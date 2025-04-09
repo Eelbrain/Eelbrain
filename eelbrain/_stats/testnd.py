@@ -2194,7 +2194,6 @@ class Vector(NDDifferenceTest):
             dims = y.get_dims(dimnames[2:])
             return NDVar(t2_map, dims)
 
-
 class VectorDifferenceIndependent(Vector):
     """Test difference between two vector fields for non-random direction
 
