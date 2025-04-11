@@ -2197,6 +2197,10 @@ class Vector(NDDifferenceTest):
 def small_func(c):
     return c
 
+def other_func():
+    x  = 2
+    return x
+
 class VectorDifferenceIndependent(Vector):
     """Test difference between two vector fields for non-random direction
 
