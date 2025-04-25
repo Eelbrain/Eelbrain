@@ -21,27 +21,27 @@ def test_glassbrain():
     p.close()
 
     # vmin, vmax, and symmetric colorbar
-    p = plot.GlassBrain(ndvar_30, colorbar = True, cmap = 'lux-a')
+    p = plot.GlassBrain(ndvar_30, colorbar=True, cmap='lux-a')
     assert p.vmin == -p.vmax and p.symmetric_cbar
     p.close()
 
     # test symmetry of max and min
-    p = plot.GlassBrain(ndvar_30, colorbar = True, cmap = 'lux-a', vmax = 3)
+    p = plot.GlassBrain(ndvar_30, colorbar=True, cmap='lux-a', vmax=3)
     assert p.vmax == -p.vmin
     p.close()
-    p = plot.GlassBrain(ndvar_30, colorbar = True, cmap = 'lux-a', vmin = -3)
+    p = plot.GlassBrain(ndvar_30, colorbar=True, cmap='lux-a', vmin=-3)
     assert p.vmax == -p.vmin
     p.close()
 
     # test asymmetric map
-    p = plot.GlassBrain(ndvar_30, cmap = 'copper')
+    p = plot.GlassBrain(ndvar_30, cmap='copper')
     p.close()
 
     # thresholding
-    p = plot.GlassBrain(ndvar_30, colorbar = True, cmap = 'copper', threshold = 1.8e-9)
+    p = plot.GlassBrain(ndvar_30, colorbar=True, cmap='copper', threshold=1.8e-9)
     p.close()
-    p = plot.GlassBrain(ndvar_30, colorbar = True, cmap = 'copper', threshold = 1.8e-9,
-                    vmin = -3.6e-9, vmax = 3.6e-9)
+    p = plot.GlassBrain(ndvar_30, colorbar=True, cmap='copper', threshold=1.8e-9,
+                    vmin=-3.6e-9, vmax=3.6e-9)
     p.close()
 
     # time series
