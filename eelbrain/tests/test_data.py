@@ -1156,6 +1156,13 @@ def test_ndvar_binning():
     binned_ndvar = ndvar.bin(0.1, 0.1, 0.4)
     assert binned_ndvar.shape == (2, 3)
 
+    # Small trailing bin
+    time = UTS(0.0, 0.001, 239235)
+    x = np.ones(time.nsamples)
+    ndvar = NDVar(x, time)
+    x_binned = ndvar.bin(0.015625)
+    assert not np.isnan(x_binned.x).any()
+
 
 def test_ndvar_connectivity():
     "Test NDVar dimensions with conectvity graph"

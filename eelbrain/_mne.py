@@ -1,8 +1,10 @@
+from functools import reduce
 from math import ceil, floor
+import operator
 import os
 from pathlib import Path
 import re
-from typing import Union, List, Sequence
+from typing import Dict, Union, List, Sequence
 import warnings
 
 import numpy as np
@@ -21,6 +23,7 @@ except ImportError:
     from mne import compute_morph_matrix
 
 from ._data_obj import NDVar, Space, SourceSpaceBase, SourceSpace, VolumeSourceSpace
+from ._types import PathArg
 from ._utils.numpy_utils import index
 
 
@@ -729,26 +732,30 @@ def resample_ico_source_space(
         return data.sub(source=index)
 
 
-def combination_label(name, exp, labels, subjects_dir):
+def combination_label(
+        name: str,
+        exp: str,
+        labels: Dict[str, Label],
+        subjects_dir: PathArg,
+) -> List[Label]:
     """Create a label based on combination of existing labels
 
     Parameters
     ----------
-    name : str
+    name
         Name for the new label (without -hemi tag to create labels for both
         hemispheres).
-    exp : str
+    exp
         Boolean expression containing label names, + and - (all without -hemi
         tags).
-    labels : dict
+    labels
         {name: label} dictionary.
-    subjects_dir : str
+    subjects_dir
         Freesurfer SUBJECTS_DIR (used for splitting labels).
 
     Returns
     -------
-    labels : list
-        List of labels, one or two depending on what hemispheres are included.
+    List of labels, one or two depending on what hemispheres are included.
     """
     m = re.match(r"([\w.]+)-([lr]h)", name)
     if m:
@@ -765,13 +772,14 @@ def combination_label(name, exp, labels, subjects_dir):
     out = []
     env = {'split': split}
     for hemi in hemis:
-        local_env = {k[:-3].replace('.', '_'): v for k, v in labels.items()
-                     if k.endswith(hemi)}
+        local_env = {k[:-3].replace('.', '_'): v for k, v in labels.items() if k.endswith(hemi)}
         try:
             label = eval(exp.replace('.', '_'), env, local_env)
         except Exception as exc:
-            raise ValueError("Invalid label expression: %r\n%s" % (exp, exc))
-        label.name = '%s-%s' % (name, hemi)
+            raise ValueError(f"{exp=}: Invalid label expression\n{exc}")
+        if isinstance(label, list):
+            label = reduce(operator.add, label)
+        label.name = f'{name}-{hemi}'
         out.append(label)
 
     return out

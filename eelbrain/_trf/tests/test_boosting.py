@@ -53,7 +53,7 @@ def test_boosting():
 
     # test values from running function, not verified independently
     res = boosting(y, x1 * 2000, 0, 1, scale_data=False, mindelta=0.0025, debug=True)
-    assert repr(res) == '<boosting y ~ x1, 0 - 1, scale_data=False, mindelta=0.0025>'
+    assert repr(res) == '<BoostingResult y ~ x1, 0 - 1, scale_data=False, mindelta=0.0025>'
     assert_allclose(res.h.x, [0, 0, 0, 0.0025, 0, 0, 0, 0, 0, 0.001875], atol=1e-6)
     assert res.r == approx(0.75, abs=0.001)
     assert res.y_mean is None
@@ -64,7 +64,7 @@ def test_boosting():
         _ = res.proportion_explained
 
     res = boosting(y, x1, 0, 1)
-    assert repr(res) == '<boosting y ~ x1, 0 - 1>'
+    assert repr(res) == '<BoostingResult y ~ x1, 0 - 1>'
     assert res.r == approx(0.83, abs=0.001)
     assert res.y_mean == y_mean
     assert res.y_scale == y.std()
@@ -323,7 +323,7 @@ def test_trf_len():
     y = convolve(k, x, name='y')
     res = boosting(y, x, 0, 0.5, partitions=3)
     assert correlation_coefficient(res.h, k) > 0.99
-    assert repr(res) == '<boosting y ~ x, 0 - 0.5, partitions=3>'
+    assert repr(res) == '<BoostingResult y ~ x, 0 - 0.5, partitions=3>'
     # split the predictor into two complementary time windows (should be identical)
     res2 = boosting(y, [x, x], [0.000, 0.250], [0.250, 0.500], partitions=3)
     assert_array_equal(res2.h[0] + res2.h[1], res.h)
@@ -336,7 +336,7 @@ def test_trf_len():
     res = boosting(y2, [x, x2], [0, -0.1], [0.5, 0.3], partitions=3)
     assert correlation_coefficient(res.h[0].sub(time=(0, 0.5)), k) > 0.99
     assert correlation_coefficient(res.h[1].sub(time=(-0.1, 0.3)), k2) > 0.99
-    assert repr(res) == '<boosting y ~ x (0 - 0.5) + x2 (-0.1 - 0.3), partitions=3>'
+    assert repr(res) == '<BoostingResult y ~ x (0 - 0.5) + x2 (-0.1 - 0.3), partitions=3>'
 
     # test scalar res.tstart res.tstop
     res = boosting(y2, [x, x2], 0, 0.5, partitions=3)

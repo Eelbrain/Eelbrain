@@ -62,9 +62,11 @@ and incorporates icons from the `Tango Desktop Project <http://tango.freedesktop
 Eelbrain is maintained by `Christian Brodbeck <http://christianbrodbeck.net>`_
 at `McMaster University <https://www.mcmaster.ca>`_.
 Current funding:
+`NIH <https://www.nih.gov>`_ `1R01DC020961-01A1 <https://reporter.nih.gov/search/Y2Ps2Pe_KkGmlGTE_W2dtw/project-details/10804052>`_ (2024-);
+`NIH <https://www.nih.gov>`_ `1R01MH132660-01A1 <https://reporter.nih.gov/search/Y2Ps2Pe_KkGmlGTE_W2dtw/project-details/10864540>`_ (2024-);
 `NSF <http://nsf.gov>`_ `2207770 <https://www.nsf.gov/awardsearch/showAward?AWD_ID=2207770>`_ (2023-);
-`NSF <http://nsf.gov>`_ `2043903 <https://www.nsf.gov/awardsearch/showAward?AWD_ID=2043903>`_ (2021-);
 Past funding:
+`NSF <http://nsf.gov>`_ `2043903 <https://www.nsf.gov/awardsearch/showAward?AWD_ID=2043903>`_ (2021-2024);
 `NSF <http://nsf.gov>`_ `1754284 <https://www.nsf.gov/awardsearch/showAward?AWD_ID=1754284>`_ (2020-2021);
 `NIH <https://www.nih.gov>`_ R01-DC-014085 (2016-2020);
 `NYU Abu Dhabi Institute <http://nyuad.nyu.edu/en/research/nyuad-institute.html>`_ G1001 (2011-2016).

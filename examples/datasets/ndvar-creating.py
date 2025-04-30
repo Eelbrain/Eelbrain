@@ -11,6 +11,10 @@ Shows how to initialize an :class:`NDVar` with the structure of EEG data from
 (randomly generate) data arrays. The data is intended for illustrating EEG
 analysis techniques and meant to vaguely resemble data from an N400 experiment,
 but it is not meant to be a physiologically realistic simulation.
+
+.. contents:: Contents
+   :local:
+
 """
 # sphinx_gallery_thumbnail_number = 3
 import numpy as np
@@ -19,19 +23,23 @@ from eelbrain import *
 
 
 ###############################################################################
-# NDVars associate data arrays with Dimension objects that describe what the
-# different data axes mean, and provide meta information thay is used, for
-# example for plotting.
-# Start by create a Sensor dimension from an actual montage:
+# NDVars from arrays
+# ------------------
+# An :class:`NDVar` combines an n-dimensional :class:`numpy.ndarray` with
+# :class:`Dimension` objects that describe what the
+# different data axes mean, and provide meta information that is used, for
+# example, for plotting.
+# Here we start by create a Sensor dimension from a built-in EEG montage
+# (a montage pairs sensor names with spatial locations on the head surface):
 sensor = Sensor.from_montage('standard_alphabetic')
 p = plot.SensorMap(sensor)
 
 ###############################################################################
-# The dimenson also contains information about the connectivity of its elements
+# The dimension also contains information about the connectivity of its elements
 # (i.e., specifying which elements are adjacent), which is used, for example,
 # for cluster-based analysis. This information is imported automatically from
-# mne-python when available; otherwise it can be defined manually when creating
-# the sensor object, or based on distance as here:
+# :mod:`mne` when available; otherwise it can be defined manually when creating
+# the sensor object, or based on pairwise sensor distance, as here:
 sensor.set_connectivity(connect_dist=1.66)
 p = plot.SensorMap(sensor, connectivity=True)
 
@@ -49,17 +57,21 @@ n400_topo = NDVar(topo, sensor)
 p = plot.Topomap(n400_topo, clip='circle')
 
 ###############################################################################
-# The time axis is specified using a :class:`UTS` ("uniform time series")
-# object. As with the topography, the UTS object allows the NDVar to
-# automatically format the time axis of a figure:
-window = scipy.signal.windows.gaussian(200, 12)[:140]
-time = UTS(-0.100, 0.005, 140)
-n400_timecourse = NDVar(window, time)
+# A time axis is specified using a :class:`UTS` ("uniform time series")
+# object. As with the topography, the UTS object allows the :class:`NDVar` to
+# automatically format the time axis of a figure. Here we create a simple time
+# series based on a Gaussian:
+window_data = scipy.signal.windows.gaussian(200, 12)[:140]
+time = UTS(tmin=-0.100, tstep=0.005, nsamples=140)
+n400_timecourse = NDVar(window_data, time)
 p = plot.UTS(n400_timecourse)
 
 ###############################################################################
-# Generate random values for the independent variable (call it "cloze
-# probability")
+# Combining NDVars
+# ---------------
+# More complex NDVars can often be created by combining simpler NDVars.
+# As example data, we generate random values for an independent variable
+# (consistent with simulating an N400 response, we call it "cloze probability")
 rng = np.random.RandomState(0)
 n_trials = 100
 cloze = np.concatenate([
@@ -70,10 +82,36 @@ rng.shuffle(cloze)
 p = plot.Histogram(cloze)
 
 ###############################################################################
-# Put all the dimensions together to simulate the EEG signal. On the first
-# line, turn cloze into Var to make clear that cloze represents a Case
-# dimension, i.e. different trials (rather than data on the time dimension in
-# ``n400_timecourse``):
+# Stacking NDVars
+# ---------------
+# A simple way of combining multiple NDVars is stacking them. Here we generate
+# a separate topography for each cloze value, add some random noise, and then
+# stack the resulting NDVars using :func:`combine`.
+# The resulting stacked :class:`NDVar` has a :class:`Case` dimension reflecting
+# the different cases (or trials):
+
+ndvars = []
+for cloze_i in cloze:
+    topo_i = NDVar(topo * cloze_i + rng.normal(0, .5, len(topo)), sensor)
+    ndvars.append(topo_i)
+topographies = combine(ndvars)
+topographies
+
+###############################################################################
+# The resulting NDvar can directly be used for a statistical test:
+
+result = testnd.TTestOneSample(topographies)
+p = plot.Topomap(result, clip='circle')
+result
+
+###############################################################################
+# Casting NDVars
+# --------------
+# Multi-dimensional NDVars can also be created through multiplication of NDVars
+# with different dimensions.
+# Here, we put all the dimensions together to simulate the EEG signal. On the first
+# line, turn cloze into :class:`Var` to make clear that cloze represents a
+# :class:`Case` dimension, i.e. different trials:
 signal = Var(1 - cloze) * n400_timecourse * n400_topo  
 
 # Add noise

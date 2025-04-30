@@ -3754,6 +3754,16 @@ class MneExperiment(FileTree):
             Return as NDVar Dimension object (default False).
         ...
             State parameters.
+
+        Examples
+        --------
+        Plot a volume source space with :mod:`mayavi`::
+
+            from mayavi import mlab
+
+            src = e.load_src(mrisubject='fsaverage', src='vol-7', ndvar=True)
+            mlab.points3d(*src.coordinates.T)
+            mlab.show()
         """
         fpath = self.get('src-file', make=True, **state)
         if ndvar:

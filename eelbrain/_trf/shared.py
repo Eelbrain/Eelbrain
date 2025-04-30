@@ -108,7 +108,7 @@ def split_data(
 ):
     """Split data segments into train, validate and test segments"""
     if partitions is not None and partitions <= validate + test:
-        raise ValueError(f"partitions={partitions} with validate={validate}, test={test}")
+        raise ValueError(f"{partitions=} with {validate=}, {test=}")
     partitions_arg = partitions
     assert validate >= 0
     if validate > 1:
@@ -374,6 +374,8 @@ class DeconvolutionData:
         x_data = PredictorData(x, data)
 
         # check y
+        if isinstance(y, (list, tuple)) and isinstance(y[0], str):
+            raise TypeError(f"{y=}: need a single NDVar (or list with ragged trials) as dependent variable")
         y = asndvar(y, data=data, ragged=x_data.is_ragged)
         if x_data.is_ragged:
             n_cases = len(y)

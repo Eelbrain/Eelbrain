@@ -101,12 +101,16 @@ def tsv(
         Further formatting parameters for :func:`csv.reader`. For example, a
         fixed-width column file can be loaded with ``skipinitialspace=True``
         (as long as there are no empty cells).
+
+    See Also
+    --------
+    Dataset.save_txt : Save :class:`Dataset` in a text file
     """
     if path is None:
         path = ui.ask_file("Load TSV", "Select tsv file to import as Dataset")
         if not path:
             return
-    path = Path(path)
+    path = Path(path).expanduser()
 
     if isinstance(random, str):
         random = [random]

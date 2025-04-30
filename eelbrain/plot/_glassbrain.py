@@ -37,12 +37,14 @@ DAMAGE.
 import os
 from typing import Literal, Union
 import warnings
+import numbers
 
 import nibabel
 import numpy as np
 
 from .._data_obj import NDVarArg, Dataset, VolumeSourceSpace
 from .._utils.numpy_utils import newaxis
+from .._colorspaces import SYMMETRIC_CMAPS
 from ._base import ColorBarMixin, TimeSlicerEF, Layout, EelFigure, brain_data, butterfly_data, use_inline_backend
 from ._utsnd import Butterfly
 
@@ -66,25 +68,132 @@ def get_bounds(shape, affine):
     return list(zip(box.min(axis=-1), box.max(axis=-1)))
 
 
+# Copied from nilearn.plotting.displays._slicers
+def _get_cbar_ticks(vmin, vmax, offset, n_ticks=5):
+    """Help for BaseSlicer."""
+    # edge case where the data has a single value yields
+    # a cryptic matplotlib error message when trying to plot the color bar
+    if vmin == vmax:
+        return np.linspace(vmin, vmax, 1)
+
+    # edge case where the data has all negative values but vmax is exactly 0
+    if vmax == 0:
+        vmax += np.finfo(np.float32).eps
+
+    # If a threshold is specified, we want two of the tick
+    # to correspond to -thresold and +threshold on the colorbar.
+    # If the threshold is very small compared to vmax,
+    # we use a simple linspace as the result would be very difficult to see.
+    ticks = np.linspace(vmin, vmax, n_ticks)
+    if offset is not None and offset / vmax > 0.12:
+        diff = [abs(abs(tick) - offset) for tick in ticks]
+        # Edge case where the thresholds are exactly
+        # at the same distance to 4 ticks
+        if diff.count(min(diff)) == 4:
+            idx_closest = np.sort(np.argpartition(diff, 4)[:4])
+            idx_closest = np.isin(ticks, np.sort(ticks[idx_closest])[1:3])
+        else:
+            # Find the closest 2 ticks
+            idx_closest = np.sort(np.argpartition(diff, 2)[:2])
+            if 0 in ticks[idx_closest]:
+                idx_closest = np.sort(np.argpartition(diff, 3)[:3])
+                idx_closest = idx_closest[[0, 2]]
+        ticks[idx_closest] = [-offset, offset]
+    if len(ticks) > 0 and ticks[0] < vmin:
+        ticks[0] = vmin
+
+    return ticks
+
+
 # Copied from nilearn.plotting.img_plotting
-def _crop_colorbar( cbar, cbar_vmin, cbar_vmax ):
-    """crop a colorbar to show from cbar_vmin to cbar_vmax.(symmetric_cbar=False)"""
-    if (cbar_vmin is None) and (cbar_vmax is None):
-        return
-    cbar_tick_locs = cbar.locator.locations
-    if cbar_vmax is None:
-        cbar_vmax = cbar_tick_locs.max()
-    if cbar_vmin is None:
-        cbar_vmin = cbar_tick_locs.min()
-    new_tick_locs = np.linspace(cbar_vmin, cbar_vmax,
-                                len(cbar_tick_locs))
-    cbar.ax.set_ylim(cbar.norm(cbar_vmin), cbar.norm(cbar_vmax))
-    outline = cbar.outline.get_xy()
-    outline[:2, 1] += cbar.norm(cbar_vmin)
-    outline[2:6, 1] -= (1. - cbar.norm(cbar_vmax))
-    outline[6:, 1] += cbar.norm(cbar_vmin)
-    cbar.outline.set_xy(outline)
-    cbar.set_ticks(new_tick_locs, update_ticks=True)
+def _get_cropped_cbar_ticks(cbar_vmin, cbar_vmax, threshold=None, n_ticks=5):
+    """Return ticks for cropped colorbars."""
+    new_tick_locs = np.linspace(cbar_vmin, cbar_vmax, n_ticks)
+    if threshold is not None:
+        # Case where cbar is either all positive or all negative
+        if 0 <= cbar_vmin <= cbar_vmax or cbar_vmin <= cbar_vmax <= 0:
+            idx_closest = np.argmin(
+                [abs(abs(new_tick_locs) - threshold) for _ in new_tick_locs]
+            )
+            new_tick_locs[idx_closest] = threshold
+        # Case where we do a symmetric thresholding
+        # within an asymmetric cbar
+        # and both threshold values are within bounds
+        elif cbar_vmin <= -threshold <= threshold <= cbar_vmax:
+            new_tick_locs = _get_cbar_ticks(
+                cbar_vmin, cbar_vmax, threshold, n_ticks=len(new_tick_locs)
+            )
+        # Case where one of the threshold values is out of bounds
+        else:
+            idx_closest = np.argmin(
+                [abs(new_tick_locs - threshold) for _ in new_tick_locs]
+            )
+            new_tick_locs[idx_closest] = (
+                -threshold if threshold > cbar_vmax else threshold
+            )
+    return new_tick_locs
+
+
+# Adapted from nilearn.plotting.img_plotting
+def _get_colorbar_and_data_ranges(stat_map_data, 
+    vmin=None, 
+    vmax=None, 
+    symmetric_cbar=True,
+):
+    """Set colormap and colorbar limits.
+
+    Used by plot_stat_map, plot_glass_brain and plot_img_on_surf.
+
+    The limits for the colorbar depend on the symmetric_cbar argument. Please
+    refer to docstring of plot_stat_map.
+    """
+    # handle invalid vmin/vmax inputs
+    if (not isinstance(vmin, numbers.Number)) or (not np.isfinite(vmin)):
+        vmin = None
+    if (not isinstance(vmax, numbers.Number)) or (not np.isfinite(vmax)):
+        vmax = None
+
+    # avoid dealing with masked_array:
+    if hasattr(stat_map_data, "_mask"):
+        stat_map_data = np.asarray(
+            stat_map_data[np.logical_not(stat_map_data._mask)]
+        )
+    
+    stat_map_min = np.nanmin(stat_map_data)
+    stat_map_max = np.nanmax(stat_map_data)
+
+    # Runs if symmetricality is unspecified by user and has not been set previously
+    if symmetric_cbar == "auto":
+        if (vmin is None) or (vmax is None):
+            symmetric_cbar = stat_map_min < 0 < stat_map_max
+        else:
+            symmetric_cbar = np.isclose(vmin, -vmax)
+
+    # check compatibility between vmin, vmax and symmetric_cbar
+    if symmetric_cbar:
+        if vmin == 0 or vmax == 0:
+            raise ValueError(
+                "vmin or vmax should not be 0 if symmetric_cbar is True"
+            )
+        if vmin is None and vmax is None:
+            vmax = max(-stat_map_min, stat_map_max)
+            vmin = -vmax
+        elif vmin is None:
+            vmin = -vmax
+        elif vmax is None:
+            vmax = -vmin
+        elif not np.isclose(vmin, -vmax):
+            raise ValueError(
+                "vmin must be equal to -vmax unless symmetric_cbar is False."
+            )
+    # set colorbar limits
+    else:
+        if vmin is None:
+            vmin = stat_map_min
+        if vmax is None:
+            vmax = stat_map_max
+
+    return vmin, vmax
 
 
 class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
@@ -155,10 +264,11 @@ class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
         Naturally, for this to work ``ndvar`` needs to contain space dimension
         (i.e 3D vectors). By default it is set to ``True``.
     symmetric_cbar
-        Specifies whether the colorbar should range from -vmax to vmax
-        or from vmin to vmax. Setting to 'auto' will select the latter if
-        the range of the whole image is either positive or negative.
-        Note: The colormap will always be set to range from -vmax to vmax.
+        Specifies whether the colorbar should range from -vmax to vmax (True)
+        or from vmin to vmax (False). Setting to 'auto' will select the latter if
+        the range of the whole image is either positive or negative. If set to 'auto' 
+        and no cmap is provided, this will change to True if data is not boolean in 
+        nature, and vice versa.
     interpolation
         Interpolation to use when resampling the image to the destination
         space. Can be "continuous" to use 3rd-order spline
@@ -219,7 +329,6 @@ class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
             warnings.filterwarnings('ignore', 'Trying to register the cmap', UserWarning)
             from nilearn.image import index_img
             from nilearn.plotting.displays import get_projector
-            from nilearn.plotting.img_plotting import get_colorbar_and_data_ranges
         if old_display is None:
             del os.environ['DISPLAY']
 
@@ -246,7 +355,7 @@ class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
 
         cbar_clip_at_0 = False
         if ndvar is None:
-            cbar_vmin = cbar_vmax = imgs = img0 = dir_imgs = threshold = None
+            imgs = img0 = dir_imgs = threshold = None
         else:
             if ndvar.has_case:
                 ndvar = ndvar.mean('case')
@@ -285,19 +394,21 @@ class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
             if cmap is None:
                 if data.dtype.kind == 'b':
                     cmap = 'copper' if black_bg else 'Oranges'
+                    symmetric_cbar = False if symmetric_cbar == 'auto' else symmetric_cbar
                 else:
                     cmap = 'cold_hot' if black_bg else 'cold_white_hot'
-
+                    symmetric_cbar = True if symmetric_cbar == 'auto' else symmetric_cbar
+            elif cmap in SYMMETRIC_CMAPS and symmetric_cbar == 'auto':
+                # Only changes to True if present in SYMMETRIC_CMAPS and no user input is specified
+                symmetric_cbar = True
+                
             if data.dtype.kind == 'b':
                 if vmax is None:
                     vmax = 1
                 if vmin is None:
                     vmin = 0
-                cbar_vmin = cbar_vmax = None
-            elif plot_abs:
-                cbar_vmin, cbar_vmax, vmin, vmax = get_colorbar_and_data_ranges(data, vmax=vmax, symmetric_cbar=symmetric_cbar)
             else:
-                cbar_vmin, cbar_vmax, vmin, vmax = get_colorbar_and_data_ranges(data, vmax=vmax, symmetric_cbar=symmetric_cbar)
+                vmin, vmax = _get_colorbar_and_data_ranges(data, vmin=vmin, vmax=vmax, symmetric_cbar=symmetric_cbar)
 
             # Deal with automatic settings of plot parameters
             if threshold == 'auto':
@@ -353,6 +464,7 @@ class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
         self.colorbar = colorbar
         self.vmin = vmin
         self.vmax = vmax
+        self.symmetric_cbar = symmetric_cbar
         self._arrows = draw_arrows
 
         if draw_arrows:
@@ -365,7 +477,8 @@ class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
             display.draw_cross()
         if hasattr(display, '_cbar'):
             cbar = display._cbar
-            _crop_colorbar(cbar, cbar_vmin, cbar_vmax)
+            new_tick_locs = _get_cropped_cbar_ticks(vmin, vmax, threshold, n_ticks=len(cbar.locator.locs))
+            cbar.set_ticks(new_tick_locs)
 
         if show_time:
             color = 'w' if black_bg else 'k'

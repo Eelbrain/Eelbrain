@@ -192,7 +192,7 @@ class _plt_map2d:
         # sensors
         if marker:
             index = slice(None) if self._index is None else self._index
-            self._sensor_h = ax.scatter(self.locs[index, 0], self.locs[index, 1], size, color, marker)
+            self._sensor_h = ax.scatter(self.locs[index, 0], self.locs[index, 1], size, color, marker=marker)
         else:
             self._sensor_h = None
 

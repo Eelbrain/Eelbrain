@@ -11,7 +11,7 @@ from .._names import INTERPOLATE_CHANNELS
 from .._utils import deprecate_ds_arg
 from . import _base
 from ._base import (
-    PlotType,
+    PlotType, CMapArg,
     EelFigure, PlotData, AxisData, DataLayer, Layout,
     ColorMapMixin, LegendMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMixin,
     pop_if_dict, set_dict_arg)
@@ -183,9 +183,9 @@ class Array(TimeSlicerEF, ColorMapMixin, XAxisMixin, EelFigure):
 
     Parameters
     ----------
-    y : (list of) NDVar
+    y
         Data to plot.
-    xax : None | categorial
+    xax
         Create a separate plot for each cell in this model.
     xlabel
         Labels for x-axis; the default is determined from the data.
@@ -202,15 +202,15 @@ class Array(TimeSlicerEF, ColorMapMixin, XAxisMixin, EelFigure):
     data : Dataset
         If a Dataset is provided, ``epochs`` and ``xax`` can be specified
         as strings.
-    sub : str | array
+    sub
         Specify a subset of the data.
-    x : str
+    x
         Dimension to plot on the x axis (default 'time').
     vmax
         Upper limits for the colormap.
     vmin
         Lower limit for the colormap.
-    cmap : str
+    cmap
         Colormap (default depends on the data).
     contours
         Draw contours. Can be an int (number of contours, including
@@ -218,15 +218,15 @@ class Array(TimeSlicerEF, ColorMapMixin, XAxisMixin, EelFigure):
         contours), or a dictionary with ``**kwargs`` for
         :meth:`~matplotlib.axes.Axes.contour` (must include a ``"levels"`` key).
         Default is no contours.
-    axtitle : bool | sequence of str
+    axtitle
         Title for the individual axes. The default is to show the names of the
         epochs, but only if multiple axes are plotted.
-    interpolation : str
+    interpolation
         Array image interpolation (see Matplotlib's
         :meth:`~matplotlib.axes.Axes.imshow`). Matplotlib 1.5.3's SVG output
         can't handle uneven aspect with ``interpolation='none'``, use
         ``interpolation='nearest'`` instead.
-    xlim : scalar | (scalar, scalar)
+    xlim
         Initial x-axis view limits as ``(left, right)`` tuple or as ``length``
         scalar (default is the full x-axis in the data).
     tight : bool
@@ -248,22 +248,22 @@ class Array(TimeSlicerEF, ColorMapMixin, XAxisMixin, EelFigure):
     @deprecate_ds_arg
     def __init__(
             self,
-            y,
-            xax=None,
+            y: Union[NDVarArg, Sequence[NDVarArg]],
+            xax: CategorialArg = None,
             xlabel: Union[bool, str] = True,
             ylabel: Union[bool, str] = True,
             xticklabels: Union[str, int, Sequence[int]] = 'bottom',
             yticklabels: Union[str, int, Sequence[int]] = 'left',
-            sub=None,
+            sub: IndexArg = None,
             data: Dataset = None,
             x: str = 'time',
             vmax: float = None,
             vmin: float = None,
-            cmap=None,
+            cmap: CMapArg = None,
             contours: Union[int, Sequence, dict] = None,
-            axtitle=True,
-            interpolation=None,
-            xlim=None,
+            axtitle: Union[bool, Sequence[str]] = True,
+            interpolation: str = None,
+            xlim: Union[float, Tuple[float, float]] = None,
             **kwargs):
         plot_data = PlotData.from_args(y, (x, None), xax, data, sub).for_plot(PlotType.IMAGE)
         xdim, ydim = plot_data.dims

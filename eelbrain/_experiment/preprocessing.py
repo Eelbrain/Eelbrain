@@ -142,10 +142,12 @@ class RawSource(RawPipe):
         Used to determine sensor positions (not needed for KIT files, or when a
         montage is specified).
     rename_channels
-        Rename channels before applying montage, ``{from: to}`` dictionary;
-        useful to convert idiosyncratic naming conventions to standard montages.
+        Rename channels based on a ``{from: to}`` dictionary. This happens
+        *after* calling the ``reader``, and *before* applying the ``montage``.
+        Useful to convert system-specific channel names to those of a standard montages.
     montage
-        Name of a montage that is applied to raw data to set sensor positions.
+        Name of a montage that is applied to raw data to set sensor positions
+        (see :meth:`mne.io.Raw.set_montage`).
     connectivity
         Connectivity between sensors. Can be specified as:
 
@@ -625,7 +627,7 @@ class RawICA(CachedRawPipe):
     step, regardless of whether they were used to estimate the components or
     not.
 
-    Use :meth:`~eelbrain.MneExperiment.make_ica_selection` for each subject to
+    Use :meth:`MneExperiment.make_ica_selection` for each subject to
     select ICA components that should be removed. The arguments to that function
     determine what data is used to visualize the component time courses.
     For example, to determine which components load strongly on empty room data,
@@ -1046,7 +1048,7 @@ class RawReReference(CachedRawPipe):
                 pipe = pipe.source
             if pipe.montage:
                 raw.set_montage(pipe.montage)
-        raw.set_eeg_reference(self.reference)
+        raw.set_eeg_reference(list(self.reference))
         if self.drop:
             raw = raw.drop_channels(self.drop)
         return raw
