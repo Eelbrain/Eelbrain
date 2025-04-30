@@ -105,6 +105,9 @@ class SubParc(Parcellation):
                     labels.append(base[label + hemi])
         return labels
 
+    def _base_labels(self) -> set:
+        return set(self.labels)
+
 
 class CombinationParc(Parcellation):
     """Recombine labels from an existing parcellation
@@ -186,6 +189,14 @@ class CombinationParc(Parcellation):
         for name, exp in self.labels.items():
             labels += combination_label(name, exp, base, subjects_dir)
         return labels
+
+    def _base_labels(self) -> set:
+        base_labels = set()
+        for name, exp in self.labels.items():
+            exp_labels = re.findall(r'[^\W0-9]\w*', exp)
+            base_labels.update(exp_labels)
+        base_labels.remove('split')
+        return base_labels
 
 
 class EelbrainParc(Parcellation):
