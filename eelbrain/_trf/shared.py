@@ -107,8 +107,14 @@ def split_data(
         test: int = 0,  # Number of segments in test set
 ):
     """Split data segments into train, validate and test segments"""
+    if int(partitions) != partitions:
+        raise TypeError(f"{partitions=}")
+    if int(validate) != validate:
+        raise TypeError(f"{validate=}")
+    if int(test) != test:
+        raise TypeError(f"{test=}")
     if partitions is not None and partitions <= validate + test:
-        raise ValueError(f"{partitions=} with {validate=}, {test=}")
+        raise ValueError(f"{validate=}, {test=} with {partitions=}")
     partitions_arg = partitions
     assert validate >= 0
     if validate > 1:
