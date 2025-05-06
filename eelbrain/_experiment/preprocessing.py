@@ -618,6 +618,7 @@ class RawICA(CachedRawPipe):
     See Also
     --------
     MneExperiment.raw
+    RawApplyICA
 
     Notes
     -----
@@ -635,6 +636,25 @@ class RawICA(CachedRawPipe):
     ``'emptyroom'`` session is present).
 
     This step merges bad channels from all sessions.
+
+    Examples
+    --------
+    Some ICA examples::
+
+        class Experiment(MneExperiment):
+
+            raw = {
+                '1-40': RawFilter('raw', 1, 40),
+                # Extended infomax with PCA preprocessing
+                'ica': RawICA('1-40', 'extended-infomax', n_components=0.99),
+                # Fast ICA
+                'fastica': RawICA('1-40', 'session', 'fastica', n_components=0.9),
+                # Change thresholds for data rejection using fit_kwargs
+                'ica-rej': RawICA('1-40', 'session', 'fastica', fit_kwargs=dict(
+                    reject={'mag': 5e-12, 'grad': 5000e-13, 'eeg': 500e-6},
+                )),
+            }
+
     """
     ica_path: str = None  # set on linking
 
@@ -820,11 +840,11 @@ class RawApplyICA(CachedRawPipe):
 
     Parameters
     ----------
-    source : str
+    source
         Name of the raw pipe to use for input data.
-    ica : str
+    ica
         Name of the :class:`RawICA` pipe from which to load the ICA components.
-    cache : bool
+    cache
         Cache the resulting raw files (default ``False``).
 
     See Also
@@ -852,7 +872,12 @@ class RawApplyICA(CachedRawPipe):
     """
     ica_source = None  # set on linking
 
-    def __init__(self, source, ica, cache=False):
+    def __init__(
+            self,
+            source: str,
+            ica: str,
+            cache: bool = False,
+    ):
         CachedRawPipe.__init__(self, source, cache)
         self._ica_source = ica
 
