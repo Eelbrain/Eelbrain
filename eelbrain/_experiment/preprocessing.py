@@ -468,13 +468,13 @@ class RawFilter(CachedRawPipe):
 
     Parameters
     ----------
-    source : str
+    source
         Name of the raw pipe to use for input data.
-    l_freq : scalar | None
+    l_freq
         Low cut-off frequency in Hz.
-    h_freq : scalar | None
+    h_freq
         High cut-off frequency in Hz.
-    cache : bool
+    cache
         Cache the resulting raw files (default ``True``).
     n_jobs
         Parameter for :meth:`mne.io.Raw.filter`; Values other than 1 are slower
@@ -486,7 +486,6 @@ class RawFilter(CachedRawPipe):
     --------
     MneExperiment.raw
     """
-
     def __init__(
             self,
             source: str,
