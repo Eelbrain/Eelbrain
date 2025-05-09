@@ -4482,8 +4482,10 @@ class MneExperiment(FileTree):
         Parameters
         ----------
         epoch
-            Epoch to use for visualization in the GUI (default is to use the
-            raw data).
+            Load data from this :ref:`state-epoch` for visualization during
+            component selection (does not affect the ICA components themselvs).
+            If unspecified, the default is to load the data form the entire
+            :ref:`state-session` that the ICA is based on.
         samplingrate
             Samplingrate in Hz for the visualization (set to a lower value to
             improve GUI performance; for raw data, the default is ~100 Hz, for
