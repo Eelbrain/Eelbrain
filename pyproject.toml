@@ -1,0 +1,121 @@
+[build-system]
+requires = [
+    "setuptools >= 64.0.0",
+    "numpy >= 1.20",
+    "cython >= 3",
+    ]
+build-backend = "setuptools.build_meta"
+
+[project]
+authors = [
+  {email = 'christianbrodbeck@nyu.edu', name = 'Christian Brodbeck'},
+]
+classifiers = [
+  'Natural Language :: English',
+  'Operating System :: MacOS',
+  'Operating System :: Microsoft :: Windows',
+  'Operating System :: Unix',
+  'Programming Language :: Python :: 3 :: Only',
+  'Programming Language :: Python :: 3.10',
+  'Programming Language :: Python :: 3.11',
+  'Programming Language :: Python :: 3.12',
+  'Programming Language :: Python :: 3.13',
+  'Programming Language :: Python :: 3.9',
+]
+dependencies = [
+  'appnope',
+  'colormath >= 2.1',
+  'keyring >= 5',
+  'libclang',
+  'matplotlib >= 3.6',
+  'mne >= 1',
+  'nibabel >= 2.5',
+  'numpy >= 1.20',
+  'pillow',
+  'psutils',
+  'pymatreader',
+  'scipy >= 1.5',
+  'seaborn',
+]
+description='MEG/EEG analysis tools'
+keywords = [
+  'ant neuro',
+  'cnt',
+  'eeg',
+  'eego',
+  'python',
+]
+license = 'BSD-3-Clause'
+license-files = ['LICENSE.txt']
+maintainers = [
+  {email = 'christianbrodbeck@nyu.edu', name = 'Chrsitian Brodbeck'},
+  {name = 'Proloy Das'},
+]
+name = 'eelbrain'
+readme = 'README.md'
+requires-python = '>=3.8'
+dynamic = ["version"]
+
+[project.optional-dependencies]
+all = [
+  'eelbrain[full]',
+  'eelbrain[test]',
+]
+brain = [
+  'pysurfer[save_movie]',
+  'nilearn >=0.10.4'
+]
+gui = [
+    'ipdb',
+    'ipython',
+    'colormath >= 2.1',
+    'tqdm >= 4.40',
+    'wxpython >= 4.0.3, != 4.1.0',
+]
+full = [
+  'eelbrain[brain]',   
+  'eelbrain[gui]',
+]
+style = [
+  'codespell[toml] >= 2.2.4',
+  'ruff >= 0.6.0',
+  'toml-sort',
+  'yamllint',
+]
+doc = [
+  'sphinx >= 3',
+  'sphinx-gallery',
+  'sphinx_rtd_theme',
+  'sphinxcontrib-bibtex',
+  'pydocstyle',
+  'pingouin'
+]
+test = [
+  'flake8',
+  'pytest-cov',
+  'pytest >=8.0, < 8.1.1',
+  'pytest-faulthandler',
+  'pingouin'
+]
+
+[tool.tomlsort]
+all = true
+ignore_case = true
+spaces_before_inline_comment = 2
+trailing_comma_inline_array = true
+
+[project.urls]
+documentation = 'https://eelbrain.readthedocs.io'
+homepage = 'https://eelbrain.readthedocs.io'
+source = 'https://github.com/Eelbrain/eelbrain'
+tracker = 'https://github.com/Eelbrain/eelbrain/issues'
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+exclude = ['eelbrain*tests']
+include = ['eelbrain*']
+
+[tool.setuptools.dynamic]
+version = {attr = "eelbrain.__version__"}

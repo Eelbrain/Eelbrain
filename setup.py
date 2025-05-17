@@ -19,16 +19,6 @@ except ImportError:
 
 IS_WINDOWS = os.name == 'nt'
 IS_ARM = platform.machine().lower().startswith('arm')
-this_directory = Path(__file__).parent
-long_description = (this_directory / "README.md").read_text()
-
-# version must be in X.X.X format, e.g., "0.0.3dev"
-text = (this_directory / 'eelbrain' / '__init__.py').read_text()
-match = re.search(r"__version__ = '([.\w]+)'", text)
-if match is None:
-    raise ValueError("No valid version string found in:\n\n" + text)
-version = match.group(1)
-Version(version)  # check that it's a valid version
 
 # Cython extensions
 base_args = {'define_macros': [("NPY_NO_DEPRECATED_API", "NPY_1_11_API_VERSION")]}
@@ -40,8 +30,8 @@ if IS_WINDOWS:
 elif IS_ARM:
     open_mp_args = {
         **base_args,
-        'extra_compile_args': ['-Wno-unreachable-code', '-fopenmp', '-O3'],
-        'extra_link_args': ['-fopenmp'],
+        'extra_compile_args': ['-Wno-unreachable-code', '-Xpreprocessor', '-fopenmp', '-O3'],
+        'extra_link_args': ['-Xpreprocessor', '-fopenmp'],
     }
     base_args['extra_compile_args'] = ['-Wno-unreachable-code', '-O3']
 else:
@@ -66,45 +56,6 @@ if cythonize:
     extensions = cythonize(extensions)
 
 setup(
-    name='eelbrain',
-    version=version,
-    description="MEG/EEG analysis tools",
-    url="https://eelbrain.readthedocs.io",
-    author="Christian Brodbeck",
-    author_email='christianbrodbeck@nyu.edu',
-    license='BSD (3-clause)',
-    long_description=long_description,
-    long_description_content_type='text/markdown',
-    python_requires='>=3.8',
-    setup_requires=[
-        "numpy >= 1.20",
-        "cython >= 3",
-    ],
-    install_requires=[
-        'appnope',
-        'colormath >= 2.1',
-        'keyring >= 5',
-        'matplotlib >= 3.6',
-        'mne >= 0.19',
-        'nibabel >= 2.5',
-        'numpy >= 1.20',
-        'pillow',
-        'pymatreader',
-        'scipy >= 1.5',
-        'tqdm >= 4.40',
-    ],
-    extras_require={
-        'brain': [
-            'pysurfer[save_movie]',
-        ],
-        'gui': [
-            'wxpython > 4.1.0',
-        ],
-        'full': [
-            'pysurfer[save_movie]',
-            'wxpython > 4.1.0',
-        ],
-    },
     include_dirs=[np.get_include()],
     packages=find_packages(),
     ext_modules=extensions,

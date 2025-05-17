@@ -13,24 +13,30 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python 3.10
-      uses: actions/setup-python@v3
-      with:
-        python-version: '3.10'
+    # - name: Set up Python 3.10
+    #   uses: actions/setup-python@v3
+    #   with:
+    #     python-version: '3.10'
     - if: matrix.os == 'ubuntu-latest'
       name: Install dependencies
       run: |
         sudo apt-get update
-    - name: Install Mamba
+    - name: Use Mamba to create env
       uses: mamba-org/setup-micromamba@v2
       with:
-        environment-file: env-dev.yml
         environment-name: eeldev
+        create-args: >-
+          python=3.10
+          libcblas
+          numpy>=1.20
+          wxpython>=4.1.0
+          rpy2
+          r-car
         init-shell: bash
         cache-environment: true
         post-cleanup: 'all'
-    - name: build Eelbrain
-      run: pip install -e .
+    - name: Build eelbrain
+      run: pip install -e .[all]
       shell: bash -el {0}
     - if: matrix.os == 'ubuntu-latest'
       name: Test without GUI
