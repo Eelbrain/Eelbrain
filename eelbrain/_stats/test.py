@@ -410,12 +410,12 @@ def _independent_measures_args(y, x, c1, c0, match, ds, sub, nd_data=False):
     return y, y1, y0, c1, c0, match, x_name, c1_name, c0_name
 
 
-def _related_measures_args(y, x, c1, c0, match, ds, sub, nd_data=False):
+def _related_measures_args(y, x, c1, c0, match, data, sub, nd_data=False):
     "Interpret parameters for related measures tests (2 different argspecs)"
     if isinstance(x, str):
-        if ds is None:
-            raise TypeError(f"x={x!r} specified as str without specifying ds")
-        x = ds.eval(x)
+        if data is None:
+            raise TypeError(f"{x=} specified as str without specifying data")
+        x = data.eval(x)
 
     if nd_data:
         two_y = isinstance(x, NDVar)
@@ -426,16 +426,16 @@ def _related_measures_args(y, x, c1, c0, match, ds, sub, nd_data=False):
 
     if two_y:
         assert match is None
-        y1 = coerce(y, sub, ds)
+        y1 = coerce(y, sub, data)
         n = len(y1)
-        y0 = coerce(x, sub, ds, n)
+        y0 = coerce(x, sub, data, n)
         c1_name = y1.name if c1 is None else c1
         c0_name = y0.name if c0 is None else c0
         x_name = y0.name
     elif match is None:
         raise TypeError("The `match` argument needs to be specified for related measures tests")
     else:
-        ct = Celltable(y, x, match, sub, cat=(c1, c0), data=ds, coercion=coerce, dtype=np.float64)
+        ct = Celltable(y, x, match, sub, cat=(c1, c0), data=data, coercion=coerce, dtype=np.float64)
         c1, c0 = ct.cat
         c1_name = c1
         c0_name = c0
