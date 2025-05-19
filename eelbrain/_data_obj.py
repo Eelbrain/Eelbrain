@@ -1835,6 +1835,11 @@ class Var(Named):
             raise ValueError(f"Length mismatch: {len(self)} (Var) != {len(x)} (x)")
         else:
             x_out = [func(self.x[x == cell]) for cell in x.cells]
+        x_out = numpy.array(x_out)
+        if self.x.dtype.kind in 'bi':
+            x_with_dtype = numpy.array(x_out, dtype=self.x.dtype)
+            if numpy.all(x_with_dtype == x_out):
+                x_out = x_with_dtype
         return Var(x_out, *op_name(self, name=name))
 
     @property
