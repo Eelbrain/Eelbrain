@@ -10,8 +10,7 @@ def get_alice_path(
         path: PathArg = Path("~/Data/Alice"),
 ):
     path = Path(path).expanduser().resolve()
-    if not path.exists():
-        path.mkdir(exist_ok=True, parents=True)
+    path.mkdir(exist_ok=True, parents=True)
 
     baseurl = 'https://drum.lib.umd.edu/bitstream/handle/1903/27591/'
     registry = {
