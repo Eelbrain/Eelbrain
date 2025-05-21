@@ -701,7 +701,7 @@ class _plt_uts_stat:
         if error == 'all':
             y_all = layer.y.get_data((xdim, 'case'))
             self.error = ax.plot(x, y_all, alpha=error_alpha, clip_on=clip, **layer.style.line_args)
-        elif error and error != 'none':
+        elif error and error != 'none' and len(layer.y.get_dim('case')) > 1:
             if callable(error):
                 dev_data = layer.get_statistic(error)
             else:
