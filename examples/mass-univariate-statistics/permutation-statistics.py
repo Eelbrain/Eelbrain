@@ -68,10 +68,10 @@ p = plot.TopoButterfly(significan_regions[0, 'cluster'], t=0.13, head_radius=0.3
 # -------------------
 # In cluster-based tests, a first steps consists in finding contiguous regions of "meaningful" effect, so-called clusters.
 # In order to find contiguous regions, the algorithm needs to know which channels are
-# neighbors. This information is refered to as the sensor connectivity (i.e., which sensors
-# are connected). The connectivity graph can be visualized to confirm that it is set correctly.
+# neighbors. This information is refered to as the sensor adjacency (i.e., which sensors
+# are connected). The adjacency graph can be visualized to confirm that it is set correctly.
 
-p = plot.SensorMap(eeg, connectivity=True)
+p = plot.SensorMap(eeg, adjacency=True)
 
 ###############################################################################
 # We also need to define what constitutes a "meaningful" effect, i.e., an effect that should be included in the cluster.

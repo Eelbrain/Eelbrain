@@ -607,9 +607,9 @@ def test_dim_categorial():
     dim_i = dim.intersect(dim2)
     assert dim_i == Categorial(name, ['b', 'c'])
 
-    # connectivity
+    # adjacency
     dim = Categorial(name, ['c', 'b', 'e'], [('b', 'c'), ('b', 'e')])
-    assert_array_equal(dim.connectivity(), [[0, 1], [1, 2]])
+    assert_array_equal(dim.adjacency(), [[0, 1], [1, 2]])
 
 
 def test_dim_scalar():
@@ -1164,7 +1164,7 @@ def test_ndvar_binning():
     assert not np.isnan(x_binned.x).any()
 
 
-def test_ndvar_connectivity():
+def test_ndvar_adjacency():
     "Test NDVar dimensions with conectvity graph"
     ds = datasets.get_uts(utsnd=True)
     x = ds['utsnd']
@@ -1173,8 +1173,8 @@ def test_ndvar_connectivity():
     sub_mono = x.sub(sensor=['2', '3', '4'])
     sub_nonmono = x.sub(sensor=['4', '3', '2'])
     argsort = np.array([2,1,0])
-    conn = argsort[sub_mono.sensor.connectivity().ravel()].reshape((-1, 2))
-    assert_equal(sub_nonmono.sensor.connectivity(), conn)
+    conn = argsort[sub_mono.sensor.adjacency().ravel()].reshape((-1, 2))
+    assert_equal(sub_nonmono.sensor.adjacency(), conn)
 
     # date for labeling
     x1 = ds.eval("utsnd[numpy.logical_and(A=='a0', B=='b0')].mean('case')")
@@ -1183,12 +1183,12 @@ def test_ndvar_connectivity():
     # insert point that is connected by sensors but not by grid
     x.x[0, 50:55] = 4
 
-    # custom connectivity on first axis
+    # custom adjacency on first axis
     l = x.label_clusters(3)
     assert len(l.info['cids']) == 5
     assert_array_equal(np.unique(l.x), np.append([0], l.info['cids']))
 
-    # custom connectivity second
+    # custom adjacency second
     sensor, time = x.dims
     x = NDVar(x.x.T, (time, sensor))
     l = x.label_clusters(3)
