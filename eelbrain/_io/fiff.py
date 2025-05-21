@@ -43,7 +43,7 @@ except ImportError:
     }
 
 BaselineArg = Optional[Tuple[Optional[float], Optional[float]]]
-ConnectivityArg = Union[str, Sequence[Tuple[str, str]], np.ndarray]
+AdjacencyArg = Union[str, Sequence[Tuple[str, str]], np.ndarray]
 DataArg = Literal['eeg', 'mag', 'grad']
 PicksArg = Any
 
@@ -361,7 +361,7 @@ def epochs(
         i_start: str = 'i_start',
         tstop: float = None,
         sysname: str = None,
-        connectivity: ConnectivityArg = None,
+        adjacency: AdjacencyArg = None,
 ) -> NDVar:
     """
     Load epochs as :class:`NDVar`.
@@ -418,11 +418,11 @@ def epochs(
         51 samples, while the epoch specified with ``tmin=-0.1, tstop=0.4`` will
         have 50 samples.
     sysname
-        Name of the sensor system to load sensor connectivity (e.g. 'neuromag',
+        Name of the sensor system to load sensor adjacency (e.g. 'neuromag',
         inferred automatically for KIT data converted with a recent version of
         MNE-Python).
-    connectivity
-        Connectivity between elements. Can be specified as:
+    adjacency
+        Adjacency between elements. Can be specified as:
 
         - ``"none"`` for no connections
         - list of connections (e.g., ``[('OZ', 'O1'), ('OZ', 'O2'), ...]``)
@@ -448,7 +448,7 @@ def epochs(
     reject = _ndvar_epochs_reject(data, reject)
 
     epochs_ = mne_epochs(ds, tmin, tmax, baseline, i_start, raw, decim=decim, picks=picks, reject=reject, proj=proj, tstop=tstop)
-    ndvar = epochs_ndvar(epochs_, name, data, 'bads', mult, info, sensors, None, sysname, connectivity)
+    ndvar = epochs_ndvar(epochs_, name, data, 'bads', mult, info, sensors, None, sysname, adjacency)
 
     if len(epochs_) == 0:
         raise RuntimeError(f"No events left in {raw.filenames[0]}")
@@ -512,7 +512,7 @@ def add_epochs(ds, tmin=-0.1, tmax=0.6, baseline=None, decim=1, mult=1,
     i_start : str
         name of the variable containing the index of the events.
     sysname : str
-        Name of the sensor system to load sensor connectivity (e.g. 'neuromag',
+        Name of the sensor system to load sensor adjacency (e.g. 'neuromag',
         inferred automatically for KIT data converted with a recent version of
         MNE-Python).
     tstop : scalar
@@ -685,7 +685,7 @@ def sensor_dim(
         info: mne.Info,
         picks: np.ndarray = None,
         sysname: str = None,
-        connectivity: ConnectivityArg = None,
+        adjacency: AdjacencyArg = None,
 ) -> Sensor:
     """Create a :class:`Sensor` dimension from an :class:`mne.Info` object.
 
@@ -698,11 +698,11 @@ def sensor_dim(
         Channel picks (integer array, as used in mne-python).
         By default, all MEG and EEG channels are included.
     sysname
-        Name of the sensor system to load sensor connectivity (e.g. 'neuromag',
+        Name of the sensor system to load sensor adjacency (e.g. 'neuromag',
         inferred automatically for KIT data converted with a recent version of
         MNE-Python).
-    connectivity : str | list of (str, str) | array of int, (n_edges, 2)
-        Sensor connectivity (adjacency graph). Can be specified as:
+    adjacency : str | list of (str, str) | array of int, (n_edges, 2)
+        Sensor adjacency (adjacency graph). Can be specified as:
 
         - ``"none"`` for no connections
         - list of connections (e.g., ``[('OZ', 'O1'), ('OZ', 'O2'), ...]``)
@@ -747,46 +747,46 @@ def sensor_dim(
             sysname = 'neuromag306mag'
         elif ch_unit == FIFF.FIFF_UNIT_V:
             sysname = 'neuromag306eeg'
-            if connectivity is None:
-                connectivity = 'auto'
+            if adjacency is None:
+                adjacency = 'auto'
         else:
             raise ValueError(f"Unknown channel unit for {sysname=}: {ch_unit!r}")
 
-    if connectivity is None:
-        connectivity = sysname or 'auto'
+    if adjacency is None:
+        adjacency = sysname or 'auto'
 
     ch_type = None
-    if connectivity == 'auto':
+    if adjacency == 'auto':
         if sysname and sysname.startswith('KIT-'):
-            connectivity = sysname
+            adjacency = sysname
         else:
             ch_types = info.get_channel_types(picks, unique=True)
             if len(ch_types) == 1:
                 ch_type = ch_types[0]
                 if ch_type not in ['mag', 'grad', 'eeg']:
-                    connectivity = 'none'
+                    adjacency = 'none'
             else:
-                connectivity = 'none'
+                adjacency = 'none'
 
-    if connectivity in ('grid', 'none'):
+    if adjacency in ('grid', 'none'):
         pass
-    elif isinstance(connectivity, str):
-        if connectivity == 'auto':
-            connectivity = _adjacency_id(info, ch_type)
-        if connectivity is None:
+    elif isinstance(adjacency, str):
+        if adjacency == 'auto':
+            adjacency = _adjacency_id(info, ch_type)
+        if adjacency is None:
             c_matrix, names = mne.channels.find_ch_adjacency(info, ch_type)
             if any(ch not in names for ch in ch_names):
-                raise NotImplementedError("Connectivity fot this data type")
+                raise NotImplementedError("Adjacency fot this data type")
         else:
-            c_matrix, names = mne.channels.read_ch_adjacency(connectivity)
+            c_matrix, names = mne.channels.read_ch_adjacency(adjacency)
             # fix channel names
-            if connectivity.startswith('neuromag'):
+            if adjacency.startswith('neuromag'):
                 if ' ' not in names[0]:  # mne-python < ~1.2
                     names = [f'{n[:3]} {n[3:]}' for n in names]
-            elif connectivity == 'ctf275':
+            elif adjacency == 'ctf275':
                 suffix = ch_names[0][-5:]
                 names = [f'{name}{suffix}' for name in names]
-            elif connectivity.startswith('bti'):
+            elif adjacency.startswith('bti'):
                 names = [f'MEG {name[1:]:0>3}' for name in names]
 
         # fix channel order
@@ -796,13 +796,13 @@ def sensor_dim(
                 c_matrix = c_matrix[index][:, index]
             except ValueError:
                 missing = [name for name in ch_names if name not in names]
-                raise IndexError(f"{connectivity=} is missing channels {', '.join(missing)}")
+                raise IndexError(f"{adjacency=} is missing channels {', '.join(missing)}")
 
-        connectivity = _matrix_graph(c_matrix)
-    elif connectivity in (None, False):
-        connectivity = 'none'
+        adjacency = _matrix_graph(c_matrix)
+    elif adjacency in (None, False):
+        adjacency = 'none'
 
-    return Sensor(ch_locs, ch_names, sysname, connectivity=connectivity)
+    return Sensor(ch_locs, ch_names, sysname, adjacency=adjacency)
 
 
 def variable_length_epochs(
@@ -814,7 +814,7 @@ def variable_length_epochs(
         data: DataArg = None,
         exclude: Union[str, Sequence[str]] = 'bads',
         sysname: str = None,
-        connectivity: ConnectivityArg = None,
+        adjacency: AdjacencyArg = None,
         tstop: Union[float, Sequence[float]] = None,
         name: str = None,
         **kwargs,
@@ -848,11 +848,11 @@ def variable_length_epochs(
         If 'bads' (default), exclude channels in info['bads'].
         If empty do not exclude any.
     sysname
-        Name of the sensor system to load sensor connectivity (e.g. 'neuromag306',
+        Name of the sensor system to load sensor adjacency (e.g. 'neuromag306',
         inferred automatically for KIT data converted with a recent version of
         MNE-Python).
-    connectivity : str | list of (str, str) | array of int, (n_edges, 2)
-        Connectivity between elements. Can be specified as:
+    adjacency : str | list of (str, str) | array of int, (n_edges, 2)
+        Adjacency between elements. Can be specified as:
 
         - ``"none"`` for no connections
         - list of connections (e.g., ``[('OZ', 'O1'), ('OZ', 'O2'), ...]``)
@@ -881,7 +881,7 @@ def variable_length_epochs(
         List of data epochs of shape.
     """
     epochs_ = variable_length_mne_epochs(events, tmin, tmax, baseline, allow_truncation, tstop=tstop, **kwargs)
-    return [epochs_ndvar(epoch, name, data, exclude, sysname=sysname, connectivity=connectivity)[0] for epoch in epochs_]
+    return [epochs_ndvar(epoch, name, data, exclude, sysname=sysname, adjacency=adjacency)[0] for epoch in epochs_]
 
 
 def variable_length_mne_epochs(
@@ -985,7 +985,7 @@ def raw_ndvar(
         data: str = None,
         exclude: Union[str, Sequence[str]] = 'bads',
         sysname: str = None,
-        connectivity: ConnectivityArg = None,
+        adjacency: AdjacencyArg = None,
 ) -> Union[NDVar, List[NDVar]]:
     """Raw data as NDVar
 
@@ -1011,11 +1011,11 @@ def raw_ndvar(
         If 'bads' (default), exclude channels in info['bads'].
         If empty do not exclude any.
     sysname
-        Name of the sensor system to load sensor connectivity (e.g. 'neuromag306',
+        Name of the sensor system to load sensor adjacency (e.g. 'neuromag306',
         inferred automatically for KIT data converted with a recent version of
         MNE-Python).
-    connectivity
-        Connectivity between elements. Can be specified as:
+    adjacency
+        Adjacency between elements. Can be specified as:
 
         - ``"none"`` for no connections
         - list of connections (e.g., ``[('OZ', 'O1'), ('OZ', 'O2'), ...]``)
@@ -1064,7 +1064,7 @@ def raw_ndvar(
     if data is None:
         data = _guess_ndvar_data_type(raw.info)
     picks = _picks(raw.info, data, exclude)
-    dim = sensor_dim(raw, picks, sysname, connectivity)
+    dim = sensor_dim(raw, picks, sysname, adjacency)
     info = _sensor_info(data, None, raw.info)
 
     out = []
@@ -1098,7 +1098,7 @@ def epochs_ndvar(
         sensors: Sensor = None,
         vmax: float = None,
         sysname: str = None,
-        connectivity: ConnectivityArg = None,
+        adjacency: AdjacencyArg = None,
         proj: bool = True,
 ):
     """
@@ -1127,11 +1127,11 @@ def epochs_ndvar(
     vmax
         Set a default range for plotting.
     sysname
-        Name of the sensor system to load sensor connectivity (e.g. 'neuromag306',
+        Name of the sensor system to load sensor adjacency (e.g. 'neuromag306',
         inferred automatically for KIT data converted with a recent version of
         MNE-Python).
-    connectivity : str | list of (str, str) | array of int, (n_edges, 2)
-        Connectivity between elements. Can be specified as:
+    adjacency : str | list of (str, str) | array of int, (n_edges, 2)
+        Adjacency between elements. Can be specified as:
 
         - ``"none"`` for no connections
         - list of connections (e.g., ``[('OZ', 'O1'), ('OZ', 'O2'), ...]``)
@@ -1160,13 +1160,13 @@ def epochs_ndvar(
     if mult != 1:
         x *= mult
 
-    sensor = sensors or sensor_dim(epochs, picks, sysname, connectivity)
+    sensor = sensors or sensor_dim(epochs, picks, sysname, adjacency)
     time = UTS(epochs.times[0], 1. / epochs.info['sfreq'], len(epochs.times))
     return NDVar(x, ('case', sensor, time), info=info_, name=name)
 
 
 def evoked_ndvar(evoked, name=None, data=None, exclude='bads', vmax=None,
-                 sysname=None, connectivity=None):
+                 sysname=None, adjacency=None):
     """
     Convert one or more mne :class:`Evoked` objects to an :class:`NDVar`.
 
@@ -1186,11 +1186,11 @@ def evoked_ndvar(evoked, name=None, data=None, exclude='bads', vmax=None,
     vmax : None | scalar
         Set a default range for plotting.
     sysname : str
-        Name of the sensor system to load sensor connectivity (e.g. 'neuromag306',
+        Name of the sensor system to load sensor adjacency (e.g. 'neuromag306',
         inferred automatically for KIT data converted with a recent version of
         MNE-Python).
-    connectivity : str | list of (str, str) | array of int, (n_edges, 2)
-        Connectivity between elements. Can be specified as:
+    adjacency : str | list of (str, str) | array of int, (n_edges, 2)
+        adjacency between elements. Can be specified as:
 
         - ``"none"`` for no connections
         - list of connections (e.g., ``[('OZ', 'O1'), ('OZ', 'O2'), ...]``)
@@ -1272,7 +1272,7 @@ def evoked_ndvar(evoked, name=None, data=None, exclude='bads', vmax=None,
             picks = _picks(e.info, data, exclude)
             x.append(e.data[picks])
 
-    sensor = sensor_dim(e0, picks, sysname, connectivity)
+    sensor = sensor_dim(e0, picks, sysname, adjacency)
     time = UTS.from_int(first, last, sfreq)
     if case_out:
         dims = ('case', sensor, time)
@@ -1287,7 +1287,7 @@ def forward_operator(
         subjects_dir: PathArg = None,
         parc: str = 'aparc',
         sysname: str = None,
-        connectivity: ConnectivityArg = None,
+        adjacency: AdjacencyArg = None,
         name: str = None,
 ) -> NDVar:
     """Load forward operator as :class:`NDVar`
@@ -1307,11 +1307,11 @@ def forward_operator(
         Parcellation to load (corresponding to existing annot files; default
         'aparc').
     sysname
-        Name of the sensor system to load sensor connectivity (e.g. 'neuromag',
+        Name of the sensor system to load sensor adjacency (e.g. 'neuromag',
         inferred automatically for KIT data converted with a recent version of
         MNE-Python).
-    connectivity
-        Connectivity between elements. Can be specified as:
+    adjacency
+        adjacency between elements. Can be specified as:
 
         - ``"none"`` for no connections
         - list of connections (e.g., ``[('OZ', 'O1'), ('OZ', 'O2'), ...]``)
@@ -1339,7 +1339,7 @@ def forward_operator(
         mne.convert_forward_solution(fwd, force_fixed=not is_vol, use_cps=True, copy=False)
     elif name is None:
         name = 'fwd'
-    sensor = sensor_dim(fwd['info'], sysname=sysname, connectivity=connectivity)
+    sensor = sensor_dim(fwd['info'], sysname=sysname, adjacency=adjacency)
     assert np.all(sensor.names == fwd['sol']['row_names'])
     subject = fwd['src'][0]['subject_his_id']
     if is_vol:
@@ -1401,7 +1401,7 @@ def stc_ndvar(
         name: str = None,
         check: bool = True,
         parc: Optional[str] = '',
-        connectivity: str = None,
+        adjacency: str = None,
         sss_filename: str = '{subject}-{src}-src.fif',
 ):
     """
@@ -1432,8 +1432,8 @@ def stc_ndvar(
         Name of a parcellation to add to the source space. ``None`` to add no
         parcellation. The default is ``aparc`` for surface source-spaces and
         none for volume source spaces.
-    connectivity : 'link-midline'
-        Modify source space connectivity to link medial sources of the two
+    adjacency : 'link-midline'
+        Modify source space adjacency to link medial sources of the two
         hemispheres across the midline.
     sss_filename
         Filename template for the MNE source space file.
@@ -1481,14 +1481,14 @@ def stc_ndvar(
         is_vector = isinstance(stc, mne.VectorSourceEstimate)
     else:
         raise TypeError(f"{stc=}")
-    # Apply connectivity modification
-    if isinstance(connectivity, str):
-        if connectivity == 'link-midline':
+    # Apply adjacency modification
+    if isinstance(adjacency, str):
+        if adjacency == 'link-midline':
             ss._link_midline()
-        elif connectivity != '':
-            raise ValueError(f"{connectivity=}")
-    elif connectivity is not None:
-        raise TypeError(f"{connectivity=}")
+        elif adjacency != '':
+            raise ValueError(f"{adjacency=}")
+    elif adjacency is not None:
+        raise TypeError(f"{adjacency=}")
     # assemble dims
     dims = [ss, time]
     if is_vector:

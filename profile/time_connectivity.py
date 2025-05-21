@@ -31,9 +31,9 @@ struct = sp.ndimage.generate_binary_structure(y.ndim, 1)
 struct[::2] = False
 all_adjacent = False
 flat_shape = (y.shape[0], np.prod(y.shape[1:]))
-connectivity_src, connectivity_dst = source.connectivity().T
-conn = {src:[] for src in np.unique(connectivity_src)}
-for src, dst in izip(connectivity_src, connectivity_dst):
+adjacency_src, adjacency_dst = source.adjacency().T
+conn = {src:[] for src in np.unique(adjacency_src)}
+for src, dst in izip(adjacency_src, adjacency_dst):
     conn[src].append(dst)
 criteria=None
 ''' % fname

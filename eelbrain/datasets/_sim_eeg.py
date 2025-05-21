@@ -60,7 +60,7 @@ def simulate_erp(
 
     if sensor is None:
         sensor = Sensor.from_montage('standard_alphabetic')
-        sensor.set_connectivity(connect_dist=1.66)
+        sensor.set_adjacency(connect_dist=1.66)
     if time is None:
         time = UTS(-0.100, 0.005, 140)
 

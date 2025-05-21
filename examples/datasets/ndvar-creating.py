@@ -35,13 +35,13 @@ sensor = Sensor.from_montage('standard_alphabetic')
 p = plot.SensorMap(sensor)
 
 ###############################################################################
-# The dimension also contains information about the connectivity of its elements
+# The dimension also contains information about the adjacency of its elements
 # (i.e., specifying which elements are adjacent), which is used, for example,
 # for cluster-based analysis. This information is imported automatically from
 # :mod:`mne` when available; otherwise it can be defined manually when creating
 # the sensor object, or based on pairwise sensor distance, as here:
-sensor.set_connectivity(connect_dist=1.66)
-p = plot.SensorMap(sensor, connectivity=True)
+sensor.set_adjacency(connect_dist=1.66)
+p = plot.SensorMap(sensor, adjacency=True)
 
 ###############################################################################
 # Using information from the :class:`Sensor` description about sensor coordinates, we

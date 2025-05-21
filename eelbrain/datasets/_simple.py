@@ -529,7 +529,7 @@ def get_sensor(n):
                      [0.0, -1.0, 0.0],
                      [0.0, 0.0, 1.0]])
     sensor = Sensor(locs, sysname='test_sens')
-    sensor.set_connectivity(connect_dist=1.75)
+    sensor.set_adjacency(connect_dist=1.75)
     return sensor
 
 

@@ -36,7 +36,7 @@ def test_load_fiff_ctf():
     raw_path = path / 'CTF' / 'testdata_ctf.ds'
     raw = mne.io.read_raw_ctf(raw_path)
     y = load.mne.raw_ndvar(raw)
-    assert_array_equal(y.sensor.connectivity()[:3], [[0, 1], [0, 16], [0, 44]])
+    assert_array_equal(y.sensor.adjacency()[:3], [[0, 1], [0, 16], [0, 44]])
 
 
 @requires_mne_sample_data

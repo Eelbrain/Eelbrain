@@ -403,7 +403,7 @@ class DeconvolutionData:
             raise ValueError(f'{y=}: different number of cases from x ({x_data.n_cases})')
 
         # vector dimension
-        vector_dims = [dim.name for dim in y0.dims if dim._connectivity_type == 'vector']
+        vector_dims = [dim.name for dim in y0.dims if dim._adjacency_type == 'vector']
         if not vector_dims:
             vector_dim = None
         elif len(vector_dims) == 1:

@@ -106,12 +106,12 @@ class Document(FileDocument):
             path: PathArg,
             data: Union[Dataset, mne.BaseEpochs],
             sysname: str,
-            connectivity: Union[str, Sequence] = None,
+            adjacency: Union[str, Sequence] = None,
             drop_epochs_std: float = None,  # drop epochs with high signal (e.g. 10)
             decim: int = None,
     ):
         FileDocument.__init__(self, path)
-        self._ndvar_args = dict(sysname=sysname, connectivity=connectivity)
+        self._ndvar_args = dict(sysname=sysname, adjacency=adjacency)
         self.saved = True
         self._explained_variance = {}
 

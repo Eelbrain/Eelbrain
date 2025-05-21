@@ -1217,7 +1217,7 @@ def combine(
                 else:
                     sub_items.append(item.sub(**idx))
         elif check_dims and all(dims_stackable(dims_i, dims, True) for dims_i in other_dims):
-            raise DimensionMismatchError.from_dims_list("Some NDVars have mismatching dimensions; set check_dims=False to ignore non-critical differences (e.g. connectivity)", all_dims, check_dims)
+            raise DimensionMismatchError.from_dims_list("Some NDVars have mismatching dimensions; set check_dims=False to ignore non-critical differences (e.g. adjacency)", all_dims, check_dims)
         else:
             raise DimensionMismatchError.from_dims_list("Some NDVars have mismatching dimensions; use to_list=True to combine them into a list, or dim_intersection=True to discard elements not present in all", all_dims, check_dims)
         # combine data
@@ -4564,9 +4564,9 @@ class NDVar(Named):
             >>> (labels == 1).sum()  # confirm count in label 1
             35
         """
-        from ._stats.testnd import Connectivity, label_clusters
+        from ._stats.testnd import Adjacency, label_clusters
 
-        custom = [dim._connectivity_type == 'custom' for dim in self.dims]
+        custom = [dim._adjacency_type == 'custom' for dim in self.dims]
         if any(custom):
             if sum(custom) > 1:
                 raise NotImplementedError("More than one non-adjacent dimension")
@@ -4576,13 +4576,13 @@ class NDVar(Named):
 
         if nad_ax:
             x = self.x.swapaxes(0, nad_ax)
-            connectivity = Connectivity(
+            adjacency = Adjacency(
                 (self.dims[nad_ax],) + self.dims[:nad_ax] + self.dims[nad_ax + 1:])
         else:
             x = self.x
-            connectivity = Connectivity(self.dims)
+            adjacency = Adjacency(self.dims)
 
-        cmap, cids = label_clusters(x, threshold, tail, connectivity, None)
+        cmap, cids = label_clusters(x, threshold, tail, adjacency, None)
 
         if nad_ax:
             cmap = cmap.swapaxes(0, nad_ax)
@@ -5158,8 +5158,8 @@ class NDVar(Named):
             elif fix_edges:
                 raise NotImplementedError(f"{fix_edges=} with {window=}")
             elif window_samples is not None:
-                if dim_object._connectivity_type == 'custom':
-                    raise ValueError(f"{window_samples=} for dimension with connectivity not based on adjacency")
+                if dim_object._adjacency_type == 'custom':
+                    raise ValueError(f"{window_samples=} for dimension with adjacency not based on adjacency")
                 raise NotImplementedError("Gaussian smoothing for window_samples")
             else:
                 dist = dim_object._distances()
@@ -5167,7 +5167,7 @@ class NDVar(Named):
             x = np.tensordot(m, self.x, (1, axis))
             if axis:
                 x = np.moveaxis(x, 0, axis)
-        elif dim_object._connectivity_type == 'custom':
+        elif dim_object._adjacency_type == 'custom':
             raise ValueError(f"{window=} for {dim_object.__class__.__name__} dimension (must be 'gaussian')")
         else:
             if window_samples:
@@ -7959,12 +7959,12 @@ class PermutedParametrization:
 
 # ---NDVar dimensions---
 
-def _subgraph_edges(connectivity, int_index):
-    "Extract connectivity for a subset of a graph"
-    idx = np.logical_and(np.isin(connectivity[:, 0], int_index),
-                         np.isin(connectivity[:, 1], int_index))
+def _subgraph_edges(adjacency, int_index):
+    "Extract adjacency for a subset of a graph"
+    idx = np.logical_and(np.isin(adjacency[:, 0], int_index),
+                         np.isin(adjacency[:, 1], int_index))
     if np.any(idx):
-        new_c = connectivity[idx]
+        new_c = adjacency[idx]
 
         # remap to new vertex indices
         if np.any(np.diff(int_index) < 1):  # non-monotonic index
@@ -7979,7 +7979,7 @@ def _subgraph_edges(connectivity, int_index):
         return np.empty((0, 2), dtype=np.uint32)
 
 
-def connectivity_from_name_pairs(neighbors, items, allow_missing=False):
+def adjacency_from_name_pairs(neighbors, items, allow_missing=False):
     pairs = set()
     for src, dst in neighbors:
         if src not in items or dst not in items:
@@ -7987,7 +7987,7 @@ def connectivity_from_name_pairs(neighbors, items, allow_missing=False):
                 continue
             else:
                 item = src if src not in items else dst
-                raise ValueError(f"Connectivity contains unknown item {item!r}")
+                raise ValueError(f"Adjacency contains unknown item {item!r}")
         a = items.index(src)
         b = items.index(dst)
         if a < b:
@@ -8004,10 +8004,10 @@ class Dimension:
     ----------
     name : str
         Dimension name.
-    connectivity : 'grid' | 'none' | array of int, (n_edges, 2)
-        Connectivity between elements. Set to ``"none"`` for no connections or 
+    adjacency : 'grid' | 'none' | array of int, (n_edges, 2)
+        Adjacency between elements. Set to ``"none"`` for no connections or 
         ``"grid"`` to use adjacency in the sequence of elements as connection. 
-        Set to :class:`numpy.ndarray` to specify custom connectivity. The array
+        Set to :class:`numpy.ndarray` to specify custom adjacency. The array
         should be of shape (n_edges, 2), and each row should specify one 
         connection [i, j] with i < j, with rows sorted in ascending order. If
         the array's dtype is uint32, property checks are disabled to improve 
@@ -8020,60 +8020,60 @@ class Dimension:
     values : sequence
         Meaningful point descriptions (e.g. time points, sensor names, ...).
     """
-    _CONNECTIVITY_TYPES = ('grid', 'none', 'custom', 'vector')
+    _ADJACENCY_TYPES = ('grid', 'none', 'custom', 'vector')
     _axis_unit = None
-    _default_connectivity = 'none'  # for loading old pickles
+    _default_adjacency = 'none'  # for loading old pickles
 
     def __init__(
             self,
             name: str,
-            connectivity: ConnectivityArg,
+            adjacency: AdjacencyArg,
     ):
         # requires __len__ to work
         self.name = name
-        self._connectivity_type, self._connectivity = self._connectivity_arg(connectivity)
+        self._adjacency_type, self._adjacency = self._adjacency_arg(adjacency)
 
-    def _connectivity_arg(self, connectivity: ConnectivityArg):
-        if isinstance(connectivity, str):
-            if connectivity not in self._CONNECTIVITY_TYPES:
-                raise ValueError(f"{connectivity=}")
-            return connectivity, None
-        elif len(connectivity) == 0:
+    def _adjacency_arg(self, adjacency: AdjacencyArg):
+        if isinstance(adjacency, str):
+            if adjacency not in self._ADJACENCY_TYPES:
+                raise ValueError(f"{adjacency=}")
+            return adjacency, None
+        elif len(adjacency) == 0:
             return 'none', None
-        elif isinstance(connectivity, np.ndarray) and connectivity.dtype == np.uint32:
-            # assume that connectivity is inherited, skip checks
-            return 'custom', connectivity
+        elif isinstance(adjacency, np.ndarray) and adjacency.dtype == np.uint32:
+            # assume that adjacency is inherited, skip checks
+            return 'custom', adjacency
         else:
-            return 'custom', self._coerce_connectivity(connectivity)
+            return 'custom', self._coerce_adjacency(adjacency)
 
-    def _coerce_connectivity(self, connectivity: ArrayLike) -> np.ndarray:
-        connectivity = np.asarray(connectivity)
-        if connectivity.dtype.kind != 'i':
-            raise TypeError(f"connectivity array needs to be integer type, got {connectivity.dtype}")
-        elif connectivity.shape != (len(connectivity), 2):
-            raise ValueError(f"connectivity requires shape (n_edges, 2), got array with shape {connectivity.shape}")
-        elif connectivity.min() < 0:
-            raise ValueError("connectivity can not have negative values")
-        elif connectivity.max() >= len(self):
-            raise ValueError("connectivity has value larger than number of elements in dimension")
-        elif np.any(connectivity[:, 0] >= connectivity[:, 1]):
+    def _coerce_adjacency(self, adjacency: ArrayLike) -> np.ndarray:
+        adjacency = np.asarray(adjacency)
+        if adjacency.dtype.kind != 'i':
+            raise TypeError(f"adjacency array needs to be integer type, got {adjacency.dtype}")
+        elif adjacency.shape != (len(adjacency), 2):
+            raise ValueError(f"adjacency requires shape (n_edges, 2), got array with shape {adjacency.shape}")
+        elif adjacency.min() < 0:
+            raise ValueError("adjacency can not have negative values")
+        elif adjacency.max() >= len(self):
+            raise ValueError("adjacency has value larger than number of elements in dimension")
+        elif np.any(adjacency[:, 0] >= adjacency[:, 1]):
             raise ValueError("All edges [i, j] must have i < j")
-        elif np.any(np.diff(connectivity, axis=0) > 0):
-            edges = list(map(tuple, connectivity))
+        elif np.any(np.diff(adjacency, axis=0) > 0):
+            edges = list(map(tuple, adjacency))
             edges.sort()
-            connectivity = np.array(edges, np.uint32)
+            adjacency = np.array(edges, np.uint32)
         else:
-            connectivity = connectivity.astype(np.uint32)
-        return connectivity
+            adjacency = adjacency.astype(np.uint32)
+        return adjacency
 
     def __getstate__(self):
-        return {'name': self.name, 'connectivity': self._connectivity,
-                'connectivity_type': self._connectivity_type}
+        return {'name': self.name, 'adjacency': self._adjacency,
+                'adjacency_type': self._adjacency_type}
 
     def __setstate__(self, state):
         self.name = state['name']
-        self._connectivity = state.get('connectivity', None)
-        self._connectivity_type = state.get('connectivity_type', self._default_connectivity)
+        self._adjacency = state.get('adjacency', None)
+        self._adjacency_type = state.get('adjacency_type', self._default_adjacency)
 
     def __len__(self):
         raise NotImplementedError
@@ -8087,11 +8087,11 @@ class Dimension:
         elif len(other) != len(self):
             return False
         elif check:
-            if other._connectivity_type == self._connectivity_type:
-                if self._connectivity_type == 'custom':
-                    if other._connectivity is None or self._connectivity is None:
+            if other._adjacency_type == self._adjacency_type:
+                if self._adjacency_type == 'custom':
+                    if other._adjacency is None or self._adjacency is None:
                         return True
-                    return np.array_equal(other._connectivity, self._connectivity)
+                    return np.array_equal(other._adjacency, self._adjacency)
                 return True
             return False
         return True
@@ -8120,13 +8120,13 @@ class Dimension:
         raise NotImplementedError(f"Can't concatenate along {cls.__name__} dimensions")
 
     @staticmethod
-    def _concatenate_connectivity(dims: Sequence[Dimension]):
-        c_types = {dim._connectivity_type for dim in dims}
+    def _concatenate_adjacency(dims: Sequence[Dimension]):
+        c_types = {dim._adjacency_type for dim in dims}
         if len(c_types) > 1:
-            raise NotImplementedError(f"concatenating with differing connectivity")
+            raise NotImplementedError(f"concatenating with differing adjacency")
         c_type = c_types.pop()
         if c_type == 'custom':
-            raise NotImplementedError(f"concatenating with custom connectivity")
+            raise NotImplementedError(f"concatenating with custom adjacency")
         return c_type
 
     @staticmethod
@@ -8356,41 +8356,41 @@ class Dimension:
     def _cluster_property_labels(self):
         return []
 
-    def connectivity(self):
-        """Retrieve the dimension's connectivity graph
+    def adjacency(self):
+        """Retrieve the dimension's adjacency graph
 
         Returns
         -------
-        connectivity : array of int, (n_pairs, 2)
+        adjacency : array of int, (n_pairs, 2)
             array of sorted ``[src, dst]`` pairs, with all ``src < dst``.
         """
-        if self._connectivity is None:
-            self._connectivity = self._generate_connectivity()
-        return self._connectivity
+        if self._adjacency is None:
+            self._adjacency = self._generate_adjacency()
+        return self._adjacency
 
-    def _generate_connectivity(self):
-        raise NotImplementedError("Connectivity for %s dimension." % self.name)
+    def _generate_adjacency(self):
+        raise NotImplementedError("Adjacency for %s dimension." % self.name)
 
     def _melt_vars(self) -> dict:
         "Variables to add when melting the dimension"
         return {}
 
     def _subgraph(self, index=None):
-        """Connectivity parameter for new Dimension instance
+        """Adjacency parameter for new Dimension instance
 
         Parameters
         ----------
         index : array_like
             Index if the new dimension is a subset of the current dimension.
         """
-        if self._connectivity_type == 'custom':
-            if self._connectivity is None:
+        if self._adjacency_type == 'custom':
+            if self._adjacency is None:
                 return 'custom'
             elif index is None:
-                return self._connectivity
-            return _subgraph_edges(self._connectivity,
+                return self._adjacency
+            return _subgraph_edges(self._adjacency,
                                    index_to_int_array(index, len(self)))
-        return self._connectivity_type
+        return self._adjacency_type
 
     def _rename(self, to):
         out = copy(self)
@@ -8405,10 +8405,10 @@ class Case(Dimension):
     ----------
     n : int
         Number of cases.
-    connectivity : 'grid' | 'none' | array of int, (n_edges, 2)
-        Connectivity between elements. Set to ``"none"`` for no connections or 
+    adjacency : 'grid' | 'none' | array of int, (n_edges, 2)
+        Adjacency between elements. Set to ``"none"`` for no connections or 
         ``"grid"`` to use adjacency in the sequence of elements as connection. 
-        Set to :class:`numpy.ndarray` to specify custom connectivity. The array
+        Set to :class:`numpy.ndarray` to specify custom adjacency. The array
         should be of shape (n_edges, 2), and each row should specify one 
         connection [i, j] with i < j, with rows sorted in ascending order. If
         the array's dtype is uint32, property checks are disabled to improve 
@@ -8427,9 +8427,9 @@ class Case(Dimension):
     def __init__(
             self,
             n: int,
-            connectivity: ConnectivityArg = 'none',
+            adjacency: AdjacencyArg = 'none',
     ):
-        Dimension.__init__(self, 'case', connectivity)
+        Dimension.__init__(self, 'case', adjacency)
         self.n = int(n)
 
     def __getstate__(self):
@@ -8442,12 +8442,12 @@ class Case(Dimension):
         self.n = state['n']
 
     def __repr__(self):
-        if self._connectivity_type == 'none':
+        if self._adjacency_type == 'none':
             return "Case(%i)" % self.n
-        elif self._connectivity_type == 'grid':
+        elif self._adjacency_type == 'grid':
             return "Case(%i, 'grid')" % self.n
         else:
-            return "Case(%i, <custom connectivity>)" % self.n
+            return "Case(%i, <custom adjacency>)" % self.n
 
     def __len__(self):
         return self.n
@@ -8520,7 +8520,7 @@ class Space(Dimension):
 
     Notes
     -----
-    Connectivity is set to ``'none'``, but :class:`Space` is not a valid
+    Adjacency is set to ``'none'``, but :class:`Space` is not a valid
     dimension to treat as mass-univariate.
     """
 
@@ -8652,14 +8652,14 @@ class Categorial(Dimension):
         Dimension name.
     values
         Names of the levels.
-    connectivity
-        Connectivity between elements. Can be specified as:
+    adjacency
+        Adjacency between elements. Can be specified as:
 
         - ``"none"`` for no connections
         - ``"grid"`` to use adjacency in ``values``
         - list of connections based on items in ``values`` (e.g.,
           ``values=['v1', 'v2', 'v3'],
-          connectivity=[('v1', 'v3'), ('v2', 'v3'), ...]``)
+          adjacency=[('v1', 'v3'), ('v2', 'v3'), ...]``)
         - :class:`numpy.ndarray` of int, shape (n_edges, 2), to specify
           connections in terms of indices. Each row should specify one
           connection ``[i, j]`` with ``i < j``. If the array's dtype is
@@ -8670,20 +8670,20 @@ class Categorial(Dimension):
             self,
             name: str,
             values: Sequence[str],
-            connectivity: ConnectivityArg = 'none',
+            adjacency: AdjacencyArg = 'none',
     ):
         self.values = tuple(values)
         if len(set(self.values)) < len(self.values):
             raise ValueError(f"{values=}: Dimension can not have duplicate values")
         if not all(isinstance(x, str) for x in self.values):
             raise ValueError(f"{values=}: All Categorial values must be strings")
-        Dimension.__init__(self, name, connectivity)
+        Dimension.__init__(self, name, adjacency)
 
-    def _coerce_connectivity(self, connectivity):
-        if isinstance(connectivity[0][0], str):
-            return connectivity_from_name_pairs(connectivity, self.values)
+    def _coerce_adjacency(self, adjacency):
+        if isinstance(adjacency[0][0], str):
+            return adjacency_from_name_pairs(adjacency, self.values)
         else:
-            return Dimension._coerce_connectivity(self, connectivity)
+            return Dimension._coerce_adjacency(self, adjacency)
 
     def __getstate__(self):
         out = Dimension.__getstate__(self)
@@ -8692,9 +8692,9 @@ class Categorial(Dimension):
 
     def __setstate__(self, state):
         # backwards compatibility
-        if 'connectivity' not in state:
-            state['connectivity'] = None
-            state['connectivity_type'] = 'none'
+        if 'adjacency' not in state:
+            state['adjacency'] = None
+            state['adjacency_type'] = 'none'
         self.values = state['values']
         if isinstance(self.values, np.ndarray):
             self.values = tuple(str(v) for v in self.values)
@@ -8744,9 +8744,9 @@ class Categorial(Dimension):
     def _concatenate(cls, dims: Sequence[Categorial]):
         dims = list(dims)
         name = cls._concatenate_attr(dims, 'name')
-        connectivity = cls._concatenate_connectivity(dims)
+        adjacency = cls._concatenate_adjacency(dims)
         values = sum((dim.values for dim in dims), ())
-        return cls(name, values, connectivity)
+        return cls(name, values, adjacency)
 
     def _dim_index(self, index):
         if isinstance(index, Integral):
@@ -8798,16 +8798,16 @@ class Scalar(Dimension):
     tick_format
         Format string for formatting axis tick labels ('%'-format, e.g. '%.0f'
         to round to nearest integer).
-    connectivity
-        Connectivity between elements. Set to ``"none"`` for no connections or 
+    adjacency
+        Adjacency between elements. Set to ``"none"`` for no connections or 
         ``"grid"`` to use adjacency in the sequence of elements as connection. 
-        Set to :class:`numpy.ndarray` to specify custom connectivity. The array
+        Set to :class:`numpy.ndarray` to specify custom adjacency. The array
         should be of shape (n_edges, 2), and each row should specify one 
         connection [i, j] with i < j, with rows sorted in ascending order. If
         the array's dtype is uint32, property checks are disabled to improve 
         efficiency.
     """
-    _default_connectivity = 'grid'
+    _default_adjacency = 'grid'
 
     def __init__(
             self,
@@ -8815,7 +8815,7 @@ class Scalar(Dimension):
             values: ArrayLike,
             unit: str = None,
             tick_format: str = None,
-            connectivity: ConnectivityArg = 'grid',
+            adjacency: AdjacencyArg = 'grid',
     ):
         values = np.asarray(values)
         if values.ndim != 1:
@@ -8828,7 +8828,7 @@ class Scalar(Dimension):
         self.unit = unit
         self._axis_unit = unit
         self.tick_format = tick_format
-        Dimension.__init__(self, name, connectivity)
+        Dimension.__init__(self, name, adjacency)
 
     def __getstate__(self):
         out = Dimension.__getstate__(self)
@@ -8838,9 +8838,9 @@ class Scalar(Dimension):
 
     def __setstate__(self, state):
         # backwards compatibility
-        if 'connectivity' not in state:
-            state['connectivity'] = None
-            state['connectivity_type'] = 'grid'
+        if 'adjacency' not in state:
+            state['adjacency'] = None
+            state['adjacency_type'] = 'grid'
         Dimension.__setstate__(self, state)
         self.values = state['values']
         self.unit = self._axis_unit = state.get('unit')
@@ -9000,8 +9000,8 @@ class Scalar(Dimension):
         unit = cls._concatenate_attr(dims, 'unit')
         tick_format = cls._concatenate_attr(dims, 'tick_format')
         values = np.concatenate([s.values for s in dims])
-        connectivity = cls._concatenate_connectivity(dims)
-        return cls(name, values, unit, tick_format, connectivity)
+        adjacency = cls._concatenate_adjacency(dims)
+        return cls(name, values, unit, tick_format, adjacency)
 
     def _array_index(self, arg):
         if isinstance(arg, self.__class__):
@@ -9081,8 +9081,8 @@ class Sensor(Dimension):
     proj2d
         Default 2d projection (default is ``'z-root'``; for options see notes
         below).
-    connectivity : str | list of (str, str) | array of int, (n_edges, 2)
-        Connectivity between elements. Can be specified as:
+    adjacency : str | list of (str, str) | array of int, (n_edges, 2)
+        Adjacency between elements. Can be specified as:
 
         - ``"none"`` for no connections
         - ``"grid"`` to use adjacency in the sensor names
@@ -9127,7 +9127,7 @@ class Sensor(Dimension):
     ...              (0, -.25, -.45)]
     >>> sensor_dim = Sensor(locations, names=["Cz", "Pz"])
     """
-    _default_connectivity = 'custom'
+    _default_adjacency = 'custom'
     _proj_aliases = {'left': 'x-', 'right': 'x+', 'back': 'y-', 'front': 'y+', 'top': 'z+', 'bottom': 'z-'}
 
     def __init__(
@@ -9136,7 +9136,7 @@ class Sensor(Dimension):
             names: Sequence[str] = None,
             sysname: str = None,
             proj2d: str = 'z root',
-            connectivity: Union[str, Sequence] = 'none',
+            adjacency: Union[str, Sequence] = 'none',
     ):
         # 'z root' transformation fails with 32-bit floats
         self.locations = locations = np.asarray(locations, dtype=np.float64)
@@ -9153,7 +9153,7 @@ class Sensor(Dimension):
         elif len(names) != n:
             raise ValueError(f"Length mismatch: got {n} locs but {len(names)} names")
         self.names = Datalist(names)
-        Dimension.__init__(self, 'sensor', connectivity)
+        Dimension.__init__(self, 'sensor', adjacency)
         self._init_secondary()
 
     @cached_property
@@ -9161,11 +9161,11 @@ class Sensor(Dimension):
     def locs(self):
         return self.locations
 
-    def _coerce_connectivity(self, connectivity):
-        if isinstance(connectivity[0][0], str):
-            return connectivity_from_name_pairs(connectivity, self.names, allow_missing=True)
+    def _coerce_adjacency(self, adjacency):
+        if isinstance(adjacency[0][0], str):
+            return adjacency_from_name_pairs(adjacency, self.names, allow_missing=True)
         else:
-            return Dimension._coerce_connectivity(self, connectivity)
+            return Dimension._coerce_adjacency(self, adjacency)
 
     def _init_secondary(self):
         self.x = self.locations[:, 0]
@@ -9191,7 +9191,7 @@ class Sensor(Dimension):
     def __setstate__(self, state):
         if 'name' not in state:
             state['name'] = 'sensor'
-            state['connectivity_type'] = 'custom'
+            state['adjacency_type'] = 'custom'
         Dimension.__setstate__(self, state)
         self.locations = state['locs']
         self.names = state['names']
@@ -9275,8 +9275,8 @@ class Sensor(Dimension):
     def _distances(self):
         return squareform(pdist(self.locations))
 
-    def _generate_connectivity(self):
-        raise RuntimeError("Sensor connectivity is not defined. Use Sensor.set_connectivity().")
+    def _generate_adjacency(self):
+        raise RuntimeError("Sensor adjacency is not defined. Use Sensor.set_adjacency().")
 
     @classmethod
     def from_xyz(cls, path=None, **kwargs):
@@ -9347,13 +9347,13 @@ class Sensor(Dimension):
             obj = mne.channels.make_standard_montage(montage)
             try:
                 cm, names = mne.channels.read_ch_adjacency(montage)
-                connectivity = _matrix_graph(cm)
+                adjacency = _matrix_graph(cm)
             except ValueError:
-                connectivity = 'none'
+                adjacency = 'none'
         else:
             sysname = None
             obj = montage
-            connectivity = 'none'
+            adjacency = 'none'
 
         if isinstance(obj, mne.channels.DigMontage):
             digs = [dig for dig in obj.dig if dig['kind'] == mne.io.constants.FIFF.FIFFV_POINT_EEG]
@@ -9369,10 +9369,10 @@ class Sensor(Dimension):
             index = np.array([names.index(ch) for ch in channels])
             locations = locations[index]
             names = [names[i] for i in index]
-            if not isinstance(connectivity, str):
-                connectivity = _subgraph_edges(connectivity, index)
+            if not isinstance(adjacency, str):
+                adjacency = _subgraph_edges(adjacency, index)
 
-        return cls(locations, names, sysname, connectivity=connectivity)
+        return cls(locations, names, sysname, adjacency=adjacency)
 
     def _interpret_proj(self, proj):
         if proj == 'default':
@@ -9396,11 +9396,11 @@ class Sensor(Dimension):
     def superior(self):
         return NDVar(self.z, self)
 
-    def get_connectivity(self):
-        """Sensor connectivity as list of ``(name_1, name_2)``"""
-        if self._connectivity_type != 'custom':
-            raise ValueError("No custom connectivity")
-        pairs = [(self.names[a], self.names[b]) for a, b in self._connectivity]
+    def get_adjacency(self):
+        """Sensor adjacency as list of ``(name_1, name_2)``"""
+        if self._adjacency_type != 'custom':
+            raise ValueError("No custom adjacency")
+        pairs = [(self.names[a], self.names[b]) for a, b in self._adjacency]
         sorted_pairs = [tuple(sorted(pair)) for pair in pairs]
         return sorted(sorted_pairs)
 
@@ -9730,8 +9730,8 @@ class Sensor(Dimension):
             nb[i] = np.flatnonzero(distances < (distances.min() * connect_dist))
         return nb
 
-    def set_connectivity(self, neighbors=None, connect_dist=None):
-        """Define the sensor connectivity through neighbors or distance
+    def set_adjacency(self, neighbors=None, connect_dist=None):
+        """Define the sensor adjacency through neighbors or distance
 
         Parameters
         ----------
@@ -9762,8 +9762,8 @@ class Sensor(Dimension):
                     else:
                         pairs.add((v, k))
 
-        self._connectivity = np.array(sorted(pairs), np.uint32)
-        self._connectivity_type = 'custom'
+        self._adjacency = np.array(sorted(pairs), np.uint32)
+        self._adjacency_type = 'custom'
 
     @property
     def values(self):
@@ -9784,7 +9784,7 @@ def as_sensor(obj) -> Sensor:
 
 
 def _point_graph(coords, dist_threshold):
-    "Connectivity graph for points based on distance"
+    "Adjacency graph for points based on distance"
     n = len(coords)
     dist = pdist(coords)
 
@@ -9801,7 +9801,7 @@ def _point_graph(coords, dist_threshold):
 
 
 def _matrix_graph(matrix):
-    "Create connectivity from matrix"
+    "Create adjacency from matrix"
     coo = matrix.tocoo()
     assert np.all(coo.data)
     edges = {(min(a, b), max(a, b)) for a, b in zip(coo.col, coo.row) if a != b}
@@ -9809,7 +9809,7 @@ def _matrix_graph(matrix):
 
 
 def _tri_graph(tris):
-    """Create connectivity graph from triangles
+    """Create adjacency graph from triangles
 
     Parameters
     ----------
@@ -9831,7 +9831,7 @@ def _tri_graph(tris):
 
 
 def _mne_tri_soure_space_graph(source_space, vertices_list):
-    "Connectivity graph for a triangulated mne source space"
+    "Adjacency graph for a triangulated mne source space"
     i = 0
     graphs = []
     for ss, verts in zip(source_space, vertices_list):
@@ -9840,7 +9840,7 @@ def _mne_tri_soure_space_graph(source_space, vertices_list):
 
         tris = ss['use_tris']
         if tris is None:
-            raise ValueError("Connectivity unavailable. The source space does "
+            raise ValueError("Adjacency unavailable. The source space does "
                              "not seem to be an ico source space.")
 
         # graph for the whole source space
@@ -9872,7 +9872,7 @@ def _mne_tri_soure_space_graph(source_space, vertices_list):
 class SourceSpaceBase(Dimension):
     _kinds = ()
     _default_parc = 'aparc'
-    _default_connectivity = 'custom'
+    _default_adjacency = 'custom'
     _ANNOT_PATH = os.path.join('{subjects_dir}', '{subject}', 'label', '{hemi}.{parc}.annot')
     _vertex_re = re.compile(r'([RL])(\d+)')
 
@@ -9883,7 +9883,7 @@ class SourceSpaceBase(Dimension):
             src: str,
             subjects_dir: PathArg,
             parc: Union[Factor, str],
-            connectivity: ConnectivityArg,
+            adjacency: AdjacencyArg,
             name: str,
             filename: str,
     ):
@@ -9894,7 +9894,7 @@ class SourceSpaceBase(Dimension):
         self._filename = filename
         # secondary attributes (also set when unpickling)
         self._init_secondary()
-        Dimension.__init__(self, name, connectivity)
+        Dimension.__init__(self, name, adjacency)
 
         # parc
         if parc is None or parc is False:
@@ -9912,7 +9912,7 @@ class SourceSpaceBase(Dimension):
         raise NotImplementedError(f"{parc=}: can't set parcellation from annotation files for {self.__class__.__name__}. Consider using a Factor instead.")
 
     def _init_secondary(self):
-        # The source-space type is needed to determine connectivity
+        # The source-space type is needed to determine adjacency
         m = SRC_RE.match(self.src)
         if not m:
             raise ValueError(f"src={self.src!r}")
@@ -10001,7 +10001,7 @@ class SourceSpaceBase(Dimension):
     def __setstate__(self, state):
         if 'name' not in state:
             state['name'] = 'source'
-            state['connectivity_type'] = 'custom'
+            state['adjacency_type'] = 'custom'
         Dimension.__setstate__(self, state)
         self.vertices = state['vertno']
         self.subject = state['subject']
@@ -10126,13 +10126,13 @@ class SourceSpaceBase(Dimension):
             i0 = i
         return dist
 
-    def connectivity(self, disconnect_parc=False):
-        """Create source space connectivity
+    def adjacency(self, disconnect_parc=False):
+        """Create source space adjacency
 
         Parameters
         ----------
         disconnect_parc : bool
-            Reduce connectivity to label-internal connections.
+            Reduce adjacency to label-internal connections.
 
         Returns
         -------
@@ -10141,30 +10141,30 @@ class SourceSpaceBase(Dimension):
         """
         if self._n_vert == 0:
             return np.empty((0, 2), np.uint32)
-        elif self._connectivity is None:
+        elif self._adjacency is None:
             if self.src is None or self.subject is None or self.subjects_dir is None:
                 raise ValueError(
                     "In order for a SourceSpace dimension to provide "
-                    "connectivity information it needs to be initialized with "
+                    "adjacency information it needs to be initialized with "
                     "src, subject and subjects_dir parameters")
 
-            self._connectivity = connectivity = self._compute_connectivity()
-            assert connectivity.max() < len(self)
+            self._adjacency = adjacency = self._compute_adjacency()
+            assert adjacency.max() < len(self)
         else:
-            connectivity = self._connectivity
+            adjacency = self._adjacency
 
         if disconnect_parc:
             parc = self.parc
             if parc is None:
                 raise RuntimeError("SourceSpace has no parcellation (use "
                                    ".set_parc())")
-            idx = np.array([parc[s] == parc[d] for s, d in connectivity])
-            connectivity = connectivity[idx]
+            idx = np.array([parc[s] == parc[d] for s, d in adjacency])
+            adjacency = adjacency[idx]
 
-        return connectivity
+        return adjacency
 
-    def _compute_connectivity(self):
-        raise NotImplementedError("Connectivity for %r source space" % self.kind)
+    def _compute_adjacency(self):
+        raise NotImplementedError("Adjacency for %r source space" % self.kind)
 
     def circular_index(self, seeds, extent=0.05, name="globe"):
         """Return an index into all vertices closer than ``extent`` of a seed
@@ -10355,10 +10355,10 @@ class SourceSpace(SourceSpaceBase):
         Add a parcellation to the source space to identify vertex location.
         Only applies to ico source spaces, default is 'aparc'.
         Use ``None`` to initialize without parcellation.
-    connectivity
-        Connectivity between elements. Set to ``"none"`` for no connections or
+    adjacency
+        Adjacency between elements. Set to ``"none"`` for no connections or
         ``"grid"`` to use adjacency in the sequence of elements as connection.
-        Set to :class:`numpy.ndarray` to specify custom connectivity. The array
+        Set to :class:`numpy.ndarray` to specify custom adjacency. The array
         should be of shape (n_edges, 2), and each row should specify one
         connection [i, j] with i < j, with rows sorted in ascending order. If
         the array's dtype is uint32, property checks are disabled to improve
@@ -10398,11 +10398,11 @@ class SourceSpace(SourceSpaceBase):
             src: str = None,
             subjects_dir: PathArg = None,
             parc: Union[Factor, str] = 'aparc',
-            connectivity: ConnectivityArg = 'custom',
+            adjacency: AdjacencyArg = 'custom',
             name: str = 'source',
             filename: str = '{subject}-{src}-src.fif',
     ):
-        SourceSpaceBase.__init__(self, vertices, subject, src, subjects_dir, parc, connectivity, name, filename)
+        SourceSpaceBase.__init__(self, vertices, subject, src, subjects_dir, parc, adjacency, name, filename)
 
     def _init_secondary(self):
         SourceSpaceBase._init_secondary(self)
@@ -10523,7 +10523,7 @@ class SourceSpace(SourceSpaceBase):
         """
         if self.kind != 'ico':
             raise ValueError("Can only link hemispheres in 'ico' source spaces")
-        old_con = self.connectivity()
+        old_con = self.adjacency()
 
         # find vertices to connect
         coords_lh = self.coordinates[:self.lh_n]
@@ -10537,12 +10537,12 @@ class SourceSpace(SourceSpaceBase):
         new_con.update((np.argmin(dists[:, rh]), rh + self.lh_n) for rh in
                        unique_close_rh)
         new_con = np.array(sorted(new_con), np.uint32)
-        self._connectivity = np.vstack((old_con, new_con))
+        self._adjacency = np.vstack((old_con, new_con))
 
-    def _compute_connectivity(self):
+    def _compute_adjacency(self):
         src = self.get_source_space()
         if self.kind == 'oct':
-            raise NotImplementedError("Connectivity for oct source space")
+            raise NotImplementedError("Adjacency for oct source space")
         return _mne_tri_soure_space_graph(src, self.vertices)
 
     def _array_index(self, arg, allow_vertex=True):
@@ -10718,10 +10718,10 @@ class VolumeSourceSpace(SourceSpaceBase):
         source space file).
     parc
         Add a parcellation to the source space to identify vertex location.
-    connectivity : 'grid' | 'none' | array of int, (n_edges, 2)
-        Connectivity between elements. Set to ``"none"`` for no connections or
+    adjacency : 'grid' | 'none' | array of int, (n_edges, 2)
+        Adjacency between elements. Set to ``"none"`` for no connections or
         ``"grid"`` to use adjacency in the sequence of elements as connection.
-        Set to :class:`numpy.ndarray` to specify custom connectivity. The array
+        Set to :class:`numpy.ndarray` to specify custom adjacency. The array
         should be of shape (n_edges, 2), and each row should specify one
         connection [i, j] with i < j, with rows sorted in ascending order. If
         the array's dtype is uint32, property checks are disabled to improve
@@ -10745,13 +10745,13 @@ class VolumeSourceSpace(SourceSpaceBase):
             src: str = None,
             subjects_dir: PathArg = None,
             parc: str = None,
-            connectivity: ConnectivityArg = 'custom',
+            adjacency: AdjacencyArg = 'custom',
             name: str = 'source',
             filename: str = '{subject}-{src}-src.fif',
     ):
         if isinstance(vertices, np.ndarray):
             vertices = [vertices]
-        SourceSpaceBase.__init__(self, vertices, subject, src, subjects_dir, parc, connectivity, name, filename)
+        SourceSpaceBase.__init__(self, vertices, subject, src, subjects_dir, parc, adjacency, name, filename)
 
     def _read_parc(self, parc: str) -> Factor:
         return self._read_volume_parc(self.subjects_dir, self.subject, parc, self.coordinates)
@@ -10811,7 +10811,7 @@ class VolumeSourceSpace(SourceSpaceBase):
     def _as_uv(self):
         return Factor(self.vertices[0], name=self.name)
 
-    def _compute_connectivity(self):
+    def _compute_adjacency(self):
         src = self.get_source_space()
         coords = src[0]['rr'][self.vertices[0]]
         dist_threshold = self.grade * 0.0011
@@ -10878,7 +10878,7 @@ class UTS(Dimension):
         None).
 
     """
-    _default_connectivity = 'grid'
+    _default_adjacency = 'grid'
     _tol = 0.000001  # tolerance for deciding if time values are equal
     plot_s_as_ms: float = 3  # plot s as ms when the absolute times in s are smaller than this
 
@@ -10931,8 +10931,8 @@ class UTS(Dimension):
     def __setstate__(self, state):
         if 'name' not in state:
             state['name'] = 'time'
-            state['connectivity'] = None
-            state['connectivity_type'] = 'grid'
+            state['adjacency'] = None
+            state['adjacency_type'] = 'grid'
         Dimension.__setstate__(self, state)
         self.tmin = state['tmin']
         self.tstep = state['tstep']
@@ -11311,7 +11311,7 @@ VarArg = Union[Var, str]
 NumericArg = Union[Var, NDVar, str]
 CategorialVariable = Union[Factor, Interaction, NestedEffect]
 CategorialArg = Union[CategorialVariable, str]
-ConnectivityArg = Union[Literal['grid', 'none', 'vector', 'custom'], ArrayLike]
+AdjacencyArg = Union[Literal['grid', 'none', 'vector', 'custom'], ArrayLike]
 FactorArg = Union[Factor, str]
 CellArg = Union[str, Tuple[str, ...]]
 IndexArg = Union[Var, np.ndarray, str]

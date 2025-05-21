@@ -19,7 +19,7 @@ FILETYPES = [("CND files", "*.mat")]
 
 def read_cnd(
         filename: PathArg = None,
-        connectivity: Union[str, Sequence, float] = None,
+        adjacency: Union[str, Sequence, float] = None,
 ) -> Optional[Dataset]:
     """Load continuous neural data (CND) file used in the mTRF-Toolbox
 
@@ -27,13 +27,13 @@ def read_cnd(
     ----------
     filename
         Path to the data file (``*.mat``). If unspecified, open a file dialog.
-    connectivity
+    adjacency
         Sensor adjacency graph for EEG sensors.
         By default, the function tries to use the ``deviceName`` entry and falls
-        back on distance-based connectivity for unkown devices.
+        back on distance-based adjacency for unkown devices.
         Can be explicitly specified as a `FieldTrip neighbor file
         <https://www.fieldtriptoolbox.org/template/neighbours/>`_ (e.g., ``'biosemi64'``;
-        Use a :class:`float` for distance-based connectivity (see :meth:`Sensor.set_connectivity`).
+        Use a :class:`float` for distance-based adjacency (see :meth:`Sensor.set_adjacency`).
         For more options see :class:`Sensor`.
 
     Notes
@@ -53,37 +53,37 @@ def read_cnd(
     if 'eeg' in data:
         data_type = data['eeg']['dataType']
         # EEG sensor properties
-        dist_connectivity = None
+        dist_adjacency = None
         sysname = data['eeg']['deviceName']
         ch_names = data['eeg']['chanlocs']['labels']
-        # connectivity default
-        if connectivity is None:
+        # adjacency default
+        if adjacency is None:
             available = mne_neighbor_files()
             if sysname in available:
-                connectivity = sysname
+                adjacency = sysname
             else:
-                connectivity = 1.6
-        # find connectivity
-        if isinstance(connectivity, float):
-            dist_connectivity = connectivity
-            connectivity = 'none'
-        elif connectivity is False:
-            connectivity = 'none'
-        elif isinstance(connectivity, str) and connectivity not in ('grid', 'none'):
-            adj_matrix, adj_names = mne.channels.read_ch_adjacency(connectivity)
+                adjacency = 1.6
+        # find adjacency
+        if isinstance(adjacency, float):
+            dist_adjacency = adjacency
+            adjacency = 'none'
+        elif adjacency is False:
+            adjacency = 'none'
+        elif isinstance(adjacency, str) and adjacency not in ('grid', 'none'):
+            adj_matrix, adj_names = mne.channels.read_ch_adjacency(adjacency)
             # fix channel order
             if adj_names != ch_names:
                 index = numpy.array([adj_names.index(name) for name in ch_names])
                 adj_matrix = adj_matrix[index][:, index]
-            connectivity = _matrix_graph(adj_matrix)
+            adjacency = _matrix_graph(adj_matrix)
         locs = numpy.vstack([
             -numpy.array(data['eeg']['chanlocs']['Y']),
             data['eeg']['chanlocs']['X'],
             data['eeg']['chanlocs']['Z'],
         ]).T
-        sensor = Sensor(locs, ch_names, sysname, connectivity=connectivity)
-        if dist_connectivity:
-            sensor.set_connectivity(connect_dist=dist_connectivity)
+        sensor = Sensor(locs, ch_names, sysname, adjacency=adjacency)
+        if dist_adjacency:
+            sensor.set_adjacency(connect_dist=dist_adjacency)
         # EEG data
         tstep = 1 / data['eeg']['fs']
         eeg = []

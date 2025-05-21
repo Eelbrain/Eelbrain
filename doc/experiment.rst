@@ -946,21 +946,21 @@ subdivision into labels.
 
 
 
-.. _state-connectivity:
+.. _state-adjacency:
 
-``connectivity``
+``adjacency``
 ----------------
 
 Possible values: ``''``, ``'link-midline'``
 
-Connectivity refers to the edges connecting data channels (sensors for sensor
+Adjacency refers to the edges connecting data channels (sensors for sensor
 space data and sources for source space data). These edges are used to find
 clusters in cluster-based permutation tests. For source spaces, the default is
 to use FreeSurfer surfaces in which the two hemispheres are unconnected. By
-setting ``connectivity='link-midline'``, this default connectivity can be
+setting ``adjacency='link-midline'``, this default adjacency can be
 modified so that the midline gyri of the two hemispheres get linked at sources
 that are at most 15 mm apart. This parameter currently does not affect sensor
-space connectivity.
+space adjacency.
 
 
 .. _state-select_clusters:

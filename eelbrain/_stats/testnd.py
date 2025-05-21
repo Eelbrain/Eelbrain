@@ -53,8 +53,8 @@ from .._utils import deprecate_ds_arg, user_activity, restore_main_spec
 from .._utils.numpy_utils import FULL_AXIS_SLICE
 from .._utils.notebooks import trange
 from . import opt, stats, vector
-from .connectivity import Connectivity, find_peaks
-from .connectivity_opt import merge_labels, tfce_increment
+from .adjacency import Adjacency, find_peaks
+from .adjacency_opt import merge_labels, tfce_increment
 from .glm import MPTestMapper, _nd_anova
 from .permutation import (
     _resample_params, permute_order, permute_sign_flip, random_seeds,
@@ -68,7 +68,7 @@ __test__ = False
 
 def check_for_vector_dim(y: NDVar) -> None:
     for dim in y.dims:
-        if dim._connectivity_type == 'vector':
+        if dim._adjacency_type == 'vector':
             raise WrongDimension(f"{dim}: mass-univariate methods are not suitable for vectors. Consider using vector norm as test statistic, or using a testnd.Vector test function.")
 
 
@@ -2522,15 +2522,15 @@ class VectorDifferenceRelated(NDMaskedC1Mixin, Vector):
         Vector.__setstate__(self, state)
 
 
-def flatten(array, connectivity):
-    """Reshape SPM buffer array to 2-dimensional map for connectivity processing
+def flatten(array, adjacency):
+    """Reshape SPM buffer array to 2-dimensional map for adjacency processing
 
     Parameters
     ----------
     array : ndarray
         N-dimensional array (with non-adjacent dimension at first position).
-    connectivity : Connectivity
-        N-dimensional connectivity.
+    adjacency : Adjacency
+        N-dimensional adjacency.
 
     Returns
     -------
@@ -2538,7 +2538,7 @@ def flatten(array, connectivity):
         The input array reshaped if necessary, making sure that input and output
         arrays share the same underlying data buffer.
     """
-    if array.ndim == 2 or not connectivity.custom:
+    if array.ndim == 2 or not adjacency.custom:
         return array
     else:
         out = array.reshape((array.shape[0], -1))
@@ -2555,7 +2555,7 @@ def flatten_1d(array):
         return out
 
 
-def label_clusters(stat_map, threshold, tail, connectivity, criteria):
+def label_clusters(stat_map, threshold, tail, adjacency, criteria):
     """Label clusters
 
     Parameters
@@ -2574,15 +2574,15 @@ def label_clusters(stat_map, threshold, tail, connectivity, criteria):
     """
     cmap = np.empty(stat_map.shape, np.uint32)
     bin_buff = np.empty(stat_map.shape, bool)
-    cmap_flat = flatten(cmap, connectivity)
+    cmap_flat = flatten(cmap, adjacency)
 
     if tail == 0:
         int_buff = np.empty(stat_map.shape, np.uint32)
-        int_buff_flat = flatten(int_buff, connectivity)
+        int_buff_flat = flatten(int_buff, adjacency)
     else:
         int_buff = int_buff_flat = None
 
-    cids = _label_clusters(stat_map, threshold, tail, connectivity, criteria,
+    cids = _label_clusters(stat_map, threshold, tail, adjacency, criteria,
                            cmap, cmap_flat, bin_buff, int_buff, int_buff_flat)
     return cmap, cids
 
@@ -2628,15 +2628,15 @@ def _label_clusters(stat_map, threshold, tail, conn, criteria, cmap, cmap_flat,
     return cids
 
 
-def label_clusters_binary(bin_map, connectivity, criteria=None):
+def label_clusters_binary(bin_map, adjacency, criteria=None):
     """Label clusters in a boolean map
 
     Parameters
     ----------
     bin_map : numpy.ndarray
         Binary map.
-    connectivity : Connectivity
-        Connectivity corresponding to ``bin_map``.
+    adjacency : Adjacency
+        adjacency corresponding to ``bin_map``.
     criteria : dict
         Cluster criteria.
 
@@ -2648,12 +2648,12 @@ def label_clusters_binary(bin_map, connectivity, criteria=None):
         Sorted identifiers of the clusters that survive the selection criteria.
     """
     cmap = np.empty(bin_map.shape, np.uint32)
-    cmap_flat = flatten(cmap, connectivity)
-    cids = _label_clusters_binary(bin_map, cmap, cmap_flat, connectivity, criteria)
+    cmap_flat = flatten(cmap, adjacency)
+    cids = _label_clusters_binary(bin_map, cmap, cmap_flat, adjacency, criteria)
     return cmap, cids
 
 
-def _label_clusters_binary(bin_map, cmap, cmap_flat, connectivity, criteria):
+def _label_clusters_binary(bin_map, cmap, cmap_flat, adjacency, criteria):
     """Label clusters in a binary array
 
     Parameters
@@ -2665,8 +2665,8 @@ def _label_clusters_binary(bin_map, cmap, cmap_flat, connectivity, criteria):
         Array in which to label the clusters.
     cmap_flat : np.ndarray
         Flat copy of cmap (ndim=2, only used when all_adjacent==False)
-    connectivity : Connectivity
-        Connectivity.
+    adjacency : Adjacency
+        Adjacency.
     criteria : None | list
         Cluster size criteria, list of (axes, v) tuples. Collapse over axes
         and apply v minimum length).
@@ -2677,15 +2677,15 @@ def _label_clusters_binary(bin_map, cmap, cmap_flat, connectivity, criteria):
         Sorted identifiers of the clusters that survive the selection criteria.
     """
     # find clusters
-    n = ndimage.label(bin_map, connectivity.struct, cmap)
+    n = ndimage.label(bin_map, adjacency.struct, cmap)
     if n <= 1:
         # in older versions, n is 1 even when no cluster is found
         if n == 0 or cmap.max() == 0:
             return np.array((), np.uint32)
         else:
             cids = np.array((1,), np.uint32)
-    elif connectivity.custom:
-        cids = merge_labels(cmap_flat, n, *connectivity.custom[0])
+    elif adjacency.custom:
+        cids = merge_labels(cmap_flat, n, *adjacency.custom[0])
     else:
         cids = np.arange(1, n + 1, 1, np.uint32)
 
@@ -2701,14 +2701,14 @@ def _label_clusters_binary(bin_map, cmap, cmap_flat, connectivity, criteria):
     return cids
 
 
-def tfce(stat_map, tail, connectivity, dh=0.1):
+def tfce(stat_map, tail, adjacency, dh=0.1):
     tfce_im = np.empty(stat_map.shape, np.float64)
     tfce_im_1d = flatten_1d(tfce_im)
     bin_buff = np.empty(stat_map.shape, bool)
     int_buff = np.empty(stat_map.shape, np.uint32)
-    int_buff_flat = flatten(int_buff, connectivity)
+    int_buff_flat = flatten(int_buff, adjacency)
     int_buff_1d = flatten_1d(int_buff)
-    return _tfce(stat_map, tail, connectivity, tfce_im, tfce_im_1d, bin_buff, int_buff,
+    return _tfce(stat_map, tail, adjacency, tfce_im, tfce_im_1d, bin_buff, int_buff,
                  int_buff_flat, int_buff_1d, dh)
 
 
@@ -2767,10 +2767,10 @@ class StatMapProcessor:
 
 class TFCEProcessor(StatMapProcessor):
 
-    def __init__(self, tail, max_axes, parc, shape, connectivity, dh):
+    def __init__(self, tail, max_axes, parc, shape, adjacency, dh):
         StatMapProcessor.__init__(self, tail, max_axes, parc)
         self.shape = shape
-        self.connectivity = connectivity
+        self.adjacency = adjacency
         self.dh = dh
 
         # Pre-allocate memory buffers used for cluster processing
@@ -2778,12 +2778,12 @@ class TFCEProcessor(StatMapProcessor):
         self._int_buff = np.empty(shape, np.uint32)
         self._tfce_im = np.empty(shape, np.float64)
         self._tfce_im_1d = flatten_1d(self._tfce_im)
-        self._int_buff_flat = flatten(self._int_buff, connectivity)
+        self._int_buff_flat = flatten(self._int_buff, adjacency)
         self._int_buff_1d = flatten_1d(self._int_buff)
 
     def max_stat(self, stat_map):
         v = _tfce(
-            stat_map, self.tail, self.connectivity, self._tfce_im, self._tfce_im_1d,
+            stat_map, self.tail, self.adjacency, self._tfce_im, self._tfce_im_1d,
             self._bin_buff, self._int_buff, self._int_buff_flat, self._int_buff_1d,
             self.dh,
         ).max(self.max_axes)
@@ -2795,11 +2795,11 @@ class TFCEProcessor(StatMapProcessor):
 
 class ClusterProcessor(StatMapProcessor):
 
-    def __init__(self, tail, max_axes, parc, shape, connectivity, threshold,
+    def __init__(self, tail, max_axes, parc, shape, adjacency, threshold,
                  criteria):
         StatMapProcessor.__init__(self, tail, max_axes, parc)
         self.shape = shape
-        self.connectivity = connectivity
+        self.adjacency = adjacency
         self.threshold = threshold
         self.criteria = criteria
 
@@ -2807,11 +2807,11 @@ class ClusterProcessor(StatMapProcessor):
         self._bin_buff = np.empty(shape, bool)
 
         self._cmap = np.empty(shape, np.uint32)
-        self._cmap_flat = flatten(self._cmap, connectivity)
+        self._cmap_flat = flatten(self._cmap, adjacency)
 
         if tail == 0:
             self._int_buff = np.empty(shape, np.uint32)
-            self._int_buff_flat = flatten(self._int_buff, connectivity)
+            self._int_buff_flat = flatten(self._int_buff, adjacency)
         else:
             self._int_buff = self._int_buff_flat = None
 
@@ -2819,7 +2819,7 @@ class ClusterProcessor(StatMapProcessor):
         if threshold is None:
             threshold = self.threshold
         cmap = self._cmap
-        cids = _label_clusters(stat_map, threshold, self.tail, self.connectivity, self.criteria, cmap, self._cmap_flat, self._bin_buff, self._int_buff, self._int_buff_flat)
+        cids = _label_clusters(stat_map, threshold, self.tail, self.adjacency, self.criteria, cmap, self._cmap_flat, self._bin_buff, self._int_buff, self._int_buff_flat)
         if self.parc is not None:
             v = []
             for idx in self.parc:
@@ -2922,7 +2922,7 @@ class NDPermutationDistribution:
             kind = 'raw'
 
         # vector: will be removed for stat_map
-        vector = [d._connectivity_type == 'vector' for d in y.dims[1:]]
+        vector = [d._adjacency_type == 'vector' for d in y.dims[1:]]
         has_vector_ax = any(vector)
         if has_vector_ax:
             vector_ax = vector.index(True)
@@ -2948,19 +2948,19 @@ class NDPermutationDistribution:
         if has_vector_ax:
             del dims[vector_ax]
 
-        # custom connectivity: move non-adjacent connectivity to first axis
-        custom = [d._connectivity_type == 'custom' for d in dims]
+        # custom adjacency: move non-adjacent adjacency to first axis
+        custom = [d._adjacency_type == 'custom' for d in dims]
         n_custom = sum(custom)
         if n_custom > 1:
-            raise NotImplementedError("More than one axis with custom connectivity")
+            raise NotImplementedError("More than one axis with custom adjacency")
         nad_ax = None if n_custom == 0 else custom.index(True)
         if nad_ax:
             swapped_dims = list(dims)
             swapped_dims[0], swapped_dims[nad_ax] = dims[nad_ax], dims[0]
         else:
             swapped_dims = dims
-        connectivity = Connectivity(swapped_dims, parc)
-        assert connectivity.vector is None
+        adjacency = Adjacency(swapped_dims, parc)
+        assert adjacency.vector is None
 
         # cluster map properties
         ndim = len(dims)
@@ -3001,12 +3001,12 @@ class NDPermutationDistribution:
             else:
                 raise ValueError("parc=%r (no dimension named %r)" % (parc, parc))
 
-            if parc_dim._connectivity_type == 'none':
+            if parc_dim._adjacency_type == 'none':
                 parc_indexes = np.arange(len(parc_dim))
             elif kind == 'tfce':
                 raise NotImplementedError(
                     f"TFCE for parc={parc!r} ({parc_dim.__class__.__name__} dimension)")
-            elif parc_dim._connectivity_type == 'custom':
+            elif parc_dim._adjacency_type == 'custom':
                 if not hasattr(parc_dim, 'parc'):
                     raise NotImplementedError(f"parc={parc!r}: dimension has no parcellation")
                 parc_indexes = tuple(np.flatnonzero(parc_dim.parc == cell) for
@@ -3029,15 +3029,15 @@ class NDPermutationDistribution:
             map_args = (kind, tail, max_axes, parc_indexes)
         elif kind == 'tfce':
             dh = 0.1 if tfce is True else tfce
-            map_args = (kind, tail, max_axes, parc_indexes, shape, connectivity, dh)
+            map_args = (kind, tail, max_axes, parc_indexes, shape, adjacency, dh)
         else:
-            map_args = (kind, tail, max_axes, parc_indexes, shape, connectivity, threshold, criteria_)
+            map_args = (kind, tail, max_axes, parc_indexes, shape, adjacency, threshold, criteria_)
 
         self.kind = kind
         self.y_perm = y_perm
         self.dims = tuple(dims)  # external stat map dims (cropped time)
         self.shape = shape  # internal stat map shape
-        self._connectivity = connectivity
+        self._adjacency = adjacency
         self.samples = samples
         self.dist_shape = dist_shape
         self._dist_dims = dist_dims
@@ -3118,12 +3118,12 @@ class NDPermutationDistribution:
             if n_steps > 10000:
                 raise RuntimeError(f"TFCE requested with {n_steps:.0f} steps; currently 10000 is set as limit to avoid excessive computation times. Consider setting the tfce parameter to a larger step size.")
             self.tfce_warning = n_steps < 1
-            cmap = tfce(stat_map, self.tail, self._connectivity, dh)
+            cmap = tfce(stat_map, self.tail, self._adjacency, dh)
             cids = None
             n_clusters = True
         elif self.kind == 'cluster':
             cmap, cids = label_clusters(stat_map, self.threshold, self.tail,
-                                        self._connectivity, self._criteria)
+                                        self._adjacency, self._criteria)
             n_clusters = len(cids)
             # clean original cluster map
             idx = np.isin(cmap, cids, invert=True).reshape(self.shape)
@@ -3194,7 +3194,7 @@ class NDPermutationDistribution:
                 # settings ...
                 'kind', 'threshold', 'tfce', 'tail', 'criteria', 'samples', 'tstart', 'tstop', 'parc',
                 # data properties ...
-                'dims', 'shape', '_nad_ax', '_vector_ax', '_criteria', '_connectivity',
+                'dims', 'shape', '_nad_ax', '_vector_ax', '_criteria', '_adjacency',
                 # results ...
                 'dt_original', 'dt_perm', 'n_clusters', '_dist_dims', 'dist', '_original_param_map', '_original_cluster_map', '_cids',
             )}
@@ -3205,11 +3205,11 @@ class NDPermutationDistribution:
         # backwards compatibility
         version = state.pop('version', 0)
         if version == 0:
-            if '_connectivity_src' in state:
-                del state['_connectivity_src']
-                del state['_connectivity_dst']
-            if '_connectivity' in state:
-                del state['_connectivity']
+            if '_adjacency_src' in state:
+                del state['_adjacency_src']
+                del state['_adjacency_dst']
+            if '_adjacency' in state:
+                del state['_adjacency']
             if 'N' in state:
                 state['samples'] = state.pop('N')
             if '_version' not in state:
@@ -3233,7 +3233,7 @@ class NDPermutationDistribution:
 
             nad_ax = state['_nad_ax']
             state['dims'] = dims = state['dims'][1:]
-            state['_connectivity'] = Connectivity(
+            state['_adjacency'] = Adjacency(
                 (dims[nad_ax],) + dims[:nad_ax] + dims[nad_ax + 1:],
                 state['parc'])
         if version < 2:
@@ -3518,8 +3518,8 @@ class NDPermutationDistribution:
                 bin_map = bin_map.swapaxes(0, self._nad_ax)
             if sub:
                 raise NotImplementedError("sub")
-                # need to subset connectivity!
-            c_map, cids = label_clusters_binary(bin_map, self._connectivity)
+                # need to subset adjacency!
+            c_map, cids = label_clusters_binary(bin_map, self._adjacency)
             if self._nad_ax:
                 c_map = c_map.swapaxes(0, self._nad_ax)
 
@@ -3574,8 +3574,8 @@ class NDPermutationDistribution:
         if self._nad_ax:
             probability_map = probability_map.swapaxes(0, self._nad_ax)
 
-        peaks = find_peaks(self._original_cluster_map, self._connectivity)
-        peak_map, peak_ids = label_clusters_binary(peaks, self._connectivity)
+        peaks = find_peaks(self._original_cluster_map, self._adjacency)
+        peak_map, peak_ids = label_clusters_binary(peaks, self._adjacency)
 
         ds = Dataset()
         ds['id'] = Var(peak_ids)

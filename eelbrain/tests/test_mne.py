@@ -54,8 +54,8 @@ def test_source_estimate():
     assert res.clusters.n_cases == 52
 
     # test disconnecting parc
-    orig_conn = set(map(tuple, source.connectivity()))
-    disc_conn = set(map(tuple, source.connectivity(True)))
+    orig_conn = set(map(tuple, source.adjacency()))
+    disc_conn = set(map(tuple, source.adjacency(True)))
     assert len(disc_conn) < len(orig_conn)
     for pair in orig_conn:
         s, d = pair
@@ -130,10 +130,10 @@ def test_dataobjects():
     ndvar = asndvar(ds['epochs'])
     ndvar = asndvar(ds['ets'])
 
-    # connectivity
+    # adjacency
     ds = datasets.get_mne_sample(sub=[0], sns=True)
     sensor = ds['meg'].sensor
-    c = sensor.connectivity()
+    c = sensor.adjacency()
     assert_array_equal(c[:, 0] < c[:, 1], True)
     assert c.max() == len(sensor) - 1
 
@@ -296,16 +296,16 @@ def test_source_space():
                 else:
                     assert ss.parc[i] == names[label].decode() + hemi_tag
 
-        # connectivity
-        conn = ss.connectivity()
+        # adjacency
+        conn = ss.adjacency()
         mne_conn = mne.spatial_src_adjacency(mne_src)
         assert_array_equal(conn, _matrix_graph(mne_conn))
 
-        # sub-space connectivity
+        # sub-space adjacency
         sssub = ss[ss._array_index('superiortemporal-rh')]
         ss2 = SourceSpace(vertices, subject, 'ico-4', subjects_dir, 'aparc')
         ss2sub = ss2[ss2._array_index('superiortemporal-rh')]
-        assert_array_equal(sssub.connectivity(), ss2sub.connectivity())
+        assert_array_equal(sssub.adjacency(), ss2sub.adjacency())
 
 
 @requires_mne_sample_data
@@ -316,13 +316,13 @@ def test_source_ndvar():
     assert v.source.parc.name == 'aparc'
     v_2009 = set_parc(v, 'aparc.a2009s')
     assert v_2009.source.parc.name == 'aparc.a2009s'
-    conn = v_2009.source.connectivity()
+    conn = v_2009.source.adjacency()
     assert np.sum(v.source.parc == v_2009.source.parc) < len(v.source)
     v_back = set_parc(v_2009, 'aparc')
     assert v_back.source.parc.name == 'aparc'
     assert_array_equal(v.source.parc, v_back.source.parc)
     assert v.x is v_back.x
-    assert_array_equal(v_back.source.connectivity(), conn)
+    assert_array_equal(v_back.source.adjacency(), conn)
 
     # labels_from_cluster
     v1, v2 = ds['src']
