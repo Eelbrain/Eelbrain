@@ -2636,7 +2636,7 @@ def label_clusters_binary(bin_map, adjacency, criteria=None):
     bin_map : numpy.ndarray
         Binary map.
     adjacency : Adjacency
-        adjacency corresponding to ``bin_map``.
+        Adjacency corresponding to ``bin_map``.
     criteria : dict
         Cluster criteria.
 

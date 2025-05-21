@@ -1561,7 +1561,7 @@
         "title": "Auditory cortical generators of the frequency following response are modulated by intermodal attention",
         "result_id": "MS6CBQ-8ViAJ",
         "link": "https://www.biorxiv.org/content/10.1101/633834.abstract",
-        "snippet": "The vast efferent adjacency of the auditory system suggests that subcortical (thalamic and brainstem) auditory regions should also be sensitive to top-down processes such as \u2026",
+        "snippet": "The vast efferent connectivity of the auditory system suggests that subcortical (thalamic and brainstem) auditory regions should also be sensitive to top-down processes such as \u2026",
         "publication_info": {
             "summary": "T Hartmann, N Weisz - bioRxiv, 2019 - biorxiv.org",
             "authors": [
@@ -1987,7 +1987,7 @@
         }
     },
     "T6Va-ETPWyYJ": {
-        "title": "Functional adjacency of stimulus-evoked brain responses to natural speech in post-stroke aphasia",
+        "title": "Functional connectivity of stimulus-evoked brain responses to natural speech in post-stroke aphasia",
         "result_id": "T6Va-ETPWyYJ",
         "link": "https://iopscience.iop.org/article/10.1088/1741-2552/ad8ef9/meta",
         "snippet": "Objective. One out of three stroke-patients develop language processing impairment known as aphasia. The need for ecological validity of the existing diagnostic tools motivates \u2026",
@@ -4523,7 +4523,7 @@
         "title": "Maternal chemosignals enhance infant-adult brain-to-brain synchrony",
         "result_id": "x0JDVngo2_sJ",
         "link": "https://www.science.org/doi/abs/10.1126/sciadv.abg6867",
-        "snippet": "\u2026 The neural adjacency statistical analysis was performed with eelbrain, an open source Python module for accessible statistical analysis of MEG and EEG data (v0.31.7, https://github.\u2026",
+        "snippet": "\u2026 The neural connectivity statistical analysis was performed with eelbrain, an open source Python module for accessible statistical analysis of MEG and EEG data (v0.31.7, https://github.\u2026",
         "publication_info": {
             "summary": "Y Endevelt-Shapira, A Djalovski, G Dumas\u2026 - Science \u2026, 2021 - science.org",
             "authors": [
