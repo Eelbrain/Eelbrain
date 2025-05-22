@@ -15,6 +15,21 @@ Check for open issues, or report new ones on `GitHub <https://github.com/christi
 Major changes
 =============
 
+New in 0.41
+-----------
+
+* API:
+
+  - To align with MNE-Python, **adjacency** has replaced **connectivity** in the names of:
+  
+    - Arguments to functions, such as :func:`eelbrain.load.cnd`
+    - Function name: ``eelbrain.set_connectivity()`` → :func:`eelbrain.set_adjacency`
+    - Method names for all NDVar dimension classes, such as ``eelbrain.Case.connectivity()`` →  :meth:`eelbrain.Case.adjacency`
+    - Method names for :class:`Sensor`:
+    
+      - ``eelbrain.Sensor.get_connectivity()`` →  :meth:`eelbrain.Sensor.get_adjacency`
+      - ``eelbrain.Sensor.set_connectivity()`` →  :meth:`eelbrain.Sensor.set_adjacency`
+
 New in 0.40
 -----------
 
@@ -67,7 +82,7 @@ New in 0.37
 * API: :func:`load.mne.events` now loads events from all stim-channels. To use a subset, use the ``stim_channel`` parameter.
 * New plot: :class:`plot.SensorMap3d`.
 * :func:`plot.styles_for_twoway` to quickly generate different color and line-style combinations.
-* New function :func:`set_adjacency` to set the neighborhood structure of an :class:`NDVar`.
+* New function `set_connectivity` to set the neighborhood structure of an :class:`NDVar`.
 * :class:`pipeline.MneExperiment`:
 
    - :meth:`pipeline.MneExperiment.plot_evoked`:  plot sensor data with corresponding source estimates
