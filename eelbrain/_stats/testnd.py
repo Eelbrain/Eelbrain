@@ -3210,6 +3210,8 @@ class NDPermutationDistribution:
                 del state['_adjacency_dst']
             if '_adjacency' in state:
                 del state['_adjacency']
+            if '_connectivity' in state:
+                del state['_connectivity']
             if 'N' in state:
                 state['samples'] = state.pop('N')
             if '_version' not in state:

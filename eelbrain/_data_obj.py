@@ -8072,8 +8072,8 @@ class Dimension:
 
     def __setstate__(self, state):
         self.name = state['name']
-        self._adjacency = state.get('adjacency', None)
-        self._adjacency_type = state.get('adjacency_type', self._default_adjacency)
+        self._adjacency = state.get('adjacency' if ('adjacency' in state) else 'connectivity', None)
+        self._adjacency_type = state.get('adjacency_type' if ('adjacency_type' in state) else 'connectivity_type', self._default_adjacency)
 
     def __len__(self):
         raise NotImplementedError
@@ -8692,7 +8692,7 @@ class Categorial(Dimension):
 
     def __setstate__(self, state):
         # backwards compatibility
-        if 'adjacency' not in state:
+        if ('adjacency' not in state) and ('connectivity' not in state):
             state['adjacency'] = None
             state['adjacency_type'] = 'none'
         self.values = state['values']
@@ -8838,7 +8838,7 @@ class Scalar(Dimension):
 
     def __setstate__(self, state):
         # backwards compatibility
-        if 'adjacency' not in state:
+        if ('adjacency' not in state) and ('connectivity' not in state):
             state['adjacency'] = None
             state['adjacency_type'] = 'grid'
         Dimension.__setstate__(self, state)
