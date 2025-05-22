@@ -12,7 +12,7 @@ def merge_labels(
         const np.npy_int64[:] edge_start,
         const np.npy_int64[:] edge_stop,
 ):
-    """Mrge adjacent labels with non-standard adjacency
+    """Merge adjacent labels with non-standard adjacency
 
     Parameters
     ----------
