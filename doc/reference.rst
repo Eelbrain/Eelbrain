@@ -345,6 +345,7 @@ Plot uniform time-series:
    plot.LineStack
    plot.UTS
    plot.UTSStat
+   plot.save_movie
 
 
 Plot multidimensional uniform time series:
