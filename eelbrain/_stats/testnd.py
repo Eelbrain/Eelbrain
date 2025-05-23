@@ -3194,7 +3194,7 @@ class NDPermutationDistribution:
                 # settings ...
                 'kind', 'threshold', 'tfce', 'tail', 'criteria', 'samples', 'tstart', 'tstop', 'parc',
                 # data properties ...
-                'dims', 'shape', '_nad_ax', '_vector_ax', '_criteria', '_adjacency',
+                'dims', 'shape', '_nad_ax', '_vector_ax', '_criteria', '_connectivity',
                 # results ...
                 'dt_original', 'dt_perm', 'n_clusters', '_dist_dims', 'dist', '_original_param_map', '_original_cluster_map', '_cids',
             )}
@@ -3205,11 +3205,9 @@ class NDPermutationDistribution:
         # backwards compatibility
         version = state.pop('version', 0)
         if version == 0:
-            if '_adjacency_src' in state:
-                del state['_adjacency_src']
-                del state['_adjacency_dst']
-            if '_adjacency' in state:
-                del state['_adjacency']
+            if '_connectivity_src' in state:
+                del state['_connectivity_src']
+                del state['_connectivity_dst']
             if '_connectivity' in state:
                 del state['_connectivity']
             if 'N' in state:
@@ -3235,7 +3233,7 @@ class NDPermutationDistribution:
 
             nad_ax = state['_nad_ax']
             state['dims'] = dims = state['dims'][1:]
-            state['_adjacency'] = Adjacency(
+            state['_connectivity'] = Adjacency(
                 (dims[nad_ax],) + dims[:nad_ax] + dims[nad_ax + 1:],
                 state['parc'])
         if version < 2:
