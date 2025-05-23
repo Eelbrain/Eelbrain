@@ -82,7 +82,7 @@ New in 0.37
 * API: :func:`load.mne.events` now loads events from all stim-channels. To use a subset, use the ``stim_channel`` parameter.
 * New plot: :class:`plot.SensorMap3d`.
 * :func:`plot.styles_for_twoway` to quickly generate different color and line-style combinations.
-* New function `set_connectivity` to set the neighborhood structure of an :class:`NDVar`.
+* New function ``set_connectivity`` to set the neighborhood structure of an :class:`NDVar`.
 * :class:`pipeline.MneExperiment`:
 
    - :meth:`pipeline.MneExperiment.plot_evoked`:  plot sensor data with corresponding source estimates
