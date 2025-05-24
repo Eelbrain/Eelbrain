@@ -33,7 +33,7 @@ import numpy as np
 from .._config import CONFIG
 from .._data_obj import Case, Dataset, Dimension, SourceSpaceBase, NDVar, CategorialArg, NDVarArg, dataobj_repr
 from .._exceptions import OldVersionError
-from .._ndvar.ndvar import _concatenate_values, set_connectivity, set_parc
+from .._ndvar.ndvar import _concatenate_values, set_adjacency, set_parc
 from .._ndvar._convolve import convolve_1d, convolve_2d
 from .._utils import PickleableDataClass, deprecate_ds_arg, user_activity
 from .shared import PredictorData, DeconvolutionData, Split, Splits, merge_segments
@@ -558,9 +558,9 @@ class BoostingResult(PickleableDataClass):
             return morph_source_space(obj, to_subject)
         self._apply_ndvar_transform(func)
 
-    def _set_connectivity(self, dim, connectivity):
+    def _set_adjacency(self, dim, adjacency):
         def func(obj: NDVar):
-            return set_connectivity(obj, dim, connectivity)
+            return set_adjacency(obj, dim, adjacency)
         self._apply_ndvar_transform(func)
 
     def _set_parc(self, parc: str):

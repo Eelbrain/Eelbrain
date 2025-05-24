@@ -7,7 +7,7 @@ import numpy as np
 import eelbrain
 from eelbrain import *
 
-fname = 'profile_of_connectivity.profile'
+fname = 'profile_of_adjacency.profile'
 
 mne.set_log_level('warning')
 configure(n_workers=False)

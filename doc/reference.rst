@@ -162,7 +162,7 @@ functions. See also :class:`NDVar` methods.
    psd_welch
    resample
    segment
-   set_connectivity
+   set_adjacency
    set_parc
    set_time
    set_tmin

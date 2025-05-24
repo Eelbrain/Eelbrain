@@ -1740,8 +1740,8 @@ class SequencePlotter:
             ims[hemi, i, view] = im
 
 
-def connectivity(source):
-    """Plot source space connectivity
+def adjacency(source):
+    """Plot source space adjacency
 
     Parameters
     ----------
@@ -1758,7 +1758,7 @@ def connectivity(source):
     if isinstance(source, NDVar):
         source = source.get_dim('source')
 
-    connections = source.connectivity()
+    connections = source.adjacency()
     coords = source.coordinates
     x, y, z = coords.T
 

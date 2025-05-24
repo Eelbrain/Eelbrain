@@ -6,41 +6,41 @@ from scipy.ndimage import generate_binary_structure
 from .._data_obj import Dimension
 
 
-class Connectivity:
-    """N-dimensional connectivity"""
+class Adjacency:
+    """N-dimensional adjacency"""
     __slots__ = ('struct', 'custom', 'vector')
 
     def __init__(self, dims, parc=None):
-        types = [dim._connectivity_type for dim in dims]
-        invalid = set(types).difference(Dimension._CONNECTIVITY_TYPES)
+        types = [dim._adjacency_type for dim in dims]
+        invalid = set(types).difference(Dimension._ADJACENCY_TYPES)
         if invalid:
-            raise RuntimeError(f"Invalid connectivity type: {', '.join(invalid)}")
+            raise RuntimeError(f"Invalid adjacency type: {', '.join(invalid)}")
 
         # vector: will be collapsed by test function
         n_vector = types.count('vector')
         if n_vector > 1:
-            raise NotImplementedError("More than one axis with vector connectivity")
+            raise NotImplementedError("More than one axis with vector adjacency")
         elif n_vector:
             self.vector = types.index('vector')
             types = types[:self.vector] + type[self.vector + 1:]
         else:
             self.vector = None
 
-        # custom connectivity
+        # custom adjacency
         self.custom = {}
         n_custom = types.count('custom')
         if n_custom > 1:
-            raise NotImplementedError("More than one axis with custom connectivity")
+            raise NotImplementedError("More than one axis with custom adjacency")
         elif n_custom:
             axis = types.index('custom')
             if axis > 0:
                 raise NotImplementedError(
-                    "Custom connectivity on axis other than first")
+                    "Custom adjacency on axis other than first")
             custom_dim = dims[axis]
             if custom_dim.name == parc:
-                edges = custom_dim.connectivity(disconnect_parc=True)
+                edges = custom_dim.adjacency(disconnect_parc=True)
             else:
-                edges = custom_dim.connectivity()
+                edges = custom_dim.adjacency()
             dim_length = len(custom_dim)
             src = edges[:, 0]
             n_edges = np.bincount(src, minlength=dim_length)
@@ -48,7 +48,7 @@ class Connectivity:
             edge_start = edge_stop - n_edges
             self.custom[axis] = (edges, edge_start, edge_stop)
 
-        # prepare struct for grid connectivity
+        # prepare struct for grid adjacency
         self.struct = generate_binary_structure(len(dims), 1)
         for i, ctype in enumerate(types):
             if ctype != 'grid':
@@ -62,7 +62,7 @@ class Connectivity:
             setattr(self, k, v)
 
 
-def find_peaks(x, connectivity, out=None):
+def find_peaks(x, adjacency, out=None):
     """Find peaks (local maxima, including plateaus) in x
 
     Returns
@@ -81,13 +81,13 @@ def find_peaks(x, connectivity, out=None):
     # move through each axis in both directions and discard descending
     # slope. Do most computationally intensive axis last.
     for ax in range(x.ndim - 1, -1, -1):
-        if ax in connectivity.custom:
+        if ax in adjacency.custom:
             shape = (len(x), -1)
             xsa = x.reshape(shape)
             outsa = out.reshape(shape)
             axlen = xsa.shape[1]
 
-            conn_src, conn_dst = connectivity.custom[ax][0].T
+            conn_src, conn_dst = adjacency.custom[ax][0].T
             for i in range(axlen):
                 data = xsa[:, i]
                 outslice = outsa[:, i]

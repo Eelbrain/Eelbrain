@@ -13,7 +13,7 @@ bin_map = (src.abs()[0] > 1).x
 out = np.empty(bin_map.shape, np.uint32)
 struct = ndimage.generate_binary_structure(2, 1)
 struct[::2] = False
-conn = src.source.connectivity()
+conn = src.source.adjacency()
 criteria = None
 
 print("tnd._label_clusters_binary(bin_map, out, struct, False, bin_map.shape, conn, criteria)")

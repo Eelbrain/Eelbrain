@@ -25,8 +25,8 @@ from .._exceptions import DimensionMismatchError
 from .._external.colorednoise import powerlaw_psd_gaussian
 from .._info import merge_info
 from .._mne import complete_source_space
-from .._stats.connectivity import Connectivity
-from .._stats.connectivity import find_peaks as _find_peaks
+from .._stats.adjacency import Adjacency
+from .._stats.adjacency import find_peaks as _find_peaks
 from .._trf._fit_metrics import error_for_indexes
 from .._utils import deprecate_ds_arg
 from .._utils.numpy_utils import aslice, newaxis
@@ -519,8 +519,8 @@ def dss(ndvar) -> (NDVar, NDVar):
 
 def erode(ndvar, dim):
     dim_obj = ndvar.get_dim(dim)
-    if dim_obj._connectivity_type != 'grid':
-        raise NotImplementedError(f"Erosion for {dim} with {dim_obj._connectivity_type!r} connectivity")
+    if dim_obj._adjacency_type != 'grid':
+        raise NotImplementedError(f"Erosion for {dim} with {dim_obj._adjacency_type!r} adjacency")
     ax = ndvar.get_axis(dim)
     struct = np.zeros((3,) * ndvar.ndim, bool)
     index = tuple(slice(None) if i == ax else 1 for i in range(ndvar.ndim))
@@ -639,7 +639,7 @@ def find_peaks(ndvar):
         NDVar that is ``True`` at local maxima.
     """
     for custom_ax, dim in enumerate(ndvar.dims):
-        if dim._connectivity_type == 'custom':
+        if dim._adjacency_type == 'custom':
             break
     else:
         custom_ax = 0
@@ -652,8 +652,8 @@ def find_peaks(ndvar):
         x = ndvar.x
         dims = ndvar.dims
 
-    connectivity = Connectivity(dims)
-    peak_map = _find_peaks(x, connectivity)
+    adjacency = Adjacency(dims)
+    peak_map = _find_peaks(x, adjacency)
     if custom_ax:
         peak_map = peak_map.swapaxes(custom_ax, 0)
     return NDVar(peak_map, ndvar.dims, ndvar.name)
@@ -874,7 +874,7 @@ def neighbor_correlation(
 
     # find neighbors
     neighbors = defaultdict(list)
-    for a, b in dim_obj.connectivity():
+    for a, b in dim_obj.adjacency():
         if is_flat[a] or is_flat[b]:
             continue
         neighbors[a].append(b)
@@ -1294,24 +1294,24 @@ def segment(continuous, times, tstart, tstop, decim=1):
                  continuous.info.copy(), continuous.name)
 
 
-def set_connectivity(
+def set_adjacency(
         data: Union[NDVar, Dimension],
         dim: str = None,
-        connectivity: Union[str, Sequence] = 'none',
+        adjacency: Union[str, Sequence] = 'none',
         name: str = None,
 ):
-    """Change the connectivity of an NDVar or a Dimension
+    """Change the adjacency of an NDVar or a Dimension
 
     Parameters
     ----------
     data
-        NDVar for which to change the connectivity.
+        NDVar for which to change the adjacency.
     dim
-        Dimension for which to set the connectivity.
-    connectivity
-        Connectivity between elements. Set to ``"none"`` for no connections or
+        Dimension for which to set the adjacency.
+    adjacency
+        Adjacency between elements. Set to ``"none"`` for no connections or
         ``"grid"`` to use adjacency in the sequence of elements as connection.
-        Set to :class:`numpy.ndarray` to specify custom connectivity. The array
+        Set to :class:`numpy.ndarray` to specify custom adjacency. The array
         should be of shape (n_edges, 2), and each row should specify one
         connection [i, j] with i < j, with rows sorted in ascending order. If
         the array's dtype is uint32, property checks are disabled to improve
@@ -1321,8 +1321,8 @@ def set_connectivity(
 
     Returns
     -------
-    data_with_connectivity
-        Shallow copy of ``data`` with the new connectivity.
+    data_with_adjacency
+        Shallow copy of ``data`` with the new adjacency.
     """
     if isinstance(data, NDVar):
         dimension = data.get_dim(dim)
@@ -1331,7 +1331,7 @@ def set_connectivity(
     else:
         raise TypeError(f"{data=}")
     new = copy(dimension)
-    new._connectivity_type, new._connectivity = dimension._connectivity_arg(connectivity)
+    new._adjacency_type, new._adjacency = dimension._adjacency_arg(adjacency)
     if data is None:
         return new
     if name is None:

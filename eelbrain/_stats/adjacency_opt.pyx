@@ -12,7 +12,7 @@ def merge_labels(
         const np.npy_int64[:] edge_start,
         const np.npy_int64[:] edge_stop,
 ):
-    """Mrge adjacent labels with non-standard connectivity
+    """Merge adjacent labels with non-standard adjacency
 
     Parameters
     ----------
@@ -22,7 +22,7 @@ def merge_labels(
     n_labels_in : int
         Number of labels in cmap.
     edges : array of int (n_edges, 2)
-        Edges of the connectivity graph.
+        Edges of the adjacency graph.
     edge_start : array, (n_nodes,)
         Index from node into edges starting with that node.
     edge_stop : array, (n_nodes,)

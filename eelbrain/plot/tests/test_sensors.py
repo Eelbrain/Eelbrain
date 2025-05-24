@@ -16,9 +16,9 @@ def test_map2d():
     p.set_label_color('g')
     p.set_label_text('index')
 
-    # connectivity
-    p.show_connectivity()
-    p.show_connectivity(None)
+    # adjacency
+    p.show_adjacency()
+    p.show_adjacency(None)
 
     # mark sensors
     p.mark_sensors([1, 2])

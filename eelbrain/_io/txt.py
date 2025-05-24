@@ -324,24 +324,24 @@ def var(path: PathArg = None, name: str = None):
     return _data.Var(x, name)
 
 
-def write_connectivity(
-        connectivity: Union[Sequence[Tuple[str, str]], Sequence[Tuple[int, int]]],
+def write_adjacency(
+        adjacency: Union[Sequence[Tuple[str, str]], Sequence[Tuple[int, int]]],
         filename: PathArg = None,
 ):
-    """Save connectivity graph as text file"""
-    text = '\n'.join([':'.join(map(str, pair)) for pair in connectivity])
+    """Save adjacency graph as text file"""
+    text = '\n'.join([':'.join(map(str, pair)) for pair in adjacency])
     if filename is None:
-        msg = f"Save connectivity..."
+        msg = f"Save adjacency..."
         filename = ui.ask_saveas(msg, msg, [("Text files", "*.txt")])
     Path(filename).write_text(text)
 
 
-def read_connectivity(
+def read_adjacency(
         filename: PathArg = None,
         is_int: bool = False,
 ):
     if filename is None:
-        filename = ui.ask_file("Load Connectivity", "Select text file with connectivity graph", [("Text files", "*.txt")])
+        filename = ui.ask_file("Load Adjacency", "Select text file with adjacency graph", [("Text files", "*.txt")])
         if filename is None:
             return
     text = Path(filename).read_text()
