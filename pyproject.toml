@@ -39,10 +39,9 @@ dependencies = [
 ]
 description='MEG/EEG analysis tools'
 keywords = [
-  'ant neuro',
-  'cnt',
+  'meg',
   'eeg',
-  'eego',
+  'temporal response function',
   'python',
 ]
 license = 'BSD-3-Clause'
@@ -81,14 +80,6 @@ style = [
   'ruff >= 0.6.0',
   'toml-sort',
   'yamllint',
-]
-doc = [
-  'sphinx >= 3',
-  'sphinx-gallery',
-  'sphinx_rtd_theme',
-  'sphinxcontrib-bibtex',
-  'pydocstyle',
-  'pingouin'
 ]
 test = [
   'flake8',
