@@ -6759,7 +6759,7 @@ class MneExperiment(FileTree):
             # source adjacency
             adjacency = self.get('adjacency')
             if adjacency and not data.source:
-                raise NotImplementedError(f"adjacency={adjacency!r} is not implemented for data={data!r}")
+                raise NotImplementedError(f"{adjacency=} is not implemented for {data=}")
             elif adjacency:
                 items.append(adjacency)
 
