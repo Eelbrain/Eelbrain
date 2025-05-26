@@ -1297,7 +1297,10 @@ def forward_operator(
     fwd
         MNE Forward solution, or path to forward solution.
     src
-        Tag describing the source space (e.g., "ico-4").
+        Tag describing the source space. Should be a source space type indicator
+        (one of ``ico|oct|vol``), followed by a number indicating spacing
+        (e.g., "ico-4" for a surface source space based on 4-fold icosahedral
+        subdivision; "vol-7" for volume source space with 7 mm grid).
     subjects_dir
         Location of the MRI subjects directory.
     parc

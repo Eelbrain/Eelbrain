@@ -957,18 +957,18 @@ class Frame(FileFrame):
             # Show Report
             if dlg.do_report.GetValue():
                 doc = fmtxt.Section("Noisy Channels")
-                doc.append("Total of %i epochs." % len(self.doc.epochs))
+                doc.append(f"Total of {len(self.doc.epochs)} epochs.")
                 if flat_average:
-                    sec = doc.add_section("Flat in the average (<%s)" % flat_average)
+                    sec = doc.add_section(f"Flat in the average (<{flat_average})")
                     if flats_av:
                         sec.add_paragraph(', '.join(flats_av))
                     else:
                         sec.add_paragraph("None.")
                 if flat:
-                    sec = doc.add_section("Flat Channels (<%s)" % flat)
+                    sec = doc.add_section(f"Flat Channels (<{flat})")
                     sec.add_paragraph(format_epoch_list(flats))
                 if mincorr:
-                    sec = doc.add_section("Neighbor correlation < %s" % mincorr)
+                    sec = doc.add_section(f"Neighbor correlation < {mincorr}")
                     sec.add_paragraph(format_epoch_list(noisies))
                 InfoFrame(self, "Noisy Channels", doc.get_html())
 
@@ -980,13 +980,13 @@ class Frame(FileFrame):
         self.SetPage(self._current_page_i + 1)
 
     def OnInfo(self, event):
-        doc = fmtxt.Section("%i Epochs" % len(self.doc.epochs))
+        doc = fmtxt.Section(f"{len(self.doc.epochs)} Epochs")
 
         # rejected epochs
         rejected = np.invert(self.doc.accept.x)
         sec = doc.add_section(_text.n_of(rejected.sum(), 'epoch') + ' rejected')
         if np.any(rejected):
-            para = fmtxt.delim_list((fmtxt.Link(epoch, "epoch:%i" % epoch) for
+            para = fmtxt.delim_list((fmtxt.Link(epoch, f"epoch:{epoch}") for
                                      epoch in np.flatnonzero(rejected)))
             sec.add_paragraph(para)
 
@@ -1039,8 +1039,8 @@ class Frame(FileFrame):
             tseg = self._get_ax_data(ax.ax_idx, event.xdata)
             self._topo_plot.set_data([tseg])
             self.canvas.redraw([self._topo_ax])
-            self._topo_plot_info_str = ("Topomap: %s,  t = %s ms,  marked: %s" %
-                                        (desc, x, ', '.join(self._mark)))
+            marked = ', '.join(self._mark)
+            self._topo_plot_info_str = (f"Topomap: {desc},  t = {x} ms,  marked: {marked}")
 
     def OnRejectRange(self, event):
         dlg = RejectRangeDialog(self)
@@ -1053,9 +1053,8 @@ class Frame(FileFrame):
         dlg.Destroy()
 
     def OnSetBadChannels(self, event):
-        dlg = wx.TextEntryDialog(self, "Please enter bad channel names separated by "
-                                 "comma (e.g., \"MEG 003, MEG 010\"):", "Set Bad "
-                                 "Channels", ', '.join(self.doc.bad_channel_names))
+        default_value = ', '.join(self.doc.bad_channel_names)
+        dlg = wx.TextEntryDialog(self, "Please enter bad channel names separated by comma (e.g., \"MEG 003, MEG 010\"):", "Set Bad Channels", default_value)
         while True:
             if dlg.ShowModal() == wx.ID_OK:
                 try:

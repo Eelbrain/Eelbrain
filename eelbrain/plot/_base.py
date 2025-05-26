@@ -604,11 +604,11 @@ def find_data_dims(
 
     Parameters
     ----------
-    ndvar : NDVar
+    ndvar
         NDVar instance to query.
-    dims : int | tuple of str
+    dims
         The requested dimensions.
-    extra_dim : str
+    extra_dim
         Dimension that will be removed by other operation (e.g. ``xax``).
 
     Returns
@@ -648,7 +648,9 @@ def find_data_dims(
             dimnames = list(ndvar.get_dimnames((agg, *required_dims)))
             agg = dimnames.pop(0)
         else:
-            raise ValueError(f"y={ndvar} has wrong dimensions; {required_dims} or one more required")
+            n_required = len(required_dims)
+            specific = ', '.join([dim for dim in required_dims if dim is not None])
+            raise ValueError(f"y={ndvar} has wrong dimensions; need {n_required} or {n_required + 1} dimensions, including {specific}")
 
         if extra_dim:
             dimnames.remove(extra_dim)

@@ -6377,12 +6377,12 @@ class Dataset(dict):
 
         """
         if not isinstance(expression, str):
-            raise TypeError(f"expression={expression!r}: needs str")
+            raise TypeError(f"{expression=}: needs str")
         try:
             return eval(expression, EVAL_CONTEXT, self)
         except Exception as exception:
             ds_repr = f"Dataset {self.name!r}" if self.name else "Dataset"
-            raise EvalError(expression, exception, ds_repr) from exception
+            raise EvalError(expression, exception, ds_repr) from None
 
     @classmethod
     def from_caselist(

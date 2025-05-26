@@ -2085,8 +2085,8 @@ class Vector(NDDifferenceTest):
 
     Notes
     -----
-    Vector tests are based on the Hotelling T-Square statistic. The test is
-    described in [1]_. Computation of the T-Square statistic relies on [2]_.
+    The permutation test for vector data is described in [1]_.
+    Computation of the T-Square statistic relies on [2]_.
 
     References
     ----------

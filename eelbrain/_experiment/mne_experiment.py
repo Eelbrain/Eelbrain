@@ -2556,7 +2556,13 @@ class MneExperiment(FileTree):
             del ds['epochs']
         return ds
 
-    def load_events(self, subject=None, add_bads=True, data_raw=False, **kwargs):
+    def load_events(
+            self,
+            subject: str = None,
+            add_bads: Union[bool, List[str]] = True,
+            data_raw: bool = False,
+            **kwargs,
+    ) -> Dataset:
         """
         Load events from a raw file.
 
@@ -2565,14 +2571,14 @@ class MneExperiment(FileTree):
 
         Parameters
         ----------
-        subject : str
+        subject
             Subject for which to load events (default is the current subject
             in the experiment's state).
-        add_bads : False | True | list
+        add_bads
             Add bad channel information to the Raw. If True, bad channel
             information is retrieved from the bad channels file. Alternatively,
             a list of bad channels can be specified.
-        data_raw : bool
+        data_raw
             Keep the :class:`mne.io.Raw` instance in ``ds.info['raw']``
             (default False).
         ...
@@ -3038,7 +3044,8 @@ class MneExperiment(FileTree):
             mask: Union[bool, str] = False,
             vardef: str = None,
             decim: int = 1,
-            **state):
+            **state,
+    ) -> Dataset:
         """Morlet wavelet induced power and phase in source space.
 
         Parameters
@@ -3205,7 +3212,8 @@ class MneExperiment(FileTree):
             fiff: Any = None,
             ndvar: bool = False,
             mask: Union[bool, str] = False,
-            **state):
+            **state,
+    ) -> Union[mne.minimum_norm.InverseOperator, NDVar]:
         """Load the inverse operator
 
         Parameters
@@ -3307,7 +3315,11 @@ class MneExperiment(FileTree):
 
         return inv, label, mri_sdir, mrisubject, is_scaled, parc
 
-    def load_label(self, label, **kwargs):
+    def load_label(
+            self,
+            label: str,
+            **kwargs,
+    ) -> Union[mne.Label, mne.BiHemiLabel]:
         """Retrieve a label as mne Label object
 
         Parameters
@@ -3427,7 +3439,8 @@ class MneExperiment(FileTree):
             decim: int = None,
             tstart: float = None,
             tstop: float = None,
-            **kwargs):
+            **kwargs,
+    ) -> Union[mne.io.Raw, NDVar]:
         """
         Load a raw file as mne Raw object.
 
@@ -3486,7 +3499,8 @@ class MneExperiment(FileTree):
             samplingrate: int = None,
             tstart: float = None,
             tstop: float = None,
-            **kwargs):
+            **kwargs,
+    ) -> Union[mne.SourceEstimate, mne.VectorSourceEstimate, mne.VolSourceEstimate, NDVar]:
         """
         Load a raw file as mne Raw object.
 
@@ -3525,37 +3539,45 @@ class MneExperiment(FileTree):
         else:
             return stc
 
-    def load_selected_events(self, subjects=None, reject=True, add_bads=True,
-                             index=True, data_raw=False, vardef=None, cat=None,
-                             **kwargs):
+    def load_selected_events(
+            self,
+            subjects: Union[str, Literal[1, -1]] = None,
+            reject: Union[bool, Literal['keep']] = True,
+            add_bads: Union[bool, List[str]] = True,
+            index: Union[bool, str] = True,
+            data_raw: bool = False,
+            vardef: str = None,
+            cat: Sequence[CellArg] = None,
+            **kwargs,
+    ) -> Dataset:
         """
         Load events and return a subset based on epoch and rejection
 
         Parameters
         ----------
-        subjects : str | 1 | -1
+        subjects
             Subject(s) for which to load data. Can be a single subject
             name or a group name such as ``'all'``. ``1`` to use the current
             subject; ``-1`` for the current group. Default is current subject
             (or group if ``group`` is specified).
-        reject : bool | 'keep'
+        reject
             Reject bad trials. If ``True`` (default), bad trials are removed
             from the Dataset. Set to ``False`` to ignore the trial rejection.
             Set ``reject='keep'`` to load the rejection (added it to the events
             as ``'accept'`` variable), but keep bad trails.
-        add_bads : False | True | list
+        add_bads
             Add bad channel information to the Raw. If True, bad channel
             information is retrieved from the bad channels file. Alternatively,
             a list of bad channels can be specified.
-        index : bool | str
+        index
             Index the Dataset before rejection (provide index name as str).
-        data_raw : bool
+        data_raw
             Keep the :class:`mne.io.Raw` instance in ``ds.info['raw']``
             (default False).
-        vardef : str
+        vardef
             Name of a test defining additional variables.
-        cat : sequence of cell-names
-            Only load data for these cells (cells of model).
+        cat
+            Only load data for these cells (cells of the current ``model``).
         ...
             State parameters.
 
@@ -3743,14 +3765,19 @@ class MneExperiment(FileTree):
         ds = self.load_epochs_stc(subject, baseline, src_baseline, mask=True, vardef=test_obj.vars)
         return testnd.LM('src', test_obj.stage_1, data=ds, samples=0, subject=subject)
 
-    def load_src(self, add_geom=False, ndvar=False, **state):
+    def load_src(
+            self,
+            add_geom: bool = False,
+            ndvar: bool = False,
+            **state,
+    ) -> Union[mne.SourceSpaces, SourceSpace, VolumeSourceSpace]:
         """Load the current source space
         
         Parameters
         ----------
-        add_geom : bool
+        add_geom
             Parameter for :func:`mne.read_source_spaces`.
-        ndvar : bool
+        ndvar
             Return as NDVar Dimension object (default False).
         ...
             State parameters.
@@ -4455,8 +4482,10 @@ class MneExperiment(FileTree):
         Parameters
         ----------
         epoch
-            Epoch to use for visualization in the GUI (default is to use the
-            raw data).
+            Load data from this :ref:`state-epoch` for visualization during
+            component selection (does not affect the ICA components themselvs).
+            If unspecified, the default is to load the data form the entire
+            :ref:`state-session` that the ICA is based on.
         samplingrate
             Samplingrate in Hz for the visualization (set to a lower value to
             improve GUI performance; for raw data, the default is ~100 Hz, for

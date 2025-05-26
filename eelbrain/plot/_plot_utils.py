@@ -24,18 +24,19 @@ def save_movie(
     Parameters
     ----------
     figures
-        Either as a nested list of figures (each inner list is a row)
-        or as a dictionary specifyig placement as ``{(xpos, ypos): figure}``.
+        Either a nested list of figures (each inner list is a row of plots)
+        or a dictionary specifying placement as ``{(xpos, ypos): figure}``.
     filename
-        Filename for the movie (omit to use a GUI).
+        Filename for the movie (default will open a GUI for selecting the
+        filename).
     time_dilation
         Factor by which to stretch time (default 4). Time dilation is
         controlled through the frame-rate; if the ``fps`` keyword argument
         is specified, ``time_dilation`` is ignored.
     tstart
-        Time axis start (default is earliest time in ``figures``).
+        Time axis start (default is the earliest time in ``figures``).
     tstop
-        Time axis stop (default includes latest time in ``figures``).
+        Time axis stop (default includes the latest time in ``figures``).
     ...
         :func:`imageio.mimwrite` parmeters.
 

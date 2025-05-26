@@ -9,6 +9,7 @@ from ._decorations import figure_outline, mark_difference
 from ._figure import Figure
 from ._glassbrain import GlassBrain
 from ._line import LineStack
+from ._plot_utils import save_movie
 from ._sensors import SensorMaps, SensorMap, SensorMap3d
 from ._styles import Style, colors_for_categorial, colors_for_oneway, colors_for_twoway, styles_for_twoway, single_hue_colormap, soft_threshold_colormap
 from ._topo import TopoArray, TopoButterfly, Topomap, TopomapBins
