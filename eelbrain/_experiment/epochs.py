@@ -428,7 +428,7 @@ class ContinuousEpoch(EpochBase):
     A :class:`ContinuousEpoch` will extract a continuous segment of data from
     the first event to the last event. ``pad_start`` and ``pad_stop`` determine
     how much extra time to include before the first event and after the last
-    event (to allow using the data surrounding the event for estimating TRFs
+    event (to allow using the data surrounding these events for estimating TRFs
     with negative and positive lags). ``split`` controls whether to break up the
     data into multuple segments when there are long pauses between successive
     events.
