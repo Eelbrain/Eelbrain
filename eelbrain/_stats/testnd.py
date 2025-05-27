@@ -3194,10 +3194,11 @@ class NDPermutationDistribution:
                 # settings ...
                 'kind', 'threshold', 'tfce', 'tail', 'criteria', 'samples', 'tstart', 'tstop', 'parc',
                 # data properties ...
-                'dims', 'shape', '_nad_ax', '_vector_ax', '_criteria', '_adjacency',
+                'dims', 'shape', '_nad_ax', '_vector_ax', '_criteria',
                 # results ...
                 'dt_original', 'dt_perm', 'n_clusters', '_dist_dims', 'dist', '_original_param_map', '_original_cluster_map', '_cids',
             )}
+        state['_connectivity'] = self._adjacency
         state['version'] = 3
         return state
 
@@ -3242,7 +3243,10 @@ class NDPermutationDistribution:
             state['tfce'] = ['kind'] == 'tfce'
 
         for k, v in state.items():
-            setattr(self, k, v)
+            if k == '_connectivity':
+                self._adjacency = v
+            else:
+                setattr(self, k, v)
         self.has_original = True
         self.finalize()
 
