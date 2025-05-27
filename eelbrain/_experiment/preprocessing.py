@@ -254,7 +254,7 @@ class RawSource(RawPipe):
             else:
                 out['montage'] = self.montage
         if self.adjacency is not None:
-            out['adjacency'] = self.adjacency
+            out['connectivity'] = self.adjacency
         return out
 
     def _load(self, subject, recording, preload):
