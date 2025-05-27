@@ -425,6 +425,17 @@ class EpochCollection(EpochBase):
 class ContinuousEpoch(EpochBase):
     """Epoch spanning multiple events for continuous analysis
 
+    A :class:`ContinuousEpoch` will extract a continuous segment of data from
+    the first event to the last event. ``pad_start`` and ``pad_stop`` determine
+    how much extra time to include before the first event and after the last
+    event (to allow using the data surrounding the event for estimating TRFs
+    with negative and positive lags). ``split`` controls whether to break up the
+    data into multuple segments when there are long pauses between successive
+    events.
+
+    When using :meth:`MneExperiment.load_epochs`, each row of the returned
+    :class:`Dataset` will contain the events in the epoch alongside the data.
+
     Parameters
     ----------
     session
@@ -438,7 +449,10 @@ class ContinuousEpoch(EpochBase):
         Time to add after the last event (in seconds, default 1).
     split
         Split into several continuous epochs whenever time between used data
-        (event times ± ``pad``) is larger than ``split`` (default 10).
+        (event times ± ``pad``) is larger than ``split`` (default 10). For
+        example, in an experiment with many 2 s long trials which are grouped
+        into 2 blocks with a break of 50 s, this would result in two epochs, one
+        for each block.
     samplingrate
         Target samplingrate. Needs to divide data samplingrate evenly (e.g.
         ``200`` for data sampled at 1000 Hz; default ``200``).

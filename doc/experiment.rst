@@ -615,6 +615,7 @@ described below:
    PrimaryEpoch
    SecondaryEpoch
    SuperEpoch
+   ContinuousEpoch
 
 
 Examples::
