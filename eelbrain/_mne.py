@@ -389,7 +389,7 @@ def morph_source_space(
         data: Union[NDVar, SourceSpace],
         subject_to: str = None,
         vertices_to: Union[List, str] = None,
-        morph_mat: scipy.sparse.spmatrix = None,
+        morph_mat: Union[scipy.sparse.spmatrix, mne.SourceMorph] = None,
         copy: bool = False,
         parc: Union[bool, str] = True,
         xhemi: bool = False,
@@ -572,9 +572,11 @@ def morph_source_space(
             index = source_to.parc.isnotin(('unknown-lh', 'unknown-rh'))
         source_to = source_to[index]
     elif mask not in (None, False):
-        raise TypeError(f"mask={mask!r}")
+        raise TypeError(f"{mask=}")
 
-    if morph_mat is None:
+    if isinstance(morph_mat, mne.SourceMorph):
+        morph_mat = morph_mat.morph_mat
+    elif morph_mat is None:
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', r'\d+/\d+ vertices not included in smoothing', module='mne')
             morph_mat = compute_morph_matrix(subject_from, subject_to, source.vertices, source_to.vertices, None, subjects_dir, xhemi=xhemi)
