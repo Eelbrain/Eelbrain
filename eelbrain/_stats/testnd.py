@@ -3244,10 +3244,7 @@ class NDPermutationDistribution:
 
         self._adjacency = state.pop('_connectivity')
         for k, v in state.items():
-            if k == '_connectivity':
-                self._adjacency = v
-            else:
-                setattr(self, k, v)
+            setattr(self, k, v)
         self.has_original = True
         self.finalize()
 
