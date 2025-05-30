@@ -26,7 +26,7 @@ jobs:
         cache-environment: true
         post-cleanup: 'all'
     - name: Build eelbrain
-      run: pip install -e .[all]
+      run: pip install --no-deps -e .
       shell: bash -el {0}
     - if: matrix.os == 'ubuntu-latest'
       name: Test without GUI
