@@ -35,7 +35,7 @@ jobs:
         DISPLAY: :99
       run: |
         Xvfb :99 -screen 0 1024x768x16 &
-        pytest eelbrain --cov --cov-report=xml --no-gui
+        pytest eelbrain --no-gui
     - if: matrix.os == 'macos-latest'
       name: Test with GUIs and code-cov
       shell: bash -el {0}
