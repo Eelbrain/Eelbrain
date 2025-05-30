@@ -69,21 +69,21 @@ def _head_outlines(
             (ear_x_right, ear_y))
 
 
-class _plt_connectivity:
-    def __init__(self, ax, locs, connectivity, **linestyle):
+class _plt_adjacency:
+    def __init__(self, ax, locs, adjacency, **linestyle):
         self.ax = ax
         self.locs = locs
         self._h = []
-        self.show(connectivity, **linestyle)
+        self.show(adjacency, **linestyle)
 
-    def show(self, connectivity, **linestyle):
+    def show(self, adjacency, **linestyle):
         while self._h:
             self._h.pop().remove()
 
-        if connectivity is None:
+        if adjacency is None:
             return
 
-        for c, r in connectivity:
+        for c, r in adjacency:
             x = self.locs[[c, r], 0]
             y = self.locs[[c, r], 1]
             line = Line2D(x, y, **linestyle)
@@ -113,7 +113,7 @@ class _ax_map2d:
         self.sensors = _plt_map2d(ax, sensors, proj, extent, marker, size, color, mark, labels=labels, invisible=True, head_radius=head_radius, head_pos=head_pos, head_linewidth=head_linewidth)
 
         locs = sensors.get_locs_2d(proj, extent, SENSORMAP_FRAME)
-        self.connectivity = _plt_connectivity(ax, locs, None)
+        self.adjacency = _plt_adjacency(ax, locs, None)
 
         ax.set_aspect('equal', 'datalim', 'C')
         if extent:
@@ -714,8 +714,8 @@ class SensorMap(SensorMapMixin, EelFigure):
     head_pos : scalar
         Head outline position along the anterior axis (0 is the center, 0.5 is
         the top end of the plot).
-    connectivity
-        Show sensor connectivity (default False).
+    adjacency
+        Show sensor adjacency (default False).
     ...
         Also accepts :ref:`general-layout-parameters`.
     """
@@ -730,7 +730,7 @@ class SensorMap(SensorMapMixin, EelFigure):
             mark: Sequence = None,
             head_radius: Union[float, Sequence[float]] = None,
             head_pos: Union[float, Sequence[float]] = 0,
-            connectivity: bool = False,
+            adjacency: bool = False,
             **kwargs):
         sensors = as_sensor(sensors)
         kwargs.setdefault('frame', 'none')
@@ -742,13 +742,13 @@ class SensorMap(SensorMapMixin, EelFigure):
         self._sensors = sensors
         self._proj = proj
         self._marker_handles = []
-        self._connectivity = None
+        self._adjacency = None
 
         self._markers = _ax_map2d(ax, sensors, proj, 1, marker, size, color, mark, head_radius, head_pos, labels=labels)
         SensorMapMixin.__init__(self, [self._markers.sensors])
 
-        if connectivity:
-            self.show_connectivity()
+        if adjacency:
+            self.show_adjacency()
 
         self._show()
 
@@ -759,19 +759,19 @@ class SensorMap(SensorMapMixin, EelFigure):
             h.remove()
         self.canvas.draw()
 
-    def show_connectivity(self, show=True):
-        """Show the sensor connectivity as lines connecting sensors.
+    def show_adjacency(self, show=True):
+        """Show the sensor adjacency as lines connecting sensors.
 
         Parameters
         ----------
         show : bool
-            Show or hide the sensor connectivity.
+            Show or hide the sensor adjacency.
         """
         if show:
-            conn = self._sensors.connectivity()
-            self._markers.connectivity.show(conn)
+            conn = self._sensors.adjacency()
+            self._markers.adjacency.show(conn)
         else:
-            self._markers.connectivity.show(None)
+            self._markers.adjacency.show(None)
         self.draw()
 
 
@@ -786,8 +786,8 @@ class SensorMap3d(EelFigure):
     labels
         Content of the labels. For 'name', any prefix common to all names
         is removed; with 'fullname', the full name is shown.
-    connectivity
-        Show sensor connectivity (default False).
+    adjacency
+        Show sensor adjacency (default False).
     ...
         Also accepts :ref:`general-layout-parameters`.
     """
@@ -797,7 +797,7 @@ class SensorMap3d(EelFigure):
             self,
             sensors: Any,
             labels: Literal['none', 'index', 'name', 'fullname'] = 'none',
-            connectivity: bool = False,
+            adjacency: bool = False,
             **kwargs):
         sensors = as_sensor(sensors)
         layout = ImLayout(1, 1, 5, default_margins={}, **kwargs)
@@ -810,10 +810,10 @@ class SensorMap3d(EelFigure):
         ax.set_ylabel('Posterior -> Anterior')
         ax.set_zlabel('Inferior -> Superior')
 
-        if connectivity:
+        if adjacency:
             from mpl_toolkits.mplot3d.art3d import Line3D
 
-            for c, r in sensors.connectivity():
+            for c, r in sensors.adjacency():
                 xs, ys, zs = locs[[c, r]].T
                 line = Line3D(xs, ys, zs)
                 ax.add_line(line)

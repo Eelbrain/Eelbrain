@@ -48,7 +48,7 @@ extensions = [
     Extension('eelbrain._trf._boosting_opt', [f'eelbrain/_trf/_boosting_opt{ext}'], **open_mp_args),
     Extension('eelbrain._ndvar._convolve', [f'eelbrain/_ndvar/_convolve{ext}'], **open_mp_args),
     Extension('eelbrain._ndvar._gammatone', [f'eelbrain/_ndvar/_gammatone{ext}'], **base_args),
-    Extension('eelbrain._stats.connectivity_opt', [f'eelbrain/_stats/connectivity_opt{ext}'], **base_args),
+    Extension('eelbrain._stats.adjacency_opt', [f'eelbrain/_stats/adjacency_opt{ext}'], **base_args),
     Extension('eelbrain._stats.opt', [f'eelbrain/_stats/opt{ext}'], **base_args),
     Extension('eelbrain._stats.vector', [f'eelbrain/_stats/vector{ext_cpp}'], include_dirs=['dsyevh3C'], **base_args),
 ]

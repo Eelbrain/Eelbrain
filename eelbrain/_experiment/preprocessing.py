@@ -17,7 +17,7 @@ from .. import load
 from .._data_obj import NDVar, Sensor
 from .._exceptions import DefinitionError
 from .._io.fiff import KIT_NEIGHBORS
-from .._io.txt import read_connectivity
+from .._io.txt import read_adjacency
 from .._ndvar import filter_data
 from .._text import enumeration
 from .._utils import as_sequence, ask, user_activity
@@ -73,7 +73,7 @@ class RawPipe:
         "Make sure the file exists and is up to date"
         raise NotImplementedError
 
-    def get_connectivity(self, data):
+    def get_adjacency(self, data):
         raise NotImplementedError
 
     def get_sysname(self, info, subject, data):
@@ -148,12 +148,12 @@ class RawSource(RawPipe):
     montage
         Name of a montage that is applied to raw data to set sensor positions
         (see :meth:`mne.io.Raw.set_montage`).
-    connectivity
-        Connectivity between sensors. Can be specified as:
+    adjacency
+        Ajacency between sensors. Can be specified as:
 
         - ``'auto'`` to use :func:`mne.channels.find_ch_adjacency`
-        - Pre-defined connectivity (one of :func:`mne.channels.get_builtin_ch_adjacencies`)
-        - Path to load connectivity from a file
+        - Pre-defined adjacency (one of :func:`mne.channels.get_builtin_ch_adjacencies`)
+        - Path to load adjacency from a file
         - ``"none"`` for no connections
         - ``"grid"`` for grid connections
         - list of connections (e.g., ``[('OZ', 'O1'), ('OZ', 'O2'), ...]``)
@@ -207,21 +207,21 @@ class RawSource(RawPipe):
             sysname: str = None,
             rename_channels: dict = None,
             montage: str = None,
-            connectivity: Union[str, List[Tuple[str, str]], Path] = None,
+            adjacency: Union[str, List[Tuple[str, str]], Path] = None,
             **kwargs,
     ):
         RawPipe.__init__(self)
-        if isinstance(connectivity, str):
-            if connectivity not in ('auto', 'grid', 'none') and connectivity not in mne.channels.get_builtin_ch_adjacencies():
-                connectivity = Path(connectivity)
-        if isinstance(connectivity, Path):
-            connectivity = read_connectivity(connectivity)
+        if isinstance(adjacency, str):
+            if adjacency not in ('auto', 'grid', 'none') and adjacency not in mne.channels.get_builtin_ch_adjacencies():
+                adjacency = Path(adjacency)
+        if isinstance(adjacency, Path):
+            adjacency = read_adjacency(adjacency)
         self.filename = typed_arg(filename, str)
         self.reader = reader
         self.sysname = sysname
         self.rename_channels = typed_arg(rename_channels, dict)
         self.montage = montage
-        self.connectivity = connectivity
+        self.adjacency = adjacency
         self._kwargs = kwargs
         if MNE_VERSION < V0_19 and reader is mne.io.read_raw_cnt:
             self._read_raw_kwargs = {'montage': None, **kwargs}
@@ -253,8 +253,8 @@ class RawSource(RawPipe):
                 out['montage'] = Sensor.from_montage(self.montage)
             else:
                 out['montage'] = self.montage
-        if self.connectivity is not None:
-            out['connectivity'] = self.connectivity
+        if self.adjacency is not None:
+            out['connectivity'] = self.adjacency
         return out
 
     def _load(self, subject, recording, preload):
@@ -283,11 +283,11 @@ class RawSource(RawPipe):
         path = self.path.format(root=self.root, subject=subject, recording=recording)
         return exists(path)
 
-    def get_connectivity(self, data):
+    def get_adjacency(self, data):
         if data == 'eog':
             return None
         else:
-            return self.connectivity
+            return self.adjacency
 
     def get_sysname(self, info, subject, data):
         if data == 'eog':
@@ -328,7 +328,7 @@ class RawSource(RawPipe):
         if isinstance(bad_chs, (str, int)):
             bad_chs = (bad_chs,)
         raw = self.load(subject, recording, add_bads=False)
-        sensor = load.mne.sensor_dim(raw.info, connectivity=self.connectivity)
+        sensor = load.mne.sensor_dim(raw.info, adjacency=self.adjacency)
         new_bads = sensor._normalize_sensor_names(bad_chs)
         # update with old bad channels
         if old_bads is not None and not redo:
@@ -349,7 +349,7 @@ class RawSource(RawPipe):
             flat = 1e-14  # May need a setting to exclude the EEG reference?
         if flat:
             sysname = self.get_sysname(raw.info, subject, None)
-            raw = load.mne.raw_ndvar(raw, sysname=sysname, connectivity=self.connectivity)
+            raw = load.mne.raw_ndvar(raw, sysname=sysname, adjacency=self.adjacency)
             bad_chs.extend(raw.sensor.names[raw.std('time') < flat])
         self.make_bad_channels(subject, recording, bad_chs, redo)
 
@@ -415,8 +415,8 @@ class CachedRawPipe(RawPipe):
             raise
         return raw
 
-    def get_connectivity(self, data):
-        return self.source.get_connectivity(data)
+    def get_adjacency(self, data):
+        return self.source.get_adjacency(data)
 
     def get_sysname(self, info, subject, data):
         return self.source.get_sysname(info, subject, data)

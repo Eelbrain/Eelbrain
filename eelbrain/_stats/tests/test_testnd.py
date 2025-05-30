@@ -11,7 +11,7 @@ from numpy.testing import assert_array_equal, assert_allclose
 import eelbrain
 from eelbrain import Dataset, NDVar, Categorial, Scalar, UTS, Sensor, configure, datasets, test, testnd, set_log_level, cwt_morlet
 from eelbrain._exceptions import WrongDimension, ZeroVariance
-from eelbrain._stats.testnd import Connectivity, NDPermutationDistribution, label_clusters, _MergedTemporalClusterDist, find_peaks, VectorDifferenceIndependent
+from eelbrain._stats.testnd import Adjacency, NDPermutationDistribution, label_clusters, _MergedTemporalClusterDist, find_peaks, VectorDifferenceIndependent
 from eelbrain._utils.system import IS_WINDOWS
 from eelbrain.fmtxt import asfmtext
 from eelbrain.testing import assert_dataobj_equal, assert_dataset_equal, requires_mne_sample_data
@@ -213,7 +213,7 @@ def test_clusterdist():
             [0, 1, 0]]
     x = np.random.normal(0, 1, shape)
     sensor = Sensor(locs, ['0', '1', '2', '3'])
-    sensor.set_connectivity(connect_dist=1.1)
+    sensor.set_adjacency(connect_dist=1.1)
     dims = ('case', UTS(-0.1, 0.1, 6), Scalar('dim2', range(6), 'unit'),
             sensor)
     y = NDVar(x, dims)
@@ -277,7 +277,7 @@ def test_clusterdist():
     # TFCE
     logging.info("TEST:  TFCE")
     sensor = Sensor(locs, ['0', '1', '2', '3'])
-    sensor.set_connectivity(connect_dist=1.1)
+    sensor.set_adjacency(connect_dist=1.1)
     time = UTS(-0.1, 0.1, 4)
     scalar = Scalar('scalar', range(10), 'unit')
     dims = ('case', time, sensor, scalar)
@@ -312,7 +312,7 @@ def test_clusterdist():
                    [0, 0, 0, 0, 7, 0, 0, 3, 0, 0],
                    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]])
     tgt = np.equal(x, 7)
-    peaks = find_peaks(x, cdist._connectivity)
+    peaks = find_peaks(x, cdist._adjacency)
     logging.debug(' detected: \n%s' % (peaks.astype(int)))
     logging.debug(' target: \n%s' % (tgt.astype(int)))
     assert_array_equal(peaks, tgt)
@@ -338,7 +338,7 @@ def test_clusterdist():
     res1 = testnd.TTestOneSample(y1, tfce=True, samples=3)
     # cdist
     assert res._cdist.shape == (4, 2, 5)
-    # T-maps don't depend on connectivity
+    # T-maps don't depend on adjacency
     assert_array_equal(res.t.x[:, 0], res0.t.x)
     assert_array_equal(res.t.x[:, 1], res1.t.x)
     assert_array_equal(res_parc.t.x[:, 0], res0.t.x)
@@ -424,8 +424,8 @@ def test_labeling():
     shape = (4, 20)
     pmap = np.empty(shape, float)
     edges = np.array([(0, 1), (0, 3), (1, 2), (2, 3)], np.uint32)
-    conn = Connectivity((
-        Scalar('graph', range(4), connectivity=edges),
+    conn = Adjacency((
+        Scalar('graph', range(4), adjacency=edges),
         UTS(0, 0.01, 20)))
     criteria = None
 

@@ -285,7 +285,7 @@ class MneExperiment(FileTree):
 
     # Pattern for subject names when searching the data directory.
     subject_re = r'([a-zA-Z_]+)(\d+)$'
-    # MEG-system (used as ``sysname`` to infer connectivity; for usage search `get_sysname`).
+    # MEG-system (used as ``sysname`` to infer adjacency; for usage search `get_sysname`).
     meg_system = None
 
     # kwargs for regularization of the covariance matrix (see .make_cov())
@@ -554,7 +554,7 @@ class MneExperiment(FileTree):
         self._raw = assemble_pipeline(raw_def, raw_dir, cache_path, root, self._sessions, log)
 
         raw_pipe = self._raw['raw']
-        # legacy connectivity determination
+        # legacy adjacency determination
         if raw_pipe.sysname is None:
             if self.meg_system is not None:
                 raw_pipe.sysname = self.meg_system
@@ -653,7 +653,7 @@ class MneExperiment(FileTree):
         self._register_field('parc', parc_values, 'aparc', eval_handler=self._eval_parc, allow_empty=True)
         self._register_field('freq', self._freqs.keys())
         self._register_field('src', default='ico-4', eval_handler=self._eval_src)
-        self._register_field('connectivity', ('', 'link-midline'), allow_empty=True)
+        self._register_field('adjacency', ('', 'link-midline'), allow_empty=True)
         self._register_field('select_clusters', self._cluster_criteria.keys(), allow_empty=True)
 
         # slave fields
@@ -2362,17 +2362,17 @@ class MneExperiment(FileTree):
             exclude = () if add_bads_to_info else 'bads'
             for data_kind in sensor_types:
                 sysname = pipe.get_sysname(info, ds.info['subject'], data_kind)
-                connectivity = pipe.get_connectivity(data_kind)
+                adjacency = pipe.get_adjacency(data_kind)
                 if data_kind == 'mag' and 'grad' not in sensor_types:
                     name = 'meg'
                 else:
                     name = data_kind
                 if variable_tmax:
-                    ys = [load.mne.epochs_ndvar(e, data=data_kind, sysname=sysname, connectivity=connectivity, exclude=exclude, name=data_kind)[0] for e in ds['epochs']]
+                    ys = [load.mne.epochs_ndvar(e, data=data_kind, sysname=sysname, adjacency=adjacency, exclude=exclude, name=data_kind)[0] for e in ds['epochs']]
                     if isinstance(data.sensor, str):
                         ys = [getattr(y, data.sensor)('sensor') for y in ys]
                 else:
-                    ys = load.mne.epochs_ndvar(ds['epochs'], data=data_kind, sysname=sysname, connectivity=connectivity, exclude=exclude)
+                    ys = load.mne.epochs_ndvar(ds['epochs'], data=data_kind, sysname=sysname, adjacency=adjacency, exclude=exclude)
                     if add_bads_to_info:
                         ys.info[BAD_CHANNELS] = ds['epochs'].info['bads']
                     if isinstance(data.sensor, str):
@@ -2527,7 +2527,7 @@ class MneExperiment(FileTree):
 
         if ndvar:
             src = self.get('src')
-            ndvar_list = [load.mne.stc_ndvar(stc, mrisubject, src, mri_sdir, method, make_kw.get('fixed', False), parc=parc, connectivity=self.get('connectivity')) for stc in stc_list]
+            ndvar_list = [load.mne.stc_ndvar(stc, mrisubject, src, mri_sdir, method, make_kw.get('fixed', False), parc=parc, adjacency=self.get('adjacency')) for stc in stc_list]
             if src_baseline:
                 for v in ndvar_list:
                     v -= v.summary(time=src_baseline)
@@ -2772,9 +2772,9 @@ class MneExperiment(FileTree):
             sensor_types = ds.info['sensor_types'] = data.data_to_ndvar(info)
             for sensor_type in sensor_types:
                 sysname = pipe.get_sysname(info, subject, sensor_type)
-                connectivity = pipe.get_connectivity(sensor_type)
+                adjacency = pipe.get_adjacency(sensor_type)
                 name = 'meg' if sensor_type == 'mag' else sensor_type
-                ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, connectivity=connectivity)
+                ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
                 if sensor_type != 'eog' and isinstance(data.sensor, str):
                     ds[name] = getattr(ds[name], data.sensor)('sensor')
 
@@ -3020,7 +3020,7 @@ class MneExperiment(FileTree):
             mri_sdir = self.get('mri-sdir')
             fixed = make_kw.get('fixed', False)
             parc = self.get('parc') or None
-            stcs = load.mne.stc_ndvar(stcs, subject, src, mri_sdir, method, fixed, parc=parc, connectivity=self.get('connectivity'))
+            stcs = load.mne.stc_ndvar(stcs, subject, src, mri_sdir, method, fixed, parc=parc, adjacency=self.get('adjacency'))
             if mask:
                 stcs = _mask_ndvar(stcs)
         else:
@@ -3169,7 +3169,7 @@ class MneExperiment(FileTree):
             else:
                 self.make_annot()
                 parc = self.get('parc')
-            fwd = load.mne.forward_operator(fwd_file, src, self.get('mri-sdir'), parc, connectivity=False)
+            fwd = load.mne.forward_operator(fwd_file, src, self.get('mri-sdir'), parc, adjacency=False)
             if mask:
                 fwd = fwd.sub(source=np.invert(
                     fwd.source.parc.startswith('unknown')))
@@ -3486,8 +3486,8 @@ class MneExperiment(FileTree):
             data = TestDims('sensor')
             data_kind = data.data_to_ndvar(raw.info)[0]
             sysname = pipe.get_sysname(raw.info, self.get('subject'), data_kind)
-            connectivity = pipe.get_connectivity(data_kind)
-            raw = load.mne.raw_ndvar(raw, sysname=sysname, connectivity=connectivity)
+            adjacency = pipe.get_adjacency(data_kind)
+            raw = load.mne.raw_ndvar(raw, sysname=sysname, adjacency=adjacency)
 
         return raw
 
@@ -3535,7 +3535,7 @@ class MneExperiment(FileTree):
 
         if ndvar:
             src = self.get('src')
-            return load.mne.stc_ndvar(stc, mrisubject, src, mri_sdir, method, make_kw.get('fixed', False), parc=parc, connectivity=self.get('connectivity'))
+            return load.mne.stc_ndvar(stc, mrisubject, src, mri_sdir, method, make_kw.get('fixed', False), parc=parc, adjacency=self.get('adjacency'))
         else:
             return stc
 
@@ -4539,8 +4539,8 @@ class MneExperiment(FileTree):
         data = TestDims('sensor')
         data_kind = data.data_to_ndvar(info)[0]
         sysname = pipe.get_sysname(info, subject, data_kind)
-        connectivity = pipe.get_connectivity(data_kind)
-        frame = gui.select_components(path, display_data, sysname, connectivity, decim, debug)
+        adjacency = pipe.get_adjacency(data_kind)
+        frame = gui.select_components(path, display_data, sysname, adjacency, decim, debug)
         if debug:
             return frame
 
@@ -5426,10 +5426,10 @@ class MneExperiment(FileTree):
         info_section = report.add_section("Test Info")
         self._report_test_info(info_section, ds, test, res, data, include)
 
-        # add connectivity image
-        p = plot.SensorMap(ds['eeg'], connectivity=True, show=False)
-        image_conn = p.image("connectivity.png")
-        info_section.add_figure("Sensor map with connectivity", image_conn)
+        # add adjacency image
+        p = plot.SensorMap(ds['eeg'], adjacency=True, show=False)
+        image_conn = p.image("adjacency.png")
+        info_section.add_figure("Sensor map with adjacency", image_conn)
         p.close()
 
         colors = plot.colors_for_categorial(ds.eval(res._plot_model()))
@@ -6756,12 +6756,12 @@ class MneExperiment(FileTree):
 
         # pmin
         if pmin is not None:
-            # source connectivity
-            connectivity = self.get('connectivity')
-            if connectivity and not data.source:
-                raise NotImplementedError(f"connectivity={connectivity!r} is not implemented for data={data!r}")
-            elif connectivity:
-                items.append(connectivity)
+            # source adjacency
+            adjacency = self.get('adjacency')
+            if adjacency and not data.source:
+                raise NotImplementedError(f"{adjacency=} is not implemented for {data=}")
+            elif adjacency:
+                items.append(adjacency)
 
             items.append(str(pmin))
 
@@ -6791,9 +6791,9 @@ class MneExperiment(FileTree):
             out['baseline'] = code.next()
             if 'srcbl' in code.lookahead_1:
                 out['baseline'] = (out['baseline'], code.next())
-        # connectivity
+        # adjacency
         if code.lookahead_1 == 'link-midline':
-            out['connectivity'] = code.next()
+            out['adjacency'] = code.next()
         # pmin
         if code.lookahead_1 == 'tfce' or code.lookahead_1.startswith('0.'):
             out['pmin'] = code.next()

@@ -27,7 +27,7 @@ def select_components(
         path: PathArg,
         data: Union[Dataset, mne.io.BaseRaw],
         sysname: str = None,
-        connectivity: Union[str, Sequence] = None,
+        adjacency: Union[str, Sequence] = None,
         decim: int = None,
         debug: bool = False,
 ):
@@ -46,9 +46,9 @@ def select_components(
         (the default is ``range(n_epochs)``).
         Further :class:`Factor` can be used to plot condition averages.
     sysname
-        Optional, to define sensor connectivity.
-    connectivity
-        Optional, to define sensor connectivity (see
+        Optional, to define sensor adjacency.
+    adjacency
+        Optional, to define sensor adjacency (see
         :func:`eelbrain.load.mne.sensor_dim`).
     decim
         Decimate the data for display (only applies when data is a ``Raw``
@@ -69,7 +69,7 @@ def select_components(
     from ._wxgui.select_components import TEST_MODE, Document, Frame, Model
 
     get_app()  # make sure app is created
-    doc = Document(path, data, sysname, connectivity, decim=decim)
+    doc = Document(path, data, sysname, adjacency, decim=decim)
     model = Model(doc)
     frame = Frame(model)
     frame.Show()

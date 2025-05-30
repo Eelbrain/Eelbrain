@@ -120,7 +120,7 @@ events
 ###############################################################################
 # Extract EEG data corresponding exactly to the timing of the envelopes
 
-events['eeg'] = eelbrain.load.mne.variable_length_epochs(events, 0, tstop='duration', decim=5, connectivity='auto')
+events['eeg'] = eelbrain.load.mne.variable_length_epochs(events, 0, tstop='duration', decim=5, adjacency='auto')
 events
 
 ###############################################################################

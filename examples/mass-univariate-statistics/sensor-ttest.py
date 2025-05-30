@@ -69,12 +69,12 @@ ds['eeg'] -= ds['eeg'].mean(sensor=['M1', 'M2'])
 # Cluster-based tests are based on identifying clusters of meaningful effects, i.e., 
 # groups of adjacent sensors that show the same effect (see :mod:`testnd` for references).
 # In order to find clusters, the algorithm needs to know which channels are 
-# neighbors. This information is refered to as the sensor connectivity (i.e., which sensors 
-# are connected). The connectivity graph can be visualized to confirm that it is set correctly.
-p = plot.SensorMap(ds['eeg'], connectivity=True)
+# neighbors. This information is refered to as the sensor adjacency (i.e., which sensors 
+# are connected). The adjacency graph can be visualized to confirm that it is set correctly.
+p = plot.SensorMap(ds['eeg'], adjacency=True)
 
 ###############################################################################
-# With the correct connectivity, we can now compute a cluster-based permutation test
+# With the correct adjacency, we can now compute a cluster-based permutation test
 # for a related measures *t*-test:
 res = testnd.TTestRelated(
     'eeg', 'predictability', 'low', 'high', match='subject', data=ds,
