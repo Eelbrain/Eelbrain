@@ -3242,6 +3242,7 @@ class NDPermutationDistribution:
         if version < 3:
             state['tfce'] = ['kind'] == 'tfce'
 
+        self._adjacency = state.pop('_connectivity')
         for k, v in state.items():
             if k == '_connectivity':
                 self._adjacency = v
