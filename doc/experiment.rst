@@ -128,8 +128,7 @@ a list of the subjects and corresponding MRIs that were discovered::
 .. note::
     If participants come back for the experiment on multiple occasions, a
     :attr:`visits` attribute might also be needed. For details see the
-    corresponding `wiki page <https://github.com/christianbrodbeck/Eelbrain/
-    wiki/MneExperiment-analysis-options#multiple-visits>`_.
+    corresponding `wiki page <https://github.com/Eelbrain/Eelbrain/wiki/MneExperiment-analysis-options#multiple-visits>`_.
 
 Setting up the analysis code
 ----------------------------
