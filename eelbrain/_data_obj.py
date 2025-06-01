@@ -3800,7 +3800,10 @@ class NDVar(Named):
             x = self.x.argmax(axis)
             x = dim._dim_index(x)
             dims = [dim_ for i, dim_ in enumerate(self.dims) if i != axis]
-            return self._package_aggregated_output(x, dims, name)
+            info = _info._update({}, self.info)
+            if dim._axis_unit:
+                info['unit'] = dim._axis_unit
+            return self._package_aggregated_output(x, dims, name, info)
         return self._dim_index_unravel(self.x.argmax())
 
     def argmin(
@@ -3833,7 +3836,10 @@ class NDVar(Named):
             x = self.x.argmin(axis)
             x = dim._dim_index(x)
             dims = [dim_ for i, dim_ in enumerate(self.dims) if i != axis]
-            return self._package_aggregated_output(x, dims, name)
+            info = _info._update({}, self.info)
+            if dim._axis_unit:
+                info['unit'] = dim._axis_unit
+            return self._package_aggregated_output(x, dims, name, info)
         return self._dim_index_unravel(self.x.argmin())
 
     def _array_index(self, arg):
@@ -10887,7 +10893,7 @@ class UTS(Dimension):
         self.tmin = float(tmin)  # Python float has superior precision
         self.tstep = float(tstep)
         self.nsamples = int(nsamples)
-        self.unit = unit
+        self._axis_unit = self.unit = unit
         self._init_secondary()
 
     def _init_secondary(self):
