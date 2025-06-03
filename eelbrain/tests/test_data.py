@@ -762,12 +762,12 @@ def test_factor():
 
     # label length
     lens = [2, 5, 32, 2, 32, 524]
-    f = Factor(['a' * l for l in lens], 'f')
+    f = Factor(['a' * length for length in lens], 'f')
     fl = f.label_length()
     assert_array_equal(fl, lens)
     assert fl.info['longname'] == 'f.label_length()'
     lens2 = [3, 5, 32, 2, 32, 523]
-    f2 = Factor(['b' * l for l in lens2], 'f2')
+    f2 = Factor(['b' * length for length in lens2], 'f2')
     assert_array_equal(fl - f2.label_length(), [a - b for a, b in zip(lens, lens2)])
 
     # equality
@@ -795,18 +795,18 @@ def test_factor():
     assert_array_equal(a.count('a').x, [0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 2])
 
     # Factor.floodfill()
-    f = Factor([' ', ' ', '1', '2', ' ', ' ', '3', ' ', ' ', '2', ' ', ' ', '1'])
-    regions =  [ 1,   1,   1,   2,   2,   2,   3,   3,   3,   2,   2,   1,   1]
-    regions2 = [ 1,   1,   1,   2,   2,   3,   3,   2,   2,   2,   2,   1,   1]
-    regions3 = [ 1,   1,   1,   1,   1,   1,   1,   1,   2,   2,   2,   2,   2]
-    target3 =  ['1', '1', '1', '2', '2', '2', '3', '3', '2', '2', '2', '2', '1']
+    f_ = Factor([' ', ' ', '1', '2', ' ', ' ', '3', ' ', ' ', '2', ' ', ' ', '1'])
+    regions_0 = [ 1,   1,   1,   2,   2,   2,   3,   3,   3,   2,   2,   1,   1]
+    regions_1 = [ 1,   1,   1,   2,   2,   3,   3,   2,   2,   2,   2,   1,   1]
+    regions_2 = [ 1,   1,   1,   1,   1,   1,   1,   1,   2,   2,   2,   2,   2]
+    regions_3 = ['1', '1', '1', '2', '2', '2', '3', '3', '2', '2', '2', '2', '1']
     target_p = [' ', ' ', '1', '2', '2', '2', '3', '3', '3', '2', '2', '2', '1']
-    assert_array_equal(f.floodfill(regions, ' '), Var(regions).as_factor())
-    assert_array_equal(f.floodfill(regions2, ' '), Var(regions2).as_factor())
-    assert_array_equal(f.floodfill(regions3, ' '), target3)
-    assert_array_equal(f.floodfill('previous', ' '), target_p)
-    f = Factor(['', '', 'a', '', 'e', 'r', ''])
-    assert_array_equal(f.floodfill([1, 1, 1, 11, 11, 11, 11]), Factor('aaaeerr'))
+    assert_array_equal(f_.floodfill(regions_0, ' '), Var(regions_0).as_factor())
+    assert_array_equal(f_.floodfill(regions_1, ' '), Var(regions_1).as_factor())
+    assert_array_equal(f_.floodfill(regions_2, ' '), regions_3)
+    assert_array_equal(f_.floodfill('previous', ' '), target_p)
+    f_ = Factor(['', '', 'a', '', 'e', 'r', ''])
+    assert_array_equal(f_.floodfill([1, 1, 1, 11, 11, 11, 11]), Factor('aaaeerr'))
 
     # cell-based index
     f = Factor(['a1', 'a10', 'b1', 'b10'])
@@ -1172,7 +1172,7 @@ def test_ndvar_adjacency():
     # non-monotonic index
     sub_mono = x.sub(sensor=['2', '3', '4'])
     sub_nonmono = x.sub(sensor=['4', '3', '2'])
-    argsort = np.array([2,1,0])
+    argsort = np.array([2, 1, 0])
     conn = argsort[sub_mono.sensor.adjacency().ravel()].reshape((-1, 2))
     assert_equal(sub_nonmono.sensor.adjacency(), conn)
 
@@ -1184,27 +1184,27 @@ def test_ndvar_adjacency():
     x.x[0, 50:55] = 4
 
     # custom adjacency on first axis
-    l = x.label_clusters(3)
-    assert len(l.info['cids']) == 5
-    assert_array_equal(np.unique(l.x), np.append([0], l.info['cids']))
+    labels = x.label_clusters(3)
+    assert len(labels.info['cids']) == 5
+    assert_array_equal(np.unique(labels.x), np.append([0], labels.info['cids']))
 
     # custom adjacency second
     sensor, time = x.dims
     x = NDVar(x.x.T, (time, sensor))
-    l = x.label_clusters(3)
-    assert len(l.info['cids']) == 5
+    labels = x.label_clusters(3)
+    assert len(labels.info['cids']) == 5
 
     # disconnected
     cat = Categorial('categorial', ('a', 'b', 'c', 'd', 'e'))
     x = NDVar(x.x, (time, cat))
-    l = x.label_clusters(3)
-    assert len(l.info['cids']) == 13
+    labels = x.label_clusters(3)
+    assert len(labels.info['cids']) == 13
 
     # ordered
     scalar = Scalar('ordered', range(5))
     x = NDVar(x.x, (time, scalar))
-    l = x.label_clusters(3)
-    assert len(l.info['cids']) == 6
+    labels = x.label_clusters(3)
+    assert len(labels.info['cids']) == 6
 
 
 def ndvar_index(x, dimname, index, a_index, index_repr=True):
@@ -1450,7 +1450,7 @@ def test_ndvar_summary_methods():
     idx1d = idx[0, :, 0]
     xsub = x.sub(time=(0, 0.5))
     idxsub = xsub > 0
-    idxsub1d = idxsub[0,0]
+    idxsub1d = idxsub[0, 0]
 
     # info inheritance
     assert x.mean(('sensor', 'time')).info == x.info
@@ -1544,7 +1544,7 @@ def test_ndvar_timeseries_methods():
     env = x.envelope()
     assert_array_equal(env.x >= 0, True)
     envs = xs.envelope()
-    assert_array_equal(env.x, envs.x.swapaxes(1,2))
+    assert_array_equal(env.x, envs.x.swapaxes(1, 2))
 
     # indexing
     assert len(ds[0, 'uts'][0.01:0.1].time) == 9
@@ -1893,11 +1893,11 @@ def test_var():
 
     # methods
     w = abs(v)
-    assert_dataobj_equal(w, Var(np.abs(w.x), 'v', {**info, 'longname': f'abs(v)'}))
+    assert_dataobj_equal(w, Var(np.abs(w.x), 'v', {**info, 'longname': 'abs(v)'}))
     # log
-    assert_dataobj_equal(w.log(), Var(np.log(w.x), 'v', {**info, 'longname': f'log(abs(v))'}))
-    assert_dataobj_equal(w.log(10), Var(np.log10(w.x), 'v', {**info, 'longname': f'log10(abs(v))'}))
-    assert_dataobj_equal(w.log(42), Var(np.log(w.x) / log(42), 'v', {**info, 'longname': f'log42(abs(v))'}))
+    assert_dataobj_equal(w.log(), Var(np.log(w.x), 'v', {**info, 'longname': 'log(abs(v))'}))
+    assert_dataobj_equal(w.log(10), Var(np.log10(w.x), 'v', {**info, 'longname': 'log10(abs(v))'}))
+    assert_dataobj_equal(w.log(42), Var(np.log(w.x) / log(42), 'v', {**info, 'longname': 'log42(abs(v))'}))
 
     # assignment
     tgt1 = np.arange(10)
