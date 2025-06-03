@@ -27,9 +27,7 @@ from eelbrain._data_obj import (
 from eelbrain._exceptions import DimensionMismatchError
 from eelbrain._stats.stats import rms
 from eelbrain._utils.numpy_utils import newaxis
-from eelbrain.testing import (
-    assert_dataobj_equal, assert_dataset_equal, assert_source_space_equal,
-    requires_mne_sample_data, skip_on_windows)
+from eelbrain.testing import assert_dataobj_equal, assert_dataset_equal, assert_fmtxt_str_equals, assert_source_space_equal, requires_mne_sample_data, skip_on_windows
 
 
 OPERATORS = {
@@ -521,36 +519,42 @@ def test_dataset_repr():
     ds = datasets.get_uts()
 
     assert repr(ds) == "<Dataset (60 cases) 'A':F, 'B':F, 'rm':F, 'ind':F, 'Y':V, 'YBin':F, 'YCat':F, 'uts':Vnd>"
-    assert str(ds[:2]) == """#   A    B    rm    ind   Y        YBin   YCat
-----------------------------------------------
-0   a0   b0   R00   R00   2.0977   c1     c1  
-1   a0   b0   R01   R01   1.8942   c1     c1  
-----------------------------------------------
-NDVars: uts"""
-    assert str(ds.summary(50)) == """Key    Type     Values                            
---------------------------------------------------
-A      Factor   a0:30, a1:30                      
-B      Factor   b0:30, b1:30                      
-rm     Factor   R00:4, R01:4... (15 cells, random)
-ind    Factor   R00, R01... (60 cells, random)    
-Y      Var      -3.53027 - 3.04498                
-YBin   Factor   c1:34, c2:26                      
-YCat   Factor   c1:17, c2:24, c3:19               
-uts    NDVar    100 time; -2.67343 - 4.56283      
---------------------------------------------------
-Dataset: 60 cases"""
-    assert str(ds[:5].summary()) == """Key    Type     Values                                     
------------------------------------------------------------
-A      Factor   a0:5                                       
-B      Factor   b0:5                                       
-rm     Factor   R00, R01, R02, R03, R04 (random)           
-ind    Factor   R00, R01, R02, R03, R04 (random)           
-Y      Var      0.77358, 1.01346, 1.89424, 2.09773, 2.55396
-YBin   Factor   c1:4, c2                                   
-YCat   Factor   c1:2, c2:2, c3                             
-uts    NDVar    100 time; -0.634835 - 4.56283              
------------------------------------------------------------
-Dataset: 5 cases"""
+    assert_fmtxt_str_equals(ds[:2], """
+    #   A    B    rm    ind   Y        YBin   YCat
+    ----------------------------------------------
+    0   a0   b0   R00   R00   2.0977   c1     c1
+    1   a0   b0   R01   R01   1.8942   c1     c1
+    ----------------------------------------------
+    NDVars: uts
+    """)
+    assert_fmtxt_str_equals(ds.summary(50), """
+    Key    Type     Values
+    --------------------------------------------------
+    A      Factor   a0:30, a1:30
+    B      Factor   b0:30, b1:30
+    rm     Factor   R00:4, R01:4... (15 cells, random)
+    ind    Factor   R00, R01... (60 cells, random)
+    Y      Var      -3.53027 - 3.04498
+    YBin   Factor   c1:34, c2:26
+    YCat   Factor   c1:17, c2:24, c3:19
+    uts    NDVar    100 time; -2.67343 - 4.56283
+    --------------------------------------------------
+    Dataset: 60 cases
+    """)
+    assert_fmtxt_str_equals(ds[:5].summary(), """
+    Key    Type     Values
+    -----------------------------------------------------------
+    A      Factor   a0:5
+    B      Factor   b0:5
+    rm     Factor   R00, R01, R02, R03, R04 (random)
+    ind    Factor   R00, R01, R02, R03, R04 (random)
+    Y      Var      0.77358, 1.01346, 1.89424, 2.09773, 2.55396
+    YBin   Factor   c1:4, c2
+    YCat   Factor   c1:2, c2:2, c3
+    uts    NDVar    100 time; -0.634835 - 4.56283
+    -----------------------------------------------------------
+    Dataset: 5 cases
+    """)
     # .head() and .tail() without NDVars
     del ds['uts']
     assert str(ds.head()) == str(ds[:10])

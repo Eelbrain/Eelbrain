@@ -148,6 +148,18 @@ def gui_test(function):
     return gui_test_context(requires_framework_build(function))
 
 
+def assert_fmtxt_str_equals(
+        fmtxt,
+        target: str,
+        indent: int = 4,
+):
+    """Allow clean and PEP8 compliant target strings in testing"""
+    as_str = str(fmtxt)
+    as_str = '\n'.join(line.rstrip() for line in as_str.split('\n'))  # rstrip whitespace (for pep8)
+    target = '\n'.join(line[indent:] for line in target.splitlines()[1:-1])
+    assert as_str == target
+
+
 class ConfigContext(ContextDecorator):
 
     def __init__(self, key, value):
