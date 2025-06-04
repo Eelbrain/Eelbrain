@@ -10850,12 +10850,16 @@ class UTS(Dimension):
 
     Parameters
     ----------
-    tmin : float
+    tmin
         First time point (inclusive).
-    tstep : float
+    tstep
         Time step between samples.
-    nsamples : int
+    nsamples
         Number of samples.
+    unit
+        Unit used for plotting.
+    name
+        Dimension name, used as :class:`NDVar` attribute name.
 
     Attributes
     ----------
@@ -10886,7 +10890,14 @@ class UTS(Dimension):
     _tol = 0.000001  # tolerance for deciding if time values are equal
     plot_s_as_ms: float = 3  # plot s as ms when the absolute times in s are smaller than this
 
-    def __init__(self, tmin: float, tstep: float, nsamples: int, unit: str = 's', name: str = 'time'):
+    def __init__(
+            self,
+            tmin: float,
+            tstep: float,
+            nsamples: int,
+            unit: str = 's',
+            name: str = 'time',
+    ):
         Dimension.__init__(self, name, 'grid')
         self.tmin = float(tmin)  # Python float has superior precision
         self.tstep = float(tstep)
