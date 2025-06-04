@@ -4,7 +4,7 @@ import gzip
 from pathlib import Path
 import re
 from numbers import Number
-from typing import Literal, Sequence, Tuple, Union
+from typing import Sequence, Tuple, Union
 
 import numpy as np
 
@@ -254,7 +254,7 @@ def tsv(
             if all(v in (None, '') or float_pattern.match(v) for v in values):
                 type_ = 'v'
             elif percent_to_proportion and all(v in (None, '') or percent_pattern.match(v) for v in values):
-                type = '%'
+                type_ = '%'
             else:
                 type_ = 'f'
         elif all(v is None or float_pattern.match(v) for v in values):
@@ -331,7 +331,7 @@ def write_adjacency(
     """Save adjacency graph as text file"""
     text = '\n'.join([':'.join(map(str, pair)) for pair in adjacency])
     if filename is None:
-        msg = f"Save adjacency..."
+        msg = "Save adjacency..."
         filename = ui.ask_saveas(msg, msg, [("Text files", "*.txt")])
     Path(filename).write_text(text)
 

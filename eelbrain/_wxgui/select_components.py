@@ -368,7 +368,7 @@ class SharedToolsMenu:  # Frame mixin
         doc = fmtxt.Section("Noisy epochs")
         doc.add_paragraph(f"Epochs with signal exceeding {threshold_desc}")
         if sort_by_component:
-            doc.add_paragraph(f"Sorted by dominant component")
+            doc.add_paragraph("Sorted by dominant component")
         doc.append(fmtxt.linebreak)
         if sort_by_component:
             for component, values in res_by_component.items():

@@ -98,10 +98,10 @@ def test_time_slicer():
 
     p1._set_time(.1, True)
     assert p2._current_time == .1
-    assert p2._time_fixed == True
+    assert p2._time_fixed is True
     p2._set_time(.2)
     assert p1._current_time == .2
-    assert p1._time_fixed == False
+    assert p1._time_fixed is False
 
     p1 = plot.TopoButterfly(ds['utsnd'])
     p2 = plot.Array('utsnd', 'A', data=ds)
@@ -109,7 +109,7 @@ def test_time_slicer():
 
     p1._set_time(.1, True)
     assert p2._current_time == .1
-    assert p2._time_fixed == True
+    assert p2._time_fixed is True
 
     # merge another
     p3 = plot.TopoButterfly(ds[0, 'utsnd'])
@@ -117,7 +117,7 @@ def test_time_slicer():
 
     p2._set_time(.2)
     assert p1._current_time == .2
-    assert p1._time_fixed == False
+    assert p1._time_fixed is False
 
 
 def test_vlims():

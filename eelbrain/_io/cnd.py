@@ -101,7 +101,7 @@ def read_cnd(
                 ds['origTrialPosition'] = Var(orig_trial_position - 1)
         else:
             logger = logging.getLogger(__name__)
-            logger.warning(f"origTrialPosition missing")
+            logger.warning("origTrialPosition missing")
         # Extra channels
         if 'extChan' in data['eeg']:
             desc = ds.info['extChan'] = data['eeg']['extChan']['description']

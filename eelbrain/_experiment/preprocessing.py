@@ -946,7 +946,7 @@ class RawMaxwell(CachedRawPipe):
 
     def _make(self, subject, recording, preload):
         raw = self.source.load(subject, recording)
-        self.log.info(f"Raw %s: computing Maxwell filter for %s/%s", self.name, subject, recording)
+        self.log.info("Raw %s: computing Maxwell filter for %s/%s", self.name, subject, recording)
         with user_activity:
             return mne.preprocessing.maxwell_filter(raw, bad_condition=self.bad_condition, **self.kwargs)
 
@@ -968,7 +968,7 @@ class RawOversampledTemporalProjection(CachedRawPipe):
 
     def _make(self, subject, recording, preload):
         raw = self.source.load(subject, recording)
-        self.log.info(f"Raw %s: computing oversampled temporal projection for %s/%s", self.name, subject, recording)
+        self.log.info("Raw %s: computing oversampled temporal projection for %s/%s", self.name, subject, recording)
         with user_activity:
             return mne.preprocessing.oversampled_temporal_projection(raw, self.duration)
 

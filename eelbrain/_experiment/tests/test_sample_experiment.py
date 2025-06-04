@@ -82,7 +82,7 @@ def test_sample():
     ds = Dataset()
     ds['subject'] = Factor(reversed(subjects))
     ds['n'] = Var(range(3))
-    s_table = e._report_subject_info(ds, '')
+    _ = e._report_subject_info(ds, '')
 
     # post_baseline_trigger_shift
     # use multiple of tstep to shift by even number of samples

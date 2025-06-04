@@ -1,7 +1,6 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 import os
 from pathlib import Path
-from warnings import catch_warnings, filterwarnings
 
 import mne
 from mne import pick_types

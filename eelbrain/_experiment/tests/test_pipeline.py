@@ -1,4 +1,4 @@
-from eelbrain.pipeline import *
+from eelbrain.pipeline import MneExperiment, PrimaryEpoch, SecondaryEpoch
 from eelbrain.testing import path
 
 
