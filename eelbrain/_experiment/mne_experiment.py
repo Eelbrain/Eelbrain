@@ -780,10 +780,10 @@ class MneExperiment(FileTree):
         else:
             events_changed = False
             if input_state['merge_triggers'] != self.merge_triggers:
-                self._log.warning(f"  merge_triggers changed: %s -> %s, reloading events", input_state['merge_triggers'], self.merge_triggers)
+                self._log.warning("  merge_triggers changed: %s -> %s, reloading events", input_state['merge_triggers'], self.merge_triggers)
                 events_changed = True
             if input_state['stim_channel'] != self._stim_channel:
-                self._log.warning(f"  stim_channel changed: %s -> %s, reloading events", input_state['stim_channel'], self._stim_channel)
+                self._log.warning("  stim_channel changed: %s -> %s, reloading events", input_state['stim_channel'], self._stim_channel)
                 events_changed = True
             if events_changed:
                 self.rm('event-file', inclusive=True, confirm=True)
@@ -926,7 +926,7 @@ class MneExperiment(FileTree):
                 self._state_backwards_compat(cache_state_v, new_state, cache_state)
                 self._migrate_cache(cache_state_v, cache_dir)
             elif cache_state_v > CACHE_STATE_VERSION:
-                raise RuntimeError(f"The cache is from a newer version of Eelbrain than you are currently using. Either upgrade Eelbrain or delete the cache folder.")
+                raise RuntimeError("The cache is from a newer version of Eelbrain than you are currently using. Either upgrade Eelbrain or delete the cache folder.")
 
             # Find modified definitions
             # =========================
@@ -1077,7 +1077,7 @@ class MneExperiment(FileTree):
                 if 'vars' in params:
                     try:
                         params['vars'] = Variables(params['vars'])
-                    except Exception as error:
+                    except Exception:
                         self._log.warning("  Test %s: Defective vardef %r", test, params['vars'])
                         params['vars'] = None
                 else:
@@ -2976,7 +2976,7 @@ class MneExperiment(FileTree):
             if morph:
                 self.make_annot(mrisubject=common_brain)
             elif len(meg_subjects) > 1:
-                raise ValueError(f"ndvar=True, morph=False with multiple subjects: Can't create ndvars with data from different brains")
+                raise ValueError("ndvar=True, morph=False with multiple subjects: Can't create ndvars with data from different brains")
             else:
                 self.make_annot(mrisubject=mri_subjects[meg_subjects[0]])
 
@@ -3473,7 +3473,7 @@ class MneExperiment(FileTree):
         pipe = self._raw[self.get('raw', **kwargs)]
         raw = pipe.load(self.get('subject'), self.get('recording'), add_bads)
         if decim and decim > 1:
-            assert samplingrate is None, f"samplingrate and decim can't both be specified"
+            assert samplingrate is None, "samplingrate and decim can't both be specified"
             samplingrate = int(round(raw.info['sfreq'] / decim))
         if tstart or tstop:
             raw = raw.crop(tstart or 0, tstop, False)
@@ -4048,9 +4048,9 @@ class MneExperiment(FileTree):
 
         # compute results
         do_mcc = (
-            len(labels) > 1 and  # more than one ROI
-            pmin not in (None, 'tfce') and  # not implemented
-            len(set(n_per_label.values())) == 1  # equal n permutations
+            len(labels) > 1  # more than one ROI
+            and pmin not in (None, 'tfce')  # not implemented
+            and len(set(n_per_label.values())) == 1  # equal n permutations
         )
         label_results = {
             label: self._make_test('label_tc', ds, test_obj, test_kwargs, do_mcc)
@@ -4893,7 +4893,7 @@ class MneExperiment(FileTree):
             raise IOError(f"Cannot access MRI directory at {mri_sdir}")
         mrisubject = self.get('mrisubject')
         if mrisubject == 'fsaverage':
-            self._log.info(f"MRI for FSAverage is missing, trying to generate it.")
+            self._log.info("MRI for FSAverage is missing, trying to generate it.")
             mne.create_default_subject(subjects_dir=mri_sdir)
         else:
             raise IOError(f"MRI for {mrisubject} is missing and cannot be created automatically")
@@ -5593,8 +5593,7 @@ class MneExperiment(FileTree):
                 legend = None
                 for subject in self:
                     # make sure there is at least one label
-                    if not any(not l.name.startswith('unknown-') for l in
-                               self.load_annot()):
+                    if all(l.name.startswith('unknown-') for l in self.load_annot()):
                         section.add_image_figure("No labels", subject)
                         continue
                     brain = self.plot_annot()
@@ -6156,7 +6155,7 @@ class MneExperiment(FileTree):
         is_vector_data = src and self.get('inv').startswith('vec')
         is_volume_source_space = src and self.get('src').startswith('vol')
         if is_vector_data and not is_volume_source_space:
-            raise NotImplementedError(f"Vector data currently can only be plotted for volume source space")
+            raise NotImplementedError("Vector data currently can only be plotted for volume source space")
 
         if separate and not subject:
             if src:

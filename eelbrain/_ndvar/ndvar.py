@@ -1255,20 +1255,26 @@ class Butterworth(Filter):
             raise ValueError("Neither low nor high set")
 
 
-def segment(continuous, times, tstart, tstop, decim=1):
+def segment(
+        continuous: NDVar,
+        times: Sequence[float],
+        tstart: float,
+        tstop: float,
+        decim: int = 1,
+) -> NDVar:
     """Segment a continuous NDVar
 
     Parameters
     ----------
-    continuous : NDVar
+    continuous
         NDVar with a continuous time axis.
-    times : sequence of scalar
+    times
         Times for which to extract segments.
-    tstart : scalar
+    tstart
         Start time for segments.
-    tstop : scalar
+    tstop
         Stop time for segments.
-    decim : int
+    decim
         Decimate data after segmenting by factor ``decim`` (the default is
         ``1``, i.e. no decimation).
 
@@ -1282,16 +1288,12 @@ def segment(continuous, times, tstart, tstop, decim=1):
         raise ValueError("Continuous data can't have case dimension")
     axis = continuous.get_axis('time')
     tstep = None if decim == 1 else continuous.time.tstep * decim
-    segments = [continuous.sub(time=(t + tstart, t + tstop, tstep)) for
-                t in times]
+    segments = [continuous.sub(time=(t + tstart, t + tstop, tstep)) for t in times]
 
     s0_time = segments[0].time
-    dims = (('case',) +
-            continuous.dims[:axis] +
-            (UTS(tstart, s0_time.tstep, s0_time.nsamples),) +
-            continuous.dims[axis + 1:])
-    return NDVar(np.array(tuple(s.x for s in segments)), dims,
-                 continuous.info.copy(), continuous.name)
+    uts = UTS(tstart, s0_time.tstep, s0_time.nsamples)
+    dims = ('case', *continuous.dims[:axis], uts, *continuous.dims[axis + 1:])
+    return NDVar(np.array(tuple(s.x for s in segments)), dims, continuous.name, continuous.info.copy())
 
 
 def set_adjacency(

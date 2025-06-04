@@ -3,7 +3,6 @@ from math import floor
 from typing import Sequence
 
 import numpy as np
-from numpy import newaxis
 
 
 FULL_SLICE = slice(None)

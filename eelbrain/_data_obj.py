@@ -1259,8 +1259,7 @@ class EffectList(list):
 
     def __contains__(self, item):
         for f in self:
-            if ((f.name == item.name) and (type(f) is type(item)) and
-                    (len(f) == len(item)) and np.all(item == f)):
+            if ((f.name == item.name) and (type(f) is type(item)) and (len(f) == len(item)) and np.all(item == f)):
                 return True
         return False
 
@@ -6192,7 +6191,7 @@ class Dataset(dict):
         """
         if name is None:
             if default is None:
-                raise ValueError(f"Unnamed variabe")
+                raise ValueError("Unnamed variable")
             return default
         return as_legal_dataset_key(name)
 
@@ -7303,8 +7302,7 @@ class Interaction(_Effect):
         self._n_cases = len(self.base[0])
         self.nestedin = EffectList()
         for e in self.base:
-            if (isinstance(e, NestedEffect) and
-                    not any(np.all(e.nestedin == ne) for ne in self.nestedin)):
+            if isinstance(e, NestedEffect) and not any(np.all(e.nestedin == ne) for ne in self.nestedin):
                 self.nestedin.append(e.nestedin)
         self.base_names = [str(f.name) for f in self.base]
         self.name = ' x '.join(self.base_names)
@@ -8129,10 +8127,10 @@ class Dimension:
     def _concatenate_adjacency(dims: Sequence[Dimension]):
         c_types = {dim._adjacency_type for dim in dims}
         if len(c_types) > 1:
-            raise NotImplementedError(f"concatenating with differing adjacency")
+            raise NotImplementedError("concatenating with differing adjacency")
         c_type = c_types.pop()
         if c_type == 'custom':
-            raise NotImplementedError(f"concatenating with custom adjacency")
+            raise NotImplementedError("concatenating with custom adjacency")
         return c_type
 
     @staticmethod
@@ -9258,8 +9256,7 @@ class Sensor(Dimension):
             return self.channel_idx[arg]
         elif isinstance(arg, Sensor):
             return np.array([self.names.index(name) for name in arg.names])
-        elif isinstance(arg, Integral) or (isinstance(arg, np.ndarray) and
-                                           arg.dtype.kind == 'i'):
+        elif isinstance(arg, Integral) or (isinstance(arg, np.ndarray) and arg.dtype.kind == 'i'):
             return arg
         else:
             return super(Sensor, self)._array_index(arg)
@@ -10034,10 +10031,10 @@ class SourceSpaceBase(Dimension):
 
     def _eq(self, other, check: bool):
         return (
-            Dimension._eq(self, other, check) and
-            self.subject == other.subject and
-            self.src == other.src and
-            all(np.array_equal(s, o) for s, o in zip(self.vertices, other.vertices)))
+            Dimension._eq(self, other, check)
+            and self.subject == other.subject
+            and self.src == other.src
+            and all(np.array_equal(s, o) for s, o in zip(self.vertices, other.vertices)))
 
     def _assert_same_base(self, other):
         "Assert that ``other`` is based on the same source space"
@@ -11032,9 +11029,9 @@ class UTS(Dimension):
         return self.nsamples
 
     def _eq(self, other, check: bool):
-        return (Dimension._eq(self, other, check) and
-                abs(self.tmin - other.tmin) < self._tol and
-                abs(self.tstep - other.tstep) < self._tol)
+        return (Dimension._eq(self, other, check)
+                and abs(self.tmin - other.tmin) < self._tol
+                and abs(self.tstep - other.tstep) < self._tol)
 
     def __contains__(self, index):
         return self.tmin - self.tstep / 2 < index < self.tstop - self.tstep / 2

@@ -1,6 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 import matplotlib
-import sys
 
 from tqdm import tqdm, trange
 
@@ -15,8 +14,8 @@ def use_inline_backend():
 # import inline tqdm
 if use_inline_backend():
     try:
-        import ipywidgets as _
+        import ipywidgets as _  # noqa
     except ImportError:
         pass
     else:
-        from tqdm.auto import tqdm, trange
+        from tqdm.auto import tqdm, trange  # noqa
