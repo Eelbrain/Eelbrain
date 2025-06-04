@@ -747,7 +747,7 @@ class TTestIndependent(TTest):
         groups = np.arange(n) < n1
         c1_data, c0_data = y[groups], y[~groups]
         c1_mean, c0_mean = c1_data.mean(), c0_data.mean()
-        pooled_variance = ((c1_data - c1_mean).var(ddof=1) * (n1-1) + (c0_data - c0_mean).var(ddof=1) * (n0-1)) / (n-2)
+        pooled_variance = ((c1_data - c1_mean).var(ddof=1) * (n1 - 1) + (c0_data - c0_mean).var(ddof=1) * (n0 - 1)) / (n - 2)
         difference = c1_mean - c0_mean
         groups.dtype = np.int8
         t = stats.t_ind(y.x[:, None], groups)[0]
@@ -1551,7 +1551,7 @@ class bootstrap_pairwise:
     def table(self):
         table = fmtxt.Table('lrrrr')
         table.title(self.title)
-        table.caption("Results based on %i samples" % self._n_samples)
+        table.caption(f"Results based on {self._n_samples} samples")
         table.cell('Comparison')
         table.cell(fmtxt.symbol('t', self._df))
         table.cell(fmtxt.symbol('p', 'param'))
@@ -1563,10 +1563,7 @@ class bootstrap_pairwise:
         stars_parametric = star(p_corr)
         stars_boot = star(self._p_boot)
 
-        for name, t, p1, pc, s1, p2, s2 in zip(self._comp_names, self.t,
-                                                self._p_parametric, p_corr,
-                                                stars_parametric,
-                                                self._p_boot, stars_boot):
+        for name, t, p1, pc, s1, p2, s2 in zip(self._comp_names, self.t, self._p_parametric, p_corr, stars_parametric, self._p_boot, stars_boot):
             table.cell(name)
             table.cell(t, fmt='%.2f')
             table.cell(fmtxt.p(p1))

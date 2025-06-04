@@ -1295,7 +1295,7 @@ class Row(list):
             lines: ListType[str] = []
             for raw_line in raw_lines:
                 if len(raw_line) > target_len:  # TODO: nicer splitting
-                    lines += [raw_line[i: i+target_len] for i in range(0, len(raw_line), target_len)]
+                    lines += [raw_line[i: i + target_len] for i in range(0, len(raw_line), target_len)]
                 else:
                     lines.append(raw_line)
             # justify text

@@ -414,7 +414,7 @@ def epochs(
         Alternative to ``tmax``. While ``tmax`` specifies the last samples to
         include, ``tstop`` specifies the sample before which to stop (standard
         Python indexing convention).
-        For example, at 100 Hz the epoch with ``tmin=-0.1, tmax=0.4`` will have 
+        For example, at 100 Hz the epoch with ``tmin=-0.1, tmax=0.4`` will have
         51 samples, while the epoch specified with ``tmin=-0.1, tstop=0.4`` will
         have 50 samples.
     sysname
@@ -516,10 +516,10 @@ def add_epochs(ds, tmin=-0.1, tmax=0.6, baseline=None, decim=1, mult=1,
         inferred automatically for KIT data converted with a recent version of
         MNE-Python).
     tstop : scalar
-        Alternative to ``tmax``: While ``tmax`` specifies the last samples to 
-        include, ``tstop`` can be used to specify the epoch time excluding the 
+        Alternative to ``tmax``: While ``tmax`` specifies the last samples to
+        include, ``tstop`` can be used to specify the epoch time excluding the
         last time point (i.e., standard Python/Eelbrain indexing convention).
-        For example, at 100 Hz the epoch with ``tmin=-0.1, tmax=0.4`` will have 
+        For example, at 100 Hz the epoch with ``tmin=-0.1, tmax=0.4`` will have
         51 samples, while the epoch specified with ``tmin=-0.1, tstop=0.4`` will
         have 50 samples.
 
@@ -634,7 +634,7 @@ def mne_epochs(ds, tmin=-0.1, tmax=None, baseline=None, i_start='i_start',
         Alternative to ``tmax``. While ``tmax`` specifies the last samples to
         include, ``tstop`` specifies the sample before which to stop (standard
         Python indexing convention).
-        For example, at 100 Hz the epoch with ``tmin=-0.1, tmax=0.4`` will have 
+        For example, at 100 Hz the epoch with ``tmin=-0.1, tmax=0.4`` will have
         51 samples, while the epoch specified with ``tmin=-0.1, tstop=0.4`` will
         have 50 samples.
     ...
@@ -971,7 +971,7 @@ def variable_length_mne_epochs(
             else:
                 missing = (i_max - raw.last_samp) / raw.info['sfreq']
                 raise ValueError(f"{tmax[i]=} is outside of data range by {missing:g} s")
-        epochs_i = mne.Epochs(raw, events_array[i:i+1], None, tmin_i, tmax_i, baseline, picks, preload=True, decim=decim, **kwargs)
+        epochs_i = mne.Epochs(raw, events_array[i:i + 1], None, tmin_i, tmax_i, baseline, picks, preload=True, decim=decim, **kwargs)
         out.append(epochs_i)
     return out
 
@@ -1355,7 +1355,7 @@ def forward_operator(
 
 def inverse_operator(inv, src, subjects_dir=None, parc='aparc', name=None):
     """Load inverse operator as :class:`NDVar`
-    
+
     Parameters
     ----------
     inv : str | mne.minimum_norm.InverseOperator

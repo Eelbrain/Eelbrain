@@ -40,8 +40,7 @@ def test_glassbrain():
     # thresholding
     p = plot.GlassBrain(ndvar_30, colorbar=True, cmap='copper', threshold=1.8e-9)
     p.close()
-    p = plot.GlassBrain(ndvar_30, colorbar=True, cmap='copper', threshold=1.8e-9,
-                    vmin=-3.6e-9, vmax=3.6e-9)
+    p = plot.GlassBrain(ndvar_30, colorbar=True, cmap='copper', threshold=1.8e-9, vmin=-3.6e-9, vmax=3.6e-9)
     p.close()
 
     # time series

@@ -82,7 +82,7 @@ def copy_file(path):
             data_object = wx.FileDataObject()
             data_object.AddFile(path)
             wx.TheClipboard.SetData(data_object)
-        except:
+        except BaseException:
             wx.TheClipboard.Close()
             raise
         else:
@@ -94,7 +94,7 @@ def copy_text(text):
         try:
             data_object = wx.TextDataObject(text)
             wx.TheClipboard.SetData(data_object)
-        except:
+        except BaseException:
             wx.TheClipboard.Close()
             raise
         else:

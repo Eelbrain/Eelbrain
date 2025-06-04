@@ -408,7 +408,7 @@ class CachedRawPipe(RawPipe):
         # save
         try:
             raw.save(path, overwrite=True)
-        except:
+        except BaseException:
             # clean up potentially corrupted file
             if exists(path):
                 remove(path)

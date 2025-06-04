@@ -305,7 +305,7 @@ class LM(MultiEffectNDTest):
 
 class LMGroup:
     """Group level analysis for linear model :class:`LM` objects
-    
+
     Parameters
     ----------
     lms : sequence of LM

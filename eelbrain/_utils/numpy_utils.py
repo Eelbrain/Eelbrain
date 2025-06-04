@@ -11,7 +11,7 @@ FULL_AXIS_SLICE = (FULL_SLICE,)
 INT_TYPES = (int, np.integer)
 
 
-def digitize_index(index: float, values: np.ndarray, tol: float=None):
+def digitize_index(index: float, values: np.ndarray, tol: float = None):
     """Locate a scalar ``index`` on ``values``
 
     Parameters

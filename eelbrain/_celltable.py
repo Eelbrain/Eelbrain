@@ -85,7 +85,6 @@ class Celltable:
     groups : dict(cell -> group)
         A slice of the match argument describing the group members for each
         cell.
-
     """
     def __init__(
             self,

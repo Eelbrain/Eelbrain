@@ -194,7 +194,7 @@ def frequencies(
             raise RuntimeError("y=%r" % (y,))
         n = np.fromiter((np.sum(y == cell) for cell in cells), int, len(cells))
         n_underline = 0
-        while (key := 'n' + '_'*n_underline) in out:
+        while (key := 'n' + '_' * n_underline) in out:
             n_underline += 1
         out[key] = Var(n)
         return out
@@ -403,7 +403,7 @@ def melt_ndvar(
             raise KeysMissing(missing, 'labels', labels)
         label = itemgetter(labels)
     elif labels is None:
-        label = lambda x: x
+        def label(x): return x
     else:
         raise TypeError(f"labels={labels!r}")
 
@@ -446,7 +446,7 @@ def cast_to_ndvar(
         name: str = None,
 ) -> Dataset:
     """Create an NDVar by converting a data column to a dimension
-    
+
     Parameters
     ----------
     y
@@ -460,22 +460,22 @@ def cast_to_ndvar(
     data
         Dataset with data for operation.
     dim
-        Name for the new dimension. Use ``dim='uts'`` to create :class:`UTS` 
+        Name for the new dimension. Use ``dim='uts'`` to create :class:`UTS`
         time dimension from scalar ``dim_values``.
     unit
         Unit for :class:`UTS` dimension (ignored otherwise).
     name
         Name for the new :class:`NDVar` (the default is the name of ``data``).
-        
+
     Returns
     -------
     short_ds
-        Copy of ``ds``, aggregated over ``dim_values``, and with an 
+        Copy of ``ds``, aggregated over ``dim_values``, and with an
         :class:`NDVar` containing the values form ``data`` and a new dimension
-        reflecting ``dim_values``. If ``dim_values`` is a Factor, the new 
-        dimension is :class:`Categorial`; if ``dim_values`` is a :class:`Var`, 
+        reflecting ``dim_values``. If ``dim_values`` is a Factor, the new
+        dimension is :class:`Categorial`; if ``dim_values`` is a :class:`Var`,
         it is :class:`Scalar`. The new dimension's name is ``dim``. The only
-        exception to this is that when ``dim='uts'``, the new dimension is 
+        exception to this is that when ``dim='uts'``, the new dimension is
         :class:`UTS` named ``'time'``.
 
     See Also

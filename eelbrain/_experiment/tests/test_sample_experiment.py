@@ -41,7 +41,7 @@ def test_sample():
     assert ds.n_cases == 20
     ds = e.load_selected_events(epoch='av')
     assert ds.n_cases == 39
-    
+
     # evoked cache invalidated by change in bads
     e.set('R0001', rej='', epoch='target')
     ds = e.load_evoked(ndvar=False)
@@ -88,6 +88,7 @@ def test_sample():
     # use multiple of tstep to shift by even number of samples
     tstep = 0.008324800548266162
     shift = -7 * tstep
+
     class Experiment(SampleExperiment):
         epochs = {
             **SampleExperiment.epochs,
@@ -258,6 +259,7 @@ def test_sample():
     labels = e.load_annot(parc='ac', mrisubject='fsaverage')
     assert len(labels) == 4
     # change parc definition
+
     class Experiment(SampleExperiment):
         parcs = {
             'ac': SubParc('aparc', ('transversetemporal', 'superiortemporal')),
@@ -292,7 +294,7 @@ def test_sample_source():
     ress = e.load_test('twostage', 0.05, 0.2, 0.05, samples=100, data='source.rms', parc='ac', make=True)
     res = ress.res['transversetemporal-lh']
     assert res.samples == -1
-    assert res.tests['intercept'].p.min() == 1/7
+    assert res.tests['intercept'].p.min() == 1 / 7
 
 
 @requires_mne_sample_data

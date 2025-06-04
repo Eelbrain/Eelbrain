@@ -102,7 +102,7 @@ def test_plot_colors():
     w0, h0 = p.figure.get_size_inches()
     p.close()
 
-    p = plot.ColorList(colors, labels={'A': 'A'*50, 'B': 'Bbb'})
+    p = plot.ColorList(colors, labels={'A': 'A' * 50, 'B': 'Bbb'})
     w, h = p.figure.get_size_inches()
     assert h == h0
     assert w > w0

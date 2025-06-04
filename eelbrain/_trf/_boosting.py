@@ -894,7 +894,7 @@ class Boosting:
 
                 if evaluators_v and i_y % n_vec == n_vec - 1:
                     i_vec = i_y // n_vec
-                    i_y_vec = slice(i_y-n_vec+1, i_y+1)
+                    i_y_vec = slice(i_y - n_vec + 1, i_y + 1)
                     y_pred_i_vec = y_pred[i_y_vec] if debug else y_pred
                     for e in evaluators_v:
                         e.add_y(i_vec, self.data.y[i_y_vec], y_pred_i_vec)
@@ -1006,7 +1006,7 @@ def boosting(
         Scale ``y`` and ``x`` before boosting: subtract the mean and divide by
         the standard deviation (when ``error='l2'``) or the mean absolute
         value (when ``error='l1'``). Use ``'inplace'`` to save memory by scaling
-        the original objects specified as ``y`` and ``x`` instead of making a 
+        the original objects specified as ``y`` and ``x`` instead of making a
         copy. The data scale is stored in the :class:`BoostingResult:
         :attr:`.y_mean``, :attr:`.y_scale`, :attr:`.x_mean`, and :attr:`.x_scale`
         attributes.

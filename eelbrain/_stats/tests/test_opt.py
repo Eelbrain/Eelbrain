@@ -23,5 +23,5 @@ def test_t_1samp():
     t_perm = np.empty_like(t)
     for sign in permute_sign_flip(n_cases, 2):
         opt.t_1samp_perm(y, t_perm, sign)
-        opt.t_1samp(y * sign[:,None], t)
+        opt.t_1samp(y * sign[:, None], t)
         assert_allclose(t_perm, t)

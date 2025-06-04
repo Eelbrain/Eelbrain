@@ -47,7 +47,7 @@ def scatter_table(
     cbar_column = 1 if n_xs > 2 else 2
     xs_columns = xs[1:] if n_xs > 2 else [xs[1], None]
     # generate table
-    table = fmtxt.Table('l' * max(2, (n_xs-1)))
+    table = fmtxt.Table('l' * max(2, (n_xs - 1)))
     for i_row, y in enumerate(xs):
         for i_column, x in enumerate(xs_columns, 1):
             if i_column == cbar_column and i_row == cbar_row and color is not None:

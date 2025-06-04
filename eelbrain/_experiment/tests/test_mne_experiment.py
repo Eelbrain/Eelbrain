@@ -128,23 +128,23 @@ def test_mne_experiment_templates():
     assert_inv_works(e, 'free-3-MNE',
                      ('free', 3, 'MNE'),
                      {'loose': 1, 'depth': 0.8},
-                     {'method': 'MNE', 'lambda2': 1/9})
+                     {'method': 'MNE', 'lambda2': 1 / 9})
     assert_inv_works(e, 'free-3-dSPM-0.2-pick_normal',
                      ('free', 3, 'dSPM', .2, True),
                      {'loose': 1, 'depth': 0.2},
-                     {'method': 'dSPM', 'lambda2': 1/9, 'pick_ori': 'normal'})
+                     {'method': 'dSPM', 'lambda2': 1 / 9, 'pick_ori': 'normal'})
     assert_inv_works(e, 'fixed-2-MNE-0.2',
                      ('fixed', 2, 'MNE', .2),
                      {'fixed': True, 'depth': 0.2},
-                     {'method': 'MNE', 'lambda2': 1/4})
+                     {'method': 'MNE', 'lambda2': 1 / 4})
     assert_inv_works(e, 'loose.2-2-MNE-pick_normal',
                      (0.2, 2, 'MNE', 0.8, True),
                      {'loose': 0.2, 'depth': 0.8},
-                     {'method': 'MNE', 'lambda2': 1/4, 'pick_ori': 'normal'})
+                     {'method': 'MNE', 'lambda2': 1 / 4, 'pick_ori': 'normal'})
     assert_inv_works(e, 'loose.5-3-sLORETA',
                      (0.5, 3, 'sLORETA'),
                      {'loose': 0.5, 'depth': 0.8},
-                     {'method': 'sLORETA', 'lambda2': 1/9})
+                     {'method': 'sLORETA', 'lambda2': 1 / 9})
     assert_inv_works(e, 'fixed-1-MNE-0',
                      ('fixed', 1, 'MNE', 0),
                      {'fixed': True, 'depth': None},

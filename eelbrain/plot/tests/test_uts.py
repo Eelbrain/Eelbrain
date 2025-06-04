@@ -105,9 +105,9 @@ def test_uts():
 
     # multiple y with xax
     y1 = ds.eval("uts[(A == 'a1') & (B == 'b1')]")
-    y1.name='y'
+    y1.name = 'y'
     y2 = ds.eval("uts[(A == 'a0') & (B == 'b1')]")
-    y2.name='y2'
+    y2.name = 'y2'
     rm = ds.eval("rm[(A == 'a0') & (B == 'b1')]")
     p = plot.UTS(y1, rm)
     p.close()

@@ -49,7 +49,7 @@ class DataSplit(EelFigure, LegendMixin):
             colors = colors_for_oneway(attrs, unambiguous=[6, 3, 5])
 
         h_default = max(2, 0.5 + 0.15 * len(splits.splits))
-        layout = Layout(1, 16/9, h_default, **kwargs)
+        layout = Layout(1, 16 / 9, h_default, **kwargs)
         EelFigure.__init__(self, None, layout)
         ax = self.figure.axes[0]
 
@@ -63,15 +63,15 @@ class DataSplit(EelFigure, LegendMixin):
                     continue
                 rect = None
                 for x0, x1 in segments:
-                    rect = Rectangle((x0, y-0.5), x1-x0, 1, color=colors[attr])
+                    rect = Rectangle((x0, y - 0.5), x1 - x0, 1, color=colors[attr])
                     ax.add_artist(rect)
                 handles[attr] = rect
             # separate splits
             if y:
-                ax.axhline(y-0.5, color='white')
+                ax.axhline(y - 0.5, color='white')
         labels = {key: labels[key] for key in handles}
         ax.set_ylabel('Split')
-        ax.set_ylim(-0.5, len(splits.splits)-0.5)
+        ax.set_ylim(-0.5, len(splits.splits) - 0.5)
         ax.yaxis.set_major_locator(MaxNLocator(integer=True))
         if xlabel:
             ax.set_xlabel(xlabel)

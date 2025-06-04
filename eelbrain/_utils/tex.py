@@ -53,7 +53,7 @@ def convert(tex_source, input_format, output_format, max_runs=5):
             ('latex', 'dvi'): ('latex',    '.dvi'),
             ('tex',   'pdf'): ('pdftex',   '.pdf'),
             ('latex', 'pdf'): ('pdflatex', '.pdf'),
-            }[(input_format, output_format)]
+        }[(input_format, output_format)]
     except KeyError:
         raise ValueError('Unable to handle conversion: %s -> %s'
                          % (input_format, output_format))

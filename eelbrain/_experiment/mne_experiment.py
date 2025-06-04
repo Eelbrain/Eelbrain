@@ -2035,7 +2035,7 @@ class MneExperiment(FileTree):
 
     def load_bad_channels(self, **kwargs):
         """Load bad channels
-        
+
         Parameters
         ----------
         ...
@@ -2096,7 +2096,7 @@ class MneExperiment(FileTree):
 
     def load_edf(self, **kwargs):
         """Load the edf file ("edf-file" template)
-        
+
         Parameters
         ----------
         ...
@@ -2248,7 +2248,7 @@ class MneExperiment(FileTree):
         if isinstance(epoch, ContinuousEpoch):
             # find splitting points
             split_threshold = epoch.split + (epoch.pad_end + epoch.pad_start)
-            diff = ds['T'].diff(to_begin=split_threshold+1)
+            diff = ds['T'].diff(to_begin=split_threshold + 1)
             onsets = np.flatnonzero(diff >= split_threshold)
             # make sure we are not messing up user events
             if illegal := {'T_relative', 'events', 'tmax'}.intersection(ds):
@@ -3222,9 +3222,9 @@ class MneExperiment(FileTree):
             Object which provides the mne info dictionary (default: load the
             raw file).
         ndvar
-            Return the inverse operator as NDVar (default is 
-            :class:`mne.minimum_norm.InverseOperator`). The NDVar representation 
-            does not take into account any direction selectivity (loose/free 
+            Return the inverse operator as NDVar (default is
+            :class:`mne.minimum_norm.InverseOperator`). The NDVar representation
+            does not take into account any direction selectivity (loose/free
             orientation) or noise normalization properties.
         mask
             Discard data that is labelled ``unknown`` by the parcellation.
@@ -3643,7 +3643,7 @@ class MneExperiment(FileTree):
                             raw = raw_
                         else:
                             ds['i_start'] += raw.last_samp + 1 - raw_.first_samp
-                            raw.append(raw_) # FIXME: if one is cached and not the other, they may be different types
+                            raw.append(raw_)  # FIXME: if one is cached and not the other, they may be different types
 
             # combine bad channels
             ds = combine(dss)
@@ -3772,7 +3772,7 @@ class MneExperiment(FileTree):
             **state,
     ) -> Union[mne.SourceSpaces, SourceSpace, VolumeSourceSpace]:
         """Load the current source space
-        
+
         Parameters
         ----------
         add_geom
@@ -3884,7 +3884,7 @@ class MneExperiment(FileTree):
             If the target file does not exist, create it (could take a long
             time depending on the test; if False, raise an IOError).
         ...
-            State parameters (Use the ``group`` state parameter to select the 
+            State parameters (Use the ``group`` state parameter to select the
             subject group for which to perform the test).
 
         Returns
@@ -4963,7 +4963,7 @@ class MneExperiment(FileTree):
 
     def make_raw(self, **kwargs):
         """Make a raw file
-        
+
         Parameters
         ----------
         ...
@@ -5709,7 +5709,7 @@ class MneExperiment(FileTree):
 
     def make_src(self, **state):
         """Make the source space
-        
+
         Parameters
         ----------
         ...
@@ -6201,9 +6201,9 @@ class MneExperiment(FileTree):
                 ys = [ds[src_key]]
             for y in ys:
                 if is_volume_source_space:
-                    plots = plot.GlassBrain.butterfly(y, w=2*h, h=h, name=title)
+                    plots = plot.GlassBrain.butterfly(y, w=2 * h, h=h, name=title)
                 else:
-                    plots = plot.brain.butterfly(y, w=2*h, h=h, name=title)
+                    plots = plot.brain.butterfly(y, w=2 * h, h=h, name=title)
                 out.extend(plots)
             right_of = out[2]
         else:
@@ -6959,7 +6959,7 @@ class MneExperiment(FileTree):
             n_selected = [row[-1] for row in rows]
             mark_unselected = any(n_selected) and not all(n_selected)
 
-            table = fmtxt.Table('lrr' + 'r'*mark_unselected)
+            table = fmtxt.Table('lrr' + 'r' * mark_unselected)
             table.cells('Subject', 'n components', 'reject')
             if mark_unselected:
                 table.cell('*')

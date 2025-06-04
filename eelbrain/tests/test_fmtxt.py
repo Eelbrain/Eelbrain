@@ -128,7 +128,7 @@ def test_table():
     table.cells('a1', 'b1', 'a2', 'b2')
     assert str(table) == 'A    B \n-------\na1   b1\na2   b2'
     assert html(table) == '<figure><table border="1" frame="hsides" rules="none" cellpadding="2"><tr>\n<td style="text-align:left">A</td>\n<td style="text-align:left">B</td>\n</tr>\n<tr>\n<td style="text-align:left">a1</td>\n<td style="text-align:left">b1</td>\n</tr>\n<tr>\n<td style="text-align:left">a2</td>\n<td style="text-align:left">b2</td>\n</tr></table></figure>'
-    assert table.get_rtf() ==(
+    assert table.get_rtf() == (
         '\\trowd\n\\cellx0000\n\\cellx1000\n\\row\n'
         'A\\intbl\\cell\nB\\intbl\\cell\n\\row\n'
         'a1\\intbl\\cell\nb1\\intbl\\cell\n\\row\n'

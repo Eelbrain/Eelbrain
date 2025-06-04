@@ -671,7 +671,7 @@ def find_labels(
         elif isinstance(cell, str):
             label = cell
         elif isinstance(cell, tuple):
-            label = cellname([labels_arg.get(item, item) for item  in cell], delim)
+            label = cellname([labels_arg.get(item, item) for item in cell], delim)
         else:
             raise TypeError(f"{cell=}")
         labels[cell] = label
@@ -2369,8 +2369,8 @@ class Layout(BaseLayout):
         dpi
             DPI for the figure (default is to use matplotlib rc parameters).
         margins
-            Absolute subplot parameters (in inches). Implies ``tight=False``. 
-            If ``margins`` is specified, ``axw`` and ``axh`` are interpreted 
+            Absolute subplot parameters (in inches). Implies ``tight=False``.
+            If ``margins`` is specified, ``axw`` and ``axh`` are interpreted
             exclusive of the margins, i.e., ``axh=2, margins={'top': .5}`` for
             a plot with one axes will result in a total height of 2.5.
         show
@@ -2380,7 +2380,7 @@ class Layout(BaseLayout):
             Run the Eelbrain GUI app (default is True for interactive plotting and
             False in scripts).
         frame : bool | 't' | 'none'
-            Draw frame around axes: 
+            Draw frame around axes:
             - True: all four spines
             - False: only spines with ticks
             - 't': spines at x=0 and y=0

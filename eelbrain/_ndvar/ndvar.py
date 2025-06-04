@@ -153,7 +153,7 @@ def concatenate(
                     out_dim = set_tmin(out_dim, tmin)
             x = np.concatenate([v.get_data(dim_names) for v in ndvars], axis)
         dims = ndvar.get_dims(dim_names)
-        dims = (*dims[:axis], out_dim, *dims[axis+1:])
+        dims = (*dims[:axis], out_dim, *dims[axis + 1:])
     return NDVar(x, dims, name or ndvar.name, info)
 
 
@@ -360,20 +360,20 @@ def correlation_coefficient(x, y, dim=None, name=None):
 
 def cross_correlation(in1, in2, name=None):
     """Cross-correlation between two NDVars along the time axis
-    
+
     Parameters
     ----------
     in1 : NDVar  (time,)
         First NDVar.
     in2 : NDVar  (time,)
         Second NDVar.
-    name : str  
+    name : str
         Name for the new NDVar.
-        
+
     Returns
     -------
     NDVar  (time,)
-        Cross-correlation between ``in1`` and ``in2``, with a time axis 
+        Cross-correlation between ``in1`` and ``in2``, with a time axis
         reflecting time shift.
     """
     x1 = in1.get_data(('time',))
@@ -490,12 +490,12 @@ def dss(ndvar) -> (NDVar, NDVar):
     -----
     the method is described in  [1]_. This function uses the implementation from
     the `mne-sandbox <https://github.com/mne-tools/mne-sandbox>`_.
-    
+
     References
     ----------
-    .. [1] de Cheveigné, A., & Simon, J. Z. (2008). Denoising based on spatial 
-        filtering. Journal of Neuroscience Methods, 171(2), 331–339. 
-        `10.1016/j.jneumeth.2008.03.015 
+    .. [1] de Cheveigné, A., & Simon, J. Z. (2008). Denoising based on spatial
+        filtering. Journal of Neuroscience Methods, 171(2), 331–339.
+        `10.1016/j.jneumeth.2008.03.015
         <https://doi.org/10.1016/j.jneumeth.2008.03.015>`_
 
     """
@@ -627,12 +627,12 @@ def find_intervals(ndvar, interpolate=False):
 
 def find_peaks(ndvar):
     """Find local maxima in an NDVar
-    
+
     Parameters
     ----------
     ndvar : NDVar
         Data in which to find peaks.
-    
+
     Returns
     -------
     peaks : NDVar of bool
@@ -734,7 +734,7 @@ def gaussian(center: float, width: float, time: UTS):
 def label_operator(labels, operation='mean', exclude=None, weights=None,
                    dim_name='label', dim_values=None):
     """Convert labeled NDVar into a matrix operation to extract label values
-    
+
     Parameters
     ----------
     labels : NDVar of int
@@ -742,19 +742,19 @@ def label_operator(labels, operation='mean', exclude=None, weights=None,
     operation : 'mean' | 'sum'
         Whether to extract the label mean or sum.
     exclude : array_like
-        Values to exclude (i.e., use ``exclude=0`` to ignore the area where 
+        Values to exclude (i.e., use ``exclude=0`` to ignore the area where
         ``labels==0``.
     weights : NDVar
-        NDVar with same dimension as ``labels`` to assign weights to label 
+        NDVar with same dimension as ``labels`` to assign weights to label
         elements.
     dim_name : str
         Name for the dimension characterized by labels (default ``"label"``).
     dim_values : dict
-        Dictionary mapping label ids (i.e., values in ``labels``) to values on 
-        the dimension characterized by labels. If values are strings the new 
+        Dictionary mapping label ids (i.e., values in ``labels``) to values on
+        the dimension characterized by labels. If values are strings the new
         dimension will be categorical, if values are scalar it will be Scalar.
         The default values are the integers in ``labels``.
-    
+
     Returns
     -------
     m : NDVar
@@ -1478,7 +1478,7 @@ def set_time(
     if start_pad > 0 or end_pad > 0:
         no_pad = (0, 0)
         pad = (max(0, start_pad), max(0, end_pad))
-        pad_width = [*repeat(no_pad, axis), pad, *repeat(no_pad, ndvar.ndim-axis-1)]
+        pad_width = [*repeat(no_pad, axis), pad, *repeat(no_pad, ndvar.ndim - axis - 1)]
         x = np.pad(x, pad_width, mode, **kwargs)
-    dims = [*ndvar.dims[:axis], time, *ndvar.dims[axis+1:]]
+    dims = [*ndvar.dims[:axis], time, *ndvar.dims[axis + 1:]]
     return NDVar(x, dims, name, ndvar.info)

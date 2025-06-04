@@ -462,9 +462,9 @@ class ColorBar(EelFigure):
                 else:
                     height = source_bbox.bounds[3]
                 if right_of:
-                    x0 = source_bbox.x1 + 2*thickness
+                    x0 = source_bbox.x1 + 2 * thickness
                 else:
-                    x0 = source_bbox.x0 - 3*thickness
+                    x0 = source_bbox.x0 - 3 * thickness
                     if ticklocation == 'auto':
                         ticklocation = 'left'
                 if offset:
@@ -479,7 +479,7 @@ class ColorBar(EelFigure):
                     x0 += (source_bbox.bounds[2] - ax_width) / 2
                 else:
                     ax_width = source_bbox.bounds[2]
-                y0 = source_bbox.y0 - 3*thickness
+                y0 = source_bbox.y0 - 3 * thickness
                 if offset:
                     y0 += inch_to_figure(figure, y=offset)
                 rect = (x0, y0, ax_width, thickness)
@@ -561,7 +561,7 @@ class ColorBar(EelFigure):
                 stop = None
             else:
                 stop = np.digitize(clipmax, boundaries) + 1
-                boundaries[stop-1] = clipmax
+                boundaries[stop - 1] = clipmax
             boundaries = boundaries[start:stop]
         else:
             boundaries = None

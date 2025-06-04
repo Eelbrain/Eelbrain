@@ -35,6 +35,7 @@ SYMMETRIC_CMAPS = []
 ZEROBASED_CMAPS = []
 ALPHA_CMAPS = {}  # corresponding cmaps with transparency (alpha channel)
 
+
 def register_cmap(
         cmap: matplotlib.colors.Colormap,
         symmetric: bool = False,
@@ -123,7 +124,7 @@ def make_seq_cmap(seq, val, name):
 
 def unambiguous_color(color: str, lightness: float = None, chroma: float = None):
     """Generate an `unambiguous color <https://jfly.uni-koeln.de/html/color_blind/#pallet>`_
-    
+
     Parameters
     ----------
     color

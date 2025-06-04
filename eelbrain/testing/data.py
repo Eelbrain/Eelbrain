@@ -24,6 +24,6 @@ def generate_sound():
                  zip(carrier_frequencies, modulation_indices, modulators))
 
     signal /= numpy.max(signal)
-    return NDVar(signal, UTS(0, 1/sample_rate, duration*sample_rate))
+    return NDVar(signal, UTS(0, 1 / sample_rate, duration * sample_rate))
 
     # gt = gammatone_bank(s, 20, 20000, 128, 1 / 100)
