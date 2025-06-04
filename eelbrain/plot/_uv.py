@@ -994,9 +994,8 @@ class _ax_timeplot:
                     labels = None
                 else:
                     raise ValueError("timelabels=%r" % (timelabels,))
-            elif (not isinstance(timelabels, Sequence) or
-                  not len(timelabels) == len(time_points)):
-                raise TypeError(f"timelabels={timelabels}; needs to be a sequence whose length equals the number of time points ({len(time_points)})")
+            elif not isinstance(timelabels, Sequence) or not len(timelabels) == len(time_points):
+                raise TypeError(f"{timelabels=}; needs to be a sequence whose length equals the number of time points ({len(time_points)})")
             else:
                 locations = time_points
                 labels = [str(l) for l in timelabels]

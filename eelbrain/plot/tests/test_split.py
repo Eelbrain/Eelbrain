@@ -1,5 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-from eelbrain import datasets, plot, boosting, epoch_impulse_predictor
+from eelbrain import datasets, boosting, epoch_impulse_predictor
 from eelbrain.testing import hide_plots
 
 

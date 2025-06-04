@@ -5,7 +5,7 @@ from typing import Any, Union, Sequence, Tuple
 import matplotlib.axes
 import numpy as np
 
-from .._data_obj import NDVarArg, CategorialArg, IndexArg, Datalist, Dataset, NDVar
+from .._data_obj import NDVarArg, CategorialArg, IndexArg, Datalist, Dataset
 from .._stats.testnd import NDTest
 from .._names import INTERPOLATE_CHANNELS
 from .._utils import deprecate_ds_arg

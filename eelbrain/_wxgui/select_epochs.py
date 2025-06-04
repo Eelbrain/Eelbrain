@@ -78,8 +78,7 @@ def _epoch_list_to_ranges(elist):
         elif start is None:
             out.append(fmtxt.Link(cur, 'epoch:%i' % cur))
         else:
-            out.append(fmtxt.Link(start, 'epoch:%i' % start) + '-' +
-                       fmtxt.Link(cur, 'epoch:%i' % cur))
+            out.append(fmtxt.Link(start, 'epoch:%i' % start) + '-' + fmtxt.Link(cur, 'epoch:%i' % cur))
             start = None
         i += 1
     return out

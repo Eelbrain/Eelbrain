@@ -55,7 +55,7 @@ from io import BytesIO, StringIO
 import tempfile
 import time
 from types import MappingProxyType
-from typing import Any, Union, Iterable, List as ListType, Sequence, Tuple
+from typing import Any, Union, Iterable, List as ListType, Sequence
 import webbrowser
 
 import numpy as np

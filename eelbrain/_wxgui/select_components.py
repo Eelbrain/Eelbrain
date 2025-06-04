@@ -1455,7 +1455,7 @@ class FindNoisyEpochsDialog(EelbrainDialog):
         threshold = config.ReadFloat(f"FindNoisyEpochsDialog/threshold_{unit}", self._default_threshold())
         apply_rejection = config.ReadBool("FindNoisyEpochsDialog/apply_rejection", True)
         sort_by_component = config.ReadBool("FindNoisyEpochsDialog/sort_by_component", True)
-        max_ch_ratio = config.Read(f"FindNoisyEpochsDialog/max_ch_ratio", '')
+        max_ch_ratio = config.Read("FindNoisyEpochsDialog/max_ch_ratio", '')
 
         sizer = wx.BoxSizer(wx.VERTICAL)
 
@@ -1522,7 +1522,7 @@ class FindNoisyEpochsDialog(EelbrainDialog):
         config.WriteFloat(f"FindNoisyEpochsDialog/threshold_{self.unit}", float(self.threshold.GetValue()))
         config.WriteBool("FindNoisyEpochsDialog/apply_rejection", self.apply_rejection.GetValue())
         config.WriteBool("FindNoisyEpochsDialog/sort_by_component", self.sort_by_component.GetValue())
-        config.Write(f"FindNoisyEpochsDialog/max_ch_ratio", self.max_ch_ratio.GetValue())
+        config.Write("FindNoisyEpochsDialog/max_ch_ratio", self.max_ch_ratio.GetValue())
         config.Flush()
 
 

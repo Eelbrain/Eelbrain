@@ -568,7 +568,7 @@ class _plt_uts:
             nonzero[0] = True
             nonzero[-1] = True
             color = matplotlib.colors.to_hex(style.color)
-            self.plot_handle = ax.stem(x[nonzero], y[nonzero], bottom=0, linefmt=color, markerfmt=' ', basefmt=f'#808080', label=label)
+            self.plot_handle = ax.stem(x[nonzero], y[nonzero], bottom=0, linefmt=color, markerfmt=' ', basefmt='#808080', label=label)
         else:
             kwargs = layer.plot_args(style.line_args)
             self.plot_handle = ax.plot(x, y, label=label, clip_on=clip, **kwargs)[0]

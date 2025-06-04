@@ -582,29 +582,28 @@ class BoostingResult(PickleableDataClass):
             dim: str = 'source',
     ):
         "Combine multiple complementary source-space BoostingResult objects"
-        # result = results[0]
         out = {}
-        for field in fields(cls):
-            if field.name == 'version':
+        for field_i in fields(cls):
+            if field_i.name == 'version':
                 continue
-            elif field.name == '_isnan':
+            elif field_i.name == '_isnan':
                 out['_isnan'] = None
                 continue
-            values = [getattr(result, field.name) for result in results]
-            if field.name == 't_run':
+            values = [getattr(result, field_i.name) for result in results]
+            if field_i.name == 't_run':
                 out['t_run'] = None if any(v is None for v in values) else sum(values)
                 continue
-            if field.name == 'partition_results' and any(v is not None for v in values):
+            if field_i.name == 'partition_results' and any(v is not None for v in values):
                 if not all(v is not None for v in values):
-                    raise ValueError(f'partition_results available for some but not all part-results')
+                    raise ValueError('partition_results available for some but not all part-results')
                 new_value = [cls._eelbrain_concatenate(p_results) for p_results in zip(*values)]
-            elif field.name in ('algorithm_version',):
+            elif field_i.name in ('algorithm_version',):
                 values = set(values)
                 if len(values) == 1:
                     new_value = values.pop()
                 else:
                     new_value = tuple(sorted(values))
-            elif field.name == 'execution_context':
+            elif field_i.name == 'execution_context':
                 new_values = values[:1]
                 for value in values[1:]:
                     if value not in new_values:
@@ -616,8 +615,8 @@ class BoostingResult(PickleableDataClass):
             elif any(v is None for v in values):
                 new_value = None
             else:
-                new_value = _concatenate_values(values, dim, field.name)
-            out[field.name] = new_value
+                new_value = _concatenate_values(values, dim, field_i.name)
+            out[field_i.name] = new_value
         return cls(**out)
 
 
@@ -826,7 +825,7 @@ class Boosting:
         # fit evaluation
         if metrics is None:
             if self.data.vector_dim:
-                metrics = [f'vec-{self.error}', f'vec-corr']
+                metrics = [f'vec-{self.error}', 'vec-corr']
                 if self.error == 'l1':
                     metrics.append('vec-corr-l1')
             else:

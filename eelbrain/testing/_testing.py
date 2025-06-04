@@ -57,7 +57,7 @@ def assert_dataobj_equal(d1, d2, decimal=None, name=True):
     name : bool
         Assert that ``d1.name == d2.name``.
     """
-    assert type(d1) == type(d2)
+    assert type(d1) == type(d2)  # noqa: E721
     if name:
         assert d1.name == d2.name
     assert len(d1) == len(d2)

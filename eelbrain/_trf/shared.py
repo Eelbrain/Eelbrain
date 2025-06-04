@@ -363,7 +363,6 @@ class DeconvolutionData:
     x_scale = None
     y_mean = None
     y_scale = None
-    x_pads = None
     _x_is_copy: bool = False
     _y_is_copy: bool = False
     scale_data: str = None

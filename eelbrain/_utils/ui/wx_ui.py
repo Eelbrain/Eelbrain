@@ -25,7 +25,7 @@ def ask(
         message: str = "Duplicate filename. Do you want to overwrite?",
         cancel: bool = False,
         default: Optional[bool] = True,  # True=YES, False=NO, None=Nothing
-    ):
+):
     style = wx.YES_NO | wx.ICON_QUESTION
     if cancel:
         style = style | wx.CANCEL
