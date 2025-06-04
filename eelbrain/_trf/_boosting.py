@@ -29,6 +29,7 @@ from typing import Callable, Dict, List, Literal, Optional, Union, Tuple, Sequen
 import warnings
 
 import numpy as np
+from numpy import newaxis
 
 from .._config import CONFIG
 from .._data_obj import Case, Dataset, Dimension, SourceSpaceBase, NDVar, CategorialArg, NDVarArg, dataobj_repr
@@ -444,12 +445,12 @@ class BoostingResult(PickleableDataClass):
         if self.scale_data:
             x_mean = self._x_mean_array[x_use_index]
             x_scale = self._x_scale_array[x_use_index]
-            x_array -= x_mean[:, np.newaxis]
-            x_pads = -(x_mean / x_scale)[np.newaxis]
-            x_array /= x_scale[:, np.newaxis]
+            x_array -= x_mean[:, newaxis]
+            x_pads = -(x_mean / x_scale)[newaxis]
+            x_array /= x_scale[:, newaxis]
         else:
             x_pads = np.zeros((1, len(x_array)))
-        x_array = x_array[np.newaxis, :, :]
+        x_array = x_array[newaxis, :, :]
         # prepare h
         h_i_start = int(round(self.h_time.tmin / self.h_time.tstep))
         # iterate through partitions

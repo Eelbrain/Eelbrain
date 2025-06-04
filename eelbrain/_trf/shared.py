@@ -6,13 +6,13 @@ from operator import mul
 from typing import List, Sequence, Union
 
 import numpy as np
+from numpy import newaxis
 import scipy.signal
 from scipy.linalg import norm
 
 from .. import _info
 from .._data_obj import CategorialArg, NDVarArg, Datalist, Dataset, NDVar, Case, UTS, dataobj_repr, ascategorial, asndvar
 from .._utils import PickleableDataClass, intervals
-from .._utils.numpy_utils import newaxis
 
 
 class EQMixIn:

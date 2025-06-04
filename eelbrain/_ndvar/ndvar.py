@@ -16,6 +16,7 @@ from typing import Any, Callable, Literal, Sequence, Union
 
 import mne
 import numpy as np
+from numpy import newaxis
 import numpy
 from scipy import linalg, ndimage, signal, stats
 
@@ -29,7 +30,7 @@ from .._stats.adjacency import Adjacency
 from .._stats.adjacency import find_peaks as _find_peaks
 from .._trf._fit_metrics import error_for_indexes
 from .._utils import deprecate_ds_arg
-from .._utils.numpy_utils import aslice, newaxis
+from .._utils.numpy_utils import aslice
 from ._convolve import convolve_2d
 
 

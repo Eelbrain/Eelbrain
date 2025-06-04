@@ -120,6 +120,7 @@ from .mne_fixes.legacy_api import label_src_vertno_sel
 import nibabel
 from nibabel.freesurfer import read_annot, read_geometry
 import numpy as np
+from numpy import newaxis
 from numpy.typing import ArrayLike, DTypeLike
 import scipy.interpolate
 import scipy.ndimage
@@ -139,7 +140,7 @@ from ._utils import deprecated, mne_utils, intervals, ui, n_decimals, natsorted
 from ._utils.numpy_utils import (
     INT_TYPES, FULL_SLICE, FULL_AXIS_SLICE,
     aslice, apply_numpy_index, deep_array, digitize_index, digitize_slice_endpoint,
-    index_length, index_to_bool_array, index_to_int_array, newaxis, optimize_index, slice_to_arange)
+    index_length, index_to_bool_array, index_to_int_array, optimize_index, slice_to_arange)
 from .mne_fixes import MNE_EPOCHS, MNE_EVOKED, MNE_RAW, MNE_LABEL
 from functools import reduce
 
@@ -3377,7 +3378,7 @@ class NDVar(Named):
                 return self.dims, self.x, self._ialign(other)
             else:
                 dims = (Case, *self.dims)
-                x_self = self.x[np.newaxis]
+                x_self = self.x[newaxis]
                 x_other = other.x.reshape([-1, *repeat(1, self.ndim)])
                 return dims, x_self, x_other
         elif isinstance(other, NDVar):
@@ -5389,7 +5390,7 @@ class NDVar(Named):
                     raise IndexError(f"Index for {arg.dims[0].name} dimension specified twice.")
             elif arg is newaxis:
                 if i > 0:
-                    raise IndexError("newaxis must be in first index position")
+                    raise IndexError("numpy.newaxis (None) must be in first index position")
                 elif self.has_case:
                     raise IndexError("NDVar already has case dimension")
                 add_axis = True

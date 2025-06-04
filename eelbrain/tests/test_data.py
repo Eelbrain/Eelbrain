@@ -11,6 +11,7 @@ import tempfile
 
 import mne
 import numpy as np
+from numpy import newaxis
 from numpy.testing import (
     assert_equal, assert_array_equal, assert_allclose,
     assert_array_almost_equal)
@@ -26,7 +27,6 @@ from eelbrain._data_obj import (
     assert_has_no_empty_cells)
 from eelbrain._exceptions import DimensionMismatchError
 from eelbrain._stats.stats import rms
-from eelbrain._utils.numpy_utils import newaxis
 from eelbrain.testing import assert_dataobj_equal, assert_dataset_equal, assert_fmtxt_str_equals, assert_source_space_equal, requires_mne_sample_data, skip_on_windows
 
 

@@ -41,9 +41,9 @@ import numbers
 
 import nibabel
 import numpy as np
+from numpy import newaxis
 
 from .._data_obj import NDVarArg, Dataset, VolumeSourceSpace
-from .._utils.numpy_utils import newaxis
 from .._colorspaces import SYMMETRIC_CMAPS
 from ._base import ColorBarMixin, TimeSlicerEF, Layout, EelFigure, brain_data, butterfly_data, use_inline_backend
 from ._utsnd import Butterfly
