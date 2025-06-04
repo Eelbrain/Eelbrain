@@ -1,14 +1,8 @@
 """Data-specific colormaps"""
 from itertools import cycle
-import logging
 from math import ceil
 from numbers import Real
 from typing import Sequence, List, Tuple, Union
-
-# colormath starts out at 0; needs to be set before init
-logger = logging.getLogger('colormath.color_conversions')
-if logger.level == 0:  # otherwise it was probably set by user (DEBUG=10)
-    logger.setLevel(logging.WARNING)
 
 from colormath.color_objects import LCHabColor, sRGBColor
 from colormath.color_conversions import convert_color
