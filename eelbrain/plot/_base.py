@@ -762,13 +762,14 @@ def butterfly_data(
         y_sig = y.mask(non_sig)
         y_ns = y.mask(sig)
         # line-styles
-        from ._colors import Style
         if colors:
             lh_color = '#046AAD'
             rh_color = '#A60628'
             line_color_sig = {'lh': lh_color, 'rh': rh_color}
-            line_color_ns = {'lh': adjust_hsv(lh_color, 0, -0.5, -0.),
-                             'rh': adjust_hsv(rh_color, 0, -0.7, -0.)}
+            line_color_ns = {
+                'lh': adjust_hsv(lh_color, 0, -0.5, -0.),
+                'rh': adjust_hsv(rh_color, 0, -0.7, -0.),
+            }
         else:
             color_sig = (0,) * 3
             color_ns = (.7,) * 3
@@ -790,7 +791,7 @@ def butterfly_data(
             axes.append(AxisData(layers))
         bfly_data = PlotData(axes, ('time', 'source'), plot_names=hemis)
     else:
-        raise RuntimeError(f"kind={kind}")
+        raise RuntimeError(f"{kind=}")
     return hemis, bfly_data, brain_data
 
 

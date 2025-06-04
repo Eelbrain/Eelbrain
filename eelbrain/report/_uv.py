@@ -51,7 +51,7 @@ def scatter_table(
     for i_row, y in enumerate(xs):
         for i_column, x in enumerate(xs_columns, 1):
             if i_column == cbar_column and i_row == cbar_row and color is not None:
-                p_cbar = p.plot_colorbar(orientation='vertical', h=p._layout.h, width=0.2)
+                p_cbar = p.plot_colorbar(orientation='vertical', h=p._layout.h, width=0.2)  # noqa: F821
                 table.cell(fmtxt.asfmtext(p_cbar, rasterize=rasterize))
                 continue
             elif x is None:

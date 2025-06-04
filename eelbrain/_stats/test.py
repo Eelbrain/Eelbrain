@@ -1188,11 +1188,6 @@ def pairwise(
         table.cell(name)
     table.midrule()
 
-    if corr and not mirror:
-        subrows = 3
-    else:
-        subrows = 2
-
     n_stars = 3 + bool(trend)
     for row in range(0, k - 1 + mirror):
         table.cell(cellnames[row])
@@ -1513,8 +1508,7 @@ class bootstrap_pairwise:
                 group_1 = groups[g1]
                 group_2 = groups[g2]
                 diffs = ordered[:, group_1] - ordered[:, group_2]
-                t[:, i] = (np.mean(diffs, axis=1) * np.sqrt(group_size) /
-                           np.std(diffs, axis=1, ddof=1))
+                t[:, i] = np.mean(diffs, axis=1) * np.sqrt(group_size) / np.std(diffs, axis=1, ddof=1)
                 comp_names.append(' - '.join((cells[g1], cells[g2])))
 
             self.diffs = diffs

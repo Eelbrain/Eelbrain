@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy
 
-from .. import NDVar, UTS, gammatone_bank
+from .. import NDVar, UTS
 
 
 TEST_DATA_DIRECTORY = Path(__file__).parents[2] / 'test_data'
@@ -25,5 +25,3 @@ def generate_sound():
 
     signal /= numpy.max(signal)
     return NDVar(signal, UTS(0, 1 / sample_rate, duration * sample_rate))
-
-    # gt = gammatone_bank(s, 20, 20000, 128, 1 / 100)

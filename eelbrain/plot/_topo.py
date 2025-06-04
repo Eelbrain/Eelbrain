@@ -1207,9 +1207,10 @@ class TopoArray(ColorMapMixin, TopoMapKey, XAxisMixin, EelFigure):
             self.canvas.draw()
 
     def _on_motion_sub(self, event):
-        if (self._selected_window is not None and event.inaxes and
-                event.inaxes.type == 'main' and
-                event.xdata in self._data.plot_data[event.inaxes.ID].y0.time):
+        if (self._selected_window is not None
+                and event.inaxes
+                and event.inaxes.type == 'main'
+                and event.xdata in self._data.plot_data[event.inaxes.ID].y0.time):
             self._selected_window.update(event.xdata)
             return {self._selected_window.ax}
         return set()

@@ -1456,9 +1456,6 @@ class TTestRelated(NDMaskedC1Mixin, NDDifferenceTest):
     def _expand_state(self):
         NDTest._expand_state(self)
 
-        cdist = self._cdist
-        t = self.t
-
         # difference
         diff = self.c1_mean - self.c0_mean
         if np.any(diff.x < 0):
@@ -1467,9 +1464,9 @@ class TTestRelated(NDMaskedC1Mixin, NDDifferenceTest):
         self.difference = diff
 
         # uncorrected p
-        pmap = stats.ttest_p(t.x, self.df, self.tail)
+        pmap = stats.ttest_p(self.t.x, self.df, self.tail)
         info = _info.for_p_map()
-        self.p_uncorrected = NDVar(pmap, t.dims, 'p', info)
+        self.p_uncorrected = NDVar(pmap, self.t.dims, 'p', info)
 
         # composites
         if self.samples:

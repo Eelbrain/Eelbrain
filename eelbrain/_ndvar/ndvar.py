@@ -888,7 +888,7 @@ def neighbor_correlation(
         if is_flat[i]:
             ncs[i] = flat
         elif i not in neighbors:
-            raise ValueError(f"Some elements do not have any neighbors")
+            raise ValueError("Some elements do not have any neighbors")
         else:
             ncs[i] = func(cc[i, neighbors[i]])
     info = _info.for_stat_map('r', old=x.info)
@@ -1239,8 +1239,7 @@ class Butterworth(Filter):
         return '%s, %s, %i' % (self.low, self.high, self.order)
 
     def __eq__(self, other):
-        return (Filter.__eq__(self, other) and self.low == other.low and
-                self.high == other.high and self.order == other.order)
+        return Filter.__eq__(self, other) and self.low == other.low and self.high == other.high and self.order == other.order
 
     def _get_b_a(self, tstep):
         nyq = 1. / tstep / 2.

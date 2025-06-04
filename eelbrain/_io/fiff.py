@@ -284,7 +284,7 @@ def _guess_ndvar_data_type(info: mne.Info) -> str:
 
 
 def _picks(info, data, exclude) -> np.ndarray:
-    meg = eeg = eog = False
+    meg = eeg = False
     kwargs = {'stim': False, 'ref_meg': False}
     if data is None:
         data = _guess_ndvar_data_type(info)

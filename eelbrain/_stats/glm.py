@@ -646,8 +646,7 @@ class IncrementalComparisons:
 
         # Find comparisons for each effect
         for i_test, e_test in enumerate(x.effects):
-            model0_effects = tuple(e for e in x.effects if e is not e_test and
-                                   not is_higher_order_effect(e, e_test))
+            model0_effects = tuple(e for e in x.effects if e is not e_test and not is_higher_order_effect(e, e_test))
             model0_id = effect_id(model0_effects)
 
             # get model 0

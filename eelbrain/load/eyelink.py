@@ -146,22 +146,16 @@ class Edf:
 
         edf_trigger = self.triggers['Id']
         if len(trigger) != len(edf_trigger):
-            lens = (len(trigger), len(edf_trigger))
-            mm = min(lens)
+            mm = min(len(trigger), len(edf_trigger))
             for i in range(mm):
                 if trigger[i] != edf_trigger[i]:
-                    mm = i
                     break
-
-            args = (getattr(ds, 'name', 'None'), self.path) + lens + (mm,)
-            err = ("Dataset %r containes different number of events from edf "
-                   "file %r (%i vs %i); first mismatch at %i." % args)
-            raise ValueError(err)
+            name = getattr(ds, 'name', 'None')
+            raise ValueError(f"Dataset {name:r} containes different number of events from edf file {self.path:r} ({len(trigger)} vs {len(edf_trigger)}); first mismatch at {i}.")
 
         check = (trigger == edf_trigger)
         if not all(check):
-            err = "Event ID mismatch: %s" % np.where(check == False)[0]
-            raise ValueError(err)
+            raise ValueError(f"Event ID mismatch: {np.where(check == False)[0]}")
 
     def add_t_to(self, ds, trigger='trigger', t_edf='t_edf'):
         """Add EDF trigger times as a variable to Dataset ds.

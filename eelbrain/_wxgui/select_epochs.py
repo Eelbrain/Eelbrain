@@ -1847,11 +1847,8 @@ class ThresholdDialog(EelbrainDialog):
         return value
 
     def OnOK(self, event):
-        if not (self.mark_above.GetValue() or self.mark_below.GetValue() or
-                self.do_report.GetValue()):
-            wx.MessageBox("Specify at least one action (create report or "
-                          "reject or accept epochs)", "No Command Selected",
-                          wx.ICON_EXCLAMATION)
+        if not (self.mark_above.GetValue() or self.mark_below.GetValue() or self.do_report.GetValue()):
+            wx.MessageBox("Specify at least one action (create report or reject or accept epochs)", "No Command Selected", wx.ICON_EXCLAMATION)
         else:
             event.Skip()
 

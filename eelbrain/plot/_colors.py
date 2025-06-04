@@ -9,7 +9,7 @@ import numpy as np
 import matplotlib
 import matplotlib.axes
 import matplotlib.cm
-from matplotlib.colors import LinearSegmentedColormap, Colormap, Normalize, to_rgb
+from matplotlib.colors import Colormap, Normalize
 from matplotlib.colorbar import ColorbarBase
 import matplotlib.patches
 from matplotlib.ticker import FixedFormatter, MaxNLocator

@@ -218,15 +218,6 @@ def requires_mne_testing_data(function):
         return pytest.mark.skip('mne testing data unavailable')(function)
 
 
-def requires_pyarrow(function):
-    "Sometimes broken under env-dev on Unix"
-    try:
-        import pyarrow
-        return function
-    except ImportError:
-        return pytest.mark.skip('pyarrow import error')(function)
-
-
 def requires_r_ez(function):
     from .._utils.r_bridge import r, r_warning_filter
 

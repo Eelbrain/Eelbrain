@@ -1393,7 +1393,7 @@ class SequencePlotter:
                 index = self._index(index)
             layer = SequencePlotterLayer(kind, ndvar, args, kwargs, label, index)
         elif self._bin_kind == SPLayer.ITEM:
-            raise ValueError(f"Can't add 2d NDVar to SequencePlotter with multiple NDVars")
+            raise ValueError("Can't add 2d NDVar to SequencePlotter with multiple NDVars")
         elif index is not None:
             raise TypeError(f"{index=}")
         elif static:
