@@ -16,6 +16,7 @@ from typing import Any, Callable, Literal, Sequence, Union
 
 import mne
 import numpy as np
+from numpy import newaxis
 import numpy
 from scipy import linalg, ndimage, signal, stats
 
@@ -29,7 +30,7 @@ from .._stats.adjacency import Adjacency
 from .._stats.adjacency import find_peaks as _find_peaks
 from .._trf._fit_metrics import error_for_indexes
 from .._utils import deprecate_ds_arg
-from .._utils.numpy_utils import aslice, newaxis
+from .._utils.numpy_utils import aslice
 from ._convolve import convolve_2d
 
 
@@ -153,7 +154,7 @@ def concatenate(
                     out_dim = set_tmin(out_dim, tmin)
             x = np.concatenate([v.get_data(dim_names) for v in ndvars], axis)
         dims = ndvar.get_dims(dim_names)
-        dims = (*dims[:axis], out_dim, *dims[axis+1:])
+        dims = (*dims[:axis], out_dim, *dims[axis + 1:])
     return NDVar(x, dims, name or ndvar.name, info)
 
 
@@ -360,20 +361,20 @@ def correlation_coefficient(x, y, dim=None, name=None):
 
 def cross_correlation(in1, in2, name=None):
     """Cross-correlation between two NDVars along the time axis
-    
+
     Parameters
     ----------
     in1 : NDVar  (time,)
         First NDVar.
     in2 : NDVar  (time,)
         Second NDVar.
-    name : str  
+    name : str
         Name for the new NDVar.
-        
+
     Returns
     -------
     NDVar  (time,)
-        Cross-correlation between ``in1`` and ``in2``, with a time axis 
+        Cross-correlation between ``in1`` and ``in2``, with a time axis
         reflecting time shift.
     """
     x1 = in1.get_data(('time',))
@@ -490,12 +491,12 @@ def dss(ndvar) -> (NDVar, NDVar):
     -----
     the method is described in  [1]_. This function uses the implementation from
     the `mne-sandbox <https://github.com/mne-tools/mne-sandbox>`_.
-    
+
     References
     ----------
-    .. [1] de Cheveigné, A., & Simon, J. Z. (2008). Denoising based on spatial 
-        filtering. Journal of Neuroscience Methods, 171(2), 331–339. 
-        `10.1016/j.jneumeth.2008.03.015 
+    .. [1] de Cheveigné, A., & Simon, J. Z. (2008). Denoising based on spatial
+        filtering. Journal of Neuroscience Methods, 171(2), 331–339.
+        `10.1016/j.jneumeth.2008.03.015
         <https://doi.org/10.1016/j.jneumeth.2008.03.015>`_
 
     """
@@ -627,12 +628,12 @@ def find_intervals(ndvar, interpolate=False):
 
 def find_peaks(ndvar):
     """Find local maxima in an NDVar
-    
+
     Parameters
     ----------
     ndvar : NDVar
         Data in which to find peaks.
-    
+
     Returns
     -------
     peaks : NDVar of bool
@@ -734,7 +735,7 @@ def gaussian(center: float, width: float, time: UTS):
 def label_operator(labels, operation='mean', exclude=None, weights=None,
                    dim_name='label', dim_values=None):
     """Convert labeled NDVar into a matrix operation to extract label values
-    
+
     Parameters
     ----------
     labels : NDVar of int
@@ -742,19 +743,19 @@ def label_operator(labels, operation='mean', exclude=None, weights=None,
     operation : 'mean' | 'sum'
         Whether to extract the label mean or sum.
     exclude : array_like
-        Values to exclude (i.e., use ``exclude=0`` to ignore the area where 
+        Values to exclude (i.e., use ``exclude=0`` to ignore the area where
         ``labels==0``.
     weights : NDVar
-        NDVar with same dimension as ``labels`` to assign weights to label 
+        NDVar with same dimension as ``labels`` to assign weights to label
         elements.
     dim_name : str
         Name for the dimension characterized by labels (default ``"label"``).
     dim_values : dict
-        Dictionary mapping label ids (i.e., values in ``labels``) to values on 
-        the dimension characterized by labels. If values are strings the new 
+        Dictionary mapping label ids (i.e., values in ``labels``) to values on
+        the dimension characterized by labels. If values are strings the new
         dimension will be categorical, if values are scalar it will be Scalar.
         The default values are the integers in ``labels``.
-    
+
     Returns
     -------
     m : NDVar
@@ -888,7 +889,7 @@ def neighbor_correlation(
         if is_flat[i]:
             ncs[i] = flat
         elif i not in neighbors:
-            raise ValueError(f"Some elements do not have any neighbors")
+            raise ValueError("Some elements do not have any neighbors")
         else:
             ncs[i] = func(cc[i, neighbors[i]])
     info = _info.for_stat_map('r', old=x.info)
@@ -1239,8 +1240,7 @@ class Butterworth(Filter):
         return '%s, %s, %i' % (self.low, self.high, self.order)
 
     def __eq__(self, other):
-        return (Filter.__eq__(self, other) and self.low == other.low and
-                self.high == other.high and self.order == other.order)
+        return Filter.__eq__(self, other) and self.low == other.low and self.high == other.high and self.order == other.order
 
     def _get_b_a(self, tstep):
         nyq = 1. / tstep / 2.
@@ -1255,20 +1255,26 @@ class Butterworth(Filter):
             raise ValueError("Neither low nor high set")
 
 
-def segment(continuous, times, tstart, tstop, decim=1):
+def segment(
+        continuous: NDVar,
+        times: Sequence[float],
+        tstart: float,
+        tstop: float,
+        decim: int = 1,
+) -> NDVar:
     """Segment a continuous NDVar
 
     Parameters
     ----------
-    continuous : NDVar
+    continuous
         NDVar with a continuous time axis.
-    times : sequence of scalar
+    times
         Times for which to extract segments.
-    tstart : scalar
+    tstart
         Start time for segments.
-    tstop : scalar
+    tstop
         Stop time for segments.
-    decim : int
+    decim
         Decimate data after segmenting by factor ``decim`` (the default is
         ``1``, i.e. no decimation).
 
@@ -1282,16 +1288,12 @@ def segment(continuous, times, tstart, tstop, decim=1):
         raise ValueError("Continuous data can't have case dimension")
     axis = continuous.get_axis('time')
     tstep = None if decim == 1 else continuous.time.tstep * decim
-    segments = [continuous.sub(time=(t + tstart, t + tstop, tstep)) for
-                t in times]
+    segments = [continuous.sub(time=(t + tstart, t + tstop, tstep)) for t in times]
 
     s0_time = segments[0].time
-    dims = (('case',) +
-            continuous.dims[:axis] +
-            (UTS(tstart, s0_time.tstep, s0_time.nsamples),) +
-            continuous.dims[axis + 1:])
-    return NDVar(np.array(tuple(s.x for s in segments)), dims,
-                 continuous.info.copy(), continuous.name)
+    uts = UTS(tstart, s0_time.tstep, s0_time.nsamples)
+    dims = ('case', *continuous.dims[:axis], uts, *continuous.dims[axis + 1:])
+    return NDVar(np.array(tuple(s.x for s in segments)), dims, continuous.name, continuous.info.copy())
 
 
 def set_adjacency(
@@ -1478,7 +1480,7 @@ def set_time(
     if start_pad > 0 or end_pad > 0:
         no_pad = (0, 0)
         pad = (max(0, start_pad), max(0, end_pad))
-        pad_width = [*repeat(no_pad, axis), pad, *repeat(no_pad, ndvar.ndim-axis-1)]
+        pad_width = [*repeat(no_pad, axis), pad, *repeat(no_pad, ndvar.ndim - axis - 1)]
         x = np.pad(x, pad_width, mode, **kwargs)
-    dims = [*ndvar.dims[:axis], time, *ndvar.dims[axis+1:]]
+    dims = [*ndvar.dims[:axis], time, *ndvar.dims[axis + 1:]]
     return NDVar(x, dims, name, ndvar.info)

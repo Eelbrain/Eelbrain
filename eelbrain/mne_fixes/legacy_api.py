@@ -61,5 +61,3 @@ def label_src_vertno_sel(label, src):
         raise Exception("Unknown hemisphere type")
 
     return vertno, src_sel
-
-

@@ -85,7 +85,7 @@ Notifier password could not be retrieved from Keychain. Try the following:
  - Select the 'Access Control' panel
  - Select 'Allow all applications to access this item'
  - Save changes, exit, and try again
- 
+
 If this does not solve the issue, delete the item and repeat.
 """)
         if password is None:

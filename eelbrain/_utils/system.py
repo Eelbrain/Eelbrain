@@ -6,9 +6,9 @@ IS_OSX = sys.platform == 'darwin'
 IS_WINDOWS = os.name == 'nt'
 
 if IS_OSX:
-    from .macos import user_activity
+    from .macos import user_activity  # noqa: F401
 else:
-    from .null_os import user_activity
+    from .null_os import user_activity  # noqa: F401
 
 
 def restore_main_spec():

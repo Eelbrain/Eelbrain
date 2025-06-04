@@ -109,7 +109,7 @@ def _mark_plot_1sample(  # Mark significance for one-sample test
         levels: Union[dict, bool] = True,
         pwcolors: Sequence = None,
         tail: int = 0,
-) -> float:  # Top of space used on y axis 
+) -> float:  # Top of space used on y axis
     # tests
     if pwcolors is None:
         pwcolors = PAIRWISE_COLORS[1 - bool(trend):]
@@ -818,9 +818,9 @@ class Timeplot(LegendMixin, YLimMixin, EelFigure):
     ylabel
         Y-axis label. By default the label is inferred from the data.
     timelabels : sequence | dict | 'all'
-        Labels for the x (time) axis. Exact labels can be specified in the form 
-        of a list of labels corresponsing to all unique values of ``time``, or a 
-        ``{time_value: label}`` dictionary. For 'all', all values of ``time`` 
+        Labels for the x (time) axis. Exact labels can be specified in the form
+        of a list of labels corresponsing to all unique values of ``time``, or a
+        ``{time_value: label}`` dictionary. For 'all', all values of ``time``
         are marked. The default is normal matplotlib ticks.
     legend : str | int | 'fig' | None
         Matplotlib figure legend location argument or 'fig' to plot the
@@ -994,9 +994,8 @@ class _ax_timeplot:
                     labels = None
                 else:
                     raise ValueError("timelabels=%r" % (timelabels,))
-            elif (not isinstance(timelabels, Sequence) or
-                  not len(timelabels) == len(time_points)):
-                raise TypeError(f"timelabels={timelabels}; needs to be a sequence whose length equals the number of time points ({len(time_points)})")
+            elif not isinstance(timelabels, Sequence) or not len(timelabels) == len(time_points):
+                raise TypeError(f"{timelabels=}; needs to be a sequence whose length equals the number of time points ({len(time_points)})")
             else:
                 locations = time_points
                 labels = [str(l) for l in timelabels]
@@ -1274,7 +1273,9 @@ class Regression(EelFigure, LegendMixin):
 
 def _difference(data, names):
     "Data condition x subject"
-    data_differences = []; diffnames = []; diffnames_2lines = []
+    data_differences = []
+    diffnames = []
+    diffnames_2lines = []
     for i, (name1, data1) in enumerate(zip(names, data)):
         for name2, data2 in zip(names[i + 1:], data[i + 1:]):
             data_differences.append(data1 - data2)

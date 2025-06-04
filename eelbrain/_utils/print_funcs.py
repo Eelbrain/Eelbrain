@@ -45,7 +45,7 @@ def strdict(dictionary, w=100, fmt='%r', sort=True, max_v_lines=6):
         lines.append(': '.join((k.ljust(k_len), v[:v_len])))
         if len(v) >= v_len:
             for i in range(v_len, len(v) + v_len - 1, v_len):
-                lines.append(empty_k + v[i : i + v_len])
+                lines.append(empty_k + v[i: i + v_len])
                 if i > v_len * max_v_lines:
                     lines.append(empty_k + '... ')
                     break
@@ -81,7 +81,7 @@ def repr_1line(obj, w=70):
                 l = len(obj)
                 name = t.__name__
                 r = '<%s, len = %i>' % (name, l)
-            except:
+            except BaseException:
                 r = str(t)
     return r
 

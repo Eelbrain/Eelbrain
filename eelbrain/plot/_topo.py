@@ -1041,16 +1041,16 @@ class TopoArray(ColorMapMixin, TopoMapKey, XAxisMixin, EelFigure):
                 for col, used in enumerate(plot_data.plot_used):
                     if not used:
                         continue
-                    self.figure.add_subplot(gs[0, col*ntopo:(col+1)*ntopo], picker=True)
+                    self.figure.add_subplot(gs[0, col * ntopo:(col + 1) * ntopo], picker=True)
                     for j in range(ntopo):
-                        self.figure.add_subplot(gs[1, col*ntopo+j], picker=True, xticks=[], yticks=[])
+                        self.figure.add_subplot(gs[1, col * ntopo + j], picker=True, xticks=[], yticks=[])
             elif layout.columns == 1:
                 for row, used in enumerate(plot_data.plot_used):
                     if not used:
                         continue
-                    self.figure.add_subplot(gs[row*2, 0:ntopo], picker=True)
+                    self.figure.add_subplot(gs[row * 2, 0:ntopo], picker=True)
                     for j in range(ntopo):
-                        self.figure.add_subplot(gs[row*2+1, j], picker=True, xticks=[], yticks=[])
+                        self.figure.add_subplot(gs[row * 2 + 1, j], picker=True, xticks=[], yticks=[])
             else:
                 raise ValueError("Layout with multiple columns and rows; set either columns=1 or rows=1")
             self.axes = self.figure.axes
@@ -1207,9 +1207,10 @@ class TopoArray(ColorMapMixin, TopoMapKey, XAxisMixin, EelFigure):
             self.canvas.draw()
 
     def _on_motion_sub(self, event):
-        if (self._selected_window is not None and event.inaxes and
-                event.inaxes.type == 'main' and
-                event.xdata in self._data.plot_data[event.inaxes.ID].y0.time):
+        if (self._selected_window is not None
+                and event.inaxes
+                and event.inaxes.type == 'main'
+                and event.xdata in self._data.plot_data[event.inaxes.ID].y0.time):
             self._selected_window.update(event.xdata)
             return {self._selected_window.ax}
         return set()

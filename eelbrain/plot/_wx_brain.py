@@ -145,7 +145,7 @@ class BrainFrame(EelbrainFrame):
         ss = np.round(ss * 255).astype(np.uint8)
         h, w, _ = ss.shape
         image = wx.ImageFromDataWithAlpha(
-            w, h, ss[:,:,:3].tostring(), ss[:,:,3].tostring())
+            w, h, ss[:, :, :3].tostring(), ss[:, :, 3].tostring())
         bitmap = image.ConvertToBitmap()
         data = wx.BitmapDataObject(bitmap)
         if not wx.TheClipboard.Open():

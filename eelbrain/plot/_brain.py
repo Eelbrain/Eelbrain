@@ -58,17 +58,17 @@ def annot(annot, subject='fsaverage', surf='smoothwm', borders=False, alpha=0.7,
     parallel : bool
         Set views to parallel projection (default ``True``).
     cortex : str | tuple | dict
-        Mark gyri and sulci on the cortex. Presets: ``'classic'`` (default), 
-        ``'high_contrast'``, ``'low_contrast'``, ``'bone'``. Can also be a 
-        single color (e.g. ``'red'``, ``(0.1, 0.4, 1.)``) or a tuple of two 
-        colors for gyri and sulci (e.g. ``['red', 'blue']`` or ``[(1, 0, 0), 
+        Mark gyri and sulci on the cortex. Presets: ``'classic'`` (default),
+        ``'high_contrast'``, ``'low_contrast'``, ``'bone'``. Can also be a
+        single color (e.g. ``'red'``, ``(0.1, 0.4, 1.)``) or a tuple of two
+        colors for gyri and sulci (e.g. ``['red', 'blue']`` or ``[(1, 0, 0),
         (0, 0, 1)]``). For all options see the PySurfer documentation.
     title : str
         title for the window (default is the parcellation name).
     subjects_dir : None | str
         Override the default subjects_dir.
     name : str
-        Equivalent to ``title``, for consistency with other plotting functions. 
+        Equivalent to ``title``, for consistency with other plotting functions.
 
     Returns
     -------
@@ -226,10 +226,10 @@ def dspm(src, fmin=13, fmax=22, fmid=None, *args, **kwargs):
     parallel : bool
         Set views to parallel projection (default ``True``).
     cortex : str | tuple | dict
-        Mark gyri and sulci on the cortex. Presets: ``'classic'`` (default), 
-        ``'high_contrast'``, ``'low_contrast'``, ``'bone'``. Can also be a 
-        single color (e.g. ``'red'``, ``(0.1, 0.4, 1.)``) or a tuple of two 
-        colors for gyri and sulci (e.g. ``['red', 'blue']`` or ``[(1, 0, 0), 
+        Mark gyri and sulci on the cortex. Presets: ``'classic'`` (default),
+        ``'high_contrast'``, ``'low_contrast'``, ``'bone'``. Can also be a
+        single color (e.g. ``'red'``, ``(0.1, 0.4, 1.)``) or a tuple of two
+        colors for gyri and sulci (e.g. ``['red', 'blue']`` or ``[(1, 0, 0),
         (0, 0, 1)]``). For all options see the PySurfer documentation.
     title : str
         title for the window (default is the subject name).
@@ -242,7 +242,7 @@ def dspm(src, fmin=13, fmax=22, fmid=None, *args, **kwargs):
     subjects_dir : None | str
         Override the subjects_dir associated with the source space dimension.
     name : str
-        Equivalent to ``title``, for consistency with other plotting functions. 
+        Equivalent to ``title``, for consistency with other plotting functions.
 
     Returns
     -------
@@ -298,10 +298,10 @@ def p_map(p_map, param_map=None, p0=0.05, p1=0.01, p0alpha=0.5, *args,
     parallel : bool
         Set views to parallel projection (default ``True``).
     cortex : str | tuple | dict
-        Mark gyri and sulci on the cortex. Presets: ``'classic'`` (default), 
-        ``'high_contrast'``, ``'low_contrast'``, ``'bone'``. Can also be a 
-        single color (e.g. ``'red'``, ``(0.1, 0.4, 1.)``) or a tuple of two 
-        colors for gyri and sulci (e.g. ``['red', 'blue']`` or ``[(1, 0, 0), 
+        Mark gyri and sulci on the cortex. Presets: ``'classic'`` (default),
+        ``'high_contrast'``, ``'low_contrast'``, ``'bone'``. Can also be a
+        single color (e.g. ``'red'``, ``(0.1, 0.4, 1.)``) or a tuple of two
+        colors for gyri and sulci (e.g. ``['red', 'blue']`` or ``[(1, 0, 0),
         (0, 0, 1)]``). For all options see the PySurfer documentation.
     title : str
         title for the window (default is the subject name).
@@ -314,7 +314,7 @@ def p_map(p_map, param_map=None, p0=0.05, p1=0.01, p0alpha=0.5, *args,
     subjects_dir : None | str
         Override the subjects_dir associated with the source space dimension.
     name : str
-        Equivalent to ``title``, for consistency with other plotting functions. 
+        Equivalent to ``title``, for consistency with other plotting functions.
 
     Returns
     -------
@@ -387,10 +387,10 @@ def cluster(cluster, vmax=None, *args, **kwargs):
     parallel : bool
         Set views to parallel projection (default ``True``).
     cortex : str | tuple | dict
-        Mark gyri and sulci on the cortex. Presets: ``'classic'`` (default), 
-        ``'high_contrast'``, ``'low_contrast'``, ``'bone'``. Can also be a 
-        single color (e.g. ``'red'``, ``(0.1, 0.4, 1.)``) or a tuple of two 
-        colors for gyri and sulci (e.g. ``['red', 'blue']`` or ``[(1, 0, 0), 
+        Mark gyri and sulci on the cortex. Presets: ``'classic'`` (default),
+        ``'high_contrast'``, ``'low_contrast'``, ``'bone'``. Can also be a
+        single color (e.g. ``'red'``, ``(0.1, 0.4, 1.)``) or a tuple of two
+        colors for gyri and sulci (e.g. ``['red', 'blue']`` or ``[(1, 0, 0),
         (0, 0, 1)]``). For all options see the PySurfer documentation.
     title : str
         title for the window (default is the subject name).
@@ -403,7 +403,7 @@ def cluster(cluster, vmax=None, *args, **kwargs):
     subjects_dir : None | str
         Override the subjects_dir associated with the source space dimension.
     name : str
-        Equivalent to ``title``, for consistency with other plotting functions. 
+        Equivalent to ``title``, for consistency with other plotting functions.
 
     Returns
     -------
@@ -469,10 +469,10 @@ def brain(src, cmap=None, vmin=None, vmax=None, surf='inflated',
     parallel : bool
         Set views to parallel projection (default ``True``).
     cortex : str | tuple | dict
-        Mark gyri and sulci on the cortex. Presets: ``'classic'`` (default), 
-        ``'high_contrast'``, ``'low_contrast'``, ``'bone'``. Can also be a 
-        single color (e.g. ``'red'``, ``(0.1, 0.4, 1.)``) or a tuple of two 
-        colors for gyri and sulci (e.g. ``['red', 'blue']`` or ``[(1, 0, 0), 
+        Mark gyri and sulci on the cortex. Presets: ``'classic'`` (default),
+        ``'high_contrast'``, ``'low_contrast'``, ``'bone'``. Can also be a
+        single color (e.g. ``'red'``, ``(0.1, 0.4, 1.)``) or a tuple of two
+        colors for gyri and sulci (e.g. ``['red', 'blue']`` or ``[(1, 0, 0),
         (0, 0, 1)]``). For all options see the PySurfer documentation.
     title : str
         title for the window (default is based on the subject name and
@@ -489,7 +489,7 @@ def brain(src, cmap=None, vmin=None, vmax=None, surf='inflated',
     subjects_dir : None | str
         Override the subjects_dir associated with the source space dimension.
     name : str
-        Equivalent to ``title``, for consistency with other plotting functions. 
+        Equivalent to ``title``, for consistency with other plotting functions.
     pos : tuple of int
         Position of the new window on the screen.
 
@@ -631,7 +631,7 @@ class ImageTable(ColorBarMixin, EelFigure):
         default_margins = {}
         if row_labels:
             default_margins['left'] = 0.3
-        layout = ImLayout(n_rows * n_columns, 4/3, 2, margins, default_margins, title, column_labels, rows=n_rows, columns=n_columns, autoscale=True, **kwargs)
+        layout = ImLayout(n_rows * n_columns, 4 / 3, 2, margins, default_margins, title, column_labels, rows=n_rows, columns=n_columns, autoscale=True, **kwargs)
         EelFigure.__init__(self, None, layout)
 
         self._n_rows = n_rows
@@ -738,7 +738,7 @@ class _BinTable(EelFigure, ColorBarMixin):
         n_hemis = (data.source.lh_n > 0) + (data.source.rh_n > 0)
         n_rows = len(views) * n_hemis
 
-        layout = ImLayout(n_rows * n_columns, 4/3, 2, margins, {'bottom': 0.5}, title, rows=n_rows, columns=n_columns, **kwargs)
+        layout = ImLayout(n_rows * n_columns, 4 / 3, 2, margins, {'bottom': 0.5}, title, rows=n_rows, columns=n_columns, **kwargs)
         EelFigure.__init__(self, None, layout)
 
         res_w = int(layout.axw * layout.dpi)
@@ -867,10 +867,10 @@ def dspm_bin_table(ndvar, fmin=2, fmax=8, fmid=None,
     parallel : bool
         Set views to parallel projection (default ``True``).
     cortex : str | tuple | dict
-        Mark gyri and sulci on the cortex. Presets: ``'classic'`` (default), 
-        ``'high_contrast'``, ``'low_contrast'``, ``'bone'``. Can also be a 
-        single color (e.g. ``'red'``, ``(0.1, 0.4, 1.)``) or a tuple of two 
-        colors for gyri and sulci (e.g. ``['red', 'blue']`` or ``[(1, 0, 0), 
+        Mark gyri and sulci on the cortex. Presets: ``'classic'`` (default),
+        ``'high_contrast'``, ``'low_contrast'``, ``'bone'``. Can also be a
+        single color (e.g. ``'red'``, ``(0.1, 0.4, 1.)``) or a tuple of two
+        colors for gyri and sulci (e.g. ``['red', 'blue']`` or ``[(1, 0, 0),
         (0, 0, 1)]``). For all options see the PySurfer documentation.
     smoothing_steps : None | int
         Number of smoothing steps if data is spatially undersampled (pysurfer
@@ -881,7 +881,7 @@ def dspm_bin_table(ndvar, fmin=2, fmax=8, fmid=None,
     subjects_dir : None | str
         Override the subjects_dir associated with the source space dimension.
     name : str
-        Equivalent to ``title``, for consistency with other plotting functions. 
+        Equivalent to ``title``, for consistency with other plotting functions.
 
 
     Returns
@@ -957,10 +957,10 @@ def bin_table(ndvar, tstart=None, tstop=None, tstep=0.1, surf='smoothwm',
     parallel : bool
         Set views to parallel projection (default ``True``).
     cortex : str | tuple | dict
-        Mark gyri and sulci on the cortex. Presets: ``'classic'`` (default), 
-        ``'high_contrast'``, ``'low_contrast'``, ``'bone'``. Can also be a 
-        single color (e.g. ``'red'``, ``(0.1, 0.4, 1.)``) or a tuple of two 
-        colors for gyri and sulci (e.g. ``['red', 'blue']`` or ``[(1, 0, 0), 
+        Mark gyri and sulci on the cortex. Presets: ``'classic'`` (default),
+        ``'high_contrast'``, ``'low_contrast'``, ``'bone'``. Can also be a
+        single color (e.g. ``'red'``, ``(0.1, 0.4, 1.)``) or a tuple of two
+        colors for gyri and sulci (e.g. ``['red', 'blue']`` or ``[(1, 0, 0),
         (0, 0, 1)]``). For all options see the PySurfer documentation.
     smoothing_steps : None | int
         Number of smoothing steps if data is spatially undersampled (pysurfer
@@ -971,7 +971,7 @@ def bin_table(ndvar, tstart=None, tstop=None, tstep=0.1, surf='smoothwm',
     subjects_dir : None | str
         Override the subjects_dir associated with the source space dimension.
     name : str
-        Equivalent to ``title``, for consistency with other plotting functions. 
+        Equivalent to ``title``, for consistency with other plotting functions.
 
 
     Returns
@@ -1393,7 +1393,7 @@ class SequencePlotter:
                 index = self._index(index)
             layer = SequencePlotterLayer(kind, ndvar, args, kwargs, label, index)
         elif self._bin_kind == SPLayer.ITEM:
-            raise ValueError(f"Can't add 2d NDVar to SequencePlotter with multiple NDVars")
+            raise ValueError("Can't add 2d NDVar to SequencePlotter with multiple NDVars")
         elif index is not None:
             raise TypeError(f"{index=}")
         elif static:
@@ -1412,7 +1412,7 @@ class SequencePlotter:
                     self._frame_labels = bins
                 elif isinstance(frame_dim, UTS):
                     fmt, _, unit = frame_dim._axis_format(True, '__unit__')
-                    self._frame_labels = [f'{t0*1000:.0f} - {t1*1000:.0f}' for t0, t1 in bins]
+                    self._frame_labels = [f'{t0 * 1000:.0f} - {t1 * 1000:.0f}' for t0, t1 in bins]
                     self._frame_labels[0] = f'{self._frame_labels[0]} {unit}'
 
             layer = SequencePlotterLayer(SPLayer.SEQUENCE, ndvar, args, kwargs, label)

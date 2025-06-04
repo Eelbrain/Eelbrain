@@ -110,25 +110,24 @@ def test_source_estimate():
     # melt NDVar
     dsa['src_sub'] = dsa['src'].sub(source=['lateraloccipital-lh', 'lateraloccipital-rh'])
     mdsa = table.melt_ndvar('src_sub', 'source', ds=dsa)
-    assert_array_equal(mdsa['hemi'], Factor(['lh']*88*2 + ['rh']*87*2))
+    assert_array_equal(mdsa['hemi'], Factor(['lh'] * 88 * 2 + ['rh'] * 87 * 2))
 
 
 @requires_mne_sample_data
 def test_dataobjects():
     "Test handing MNE-objects as data-objects"
-    shift = np.array([0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                      0.0, 0.0, 0.0, 0.1, -0.1])
+    shift = np.array([0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, -0.1])
     epochs = datasets.get_mne_epochs()
     ds = Dataset({'a': Factor('ab', repeat=8), 'epochs': epochs})
     ds['ets'] = shift_mne_epoch_trigger(epochs, shift, min(shift), max(shift))
 
     # ds operations
-    sds = ds.sub("a == 'a'")
-    ads = ds.aggregate('a')
+    ds.sub("a == 'a'")
+    ds.aggregate('a')
 
     # asndvar
-    ndvar = asndvar(ds['epochs'])
-    ndvar = asndvar(ds['ets'])
+    asndvar(ds['epochs'])
+    asndvar(ds['ets'])
 
     # adjacency
     ds = datasets.get_mne_sample(sub=[0], sns=True)

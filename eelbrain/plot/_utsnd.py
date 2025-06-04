@@ -5,7 +5,7 @@ from typing import Any, Union, Sequence, Tuple
 import matplotlib.axes
 import numpy as np
 
-from .._data_obj import NDVarArg, CategorialArg, IndexArg, Datalist, Dataset, NDVar
+from .._data_obj import NDVarArg, CategorialArg, IndexArg, Datalist, Dataset
 from .._stats.testnd import NDTest
 from .._names import INTERPOLATE_CHANNELS
 from .._utils import deprecate_ds_arg
@@ -415,9 +415,9 @@ class Butterfly(TimeSlicerEF, LegendMixin, TopoMapKey, YLimMixin, XAxisMixin, Ee
         Use ``int`` for a single axis, a sequence of ``int`` for multiple
         specific axes, or one of ``'left' | 'bottom' | 'all' | 'none'``.
     color : matplotlib color | dict
-        Either a color for all lines, or a dictionary mapping levels of the 
+        Either a color for all lines, or a dictionary mapping levels of the
         line dimension to colors. The default is to use ``NDVar.info['color']``
-        if available, otherwise the matplotlib default color alternation. Use 
+        if available, otherwise the matplotlib default color alternation. Use
         ``color=True`` to use the matplotlib default.
     linewidth : scalar
         Linewidth for plots (defult is to use ``matplotlib.rcParams``).

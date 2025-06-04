@@ -1,3 +1,4 @@
+# skip test: data download unreliable
 """
 .. _exa-alice-trf:
 
@@ -17,9 +18,6 @@ This assumes that the Alice dataset has already been downloded
     :backlinks: top
 """
 # sphinx_gallery_thumbnail_number = 6
-from pathlib import Path
-import re
-
 import eelbrain
 import eelbrain.datasets._alice
 from matplotlib import pyplot

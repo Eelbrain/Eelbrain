@@ -553,7 +553,7 @@ def find_vlim_args(
             xmin = xmin.data
         abs_max = max(abs(xmax), abs(xmin)) or 1e-14
         if np.isnan(abs_max):
-            raise ValueError(f"Can't plot all NaN input")
+            raise ValueError("Can't plot all NaN input")
         scale = math.floor(np.log10(abs_max))
         if vmax is None:
             vmax = math.ceil(xmax * 10 ** -scale) * 10 ** scale
@@ -671,7 +671,7 @@ def find_labels(
         elif isinstance(cell, str):
             label = cell
         elif isinstance(cell, tuple):
-            label = cellname([labels_arg.get(item, item) for item  in cell], delim)
+            label = cellname([labels_arg.get(item, item) for item in cell], delim)
         else:
             raise TypeError(f"{cell=}")
         labels[cell] = label
@@ -762,13 +762,14 @@ def butterfly_data(
         y_sig = y.mask(non_sig)
         y_ns = y.mask(sig)
         # line-styles
-        from ._colors import Style
         if colors:
             lh_color = '#046AAD'
             rh_color = '#A60628'
             line_color_sig = {'lh': lh_color, 'rh': rh_color}
-            line_color_ns = {'lh': adjust_hsv(lh_color, 0, -0.5, -0.),
-                             'rh': adjust_hsv(rh_color, 0, -0.7, -0.)}
+            line_color_ns = {
+                'lh': adjust_hsv(lh_color, 0, -0.5, -0.),
+                'rh': adjust_hsv(rh_color, 0, -0.7, -0.),
+            }
         else:
             color_sig = (0,) * 3
             color_ns = (.7,) * 3
@@ -790,7 +791,7 @@ def butterfly_data(
             axes.append(AxisData(layers))
         bfly_data = PlotData(axes, ('time', 'source'), plot_names=hemis)
     else:
-        raise RuntimeError(f"kind={kind}")
+        raise RuntimeError(f"{kind=}")
     return hemis, bfly_data, brain_data
 
 
@@ -2369,8 +2370,8 @@ class Layout(BaseLayout):
         dpi
             DPI for the figure (default is to use matplotlib rc parameters).
         margins
-            Absolute subplot parameters (in inches). Implies ``tight=False``. 
-            If ``margins`` is specified, ``axw`` and ``axh`` are interpreted 
+            Absolute subplot parameters (in inches). Implies ``tight=False``.
+            If ``margins`` is specified, ``axw`` and ``axh`` are interpreted
             exclusive of the margins, i.e., ``axh=2, margins={'top': .5}`` for
             a plot with one axes will result in a total height of 2.5.
         show
@@ -2380,7 +2381,7 @@ class Layout(BaseLayout):
             Run the Eelbrain GUI app (default is True for interactive plotting and
             False in scripts).
         frame : bool | 't' | 'none'
-            Draw frame around axes: 
+            Draw frame around axes:
             - True: all four spines
             - False: only spines with ticks
             - 't': spines at x=0 and y=0

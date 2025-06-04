@@ -1,7 +1,6 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 from matplotlib.backend_bases import KeyEvent
 import numpy as np
-import pytest
 import wx
 
 from eelbrain import datasets, plot, testnd

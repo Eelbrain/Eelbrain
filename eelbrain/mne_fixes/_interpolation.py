@@ -111,13 +111,11 @@ def _interpolate_bads_eeg(epochs, bad_channels_by_epoch):
         if key in interp_cache:
             goods_idx, bads_idx, interpolation = interp_cache[key]
         else:
-            goods_idx, bads_idx, interpolation = interp_cache[key] \
-                                = _make_interpolator(epochs, key)
+            goods_idx, bads_idx, interpolation = interp_cache[key] = _make_interpolator(epochs, key)
 
         # apply interpolation
         logger.info('Interpolating %i sensors on epoch %i', bads_idx.sum(), i)
-        epochs._data[i, bads_idx, :] = np.dot(interpolation,
-                                              epochs._data[i, goods_idx, :])
+        epochs._data[i, bads_idx, :] = np.dot(interpolation, epochs._data[i, goods_idx, :])
 
 
 def _interpolate_bads_meg(epochs, bad_channels_by_epoch, interp_cache):

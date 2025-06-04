@@ -521,7 +521,7 @@ def morph_source_space(
     has_lh_out = bool(source.rh_n if xhemi else source.lh_n)
     has_rh_out = bool(source.lh_n if xhemi else source.rh_n)
     if isinstance(vertices_to, np.ndarray):
-        raise TypeError(f"vertices_to=array: must be a list of arrays or 'lh'|'rh'")
+        raise TypeError("vertices_to=<numpy.array>: must be a list of arrays or 'lh'|'rh'")
     elif vertices_to in (None, 'lh', 'rh'):
         default_vertices = source_space_vertices(source.kind, source.grade, subject_to, subjects_dir)
         lh_out = vertices_to == 'lh' or (vertices_to is None and has_lh_out)

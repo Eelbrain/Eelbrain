@@ -1,4 +1,6 @@
 """WxPython-based implementation of the Eelbrain ui functions."""
+from typing import Optional
+
 from ..._wxgui import wx, get_app
 
 
@@ -18,17 +20,18 @@ def ask_file(title, message, filetypes, directory, mult):
     return app.ask_for_file(title, message, filetypes, directory, mult)
 
 
-def ask(title="Overwrite File?",
-        message="Duplicate filename. Do you want to overwrite?",
-        cancel=False,
-        default=True,  # True=YES, False=NO, None=Nothing
-        ):
+def ask(
+        title: str = "Overwrite File?",
+        message: str = "Duplicate filename. Do you want to overwrite?",
+        cancel: bool = False,
+        default: Optional[bool] = True,  # True=YES, False=NO, None=Nothing
+):
     style = wx.YES_NO | wx.ICON_QUESTION
     if cancel:
         style = style | wx.CANCEL
     if default:
         style = style | wx.YES_DEFAULT
-    elif default == False:
+    elif default is False:
         style = style | wx.NO_DEFAULT
     dialog = wx.MessageDialog(None, message, title, style)
     answer = dialog.ShowModal()
@@ -36,7 +39,7 @@ def ask(title="Overwrite File?",
         return False
     elif answer == wx.ID_YES:
         return True
-    elif answer == wx.ID_CANCEL:
+    else:
         return None
 
 
@@ -82,7 +85,7 @@ def copy_file(path):
             data_object = wx.FileDataObject()
             data_object.AddFile(path)
             wx.TheClipboard.SetData(data_object)
-        except:
+        except BaseException:
             wx.TheClipboard.Close()
             raise
         else:
@@ -94,7 +97,7 @@ def copy_text(text):
         try:
             data_object = wx.TextDataObject(text)
             wx.TheClipboard.SetData(data_object)
-        except:
+        except BaseException:
             wx.TheClipboard.Close()
             raise
         else:

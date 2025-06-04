@@ -6,13 +6,13 @@ from operator import mul
 from typing import List, Sequence, Union
 
 import numpy as np
+from numpy import newaxis
 import scipy.signal
 from scipy.linalg import norm
 
 from .. import _info
 from .._data_obj import CategorialArg, NDVarArg, Datalist, Dataset, NDVar, Case, UTS, dataobj_repr, ascategorial, asndvar
 from .._utils import PickleableDataClass, intervals
-from .._utils.numpy_utils import newaxis
 
 
 class EQMixIn:
@@ -56,11 +56,11 @@ def merge_segments(
     if soft_splits is None or isinstance(soft_splits, np.ndarray) and len(soft_splits) == 0:
         return segments
     out_segments = list(segments)
-    for i in range(len(out_segments)-1, 0, -1):
-        pre_seg, post_seg = out_segments[i-1], out_segments[i]
+    for i in range(len(out_segments) - 1, 0, -1):
+        pre_seg, post_seg = out_segments[i - 1], out_segments[i]
         if pre_seg[1] >= post_seg[0]:
             if soft_splits is True or post_seg[0] in soft_splits:
-                out_segments[i-1] = [pre_seg[0], max(pre_seg[1], post_seg[1])]
+                out_segments[i - 1] = [pre_seg[0], max(pre_seg[1], post_seg[1])]
                 del out_segments[i]
     return np.vstack(out_segments)
 
@@ -130,7 +130,7 @@ def split_data(
         n_times = segments[0, 1] - segments[0, 0]
         split_points = np.round(np.linspace(0, n_times, partitions + 1)).astype(np.int64)
         soft_splits = split_points[1:-1]
-        split_segments = np.vstack([split_points[i: i+2] for i in range(partitions)])
+        split_segments = np.vstack([split_points[i: i + 2] for i in range(partitions)])
         categories = [None]
     else:
         n_segments = len(segments)
@@ -345,7 +345,7 @@ class PredictorData:
 
 class DeconvolutionData:
     """Restructure input NDVars into arrays for deconvolution
-    
+
     Attributes
     ----------
     y : NDVar
@@ -363,7 +363,6 @@ class DeconvolutionData:
     x_scale = None
     y_mean = None
     y_scale = None
-    x_pads = None
     _x_is_copy: bool = False
     _y_is_copy: bool = False
     scale_data: str = None
@@ -426,7 +425,7 @@ class DeconvolutionData:
         if x_data.is_ragged:
             y_data = np.empty(shape)
             for yi, (start, stop) in zip(y, x_data.segments):
-                y_data[:, start:stop] = yi.get_data(y_dimnames).reshape((n_flat, stop-start))
+                y_data[:, start:stop] = yi.get_data(y_dimnames).reshape((n_flat, stop - start))
             self._y_is_copy = True
         else:
             y_data = y.get_data(y_dimnames).reshape(shape)
@@ -624,7 +623,7 @@ class DeconvolutionData:
 
     def package_kernel(self, h, tstart):
         """Package kernel as NDVar
-        
+
         Parameters
         ----------
         h : array  (n_y, n_x, n_times)

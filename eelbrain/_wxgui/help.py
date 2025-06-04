@@ -10,7 +10,7 @@ def show_help_txt(text, parent, title=""):
     "Show help frame with text in mono-spaced font"
     s = Section(title, Code(text))
     html = make_html_doc(s, None)
-    frame = HelpFrame(parent, title, html)
+    return HelpFrame(parent, title, html)
 
 
 class HelpFrame(HTMLFrame):

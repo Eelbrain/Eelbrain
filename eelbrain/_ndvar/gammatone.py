@@ -89,7 +89,7 @@ def gammatone_bank(
     output_step = tstep / wav.time.tstep
     output_data = numpy.zeros((n, output_n_samples))
     disable = n * output_n_samples < 200_000  # 100 bands * 2 s * 1000 Hz
-    for i, cf, window in tqdm(zip(range(n-1, -1, -1), cfs, integration_window_lens), "Gammatone filterbank", total=len(cfs), unit='band', disable=disable):
+    for i, cf, window in tqdm(zip(range(n - 1, -1, -1), cfs, integration_window_lens), "Gammatone filterbank", total=len(cfs), unit='band', disable=disable):
         fcoefs = numpy.flipud(make_erb_filters(fs, cf))
         xf = erb_filterbank(wave, fcoefs)
         xf **= 2

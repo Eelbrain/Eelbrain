@@ -82,7 +82,7 @@ def test_im_layout():
     assert l.axw == l.axh == 3
     # 2 x 2 layout
     margins = {'left': 0.4, 'right': 0.1, 'top': 0.1, 'bottom': 0.4}
-    l = ImLayout(4, 4/3, 2, margins, {'bottom': 0.5}, rows=2, columns=2, w=4, h=4)
+    l = ImLayout(4, 4 / 3, 2, margins, {'bottom': 0.5}, rows=2, columns=2, w=4, h=4)
     assert l.w == 4
     assert l.axw == 1.75
 
@@ -98,10 +98,10 @@ def test_time_slicer():
 
     p1._set_time(.1, True)
     assert p2._current_time == .1
-    assert p2._time_fixed == True
+    assert p2._time_fixed is True
     p2._set_time(.2)
     assert p1._current_time == .2
-    assert p1._time_fixed == False
+    assert p1._time_fixed is False
 
     p1 = plot.TopoButterfly(ds['utsnd'])
     p2 = plot.Array('utsnd', 'A', data=ds)
@@ -109,7 +109,7 @@ def test_time_slicer():
 
     p1._set_time(.1, True)
     assert p2._current_time == .1
-    assert p2._time_fixed == True
+    assert p2._time_fixed is True
 
     # merge another
     p3 = plot.TopoButterfly(ds[0, 'utsnd'])
@@ -117,13 +117,13 @@ def test_time_slicer():
 
     p2._set_time(.2)
     assert p1._current_time == .2
-    assert p1._time_fixed == False
+    assert p1._time_fixed is False
 
 
 def test_vlims():
     "Test vlim determination"
     ds = datasets.get_uts()
-    epochs = [[ds[i: i+5, 'uts'].mean('case')] for i in range(0, 10, 5)]
+    epochs = [[ds[i: i + 5, 'uts'].mean('case')] for i in range(0, 10, 5)]
     meas = ds['uts'].info.get('meas')
 
     # without cmap

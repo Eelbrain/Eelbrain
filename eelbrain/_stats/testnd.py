@@ -817,10 +817,10 @@ class NDDifferenceTest(NDTest):
     def _get_mask(self, p=0.05):
         self._assert_has_cdist()
         if not 1 >= p > 0:
-            raise ValueError(f"p={p}: needs to be between 1 and 0")
+            raise ValueError(f"{p=}: needs to be between 1 and 0")
         if p == 1:
             if self._cdist.kind != 'cluster':
-                raise ValueError(f"p=1 is only a valid mask for threshold-based cluster tests")
+                raise ValueError(f"{p=} is only a valid mask for threshold-based cluster tests")
             mask = self._cdist.cluster_map == 0
         else:
             mask = self.p > p
@@ -1456,9 +1456,6 @@ class TTestRelated(NDMaskedC1Mixin, NDDifferenceTest):
     def _expand_state(self):
         NDTest._expand_state(self)
 
-        cdist = self._cdist
-        t = self.t
-
         # difference
         diff = self.c1_mean - self.c0_mean
         if np.any(diff.x < 0):
@@ -1467,9 +1464,9 @@ class TTestRelated(NDMaskedC1Mixin, NDDifferenceTest):
         self.difference = diff
 
         # uncorrected p
-        pmap = stats.ttest_p(t.x, self.df, self.tail)
+        pmap = stats.ttest_p(self.t.x, self.df, self.tail)
         info = _info.for_p_map()
-        self.p_uncorrected = NDVar(pmap, t.dims, 'p', info)
+        self.p_uncorrected = NDVar(pmap, self.t.dims, 'p', info)
 
         # composites
         if self.samples:
@@ -1941,8 +1938,7 @@ class ANOVA(MultiEffectNDTest):
             return "ANOVA:  %s" % self.x
 
     def _plot_model(self):
-        return '%'.join(e.name for e in self._effects if isinstance(e, Factor) or
-                        (isinstance(e, NestedEffect) and isinstance(e.effect, Factor)))
+        return '%'.join(e.name for e in self._effects if isinstance(e, Factor) or (isinstance(e, NestedEffect) and isinstance(e.effect, Factor)))
 
     def _plot_sub(self):
         return super(ANOVA, self)._plot_sub()
@@ -3695,7 +3691,7 @@ class NDPermutationDistribution:
 
         if pmin == 1:
             if self.kind != 'cluster':
-                raise ValueError(f"pmin=1 is only a valid mask for threshold-based cluster tests")
+                raise ValueError(f"{pmin=} is only a valid mask for threshold-based cluster tests")
             mask = self.cluster_map == 0
         else:
             probability_map = self.compute_probability_map(**sub)

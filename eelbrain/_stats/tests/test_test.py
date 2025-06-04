@@ -6,8 +6,9 @@ import pytest
 import scipy.stats
 
 from eelbrain import datasets, test
-from eelbrain.fmtxt import asfmtext
 from eelbrain._stats import test as _test
+from eelbrain.fmtxt import asfmtext
+from eelbrain.testing import assert_fmtxt_str_equals
 
 
 def test_correlations():
@@ -52,6 +53,16 @@ def test_correlations():
 
     # pairwise correlation
     doc = test.pairwise_correlations(['intvar', 'fltvar', 'fltvar2'], data=ds)
+    assert_fmtxt_str_equals(doc, """
+                    intvar                      fltvar                    fltvar2
+    ------------------------------------------------------------------------------------------
+    intvar                                r(78) = 0.10               r(78) = -0.08
+                                              p = .383                   p = .500
+    fltvar    r(78) = 0.10                                           r(78) = 0.40***
+                  p = .383                                               p < .001
+    fltvar2   r(78) = -0.08               r(78) = 0.40***
+                  p = .500                    p < .001
+    """)
 
 
 def test_mann_whitney():

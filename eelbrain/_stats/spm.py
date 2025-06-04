@@ -305,7 +305,7 @@ class LM(MultiEffectNDTest):
 
 class LMGroup:
     """Group level analysis for linear model :class:`LM` objects
-    
+
     Parameters
     ----------
     lms : sequence of LM
@@ -528,11 +528,11 @@ class LMGroup:
         self.samples = self.tests[self.column_names[0]].samples
 
     def info_list(self):
-        l = fmtxt.List("LMGroup info")
+        info = fmtxt.List("LMGroup info")
         for effect in self.column_names:
             res = self.tests[effect]
-            l.add_sublist(effect, [res.info_list()])
-        return l
+            info.add_sublist(effect, [res.info_list()])
+        return info
 
     def table(self, title=None, caption=None):
         """Table listing all terms and corresponding smallest p-values

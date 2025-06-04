@@ -11,7 +11,7 @@ from functools import reduce
 
 class LineStack(LegendMixin, XAxisMixin, EelFigure):
     """Stack multiple lines vertically
-    
+
     Parameters
     ----------
     y : NDVar
@@ -24,9 +24,9 @@ class LineStack(LegendMixin, XAxisMixin, EelFigure):
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
     offset : float | str
-        The distance between the baseline (y = 0) for the different lines. 
-        Can be a string expressed as a function of y. For example, 
-        ``'0.66 * max(y)'`` will offset each line by 0.66 times the maximum 
+        The distance between the baseline (y = 0) for the different lines.
+        Can be a string expressed as a function of y. For example,
+        ``'0.66 * max(y)'`` will offset each line by 0.66 times the maximum
         value in ``y`` (after aggregating if ``x`` is specified). The default is
         ``'2/3 * max(y.max(), -y.min())'``.
     xlim : scalar | (scalar, scalar)

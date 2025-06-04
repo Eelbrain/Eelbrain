@@ -1,14 +1,8 @@
 """Data-specific colormaps"""
 from itertools import cycle
-import logging
 from math import ceil
 from numbers import Real
 from typing import Sequence, List, Tuple, Union
-
-# colormath starts out at 0; needs to be set before init
-logger = logging.getLogger('colormath.color_conversions')
-if logger.level == 0:  # otherwise it was probably set by user (DEBUG=10)
-    logger.setLevel(logging.WARNING)
 
 from colormath.color_objects import LCHabColor, sRGBColor
 from colormath.color_conversions import convert_color
@@ -34,6 +28,7 @@ UNAMBIGUOUS_COLORS = {
 SYMMETRIC_CMAPS = []
 ZEROBASED_CMAPS = []
 ALPHA_CMAPS = {}  # corresponding cmaps with transparency (alpha channel)
+
 
 def register_cmap(
         cmap: matplotlib.colors.Colormap,
@@ -123,7 +118,7 @@ def make_seq_cmap(seq, val, name):
 
 def unambiguous_color(color: str, lightness: float = None, chroma: float = None):
     """Generate an `unambiguous color <https://jfly.uni-koeln.de/html/color_blind/#pallet>`_
-    
+
     Parameters
     ----------
     color

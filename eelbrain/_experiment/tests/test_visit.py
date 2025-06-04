@@ -4,8 +4,8 @@ from warnings import catch_warnings, filterwarnings
 
 import pytest
 
-from eelbrain import *
-from eelbrain.pipeline import *
+from eelbrain import datasets, set_log_level
+from eelbrain.pipeline import MneExperiment, PrimaryEpoch, RawFilter, RawICA, TTestRelated
 from eelbrain.testing import TempDir, path, requires_mne_sample_data
 
 

@@ -32,7 +32,7 @@ class STCLoaderFrame(EelbrainFrame):
     def InitUI(self):
         self.SetMinSize((500, -1))
         self.status = self.CreateStatusBar(1)
-        self.sizer = wx.BoxSizer(wx.VERTICAL) # top-level sizer
+        self.sizer = wx.BoxSizer(wx.VERTICAL)  # top-level sizer
         data_title = TitleSizer(self, "MEG/MRI Information")
         self.sizer.Add(data_title, **self.add_params)
         dir_label = wx.StaticText(self, label=".stc Data Directory")

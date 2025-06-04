@@ -382,7 +382,7 @@ class App(wx.App):
 
     def Attach(self, obj, desc, default_name, parent):
         if self._ipython is None:
-            self.message_box("Attach Unavailable", "The attach command requires running from within IPython 5 or later", wx.ICON_ERROR|wx.OK, parent)
+            self.message_box("Attach Unavailable", "The attach command requires running from within IPython 5 or later", wx.ICON_ERROR | wx.OK, parent)
             return
         name = self.ask_for_string("Attach", f"Variable name for {desc} in terminal:", default_name, parent)
         if name:

@@ -392,7 +392,7 @@ class Brain(TimeSlicer, surfer.Brain):
             milliseconds or in seconds, or supply a custom formatter for time
             values in seconds (default is ``'ms'``).
         lighting
-            The data overlay is affected by light sources (default ``False``, 
+            The data overlay is affected by light sources (default ``False``,
             i.e. data overlays appear luminescent).
         contours
             Draw contour lines instead of a solid overlay. Set to a list of
@@ -420,7 +420,7 @@ class Brain(TimeSlicer, surfer.Brain):
             times = ndvar.time.times
             data_dims = (source.name, 'time')
             if time_label == 'ms':
-                time_label = lambda x: '%s ms' % int(round(x * 1000))
+                def time_label(x): return '%s ms' % int(round(x * 1000))
             elif time_label == 's':
                 time_label = '%.3f s'
             elif time_label is False:
@@ -527,17 +527,17 @@ class Brain(TimeSlicer, surfer.Brain):
 
     def add_ndvar_annotation(self, ndvar, colors=None, borders=True, alpha=1, lighting=True):
         """Add annotation from labels in an NDVar
-        
+
         Parameters
         ----------
         ndvar : NDVar of int
-            NDVar in which each unique integer indicates a label. By default, 
-            ``0`` is interpreted as unlabeled, but this can be overridden by 
+            NDVar in which each unique integer indicates a label. By default,
+            ``0`` is interpreted as unlabeled, but this can be overridden by
             providing a ``colors`` dictionary that contains an entry for ``0``.
         colors : dict
             Dictionary mapping label IDs to colors.
         borders : bool | int
-            Show label borders (instead of solid labels). If int, specify the 
+            Show label borders (instead of solid labels). If int, specify the
             border width.
         alpha : scalar [0, 1]
             Opacity of the labels (default 1).
@@ -557,7 +557,7 @@ class Brain(TimeSlicer, surfer.Brain):
             missing = np.setdiff1d(label_values, colors)
             # if 0 should be plotted, we need to shift values
             if 0 in colors and 0 in label_values:
-                plot_colors = {k+1: v for k, v in colors.items()}
+                plot_colors = {k + 1: v for k, v in colors.items()}
                 x = x + 1
                 label_values += 1
             else:
@@ -773,7 +773,7 @@ class Brain(TimeSlicer, surfer.Brain):
         for brain in self.brains:
             func = partial(self._select_nearest_source, hemi=brain.hemi, color=color)
             brain._f.on_mouse_pick(func, button="Right")
-            
+
     @cached_property
     def _tris_lh(self):
         return self.__source_space._read_surf('lh')[1]

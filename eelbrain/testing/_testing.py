@@ -57,7 +57,7 @@ def assert_dataobj_equal(d1, d2, decimal=None, name=True):
     name : bool
         Assert that ``d1.name == d2.name``.
     """
-    assert type(d1) == type(d2)
+    assert type(d1) == type(d2)  # noqa: E721
     if name:
         assert d1.name == d2.name
     assert len(d1) == len(d2)
@@ -148,6 +148,18 @@ def gui_test(function):
     return gui_test_context(requires_framework_build(function))
 
 
+def assert_fmtxt_str_equals(
+        fmtxt,
+        target: str,
+        indent: int = 4,
+):
+    """Allow clean and PEP8 compliant target strings in testing"""
+    as_str = str(fmtxt)
+    as_str = '\n'.join(line.rstrip() for line in as_str.split('\n'))  # rstrip whitespace (for pep8)
+    target = '\n'.join(line[indent:] for line in target.splitlines()[1:-1])
+    assert as_str == target
+
+
 class ConfigContext(ContextDecorator):
 
     def __init__(self, key, value):
@@ -204,15 +216,6 @@ def requires_mne_testing_data(function):
         return function
     else:
         return pytest.mark.skip('mne testing data unavailable')(function)
-
-
-def requires_pyarrow(function):
-    "Sometimes broken under env-dev on Unix"
-    try:
-        import pyarrow
-        return function
-    except ImportError:
-        return pytest.mark.skip('pyarrow import error')(function)
 
 
 def requires_r_ez(function):

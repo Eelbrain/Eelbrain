@@ -780,10 +780,10 @@ class MneExperiment(FileTree):
         else:
             events_changed = False
             if input_state['merge_triggers'] != self.merge_triggers:
-                self._log.warning(f"  merge_triggers changed: %s -> %s, reloading events", input_state['merge_triggers'], self.merge_triggers)
+                self._log.warning("  merge_triggers changed: %s -> %s, reloading events", input_state['merge_triggers'], self.merge_triggers)
                 events_changed = True
             if input_state['stim_channel'] != self._stim_channel:
-                self._log.warning(f"  stim_channel changed: %s -> %s, reloading events", input_state['stim_channel'], self._stim_channel)
+                self._log.warning("  stim_channel changed: %s -> %s, reloading events", input_state['stim_channel'], self._stim_channel)
                 events_changed = True
             if events_changed:
                 self.rm('event-file', inclusive=True, confirm=True)
@@ -926,7 +926,7 @@ class MneExperiment(FileTree):
                 self._state_backwards_compat(cache_state_v, new_state, cache_state)
                 self._migrate_cache(cache_state_v, cache_dir)
             elif cache_state_v > CACHE_STATE_VERSION:
-                raise RuntimeError(f"The cache is from a newer version of Eelbrain than you are currently using. Either upgrade Eelbrain or delete the cache folder.")
+                raise RuntimeError("The cache is from a newer version of Eelbrain than you are currently using. Either upgrade Eelbrain or delete the cache folder.")
 
             # Find modified definitions
             # =========================
@@ -1077,7 +1077,7 @@ class MneExperiment(FileTree):
                 if 'vars' in params:
                     try:
                         params['vars'] = Variables(params['vars'])
-                    except Exception as error:
+                    except Exception:
                         self._log.warning("  Test %s: Defective vardef %r", test, params['vars'])
                         params['vars'] = None
                 else:
@@ -2035,7 +2035,7 @@ class MneExperiment(FileTree):
 
     def load_bad_channels(self, **kwargs):
         """Load bad channels
-        
+
         Parameters
         ----------
         ...
@@ -2096,7 +2096,7 @@ class MneExperiment(FileTree):
 
     def load_edf(self, **kwargs):
         """Load the edf file ("edf-file" template)
-        
+
         Parameters
         ----------
         ...
@@ -2248,7 +2248,7 @@ class MneExperiment(FileTree):
         if isinstance(epoch, ContinuousEpoch):
             # find splitting points
             split_threshold = epoch.split + (epoch.pad_end + epoch.pad_start)
-            diff = ds['T'].diff(to_begin=split_threshold+1)
+            diff = ds['T'].diff(to_begin=split_threshold + 1)
             onsets = np.flatnonzero(diff >= split_threshold)
             # make sure we are not messing up user events
             if illegal := {'T_relative', 'events', 'tmax'}.intersection(ds):
@@ -2976,7 +2976,7 @@ class MneExperiment(FileTree):
             if morph:
                 self.make_annot(mrisubject=common_brain)
             elif len(meg_subjects) > 1:
-                raise ValueError(f"ndvar=True, morph=False with multiple subjects: Can't create ndvars with data from different brains")
+                raise ValueError("ndvar=True, morph=False with multiple subjects: Can't create ndvars with data from different brains")
             else:
                 self.make_annot(mrisubject=mri_subjects[meg_subjects[0]])
 
@@ -3222,9 +3222,9 @@ class MneExperiment(FileTree):
             Object which provides the mne info dictionary (default: load the
             raw file).
         ndvar
-            Return the inverse operator as NDVar (default is 
-            :class:`mne.minimum_norm.InverseOperator`). The NDVar representation 
-            does not take into account any direction selectivity (loose/free 
+            Return the inverse operator as NDVar (default is
+            :class:`mne.minimum_norm.InverseOperator`). The NDVar representation
+            does not take into account any direction selectivity (loose/free
             orientation) or noise normalization properties.
         mask
             Discard data that is labelled ``unknown`` by the parcellation.
@@ -3473,7 +3473,7 @@ class MneExperiment(FileTree):
         pipe = self._raw[self.get('raw', **kwargs)]
         raw = pipe.load(self.get('subject'), self.get('recording'), add_bads)
         if decim and decim > 1:
-            assert samplingrate is None, f"samplingrate and decim can't both be specified"
+            assert samplingrate is None, "samplingrate and decim can't both be specified"
             samplingrate = int(round(raw.info['sfreq'] / decim))
         if tstart or tstop:
             raw = raw.crop(tstart or 0, tstop, False)
@@ -3643,7 +3643,7 @@ class MneExperiment(FileTree):
                             raw = raw_
                         else:
                             ds['i_start'] += raw.last_samp + 1 - raw_.first_samp
-                            raw.append(raw_) # FIXME: if one is cached and not the other, they may be different types
+                            raw.append(raw_)  # FIXME: if one is cached and not the other, they may be different types
 
             # combine bad channels
             ds = combine(dss)
@@ -3772,7 +3772,7 @@ class MneExperiment(FileTree):
             **state,
     ) -> Union[mne.SourceSpaces, SourceSpace, VolumeSourceSpace]:
         """Load the current source space
-        
+
         Parameters
         ----------
         add_geom
@@ -3884,7 +3884,7 @@ class MneExperiment(FileTree):
             If the target file does not exist, create it (could take a long
             time depending on the test; if False, raise an IOError).
         ...
-            State parameters (Use the ``group`` state parameter to select the 
+            State parameters (Use the ``group`` state parameter to select the
             subject group for which to perform the test).
 
         Returns
@@ -4048,9 +4048,9 @@ class MneExperiment(FileTree):
 
         # compute results
         do_mcc = (
-            len(labels) > 1 and  # more than one ROI
-            pmin not in (None, 'tfce') and  # not implemented
-            len(set(n_per_label.values())) == 1  # equal n permutations
+            len(labels) > 1  # more than one ROI
+            and pmin not in (None, 'tfce')  # not implemented
+            and len(set(n_per_label.values())) == 1  # equal n permutations
         )
         label_results = {
             label: self._make_test('label_tc', ds, test_obj, test_kwargs, do_mcc)
@@ -4893,7 +4893,7 @@ class MneExperiment(FileTree):
             raise IOError(f"Cannot access MRI directory at {mri_sdir}")
         mrisubject = self.get('mrisubject')
         if mrisubject == 'fsaverage':
-            self._log.info(f"MRI for FSAverage is missing, trying to generate it.")
+            self._log.info("MRI for FSAverage is missing, trying to generate it.")
             mne.create_default_subject(subjects_dir=mri_sdir)
         else:
             raise IOError(f"MRI for {mrisubject} is missing and cannot be created automatically")
@@ -4963,7 +4963,7 @@ class MneExperiment(FileTree):
 
     def make_raw(self, **kwargs):
         """Make a raw file
-        
+
         Parameters
         ----------
         ...
@@ -5593,8 +5593,7 @@ class MneExperiment(FileTree):
                 legend = None
                 for subject in self:
                     # make sure there is at least one label
-                    if not any(not l.name.startswith('unknown-') for l in
-                               self.load_annot()):
+                    if all(l.name.startswith('unknown-') for l in self.load_annot()):
                         section.add_image_figure("No labels", subject)
                         continue
                     brain = self.plot_annot()
@@ -5709,7 +5708,7 @@ class MneExperiment(FileTree):
 
     def make_src(self, **state):
         """Make the source space
-        
+
         Parameters
         ----------
         ...
@@ -6156,7 +6155,7 @@ class MneExperiment(FileTree):
         is_vector_data = src and self.get('inv').startswith('vec')
         is_volume_source_space = src and self.get('src').startswith('vol')
         if is_vector_data and not is_volume_source_space:
-            raise NotImplementedError(f"Vector data currently can only be plotted for volume source space")
+            raise NotImplementedError("Vector data currently can only be plotted for volume source space")
 
         if separate and not subject:
             if src:
@@ -6201,9 +6200,9 @@ class MneExperiment(FileTree):
                 ys = [ds[src_key]]
             for y in ys:
                 if is_volume_source_space:
-                    plots = plot.GlassBrain.butterfly(y, w=2*h, h=h, name=title)
+                    plots = plot.GlassBrain.butterfly(y, w=2 * h, h=h, name=title)
                 else:
-                    plots = plot.brain.butterfly(y, w=2*h, h=h, name=title)
+                    plots = plot.brain.butterfly(y, w=2 * h, h=h, name=title)
                 out.extend(plots)
             right_of = out[2]
         else:
@@ -6959,7 +6958,7 @@ class MneExperiment(FileTree):
             n_selected = [row[-1] for row in rows]
             mark_unselected = any(n_selected) and not all(n_selected)
 
-            table = fmtxt.Table('lrr' + 'r'*mark_unselected)
+            table = fmtxt.Table('lrr' + 'r' * mark_unselected)
             table.cells('Subject', 'n components', 'reject')
             if mark_unselected:
                 table.cell('*')

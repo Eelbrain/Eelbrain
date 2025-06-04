@@ -130,7 +130,7 @@ def permute_sign_flip(n, samples=10000, rng=None, out=None):
     Yields
     ------
     sign : array of int8  (n,)
-        Sign for each case (``1`` or ``-1``; ``sign`` is the same array object 
+        Sign for each case (``1`` or ``-1``; ``sign`` is the same array object
         but its content modified in every iteration).
     """
     n = int(n)

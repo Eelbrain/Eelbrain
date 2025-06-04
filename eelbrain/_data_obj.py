@@ -120,6 +120,7 @@ from .mne_fixes.legacy_api import label_src_vertno_sel
 import nibabel
 from nibabel.freesurfer import read_annot, read_geometry
 import numpy as np
+from numpy import newaxis
 from numpy.typing import ArrayLike, DTypeLike
 import scipy.interpolate
 import scipy.ndimage
@@ -139,7 +140,7 @@ from ._utils import deprecated, mne_utils, intervals, ui, n_decimals, natsorted
 from ._utils.numpy_utils import (
     INT_TYPES, FULL_SLICE, FULL_AXIS_SLICE,
     aslice, apply_numpy_index, deep_array, digitize_index, digitize_slice_endpoint,
-    index_length, index_to_bool_array, index_to_int_array, newaxis, optimize_index, slice_to_arange)
+    index_length, index_to_bool_array, index_to_int_array, optimize_index, slice_to_arange)
 from .mne_fixes import MNE_EPOCHS, MNE_EVOKED, MNE_RAW, MNE_LABEL
 from functools import reduce
 
@@ -1077,8 +1078,8 @@ def combine(
     Parameters
     ----------
     items
-        Sequence of data objects to combine (Dataset, Var, Factor, 
-        NDVar or Datalist). A sequence of numbers is converted to :class:`Var`, 
+        Sequence of data objects to combine (Dataset, Var, Factor,
+        NDVar or Datalist). A sequence of numbers is converted to :class:`Var`,
         a sequence of strings is converted to :class:`Factor`.
     name
         Name for the resulting data-object. If None, the name of the combined
@@ -1249,7 +1250,7 @@ def find_factors(obj):
     else:  # NonbasicEffect
         try:
             return EffectList(obj.factors)
-        except:
+        except BaseException:
             raise TypeError("%r has no factors" % obj)
 
 
@@ -1259,8 +1260,7 @@ class EffectList(list):
 
     def __contains__(self, item):
         for f in self:
-            if ((f.name == item.name) and (type(f) is type(item)) and
-                    (len(f) == len(item)) and np.all(item == f)):
+            if ((f.name == item.name) and (type(f) is type(item)) and (len(f) == len(item)) and np.all(item == f)):
                 return True
         return False
 
@@ -2880,7 +2880,7 @@ class Factor(_Effect):
             else:
                 raise RuntimeError("demarcation=%r" % (regions,))
         else:
-            assert(len(regions) == self._n_cases)
+            assert len(regions) == self._n_cases
             i_region_start = 0
             region_v = -1 if regions[0] is None else None
             fill_with = empty
@@ -3378,7 +3378,7 @@ class NDVar(Named):
                 return self.dims, self.x, self._ialign(other)
             else:
                 dims = (Case, *self.dims)
-                x_self = self.x[np.newaxis]
+                x_self = self.x[newaxis]
                 x_other = other.x.reshape([-1, *repeat(1, self.ndim)])
                 return dims, x_self, x_other
         elif isinstance(other, NDVar):
@@ -3704,8 +3704,8 @@ class NDVar(Named):
             to find nonzero values in specific elements (if the NDVar has cases
             on a per case basis).
         **regions
-            Regions over which to aggregate as keywords. 
-            For example, to check whether all values between time=0.1 and 
+            Regions over which to aggregate as keywords.
+            For example, to check whether all values between time=0.1 and
             time=0.2 are non-zero, use ``ndvar.all(time=(0.1, 0.2))``.
         name : str
             Name of the output NDVar (default is the current name).
@@ -3716,29 +3716,29 @@ class NDVar(Named):
             Boolean data indicating presence of nonzero value over specified
             dimensions. Return a Var if only the case dimension remains, and a
             boolean if the function collapses over all data.
-            
+
         Examples
         --------
         Examples for
-        
+
         >>> ndvar
         <NDVar 'utsnd': 60 case, 5 sensor, 100 time>
 
         Check whether all values are nonzero:
-        
+
         >>> ndvar.all()
         True
-        
+
         Check whether each time point contains at least one non-zero value
-        
+
         >>> ndvar.all(('case', 'sensor'))
         <NDVar 'utsnd': 100 time>
-        
+
         Check for nonzero values between time=0.1 and time=0.2
-        
+
         >>> ndvar.all(time=(0.1, 0.2))
         <NDVar 'utsnd': 60 case, 5 sensor>
-        
+
         """
         return self._aggregate_over_dims(axis, regions, np.all)
 
@@ -4814,7 +4814,7 @@ class NDVar(Named):
         dim : str
             Dimension over which to operate.
         ord : scalar
-            See description of vector norm for :func:`scipy.linalg.norm` 
+            See description of vector norm for :func:`scipy.linalg.norm`
             (default 2).
         name : str
             Name of the output NDVar (default is the current name).
@@ -5108,7 +5108,7 @@ class NDVar(Named):
             Dimension along which to smooth.
         window_size : scalar
             Size of the window (in dimension units, i.e., for time in
-            seconds). For finite windows this is the full size of the window, 
+            seconds). For finite windows this is the full size of the window,
             for a gaussian window it is the standard deviation.
         window : str | tuple
             Window type, input to :func:`scipy.signal.get_window`. For example
@@ -5194,16 +5194,16 @@ class NDVar(Named):
                     n0 = (n - 1) // 2  # how many input samples need to be fixed (left edge)
                     w_center = (n - 1) // 2  # window sample which is aligned to x
                     for i in range(n0):  # i = origin sample
-                        window_i = window[aslice(axis, start=w_center-i)]
+                        window_i = window[aslice(axis, start=w_center - i)]
                         # renormalize window and subtract values of initial convolution
                         window_i = (window_i / window_i.sum()) - window_i
-                        x[aslice(axis, stop=i+(n-w_center))] += window_i * self.x[aslice(axis, i, i+1)]
+                        x[aslice(axis, stop=i + (n - w_center))] += window_i * self.x[aslice(axis, i, i + 1)]
                     n1 = n // 2  # samples to fix right edge
                     nx = x.shape[axis]
                     for i in range(n1):
-                        window_i = window[aslice(axis, stop=w_center+i+1)]
+                        window_i = window[aslice(axis, stop=w_center + i + 1)]
                         window_i = (window_i / window_i.sum()) - window_i
-                        x[aslice(axis, start=nx-1-w_center-i)] += window_i * self.x[aslice(axis, nx-1-i, nx-i)]
+                        x[aslice(axis, start=nx - 1 - w_center - i)] += window_i * self.x[aslice(axis, nx - 1 - i, nx - i)]
             elif fix_edges:
                 raise NotImplementedError(f"{fix_edges=} with {mode=}")
             else:
@@ -5390,7 +5390,7 @@ class NDVar(Named):
                     raise IndexError(f"Index for {arg.dims[0].name} dimension specified twice.")
             elif arg is newaxis:
                 if i > 0:
-                    raise IndexError("newaxis must be in first index position")
+                    raise IndexError("numpy.newaxis (None) must be in first index position")
                 elif self.has_case:
                     raise IndexError("NDVar already has case dimension")
                 add_axis = True
@@ -5536,8 +5536,8 @@ class NDVar(Named):
         return self._aggregate_over_dims(axis, regions, partial(np.var, ddof=ddof))
 
     def nonzero(self):
-        """Return indices where the NDVar is non-zero 
-        
+        """Return indices where the NDVar is non-zero
+
         Like :func:`numpy.nonzero`.
         """
         return tuple(dim._dim_index(index) for dim, index in zip(self.dims, self.x.nonzero()))
@@ -6192,7 +6192,7 @@ class Dataset(dict):
         """
         if name is None:
             if default is None:
-                raise ValueError(f"Unnamed variabe")
+                raise ValueError("Unnamed variable")
             return default
         return as_legal_dataset_key(name)
 
@@ -6693,7 +6693,7 @@ class Dataset(dict):
                         ds[k] = [v[x == cell].average() for cell in x.cells]
                 else:
                     raise TypeError(f"{v}: unsupported type for Dataset.aggregate()")
-            except:
+            except BaseException:
                 if drop_bad and k not in never_drop:
                     pass
                 else:
@@ -7303,8 +7303,7 @@ class Interaction(_Effect):
         self._n_cases = len(self.base[0])
         self.nestedin = EffectList()
         for e in self.base:
-            if (isinstance(e, NestedEffect) and
-                    not any(np.all(e.nestedin == ne) for ne in self.nestedin)):
+            if isinstance(e, NestedEffect) and not any(np.all(e.nestedin == ne) for ne in self.nestedin):
                 self.nestedin.append(e.nestedin)
         self.base_names = [str(f.name) for f in self.base]
         self.name = ' x '.join(self.base_names)
@@ -7592,7 +7591,7 @@ class Model:
     Attributes
     ----------
     effects : list
-        Effects included in the model (:class:`Var`, :class:`Factor`, etc. 
+        Effects included in the model (:class:`Var`, :class:`Factor`, etc.
         objects)
     """
     def __init__(self, x):
@@ -8005,18 +8004,18 @@ def adjacency_from_name_pairs(neighbors, items, allow_missing=False):
 
 class Dimension:
     """Base class for dimensions.
-    
+
     Parameters
     ----------
     name : str
         Dimension name.
     adjacency : 'grid' | 'none' | array of int, (n_edges, 2)
-        Adjacency between elements. Set to ``"none"`` for no connections or 
-        ``"grid"`` to use adjacency in the sequence of elements as connection. 
+        Adjacency between elements. Set to ``"none"`` for no connections or
+        ``"grid"`` to use adjacency in the sequence of elements as connection.
         Set to :class:`numpy.ndarray` to specify custom adjacency. The array
-        should be of shape (n_edges, 2), and each row should specify one 
+        should be of shape (n_edges, 2), and each row should specify one
         connection [i, j] with i < j, with rows sorted in ascending order. If
-        the array's dtype is uint32, property checks are disabled to improve 
+        the array's dtype is uint32, property checks are disabled to improve
         efficiency.
 
     Attributes
@@ -8129,10 +8128,10 @@ class Dimension:
     def _concatenate_adjacency(dims: Sequence[Dimension]):
         c_types = {dim._adjacency_type for dim in dims}
         if len(c_types) > 1:
-            raise NotImplementedError(f"concatenating with differing adjacency")
+            raise NotImplementedError("concatenating with differing adjacency")
         c_type = c_types.pop()
         if c_type == 'custom':
-            raise NotImplementedError(f"concatenating with custom adjacency")
+            raise NotImplementedError("concatenating with custom adjacency")
         return c_type
 
     @staticmethod
@@ -8406,25 +8405,25 @@ class Dimension:
 
 class Case(Dimension):
     """Case dimension
-    
+
     Parameters
     ----------
     n : int
         Number of cases.
     adjacency : 'grid' | 'none' | array of int, (n_edges, 2)
-        Adjacency between elements. Set to ``"none"`` for no connections or 
-        ``"grid"`` to use adjacency in the sequence of elements as connection. 
+        Adjacency between elements. Set to ``"none"`` for no connections or
+        ``"grid"`` to use adjacency in the sequence of elements as connection.
         Set to :class:`numpy.ndarray` to specify custom adjacency. The array
-        should be of shape (n_edges, 2), and each row should specify one 
+        should be of shape (n_edges, 2), and each row should specify one
         connection [i, j] with i < j, with rows sorted in ascending order. If
-        the array's dtype is uint32, property checks are disabled to improve 
+        the array's dtype is uint32, property checks are disabled to improve
         efficiency.
-        
+
     Examples
     --------
     When initializing an :class:`NDVar`, the case dimension can be speciied
     with the bare class and the number of cases will be inferred from the data:
-    
+
     >>> NDVar([[1, 2], [3, 4]], (Case, Categorial('column', ['1', '2'])))
     <NDVar: 2 case, 2 column>
     """
@@ -8805,12 +8804,12 @@ class Scalar(Dimension):
         Format string for formatting axis tick labels ('%'-format, e.g. '%.0f'
         to round to nearest integer).
     adjacency
-        Adjacency between elements. Set to ``"none"`` for no connections or 
-        ``"grid"`` to use adjacency in the sequence of elements as connection. 
+        Adjacency between elements. Set to ``"none"`` for no connections or
+        ``"grid"`` to use adjacency in the sequence of elements as connection.
         Set to :class:`numpy.ndarray` to specify custom adjacency. The array
-        should be of shape (n_edges, 2), and each row should specify one 
+        should be of shape (n_edges, 2), and each row should specify one
         connection [i, j] with i < j, with rows sorted in ascending order. If
-        the array's dtype is uint32, property checks are disabled to improve 
+        the array's dtype is uint32, property checks are disabled to improve
         efficiency.
     """
     _default_adjacency = 'grid'
@@ -9258,8 +9257,7 @@ class Sensor(Dimension):
             return self.channel_idx[arg]
         elif isinstance(arg, Sensor):
             return np.array([self.names.index(name) for name in arg.names])
-        elif isinstance(arg, Integral) or (isinstance(arg, np.ndarray) and
-                                           arg.dtype.kind == 'i'):
+        elif isinstance(arg, Integral) or (isinstance(arg, np.ndarray) and arg.dtype.kind == 'i'):
             return arg
         else:
             return super(Sensor, self)._array_index(arg)
@@ -10034,10 +10032,10 @@ class SourceSpaceBase(Dimension):
 
     def _eq(self, other, check: bool):
         return (
-            Dimension._eq(self, other, check) and
-            self.subject == other.subject and
-            self.src == other.src and
-            all(np.array_equal(s, o) for s, o in zip(self.vertices, other.vertices)))
+            Dimension._eq(self, other, check)
+            and self.subject == other.subject
+            and self.src == other.src
+            and all(np.array_equal(s, o) for s, o in zip(self.vertices, other.vertices)))
 
     def _assert_same_base(self, other):
         "Assert that ``other`` is based on the same source space"
@@ -10511,7 +10509,7 @@ class SourceSpace(SourceSpaceBase):
             i0 = 0
             for argsort in argsorts:
                 i1 = i0 + len(argsort)
-                parc[i0:i1] = parc[i0+argsort]
+                parc[i0:i1] = parc[i0 + argsort]
                 i0 = i1
         return SourceSpace(vertices, subject, src, subjects_dir, parc, name=name, filename=filename)
 
@@ -11032,9 +11030,9 @@ class UTS(Dimension):
         return self.nsamples
 
     def _eq(self, other, check: bool):
-        return (Dimension._eq(self, other, check) and
-                abs(self.tmin - other.tmin) < self._tol and
-                abs(self.tstep - other.tstep) < self._tol)
+        return (Dimension._eq(self, other, check)
+                and abs(self.tmin - other.tmin) < self._tol
+                and abs(self.tstep - other.tstep) < self._tol)
 
     def __contains__(self, index):
         return self.tmin - self.tstep / 2 < index < self.tstop - self.tstep / 2

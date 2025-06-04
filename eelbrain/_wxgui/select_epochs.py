@@ -78,8 +78,7 @@ def _epoch_list_to_ranges(elist):
         elif start is None:
             out.append(fmtxt.Link(cur, 'epoch:%i' % cur))
         else:
-            out.append(fmtxt.Link(start, 'epoch:%i' % start) + '-' +
-                       fmtxt.Link(cur, 'epoch:%i' % cur))
+            out.append(fmtxt.Link(start, 'epoch:%i' % start) + '-' + fmtxt.Link(cur, 'epoch:%i' % cur))
             start = None
         i += 1
     return out
@@ -702,11 +701,9 @@ class Frame(FileFrame):
         tb.Bind(wx.EVT_CHOICE, self.OnPageChoice)
 
         # --> forward / backward
-        self.back_button = tb.AddTool(wx.ID_BACKWARD, "Back",
-                                           Icon("tango/actions/go-previous"))
+        self.back_button = tb.AddTool(wx.ID_BACKWARD, "Back", Icon("tango/actions/go-previous"))
         self.Bind(wx.EVT_TOOL, self.OnBackward, id=wx.ID_BACKWARD)
-        self.next_button = tb.AddTool(wx.ID_FORWARD, "Next",
-                                           Icon("tango/actions/go-next"))
+        self.next_button = tb.AddTool(wx.ID_FORWARD, "Next", Icon("tango/actions/go-next"))
         self.Bind(wx.EVT_TOOL, self.OnForward, id=wx.ID_FORWARD)
         tb.AddSeparator()
 
@@ -1849,11 +1846,8 @@ class ThresholdDialog(EelbrainDialog):
         return value
 
     def OnOK(self, event):
-        if not (self.mark_above.GetValue() or self.mark_below.GetValue() or
-                self.do_report.GetValue()):
-            wx.MessageBox("Specify at least one action (create report or "
-                          "reject or accept epochs)", "No Command Selected",
-                          wx.ICON_EXCLAMATION)
+        if not (self.mark_above.GetValue() or self.mark_below.GetValue() or self.do_report.GetValue()):
+            wx.MessageBox("Specify at least one action (create report or reject or accept epochs)", "No Command Selected", wx.ICON_EXCLAMATION)
         else:
             event.Skip()
 

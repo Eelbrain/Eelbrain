@@ -90,7 +90,7 @@ def test_sequence_plotter():
     sp.set_brain_args(surf='white', mask=False)  # the source space required for mask is not in the test dataset
     sp.add_ndvar(y, vmax=10)
     sp.add_ndvar(y_mask)
-    p = sp.plot_table(view='lateral')
+    sp.plot_table(view='lateral')
     # test internals
     assert sp._get_frame_labels(True) == ['0 - 50 ms', '50 - 100', '100 - 150', '150 - 200']
 
@@ -100,6 +100,6 @@ def test_sequence_plotter():
     sp.add_ndvar(stc.mean(time=(0.150, 0.250)), label='normal')
     sp.add_ndvar(stc.mean(time=(0.150, 0.250)), cmap='jet', label='jet')
     sp.add_ndvar(stc_mask.max(time=(0.150, 0.250)), label='mask')
-    p = sp.plot_table(view='lateral', orientation='vertical')
+    sp.plot_table(view='lateral', orientation='vertical')
     # test internals
     assert sp._get_frame_labels(True) == ['normal', 'jet', 'mask']

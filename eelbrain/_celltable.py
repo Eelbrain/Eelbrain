@@ -1,6 +1,6 @@
 from fnmatch import fnmatchcase
 from itertools import combinations
-from typing import Callable, Sequence, Union
+from typing import Callable, Sequence
 
 import numpy as np
 
@@ -10,7 +10,7 @@ from ._data_obj import (
     ascategorial, asdataobject, assub,
     cellname, dataobj_repr,
 )
-from ._stats.stats import Dispersion, DispersionSpec, dispersion
+from ._stats.stats import Dispersion, dispersion
 from functools import cached_property
 from ._utils.numpy_utils import FULL_SLICE
 
@@ -85,7 +85,6 @@ class Celltable:
     groups : dict(cell -> group)
         A slice of the match argument describing the group members for each
         cell.
-
     """
     def __init__(
             self,

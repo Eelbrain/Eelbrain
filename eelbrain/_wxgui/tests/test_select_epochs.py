@@ -23,7 +23,7 @@ def test_select_epochs():
     ds['meg'] = load.mne.epochs(ds, tmax=0.1)
     # 25 cases
     arange = np.arange(25)
-    false_at = lambda index: np.isin(arange, index, invert=True)
+    def false_at(index): return np.isin(arange, index, invert=True)
 
     tempdir = TempDir()
     path = join(tempdir, 'rej.pickle')
