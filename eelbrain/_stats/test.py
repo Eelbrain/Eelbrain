@@ -1124,7 +1124,7 @@ def pairwise(
         par: bool = True,
         corr: MCCArg = 'Hochberg',
         trend: Union[bool, str] = False,
-        title: str = '{desc}',
+        title: Union[bool, str] = True,
         mirror: bool = False,
         labels: Dict[CellArg, str] = None,
 ):
@@ -1178,8 +1178,10 @@ def pairwise(
 
     # create TABLE
     table = fmtxt.Table('l' + 'l' * (k - 1 + mirror))
-    title_desc = f"Pairwise {tests['name']}"
-    table.title(title.format(desc=title_desc))
+    if title is True:
+        table.title(f"Pairwise {tests['name']}")
+    elif title:
+        table.title(title)
     table.caption(tests['caption'])
 
     # headings
