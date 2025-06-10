@@ -1,10 +1,13 @@
 """
+.. currentmodule:: eelbrain
+
+
 Group level analysis
 ====================
 
-:class:`Dataset`s provide a means to collect data for statistical analysis.
+:class:`Dataset` s provide a means to collect data for statistical analysis.
 
-:class:`Dataset`s are similar to dataframes in R or :mod:`pandas`,
+:class:`Dataset` s are similar to dataframes in R or :mod:`pandas`,
 but can hold mass-univariate measurements in :class:`NDVar`s.
 
 :class:`Dataset`s can be constructed by collecting the individual cases,
