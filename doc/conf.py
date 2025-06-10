@@ -79,6 +79,7 @@ example_order = {
         'dataset-basics.py',
         'align.py',
         'ndvar-creating.py',
+        'group-level-analysis.py',
     ],
     'statistics': [
         'models.py',
