@@ -7,13 +7,12 @@ Group level analysis
 
 :class:`Datasets <Dataset>` provide a means to collect data for statistical
 analysis.
-
 A :class:`Dataset` is similar to a dataframe in R or :mod:`pandas`,
-but can hold mass-univariate measurements using :class:`NDVars <NDVar>`.
+but can hold mass-univariate measurements in :class:`NDVars <NDVar>`.
 
-:class:`Datasets <Dataset>` can be constructed by first collecting the cases,
-or rows, of the desired data table, and then combining them using
-:meth:`Dataset.from_caselist`.
+This example illustrates how to construct a :class:`Datasets <Dataset>`
+by first collecting the cases, or rows, of the desired data table,
+and then combining them using :meth:`Dataset.from_caselist`.
 
 .. contents:: Contents
    :local:
