@@ -1,5 +1,7 @@
 """Test mne interaction"""
 import os
+from pathlib import Path
+import warnings
 
 import numpy as np
 from numpy.testing import assert_array_equal, assert_allclose
@@ -207,27 +209,49 @@ def test_combination_label():
 
 @requires_mne_testing_data
 def test_morphing():
-    data_dir = mne.datasets.testing.data_path(download=False)
-    subjects_dir = os.path.join(data_dir, 'subjects')
-
+    # Test data
+    data_dir = Path(mne.datasets.testing.data_path(download=False))
+    subjects_dir = data_dir / 'subjects'
     stc = datasets.get_mne_stc()
-    y = load.mne.stc_ndvar(stc, 'sample', 'ico-5', subjects_dir, 'dSPM', name='src')
+    ndvar = load.mne.stc_ndvar(stc, 'sample', 'ico-5', subjects_dir, 'dSPM', name='src')
+    labels_sample = {label.name: label for label in mne.read_labels_from_annot('sample', 'aparc', subjects_dir=subjects_dir)}
+    labels_fsa = {label.name: label for label in mne.read_labels_from_annot('fsaverage', 'aparc', subjects_dir=subjects_dir)}
+    morph = mne.compute_source_morph(stc, 'sample', 'fsaverage', subjects_dir)
+    stc_fsa = morph.apply(stc)
+    stc_fsa_ndvar = load.mne.stc_ndvar(stc_fsa, 'fsaverage', 'ico-5', subjects_dir, 'dSPM', False, 'src', parc=None)
 
     # sample to fsaverage
-    m = mne.compute_source_morph(stc, 'sample', 'fsaverage', subjects_dir)
-    stc_fsa = m.apply(stc)
-    y_fsa = morph_source_space(y, 'fsaverage')
-    assert_allclose(y_fsa.x, stc_fsa.data)
-    stc_fsa_ndvar = load.mne.stc_ndvar(stc_fsa, 'fsaverage', 'ico-5', subjects_dir, 'dSPM', False, 'src', parc=None)
-    assert_dataobj_equal(stc_fsa_ndvar, y_fsa, decimal=6)
+    # -------------------
+    # Using only subject
+    ndvar_fsa = morph_source_space(ndvar, 'fsaverage')
+    assert_dataobj_equal(ndvar_fsa, stc_fsa_ndvar, decimal=6)
+    # Using pre-computed morph-matrix
+    ndvar_fsa = morph_source_space(ndvar, 'fsaverage', morph_mat=morph)
+    assert_dataobj_equal(ndvar_fsa, stc_fsa_ndvar, decimal=6)
+    # Subset of STC using morph-matrix (equivalent to using stc.expand())
+    stc_label = stc.in_label(labels_sample['transversetemporal-lh'])
+    ndvar_label = load.mne.stc_ndvar(stc_label, 'sample', 'ico-5', subjects_dir, 'dSPM', name='src')
+    stc_label_fsa = morph.apply(stc_label.copy().expand(stc.vertices)).in_label(labels_fsa['transversetemporal-lh'])
+    stc_label_fsa_ndvar = load.mne.stc_ndvar(stc_label_fsa, 'fsaverage', 'ico-5', subjects_dir, 'dSPM', False, 'src', parc=None)
+    ndvar_label_fsa = morph_source_space(ndvar_label, 'fsaverage', morph_mat=morph)
+    assert_dataobj_equal(ndvar_label_fsa, stc_label_fsa_ndvar, decimal=6)
+    # Subset of STC (computing morph-matrix for subset)
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', r'\d+/\d+ vertices not included in smoothing', module='mne')
+        label_morph = mne.compute_source_morph(stc_label, 'sample', 'fsaverage', subjects_dir)
+    stc_label_fsa = label_morph.apply(stc_label).in_label(labels_fsa['transversetemporal-lh'])
+    stc_label_fsa_ndvar = load.mne.stc_ndvar(stc_label_fsa, 'fsaverage', 'ico-5', subjects_dir, 'dSPM', False, 'src', parc=None)
+    ndvar_label_fsa = morph_source_space(ndvar_label, 'fsaverage')
+    assert_dataobj_equal(ndvar_label_fsa, stc_label_fsa_ndvar, decimal=6)
 
-    # scaled to fsaverage
+    # Scaled brain to fsaverage
+    # -------------------------
     y_scaled = datasets.get_mne_stc(True, subject='fsaverage_scaled')
     y_scaled_m = morph_source_space(y_scaled, 'fsaverage')
     assert y_scaled_m.source.subject == 'fsaverage'
     assert_array_equal(y_scaled_m.x, y_scaled.x)
 
-    # scaled to fsaverage [masked]
+    # masked data
     y_sub = y_scaled.sub(source='superiortemporal-lh')
     y_sub_m = morph_source_space(y_sub, 'fsaverage')
     assert y_sub_m.source.subject == 'fsaverage'
