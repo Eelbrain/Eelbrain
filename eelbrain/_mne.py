@@ -427,7 +427,7 @@ def morph_source_space(
     mask
         Restrict output to known sources. If the parcellation of ``data`` is
         retained keep only sources with labels contained in ``data``, otherwise
-        remove only sourves with ``”unknown-*”`` label (default is True unless
+        remove only sources with ``”unknown-*”`` label (default is True unless
         ``vertices_to`` is specified).
 
     Returns
@@ -534,7 +534,7 @@ def morph_source_space(
             else:  # infer whether ndvar was masked
                 mask = not ('unknown-lh' in source.parc or 'unknown-rh' in source.parc)
     elif not isinstance(vertices_to, list) or not len(vertices_to) == 2:
-        raise ValueError(f"vertices_to={vertices_to!r}: must be a list of length 2")
+        raise ValueError(f"{vertices_to=}: must be a list of length 2")
 
     # check that requested data is available
     n_to_lh = len(vertices_to[0])
