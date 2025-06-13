@@ -312,7 +312,7 @@ class Barplot(CategorialAxisMixin, YLimMixin, _SimpleFigure):
     y
         Dependent variable.
     x
-        Model (Factor or Interaction).
+        Model defining cells to show on the x axis (Factor or Interaction).
     match
         Match cases for a repeated measures design.
     sub
