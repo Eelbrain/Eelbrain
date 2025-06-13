@@ -235,6 +235,9 @@ def test_morphing():
     stc_label_fsa_ndvar = load.mne.stc_ndvar(stc_label_fsa, 'fsaverage', 'ico-5', subjects_dir, 'dSPM', False, 'src', parc=None)
     ndvar_label_fsa = morph_source_space(ndvar_label, 'fsaverage', morph_mat=morph)
     assert_dataobj_equal(ndvar_label_fsa, stc_label_fsa_ndvar, decimal=6)
+    # Single time point
+    ndvar_label_fsa = morph_source_space(ndvar_label.sub(time=0), 'fsaverage', morph_mat=morph)
+    assert_dataobj_equal(ndvar_label_fsa, stc_label_fsa_ndvar.sub(time=0), decimal=6)
     # Subset of STC (computing morph-matrix for subset)
     with warnings.catch_warnings():
         warnings.filterwarnings('ignore', r'\d+/\d+ vertices not included in smoothing', module='mne')
