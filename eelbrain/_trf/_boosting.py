@@ -555,7 +555,7 @@ class BoostingResult(PickleableDataClass):
     def _morph(
             self,
             to_subject: str,
-            source_morph: Union[mne.SourceMorph] = None,
+            source_morph: mne.SourceMorph = None,
     ):
         "Morph source space"
         from .._mne import morph_source_space
