@@ -639,8 +639,7 @@ def morph_source_space(
 
     if isinstance(morph_mat, mne.SourceMorph):
         # Update morph matrix
-        morph_n_to, morph_n_from = morph_mat.morph_mat.shape
-        if len(source) != morph_n_from or len(source_to) != morph_n_to:
+        if morph_mat.morph_mat.shape != (len(source), len(source_to)):
             morph_mat = _update_morph(morph_mat, source.vertices, source_to.vertices)
         # Morph data
         stc, shape, dims = ndvar_stc(ndvar)
@@ -656,9 +655,9 @@ def morph_source_space(
             warnings.filterwarnings('ignore', r'\d+/\d+ vertices not included in smoothing', module='mne')
             morph_mat = compute_morph_matrix(subject_from, subject_to, source.vertices, source_to.vertices, None, subjects_dir, xhemi=xhemi)
     elif not scipy.sparse.issparse(morph_mat):
-        raise ValueError('morph_mat must be a sparse matrix')
-    elif not sum(len(v) for v in source_to.vertices) == morph_mat.shape[0]:
-        raise ValueError('morph_mat.shape[0] must match number of vertices in vertices_to')
+        raise ValueError(f'{morph_mat=}: must be mne.SourceMorph or a sparse matrix')
+    elif morph_mat.shape != (len(source), len(source_to)):
+        raise ValueError(f'{morph_mat.shape=}: Dimensions must match source and target source space dimensions {(len(source), len(source_to))}')
 
     # flatten data
     x = ndvar.x

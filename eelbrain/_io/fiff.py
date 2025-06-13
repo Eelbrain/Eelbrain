@@ -1549,11 +1549,10 @@ def ndvar_stc(
         time_dim = ndvar.get_dim('time')
         tmin = time_dim.tmin
         tstep = time_dim.tstep
-        target_shape = None
     else:
         tmin = 0
         tstep = 1
-        target_shape = (-1, *source_shape[1:])
+    target_shape = (-1, *source_shape[1:])
     # Initialize appropriate MNE STC object
     if isinstance(source_dim, SourceSpace):
         if is_vector_stc:
