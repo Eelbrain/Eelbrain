@@ -25,7 +25,7 @@ except ImportError:
     from mne import compute_morph_matrix
 
 from ._data_obj import NDVar, Space, SourceSpaceBase, SourceSpace, VolumeSourceSpace
-from ._io.fiff import ndvar_stc, stc_ndvar
+from ._io.fiff import ndvar_stc
 from ._types import PathArg
 from ._utils.numpy_utils import index
 

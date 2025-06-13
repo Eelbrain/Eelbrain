@@ -1539,7 +1539,7 @@ def ndvar_stc(
     dims = ndvar.get_dims(dim_names)
     source_shape = [len(dim) for dim in dims]
     compressed_shape = (
-        *source_shape[:1+is_vector_stc],
+        *source_shape[:1 + is_vector_stc],
         reduce(operator.mul, source_shape[1 + is_vector_stc:], 1),
     )
     data = ndvar.get_data(dim_names).reshape(compressed_shape)
