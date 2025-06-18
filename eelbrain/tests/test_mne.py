@@ -229,23 +229,30 @@ def test_morphing():
     ndvar_fsa = morph_source_space(ndvar, 'fsaverage', morph_mat=morph)
     assert_dataobj_equal(ndvar_fsa, stc_fsa_ndvar, decimal=6)
     # Subset of STC using morph-matrix (equivalent to using stc.expand())
-    stc_label = stc.in_label(labels_sample['transversetemporal-lh'])
-    ndvar_label = load.mne.stc_ndvar(stc_label, 'sample', 'ico-5', subjects_dir, 'dSPM', name='src')
-    stc_label_fsa = morph.apply(stc_label.copy().expand(stc.vertices)).in_label(labels_fsa['transversetemporal-lh'])
-    stc_label_fsa_ndvar = load.mne.stc_ndvar(stc_label_fsa, 'fsaverage', 'ico-5', subjects_dir, 'dSPM', False, 'src', parc=None)
-    ndvar_label_fsa = morph_source_space(ndvar_label, 'fsaverage', morph_mat=morph)
-    assert_dataobj_equal(ndvar_label_fsa, stc_label_fsa_ndvar, decimal=6)
-    # Single time point
-    ndvar_label_fsa = morph_source_space(ndvar_label.sub(time=0), 'fsaverage', morph_mat=morph)
-    assert_dataobj_equal(ndvar_label_fsa, stc_label_fsa_ndvar.sub(time=0), decimal=6)
-    # Subset of STC (computing morph-matrix for subset)
-    with warnings.catch_warnings():
-        warnings.filterwarnings('ignore', r'\d+/\d+ vertices not included in smoothing', module='mne')
-        label_morph = mne.compute_source_morph(stc_label, 'sample', 'fsaverage', subjects_dir)
-    stc_label_fsa = label_morph.apply(stc_label).in_label(labels_fsa['transversetemporal-lh'])
-    stc_label_fsa_ndvar = load.mne.stc_ndvar(stc_label_fsa, 'fsaverage', 'ico-5', subjects_dir, 'dSPM', False, 'src', parc=None)
-    ndvar_label_fsa = morph_source_space(ndvar_label, 'fsaverage')
-    assert_dataobj_equal(ndvar_label_fsa, stc_label_fsa_ndvar, decimal=6)
+    for hemi in ['lh', 'rh', 'bi']:
+        if hemi == 'bi':
+            label_sample = labels_sample['transversetemporal-lh'] + labels_sample['transversetemporal-rh']
+            label_fsa = labels_fsa['transversetemporal-lh'] + labels_fsa['transversetemporal-rh']
+        else:
+            label_sample = labels_sample[f'transversetemporal-{hemi}']
+            label_fsa = labels_fsa[f'transversetemporal-{hemi}']
+        stc_label = stc.in_label(label_sample)
+        ndvar_label = load.mne.stc_ndvar(stc_label, 'sample', 'ico-5', subjects_dir, 'dSPM', name='src')
+        stc_label_fsa = morph.apply(stc_label.copy().expand(stc.vertices)).in_label(label_fsa)
+        stc_label_fsa_ndvar = load.mne.stc_ndvar(stc_label_fsa, 'fsaverage', 'ico-5', subjects_dir, 'dSPM', False, 'src', parc=None)
+        ndvar_label_fsa = morph_source_space(ndvar_label, 'fsaverage', morph_mat=morph)
+        assert_dataobj_equal(ndvar_label_fsa, stc_label_fsa_ndvar, decimal=6)
+        # Single time point
+        ndvar_label_fsa = morph_source_space(ndvar_label.sub(time=0), 'fsaverage', morph_mat=morph)
+        assert_dataobj_equal(ndvar_label_fsa, stc_label_fsa_ndvar.sub(time=0), decimal=6)
+        # Subset of STC (computing morph-matrix for subset)
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', r'\d+/\d+ vertices not included in smoothing', module='mne')
+            label_morph = mne.compute_source_morph(stc_label, 'sample', 'fsaverage', subjects_dir)
+        stc_label_fsa = label_morph.apply(stc_label).in_label(label_fsa)
+        stc_label_fsa_ndvar = load.mne.stc_ndvar(stc_label_fsa, 'fsaverage', 'ico-5', subjects_dir, 'dSPM', False, 'src', parc=None)
+        ndvar_label_fsa = morph_source_space(ndvar_label, 'fsaverage')
+        assert_dataobj_equal(ndvar_label_fsa, stc_label_fsa_ndvar, decimal=6)
 
     # Scaled brain to fsaverage
     # -------------------------
