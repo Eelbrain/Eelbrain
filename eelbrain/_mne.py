@@ -388,29 +388,29 @@ def labels_from_mni_coords(seeds, extent=30., subject='fsaverage',
     return labels
 
 
-def _update_morph(
+def _morph_subset(
         morph: mne.SourceMorph,
-        vertice_from: List[np.ndarray],
-        vertice_to: List[np.ndarray] = None,
-        orig_vertice_from: List[np.ndarray] = None,
+        vertices_from: List[np.ndarray],
+        vertices_to: List[np.ndarray],
 ) -> mne.SourceMorph:
+    """Update :class:`mne.SourceMorph` for a subset of vertices"""
     if morph.shape is not None:
         raise NotImplementedError()
     elif morph.vol_morph_mat is not None:
         raise NotImplementedError("Volume morphing")
+    morph_mat = morph.morph_mat
     # Retrieve orig_vertice_from
-    if orig_vertice_from is None:
-        if 'vertices_from' in morph.src_data:
-            orig_vertice_from = morph.src_data['vertices_from']
-        else:
-            raise ValueError("SourceMorph does not contain original vertices_from")
+    if 'vertices_from' not in morph.src_data:
+        raise ValueError("SourceMorph does not contain original vertices_from")
+    orig_vertice_from = morph.src_data['vertices_from']
     # Subset vertices_from
-    index = numpy.concatenate([np.isin(orig_v, v) for orig_v, v in zip(orig_vertice_from, vertice_from)])
-    morph_mat = morph.morph_mat[:, index]
-    src_data = {'vertices_from': deepcopy(vertice_from)}
+    if not all(numpy.array_equal(v, orig_v) for v, orig_v in zip(vertices_from, orig_vertice_from)):
+        index = numpy.concatenate([np.isin(orig_v, v) for v, orig_v in zip(vertices_from, orig_vertice_from)])
+        morph_mat = morph_mat[:, index]
+    src_data = {'vertices_from': deepcopy(vertices_from)}
     # Subset vertices_to
-    if vertice_to is not None:
-        index = numpy.concatenate([np.isin(orig_v, v) for orig_v, v in zip(morph.vertices_to, vertice_to)])
+    if not all(numpy.array_equal(v, orig_v) for v, orig_v in zip(vertices_to, morph.vertices_to)):
+        index = numpy.concatenate([np.isin(orig_v, v) for v, orig_v in zip(vertices_to, morph.vertices_to)])
         morph_mat = morph_mat[index]
     # Reconstruct source morph
     return mne.SourceMorph(
@@ -424,7 +424,7 @@ def _update_morph(
         morph.smooth,
         morph.xhemi,
         morph_mat,
-        vertice_to,
+        vertices_to,
         morph.shape,
         morph.affine,
         morph.pre_affine,
@@ -639,8 +639,7 @@ def morph_source_space(
 
     if isinstance(morph_mat, mne.SourceMorph):
         # Update morph matrix
-        if morph_mat.morph_mat.shape != (len(source), len(source_to)):
-            morph_mat = _update_morph(morph_mat, source.vertices, source_to.vertices)
+        morph_mat = _morph_subset(morph_mat, source.vertices, source_to.vertices)
         # Morph data
         stc, shape, dims = ndvar_stc(ndvar)
         morphed_stc = morph_mat.apply(stc)
