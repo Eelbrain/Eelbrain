@@ -399,6 +399,7 @@ def _morph_subset(
     elif morph.vol_morph_mat is not None:
         raise NotImplementedError("Volume morphing")
     morph_mat = morph.morph_mat
+    changed = False
     # Retrieve orig_vertice_from
     if 'vertices_from' not in morph.src_data:
         raise ValueError("SourceMorph does not contain original vertices_from")
@@ -407,12 +408,16 @@ def _morph_subset(
     if not all(numpy.array_equal(v, orig_v) for v, orig_v in zip(vertices_from, orig_vertice_from)):
         index = numpy.concatenate([np.isin(orig_v, v) for v, orig_v in zip(vertices_from, orig_vertice_from)])
         morph_mat = morph_mat[:, index]
+        changed = True
     src_data = {'vertices_from': deepcopy(vertices_from)}
     # Subset vertices_to
     if not all(numpy.array_equal(v, orig_v) for v, orig_v in zip(vertices_to, morph.vertices_to)):
         index = numpy.concatenate([np.isin(orig_v, v) for v, orig_v in zip(vertices_to, morph.vertices_to)])
         morph_mat = morph_mat[index]
+        changed = True
     # Reconstruct source morph
+    if not changed:
+        return morph
     return mne.SourceMorph(
         morph.subject_from,
         morph.subject_to,
