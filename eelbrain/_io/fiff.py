@@ -2,9 +2,11 @@
 """I/O for MNE"""
 from collections.abc import Iterable
 import fnmatch
+from functools import reduce
 from itertools import chain, zip_longest
 from logging import getLogger
 from math import floor
+import operator
 import os
 from pathlib import Path
 import re
@@ -19,7 +21,7 @@ import numpy as np
 
 from .. import _info
 from .._types import PathArg
-from .._data_obj import Factor, Var, NDVar, Dataset, Case, Sensor, Space, SourceSpace, VolumeSourceSpace, UTS, _matrix_graph
+from .._data_obj import Dimension, Factor, Var, NDVar, Dataset, Case, Sensor, Space, SourceSpace, VolumeSourceSpace, UTS, _matrix_graph
 from .._info import BAD_CHANNELS
 from .._text import n_of
 from .._utils import ui, as_list
@@ -1512,6 +1514,59 @@ def stc_ndvar(
         raise ValueError(f"{fixed=}")
 
     return NDVar(x, dims, name, info)
+
+
+def ndvar_stc(
+        ndvar: NDVar,
+) -> (
+    mne.source_estimate._BaseSourceEstimate,
+    Tuple[int, ...],  # target shape
+    List[Dimension],  # Dimensions
+):
+    """Convert an NDVar with source space data to an :mod:`mne` object
+
+    Parameters
+    ----------
+    ndvar
+        Data in source space.
+    """
+    source_dim = ndvar.get_dim('source')
+    is_vector_stc = ndvar.has_dim('space')
+    if is_vector_stc:
+        dim_names = ndvar.get_dimnames(first=('source', 'space'))
+    else:
+        dim_names = ndvar.get_dimnames(first='source')
+    dims = ndvar.get_dims(dim_names)
+    source_shape = [len(dim) for dim in dims]
+    compressed_shape = (
+        *source_shape[:1 + is_vector_stc],
+        reduce(operator.mul, source_shape[1 + is_vector_stc:], 1),
+    )
+    data = ndvar.get_data(dim_names).reshape(compressed_shape)
+    # Whether to use STC time axis for time
+    use_time_axis = len(dim_names) == 2 + is_vector_stc and dim_names[-1] == 'time'
+    if use_time_axis:
+        time_dim = ndvar.get_dim('time')
+        tmin = time_dim.tmin
+        tstep = time_dim.tstep
+    else:
+        tmin = 0
+        tstep = 1
+    target_shape = (-1, *source_shape[1:])
+    # Initialize appropriate MNE STC object
+    if isinstance(source_dim, SourceSpace):
+        if is_vector_stc:
+            stc = mne.VectorSourceEstimate(data, source_dim.vertices, tmin, tstep, source_dim.subject)
+        else:
+            stc = mne.SourceEstimate(data, source_dim.vertices, tmin, tstep, source_dim.subject)
+    elif isinstance(source_dim, VolumeSourceSpace):
+        assert len(source_dim.vertices) == 1
+        vertices = source_dim.vertices[0]
+        if is_vector_stc:
+            stc = mne.VolVectorSourceEstimate(data, vertices, tmin, tstep, source_dim.subject)
+        else:
+            stc = mne.VolSourceEstimate(data, vertices, tmin, tstep, source_dim.subject)
+    return stc, target_shape, dims[1:]
 
 
 def _trim_ds(ds, epochs):
