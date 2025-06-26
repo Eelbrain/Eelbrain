@@ -408,7 +408,7 @@ def _morph_subset(
     if not all(numpy.array_equal(v, orig_v) for v, orig_v in zip(vertices_from, orig_vertice_from)):
         index = numpy.concatenate([np.isin(orig_v, v, True) for v, orig_v in zip(vertices_from, orig_vertice_from)])
         if index.sum() != sum([len(v) for v in vertices_from]):
-           raise ValueError("morph does not contain all vertices in vertices_from")
+            raise ValueError("morph does not contain all vertices in vertices_from")
         morph_mat = morph_mat[:, index]
         changed = True
     src_data = {'vertices_from': deepcopy(vertices_from)}
