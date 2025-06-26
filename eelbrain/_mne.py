@@ -406,13 +406,17 @@ def _morph_subset(
     orig_vertice_from = morph.src_data['vertices_from']
     # Subset vertices_from
     if not all(numpy.array_equal(v, orig_v) for v, orig_v in zip(vertices_from, orig_vertice_from)):
-        index = numpy.concatenate([np.isin(orig_v, v) for v, orig_v in zip(vertices_from, orig_vertice_from)])
+        index = numpy.concatenate([np.isin(orig_v, v, True) for v, orig_v in zip(vertices_from, orig_vertice_from)])
+        if index.sum() != sum([len(v) for v in vertices_from]):
+           raise ValueError("morph does not contain all vertices in vertices_from")
         morph_mat = morph_mat[:, index]
         changed = True
     src_data = {'vertices_from': deepcopy(vertices_from)}
     # Subset vertices_to
     if not all(numpy.array_equal(v, orig_v) for v, orig_v in zip(vertices_to, morph.vertices_to)):
-        index = numpy.concatenate([np.isin(orig_v, v) for v, orig_v in zip(vertices_to, morph.vertices_to)])
+        index = numpy.concatenate([np.isin(orig_v, v, True) for v, orig_v in zip(vertices_to, morph.vertices_to)])
+        if index.sum() != sum([len(v) for v in vertices_to]):
+            raise ValueError("morph does not contain all vertices in vertices_to")
         morph_mat = morph_mat[index]
         changed = True
     # Reconstruct source morph
