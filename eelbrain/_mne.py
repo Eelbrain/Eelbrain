@@ -460,17 +460,15 @@ def morph_source_space(
     data
         NDVar with SourceSpace dimension.
     subject_to
-        Name of the subject on which to morph (by default this is the same as
+        Name of the target MRI subject (by default, this is the same as
         the current subject for ``xhemi`` morphing).
-    vertices_to : list of array of int | 'lh' | 'rh'
+    vertices_to
         The vertices on the destination subject's brain. If ``data`` contains a
         whole source space, vertices_to can be automatically loaded, although
         providing them as argument can speed up processing by a second or two.
-        Use 'lh' or 'rh' to target vertices from only one hemisphere.
+        Use ``'lh'`` or ``'rh'`` to target vertices from only one hemisphere.
     morph_mat
-        The morphing matrix. If ``data`` contains a whole source space, the morph
-        matrix can be automatically loaded, although providing a cached matrix
-        can speed up processing by a second or two.
+        A pre-computed morph matrix to speed up processing.
     copy
         Make sure that the data of ``morphed_ndvar`` is separate from
         ``data`` (default False).
