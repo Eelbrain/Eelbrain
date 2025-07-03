@@ -586,14 +586,15 @@ def morph_source_space(
         raise TypeError(f"{type(vertices_to)=}: must be a list of arrays or 'lh'|'rh'")
     elif vertices_to in (None, 'lh', 'rh'):
         if isinstance(morph_mat, mne.SourceMorph):
-            grade_to = morph_mat.spacing
+            default_vertices = morph_mat.vertices_to
         else:
-            grade_to = source.grade
-        default_vertices = source_space_vertices(source.kind, grade_to, subject_to, subjects_dir)
+            default_vertices = source_space_vertices(source.kind, source.grade, subject_to, subjects_dir)
         lh_out = vertices_to == 'lh' or (vertices_to is None and has_lh_out)
         rh_out = vertices_to == 'rh' or (vertices_to is None and has_rh_out)
-        vertices_to = [default_vertices[0] if lh_out else np.empty(0, int),
-                       default_vertices[1] if rh_out else np.empty(0, int)]
+        vertices_to = [
+            default_vertices[0] if lh_out else np.empty(0, int),
+            default_vertices[1] if rh_out else np.empty(0, int),
+        ]
         if mask is None:
             if source.parc is None:
                 mask = False
