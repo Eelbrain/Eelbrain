@@ -561,7 +561,7 @@ class BoostingResult(PickleableDataClass):
         from .._mne import morph_source_space
 
         def func(obj: NDVar):
-            return morph_source_space(obj, to_subject, morph_mat=source_morph)
+            return morph_source_space(obj, to_subject, morph=source_morph)
         self._apply_ndvar_transform(func)
 
     def _set_adjacency(self, dim, adjacency):

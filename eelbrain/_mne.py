@@ -447,7 +447,7 @@ def morph_source_space(
         data: Union[NDVar, SourceSpace],
         subject_to: str = None,
         vertices_to: Union[List, str] = None,
-        morph_mat: Union[scipy.sparse.spmatrix, mne.SourceMorph] = None,
+        morph: Union[scipy.sparse.spmatrix, mne.SourceMorph] = None,
         copy: bool = False,
         parc: Union[bool, str] = True,
         xhemi: bool = False,
@@ -467,7 +467,7 @@ def morph_source_space(
         whole source space, vertices_to can be automatically loaded, although
         providing them as argument can speed up processing by a second or two.
         Use ``'lh'`` or ``'rh'`` to target vertices from only one hemisphere.
-    morph_mat
+    morph
         A pre-computed morph matrix to speed up processing.
     copy
         Make sure that the data of ``morphed_ndvar`` is separate from
@@ -541,11 +541,11 @@ def morph_source_space(
     subjects_dir = source.subjects_dir
     subject_from = source.subject
     # Verify subject_to
-    if isinstance(morph_mat, mne.SourceMorph):
+    if isinstance(morph, mne.SourceMorph):
         if subject_to is None:
-            subject_to = morph_mat.subject_to
-        elif subject_to != morph_mat.subject_to:
-            raise ValueError(f"{subject_to=} with {morph_mat.subject_to=}")
+            subject_to = morph.subject_to
+        elif subject_to != morph.subject_to:
+            raise ValueError(f"{subject_to=} with {morph.subject_to=}")
     elif subject_to is None:
         subject_to = subject_from
     if subject_to != subject_from:
@@ -585,8 +585,8 @@ def morph_source_space(
     if isinstance(vertices_to, np.ndarray):
         raise TypeError(f"{type(vertices_to)=}: must be a list of arrays or 'lh'|'rh'")
     elif vertices_to in (None, 'lh', 'rh'):
-        if isinstance(morph_mat, mne.SourceMorph):
-            default_vertices = morph_mat.vertices_to
+        if isinstance(morph, mne.SourceMorph):
+            default_vertices = morph.vertices_to
         else:
             default_vertices = source_space_vertices(source.kind, source.grade, subject_to, subjects_dir)
         lh_out = vertices_to == 'lh' or (vertices_to is None and has_lh_out)
@@ -645,40 +645,40 @@ def morph_source_space(
     if ndvar is None:
         return source_to
 
-    if isinstance(morph_mat, mne.SourceMorph):
+    if isinstance(morph, mne.SourceMorph):
         # Update morph matrix
-        morph_mat = _morph_subset(morph_mat, source.vertices, source_to.vertices)
+        morph = _morph_subset(morph, source.vertices, source_to.vertices)
         # Morph data
         stc, shape, dims = ndvar_stc(ndvar)
-        morphed_stc = morph_mat.apply(stc)
+        morphed_stc = morph.apply(stc)
         # Reconstruct NDVar
         x = morphed_stc.data
         if shape is not None:
             x = x.reshape(shape)
         dims = (source_to, *dims)
         return NDVar(x, dims, ndvar.name, ndvar.info)
-    elif morph_mat is None:
+    elif morph is None:
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', r'\d+/\d+ vertices not included in smoothing', module='mne')
-            morph_mat = compute_morph_matrix(subject_from, subject_to, source.vertices, source_to.vertices, None, subjects_dir, xhemi=xhemi)
-    elif not scipy.sparse.issparse(morph_mat):
-        raise ValueError(f'{morph_mat=}: must be mne.SourceMorph or a sparse matrix')
-    elif morph_mat.shape != (len(source), len(source_to)):
-        raise ValueError(f'{morph_mat.shape=}: Dimensions must match source and target source space dimensions {(len(source), len(source_to))}')
+            morph = compute_morph_matrix(subject_from, subject_to, source.vertices, source_to.vertices, None, subjects_dir, xhemi=xhemi)
+    elif not scipy.sparse.issparse(morph):
+        raise ValueError(f'{morph=}: must be mne.SourceMorph or a sparse matrix')
+    elif morph.shape != (len(source), len(source_to)):
+        raise ValueError(f'{morph.shape=}: Dimensions must match source and target source space dimensions {(len(source), len(source_to))}')
 
     # flatten data
     x = ndvar.x
     if axis != 0:
         x = x.swapaxes(0, axis)
     n_sources = len(x)
-    if not n_sources == morph_mat.shape[1]:
-        raise ValueError('data source dimension length must be the same as morph_mat.shape[0]')
+    if not n_sources == morph.shape[1]:
+        raise ValueError('data source dimension length must be the same as morph.shape[0]')
     if ndvar.ndim > 2:
         shape = x.shape
         x = x.reshape((n_sources, -1))
 
     # apply morph matrix
-    x_m = morph_mat.dot(x)
+    x_m = morph.dot(x)
 
     # restore data shape
     if ndvar.ndim > 2:

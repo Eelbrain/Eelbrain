@@ -226,7 +226,7 @@ def test_morphing():
     ndvar_fsa = morph_source_space(ndvar, 'fsaverage')
     assert_dataobj_equal(ndvar_fsa, stc_fsa_ndvar, decimal=6)
     # Using pre-computed morph-matrix
-    ndvar_fsa = morph_source_space(ndvar, 'fsaverage', morph_mat=morph)
+    ndvar_fsa = morph_source_space(ndvar, 'fsaverage', morph=morph)
     assert_dataobj_equal(ndvar_fsa, stc_fsa_ndvar, decimal=6)
     # Subset of STC using morph-matrix (equivalent to using stc.expand())
     for hemi in ['lh', 'rh', 'bi']:
@@ -240,10 +240,10 @@ def test_morphing():
         ndvar_label = load.mne.stc_ndvar(stc_label, 'sample', 'ico-5', subjects_dir, 'dSPM', name='src')
         stc_label_fsa = morph.apply(stc_label.copy().expand(stc.vertices)).in_label(label_fsa)
         stc_label_fsa_ndvar = load.mne.stc_ndvar(stc_label_fsa, 'fsaverage', 'ico-5', subjects_dir, 'dSPM', False, 'src', parc=None)
-        ndvar_label_fsa = morph_source_space(ndvar_label, 'fsaverage', morph_mat=morph)
+        ndvar_label_fsa = morph_source_space(ndvar_label, 'fsaverage', morph=morph)
         assert_dataobj_equal(ndvar_label_fsa, stc_label_fsa_ndvar, decimal=6)
         # Single time point
-        ndvar_label_fsa = morph_source_space(ndvar_label.sub(time=0), 'fsaverage', morph_mat=morph)
+        ndvar_label_fsa = morph_source_space(ndvar_label.sub(time=0), 'fsaverage', morph=morph)
         assert_dataobj_equal(ndvar_label_fsa, stc_label_fsa_ndvar.sub(time=0), decimal=6)
         # Subset of STC (computing morph-matrix for subset)
         with warnings.catch_warnings():
