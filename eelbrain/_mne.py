@@ -398,7 +398,7 @@ def _morph_subset(
         raise NotImplementedError()
     elif morph.vol_morph_mat is not None:
         raise NotImplementedError("Volume morphing")
-    morph_mat = morph.morph_mat
+    morph_matrix = morph.morph_mat
     changed = False
     # Retrieve orig_vertice_from
     if 'vertices_from' not in morph.src_data:
@@ -409,7 +409,7 @@ def _morph_subset(
         index = numpy.concatenate([np.isin(orig_v, v, True) for v, orig_v in zip(vertices_from, orig_vertice_from)])
         if index.sum() != sum([len(v) for v in vertices_from]):
             raise ValueError("morph does not contain all vertices in vertices_from")
-        morph_mat = morph_mat[:, index]
+        morph_matrix = morph_matrix[:, index]
         changed = True
     src_data = {'vertices_from': deepcopy(vertices_from)}
     # Subset vertices_to
@@ -417,7 +417,7 @@ def _morph_subset(
         index = numpy.concatenate([np.isin(orig_v, v, True) for v, orig_v in zip(vertices_to, morph.vertices_to)])
         if index.sum() != sum([len(v) for v in vertices_to]):
             raise ValueError("morph does not contain all vertices in vertices_to")
-        morph_mat = morph_mat[index]
+        morph_matrix = morph_matrix[index]
         changed = True
     # Reconstruct source morph
     if not changed:
@@ -432,7 +432,7 @@ def _morph_subset(
         morph.spacing,
         morph.smooth,
         morph.xhemi,
-        morph_mat,
+        morph_matrix,
         vertices_to,
         morph.shape,
         morph.affine,
@@ -452,7 +452,7 @@ def morph_source_space(
         parc: Union[bool, str] = True,
         xhemi: bool = False,
         mask: bool = None,
-):
+) -> Union[NDVar, SourceSpace]:
     """Morph source estimate to a different MRI subject
 
     Parameters
