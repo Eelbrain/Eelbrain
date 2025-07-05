@@ -1,3 +1,4 @@
+from copy import deepcopy
 from functools import reduce
 from math import ceil, floor
 import operator
@@ -7,6 +8,7 @@ import re
 from typing import Dict, Union, List, Sequence
 import warnings
 
+import numpy
 import numpy as np
 import scipy
 import scipy.sparse
@@ -23,6 +25,7 @@ except ImportError:
     from mne import compute_morph_matrix
 
 from ._data_obj import NDVar, Space, SourceSpaceBase, SourceSpace, VolumeSourceSpace
+from ._io.fiff import ndvar_stc
 from ._types import PathArg
 from ._utils.numpy_utils import index
 
@@ -385,16 +388,71 @@ def labels_from_mni_coords(seeds, extent=30., subject='fsaverage',
     return labels
 
 
+def _morph_subset(
+        morph: mne.SourceMorph,
+        vertices_from: List[np.ndarray],
+        vertices_to: List[np.ndarray],
+) -> mne.SourceMorph:
+    """Update :class:`mne.SourceMorph` for a subset of vertices"""
+    if morph.shape is not None:
+        raise NotImplementedError()
+    elif morph.vol_morph_mat is not None:
+        raise NotImplementedError("Volume morphing")
+    morph_matrix = morph.morph_mat
+    changed = False
+    # Retrieve orig_vertice_from
+    if 'vertices_from' not in morph.src_data:
+        raise ValueError("SourceMorph does not contain original vertices_from")
+    orig_vertice_from = morph.src_data['vertices_from']
+    # Subset vertices_from
+    if not all(numpy.array_equal(v, orig_v) for v, orig_v in zip(vertices_from, orig_vertice_from)):
+        index = numpy.concatenate([np.isin(orig_v, v, True) for v, orig_v in zip(vertices_from, orig_vertice_from)])
+        if index.sum() != sum([len(v) for v in vertices_from]):
+            raise ValueError("morph does not contain all vertices in vertices_from")
+        morph_matrix = morph_matrix[:, index]
+        changed = True
+    src_data = {'vertices_from': deepcopy(vertices_from)}
+    # Subset vertices_to
+    if not all(numpy.array_equal(v, orig_v) for v, orig_v in zip(vertices_to, morph.vertices_to)):
+        index = numpy.concatenate([np.isin(orig_v, v, True) for v, orig_v in zip(vertices_to, morph.vertices_to)])
+        if index.sum() != sum([len(v) for v in vertices_to]):
+            raise ValueError("morph does not contain all vertices in vertices_to")
+        morph_matrix = morph_matrix[index]
+        changed = True
+    # Reconstruct source morph
+    if not changed:
+        return morph
+    return mne.SourceMorph(
+        morph.subject_from,
+        morph.subject_to,
+        morph.kind,
+        morph.zooms,
+        morph.niter_affine,
+        morph.niter_sdr,
+        morph.spacing,
+        morph.smooth,
+        morph.xhemi,
+        morph_matrix,
+        vertices_to,
+        morph.shape,
+        morph.affine,
+        morph.pre_affine,
+        morph.sdr_morph,
+        src_data,
+        morph.vol_morph_mat,
+    )
+
+
 def morph_source_space(
         data: Union[NDVar, SourceSpace],
         subject_to: str = None,
         vertices_to: Union[List, str] = None,
-        morph_mat: scipy.sparse.spmatrix = None,
+        morph: Union[scipy.sparse.spmatrix, mne.SourceMorph] = None,
         copy: bool = False,
         parc: Union[bool, str] = True,
         xhemi: bool = False,
         mask: bool = None,
-):
+) -> Union[NDVar, SourceSpace]:
     """Morph source estimate to a different MRI subject
 
     Parameters
@@ -402,17 +460,15 @@ def morph_source_space(
     data
         NDVar with SourceSpace dimension.
     subject_to
-        Name of the subject on which to morph (by default this is the same as
+        Name of the target MRI subject (by default, this is the same as
         the current subject for ``xhemi`` morphing).
-    vertices_to : list of array of int | 'lh' | 'rh'
+    vertices_to
         The vertices on the destination subject's brain. If ``data`` contains a
         whole source space, vertices_to can be automatically loaded, although
         providing them as argument can speed up processing by a second or two.
-        Use 'lh' or 'rh' to target vertices from only one hemisphere.
-    morph_mat
-        The morphing matrix. If ``data`` contains a whole source space, the morph
-        matrix can be automatically loaded, although providing a cached matrix
-        can speed up processing by a second or two.
+        Use ``'lh'`` or ``'rh'`` to target vertices from only one hemisphere.
+    morph
+        A pre-computed morph matrix to speed up processing.
     copy
         Make sure that the data of ``morphed_ndvar`` is separate from
         ``data`` (default False).
@@ -427,7 +483,7 @@ def morph_source_space(
     mask
         Restrict output to known sources. If the parcellation of ``data`` is
         retained keep only sources with labels contained in ``data``, otherwise
-        remove only sourves with ``”unknown-*”`` label (default is True unless
+        remove only sources with ``”unknown-*”`` label (default is True unless
         ``vertices_to`` is specified).
 
     Returns
@@ -484,11 +540,17 @@ def morph_source_space(
         source = ndvar.get_dim('source')
     subjects_dir = source.subjects_dir
     subject_from = source.subject
-    if subject_to is None:
+    # Verify subject_to
+    if isinstance(morph, mne.SourceMorph):
+        if subject_to is None:
+            subject_to = morph.subject_to
+        elif subject_to != morph.subject_to:
+            raise ValueError(f"{subject_to=} with {morph.subject_to=}")
+    elif subject_to is None:
         subject_to = subject_from
-    else:
+    if subject_to != subject_from:
         assert_subject_exists(subject_to, subjects_dir)
-    # catch cases that don't require morphing
+    # Catch cases that don't require morphing
     if not xhemi:
         subject_is_same = subject_from == subject_to
         subject_is_scaled = find_source_subject(subject_to, subjects_dir) == subject_from or find_source_subject(subject_from, subjects_dir) == subject_to
@@ -521,20 +583,25 @@ def morph_source_space(
     has_lh_out = bool(source.rh_n if xhemi else source.lh_n)
     has_rh_out = bool(source.lh_n if xhemi else source.rh_n)
     if isinstance(vertices_to, np.ndarray):
-        raise TypeError("vertices_to=<numpy.array>: must be a list of arrays or 'lh'|'rh'")
+        raise TypeError(f"{type(vertices_to)=}: must be a list of arrays or 'lh'|'rh'")
     elif vertices_to in (None, 'lh', 'rh'):
-        default_vertices = source_space_vertices(source.kind, source.grade, subject_to, subjects_dir)
+        if isinstance(morph, mne.SourceMorph):
+            default_vertices = morph.vertices_to
+        else:
+            default_vertices = source_space_vertices(source.kind, source.grade, subject_to, subjects_dir)
         lh_out = vertices_to == 'lh' or (vertices_to is None and has_lh_out)
         rh_out = vertices_to == 'rh' or (vertices_to is None and has_rh_out)
-        vertices_to = [default_vertices[0] if lh_out else np.empty(0, int),
-                       default_vertices[1] if rh_out else np.empty(0, int)]
+        vertices_to = [
+            default_vertices[0] if lh_out else np.empty(0, int),
+            default_vertices[1] if rh_out else np.empty(0, int),
+        ]
         if mask is None:
             if source.parc is None:
                 mask = False
             else:  # infer whether ndvar was masked
                 mask = not ('unknown-lh' in source.parc or 'unknown-rh' in source.parc)
     elif not isinstance(vertices_to, list) or not len(vertices_to) == 2:
-        raise ValueError(f"vertices_to={vertices_to!r}: must be a list of length 2")
+        raise ValueError(f"{vertices_to=}: must be a list of length 2")
 
     # check that requested data is available
     n_to_lh = len(vertices_to[0])
@@ -560,6 +627,7 @@ def morph_source_space(
         if missing:
             missing = '\n'.join(missing)
             raise IOError(f"Annotation files are missing for parc={parc_to!r}, subject={subject_to!r}. Use the parc parameter when morphing to set a different parcellation. The following files are missing:\n{missing}")
+
     # find target source space
     source_to = SourceSpace(vertices_to, subject_to, source.src, subjects_dir, parc_to)
     if mask is True:
@@ -572,33 +640,45 @@ def morph_source_space(
             index = source_to.parc.isnotin(('unknown-lh', 'unknown-rh'))
         source_to = source_to[index]
     elif mask not in (None, False):
-        raise TypeError(f"mask={mask!r}")
-
-    if morph_mat is None:
-        with warnings.catch_warnings():
-            warnings.filterwarnings('ignore', r'\d+/\d+ vertices not included in smoothing', module='mne')
-            morph_mat = compute_morph_matrix(subject_from, subject_to, source.vertices, source_to.vertices, None, subjects_dir, xhemi=xhemi)
-    elif not scipy.sparse.issparse(morph_mat):
-        raise ValueError('morph_mat must be a sparse matrix')
-    elif not sum(len(v) for v in source_to.vertices) == morph_mat.shape[0]:
-        raise ValueError('morph_mat.shape[0] must match number of vertices in vertices_to')
+        raise TypeError(f"{mask=}")
 
     if ndvar is None:
         return source_to
+
+    if isinstance(morph, mne.SourceMorph):
+        # Update morph matrix
+        morph = _morph_subset(morph, source.vertices, source_to.vertices)
+        # Morph data
+        stc, shape, dims = ndvar_stc(ndvar)
+        morphed_stc = morph.apply(stc)
+        # Reconstruct NDVar
+        x = morphed_stc.data
+        if shape is not None:
+            x = x.reshape(shape)
+        dims = (source_to, *dims)
+        return NDVar(x, dims, ndvar.name, ndvar.info)
+    elif morph is None:
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', r'\d+/\d+ vertices not included in smoothing', module='mne')
+            morph = compute_morph_matrix(subject_from, subject_to, source.vertices, source_to.vertices, None, subjects_dir, xhemi=xhemi)
+    elif not scipy.sparse.issparse(morph):
+        raise ValueError(f'{morph=}: must be mne.SourceMorph or a sparse matrix')
+    elif morph.shape != (len(source), len(source_to)):
+        raise ValueError(f'{morph.shape=}: Dimensions must match source and target source space dimensions {(len(source), len(source_to))}')
 
     # flatten data
     x = ndvar.x
     if axis != 0:
         x = x.swapaxes(0, axis)
     n_sources = len(x)
-    if not n_sources == morph_mat.shape[1]:
-        raise ValueError('data source dimension length must be the same as morph_mat.shape[0]')
+    if not n_sources == morph.shape[1]:
+        raise ValueError('data source dimension length must be the same as morph.shape[0]')
     if ndvar.ndim > 2:
         shape = x.shape
         x = x.reshape((n_sources, -1))
 
     # apply morph matrix
-    x_m = morph_mat.dot(x)
+    x_m = morph.dot(x)
 
     # restore data shape
     if ndvar.ndim > 2:

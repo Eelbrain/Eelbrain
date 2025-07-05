@@ -28,6 +28,7 @@ import time
 from typing import Callable, Dict, List, Literal, Optional, Union, Tuple, Sequence
 import warnings
 
+import mne
 import numpy as np
 from numpy import newaxis
 
@@ -551,12 +552,16 @@ class BoostingResult(PickleableDataClass):
             for res in self.partition_results:
                 res._apply_ndvar_transform(func)
 
-    def _morph(self, to_subject: str):
+    def _morph(
+            self,
+            to_subject: str,
+            source_morph: mne.SourceMorph = None,
+    ):
         "Morph source space"
         from .._mne import morph_source_space
 
         def func(obj: NDVar):
-            return morph_source_space(obj, to_subject)
+            return morph_source_space(obj, to_subject, morph=source_morph)
         self._apply_ndvar_transform(func)
 
     def _set_adjacency(self, dim, adjacency):
