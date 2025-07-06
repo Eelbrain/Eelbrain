@@ -93,6 +93,7 @@ example_order = {
         'sensor-lm.py',
         'sensor-two-stage.py',
         'compare-topographies.py',
+        'volume-source-space.py',
     ],
     'plots': [
         'boxplot.py',
