@@ -187,7 +187,7 @@ def events(
     events
         If events are stored in a fiff file separate from the Raw object, the
         path to the events file can be supplied here. The events in the Dataset
-        will reflect the event sin the events file rather than the raw file.
+        will reflect the events in the events file rather than the raw file.
     annotations
         Generate events from annotations instead of the stim channel (by
         default, annotations are used when present).

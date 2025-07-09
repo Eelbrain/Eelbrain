@@ -320,6 +320,18 @@ To reject trials based on a pre-determined threshold, a loop can be used::
     ...
 
 
+.. _MneExperiment-intro-cov:
+
+Empty room noise covariance
+---------------------------
+
+To use empty room data for estimating the noise covariance, follow these steps:
+
+ - Put an empty room recording in each subject’s MEG directory, just like the other MEG files, with session name ``emptyroom``. If you want to use the same empty room file for all subjects you can make links instead of copies to save space.
+ - Add ``"emptyroom”`` as a session to the experiment definition.
+ - Use the empty room covariance though :ref:`state-cov` with ``e.set(cov='emptyroom')``
+
+
 .. _MneExperiment-intro-analysis:
 
 Analysis
@@ -866,7 +878,7 @@ The method for correcting the sensor covariance.
 'auto'
     Use automatic selection of the optimal regularization method, as described in :func:`mne.compute_covariance`.
 `empty_room`
-    Empty room covariance; for required setup, see `Empty room covariance <https://github.com/christianbrodbeck/Eelbrain/wiki/MneExperiment-analysis-options#empty-room-covariance>`_.
+    Empty room covariance; for required setup, see :ref:`MneExperiment-intro-cov`.
 'ad_hoc'
     Use diagonal covariance based on :func:`mne.cov.make_ad_hoc_cov`.
 
