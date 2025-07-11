@@ -45,7 +45,7 @@ from numpy import newaxis
 
 from .._data_obj import NDVarArg, Dataset, VolumeSourceSpace
 from .._colorspaces import SYMMETRIC_CMAPS
-from ._base import ColorBarMixin, TimeSlicerEF, Layout, EelFigure, brain_data, butterfly_data, use_inline_backend
+from ._base import CMapArg, ColorBarMixin, TimeSlicerEF, Layout, EelFigure, brain_data, butterfly_data, use_inline_backend
 from ._utsnd import Butterfly
 
 
@@ -415,7 +415,7 @@ class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
             if threshold is not None:
                 threshold = float(threshold)
                 if isinstance(ndvar.x, np.ma.MaskedArray):
-                    raise ValueError(f"Cannot use threshold={threshold} with masked data")
+                    raise ValueError(f"Cannot use {threshold=} with masked data")
 
         self.time = time
         self._ndvar = ndvar
@@ -587,37 +587,56 @@ class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
         return self.cmap, self.vmin, self.vmax
 
     @classmethod
-    def butterfly(cls, y, cmap=None, vmin=None, vmax=None, dest='mri',
-                  mri_resolution=False, mni305=None, black_bg=False, display_mode=None,
-                  threshold=None, colorbar=False, alpha=0.7, plot_abs=False,
-                  draw_arrows=True, symmetric_cbar="auto", interpolation='nearest',
-                  w=5, h=2.5, xlim=None, name=None, **kwargs):
+    def butterfly(
+            cls,
+            y: NDVar,
+            cmap: CMapArg = None,
+            vmin: float = None,
+            vmax: float = None,
+            dest: Literal['mri', 'surf'] = 'mri',
+            mri_resolution: bool = False,
+            mni305: bool = None,
+            black_bg: bool = False,
+            display_mode: str = None,
+            threshold: Union[float, Literal['auto']] = None,
+            colorbar: bool = False,
+            alpha: float = 0.7,
+            plot_abs: bool = False,
+            draw_arrows: bool = True,
+            symmetric_cbar: Union[bool, Literal['auto']] = 'auto',
+            interpolation: str = 'nearest',
+            w: float = 5,
+            h: float = 2.5,
+            xlim: Union[float, Tuple[float, float]] = None,
+            name: str = None,
+            **kwargs,
+    ) -> (Butterfly, GlassBrain):
         """Shortcut for a butterfly-plot with a time-linked glassbrain plot
 
         Parameters
         ----------
-        y : NDVar  ([case,] time, source[, space])
-            Data to plot; if ``ndvar`` has a case dimension, the mean is plotted.
-            if ``ndvar`` has a space dimension, the norm is plotted.
-        cmap : str
+        y
+            Data to plot, should have shape ``([case,] time, source[, space])``;
+            if ``ndvar`` has a case dimension, the mean is plotted.
+        cmap
             Colormap (name of a matplotlib colormap).
-        vmin : scalar
+        vmin
             Plot data range minimum.
-        vmax : scalar
+        vmax
             Plot data range maximum.
-        dest : 'mri' | 'surf'
+        dest
             If 'mri' the volume is defined in the coordinate system of
             the original T1 image. If 'surf' the coordinate system
             of the FreeSurfer surface is used (Surface RAS).
-        mri_resolution: bool, Default is False
+        mri_resolution
             If True the image will be created in MRI resolution.
             WARNING: it can result in significantly high memory usage.
-        mni305 : bool
+        mni305
             Project data from MNI-305 space to MNI-152 space (by default this
             is enabled iff the source space subject is ``fsaverage``).
-        black_bg : boolean
+        black_bg
             If True, the background of the image is set to be black.
-        display_mode : str
+        display_mode
             Direction of the cuts:
 
             - ``'x'``: sagittal
@@ -631,43 +650,43 @@ class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
             Possible values are: 'ortho', 'x', 'y', 'z', 'xz', 'yx', 'yz',
             'l', 'r', 'lr', 'lzr', 'lyr', 'lzry', 'lyrz'. Default depends on
             hemispheres in data.
-        threshold : scalar | 'auto'
+        threshold
             If a number is given, values below the threshold (in absolute value) are
             plotted as transparent. If ``'auto'`` is given, the threshold is
             determined magically by analysis of the image.
-        colorbar : boolean, Default is False
+        colorbar
             If True, display a colorbar on the right of the plots.
-        alpha : float between 0 and 1
+        alpha
             Alpha transparency for the brain schematics
-        plot_abs : bool
+        plot_abs
             Plot the maximum intensity projection of the absolute value (rendering
             positive and negative values in the same manner). By default,
             (``False``), the sign of the maximum intensity will be represented with
             different colors. See `examples <http://nilearn.github.io/auto_examples/
             01_plotting/plot_demo_glass_brain_extensive.html>`_. Only affects
             GlassBrain plot.
-        draw_arrows: boolean
+        draw_arrows
             Draw arrows in the direction of activation over the glassbrain plots.
             Naturally, for this to work ``ndvar`` needs to contain space dimension
             (i.e 3D vectors). By default it is set to ``True``.
-        symmetric_cbar : boolean or 'auto'
+        symmetric_cbar
             Specifies whether the colorbar should range from -vmax to vmax
             or from vmin to vmax. Setting to 'auto' will select the latter if
             the range of the whole image is either positive or negative.
             Note: The colormap will always be set to range from -vmax to vmax.
-        interpolation : str
+        interpolation
             Interpolation to use when resampling the image to the destination
             space. Can be "continuous" (default) to use 3rd-order spline
             interpolation, or "nearest" to use nearest-neighbor mapping.
             "nearest" is faster but can be noisier in some cases.
-        w : scalar
+        w
             Butterfly plot width (inches).
-        h : scalar
+        h
             Plot height (inches; applies to butterfly and brain plot).
-        xlim : scalar | (scalar, scalar)
+        xlim
             Initial x-axis view limits as ``(left, right)`` tuple or as ``length``
             scalar (default is the full x-axis in the data).
-        name : str
+        name
             The window title (default is ndvar.name).
 
         Returns
