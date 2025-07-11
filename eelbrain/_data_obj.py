@@ -10426,18 +10426,25 @@ class SourceSpace(SourceSpaceBase):
 
     def _read_parc(self, parc: str) -> Factor:
         label_dir = Path(self.subjects_dir) / self.subject / 'label'
-        labels_lh, _, names_lh = read_annot(label_dir / f'lh.{parc}.annot')
-        labels_rh, _, names_rh = read_annot(label_dir / f'rh.{parc}.annot')
-        x_lh = labels_lh[self.lh_vertices]
-        x_lh[x_lh == -1] = -2
-        x_rh = labels_rh[self.rh_vertices]
-        x_rh[x_rh >= 0] += len(names_lh)
-        names = chain(
-            ('unknown-lh', 'unknown-rh'),
-            (name.decode() + '-lh' for name in names_lh),
-            (name.decode() + '-rh' for name in names_rh),
-        )
-        return Factor(np.hstack((x_lh, x_rh)), parc, labels={i: name for i, name in enumerate(names, -2)})
+        codes = []
+        labels = {}
+        for hemi, vertices in zip(('lh', 'rh'), self.vertices):
+            if not len(vertices):
+                continue
+            annot, ctab, names = read_annot(label_dir / f'{hemi}.{parc}.annot')
+            annot = annot[vertices]
+            first_index = annot.min()
+            if first_index >= 1000:  # fsaverage_sym
+                annot -= first_index
+            if hemi == 'rh':
+                offset = max(labels) + 2
+                annot += offset
+            else:
+                offset = 0
+            codes.append(annot)
+            labels[-1 + offset] = f'unknown-{hemi}'
+            labels.update({i + offset: f'{name.decode()}-{hemi}' for i, name in enumerate(names)})
+        return Factor(np.concatenate(codes), parc, labels=labels)
 
     def __iter__(self):
         return (temp % v for temp, vertices in
