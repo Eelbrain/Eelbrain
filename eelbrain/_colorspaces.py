@@ -25,7 +25,9 @@ UNAMBIGUOUS_COLORS = {
 }
 
 # How to handle different colormaps
-SYMMETRIC_CMAPS = []
+SYMMETRIC_CMAPS = [
+    'cold_hot', 'cold_white_hot',
+]
 ZEROBASED_CMAPS = []
 ALPHA_CMAPS = {}  # corresponding cmaps with transparency (alpha channel)
 
@@ -275,9 +277,9 @@ def twoway_colors(
     else:
         hues = np.asarray(hues)
         if np.any(hues > 1) or np.any(hues < 0):
-            raise ValueError(f"hues={hues}: values out of range, need to be in [0, 1]")
+            raise ValueError(f"{hues=}: values out of range, need to be in [0, 1]")
         elif len(hues) < n1:
-            raise ValueError(f"hues={hues}: need as many hues as levels in the first factor (got {len(hues)}, need {n1})")
+            raise ValueError(f"{hues=}: need as many hues as levels in the first factor (got {len(hues)}, need {n1})")
     hue_shift *= (1. / 3. / n1)
 
     if lightness is None:
@@ -287,7 +289,7 @@ def twoway_colors(
         ls = np.linspace(lightness, 100 - lightness, n2)
     else:
         if len(lightness) != n2:
-            raise ValueError(f"lightness={lightness!r}: need {n2} values")
+            raise ValueError(f"{lightness=}: need {n2} values")
         ls = lightness
 
     colors = []
@@ -380,19 +382,6 @@ def two_step_colormap(left_max, left, center='transparent', right=None, right_ma
     cmap.set_bad('w', alpha=0.)
     cmap.symmetric = is_symmetric
     return cmap
-
-
-def pigtailed_cmap(cmap, swap_order=('green', 'red', 'blue')):
-    # nilearn colormaps with neutral middle
-    orig = matplotlib.colormaps.get_cmap(cmap)._segmentdata
-    cdict = {
-        'green': [(0.5 * (1 - p), *c) for p, *c in reversed(orig[swap_order[0]])],
-        'blue': [(0.5 * (1 - p), *c) for p, *c in reversed(orig[swap_order[1]])],
-        'red': [(0.5 * (1 - p), *c) for p, *c in reversed(orig[swap_order[2]])],
-    }
-    for color in ('red', 'green', 'blue'):
-        cdict[color].extend((0.5 * (1 + p), *c) for p, *c in orig[color])
-    return cdict
 
 
 def make_cmaps():
@@ -638,14 +627,6 @@ def make_cmaps():
     cmap.set_over('k', alpha=0.)
     cmap.set_bad('b', alpha=0.)
     register_cmap(cmap, zero_based=True)
-
-    # Nilearn cmaps
-    if 'cold_hot' not in matplotlib.colormaps:
-        cmap = LinearSegmentedColormap('cold_hot', pigtailed_cmap('hot'))
-        register_cmap(cmap, symmetric=True)
-    if 'cold_white_hot' not in matplotlib.colormaps:
-        cmap = LinearSegmentedColormap('cold_white_hot', pigtailed_cmap('hot_r'))
-        register_cmap(cmap, symmetric=True)
 
 
 make_cmaps()
