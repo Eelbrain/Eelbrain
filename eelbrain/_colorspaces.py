@@ -277,9 +277,9 @@ def twoway_colors(
     else:
         hues = np.asarray(hues)
         if np.any(hues > 1) or np.any(hues < 0):
-            raise ValueError(f"hues={hues}: values out of range, need to be in [0, 1]")
+            raise ValueError(f"{hues=}: values out of range, need to be in [0, 1]")
         elif len(hues) < n1:
-            raise ValueError(f"hues={hues}: need as many hues as levels in the first factor (got {len(hues)}, need {n1})")
+            raise ValueError(f"{hues=}: need as many hues as levels in the first factor (got {len(hues)}, need {n1})")
     hue_shift *= (1. / 3. / n1)
 
     if lightness is None:
@@ -289,7 +289,7 @@ def twoway_colors(
         ls = np.linspace(lightness, 100 - lightness, n2)
     else:
         if len(lightness) != n2:
-            raise ValueError(f"lightness={lightness!r}: need {n2} values")
+            raise ValueError(f"{lightness=}: need {n2} values")
         ls = lightness
 
     colors = []
