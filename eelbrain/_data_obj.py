@@ -9882,7 +9882,6 @@ class SourceSpaceBase(Dimension):
     _kinds = ()
     _default_parc = 'aparc'
     _default_adjacency = 'custom'
-    _ANNOT_PATH = os.path.join('{subjects_dir}', '{subject}', 'label', '{hemi}.{parc}.annot')
     _vertex_re = re.compile(r'([RL])(\d+)')
 
     def __init__(
@@ -10426,20 +10425,19 @@ class SourceSpace(SourceSpaceBase):
         return Factor(['lh', 'rh'], repeat=[self.lh_n, self.rh_n])
 
     def _read_parc(self, parc: str) -> Factor:
-        fname = self._ANNOT_PATH.format(
-            subjects_dir=self.subjects_dir, subject=self.subject,
-            hemi='%s', parc=parc)
-        labels_lh, _, names_lh = read_annot(fname % 'lh')
-        labels_rh, _, names_rh = read_annot(fname % 'rh')
+        label_dir = Path(self.subjects_dir) / self.subject / 'label'
+        labels_lh, _, names_lh = read_annot(label_dir / f'lh.{parc}.annot')
+        labels_rh, _, names_rh = read_annot(label_dir / f'rh.{parc}.annot')
         x_lh = labels_lh[self.lh_vertices]
         x_lh[x_lh == -1] = -2
         x_rh = labels_rh[self.rh_vertices]
         x_rh[x_rh >= 0] += len(names_lh)
-        names = chain(('unknown-lh', 'unknown-rh'),
-                      (name.decode() + '-lh' for name in names_lh),
-                      (name.decode() + '-rh' for name in names_rh))
-        return Factor(np.hstack((x_lh, x_rh)), parc,
-                      labels={i: name for i, name in enumerate(names, -2)})
+        names = chain(
+            ('unknown-lh', 'unknown-rh'),
+            (name.decode() + '-lh' for name in names_lh),
+            (name.decode() + '-rh' for name in names_rh),
+        )
+        return Factor(np.hstack((x_lh, x_rh)), parc, labels={i: name for i, name in enumerate(names, -2)})
 
     def __iter__(self):
         return (temp % v for temp, vertices in
