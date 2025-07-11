@@ -38,12 +38,13 @@ import os
 from typing import Literal, Union
 import warnings
 import numbers
+from typing import Tuple
 
 import nibabel
 import numpy as np
 from numpy import newaxis
 
-from .._data_obj import NDVarArg, Dataset, VolumeSourceSpace
+from .._data_obj import NDVarArg, NDVar, Dataset, VolumeSourceSpace
 from .._colorspaces import SYMMETRIC_CMAPS
 from ._base import CMapArg, ColorBarMixin, TimeSlicerEF, Layout, EelFigure, brain_data, butterfly_data, use_inline_backend
 from ._utsnd import Butterfly
@@ -610,7 +611,7 @@ class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
             xlim: Union[float, Tuple[float, float]] = None,
             name: str = None,
             **kwargs,
-    ) -> (Butterfly, GlassBrain):
+    ) -> (Butterfly, 'GlassBrain'):
         """Shortcut for a butterfly-plot with a time-linked glassbrain plot
 
         Parameters
