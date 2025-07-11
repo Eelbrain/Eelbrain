@@ -10436,7 +10436,7 @@ class SourceSpace(SourceSpaceBase):
             first_index = annot.min()
             if first_index >= 1000:  # fsaverage_sym
                 annot -= first_index
-            if hemi == 'rh':
+            if hemi == 'rh' and labels:
                 offset = max(labels) + 2
                 annot += offset
             else:
