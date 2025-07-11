@@ -240,6 +240,7 @@ def get_mne_sample(
         stc: bool = False,
         hpf: float = 0,
         proj: bool = True,
+        fsaverage: bool = False,
 ):
     """Load events and epochs from the MNE sample data
 
@@ -274,6 +275,8 @@ def get_mne_sample(
         High pass filter cutoff.
     proj
         Add projectors.
+    fsaverage
+        Morph data to FSAverage template brain.
 
     Returns
     -------
@@ -377,6 +380,13 @@ def get_mne_sample(
     ds['src'] = load.mne.stc_ndvar(stcs, subject, src_tag, subjects_dir, method, fixed)
     if stc:
         ds['stc'] = stcs
+
+    if fsaverage:
+        src_from = _mne_source_space(subject, src_tag, subjects_dir)
+        src_to = _mne_source_space('fsaverage', src_tag, subjects_dir)
+        morph = mne.compute_source_morph(stcs[0], subject, 'fsaverage', subjects_dir, src_to=src_to)
+        stcs_m = [morph.apply(stc) for stc in stcs]
+        ds['srcm'] = load.mne.stc_ndvar(stcs_m, 'fsaverage', src_tag, subjects_dir, method, fixed)
 
     return ds
 
