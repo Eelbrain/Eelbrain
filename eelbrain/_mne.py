@@ -865,7 +865,12 @@ def combination_label(
     return out
 
 
-def xhemi(ndvar, mask=None, hemi='lh', parc=True):
+def xhemi(
+        ndvar: NDVar,
+        mask: bool = None,
+        hemi: str = 'lh',
+        parc: Union[bool, str] = True,
+) -> (NDVar, NDVar):
     """Project data from both hemispheres to ``hemi`` of fsaverage_sym
 
     Project data from both hemispheres to the same hemisphere for
@@ -878,14 +883,14 @@ def xhemi(ndvar, mask=None, hemi='lh', parc=True):
 
     Parameters
     ----------
-    ndvar : NDVar
+    ndvar
         NDVar with SourceSpace dimension.
-    mask : bool
+    mask
         Remove sources in "unknown-" labels (default is True unless ``ndvar``
         contains sources with "unknown-" label).
-    hemi : 'lh' | 'rh'
+    hemi
         Hemisphere onto which to morph the data.
-    parc : bool | str
+    parc
         Parcellation for target source space; True to use same as in ``ndvar``
         (default).
 
