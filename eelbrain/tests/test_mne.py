@@ -281,7 +281,21 @@ def test_xhemi():
     assert lh.max() == pytest.approx(10.80, abs=1e-2)
     assert rh.max() == pytest.approx(7.91, abs=1e-2)
 
-    # volume source space
+    # Surface source space
+    ds = datasets.get_mne_sample(src='ico', hpf=1, fsaverage=True)
+    y = ds['src']
+    yl, yr = xhemi(y)
+    assert yl.source == yr.source
+    # FSAverage
+    y = ds['srcm']
+    yl, yr = xhemi(y)
+    assert yl.source == yr.source
+    # Subset
+    y = ds['srcm'].sub(source=[f'{label}-{hemi}' for label in ('superiortemporal', 'transversetemporal') for hemi in ('lh', 'rh')])
+    yl, yr = xhemi(y)
+    assert yl.source == yr.source
+
+    # Volume source space
     ds = datasets.get_mne_sample(src='vol', ori='vector', hpf=1)
     y = ds[0, 'src']
     with pytest.raises(NotImplementedError):

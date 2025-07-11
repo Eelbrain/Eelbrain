@@ -222,12 +222,13 @@ def label_from_annot(sss, subject, subjects_dir, parc=None, color=(0, 0, 0)):
     label : mne.Label
         Label encompassing known regions of ``parc`` in ``sss``.
     """
-    fname = SourceSpace._ANNOT_PATH.format(subjects_dir=subjects_dir, subject=subject, hemi='%s', parc=parc)
+    subjects_dir = Path(subjects_dir)
+    label_dir = subjects_dir / subject / 'label'
 
     # find vertices for each hemisphere
     labels = []
     for hemi, ss in zip(('lh', 'rh'), sss):
-        annotation, _, names = read_annot(fname % hemi)
+        annotation, _, names = read_annot(label_dir / f'{hemi}.{parc}.annot')
         bad = [-1, names.index(b'unknown')]
         keep = ~np.isin(annotation[ss['vertno']], bad)
         if np.any(keep):
@@ -622,8 +623,9 @@ def morph_source_space(
         raise ValueError("Can't mask source space without parcellation...")
     # check that annot files are available
     if parc_to:
-        fnames = [SourceSpace._ANNOT_PATH.format(subjects_dir=subjects_dir, subject=subject_to, hemi=hemi, parc=parc_to) for hemi in ('lh', 'rh')]
-        missing = [fname for fname in fnames if not os.path.exists(fname)]
+        label_dir = Path(subjects_dir) / subject_to / 'label'
+        paths = [label_dir / f'{hemi}.{parc_to}.annot' for hemi in ('lh', 'rh')]
+        missing = [fname for fname in paths if not os.path.exists(fname)]
         if missing:
             missing = '\n'.join(missing)
             raise IOError(f"Annotation files are missing for parc={parc_to!r}, subject={subject_to!r}. Use the parc parameter when morphing to set a different parcellation. The following files are missing:\n{missing}")
@@ -639,6 +641,7 @@ def morph_source_space(
         else:
             index = source_to.parc.isnotin(('unknown-lh', 'unknown-rh'))
         source_to = source_to[index]
+        assert len(source_to)
     elif mask not in (None, False):
         raise TypeError(f"{mask=}")
 
@@ -865,7 +868,12 @@ def combination_label(
     return out
 
 
-def xhemi(ndvar, mask=None, hemi='lh', parc=True):
+def xhemi(
+        ndvar: NDVar,
+        mask: bool = None,
+        hemi: str = 'lh',
+        parc: Union[bool, str] = True,
+) -> (NDVar, NDVar):
     """Project data from both hemispheres to ``hemi`` of fsaverage_sym
 
     Project data from both hemispheres to the same hemisphere for
@@ -878,14 +886,14 @@ def xhemi(ndvar, mask=None, hemi='lh', parc=True):
 
     Parameters
     ----------
-    ndvar : NDVar
+    ndvar
         NDVar with SourceSpace dimension.
-    mask : bool
+    mask
         Remove sources in "unknown-" labels (default is True unless ``ndvar``
         contains sources with "unknown-" label).
-    hemi : 'lh' | 'rh'
+    hemi
         Hemisphere onto which to morph the data.
-    parc : bool | str
+    parc
         Parcellation for target source space; True to use same as in ``ndvar``
         (default).
 
