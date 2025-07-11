@@ -639,6 +639,7 @@ def morph_source_space(
         else:
             index = source_to.parc.isnotin(('unknown-lh', 'unknown-rh'))
         source_to = source_to[index]
+        assert len(source_to)
     elif mask not in (None, False):
         raise TypeError(f"{mask=}")
 
