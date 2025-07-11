@@ -382,7 +382,6 @@ def get_mne_sample(
         ds['stc'] = stcs
 
     if fsaverage:
-        src_from = _mne_source_space(subject, src_tag, subjects_dir)
         src_to = _mne_source_space('fsaverage', src_tag, subjects_dir)
         morph = mne.compute_source_morph(stcs[0], subject, 'fsaverage', subjects_dir, src_to=src_to)
         stcs_m = [morph.apply(stc) for stc in stcs]
