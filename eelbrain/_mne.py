@@ -958,9 +958,6 @@ def xhemi(
         else:
             ndvar_sym = morph_source_space(ndvar, 'fsaverage_sym', parc=parc, mask=mask)
 
-        vert_lh, vert_rh = ndvar_sym.source.vertices
-        vert_from = [[], vert_rh] if hemi == 'lh' else [vert_lh, []]
-        vert_to = [vert_lh, []] if hemi == 'lh' else [[], vert_rh]
         src = ndvar_sym.source.get_source_space()
         morph = mne.compute_source_morph(src, 'fsaverage_sym', 'fsaverage_sym', ndvar.source.subjects_dir, xhemi=True, src_to=src)
 
