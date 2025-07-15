@@ -40,8 +40,8 @@ result = testnd.Vector('src', sub="side == 'R'", data=data, samples=1000, tfce=T
 # interactively. In a notebook, use different :class:`plot.GlassBrain` plots.
 # (see next section):
 
-butterfly, brain = plot.GlassBrain.butterfly(result)
-brain.set_time(0.090)
+# butterfly, brain = plot.GlassBrain.butterfly(result)
+# brain.set_time(0.090)
 
 ###############################################################################
 # Amplitude in ROI
