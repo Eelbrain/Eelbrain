@@ -6,7 +6,7 @@ import fnmatch
 from itertools import chain
 import logging
 from os import makedirs, remove
-from os.path import basename, dirname, exists, getmtime
+from os.path import basename, dirname, exists, getmtime, join
 from pathlib import Path
 from typing import Any, Collection, Dict, List, Literal, Sequence, Tuple, Union
 
@@ -32,6 +32,9 @@ from .preprocessing import RawPipe
 AddBadsArg = Union[bool, Sequence[str]]
 PreloadArg = Union[bool, Literal[-1]]
 
+# TODO: Merge this with MneExperiment._templates
+CACHE_PATH_TEMP = join('{cache_dir}', '{raw_fname}')
+ICA_PATH_TEMP = join('{raw_dir}', '{raw_base_fname}-ica.fif')
 
 class RawPipe:
     name: str = None  # set on linking
@@ -46,7 +49,7 @@ class RawPipe:
             name: str,
             pipes: Dict[str, RawPipe],
             root: str,
-            cache_path: str,
+            cache_dir: str,
             log: logging.Logger
     ) -> RawPipe:
         raise NotImplementedError
@@ -234,7 +237,7 @@ class RawSource(RawPipe):
                 adjacency = Path(adjacency)
         if isinstance(adjacency, Path):
             adjacency = read_adjacency(adjacency)
-        # TODO: using MNE-BIDS to read raw limits the file formats, add more readers later
+        # TODO: Using MNE-BIDS to read raw limits the file formats, add more readers later
         # self.filename = typed_arg(filename, str)
         # self.reader = reader
         self.sysname = sysname
@@ -242,7 +245,7 @@ class RawSource(RawPipe):
         self.montage = montage
         self.adjacency = adjacency
         self._kwargs = kwargs
-        # TODO: should we keep this?
+        # TODO: Should we keep this?
         # if MNE_VERSION < V0_19 and reader is mne.io.read_raw_cnt:
         #     self._read_raw_kwargs = {'montage': None, **kwargs}
         # else:
@@ -256,7 +259,7 @@ class RawSource(RawPipe):
             name: str,
             pipes: Dict[str, RawPipe],
             root: str,
-            cache_path: str,
+            cache_dir: str,
             log: logging.Logger,
     ) -> RawPipe:
         out = RawPipe._link_base(self, name, root, log)
@@ -292,12 +295,12 @@ class RawSource(RawPipe):
 
     def cache(self, path: BIDSPath):
         "Make sure the file exists and is up to date"
-        raw_path = self._get_file_path(path)
+        raw_path = self.get_file_path(path)
         if raw_path is None:
             raise FileMissingError(f"Raw input file does not exist at expected location {raw_path}")
         return raw_path
 
-    def _get_file_path(
+    def get_file_path(
             self,
             path: BIDSPath,
             file_type: Literal['raw', 'bads'] = 'raw',
@@ -331,7 +334,7 @@ class RawSource(RawPipe):
         return KIT_NEIGHBORS.get(kit_system_id)
 
     def _get_channels_df(self, path: BIDSPath) -> pd.DataFrame | None:
-        bads_path = self._get_file_path(path, 'bads')
+        bads_path = self.get_file_path(path, 'bads')
         if bads_path is None:
             return None
         return pd.read_csv(bads_path, sep='\t')
@@ -398,8 +401,8 @@ class RawSource(RawPipe):
             path: BIDSPath,
             bad_chs: bool = True,
     ) -> float | None:
-        raw_path = self._get_file_path(path)
-        bads_path = self._get_file_path(path)
+        raw_path = self.get_file_path(path)
+        bads_path = self.get_file_path(path)
         if raw_path is None or (bad_chs and bads_path is None):
             return None
         if bad_chs:
@@ -425,14 +428,14 @@ class CachedRawPipe(RawPipe):
             name: str,
             pipes: Dict[str, RawPipe],
             root: str,
-            cache_path: str,
+            cache_dir: str,
             log: logging.Logger,
     ) -> RawPipe:
         if self._source_name not in pipes:
             raise DefinitionError(f"{self.__class__.__name__} {name!r} source {self._source_name!r} does not exist")
         out = RawPipe._link_base(self, name, root, log)
         out.source = pipes[self._source_name]
-        out.cache_path = cache_path.format(root='{root}', raw=name, subject='{subject}', recording='{recording}')
+        out.cache_dir = cache_dir
         return out
 
     def _as_dict(self, args: Sequence[str] = ()) -> dict:
@@ -442,9 +445,8 @@ class CachedRawPipe(RawPipe):
 
     def cache(self, path: BIDSPath):
         "Make sure the cache is up to date"
-        subject = path.entities['subject']
-        recording = path.entities['recording']
-        cache_path = self.cache_path.format(root=self.root, subject=subject, recording=recording)
+        cache_dir = self.cache_dir.format(subject=path.entities['subject'], session=path.entities['session'])
+        cache_path = CACHE_PATH_TEMP.format(cache_dir=cache_dir, raw_fname=str(path.fpath))
         if exists(cache_path):
             mtime = self.mtime(path, self._bad_chs_affect_cache)
             if mtime and getmtime(cache_path) >= mtime:
@@ -732,7 +734,6 @@ class RawICA(CachedRawPipe):
             }
 
     """
-    ica_path: str = None  # set on linking
 
     def __init__(
             self,
@@ -754,11 +755,10 @@ class RawICA(CachedRawPipe):
             name: str,
             pipes: Dict[str, RawPipe],
             root: str,
-            cache_path: str,
+            cache_dir: str,
             log: logging.Logger,
     ) -> RawPipe:
-        out = CachedRawPipe._link(self, name, pipes, root, cache_path, log)
-        out.ica_path = '{raw_fname}-ica.fif'
+        out = CachedRawPipe._link(self, name, pipes, root, cache_dir, log)
         return out
 
     def _as_dict(self, args: Sequence[str] = ()) -> dict:
@@ -898,7 +898,7 @@ class RawICA(CachedRawPipe):
                 return max(mtime, getmtime(ica_path))
 
     def _ica_path(self, path: BIDSPath) -> str:
-        return self.ica_path.format(raw_fname=str(path.fpath).removesuffix('.fif'))
+        return ICA_PATH_TEMP.format(raw_dir=str(path.directory), raw_base_fname=str(path.fpath).removesuffix('.fif'))
 
 
 class RawApplyICA(CachedRawPipe):
@@ -955,10 +955,10 @@ class RawApplyICA(CachedRawPipe):
             name: str,
             pipes: Dict[str, RawPipe],
             root: str,
-            cache_path: str,
+            cache_dir: str,
             log: logging.Logger,
     ) -> RawPipe:
-        out = CachedRawPipe._link(self, name, pipes, root, cache_path, log)
+        out = CachedRawPipe._link(self, name, pipes, root, cache_dir, log)
         out.ica_source = pipes[self._ica_source]
         return out
 
@@ -1183,7 +1183,7 @@ class RawReReference(CachedRawPipe):
 
 def assemble_pipeline(
         raw_dict: dict,
-        cache_path: str,
+        cache_dir: str,
         root: str,
         tasks: list[str],
         log: logging.Logger,
@@ -1221,7 +1221,7 @@ def assemble_pipeline(
         n = len(raw)
         for key in list(raw):
             if raw[key]._can_link(linked_raw):
-                pipe = raw.pop(key)._link(key, linked_raw, root, cache_path, log)
+                pipe = raw.pop(key)._link(key, linked_raw, root, cache_dir, log)
                 if isinstance(pipe, RawICA):
                     missing = set(pipe.task).difference(tasks)
                     if missing:

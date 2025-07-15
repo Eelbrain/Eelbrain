@@ -386,6 +386,7 @@ class MneExperiment(FileTree):
 
         # create attributes (overwrite class attributes)
         self._mri_subjects = self.mri_subjects.copy()
+        # TODO: Remove 'raw-dir', update templates that use 'raw-cache-dir'
         self._templates = {
             # MEG
             'equalize_evoked_count': ('', 'eq'),
@@ -405,7 +406,7 @@ class MneExperiment(FileTree):
             'rej-file': join('{rej-dir}', '{session}_{sns_kind}_{epoch_visit}-{rej}.pickled'),
 
             # raw
-            'raw-cache-dir': join('{cache-dir}', 'raw', '{subject}'),
+            'raw-cache-dir': join('{cache-dir}', 'raw', '{subject}', '{session}'),
             'raw-cache-base': join('{raw-cache-dir}', '{recording} {raw}'),
             'cached-raw-file': '{raw-cache-base}-raw.fif',
             'cached-raw-file-overflow': '{raw-cache-base}-raw-?.fif',
@@ -548,16 +549,17 @@ class MneExperiment(FileTree):
 
         ########################################################################
         # Preprocessing
-        skip = {'root', 'subject', 'recording', 'raw'}
-        raw_dir = self._partial('raw-dir', skip)
-        cache_path = self._partial('cached-raw-file', skip)
-        self._raw = assemble_pipeline(raw_def, raw_dir, cache_path, root, self._sessions, log)
+        skip = {'subject', 'session'}
+        # raw_dir = self._partial('raw-dir', skip)
+        cache_dir = self._partial('raw-cache-dir', skip)
+        self._raw = assemble_pipeline(raw_def, cache_dir, root, self._sessions, log)
 
-        raw_pipe = self._raw['raw']
+        raw_pipe: RawSource = self._raw['raw']
         # legacy adjacency determination
         if raw_pipe.sysname is None:
             if self.meg_system is not None:
                 raw_pipe.sysname = self.meg_system
+        # TODO: Abandon `raw-file`
         # update templates
         self._register_constant('raw-file', raw_pipe.path)
 
@@ -638,8 +640,8 @@ class MneExperiment(FileTree):
         else:
             default_epoch = None
         self._register_field('epoch', epoch_keys, default_epoch, repr=True)
-        self._register_field('session', self._sessions, depends_on=('epoch',), slave_handler=self._update_session, repr=True)
-        self._register_field('visit', self._visits, allow_empty=True, repr=True)
+        # self._register_field('session', self._sessions, depends_on=('epoch',), slave_handler=self._update_session, repr=True)
+        # self._register_field('visit', self._visits, allow_empty=True, repr=True)
 
         # cov
         if 'bestreg' in self._covs:
@@ -674,7 +676,7 @@ class MneExperiment(FileTree):
         self._register_compound('sns_kind', ('raw',))
         self._register_compound('inv_kind', ('sns_kind', 'cov', 'rej', 'inv-cache'))
         self._register_compound('src_kind', ('sns_kind', 'cov', 'mri', 'src-name', 'inv'))
-        self._register_compound('recording', ('session', 'visit'))
+        # self._register_compound('recording', ('session', 'visit'))
         self._register_compound('subject_visit', ('subject', 'visit'))
         self._register_compound('mrisubject_visit', ('mrisubject', 'visit'))
         self._register_compound('epoch_visit', ('epoch', 'visit'))
@@ -796,9 +798,9 @@ class MneExperiment(FileTree):
         pipe = self._raw['raw']
         self._raw_samplingrate = {}  # {(subject, recording): samplingrate}
         with self._temporary_state:
-            for subject, visit, recording in self.iter(('subject', 'visit', 'recording'), group='all', raw='raw'):
-                key = subject, recording
-                if not pipe.exists(subject, recording):
+            for subject, session, task, run in self.iter(('subject', 'session', 'task', 'run'), group='all', raw='raw'):
+                key = (subject, session, task, run)
+                if pipe.get_file_path(path) is None:
                     raw_missing.add(key)
                     continue
                 # events
@@ -920,6 +922,7 @@ class MneExperiment(FileTree):
                 raise RuntimeError(f"The cache's time stamp is in the future ({time.ctime(state_mtime)}). If the system time ({time.ctime(now)}) is wrong, adjust the system clock; if not, delete the eelbrain-cache folder.")
             cache_state = load.unpickle(cache_state_path)
             cache_state_v = cache_state.setdefault('version', 0)
+            # TODO: Maybe break backwards compatibility in cache as well
             if cache_state_v < CACHE_STATE_VERSION:
                 log.debug("Updating cache-state %i -> %i", cache_state_v, CACHE_STATE_VERSION)
                 save_state = deepcopy(save_state)
@@ -930,6 +933,7 @@ class MneExperiment(FileTree):
 
             # Find modified definitions
             # =========================
+            # TODO: Update this invalid cache removal to work with BIDS
             invalid_cache = self._check_cache(new_state, cache_state, root)
 
             # Collect invalid files
@@ -1026,7 +1030,7 @@ class MneExperiment(FileTree):
                 log.warning("Validating cache-dir without history")
             else:
                 raise RuntimeError(f"command={command}")
-        elif not exists(cache_dir):
+        else:
             os.mkdir(cache_dir)
 
         save.pickle(save_state, cache_state_path)
@@ -1467,17 +1471,13 @@ class MneExperiment(FileTree):
             if cov_mtime:
                 return max(cov_mtime, fwd_mtime)
 
-    def _raw_mtime(self, raw=None, bad_chs=True, subject=None, recording=None):
+    def _raw_mtime(self, raw=None, bad_chs=True):
         if raw is None:
             raw = self.get('raw')
         elif raw not in self._raw:
             raise RuntimeError(f"{raw=}")
         pipe = self._raw[raw]
-        if subject is None:
-            subject = self.get('subject')
-        if recording is None:
-            recording = self.get('recording')
-        return pipe.mtime(subject, recording, bad_chs)
+        return pipe.mtime(self.bids_path, bad_chs)
 
     def _rej_mtime(self, epoch):
         """rej-file mtime for secondary epoch definition
@@ -2595,20 +2595,20 @@ class MneExperiment(FileTree):
         # search for and check cached version
         ds = None
         if exists(evt_file):
-            raw_mtime = self._raw_mtime(bad_chs=False, subject=subject)
+            raw_mtime = self._raw_mtime(bad_chs=False)
             ds = load.unpickle(evt_file)
             if self.check_raw_mtime and mtime_changed(ds.info['raw-mtime'], raw_mtime):
-                self._log.debug("Raw file  %s %s %s modification time changed %s -> %s", self.get('raw'), subject, self.get('recording'), ds.info['raw-mtime'], raw_mtime)
+                self._log.debug("Raw file  %s %s %s %s modification time changed %s -> %s", self.get('raw'), subject, self.get('session'), self.get('task'), ds.info['raw-mtime'], raw_mtime)
                 ds = None
 
         # refresh cache
         if ds is None:
-            self._log.debug("Extracting events for %s %s %s", self.get('raw'), subject, self.get('recording'))
+            self._log.debug("Extracting events for %s %s %s %s", self.get('raw'), subject, self.get('session'), self.get('task'))
             raw = self.load_raw(add_bads)
             ds = load.mne.events(raw, self.merge_triggers, stim_channel=self._stim_channel)
             del ds.info['raw']
             ds.info['sfreq'] = raw.info['sfreq']
-            ds.info['raw-mtime'] = self._raw_mtime(bad_chs=False, subject=subject)
+            ds.info['raw-mtime'] = self._raw_mtime(bad_chs=False)
 
             # add edf
             if self.has_edf[subject]:
@@ -2624,6 +2624,7 @@ class MneExperiment(FileTree):
 
         ds.info['subject'] = subject
         ds.info['session'] = self.get('session')
+        ds.info['task'] = self.get('task')
         if len(self._visits) > 1:
             ds.info['visit'] = visit
 
