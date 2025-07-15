@@ -652,13 +652,16 @@ def morph_source_space(
         # Update morph matrix
         morph = _morph_subset(morph, source.vertices, source_to.vertices)
         # Morph data
-        stc, shape, dims = ndvar_stc(ndvar)
+        stc, shape, dims, case_axis = ndvar_stc(ndvar)
         morphed_stc = morph.apply(stc)
         # Reconstruct NDVar
         x = morphed_stc.data
         if shape is not None:
             x = x.reshape(shape)
-        dims = (source_to, *dims)
+        dims = [source_to, *dims]
+        if case_axis:
+            x = np.moveaxis(x, case_axis, 0)
+            dims.insert(0, dims.pop(case_axis))
         return NDVar(x, dims, ndvar.name, ndvar.info)
     elif morph is None:
         with warnings.catch_warnings():
