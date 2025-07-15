@@ -10271,9 +10271,13 @@ class SourceSpaceBase(Dimension):
         if self.src is None:
             raise TypeError("Unknown source-space. Specify the src parameter when initializing SourceSpace.")
         path = self._sss_path(subjects_dir)
-        if not path.exists():
-            raise IOError(f"Can't load source space because {path} does not exist; if the MRI files for {self.subject} were moved, use eelbrain.load.update_subjects_dir()")
-        return mne.read_source_spaces(str(path))
+        if path.exists():
+            return mne.read_source_spaces(str(path))
+        else:
+            return self._setup_source_space()
+
+    def _setup_source_space(self):
+        raise NotImplementedError
 
     def index_for_label(self, label):
         """Return the index for a label
@@ -10714,6 +10718,10 @@ class SourceSpace(SourceSpaceBase):
             return out[0]
         else:
             return np.vstack(out)
+
+    def _setup_source_space(self):
+        spacing = self.src.replace('-', '')
+        return mne.setup_source_space(self.subject, spacing, subjects_dir=self.subjects_dir, n_jobs=1, add_dist=False)
 
 
 class VolumeSourceSpace(SourceSpaceBase):

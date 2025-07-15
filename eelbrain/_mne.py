@@ -961,12 +961,11 @@ def xhemi(
         vert_lh, vert_rh = ndvar_sym.source.vertices
         vert_from = [[], vert_rh] if hemi == 'lh' else [vert_lh, []]
         vert_to = [vert_lh, []] if hemi == 'lh' else [[], vert_rh]
-        with warnings.catch_warnings():
-            warnings.filterwarnings('ignore', r'\d+/\d+ vertices not included in smoothing', module='mne')
-            morph_mat = compute_morph_matrix('fsaverage_sym', 'fsaverage_sym', vert_from, vert_to, subjects_dir=ndvar.source.subjects_dir, xhemi=True)
+        src = ndvar_sym.source.get_source_space()
+        morph = mne.compute_source_morph(src, 'fsaverage_sym', 'fsaverage_sym', ndvar.source.subjects_dir, xhemi=True, src_to=src)
 
         out_same = ndvar_sym.sub(source=hemi)
-        out_other = morph_source_space(ndvar_sym.sub(source=other_hemi), 'fsaverage_sym', out_same.source.vertices, morph_mat, parc=parc, xhemi=True, mask=mask)
+        out_other = morph_source_space(ndvar_sym.sub(source=other_hemi), 'fsaverage_sym', out_same.source.vertices, morph, parc=parc, xhemi=True, mask=mask)
 
     if hemi == 'lh':
         return out_same, out_other
