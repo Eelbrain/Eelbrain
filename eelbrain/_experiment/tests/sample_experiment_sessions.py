@@ -1,4 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+# flake8: noqa
 """
 A copy of sample_experiment.py with multiple sessions.
 To produce the data directory for this experiment use (make sure

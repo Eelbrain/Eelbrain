@@ -12,17 +12,14 @@ from numpy.testing import assert_almost_equal, assert_array_equal
 from eelbrain import *
 from eelbrain.pipeline import *
 from eelbrain._exceptions import DefinitionError
-from eelbrain.testing import TempDir, assert_dataobj_equal, import_attr, requires_mne_sample_data
-
-
-sample_path = Path(__file__).parents[3] / 'examples/experiment'
+from eelbrain.testing import TempDir, assert_dataobj_equal, requires_mne_sample_data
 
 
 @requires_mne_sample_data
 def test_sample():
     set_log_level('warning', 'mne')
-    # import from file:  http://stackoverflow.com/a/67692/166700
-    SampleExperiment = import_attr(sample_path / 'sample_experiment.py', 'SampleExperiment')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
     tempdir = TempDir()
     datasets.setup_samples_experiment(tempdir, 3, 2, mris=True)
 
@@ -274,7 +271,8 @@ def test_sample():
 @pytest.mark.slow
 def test_sample_source():
     set_log_level('warning', 'mne')
-    SampleExperiment = import_attr(sample_path / 'sample_experiment.py', 'SampleExperiment')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
     tempdir = TempDir()
     datasets.setup_samples_experiment(tempdir, 3, 2, mris=True)  # TODO: use sample MRI which already has forward solution
     root = join(tempdir, 'SampleExperiment')
@@ -300,7 +298,8 @@ def test_sample_source():
 @requires_mne_sample_data
 def test_sample_sessions():
     set_log_level('warning', 'mne')
-    SampleExperiment = import_attr(sample_path / 'sample_experiment_sessions.py', 'SampleExperiment')
+    from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
+
     tempdir = TempDir()
     datasets.setup_samples_experiment(tempdir, 2, 1, 2)
 
@@ -361,7 +360,8 @@ def test_sample_sessions():
 @requires_mne_sample_data
 def test_sample_neuromag():
     set_log_level('warning', 'mne')
-    SampleExperiment = import_attr(sample_path / 'sample_experiment.py', 'SampleExperiment')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
     tempdir = TempDir()
     datasets.setup_samples_experiment(tempdir, n_subjects=1, pick='')
 
