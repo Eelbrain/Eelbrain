@@ -201,7 +201,7 @@ class UTSStat(LegendMixin, XAxisMixin, YLimMixin, EelFigure):
         legend_handles = {}
         ymax = ymin = None
         for ax, ax_data in zip(self.axes, plot_data):
-            p = _ax_uts_stat(ax, ax_data, xdim, main, error, within_subject_error, clusters, pmax, ptrend, clip, error_alpha)
+            p = AxUTSStat(ax, ax_data, xdim, main, error, within_subject_error, clusters, pmax, ptrend, clip, error_alpha)
             self._plots.append(p)
             legend_handles.update(p.legend_handles)
             ymin = p.vmin if ymin is None else min(ymin, p.vmin)
@@ -237,11 +237,11 @@ class UTSStat(LegendMixin, XAxisMixin, YLimMixin, EelFigure):
         btn = self._cluster_btn = wx.Button(tb, wx.ID_ABOUT, "Clusters")
         btn.Enable(False)
         tb.AddControl(btn)
-        btn.Bind(wx.EVT_BUTTON, self._OnShowClusterInfo)
+        btn.Bind(wx.EVT_BUTTON, self._on_show_cluster_info)
 
         LegendMixin._fill_toolbar(self, tb)
 
-    def _OnShowClusterInfo(self, event):
+    def _on_show_cluster_info(self, event):
         from .._wxgui import show_text_dialog
 
         if len(self._plots) == 1:
@@ -455,7 +455,7 @@ class UTS(TimeSlicerEF, LegendMixin, YLimMixin, XAxisMixin, EelFigure):
             styles = (Style._coerce(colors),) * n_colors
 
         for ax, layers in zip(self.axes, plot_data):
-            h = _ax_uts(ax, layers, xdim, vlims, styles, stem, clip)
+            h = AxUTS(ax, layers, xdim, vlims, styles, stem, clip)
             self.plots.append(h)
             legend_handles.update(h.legend_handles)
 
@@ -470,7 +470,7 @@ class UTS(TimeSlicerEF, LegendMixin, YLimMixin, XAxisMixin, EelFigure):
         LegendMixin._fill_toolbar(self, tb)
 
 
-class _ax_uts_stat:
+class AxUTSStat:
 
     def __init__(
             self,
@@ -492,13 +492,13 @@ class _ax_uts_stat:
         self.legend_handles = {}
 
         for layer in data:
-            plt = _plt_uts_stat(ax, layer, xdim, main, error, within_subject_error, clip, error_alpha)
+            plt = PltUTSStat(ax, layer, xdim, main, error, within_subject_error, clip, error_alpha)
             self.stat_plots.append(plt)
             if plt.main is not None:
                 self.legend_handles[layer.style_key] = plt.main[0]
 
         # cluster plot
-        self.cluster_plt = _plt_uts_clusters(ax, clusters, pmax, ptrend)
+        self.cluster_plt = PltUTSClusters(ax, clusters, pmax, ptrend)
 
         # format y axis
         ax.autoscale(True, 'y')
@@ -514,7 +514,7 @@ class _ax_uts_stat:
         self.vmin, self.vmax = self.ax.get_ylim()
 
 
-class _ax_uts:
+class AxUTS:
 
     def __init__(
             self,
@@ -532,7 +532,7 @@ class _ax_uts:
 
         self.legend_handles = {}
         for layer, style in zip(axis_data, styles):
-            p = _plt_uts(ax, layer, xdim, style, stem, clip)
+            p = PltUTS(ax, layer, xdim, style, stem, clip)
             self.legend_handles[longname(layer.y)] = p.plot_handle
             contours = layer.y.info.get('contours', None)
             if contours:
@@ -549,7 +549,7 @@ class _ax_uts:
         self.vmin, self.vmax = self.ax.get_ylim()
 
 
-class _plt_uts:
+class PltUTS:
 
     def __init__(
             self,
@@ -577,7 +577,7 @@ class _plt_uts:
             ax.axhline(y, **kwa)
 
 
-class _plt_uts_clusters:
+class PltUTSClusters:
     """UTS cluster plot"""
     def __init__(
             self,
@@ -668,7 +668,7 @@ class _plt_uts_clusters:
             self.h.append(h)
 
 
-class _plt_uts_stat:
+class PltUTSStat:
 
     def __init__(
             self,

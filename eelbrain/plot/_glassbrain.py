@@ -704,7 +704,7 @@ class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
         return p, p_glassbrain
 
 
-def _to_MNI152(trans):
+def _to_mni152(trans):
     """Transfrom from MNI-305 space (fsaverage) to MNI-152
 
     parameters
@@ -802,7 +802,7 @@ def _stc_to_volume(ndvar, src, dest='mri', mri_resolution=False, mni305=False):
 
     affine[:3] *= 1e3
     if mni305:
-        affine = _to_MNI152(affine)
+        affine = _to_mni152(affine)
 
     # write the image in nifty format
     header = nibabel.nifti1.Nifti1Header()
@@ -856,13 +856,12 @@ def _fast_abs_percentile(ndvar, percentile=80):
 
 def get_transform(extent, shape):
     xmin, xmax, zmin, zmax = extent
-    T = np.eye(3)
-    T[0, 0] = (zmin - zmax) / shape[0]
-    T[0, 2] = zmax
-    T[1, 1] = (xmax - xmin) / shape[1]
-    T[1, 2] = xmin
-
-    return T
+    transform = np.eye(3)
+    transform[0, 0] = (zmin - zmax) / shape[0]
+    transform[0, 2] = zmax
+    transform[1, 1] = (xmax - xmin) / shape[1]
+    transform[1, 2] = xmin
+    return transform
 
 
 def coord_transform_2d(indices, affine):

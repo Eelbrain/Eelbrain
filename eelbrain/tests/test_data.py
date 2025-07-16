@@ -166,14 +166,14 @@ def test_celltable():
         Celltable(ds['Y', :-1], 'cat', match='rm', data=ds)
 
     # coercion of numerical X
-    X = ds.eval("A == 'a0'")
-    ct = Celltable('Y', X, cat=(None, None), data=ds)
+    x = ds.eval("A == 'a0'")
+    ct = Celltable('Y', x, cat=(None, None), data=ds)
     assert ct.cat == ('False', 'True')
-    assert_array_equal(ct.data['True'], ds['Y', X])
+    assert_array_equal(ct.data['True'], ds['Y', x])
 
-    ct = Celltable('Y', X, cat=('True', 'False'), data=ds)
+    ct = Celltable('Y', x, cat=('True', 'False'), data=ds)
     assert ('True', 'False') == ct.cat
-    assert_array_equal(ct.data['True'], ds['Y', X])
+    assert_array_equal(ct.data['True'], ds['Y', x])
 
     # test coercion of Y
     ct = Celltable(ds['Y'].x, 'A', data=ds)
@@ -837,8 +837,8 @@ def test_factor_relabel():
 def test_interaction():
     "Test Interaction"
     ds = datasets.get_uv()
-    A = ds['A']
-    B = ds['B']
+    A = ds['A']  # noqa
+    B = ds['B']  # noqa
     i = A % B
     # eq for sequence
     assert_array_equal(i == A % B, True)

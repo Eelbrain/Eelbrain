@@ -1,7 +1,6 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Statistical tests for univariate variables"""
 from functools import cached_property
-import itertools
 import math
 from typing import Dict, Literal, Sequence, Union
 
@@ -13,12 +12,10 @@ from .._celltable import Celltable
 from .._data_obj import (
     CategorialArg, CellArg, IndexArg, VarArg, NumericArg,
     Dataset, Factor, Interaction, Var, NDVar,
-    ascategorial, asfactor, asnumeric, assub, asvar, asndvar,
-    combine,
-    cellname, dataobj_repr, nice_label,
+    ascategorial, asnumeric, assub, asvar, asndvar,
+    combine, cellname, dataobj_repr, nice_label,
 )
 from .._utils import deprecate_ds_arg
-from .permutation import resample
 from . import stats
 
 
@@ -157,7 +154,7 @@ def lilliefors(data, formatted=False, **kwargs):
     Parameters
     ----------
     data : array_like
-
+        Data to test.
     formatted : bool
         Return a single string with the results instead of the numbers.
     kwargs :
@@ -189,48 +186,47 @@ def lilliefors(data, formatted=False, **kwargs):
     # lillie.test adjusts something at p>.1
     # http://pbil.univ-lyon1.fr/library/nortest/R/nortest
     data = np.asarray(data)
-    N = len(data)  # data.shape[-1] #axis]
-    assert N >= 5, "sample size must be greater than 4"
+    n = len(data)  # data.shape[-1] #axis]
+    assert n >= 5, "sample size must be greater than 4"
     # perform Kolmogorov-Smirnov with estimated mean and std
-    m = np.mean(data)  # , axis=axis)
-    s = np.std(data, ddof=1)  # , axis=axis)
-    D, ks_p = scipy.stats.kstest(data, 'norm', args=(m, s), **kwargs)
+    m = np.mean(data)
+    s = np.std(data, ddof=1)
+    d, ks_p = scipy.stats.kstest(data, 'norm', args=(m, s), **kwargs)
     # approximate p (Dallal)
-    if N > 100:
-        D *= (N / 100) ** .49
-        N = 100
-    p_estimate = np.exp(- 7.01256 * D ** 2 * (N + 2.78019)
-                        + 2.99587 * D * (N + 2.78019) ** .5
+    if n > 100:
+        d *= (n / 100) ** .49
+        n = 100
+    p_estimate = np.exp(- 7.01256 * d ** 2 * (n + 2.78019)
+                        + 2.99587 * d * (n + 2.78019) ** .5
                         - .122119
-                        + .974598 / (N ** .5)
-                        + 1.67997 / N)
+                        + .974598 / (n ** .5)
+                        + 1.67997 / n)
     # approximate P (Molin & Abdi)
-    L = D  # ???
+    l = d  # ???
     b2 = 0.08861783849346
     b1 = 1.30748185078790
     b0 = 0.37872256037043
-    A = (-(b1 + N) + np.sqrt((b1 + N) ** 2 - 4 * b2 * (b0 - L ** -2))) / 2 * b2
-    Pr = (-.37782822932809
-          + 1.67819837908004 * A
-          - 3.02959249450445 * A ** 2
-          + 2.80015798142101 * A ** 3
-          - 1.39874347510845 * A ** 4
-          + 0.40466213484419 * A ** 5
-          - 0.06353440854207 * A ** 6
-          + 0.00287462087623 * A ** 7
-          + 0.00069650013110 * A ** 8
-          - 0.00011872227037 * A ** 9
-          + 0.00000575586834 * A ** 10)
+    a = (-(b1 + n) + np.sqrt((b1 + n) ** 2 - 4 * b2 * (b0 - l ** -2))) / 2 * b2
+    p = (-.37782822932809
+         + 1.67819837908004 * a
+         - 3.02959249450445 * a ** 2
+         + 2.80015798142101 * a ** 3
+         - 1.39874347510845 * a ** 4
+         + 0.40466213484419 * a ** 5
+         - 0.06353440854207 * a ** 6
+         + 0.00287462087623 * a ** 7
+         + 0.00069650013110 * a ** 8
+         - 0.00011872227037 * a ** 9
+         + 0.00000575586834 * a ** 10)
     if formatted:
-        txt = "D={0:.4f}, Dallal p={1:.4f}, Molin&Abdi p={2:.4f}"
-        return txt.format(D, p_estimate, Pr)
+        return f"D={d:.4f}, Dallal p={p_estimate:.4f}, Molin&Abdi p={p:.4f}"
     else:
-        return D, p_estimate
+        return d, p_estimate
 
 
-def _hochberg_threshold(N, alpha=.05):
-    j = np.arange(N)
-    threshold = alpha / (N - j)
+def _hochberg_threshold(n, alpha=.05):
+    j = np.arange(n)
+    threshold = alpha / (n - j)
     return threshold
 
 

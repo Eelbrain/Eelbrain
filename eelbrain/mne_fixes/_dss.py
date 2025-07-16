@@ -3,6 +3,7 @@
 # Authors: Daniel McCloy <drmccloy@uw.edu>
 #
 # License: BSD (3-clause)
+# flake8: noqa
 
 import numpy as np
 from mne import Epochs, EpochsArray, compute_covariance

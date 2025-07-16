@@ -1430,19 +1430,20 @@ def aggregate(y, agg):
 
 
 class FigureFrame:
+    """Stand in for a wx.Frame with other backends"""
 
     def __init__(self, figure):
         self.figure = figure
         self.canvas = self.figure.canvas
         self._background = None
 
-    def Close(self):
+    def Close(self):  # noqa
         pass
 
-    def SetStatusText(self, text):
+    def SetStatusText(self, text):  # noqa
         pass
 
-    def Show(self):
+    def Show(self):  # noqa
         pass
 
     def redraw(self, axes=()):
@@ -1466,10 +1467,10 @@ class MatplotlibFrame(FigureFrame):
         FigureFrame.__init__(self, figure)
         self._plt = pyplot
 
-    def Close(self):
+    def Close(self):  # noqa
         self._plt.close(self.figure)
 
-    def Show(self):
+    def Show(self):  # noqa
         if mpl.get_backend() == 'WXAgg' and do_autorun():
             self._plt.show()
 
@@ -2845,7 +2846,7 @@ class ColorBarMixin:
         tb.AddTool(ID.PLOT_COLORBAR, "Plot Colorbar", Icon("plot/colorbar"))
         tb.Bind(wx.EVT_TOOL, self.__OnPlotColorBar, id=ID.PLOT_COLORBAR)
 
-    def __OnPlotColorBar(self, event):
+    def __OnPlotColorBar(self, event):  # noqa
         return self.plot_colorbar()
 
     def plot_colorbar(
@@ -3048,7 +3049,7 @@ class LegendMixin:
         tb.AddControl(self.__ctrl, "Legend")
         self.__ctrl.Bind(wx.EVT_CHOICE, self.__OnChoice, source=self.__ctrl)
 
-    def __OnChoice(self, event):
+    def __OnChoice(self, event):  # noqa
         self.__plot(self.__args[event.GetSelection()])
 
     def plot_legend(

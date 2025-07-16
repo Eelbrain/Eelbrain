@@ -16,7 +16,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install flake8
+        pip install flake8 pep8-naming
 
     - name: Run flake8
       run: |

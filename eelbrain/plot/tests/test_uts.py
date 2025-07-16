@@ -124,25 +124,21 @@ def test_uts():
 def test_clusters():
     "test plot.uts cluster plotting functions"
     ds = datasets.get_uts()
-
-    A = ds['A']
-    B = ds['B']
-    Y = ds['uts']
+    ds['subject'] = Factor(range(15), tile=4, random=True, name='subject')
 
     # fixed effects model
-    res = testnd.ANOVA(Y, A * B)
+    res = testnd.ANOVA('uts', 'A * B', data=ds)
     p = plot.UTS(res, title="Fixed Effects Model")
     p.close()
 
     # random effects model:
-    subject = Factor(range(15), tile=4, random=True, name='subject')
-    res = testnd.ANOVA(Y, A * B * subject, match=subject, samples=2)
+    res = testnd.ANOVA('uts', 'A * B * subject', match='subject', data=ds, samples=2)
     p = plot.UTS(res, title="Random Effects Model")
     p.close()
 
     # plot UTSStat
-    p = plot.UTSStat(Y, A % B, match=subject)
+    p = plot.UTSStat('uts', 'A % B', match='subject', data=ds)
     p.set_clusters(res.clusters)
     p.close()
-    p = plot.UTSStat(Y, A, xax=B, match=subject)
+    p = plot.UTSStat('uts', 'A', xax='B', match='subject', data=ds)
     p.close()

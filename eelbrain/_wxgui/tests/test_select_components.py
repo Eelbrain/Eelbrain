@@ -12,7 +12,7 @@ from eelbrain._wxgui import ID
 def test_select_components():
     "Test Select-Epochs GUI Document"
     tempdir = TempDir()
-    PATH = join(tempdir, 'test-ica.fif')
+    path = join(tempdir, 'test-ica.fif')
 
     data_path = mne.datasets.testing.data_path()
     raw_path = join(data_path, 'MEG', 'sample', 'sample_audvis_trunc_raw.fif')
@@ -23,17 +23,17 @@ def test_select_components():
     with catch_warnings():
         filterwarnings('ignore', 'FastICA did not converge')
         ica.fit(raw)
-    ica.save(PATH)
+    ica.save(path)
 
-    frame = gui.select_components(PATH, ds)
+    frame = gui.select_components(path, ds)
     frame.model.toggle(1)
     frame.OnSave(None)
-    ica = mne.preprocessing.read_ica(PATH)
+    ica = mne.preprocessing.read_ica(path)
     assert ica.exclude == [1]
 
     frame.OnUndo(None)
     frame.OnSave(None)
-    ica = mne.preprocessing.read_ica(PATH)
+    ica = mne.preprocessing.read_ica(path)
     assert ica.exclude == []
 
     # plotting

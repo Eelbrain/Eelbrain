@@ -184,7 +184,7 @@ class Edf:
         ds[t_edf] = Var(self.triggers['T'])
 
     def filter(self, ds, tstart=-0.1, tstop=0.6, use=['ESACC', 'EBLINK'],
-               T='t_edf'):
+               t='t_edf'):
         """Remove bad events from ``ds``
 
         Return a copy of the Dataset ``ds`` with all bad events removed. A
@@ -202,20 +202,20 @@ class Edf:
         use : list of str
             List of events types which are to be treated as artifacts (possible
             are 'ESACC' and 'EBLINK')
-        T : str | Var
+        t : str | Var
             Variable describing edf-relative timing for the events in ``ds``.
             Usually this is a string key for a variable in ``ds``.
 
         """
-        if isinstance(T, str):
-            T = ds[T]
-        accept = self.get_accept(T, tstart=tstart, tstop=tstop, use=use)
+        if isinstance(t, str):
+            t = ds[t]
+        accept = self.get_accept(t, tstart=tstart, tstop=tstop, use=use)
         accepted = ds.sub(accept)
         rejected = ds.sub(accept == False)
         accepted.info['rejected'] = rejected
         return accepted
 
-    def get_accept(self, T=None, tstart=-0.1, tstop=0.6, use=['ESACC', 'EBLINK']):
+    def get_accept(self, t=None, tstart=-0.1, tstop=0.6, use=['ESACC', 'EBLINK']):
         """Find good epochs
 
         Return a boolean Var indicating for each epoch whether it should be
@@ -223,7 +223,7 @@ class Edf:
 
         Parameters
         ----------
-        T : array-like | None
+        t : array-like | None
             List of time points (in the edf file's time coordinates). If None,
             the edf's trigger events are used.
         tstart : scalar
@@ -232,8 +232,8 @@ class Edf:
             end of the epoch relative to the even (in seconds)
 
         """
-        if T is None:
-            T = self.triggers['T']
+        if t is None:
+            t = self.triggers['T']
 
         # conert to ms
         start = int(tstart * 1000)
@@ -242,16 +242,15 @@ class Edf:
         self._debug = []
 
         # get data for triggers
-        N = len(T)
-        accept = np.empty(N, np.bool_)
+        accept = np.empty(len(t), bool)
 
         x = tuple(self.artifacts['event'] == name for name in use)
         idx = np.any(x, axis=0)
         artifacts = self.artifacts[idx]
 
-        for i, t in enumerate(T):
-            starts_before_tstop = artifacts['start'] < t + stop
-            stops_after_tstart = artifacts['stop'] > t + start
+        for i, ti in enumerate(t):
+            starts_before_tstop = artifacts['start'] < ti + stop
+            stops_after_tstart = artifacts['stop'] > ti + start
             overlap = np.all((starts_before_tstop, stops_after_tstart), axis=0)
             accept[i] = not np.any(overlap)
 
@@ -285,7 +284,7 @@ class Edf:
         return ds
 
     def mark(self, ds, tstart=-0.1, tstop=0.6, good=None, bad=False,
-             use=['ESACC', 'EBLINK'], T='t_edf', target='accept'):
+             use=['ESACC', 'EBLINK'], t='t_edf', target='accept'):
         """Mark events in ``ds`` as acceptable or not.
 
         ``ds`` needs to contain edf trigger times in a variable whose name is
@@ -307,7 +306,7 @@ class Edf:
             based on the eye-tracker data.
         use : list of str
             Artifact categories to include
-        T : Var
+        t : Var
             variable providing the trigger time values
         target : Var
             variable to which the good/bad values are assigned (if it does not
@@ -321,10 +320,10 @@ class Edf:
             else:
                 ds[target] = target = Var(np.ones(ds.n_cases, dtype=bool))
 
-        if isinstance(T, str):
-            T = ds[T]
+        if isinstance(t, str):
+            t = ds[t]
 
-        accept = self.get_accept(T, tstart=tstart, tstop=tstop, use=use)
+        accept = self.get_accept(t, tstart=tstart, tstop=tstop, use=use)
         if good is not None:
             target[accept] = good
         if bad is not None:
@@ -368,12 +367,8 @@ class Edf:
         """
         if trigger:
             self.assert_trigger_match(ds=ds, trigger=trigger)
-            if isinstance(trigger, str):
-                trigger = ds[trigger]
-
-        T = self.get_t()
-        self.mark(ds, tstart=tstart, tstop=tstop, good=good, bad=bad, use=use,
-                  T=T, target=target)
+        t = self.get_t()
+        self.mark(ds, tstart, tstop, good, bad, use, t, target)
 
 
 def events(path, samples=False, ds=None, trigger='trigger', t_edf='t_edf'):

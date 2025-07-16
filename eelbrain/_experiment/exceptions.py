@@ -1,9 +1,9 @@
 """Exceptions for MneExperiment"""
 
 
-class FileMissing(Exception):
+class FileMissingError(Exception):
     "An input file is missing"
 
 
-class FileDeficient(Exception):
+class FileDeficientError(Exception):
     "An input file is deficient"

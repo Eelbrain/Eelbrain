@@ -445,10 +445,10 @@ class App(wx.App):
 
     def OnOnlineHelp(self, event):
         "Called from the Help menu to open external resources"
-        Id = event.GetId()
-        if Id == ID.HELP_EELBRAIN:
+        event_id = event.GetId()
+        if event_id == ID.HELP_EELBRAIN:
             webbrowser.open("https://pythonhosted.org/eelbrain/")
-        elif Id == ID.HELP_PYTHON:
+        elif event_id == ID.HELP_PYTHON:
             webbrowser.open("http://docs.python.org/2.7/")
         else:
             raise RuntimeError("Invalid help ID")

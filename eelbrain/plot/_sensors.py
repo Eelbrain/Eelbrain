@@ -69,7 +69,7 @@ def _head_outlines(
             (ear_x_right, ear_y))
 
 
-class _plt_adjacency:
+class PltAdjacency:
     def __init__(self, ax, locs, adjacency, **linestyle):
         self.ax = ax
         self.locs = locs
@@ -91,7 +91,7 @@ class _plt_adjacency:
             self._h.append(line)
 
 
-class _ax_map2d:
+class AxMap2d:
 
     def __init__(
             self,
@@ -110,10 +110,10 @@ class _ax_map2d:
     ):
         self.ax = ax
 
-        self.sensors = _plt_map2d(ax, sensors, proj, extent, marker, size, color, mark, labels=labels, invisible=True, head_radius=head_radius, head_pos=head_pos, head_linewidth=head_linewidth)
+        self.sensors = PltMap2d(ax, sensors, proj, extent, marker, size, color, mark, labels=labels, invisible=True, head_radius=head_radius, head_pos=head_pos, head_linewidth=head_linewidth)
 
         locs = sensors.get_locs_2d(proj, extent, SENSORMAP_FRAME)
-        self.adjacency = _plt_adjacency(ax, locs, None)
+        self.adjacency = PltAdjacency(ax, locs, None)
 
         ax.set_aspect('equal', 'datalim', 'C')
         if extent:
@@ -147,7 +147,7 @@ def sensor_labels(
         raise ValueError(f"{labels=}")
 
 
-class _plt_map2d:
+class PltMap2d:
     "Sensor-map plot"
     _labels_arg = 'none'  # currently shown label text
 
@@ -327,7 +327,7 @@ class SensorMapMixin:
 
     def __init__(
             self,
-            sensor_plots: Sequence[_plt_map2d],
+            sensor_plots: Sequence[PltMap2d],
     ):
         "Call after EelFigure init (toolbar fill)"
         self.__label_color = 'k'
@@ -361,7 +361,7 @@ class SensorMapMixin:
         btn.Bind(wx.EVT_BUTTON, self.__OnMarkSensor)
         tb.AddControl(btn)
 
-    def __OnMarkSensor(self, event):
+    def __OnMarkSensor(self, event):  # noqa
         from .._wxgui import wx
 
         msg = "Channels to mark, separated by comma"
@@ -377,12 +377,12 @@ class SensorMapMixin:
             sty = wx.OK | wx.ICON_ERROR
             wx.MessageBox(msg, "Mark Sensors Failed for %r" % chs, style=sty)
 
-    def __OnSensorLabelChoice(self, event):
+    def __OnSensorLabelChoice(self, event):  # noqa
         sel = event.GetSelection()
         sel_arg = self.__label_option_args[sel]
         self.set_label_text(sel_arg)
 
-    def __OnSensorLabelColorChoice(self, event):
+    def __OnSensorLabelColorChoice(self, event):  # noqa
         sel = event.GetSelection()
         color = ['k', 'w', 'b', 'g', 'r', 'c', 'm', 'y'][sel]
         self.set_label_color(color)
@@ -518,7 +518,7 @@ class SensorMaps(EelFigure):
         ax.extent = False
         ax.set_xlim(xlim)
         ax.set_ylim(zlim)
-        self._h0 = _ax_map2d(ax, sensors, ax.proj, ax.extent, marker, size, color)
+        self._h0 = AxMap2d(ax, sensors, ax.proj, ax.extent, marker, size, color)
 
         # left
         ax = self.ax1 = self.axes[1]
@@ -526,7 +526,7 @@ class SensorMaps(EelFigure):
         ax.extent = False
         ax.set_xlim(ylim)
         ax.set_ylim(zlim)
-        self._h1 = _ax_map2d(ax, sensors, ax.proj, ax.extent, marker, size, color)
+        self._h1 = AxMap2d(ax, sensors, ax.proj, ax.extent, marker, size, color)
 
         # top
         ax = self.ax2 = self.axes[2]
@@ -534,13 +534,13 @@ class SensorMaps(EelFigure):
         ax.extent = False
         ax.set_xlim(xlim)
         ax.set_ylim(ylim)
-        self._h2 = _ax_map2d(ax, sensors, ax.proj, ax.extent, marker, size, color)
+        self._h2 = AxMap2d(ax, sensors, ax.proj, ax.extent, marker, size, color)
 
         # proj
         ax = self.ax3 = self.axes[3]
         ax.proj = proj
         ax.extent = 1
-        self._h3 = _ax_map2d(ax, sensors, ax.proj, ax.extent, marker, size, color)
+        self._h3 = AxMap2d(ax, sensors, ax.proj, ax.extent, marker, size, color)
         self.ax3.set_xlim(-frame, 1 + frame)
         self.ax3.set_ylim(-frame, 1 + frame)
 
@@ -658,7 +658,7 @@ class SensorMaps(EelFigure):
             return {ax}
         return set()
 
-    def _OnClear(self, event):
+    def _OnClear(self, event):  # noqa
         self.clear()
 
     def set_selection(self, select):
@@ -744,7 +744,7 @@ class SensorMap(SensorMapMixin, EelFigure):
         self._marker_handles = []
         self._adjacency = None
 
-        self._markers = _ax_map2d(ax, sensors, proj, 1, marker, size, color, mark, head_radius, head_pos, labels=labels)
+        self._markers = AxMap2d(ax, sensors, proj, 1, marker, size, color, mark, head_radius, head_pos, labels=labels)
         SensorMapMixin.__init__(self, [self._markers.sensors])
 
         if adjacency:
