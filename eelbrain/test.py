@@ -5,6 +5,6 @@ from ._stats.test import (
     Correlation, RankCorrelation,
     TTestOneSample, TTestIndependent, TTestRelated, MannWhitneyU, WilcoxonSignedRank,
     pairwise, ttest, correlations,
-    bootstrap_pairwise, lilliefors,
+    lilliefors,
     pairwise_correlations,
 )
