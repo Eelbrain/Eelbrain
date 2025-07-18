@@ -222,12 +222,13 @@ def label_from_annot(sss, subject, subjects_dir, parc=None, color=(0, 0, 0)):
     label : mne.Label
         Label encompassing known regions of ``parc`` in ``sss``.
     """
-    fname = SourceSpace._ANNOT_PATH.format(subjects_dir=subjects_dir, subject=subject, hemi='%s', parc=parc)
+    subjects_dir = Path(subjects_dir)
+    label_dir = subjects_dir / subject / 'label'
 
     # find vertices for each hemisphere
     labels = []
     for hemi, ss in zip(('lh', 'rh'), sss):
-        annotation, _, names = read_annot(fname % hemi)
+        annotation, _, names = read_annot(label_dir / f'{hemi}.{parc}.annot')
         bad = [-1, names.index(b'unknown')]
         keep = ~np.isin(annotation[ss['vertno']], bad)
         if np.any(keep):
@@ -622,8 +623,9 @@ def morph_source_space(
         raise ValueError("Can't mask source space without parcellation...")
     # check that annot files are available
     if parc_to:
-        fnames = [SourceSpace._ANNOT_PATH.format(subjects_dir=subjects_dir, subject=subject_to, hemi=hemi, parc=parc_to) for hemi in ('lh', 'rh')]
-        missing = [fname for fname in fnames if not os.path.exists(fname)]
+        label_dir = Path(subjects_dir) / subject_to / 'label'
+        paths = [label_dir / f'{hemi}.{parc_to}.annot' for hemi in ('lh', 'rh')]
+        missing = [fname for fname in paths if not os.path.exists(fname)]
         if missing:
             missing = '\n'.join(missing)
             raise IOError(f"Annotation files are missing for parc={parc_to!r}, subject={subject_to!r}. Use the parc parameter when morphing to set a different parcellation. The following files are missing:\n{missing}")
@@ -639,6 +641,7 @@ def morph_source_space(
         else:
             index = source_to.parc.isnotin(('unknown-lh', 'unknown-rh'))
         source_to = source_to[index]
+        assert len(source_to)
     elif mask not in (None, False):
         raise TypeError(f"{mask=}")
 
@@ -649,13 +652,16 @@ def morph_source_space(
         # Update morph matrix
         morph = _morph_subset(morph, source.vertices, source_to.vertices)
         # Morph data
-        stc, shape, dims = ndvar_stc(ndvar)
+        stc, shape, dims, case_axis = ndvar_stc(ndvar)
         morphed_stc = morph.apply(stc)
         # Reconstruct NDVar
         x = morphed_stc.data
         if shape is not None:
             x = x.reshape(shape)
-        dims = (source_to, *dims)
+        dims = [source_to, *dims]
+        if case_axis:
+            x = np.moveaxis(x, case_axis, 0)
+            dims.insert(0, dims.pop(case_axis))
         return NDVar(x, dims, ndvar.name, ndvar.info)
     elif morph is None:
         with warnings.catch_warnings():
@@ -865,7 +871,12 @@ def combination_label(
     return out
 
 
-def xhemi(ndvar, mask=None, hemi='lh', parc=True):
+def xhemi(
+        ndvar: NDVar,
+        mask: bool = None,
+        hemi: str = 'lh',
+        parc: Union[bool, str] = True,
+) -> (NDVar, NDVar):
     """Project data from both hemispheres to ``hemi`` of fsaverage_sym
 
     Project data from both hemispheres to the same hemisphere for
@@ -878,14 +889,14 @@ def xhemi(ndvar, mask=None, hemi='lh', parc=True):
 
     Parameters
     ----------
-    ndvar : NDVar
+    ndvar
         NDVar with SourceSpace dimension.
-    mask : bool
+    mask
         Remove sources in "unknown-" labels (default is True unless ``ndvar``
         contains sources with "unknown-" label).
-    hemi : 'lh' | 'rh'
+    hemi
         Hemisphere onto which to morph the data.
-    parc : bool | str
+    parc
         Parcellation for target source space; True to use same as in ``ndvar``
         (default).
 
@@ -947,15 +958,11 @@ def xhemi(ndvar, mask=None, hemi='lh', parc=True):
         else:
             ndvar_sym = morph_source_space(ndvar, 'fsaverage_sym', parc=parc, mask=mask)
 
-        vert_lh, vert_rh = ndvar_sym.source.vertices
-        vert_from = [[], vert_rh] if hemi == 'lh' else [vert_lh, []]
-        vert_to = [vert_lh, []] if hemi == 'lh' else [[], vert_rh]
-        with warnings.catch_warnings():
-            warnings.filterwarnings('ignore', r'\d+/\d+ vertices not included in smoothing', module='mne')
-            morph_mat = compute_morph_matrix('fsaverage_sym', 'fsaverage_sym', vert_from, vert_to, subjects_dir=ndvar.source.subjects_dir, xhemi=True)
+        src = ndvar_sym.source.get_source_space()
+        morph = mne.compute_source_morph(src, 'fsaverage_sym', 'fsaverage_sym', ndvar.source.subjects_dir, xhemi=True, src_to=src)
 
         out_same = ndvar_sym.sub(source=hemi)
-        out_other = morph_source_space(ndvar_sym.sub(source=other_hemi), 'fsaverage_sym', out_same.source.vertices, morph_mat, parc=parc, xhemi=True, mask=mask)
+        out_other = morph_source_space(ndvar_sym.sub(source=other_hemi), 'fsaverage_sym', out_same.source.vertices, morph, parc=parc, xhemi=True, mask=mask)
 
     if hemi == 'lh':
         return out_same, out_other

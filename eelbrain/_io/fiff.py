@@ -1536,6 +1536,10 @@ def ndvar_stc(
         dim_names = ndvar.get_dimnames(first=('source', 'space'))
     else:
         dim_names = ndvar.get_dimnames(first='source')
+    if 'case' in dim_names:
+        case_axis = dim_names.index('case')
+    else:
+        case_axis = None
     dims = ndvar.get_dims(dim_names)
     source_shape = [len(dim) for dim in dims]
     compressed_shape = (
@@ -1566,7 +1570,7 @@ def ndvar_stc(
             stc = mne.VolVectorSourceEstimate(data, vertices, tmin, tstep, source_dim.subject)
         else:
             stc = mne.VolSourceEstimate(data, vertices, tmin, tstep, source_dim.subject)
-    return stc, target_shape, dims[1:]
+    return stc, target_shape, dims[1:], case_axis
 
 
 def _trim_ds(ds, epochs):
