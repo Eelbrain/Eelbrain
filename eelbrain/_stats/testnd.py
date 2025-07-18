@@ -48,7 +48,7 @@ from .._data_obj import (
     NDVar, Categorial, UTS,
     ascategorial, asmodel, asndvar, asvar, assub,
     cellname, combine, dataobj_repr, longname)
-from .._exceptions import OldVersionError, WrongDimension, ZeroVariance
+from .._exceptions import OldVersionError, WrongDimensionError, ZeroVarianceError
 from .._utils import deprecate_ds_arg, user_activity, restore_main_spec
 from .._utils.numpy_utils import FULL_AXIS_SLICE
 from .._utils.notebooks import trange
@@ -69,14 +69,14 @@ __test__ = False
 def check_for_vector_dim(y: NDVar) -> None:
     for dim in y.dims:
         if dim._adjacency_type == 'vector':
-            raise WrongDimension(f"{dim}: mass-univariate methods are not suitable for vectors. Consider using vector norm as test statistic, or using a testnd.Vector test function.")
+            raise WrongDimensionError(f"{dim}: mass-univariate methods are not suitable for vectors. Consider using vector norm as test statistic, or using a testnd.Vector test function.")
 
 
 def check_variance(x):
     if x.ndim != 2:
         x = x.reshape((len(x), -1))
     if opt.has_zero_variance(x):
-        raise ZeroVariance("y contains data column with zero variance")
+        raise ZeroVarianceError("y contains data column with zero variance")
 
 
 class NDTest:

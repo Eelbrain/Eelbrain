@@ -152,9 +152,9 @@ class Celltable:
             else:
                 sort_idx = cell_model.sort_index()
                 if x is not None and cat is not None:
-                    X_ = x[sort_idx]
-                    sort_X_idx = X_.sort_index(order=cat)
-                    sort_idx = sort_idx[sort_X_idx]
+                    x_ = x[sort_idx]
+                    sort_x_idx = x_.sort_index(order=cat)
+                    sort_idx = sort_idx[sort_x_idx]
 
             if sort_idx is not None:
                 if sort_idx[0] == 0 and np.all(np.diff(sort_idx) == 1):

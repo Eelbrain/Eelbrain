@@ -24,7 +24,7 @@ from .._utils import as_sequence, ask, user_activity
 from ..mne_fixes import CaptureLog
 from ..mne_fixes._version import MNE_VERSION, V0_19, V0_24
 from .definitions import compound, log_dict_change, tuple_arg, typed_arg
-from .exceptions import FileMissing
+from .exceptions import FileMissingError
 
 
 AddBadsArg = Union[bool, Sequence[str]]
@@ -276,7 +276,7 @@ class RawSource(RawPipe):
         "Make sure the file exists and is up to date"
         path = self.path.format(root=self.root, subject=subject, recording=recording)
         if not exists(path):
-            raise FileMissing(f"Raw input file for {subject}/{recording} does not exist at expected location {path}")
+            raise FileMissingError(f"Raw input file for {subject}/{recording} does not exist at expected location {path}")
         return path
 
     def exists(self, subject, recording):
@@ -700,7 +700,7 @@ class RawICA(CachedRawPipe):
         visit = _visit(recording)
         path = self._ica_path(subject, visit)
         if not exists(path):
-            raise FileMissing(f"ICA file {basename(path)} does not exist for raw={self.name!r}. Run e.make_ica_selection() to create it.")
+            raise FileMissingError(f"ICA file {basename(path)} does not exist for raw={self.name!r}. Run e.make_ica_selection() to create it.")
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', 'Version 0.23 introduced max_iter', DeprecationWarning)
             return mne.preprocessing.read_ica(path)

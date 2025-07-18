@@ -5,22 +5,22 @@ from eelbrain.testing import hide_plots
 
 
 @hide_plots
-@pytest.mark.parametrize('Barplot', [plot.Barplot, plot.BarplotHorizontal])
-def test_barplots(Barplot):
+@pytest.mark.parametrize("barplot", [plot.Barplot, plot.BarplotHorizontal])
+def test_barplots(barplot):
     "Test plot.Barplot"
     ds = datasets.get_uv()
 
     # one category
-    Barplot('fltvar', data=ds, test=False)
-    Barplot('fltvar', 'A', data=ds, test=False)
-    Barplot('fltvar', 'A%B', data=ds, test=False)
-    Barplot('fltvar', match='rm', data=ds, test=False)
-    Barplot('fltvar', 'A', match='rm', data=ds, test=False)
-    Barplot('fltvar', 'A%B', match='rm', data=ds, test=False)
+    barplot('fltvar', data=ds, test=False)
+    barplot('fltvar', 'A', data=ds, test=False)
+    barplot('fltvar', 'A%B', data=ds, test=False)
+    barplot('fltvar', match='rm', data=ds, test=False)
+    barplot('fltvar', 'A', match='rm', data=ds, test=False)
+    barplot('fltvar', 'A%B', match='rm', data=ds, test=False)
 
     # cells
-    Barplot('fltvar', 'A%B', cells=(('a2', 'b2'), ('a1', 'b1')), data=ds, test=False)
-    Barplot('fltvar', 'A%B', match='rm', cells=(('a2', 'b2'), ('a1', 'b1')), data=ds, test=False)
+    barplot('fltvar', 'A%B', cells=(('a2', 'b2'), ('a1', 'b1')), data=ds, test=False)
+    barplot('fltvar', 'A%B', match='rm', cells=(('a2', 'b2'), ('a1', 'b1')), data=ds, test=False)
 
 
 @hide_plots

@@ -295,7 +295,7 @@ class Boxplot(CategorialAxisMixin, YLimMixin, _SimpleFigure):
         _SimpleFigure.__init__(self, frame_title(ct.y, ct.x), **kwargs)
         self._configure_axis_data('y', ct.y, ylabel)
 
-        self._plot = p = _plt_boxplot(self._ax, ct, styles, bottom, top, test, tail, par, corr, trend, test_markers, label_fliers, boxplot_args)
+        self._plot = p = PltBoxplot(self._ax, ct, styles, bottom, top, test, tail, par, corr, trend, test_markers, label_fliers, boxplot_args)
         p.set_ylim(p.bottom, p.top)
         p.ax.set_xlim(p.left, p.right)
 
@@ -431,7 +431,7 @@ class Barplot(CategorialAxisMixin, YLimMixin, _SimpleFigure):
         _SimpleFigure.__init__(self, frame_title(ct.y, ct.x), **kwargs)
         self._configure_axis_data('y', ct.y, ylabel)
 
-        p = _plt_barplot(self._ax, ct, error, within_subject_error, styles, bottom, top, origin, pos, width, color, edgec, ec, test, tail, par, trend, corr, test_markers)
+        p = PltBarplot(self._ax, ct, error, within_subject_error, styles, bottom, top, origin, pos, width, color, edgec, ec, test, tail, par, trend, corr, test_markers)
         p.set_ylim(p.bottom, p.top)
         p.ax.set_xlim(p.left, p.right)
 
@@ -569,7 +569,7 @@ class BarplotHorizontal(XAxisMixin, CategorialAxisMixin, _SimpleFigure):
 
         _SimpleFigure.__init__(self, frame_title(ct.y, ct.x), **kwargs)
 
-        p = _plt_barplot(self._ax, ct, error, within_subject_error, styles, bottom, top, origin, pos, width, c, edgec, ec, test, tail, par, trend, corr, test_markers, horizontal=True)
+        p = PltBarplot(self._ax, ct, error, within_subject_error, styles, bottom, top, origin, pos, width, c, edgec, ec, test, tail, par, trend, corr, test_markers, horizontal=True)
         p.ax.set_ylim(p.left, p.right)
         self._configure_axis_data('x', ct.y, ylabel)
 
@@ -578,7 +578,7 @@ class BarplotHorizontal(XAxisMixin, CategorialAxisMixin, _SimpleFigure):
         self._show()
 
 
-class _plt_uv_base:
+class PltUvBase:
     """Base for barplot and boxplot -- x is categorial, y is scalar"""
 
     def __init__(
@@ -645,7 +645,7 @@ class _plt_uv_base:
             self.vmin, self.vmax = self.ax.get_ylim()
 
 
-class _plt_boxplot(_plt_uv_base):
+class PltBoxplot(PltUvBase):
     """Boxplot"""
 
     def __init__(self, ax, ct, styles, bottom, top, test, tail, par, corr, trend, test_markers, label_fliers, boxplot_args):
@@ -697,10 +697,10 @@ class _plt_boxplot(_plt_uv_base):
 
         # set ax limits
         plot_max = max(x.max() for x in all_data)
-        _plt_uv_base.__init__(self, ax, ct, None, pos, width, bottom, plot_max, top, test, tail, corr, par, trend, test_markers)
+        PltUvBase.__init__(self, ax, ct, None, pos, width, bottom, plot_max, top, test, tail, corr, par, trend, test_markers)
 
 
-class _plt_barplot(_plt_uv_base):
+class PltBarplot(PltUvBase):
     "Barplot from Celltable ``ct``"
     def __init__(
             self,
@@ -775,7 +775,7 @@ class _plt_barplot(_plt_uv_base):
                 if style.hatch:
                     bar.set_hatch(style.hatch)
 
-        _plt_uv_base.__init__(self, ax, ct, origin, pos, width, bottom, plot_max, top, test, tail, corr, par, trend, test_markers, horizontal)
+        PltUvBase.__init__(self, ax, ct, origin, pos, width, bottom, plot_max, top, test, tail, corr, par, trend, test_markers, horizontal)
 
 
 class Timeplot(LegendMixin, YLimMixin, EelFigure):
@@ -902,7 +902,7 @@ class Timeplot(LegendMixin, YLimMixin, EelFigure):
         self._configure_axis_data('y', y, ylabel)
         self._configure_axis_data('x', x, xlabel)
 
-        plot = _ax_timeplot(self.axes[0], y, categories, x, match, styles, line_plot, error, local_plot, timelabels, x_jitter, bottom, top)
+        plot = AxTimeplot(self.axes[0], y, categories, x, match, styles, line_plot, error, local_plot, timelabels, x_jitter, bottom, top)
 
         YLimMixin.__init__(self, (plot,))
         LegendMixin.__init__(self, legend, plot.legend_handles, labels)
@@ -912,7 +912,7 @@ class Timeplot(LegendMixin, YLimMixin, EelFigure):
         LegendMixin._fill_toolbar(self, tb)
 
 
-class _ax_timeplot:
+class AxTimeplot:
 
     def __init__(self, ax, y, categories, time, match, styles, line_plot, error, local_plot, timelabels, x_jitter, bottom, top):
         # categories
@@ -961,7 +961,7 @@ class _ax_timeplot:
                     patch = mpl.patches.Polygon(zip(box_x, box_y), zorder=-999, **style.patch_args)
                     ax.add_patch(patch)
             elif local_plot == 'bar':
-                _plt_barplot(ax, ct, error, False, styles, 0, pos=pos, width=within_spacing, test=False)
+                PltBarplot(ax, ct, error, False, styles, 0, pos=pos, width=within_spacing, test=False)
 
         legend_handles = {}
         if line_plot:

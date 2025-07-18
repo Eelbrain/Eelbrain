@@ -17,7 +17,7 @@ from ._base import (
     pop_if_dict, set_dict_arg)
 
 
-class _plt_im:
+class PltIm:
 
     _aspect = 'auto'
 
@@ -115,14 +115,14 @@ class _plt_im:
         self.vmin, self.vmax = self.im.get_clim()
 
 
-class _plt_im_array(_plt_im):
+class PltImArray(PltIm):
 
     def __init__(self, ax, layer, dimnames, interpolation, vlims, cmaps, contours):
         self._dimnames = dimnames[::-1]
         xdim, ydim = layer.y.get_dims(dimnames)
         xlim = xdim._axis_im_extent()
         ylim = ydim._axis_im_extent()
-        _plt_im.__init__(self, ax, layer, cmaps, vlims, contours, xlim + ylim, interpolation)
+        PltIm.__init__(self, ax, layer, cmaps, vlims, contours, xlim + ylim, interpolation)
         ax.set_xlim(xlim)
         ax.set_ylim(ylim)
 
@@ -130,13 +130,13 @@ class _plt_im_array(_plt_im):
         return ndvar.get_data(self._dimnames)
 
 
-class _ax_im_array:
+class AxImArray:
 
     def __init__(self, ax, layers, x='time', interpolation=None, vlims={}, cmaps={}, contours={}):
         self.ax = ax
         self.data = layers
         dimnames = layers.y0.get_dimnames((x, None))
-        self.plots = [_plt_im_array(ax, l, dimnames, interpolation, vlims, cmaps, contours) for l in layers]
+        self.plots = [PltImArray(ax, l, dimnames, interpolation, vlims, cmaps, contours) for l in layers]
 
     @property
     def title(self):
@@ -275,7 +275,7 @@ class Array(TimeSlicerEF, ColorMapMixin, XAxisMixin, EelFigure):
         self._set_axtitle(axtitle, plot_data)
 
         for ax, layers in zip(self.axes, plot_data):
-            p = _ax_im_array(ax, layers, x, interpolation, self._vlims, self._cmaps, self._contours)
+            p = AxImArray(ax, layers, x, interpolation, self._vlims, self._cmaps, self._contours)
             self.plots.append(p)
 
         self._configure_axis_dim('x', xdim, xlabel, xticklabels, data=plot_data.data)
@@ -288,7 +288,7 @@ class Array(TimeSlicerEF, ColorMapMixin, XAxisMixin, EelFigure):
         ColorMapMixin._fill_toolbar(self, tb)
 
 
-class _plt_utsnd:
+class PltUTSND:
 
     def __init__(
             self,
@@ -345,7 +345,7 @@ class _plt_utsnd:
             line.set_ydata(y)
 
 
-class _ax_butterfly:
+class AxButterfly:
     def __init__(
             self,
             ax: matplotlib.axes.Axes,
@@ -368,7 +368,7 @@ class _ax_butterfly:
 
         name = ''
         for layer in axis_data:
-            h = _plt_utsnd(ax, layer, xdim, linedim, sensors, clip_on=clip, color=color, linewidth=linewidth)
+            h = PltUTSND(ax, layer, xdim, linedim, sensors, clip_on=clip, color=color, linewidth=linewidth)
             self.layers.append(h)
             if not name and layer.y.name:
                 name = layer.y.name
@@ -505,7 +505,7 @@ class Butterfly(TimeSlicerEF, LegendMixin, TopoMapKey, YLimMixin, XAxisMixin, Ee
         self._vlims = _base.find_fig_vlims(plot_data.data, vmax, vmin)
         legend_handles = {}
         for ax, layers in zip(self.axes, plot_data):
-            h = _ax_butterfly(ax, layers, xdim, linedim, sensors, color, linewidth, self._vlims, clip)
+            h = AxButterfly(ax, layers, xdim, linedim, sensors, color, linewidth, self._vlims, clip)
             self.plots.append(h)
             legend_handles.update(h.legend_handles)
 
@@ -567,7 +567,7 @@ class Butterfly(TimeSlicerEF, LegendMixin, TopoMapKey, YLimMixin, XAxisMixin, Ee
         return data, p.title + ' %i ms' % round(t), 'default'
 
 
-class _ax_bfly_epoch:
+class AxButterflyEpoch:
 
     def __init__(self, ax, epoch, mark=None, state=True, label=None, color='k',
                  lw=0.2, mcolor='r', mlw=0.8, antialiased=True, vlims={}):
@@ -588,8 +588,8 @@ class _ax_bfly_epoch:
         mlw : scalar
             Marked sensor plot line width (default 1).
         """
-        self.lines = _plt_utsnd(ax, DataLayer(epoch, PlotType.LINE), 'time', 'sensor',
-                                color=color, lw=lw, antialiased=antialiased)
+        self.lines = PltUTSND(ax, DataLayer(epoch, PlotType.LINE), 'time', 'sensor',
+                              color=color, lw=lw, antialiased=antialiased)
         ax.set_xlim(epoch.time[0], epoch.time[-1])
 
         self.ax = ax

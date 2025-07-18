@@ -8,7 +8,7 @@ import pytest
 
 from eelbrain import datasets, load, test, testnd, Dataset, Factor, NDVar, Var
 from eelbrain._data_obj import UTS
-from eelbrain._exceptions import IncompleteModel
+from eelbrain._exceptions import IncompleteModelError
 from eelbrain._stats import glm
 from eelbrain._stats.permutation import permute_order
 from eelbrain._utils.r_bridge import r, r_require, r_warning_filter
@@ -30,10 +30,10 @@ def assert_f_test_equal(f_test, r_res, r_row, f_lmf, f_nd, r_kind='aov'):
 
     assert f_test.df == r_res['df']
     if 'SS' in r_res:
-        assert f_test.SS == pytest.approx(r_res['SS'])
+        assert f_test.ss == pytest.approx(r_res['SS'])
     if 'MS' in r_res:
-        assert f_test.MS == pytest.approx(r_res['MS'])
-    assert f_test.F == pytest.approx(r_res['F'])
+        assert f_test.ms == pytest.approx(r_res['MS'])
+    assert f_test.f == pytest.approx(r_res['F'])
     assert f_test.p == pytest.approx(r_res['p'])
     assert f_lmf == pytest.approx(r_res['F'])  # lm-fitter comparison"
     assert f_nd == pytest.approx(r_res['F'])  # nd-ANOVA comparison"
@@ -157,7 +157,7 @@ def test_anova_eq():
     assert str(r2) == str(r1)
 
     # not fully specified model with random effects
-    with pytest.raises(IncompleteModel):
+    with pytest.raises(IncompleteModelError):
         test.ANOVA('fltvar', 'A*rm', data=ds)
 
     # unequal group size, 1-way
@@ -495,5 +495,5 @@ def test_lmfitter():
 
     aov = test.ANOVA(y[:, 0], x)
     for f_test, f_map, p_map in zip(aov.f_tests, f_maps, p_maps):
-        assert f_map[0] == pytest.approx(f_test.F)
+        assert f_map[0] == pytest.approx(f_test.f)
         assert p_map[0] == pytest.approx(f_test.p)

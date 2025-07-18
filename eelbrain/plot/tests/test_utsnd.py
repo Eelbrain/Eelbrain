@@ -3,7 +3,7 @@ import numpy as np
 
 from eelbrain import datasets, plot, testnd, cwt_morlet
 from eelbrain.plot._figure import Figure
-from eelbrain.plot._utsnd import _ax_bfly_epoch
+from eelbrain.plot._utsnd import AxButterflyEpoch
 from eelbrain.testing import requires_mne_sample_data
 from eelbrain.testing import hide_plots
 
@@ -24,7 +24,7 @@ def test_plot_butterfly():
 
     # _ax_bfly_epoch (used in GUI, not part of a figure)
     fig = Figure(1)
-    ax = _ax_bfly_epoch(fig.axes[0], ds[0, 'utsnd'])
+    ax = AxButterflyEpoch(fig.axes[0], ds[0, 'utsnd'])
     fig.show()
     ax.set_data(ds[1, 'utsnd'])
     fig.draw()

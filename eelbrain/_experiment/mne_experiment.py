@@ -49,7 +49,7 @@ from .._utils.notebooks import tqdm
 from .covariance import EpochCovariance, RawCovariance
 from .definitions import FieldCode, find_dependent_epochs, find_epochs_vars, log_dict_change, log_list_change, tuple_arg
 from .epochs import ContinuousEpoch, PrimaryEpoch, SecondaryEpoch, SuperEpoch, EpochBase, EpochCollection, assemble_epochs, decim_param
-from .exceptions import FileDeficient, FileMissing
+from .exceptions import FileDeficientError, FileMissingError
 from .experiment import FileTree
 from .groups import assemble_groups
 from .parc import SEEDED_PARC_RE, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, SeededParc, IndividualSeededParc, LabelParc, VolumeParc, Parcellation, SubParc, assemble_parcs
@@ -847,7 +847,7 @@ class MneExperiment(FileTree):
                     elif head_shape is None:
                         head_shape = dig
                     elif not hsp_equal(dig, head_shape):
-                        raise FileDeficient(f"Raw file {recording} for {subject} has head shape that is different from {enumeration(marker_ids)}; consider defining different visits.")
+                        raise FileDeficientError(f"Raw file {recording} for {subject} has head shape that is different from {enumeration(marker_ids)}; consider defining different visits.")
 
                     # find if marker pos already exists
                     for i, dig_i in enumerate(markers):
@@ -862,7 +862,7 @@ class MneExperiment(FileTree):
                 if len(markers) > 1:
                     if dig_missing:
                         n = len(dig_missing)
-                        raise FileDeficient(f"The raw {plural('file', n)} for {subject}, {plural('recording', n)} {enumeration(dig_missing)} {plural('is', n)} missing digitizer information")
+                        raise FileDeficientError(f"The raw {plural('file', n)} for {subject}, {plural('recording', n)} {enumeration(dig_missing)} {plural('is', n)} missing digitizer information")
                     for epoch in super_epochs:
                         if len(set(marker_ids[s] for s in epoch.sessions)) > 1:
                             groups = defaultdict(list)
@@ -1775,7 +1775,7 @@ class MneExperiment(FileTree):
         try:
             return self._dig_sessions[subject][recording]
         except KeyError:
-            raise FileMissing(f"Raw data missing for {subject}, session {recording}")
+            raise FileMissingError(f"Raw data missing for {subject}, session {recording}")
 
     def iter(self, fields='subject', exclude=None, values=None, progress_bar=None, **state):
         """
@@ -3672,7 +3672,7 @@ class MneExperiment(FileTree):
                         ds_sel = load.unpickle(rej_file)
                     else:
                         rej_file = self._get_rel('rej-file', 'root')
-                        raise FileMissing(f"The rejection file at {rej_file} does not exist. Run .make_epoch_selection() first.")
+                        raise FileMissingError(f"The rejection file at {rej_file} does not exist. Run .make_epoch_selection() first.")
                 else:
                     ds_sel = None
                 ds = self.load_events(add_bads=add_bads, data_raw=data_raw, session=epoch.session)
@@ -6949,7 +6949,7 @@ class MneExperiment(FileTree):
                 try:
                     ica = self.load_ica()
                     rows.append((subject, ica.n_components_, len(ica.exclude)))
-                except FileMissing:
+                except FileMissingError:
                     if all(source_pipe.mtime(subject, self.get('recording', session=session), False) for session in pipe.session):
                         rows.append((subject, "No ICA-file", -1))
                     else:
@@ -7047,7 +7047,7 @@ class MneExperiment(FileTree):
             subjects.append(subject)
             try:
                 bads_raw = self.load_bad_channels()
-            except FileMissing:  # raw file is missing
+            except FileMissingError:  # raw file is missing
                 bad_chs.append(('NaN', 'NaN'))
                 if has_epoch_rejection:
                     n_good.append(float('nan'))
@@ -7058,7 +7058,7 @@ class MneExperiment(FileTree):
 
             try:
                 ds = self.load_selected_events(reject='keep')
-            except FileMissing:  # rejection file is missing
+            except FileMissingError:  # rejection file is missing
                 ds = self.load_selected_events(reject=False)
                 bad_chs.append((bads_fmt(bads_raw), 'NaN'))
                 if has_epoch_rejection:

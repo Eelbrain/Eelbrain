@@ -79,19 +79,19 @@ def besa_evt(ds, tstart=-0.1, tstop=0.6, pad=0.1, dest=None):
     MEG-160.
     """
     idx = ds['besa_index']
-    N = idx.x.max() + 1
+    n = idx.x.max() + 1
 
     # save trigger times in ds
     tstart2 = tstart - pad
     tstop2 = tstop + pad
     epoch_len = tstop2 - tstart2
     start = -tstart2
-    stop = epoch_len * N
+    stop = epoch_len * n
 
     # BESA events
     evts = Dataset()
     evts['Tsec'] = Var(np.arange(start, stop, epoch_len))
-    evts['Code'] = Var(np.ones(N))
+    evts['Code'] = Var(np.ones(n))
 
     # remove rejected trials
     evts = evts.sub(idx)

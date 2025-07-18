@@ -113,7 +113,7 @@ class LM:
 
     Attributes
     ----------
-    F, p : scalar
+    f, p : scalar
         Test of the null-hypothesis that the model does not explain a
         significant amount of the variance in the dependent variable.
     """
@@ -135,31 +135,31 @@ class LM:
         # fit
         p = x._parametrize()
         if _lm_lsq == 0:  # use scipy (faster)
-            beta, SS_res, _, _ = lstsq(p.x, y.x)
+            beta, ss_res, _, _ = lstsq(p.x, y.x)
         elif _lm_lsq == 1:  # Fox
             # estimate least squares approximation
             beta = np.dot(p.projector, y.x)
             # estimate
             y_est = np.dot(p.x, beta)
             self._residuals = residuals = y.x - y_est
-            SS_res = np.sum(residuals ** 2)
+            ss_res = np.sum(residuals ** 2)
         else:
             raise ValueError
 
         # SS total
-        SS_total = self.SS_total = np.sum((y.x - y.mean()) ** 2)
+        ss_total = self.ss_total = np.sum((y.x - y.mean()) ** 2)
         df_total = self.df_total = x.df_total
-        self.MS_total = SS_total / df_total
+        self.ms_total = ss_total / df_total
 
         # SS residuals
-        self.SS_res = SS_res
+        self.ss_res = ss_res
         df_res = self.df_res = x.df_error
-        self.MS_res = SS_res / df_res
+        self.ms_res = ss_res / df_res
 
         # SS explained
-        SS_model = self.SS = self.SS_model = SS_total - SS_res
+        ss_model = self.ss = self.ss_model = ss_total - ss_res
         df_model = self.df = self.df_model = x.df - 1  # don't count intercept
-        self.MS_model = self.MS = SS_model / df_model
+        self.ms_model = self.ms = ss_model / df_model
 
         # store stuff
         self.y = y
@@ -205,65 +205,64 @@ class LM:
         table.midrule()
 
         # MS for factors (Needed for models involving random effects)
-        MSs = {}
-        SSs = {}
+        ms_s = {}
+        ss_s = {}
         for e in x.effects:
             idx = x.full_index[e]
-            SSs[e] = SS = np.sum(values[:, idx].sum(1) ** 2)
-            MSs[e] = (SS / e.df)
+            ss_s[e] = ss = np.sum(values[:, idx].sum(1) ** 2)
+            ms_s[e] = (ss / e.df)
 
         # table body
         results = {}
         for i, e in enumerate(x.effects):
-            MS = MSs[e]
+            ms = ms_s[e]
             if e_ms:
                 e_ems = e_ms[i]
                 df_d = sum(c.df for c in e_ems)
-                MS_d = sum(MSs[c] for c in e_ems)
+                ms_d = sum(ms_s[c] for c in e_ems)
                 e_ms_name = ' + '.join(repr(c) for c in e_ems)
             else:
                 df_d = self.df_res
-                MS_d = self.MS_res
+                ms_d = self.ms_res
                 e_ms_name = "Res"
 
             # F-test
-            if MS_d:
-                F = MS / MS_d
-                p = 1 - scipy.stats.distributions.f.cdf(F, e.df, df_d)
-                F_tex = fmtxt.stat(F, stars=test.star(p))
+            if ms_d:
+                f = ms / ms_d
+                p = 1 - scipy.stats.distributions.f.cdf(f, e.df, df_d)
+                f_tex = fmtxt.stat(f, stars=test.star(p))
             else:
-                F_tex = None
+                f_tex = None
                 p = None
             # add to table
             if e_ms_name or empty:
                 table.cell(e.name)
-                table.cell(SSs[e])
+                table.cell(ss_s[e])
                 table.cell(e.df)
-                table.cell(MS)
+                table.cell(ms)
                 if ems:
                     table.cell(e_ms_name)
-                table.cell(F_tex)
+                table.cell(f_tex)
                 table.cell(fmtxt.P(p))
             # store results
-            results[e.name] = {'SS': SS, 'df': e.df, 'MS': MS,
-                               'E(MS)': e_ms_name, 'F': F, 'p': p}
+            results[e.name] = {'SS': ss, 'df': e.df, 'MS': ms, 'E(MS)': e_ms_name, 'F': f, 'p': p}
 
         # Residuals
         if self.df_res > 0:
             table.cell("Residuals")
-            table.cell(self.SS_res)
+            table.cell(self.ss_res)
             table.cell(self.df_res)
-            table.cell(self.MS_res)
+            table.cell(self.ms_res)
 
         return table
 
     @cached_property
-    def F(self):
-        return self.MS_model / self.MS_res
+    def f(self):
+        return self.ms_model / self.ms_res
 
     @cached_property
     def p(self):
-        return scipy.stats.distributions.f.sf(self.F, self.df_model, self.df_res)
+        return scipy.stats.distributions.f.sf(self.f, self.df_model, self.df_res)
 
     @cached_property
     def regression_table(self):
@@ -289,12 +288,12 @@ class LM:
             table.endline()
             for i, name in enumerate(e.beta_labels):  # Fox pp. 106 ff.
                 beta = self.beta[q + i]
-                T = 0
+                t = 0
                 p = 0
                 # todo: T/p
                 table.cell(name)
                 table.cell(beta)
-                table.cell(T)
+                table.cell(t)
                 table.cell(fmtxt.p(p))
             q += e.df
             if ie < ne - 1:
@@ -504,9 +503,9 @@ class _IncrementalNDANOVA(_NDANOVA):
         _NDANOVA.__init__(self, x, comparisons.effects, comparisons.dfs_denom)
 
         self._comparisons = comparisons
-        self._SS_diff = None
-        self._MS_e = None
-        self._SS_res = None
+        self._ss_diff = None
+        self._ms_e = None
+        self._ss_res = None
 
         self._x_orig = {}
         self._full_ss_i = -1
@@ -526,21 +525,21 @@ class _IncrementalNDANOVA(_NDANOVA):
         f_map = _NDANOVA.preallocate(self, y_shape)
 
         shape = self._flat_f_map.shape[1]
-        self._SS_diff = np.empty(shape)
-        self._MS_e = np.empty(shape)
-        self._SS_res = {i: np.empty(shape) for i in self._x_orig.keys()}
+        self._ss_diff = np.empty(shape)
+        self._ms_e = np.empty(shape)
+        self._ss_res = {i: np.empty(shape) for i in self._x_orig.keys()}
         return f_map
 
     def _map(self, y, flat_f_map, perm):
-        if self._SS_diff is None:
+        if self._ss_diff is None:
             shape = y.shape[1]
-            SS_diff = MS_diff = np.empty(shape)
-            MS_e = np.empty(shape)
-            SS_res = {i: np.empty(shape) for i in self._x_orig.keys()}
+            ss_diff = ms_diff = np.empty(shape)
+            ms_e = np.empty(shape)
+            ss_res = {i: np.empty(shape) for i in self._x_orig.keys()}
         else:
-            SS_diff = MS_diff = self._SS_diff
-            MS_e = self._MS_e
-            SS_res = self._SS_res
+            ss_diff = ms_diff = self._ss_diff
+            ms_e = self._ms_e
+            ss_res = self._ss_res
 
         if perm is None:
             x_dict = self._x_orig
@@ -560,26 +559,26 @@ class _IncrementalNDANOVA(_NDANOVA):
                     x_orig[i][0].take(perm, 0, x_dict[i][0])
                     x_orig[i][1].take(perm, 1, x_dict[i][1])
 
-        # calculate SS_res for all models
+        # calculate ss_res for all models
         for i, x in x_dict.items():
             if x is None:  # TODO:  use the same across permutations?
-                ss(y, SS_res[i])
+                ss(y, ss_res[i])
             else:
                 x_full, xsinv = x
-                lm_res_ss(y, x_full, xsinv, SS_res[i])
+                lm_res_ss(y, x_full, xsinv, ss_res[i])
 
         # incremental comparisons
         if not self._comparisons.mixed:
-            np.divide(SS_res[0], self.x.df_error, MS_e)
+            np.divide(ss_res[0], self.x.df_error, ms_e)
         for i, (i_test, (i1, i0)) in enumerate(self._comparisons.comparisons.items()):
             if self._comparisons.mixed:
                 i_ems = self._comparisons.ems_idx[i_test]
-                np.subtract(SS_res[self._full_ss_i], SS_res[i_ems], MS_e)
-                np.divide(MS_e, self.dfs_denom[i], MS_e)
+                np.subtract(ss_res[self._full_ss_i], ss_res[i_ems], ms_e)
+                np.divide(ms_e, self.dfs_denom[i], ms_e)
             df_diff = self._comparisons.x.effects[i_test].df
-            np.subtract(SS_res[i0], SS_res[i1], SS_diff)
-            np.divide(SS_diff, df_diff, MS_diff)
-            np.divide(MS_diff, MS_e, flat_f_map[i])
+            np.subtract(ss_res[i0], ss_res[i1], ss_diff)
+            np.divide(ss_diff, df_diff, ms_diff)
+            np.divide(ms_diff, ms_e, flat_f_map[i])
 
 
 def effect_id(effects):
@@ -728,7 +727,7 @@ class IncrementalFTest:
     ----------
     lm1, lm0 : Model
         The two models to compare.
-    MS_e, df_e : scalar | None
+    ms_e, df_e : scalar | None
         Parameters for random effects models: the Expected value of MS;
         if None, the error MS of lm1 is used (valid for fixed effects
         models).
@@ -739,56 +738,56 @@ class IncrementalFTest:
         The extended model.
     lm0 : Model
         The control model.
-    SS : scalar
+    ss : scalar
         the difference in the SS explained by the two models.
     df : int
         The difference in df between the two models.
-    MS : scalar
+    ms : scalar
         The MS of the difference.
-    F, p : scalar
+    f, p : scalar
         F and p valuer of the comparison.
     """
-    def __init__(self, lm1, lm0, MS_e=None, df_e=None, name=None):
+    def __init__(self, lm1, lm0, ms_e=None, df_e=None, name=None):
         if lm1 is None:
-            lm1_SS_res = 0
-            lm1_MS_res = 0
+            lm1_ss_res = 0
+            lm1_ms_res = 0
             lm1_df_res = 0
         else:
-            lm1_SS_res = lm1.SS_res
-            lm1_MS_res = lm1.MS_res
+            lm1_ss_res = lm1.ss_res
+            lm1_ms_res = lm1.ms_res
             lm1_df_res = lm1.df_res
 
-        if MS_e is None:
+        if ms_e is None:
             assert df_e is None
-            MS_e = lm1_MS_res
+            ms_e = lm1_ms_res
             df_e = lm1_df_res
         else:
             assert df_e is not None
 
-        SS_diff = lm0.SS_res - lm1_SS_res
+        ss_diff = lm0.ss_res - lm1_ss_res
         df_diff = lm0.df_res - lm1_df_res
-        MS_diff = SS_diff / df_diff
+        ms_diff = ss_diff / df_diff
 
         if df_e > 0:
-            F = MS_diff / MS_e
-            p = scipy.stats.f.sf(F, df_diff, df_e)
+            f = ms_diff / ms_e
+            p = scipy.stats.f.sf(f, df_diff, df_e)
         else:
-            F = None
+            f = None
             p = None
 
         self.lm0 = lm0
         self.lm1 = lm1
-        self.SS = SS_diff
-        self.MS = MS_diff
+        self.ss = ss_diff
+        self.ms = ms_diff
         self.df = df_diff
-        self.MSe = MS_e
+        self.ms_e = ms_e
         self.dfe = df_e
-        self.F = F
+        self.f = f
         self.p = p
         self.name = name
 
     def _asfmtext(self, **_):
-        return fmtxt.FMText([fmtxt.eq('F', self.F, (self.df, self.dfe)), ', ', fmtxt.peq(self.p)])
+        return fmtxt.FMText([fmtxt.eq('F', self.f, (self.df, self.dfe)), ', ', fmtxt.peq(self.p)])
 
     def __repr__(self):
         name = f' {self.name!r}' if self.name else ''
@@ -925,7 +924,7 @@ class ANOVA:
             lm1 = LM(y, x)
             f_tests.append(lm1)
             names.append(x.name)
-            self.residuals = lm1.SS_res, lm1.df_res, lm1.MS_res
+            self.residuals = lm1.ss_res, lm1.df_res, lm1.ms_res
             self._is_mixed = False
         else:
             comparisons = IncrementalComparisons(x)
@@ -943,11 +942,11 @@ class ANOVA:
 
                 if is_mixed:
                     lm_ems = lms[comparisons.ems_idx[i_test]]
-                    ms_e = lm_ems.MS_model
+                    ms_e = lm_ems.ms_model
                     df_e = lm_ems.df_model
                 else:
                     full_lm = lms[0]
-                    ms_e = full_lm.MS_res
+                    ms_e = full_lm.ms_res
                     df_e = full_lm.df_res
 
                 res = IncrementalFTest(lm1, lm0, ms_e, df_e, e_test.name)
@@ -958,7 +957,7 @@ class ANOVA:
                 self.residuals = None
             else:
                 full_lm = lms[0]
-                self.residuals = full_lm.SS_res, full_lm.df_res, full_lm.MS_res
+                self.residuals = full_lm.ss_res, full_lm.df_res, full_lm.ms_res
 
         self.effects = tuple(names)
         self.f_tests = tuple(f_tests)
@@ -1010,16 +1009,16 @@ class ANOVA:
         # table body
         for name, f_test in zip(self.effects, self.f_tests):
             table.cell(name)
-            table.cell(fmtxt.stat(f_test.SS))
+            table.cell(fmtxt.stat(f_test.ss))
             table.cell(f_test.df)
-            table.cell(fmtxt.stat(f_test.MS))
+            table.cell(fmtxt.stat(f_test.ms))
             if self._is_mixed:
-                table.cell(fmtxt.stat(f_test.MSe))
+                table.cell(fmtxt.stat(f_test.ms_e))
                 table.cell(f_test.dfe)
 
-            if f_test.F:
+            if f_test.f:
                 stars = test.star(f_test.p)
-                table.cell(fmtxt.stat(f_test.F, stars=stars))
+                table.cell(fmtxt.stat(f_test.f, stars=stars))
                 table.cell(fmtxt.p(f_test.p))
             else:
                 table.endline()
@@ -1028,16 +1027,16 @@ class ANOVA:
         if self.x.df_error > 0:
             table.empty_row()
             table.cell("Residuals")
-            SS, df, MS = self.residuals
-            table.cell(fmtxt.stat(SS))
+            ss, df, ms = self.residuals
+            table.cell(fmtxt.stat(ss))
             table.cell(df)
-            table.cell(fmtxt.stat(MS))
+            table.cell(fmtxt.stat(ms))
             table.endline()
 
         # total
         table.midrule()
         table.cell("Total")
-        SS = np.sum((self.y.x - self.y.mean()) ** 2)
-        table.cell(fmtxt.stat(SS))
+        ss = np.sum((self.y.x - self.y.mean()) ** 2)
+        table.cell(fmtxt.stat(ss))
         table.cell(len(self.y) - 1)
         return table

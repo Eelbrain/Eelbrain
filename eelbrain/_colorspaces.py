@@ -25,7 +25,9 @@ UNAMBIGUOUS_COLORS = {
 }
 
 # How to handle different colormaps
-SYMMETRIC_CMAPS = []
+SYMMETRIC_CMAPS = [
+    'cold_hot', 'cold_white_hot',
+]
 ZEROBASED_CMAPS = []
 ALPHA_CMAPS = {}  # corresponding cmaps with transparency (alpha channel)
 
@@ -382,19 +384,6 @@ def two_step_colormap(left_max, left, center='transparent', right=None, right_ma
     return cmap
 
 
-def pigtailed_cmap(cmap, swap_order=('green', 'red', 'blue')):
-    # nilearn colormaps with neutral middle
-    orig = matplotlib.colormaps.get_cmap(cmap)._segmentdata
-    cdict = {
-        'green': [(0.5 * (1 - p), *c) for p, *c in reversed(orig[swap_order[0]])],
-        'blue': [(0.5 * (1 - p), *c) for p, *c in reversed(orig[swap_order[1]])],
-        'red': [(0.5 * (1 - p), *c) for p, *c in reversed(orig[swap_order[2]])],
-    }
-    for color in ('red', 'green', 'blue'):
-        cdict[color].extend((0.5 * (1 + p), *c) for p, *c in orig[color])
-    return cdict
-
-
 def make_cmaps():
     """Create custom colormaps and register them with matplotlib"""
     # Polar
@@ -638,14 +627,6 @@ def make_cmaps():
     cmap.set_over('k', alpha=0.)
     cmap.set_bad('b', alpha=0.)
     register_cmap(cmap, zero_based=True)
-
-    # Nilearn cmaps
-    if 'cold_hot' not in matplotlib.colormaps:
-        cmap = LinearSegmentedColormap('cold_hot', pigtailed_cmap('hot'))
-        register_cmap(cmap, symmetric=True)
-    if 'cold_white_hot' not in matplotlib.colormaps:
-        cmap = LinearSegmentedColormap('cold_white_hot', pigtailed_cmap('hot_r'))
-        register_cmap(cmap, symmetric=True)
 
 
 make_cmaps()

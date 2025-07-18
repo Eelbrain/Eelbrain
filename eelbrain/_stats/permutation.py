@@ -14,14 +14,14 @@ _YIELD_ORIGINAL = 0
 # for testing purposes, yield original order instead of permutations
 
 
-def _resample_params(N, samples):
+def _resample_params(n: int, samples: int) -> (int, int):
     """Decide whether to do permutations or random resampling
 
     Parameters
     ----------
-    N : int
+    n
         Number of observations.
-    samples : int
+    samples
         ``samples`` parameter (number of resampling iterations, or < 0 to
         sample all permutations).
 
@@ -33,7 +33,7 @@ def _resample_params(N, samples):
         Samples parameter for the resample function (-1 to do all permutations,
         otherwise same as n_samples).
     """
-    n_perm = 2 ** N
+    n_perm = 2 ** n
     if n_perm - 1 <= samples:
         samples = -1
 

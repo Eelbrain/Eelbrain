@@ -1,4 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+# flake8: noqa
 """
 Sample MneExperiment. This experiment can be used with a sample dataset that
 treats different parts of the recording from the MNE sample dataset as different

@@ -42,11 +42,11 @@ class DimensionMismatchError(Exception):
         return cls(f'{message}\n{desc}')
 
 
-class WrongDimension(Exception):
+class WrongDimensionError(Exception):
     "Dimension that is supported"
 
 
-class IncompleteModel(Exception):
+class IncompleteModelError(Exception):
     "Function requires a fully specified model"
 
 
@@ -54,5 +54,5 @@ class OldVersionError(Exception):
     "Trying to load a file from a version that is no longer supported"
 
 
-class ZeroVariance(Exception):
-    "Trying to do test on data with zero variance"
+class ZeroVarianceError(Exception):
+    "Data with zero variance"

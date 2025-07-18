@@ -1,7 +1,6 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Statistical tests for univariate variables"""
 from functools import cached_property
-import itertools
 import math
 from typing import Dict, Literal, Sequence, Union
 
@@ -13,12 +12,10 @@ from .._celltable import Celltable
 from .._data_obj import (
     CategorialArg, CellArg, IndexArg, VarArg, NumericArg,
     Dataset, Factor, Interaction, Var, NDVar,
-    ascategorial, asfactor, asnumeric, assub, asvar, asndvar,
-    combine,
-    cellname, dataobj_repr, nice_label,
+    ascategorial, asnumeric, assub, asvar, asndvar,
+    combine, cellname, dataobj_repr, nice_label,
 )
 from .._utils import deprecate_ds_arg
-from .permutation import resample
 from . import stats
 
 
@@ -157,7 +154,7 @@ def lilliefors(data, formatted=False, **kwargs):
     Parameters
     ----------
     data : array_like
-
+        Data to test.
     formatted : bool
         Return a single string with the results instead of the numbers.
     kwargs :
@@ -189,48 +186,47 @@ def lilliefors(data, formatted=False, **kwargs):
     # lillie.test adjusts something at p>.1
     # http://pbil.univ-lyon1.fr/library/nortest/R/nortest
     data = np.asarray(data)
-    N = len(data)  # data.shape[-1] #axis]
-    assert N >= 5, "sample size must be greater than 4"
+    n = len(data)  # data.shape[-1] #axis]
+    assert n >= 5, "sample size must be greater than 4"
     # perform Kolmogorov-Smirnov with estimated mean and std
-    m = np.mean(data)  # , axis=axis)
-    s = np.std(data, ddof=1)  # , axis=axis)
-    D, ks_p = scipy.stats.kstest(data, 'norm', args=(m, s), **kwargs)
+    m = np.mean(data)
+    s = np.std(data, ddof=1)
+    d, ks_p = scipy.stats.kstest(data, 'norm', args=(m, s), **kwargs)
     # approximate p (Dallal)
-    if N > 100:
-        D *= (N / 100) ** .49
-        N = 100
-    p_estimate = np.exp(- 7.01256 * D ** 2 * (N + 2.78019)
-                        + 2.99587 * D * (N + 2.78019) ** .5
+    if n > 100:
+        d *= (n / 100) ** .49
+        n = 100
+    p_estimate = np.exp(- 7.01256 * d ** 2 * (n + 2.78019)
+                        + 2.99587 * d * (n + 2.78019) ** .5
                         - .122119
-                        + .974598 / (N ** .5)
-                        + 1.67997 / N)
+                        + .974598 / (n ** .5)
+                        + 1.67997 / n)
     # approximate P (Molin & Abdi)
-    L = D  # ???
+    l = d  # ???
     b2 = 0.08861783849346
     b1 = 1.30748185078790
     b0 = 0.37872256037043
-    A = (-(b1 + N) + np.sqrt((b1 + N) ** 2 - 4 * b2 * (b0 - L ** -2))) / 2 * b2
-    Pr = (-.37782822932809
-          + 1.67819837908004 * A
-          - 3.02959249450445 * A ** 2
-          + 2.80015798142101 * A ** 3
-          - 1.39874347510845 * A ** 4
-          + 0.40466213484419 * A ** 5
-          - 0.06353440854207 * A ** 6
-          + 0.00287462087623 * A ** 7
-          + 0.00069650013110 * A ** 8
-          - 0.00011872227037 * A ** 9
-          + 0.00000575586834 * A ** 10)
+    a = (-(b1 + n) + np.sqrt((b1 + n) ** 2 - 4 * b2 * (b0 - l ** -2))) / 2 * b2
+    p = (-.37782822932809
+         + 1.67819837908004 * a
+         - 3.02959249450445 * a ** 2
+         + 2.80015798142101 * a ** 3
+         - 1.39874347510845 * a ** 4
+         + 0.40466213484419 * a ** 5
+         - 0.06353440854207 * a ** 6
+         + 0.00287462087623 * a ** 7
+         + 0.00069650013110 * a ** 8
+         - 0.00011872227037 * a ** 9
+         + 0.00000575586834 * a ** 10)
     if formatted:
-        txt = "D={0:.4f}, Dallal p={1:.4f}, Molin&Abdi p={2:.4f}"
-        return txt.format(D, p_estimate, Pr)
+        return f"D={d:.4f}, Dallal p={p_estimate:.4f}, Molin&Abdi p={p:.4f}"
     else:
-        return D, p_estimate
+        return d, p_estimate
 
 
-def _hochberg_threshold(N, alpha=.05):
-    j = np.arange(N)
-    threshold = alpha / (N - j)
+def _hochberg_threshold(n, alpha=.05):
+    j = np.arange(n)
+    threshold = alpha / (n - j)
     return threshold
 
 
@@ -1452,145 +1448,3 @@ def _corr(y: np.ndarray, x: np.ndarray):
     t = r / np.sqrt((1 - r ** 2) / df)
     p = scipy.stats.t.sf(np.abs(t), df) * 2
     return r, p, df
-
-
-class bootstrap_pairwise:
-    def __init__(self, y, x, match=None, sub=None,
-                 samples=1000, replacement=True,
-                 title="Bootstrapped Pairwise Tests", ds=None):
-        sub = assub(sub, ds)
-        y = asvar(y, sub, ds)
-        x = asfactor(x, sub, ds)
-        assert len(y) == len(x), "data length mismatch"
-        if match is not None:
-            match = ascategorial(match, sub, ds)
-            assert len(match) == len(y), "data length mismatch"
-
-        # prepare data container
-        resampled = np.empty((samples + 1, len(y)))  # sample x subject within category
-        resampled[0] = y.x
-        # fill resampled
-        for i, y_i in enumerate(resample(y, samples, replacement, match), 1):
-            resampled[i] = y_i.x
-        self.resampled = resampled
-
-        cells = x.cells
-        n_groups = len(cells)
-
-        if match is not None:
-            # if there are several values per x%match cell, take the average
-            # T: indexes to transform y.x to [x%match, value]-array
-            match_cell_ids = match.cells
-            group_size = len(match_cell_ids)
-            T = None
-            i = 0
-            for x_cell in cells:
-                for match_cell in match_cell_ids:
-                    source_indexes = np.where((x == x_cell) * (match == match_cell))[0]
-                    if T is None:
-                        n_cells = n_groups * group_size
-                        T = np.empty((n_cells, len(source_indexes)), dtype=int)
-                    T[i, :] = source_indexes
-                    i += 1
-
-            if T.shape[1] == 1:
-                T = T[:, 0]
-                ordered = resampled[:, T]
-            else:
-                ordered = resampled[:, T].mean(axis=2)
-            self.ordered = ordered
-
-            # t-tests
-            n_comparisons = sum(range(n_groups))
-            t = np.empty((samples + 1, n_comparisons))
-            comp_names = []
-            one_group = np.arange(group_size)
-            groups = [one_group + i * group_size for i in range(n_groups)]
-            for i, (g1, g2) in enumerate(itertools.combinations(range(n_groups), 2)):
-                group_1 = groups[g1]
-                group_2 = groups[g2]
-                diffs = ordered[:, group_1] - ordered[:, group_2]
-                t[:, i] = np.mean(diffs, axis=1) * np.sqrt(group_size) / np.std(diffs, axis=1, ddof=1)
-                comp_names.append(' - '.join((cells[g1], cells[g2])))
-
-            self.diffs = diffs
-            self.t_resampled = np.max(np.abs(t[1:]), axis=1)
-            self.t = t = t[0]
-        else:
-            raise NotImplementedError
-
-        self._Y = y
-        self._X = x
-        self._group_names = cells
-        self._group_data = np.array([ordered[0, g] for g in groups])
-        self._group_size = group_size
-        self._df = group_size - 1
-        self._match = match
-        self._n_samples = samples
-        self._replacement = replacement
-        self._comp_names = comp_names
-        self._p_parametric = self.test_param(t)
-        self._p_boot = self.test_boot(t)
-        self.title = title
-
-    def __repr__(self):
-        out = ['bootstrap_pairwise(', self._Y.name, self._X.name]
-        if self._match:
-            out.append('match=%s ' % self._match.name)
-        out.append('saples=%i ' % self._n_samples)
-        out.append('replacement=%s)' % self._replacement)
-        return ''.join(out)
-
-    def __str__(self):
-        return str(self.table())
-
-    def table(self):
-        table = fmtxt.Table('lrrrr')
-        table.title(self.title)
-        table.caption(f"Results based on {self._n_samples} samples")
-        table.cell('Comparison')
-        table.cell(fmtxt.symbol('t', self._df))
-        table.cell(fmtxt.symbol('p', 'param'))
-        table.cell(fmtxt.symbol('p', 'corr'))
-        table.cell(fmtxt.symbol('p', 'boot'))
-        table.midrule()
-
-        p_corr = mcp_adjust(self._p_parametric)
-        stars_parametric = star(p_corr)
-        stars_boot = star(self._p_boot)
-
-        for name, t, p1, pc, s1, p2, s2 in zip(self._comp_names, self.t, self._p_parametric, p_corr, stars_parametric, self._p_boot, stars_boot):
-            table.cell(name)
-            table.cell(t, fmt='%.2f')
-            table.cell(fmtxt.p(p1))
-            table.cell(fmtxt.p(pc, stars=s1))
-            table.cell(fmtxt.p(p2, stars=s2))
-        return table
-
-    def plot_t_dist(self):
-        # http://stackoverflow.com/questions/4150171/how-to-create-a-density-plot-in-matplotlib
-        from matplotlib import pyplot
-
-        t = self.t_resampled
-        density = scipy.stats.gaussian_kde(t)
-#        density.covariance_factor = lambda : .25
-#        density._compute_covariance()
-        xs = np.linspace(0, max(t), 200)
-        pyplot.plot(xs, density(xs))
-
-    def plot_dv_dist(self):
-        from matplotlib import pyplot
-
-        xs = np.linspace(np.min(self._group_data), np.max(self._group_data), 200)
-        for i, name in enumerate(self._group_names):
-            density = scipy.stats.gaussian_kde(self._group_data[i])
-            pyplot.plot(xs, density(xs), label=name)
-        pyplot.legend()
-
-    def test_param(self, t):
-        return scipy.stats.t.sf(np.abs(t), self._group_size - 1) * 2
-
-    def test_boot(self, t):
-        "t: scalar or array; returns p for each t"
-        test = self.t_resampled[:, None] > np.abs(t)
-        return np.sum(test, axis=0) / self.t_resampled.shape[0]

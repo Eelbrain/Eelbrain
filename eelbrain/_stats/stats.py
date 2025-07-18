@@ -224,10 +224,10 @@ def rmssd(y):
     Used for heart rate variance analysis.
     """
     assert np.ndim(y) == 1
-    N = len(y)
-    assert N > 1
+    n = len(y)
+    assert n > 1
     dy = np.diff(y)
-    x = N / (N - 1) * np.sum(dy ** 2)
+    x = n / (n - 1) * np.sum(dy ** 2)
     return np.sqrt(x)
 
 

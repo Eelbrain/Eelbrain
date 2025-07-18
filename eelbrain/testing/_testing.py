@@ -2,7 +2,6 @@
 "Utilities for testing"
 from contextlib import ContextDecorator, contextmanager
 from functools import reduce
-from importlib.util import spec_from_file_location, module_from_spec
 import os
 from operator import mul
 from pathlib import Path
@@ -191,13 +190,6 @@ def working_directory(wd):
         yield
     finally:
         os.chdir(cwd)
-
-
-def import_attr(path, attr):
-    spec = spec_from_file_location('module', path)
-    mod = module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return getattr(mod, attr)
 
 
 def requires_framework_build(function):

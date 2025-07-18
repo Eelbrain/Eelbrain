@@ -590,14 +590,14 @@ def _mne_events(ds=None, i_start='i_start', trigger='trigger'):
     if isinstance(i_start, str):
         i_start = ds[i_start]
 
-    N = len(i_start)
+    n_events = len(i_start)
 
     if isinstance(trigger, str):
         trigger = ds[trigger]
     elif trigger is None:
-        trigger = np.ones(N)
+        trigger = np.ones(n_events)
 
-    events = np.empty((N, 3), dtype=np.int32)
+    events = np.empty((n_events, 3), dtype=np.int32)
     events[:, 0] = i_start.x
     events[:, 1] = 0
     events[:, 2] = trigger

@@ -1,7 +1,7 @@
 """Plot non-uniform time series"""
 
 
-class _plt_bin_nuts:
+class PltBinNuts:
     def __init__(self, ax, epoch, color='r', fill=False, hatch='//', **kwargs):
         """Plot a simple on/off nonuniform time series
 

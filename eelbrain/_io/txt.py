@@ -311,9 +311,8 @@ def var(path: PathArg = None, name: str = None):
         if not path:
             return
 
-    FILE = open(path)
-    lines = FILE.read().split()
-    FILE.close()
+    with open(path) as file:
+        lines = file.read().split()
     is_bool = all(line in ['True', 'False'] for line in lines)
 
     if is_bool:

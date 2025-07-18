@@ -10,7 +10,7 @@ from numpy.testing import assert_array_equal, assert_allclose
 
 import eelbrain
 from eelbrain import Dataset, NDVar, Categorial, Scalar, UTS, Sensor, configure, datasets, test, testnd, set_log_level, cwt_morlet
-from eelbrain._exceptions import WrongDimension, ZeroVariance
+from eelbrain._exceptions import WrongDimensionError, ZeroVarianceError
 from eelbrain._stats.testnd import Adjacency, NDPermutationDistribution, label_clusters, _MergedTemporalClusterDist, find_peaks, VectorDifferenceIndependent
 from eelbrain._utils.system import IS_WINDOWS
 from eelbrain.fmtxt import asfmtext
@@ -365,14 +365,12 @@ def test_corr():
     ds = datasets.get_uts(True)
 
     # add correlation
-    Y = ds['Y']
-    utsnd = ds['utsnd']
-    utsnd.x[:, 3:5, 50:65] += Y.x[:, None, None]
+    ds['utsnd'].x[:, 3:5, 50:65] += ds['Y'].x[:, None, None]
 
     res = testnd.Correlation('utsnd', 'Y', data=ds, samples=0)
     assert repr(res) == "<Correlation 'utsnd', 'Y', samples=0>"
     for s, t in product('01234', (0.1, 0.2, 0.35)):
-        target = test.Correlation(utsnd.sub(sensor=s, time=t), Y).r
+        target = test.Correlation(ds['utsnd'].sub(sensor=s, time=t), ds['Y']).r
         assert res.r.sub(sensor=s, time=t) == pytest.approx(target)
     res = testnd.Correlation('utsnd', 'Y', 'rm', data=ds, samples=0)
     repr(res)
@@ -415,7 +413,7 @@ def test_t_contrast():
 
     # zero variance
     ds['uts'].x[:, 10] = 0.
-    with pytest.raises(ZeroVariance):
+    with pytest.raises(ZeroVarianceError):
         testnd.TContrastRelated('uts', 'A%B', 'min(a1|b0>a0|b0, a1|b1>a0|b1)', 'rm', tail=1, data=ds, samples=0)
 
 
@@ -662,17 +660,17 @@ def test_vector():
     assert res_t.p == 1.0
 
     # non-space tests should raise error
-    with pytest.raises(WrongDimension):
+    with pytest.raises(WrongDimensionError):
         testnd.TTestOneSample('v', data=ds)
-    with pytest.raises(WrongDimension):
+    with pytest.raises(WrongDimensionError):
         testnd.TTestRelated('v', 'A', match='rm', data=ds)
-    with pytest.raises(WrongDimension):
+    with pytest.raises(WrongDimensionError):
         testnd.TTestIndependent('v', 'A', data=ds)
-    with pytest.raises(WrongDimension):
+    with pytest.raises(WrongDimensionError):
         testnd.TContrastRelated('v', 'A', 'a0 > a1', 'rm', data=ds)
-    with pytest.raises(WrongDimension):
+    with pytest.raises(WrongDimensionError):
         testnd.Correlation('v', 'fltvar', data=ds)
-    with pytest.raises(WrongDimension):
+    with pytest.raises(WrongDimensionError):
         testnd.ANOVA('v', 'A * B', data=ds)
 
     # vector in time

@@ -132,7 +132,7 @@ from scipy.spatial import ConvexHull
 from scipy.spatial.distance import cdist, pdist, squareform
 
 from . import fmtxt, _info
-from ._exceptions import DimensionMismatchError, EvalError, IncompleteModel
+from ._exceptions import DimensionMismatchError, EvalError, IncompleteModelError
 from ._data_opt import gaussian_smoother
 from ._text import enumeration
 from ._types import PathArg
@@ -7854,7 +7854,7 @@ class Model:
     def _incomplete_error(self, caller):
         df_table = self.info()
         df_table[-1, 1] = 'Unexplained'
-        return IncompleteModel(f"{caller} requires a fully specified model, but {self.name} only has {self.df} degrees of freedom for {self.df_total} cases:\n{df_table}")
+        return IncompleteModelError(f"{caller} requires a fully specified model, but {self.name} only has {self.df} degrees of freedom for {self.df_total} cases:\n{df_table}")
 
     def repeat(self, n):
         "Repeat each row of the Model ``n`` times"
@@ -9522,8 +9522,8 @@ class Sensor(Dimension):
                 r = np.sqrt(z_dist)  # desired 2d radius
                 r_xy = np.sqrt(np.sum(locs3d[:, :2] ** 2, 1))  # current radius in xy
                 idx = (r_xy != 0)  # avoid zero division
-                F = r[idx] / r_xy[idx]  # stretching Factor accounting for current r
-                locs2d[idx, :] *= F[:, None]
+                stretch = r[idx] / r_xy[idx]  # stretching factor accounting for current r
+                locs2d[idx, :] *= stretch[:, None]
         else:
             match = re.match('([xyz])([+-])', proj)
             if match:

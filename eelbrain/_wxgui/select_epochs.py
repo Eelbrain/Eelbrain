@@ -44,9 +44,9 @@ from .._utils.parse import FLOAT_PATTERN, POS_FLOAT_PATTERN, INT_PATTERN
 from .._utils.numpy_utils import FULL_SLICE, INT_TYPES
 from ..mne_fixes import MNE_EPOCHS
 from ..plot._base import AxisData, DataLayer, PlotType, AxisScale, find_fig_vlims, find_fig_cmaps
-from ..plot._nuts import _plt_bin_nuts
-from ..plot._topo import _ax_topomap
-from ..plot._utsnd import _ax_bfly_epoch
+from ..plot._nuts import PltBinNuts
+from ..plot._topo import AxTopomap
+from ..plot._utsnd import AxButterflyEpoch
 from .app import get_app
 from .frame import EelbrainDialog
 from .mpl_canvas import FigureCanvasPanel
@@ -1421,7 +1421,7 @@ class Frame(FileFrame):
                         if ch in case.sensor.channel_idx]
             state = self.doc.accept[epoch_idx]
             ax = self.figure.add_subplot(nrow, ncol, i + 1, xticks=[0], yticks=[])
-            h = _ax_bfly_epoch(ax, case, mark, state, epoch_idx, **self._bfly_kwargs)
+            h = AxButterflyEpoch(ax, case, mark, state, epoch_idx, **self._bfly_kwargs)
             # mark interpolated channels
             if self.doc.interpolate[epoch_idx]:
                 chs = [case.sensor.channel_idx[ch]
@@ -1430,8 +1430,8 @@ class Frame(FileFrame):
                 h.set_marked(INTERPOLATE_CHANNELS, chs)
             # mark eye tracker artifacts
             if self.doc.blink is not None:
-                _plt_bin_nuts(ax, self.doc.blink[epoch_idx],
-                              color=(0.99, 0.76, 0.21))
+                PltBinNuts(ax, self.doc.blink[epoch_idx],
+                           color=(0.99, 0.76, 0.21))
             # formatters
             if t_locator is not None:
                 ax.xaxis.set_major_locator(t_locator)
@@ -1452,8 +1452,8 @@ class Frame(FileFrame):
             self._mean_ax = ax = self.figure.add_subplot(nrow, ncol, plot_i)
             ax.ax_idx = MEAN_PLOT
             self._mean_seg = self._get_page_mean_seg()
-            self._mean_plot = _ax_bfly_epoch(ax, self._mean_seg, mark, 'Page Mean',
-                                             **self._bfly_kwargs)
+            self._mean_plot = AxButterflyEpoch(ax, self._mean_seg, mark, 'Page Mean',
+                                               **self._bfly_kwargs)
 
             # formatters
             ax.xaxis.set_major_formatter(t_formatter)
@@ -1471,7 +1471,7 @@ class Frame(FileFrame):
             else:
                 mark = None
             layers = AxisData([DataLayer(tseg, PlotType.IMAGE)])
-            self._topo_plot = _ax_topomap(self._topo_ax, layers, mark=mark, **self._topo_kwargs)
+            self._topo_plot = AxTopomap(self._topo_ax, layers, mark=mark, **self._topo_kwargs)
             self._topo_plot_info_str = ""
 
         self.canvas.draw()

@@ -661,16 +661,16 @@ def stats(
         col = ascategorial(col, sub, data)
         ct = Celltable(y, row % col, match=match)
 
-        N = len(col.cells)
+        n = len(col.cells)
         if not format:
             raise NotImplementedError(f"{format=} with col specified")
 
-        table = fmtxt.Table('l' * (N + 1), title=title, caption=caption)
+        table = fmtxt.Table('l' * (n + 1), title=title, caption=caption)
 
         # table header
         table.cell()
-        table.cell(col.name, width=N, just='c')
-        table.midrule(span=(2, N + 1))
+        table.cell(col.name, width=n, just='c')
+        table.midrule(span=(2, n + 1))
         table.cell()
 
         table.cells(*col.cells)
@@ -685,19 +685,19 @@ def stats(
         else:
             raise ValueError("fmt does not match funcs")
 
-        for Ycell in row.cells:
-            table.cell(Ycell)
-            for Xcell in col.cells:
+        for y_cell in row.cells:
+            table.cell(y_cell)
+            for x_cell in col.cells:
                 # construct address
                 a = ()
-                if isinstance(Ycell, tuple):
-                    a += Ycell
+                if isinstance(y_cell, tuple):
+                    a += y_cell
                 else:
-                    a += (Ycell,)
-                if isinstance(Xcell, tuple):
-                    a += Xcell
+                    a += (y_cell,)
+                if isinstance(x_cell, tuple):
+                    a += x_cell
                 else:
-                    a += (Xcell,)
+                    a += (x_cell,)
 
                 # cell
                 data = ct.data[a]
