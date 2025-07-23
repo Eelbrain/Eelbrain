@@ -53,7 +53,7 @@ from .experiment import FileTree, LayeredDict
 from .groups import assemble_groups
 from .parc import SEEDED_PARC_RE, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, SeededParc, IndividualSeededParc, LabelParc, VolumeParc, Parcellation, SubParc, assemble_parcs
 from .preprocessing import (
-    assemble_pipeline, RawPipe, RawSource, RawICA, RawApplyICA,
+    assemble_pipeline, RawPipe, RawSource, RawICA, RawApplyICA, RawFilter,
     compare_pipelines, ask_to_delete_ica_files)
 from .test_def import (
     Test,
