@@ -8,7 +8,7 @@ import inspect
 from itertools import chain, product
 import logging
 import os
-from os.path import basename, exists, getmtime, isdir, join, relpath
+from os.path import basename, exists, getmtime, isdir, join, relpath, splitext
 from pathlib import Path
 import re
 import shutil
@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
 import numpy as np
 import mne
 from mne.minimum_norm import make_inverse_operator, apply_inverse, apply_inverse_epochs, apply_inverse_raw
+from mne_bids import BIDSPath, get_entity_vals
 
 from .. import fmtxt
 from .. import gui
@@ -50,7 +51,7 @@ from .covariance import EpochCovariance, RawCovariance
 from .definitions import FieldCode, find_dependent_epochs, find_epochs_vars, log_dict_change, log_list_change, tuple_arg
 from .epochs import ContinuousEpoch, PrimaryEpoch, SecondaryEpoch, SuperEpoch, EpochBase, EpochCollection, assemble_epochs, decim_param
 from .exceptions import FileDeficientError, FileMissingError
-from .experiment import FileTree
+from .experiment import FileTree, LayeredDict
 from .groups import assemble_groups
 from .parc import SEEDED_PARC_RE, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, SeededParc, IndividualSeededParc, LabelParc, VolumeParc, Parcellation, SubParc, assemble_parcs
 from .preprocessing import (
@@ -76,6 +77,8 @@ CACHE_STATE_VERSION = 17
 #  15:  merge_triggers attribute, store in input_state
 #  16:  stim_channel attribute, store in input_state
 
+BIDS_ENTITY_KEYS = ['subject', 'session', 'task', 'acquisition', 'run', 'datatype', 'extension']
+
 # paths
 LOG_FILE = join('{root}', 'eelbrain {name}.log')
 LOG_FILE_OLD = join('{root}', '.eelbrain.log')
@@ -97,14 +100,6 @@ BaselineArg = Union[bool, Tuple[Optional[float], Optional[float]]]
 DataArg = Union[str, TestDims]
 PMinArg = Union[Literal['tfce'], float, None]
 SubjectArg = Union[str, Literal[1, -1]]
-
-# Eelbrain 0.24 raw/preprocessing pipeline
-LEGACY_RAW = {
-    '0-40': RawFilter('raw', None, 40, method='iir'),
-    '0.1-40': RawFilter('raw', 0.1, 40, l_trans_bandwidth=0.08, filter_length='60s'),
-    '0.2-40': RawFilter('raw', 0.2, 40, l_trans_bandwidth=0.08, filter_length='60s'),
-    '1-40': RawFilter('raw', 1, 40, method='iir'),
-}
 
 
 CACHE_HELP = "A change in the {experiment} class definition (or the input files) means that some {filetype} files no longer reflect the current definition. In order to keep local results consistent with the definition, these files should be deleted. If you want to keep a copy of the results, be sure to move them to a different location before proceding. If you think the change in the definition was a mistake, you can select 'abort', revert the change and try again."
@@ -212,16 +207,14 @@ class MneExperiment(FileTree):
     check_raw_mtime: bool = True  # check raw input files' mtime for change
 
     # Customize data locations, relative to root:
-    # Main data files (MEG/EEG)
-    data_dir: str = 'meg'
     # Directory where to look for MRI subjects
     mri_dir: str = 'mri'
     # Directory where to keep cache files
     cache_dir: str = 'eelbrain-cache'
 
-    # tuple (if the experiment has multiple sessions)
-    sessions: Union[str, Sequence[str]] = None
-    visits: Tuple[str] = ('',)
+    datatype: str = 'meg'
+    extension: str = '.fif'
+    ignore_entities: dict[str, list[str]] = {}
 
     # Raw preprocessing pipeline
     raw: Dict[str, RawPipe] = {}
@@ -372,11 +365,14 @@ class MneExperiment(FileTree):
 
     def __init__(
             self,
-            root: PathArg = None,
-            find_subjects: bool = True,
+            root: PathArg,
             **state,
     ):
-        # checks
+        ########################################################################
+        # Checks
+        ########
+        if root is None:
+            raise AttributeError("MneExperiment subclasses must have root.")
         if hasattr(self, 'cluster_criteria'):
             raise AttributeError("MneExperiment subclasses can not have a .cluster_criteria attribute anymore. Please remove the attribute, delete the eelbrain-cache folder and use the select_clusters analysis parameter.")
         if not isinstance(self.auto_delete_cache, str):
@@ -384,106 +380,103 @@ class MneExperiment(FileTree):
         if not isinstance(self.auto_delete_results, bool):
             raise TypeError(f"{self.__class__.__name__}.auto_delete_results={self.auto_delete_results!r}")
 
-        # create attributes (overwrite class attributes)
-        self._mri_subjects = self.mri_subjects.copy()
-        # TODO: Remove 'raw-dir', update templates that use 'raw-cache-dir'
+        ########################################################################
+        # Templates
+        ###########
         self._templates = {
             # MEG
             'equalize_evoked_count': ('', 'eq'),
-            # locations
-            # raw-sdir to be set later
-            'raw-dir': join('{raw-sdir}', '{subject}'),
 
             # raw input files
-            'trans-file': join('{raw-dir}', '{mrisubject_visit}-trans.fif'),
+            # 'trans-file': join('{raw-dir}', '{mrisubject_visit}-trans.fif'),
             # log-files (eye-tracker etc.)
-            'log-dir': join('{raw-dir}', 'logs'),
-            'edf-file': join('{log-dir}', '*.edf'),
+            # 'log-dir': join('{raw-dir}', 'logs'),
+            # 'edf-file': join('{log-dir}', '*.edf'),
 
-            # created input files
-            'ica-file': join('{raw-dir}', '{subject_visit} {raw}-ica.fif'),  # hard-coded in RawICA
-            'rej-dir': join('{raw-dir}', 'epoch selection'),
-            'rej-file': join('{rej-dir}', '{session}_{sns_kind}_{epoch_visit}-{rej}.pickled'),
+            # # created input files
+            # 'ica-file': join('{raw_dir}', '{raw_basename}-ica.fif'),  # hard-coded in RawICA
+            # 'rej-dir': join('{raw-dir}', 'epoch selection'),
+            # 'rej-file': join('{rej-dir}', '{task}_{sns_kind}_{epoch_visit}-{rej}.pickled'),
 
             # raw
-            'raw-cache-dir': join('{cache-dir}', 'raw', '{subject}', '{session}'),
-            'raw-cache-base': join('{raw-cache-dir}', '{recording} {raw}'),
-            'cached-raw-file': '{raw-cache-base}-raw.fif',
-            'cached-raw-file-overflow': '{raw-cache-base}-raw-?.fif',
+            'raw-cache-dir': join('{cache-dir}', 'raw'),
+            'raw-cache-base': join('{raw-cache-dir}', '{raw_basename}'),
+            # 'cached-raw-file': join('{raw-cache-dir}', '{raw_basename}{extension}'),
+            # 'cached-raw-file-overflow': '{raw-cache-base}-raw-?.fif',
             'event-file': '{raw-cache-base}-evts.pickled',
             'interp-file': '{raw-cache-base}-interp.pickled',
             'cached-raw-log-file': '{raw-cache-base}-raw.log',
 
-            # evoked
-            'evoked-dir': join('{cache-dir}', 'evoked'),
-            'evoked-file': join('{evoked-dir}', '{subject}', '{sns_kind} {evoked_desc}-ave.fif'),
+            # # evoked
+            # 'evoked-dir': join('{cache-dir}', 'evoked'),
+            # 'evoked-file': join('{evoked-dir}', '{subject}', '{sns_kind} {evoked_desc}-ave.fif'),
 
-            # forward modeling:
-            'fwd-file': join('{raw-cache-dir}', '{recording}-{mrisubject}-{src}-fwd.fif'),
-            # sensor covariance
-            'cov-dir': join('{cache-dir}', 'cov'),
-            'cov-base': join('{cov-dir}', '{subject_visit}', '{sns_kind} {cov}-{rej}'),
-            'cov-file': '{cov-base}-cov.fif',
-            'cov-info-file': '{cov-base}-info.txt',
-            # inverse solution
-            'inv-file': join('{raw-cache-dir}', 'inv', '{mrisubject} {src} {recording} {inv_kind}-inv.fif'),
-            # MRIs
-            'common_brain': 'fsaverage',
-            # MRI base files
-            'mri-dir': join('{mri-sdir}', '{mrisubject}'),
-            'bem-dir': join('{mri-dir}', 'bem'),
-            'mri-cfg-file': join('{mri-dir}', 'MRI scaling parameters.cfg'),
-            'mri-file': join('{mri-dir}', 'mri', 'orig.mgz'),
-            'bem-file': join('{bem-dir}', '{mrisubject}-inner_skull-bem.fif'),
-            'bem-sol-file': join('{bem-dir}', '{mrisubject}-*-bem-sol.fif'),  # removed for 0.24
-            'head-bem-file': join('{bem-dir}', '{mrisubject}-head.fif'),
-            'src-file': join('{bem-dir}', '{mrisubject}-{src}-src.fif'),
-            'fiducials-file': join('{bem-dir}', '{mrisubject}-fiducials.fif'),
-            # Morphing
-            'source-morph-file': join('{bem-dir}', '{mrisubject} {common_brain} {src}-morph.h5'),
-            # Labels
-            'hemi': ('lh', 'rh'),
-            'label-dir': join('{mri-dir}', 'label'),
-            'annot-file': join('{label-dir}', '{hemi}.{parc}.annot'),
+            # # forward modeling:
+            # 'fwd-file': join('{raw-cache-dir}', '{recording}-{mrisubject}-{src}-fwd.fif'),
+            # # sensor covariance
+            # 'cov-dir': join('{cache-dir}', 'cov'),
+            # 'cov-base': join('{cov-dir}', '{subject_visit}', '{sns_kind} {cov}-{rej}'),
+            # 'cov-file': '{cov-base}-cov.fif',
+            # 'cov-info-file': '{cov-base}-info.txt',
+            # # inverse solution
+            # 'inv-file': join('{raw-cache-dir}', 'inv', '{mrisubject} {src} {recording} {inv_kind}-inv.fif'),
+            # # MRIs
+            # 'common_brain': 'fsaverage',
+            # # MRI base files
+            # 'mri-dir': join('{mri-sdir}', '{mrisubject}'),
+            # 'bem-dir': join('{mri-dir}', 'bem'),
+            # 'mri-cfg-file': join('{mri-dir}', 'MRI scaling parameters.cfg'),
+            # 'mri-file': join('{mri-dir}', 'mri', 'orig.mgz'),
+            # 'bem-file': join('{bem-dir}', '{mrisubject}-inner_skull-bem.fif'),
+            # 'bem-sol-file': join('{bem-dir}', '{mrisubject}-*-bem-sol.fif'),  # removed for 0.24
+            # 'head-bem-file': join('{bem-dir}', '{mrisubject}-head.fif'),
+            # 'src-file': join('{bem-dir}', '{mrisubject}-{src}-src.fif'),
+            # 'fiducials-file': join('{bem-dir}', '{mrisubject}-fiducials.fif'),
+            # # Morphing
+            # 'source-morph-file': join('{bem-dir}', '{mrisubject} {common_brain} {src}-morph.h5'),
+            # # Labels
+            # 'hemi': ('lh', 'rh'),
+            # 'label-dir': join('{mri-dir}', 'label'),
+            # 'annot-file': join('{label-dir}', '{hemi}.{parc}.annot'),
 
-            # (method) plots
-            'methods-dir': join('{root}', 'methods'),
+            # # (method) plots
+            # 'methods-dir': join('{root}', 'methods'),
 
-            # group level: test files
-            'test-dir': join('{cache-dir}', 'test'),
-            'test-file': join('{test-dir}', '{analysis} {group}', '{test_desc} {test_dims}.pickled'),
-            # result output files
-            # data processing parameters
-            #    > group
-            #        > kind of test
-            #    > single-subject
-            #        > kind of test
-            #            > subject
-            'res-dir': join('{root}', 'results'),
-            'res-file': join('{res-dir}', '{analysis}', '{resname}.{ext}'),
-            'res-deep-file': join('{res-dir}', '{analysis}', '{folder}', '{resname}.{ext}'),
-            'report-file': join('{res-dir}', '{analysis} {group}', '{folder}', '{test_desc}.html'),
-            'group-mov-file': join('{res-dir}', '{analysis} {group}', '{epoch_visit} {test_options} {resname}.mov'),
-            'subject-res-dir': join('{res-dir}', '{analysis} subjects'),
-            'subject-spm-report': join('{subject-res-dir}', '{test} {epoch_visit} {test_options}', '{subject}.html'),
-            'subject-mov-file': join('{subject-res-dir}', '{epoch_visit} {test_options} {resname}', '{subject}.mov'),
+            # # group level: test files
+            # 'test-dir': join('{cache-dir}', 'test'),
+            # 'test-file': join('{test-dir}', '{analysis} {group}', '{test_desc} {test_dims}.pickled'),
+            # # result output files
+            # # data processing parameters
+            # #    > group
+            # #        > kind of test
+            # #    > single-subject
+            # #        > kind of test
+            # #            > subject
+            # 'res-dir': join('{root}', 'results'),
+            # 'res-file': join('{res-dir}', '{analysis}', '{resname}.{ext}'),
+            # 'res-deep-file': join('{res-dir}', '{analysis}', '{folder}', '{resname}.{ext}'),
+            # 'report-file': join('{res-dir}', '{analysis} {group}', '{folder}', '{test_desc}.html'),
+            # 'group-mov-file': join('{res-dir}', '{analysis} {group}', '{epoch_visit} {test_options} {resname}.mov'),
+            # 'subject-res-dir': join('{res-dir}', '{analysis} subjects'),
+            # 'subject-spm-report': join('{subject-res-dir}', '{test} {epoch_visit} {test_options}', '{subject}.html'),
+            # 'subject-mov-file': join('{subject-res-dir}', '{epoch_visit} {test_options} {resname}', '{subject}.mov'),
 
-            # plots
-            # plot corresponding to a report (and using same folder structure)
-            'res-plot-root': join('{root}', 'result plots'),
-            'res-plot-dir': join('{res-plot-root}', '{analysis} {group}', '{folder}', '{test_desc}'),
+            # # plots
+            # # plot corresponding to a report (and using same folder structure)
+            # 'res-plot-root': join('{root}', 'result plots'),
+            # 'res-plot-dir': join('{res-plot-root}', '{analysis} {group}', '{folder}', '{test_desc}'),
 
-            # MRAT
-            'mrat_condition': '',
-            'mrat-root': join('{root}', 'mrat'),
-            'mrat-sns-root': join('{mrat-root}', '{sns_kind}', '{evoked_desc}'),
-            'mrat-src-root': join('{mrat-root}', '{src_kind}', '{evoked_desc}'),
-            'mrat-sns-file': join('{mrat-sns-root}', '{mrat_condition}', '{mrat_condition}_{subject}-ave.fif'),
-            'mrat_info-file': join('{mrat-root}', '{subject} info.txt'),
-            'mrat-src-file': join('{mrat-src-root}', '{mrat_condition}', '{mrat_condition}_{subject}'),
+            # # MRAT
+            # 'mrat_condition': '',
+            # 'mrat-root': join('{root}', 'mrat'),
+            # 'mrat-sns-root': join('{mrat-root}', '{sns_kind}', '{evoked_desc}'),
+            # 'mrat-src-root': join('{mrat-root}', '{src_kind}', '{evoked_desc}'),
+            # 'mrat-sns-file': join('{mrat-sns-root}', '{mrat_condition}', '{mrat_condition}_{subject}-ave.fif'),
+            # 'mrat_info-file': join('{mrat-root}', '{subject} info.txt'),
+            # 'mrat-src-file': join('{mrat-src-root}', '{mrat_condition}', '{mrat_condition}_{subject}'),
         }
+
         for temp, path in [
-            ('raw-sdir', self.data_dir),
             ('cache-dir', self.cache_dir),
             ('mri-sdir', self.mri_dir),
         ]:
@@ -493,87 +486,81 @@ class MneExperiment(FileTree):
             else:
                 self._templates[temp] = join('{root}', path)
 
-        # templates version
-        if self.path_version == 0:
-            self._templates['raw-dir'] = join('{raw-sdir}', 'meg', 'raw')
-            raw_def = {**LEGACY_RAW, 'raw': RawSource('{subject}_{recording}_clm-raw.fif'), **self.raw}
-        elif self.path_version == 1:
-            raw_def = {**LEGACY_RAW, 'raw': RawSource(), **self.raw}
-        elif self.path_version == 2:
-            raw_def = {'raw': RawSource(), **self.raw}
-        else:
-            raise ValueError(f"{self.__class__.__name__}.path_version={self.path_version}; needs to be 0, 1 or 2")
         # update templates with _values
         for cls in reversed(inspect.getmro(self.__class__)):
             if hasattr(cls, '_values'):
                 self._templates.update(cls._values)
 
+        # register fields in templates
+        self.root = root = FileTree._eval_root(root)
+        self._bids_path = BIDSPath(root=root)
         FileTree.__init__(self)
+        self.set(root=root)
+
+        ########################################################################
+        # Logger
+        ########
+        # log-file
         self._log = log = logging.Logger(self.__class__.__name__, logging.DEBUG)
+        log_file = LOG_FILE.format(root=root, name=self.__class__.__name__)
+        log_file_old = LOG_FILE_OLD.format(root=root)
+        if exists(log_file_old):
+            os.rename(log_file_old, log_file)
+        handler = logging.FileHandler(log_file)
+        formatter = logging.Formatter("%(levelname)-8s %(asctime)s %(message)s",
+                                        "%m-%d %H:%M")  # %(name)-12s
+        handler.setFormatter(formatter)
+        handler.setLevel(logging.DEBUG)
+        log.addHandler(handler)
+
+        # terminal log
+        handler = ScreenHandler()
+        self._screen_log_level = log_level(self.screen_log_level)
+        if self.auto_delete_cache == 'debug':
+            self._screen_log_level = min(self._screen_log_level, logging.DEBUG)
+        handler.setLevel(self._screen_log_level)
+        log.addHandler(handler)
+        self._screen_log_handler = handler
 
         ########################################################################
-        # sessions
-        if not self.sessions:
-            raise TypeError(f"The {self.__class__.__name__}.sessions attribute needs to be specified. The session name is contained in your raw data files. For example if your file is named `R0026_mysession-raw.fif` your session name is 'mysession' and you should set {self.__class__.__name__}.sessions to 'mysession'.")
-        elif isinstance(self.sessions, str):
-            self._sessions = (self.sessions,)
-        elif isinstance(self.sessions, Sequence):
-            self._sessions = tuple(self.sessions)
-        else:
-            raise TypeError(f"{self.__class__.__name__}.sessions={self.sessions!r}; needs to be a string or a tuple")
-        self._visits = (self.visits,) if isinstance(self.visits, str) else tuple(self.visits)
+        # Experiment arguments
+        ######################
+        # BIDS entities
+        self._subjects = tuple(get_entity_vals(root, 'subject', **self.ignore_entities))
+        self._sessions = tuple(get_entity_vals(root, 'session', **self.ignore_entities))
+        self._tasks = tuple(get_entity_vals(root, 'task', **self.ignore_entities))
+        self._acquisitions = tuple(get_entity_vals(root, 'acquisition', **self.ignore_entities))
+        self._runs = tuple(get_entity_vals(root, 'run', **self.ignore_entities))
 
-        ########################################################################
-        # subjects
-        if root is None:
-            find_subjects = False
-        else:
-            root = self.get('root', root=str(root))
-
-        if find_subjects:
-            subject_re = re.compile(self.subject_re)
-            sub_dir = self.get(self._subject_loc)
-            if not exists(sub_dir):
-                raise IOError(f"Subjects directory {sub_dir}: does notexist. To initialize {self.__class__.__name__} without data, initialize with root=None or find_subjects=False")
-            subjects = [s for s in os.listdir(sub_dir) if subject_re.match(s) and isdir(join(sub_dir, s))]
-            if len(subjects) == 0:
-                log.warning(f"No subjects found in {sub_dir}")
-            subjects.sort()
-            subjects = tuple(subjects)
-        else:
-            subjects = ()
-
-        ########################################################################
         # groups
-        self._groups = assemble_groups(self.groups, set(subjects))
+        self._groups = assemble_groups(self.groups, set(self._subjects))
 
-        ########################################################################
-        # Preprocessing
-        skip = {'subject', 'session'}
-        # raw_dir = self._partial('raw-dir', skip)
-        cache_dir = self._partial('raw-cache-dir', skip)
-        self._raw = assemble_pipeline(raw_def, cache_dir, root, self._sessions, log)
+        # mri_subjects
+        self._mri_subjects = self.mri_subjects.copy()
 
+        # preprocessing
+        self._raw = assemble_pipeline(
+            { 'raw': RawSource(), **self.raw },
+            self._tasks,
+            self.get('raw-cache-dir'),
+            log,
+        )
         raw_pipe: RawSource = self._raw['raw']
+
         # legacy adjacency determination
         if raw_pipe.sysname is None:
             if self.meg_system is not None:
                 raw_pipe.sysname = self.meg_system
-        # TODO: Abandon `raw-file`
-        # update templates
-        self._register_constant('raw-file', raw_pipe.path)
 
-        ########################################################################
         # variables
         self._variables = Variables(self.variables)
         self._variables._check_trigger_vars()
 
-        ########################################################################
         # epochs
-        epoch_default = {'session': self._sessions[0], **self.epoch_default}
+        # TODO: change `session` in epochs
+        epoch_default = {'session': self._tasks[0], **self.epoch_default}
         self._epochs = assemble_epochs(self.epochs, epoch_default)
 
-        ########################################################################
         # epoch rejection
         artifact_rejection = {}
         for name, params in chain(self._artifact_rejection.items(), self.artifact_rejection.items()):
@@ -585,22 +572,19 @@ class MneExperiment(FileTree):
                 raise ValueError(f"kind={params['kind']!r} in artifact_rejection {name!r}")
         self._artifact_rejection = artifact_rejection
 
-        ########################################################################
         # noise covariance
         for key, cov in self._covs.items():
             cov.key = key
             if isinstance(cov, RawCovariance) and cov.session is None:
-                cov.session = self._sessions[0]
+                # TODO: change `cov.session`
+                cov.session = self._tasks[0]
 
-        ########################################################################
         # parcellations
-        ###############
         # make : can be made if non-existent
         # morph_from_fraverage : can be morphed from fsaverage to other subjects
         self._parcs = assemble_parcs(chain(self.__parcs.items(), self.parcs.items()))
         parc_values = [*self._parcs.keys(), '']
 
-        ########################################################################
         # frequency
         freqs = {}
         for name, f in chain(self._freqs.items(), self.freqs.items()):
@@ -611,10 +595,8 @@ class MneExperiment(FileTree):
             elif 'n_cycles' not in f:
                 raise KeyError("Number of cycles not defined for %s" % name)
             freqs[name] = f
-
         self._freqs = freqs
 
-        ########################################################################
         # tests
         self._tests = assemble_tests(self.tests)
         test_values = sorted(self._tests)
@@ -624,14 +606,6 @@ class MneExperiment(FileTree):
         ########################################################################
         # Experiment class setup
         ########################
-        self._register_field('mri', sorted(self._mri_subjects), allow_empty=True)
-        self._register_field('subject', subjects or None, repr=True)
-        self._register_field('group', self._groups.keys(), 'all', post_set_handler=self._post_set_group)
-
-        raw_default = sorted(self.raw)[0] if self.raw else None
-        self._register_field('raw', sorted(self._raw), default=raw_default, repr=True)
-        self._register_field('rej', self._artifact_rejection.keys(), self._artifact_rejection_default, allow_empty=True)
-
         # epoch
         epoch_keys = sorted(self._epochs)
         for default_epoch in epoch_keys:
@@ -640,94 +614,86 @@ class MneExperiment(FileTree):
         else:
             default_epoch = None
         self._register_field('epoch', epoch_keys, default_epoch, repr=True)
-        # self._register_field('session', self._sessions, depends_on=('epoch',), slave_handler=self._update_session, repr=True)
-        # self._register_field('visit', self._visits, allow_empty=True, repr=True)
 
-        # cov
-        if 'bestreg' in self._covs:
-            default_cov = 'bestreg'
-        else:
-            default_cov = None
-        self._register_field('cov', sorted(self._covs), default_cov)
-        self._register_field('inv', default='free-3-dSPM', eval_handler=self._eval_inv)
-        self._register_field('model', eval_handler=self._eval_model)
-        self._register_field('test', test_values, post_set_handler=self._post_set_test, allow_empty=self._empty_test, repr=False)
-        self._register_field('parc', parc_values, 'aparc', eval_handler=self._eval_parc, allow_empty=True)
-        self._register_field('freq', self._freqs.keys())
-        self._register_field('src', default='ico-4', eval_handler=self._eval_src)
-        self._register_field('adjacency', ('', 'link-midline'), allow_empty=True)
-        self._register_field('select_clusters', self._cluster_criteria.keys(), allow_empty=True)
+        # BIDS entities
+        self._register_field('subject', self._subjects, repr=True)
+        self._register_field('session', self._sessions or None, repr=True)
+        self._register_field('task', self._tasks, depends_on=('epoch',), slave_handler=self._update_task, repr=True)
+        self._register_field('acquisition', self._acquisitions or None, repr=True)
+        self._register_field('run', self._runs or None, repr=True)
+        self._register_field('datatype', ('meg', 'eeg'), self.datatype, repr=True)
+        self._register_field('extension', ('.fif', ), self.extension, repr=True)
 
-        # slave fields
-        self._register_field('mrisubject', depends_on=('mri', 'subject'), slave_handler=self._update_mrisubject, repr=False)
-        self._register_field('src-name', depends_on=('src',), slave_handler=self._update_src_name, repr=False)
-        self._register_field('inv-cache', depends_on='inv', slave_handler=self._update_inv_cache, repr=False)
+        self._register_field('mri', sorted(self._mri_subjects), allow_empty=True)
+        self._register_field('group', self._groups.keys(), 'all', post_set_handler=self._post_set_group)
 
-        # fields used internally
-        self._register_field('analysis', repr=False)
-        self._register_field('test_options', repr=False)
-        self._register_field('name', repr=False)
-        self._register_field('folder', repr=False)
-        self._register_field('resname', repr=False)
-        self._register_field('ext', repr=False)
-        self._register_field('test_dims', repr=False)
+        # raw
+        raw_default = sorted(self.raw)[0] if self.raw else None
+        self._register_field('raw', sorted(self._raw), default=raw_default, repr=True)
+        self._register_field('raw_basename', depends_on=BIDS_ENTITY_KEYS, slave_handler=self._update_raw_basename, repr=True)
+        self._register_field('rej', self._artifact_rejection.keys(), self._artifact_rejection_default, allow_empty=True)
 
-        # compounds
-        self._register_compound('sns_kind', ('raw',))
-        self._register_compound('inv_kind', ('sns_kind', 'cov', 'rej', 'inv-cache'))
-        self._register_compound('src_kind', ('sns_kind', 'cov', 'mri', 'src-name', 'inv'))
-        # self._register_compound('recording', ('session', 'visit'))
-        self._register_compound('subject_visit', ('subject', 'visit'))
-        self._register_compound('mrisubject_visit', ('mrisubject', 'visit'))
-        self._register_compound('epoch_visit', ('epoch', 'visit'))
-        self._register_compound('evoked_kind', ('rej', 'equalize_evoked_count'))
-        self._register_compound('evoked_sns_kind', ('sns_kind', 'evoked_kind'))
-        self._register_compound('evoked_src_kind', ('src_kind', 'evoked_kind'))
-        self._register_compound('evoked_desc', ('epoch_visit', 'model', 'evoked_kind'))
-        self._register_compound('test_desc', ('epoch_visit', 'test', 'test_options'))
+        # # cov
+        # if 'bestreg' in self._covs:
+        #     default_cov = 'bestreg'
+        # else:
+        #     default_cov = None
+        # self._register_field('cov', sorted(self._covs), default_cov)
+        # self._register_field('inv', default='free-3-dSPM', eval_handler=self._eval_inv)
+        # self._register_field('model', eval_handler=self._eval_model)
+        # self._register_field('test', test_values, post_set_handler=self._post_set_test, allow_empty=self._empty_test, repr=False)
+        # self._register_field('parc', parc_values, 'aparc', eval_handler=self._eval_parc, allow_empty=True)
+        # self._register_field('freq', self._freqs.keys())
+        # self._register_field('src', default='ico-4', eval_handler=self._eval_src)
+        # self._register_field('adjacency', ('', 'link-midline'), allow_empty=True)
+        # self._register_field('select_clusters', self._cluster_criteria.keys(), allow_empty=True)
 
-        # Define make handlers
-        self._bind_make('mri-dir', self._make_mri)
-        self._bind_cache('cov-file', self.make_cov)
-        self._bind_cache('src-file', self.make_src)
-        self._bind_cache('fwd-file', self.make_fwd)
+        # # slave fields
+        # self._register_field('mrisubject', depends_on=('mri', 'subject'), slave_handler=self._update_mrisubject, repr=False)
+        # self._register_field('src-name', depends_on=('src',), slave_handler=self._update_src_name, repr=False)
+        # self._register_field('inv-cache', depends_on='inv', slave_handler=self._update_inv_cache, repr=False)
+
+        # # fields used internally
+        # self._register_field('analysis', repr=False)
+        # self._register_field('test_options', repr=False)
+        # self._register_field('name', repr=False)
+        # self._register_field('folder', repr=False)
+        # self._register_field('resname', repr=False)
+        # self._register_field('ext', repr=False)
+        # self._register_field('test_dims', repr=False)
+
+        # # compounds
+        # self._register_compound('sns_kind', ('raw',))
+        # self._register_compound('inv_kind', ('sns_kind', 'cov', 'rej', 'inv-cache'))
+        # self._register_compound('src_kind', ('sns_kind', 'cov', 'mri', 'src-name', 'inv'))
+        # # self._register_compound('recording', ('session', 'visit'))
+        # self._register_compound('subject_visit', ('subject', 'visit'))
+        # self._register_compound('mrisubject_visit', ('mrisubject', 'visit'))
+        # self._register_compound('epoch_visit', ('epoch', 'visit'))
+        # self._register_compound('evoked_kind', ('rej', 'equalize_evoked_count'))
+        # self._register_compound('evoked_sns_kind', ('sns_kind', 'evoked_kind'))
+        # self._register_compound('evoked_src_kind', ('src_kind', 'evoked_kind'))
+        # self._register_compound('evoked_desc', ('epoch_visit', 'model', 'evoked_kind'))
+        # self._register_compound('test_desc', ('epoch_visit', 'test', 'test_options'))
+
+        # # Define make handlers
+        # self._bind_make('mri-dir', self._make_mri)
+        # self._bind_cache('cov-file', self.make_cov)
+        # self._bind_cache('src-file', self.make_src)
+        # self._bind_cache('fwd-file', self.make_fwd)
 
         # currently only used for .rm()
         self._secondary_cache['cached-raw-file'] = ('event-file', 'interp-file', 'cached-raw-log-file', 'cached-raw-file-overflow')
 
         ########################################################################
-        # logger
-        ########
-        # log-file
-        if root:
-            log_file = LOG_FILE.format(root=root, name=self.__class__.__name__)
-            log_file_old = LOG_FILE_OLD.format(root=root)
-            if exists(log_file_old):
-                os.rename(log_file_old, log_file)
-            handler = logging.FileHandler(log_file)
-            formatter = logging.Formatter("%(levelname)-8s %(asctime)s %(message)s",
-                                          "%m-%d %H:%M")  # %(name)-12s
-            handler.setFormatter(formatter)
-            handler.setLevel(logging.DEBUG)
-            log.addHandler(handler)
-        # Terminal log
-        handler = ScreenHandler()
-        self._screen_log_level = log_level(self.screen_log_level)
-        if self.auto_delete_cache == 'debug':
-            self._screen_log_level = min(self._screen_log_level, logging.DEBUG)
-        handler.setLevel(self._screen_log_level)
-        log.addHandler(handler)
-        self._screen_log_handler = handler
-
+        # Finalize
+        ##########
         # log package versions
         from .. import __version__
         log.info("*** %s initialized with root %s on %s ***", self.__class__.__name__, root, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
         level = logging.DEBUG if any('dev' in v for v in (__version__, mne.__version__)) else logging.INFO
         log.log(level, "Using eelbrain %s, mne %s.", __version__, mne.__version__)
 
-        ########################################################################
-        # Finalize
-        ##########
         # Calls below might create new cache-dir
         cache_dir = self.get('cache-dir')
         cache_dir_existed = exists(cache_dir)
@@ -742,16 +708,12 @@ class MneExperiment(FileTree):
         self.set(**state)
         self._store_state()
 
+
         ########################################################################
         # Cache
         #######
-        if not root:
-            return
-
         # collect input file information
         # ==============================
-        raw_missing = set()  # [(subject, recording), ...]
-        subjects_with_raw_changes = set()  # {subject, ...}
         events = {}  # {(subject, recording): event_dataset}
         self._stim_channel = tuple_arg(f'{self.__class__.__name__}.stim_channel', self.stim_channel)
 
@@ -775,7 +737,7 @@ class MneExperiment(FileTree):
             input_state = {
                 'version': CACHE_STATE_VERSION,
                 'raw-mtimes': {},
-                'fwd-sessions': {s: {} for s in subjects},
+                'fwd-sessions': {s: {} for s in self._subjects},
                 'stim_channel': self._stim_channel,
                 'merge_triggers': self.merge_triggers,
             }
@@ -793,31 +755,27 @@ class MneExperiment(FileTree):
                 input_state['stim_channel'] = self._stim_channel
 
         # collect raw input info
+        raw_missing = input_state['raw_missing'] = set()
         raw_mtimes = input_state['raw-mtimes']
-        raw_previously_missing = input_state.get('raw_missing', ())
+
         pipe = self._raw['raw']
         self._raw_samplingrate = {}  # {(subject, recording): samplingrate}
         with self._temporary_state:
-            for subject, session, task, run in self.iter(('subject', 'session', 'task', 'run'), group='all', raw='raw'):
-                key = (subject, session, task, run)
-                if pipe.get_file_path(path) is None:
+            subjects_with_raw_changes = set()
+            for subject, session, task, acquisition, run in self.iter(('subject', 'session', 'task', 'acquisition', 'run'), group='all', raw='raw'):
+                key = (subject, session, task, acquisition, run)
+                raw_path = pipe.get_path(self._bids_path, on_error='ignore')
+                if raw_path is None:
                     raw_missing.add(key)
+                    if self.check_raw_mtime:
+                        log.debug("Raw file missing: %s", self._bids_path.fpath)
                     continue
                 # events
                 events[key] = events_in = self.load_events(add_bads=False, data_raw=False)
                 self._raw_samplingrate[key] = events_in.info['sfreq']
                 if key not in raw_mtimes or mtime_changed(events_in.info['raw-mtime'], raw_mtimes[key]):
-                    subjects_with_raw_changes.add((subject, visit))
+                    subjects_with_raw_changes.add((subject, session))
                     raw_mtimes[key] = events_in.info['raw-mtime']
-            # log missing raw files
-            if raw_missing and self.check_raw_mtime:
-                log.debug("Raw files missing:")
-                missing = defaultdict(list)
-                log_as_missing = raw_missing.difference(raw_previously_missing)
-                for subject, recording in sorted(log_as_missing):
-                    missing[subject].append(recording)
-                for subject, recordings in missing.items():
-                    log.debug(f"  {subject}: {', '.join(recordings)}")
 
         # check for digitizer data differences
         # ====================================
@@ -832,72 +790,56 @@ class MneExperiment(FileTree):
             if subjects_with_raw_changes:
                 log.info("Raw input files new or changed, checking digitizer data")
                 super_epochs = [epoch for epoch in self._epochs.values() if isinstance(epoch, SuperEpoch)]
-            for subject, visit in subjects_with_raw_changes:
+            for subject, session in subjects_with_raw_changes:
                 # find unique digitizer datasets
                 head_shape = None
-                markers = []  # unique MEG marker measurements
-                marker_ids = {}  # {recording: index in markers}
+                digs = []  # unique MEG marker measurements
+                dig_mapping = input_state['fwd-sessions'].setdefault((subject, session), {})
                 dig_missing = []  # raw files without dig
-                for recording in self.iter('recording', subject=subject, visit=visit):
-                    if (subject, recording) in raw_missing:
+                for task, acquisition, run in self.iter(('task', 'acquisition', 'run'), subject=subject, session=session):
+                    if (subject, session, task, acquisition, run) in raw_missing:
                         continue
                     raw = self.load_raw(False)
                     dig = raw.info['dig']
                     if dig is None:
-                        dig_missing.append(recording)
+                        dig_missing.append((task, acquisition, run))
                         continue
                     elif head_shape is None:
                         head_shape = dig
                     elif not hsp_equal(dig, head_shape):
-                        raise FileDeficientError(f"Raw file {recording} for {subject} has head shape that is different from {enumeration(marker_ids)}; consider defining different visits.")
+                        raise FileDeficientError(f"Raw file {self._bids_path.basename} for {subject} has head shape that is different from {enumeration(marker_ids)}; consider defining different visits.")
 
                     # find if marker pos already exists
-                    for i, dig_i in enumerate(markers):
-                        if mrk_equal(dig, dig_i):
-                            marker_ids[recording] = i
+                    for d in digs:
+                        if mrk_equal(dig, d[-1]):
+                            dig_mapping[(task, acquisition, run)] = d[:-1]
                             break
                     else:
-                        marker_ids[recording] = len(markers)
-                        markers.append(dig)
+                        dig_mapping[(task, acquisition, run)] = (task, acquisition, run)
+                        digs.append((task, acquisition, run, dig))
 
                 # checks for missing digitizer data
-                if len(markers) > 1:
+                if len(digs) > 1:
                     if dig_missing:
                         n = len(dig_missing)
                         raise FileDeficientError(f"The raw {plural('file', n)} for {subject}, {plural('recording', n)} {enumeration(dig_missing)} {plural('is', n)} missing digitizer information")
-                    for epoch in super_epochs:
-                        if len(set(marker_ids[s] for s in epoch.sessions)) > 1:
-                            groups = defaultdict(list)
-                            for s in epoch.sessions:
-                                groups[marker_ids[s]].append(s)
-                            group_desc = ' vs '.join('/'.join(group) for group in groups.values())
-                            raise NotImplementedError(f"SuperEpoch {epoch.name} has sessions with incompatible marker positions ({group_desc}); SuperEpochs with different forward solutions are not implemented.")
-
-                # determine which sessions to use for forward solutions
-                # -> {for_session: use_session}
-                use_for_recording = input_state['fwd-sessions'].setdefault(subject, {})
-                # -> {marker_id: use_session}, initialize with previously used sessions
-                use_for_id = {marker_ids[s]: s for s in use_for_recording.values() if s in marker_ids}
-                for recording in sorted(marker_ids):
-                    mrk_id = marker_ids[recording]
-                    if recording in use_for_recording:
-                        assert mrk_id == marker_ids[use_for_recording[recording]]
-                        continue
-                    elif mrk_id not in use_for_id:
-                        use_for_id[mrk_id] = recording
-                    use_for_recording[recording] = use_for_id[mrk_id]
-                # for files missing digitizer, use singe available fwd-recording
-                for recording in dig_missing:
-                    if use_for_id:
-                        assert len(use_for_id) == 1
-                        use_for_recording[recording] = use_for_id[0]
+                else:
+                    # for files missing digitizer, use singe available fwd-recording
+                    for (task, acquisition, run) in dig_missing:
+                        dig_mapping[(task, acquisition, run)] = digs[0][:-1]
+                    # for epoch in super_epochs:
+                    #     if len(set(marker_ids[s] for s in epoch.sessions)) > 1:
+                    #         groups = defaultdict(list)
+                    #         for s in epoch.sessions:
+                    #             groups[marker_ids[s]].append(s)
+                    #         group_desc = ' vs '.join('/'.join(group) for group in groups.values())
+                    #         raise NotImplementedError(f"SuperEpoch {epoch.name} has sessions with incompatible marker positions ({group_desc}); SuperEpochs with different forward solutions are not implemented.")
 
         # save input-state
         if not cache_dir_existed:
             os.makedirs(cache_dir, exist_ok=True)
-        input_state['raw_missing'] = raw_missing
         save.pickle(input_state, input_state_file)
-        self._dig_sessions = pipe._dig_sessions = input_state['fwd-sessions']  # {subject: {for_recording: use_recording}}
+        self._dig_sessions = input_state['fwd-sessions']  # {subject: {for_recording: use_recording}}
 
         # Check the cache, delete invalid files
         # =====================================
@@ -920,98 +862,98 @@ class MneExperiment(FileTree):
             now = time.time() + IS_WINDOWS  # Windows seems to have rounding issue
             if state_mtime > now:
                 raise RuntimeError(f"The cache's time stamp is in the future ({time.ctime(state_mtime)}). If the system time ({time.ctime(now)}) is wrong, adjust the system clock; if not, delete the eelbrain-cache folder.")
-            cache_state = load.unpickle(cache_state_path)
-            cache_state_v = cache_state.setdefault('version', 0)
-            # TODO: Maybe break backwards compatibility in cache as well
-            if cache_state_v < CACHE_STATE_VERSION:
-                log.debug("Updating cache-state %i -> %i", cache_state_v, CACHE_STATE_VERSION)
-                save_state = deepcopy(save_state)
-                self._state_backwards_compat(cache_state_v, new_state, cache_state)
-                self._migrate_cache(cache_state_v, cache_dir)
-            elif cache_state_v > CACHE_STATE_VERSION:
-                raise RuntimeError("The cache is from a newer version of Eelbrain than you are currently using. Either upgrade Eelbrain or delete the cache folder.")
+            # cache_state = load.unpickle(cache_state_path)
+            # cache_state_v = cache_state.setdefault('version', 0)
+            # # TODO: Maybe break backwards compatibility in cache as well
+            # if cache_state_v < CACHE_STATE_VERSION:
+            #     log.debug("Updating cache-state %i -> %i", cache_state_v, CACHE_STATE_VERSION)
+            #     save_state = deepcopy(save_state)
+            #     self._state_backwards_compat(cache_state_v, new_state, cache_state)
+            #     self._migrate_cache(cache_state_v, cache_dir)
+            # elif cache_state_v > CACHE_STATE_VERSION:
+            #     raise RuntimeError("The cache is from a newer version of Eelbrain than you are currently using. Either upgrade Eelbrain or delete the cache folder.")
 
-            # Find modified definitions
-            # =========================
-            # TODO: Update this invalid cache removal to work with BIDS
-            invalid_cache = self._check_cache(new_state, cache_state, root)
+            # # Find modified definitions
+            # # =========================
+            # # TODO: Update this invalid cache removal to work with BIDS
+            # invalid_cache = self._check_cache(new_state, cache_state, root)
 
-            # Collect invalid files
-            # =====================
-            if invalid_cache or cache_state_v < 2:
-                rm = self._collect_invalid_files(invalid_cache, new_state, cache_state)
+            # # Collect invalid files
+            # # =====================
+            # if invalid_cache or cache_state_v < 2:
+            #     rm = self._collect_invalid_files(invalid_cache, new_state, cache_state)
 
-                # find actual files to delete
-                log.debug("Outdated cache files:")
-                files = set()
-                result_files = []
-                for temp, arg_dicts in rm.items():
-                    for args in arg_dicts:
-                        pattern = self._glob_pattern(temp, True, vmatch=False, **args)
-                        filenames = glob(pattern)
-                        files.update(filenames)
-                        # log
-                        rel_pattern = relpath(pattern, root)
-                        rel_filenames = sorted('  ' + relpath(f, root) for f in filenames)
-                        log.debug(' >%s', rel_pattern)
-                        for filename in rel_filenames:
-                            log.debug(filename)
-                        # message to the screen unless log is already displayed
-                        if rel_pattern.startswith('results'):
-                            result_files.extend(rel_filenames)
+            #     # find actual files to delete
+            #     log.debug("Outdated cache files:")
+            #     files = set()
+            #     result_files = []
+            #     for temp, arg_dicts in rm.items():
+            #         for args in arg_dicts:
+            #             pattern = self._glob_pattern(temp, True, vmatch=False, **args)
+            #             filenames = glob(pattern)
+            #             files.update(filenames)
+            #             # log
+            #             rel_pattern = relpath(pattern, root)
+            #             rel_filenames = sorted('  ' + relpath(f, root) for f in filenames)
+            #             log.debug(' >%s', rel_pattern)
+            #             for filename in rel_filenames:
+            #                 log.debug(filename)
+            #             # message to the screen unless log is already displayed
+            #             if rel_pattern.startswith('results'):
+            #                 result_files.extend(rel_filenames)
 
-                # handle invalid files
-                n_result_files = len(result_files)
-                # Only ask for result files
-                if n_result_files and self.auto_delete_cache == 'auto' and not self.auto_delete_results:
-                    if self._screen_log_level > logging.DEBUG:
-                        msg = ["Outdated result files detected:", *result_files]
-                    else:
-                        msg = []
-                    msg.append(f"Delete {n_result_files} outdated results?")
-                    help_text = CACHE_HELP.format(experiment=self.__class__.__name__, filetype='result')
-                    command = ask('\n'.join(msg), options={'delete': 'delete invalid result files', 'abort': 'raise an error'}, help=help_text)
-                    if command == 'abort':
-                        raise RuntimeError("User aborted invalid result deletion")
-                    elif command != 'delete':
-                        raise RuntimeError("command=%r" % (command,))
-                # Ask for any files
-                if files and self.auto_delete_cache != 'auto':
-                    options = {'delete': 'delete invalid files', 'abort': 'raise an error'}
-                    if self.auto_delete_cache == 'debug':
-                        options.update({'ignore': 'proceed without doing anything', 'revalidate': "don't delete any cache files but write a new cache-state file"})
-                    elif self.auto_delete_cache != 'ask':
-                        raise ValueError(f"{self.__class__.__name__}.auto_delete_cache={self.auto_delete_cache!r}")
-                    help_text = CACHE_HELP.format(experiment=self.__class__.__name__, filetype='cache and/or result')
-                    command = ask("Outdated cache files. Choose 'delete' to proceed. WARNING: only choose 'ignore' or 'revalidate' if you know what you are doing.", options=options, help=help_text)
-                    if command == 'delete':
-                        pass
-                    elif command == 'abort':
-                        raise RuntimeError("User aborted invalid cache deletion")
-                    elif command == 'ignore':
-                        log.warning("Ignoring invalid cache")
-                        return
-                    elif command == 'revalidate':
-                        log.warning("Revalidating invalid cache")
-                        files.clear()
-                    else:
-                        raise RuntimeError("command=%s" % repr(command))
+            #     # handle invalid files
+            #     n_result_files = len(result_files)
+            #     # Only ask for result files
+            #     if n_result_files and self.auto_delete_cache == 'auto' and not self.auto_delete_results:
+            #         if self._screen_log_level > logging.DEBUG:
+            #             msg = ["Outdated result files detected:", *result_files]
+            #         else:
+            #             msg = []
+            #         msg.append(f"Delete {n_result_files} outdated results?")
+            #         help_text = CACHE_HELP.format(experiment=self.__class__.__name__, filetype='result')
+            #         command = ask('\n'.join(msg), options={'delete': 'delete invalid result files', 'abort': 'raise an error'}, help=help_text)
+            #         if command == 'abort':
+            #             raise RuntimeError("User aborted invalid result deletion")
+            #         elif command != 'delete':
+            #             raise RuntimeError("command=%r" % (command,))
+            #     # Ask for any files
+            #     if files and self.auto_delete_cache != 'auto':
+            #         options = {'delete': 'delete invalid files', 'abort': 'raise an error'}
+            #         if self.auto_delete_cache == 'debug':
+            #             options.update({'ignore': 'proceed without doing anything', 'revalidate': "don't delete any cache files but write a new cache-state file"})
+            #         elif self.auto_delete_cache != 'ask':
+            #             raise ValueError(f"{self.__class__.__name__}.auto_delete_cache={self.auto_delete_cache!r}")
+            #         help_text = CACHE_HELP.format(experiment=self.__class__.__name__, filetype='cache and/or result')
+            #         command = ask("Outdated cache files. Choose 'delete' to proceed. WARNING: only choose 'ignore' or 'revalidate' if you know what you are doing.", options=options, help=help_text)
+            #         if command == 'delete':
+            #             pass
+            #         elif command == 'abort':
+            #             raise RuntimeError("User aborted invalid cache deletion")
+            #         elif command == 'ignore':
+            #             log.warning("Ignoring invalid cache")
+            #             return
+            #         elif command == 'revalidate':
+            #             log.warning("Revalidating invalid cache")
+            #             files.clear()
+            #         else:
+            #             raise RuntimeError("command=%s" % repr(command))
 
-                # delete invalid files
-                if files:
-                    n_cache_files = len(files) - n_result_files
-                    descs = []
-                    if n_result_files:
-                        descs.append(f"{n_result_files} invalid result files")
-                    if n_cache_files:
-                        descs.append(f"{n_cache_files} invalid cache files")
-                    log.info(f"Deleting {' and '.join(descs)}...")
-                    for path in files:
-                        os.remove(path)
-                else:
-                    log.debug("No existing cache files affected.")
-            else:
-                log.debug("Cache up to date.")
+            #     # delete invalid files
+            #     if files:
+            #         n_cache_files = len(files) - n_result_files
+            #         descs = []
+            #         if n_result_files:
+            #             descs.append(f"{n_result_files} invalid result files")
+            #         if n_cache_files:
+            #             descs.append(f"{n_cache_files} invalid cache files")
+            #         log.info(f"Deleting {' and '.join(descs)}...")
+            #         for path in files:
+            #             os.remove(path)
+            #     else:
+            #         log.debug("No existing cache files affected.")
+            # else:
+            #     log.debug("Cache up to date.")
         elif cache_dir_existed:  # cache-dir but no history
             if self.auto_delete_cache == 'auto':
                 command = 'delete'
@@ -1477,7 +1419,7 @@ class MneExperiment(FileTree):
         elif raw not in self._raw:
             raise RuntimeError(f"{raw=}")
         pipe = self._raw[raw]
-        return pipe.mtime(self.bids_path, bad_chs)
+        return pipe.mtime(self._bids_path, bad_chs)
 
     def _rej_mtime(self, epoch):
         """rej-file mtime for secondary epoch definition
@@ -1838,10 +1780,10 @@ class MneExperiment(FileTree):
         ds['T'] = ds['i_start'] / ds.info['sfreq']
         ds['SOA'] = ds['T'].diff(0)
         ds['subject'] = Factor([ds.info['subject']], repeat=ds.n_cases, random=True)
+        if len(self._tasks) > 1:
+            ds[:, 'task'] = ds.info['task']
         if len(self._sessions) > 1:
             ds[:, 'session'] = ds.info['session']
-        if len(self._visits) > 1:
-            ds[:, 'visit'] = ds.info['visit']
         self._variables.apply(ds, self)
 
         # subclass label_events
@@ -2590,7 +2532,7 @@ class MneExperiment(FileTree):
         """
         evt_file = self.get('event-file', mkdir=True, subject=subject, **kwargs)
         subject = self.get('subject')
-        visit = self.get('visit')
+        session = self.get('session')
 
         # search for and check cached version
         ds = None
@@ -2598,12 +2540,12 @@ class MneExperiment(FileTree):
             raw_mtime = self._raw_mtime(bad_chs=False)
             ds = load.unpickle(evt_file)
             if self.check_raw_mtime and mtime_changed(ds.info['raw-mtime'], raw_mtime):
-                self._log.debug("Raw file  %s %s %s %s modification time changed %s -> %s", self.get('raw'), subject, self.get('session'), self.get('task'), ds.info['raw-mtime'], raw_mtime)
+                self._log.debug("Raw file %s modification time changed %s -> %s", self._bids_path.fpath, ds.info['raw-mtime'], raw_mtime)
                 ds = None
 
         # refresh cache
         if ds is None:
-            self._log.debug("Extracting events for %s %s %s %s", self.get('raw'), subject, self.get('session'), self.get('task'))
+            self._log.debug("Extracting events for %s", self._bids_path.fpath)
             raw = self.load_raw(add_bads)
             ds = load.mne.events(raw, self.merge_triggers, stim_channel=self._stim_channel)
             del ds.info['raw']
@@ -2623,15 +2565,15 @@ class MneExperiment(FileTree):
             ds.info['raw'] = self.load_raw(add_bads)
 
         ds.info['subject'] = subject
-        ds.info['session'] = self.get('session')
+        ds.info['session'] = session
         ds.info['task'] = self.get('task')
-        if len(self._visits) > 1:
-            ds.info['visit'] = visit
+        ds.info['run'] = self.get('run')
+        ds.info['acquisition'] = self.get('acquisition')
 
         if self.trigger_shift:
             if isinstance(self.trigger_shift, dict):
-                if (subject, visit) in self.trigger_shift:
-                    trigger_shift = self.trigger_shift[subject, visit]
+                if (subject, session) in self.trigger_shift:
+                    trigger_shift = self.trigger_shift[(subject, session)]
                 else:
                     trigger_shift = self.trigger_shift[subject]
             else:
@@ -3472,7 +3414,7 @@ class MneExperiment(FileTree):
              - :ref:`state-raw`: preprocessing pipeline
         """
         pipe = self._raw[self.get('raw', **kwargs)]
-        raw = pipe.load(self.get('subject'), self.get('recording'), add_bads)
+        raw = pipe.load(self._bids_path, add_bads)
         if decim and decim > 1:
             assert samplingrate is None, "samplingrate and decim can't both be specified"
             samplingrate = int(round(raw.info['sfreq'] / decim))
@@ -6318,8 +6260,14 @@ class MneExperiment(FileTree):
                     state['subject'] = subject
                     subject = None
         FileTree.set(self, match, allow_asterisk, **state)
+        entities = {
+            k: v for k, v in state.items()
+            if (k in BIDS_ENTITY_KEYS) and v
+        }
+        self._bids_path.update(**entities)
         if subject is not None:
             FileTree.set(self, match, allow_asterisk, subject=subject)
+            self._bids_path.update(subject=subject)
 
     def _post_set_group(self, _, group):
         if group == '*' or group not in self._groups:
@@ -6583,7 +6531,7 @@ class MneExperiment(FileTree):
             return '*'
         return self._mri_subjects[mri][subject]
 
-    def _update_session(self, fields):
+    def _update_task(self, fields):
         epoch = fields['epoch']
         if epoch in self._epochs:
             epoch = self._epochs[epoch]
@@ -6595,6 +6543,15 @@ class MneExperiment(FileTree):
     def _update_src_name(self, fields):
         "Because 'ico-4' is treated in filenames  as ''"
         return '' if fields['src'] == 'ico-4' else fields['src']
+    
+    def _update_raw_basename(self, fields: LayeredDict) -> str:
+        entities = {
+            k: v for k, v in fields.items()
+            if (k in BIDS_ENTITY_KEYS) and v
+        }
+        bids_path = BIDSPath(root=self.root, **entities)
+        bids_path.find_matching_sidecar()
+        return bids_path.basename
 
     def _eval_parc(self, parc):
         if parc in self._parcs:

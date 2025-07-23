@@ -528,7 +528,7 @@ class TreeModel:
         iter_fields = []
         for field in fields:
             for terminal_field in self.find_keys(field):
-                if terminal_field in constants or terminal_field in iter_fields:
+                if (terminal_field in constants) or (terminal_field in iter_fields) or (terminal_field not in self._field_values):
                     continue
                 iter_fields.append(terminal_field)
 

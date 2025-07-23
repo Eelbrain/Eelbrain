@@ -1,0 +1,21 @@
+from eelbrain.pipeline import *
+from eelbrain import MneExperiment
+
+class BIDSExperiment(MneExperiment):
+    ignore_entities = {
+        'ignore_subjects': ['noIPG'],
+        'ignore_sessions': ['220426'],
+    }
+    raw = {
+        'tsss': RawMaxwell('raw', st_duration=10., ignore_ref=True, st_correlation=.9, st_only=True),
+        '1-40': RawFilter('tsss', 1, 40),
+        'ica': RawICA('tsss', 'dip13', method='fastica', n_components=0.95),
+        'ica1-40': RawFilter('ica', 1, 40),
+    }
+
+if __name__ == '__main__':
+    e = BIDSExperiment('D:\\sfb_meg_phantom')
+    raw = e.load_raw()
+    events = e.load_events()
+    print(raw)
+    print(events)

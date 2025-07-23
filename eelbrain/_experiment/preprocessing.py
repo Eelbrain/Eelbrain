@@ -1,12 +1,13 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Pre-processing operations based on NDVars"""
+from __future__ import annotations
 import warnings
 from copy import deepcopy
 import fnmatch
 from itertools import chain
 import logging
 from os import makedirs, remove
-from os.path import basename, dirname, exists, getmtime, join
+from os.path import basename, dirname, exists, getmtime, join, splitext
 from pathlib import Path
 from typing import Any, Collection, Dict, List, Literal, Sequence, Tuple, Union
 
@@ -27,18 +28,12 @@ from ..mne_fixes import CaptureLog
 from ..mne_fixes._version import MNE_VERSION, V0_19, V0_24
 from .definitions import log_dict_change, tuple_arg, typed_arg
 from .exceptions import FileMissingError
-from .preprocessing import RawPipe
 
 AddBadsArg = Union[bool, Sequence[str]]
 PreloadArg = Union[bool, Literal[-1]]
 
-# TODO: Merge this with MneExperiment._templates
-CACHE_PATH_TEMP = join('{cache_dir}', '{raw_fname}')
-ICA_PATH_TEMP = join('{raw_dir}', '{raw_base_fname}-ica.fif')
-
 class RawPipe:
     name: str = None  # set on linking
-    root: str = None
     log: logging.Logger = None
 
     def _can_link(self, pipes: Dict[str, RawPipe]) -> bool:
@@ -48,7 +43,6 @@ class RawPipe:
             self,
             name: str,
             pipes: Dict[str, RawPipe],
-            root: str,
             cache_dir: str,
             log: logging.Logger
     ) -> RawPipe:
@@ -57,12 +51,10 @@ class RawPipe:
     def _link_base(
             self,
             name: str,
-            root: str,
             log: logging.Logger,
     ) -> RawPipe:
         out = deepcopy(self)
         out.name = name
-        out.root = root
         out.log = log
         return out
 
@@ -75,11 +67,11 @@ class RawPipe:
     def _normalize_dict(state: dict) -> None:
         pass
 
-    def cache(self, path: BIDSPath):
+    def cache(self, path: BIDSPath) -> mne.io.BaseRaw:
         "Make sure the file exists and is up to date"
         raise NotImplementedError
 
-    def get_adjacency(self, data: str):
+    def get_adjacency(self, data: str) -> Union[str, List[Tuple[str, str]], Path]:
         raise NotImplementedError
 
     def get_sysname(
@@ -89,6 +81,23 @@ class RawPipe:
             data: str
     ) -> str | None:
         raise NotImplementedError
+
+    def get_path(
+            self,
+            path: BIDSPath,
+            file_type: Literal['raw', 'bads', 'cache', 'ica'] = 'raw',
+            on_error: Literal['raise', 'warn', 'ignore'] = 'raise',
+    ) -> str | None:
+        if not path.find_matching_sidecar(on_error=on_error):
+            return None
+        if file_type == 'raw':
+            return str(path.fpath)
+        elif file_type == 'bads':
+            return str(path.find_matching_sidecar('channels', '.tsv', on_error=on_error))
+        elif file_type == 'cache':
+            return join(self.cache_dir, path.basename + path.extension)
+        else:
+            return splitext(str(path.fpath))[0] + '-ica.fif'
 
     def load(
             self,
@@ -107,7 +116,7 @@ class RawPipe:
             raw.info['bads'] = list(add_bads)
         elif add_bads is False:
             raw.info['bads'] = []
-        else:
+        elif add_bads is not True:
             raise TypeError(f"{add_bads=}")
         return raw
 
@@ -116,7 +125,11 @@ class RawPipe:
             path: BIDSPath,
             preload: PreloadArg,
     ) -> mne.io.BaseRaw:
-        return read_raw_bids(path, extra_params={'preload': preload})
+        return read_raw_bids(
+            path,
+            extra_params={'preload': preload},
+            verbose='ERROR',
+        )
 
     def load_bad_channels(
             self,
@@ -258,11 +271,10 @@ class RawSource(RawPipe):
             self,
             name: str,
             pipes: Dict[str, RawPipe],
-            root: str,
             cache_dir: str,
             log: logging.Logger,
     ) -> RawPipe:
-        out = RawPipe._link_base(self, name, root, log)
+        out = RawPipe._link_base(self, name, log)
         return out
 
     def _as_dict(self, args: Sequence[str] = ()) -> dict:
@@ -280,12 +292,17 @@ class RawSource(RawPipe):
         return out
 
     def _load(self, path: BIDSPath, preload):
-        raw: mne.io.BaseRaw = read_raw_bids(path, extra_params={'preload': preload})
+        raw: mne.io.BaseRaw = read_raw_bids(
+            path,
+            extra_params={'preload': preload},
+            verbose='ERROR',
+        )
         if self.rename_channels:
             if rename := {k: v for k, v in self.rename_channels.items() if k in raw.ch_names}:
                 raw.rename_channels(rename)
         if self.montage:
             raw.set_montage(self.montage)
+        # Empty room may have missing raw.info['dig'], find alternative ways to do this when encountered
         # if not raw.info['dig'] and self._dig_sessions is not None and self._dig_sessions[subject]:
         #     dig_recording = self._dig_sessions[subject][recording]
         #     if dig_recording != recording:
@@ -293,24 +310,7 @@ class RawSource(RawPipe):
         #         raw.set_montage(mne.channels.DigMontage(dig=dig_raw.info['dig']))
         return raw
 
-    def cache(self, path: BIDSPath):
-        "Make sure the file exists and is up to date"
-        raw_path = self.get_file_path(path)
-        if raw_path is None:
-            raise FileMissingError(f"Raw input file does not exist at expected location {raw_path}")
-        return raw_path
-
-    def get_file_path(
-            self,
-            path: BIDSPath,
-            file_type: Literal['raw', 'bads'] = 'raw',
-    ) -> Path | None:
-        if file_type == 'raw':
-            return path.find_matching_sidecar(None, 'fif', on_error='ignore')
-        else:
-            return path.find_matching_sidecar('channels', 'tsv', on_error='ignore')
-
-    def get_adjacency(self, data: str):
+    def get_adjacency(self, data: str) -> Union[str, List[Tuple[str, str]], Path]:
         if data == 'eog':
             return None
         else:
@@ -333,20 +333,15 @@ class RawSource(RawPipe):
         kit_system_id = info.get('kit_system_id')
         return KIT_NEIGHBORS.get(kit_system_id)
 
-    def _get_channels_df(self, path: BIDSPath) -> pd.DataFrame | None:
-        bads_path = self.get_file_path(path, 'bads')
-        if bads_path is None:
-            return None
-        return pd.read_csv(bads_path, sep='\t')
-
     def load_bad_channels(
             self,
             path: BIDSPath,
             existing: Collection[str] = None,
     ) -> list[str]:
-        channels_df = self._get_channels_df(path)
+        bads_path = self.get_path(path, 'bads')
+        channels_df = pd.read_csv(bads_path, sep='\t')
         if (channels_df is None) or ('status' not in channels_df.columns.tolist()):
-            self.log.info("Generating bad_channels for %s %s", path.entities['subject'], path.entities['recording'])
+            self.log.info("Generating bad_channels for %s", path.fpath)
             self.make_bad_channels_auto(path)
         bad_chs = channels_df.query('status == "bad"')['name'].tolist()
         if existing is not None:
@@ -359,7 +354,8 @@ class RawSource(RawPipe):
             bad_chs,
             redo: bool,
     ) -> None:
-        channels_df = self._get_channels_df(path)
+        bads_path = self.get_path(path, 'bads')
+        channels_df = pd.read_csv(bads_path, sep='\t')
         if (channels_df is None) or ('status' not in channels_df.columns.tolist()):
             old_bads = channels_df.query('status == "bad"')['name'].tolist()
         else:
@@ -401,10 +397,8 @@ class RawSource(RawPipe):
             path: BIDSPath,
             bad_chs: bool = True,
     ) -> float | None:
-        raw_path = self.get_file_path(path)
-        bads_path = self.get_file_path(path)
-        if raw_path is None or (bad_chs and bads_path is None):
-            return None
+        raw_path = self.get_path(path)
+        bads_path = self.get_path(path, 'bads')
         if bad_chs:
             return max(getmtime(raw_path), getmtime(bads_path))
         else:
@@ -427,13 +421,12 @@ class CachedRawPipe(RawPipe):
             self,
             name: str,
             pipes: Dict[str, RawPipe],
-            root: str,
             cache_dir: str,
             log: logging.Logger,
     ) -> RawPipe:
         if self._source_name not in pipes:
             raise DefinitionError(f"{self.__class__.__name__} {name!r} source {self._source_name!r} does not exist")
-        out = RawPipe._link_base(self, name, root, log)
+        out = RawPipe._link_base(self, name, log)
         out.source = pipes[self._source_name]
         out.cache_dir = cache_dir
         return out
@@ -443,10 +436,9 @@ class CachedRawPipe(RawPipe):
         out['source'] = self._source_name
         return out
 
-    def cache(self, path: BIDSPath):
+    def cache(self, path: BIDSPath) -> mne.io.BaseRaw:
         "Make sure the cache is up to date"
-        cache_dir = self.cache_dir.format(subject=path.entities['subject'], session=path.entities['session'])
-        cache_path = CACHE_PATH_TEMP.format(cache_dir=cache_dir, raw_fname=str(path.fpath))
+        cache_path = self.get_path(path, 'cache')
         if exists(cache_path):
             mtime = self.mtime(path, self._bad_chs_affect_cache)
             if mtime and getmtime(cache_path) >= mtime:
@@ -470,7 +462,7 @@ class CachedRawPipe(RawPipe):
             raise
         return raw
 
-    def get_adjacency(self, data: str):
+    def get_adjacency(self, data: str) -> Union[str, List[Tuple[str, str]], Path]:
         return self.source.get_adjacency(data)
 
     def get_sysname(
@@ -588,7 +580,7 @@ class RawFilter(CachedRawPipe):
             preload: bool,
     ) -> mne.io.BaseRaw:
         raw = self.source.load(path, preload=True)
-        self.log.info("Raw %s: filtering for %s/%s...", self.name, path.entities['subject'], path.entities['recording'])
+        self.log.info("Raw %s: filtering for %s...", self.name, path.fpath)
         raw.filter(*self.args, **self._use_kwargs, n_jobs=self.n_jobs)
         return raw
 
@@ -653,7 +645,7 @@ class RawFilterElliptic(CachedRawPipe):
             preload: bool,
     ) -> mne.io.BaseRaw:
         raw = self.source.load(path, preload=True)
-        self.log.info("Raw %s: filtering for %s/%s...", self.name, path.entities['subject'], path.entities['recording'])
+        self.log.info("Raw %s: filtering for %s...", self.name, path.fpath)
         # filter data
         picks = mne.pick_types(raw.info, meg=True, eeg=True, ref_meg=True)
         sos = self._sos(raw.info['sfreq'])
@@ -750,19 +742,8 @@ class RawICA(CachedRawPipe):
         self.kwargs = {'method': method, 'random_state': random_state, **kwargs}
         self.fit_kwargs = dict(fit_kwargs) if fit_kwargs else {}
 
-    def _link(
-            self,
-            name: str,
-            pipes: Dict[str, RawPipe],
-            root: str,
-            cache_dir: str,
-            log: logging.Logger,
-    ) -> RawPipe:
-        out = CachedRawPipe._link(self, name, pipes, root, cache_dir, log)
-        return out
-
     def _as_dict(self, args: Sequence[str] = ()) -> dict:
-        out = CachedRawPipe._as_dict(self, [*args, 'session', 'kwargs'])
+        out = CachedRawPipe._as_dict(self, [*args, 'task', 'kwargs'])
         if self.fit_kwargs:
             out['fit_kwargs'] = self.fit_kwargs
         return out
@@ -779,7 +760,7 @@ class RawICA(CachedRawPipe):
         return sorted(bad_chs)
 
     def load_ica(self, path: BIDSPath) -> mne.preprocessing.ICA:
-        ica_path = self._ica_path(path)
+        ica_path = self.get_path(path, 'ica')
         if not exists(ica_path):
             raise FileMissingError(f"ICA file {basename(ica_path)} does not exist for raw={self.name!r}. Run e.make_ica_selection() to create it.")
         with warnings.catch_warnings():
@@ -824,7 +805,7 @@ class RawICA(CachedRawPipe):
         return raw
 
     def make_ica(self, path: BIDSPath) -> str:
-        ica_path = self._ica_path(path)
+        ica_path = self.get_path(path, 'ica')
         bad_channels = self.load_bad_channels(path)
         raw = self.source.load(path.copy().update(task=self.task[0]), bad_channels, preload=-1)
         if exists(ica_path):
@@ -877,7 +858,7 @@ class RawICA(CachedRawPipe):
             path: BIDSPath,
             raw_name: str,
     ) -> mne.io.BaseRaw:
-        self.log.debug("Raw %s: applying ICA for %s/%s...", raw_name, path.entities['subject'], path.entities['recording'])
+        self.log.debug("Raw %s: applying ICA for %s...", raw_name, path.fpath)
         raw.info['bads'] = self.load_bad_channels(path, existing=raw.ch_names)
         ica = self.load_ica(path)
         missing = self._check_ica_channels(ica, raw, raise_on_mismatch=True, raw_name=raw_name, subject=path.entities['subject'], return_missing=True)
@@ -889,17 +870,13 @@ class RawICA(CachedRawPipe):
     def mtime(
             self,
             path: BIDSPath,
-            bad_chs: bool = True
+            bad_chs: bool = True,
     ) -> float | None:
         mtime = CachedRawPipe.mtime(self, path, bad_chs or self._bad_chs_affect_cache)
         if mtime:
-            ica_path = self._ica_path(path)
+            ica_path = self.get_path(path, 'ica')
             if exists(ica_path):
                 return max(mtime, getmtime(ica_path))
-
-    def _ica_path(self, path: BIDSPath) -> str:
-        return ICA_PATH_TEMP.format(raw_dir=str(path.directory), raw_base_fname=str(path.fpath).removesuffix('.fif'))
-
 
 class RawApplyICA(CachedRawPipe):
     """Apply ICA estimated in a :class:`RawICA` pipe
@@ -954,11 +931,10 @@ class RawApplyICA(CachedRawPipe):
             self,
             name: str,
             pipes: Dict[str, RawPipe],
-            root: str,
             cache_dir: str,
             log: logging.Logger,
     ) -> RawPipe:
-        out = CachedRawPipe._link(self, name, pipes, root, cache_dir, log)
+        out = CachedRawPipe._link(self, name, pipes, cache_dir, log)
         out.ica_source = pipes[self._ica_source]
         return out
 
@@ -1031,7 +1007,7 @@ class RawMaxwell(CachedRawPipe):
             preload: PreloadArg,
     ) -> mne.io.BaseRaw:
         raw = self.source.load(path)
-        self.log.info("Raw %s: computing Maxwell filter for %s/%s", self.name, path.entities['subject'], path.entities['recording'])
+        self.log.info("Raw %s: computing Maxwell filter for %s", self.name, path.fpath)
         with user_activity:
             return mne.preprocessing.maxwell_filter(raw, bad_condition=self.bad_condition, **self.kwargs)
 
@@ -1057,7 +1033,7 @@ class RawOversampledTemporalProjection(CachedRawPipe):
             preload: PreloadArg,
     ) -> mne.io.BaseRaw:
         raw = self.source.load(path)
-        self.log.info("Raw %s: computing oversampled temporal projection for %s/%s", self.name, path.entities['subject'], path.entities['recording'])
+        self.log.info("Raw %s: computing oversampled temporal projection for %s", self.name, path.fpath)
         with user_activity:
             return mne.preprocessing.oversampled_temporal_projection(raw, self.duration)
 
@@ -1182,46 +1158,18 @@ class RawReReference(CachedRawPipe):
 
 
 def assemble_pipeline(
-        raw_dict: dict,
+        raw: dict[str, RawPipe],
+        tasks: tuple[str],
         cache_dir: str,
-        root: str,
-        tasks: list[str],
         log: logging.Logger,
 ) -> dict[str, RawPipe]:
     "Assemble preprocessing pipeline form a definition in a dict"
-    # convert to Raw objects
-    raw: dict[str, RawPipe] = {}
-    for key, raw_def in raw_dict.items():
-        if not isinstance(raw_def, RawPipe):
-            params = {**raw_def}
-            source = params.pop('source', None)
-            if source is None:
-                raw_def = RawSource(**params)
-            else:
-                pipe_type = params.pop('type')
-                kwargs = params.pop('kwargs', {})
-                if pipe_type == 'filter':
-                    if 'fir_design' not in kwargs:
-                        kwargs = {**kwargs, 'use_kwargs': {**kwargs, 'fir_design': 'firwin2'}}
-                    raw_def = RawFilter(source, *params.pop('args', ()), **kwargs)
-                elif pipe_type == 'ica':
-                    raw_def = RawICA(source, params.pop('session'), **kwargs)
-                elif pipe_type == 'maxwell_filter':
-                    raw_def = RawMaxwell(source, **kwargs)
-                else:
-                    raise DefinitionError(f"Raw {key!r}: unknonw type {pipe_type!r}")
-                if params:
-                    raise DefinitionError(f"Unused parameters in raw definition {key!r}: {raw_def}")
-        raw[key] = raw_def
-    if not any(isinstance(p, RawSource) for p in raw.values()):
-        raise DefinitionError("No RawSource pipe")
-    # link sources
     linked_raw = {}
     while raw:
         n = len(raw)
         for key in list(raw):
             if raw[key]._can_link(linked_raw):
-                pipe = raw.pop(key)._link(key, linked_raw, root, cache_dir, log)
+                pipe = raw.pop(key)._link(key, linked_raw, cache_dir, log)
                 if isinstance(pipe, RawICA):
                     missing = set(pipe.task).difference(tasks)
                     if missing:
