@@ -1,5 +1,6 @@
-from eelbrain.pipeline import *
+from eelbrain.pipeline import RawMaxwell, RawFilter, RawICA
 from eelbrain import MneExperiment
+
 
 class BIDSExperiment(MneExperiment):
     ignore_entities = {
@@ -12,6 +13,7 @@ class BIDSExperiment(MneExperiment):
         'ica': RawICA('tsss', 'dip13', method='fastica', n_components=0.95),
         'ica1-40': RawFilter('ica', 1, 40),
     }
+
 
 if __name__ == '__main__':
     e = BIDSExperiment('D:\\sfb_meg_phantom')
