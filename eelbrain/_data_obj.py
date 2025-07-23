@@ -9882,7 +9882,6 @@ class SourceSpaceBase(Dimension):
     _kinds = ()
     _default_parc = 'aparc'
     _default_adjacency = 'custom'
-    _ANNOT_PATH = os.path.join('{subjects_dir}', '{subject}', 'label', '{hemi}.{parc}.annot')
     _vertex_re = re.compile(r'([RL])(\d+)')
 
     def __init__(
@@ -10272,9 +10271,13 @@ class SourceSpaceBase(Dimension):
         if self.src is None:
             raise TypeError("Unknown source-space. Specify the src parameter when initializing SourceSpace.")
         path = self._sss_path(subjects_dir)
-        if not path.exists():
-            raise IOError(f"Can't load source space because {path} does not exist; if the MRI files for {self.subject} were moved, use eelbrain.load.update_subjects_dir()")
-        return mne.read_source_spaces(str(path))
+        if path.exists():
+            return mne.read_source_spaces(str(path))
+        else:
+            return self._setup_source_space()
+
+    def _setup_source_space(self):
+        raise NotImplementedError
 
     def index_for_label(self, label):
         """Return the index for a label
@@ -10426,20 +10429,26 @@ class SourceSpace(SourceSpaceBase):
         return Factor(['lh', 'rh'], repeat=[self.lh_n, self.rh_n])
 
     def _read_parc(self, parc: str) -> Factor:
-        fname = self._ANNOT_PATH.format(
-            subjects_dir=self.subjects_dir, subject=self.subject,
-            hemi='%s', parc=parc)
-        labels_lh, _, names_lh = read_annot(fname % 'lh')
-        labels_rh, _, names_rh = read_annot(fname % 'rh')
-        x_lh = labels_lh[self.lh_vertices]
-        x_lh[x_lh == -1] = -2
-        x_rh = labels_rh[self.rh_vertices]
-        x_rh[x_rh >= 0] += len(names_lh)
-        names = chain(('unknown-lh', 'unknown-rh'),
-                      (name.decode() + '-lh' for name in names_lh),
-                      (name.decode() + '-rh' for name in names_rh))
-        return Factor(np.hstack((x_lh, x_rh)), parc,
-                      labels={i: name for i, name in enumerate(names, -2)})
+        label_dir = Path(self.subjects_dir) / self.subject / 'label'
+        codes = []
+        labels = {}
+        for hemi, vertices in zip(('lh', 'rh'), self.vertices):
+            if not len(vertices):
+                continue
+            annot, ctab, names = read_annot(label_dir / f'{hemi}.{parc}.annot')
+            annot = annot[vertices]
+            first_index = annot.min()
+            if first_index >= 1000:  # fsaverage_sym
+                annot -= first_index
+            if hemi == 'rh' and labels:
+                offset = max(labels) + 2
+                annot += offset
+            else:
+                offset = 0
+            codes.append(annot)
+            labels[-1 + offset] = f'unknown-{hemi}'
+            labels.update({i + offset: f'{name.decode()}-{hemi}' for i, name in enumerate(names)})
+        return Factor(np.concatenate(codes), parc, labels=labels)
 
     def __iter__(self):
         return (temp % v for temp, vertices in
@@ -10709,6 +10718,10 @@ class SourceSpace(SourceSpaceBase):
             return out[0]
         else:
             return np.vstack(out)
+
+    def _setup_source_space(self):
+        spacing = self.src.replace('-', '')
+        return mne.setup_source_space(self.subject, spacing, subjects_dir=self.subjects_dir, n_jobs=1, add_dist=False)
 
 
 class VolumeSourceSpace(SourceSpaceBase):
