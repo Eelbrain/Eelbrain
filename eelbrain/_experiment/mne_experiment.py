@@ -1,14 +1,12 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """MneExperiment class to manage data from a experiment"""
 from collections import defaultdict
-from copy import deepcopy
 from datetime import datetime
-from glob import glob
 import inspect
 from itertools import chain, product
 import logging
 import os
-from os.path import basename, exists, getmtime, isdir, join, relpath, splitext
+from os.path import basename, exists, getmtime, isdir, join, relpath
 from pathlib import Path
 import re
 import shutil
@@ -55,7 +53,7 @@ from .experiment import FileTree, LayeredDict
 from .groups import assemble_groups
 from .parc import SEEDED_PARC_RE, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, SeededParc, IndividualSeededParc, LabelParc, VolumeParc, Parcellation, SubParc, assemble_parcs
 from .preprocessing import (
-    assemble_pipeline, RawPipe, RawSource, RawFilter, RawICA, RawApplyICA,
+    assemble_pipeline, RawPipe, RawSource, RawICA, RawApplyICA,
     compare_pipelines, ask_to_delete_ica_files)
 from .test_def import (
     Test,
@@ -101,6 +99,13 @@ DataArg = Union[str, TestDims]
 PMinArg = Union[Literal['tfce'], float, None]
 SubjectArg = Union[str, Literal[1, -1]]
 
+# Eelbrain 0.24 raw/preprocessing pipeline
+LEGACY_RAW = {
+    '0-40': RawFilter('raw', None, 40, method='iir'),
+    '0.1-40': RawFilter('raw', 0.1, 40, l_trans_bandwidth=0.08, filter_length='60s'),
+    '0.2-40': RawFilter('raw', 0.2, 40, l_trans_bandwidth=0.08, filter_length='60s'),
+    '1-40': RawFilter('raw', 1, 40, method='iir'),
+}
 
 CACHE_HELP = "A change in the {experiment} class definition (or the input files) means that some {filetype} files no longer reflect the current definition. In order to keep local results consistent with the definition, these files should be deleted. If you want to keep a copy of the results, be sure to move them to a different location before proceding. If you think the change in the definition was a mistake, you can select 'abort', revert the change and try again."
 
@@ -507,8 +512,7 @@ class MneExperiment(FileTree):
         if exists(log_file_old):
             os.rename(log_file_old, log_file)
         handler = logging.FileHandler(log_file)
-        formatter = logging.Formatter("%(levelname)-8s %(asctime)s %(message)s",
-                                        "%m-%d %H:%M")  # %(name)-12s
+        formatter = logging.Formatter("%(levelname)-8s %(asctime)s %(message)s", "%m-%d %H:%M")  # %(name)-12s
         handler.setFormatter(formatter)
         handler.setLevel(logging.DEBUG)
         log.addHandler(handler)
@@ -583,7 +587,7 @@ class MneExperiment(FileTree):
         # make : can be made if non-existent
         # morph_from_fraverage : can be morphed from fsaverage to other subjects
         self._parcs = assemble_parcs(chain(self.__parcs.items(), self.parcs.items()))
-        parc_values = [*self._parcs.keys(), '']
+        # parc_values = [*self._parcs.keys(), '']
 
         # frequency
         freqs = {}
@@ -708,7 +712,6 @@ class MneExperiment(FileTree):
         self.set(**state)
         self._store_state()
 
-
         ########################################################################
         # Cache
         #######
@@ -789,7 +792,7 @@ class MneExperiment(FileTree):
         #    hence marker positions need to be the same between sub-epochs
             if subjects_with_raw_changes:
                 log.info("Raw input files new or changed, checking digitizer data")
-                super_epochs = [epoch for epoch in self._epochs.values() if isinstance(epoch, SuperEpoch)]
+                # super_epochs = [epoch for epoch in self._epochs.values() if isinstance(epoch, SuperEpoch)]
             for subject, session in subjects_with_raw_changes:
                 # find unique digitizer datasets
                 head_shape = None
@@ -807,7 +810,7 @@ class MneExperiment(FileTree):
                     elif head_shape is None:
                         head_shape = dig
                     elif not hsp_equal(dig, head_shape):
-                        raise FileDeficientError(f"Raw file {self._bids_path.basename} for {subject} has head shape that is different from {enumeration(marker_ids)}; consider defining different visits.")
+                        raise FileDeficientError(f"Raw file {self._bids_path.basename} for {subject} has head shape that is different from other files; consider defining different visits.")
 
                     # find if marker pos already exists
                     for d in digs:
@@ -843,7 +846,7 @@ class MneExperiment(FileTree):
 
         # Check the cache, delete invalid files
         # =====================================
-        save_state = new_state = {
+        save_state = {
             'version': CACHE_STATE_VERSION,
             'stim_channel': self._stim_channel,
             'merge_triggers': self.merge_triggers,
@@ -6543,7 +6546,7 @@ class MneExperiment(FileTree):
     def _update_src_name(self, fields):
         "Because 'ico-4' is treated in filenames  as ''"
         return '' if fields['src'] == 'ico-4' else fields['src']
-    
+
     def _update_raw_basename(self, fields: LayeredDict) -> str:
         entities = {
             k: v for k, v in fields.items()

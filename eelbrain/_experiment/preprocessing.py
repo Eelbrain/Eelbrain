@@ -32,6 +32,7 @@ from .exceptions import FileMissingError
 AddBadsArg = Union[bool, Sequence[str]]
 PreloadArg = Union[bool, Literal[-1]]
 
+
 class RawPipe:
     name: str = None  # set on linking
     log: logging.Logger = None
@@ -877,6 +878,7 @@ class RawICA(CachedRawPipe):
             ica_path = self.get_path(path, 'ica')
             if exists(ica_path):
                 return max(mtime, getmtime(ica_path))
+
 
 class RawApplyICA(CachedRawPipe):
     """Apply ICA estimated in a :class:`RawICA` pipe
