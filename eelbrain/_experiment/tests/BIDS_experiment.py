@@ -29,5 +29,8 @@ class BIDSExperiment(MneExperiment):
 
 if __name__ == '__main__':
     e = BIDSExperiment('D:\\sfb_meg_phantom')
-    print(e.get('epoch', ))
-    events = e.load_epochs()
+    e.set(subject='mdtpc', task='dip13mov')
+    print(e.get('task'))
+    epochs = e.load_epochs(ndvar=False)
+    evoked = e.load_evoked(ndvar=False)
+    print(evoked)
