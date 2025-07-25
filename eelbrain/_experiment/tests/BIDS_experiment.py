@@ -29,7 +29,5 @@ class BIDSExperiment(MneExperiment):
 
 if __name__ == '__main__':
     e = BIDSExperiment('D:\\sfb_meg_phantom')
-    raw = e.load_raw()
-    events = e.load_events()
-    # print(raw)
-    print(events)
+    print(e.get('epoch', ))
+    events = e.load_epochs()

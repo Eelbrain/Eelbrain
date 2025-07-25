@@ -272,7 +272,7 @@ class MneExperiment(FileTree):
         'man': {'kind': 'manual', 'interpolation': True},
     }
     artifact_rejection = {}
-    _artifact_rejection_default = 'man'
+    _artifact_rejection_default = ''
 
     # groups can be defined as subject lists: {'group': ('member1', 'member2', ...)}
     # or by exclusion: {'group': {'base': 'all', 'exclude': ('member1', 'member2')}}
