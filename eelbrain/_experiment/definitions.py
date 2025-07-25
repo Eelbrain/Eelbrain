@@ -133,7 +133,7 @@ def compound(items):
                 out += '*'
         elif item:
             if out and not out.endswith('*'):
-                out += ' '
+                out += '-'
             out += item
     return out
 

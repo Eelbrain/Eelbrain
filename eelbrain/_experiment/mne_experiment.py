@@ -400,8 +400,8 @@ class MneExperiment(FileTree):
 
             # # created input files
             # 'ica-file': join('{raw_dir}', '{raw_basename}-ica.fif'),  # hard-coded in RawICA
-            # 'rej-dir': join('{raw-dir}', 'epoch selection'),
-            # 'rej-file': join('{rej-dir}', '{task}_{sns_kind}_{epoch_visit}-{rej}.pickled'),
+            'rej-dir': join('{cache-dir}', 'epoch selection'),
+            'rej-file': join('{rej-dir}', '{raw_basename}_{sns_kind}_{epoch}_{rej}.pickled'),
 
             # raw
             'raw-cache-dir': join('{cache-dir}', 'raw'),
@@ -413,8 +413,8 @@ class MneExperiment(FileTree):
             'cached-raw-log-file': '{raw-cache-base}-raw.log',
 
             # # evoked
-            # 'evoked-dir': join('{cache-dir}', 'evoked'),
-            # 'evoked-file': join('{evoked-dir}', '{subject}', '{sns_kind} {evoked_desc}-ave.fif'),
+            'evoked-dir': join('{cache-dir}', 'evoked'),
+            'evoked-file': join('{evoked-dir}', '{raw_basename}_{sns_kind}_{epoch}_{evoked_desc}_ave.fif'),
 
             # # forward modeling:
             # 'fwd-file': join('{raw-cache-dir}', '{recording}-{mrisubject}-{src}-fwd.fif'),
@@ -644,7 +644,7 @@ class MneExperiment(FileTree):
         #     default_cov = None
         # self._register_field('cov', sorted(self._covs), default_cov)
         # self._register_field('inv', default='free-3-dSPM', eval_handler=self._eval_inv)
-        # self._register_field('model', eval_handler=self._eval_model)
+        self._register_field('model', eval_handler=self._eval_model)
         # self._register_field('test', test_values, post_set_handler=self._post_set_test, allow_empty=self._empty_test, repr=False)
         # self._register_field('parc', parc_values, 'aparc', eval_handler=self._eval_parc, allow_empty=True)
         # self._register_field('freq', self._freqs.keys())
@@ -667,17 +667,17 @@ class MneExperiment(FileTree):
         # self._register_field('test_dims', repr=False)
 
         # # compounds
-        # self._register_compound('sns_kind', ('raw',))
+        self._register_compound('sns_kind', ('raw',))
         # self._register_compound('inv_kind', ('sns_kind', 'cov', 'rej', 'inv-cache'))
         # self._register_compound('src_kind', ('sns_kind', 'cov', 'mri', 'src-name', 'inv'))
         # # self._register_compound('recording', ('session', 'visit'))
         # self._register_compound('subject_visit', ('subject', 'visit'))
         # self._register_compound('mrisubject_visit', ('mrisubject', 'visit'))
-        # self._register_compound('epoch_visit', ('epoch', 'visit'))
-        # self._register_compound('evoked_kind', ('rej', 'equalize_evoked_count'))
+        # self._register_compound('epoch_session', ('epoch', 'session'))
+        self._register_compound('evoked_kind', ('rej', 'equalize_evoked_count'))
         # self._register_compound('evoked_sns_kind', ('sns_kind', 'evoked_kind'))
         # self._register_compound('evoked_src_kind', ('src_kind', 'evoked_kind'))
-        # self._register_compound('evoked_desc', ('epoch_visit', 'model', 'evoked_kind'))
+        self._register_compound('evoked_desc', ('model', 'evoked_kind'))
         # self._register_compound('test_desc', ('epoch_visit', 'test', 'test_options'))
 
         # # Define make handlers
@@ -2139,7 +2139,7 @@ class MneExperiment(FileTree):
              - :ref:`state-rej`: which trials to use
 
         """
-        data = TestDims.coerce(data)
+        data: TestDims = TestDims.coerce(data)
         if not data.sensor:
             raise ValueError(f"data={data.string!r}; load_evoked is for loading sensor data")
         elif data.sensor is not True:
@@ -2173,6 +2173,7 @@ class MneExperiment(FileTree):
                     dss.append(ds)
             return combine(dss)
 
+        # TODO: add_bads can't be str by type annotation
         if isinstance(add_bads, str):
             if add_bads == 'info':
                 add_bads_to_info = True
@@ -2570,8 +2571,8 @@ class MneExperiment(FileTree):
         ds.info['subject'] = subject
         ds.info['session'] = session
         ds.info['task'] = self.get('task')
-        ds.info['run'] = self.get('run')
         ds.info['acquisition'] = self.get('acquisition')
+        ds.info['run'] = self.get('run')
 
         if self.trigger_shift:
             if isinstance(self.trigger_shift, dict):
@@ -3613,7 +3614,7 @@ class MneExperiment(FileTree):
             # load files
             with self._temporary_state:
                 if reject and rej_params['kind'] is not None:
-                    rej_file = self.get('rej-file', session=epoch.session)
+                    rej_file = self.get('rej-file', task=epoch.session)
                     if exists(rej_file):
                         ds_sel = load.unpickle(rej_file)
                     else:
@@ -3621,7 +3622,7 @@ class MneExperiment(FileTree):
                         raise FileMissingError(f"The rejection file at {rej_file} does not exist. Run .make_epoch_selection() first.")
                 else:
                     ds_sel = None
-                ds = self.load_events(add_bads=add_bads, data_raw=data_raw, session=epoch.session)
+                ds = self.load_events(add_bads=add_bads, data_raw=data_raw, task=epoch.session)
 
             # primary event selection
             if epoch.sel:
@@ -6554,7 +6555,7 @@ class MneExperiment(FileTree):
         }
         bids_path = BIDSPath(root=self.root, **entities)
         bids_path.find_matching_sidecar()
-        return bids_path.basename
+        return bids_path.basename + '_' + bids_path.datatype
 
     def _eval_parc(self, parc):
         if parc in self._parcs:

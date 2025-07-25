@@ -96,7 +96,7 @@ class RawPipe:
         elif file_type == 'bads':
             return str(path.find_matching_sidecar('channels', '.tsv', on_error=on_error))
         elif file_type == 'cache':
-            return join(self.cache_dir, path.basename + path.extension)
+            return join(self.cache_dir, path.basename + '_' + path.datatype + path.extension)
         else:
             return splitext(str(path.fpath))[0] + '-ica.fif'
 
