@@ -4,7 +4,7 @@ from eelbrain.pipeline import RawMaxwell, RawFilter, RawICA
 from eelbrain import MneExperiment
 
 
-class BIDSExperiment(MneExperiment):
+class PhantomExperiment(MneExperiment):
     ignore_entities = {
         'ignore_subjects': ['noIPG'],
         'ignore_sessions': ['220426'],
@@ -28,7 +28,7 @@ class BIDSExperiment(MneExperiment):
 
 
 if __name__ == '__main__':
-    e = BIDSExperiment('D:\\sfb_meg_phantom')
+    e = PhantomExperiment('D:\\sfb_meg_phantom')
     e.set(subject='mdtpc', task='dip13mov')
     print(e.get('task'))
     epochs = e.load_epochs(ndvar=False)
