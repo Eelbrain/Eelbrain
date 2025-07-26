@@ -776,29 +776,35 @@ def sensor_dim(
         if adjacency == 'auto':
             adjacency = _adjacency_id(info, ch_type)
         if adjacency is None:
-            c_matrix, names = mne.channels.find_ch_adjacency(info, ch_type)
-            if any(ch not in names for ch in ch_names):
+            c_matrix, adj_ch_names = mne.channels.find_ch_adjacency(info, ch_type)
+            if any(ch not in adj_ch_names for ch in ch_names):
                 raise NotImplementedError("Adjacency fot this data type")
         else:
-            c_matrix, names = mne.channels.read_ch_adjacency(adjacency)
+            c_matrix, adj_ch_names = mne.channels.read_ch_adjacency(adjacency)
             # fix channel names
             if adjacency.startswith('neuromag'):
-                if ' ' not in names[0]:  # mne-python < ~1.2
-                    names = [f'{n[:3]} {n[3:]}' for n in names]
+                if ' ' not in adj_ch_names[0]:  # mne-python < ~1.2
+                    adj_ch_names = [f'{n[:3]} {n[3:]}' for n in adj_ch_names]
             elif adjacency == 'ctf275':
                 suffix = ch_names[0][-5:]
-                names = [f'{name}{suffix}' for name in names]
+                adj_ch_names = [f'{name}{suffix}' for name in adj_ch_names]
             elif adjacency.startswith('bti'):
-                names = [f'MEG {name[1:]:0>3}' for name in names]
+                adj_ch_names = [f'MEG {name[1:]:0>3}' for name in adj_ch_names]
+
+        # some systems have "MEG 001" vs "MEG001" mismatches
+        if adj_ch_names != ch_names:
+            if ' ' in adj_ch_names[0] and ' ' not in ch_names[0]:
+                adj_ch_names = [ch.replace(' ', '') for ch in adj_ch_names]
 
         # fix channel order
-        if names != ch_names:
-            try:
-                index = np.array([names.index(name) for name in ch_names])
+        if adj_ch_names != ch_names:
+            if set(ch_names).issubset(adj_ch_names):
+                index = np.array([adj_ch_names.index(name) for name in ch_names])
                 c_matrix = c_matrix[index][:, index]
-            except ValueError:
-                missing = [name for name in ch_names if name not in names]
-                raise IndexError(f"{adjacency=} is missing channels {', '.join(missing)}")
+            else:
+                missing = [name for name in ch_names if name not in adj_ch_names]
+                unused = [name for name in adj_ch_names if name not in ch_names]
+                raise IndexError(f"{adjacency=} is missing channels {', '.join(missing)}\nUnused channels in adjacency: {', '.join(unused)}")
 
         adjacency = _matrix_graph(c_matrix)
     elif adjacency in (None, False):
