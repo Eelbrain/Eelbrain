@@ -784,7 +784,7 @@ def sensor_dim(
             # fix channel names
             if adjacency.startswith('neuromag'):
                 if (' ' not in adj_ch_names[0]) and (' ' in ch_names[0]):  # mne-python < ~1.2
-                    adj_ch_names = [ch.replace(' ', '') for ch in adj_ch_names]
+                    adj_ch_names = [f'{n[:3]} {n[3:]}' for n in adj_ch_names]
             elif adjacency == 'ctf275':
                 suffix = ch_names[0][-5:]
                 adj_ch_names = [f'{name}{suffix}' for name in adj_ch_names]
