@@ -783,18 +783,13 @@ def sensor_dim(
             c_matrix, adj_ch_names = mne.channels.read_ch_adjacency(adjacency)
             # fix channel names
             if adjacency.startswith('neuromag'):
-                if ' ' not in adj_ch_names[0]:  # mne-python < ~1.2
+                if (' ' not in adj_ch_names[0]) and (' ' in ch_names[0]):
                     adj_ch_names = [f'{n[:3]} {n[3:]}' for n in adj_ch_names]
             elif adjacency == 'ctf275':
                 suffix = ch_names[0][-5:]
                 adj_ch_names = [f'{name}{suffix}' for name in adj_ch_names]
             elif adjacency.startswith('bti'):
                 adj_ch_names = [f'MEG {name[1:]:0>3}' for name in adj_ch_names]
-
-        # some systems have "MEG 001" vs "MEG001" mismatches
-        if adj_ch_names != ch_names:
-            if ' ' in adj_ch_names[0] and ' ' not in ch_names[0]:
-                adj_ch_names = [ch.replace(' ', '') for ch in adj_ch_names]
 
         # fix channel order
         if adj_ch_names != ch_names:
