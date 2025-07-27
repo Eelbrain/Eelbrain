@@ -1992,7 +1992,7 @@ class MneExperiment(FileTree):
             Bad chnnels.
         """
         pipe = self._raw[self.get('raw', **kwargs)]
-        return pipe.load_bad_channels(self.get('subject'), self.get('recording'))
+        return pipe.load_bad_channels(self._bids_path)
 
     def _load_bem(self):
         subject = self.get('mrisubject')
@@ -3140,7 +3140,7 @@ class MneExperiment(FileTree):
         ICA object for the current :ref:`state-raw` setting.
         """
         pipe = self._get_ica_pipe(state)
-        return pipe.load_ica(self.get('subject'), self.get('recording'))
+        return pipe.load_ica(self._bids_path)
 
     def _get_ica_pipe(self, state):
         raw = self.get('raw', **state)
@@ -4154,7 +4154,7 @@ class MneExperiment(FileTree):
         merge_bad_channels : merge bad channel definitions for all sessions
         """
         pipe = self._raw[self.get('raw', **kwargs)]
-        pipe.make_bad_channels(self.get('subject'), self.get('recording'), bad_chs, redo)
+        pipe.make_bad_channels(self._bids_path, bad_chs, redo)
 
     def make_bad_channels_auto(self, flat=1e-14, redo=False, **state):
         """Automatically detect bad channels
@@ -4174,7 +4174,7 @@ class MneExperiment(FileTree):
         if state:
             self.set(**state)
         pipe = self._raw['raw']
-        pipe.make_bad_channels_auto(self.get('subject'), self.get('recording'), flat, redo)
+        pipe.make_bad_channels_auto(self._bids_path, flat, redo)
 
     def make_bad_channels_neighbor_correlation(
             self,
@@ -4421,7 +4421,7 @@ class MneExperiment(FileTree):
             epoch: str = None,
             samplingrate: float = None,
             decim: int = None,
-            session: Union[str, Sequence[str]] = None,
+            tasks: Union[str, Sequence[str]] = None,
             **state,
     ):
         """Select ICA components to remove through a GUI
@@ -4462,17 +4462,17 @@ class MneExperiment(FileTree):
         # display data
         subject = self.get('subject')
         pipe = self._get_ica_pipe(state)
-        bads = pipe.load_bad_channels(subject, self.get('recording'))
+        bads = pipe.load_bad_channels(self._bids_path)
         with self._temporary_state:
             if epoch is None:
-                if session is None:
-                    session = pipe.session
-                raw = pipe.load_concatenated_source_raw(subject, session, self.get('visit'))
+                if tasks is None:
+                    tasks = pipe.tasks
+                raw = pipe.load_concatenated_source_raw(self._bids_path, tasks)
                 decim = decim_param(samplingrate, decim, None, raw.info, minimal=True)
                 info = raw.info
                 display_data = raw
-            elif session is not None:
-                raise TypeError(f"{session=} with {epoch=}")
+            elif tasks is not None:
+                raise TypeError(f"{tasks=} with {epoch=}")
             else:
                 ds = self.load_epochs(ndvar=False, epoch=epoch, reject=False, raw=pipe.source.name, samplingrate=samplingrate, decim=decim, add_bads=bads)
                 if isinstance(ds['epochs'], Datalist):  # variable-length epoch
@@ -4518,7 +4518,7 @@ class MneExperiment(FileTree):
 
         """
         pipe = self._get_ica_pipe(state)
-        return pipe.make_ica(self.get('subject'), self.get('visit'))
+        return pipe.make_ica(self._bids_path)
 
     def make_link(self, temp, field, src, dst, redo=False):
         """Make a hard link
@@ -4924,7 +4924,7 @@ class MneExperiment(FileTree):
         if kwargs:
             self.set(**kwargs)
         pipe = self._raw[self.get('raw')]
-        pipe.cache(self.get('subject'), self.get('recording'))
+        pipe.cache(self._bids_path)
 
     def make_epoch_selection(
             self,
@@ -5781,24 +5781,24 @@ class MneExperiment(FileTree):
         --------
         make_bad_channels : set bad channels for a single session
         """
-        n_chars = max(map(len, self._sessions))
+        n_chars = max(map(len, self._tasks))
         # collect bad channels
         bads = set()
-        sessions = []
+        tasks = []
         with self._temporary_state:
             # ICARaw merges bad channels dynamically, so explicit merge needs to
             # be performed lower in the hierarchy
             self.set(raw='raw')
-            for session in self.iter('session'):
-                if exists(self.get('raw-file')):
+            for task in self.iter('task'):
+                if exists(self._raw['raw'].get_path(self._bids_path)):
                     bads.update(self.load_bad_channels())
-                    sessions.append(session)
+                    tasks.append(task)
                 else:
-                    print("%%-%is: skipping, raw file missing" % n_chars % session)
+                    print("%%-%is: skipping, raw file missing" % n_chars % task)
             # update bad channel files
-            for session in sessions:
-                print(session.ljust(n_chars), end=': ')
-                self.make_bad_channels(bads, session=session)
+            for task in tasks:
+                print(task.ljust(n_chars), end=': ')
+                self.make_bad_channels(bads, task=task)
 
     def next(self, field='subject'):
         """Change field to the next value

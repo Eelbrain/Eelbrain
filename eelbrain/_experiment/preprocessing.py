@@ -151,6 +151,7 @@ class RawPipe:
             self,
             path: BIDSPath,
             flat: float,
+            redo: bool,
     ) -> None:
         raise NotImplementedError
 

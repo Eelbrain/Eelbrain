@@ -30,9 +30,9 @@ class SomatomotorExperiment(MneExperiment):
 
 if __name__ == '__main__':
     e = SomatomotorExperiment('D:\\somatomotor')
-    # print(e.load_events())
+    print(e.load_events().info)
     # e.set(subject='mdtpc', task='dip13mov')
     # print(e.get('task'))
     # epochs = e.load_epochs()
-    evoked = e.load_evoked()
-    print(evoked)
+    # evoked = e.load_evoked()
+    # print(evoked)
