@@ -1,7 +1,7 @@
 # Environment for development
 # usage: $ conda env create --file=env-dev.yml
 # to run stats test, install r-ez with $ conda install -c ncil r-ez --no-deps
-name: eeldev-feat
+name: eeldev
 channels:
 - conda-forge
 dependencies:
