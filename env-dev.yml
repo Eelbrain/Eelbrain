@@ -55,7 +55,7 @@ dependencies:
 # testing of R integration
 - rpy2 < 3.6.1
 - r-car
-- r-ez  # requires ncil channel
+# - r-ez  # requires ncil channel
 # plotting brains
 - nibabel >= 2.5
 - mayavi >= 4.6.2  # conda-forge pinning faulty
