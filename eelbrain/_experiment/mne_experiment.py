@@ -6,7 +6,7 @@ import inspect
 from itertools import chain, product
 import logging
 import os
-from os.path import basename, exists, getmtime, isdir, join, relpath
+from os.path import basename, exists, getmtime, isdir, join, relpath, splitext
 from pathlib import Path
 import re
 import shutil
@@ -75,7 +75,7 @@ CACHE_STATE_VERSION = 17
 #  15:  merge_triggers attribute, store in input_state
 #  16:  stim_channel attribute, store in input_state
 
-BIDS_ENTITY_KEYS = ['subject', 'session', 'task', 'acquisition', 'run', 'datatype', 'extension']
+BIDS_ENTITY_KEYS = ['subject', 'session', 'task', 'acquisition', 'run', 'datatype', 'suffix', 'extension']
 
 # paths
 LOG_FILE = join('{root}', 'eelbrain {name}.log')
@@ -272,7 +272,7 @@ class MneExperiment(FileTree):
         'man': {'kind': 'manual', 'interpolation': True},
     }
     artifact_rejection = {}
-    _artifact_rejection_default = ''
+    _artifact_rejection_default = 'man'
 
     # groups can be defined as subject lists: {'group': ('member1', 'member2', ...)}
     # or by exclusion: {'group': {'base': 'all', 'exclude': ('member1', 'member2')}}
@@ -546,7 +546,7 @@ class MneExperiment(FileTree):
         self._raw = assemble_pipeline(
             { 'raw': RawSource(), **self.raw },
             self._tasks,
-            self.get('raw-cache-dir'),
+            self.get('cache-dir'),
             log,
         )
         raw_pipe: RawSource = self._raw['raw']
@@ -626,6 +626,7 @@ class MneExperiment(FileTree):
         self._register_field('acquisition', self._acquisitions or None, repr=True)
         self._register_field('run', self._runs or None, repr=True)
         self._register_field('datatype', ('meg', 'eeg'), self.datatype, repr=True)
+        self._register_field('suffix', ('meg', 'eeg'), self.datatype, repr=True)
         self._register_field('extension', ('.fif', ), self.extension, repr=True)
 
         self._register_field('mri', sorted(self._mri_subjects), allow_empty=True)
@@ -700,7 +701,6 @@ class MneExperiment(FileTree):
 
         # Calls below might create new cache-dir
         cache_dir = self.get('cache-dir')
-        cache_dir_existed = exists(cache_dir)
 
         # register experimental features
         self._subclass_init()
@@ -839,8 +839,6 @@ class MneExperiment(FileTree):
                     #         raise NotImplementedError(f"SuperEpoch {epoch.name} has sessions with incompatible marker positions ({group_desc}); SuperEpochs with different forward solutions are not implemented.")
 
         # save input-state
-        if not cache_dir_existed:
-            os.makedirs(cache_dir, exist_ok=True)
         save.pickle(input_state, input_state_file)
         self._dig_sessions = input_state['fwd-sessions']  # {subject: {for_recording: use_recording}}
 
@@ -857,6 +855,8 @@ class MneExperiment(FileTree):
             'parcs': {k: v._as_dict() for k, v in self._parcs.items()},
             'events': events,
         }
+        if not exists(cache_dir):
+            os.makedirs(cache_dir, exist_ok=True)
         cache_state_path = join(cache_dir, 'cache-state.pickle')
         if exists(cache_state_path):
             # check time stamp
@@ -957,7 +957,7 @@ class MneExperiment(FileTree):
             #         log.debug("No existing cache files affected.")
             # else:
             #     log.debug("Cache up to date.")
-        elif cache_dir_existed:  # cache-dir but no history
+        else:  # cache-dir but no history
             if self.auto_delete_cache == 'auto':
                 command = 'delete'
             else:
@@ -975,10 +975,16 @@ class MneExperiment(FileTree):
                 log.warning("Validating cache-dir without history")
             else:
                 raise RuntimeError(f"command={command}")
-        else:
-            os.mkdir(cache_dir)
 
         save.pickle(save_state, cache_state_path)
+
+    def _restore_state(self, state=-1, discard_tip=True):
+        FileTree._restore_state(self, state=state, discard_tip=discard_tip)
+        entities = {
+            k: v for k, v in self._fields.items()
+            if (k in BIDS_ENTITY_KEYS) and v
+        }
+        self._bids_path.update(**entities)
 
     def _state_backwards_compat(self, cache_state_v, new_state, cache_state):
         "Update state dicts for backwards-compatible comparison"
@@ -4421,7 +4427,7 @@ class MneExperiment(FileTree):
             epoch: str = None,
             samplingrate: float = None,
             decim: int = None,
-            tasks: Union[str, Sequence[str]] = None,
+            task: Union[str, Sequence[str]] = None,
             **state,
     ):
         """Select ICA components to remove through a GUI
@@ -4465,14 +4471,14 @@ class MneExperiment(FileTree):
         bads = pipe.load_bad_channels(self._bids_path)
         with self._temporary_state:
             if epoch is None:
-                if tasks is None:
-                    tasks = pipe.tasks
-                raw = pipe.load_concatenated_source_raw(self._bids_path, tasks)
+                if task is None:
+                    task = pipe.task
+                raw = pipe.load_concatenated_source_raw(self._bids_path, task)
                 decim = decim_param(samplingrate, decim, None, raw.info, minimal=True)
                 info = raw.info
                 display_data = raw
-            elif tasks is not None:
-                raise TypeError(f"{tasks=} with {epoch=}")
+            elif task is not None:
+                raise TypeError(f"{task=} with {epoch=}")
             else:
                 ds = self.load_epochs(ndvar=False, epoch=epoch, reject=False, raw=pipe.source.name, samplingrate=samplingrate, decim=decim, add_bads=bads)
                 if isinstance(ds['epochs'], Datalist):  # variable-length epoch
@@ -4997,7 +5003,7 @@ class MneExperiment(FileTree):
             else:
                 raise ValueError(f"The current epoch {epoch.name!r} is not a primary epoch and inherits selections from other epochs. Generate trial rejection for these epochs.")
 
-        path = self.get('rej-file', mkdir=True, session=epoch.session)
+        path = self.get('rej-file', mkdir=True, task=epoch.session)
 
         if auto is not None and overwrite is not True and exists(path):
             if overwrite is False:
@@ -6555,7 +6561,7 @@ class MneExperiment(FileTree):
         }
         bids_path = BIDSPath(root=self.root, **entities)
         bids_path.find_matching_sidecar()
-        return bids_path.basename + '_' + bids_path.datatype
+        return splitext(bids_path.basename)[0] + '_' + bids_path.suffix
 
     def _eval_parc(self, parc):
         if parc in self._parcs:

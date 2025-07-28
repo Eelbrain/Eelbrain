@@ -96,9 +96,9 @@ class RawPipe:
         elif file_type == 'bads':
             return str(path.find_matching_sidecar('channels', '.tsv', on_error=on_error))
         elif file_type == 'cache':
-            return join(self.cache_dir, path.basename + '_' + path.datatype + path.extension)
+            return join(self.cache_dir, 'raw', path.basename)
         else:
-            return splitext(str(path.fpath))[0] + '-ica.fif'
+            return join(self.cache_dir, 'ica', splitext(path.basename)[0] + '-ica.fif')
 
     def load(
             self,
@@ -840,6 +840,7 @@ class RawICA(CachedRawPipe):
         fit_kwargs = {'reject': {'mag': 5e-12, 'grad': 5000e-13, 'eeg': 300e-6}, **self.fit_kwargs}
         with user_activity:
             ica.fit(raw, **fit_kwargs)
+        makedirs(dirname(ica_path), exist_ok=True)
         if MNE_VERSION >= V0_24:
             ica.save(ica_path, overwrite=True)
         else:

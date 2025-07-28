@@ -1,7 +1,7 @@
 # Environment for development
 # usage: $ conda env create --file=env-dev.yml
 # to run stats test, install r-ez with $ conda install -c ncil r-ez --no-deps
-name: eeldev
+name: eeldev-feat
 channels:
 - conda-forge
 dependencies:
@@ -63,3 +63,5 @@ dependencies:
 - pysurfer >= 0.11.2
 - nilearn >=0.10.4
 - pyface != 7.2.0  # 7.2.0 causes RuntimeError: No traitsui.toolkits plugin could be loaded for wx
+- pip:
+    - mne_bids
