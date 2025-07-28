@@ -28,11 +28,6 @@ jobs:
     - name: Build eelbrain
       run: pip install --no-deps -e .
       shell: bash -el {0}
-    - name: Check R installation
-      shell: bash -el {0}
-      run: |
-        echo "R version:"
-        Rscript --version
     - if: matrix.os == 'ubuntu-latest'
       name: Test without GUI
       shell: bash -el {0}
