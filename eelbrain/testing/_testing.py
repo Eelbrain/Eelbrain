@@ -213,6 +213,7 @@ def requires_mne_testing_data(function):
 def requires_r_ez(function):
     from .._utils.r_bridge import r, r_warning_filter
 
+    print("R version:", r('R.version.string')[0])
     with r_warning_filter:
         success = r('require(ez)')[0]
 
