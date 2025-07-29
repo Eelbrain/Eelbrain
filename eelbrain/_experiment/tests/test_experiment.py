@@ -34,7 +34,7 @@ def test_tree():
     # test compound
     assert tree.get('cmp') == 'a1'
     tree.set(field2='value')
-    assert tree.get('cmp') == 'a1 value'
+    assert tree.get('cmp') == 'a1-value'
     tree.set(field2='')
     assert tree.get('cmp') == 'a1'
 
@@ -47,8 +47,8 @@ def test_tree():
     # iterate
     assert list(tree.iter('afield')) == ['a1', 'a2', 'a3']
     assert list(tree.iter(('afield', 'field2'))) == [('a1', ''), ('a1', 'value'), ('a2', ''), ('a2', 'value'), ('a3', ''), ('a3', 'value')]
-    assert list(tree.iter('cmp')) == ['a1', 'a1 value', 'a2', 'a2 value', 'a3', 'a3 value']
-    assert list(tree.iter(('afield', 'cmp'))) == [('a1', 'a1'), ('a1', 'a1 value'), ('a2', 'a2'), ('a2', 'a2 value'), ('a3', 'a3'), ('a3', 'a3 value')]
+    assert list(tree.iter('cmp')) == ['a1', 'a1-value', 'a2', 'a2-value', 'a3', 'a3-value']
+    assert list(tree.iter(('afield', 'cmp'))) == [('a1', 'a1'), ('a1', 'a1-value'), ('a2', 'a2'), ('a2', 'a2-value'), ('a3', 'a3'), ('a3', 'a3-value')]
 
 
 class SlaveTree(TreeModel):
@@ -88,7 +88,7 @@ def test_slave_tree():
     a_seq = ['a1', 'a2', 'a3']
     b_seq = ['b1', 'b2', '']
     c_seq = ['c1', 'c2']
-    ab_seq = [f'{a} {b}' if b else a for a, b in product(a_seq, b_seq)]
+    ab_seq = [f'{a}-{b}' if b else a for a, b in product(a_seq, b_seq)]
     tree = SlaveTree(a_seq, b_seq, c_seq)
 
     # set
@@ -103,19 +103,19 @@ def test_slave_tree():
     assert tree.get('b') == ''
 
     tree.reset()
-    assert tree.get('ab') == 'a1 b1'
-    assert tree.get('sb') == 'A1 b1'
+    assert tree.get('ab') == 'a1-b1'
+    assert tree.get('sb') == 'A1-b1'
     assert tree.get('comp_slave') == 'A1 B1'
     tree.set(a='a2')
-    assert tree.get('ab') == 'a2 b1'
-    assert tree.get('sb') == 'A2 b1'
+    assert tree.get('ab') == 'a2-b1'
+    assert tree.get('sb') == 'A2-b1'
     assert tree.get('comp_slave') == 'A2 B1'
 
     # compound involving slave field
     tree.set(c='c2')
-    assert tree.get('s_ab') == 'a2 b2'
+    assert tree.get('s_ab') == 'a2-b2'
     tree.set(c='c1')
-    assert tree.get('s_ab') == 'a1 b1'
+    assert tree.get('s_ab') == 'a1-b1'
 
     # finde terminal keys
     assert tree.find_keys('c') == ['c']

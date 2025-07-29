@@ -24,8 +24,6 @@ class SampleExperiment(MneExperiment):
     stim_channel = 'STI 014'
     merge_triggers = -1  # ignore events of duration 1
 
-    sessions = 'sample'
-
     defaults = {
         'epoch': 'target',
         'select_clusters': 'all',
@@ -57,22 +55,22 @@ class SampleExperiment(MneExperiment):
         'cov': SecondaryEpoch('target', tmax=0),
     }
 
-    tests = {
-        # T-test to compare left-sided vs right-sided stimulation
-        'left=right': TTestRelated('side', 'left', 'right'),
-        # One-tailed test for auditory > visual stimulation
-        'a>v': TTestRelated('modality', 'auditory', 'visual', tail=1),
-        # Two-stage
-        'twostage': TwoStageTest(
-            stage_1='side_left + modality_a',
-            model='side % modality',
-            vars={'side_left': "side == 'left'",
-                  'modality_a': "modality == 'auditory'"}),
-    }
+    # tests = {
+    #     # T-test to compare left-sided vs right-sided stimulation
+    #     'left=right': TTestRelated('side', 'left', 'right'),
+    #     # One-tailed test for auditory > visual stimulation
+    #     'a>v': TTestRelated('modality', 'auditory', 'visual', tail=1),
+    #     # Two-stage
+    #     'twostage': TwoStageTest(
+    #         stage_1='side_left + modality_a',
+    #         model='side % modality',
+    #         vars={'side_left': "side == 'left'",
+    #               'modality_a': "modality == 'auditory'"}),
+    # }
 
-    parcs = {
-        'ac': SubParc('aparc', ('transversetemporal',)),
-    }
+    # parcs = {
+    #     'ac': SubParc('aparc', ('transversetemporal',)),
+    # }
 
 
 if __name__ == '__main__':

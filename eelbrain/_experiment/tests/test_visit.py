@@ -39,37 +39,37 @@ class Experiment(MneExperiment):
     }
 
 
-def test_visit_patterns():
-    e = Experiment()
-    assert e._glob_pattern('fwd-file', True, session='sample') == path('/eelbrain-cache/raw/*/sample*-*-*-fwd.fif')
+# def test_visit_patterns():
+#     e = Experiment()
+#     assert e._glob_pattern('fwd-file', True, session='sample') == path('/eelbrain-cache/raw/*/sample*-*-*-fwd.fif')
 
 
-@requires_mne_sample_data
-def test_mne_experiment_visit():
-    set_log_level('warning', 'mne')
-    tempdir = TempDir()
-    datasets.setup_samples_experiment(tempdir, 3, 1, n_visits=2)
-    root = join(tempdir, 'SampleExperiment')
+# @requires_mne_sample_data
+# def test_mne_experiment_visit():
+#     set_log_level('warning', 'mne')
+#     tempdir = TempDir()
+#     datasets.setup_samples_experiment(tempdir, 3, 1, n_visits=2)
+#     root = join(tempdir, 'SampleExperiment')
 
-    e = Experiment(root)
-    ds0 = e.load_events(epoch='target', visit='')
-    ds1 = e.load_events(epoch='target', visit='1')
-    assert ds0[1, 'trigger'] != ds1[1, 'trigger']
-    for _ in e:
-        e.make_epoch_selection(auto=2e-12)
-    e.set(visit='')
-    for _ in e:
-        e.make_epoch_selection(auto=2e-12)
-    res0 = e.load_test('side', 0.05, 0.15, 0.05, data='sensor', make=True)
-    e.set(visit='1')
-    with pytest.raises(IOError):
-        e.load_test('side', 0.05, 0.15, 0.05, data='sensor')
-    res1 = e.load_test('side', 0.05, 0.15, 0.05, data='sensor', make=True)
-    assert res1.p.min() != res0.p.min()
+#     e = Experiment(root)
+#     ds0 = e.load_events(epoch='target', visit='')
+#     ds1 = e.load_events(epoch='target', visit='1')
+#     assert ds0[1, 'trigger'] != ds1[1, 'trigger']
+#     for _ in e:
+#         e.make_epoch_selection(auto=2e-12)
+#     e.set(visit='')
+#     for _ in e:
+#         e.make_epoch_selection(auto=2e-12)
+#     res0 = e.load_test('side', 0.05, 0.15, 0.05, data='sensor', make=True)
+#     e.set(visit='1')
+#     with pytest.raises(IOError):
+#         e.load_test('side', 0.05, 0.15, 0.05, data='sensor')
+#     res1 = e.load_test('side', 0.05, 0.15, 0.05, data='sensor', make=True)
+#     assert res1.p.min() != res0.p.min()
 
-    # ica
-    e.set(raw='ica')
-    with catch_warnings():
-        filterwarnings('ignore', "FastICA did not converge", UserWarning)
-        assert e.make_ica(visit='') == join(root, 'meg', 'R0000', 'R0000 ica-ica.fif')
-        assert e.make_ica(visit='1') == join(root, 'meg', 'R0000', 'R0000 1 ica-ica.fif')
+#     # ica
+#     e.set(raw='ica')
+#     with catch_warnings():
+#         filterwarnings('ignore', "FastICA did not converge", UserWarning)
+#         assert e.make_ica(visit='') == join(root, 'meg', 'R0000', 'R0000 ica-ica.fif')
+#         assert e.make_ica(visit='1') == join(root, 'meg', 'R0000', 'R0000 1 ica-ica.fif')

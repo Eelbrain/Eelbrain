@@ -10,6 +10,7 @@ from os import makedirs, remove
 from os.path import basename, dirname, exists, getmtime, join, splitext
 from pathlib import Path
 from typing import Any, Collection, Dict, List, Literal, Sequence, Tuple, Union
+import re
 
 import mne
 from scipy import signal
@@ -98,7 +99,7 @@ class RawPipe:
         elif file_type == 'cache':
             return join(self.cache_dir, 'raw', path.basename)
         else:
-            return join(self.cache_dir, 'ica', splitext(path.basename)[0] + '-ica.fif')
+            return join(self.cache_dir, 'ica', remove_task_in_fname(splitext(path.basename)[0]) + '_ica.fif')
 
     def load(
             self,
@@ -1293,3 +1294,6 @@ def normalize_dict(raw: dict) -> None:
     for key, params in raw.items():
         pipe_class = globals()[params['type']]
         pipe_class._normalize_dict(params)
+
+def remove_task_in_fname(fname: str) -> str:
+    return re.sub(r'_task-[^_]+', '', fname)
