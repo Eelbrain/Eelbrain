@@ -21,7 +21,7 @@ def test_sample():
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
     tempdir = TempDir()
-    datasets.setup_samples_experiment(tempdir, 3, 2)
+    datasets.setup_samples_experiment(tempdir, n_subjects=3, n_segments=2)
 
     root = join(tempdir, 'SampleExperiment')
     e = SampleExperiment(root)
@@ -301,7 +301,7 @@ def test_sample_tasks():
     from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
 
     tempdir = TempDir()
-    datasets.setup_samples_experiment(tempdir, 2, 1, 2)
+    datasets.setup_samples_experiment(tempdir, 2, 2, 1)
 
     class Experiment(SampleExperiment):
 

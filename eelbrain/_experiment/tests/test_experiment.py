@@ -109,7 +109,7 @@ def test_slave_tree():
     tree.set(a='a2')
     assert tree.get('ab') == 'a2-b1'
     assert tree.get('sb') == 'A2-b1'
-    assert tree.get('comp_slave') == 'A2 B1'
+    assert tree.get('comp_slave') == 'A2-B1'
 
     # compound involving slave field
     tree.set(c='c2')
