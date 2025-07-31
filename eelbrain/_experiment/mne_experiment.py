@@ -401,15 +401,15 @@ class MneExperiment(FileTree):
             # # created input files
             # 'ica-file': join('{raw_dir}', '{raw_basename}-ica.fif'),  # hard-coded in RawICA
             'rej-dir': join('{cache-dir}', 'epoch selection'),
-            'rej-file': join('{rej-dir}', '{raw_basename}_{sns_kind}_{epoch}_{rej}.pickled'),
+            'rej-file': join('{rej-dir}', '{raw_basename}_{sns_kind}_{epoch}_{rej}.pickle'),
 
             # raw
             'raw-cache-dir': join('{cache-dir}', 'raw'),
             'raw-cache-base': join('{raw-cache-dir}', '{raw_basename}'),
             # 'cached-raw-file': join('{raw-cache-dir}', '{raw_basename}{extension}'),
             # 'cached-raw-file-overflow': '{raw-cache-base}-raw-?.fif',
-            'event-file': '{raw-cache-base}-evts.pickled',
-            'interp-file': '{raw-cache-base}-interp.pickled',
+            'event-file': '{raw-cache-base}-evts.pickle',
+            'interp-file': '{raw-cache-base}-interp.pickle',
             'cached-raw-log-file': '{raw-cache-base}-raw.log',
 
             # # evoked
@@ -980,11 +980,7 @@ class MneExperiment(FileTree):
 
     def _restore_state(self, state=-1, discard_tip=True):
         FileTree._restore_state(self, state=state, discard_tip=discard_tip)
-        entities = {
-            k: v for k, v in self._fields.items()
-            if (k in BIDS_ENTITY_KEYS) and v
-        }
-        self._bids_path.update(**entities)
+        self._update_bids_path()
 
     def _state_backwards_compat(self, cache_state_v, new_state, cache_state):
         "Update state dicts for backwards-compatible comparison"
@@ -3571,26 +3567,26 @@ class MneExperiment(FileTree):
                     bad_channels = list(add_bads)
                 elif add_bads:
                     bad_channels = sorted(set.union(*(
-                        set(self.load_bad_channels(session=session)) for
-                        session in epoch.sessions)))
+                        set(self.load_bad_channels(task=task)) for
+                        task in epoch.sessions)))
                 else:
                     bad_channels = []
                 # load events
-                for session in epoch.sessions:
-                    self.set(session=session)
-                    # load events for this session
-                    session_dss = []
+                for task in epoch.sessions:
+                    self.set(task=task)
+                    # load events for this task
+                    task_dss = []
                     for sub_epoch in epoch.sub_epochs:
-                        if self._epochs[sub_epoch].session != session:
+                        if self._epochs[sub_epoch].session != task:
                             continue
                         ds = self.load_selected_events(subject, reject, add_bads, index, data_raw, epoch=sub_epoch)
                         ds[:, 'epoch'] = sub_epoch
-                        session_dss.append(ds)
-                    ds = combine(session_dss)
+                        task_dss.append(ds)
+                    ds = combine(task_dss)
                     dss.append(ds)
                     # combine raw
                     if data_raw:
-                        raw_ = session_dss[0].info['raw']
+                        raw_ = task_dss[0].info['raw']
                         raw_.info['bads'] = bad_channels
                         if raw is None:
                             raw = raw_
@@ -6270,14 +6266,9 @@ class MneExperiment(FileTree):
                     state['subject'] = subject
                     subject = None
         FileTree.set(self, match, allow_asterisk, **state)
-        entities = {
-            k: v for k, v in state.items()
-            if (k in BIDS_ENTITY_KEYS) and v
-        }
-        self._bids_path.update(**entities)
         if subject is not None:
             FileTree.set(self, match, allow_asterisk, subject=subject)
-            self._bids_path.update(subject=subject)
+        self._update_bids_path()
 
     def _post_set_group(self, _, group):
         if group == '*' or group not in self._groups:
@@ -7188,3 +7179,10 @@ class MneExperiment(FileTree):
         if hemi:
             out['hemi'] = hemi
         return out
+
+    def _update_bids_path(self):
+        entities = {
+            k: v for k, v in self._fields.items()
+            if (k in BIDS_ENTITY_KEYS) and v
+        }
+        self._bids_path.update(**entities)

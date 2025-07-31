@@ -813,6 +813,7 @@ class RawICA(CachedRawPipe):
         raw = self.source.load(path.copy().update(task=self.task[0]), bad_channels, preload=-1)
         if exists(ica_path):
             ica = mne.preprocessing.read_ica(ica_path)
+            # equal channel names in different raw is guaranteed here
             if not self._check_ica_channels(ica, raw):
                 self.log.info("Raw %s for subject=%r: ICA channels mismatch data channels, recomputing ICA...", self.name, path.entities['subject'])
             else:
