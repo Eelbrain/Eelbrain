@@ -341,7 +341,7 @@ def test_sample_tasks():
     assert_dataobj_equal(dse_super, target, 19)
 
     # conflicting task and epoch settings
-    rej_path = join(root, 'eelbrain-cache', 'epoch selection', 'sub-R0000_task-sample1_meg_1-40_target2_man.pickled')
+    rej_path = join(root, 'eelbrain-cache', 'epoch selection', 'sub-R0000_task-sample1_meg_1-40_target2_man.pickle')
     e.set(epoch='target2', raw='1-40')
     assert not exists(rej_path)
     e.set(task='sample1')
