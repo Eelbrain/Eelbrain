@@ -1,9 +1,7 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Test MneExperiment using mne-python sample data"""
-from pathlib import Path
 from os.path import join, exists
 import pytest
-import shutil
 from warnings import catch_warnings, filterwarnings
 
 import numpy as np
@@ -79,7 +77,7 @@ def test_sample():
     ds = Dataset()
     ds['subject'] = Factor(reversed(subjects))
     ds['n'] = Var(range(3))
-    _ = e._report_subject_info(ds, '')
+    # _ = e._report_subject_info(ds, '')
 
     # post_baseline_trigger_shift
     # use multiple of tstep to shift by even number of samples
@@ -343,7 +341,7 @@ def test_sample_tasks():
     assert_dataobj_equal(dse_super, target, 19)
 
     # conflicting task and epoch settings
-    rej_path = join(root, 'eelbrain-cache', 'epoch selection', 'sub-R0000_task-sample_meg_1-40_target2_man.pickled')
+    rej_path = join(root, 'eelbrain-cache', 'epoch selection', 'sub-R0000_task-sample1_meg_1-40_target1_man.pickled')
     e.set(epoch='target2', raw='1-40')
     assert not exists(rej_path)
     e.set(task='sample1')

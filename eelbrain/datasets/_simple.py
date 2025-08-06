@@ -1,7 +1,6 @@
 """Some basic example datasets for testing."""
 from itertools import product
 from pathlib import Path
-import shutil
 import string
 from typing import Literal, Optional, Tuple, Union
 from os.path import join
@@ -623,7 +622,7 @@ def setup_samples_experiment(
         tasks = ['sample%i' % (i + 1) for i in range(n_tasks)]
     else:
         tasks = ['sample']
-    
+
     # output paths
     dst = Path(dst).expanduser().resolve()
     root = dst / name

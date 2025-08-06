@@ -1296,5 +1296,6 @@ def normalize_dict(raw: dict) -> None:
         pipe_class = globals()[params['type']]
         pipe_class._normalize_dict(params)
 
+
 def remove_task_in_fname(fname: str) -> str:
     return re.sub(r'_task-[^_]+', '', fname)

@@ -1,16 +1,16 @@
-from eelbrain.pipeline import MneExperiment, PrimaryEpoch, SecondaryEpoch
-from eelbrain.testing import path
+# from eelbrain.pipeline import MneExperiment, PrimaryEpoch, SecondaryEpoch
+# from eelbrain.testing import path
 
 
-class Experiment(MneExperiment):
+# class Experiment(MneExperiment):
 
-    sessions = ('cheese', 'pets')
+#     sessions = ('cheese', 'pets')
 
-    epochs = {
-        'cheese': PrimaryEpoch('cheese'),
-        'hard-cheese': SecondaryEpoch('cheese', "texture == 'hard'"),
-        'avians': PrimaryEpoch('pets', "has_wings"),
-    }
+#     epochs = {
+#         'cheese': PrimaryEpoch('cheese'),
+#         'hard-cheese': SecondaryEpoch('cheese', "texture == 'hard'"),
+#         'avians': PrimaryEpoch('pets', "has_wings"),
+#     }
 
 
 # def test_experiment():

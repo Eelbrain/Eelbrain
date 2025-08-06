@@ -1,95 +1,95 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-import os
+# import os
 
-import numpy as np
-from numpy.testing import assert_array_equal
-import pytest
+# import numpy as np
+# from numpy.testing import assert_array_equal
+# import pytest
 
-from eelbrain import Dataset, Factor, Var
-from eelbrain._exceptions import DefinitionError
-from eelbrain.pipeline import *
-from eelbrain.testing import assert_dataobj_equal, TempDir
-
-
-SUBJECT = 'CheeseMonger'
-SUBJECTS = [f'R{i:04}' for i in (1, 11, 111, 1111)]
-SAMPLINGRATE = 1000.
-TRIGGERS = np.tile(np.arange(1, 5), 2)
-I_START = np.arange(1001, 1441, 55)
+# from eelbrain import Dataset, Factor, Var
+# from eelbrain._exceptions import DefinitionError
+# from eelbrain.pipeline import *
+# from eelbrain.testing import assert_dataobj_equal, TempDir
 
 
-@pytest.fixture
-def root_dir():
-    tempdir = TempDir()
-    for subject in SUBJECTS:
-        sdir = os.path.join(tempdir, 'meg', subject)
-        os.makedirs(sdir)
-    return tempdir
+# SUBJECT = 'CheeseMonger'
+# SUBJECTS = [f'R{i:04}' for i in (1, 11, 111, 1111)]
+# SAMPLINGRATE = 1000.
+# TRIGGERS = np.tile(np.arange(1, 5), 2)
+# I_START = np.arange(1001, 1441, 55)
 
 
-class BaseExperiment(MneExperiment):
-
-    sessions = 'file'
-
-    raw = {
-        '0-40': RawFilter('raw', None, 40, method='iir'),
-        '1-40': RawFilter('raw', 1, 40, method='iir'),
-        'ica': RawICA('raw', 'file'),
-    }
+# @pytest.fixture
+# def root_dir():
+#     tempdir = TempDir()
+#     for subject in SUBJECTS:
+#         sdir = os.path.join(tempdir, 'meg', subject)
+#         os.makedirs(sdir)
+#     return tempdir
 
 
-class EventExperiment(MneExperiment):
+# class BaseExperiment(MneExperiment):
 
-    trigger_shift = 0.03
+#     sessions = 'file'
 
-    sessions = 'cheese'
-
-    raw = {
-        '0-40': RawFilter('raw', None, 40, method='iir'),
-        '1-40': RawFilter('raw', 1, 40, method='iir'),
-    }
-
-    variables = {
-        'kind': {(1, 2, 3, 4): 'cheese', (11, 12, 13, 14): 'pet'},
-        'name': {1: 'Leicester', 2: 'Tilsit', 3: 'Caerphilly', 4: 'Bel Paese'},
-        'backorder': {(1, 4): 'no', (2, 3): 'yes'},
-        'taste': {(1, 2): 'good', 'default': 'bad'},
-    }
-
-    epochs = {
-        'cheese': {'sel': "kind == 'cheese'", 'tmin': -0.2},
-        'cheese-leicester': {'base': 'cheese', 'tmin': -0.1, 'sel': "name == 'Leicester'"},
-        'cheese-tilsit': {'base': 'cheese', 'sel': "name == 'Tilsit"},
-    }
-
-    defaults = {'model': 'name'}
+#     raw = {
+#         '0-40': RawFilter('raw', None, 40, method='iir'),
+#         '1-40': RawFilter('raw', 1, 40, method='iir'),
+#         'ica': RawICA('raw', 'file'),
+#     }
 
 
-class EventExperimentTriggerShiftDict(EventExperiment):
-    "Test trigger shift as dictionary"
-    trigger_shift = {SUBJECT: 0.04}
+# class EventExperiment(MneExperiment):
+
+#     trigger_shift = 0.03
+
+#     sessions = 'cheese'
+
+#     raw = {
+#         '0-40': RawFilter('raw', None, 40, method='iir'),
+#         '1-40': RawFilter('raw', 1, 40, method='iir'),
+#     }
+
+#     variables = {
+#         'kind': {(1, 2, 3, 4): 'cheese', (11, 12, 13, 14): 'pet'},
+#         'name': {1: 'Leicester', 2: 'Tilsit', 3: 'Caerphilly', 4: 'Bel Paese'},
+#         'backorder': {(1, 4): 'no', (2, 3): 'yes'},
+#         'taste': {(1, 2): 'good', 'default': 'bad'},
+#     }
+
+#     epochs = {
+#         'cheese': {'sel': "kind == 'cheese'", 'tmin': -0.2},
+#         'cheese-leicester': {'base': 'cheese', 'tmin': -0.1, 'sel': "name == 'Leicester'"},
+#         'cheese-tilsit': {'base': 'cheese', 'sel': "name == 'Tilsit"},
+#     }
+
+#     defaults = {'model': 'name'}
 
 
-def gen_triggers():
-    raw = Var([], info={'sfreq': SAMPLINGRATE})
-    ds = Dataset(info={'subject': SUBJECT, 'session': 'cheese', 'raw': raw, 'sfreq': SAMPLINGRATE})
-    ds['trigger'] = Var(TRIGGERS)
-    ds['i_start'] = Var(I_START)
-    return ds
+# class EventExperimentTriggerShiftDict(EventExperiment):
+#     "Test trigger shift as dictionary"
+#     trigger_shift = {SUBJECT: 0.04}
 
 
-def assert_inv_works(e, inv, args, make_kw, apply_kw):
-    e.reset()
-    e.set(inv=inv)
-    method, make_kw_, apply_kw_ = e._inv_params()
-    assert make_kw_ == make_kw
-    assert apply_kw_ == apply_kw
-    e.reset()
-    e.set_inv(*args)
-    assert e.get('inv') == inv
-    method, make_kw_, apply_kw_ = e._inv_params()
-    assert make_kw_ == make_kw
-    assert apply_kw_ == apply_kw
+# def gen_triggers():
+#     raw = Var([], info={'sfreq': SAMPLINGRATE})
+#     ds = Dataset(info={'subject': SUBJECT, 'session': 'cheese', 'raw': raw, 'sfreq': SAMPLINGRATE})
+#     ds['trigger'] = Var(TRIGGERS)
+#     ds['i_start'] = Var(I_START)
+#     return ds
+
+
+# def assert_inv_works(e, inv, args, make_kw, apply_kw):
+#     e.reset()
+#     e.set(inv=inv)
+#     method, make_kw_, apply_kw_ = e._inv_params()
+#     assert make_kw_ == make_kw
+#     assert apply_kw_ == apply_kw
+#     e.reset()
+#     e.set_inv(*args)
+#     assert e.get('inv') == inv
+#     method, make_kw_, apply_kw_ = e._inv_params()
+#     assert make_kw_ == make_kw
+#     assert apply_kw_ == apply_kw
 
 
 # def test_mne_experiment_templates():
@@ -204,21 +204,21 @@ def assert_inv_works(e, inv, args, make_kw, apply_kw):
 #     e = EventExperiment(root_dir)
 
 
-class FileExperiment(MneExperiment):
+# class FileExperiment(MneExperiment):
 
-    groups = {
-        'gsub': Group(SUBJECTS[1:]),
-        'gexc': SubGroup('all', SUBJECTS[0]),
-        'gexc2': SubGroup('gexc', SUBJECTS[-1:]),
-    }
+#     groups = {
+#         'gsub': Group(SUBJECTS[1:]),
+#         'gexc': SubGroup('all', SUBJECTS[0]),
+#         'gexc2': SubGroup('gexc', SUBJECTS[-1:]),
+#     }
 
-    sessions = 'file'
+#     sessions = 'file'
 
 
-class FileExperimentDefaults(FileExperiment):
+# class FileExperimentDefaults(FileExperiment):
 
-    defaults = {'session': 'file',
-                'group': 'gsub'}
+#     defaults = {'session': 'file',
+#                 'group': 'gsub'}
 
 
 # def test_file_handling(root_dir):

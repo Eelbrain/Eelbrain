@@ -1,42 +1,42 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-from os.path import join
-from warnings import catch_warnings, filterwarnings
+# from os.path import join
+# from warnings import catch_warnings, filterwarnings
 
-import pytest
+# import pytest
 
-from eelbrain import datasets, set_log_level
-from eelbrain.pipeline import MneExperiment, PrimaryEpoch, RawFilter, RawICA, TTestRelated
-from eelbrain.testing import TempDir, path, requires_mne_sample_data
+# from eelbrain import datasets, set_log_level
+# from eelbrain.pipeline import MneExperiment, PrimaryEpoch, RawFilter, RawICA, TTestRelated
+# from eelbrain.testing import TempDir, path, requires_mne_sample_data
 
 
-class Experiment(MneExperiment):
+# class Experiment(MneExperiment):
 
-    meg_system = 'neuromag306mag'
-    stim_channel = 'STI 014'
+#     meg_system = 'neuromag306mag'
+#     stim_channel = 'STI 014'
 
-    sessions = 'sample'
+#     sessions = 'sample'
 
-    visits = ('', '1')
+#     visits = ('', '1')
 
-    raw = {
-        '1-40': RawFilter('raw', 1, 40, method='iir'),
-        'ica': RawICA('raw', 'sample', 'fastica', max_iter=1),
-        'ica1-40': RawFilter('ica', 1, 40, method='iir'),
-    }
+#     raw = {
+#         '1-40': RawFilter('raw', 1, 40, method='iir'),
+#         'ica': RawICA('raw', 'sample', 'fastica', max_iter=1),
+#         'ica1-40': RawFilter('ica', 1, 40, method='iir'),
+#     }
 
-    variables = {
-        'event': {(1, 2, 3, 4): 'target', 5: 'smiley', 32: 'button'},
-        'side': {(1, 3): 'left', (2, 4): 'right'},
-        'modality': {(1, 2): 'auditory', (3, 4): 'visual'}
-    }
+#     variables = {
+#         'event': {(1, 2, 3, 4): 'target', 5: 'smiley', 32: 'button'},
+#         'side': {(1, 3): 'left', (2, 4): 'right'},
+#         'modality': {(1, 2): 'auditory', (3, 4): 'visual'}
+#     }
 
-    epochs = {
-        'target': PrimaryEpoch('sample', "event == 'target'", tmax=0.15, decim=4),
-    }
+#     epochs = {
+#         'target': PrimaryEpoch('sample', "event == 'target'", tmax=0.15, decim=4),
+#     }
 
-    tests = {
-        'side': TTestRelated('side', 'left', 'right'),
-    }
+#     tests = {
+#         'side': TTestRelated('side', 'left', 'right'),
+#     }
 
 
 # def test_visit_patterns():
