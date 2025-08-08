@@ -218,7 +218,7 @@ def _mne_source_space(subject, src_tag, subjects_dir):
         ss = mne.setup_source_space(subject, spacing=src + spacing, subjects_dir=subjects_dir, add_dist=True)
     elif src == 'vol':
         mri_file = subjects_dir / subject / 'mri' / 'orig.mgz'
-        bem_file = subjects_dir / subject / 'bem' / 'sample-5120-5120-5120-bem-sol.fif'
+        bem_file = subjects_dir / subject / 'bem' / f'{subject}-5120-5120-5120-bem-sol.fif'
         ss = mne.setup_volume_source_space(subject, pos=float(spacing), mri=mri_file, bem=bem_file, mindist=0., exclude=0., subjects_dir=subjects_dir)
     else:
         raise ValueError(f"{src_tag=}")
