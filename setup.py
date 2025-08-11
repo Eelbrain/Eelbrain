@@ -1,10 +1,7 @@
 # https://packaging.python.org/en/latest/
 # https://packaging.python.org/en/latest/guides/modernize-setup-py-project/
-from packaging.version import Version
 import os
-from pathlib import Path
 import platform
-import re
 from setuptools import setup, find_packages, Extension
 
 import numpy as np

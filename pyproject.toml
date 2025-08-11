@@ -47,8 +47,8 @@ keywords = [
 license = 'BSD-3-Clause'
 license-files = ['LICENSE.txt']
 maintainers = [
-  {email = 'christianbrodbeck@nyu.edu', name = 'Chrsitian Brodbeck'},
-  {name = 'Proloy Das'},
+  {email = 'christianbrodbeck@nyu.edu', name = 'Christian Brodbeck'},
+  {email = 'proloyd94@gmail.com', name = 'Proloy Das'},
 ]
 name = 'eelbrain'
 readme = 'README.md'
