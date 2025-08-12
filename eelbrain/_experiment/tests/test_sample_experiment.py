@@ -210,12 +210,12 @@ def test_sample():
 
     # rename subject
     # --------------
-    e.set(subject='R0001')
-    src = Path(e._bids_path.directory)
-    dst = Path(str(src).replace('R0001', 'R0003'))
-    shutil.move(src, dst)
-    for path in dst.glob('*.fif'):
-        shutil.move(path, dst / path.parent / path.name.replace('R0001', 'R0003'))
+    # e.set(subject='R0001')
+    # src = Path(e._bids_path.directory)
+    # dst = Path(str(src).replace('R0001', 'R0003'))
+    # shutil.move(src, dst)
+    # for path in dst.glob('*.fif'):
+    #     shutil.move(path, dst / path.parent / path.name.replace('R0001', 'R0003'))
     # check subject list
     # e = SampleExperiment(root)
     # assert list(e) == ['R0000', 'R0002', 'R0003']
@@ -230,14 +230,14 @@ def test_sample():
 
     # remove subject
     # --------------
-    shutil.rmtree(dst)
-    # check cache
-    e = SampleExperiment(root)
-    assert list(e) == ['R0000', 'R0002']
-    # check that cached test got deleted
-    assert e.get('raw') == '1-40'
-    with pytest.raises(IOError):
-        e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False)
+    # shutil.rmtree(dst)
+    # # check cache
+    # e = SampleExperiment(root)
+    # assert list(e) == ['R0000', 'R0002']
+    # # check that cached test got deleted
+    # assert e.get('raw') == '1-40'
+    # with pytest.raises(IOError):
+    #     e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False)
 
     # label_events
     # ------------

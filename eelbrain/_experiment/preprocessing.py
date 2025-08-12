@@ -1316,4 +1316,4 @@ def normalize_dict(raw: dict) -> None:
 
 
 def remove_task_in_fname(fname: str) -> str:
-    return re.sub(r'(_task-[^_])|(_run-[^_])+', '', fname)
+    return re.sub(r'(task-[^_]+_)|(run-[^_]+_)', '', fname)

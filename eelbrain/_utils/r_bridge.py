@@ -10,14 +10,12 @@ except ImportError:  # rpy2 < 2.8
 
 def r_require(package):
     with r_warning_filter:
-        res = r('require(%s)' % package)
-        success = res[0] if res is not None else None
+        success = r('require(%s)' % package)[0]
 
     if not success:
         print(r("install.packages('%s', repos='http://cran.us.r-project.org')"
                 % package))
-        res = r('require(%s)' % package)
-        success = res[0] if res is not None else None
+        success = r('require(%s)' % package)[0]
         if not success:
             raise RuntimeError("Could not install R package %r" % package)
 

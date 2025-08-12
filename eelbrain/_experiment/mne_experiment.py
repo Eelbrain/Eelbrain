@@ -4399,7 +4399,7 @@ class MneExperiment(FileTree):
             if epoch is None:
                 if task is None:
                     task = pipe.task
-                raw = pipe.load_concatenated_source_raw(self._bids_path, task)
+                raw = pipe.load_concatenated_source_raw(self._bids_path, task, list(self._runs) if self._runs else [])
                 decim = decim_param(samplingrate, decim, None, raw.info, minimal=True)
                 info = raw.info
                 display_data = raw
