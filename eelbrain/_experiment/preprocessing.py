@@ -93,14 +93,15 @@ class RawPipe:
     ) -> str | None:
         if not path.find_matching_sidecar(on_error=on_error):
             return None
+        subject_session = f'{path.subject}_{path.session}' if path.session is not None else path.subject
         if file_type == 'raw':
             return str(path.fpath)
         elif file_type == 'bads':
             return str(path.find_matching_sidecar('channels', '.tsv', on_error=on_error))
         elif file_type == 'cache':
-            return join(self.cache_dir, 'extra input', 'raw', f'{path.subject}_{path.session}', path.basename)
+            return join(self.cache_dir, 'extra input', 'raw', subject_session, path.basename)
         else:
-            return join(self.deriv_dir, f'{path.subject}_{path.session}', f'{remove_task_in_fname(splitext(path.basename)[0])}_raw-{self.name}_ica.fif')
+            return join(self.deriv_dir, 'extra input', subject_session, f'{remove_task_in_fname(splitext(path.basename)[0])}_raw-{self.name}_ica.fif')
 
     def load(
             self,

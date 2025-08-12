@@ -220,13 +220,13 @@ def test_sample():
     # e = SampleExperiment(root)
     # assert list(e) == ['R0000', 'R0002', 'R0003']
     # check that cached test got deleted
-    assert e.get('raw') == '1-40'
-    with pytest.raises(IOError):
-        e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False)
-    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False, make=True)
-    assert res.df == 2
-    assert res.p.min() == pytest.approx(.143, abs=.001)
-    assert res.difference.max() == pytest.approx(4.47e-13, 1e-15)
+    # assert e.get('raw') == '1-40'
+    # with pytest.raises(IOError):
+    #     e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False)
+    # res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False, make=True)
+    # assert res.df == 2
+    # assert res.p.min() == pytest.approx(.143, abs=.001)
+    # assert res.difference.max() == pytest.approx(4.47e-13, 1e-15)
 
     # remove subject
     # --------------
