@@ -678,11 +678,11 @@ def setup_samples_experiment(
 
     # trans
     trans = mne.Transform(4, 5, [[ 0.9998371,  -0.00766024,  0.01634169,  0.00289569],
-                                    [ 0.00933457,  0.99443108, -0.10497498, -0.0205526 ],
-                                    [-0.01544655,  0.10511042,  0.9943406,  -0.04443745],
-                                    [ 0.,          0.,          0.,          1.        ]])
+                                 [ 0.00933457,  0.99443108, -0.10497498, -0.0205526 ],
+                                 [-0.01544655,  0.10511042,  0.9943406,  -0.04443745],
+                                 [ 0.,          0.,          0.,          1.        ]])
     for subject in subjects:
         mne.scale_mri('fsaverage', subject, 1., subjects_dir=mri_sdir, skip_fiducials=True, labels=False)
-        extra_dir = root / 'derivatives' / 'eelbrain' /'extra input' / subject
+        extra_dir = root / 'derivatives' / 'eelbrain' / 'extra input' / subject
         extra_dir.mkdir(parents=True)
         trans.save(str(extra_dir / f'{subject}_trans.fif'))

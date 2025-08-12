@@ -210,8 +210,8 @@ def test_sample():
 
     # rename subject
     # --------------
-    src = Path(e.get('raw-dir', subject='R0001'))
-    dst = Path(e.get('raw-dir', subject='R0003', match=False))
+    src = Path(e.get('raw_basename', subject='R0001') + '.fif')
+    dst = Path(e.get('raw_basename', subject='R0003', match=False) + '.fif')
     shutil.move(src, dst)
     for path in dst.glob('*.fif'):
         shutil.move(path, dst / path.parent / path.name.replace('R0001', 'R0003'))
@@ -343,7 +343,7 @@ def test_sample_tasks():
     assert_dataobj_equal(dse_super, target, 19)
 
     # conflicting task and epoch settings
-    rej_path = join(root, 'eelbrain-cache', 'epoch selection', 'sub-R0000_task-sample1_meg_1-40_target1_man.pickle')
+    rej_path = join(root, 'derivatives', 'eelbrain', 'extra input', 'epoch selection', 'sub-R0000_meg_raw-1-40_epoch-target1_rej-man_epoch.pickle')
     e.set(epoch='target2', raw='1-40')
     assert not exists(rej_path)
     e.set(task='sample1')
@@ -354,7 +354,7 @@ def test_sample_tasks():
     e.set('R0000', raw='ica')
     with catch_warnings():
         filterwarnings('ignore', "FastICA did not converge", UserWarning)
-        assert e.make_ica() == join(root, 'eelbrain-cache', 'ica', 'sub-R0000_meg_ica.fif')
+        assert e.make_ica() == join(root, 'eelbrain-cache', 'ica', 'sub-R0000_meg_raw-ica_ica.fif')
 
 
 @requires_mne_sample_data

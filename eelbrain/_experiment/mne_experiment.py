@@ -34,7 +34,7 @@ from .._names import INTERPOLATE_CHANNELS
 from .._meeg import new_rejection_ds
 from .._mne import morph_source_space, shift_mne_epoch_trigger, find_source_subject, label_from_annot
 from ..mne_fixes import write_labels_to_annot, _interpolate_bads_eeg, _interpolate_bads_meg, suppress_mne_warning
-from ..mne_fixes._trans import hsp_equal, mrk_equal
+from ..mne_fixes._trans import hsp_equal
 from ..mne_fixes._source_space import merge_volume_source_space, prune_volume_source_space, restrict_volume_source_space
 from ..mne_fixes._version import MNE_VERSION, V1
 from .._ndvar import concatenate, cwt_morlet, neighbor_correlation
@@ -388,9 +388,9 @@ class MneExperiment(FileTree):
             # one rej-file for each raw
             'rej-file': join('{extra-dir}', 'epoch selection', '{epoch_basename}_raw-{raw}_epoch-{epoch}_rej-{rej}_epoch.pickle'),
 
-            
+
             'cache-dir': join('{deriv-dir}', 'cache'),
-            'raw-cache-dir': join('{cache-dir}', 'raw', '{subject_session}'), # hard-coded in RawPipe
+            'raw-cache-dir': join('{cache-dir}', 'raw', '{subject_session}'),  # hard-coded in RawPipe
 
             'event-file': join('{raw-cache-dir}', '{raw_basename}_raw-{raw}_evts.pickle'),
             'interp-file': join('{raw-cache-dir}', '{raw_basename}_raw-{raw}_interp.pickle'),
@@ -6482,7 +6482,7 @@ class MneExperiment(FileTree):
         }
         bids_path = BIDSPath(root=self.root, **entities)
         bids_path.find_matching_sidecar()
-        return splitext(bids_path.basename)[0] + '_' + bids_path.suffix
+        return splitext(bids_path.basename)[0]
 
     def _update_epoch_basename(self, fields: LayeredDict) -> str:
         return re.sub(r'(task-[^_]+_)|(run-[^_]+_)', '', self._update_raw_basename(fields))
