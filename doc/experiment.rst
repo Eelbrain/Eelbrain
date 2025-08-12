@@ -75,16 +75,15 @@ names. For example, ``{subject}`` will be replaced with each specific subject's 
     event-file                                    /*_evts.pickle
     interp-file                                   /*_interp.pickle
     fwd-file                                      /*_fwd.fif
-    inv-file                                      /*_inv.fif
-    evoked                                     /evoked/{subject_session}/*_ave.fif
-    sensor covariance                          /cov/{subject_session}
     cov file                                      /*_cov.fif
     cov info file                                 /*_info.txt
-    test results                               /test/{analysis}_{group}/*.pickle
+    inv-file                                      /*_inv.fif
+    evoked                                     /evoked/{subject_session}/*_ave.fif
+    test results                               /test/{group}_{analysis}/*.pickle
     non-BIDS input                          /extra input/{subject_session}
     ICA                                        /*_ica.fif
     trans file                                 /*_trans.fif
-    epoch rejection                            /epoch selection/*.pickle
+    epoch rejection                            /epoch selection/*_epoch.pickle
     freesurfer MRI                          /freesurfer
     result output files                     /results
     plot files                              /result plots

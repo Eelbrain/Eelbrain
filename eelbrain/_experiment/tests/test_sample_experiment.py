@@ -1,9 +1,7 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Test MneExperiment using mne-python sample data"""
-from pathlib import Path
 from os.path import join, exists
 import pytest
-import shutil
 from warnings import catch_warnings, filterwarnings
 
 import numpy as np
