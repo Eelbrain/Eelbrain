@@ -1,7 +1,9 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Test MneExperiment using mne-python sample data"""
+from pathlib import Path
 from os.path import join, exists
 import pytest
+import shutil
 from warnings import catch_warnings, filterwarnings
 
 import numpy as np
@@ -57,18 +59,18 @@ def test_sample():
     assert_dataobj_equal(ds_ind, ds, decimal=19)  # make vs load evoked
 
     # sensor space tests
-    # megs = [e.load_evoked(cat='auditory')['meg'] for _ in e]
-    # res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.rms', baseline=False, make=True)
-    # meg_rms = combine(meg.rms('sensor') for meg in megs).mean('case', name='auditory')
-    # assert_dataobj_equal(res.c1_mean, meg_rms, decimal=21)
-    # res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.mean', baseline=False, make=True)
-    # meg_mean = combine(meg.mean('sensor') for meg in megs).mean('case', name='auditory')
-    # assert_dataobj_equal(res.c1_mean, meg_mean, decimal=21)
-    # with pytest.raises(IOError):
-    #     e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False)
-    # res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False, make=True)
-    # assert res.p.min() == pytest.approx(.143, abs=.001)
-    # assert res.difference.max() == pytest.approx(4.47e-13, 1e-15)
+    megs = [e.load_evoked(cat='auditory')['meg'] for _ in e]
+    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.rms', baseline=False, make=True)
+    meg_rms = combine(meg.rms('sensor') for meg in megs).mean('case', name='auditory')
+    assert_dataobj_equal(res.c1_mean, meg_rms, decimal=21)
+    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.mean', baseline=False, make=True)
+    meg_mean = combine(meg.mean('sensor') for meg in megs).mean('case', name='auditory')
+    assert_dataobj_equal(res.c1_mean, meg_mean, decimal=21)
+    with pytest.raises(IOError):
+        e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False)
+    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False, make=True)
+    assert res.p.min() == pytest.approx(.143, abs=.001)
+    assert res.difference.max() == pytest.approx(4.47e-13, 1e-15)
     # plot (skip to avoid using framework build)
     # e.plot_evoked(1, epoch='target', model='')
 
@@ -77,7 +79,7 @@ def test_sample():
     ds = Dataset()
     ds['subject'] = Factor(reversed(subjects))
     ds['n'] = Var(range(3))
-    # _ = e._report_subject_info(ds, '')
+    _ = e._report_subject_info(ds, '')
 
     # post_baseline_trigger_shift
     # use multiple of tstep to shift by even number of samples
@@ -208,33 +210,33 @@ def test_sample():
 
     # rename subject
     # --------------
-    # src = Path(e.get('raw-dir', subject='R0001'))
-    # dst = Path(e.get('raw-dir', subject='R0003', match=False))
-    # shutil.move(src, dst)
-    # for path in dst.glob('*.fif'):
-    #     shutil.move(path, dst / path.parent / path.name.replace('R0001', 'R0003'))
-    # # check subject list
-    # e = SampleExperiment(root)
-    # assert list(e) == ['R0000', 'R0002', 'R0003']
+    src = Path(e.get('raw-dir', subject='R0001'))
+    dst = Path(e.get('raw-dir', subject='R0003', match=False))
+    shutil.move(src, dst)
+    for path in dst.glob('*.fif'):
+        shutil.move(path, dst / path.parent / path.name.replace('R0001', 'R0003'))
+    # check subject list
+    e = SampleExperiment(root)
+    assert list(e) == ['R0000', 'R0002', 'R0003']
     # check that cached test got deleted
-    # assert e.get('raw') == '1-40'
-    # with pytest.raises(IOError):
-    #     e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False)
-    # res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False, make=True)
-    # assert res.df == 2
-    # assert res.p.min() == pytest.approx(.143, abs=.001)
-    # assert res.difference.max() == pytest.approx(4.47e-13, 1e-15)
+    assert e.get('raw') == '1-40'
+    with pytest.raises(IOError):
+        e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False)
+    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False, make=True)
+    assert res.df == 2
+    assert res.p.min() == pytest.approx(.143, abs=.001)
+    assert res.difference.max() == pytest.approx(4.47e-13, 1e-15)
 
     # remove subject
     # --------------
-    # shutil.rmtree(dst)
+    shutil.rmtree(dst)
     # check cache
-    # e = SampleExperiment(root)
-    # assert list(e) == ['R0000', 'R0002']
+    e = SampleExperiment(root)
+    assert list(e) == ['R0000', 'R0002']
     # check that cached test got deleted
-    # assert e.get('raw') == '1-40'
-    # with pytest.raises(IOError):
-    #     e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False)
+    assert e.get('raw') == '1-40'
+    with pytest.raises(IOError):
+        e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False)
 
     # label_events
     # ------------
@@ -251,46 +253,46 @@ def test_sample():
 
     # Parc
     # ----
-    # labels = e.load_annot(parc='ac', mrisubject='fsaverage')
-    # assert len(labels) == 4
+    labels = e.load_annot(parc='ac', mrisubject='fsaverage')
+    assert len(labels) == 4
     # change parc definition
 
-    # class Experiment(SampleExperiment):
-    #     parcs = {
-    #         'ac': SubParc('aparc', ('transversetemporal', 'superiortemporal')),
-    #     }
-    # e = Experiment(root)
-    # assert len(e.glob('annot-file', True, parc='ac')) == 0
-    # labels = e.load_annot(parc='ac', mrisubject='fsaverage')
-    # assert len(labels) == 6
+    class Experiment(SampleExperiment):
+        parcs = {
+            'ac': SubParc('aparc', ('transversetemporal', 'superiortemporal')),
+        }
+    e = Experiment(root)
+    assert len(e.glob('annot-file', True, parc='ac')) == 0
+    labels = e.load_annot(parc='ac', mrisubject='fsaverage')
+    assert len(labels) == 6
 
 
-# @requires_mne_sample_data
-# @pytest.mark.slow
-# def test_sample_source():
-#     set_log_level('warning', 'mne')
-#     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+@requires_mne_sample_data
+@pytest.mark.slow
+def test_sample_source():
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
-#     tempdir = TempDir()
-#     datasets.setup_samples_experiment(tempdir, 3, 2, mris=True)  # TODO: use sample MRI which already has forward solution
-#     root = join(tempdir, 'SampleExperiment')
-#     e = SampleExperiment(root)
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, 3, 2, mris=True)  # TODO: use sample MRI which already has forward solution
+    root = join(tempdir, 'SampleExperiment')
+    e = SampleExperiment(root)
 
-#     # source space tests
-#     e.set(src='ico-4', rej='', epoch='auditory')
-#     # These two tests are only identical if the evoked has been cached before the first test is loaded
-#     resp = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, parc='ac', make=True)
-#     resm = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, mask='ac', make=True)
-#     assert_dataobj_equal(resp.t, resm.t)
-#     # ROI tests
-#     e.set(epoch='target')
-#     ress = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, data='source.rms', parc='ac', make=True)
-#     res = ress.res['transversetemporal-lh']
-#     assert res.p.min() == pytest.approx(0.429, abs=.001)
-#     ress = e.load_test('twostage', 0.05, 0.2, 0.05, samples=100, data='source.rms', parc='ac', make=True)
-#     res = ress.res['transversetemporal-lh']
-#     assert res.samples == -1
-#     assert res.tests['intercept'].p.min() == 1 / 7
+    # source space tests
+    e.set(src='ico-4', rej='', epoch='auditory')
+    # These two tests are only identical if the evoked has been cached before the first test is loaded
+    resp = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, parc='ac', make=True)
+    resm = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, mask='ac', make=True)
+    assert_dataobj_equal(resp.t, resm.t)
+    # ROI tests
+    e.set(epoch='target')
+    ress = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, data='source.rms', parc='ac', make=True)
+    res = ress.res['transversetemporal-lh']
+    assert res.p.min() == pytest.approx(0.429, abs=.001)
+    ress = e.load_test('twostage', 0.05, 0.2, 0.05, samples=100, data='source.rms', parc='ac', make=True)
+    res = ress.res['transversetemporal-lh']
+    assert res.samples == -1
+    assert res.tests['intercept'].p.min() == 1 / 7
 
 
 @requires_mne_sample_data

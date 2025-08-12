@@ -1,6 +1,7 @@
 """Some basic example datasets for testing."""
 from itertools import product
 from pathlib import Path
+import shutil
 import string
 from typing import Literal, Optional, Tuple, Union
 from os.path import join
@@ -580,6 +581,7 @@ def setup_samples_experiment(
     """
     # input paths
     data_path = mne.datasets.sample.data_path()
+    fsaverage_path = mne.datasets.fetch_fsaverage()
     raw_fname = join(data_path, "MEG", "sample", "sample_audvis_raw.fif")
     event_id = {
         "Auditory/Left": 1,
@@ -645,3 +647,42 @@ def setup_samples_experiment(
                 allow_preload=True,
                 format='FIF',
             )
+
+    # freesurfer
+    mri_sdir = root / 'derivatives' / 'eelbrain' / 'freesurfer'
+    mri_sdir.mkdir(parents=True)
+    # copy rudimentary fsaverage
+    surf_names = ['inflated', 'white', 'orig', 'orig_avg', 'curv', 'sphere']
+    files = {
+        'bem': ['fsaverage-head.fif', 'fsaverage-inner_skull-bem.fif'],
+        'label': ['lh.aparc.annot', 'rh.aparc.annot'],
+        'surf': [f'{hemi}.{name}' for hemi, name in product(['lh', 'rh'], surf_names)],
+        'mri': [],
+    }
+    dst_s_dir = mri_sdir / 'fsaverage'
+    dst_s_dir.mkdir()
+    # from fsaverage
+    for dir_name, file_names in files.items():
+        src_dir = fsaverage_path / dir_name
+        dst_dir = dst_s_dir / dir_name
+        dst_dir.mkdir()
+        for file_name in file_names:
+            shutil.copy(src_dir / file_name, dst_dir / file_name)
+    # source space
+    src_src = fsaverage_path / 'bem' / 'fsaverage-ico-3-src.fif'
+    src_dst = dst_s_dir / 'bem' / 'fsaverage-ico-3-src.fif'
+    if not src_src.exists():
+        src = mne.setup_source_space('fsaverage', 'ico1', subjects_dir=fsaverage_path.parent)
+        src.save(src_src)
+    shutil.copy(src_src, src_dst)
+
+    # trans
+    trans = mne.Transform(4, 5, [[ 0.9998371,  -0.00766024,  0.01634169,  0.00289569],
+                                    [ 0.00933457,  0.99443108, -0.10497498, -0.0205526 ],
+                                    [-0.01544655,  0.10511042,  0.9943406,  -0.04443745],
+                                    [ 0.,          0.,          0.,          1.        ]])
+    for subject in subjects:
+        mne.scale_mri('fsaverage', subject, 1., subjects_dir=mri_sdir, skip_fiducials=True, labels=False)
+        extra_dir = root / 'derivatives' / 'eelbrain' /'extra input' / subject
+        extra_dir.mkdir(parents=True)
+        trans.save(str(extra_dir / f'{subject}_trans.fif'))

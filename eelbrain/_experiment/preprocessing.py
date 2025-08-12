@@ -46,6 +46,7 @@ class RawPipe:
             name: str,
             pipes: Dict[str, RawPipe],
             cache_dir: str,
+            deriv_dir: str,
             log: logging.Logger
     ) -> RawPipe:
         raise NotImplementedError
@@ -97,9 +98,9 @@ class RawPipe:
         elif file_type == 'bads':
             return str(path.find_matching_sidecar('channels', '.tsv', on_error=on_error))
         elif file_type == 'cache':
-            return join(self.cache_dir, 'raw', path.basename)
+            return join(self.cache_dir, 'extra input', 'raw', f'{path.subject}_{path.session}', path.basename)
         else:
-            return join(self.cache_dir, 'ica', remove_task_in_fname(splitext(path.basename)[0]) + '_ica.fif')
+            return join(self.deriv_dir, f'{path.subject}_{path.session}', f'{remove_task_in_fname(splitext(path.basename)[0])}_raw-{self.name}_ica.fif')
 
     def load(
             self,
@@ -236,7 +237,6 @@ class RawSource(RawPipe):
         }
 
     """
-    # _dig_sessions: dict = None  # {subject: {for_recording: use_recording}}
 
     @deprecate_kwarg('connectivity', 'adjacency', '0.41', '0.42')
     def __init__(
@@ -275,10 +275,10 @@ class RawSource(RawPipe):
             name: str,
             pipes: Dict[str, RawPipe],
             cache_dir: str,
+            deriv_dir: str,
             log: logging.Logger,
     ) -> RawPipe:
-        out = RawPipe._link_base(self, name, log)
-        return out
+        return RawPipe._link_base(self, name, log)
 
     def _as_dict(self, args: Sequence[str] = ()) -> dict:
         out = RawPipe._as_dict(self, args)
@@ -425,6 +425,7 @@ class CachedRawPipe(RawPipe):
             name: str,
             pipes: Dict[str, RawPipe],
             cache_dir: str,
+            deriv_dir: str,
             log: logging.Logger,
     ) -> RawPipe:
         if self._source_name not in pipes:
@@ -432,6 +433,7 @@ class CachedRawPipe(RawPipe):
         out = RawPipe._link_base(self, name, log)
         out.source = pipes[self._source_name]
         out.cache_dir = cache_dir
+        out.deriv_dir = deriv_dir
         return out
 
     def _as_dict(self, args: Sequence[str] = ()) -> dict:
@@ -799,19 +801,32 @@ class RawICA(CachedRawPipe):
             self,
             path: BIDSPath,
             tasks: list[str],
+            runs: list[str],
     ) -> mne.io.BaseRaw:
         bad_channels = self.load_bad_channels(path)
-        raw = self.source.load(path.update(task=tasks[0]), bad_channels)
-        for task in tasks[1:]:
-            raw_ = self.source.load(path.copy().update(task=task), bad_channels)
+        path_list = []
+        for task in tasks:
+            path_ = path.copy().update(task=task)
+            if not runs:
+                path_list.append(path_)
+                continue
+            for run in runs:
+                path_list.append(path_.copy().update(run=run))
+        raw = self.source.load(path_list[0], bad_channels)
+        for path_ in path_list[1:]:
+            raw_ = self.source.load(path_, bad_channels)
             raw.append(raw_)
         return raw
 
-    def make_ica(self, path: BIDSPath) -> str:
+    def make_ica(
+            self,
+            path: BIDSPath,
+            run: list[str],
+    ) -> str:
         ica_path = self.get_path(path, 'ica')
         bad_channels = self.load_bad_channels(path)
-        raw = self.source.load(path.copy().update(task=self.task[0]), bad_channels, preload=-1)
         if exists(ica_path):
+            raw = self.source.load(path.copy().update(task=self.task[0]), bad_channels, preload=-1)
             ica = mne.preprocessing.read_ica(ica_path)
             # equal channel names in different raw is guaranteed here
             if not self._check_ica_channels(ica, raw):
@@ -829,7 +844,7 @@ class RawICA(CachedRawPipe):
                 else:
                     raise RuntimeError(f"{command=}")
 
-        raw = self.load_concatenated_source_raw(path, self.task)
+        raw = self.load_concatenated_source_raw(path, self.task, run)
         self.log.info("Raw %s: computing ICA decomposition for %s", self.name, path.entities['subject'])
         kwargs = self.kwargs.copy()
         kwargs.setdefault('max_iter', 256)
@@ -938,9 +953,10 @@ class RawApplyICA(CachedRawPipe):
             name: str,
             pipes: Dict[str, RawPipe],
             cache_dir: str,
+            deriv_dir: str,
             log: logging.Logger,
     ) -> RawPipe:
-        out = CachedRawPipe._link(self, name, pipes, cache_dir, log)
+        out = CachedRawPipe._link(self, name, pipes, cache_dir, deriv_dir, log)
         out.ica_source = pipes[self._ica_source]
         return out
 
@@ -1167,6 +1183,7 @@ def assemble_pipeline(
         raw: dict[str, RawPipe],
         tasks: tuple[str],
         cache_dir: str,
+        deriv_dir: str,
         log: logging.Logger,
 ) -> dict[str, RawPipe]:
     "Assemble preprocessing pipeline form a definition in a dict"
@@ -1175,7 +1192,7 @@ def assemble_pipeline(
         n = len(raw)
         for key in list(raw):
             if raw[key]._can_link(linked_raw):
-                pipe = raw.pop(key)._link(key, linked_raw, cache_dir, log)
+                pipe = raw.pop(key)._link(key, linked_raw, cache_dir, deriv_dir, log)
                 if isinstance(pipe, RawICA):
                     missing = set(pipe.task).difference(tasks)
                     if missing:
@@ -1298,4 +1315,4 @@ def normalize_dict(raw: dict) -> None:
 
 
 def remove_task_in_fname(fname: str) -> str:
-    return re.sub(r'_task-[^_]+', '', fname)
+    return re.sub(r'(_task-[^_])|(_run-[^_])+', '', fname)

@@ -211,12 +211,6 @@ class MneExperiment(FileTree):
     # hard drive space ~ 100 mb/file
     check_raw_mtime: bool = True  # check raw input files' mtime for change
 
-    # Customize data locations, relative to root:
-    # Directory where to look for MRI subjects
-    mri_dir: str = 'mri'
-    # Directory where to keep cache files
-    cache_dir: str = 'eelbrain-cache'
-
     datatype: str = 'meg'
     extension: str = '.fif'
     ignore_entities: dict[str, list[str]] = {}
@@ -281,8 +275,6 @@ class MneExperiment(FileTree):
     # whether to look for and load eye tracker data when loading raw files
     has_edf = defaultdict(lambda: False)
 
-    # Pattern for subject names when searching the data directory.
-    subject_re = r'([a-zA-Z_]+)(\d+)$'
     # MEG-system (used as ``sysname`` to infer adjacency; for usage search `get_sysname`).
     meg_system = None
 
@@ -300,11 +292,6 @@ class MneExperiment(FileTree):
     # selected with e.set(mri=dict_name)
     # default is identity (mrisubject = subject)
     mri_subjects = {'': keydefaultdict(lambda s: s)}
-
-    # Where to search for subjects (defined as a template name). If the
-    # experiment searches for subjects automatically, it scans this directory
-    # for subfolders matching subject_re.
-    _subject_loc = 'raw-sdir'
 
     # Parcellations
     __parcs = {
@@ -389,107 +376,94 @@ class MneExperiment(FileTree):
         # Templates
         ###########
         self._templates = {
-            # MEG
             'equalize_evoked_count': ('', 'eq'),
 
-            # raw input files
-            # 'trans-file': join('{raw-dir}', '{mrisubject_visit}-trans.fif'),
-            # log-files (eye-tracker etc.)
-            # 'log-dir': join('{raw-dir}', 'logs'),
-            # 'edf-file': join('{log-dir}', '*.edf'),
+            'deriv-dir': join('{root}', 'derivatives', 'eelbrain'),
 
-            # # created input files
-            # 'ica-file': join('{raw_dir}', '{raw_basename}-ica.fif'),  # hard-coded in RawICA
-            'rej-dir': join('{cache-dir}', 'epoch selection'),
-            'rej-file': join('{rej-dir}', '{raw_basename}_{sns_kind}_{epoch}_{rej}.pickle'),
+            # extra input files
+            'extra-dir': join('{deriv-dir}', 'extra input', '{subject_session}'),
+            # one ica-file for each task group
+            'ica-file': join('{extra-dir}', '{epoch_basename}_raw-{raw}_ica.fif'),  # hard-coded in RawPipe
+            'trans-file': join('{extra-dir}', '{mrisubject}_trans.fif'),
+            # one rej-file for each raw
+            'rej-file': join('{extra-dir}', 'epoch selection', '{epoch_basename}_raw-{raw}_epoch-{epoch}_rej-{rej}_epoch.pickle'),
 
-            # raw
-            'raw-cache-dir': join('{cache-dir}', 'raw'),
-            'raw-cache-base': join('{raw-cache-dir}', '{raw_basename}'),
-            # 'cached-raw-file': join('{raw-cache-dir}', '{raw_basename}{extension}'),
-            # 'cached-raw-file-overflow': '{raw-cache-base}-raw-?.fif',
-            'event-file': '{raw-cache-base}-evts.pickle',
-            'interp-file': '{raw-cache-base}-interp.pickle',
-            'cached-raw-log-file': '{raw-cache-base}-raw.log',
+            
+            'cache-dir': join('{deriv-dir}', 'cache'),
+            'raw-cache-dir': join('{cache-dir}', 'raw', '{subject_session}'), # hard-coded in RawPipe
 
-            # # evoked
-            'evoked-dir': join('{cache-dir}', 'evoked'),
-            'evoked-file': join('{evoked-dir}', '{raw_basename}_{sns_kind}_{epoch}_{evoked_desc}_ave.fif'),
+            'event-file': join('{raw-cache-dir}', '{raw_basename}_raw-{raw}_evts.pickle'),
+            'interp-file': join('{raw-cache-dir}', '{raw_basename}_raw-{raw}_interp.pickle'),
 
-            # # forward modeling:
-            # 'fwd-file': join('{raw-cache-dir}', '{recording}-{mrisubject}-{src}-fwd.fif'),
-            # # sensor covariance
-            # 'cov-dir': join('{cache-dir}', 'cov'),
-            # 'cov-base': join('{cov-dir}', '{subject_visit}', '{sns_kind} {cov}-{rej}'),
-            # 'cov-file': '{cov-base}-cov.fif',
-            # 'cov-info-file': '{cov-base}-info.txt',
-            # # inverse solution
-            # 'inv-file': join('{raw-cache-dir}', 'inv', '{mrisubject} {src} {recording} {inv_kind}-inv.fif'),
-            # # MRIs
-            # 'common_brain': 'fsaverage',
-            # # MRI base files
-            # 'mri-dir': join('{mri-sdir}', '{mrisubject}'),
-            # 'bem-dir': join('{mri-dir}', 'bem'),
-            # 'mri-cfg-file': join('{mri-dir}', 'MRI scaling parameters.cfg'),
-            # 'mri-file': join('{mri-dir}', 'mri', 'orig.mgz'),
-            # 'bem-file': join('{bem-dir}', '{mrisubject}-inner_skull-bem.fif'),
-            # 'bem-sol-file': join('{bem-dir}', '{mrisubject}-*-bem-sol.fif'),  # removed for 0.24
-            # 'head-bem-file': join('{bem-dir}', '{mrisubject}-head.fif'),
-            # 'src-file': join('{bem-dir}', '{mrisubject}-{src}-src.fif'),
-            # 'fiducials-file': join('{bem-dir}', '{mrisubject}-fiducials.fif'),
-            # # Morphing
-            # 'source-morph-file': join('{bem-dir}', '{mrisubject} {common_brain} {src}-morph.h5'),
-            # # Labels
-            # 'hemi': ('lh', 'rh'),
-            # 'label-dir': join('{mri-dir}', 'label'),
-            # 'annot-file': join('{label-dir}', '{hemi}.{parc}.annot'),
+            # evoked
+            'evoked-file': join('{cache-dir}', 'evoked', '{subject_session}', '{epoch_basename}_raw-{raw}_epoch-{epoch}_rej-{rej}_model-{model}_count-{equalize_evoked_count}_ave.fif'),
 
-            # # (method) plots
-            # 'methods-dir': join('{root}', 'methods'),
+            # forward modeling:
+            'fwd-file': join('{raw-cache-dir}', '{epoch_basename}_mrisubject-{mrisubject}_src-{src}_fwd.fif'),
+            # sensor covariance
+            'cov-file': join('{raw-cache-dir}', '{epoch_basename}_raw-{raw}_cov-{cov}_rej-{rej}_cov.fif'),
+            'cov-info-file': join('{raw-cache-dir}', '{epoch_basename}_raw-{raw}_cov-{cov}_rej-{rej}_info.txt'),
+            # inverse solution
+            'inv-file': join('{raw-cache-dir}', '{epoch_basename}_mrisubject-{mrisubject}_src-{src}_raw-{raw}_cov-{cov}_rej-{rej}_cache-{inv-cache}_inv.fif'),
 
-            # # group level: test files
-            # 'test-dir': join('{cache-dir}', 'test'),
-            # 'test-file': join('{test-dir}', '{analysis} {group}', '{test_desc} {test_dims}.pickled'),
-            # # result output files
-            # # data processing parameters
-            # #    > group
-            # #        > kind of test
-            # #    > single-subject
-            # #        > kind of test
-            # #            > subject
-            # 'res-dir': join('{root}', 'results'),
+            # MRIs
+            'common_brain': 'fsaverage',
+            # MRI base files
+            'mri-sdir': join('{deriv-dir}', 'freesurfer'),
+            'mri-dir': join('{mri-sdir}', '{mrisubject}'),
+            'mri-cfg-file': join('{mri-dir}', 'MRI scaling parameters.cfg'),
+            'mri-file': join('{mri-dir}', 'mri', 'orig.mgz'),
+
+            'bem-dir': join('{mri-dir}', 'bem'),
+            'bem-file': join('{bem-dir}', '{mrisubject}-inner_skull-bem.fif'),
+            'bem-sol-file': join('{bem-dir}', '{mrisubject}-*-bem-sol.fif'),  # removed for 0.24
+            'head-bem-file': join('{bem-dir}', '{mrisubject}-head.fif'),
+            'src-file': join('{bem-dir}', '{mrisubject}-{src}-src.fif'),
+            'fiducials-file': join('{bem-dir}', '{mrisubject}-fiducials.fif'),
+            # Morphing
+            'source-morph-file': join('{bem-dir}', '{mrisubject}-{common_brain}-{src}-morph.h5'),
+            # Labels
+            'hemi': ('lh', 'rh'),
+            'label-dir': join('{mri-dir}', 'label'),
+            'annot-file': join('{label-dir}', '{hemi}.{parc}.annot'),
+
+            # group level: test files
+            'test-dir': join('{cache-dir}', 'test'),
+            'test-file': join('{test-dir}', '{group}_{analysis}', '{test_basename}_epoch-{epoch}_test-{test}_options-{test_options}_dims-{test_dims}.pickle'),
+            # result output files
+            # data processing parameters
+            #    > group
+            #        > kind of test
+            #    > single-subject
+            #        > kind of test
+            #            > subject
+
+            # (method) plots
+            # 'methods-dir': join('{deriv-dir}', 'methods'),
+
+            # 'res-dir': join('{deriv-dir}', 'results'),
             # 'res-file': join('{res-dir}', '{analysis}', '{resname}.{ext}'),
             # 'res-deep-file': join('{res-dir}', '{analysis}', '{folder}', '{resname}.{ext}'),
-            # 'report-file': join('{res-dir}', '{analysis} {group}', '{folder}', '{test_desc}.html'),
-            # 'group-mov-file': join('{res-dir}', '{analysis} {group}', '{epoch_visit} {test_options} {resname}.mov'),
-            # 'subject-res-dir': join('{res-dir}', '{analysis} subjects'),
-            # 'subject-spm-report': join('{subject-res-dir}', '{test} {epoch_visit} {test_options}', '{subject}.html'),
-            # 'subject-mov-file': join('{subject-res-dir}', '{epoch_visit} {test_options} {resname}', '{subject}.mov'),
+            # 'report-file': join('{res-dir}', '{analysis}_{group}', '{folder}', '{test_desc}.html'),
+            # 'group-mov-file': join('{res-dir}', '{analysis}_{group}', '{epoch_visit}_{test_options}_{resname}.mov'),
+            # 'subject-res-dir': join('{res-dir}', '{analysis}_subjects'),
+            # 'subject-spm-report': join('{subject-res-dir}', '{test}_{epoch_visit}_{test_options}', '{subject}.html'),
+            # 'subject-mov-file': join('{subject-res-dir}', '{epoch_visit}_{test_options}_{resname}', '{subject}.mov'),
 
-            # # plots
-            # # plot corresponding to a report (and using same folder structure)
-            # 'res-plot-root': join('{root}', 'result plots'),
+            # plots
+            # plot corresponding to a report (and using same folder structure)
+            # 'res-plot-root': join('{deriv-dir}', 'result plots'),
             # 'res-plot-dir': join('{res-plot-root}', '{analysis} {group}', '{folder}', '{test_desc}'),
 
-            # # MRAT
+            # MRAT
             # 'mrat_condition': '',
-            # 'mrat-root': join('{root}', 'mrat'),
+            # 'mrat-root': join('{deriv-dir}', 'mrat'),
             # 'mrat-sns-root': join('{mrat-root}', '{sns_kind}', '{evoked_desc}'),
             # 'mrat-src-root': join('{mrat-root}', '{src_kind}', '{evoked_desc}'),
             # 'mrat-sns-file': join('{mrat-sns-root}', '{mrat_condition}', '{mrat_condition}_{subject}-ave.fif'),
             # 'mrat_info-file': join('{mrat-root}', '{subject} info.txt'),
             # 'mrat-src-file': join('{mrat-src-root}', '{mrat_condition}', '{mrat_condition}_{subject}'),
         }
-
-        for temp, path in [
-            ('cache-dir', self.cache_dir),
-            ('mri-sdir', self.mri_dir),
-        ]:
-            path = Path(path).expanduser()
-            if path.is_absolute():
-                self._templates[temp] = str(path)
-            else:
-                self._templates[temp] = join('{root}', path)
 
         # update templates with _values
         for cls in reversed(inspect.getmro(self.__class__)):
@@ -547,6 +521,7 @@ class MneExperiment(FileTree):
             { 'raw': RawSource(), **self.raw },
             self._tasks,
             self.get('cache-dir'),
+            self.get('deriv-dir'),
             log,
         )
         raw_pipe: RawSource = self._raw['raw']
@@ -587,7 +562,7 @@ class MneExperiment(FileTree):
         # make : can be made if non-existent
         # morph_from_fraverage : can be morphed from fsaverage to other subjects
         self._parcs = assemble_parcs(chain(self.__parcs.items(), self.parcs.items()))
-        # parc_values = [*self._parcs.keys(), '']
+        parc_values = [*self._parcs.keys(), '']
 
         # frequency
         freqs = {}
@@ -636,59 +611,56 @@ class MneExperiment(FileTree):
         raw_default = sorted(self.raw)[0] if self.raw else None
         self._register_field('raw', sorted(self._raw), default=raw_default, repr=True)
         self._register_field('raw_basename', depends_on=BIDS_ENTITY_KEYS, slave_handler=self._update_raw_basename, repr=True)
+        self._register_field('epoch_basename', depends_on=[key for key in BIDS_ENTITY_KEYS if key not in ('task', 'run')], slave_handler=self._update_epoch_basename, repr=True)
+        self._register_field('test_basename', depends_on=[key for key in BIDS_ENTITY_KEYS if key not in ('subject', 'task', 'run')], slave_handler=self._update_test_basename, repr=True)
         self._register_field('rej', self._artifact_rejection.keys(), self._artifact_rejection_default, allow_empty=True)
 
-        # # cov
-        # if 'bestreg' in self._covs:
-        #     default_cov = 'bestreg'
-        # else:
-        #     default_cov = None
-        # self._register_field('cov', sorted(self._covs), default_cov)
-        # self._register_field('inv', default='free-3-dSPM', eval_handler=self._eval_inv)
+        # cov
+        if 'bestreg' in self._covs:
+            default_cov = 'bestreg'
+        else:
+            default_cov = None
+        self._register_field('cov', sorted(self._covs), default_cov)
+        self._register_field('inv', default='free-3-dSPM', eval_handler=self._eval_inv)
         self._register_field('model', eval_handler=self._eval_model)
-        # self._register_field('test', test_values, post_set_handler=self._post_set_test, allow_empty=self._empty_test, repr=False)
-        # self._register_field('parc', parc_values, 'aparc', eval_handler=self._eval_parc, allow_empty=True)
-        # self._register_field('freq', self._freqs.keys())
-        # self._register_field('src', default='ico-4', eval_handler=self._eval_src)
-        # self._register_field('adjacency', ('', 'link-midline'), allow_empty=True)
-        # self._register_field('select_clusters', self._cluster_criteria.keys(), allow_empty=True)
+        self._register_field('test', test_values, post_set_handler=self._post_set_test, allow_empty=self._empty_test, repr=False)
+        self._register_field('parc', parc_values, 'aparc', eval_handler=self._eval_parc, allow_empty=True)
+        self._register_field('freq', self._freqs.keys())
+        self._register_field('src', default='ico-4', eval_handler=self._eval_src)
+        self._register_field('adjacency', ('', 'link-midline'), allow_empty=True)
+        self._register_field('select_clusters', self._cluster_criteria.keys(), allow_empty=True)
 
         # # slave fields
-        # self._register_field('mrisubject', depends_on=('mri', 'subject'), slave_handler=self._update_mrisubject, repr=False)
-        # self._register_field('src-name', depends_on=('src',), slave_handler=self._update_src_name, repr=False)
-        # self._register_field('inv-cache', depends_on='inv', slave_handler=self._update_inv_cache, repr=False)
+        self._register_field('mrisubject', depends_on=('mri', 'subject'), slave_handler=self._update_mrisubject, repr=False)
+        self._register_field('src-name', depends_on=('src',), slave_handler=self._update_src_name, repr=False)
+        self._register_field('inv-cache', depends_on='inv', slave_handler=self._update_inv_cache, repr=False)
 
         # # fields used internally
-        # self._register_field('analysis', repr=False)
-        # self._register_field('test_options', repr=False)
+        self._register_field('analysis', repr=False)
+        self._register_field('test_options', repr=False)
         # self._register_field('name', repr=False)
-        # self._register_field('folder', repr=False)
+        self._register_field('folder', repr=False)
         # self._register_field('resname', repr=False)
         # self._register_field('ext', repr=False)
-        # self._register_field('test_dims', repr=False)
+        self._register_field('test_dims', repr=False)
 
-        # # compounds
+        # compounds
+        self._register_compound('subject_session', ('subject', 'session'))
         self._register_compound('sns_kind', ('raw',))
-        # self._register_compound('inv_kind', ('sns_kind', 'cov', 'rej', 'inv-cache'))
-        # self._register_compound('src_kind', ('sns_kind', 'cov', 'mri', 'src-name', 'inv'))
-        # # self._register_compound('recording', ('session', 'visit'))
-        # self._register_compound('subject_visit', ('subject', 'visit'))
-        # self._register_compound('mrisubject_visit', ('mrisubject', 'visit'))
-        # self._register_compound('epoch_session', ('epoch', 'session'))
+        self._register_compound('inv_kind', ('sns_kind', 'cov', 'rej', 'inv-cache'))
+        self._register_compound('src_kind', ('sns_kind', 'cov', 'mri', 'src-name', 'inv'))
         self._register_compound('evoked_kind', ('rej', 'equalize_evoked_count'))
-        # self._register_compound('evoked_sns_kind', ('sns_kind', 'evoked_kind'))
-        # self._register_compound('evoked_src_kind', ('src_kind', 'evoked_kind'))
-        self._register_compound('evoked_desc', ('model', 'evoked_kind'))
-        # self._register_compound('test_desc', ('epoch_visit', 'test', 'test_options'))
+        self._register_compound('evoked_sns_kind', ('sns_kind', 'evoked_kind'))
+        self._register_compound('evoked_src_kind', ('src_kind', 'evoked_kind'))
 
-        # # Define make handlers
-        # self._bind_make('mri-dir', self._make_mri)
-        # self._bind_cache('cov-file', self.make_cov)
-        # self._bind_cache('src-file', self.make_src)
-        # self._bind_cache('fwd-file', self.make_fwd)
+        # Define make handlers
+        self._bind_make('mri-dir', self._make_mri)
+        self._bind_cache('cov-file', self.make_cov)
+        self._bind_cache('src-file', self.make_src)
+        self._bind_cache('fwd-file', self.make_fwd)
 
         # currently only used for .rm()
-        self._secondary_cache['cached-raw-file'] = ('event-file', 'interp-file', 'cached-raw-log-file', 'cached-raw-file-overflow')
+        # self._secondary_cache['cached-raw-file'] = ('event-file', 'interp-file', 'cached-raw-log-file', 'cached-raw-file-overflow')
 
         ########################################################################
         # Finalize
@@ -740,7 +712,6 @@ class MneExperiment(FileTree):
             input_state = {
                 'version': CACHE_STATE_VERSION,
                 'raw-mtimes': {},
-                'fwd-sessions': {s: {} for s in self._subjects},
                 'stim_channel': self._stim_channel,
                 'merge_triggers': self.merge_triggers,
             }
@@ -792,55 +763,23 @@ class MneExperiment(FileTree):
         #    hence marker positions need to be the same between sub-epochs
             if subjects_with_raw_changes:
                 log.info("Raw input files new or changed, checking digitizer data")
-                # super_epochs = [epoch for epoch in self._epochs.values() if isinstance(epoch, SuperEpoch)]
             for subject, session in subjects_with_raw_changes:
                 # find unique digitizer datasets
                 head_shape = None
-                digs = []  # unique MEG marker measurements
-                dig_mapping = input_state['fwd-sessions'].setdefault((subject, session), {})
-                dig_missing = []  # raw files without dig
                 for task, acquisition, run in self.iter(('task', 'acquisition', 'run'), subject=subject, session=session):
                     if (subject, session, task, acquisition, run) in raw_missing:
                         continue
                     raw = self.load_raw(False)
                     dig = raw.info['dig']
-                    if dig is None:
-                        dig_missing.append((task, acquisition, run))
-                        continue
-                    elif head_shape is None:
+                    if head_shape is None:
                         head_shape = dig
-                    elif not hsp_equal(dig, head_shape):
-                        raise FileDeficientError(f"Raw file {self._bids_path.basename} for {subject} has head shape that is different from other files; consider defining different visits.")
-
-                    # find if marker pos already exists
-                    for d in digs:
-                        if mrk_equal(dig, d[-1]):
-                            dig_mapping[(task, acquisition, run)] = d[:-1]
-                            break
-                    else:
-                        dig_mapping[(task, acquisition, run)] = (task, acquisition, run)
-                        digs.append((task, acquisition, run, dig))
-
-                # checks for missing digitizer data
-                if len(digs) > 1:
-                    if dig_missing:
-                        n = len(dig_missing)
-                        raise FileDeficientError(f"The raw {plural('file', n)} for {subject}, {plural('recording', n)} {enumeration(dig_missing)} {plural('is', n)} missing digitizer information")
-                else:
-                    # for files missing digitizer, use singe available fwd-recording
-                    for (task, acquisition, run) in dig_missing:
-                        dig_mapping[(task, acquisition, run)] = digs[0][:-1]
-                    # for epoch in super_epochs:
-                    #     if len(set(marker_ids[s] for s in epoch.sessions)) > 1:
-                    #         groups = defaultdict(list)
-                    #         for s in epoch.sessions:
-                    #             groups[marker_ids[s]].append(s)
-                    #         group_desc = ' vs '.join('/'.join(group) for group in groups.values())
-                    #         raise NotImplementedError(f"SuperEpoch {epoch.name} has sessions with incompatible marker positions ({group_desc}); SuperEpochs with different forward solutions are not implemented.")
+                    if dig is None:
+                        raise FileDeficientError(f"The raw file {self._bids_path.basename} is missing digitizer information")
+                    if not hsp_equal(dig, head_shape):
+                        raise FileDeficientError(f"Raw file {self._bids_path.basename} has head shape that is different from other files.")
 
         # save input-state
         save.pickle(input_state, input_state_file)
-        self._dig_sessions = input_state['fwd-sessions']  # {subject: {for_recording: use_recording}}
 
         # Check the cache, delete invalid files
         # =====================================
@@ -1300,9 +1239,9 @@ class MneExperiment(FileTree):
             rm['inv-file'].add({})
 
         # secondary cache files
-        for temp in tuple(rm):
-            for stemp in self._secondary_cache[temp]:
-                rm[stemp].update(rm[temp])
+        # for temp in tuple(rm):
+        #     for stemp in self._secondary_cache[temp]:
+        #         rm[stemp].update(rm[temp])
 
         return rm
 
@@ -1397,22 +1336,20 @@ class MneExperiment(FileTree):
             if inv_mtime:
                 return max(evoked_mtime, inv_mtime)
 
-    def _fwd_mtime(self, subject=None, recording=None, fwd_recording=None):
+    def _fwd_mtime(self):
         "The last time at which input files affecting fwd-file changed"
         trans = self.get('trans-file')
         if exists(trans):
             src = self.get('src-file')
             if exists(src):
-                if fwd_recording is None:
-                    fwd_recording = self._get_fwd_recording(subject, recording)
-                raw_mtime = self._raw_mtime('raw', False, subject, fwd_recording)
+                raw_mtime = self._raw_mtime('raw', False)
                 if raw_mtime:
                     trans_mtime = getmtime(trans)
                     src_mtime = getmtime(src)
                     return max(raw_mtime, trans_mtime, src_mtime)
 
-    def _inv_mtime(self, fwd_recording=None):
-        fwd_mtime = self._fwd_mtime(fwd_recording=fwd_recording)
+    def _inv_mtime(self):
+        fwd_mtime = self._fwd_mtime()
         if fwd_mtime:
             cov_mtime = self._cov_mtime()
             if cov_mtime:
@@ -1713,16 +1650,6 @@ class MneExperiment(FileTree):
             return mrisubjects
         else:
             return FileTree.get_field_values(self, field, exclude)
-
-    def _get_fwd_recording(self, subject: str = None, recording: str = None) -> str:
-        if subject is None:
-            subject = self.get('subject')
-        if recording is None:
-            recording = self.get('recording')
-        try:
-            return self._dig_sessions[subject][recording]
-        except KeyError:
-            raise FileMissingError(f"Raw data missing for {subject}, session {recording}")
 
     def iter(self, fields='subject', exclude=None, values=None, progress_bar=None, **state):
         """
@@ -3118,7 +3045,7 @@ class MneExperiment(FileTree):
             else:
                 self.make_annot()
                 parc = self.get('parc')
-            fwd = load.mne.forward_operator(fwd_file, src, self.get('mri-sdir'), parc, adjacency=False)
+            fwd = load.mne.forward_operator(fwd_file, src, self.get('mri-dir'), parc, adjacency=False)
             if mask:
                 fwd = fwd.sub(source=np.invert(
                     fwd.source.parc.startswith('unknown')))
@@ -3201,11 +3128,9 @@ class MneExperiment(FileTree):
 
         inv = dst = None
         if self.cache_inv:
-            subject = self.get('subject')
-            fwd_recording = self._get_fwd_recording(subject)
             with self._temporary_state:
-                dst = self.get('inv-file', mkdir=True, recording=fwd_recording)
-            if exists(dst) and cache_valid(getmtime(dst), self._inv_mtime(fwd_recording)):
+                dst = self.get('inv-file', mkdir=True)
+            if exists(dst) and cache_valid(getmtime(dst), self._inv_mtime()):
                 inv = mne.minimum_norm.read_inverse_operator(dst)
 
         if inv is None:
@@ -3614,6 +3539,7 @@ class MneExperiment(FileTree):
         else:
             rej_params = self._artifact_rejection[self.get('rej')]
             # load files
+            dss = []
             with self._temporary_state:
                 if reject and rej_params['kind'] is not None:
                     rej_file = self.get('rej-file', task=epoch.session)
@@ -3624,7 +3550,13 @@ class MneExperiment(FileTree):
                         raise FileMissingError(f"The rejection file at {rej_file} does not exist. Run .make_epoch_selection() first.")
                 else:
                     ds_sel = None
-                ds = self.load_events(add_bads=add_bads, data_raw=data_raw, task=epoch.session)
+                if not self._runs:
+                    ds = self.load_events(add_bads=add_bads, data_raw=data_raw, task=epoch.session)
+                for run in self._runs:
+                    ds = self.load_events(add_bads=add_bads, data_raw=data_raw, task=epoch.session, run=run)
+                    dss.append(ds)
+            if self._runs:
+                ds = combine(dss)
 
             # primary event selection
             if epoch.sel:
@@ -4305,7 +4237,7 @@ class MneExperiment(FileTree):
             covariance = cov.make(ds['epochs'], log_path)
         else:
             with self._temporary_state:
-                raw = self.load_raw(session=cov.session)
+                raw = self.load_raw(task=cov.session)
             covariance = cov.make(raw)
         if MNE_VERSION >= V1:
             covariance.save(dest, overwrite=True)
@@ -4385,19 +4317,16 @@ class MneExperiment(FileTree):
 
     def make_fwd(self):
         """Make the forward model"""
-        subject = self.get('subject')
-        fwd_recording = self._get_fwd_recording(subject)
+        raw = self.load_raw(add_bads=False)
         with self._temporary_state:
-            dst = self.get('fwd-file', recording=fwd_recording)
+            dst = self.get('fwd-file')
             if exists(dst):
-                if cache_valid(getmtime(dst), self._fwd_mtime(subject, fwd_recording=fwd_recording)):
+                if cache_valid(getmtime(dst), self._fwd_mtime()):
                     return dst
             # get trans for correct visit for fwd_session
             trans = self.get('trans-file')
 
         src = self.get('src-file', make=True)
-        pipe = self._raw[self.get('raw')]
-        raw = pipe.load(subject, fwd_recording)
         src = mne.read_source_spaces(src)
         self._log.debug(f"make_fwd {basename(dst)}...")
         if self.get('mrisubject') == 'fsaverage':
@@ -4410,6 +4339,7 @@ class MneExperiment(FileTree):
             is_kit = raw.info['kit_system_id'] is not None
         else:
             raise RuntimeError("Unclear how to set ignor_ref for legacy file without kit_system_id")
+
         fwd = mne.make_forward_solution(raw.info, trans, src, bemsol, ignore_ref=is_kit)
         for s, s0 in zip(fwd['src'], src):
             if s['nuse'] != s0['nuse']:
@@ -4520,7 +4450,7 @@ class MneExperiment(FileTree):
 
         """
         pipe = self._get_ica_pipe(state)
-        return pipe.make_ica(self._bids_path)
+        return pipe.make_ica(self._bids_path, list(self._runs) if self._runs else [])
 
     def make_link(self, temp, field, src, dst, redo=False):
         """Make a hard link
@@ -6553,6 +6483,12 @@ class MneExperiment(FileTree):
         bids_path = BIDSPath(root=self.root, **entities)
         bids_path.find_matching_sidecar()
         return splitext(bids_path.basename)[0] + '_' + bids_path.suffix
+
+    def _update_epoch_basename(self, fields: LayeredDict) -> str:
+        return re.sub(r'(task-[^_]+_)|(run-[^_]+_)', '', self._update_raw_basename(fields))
+
+    def _update_test_basename(self, fields: LayeredDict) -> str:
+        return re.sub(r'(sub-[^_]+_)|(task-[^_]+_)|(run-[^_]+_)', '', self._update_raw_basename(fields))
 
     def _eval_parc(self, parc):
         if parc in self._parcs:

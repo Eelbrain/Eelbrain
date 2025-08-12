@@ -69,13 +69,25 @@ The pipeline expects input files in a strictly determined folder/file structure.
 In the schema below, curly brackets indicate slots that the pipeline will replace with specific
 names. For example, ``{subject}`` will be replaced with each specific subject's name::
 
-    Root                            {root}
-    M/EEG directory                    /{data_dir}
-    M/EEG subject                         /{subject}
-    trans-file                               /{subject}-trans.fif
-    raw-file                                 /{subject}_{session}-raw.fif
-    MRI directory                      /mri
-    MRI subject                           /{subject}
+    Root                                 {root}/derivatives/eelbrain
+    cache directory                         /cache
+    preprocessed raw                           /raw/{subject_session}
+    event-file                                    /*_evts.pickle
+    interp-file                                   /*_interp.pickle
+    fwd-file                                      /*_fwd.fif
+    inv-file                                      /*_inv.fif
+    evoked                                     /evoked/{subject_session}/*_ave.fif
+    sensor covariance                          /cov/{subject_session}
+    cov file                                      /*_cov.fif
+    cov info file                                 /*_info.txt
+    test results                               /test/{analysis}_{group}/*.pickle
+    non-BIDS input                          /extra input/{subject_session}
+    ICA                                        /*_ica.fif
+    trans file                                 /*_trans.fif
+    epoch rejection                            /epoch selection/*.pickle
+    freesurfer MRI                          /freesurfer
+    result output files                     /results
+    plot files                              /result plots
 
 
 ``{data_dir}``, the directory in which the pipeline looks for the raw data, is determined by the :attr:`MneExperiment.data_dir` attribute. By default it is ``'meg'``, but it can be changed, for example, to ``'eeg'``. This is merely to make the filenames less confusing when e.g. working with EEG data, it does not influence the analysis in any other way.
