@@ -212,7 +212,7 @@ def test_sample():
     # --------------
     e.set(subject='R0001')
     src = Path(e._bids_path.directory)
-    dst = Path(src.name.replace('R0001', 'R0003'))
+    dst = Path(str(src).replace('R0001', 'R0003'))
     shutil.move(src, dst)
     for path in dst.glob('*.fif'):
         shutil.move(path, dst / path.parent / path.name.replace('R0001', 'R0003'))
@@ -344,7 +344,7 @@ def test_sample_tasks():
     assert_dataobj_equal(dse_super, target, 19)
 
     # conflicting task and epoch settings
-    rej_path = join(root, 'derivatives', 'eelbrain', 'extra input', 'epoch selection', 'sub-R0000_meg_raw-1-40_epoch-target2_rej-man_epoch.pickle')
+    rej_path = join(root, 'derivatives', 'eelbrain', 'extra input', 'R0000', 'epoch selection', 'sub-R0000_meg_raw-1-40_epoch-target2_rej-man_epoch.pickle')
     e.set(epoch='target2', raw='1-40')
     assert not exists(rej_path)
     e.set(task='sample1')
