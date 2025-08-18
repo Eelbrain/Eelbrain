@@ -3,6 +3,7 @@
 from collections import defaultdict
 from dataclasses import dataclass, fields
 import functools
+import inspect
 import logging
 import re
 from typing import Dict
@@ -158,6 +159,61 @@ def deprecated_attribute(version, class_name, replacement):
             return getattr(obj, replacement)
 
     return Dec
+
+
+def deprecate_kwarg(
+        old: str,
+        new: str,
+        since: str = None,
+        remove_in: str = None,
+):
+    """
+    Decorator factory to deprecate a renamed keyword argument.
+
+    Parameters
+    ----------
+    old
+        The deprecated keyword name that used to be accepted.
+    new
+        The new keyword name the function now uses.
+    since
+        Version/date when the deprecation started (for the warning message).
+    remove_in
+        Version/date when support will be removed (for the warning message).
+
+    Notes
+    -----
+    - If both `old` and `new` are provided in a call, a TypeError is raised.
+    - If `old` is used, it is moved to `new` and a DeprecationWarning is emitted.
+    - Positional arguments are unaffected (this handles keyword renames).
+    """
+    def _decorator(func):
+        sig = inspect.signature(func)
+        if new not in sig.parameters:
+            raise ValueError(f"{new=}: {func.__name__!r} has no parameter named {new!r}")
+
+        @functools.wraps(func)
+        def _wrapper(*args, **kwargs):
+            if old in kwargs:
+                if new in kwargs:
+                    raise TypeError(f"{func.__name__} received both {old!r} (deprecated) and {new!r}. Use only {new!r}.")
+                # Build a helpful warning message.
+                parts = [f"Argument {old!r} is deprecated; use {new!r} instead."]
+                if since:
+                    parts.append(f"Deprecated since eelbrain {since}.")
+                if remove_in:
+                    parts.append(f"Support will be removed in eelbrain {remove_in}.")
+                warn(" ".join(parts), DeprecationWarning, stacklevel=2)
+
+                # Move value from old -> new
+                kwargs[new] = kwargs.pop(old)
+
+            # Let Python handle defaults/type errors as usual
+            bound = sig.bind_partial(*args, **kwargs)
+            return func(*bound.args, **bound.kwargs)
+
+        return _wrapper
+    return _decorator
 
 
 def deprecate_ds_arg(func):
