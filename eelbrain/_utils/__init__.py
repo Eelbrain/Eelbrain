@@ -2,7 +2,9 @@
 from .basic import (
     tqdm,
     PickleableDataClass,
-    as_list, as_sequence, ask, deprecated, deprecated_attribute, deprecate_ds_arg, intervals,
+    as_list, as_sequence, ask,
+    deprecated, deprecated_attribute, deprecate_kwarg, deprecate_ds_arg,
+    intervals,
     keydefaultdict, n_decimals, natsorted,
     log_level, set_log_level, ScreenHandler,
 )

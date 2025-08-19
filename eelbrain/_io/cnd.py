@@ -11,12 +11,13 @@ from pymatreader import read_mat
 from .._data_obj import Dataset, Factor, NDVar, Scalar, Sensor, UTS, Var, combine, _matrix_graph
 from .._io.fiff import mne_neighbor_files
 from .._types import PathArg
-from .._utils import ui
+from .._utils import deprecate_kwarg, ui
 
 
 FILETYPES = [("CND files", "*.mat")]
 
 
+@deprecate_kwarg('connectivity', 'adjacency', '0.40', '0.42')
 def read_cnd(
         filename: PathArg = None,
         adjacency: Union[str, Sequence, float] = None,

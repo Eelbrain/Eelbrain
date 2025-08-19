@@ -24,7 +24,7 @@ from .._types import PathArg
 from .._data_obj import Dimension, Factor, Var, NDVar, Dataset, Case, Sensor, Space, SourceSpace, VolumeSourceSpace, UTS, _matrix_graph
 from .._info import BAD_CHANNELS
 from .._text import n_of
-from .._utils import ui, as_list
+from .._utils import deprecate_kwarg, ui, as_list
 from ..mne_fixes import MNE_EVOKED, MNE_RAW, MNE_VOLUME_STC
 from ..mne_fixes._channels import _adjacency_id
 
@@ -345,6 +345,7 @@ def _sensor_info(
     return info
 
 
+@deprecate_kwarg('connectivity', 'adjacency', '0.40', '0.42')
 def epochs(
         ds: Dataset,
         tmin: float = -0.1,
@@ -683,6 +684,7 @@ def mne_epochs(ds, tmin=-0.1, tmax=None, baseline=None, i_start='i_start',
     return epochs
 
 
+@deprecate_kwarg('connectivity', 'adjacency', '0.40', '0.42')
 def sensor_dim(
         info: mne.Info,
         picks: np.ndarray = None,
@@ -808,6 +810,7 @@ def sensor_dim(
     return Sensor(ch_locs, ch_names, sysname, adjacency=adjacency)
 
 
+@deprecate_kwarg('connectivity', 'adjacency', '0.40', '0.42')
 def variable_length_epochs(
         events: Dataset,
         tmin: Union[float, Sequence[float]],
@@ -979,6 +982,7 @@ def variable_length_mne_epochs(
     return out
 
 
+@deprecate_kwarg('connectivity', 'adjacency', '0.40', '0.42')
 def raw_ndvar(
         raw: Union[mne.io.BaseRaw, PathArg],
         i_start: Union[int, Sequence[int]] = None,
@@ -1091,6 +1095,7 @@ def raw_ndvar(
         return out
 
 
+@deprecate_kwarg('connectivity', 'adjacency', '0.40', '0.42')
 def epochs_ndvar(
         epochs: Union[mne.BaseEpochs, PathArg],
         name: str = None,
@@ -1284,6 +1289,7 @@ def evoked_ndvar(evoked, name=None, data=None, exclude='bads', vmax=None,
     return NDVar(x, dims, name, info)
 
 
+@deprecate_kwarg('connectivity', 'adjacency', '0.40', '0.42')
 def forward_operator(
         fwd: Union[str, mne.Forward],
         src: str,
@@ -1394,6 +1400,7 @@ def inverse_operator(inv, src, subjects_dir=None, parc='aparc', name=None):
     return NDVar(k, (source, sensor), {}, name)
 
 
+@deprecate_kwarg('connectivity', 'adjacency', '0.40', '0.42')
 def stc_ndvar(
         stc: Union[_BaseSourceEstimate, Sequence[_BaseSourceEstimate], PathArg],
         subject: str,

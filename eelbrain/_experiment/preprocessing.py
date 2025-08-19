@@ -20,7 +20,7 @@ from .._io.fiff import KIT_NEIGHBORS
 from .._io.txt import read_adjacency
 from .._ndvar import filter_data
 from .._text import enumeration
-from .._utils import as_sequence, ask, user_activity
+from .._utils import as_sequence, ask, deprecate_kwarg, user_activity
 from ..mne_fixes import CaptureLog
 from ..mne_fixes._version import MNE_VERSION, V0_19, V0_24
 from .definitions import compound, log_dict_change, tuple_arg, typed_arg
@@ -200,6 +200,7 @@ class RawSource(RawPipe):
     _dig_sessions: dict = None  # {subject: {for_recording: use_recording}}
     bads_path: str = None  # set on linking
 
+    @deprecate_kwarg('connectivity', 'adjacency', '0.40', '0.42')
     def __init__(
             self,
             filename: str = '{subject}_{recording}-raw.fif',
