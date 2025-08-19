@@ -154,16 +154,6 @@ def update_subjects_dir(
 ) -> None:
     """Update FreeSurfer :attr:`~SourceSpace.subjects_dir` on source-space data
 
-    Examine elements of ``obj`` recursively and replace ``subjects_dir`` on all
-    :class:`NDVars <NDVar>` that have a :class:`SourceSpace` dimension.
-
-    .. note::
-        By default, only ``obj`` itself is updated (i.e., ``obj`` is the
-        relevant :class:`NDVar` or :class:`SourceSpace`).
-        Use the ``depth`` parameter to recursively update objects in
-        ``obj``, for example, ``obj`` may be a list or dictionary containing
-        :class:`NDVars <NDVar>`.
-
     Parameters
     ----------
     obj
@@ -171,12 +161,20 @@ def update_subjects_dir(
     subjects_dir
         New values for subjects_dir.
     depth
-        Recursion depth for examining attributes (default 0, i.e. only apply
-        the function to ``obj`` without recursion). Use a negative number for
-        an exhaustive search.
+        Recursion depth for examining ``obj`` content and attributes
+        (default 0, i.e. only apply the function to ``obj`` without recursion,
+        assuming that ``obj`` is an :class:`NDVar` or :class:`SourceSpace`).
+        Use a negative number for an exhaustive search.
+        Use ``depth`` to replace ``subjects_dir`` on, e.g.,
+        :class:`NDVars <NDVar>` in a :class:`list`, :class:`dict` values,
+        or on object attributes.
 
     Notes
     -----
+    Use the ``depth`` parameter to recursively update objects in
+    ``obj``, for example, ``obj`` may be a list or :class:`dict` containing
+    :class:`NDVars <NDVar>`, or a :class:`BoostingResult` object.
+
     The following elements are searched:
 
       - Attributes of objects that have a ``__dict__``.
