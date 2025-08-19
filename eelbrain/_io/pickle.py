@@ -157,7 +157,7 @@ def update_subjects_dir(
     Examine elements of ``obj`` recursively and replace ``subjects_dir`` on all
     :class:`NDVars <NDVar>` that have a :class:`SourceSpace` dimension.
 
-    ... note::
+    .. note::
         By default, only ``obj`` itself is updated (i.e., ``obj`` is the
         relevant :class:`NDVar` or :class:`SourceSpace`).
         Use the ``depth`` parameter to recursively update objects in
