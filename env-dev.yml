@@ -53,7 +53,7 @@ dependencies:
 - pingouin
 #- pytest-sugar  # errors on Linux
 # testing of R integration
-- rpy2
+- rpy2 != 3.6.2
 - r-car
 # - r-ez  # requires ncil channel
 # plotting brains
