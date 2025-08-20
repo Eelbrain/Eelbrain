@@ -17,7 +17,7 @@ from .._utils import deprecate_kwarg, ui
 FILETYPES = [("CND files", "*.mat")]
 
 
-@deprecate_kwarg('connectivity', 'adjacency', '0.40', '0.42')
+@deprecate_kwarg('connectivity', 'adjacency', '0.41', '0.42')
 def read_cnd(
         filename: PathArg = None,
         adjacency: Union[str, Sequence, float] = None,

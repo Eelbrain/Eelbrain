@@ -8034,7 +8034,7 @@ class Dimension:
     _axis_unit = None
     _default_adjacency = 'none'  # for loading old pickles
 
-    @deprecate_kwarg('connectivity', 'adjacency', '0.40', '0.42')
+    @deprecate_kwarg('connectivity', 'adjacency', '0.41', '0.42')
     def __init__(
             self,
             name: str,
@@ -8435,7 +8435,7 @@ class Case(Dimension):
     """
     _DIMINDEX_RAW_TYPES = INT_TYPES + (slice, list)
 
-    @deprecate_kwarg('connectivity', 'adjacency', '0.40', '0.42')
+    @deprecate_kwarg('connectivity', 'adjacency', '0.41', '0.42')
     def __init__(
             self,
             n: int,
@@ -8678,7 +8678,7 @@ class Categorial(Dimension):
           ``uint32``, property checks are disabled to improve efficiency.
 
     """
-    @deprecate_kwarg('connectivity', 'adjacency', '0.40', '0.42')
+    @deprecate_kwarg('connectivity', 'adjacency', '0.41', '0.42')
     def __init__(
             self,
             name: str,
@@ -8822,7 +8822,7 @@ class Scalar(Dimension):
     """
     _default_adjacency = 'grid'
 
-    @deprecate_kwarg('connectivity', 'adjacency', '0.40', '0.42')
+    @deprecate_kwarg('connectivity', 'adjacency', '0.41', '0.42')
     def __init__(
             self,
             name: str,
@@ -9144,7 +9144,7 @@ class Sensor(Dimension):
     _default_adjacency = 'custom'
     _proj_aliases = {'left': 'x-', 'right': 'x+', 'back': 'y-', 'front': 'y+', 'top': 'z+', 'bottom': 'z-'}
 
-    @deprecate_kwarg('connectivity', 'adjacency', '0.40', '0.42')
+    @deprecate_kwarg('connectivity', 'adjacency', '0.41', '0.42')
     def __init__(
             self,
             locations: Sequence,
@@ -9889,7 +9889,7 @@ class SourceSpaceBase(Dimension):
     _default_adjacency = 'custom'
     _vertex_re = re.compile(r'([RL])(\d+)')
 
-    @deprecate_kwarg('connectivity', 'adjacency', '0.40', '0.42')
+    @deprecate_kwarg('connectivity', 'adjacency', '0.41', '0.42')
     def __init__(
             self,
             vertices: List[ArrayLike],
@@ -10409,7 +10409,7 @@ class SourceSpace(SourceSpaceBase):
     """
     _kinds = ('ico', 'oct')
 
-    @deprecate_kwarg('connectivity', 'adjacency', '0.40', '0.42')
+    @deprecate_kwarg('connectivity', 'adjacency', '0.41', '0.42')
     def __init__(
             self,
             vertices: List[ArrayLike],
@@ -10767,7 +10767,7 @@ class VolumeSourceSpace(SourceSpaceBase):
     _kinds = ('vol',)
     _default_parc = None  # early version of mne-Python did not scale parcellations for scaled brains
 
-    @deprecate_kwarg('connectivity', 'adjacency', '0.40', '0.42')
+    @deprecate_kwarg('connectivity', 'adjacency', '0.41', '0.42')
     def __init__(
             self,
             vertices: ArrayLike,

@@ -200,7 +200,7 @@ class RawSource(RawPipe):
     _dig_sessions: dict = None  # {subject: {for_recording: use_recording}}
     bads_path: str = None  # set on linking
 
-    @deprecate_kwarg('connectivity', 'adjacency', '0.40', '0.42')
+    @deprecate_kwarg('connectivity', 'adjacency', '0.41', '0.42')
     def __init__(
             self,
             filename: str = '{subject}_{recording}-raw.fif',
