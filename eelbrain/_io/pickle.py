@@ -167,7 +167,7 @@ def update_subjects_dir(
         Default (0) only applies the function to ``obj`` without recursion,
         assuming that ``obj`` is itself an :class:`~eelbrain.NDVar` or :class:`~eelbrain.SourceSpace`.
         Use ``depth`` to replace ``subjects_dir`` on, e.g.,
-        :class:`NDVars <~eelbrain.NDVar>` in a :class:`list`, :class:`dict` values,
+        :class:`NDVars <eelbrain.NDVar>` in a :class:`list`, :class:`dict` values,
         or on object attributes.
         Use a negative number for an exhaustive search.
 
