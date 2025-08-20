@@ -338,12 +338,14 @@ class UTSStat(LegendMixin, XAxisMixin, YLimMixin, EelFigure):
 
 
 class UTS(TimeSlicerEF, LegendMixin, YLimMixin, XAxisMixin, EelFigure):
-    """Value by time plot for UTS data
+    """Value by time plot for uniform time series (UTS) data
 
     Parameters
     ----------
     y : (list of) NDVar
-        Uts data to plot.
+        UTS data to plot. For a list (``[a, b]``) each item will be plotted
+        separately. To combine multiple UTSs in a common axes, use a nested
+        list (``[[a, b]]`` would plot ``a`` and ``b`` together in a common axes).
     xax : categorial
         Make separate axes for each category in this categorial model.
     axtitle : bool | sequence of str
@@ -352,7 +354,7 @@ class UTS(TimeSlicerEF, LegendMixin, YLimMixin, XAxisMixin, EelFigure):
     data : Dataset
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
-    sub : str | array
+    sub
         Specify a subset of the data.
     xlabel
         X-axis label. By default the label is inferred from the data.

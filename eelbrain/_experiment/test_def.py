@@ -449,7 +449,7 @@ TEST_CLASSES = {
 class TestDims:
     """Data shape for test
 
-    Paremeters
+    Parameters
     ----------
     string : str
         String describing data.

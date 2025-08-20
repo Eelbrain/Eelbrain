@@ -44,7 +44,11 @@ class EelUnpickler(Unpickler):
         return Unpickler.find_class(self, module, name)
 
 
-def pickle(obj: Any, dest: PathArg = None, protocol: int = HIGHEST_PROTOCOL):
+def pickle(
+        obj: Any,
+        dest: PathArg = None,
+        protocol: int = HIGHEST_PROTOCOL,
+) -> None:
     """Pickle a Python object (see :mod:`pickle`).
 
     Parameters
@@ -55,7 +59,7 @@ def pickle(obj: Any, dest: PathArg = None, protocol: int = HIGHEST_PROTOCOL):
         Path to destination where to save the file. If no destination is
         provided, a file dialog is shown. If a destination without extension is
         provided, ``.pickle`` is appended.
-    protocol : int
+    protocol
         Pickle protocol (default is ``pickle.HIGHEST_PROTOCOL``).
 
         .. Warning::
@@ -143,29 +147,41 @@ def unpickle(path: PathArg = None):
             raise EOFError(f"Corrupted file, writing may have been interrupted: {path}")
 
 
-def update_subjects_dir(obj: object, subjects_dir: PathArg, depth: int = 0) -> None:
-    """Update NDVar SourceSpace.subjects_dir attributes in place
+def update_subjects_dir(
+        obj: object,
+        subjects_dir: PathArg,
+        depth: int = 0,
+) -> None:
+    """Update FreeSurfer :attr:`~eelbrain.SourceSpace.subjects_dir` on source-space data
 
-    Examine elements of ``obj`` recursively and replace ``subjects_dir`` on all
-    NDVars with SourceSpace dimension that are found.
+    Operates in-place.
 
     Parameters
     ----------
     obj
-        Object to examine.
+        Object on which to replace :attr:`~eelbrain.SourceSpace.subjects_dir`.
     subjects_dir
         New values for subjects_dir.
     depth
-        Recursion depth for examining attributes (default 0, i.e. only apply to
-        ``obj`` without recursion). Negative number for exhaustive search.
+        Depth for visiting ``obj`` content and attributes.
+        Default (0) only applies the function to ``obj`` without recursion,
+        assuming that ``obj`` is itself an :class:`~eelbrain.NDVar` or :class:`~eelbrain.SourceSpace`.
+        Use ``depth`` to replace ``subjects_dir`` on, e.g.,
+        :class:`NDVars <eelbrain.NDVar>` in a :class:`list`, :class:`dict` values,
+        or on object attributes.
+        Use a negative number for an exhaustive search.
 
     Notes
     -----
+    Use the ``depth`` parameter to recursively update content and attributes in
+    ``obj``, for example, ``obj`` may be a list or :class:`dict` containing
+    :class:`NDVars <eelbrain.NDVar>`, or a :class:`~eelbrain.BoostingResult` object.
+
     The following elements are searched:
 
       - Attributes of objects that have a ``__dict__``.
-      - ``dict`` values.
-      - list/tuple items.
+      - :class:`dict` values.
+      - :class:`list` and :class:`tuple` items.
     """
     if isinstance(obj, SourceSpaceBase):
         if obj.subjects_dir != subjects_dir:

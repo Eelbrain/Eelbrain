@@ -801,7 +801,11 @@ def sensor_dim(
             else:
                 missing = [name for name in ch_names if name not in adj_ch_names]
                 unused = [name for name in adj_ch_names if name not in ch_names]
-                raise IndexError(f"{adjacency=} is missing channels {', '.join(missing)}\nUnused channels in adjacency: {', '.join(unused)}")
+                raise IndexError(
+                    f"{adjacency=} is missing channels {', '.join(missing)}\n"
+                    f"Unused channels in adjacency: {', '.join(unused)}\n"
+                    f"If the builtin sensor adjacency is inappropriate for this dataset, consider specifying the sensor adjacency manually."
+                )
 
         adjacency = _matrix_graph(c_matrix)
     elif adjacency in (None, False):
