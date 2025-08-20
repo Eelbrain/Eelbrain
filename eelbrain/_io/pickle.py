@@ -152,28 +152,30 @@ def update_subjects_dir(
         subjects_dir: PathArg,
         depth: int = 0,
 ) -> None:
-    """Update FreeSurfer :attr:`~SourceSpace.subjects_dir` on source-space data
+    """Update FreeSurfer :attr:`~eelbrain.SourceSpace.subjects_dir` on source-space data
+
+    Operates in-place.
 
     Parameters
     ----------
     obj
-        Object to examine.
+        Object on which to replace :attr:`~eelbrain.SourceSpace.subjects_dir`.
     subjects_dir
         New values for subjects_dir.
     depth
-        Recursion depth for examining ``obj`` content and attributes
-        (default 0, i.e. only apply the function to ``obj`` without recursion,
-        assuming that ``obj`` is an :class:`NDVar` or :class:`SourceSpace`).
-        Use a negative number for an exhaustive search.
+        Depth for visiting ``obj`` content and attributes.
+        Default (0) only applies the function to ``obj`` without recursion,
+        assuming that ``obj`` is itself an :class:`~eelbrain.NDVar` or :class:`~eelbrain.SourceSpace`.
         Use ``depth`` to replace ``subjects_dir`` on, e.g.,
-        :class:`NDVars <NDVar>` in a :class:`list`, :class:`dict` values,
+        :class:`NDVars <~eelbrain.NDVar>` in a :class:`list`, :class:`dict` values,
         or on object attributes.
+        Use a negative number for an exhaustive search.
 
     Notes
     -----
-    Use the ``depth`` parameter to recursively update objects in
+    Use the ``depth`` parameter to recursively update content and attributes in
     ``obj``, for example, ``obj`` may be a list or :class:`dict` containing
-    :class:`NDVars <NDVar>`, or a :class:`BoostingResult` object.
+    :class:`NDVars <eelbrain.NDVar>`, or a :class:`~eelbrain.BoostingResult` object.
 
     The following elements are searched:
 
