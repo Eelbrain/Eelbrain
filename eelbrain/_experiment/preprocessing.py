@@ -6,9 +6,9 @@ import fnmatch
 from itertools import chain
 import logging
 from os import makedirs, remove
-from os.path import basename, dirname, exists, getmtime, join, splitext
+from os.path import basename, dirname, exists, getmtime
 from pathlib import Path
-from typing import Any, Callable, Collection, Dict, List, Literal, Sequence, Tuple, Union
+from typing import Any, Collection, Dict, List, Literal, Sequence, Tuple, Union
 
 import mne
 from scipy import signal
@@ -25,9 +25,9 @@ from .._text import enumeration
 from .._utils import as_sequence, ask, deprecate_kwarg, user_activity
 from ..mne_fixes import CaptureLog
 from ..mne_fixes._version import MNE_VERSION, V0_19, V0_24
-from .definitions import compound, log_dict_change, tuple_arg, typed_arg
+from .definitions import log_dict_change, tuple_arg, typed_arg
 from .exceptions import FileMissingError
-from .preprocessing import RawPipe, CachedRawPipe
+from .preprocessing import RawPipe
 
 AddBadsArg = Union[bool, Sequence[str]]
 PreloadArg = Union[bool, Literal[-1]]
@@ -293,10 +293,10 @@ class RawSource(RawPipe):
     def cache(self, path: BIDSPath):
         "Make sure the file exists and is up to date"
         raw_path = self._get_file_path(path)
-        if raw_path == None:
+        if raw_path is None:
             raise FileMissingError(f"Raw input file does not exist at expected location {raw_path}")
         return raw_path
-    
+
     def _get_file_path(
             self,
             path: BIDSPath,
@@ -329,10 +329,10 @@ class RawSource(RawPipe):
                     return v
         kit_system_id = info.get('kit_system_id')
         return KIT_NEIGHBORS.get(kit_system_id)
-    
+
     def _get_channels_df(self, path: BIDSPath) -> pd.DataFrame | None:
         bads_path = self._get_file_path(path, 'bads')
-        if bads_path == None:
+        if bads_path is None:
             return None
         return pd.read_csv(bads_path, sep='\t')
 
@@ -342,7 +342,7 @@ class RawSource(RawPipe):
             existing: Collection[str] = None,
     ) -> list[str]:
         channels_df = self._get_channels_df(path)
-        if (channels_df == None) or ('status' not in channels_df.columns.tolist()):
+        if (channels_df is None) or ('status' not in channels_df.columns.tolist()):
             self.log.info("Generating bad_channels for %s %s", path.entities['subject'], path.entities['recording'])
             self.make_bad_channels_auto(path)
         bad_chs = channels_df.query('status == "bad"')['name'].tolist()
@@ -357,7 +357,7 @@ class RawSource(RawPipe):
             redo: bool,
     ) -> None:
         channels_df = self._get_channels_df(path)
-        if (channels_df == None) or ('status' not in channels_df.columns.tolist()):
+        if (channels_df is None) or ('status' not in channels_df.columns.tolist()):
             old_bads = channels_df.query('status == "bad"')['name'].tolist()
         else:
             old_bads = None
@@ -400,7 +400,7 @@ class RawSource(RawPipe):
     ) -> float | None:
         raw_path = self._get_file_path(path)
         bads_path = self._get_file_path(path)
-        if raw_path == None or (bad_chs and bads_path == None):
+        if raw_path is None or (bad_chs and bads_path is None):
             return None
         if bad_chs:
             return max(getmtime(raw_path), getmtime(bads_path))
@@ -1307,7 +1307,7 @@ def ask_to_delete_ica_files(
         raw: mne.io.BaseRaw,
         status: str,
         filenames: list[str],
-    ) -> None:
+) -> None:
     "Ask whether outdated ICA files should be removed and act accordingly"
     if status == 'new':
         msg = ("The definition for raw=%r has been added, but ICA-files "
