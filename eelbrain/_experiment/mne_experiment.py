@@ -6478,7 +6478,7 @@ class MneExperiment(FileTree):
     def _update_raw_basename(self, fields: LayeredDict) -> str:
         entities = {
             k: v for k, v in fields.items()
-            if (k in BIDS_ENTITY_KEYS) and v
+            if (k in BIDS_ENTITY_KEYS) and v and ('*' not in v)
         }
         bids_path = BIDSPath(root=self.root, **entities)
         bids_path.find_matching_sidecar()
