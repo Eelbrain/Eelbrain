@@ -6481,7 +6481,7 @@ class MneExperiment(FileTree):
             if (k in BIDS_ENTITY_KEYS) and v and ('*' not in v)
         }
         bids_path = BIDSPath(root=self.root, **entities)
-        bids_path.find_matching_sidecar()
+        bids_path.find_matching_sidecar(on_error='warn')
         return splitext(bids_path.basename)[0]
 
     def _update_epoch_basename(self, fields: LayeredDict) -> str:
