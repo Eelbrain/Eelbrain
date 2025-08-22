@@ -24,7 +24,7 @@ from .._io.fiff import KIT_NEIGHBORS
 from .._io.txt import read_adjacency
 from .._ndvar import filter_data
 from .._text import enumeration
-from .._utils import as_sequence, ask, deprecate_kwarg, user_activity
+from .._utils import ask, deprecate_kwarg, user_activity
 from ..mne_fixes import CaptureLog
 from ..mne_fixes._version import MNE_VERSION, V0_19, V0_24
 from .definitions import log_dict_change, tuple_arg, typed_arg

@@ -7119,6 +7119,6 @@ class MneExperiment(FileTree):
     def _update_bids_path(self):
         entities = {
             k: v for k, v in self._fields.items()
-            if (k in BIDS_ENTITY_KEYS) and v
+            if (k in BIDS_ENTITY_KEYS) and v and ('*' not in v)
         }
         self._bids_path.update(**entities)
