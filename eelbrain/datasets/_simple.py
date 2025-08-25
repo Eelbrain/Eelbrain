@@ -649,7 +649,7 @@ def setup_samples_experiment(
             )
 
     # freesurfer
-    mri_sdir = root / 'derivatives' / 'eelbrain' / 'freesurfer'
+    mri_sdir = root / 'derivatives' / 'freesurfer'
     mri_sdir.mkdir(parents=True)
     # copy rudimentary fsaverage
     surf_names = ['inflated', 'white', 'orig', 'orig_avg', 'curv', 'sphere']
@@ -683,6 +683,6 @@ def setup_samples_experiment(
                                  [ 0.,          0.,          0.,          1.        ]])
     for subject in subjects:
         mne.scale_mri('fsaverage', subject, 1., subjects_dir=mri_sdir, skip_fiducials=True, labels=False)
-        extra_dir = root / 'derivatives' / 'eelbrain' / 'extra input' / subject
-        extra_dir.mkdir(parents=True)
-        trans.save(str(extra_dir / f'{subject}_trans.fif'))
+        trans_dir = root / 'derivatives' / 'trans' / subject
+        trans_dir.mkdir(parents=True)
+        trans.save(str(trans_dir / f'{subject}_trans.fif'))
