@@ -69,7 +69,11 @@ The pipeline expects input files in a strictly determined folder/file structure.
 In the schema below, curly brackets indicate slots that the pipeline will replace with specific
 names. For example, ``{subject}`` will be replaced with each specific subject's name::
 
-    Root                                 {root}/derivatives/eelbrain
+    derivatives root                  {root}/derivatives
+    ICA                                  /ica/*_ica.fif
+    trans file                           /trans/*_trans.fif
+    freesurfer MRI                       /freesurfer
+    Eelbrain generated files             /eelbrain
     cache directory                         /cache
     preprocessed raw                           /raw/{subject_session}
     event-file                                    /*_evts.pickle
@@ -78,13 +82,9 @@ names. For example, ``{subject}`` will be replaced with each specific subject's 
     cov file                                      /*_cov.fif
     cov info file                                 /*_info.txt
     inv-file                                      /*_inv.fif
-    evoked                                     /evoked/{subject_session}/*_ave.fif
+    evoked                                     /evoked/*_ave.fif
     test results                               /test/{group}_{analysis}/*.pickle
-    non-BIDS input                          /extra input/{subject_session}
-    ICA                                        /*_ica.fif
-    trans file                                 /*_trans.fif
-    epoch rejection                            /epoch selection/*_epoch.pickle
-    freesurfer MRI                          /freesurfer
+    epoch rejection                         /epoch selection/*_epoch.pickle
     result output files                     /results
     plot files                              /result plots
 

@@ -378,25 +378,25 @@ class MneExperiment(FileTree):
         self._templates = {
             'equalize_evoked_count': ('', 'eq'),
 
-            'deriv-dir': join('{root}', 'derivatives', 'eelbrain'),
+            'deriv-dir': join('{root}', 'derivatives'),
 
-            # extra input files
-            'extra-dir': join('{deriv-dir}', 'extra input', '{subject_session}'),
             # one ica-file for each task group
-            'ica-file': join('{extra-dir}', '{epoch_basename}_raw-{raw}_ica.fif'),  # hard-coded in RawPipe
-            'trans-file': join('{extra-dir}', '{mrisubject}_trans.fif'),
+            'ica-file': join('{deriv-dir}', 'ica', '{epoch_basename}_raw-{raw}_ica.fif'),  # hard-coded in RawPipe
+            'trans-file': join('{deriv-dir}', 'trans', '{mrisubject}_trans.fif'),
             # one rej-file for each raw
-            'rej-file': join('{extra-dir}', 'epoch selection', '{epoch_basename}_raw-{raw}_epoch-{epoch}_rej-{rej}_epoch.pickle'),
+            'rej-file': join('{deriv-dir}', 'eelbrain', 'epoch selection', '{epoch_basename}_raw-{raw}_epoch-{epoch}_rej-{rej}_epoch.pickle'),
 
+            'log-dir': join('{deriv-dir}', 'eelbrain', 'logs'),
+            'edf-file': join('{log-dir}', '*.edf'),
 
-            'cache-dir': join('{deriv-dir}', 'cache'),
+            'cache-dir': join('{deriv-dir}', 'eelbrain', 'cache'),
             'raw-cache-dir': join('{cache-dir}', 'raw', '{subject_session}'),  # hard-coded in RawPipe
 
             'event-file': join('{raw-cache-dir}', '{raw_basename}_raw-{raw}_evts.pickle'),
             'interp-file': join('{raw-cache-dir}', '{raw_basename}_raw-{raw}_interp.pickle'),
 
             # evoked
-            'evoked-file': join('{cache-dir}', 'evoked', '{subject_session}', '{epoch_basename}_raw-{raw}_epoch-{epoch}_rej-{rej}_model-{model}_count-{equalize_evoked_count}_ave.fif'),
+            'evoked-file': join('{cache-dir}', 'evoked', '{epoch_basename}_raw-{raw}_epoch-{epoch}_rej-{rej}_model-{model}_count-{equalize_evoked_count}_ave.fif'),
 
             # forward modeling:
             'fwd-file': join('{raw-cache-dir}', '{epoch_basename}_mrisubject-{mrisubject}_src-{src}_fwd.fif'),
@@ -439,21 +439,20 @@ class MneExperiment(FileTree):
             #            > subject
 
             # (method) plots
-            # 'methods-dir': join('{deriv-dir}', 'methods'),
+            'methods-dir': join('{deriv-dir}', 'eelbrain', 'methods'),
+            'res-dir': join('{deriv-dir}', 'eelbrain', 'results'),
 
-            # 'res-dir': join('{deriv-dir}', 'results'),
-            # 'res-file': join('{res-dir}', '{analysis}', '{resname}.{ext}'),
-            # 'res-deep-file': join('{res-dir}', '{analysis}', '{folder}', '{resname}.{ext}'),
-            # 'report-file': join('{res-dir}', '{analysis}_{group}', '{folder}', '{test_desc}.html'),
-            # 'group-mov-file': join('{res-dir}', '{analysis}_{group}', '{epoch_visit}_{test_options}_{resname}.mov'),
-            # 'subject-res-dir': join('{res-dir}', '{analysis}_subjects'),
-            # 'subject-spm-report': join('{subject-res-dir}', '{test}_{epoch_visit}_{test_options}', '{subject}.html'),
-            # 'subject-mov-file': join('{subject-res-dir}', '{epoch_visit}_{test_options}_{resname}', '{subject}.mov'),
+            'res-file': join('{res-dir}', '{analysis}', '{resname}.{ext}'),
+            'res-deep-file': join('{res-dir}', '{analysis}', '{folder}', '{resname}.{ext}'),
+            'report-file': join('{res-dir}', '{group}_{analysis}', '{folder}', '{test_basename}_epoch-{epoch}_test-{test}_options-{test_options}.html'),
+            'group-mov-file': join('{res-dir}', '{group}_{analysis}', '{epoch_basename}_{epoch}_{test_options}_{resname}.mov'),
+            'subject-res-dir': join('{res-dir}', '{analysis}_subjects'),
+            'subject-spm-report': join('{subject-res-dir}', '{epoch_basename}_{epoch}_{test}_{test_options}', '{subject}.html'),
+            'subject-mov-file': join('{subject-res-dir}', '{epoch_basename}_{epoch}_{test_options}_{resname}', '{subject}.mov'),
 
             # plots
             # plot corresponding to a report (and using same folder structure)
-            # 'res-plot-root': join('{deriv-dir}', 'result plots'),
-            # 'res-plot-dir': join('{res-plot-root}', '{analysis} {group}', '{folder}', '{test_desc}'),
+            'res-plot-dir': join('{deriv-dir}', 'eelbrain', 'result plots', '{group}_{analysis}', '{folder}', '{test_basename}_epoch-{epoch}_test-{test}_options-{test_options}'),
 
             # MRAT
             # 'mrat_condition': '',
@@ -610,6 +609,7 @@ class MneExperiment(FileTree):
         # raw
         raw_default = sorted(self.raw)[0] if self.raw else None
         self._register_field('raw', sorted(self._raw), default=raw_default, repr=True)
+        self._register_field('raw_dir', depends_on=BIDS_ENTITY_KEYS, slave_handler=self._update_raw_dir, repr=True)
         self._register_field('raw_basename', depends_on=BIDS_ENTITY_KEYS, slave_handler=self._update_raw_basename, repr=True)
         self._register_field('epoch_basename', depends_on=[key for key in BIDS_ENTITY_KEYS if key not in ('task', 'run')], slave_handler=self._update_epoch_basename, repr=True)
         self._register_field('test_basename', depends_on=[key for key in BIDS_ENTITY_KEYS if key not in ('subject', 'task', 'run')], slave_handler=self._update_test_basename, repr=True)
@@ -640,8 +640,8 @@ class MneExperiment(FileTree):
         self._register_field('test_options', repr=False)
         # self._register_field('name', repr=False)
         self._register_field('folder', repr=False)
-        # self._register_field('resname', repr=False)
-        # self._register_field('ext', repr=False)
+        self._register_field('resname', repr=False)
+        self._register_field('ext', repr=False)
         self._register_field('test_dims', repr=False)
 
         # compounds
@@ -804,98 +804,91 @@ class MneExperiment(FileTree):
             now = time.time() + IS_WINDOWS  # Windows seems to have rounding issue
             if state_mtime > now:
                 raise RuntimeError(f"The cache's time stamp is in the future ({time.ctime(state_mtime)}). If the system time ({time.ctime(now)}) is wrong, adjust the system clock; if not, delete the eelbrain-cache folder.")
-            # cache_state = load.unpickle(cache_state_path)
-            # cache_state_v = cache_state.setdefault('version', 0)
-            # # TODO: Maybe break backwards compatibility in cache as well
-            # if cache_state_v < CACHE_STATE_VERSION:
-            #     log.debug("Updating cache-state %i -> %i", cache_state_v, CACHE_STATE_VERSION)
-            #     save_state = deepcopy(save_state)
-            #     self._state_backwards_compat(cache_state_v, new_state, cache_state)
-            #     self._migrate_cache(cache_state_v, cache_dir)
-            # elif cache_state_v > CACHE_STATE_VERSION:
-            #     raise RuntimeError("The cache is from a newer version of Eelbrain than you are currently using. Either upgrade Eelbrain or delete the cache folder.")
+            cache_state = load.unpickle(cache_state_path)
+            cache_state_v = cache_state.setdefault('version', 0)
+            if cache_state_v != CACHE_STATE_VERSION:
+                raise RuntimeError("The cache is from a different version of Eelbrain than you are currently using. Please delete the cache folder.")
 
-            # # Find modified definitions
-            # # =========================
-            # # TODO: Update this invalid cache removal to work with BIDS
-            # invalid_cache = self._check_cache(new_state, cache_state, root)
+            # Find modified definitions
+            # =========================
+            invalid_cache = self._check_cache(new_state, cache_state, root)
 
-            # # Collect invalid files
-            # # =====================
-            # if invalid_cache or cache_state_v < 2:
-            #     rm = self._collect_invalid_files(invalid_cache, new_state, cache_state)
+            # Collect invalid files
+            # =====================
+            if invalid_cache:
+                rm = self._collect_invalid_files(invalid_cache, new_state, cache_state)
 
-            #     # find actual files to delete
-            #     log.debug("Outdated cache files:")
-            #     files = set()
-            #     result_files = []
-            #     for temp, arg_dicts in rm.items():
-            #         for args in arg_dicts:
-            #             pattern = self._glob_pattern(temp, True, vmatch=False, **args)
-            #             filenames = glob(pattern)
-            #             files.update(filenames)
-            #             # log
-            #             rel_pattern = relpath(pattern, root)
-            #             rel_filenames = sorted('  ' + relpath(f, root) for f in filenames)
-            #             log.debug(' >%s', rel_pattern)
-            #             for filename in rel_filenames:
-            #                 log.debug(filename)
-            #             # message to the screen unless log is already displayed
-            #             if rel_pattern.startswith('results'):
-            #                 result_files.extend(rel_filenames)
+                # find actual files to delete
+                log.debug("Outdated cache files:")
+                files = set()
+                result_files = []
+                for temp, arg_dicts in rm.items():
+                    for args in arg_dicts:
+                        pattern = self._glob_pattern(temp, True, vmatch=False, **args)
+                        filenames = glob(pattern)
+                        files.update(filenames)
+                        # log
+                        rel_pattern = relpath(pattern, join(self.get('deriv-dir'), 'eelbrain'))
+                        rel_filenames = sorted('  ' + relpath(f, join(self.get('deriv-dir'), 'eelbrain')) for f in filenames)
+                        log.debug(' >%s', rel_pattern)
+                        for filename in rel_filenames:
+                            log.debug(filename)
+                        # message to the screen unless log is already displayed
+                        if rel_pattern.startswith('results'):
+                            result_files.extend(rel_filenames)
 
-            #     # handle invalid files
-            #     n_result_files = len(result_files)
-            #     # Only ask for result files
-            #     if n_result_files and self.auto_delete_cache == 'auto' and not self.auto_delete_results:
-            #         if self._screen_log_level > logging.DEBUG:
-            #             msg = ["Outdated result files detected:", *result_files]
-            #         else:
-            #             msg = []
-            #         msg.append(f"Delete {n_result_files} outdated results?")
-            #         help_text = CACHE_HELP.format(experiment=self.__class__.__name__, filetype='result')
-            #         command = ask('\n'.join(msg), options={'delete': 'delete invalid result files', 'abort': 'raise an error'}, help=help_text)
-            #         if command == 'abort':
-            #             raise RuntimeError("User aborted invalid result deletion")
-            #         elif command != 'delete':
-            #             raise RuntimeError("command=%r" % (command,))
-            #     # Ask for any files
-            #     if files and self.auto_delete_cache != 'auto':
-            #         options = {'delete': 'delete invalid files', 'abort': 'raise an error'}
-            #         if self.auto_delete_cache == 'debug':
-            #             options.update({'ignore': 'proceed without doing anything', 'revalidate': "don't delete any cache files but write a new cache-state file"})
-            #         elif self.auto_delete_cache != 'ask':
-            #             raise ValueError(f"{self.__class__.__name__}.auto_delete_cache={self.auto_delete_cache!r}")
-            #         help_text = CACHE_HELP.format(experiment=self.__class__.__name__, filetype='cache and/or result')
-            #         command = ask("Outdated cache files. Choose 'delete' to proceed. WARNING: only choose 'ignore' or 'revalidate' if you know what you are doing.", options=options, help=help_text)
-            #         if command == 'delete':
-            #             pass
-            #         elif command == 'abort':
-            #             raise RuntimeError("User aborted invalid cache deletion")
-            #         elif command == 'ignore':
-            #             log.warning("Ignoring invalid cache")
-            #             return
-            #         elif command == 'revalidate':
-            #             log.warning("Revalidating invalid cache")
-            #             files.clear()
-            #         else:
-            #             raise RuntimeError("command=%s" % repr(command))
+                # handle invalid files
+                n_result_files = len(result_files)
+                # Only ask for result files
+                if n_result_files and self.auto_delete_cache == 'auto' and not self.auto_delete_results:
+                    if self._screen_log_level > logging.DEBUG:
+                        msg = ["Outdated result files detected:", *result_files]
+                    else:
+                        msg = []
+                    msg.append(f"Delete {n_result_files} outdated results?")
+                    help_text = CACHE_HELP.format(experiment=self.__class__.__name__, filetype='result')
+                    command = ask('\n'.join(msg), options={'delete': 'delete invalid result files', 'abort': 'raise an error'}, help=help_text)
+                    if command == 'abort':
+                        raise RuntimeError("User aborted invalid result deletion")
+                    elif command != 'delete':
+                        raise RuntimeError("command=%r" % (command,))
+                # Ask for any files
+                if files and self.auto_delete_cache != 'auto':
+                    options = {'delete': 'delete invalid files', 'abort': 'raise an error'}
+                    if self.auto_delete_cache == 'debug':
+                        options.update({'ignore': 'proceed without doing anything', 'revalidate': "don't delete any cache files but write a new cache-state file"})
+                    elif self.auto_delete_cache != 'ask':
+                        raise ValueError(f"{self.__class__.__name__}.auto_delete_cache={self.auto_delete_cache!r}")
+                    help_text = CACHE_HELP.format(experiment=self.__class__.__name__, filetype='cache and/or result')
+                    command = ask("Outdated cache files. Choose 'delete' to proceed. WARNING: only choose 'ignore' or 'revalidate' if you know what you are doing.", options=options, help=help_text)
+                    if command == 'delete':
+                        pass
+                    elif command == 'abort':
+                        raise RuntimeError("User aborted invalid cache deletion")
+                    elif command == 'ignore':
+                        log.warning("Ignoring invalid cache")
+                        return
+                    elif command == 'revalidate':
+                        log.warning("Revalidating invalid cache")
+                        files.clear()
+                    else:
+                        raise RuntimeError("command=%s" % repr(command))
 
-            #     # delete invalid files
-            #     if files:
-            #         n_cache_files = len(files) - n_result_files
-            #         descs = []
-            #         if n_result_files:
-            #             descs.append(f"{n_result_files} invalid result files")
-            #         if n_cache_files:
-            #             descs.append(f"{n_cache_files} invalid cache files")
-            #         log.info(f"Deleting {' and '.join(descs)}...")
-            #         for path in files:
-            #             os.remove(path)
-            #     else:
-            #         log.debug("No existing cache files affected.")
-            # else:
-            #     log.debug("Cache up to date.")
+                # delete invalid files
+                if files:
+                    n_cache_files = len(files) - n_result_files
+                    descs = []
+                    if n_result_files:
+                        descs.append(f"{n_result_files} invalid result files")
+                    if n_cache_files:
+                        descs.append(f"{n_cache_files} invalid cache files")
+                    log.info(f"Deleting {' and '.join(descs)}...")
+                    for path in files:
+                        os.remove(path)
+                else:
+                    log.debug("No existing cache files affected.")
+            else:
+                log.debug("Cache up to date.")
         else:  # cache-dir but no history
             if self.auto_delete_cache == 'auto':
                 command = 'delete'
@@ -1044,7 +1037,7 @@ class MneExperiment(FileTree):
         if changed:
             invalid_cache['raw'].update(changed)
         for raw, status in changed_ica.items():
-            filenames = self.glob('ica-file', raw=raw, subject='*', visit='*', match=False)
+            filenames = self.glob('ica-file', raw=raw, inclusive=True, match=False)
             if filenames:
                 rel_paths = '\n'.join(relpath(path, root) for path in filenames)
                 print(f"Outdated ICA files:\n{rel_paths}")
@@ -1095,7 +1088,7 @@ class MneExperiment(FileTree):
         # ========================
         # changed events -> group result involving those subjects is also bad
         if 'events' in invalid_cache:
-            subjects = {subject for subject, _ in invalid_cache['events']}
+            subjects = {subject for subject, _, _, _, _ in invalid_cache['events']}
             for group, members in cache_state['groups'].items():
                 if subjects.intersection(members):
                     invalid_cache['groups'].add(group)
@@ -1151,36 +1144,18 @@ class MneExperiment(FileTree):
     def _collect_invalid_files(self, invalid_cache, new_state, cache_state):
         rm = defaultdict(DictSet)
 
-        # version
-        if cache_state['version'] < 2:
-            bad_parcs = []
-            for parc, params in self._parcs.items():
-                if params['kind'] == 'seeded':
-                    bad_parcs.append(parc + '-?')
-                    bad_parcs.append(parc + '-??')
-                    bad_parcs.append(parc + '-???')
-                else:
-                    bad_parcs.append(parc)
-            bad_tests = []
-            for test, params in new_state['tests'].items():
-                if params['kind'] == 'anova' and params['x'].count('*') > 1:
-                    bad_tests.append(test)
-            if bad_tests and bad_parcs:
-                self._log.warning("  Invalid ANOVA tests: %s for %s", bad_tests, bad_parcs)
-            for test, parc in product(bad_tests, bad_parcs):
-                rm['test-file'].add({'test': test, 'test_dims': parc})
-                rm['report-file'].add({'test': test, 'folder': parc})
-
         # evoked files are based on old events
-        for subject, recording in invalid_cache['events']:
+        for subject, session, task, acquisition, run in invalid_cache['events']:
             for epoch, params in self._epochs.items():
-                if recording not in params.sessions:
+                if task not in params.sessions:
                     continue
-                rm['evoked-file'].add({'subject': subject, 'epoch': epoch})
+                with self._temporary_state:
+                    rm['evoked-file'].add({'epoch_basename': self.get('epoch_basename', subject=subject, session=session, task=task, acquisition=acquisition, run=run), 'epoch': epoch})
 
         # variables
         for var, subject in invalid_cache['variable_for_subject']:
-            rm['evoked-file'].add({'model': f'*{var}*', 'subject': subject})
+            with self._temporary_state:
+                rm['evoked-file'].add({'model': f'*{var}*', 'epoch_basename': self.get('epoch_basename', subject=subject, session=session, task=task, acquisition=acquisition, run=run)})
 
         # groups
         for group in invalid_cache['groups']:
@@ -4258,7 +4233,7 @@ class MneExperiment(FileTree):
             if epoch.decim:
                 default_decim = decim == epoch.decim
             else:
-                key = self.get('subject'), self.get('recording')
+                key = self.get('subject'), self.get('session'), self.get('task'), self.get('acquisition'), self.get('run')
                 raw_samplingrate = self._raw_samplingrate[key]
                 default_decim = decim == raw_samplingrate / epoch.samplingrate
         else:
@@ -5894,6 +5869,8 @@ class MneExperiment(FileTree):
         brain_args = self._surfer_plot_kwargs()
         brain_args.update(brain_kwargs)
         brain_args['subjects_dir'] = self.get('mri-sdir')
+        if 'hemi' not in brain_args:
+            brain_args['hemi'] = self.get('hemi')
 
         # find subject
         if common_brain and is_fake_mri(self.get('mri-dir')):
@@ -6126,7 +6103,7 @@ class MneExperiment(FileTree):
             State parameters.
         """
         raw = self.load_raw(add_bads, ndvar=True, decim=decim, **state)
-        name = self.format("{subject} {recording} {raw}")
+        name = self.format("{raw_basename}_raw-{raw}")
         if raw.info['meas'] == 'V':
             vmax = 1.5e-4
         elif raw.info['meas'] == 'B':
@@ -6150,7 +6127,7 @@ class MneExperiment(FileTree):
         Sets the current directory to raw-dir, and sets the SUBJECT and
         SUBJECTS_DIR to current values
         """
-        subp.run_mne_analyze(self.get('raw-dir'), self.get('mrisubject'),
+        subp.run_mne_analyze(self.get('raw_dir'), self.get('mrisubject'),
                              self.get('mri-sdir'), modal)
 
     def run_mne_browse_raw(self, modal=False):
@@ -6166,7 +6143,7 @@ class MneExperiment(FileTree):
         Sets the current directory to raw-dir, and sets the SUBJECT and
         SUBJECTS_DIR to current values
         """
-        subp.run_mne_browse_raw(self.get('raw-dir'), self.get('mrisubject'), self.get('mri-sdir'), modal)
+        subp.run_mne_browse_raw(self.get('raw_dir'), self.get('mrisubject'), self.get('mri-sdir'), modal)
 
     def set(self, subject=None, match=True, allow_asterisk=False, **state):
         """
@@ -6475,6 +6452,15 @@ class MneExperiment(FileTree):
         "Because 'ico-4' is treated in filenames  as ''"
         return '' if fields['src'] == 'ico-4' else fields['src']
 
+    def _update_raw_dir(self, fields: LayeredDict) -> str:
+        entities = {
+            k: v for k, v in fields.items()
+            if (k in BIDS_ENTITY_KEYS) and v and ('*' not in v)
+        }
+        bids_path = BIDSPath(root=self.root, **entities)
+        bids_path.find_matching_sidecar(on_error='warn')
+        return str(bids_path.directory)
+
     def _update_raw_basename(self, fields: LayeredDict) -> str:
         entities = {
             k: v for k, v in fields.items()
@@ -6704,68 +6690,68 @@ class MneExperiment(FileTree):
 
     def show_bad_channels(
             self,
-            sessions: Union[bool, str, Sequence[str]] = None,
+            tasks: Union[bool, str, Sequence[str]] = None,
             **state,
     ):
         """List bad channels
 
         Parameters
         ----------
-        sessions
+        tasks
             By default, bad channels for the current session are shown. Set
-            ``sessions`` to ``True`` to show bad channels for all sessions, or
-            a list of session names to show bad channeles for these sessions.
+            ``tasks`` to ``True`` to show bad channels for all tasks, or
+            a list of session names to show bad channeles for these tasks.
         ...
             State parameters.
 
         Notes
         -----
-        ICA Raw pipes merge bad channels from different sessions (by combining
-        the bad channels from all sessions).
+        ICA Raw pipes merge bad channels from different tasks (by combining
+        the bad channels from all tasks).
         """
         if state:
             self.set(**state)
 
-        if sessions is True:
-            use_sessions = self._sessions
-        elif sessions:
-            use_sessions = [sessions] if isinstance(sessions, str) else sessions
+        if tasks is True:
+            use_tasks = self._tasks
+        elif tasks:
+            use_tasks = [tasks] if isinstance(tasks, str) else tasks
         else:
-            use_sessions = None
+            use_tasks = None
 
-        if use_sessions is None:
+        if use_tasks is None:
             bad_channels = {subject: self.load_bad_channels() for subject in self}
-            list_sessions = False
+            list_tasks = False
         else:
-            bad_channels = {key: self.load_bad_channels() for key in self.iter(('subject', 'session'), values={'session': use_sessions})}
-            # whether they are equal between sessions
+            bad_channels = {key: self.load_bad_channels() for key in self.iter(('subject', 'task'), values={'task': use_tasks})}
+            # whether they are equal between tasks
             bad_by_s = {}
-            for (subject, session), bads in bad_channels.items():
+            for (subject, task), bads in bad_channels.items():
                 if subject in bad_by_s:
                     if bad_by_s[subject] != bads:
-                        list_sessions = True
+                        list_tasks = True
                         break
                 else:
                     bad_by_s[subject] = bads
             else:
                 bad_channels = bad_by_s
-                list_sessions = False
+                list_tasks = False
 
         # table
-        session_desc = ', '.join(use_sessions) if use_sessions else self.get('session')
-        caption = f"Bad channels in {session_desc}"
-        if list_sessions:
+        task_desc = ', '.join(use_tasks) if use_tasks else self.get('task')
+        caption = f"Bad channels in {task_desc}"
+        if list_tasks:
             subjects = sorted({subject for subject, _ in bad_channels})
-            t = fmtxt.Table('l' * (1 + len(use_sessions)), caption=caption)
-            t.cells('Subject', *use_sessions)
+            t = fmtxt.Table('l' * (1 + len(use_tasks)), caption=caption)
+            t.cells('Subject', *use_tasks)
             t.midrule()
             for subject in subjects:
                 t.cell(subject)
-                for session in use_sessions:
-                    t.cell(', '.join(bad_channels[subject, session]))
+                for task in use_tasks:
+                    t.cell(', '.join(bad_channels[subject, task]))
         else:
-            if use_sessions:
-                caption += " (all sessions equal)"
+            if use_tasks:
+                caption += " (all tasks equal)"
             t = fmtxt.Table('ll', caption=caption)
             t.cells('Subject', 'Bad channels')
             t.midrule()
@@ -6845,7 +6831,7 @@ class MneExperiment(FileTree):
                     ica = self.load_ica()
                     rows.append((subject, ica.n_components_, len(ica.exclude)))
                 except FileMissingError:
-                    if all(source_pipe.mtime(subject, self.get('recording', session=session), False) for session in pipe.session):
+                    if all(source_pipe.mtime(self._bids_path.copy().update(task=task), False) for task in pipe.task):
                         rows.append((subject, "No ICA-file", -1))
                     else:
                         rows.append((subject, "No data", -1))
@@ -7092,7 +7078,7 @@ class MneExperiment(FileTree):
         --------
         show_tree: show complete tree (including secondary, optional and cache)
         """
-        return self.show_tree(fields=['raw-file', 'trans-file', 'mri-dir'])
+        return self.show_tree(fields=['raw_dir', 'trans-file', 'mri-dir'])
 
     def _surfer_plot_kwargs(self, surf=None, views=None, foreground=None, background=None, smoothing_steps=None, hemi=None):
         out = self._brain_plot_defaults.copy()
