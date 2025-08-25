@@ -2,6 +2,7 @@
 """MneExperiment class to manage data from a experiment"""
 from collections import defaultdict
 from datetime import datetime
+from glob import glob
 import inspect
 from itertools import chain, product
 import logging
@@ -783,7 +784,7 @@ class MneExperiment(FileTree):
 
         # Check the cache, delete invalid files
         # =====================================
-        save_state = {
+        save_state = new_state = {
             'version': CACHE_STATE_VERSION,
             'stim_channel': self._stim_channel,
             'merge_triggers': self.merge_triggers,
