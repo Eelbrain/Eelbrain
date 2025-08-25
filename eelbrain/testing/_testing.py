@@ -214,9 +214,9 @@ def requires_r_ez(function):
     from .._utils.r_bridge import r, r_warning_filter
 
     with r_warning_filter:
-        success = r('require(ez)')
+        success = r('require(ez)')[0]
 
-    if success and success[0]:
+    if success:
         return function
     else:
         return pytest.mark.skip('r-ez unavailable')(function)
