@@ -342,7 +342,7 @@ def test_sample_tasks():
     assert_dataobj_equal(dse_super, target, 19)
 
     # conflicting task and epoch settings
-    rej_path = join(root, 'derivatives', 'eelbrain', 'extra input', 'R0000', 'epoch selection', 'sub-R0000_meg_raw-1-40_epoch-target2_rej-man_epoch.pickle')
+    rej_path = join(root, 'derivatives', 'eelbrain', 'epoch selection', 'sub-R0000_meg_raw-1-40_epoch-target2_rej-man_epoch.pickle')
     e.set(epoch='target2', raw='1-40')
     assert not exists(rej_path)
     e.set(task='sample1')
@@ -353,7 +353,7 @@ def test_sample_tasks():
     e.set('R0000', raw='ica')
     with catch_warnings():
         filterwarnings('ignore', "FastICA did not converge", UserWarning)
-        assert e.make_ica() == join(root, 'derivatives', 'eelbrain', 'extra input', 'R0000', 'sub-R0000_meg_raw-ica_ica.fif')
+        assert e.make_ica() == join(root, 'derivatives', 'ica', 'sub-R0000_meg_raw-ica_ica.fif')
 
 
 @requires_mne_sample_data

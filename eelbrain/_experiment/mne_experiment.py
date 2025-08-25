@@ -1156,7 +1156,8 @@ class MneExperiment(FileTree):
         # variables
         for var, subject in invalid_cache['variable_for_subject']:
             with self._temporary_state:
-                rm['evoked-file'].add({'model': f'*{var}*', 'epoch_basename': self.get('epoch_basename', subject=subject, session=session, task=task, acquisition=acquisition, run=run)})
+                for _, _, _, _ in self.iter(('session', 'task', 'run', 'acquisition'), subject=subject):
+                    rm['evoked-file'].add({'model': f'*{var}*', 'epoch_basename': self.get('epoch_basename')})
 
         # groups
         for group in invalid_cache['groups']:
