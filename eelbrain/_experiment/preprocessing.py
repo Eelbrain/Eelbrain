@@ -99,7 +99,7 @@ class RawPipe:
         elif file_type == 'bads':
             return str(path.find_matching_sidecar('channels', '.tsv', on_error=on_error))
         elif file_type == 'cache':
-            return join(self.cache_dir, 'raw', subject_session, path.basename)
+            return join(self.cache_dir, 'raw', subject_session, f'{splitext(path.basename)[0]}_raw-{self.name}.fif')
         else:
             return join(self.deriv_dir, 'ica', f'{remove_task_in_fname(splitext(path.basename)[0])}_raw-{self.name}_ica.fif')
 

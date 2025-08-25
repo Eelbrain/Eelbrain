@@ -392,6 +392,7 @@ class MneExperiment(FileTree):
 
             'cache-dir': join('{deriv-dir}', 'eelbrain', 'cache'),
             'raw-cache-dir': join('{cache-dir}', 'raw', '{subject_session}'),  # hard-coded in RawPipe
+            'cached-raw-file': join('raw-cache-dir', '{raw_basename}_raw-{raw}.fif'),
 
             'event-file': join('{raw-cache-dir}', '{raw_basename}_raw-{raw}_evts.pickle'),
             'interp-file': join('{raw-cache-dir}', '{raw_basename}_raw-{raw}_interp.pickle'),
