@@ -361,9 +361,9 @@ class RawSource(RawPipe):
         bads_path = self.get_path(path, 'bads')
         channels_df = pd.read_csv(bads_path, sep='\t')
         if (channels_df is None) or ('status' not in channels_df.columns.tolist()):
-            old_bads = channels_df.query('status == "bad"')['name'].tolist()
-        else:
             old_bads = None
+        else:
+            old_bads = channels_df.query('status == "bad"')['name'].tolist()
         # find new bad channels
         if isinstance(bad_chs, (str, int)):
             bad_chs = (bad_chs,)
@@ -673,7 +673,7 @@ class RawICA(CachedRawPipe):
     ----------
     source
         Name of the raw pipe to use for input data.
-    session
+    task
         Session(s) to use for estimating ICA components.
     method
         Method for ICA decomposition (default: ``'extended-infomax'``; see
@@ -699,7 +699,7 @@ class RawICA(CachedRawPipe):
     Notes
     -----
     This preprocessing step estimates one set of ICA components per subject,
-    using the data specified in the ``session`` parameter. The selected
+    using the data specified in the ``task`` parameter. The selected
     components are then removed from all data sessions during this preprocessing
     step, regardless of whether they were used to estimate the components or
     not.
@@ -708,8 +708,8 @@ class RawICA(CachedRawPipe):
     select ICA components that should be removed. The arguments to that function
     determine what data is used to visualize the component time courses.
     For example, to determine which components load strongly on empty room data,
-    use ``e.make_ica_selection(session='emptyroom')`` (assuming an
-    ``'emptyroom'`` session is present).
+    use ``e.make_ica_selection(task='emptyroom')`` (assuming an
+    ``'emptyroom'`` task is present).
 
     This step merges bad channels from all sessions.
 
@@ -724,9 +724,9 @@ class RawICA(CachedRawPipe):
                 # Extended infomax with PCA preprocessing
                 'ica': RawICA('1-40', 'extended-infomax', n_components=0.99),
                 # Fast ICA
-                'fastica': RawICA('1-40', 'session', 'fastica', n_components=0.9),
+                'fastica': RawICA('1-40', 'task', 'fastica', n_components=0.9),
                 # Change thresholds for data rejection using fit_kwargs
-                'ica-rej': RawICA('1-40', 'session', 'fastica', fit_kwargs=dict(
+                'ica-rej': RawICA('1-40', 'task', 'fastica', fit_kwargs=dict(
                     reject={'mag': 5e-12, 'grad': 5000e-13, 'eeg': 500e-6},
                 )),
             }
@@ -929,7 +929,7 @@ class RawApplyICA(CachedRawPipe):
 
             raw = {
                 '1-40': RawFilter('raw', 1, 40),
-                'ica': RawICA('1-40', 'session', 'extended-infomax', n_components=0.99),
+                'ica': RawICA('1-40', 'task', 'extended-infomax', n_components=0.99),
                 '0.1-40': RawFilter('raw', 0.1, 40),
                 '0.1-40-ica': RawApplyICA('0.1-40', 'ica'),
             }

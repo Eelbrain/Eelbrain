@@ -457,13 +457,13 @@ class MneExperiment(FileTree):
             'res-plot-dir': join('{deriv-dir}', 'eelbrain', 'result plots', '{group}_{analysis}', '{folder}', '{test_basename}_epoch-{epoch}_test-{test}_options-{test_options}'),
 
             # MRAT
-            # 'mrat_condition': '',
-            # 'mrat-root': join('{deriv-dir}', 'mrat'),
-            # 'mrat-sns-root': join('{mrat-root}', '{sns_kind}', '{evoked_desc}'),
-            # 'mrat-src-root': join('{mrat-root}', '{src_kind}', '{evoked_desc}'),
-            # 'mrat-sns-file': join('{mrat-sns-root}', '{mrat_condition}', '{mrat_condition}_{subject}-ave.fif'),
-            # 'mrat_info-file': join('{mrat-root}', '{subject} info.txt'),
-            # 'mrat-src-file': join('{mrat-src-root}', '{mrat_condition}', '{mrat_condition}_{subject}'),
+            'mrat_condition': '',
+            'mrat-root': join('{deriv-dir}', 'mrat'),
+            'mrat-sns-root': join('{mrat-root}', '{sns_kind}', '{epoch_basename}_epoch-{epoch}_rej-{rej}_model-{model}_count-{equalize_evoked_count}'),
+            'mrat-src-root': join('{mrat-root}', '{src_kind}', '{epoch_basename}_epoch-{epoch}_rej-{rej}_model-{model}_count-{equalize_evoked_count}'),
+            'mrat-sns-file': join('{mrat-sns-root}', '{mrat_condition}', '{mrat_condition}_{subject}-ave.fif'),
+            'mrat_info-file': join('{mrat-root}', '{subject} info.txt'),
+            'mrat-src-file': join('{mrat-src-root}', '{mrat_condition}', '{mrat_condition}_{subject}'),
         }
 
         # update templates with _values
@@ -640,7 +640,7 @@ class MneExperiment(FileTree):
         # # fields used internally
         self._register_field('analysis', repr=False)
         self._register_field('test_options', repr=False)
-        # self._register_field('name', repr=False)
+        self._register_field('name', repr=False)
         self._register_field('folder', repr=False)
         self._register_field('resname', repr=False)
         self._register_field('ext', repr=False)
@@ -662,7 +662,7 @@ class MneExperiment(FileTree):
         self._bind_cache('fwd-file', self.make_fwd)
 
         # currently only used for .rm()
-        # self._secondary_cache['cached-raw-file'] = ('event-file', 'interp-file', 'cached-raw-log-file', 'cached-raw-file-overflow')
+        self._secondary_cache['cached-raw-file'] = ('event-file', 'interp-file')
 
         ########################################################################
         # Finalize
@@ -767,18 +767,18 @@ class MneExperiment(FileTree):
                 log.info("Raw input files new or changed, checking digitizer data")
             for subject, session in subjects_with_raw_changes:
                 # find unique digitizer datasets
-                head_shape = None
+                dev_head_t = None
                 for task, acquisition, run in self.iter(('task', 'acquisition', 'run'), subject=subject, session=session):
                     if (subject, session, task, acquisition, run) in raw_missing:
                         continue
                     raw = self.load_raw(False)
-                    dig = raw.info['dig']
-                    if head_shape is None:
-                        head_shape = dig
-                    if dig is None:
-                        raise FileDeficientError(f"The raw file {self._bids_path.basename} is missing digitizer information")
-                    if not hsp_equal(dig, head_shape):
-                        raise FileDeficientError(f"Raw file {self._bids_path.basename} has head shape that is different from other files.")
+                    _dev_head_t = raw.info['dev_head_t']
+                    if _dev_head_t is None:
+                        raise FileDeficientError(f"The raw file {self._bids_path.basename} is missing dev_head_t information")
+                    if dev_head_t is None:
+                        dev_head_t = _dev_head_t
+                    if dev_head_t != _dev_head_t:
+                        raise FileDeficientError(f"Raw file {self._bids_path.basename} has dev_head_t that is different from other files.")
 
         # save input-state
         save.pickle(input_state, input_state_file)
@@ -1217,9 +1217,9 @@ class MneExperiment(FileTree):
             rm['inv-file'].add({})
 
         # secondary cache files
-        # for temp in tuple(rm):
-        #     for stemp in self._secondary_cache[temp]:
-        #         rm[stemp].update(rm[temp])
+        for temp in tuple(rm):
+            for stemp in self._secondary_cache[temp]:
+                rm[stemp].update(rm[temp])
 
         return rm
 
@@ -5064,7 +5064,7 @@ class MneExperiment(FileTree):
             return
 
         # start report
-        title = self.format('{recording} {test_desc}')
+        title = self.format('{raw_basename}_{test_basename}_epoch-{epoch}_test-{test}_options-{test_options}')
         report = fmtxt.Report(title)
         report.add_paragraph(self._report_methods_brief(dst))
 
@@ -5203,7 +5203,7 @@ class MneExperiment(FileTree):
         labels_rh.sort()
 
         # start report
-        title = self.format('{recording} {test_desc}')
+        title = self.format('{raw_basename}_{test_basename}_epoch-{epoch}_test-{test}_options-{test_options}')
         report = fmtxt.Report(title)
 
         # method intro (compose it later when data is available)
@@ -5276,7 +5276,7 @@ class MneExperiment(FileTree):
         ds, res = self.load_test(test, tstart, tstop, pmin, samples=samples, data='sensor', baseline=baseline, return_data=True, make=True)
 
         # start report
-        title = self.format('{recording} {test_desc}')
+        title = self.format('{raw_basename}_{test_basename}_epoch-{epoch}_test-{test}_options-{test_options}')
         report = fmtxt.Report(title)
 
         # info
@@ -5346,7 +5346,7 @@ class MneExperiment(FileTree):
             raise ValueError("The following sensors are not in the data: %s" % missing)
 
         # start report
-        title = self.format('{recording} {test_desc}')
+        title = self.format('{raw_basename}_{test_basename}_epoch-{epoch}_test-{test}_options-{test_options}')
         report = fmtxt.Report(title)
 
         # info
@@ -5488,7 +5488,7 @@ class MneExperiment(FileTree):
             dst = self.get('subject-spm-report', mkdir=True)
             lm = self._load_spm(baseline, src_baseline)
 
-            title = self.format('{recording} {test_desc}')
+            title = self.format('{raw_basename}_{test_basename}_epoch-{epoch}_test-{test}_options-{test_options}')
             surfer_kwargs = self._surfer_plot_kwargs()
 
         report = fmtxt.Report(title)
