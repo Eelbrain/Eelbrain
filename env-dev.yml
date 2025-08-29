@@ -63,5 +63,4 @@ dependencies:
 - pysurfer >= 0.11.2
 - nilearn >=0.10.4
 - pyface != 7.2.0  # 7.2.0 causes RuntimeError: No traitsui.toolkits plugin could be loaded for wx
-- pip:
-    - mne_bids
+- mne-bids
