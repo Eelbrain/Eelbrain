@@ -40,6 +40,15 @@ result = testnd.Vector('src', sub="side == 'R'", data=data, samples=1000, tfce=T
 # interactively. In a notebook, use different :class:`plot.GlassBrain` plots.
 # (see next section):
 
+from eelbrain_plotly_viz import EelbrainPlotly2DViz
+
+# Create visualization with sample data
+viz = EelbrainPlotly2DViz(result.difference)
+
+# Run interactive dashboard
+viz.run()
+
+""
 # butterfly, brain = plot.GlassBrain.butterfly(result)
 # brain.set_time(0.090)
 
