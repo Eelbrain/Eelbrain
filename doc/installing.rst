@@ -9,46 +9,10 @@ For alternative ways of installing, see :ref:`install-custom`.
    :local:
 
 
-.. _install-custom:
-
-Basic Installation
-------------------
-
-Eelbrain can be installed as pre-compiled library from `conda-forge <https://conda-forge.org>`_:
-
-.. code-block:: bash
-
-    $ mamba install eelbrain
-
-or with `conda`:
-
-.. code-block:: bash
-
-    $ conda install -c conda-forge eelbrain
-
-Alternatively, Eelbrain is also hosted on the Python Package Index (`PyPI <https://pypi.org/project/eelbrain/>`_), but installing from PyPI requires local compilation:
-
-.. code-block:: bash
-
-    $ pip install eelbrain
-
-The default PYPI installation omits optional dependencies required for using the GUIs and for creating `PySurfer <https://pysurfer.github.io>`_/`Mayavi <http://docs.enthought.com/mayavi/mayavi/>`_ based anatomical plots. In order to install these dependencies as well, use one of:
-
-.. code-block:: bash
-
-    $ pip install eelbrain[brain]
-    $ pip install eelbrain[gui]
-    $ pip install eelbrain[full]
-
-
-.. SEEALSO::
-    For more installing options, including pre-releases, see the `wiki <https://github.com/christianbrodbeck/Eelbrain/wiki/Installing>`_.
-
-
 .. _install-full:
 
-Full Setup
-----------
+Recommended Setup
+-----------------
 
 The recommended tool for deploying Eelbrain is the `Mamba <https://mamba.readthedocs.io/en/latest/index.html>`_ package manager:
 
@@ -106,6 +70,42 @@ The currently installed version can be displayed with the ``mamba list`` command
     eelbrain                  0.39.11         py311h86e7398_0    conda-forge
 
 Sometimes Mamba may run into difficulties while updating and it may be easier to create a new environment instead.
+
+
+.. _install-custom:
+
+Alternative Installations
+-------------------------
+
+Eelbrain can be installed as pre-compiled library from `conda-forge <https://conda-forge.org>`_:
+
+.. code-block:: bash
+
+    $ mamba install eelbrain
+
+or with `conda`:
+
+.. code-block:: bash
+
+    $ conda install -c conda-forge eelbrain
+
+Alternatively, Eelbrain is also hosted on the Python Package Index (`PyPI <https://pypi.org/project/eelbrain/>`_), but installing from PyPI requires local compilation:
+
+.. code-block:: bash
+
+    $ pip install eelbrain
+
+The default PYPI installation omits optional dependencies required for using the GUIs and for creating `PySurfer <https://pysurfer.github.io>`_/`Mayavi <http://docs.enthought.com/mayavi/mayavi/>`_ based anatomical plots. In order to install these dependencies as well, use one of:
+
+.. code-block:: bash
+
+    $ pip install eelbrain[brain]
+    $ pip install eelbrain[gui]
+    $ pip install eelbrain[full]
+
+
+.. SEEALSO::
+    For more installing options, including pre-releases, see the `wiki <https://github.com/christianbrodbeck/Eelbrain/wiki/Installing>`_.
 
 
 Making your analysis future-proof
