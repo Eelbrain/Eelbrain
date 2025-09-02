@@ -1,4 +1,4 @@
-import os
+# skip test: data unavailable
 import mne
 
 MRI_SDIR = '/mnt/d/Data/Somatomotor/derivatives/freesurfer'
