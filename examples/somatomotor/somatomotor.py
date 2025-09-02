@@ -33,6 +33,8 @@ class Somatomotor(MneExperiment):
     }
 
 
-root = '~/Data/Somatomotor'
+root = '/mnt/d/Data/Somatomotor'
 e = Somatomotor(root)
-print(e.load_evoked(subjects=-1, data='meg', rej=''))
+e.set(rej='')
+# print(e.load_evoked(subjects=-1, data='meg'))
+print(e.load_test('connection', 0.3, 0.5, 0.05, data='meg', baseline=False, epoch='not_null', make=True))
