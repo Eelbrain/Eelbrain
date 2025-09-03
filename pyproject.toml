@@ -36,6 +36,7 @@ dependencies = [
   'pymatreader',
   'scipy >= 1.5',
   'seaborn',
+  'mne-bids',
 ]
 description='MEG/EEG analysis tools'
 keywords = [
