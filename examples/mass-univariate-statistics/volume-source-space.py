@@ -32,7 +32,7 @@ data['src'].source.parc.cells
 # ^^^^^^^^^^^^^^^
 # A one-sample test can be used to detect significant activations
 
-result = testnd.Vector('src', sub="side == 'R'", data=data, samples=1000, tfce=True, tstart=0.050)
+result = testnd.Vector('src', sub="side == 'R'", data=data, samples=250, tfce=True, tstart=0.05, tstop=0.200)
 
 ###############################################################################
 # A butterfly plot can give a quick overview of amplitudes over time.
