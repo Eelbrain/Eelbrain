@@ -24,17 +24,20 @@ class ImageNet(MneExperiment):
         'used': PrimaryEpoch('ImageNet', "position == 'middle'", samplingrate=200),
         'resp': SecondaryEpoch('used', "event == 'resp'"),
         'stim_on': SecondaryEpoch('used', "event == 'stim_on'"),
+        'cov': SecondaryEpoch('used', tmax=0),
     }
 
     tests = {
         '=0': TTestOneSample(),
-        'connection': TTestRelated('stimulus', 'stim_on', 'resp'),
+        'connection': TTestRelated('event', 'stim_on', 'resp'),
         'anova': ANOVA('event * subject'),
     }
 
 
 root = '/mnt/d/Data/ds005810'
 e = ImageNet(root)
-e.set(rej='')
-print(e.load_events())
-# print(e.load_test('connection', 0.3, 0.5, 0.05, data='meg', baseline=False, epoch='not_null', make=True))
+e.set(rej='', epoch='used')
+# e.load_raw(preload=True)
+# print(e.load_raw(preload=True))
+print(e.load_evoked_stc(subjects=1))
+# print(e.load_test('connection', 0.3, 0.5, 0.05, data='meg', baseline=False, epoch='used', make=True))
