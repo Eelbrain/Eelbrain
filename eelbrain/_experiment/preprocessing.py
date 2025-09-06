@@ -10,7 +10,6 @@ from os import makedirs, remove
 from os.path import basename, dirname, exists, getmtime, join, splitext
 from pathlib import Path
 from typing import Any, Collection, Dict, List, Literal, Sequence, Tuple, Union
-import re
 
 import mne
 from scipy import signal
@@ -1319,6 +1318,7 @@ def remove_task(fname: str) -> str:
     parts = fname.split('_')
     filtered_parts = [part for part in parts if not (part.startswith('task-') or part.startswith('run-'))]
     return '_'.join(filtered_parts)
+
 
 def remove_subject(fname: str) -> str:
     parts = fname.split('_')
