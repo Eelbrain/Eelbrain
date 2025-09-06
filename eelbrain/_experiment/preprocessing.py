@@ -101,7 +101,7 @@ class RawPipe:
         elif file_type == 'cache':
             return join(self.cache_dir, 'raw', subject_session, f'{splitext(path.basename)[0]}_raw-{self.name}.fif')
         else:
-            return join(self.deriv_dir, 'ica', f'{remove_task_in_fname(splitext(path.basename)[0])}_raw-{self.name}_ica.fif')
+            return join(self.deriv_dir, 'ica', f'{remove_task(splitext(path.basename)[0])}_raw-{self.name}_ica.fif')
 
     def load(
             self,
@@ -460,7 +460,7 @@ class CachedRawPipe(RawPipe):
             raw = self._make(path, True)
         # save
         try:
-            raw.save(cache_path, overwrite=True)
+            raw.save(cache_path, overwrite=True, verbose='critical')
         except BaseException:
             # clean up potentially corrupted file
             if exists(cache_path):
