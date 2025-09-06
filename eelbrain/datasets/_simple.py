@@ -581,7 +581,7 @@ def setup_samples_experiment(
     """
     # input paths
     data_path = mne.datasets.sample.data_path()
-    fsaverage_path = mne.datasets.fetch_fsaverage(subjects_dir='~/mne_data/MNE-fsaverage-data')
+    fsaverage_path = mne.datasets.fetch_fsaverage()
     raw_fname = join(data_path, "MEG", "sample", "sample_audvis_raw.fif")
     event_id = {
         "Auditory/Left": 1,
