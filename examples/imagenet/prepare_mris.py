@@ -9,7 +9,7 @@ import mne
 MRI_SDIR = '/mnt/d/Data/ds005810/derivatives/freesurfer'
 RAW_FILE = '/mnt/d/Data/ds005810/sub-{subject}/ses-ImageNet01/meg/sub-{subject}_ses-ImageNet01_task-ImageNet_run-01_meg.fif'
 TRANS_FILE = '/mnt/d/Data/ds005810/derivatives/trans/{subject}_trans.fif'
-subjects = ['01']
+subjects = ['01', '02']
 
 makedirs(dirname(TRANS_FILE), exist_ok=True)
 for subject in subjects:

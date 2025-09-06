@@ -54,7 +54,7 @@ from .groups import assemble_groups
 from .parc import SEEDED_PARC_RE, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, SeededParc, IndividualSeededParc, LabelParc, VolumeParc, Parcellation, SubParc, assemble_parcs
 from .preprocessing import (
     assemble_pipeline, RawPipe, RawSource, RawICA, RawApplyICA, RawFilter,
-    compare_pipelines, ask_to_delete_ica_files)
+    compare_pipelines, ask_to_delete_ica_files, remove_task, remove_subject)
 from .test_def import (
     Test,
     ROITestResult, ROI2StageResult, TestDims, TwoStageTest,
@@ -2456,7 +2456,7 @@ class MneExperiment(FileTree):
         # refresh cache
         if ds is None:
             self._log.debug("Extracting events for %s", self._bids_path.fpath)
-            raw = self.load_raw(add_bads)
+            raw = self.load_raw(add_bads, preload=True)
             ds = load.mne.events(raw, self.merge_triggers, stim_channel=self._stim_channel)
             del ds.info['raw']
             ds.info['sfreq'] = raw.info['sfreq']
@@ -2472,7 +2472,7 @@ class MneExperiment(FileTree):
             if data_raw:
                 ds.info['raw'] = raw
         elif data_raw:
-            ds.info['raw'] = self.load_raw(add_bads)
+            ds.info['raw'] = self.load_raw(add_bads, preload=True)
 
         ds.info['subject'] = subject
         ds.info['session'] = session
@@ -6460,7 +6460,7 @@ class MneExperiment(FileTree):
             if (k in BIDS_ENTITY_KEYS) and v and ('*' not in v)
         }
         bids_path = BIDSPath(root=self.root, **entities)
-        bids_path.find_matching_sidecar(on_error='warn')
+        bids_path.find_matching_sidecar(on_error='ignore')
         return str(bids_path.directory)
 
     def _update_raw_basename(self, fields: LayeredDict) -> str:
@@ -6469,14 +6469,16 @@ class MneExperiment(FileTree):
             if (k in BIDS_ENTITY_KEYS) and v and ('*' not in v)
         }
         bids_path = BIDSPath(root=self.root, **entities)
-        bids_path.find_matching_sidecar(on_error='warn')
+        bids_path.find_matching_sidecar(on_error='ignore')
         return splitext(bids_path.basename)[0]
 
     def _update_epoch_basename(self, fields: LayeredDict) -> str:
-        return re.sub(r'(task-[^_]+_)|(run-[^_]+_)', '', self._update_raw_basename(fields))
+        raw_basename = self._update_raw_basename(fields)
+        return remove_task(raw_basename)
 
     def _update_test_basename(self, fields: LayeredDict) -> str:
-        return re.sub(r'(sub-[^_]+_)|(task-[^_]+_)|(run-[^_]+_)', '', self._update_raw_basename(fields))
+        epoch_basename = self._update_epoch_basename(fields)
+        return remove_subject(epoch_basename)
 
     def _eval_parc(self, parc):
         if parc in self._parcs:

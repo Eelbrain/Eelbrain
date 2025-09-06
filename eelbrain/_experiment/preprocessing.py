@@ -1315,5 +1315,12 @@ def normalize_dict(raw: dict) -> None:
         pipe_class._normalize_dict(params)
 
 
-def remove_task_in_fname(fname: str) -> str:
-    return re.sub(r'(task-[^_]+_)|(run-[^_]+_)', '', fname)
+def remove_task(fname: str) -> str:
+    parts = fname.split('_')
+    filtered_parts = [part for part in parts if not (part.startswith('task-') or part.startswith('run-'))]
+    return '_'.join(filtered_parts)
+
+def remove_subject(fname: str) -> str:
+    parts = fname.split('_')
+    filtered_parts = [part for part in parts if not part.startswith('sub-')]
+    return '_'.join(filtered_parts)
