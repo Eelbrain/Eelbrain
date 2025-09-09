@@ -214,6 +214,7 @@ class MneExperiment(FileTree):
     datatype: str = 'meg'
     extension: str = '.fif'
     ignore_entities: dict[str, list[str]] = {}
+    preload: bool = False
 
     # Raw preprocessing pipeline
     raw: Dict[str, RawPipe] = {}
@@ -2456,7 +2457,7 @@ class MneExperiment(FileTree):
         # refresh cache
         if ds is None:
             self._log.debug("Extracting events for %s", self._bids_path.fpath)
-            raw = self.load_raw(add_bads, preload=True)
+            raw = self.load_raw(add_bads, preload=self.preload)
             ds = load.mne.events(raw, self.merge_triggers, stim_channel=self._stim_channel)
             del ds.info['raw']
             ds.info['sfreq'] = raw.info['sfreq']
@@ -2472,7 +2473,7 @@ class MneExperiment(FileTree):
             if data_raw:
                 ds.info['raw'] = raw
         elif data_raw:
-            ds.info['raw'] = self.load_raw(add_bads, preload=True)
+            ds.info['raw'] = self.load_raw(add_bads, preload=self.preload)
 
         ds.info['subject'] = subject
         ds.info['session'] = session
@@ -2671,7 +2672,7 @@ class MneExperiment(FileTree):
         name = 'srcm' if 'srcm' in ds else 'src'
 
         # apply morlet transformation
-        freq_params = self.freqs[self.get('freq')]
+        freq_params = self._freqs[self.get('freq')]
         freq_range = freq_params['frequencies']
         ds['stf'] = cwt_morlet(ds[name], freq_range, use_fft=True, n_cycles=freq_params['n_cycles'], output='complex')
 
@@ -5937,7 +5938,7 @@ class MneExperiment(FileTree):
             for subject in self.iter_range(s_start, s_stop):
                 cov = self.load_cov()
                 picks = np.arange(len(cov.ch_names))
-                ds = self.load_evoked(baseline=True)
+                ds = self.load_evoked(baseline=True, ndvar=False)
                 whitened_evoked = mne.whiten_evoked(ds[0, 'evoked'], cov, picks)
                 gfp = whitened_evoked.data.std(0)
 
@@ -7034,19 +7035,21 @@ class MneExperiment(FileTree):
         subject_list = []
         mri_list = []
         mrisubject_list = []
-        raw_files = defaultdict(list)
-        raw_pipe = self._raw['raw']
-        recordings = list(self.iter('recording'))
+        raw_list = []
         for subject in self.iter():
             subject_list.append(subject)
             mrisubject_ = self.get('mrisubject')
             mrisubject_list.append(mrisubject_)
             if raw:
-                for recording in recordings:
-                    if raw_pipe.exists(subject, recording):
-                        raw_files[recording].append('X')
-                    else:
-                        raw_files[recording].append('')
+                query = BIDSPath(
+                    subject=subject,
+                    datatype='meg',
+                    suffix='meg',
+                    root=self.get('root'),
+                )
+                matches = query.match()
+                basenames = [match.basename for match in matches]
+                raw_list.append(', '.join(basenames))
             if mri:
                 mri_dir = self.get('mri-dir')
                 if not exists(mri_dir):
@@ -7067,8 +7070,7 @@ class MneExperiment(FileTree):
         if mrisubject:
             ds['mrisubject'] = Factor(mrisubject_list)
         if raw:
-            for recording, data in raw_files.items():
-                ds[recording.replace(' ', '_')] = Factor(data)
+            ds['raw files'] = Factor(raw_list)
 
         if asds:
             return ds
