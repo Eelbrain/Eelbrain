@@ -92,7 +92,6 @@ class RawPipe:
     ) -> str | None:
         if not path.find_matching_sidecar(on_error=on_error):
             return None
-        subject_session = f'{path.subject}_{path.session}' if path.session is not None else path.subject
         if file_type == 'raw':
             return str(path.fpath)
         elif file_type == 'bads':
