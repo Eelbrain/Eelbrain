@@ -98,9 +98,18 @@ class RawPipe:
         elif file_type == 'bads':
             return str(path.find_matching_sidecar('channels', '.tsv', on_error=on_error))
         elif file_type == 'cache':
-            return join(self.cache_dir, 'raw', subject_session, f'{splitext(path.basename)[0]}_raw-{self.name}.fif')
+            return join(
+                self.cache_dir,
+                'raw',
+                get_subject_session(path.basename),
+                f'{splitext(path.basename)[0]}_raw-{self.name}.fif'
+            )
         else:
-            return join(self.deriv_dir, 'ica', f'{remove_task(splitext(path.basename)[0])}_raw-{self.name}_ica.fif')
+            return join(
+                self.deriv_dir,
+                'ica',
+                f'{remove_task(splitext(path.basename)[0])}_raw-{self.name}_ica.fif'
+            )
 
     def load(
             self,
@@ -1316,11 +1325,17 @@ def normalize_dict(raw: dict) -> None:
 
 def remove_task(fname: str) -> str:
     parts = fname.split('_')
-    filtered_parts = [part for part in parts if not (part.startswith('task-') or part.startswith('run-'))]
+    filtered_parts = [part for part in parts if not part.startswith('task-')]
     return '_'.join(filtered_parts)
 
 
 def remove_subject(fname: str) -> str:
     parts = fname.split('_')
     filtered_parts = [part for part in parts if not part.startswith('sub-')]
+    return '_'.join(filtered_parts)
+
+
+def get_subject_session(fname: str) -> str:
+    parts = fname.split('_')
+    filtered_parts = [part for part in parts if (part.startswith('sub-') or part.startswith('ses-'))]
     return '_'.join(filtered_parts)

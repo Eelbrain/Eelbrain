@@ -7,7 +7,7 @@ class ImageNet(MneExperiment):
     preload = True
 
     ignore_entities = {
-        'ignore_subjects': ('03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24', '25', '26', '27', '28', '29', '30', 'emptyroom'),
+        'ignore_subjects': ('02', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24', '25', '26', '27', '28', '29', '30', 'emptyroom'),
         'ignore_sessions': ('ImageNet02', 'ImageNet03', 'ImageNet04', 'MRI'),
         'ignore_runs': ('02'),
     }
@@ -38,8 +38,10 @@ class ImageNet(MneExperiment):
 
 root = '/mnt/d/Data/ds005810'
 e = ImageNet(root)
-e.set(rej='', epoch='used')
+e.set(raw='ica', epoch='used')
+# e.make_ica()
+# e.make_epoch_selection(auto=True)
 # e.load_raw(preload=True)
 # print(e.load_raw(preload=True))
-print(e.load_evoked_stc(subjects=-1))
-# print(e.load_test('connection', 0.3, 0.5, 0.05, data='meg', baseline=False, epoch='used', make=True))
+# print(e.load_evoked_stc(subjects=-1))
+print(e.load_test('connection', 0.3, 0.5, 0.05, data='source', baseline=False, epoch='used', make=True))

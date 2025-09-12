@@ -48,13 +48,13 @@ from .._utils.notebooks import tqdm
 from .covariance import EpochCovariance, RawCovariance
 from .definitions import FieldCode, find_dependent_epochs, find_epochs_vars, log_dict_change, log_list_change, tuple_arg
 from .epochs import ContinuousEpoch, PrimaryEpoch, SecondaryEpoch, SuperEpoch, EpochBase, EpochCollection, assemble_epochs, decim_param
-from .exceptions import FileDeficientError, FileMissingError
+from .exceptions import FileMissingError
 from .experiment import FileTree, LayeredDict
 from .groups import assemble_groups
 from .parc import SEEDED_PARC_RE, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, SeededParc, IndividualSeededParc, LabelParc, VolumeParc, Parcellation, SubParc, assemble_parcs
 from .preprocessing import (
     assemble_pipeline, RawPipe, RawSource, RawICA, RawApplyICA, RawFilter,
-    compare_pipelines, ask_to_delete_ica_files, remove_task, remove_subject)
+    compare_pipelines, ask_to_delete_ica_files, remove_task, remove_subject, get_subject_session)
 from .test_def import (
     Test,
     ROITestResult, ROI2StageResult, TestDims, TwoStageTest,
@@ -383,7 +383,7 @@ class MneExperiment(FileTree):
 
             # one ica-file for each task group
             'ica-file': join('{deriv-dir}', 'ica', '{epoch_basename}_raw-{raw}_ica.fif'),  # hard-coded in RawPipe
-            'trans-file': join('{deriv-dir}', 'trans', '{mrisubject}_trans.fif'),
+            'trans-file': join('{deriv-dir}', 'trans', '{subject_session}_trans.fif'),
             # one rej-file for each raw
             'rej-file': join('{deriv-dir}', 'eelbrain', 'epoch selection', '{epoch_basename}_raw-{raw}_epoch-{epoch}_rej-{rej}_epoch.pickle'),
 
@@ -613,8 +613,9 @@ class MneExperiment(FileTree):
         self._register_field('raw', sorted(self._raw), default=raw_default, repr=True)
         self._register_field('raw_dir', depends_on=BIDS_ENTITY_KEYS, slave_handler=self._update_raw_dir, repr=True)
         self._register_field('raw_basename', depends_on=BIDS_ENTITY_KEYS, slave_handler=self._update_raw_basename, repr=True)
-        self._register_field('epoch_basename', depends_on=[key for key in BIDS_ENTITY_KEYS if key not in ('task', 'run')], slave_handler=self._update_epoch_basename, repr=True)
-        self._register_field('test_basename', depends_on=[key for key in BIDS_ENTITY_KEYS if key not in ('subject', 'task', 'run')], slave_handler=self._update_test_basename, repr=True)
+        self._register_field('epoch_basename', depends_on=[key for key in BIDS_ENTITY_KEYS if key not in ('task')], slave_handler=self._update_epoch_basename, repr=True)
+        self._register_field('subject_session', depends_on=('subject', 'session'), slave_handler=self._update_subject_session, repr=True)
+        self._register_field('test_basename', depends_on=[key for key in BIDS_ENTITY_KEYS if key not in ('subject', 'task')], slave_handler=self._update_test_basename, repr=True)
         self._register_field('rej', self._artifact_rejection.keys(), self._artifact_rejection_default, allow_empty=True)
 
         # cov
@@ -647,7 +648,6 @@ class MneExperiment(FileTree):
         self._register_field('test_dims', repr=False)
 
         # compounds
-        self._register_compound('subject_session', ('subject', 'session'))
         self._register_compound('sns_kind', ('raw',))
         self._register_compound('inv_kind', ('sns_kind', 'cov', 'rej', 'inv-cache'))
         self._register_compound('src_kind', ('sns_kind', 'cov', 'mri', 'src-name', 'inv'))
@@ -737,7 +737,7 @@ class MneExperiment(FileTree):
         pipe = self._raw['raw']
         self._raw_samplingrate = {}  # {(subject, recording): samplingrate}
         with self._temporary_state:
-            subjects_with_raw_changes = set()
+            # subjects_with_raw_changes = set()
             for subject, session, task, acquisition, run in self.iter(('subject', 'session', 'task', 'acquisition', 'run'), group='all', raw='raw'):
                 key = (subject, session, task, acquisition, run)
                 raw_path = pipe.get_path(self._bids_path, on_error='ignore')
@@ -750,7 +750,7 @@ class MneExperiment(FileTree):
                 events[key] = events_in = self.load_events(add_bads=False, data_raw=False)
                 self._raw_samplingrate[key] = events_in.info['sfreq']
                 if key not in raw_mtimes or mtime_changed(events_in.info['raw-mtime'], raw_mtimes[key]):
-                    subjects_with_raw_changes.add((subject, session))
+                    # subjects_with_raw_changes.add((subject, session))
                     raw_mtimes[key] = events_in.info['raw-mtime']
 
         # check for digitizer data differences
@@ -763,22 +763,22 @@ class MneExperiment(FileTree):
         #    forward solutions
         #  - SuperEpochs currently need to have a single forward solution,
         #    hence marker positions need to be the same between sub-epochs
-            if subjects_with_raw_changes:
-                log.info("Raw input files new or changed, checking digitizer data")
-            for subject, session in subjects_with_raw_changes:
-                # find unique digitizer datasets
-                dev_head_t = None
-                for task, acquisition, run in self.iter(('task', 'acquisition', 'run'), subject=subject, session=session):
-                    if (subject, session, task, acquisition, run) in raw_missing:
-                        continue
-                    raw = self.load_raw(False)
-                    _dev_head_t = raw.info['dev_head_t']
-                    if _dev_head_t is None:
-                        raise FileDeficientError(f"The raw file {self._bids_path.basename} is missing dev_head_t information")
-                    if dev_head_t is None:
-                        dev_head_t = _dev_head_t
-                    if dev_head_t != _dev_head_t:
-                        raise FileDeficientError(f"Raw file {self._bids_path.basename} has dev_head_t that is different from other files.")
+            # if subjects_with_raw_changes:
+            #     log.info("Raw input files new or changed, checking digitizer data")
+            # for subject, session in subjects_with_raw_changes:
+            #     # find unique digitizer datasets
+            #     dev_head_t = None
+            #     for task, acquisition, run in self.iter(('task', 'acquisition', 'run'), subject=subject, session=session):
+            #         if (subject, session, task, acquisition, run) in raw_missing:
+            #             continue
+            #         raw = self.load_raw(False)
+            #         _dev_head_t = raw.info['dev_head_t']
+            #         if _dev_head_t is None:
+            #             raise FileDeficientError(f"The raw file {self._bids_path.basename} is missing dev_head_t information")
+            #         if dev_head_t is None:
+            #             dev_head_t = _dev_head_t
+            #         if dev_head_t != _dev_head_t:
+            #             raise FileDeficientError(f"Raw file {self._bids_path.basename} has dev_head_t that is different from other files.")
 
         # save input-state
         save.pickle(input_state, input_state_file)
@@ -1152,7 +1152,7 @@ class MneExperiment(FileTree):
                 if task not in params.sessions:
                     continue
                 with self._temporary_state:
-                    rm['evoked-file'].add({'epoch_basename': self.get('epoch_basename', subject=subject, session=session, task=task, acquisition=acquisition, run=run), 'epoch': epoch})
+                    rm['evoked-file'].add({'subject': subject, 'session': session, 'task': task, 'acquisition': acquisition, 'run': run, 'epoch': epoch})
 
         # variables
         for var, subject in invalid_cache['variable_for_subject']:
@@ -3023,7 +3023,7 @@ class MneExperiment(FileTree):
             else:
                 self.make_annot()
                 parc = self.get('parc')
-            fwd = load.mne.forward_operator(fwd_file, src, self.get('mri-dir'), parc, adjacency=False)
+            fwd = load.mne.forward_operator(fwd_file, src, self.get('mri-sdir'), parc, adjacency=False)
             if mask:
                 fwd = fwd.sub(source=np.invert(
                     fwd.source.parc.startswith('unknown')))
@@ -3528,13 +3528,7 @@ class MneExperiment(FileTree):
                         raise FileMissingError(f"The rejection file at {rej_file} does not exist. Run .make_epoch_selection() first.")
                 else:
                     ds_sel = None
-                if not self._runs:
-                    ds = self.load_events(add_bads=add_bads, data_raw=data_raw, task=epoch.session)
-                for run in self._runs:
-                    ds = self.load_events(add_bads=add_bads, data_raw=data_raw, task=epoch.session, run=run)
-                    dss.append(ds)
-            if self._runs:
-                ds = combine(dss)
+                ds = self.load_events(add_bads=add_bads, data_raw=data_raw, task=epoch.session)
 
             # primary event selection
             if epoch.sel:
@@ -6476,6 +6470,10 @@ class MneExperiment(FileTree):
     def _update_epoch_basename(self, fields: LayeredDict) -> str:
         raw_basename = self._update_raw_basename(fields)
         return remove_task(raw_basename)
+
+    def _update_subject_session(self, fields: LayeredDict) -> str:
+        raw_basename = self._update_raw_basename(fields)
+        return get_subject_session(raw_basename)
 
     def _update_test_basename(self, fields: LayeredDict) -> str:
         epoch_basename = self._update_epoch_basename(fields)
