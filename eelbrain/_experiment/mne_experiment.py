@@ -1152,7 +1152,7 @@ class MneExperiment(FileTree):
                 if task not in params.sessions:
                     continue
                 with self._temporary_state:
-                    rm['evoked-file'].add({'subject': subject, 'session': session, 'task': task, 'acquisition': acquisition, 'run': run, 'epoch': epoch})
+                    rm['evoked-file'].add({'subject': subject, 'session': session, 'task': task, 'acquisition': acquisition, 'run': run, 'epoch': epoch, 'suffix': self.get('suffix')})
 
         # variables
         for var, subject in invalid_cache['variable_for_subject']:
