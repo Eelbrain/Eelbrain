@@ -1,6 +1,5 @@
 # skip test: data unavailable
 from os import makedirs
-from pathlib import Path
 from posixpath import dirname
 import mne
 
