@@ -78,7 +78,7 @@ CACHE_STATE_VERSION = 17
 BIDS_ENTITY_KEYS = ['subject', 'session', 'task', 'acquisition', 'run', 'datatype', 'suffix', 'extension']
 
 # paths
-LOG_FILE = join('{root}', 'eelbrain {name}.log')
+LOG_FILE = join('{root}', 'derivatives', 'eelbrain', 'eelbrain {name}.log')
 LOG_FILE_OLD = join('{root}', '.eelbrain.log')
 
 # Allowable parameters
@@ -486,6 +486,7 @@ class MneExperiment(FileTree):
         log_file_old = LOG_FILE_OLD.format(root=root)
         if exists(log_file_old):
             os.rename(log_file_old, log_file)
+        os.makedirs(self.get('cache-dir'), exist_ok=True)
         handler = logging.FileHandler(log_file)
         formatter = logging.Formatter("%(levelname)-8s %(asctime)s %(message)s", "%m-%d %H:%M")  # %(name)-12s
         handler.setFormatter(formatter)
@@ -796,8 +797,7 @@ class MneExperiment(FileTree):
             'parcs': {k: v._as_dict() for k, v in self._parcs.items()},
             'events': events,
         }
-        if not exists(cache_dir):
-            os.makedirs(cache_dir, exist_ok=True)
+
         cache_state_path = join(cache_dir, 'cache-state.pickle')
         if exists(cache_state_path):
             # check time stamp

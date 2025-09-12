@@ -38,7 +38,7 @@ class ImageNet(MneExperiment):
 
 root = '/mnt/d/Data/ds005810'
 e = ImageNet(root)
-e.set(raw='ica', epoch='used')
+e.set(rej='', epoch='used')
 # e.make_ica()
 # e.make_epoch_selection(auto=True)
 # e.load_raw(preload=True)
