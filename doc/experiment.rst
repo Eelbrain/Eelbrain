@@ -65,43 +65,28 @@ The first steps for setting up the pipeline are:
 - Arranging the input data files in the expected file structure
 - Defining an :class:`MneExperiment` subclass with the parameters required to find those files
 
-The pipeline expects input files in a strictly determined folder/file structure.
-In the schema below, curly brackets indicate slots that the pipeline will replace with specific
-names. For example, ``{subject}`` will be replaced with each specific subject's name::
-
-    derivatives root                  {root}/derivatives
-    ICA                                  /ica/*_ica.fif
-    trans file                           /trans/*_trans.fif
-    freesurfer MRI                       /freesurfer
-    Eelbrain generated files             /eelbrain
-    cache directory                         /cache
-    preprocessed raw                           /raw/{subject_session}
-    event-file                                    /*_evts.pickle
-    interp-file                                   /*_interp.pickle
-    fwd-file                                      /*_fwd.fif
-    cov file                                      /*_cov.fif
-    cov info file                                 /*_info.txt
-    inv-file                                      /*_inv.fif
-    evoked                                     /evoked/*_ave.fif
-    test results                               /test/{group}_{analysis}/*.pickle
-    epoch rejection                         /epoch selection/*_epoch.pickle
-    result output files                     /results
-    plot files                              /result plots
+The pipeline expects input dataset in `BIDS (Brain Imaging Data Structure) <https://bids.neuroimaging.io/>`_ format. In the schema below, curly brackets indicate slots that the pipeline will replace with specific names::
 
 
-``{data_dir}``, the directory in which the pipeline looks for the raw data, is determined by the :attr:`MneExperiment.data_dir` attribute. By default it is ``'meg'``, but it can be changed, for example, to ``'eeg'``. This is merely to make the filenames less confusing when e.g. working with EEG data, it does not influence the analysis in any other way.
+    root                              {root}
+    subject folder                       /sub-{subject}
+    session folder                          /ses-{session}
+    modality folder                            /{modality}
+    raw data file                                 /sub-{subject}_ses-{session}_task-{task}_run-{run}_{modality}.fif
+    derivatives root                     /derivatives
+    trans file                              /trans/sub-{subject}_ses-{session}_trans.fif
+    FreeSurfer MRI                          /freesurfer
+    Eelbrain generated files                /eelbrain
 
-``MRI`` files (including ``trans-file``) are optional and only needed for source localization. The ``{root}/mri/{subject}`` directories are `FreeSurfer <https://surfer.nmr.mgh.harvard.edu>`_ subject directories. They either contain the files created by FreeSurfer's `recon-all <https://surfer.nmr.mgh.harvard.edu/fswiki/recon-all>`_ command, or are created by the MNE-Python coregistration utility for scaled template brains. A corresponding ``trans-file`` is created with the MNE-Python coregistration utility in either case (see more information on using `structural MRIs <https://github.com/christianbrodbeck/Eelbrain/wiki/Coregistration%3A-Structural-MRI>`_ or the `fsaverage template brain <https://github.com/christianbrodbeck/Eelbrain/wiki/Coregistration%3A-Template-Brain>`_).
 
-``{session}`` refers to the name of the recording session. The name of one or several recording session(s) has to be specified on an :class:`MneExperiment` subclass, using the  :attr:`MneExperiment.sessions` attribute. Those names will be used to find the raw data files, by filling in the ``raw-file`` template::
+.. note::
+    In BIDS specification, ``{root}/derivatives`` is for files that do not fit into the BIDS structure, such as FreeSurfer MRIs and Eelbrain-generated files.
 
-    from eelbrain.pipeline import *
 
-    class MyExperiment(MneExperiment):
+``{subject}``, ``{session}``, ``{task}``, ``{run}`` and ``{modality}`` are `BIDS entities <https://bids-specification.readthedocs.io/en/stable/appendices/entities.html>`_. ``{session}`` and ``{run}`` are optional. ``{modality}`` is ``meg`` by default.
 
-        data_dir = 'eeg'
-        sessions = 'words'
 
+``MRI`` files (including ``trans-file``) are optional and only needed for source localization. The ``{root}/derivatives/freesurfer`` directory is `FreeSurfer <https://surfer.nmr.mgh.harvard.edu>`_ subject directory. They either contain the files created by FreeSurfer's `recon-all <https://surfer.nmr.mgh.harvard.edu/fswiki/recon-all>`_ command, or are created by the MNE-Python coregistration utility for scaled template brains. (Note that the pipeline doesn't use the NIfTI format that BIDS specifies.) A corresponding ``trans-file`` is created with the MNE-Python coregistration utility in either case (see more information on using `structural MRIs <https://github.com/christianbrodbeck/Eelbrain/wiki/Coregistration%3A-Structural-MRI>`_ or the `fsaverage template brain <https://github.com/christianbrodbeck/Eelbrain/wiki/Coregistration%3A-Template-Brain>`_).
 
 
 The final step to locating the files is providing the ``{root}`` location when initializing that subclass, for example::
@@ -110,16 +95,13 @@ The final step to locating the files is providing the ``{root}`` location when i
     e = MyExperiment("~/Data/Experiment")
 
 
-The pipeline will then determine the subject names based on the names of the folders inside the M/EEG directory. Only names matching a specific expression will be considered, for example "S" followed by 3 or more digits. This expression can be customized in :attr:`MneExperiment.subject_re`.
+Assuming a subject without any session is named "S001", the pipeline will look for data at the following locations:
 
-Assuming a subject is named "S001", the pipeline will look for data at the following locations:
+- The raw data file at ``~/Data/Experiment/sub-S001/meg/sub-S001_task-words_meg.fif``
+- The trans-file from the coregistration at ``~/Data/Experiment/derivatives/trans/sub-S001_trans.fif``
+- The FreeSurfer MRI-directory at ``~/Data/Experiment/derivatives/freesurfer/S001``
 
-- The raw data file at ``~/Data/Experiment/meg/S001/S001_words-raw.fif`` (the session is called "words" which is specified in ``MyExperiment.sessions``)
-- The trans-file from the coregistration at ``~/Data/Experiment/meg/S001/S001-trans.fif``
-- The FreeSurfer MRI-directory at ``~/Data/Experiment/mri/S001``
-
-The setup can be tested using :meth:`MneExperiment.show_subjects`, which shows
-a list of the subjects and corresponding MRIs that were discovered::
+The setup can be tested using :meth:`MneExperiment.show_subjects`, which shows a list of the subjects and corresponding MRIs that were discovered::
 
     >>> e.show_subjects()
     #    subject   mri
@@ -130,16 +112,8 @@ a list of the subjects and corresponding MRIs that were discovered::
     ...
 
 
-.. note::
-    The default input format for M/EEG data is the FIFF format (``*-raw.fif`` files). To specify an alternative input data format, see :attr:`MneExperiment.raw`.
-
-
-.. py:attribute:: MneExperiment.visits
-
-.. note::
-    If participants come back for the experiment on multiple occasions, a
-    :attr:`visits` attribute might also be needed. For details see the
-    corresponding `wiki page <https://github.com/Eelbrain/Eelbrain/wiki/MneExperiment-analysis-options#multiple-visits>`_.
+.. .. note::
+..     The default input format for M/EEG data is the FIFF format (``*-raw.fif`` files). To specify an alternative input data format, see :attr:`MneExperiment.raw`.
 
 Setting up the analysis code
 ----------------------------
@@ -156,8 +130,7 @@ IN the example above, the following would be saved in ``~/Code/MyProject/my_expe
 
     class MyExperiment(MneExperiment):
 
-        data_dir = 'eeg'
-        sessions = 'words'
+        modality = 'eeg'
 
     e = MyExperiment("~/Data/Experiment")
 
@@ -389,27 +362,24 @@ Example
 
 The following is a complete example for an experiment class definition file
 (the source file can be found in the Eelbrain examples folder at
-``examples/mouse/mouse.py``):
+``examples/imagenet/imagenet.py``):
 
-.. literalinclude:: ../examples/mouse/mouse.py
+.. literalinclude:: ../examples/imagenet/imagenet.py
 
 The event structure is illustrated by looking at the first few events::
 
-    >>> from mouse import *
+    >>> from imagenet import *
     >>> data = e.load_events()
     >>> data.head()
-    trigger   i_start   T        SOA     subject   stimulus   prediction
-    --------------------------------------------------------------------
-    182       104273    104.27   12.04   S0001
-    182       116313    116.31   1.313   S0001
-    166       117626    117.63   0.598   S0001     prime      expected
-    162       118224    118.22   2.197   S0001     target     expected
-    166       120421    120.42   0.595   S0001     prime      expected
-    162       121016    121.02   2.195   S0001     target     expected
-    167       123211    123.21   0.596   S0001     prime      unexpected
-    163       123807    123.81   2.194   S0001     target     unexpected
-    167       126001    126      0.598   S0001     prime      unexpected
-    163       126599    126.6    2.195   S0001     target     unexpected
+    #     i_start   trigger   event     T        SOA       subject   position
+    -------------------------------------------------------------------------
+    0     2814      1         unused    2.345    5.0392    01        begin   
+    1     8861      4         stim_on   7.3842   1.0242    01        middle  
+    2     10090     3         resp      8.4083   0.2925    01        middle  
+    3     10441     4         stim_on   8.7008   0.915     01        middle  
+    4     11539     3         resp      9.6158   0.63417   01        middle  
+    5     12300     4         stim_on   10.25    0.90167   01        middle  
+    6     13382     3         resp      11.152   0.64833   01        middle  
 
 
 Experiment Definition
@@ -481,20 +451,26 @@ experiment analysis parameters (see :ref:`state-parameters`), e.g.::
 Finding files
 -------------
 
-.. py:attribute:: MneExperiment.sessions
-   :type: str | Sequence[str]
+.. py:attribute:: MneExperiment.ignore_entities
+   :type: Dict[str, list[str]]
 
-The name, or a list of names of the raw data files (see :ref:`MneExperiment-filestructure`).
+Exclude certain entities from the experiment, e.g.::
 
-.. py:attribute:: MneExperiment.data_dir
+    ignore_entities = {
+        'subject': ['S666', 'S999'],
+        'session': ['emptyroom'],
+    }
+
+.. py:attribute:: MneExperiment.modality
    :type: str
 
-Folder name for the raw data directory. By default, this is ``meg``, i.e., the experiment will look for raw files at ``root/meg/{subject}/{subject}_{session}-raw.fif``. After setting ``data_dir = 'eeg'``, the experiment will look at ``root/eeg/{subject}/{subject}_{session}-raw.fif``.
+Modality for the raw data directory. By default, this is ``meg``, i.e., the experiment will look for raw files at ``{root}/sub-{subject}/ses-{session}/meg/sub-{subject}_ses-{session}_task-{task}_run-{run}_meg.fif``. After setting ``modality = 'eeg'``, the experiment will look at ``{root}/sub-{subject}/ses-{session}/eeg/sub-{subject}_ses-{session}_task-{task}_run-{run}_eeg.fif``.
 
-.. py:attribute:: MneExperiment.subject_re
-   :type: str
 
-Subjects are identified on initialization by looking for folders in the :attr:`MneExperiment.data_dir` directory (``meg`` by default) whose name matches the :attr:`.MneExperiment.subject_re` regular expression. By default, this is one or more characters or underline, followed by one or more digits, for example: ``S001``, ``subject_1``, ``R0001`` (for information about how to define a different pattern, see :mod:`re`).
+.. py:attribute:: MneExperiment.preload
+   :type: bool
+
+Whether to preload raw data into memory before creating epochs. Default is ``False``. It is observed that in some datasets reading raw data when creating epochs is time consuming, and in these cases setting ``preload=True`` can speed up epoch creation.
 
 
 Reading files
@@ -780,16 +756,23 @@ sets up ``my_experiment`` to use a 1-40 Hz band-pass filter as preprocessing, an
 ``session``
 -----------
 
-Which raw session to work with (one of :attr:`MneExperiment.sessions`; usually
-set automatically when :ref:`state-epoch` is set)
+Which session to work with.
 
 
-.. _state-visit:
+.. _state-task:
 
-``visit``
+``task``
+-----------
+
+Which task to work with (usually set automatically when :ref:`state-epoch` is set).
+
+
+.. _state-run:
+
+``run``
 ---------
 
-Which visit to work with (one of :attr:`MneExperiment.visits`)
+Which run to work with.
 
 
 .. _state-raw:
@@ -807,7 +790,7 @@ all the processing steps defined in :attr:`MneExperiment.raw`, as well as
 ``subject``
 -----------
 
-Any subject in the experiment (subjects are identified based on :attr:`MneExperiment.subject_re`).
+Any subject in the experiment.
 
 
 .. _state-group:

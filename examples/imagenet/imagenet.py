@@ -36,12 +36,5 @@ class ImageNet(MneExperiment):
     }
 
 
-root = '/mnt/d/Data/ds005810'
+root = '~/Data/ds005810'
 e = ImageNet(root)
-e.set(rej='', epoch='used')
-# e.make_ica()
-# e.make_epoch_selection(auto=True)
-# e.load_raw(preload=True)
-# print(e.load_raw(preload=True))
-# print(e.load_evoked_stc(subjects=-1))
-print(e.load_test('connection', 0.3, 0.5, 0.05, data='source', baseline=False, epoch='used', make=True))
