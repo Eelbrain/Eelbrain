@@ -2,6 +2,7 @@
 from copy import deepcopy
 import inspect
 from typing import Optional
+import math
 
 from .._exceptions import DefinitionError
 from .._text import enumeration
@@ -508,9 +509,10 @@ def decim_param(
 
     if samplingrate is not None:
         decim_ratio = info['sfreq'] / samplingrate
-        if decim_ratio % 1:
+        rounded_decim_ratio = round(decim_ratio)
+        if not math.isclose(decim_ratio, rounded_decim_ratio, rel_tol=1e-3):
             raise ValueError(f"{samplingrate=} with data at {info['sfreq']:g} Hz: needs to be integer ratio")
-        return int(decim_ratio)
+        return rounded_decim_ratio
 
     if minimal:
         if h_freq := info.get('lowpass'):

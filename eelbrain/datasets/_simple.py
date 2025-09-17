@@ -4,10 +4,12 @@ from pathlib import Path
 import shutil
 import string
 from typing import Literal, Optional, Tuple, Union
+from os.path import join
 
 import mne
 from mne import minimum_norm as mn
 import numpy as np
+from mne_bids import BIDSPath, write_raw_bids
 
 from .. import _info, load
 from .._data_obj import Dataset, Factor, Var, NDVar, Case, Categorial, Scalar, Sensor, Space, UTS
@@ -545,12 +547,9 @@ def get_sensor(n):
 def setup_samples_experiment(
         dst: PathArg,
         n_subjects: int = 3,
+        n_tasks: int = 1,
         n_segments: int = 4,
-        n_sessions: int = 1,
-        n_visits: int = 1,
         name: str = 'SampleExperiment',
-        mris: bool = False,
-        mris_only: bool = False,
         pick: str = 'mag',
 ):
     """Setup up file structure for the ``SampleExperiment`` class
@@ -580,72 +579,27 @@ def setup_samples_experiment(
     pick
         Pick a certain channel type (``''`` to copy all channels).
     """
-    # find data source
-    data_path = Path(mne.datasets.sample.data_path())
-    fsaverage_path = Path(mne.datasets.fetch_fsaverage())
+    # input paths
+    data_path = mne.datasets.sample.data_path()
+    fsaverage_path = mne.datasets.fetch_fsaverage()
+    raw_fname = join(data_path, "MEG", "sample", "sample_audvis_raw.fif")
+    event_id = {
+        "Auditory/Left": 1,
+        "Auditory/Right": 2,
+        "Visual/Left": 3,
+        "Visual/Right": 4,
+        "Smiley": 5,
+        "Button": 32,
+    }
 
-    # setup destination
-    dst = Path(dst).expanduser().resolve()
-    root = dst / name
-    root.mkdir(exist_ok=mris_only)
-
-    if n_sessions > 1 and n_visits > 1:
-        raise NotImplementedError
-    n_recordings = n_subjects * max(n_sessions, n_visits)
-    subjects = [f'R{s_id:04}' for s_id in range(n_subjects)]
-
-    meg_sdir = root / 'meg'
-    meg_sdir.mkdir(exist_ok=mris_only)
-
-    if mris:
-        mri_sdir = root / 'mri'
-        if mris_only and mri_sdir.exists():
-            shutil.rmtree(mri_sdir)
-        mri_sdir.mkdir()
-        # copy rudimentary fsaverage
-        surf_names = ['inflated', 'white', 'orig', 'orig_avg', 'curv', 'sphere']
-        files = {
-            'bem': ['fsaverage-head.fif', 'fsaverage-inner_skull-bem.fif'],
-            'label': ['lh.aparc.annot', 'rh.aparc.annot'],
-            'surf': [f'{hemi}.{name}' for hemi, name in product(['lh', 'rh'], surf_names)],
-            'mri': [],
-        }
-        dst_s_dir = mri_sdir / 'fsaverage'
-        dst_s_dir.mkdir()
-        # from fsaverage
-        for dir_name, file_names in files.items():
-            src_dir = fsaverage_path / dir_name
-            dst_dir = dst_s_dir / dir_name
-            dst_dir.mkdir()
-            for file_name in file_names:
-                shutil.copy(src_dir / file_name, dst_dir / file_name)
-        # source space
-        src_src = fsaverage_path / 'bem' / 'fsaverage-ico-3-src.fif'
-        src_dst = dst_s_dir / 'bem' / 'fsaverage-ico-3-src.fif'
-        if not src_src.exists():
-            src = mne.setup_source_space('fsaverage', 'ico1', subjects_dir=fsaverage_path.parent)
-            src.save(src_src)
-        shutil.copy(src_src, src_dst)
-        # create scaled brains
-        trans = mne.Transform(4, 5, [[ 0.9998371,  -0.00766024,  0.01634169,  0.00289569],
-                                     [ 0.00933457,  0.99443108, -0.10497498, -0.0205526 ],
-                                     [-0.01544655,  0.10511042,  0.9943406,  -0.04443745],
-                                     [ 0.,          0.,          0.,          1.        ]])
-        for subject in subjects:
-            mne.scale_mri('fsaverage', subject, 1., subjects_dir=mri_sdir, skip_fiducials=True, labels=False)
-            meg_dir = meg_sdir / subject
-            meg_dir.mkdir(exist_ok=mris_only)
-            trans.save(str(meg_dir / f'{subject}-trans.fif'))
-    if mris_only:
-        return
-
-    # MEG
-    raw_path = data_path / 'MEG' / 'sample' / 'sample_audvis_raw.fif'
-    raw = mne.io.read_raw_fif(str(raw_path))
+    # read raw
+    raw = mne.io.read_raw_fif(raw_fname)
+    raw.info['line_freq'] = 60
     raw.info['bads'] = []
     sfreq = raw.info['sfreq']
 
-    # find segmentation points
+    # segmentation
+    n_recordings = n_subjects * n_tasks
     events = mne.find_events(raw)
     events[:, 0] -= raw.first_samp
     segs = []
@@ -664,20 +618,71 @@ def setup_samples_experiment(
     else:
         raise ValueError("Not enough data in sample raw. Try smaller ns.")
 
-    if n_visits > 1:
-        sessions = ['sample', *(f'sample {i}' for i in range(1, n_visits))]
-    elif n_sessions > 1:
-        sessions = ['sample%i' % (i + 1) for i in range(n_sessions)]
+    # generate subject and task names
+    subjects = [f'R{s_id:04}' for s_id in range(n_subjects)]
+    if n_tasks > 1:
+        tasks = ['sample%i' % (i + 1) for i in range(n_tasks)]
     else:
-        sessions = ['sample']
+        tasks = ['sample']
+
+    # output paths
+    dst = Path(dst).expanduser().resolve()
+    root = dst / name
+    root.mkdir()
+    bids_path = BIDSPath(root=root)
 
     for subject in subjects:
-        meg_dir = meg_sdir / subject
-        meg_dir.mkdir(exist_ok=mris)
-        for session in sessions:
+        for task in tasks:
             start, stop = segs.pop()
             raw_ = raw.copy().crop(start, stop)
             raw_.load_data()
             if pick:
                 raw_.pick_types(pick, stim=True, exclude=[])
-            raw_.save(str(meg_dir / f'{subject}_{session}-raw.fif'))
+            bids_path.update(subject=subject, task=task, datatype='meg')
+            write_raw_bids(
+                raw=raw_,
+                bids_path=bids_path,
+                event_id=event_id,
+                overwrite=True,
+                allow_preload=True,
+                format='FIF',
+            )
+
+    # freesurfer
+    mri_sdir = root / 'derivatives' / 'freesurfer'
+    mri_sdir.mkdir(parents=True)
+    # copy rudimentary fsaverage
+    surf_names = ['inflated', 'white', 'orig', 'orig_avg', 'curv', 'sphere']
+    files = {
+        'bem': ['fsaverage-head.fif', 'fsaverage-inner_skull-bem.fif'],
+        'label': ['lh.aparc.annot', 'rh.aparc.annot'],
+        'surf': [f'{hemi}.{name}' for hemi, name in product(['lh', 'rh'], surf_names)],
+        'mri': [],
+    }
+    dst_s_dir = mri_sdir / 'fsaverage'
+    dst_s_dir.mkdir()
+    # from fsaverage
+    for dir_name, file_names in files.items():
+        src_dir = fsaverage_path / dir_name
+        dst_dir = dst_s_dir / dir_name
+        dst_dir.mkdir()
+        for file_name in file_names:
+            shutil.copy(src_dir / file_name, dst_dir / file_name)
+    # source space
+    src_src = fsaverage_path / 'bem' / 'fsaverage-ico-3-src.fif'
+    src_dst = dst_s_dir / 'bem' / 'fsaverage-ico-3-src.fif'
+    if not src_src.exists():
+        src = mne.setup_source_space('fsaverage', 'ico1', subjects_dir=fsaverage_path.parent)
+        src.save(src_src)
+    shutil.copy(src_src, src_dst)
+
+    # trans
+    trans = mne.Transform(4, 5, [[ 0.9998371,  -0.00766024,  0.01634169,  0.00289569],
+                                 [ 0.00933457,  0.99443108, -0.10497498, -0.0205526 ],
+                                 [-0.01544655,  0.10511042,  0.9943406,  -0.04443745],
+                                 [ 0.,          0.,          0.,          1.        ]])
+    for subject in subjects:
+        mne.scale_mri('fsaverage', subject, 1., subjects_dir=mri_sdir, skip_fiducials=True, labels=False)
+        trans_dir = root / 'derivatives' / 'trans' / subject
+        trans_dir.mkdir(parents=True)
+        trans.save(str(trans_dir / f'{subject}_trans.fif'))

@@ -24,8 +24,6 @@ class SampleExperiment(MneExperiment):
     stim_channel = 'STI 014'
     merge_triggers = -1  # ignore events of duration 1
 
-    sessions = 'sample'
-
     defaults = {
         'epoch': 'target',
         'select_clusters': 'all',

@@ -25,8 +25,6 @@ class SampleExperiment(MneExperiment):
     meg_system = 'neuromag306mag'
     stim_channel = 'STI 014'
 
-    sessions = ('sample1', 'sample2')
-
     raw = {
         '0-40': RawFilter('raw', None, 40, method='iir'),
         '1-40': RawFilter('raw', 1, 40, method='iir'),
