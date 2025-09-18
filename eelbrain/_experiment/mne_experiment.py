@@ -3745,6 +3745,8 @@ class MneExperiment(FileTree):
                 shift = ds.eval(shift)
             if isinstance(shift, Var):
                 shift = shift.x
+                if np.isnan(shift).any():
+                    raise RuntimeError(f"The epoch shift contains NaNs for {subject}/{epoch.name}\n{shift=}")
 
             if np.isscalar(shift):
                 ds['i_start'] += int(round(shift * ds.info['sfreq']))
