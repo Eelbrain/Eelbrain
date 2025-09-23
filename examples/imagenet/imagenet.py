@@ -1,8 +1,8 @@
 # skip test: data unavailable
-from eelbrain.pipeline import MneExperiment, RawFilter, RawICA, LabelVar, PrimaryEpoch, SecondaryEpoch, TTestOneSample, TTestRelated, ANOVA
+from eelbrain.pipeline import MNEExperiment, RawFilter, RawICA, LabelVar, PrimaryEpoch, SecondaryEpoch, TTestOneSample, TTestRelated, ANOVA
 
 
-class ImageNet(MneExperiment):
+class ImageNet(MNEExperiment):
 
     preload = True
 

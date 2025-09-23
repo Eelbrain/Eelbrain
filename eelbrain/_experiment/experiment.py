@@ -588,7 +588,7 @@ class TreeModel:
         Parameters
         ----------
         temp : str
-            Name of a template in the MneExperiment.templates dictionary, or
+            Name of a template in the MNEExperiment.templates dictionary, or
             a path template with variables indicated as in ``'{var_name}'``
         """
         # if the name is an existing template, retrieve it
@@ -641,7 +641,7 @@ class TreeModel:
     def reset(self):
         """Reset all field values to the state at initialization
 
-        This function can be used in cases where the same MneExperiment instance
+        This function can be used in cases where the same MNEExperiment instance
         is used to perform multiple independent operations, where parameters set
         during one operation should not affect the next operation.
         """

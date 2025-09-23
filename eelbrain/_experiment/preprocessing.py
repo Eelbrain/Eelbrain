@@ -216,7 +216,7 @@ class RawSource(RawPipe):
 
     See Also
     --------
-    MneExperiment.raw
+    MNEExperiment.raw
 
     Examples
     --------
@@ -560,7 +560,7 @@ class RawFilter(CachedRawPipe):
 
     See Also
     --------
-    MneExperiment.raw
+    MNEExperiment.raw
     """
     def __init__(
             self,
@@ -700,7 +700,7 @@ class RawICA(CachedRawPipe):
 
     See Also
     --------
-    MneExperiment.raw
+    MNEExperiment.raw
     RawApplyICA
 
     Notes
@@ -711,7 +711,7 @@ class RawICA(CachedRawPipe):
     step, regardless of whether they were used to estimate the components or
     not.
 
-    Use :meth:`MneExperiment.make_ica_selection` for each subject to
+    Use :meth:`MNEExperiment.make_ica_selection` for each subject to
     select ICA components that should be removed. The arguments to that function
     determine what data is used to visualize the component time courses.
     For example, to determine which components load strongly on empty room data,
@@ -724,7 +724,7 @@ class RawICA(CachedRawPipe):
     --------
     Some ICA examples::
 
-        class Experiment(MneExperiment):
+        class Experiment(MNEExperiment):
 
             raw = {
                 '1-40': RawFilter('raw', 1, 40),
@@ -768,8 +768,8 @@ class RawICA(CachedRawPipe):
     ) -> list[str]:
         bad_chs = set()
         for task in self.task:
-            path.copy().update(task=task)
-            bad_chs.update(self.source.load_bad_channels(path, existing))
+            path_ = path.copy().update(task=task)
+            bad_chs.update(self.source.load_bad_channels(path_, existing))
         return sorted(bad_chs)
 
     def load_ica(self, path: BIDSPath) -> mne.preprocessing.ICA:
@@ -802,7 +802,7 @@ class RawICA(CachedRawPipe):
                 if missing := raw_set - ica_set:
                     return tuple(missing)
         if raise_on_mismatch and not names_match:
-            raise RuntimeError(f"The ICA channel names do not match the data channels for raw={raw_name!r}, {subject=}. Have the bad channels changed since the ICA was computed? Try to revert the data channels, or recompute the ICA using MneExperiment.make_ica().\nData: {', '.join(raw_ch_names)}\nICA:  {', '.join(ica.ch_names)}")
+            raise RuntimeError(f"The ICA channel names do not match the data channels for raw={raw_name!r}, {subject=}. Have the bad channels changed since the ICA was computed? Try to revert the data channels, or recompute the ICA using MNEExperiment.make_ica().\nData: {', '.join(raw_ch_names)}\nICA:  {', '.join(ica.ch_names)}")
         return names_match
 
     def load_concatenated_source_raw(
@@ -921,7 +921,7 @@ class RawApplyICA(CachedRawPipe):
 
     See Also
     --------
-    MneExperiment.raw
+    MNEExperiment.raw
 
     Notes
     -----
@@ -932,7 +932,7 @@ class RawApplyICA(CachedRawPipe):
     Estimate ICA components with 1-40 Hz band-pass filter and apply the ICA
     to data that is high pass filtered at 0.1 Hz::
 
-        class Experiment(MneExperiment):
+        class Experiment(MNEExperiment):
 
             raw = {
                 '1-40': RawFilter('raw', 1, 40),
@@ -1018,7 +1018,7 @@ class RawMaxwell(CachedRawPipe):
 
     See Also
     --------
-    MneExperiment.raw
+    MNEExperiment.raw
     """
 
     _bad_chs_affect_cache = True
@@ -1126,7 +1126,7 @@ class RawReReference(CachedRawPipe):
 
     See Also
     --------
-    MneExperiment.raw
+    MNEExperiment.raw
     """
     def __init__(
             self,

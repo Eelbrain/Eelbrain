@@ -1,5 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-"""Test MneExperiment using mne-python sample data"""
+"""Test MNEExperiment using mne-python sample data"""
 from os.path import join, exists
 import pytest
 from warnings import catch_warnings, filterwarnings

@@ -16,7 +16,7 @@ class KeysMissing(KeyError):
 
 
 class DefinitionError(Exception):
-    "MneExperiment definition error"
+    "MNEExperiment definition error"
 
 
 class EvalError(Exception):

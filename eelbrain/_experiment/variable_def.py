@@ -71,7 +71,7 @@ class EvalVar(VarDef):
 
     See Also
     --------
-    MneExperiment.variables
+    MNEExperiment.variables
     """
     _pickle_args = ('task', 'code')
 
@@ -116,7 +116,7 @@ class LabelVar(VarDef):
 
     See Also
     --------
-    MneExperiment.variables
+    MNEExperiment.variables
     """
     _pickle_args = ('task', 'source', 'codes', 'labels', 'is_factor', 'default', 'fnmatch')
 
@@ -194,7 +194,7 @@ class GroupVar(VarDef):
 
     See Also
     --------
-    MneExperiment.variables
+    MNEExperiment.variables
 
     Examples
     --------

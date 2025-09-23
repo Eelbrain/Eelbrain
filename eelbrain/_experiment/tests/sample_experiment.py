@@ -1,7 +1,7 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 # flake8: noqa
 """
-Sample MneExperiment. This experiment can be used with a sample dataset that
+Sample MNEExperiment. This experiment can be used with a sample dataset that
 treats different parts of the recording from the MNE sample dataset as different
 subjects. To produce the data directory for this experiment use (make sure
 that the directory you specify exists)::
@@ -16,10 +16,10 @@ Then you can use::
 
 """
 from eelbrain.pipeline import *
-from eelbrain import MneExperiment
+from eelbrain import MNEExperiment
 
 
-class SampleExperiment(MneExperiment):
+class SampleExperiment(MNEExperiment):
 
     stim_channel = 'STI 014'
     merge_triggers = -1  # ignore events of duration 1

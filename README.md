@@ -21,4 +21,4 @@ To expedite testing in different environments, there are several shortcut comman
 
 - `$ make test-no-gui`: runs all tests that do not invoke a GUI
 - `$ make test-only-gui`: runs specifically those tests that involve GUI elements
-- `pytest --runslow eelbrain/_experiment/tests/test_sample_experiment.py::test_sample_source` runs more thorough (and lengthy) testing of the `MneExperiment` pipeline 
+- `pytest --runslow eelbrain/_experiment/tests/test_sample_experiment.py::test_sample_source` runs more thorough (and lengthy) testing of the `MNEExperiment` pipeline 

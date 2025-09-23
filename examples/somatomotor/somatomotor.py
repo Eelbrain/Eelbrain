@@ -2,7 +2,7 @@
 from eelbrain.pipeline import *
 
 
-class Somatomotor(MneExperiment):
+class Somatomotor(MNEExperiment):
 
     ignore_entities = {
         'ignore_runs': ('2', '3'),

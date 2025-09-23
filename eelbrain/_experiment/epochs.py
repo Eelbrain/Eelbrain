@@ -206,7 +206,7 @@ class PrimaryEpoch(Epoch):
 
     See Also
     --------
-    MneExperiment.epochs
+    MNEExperiment.epochs
 
     Examples
     --------
@@ -269,7 +269,7 @@ class SecondaryEpoch(Epoch):
 
     See Also
     --------
-    MneExperiment.epochs
+    MNEExperiment.epochs
     """
     DICT_ATTRS = Epoch.DICT_ATTRS + ('sel_epoch', 'sel')
     INHERITED_PARAMS = ('tmin', 'tmax', 'decim', 'samplingrate', 'baseline', 'post_baseline_trigger_shift', 'post_baseline_trigger_shift_min', 'post_baseline_trigger_shift_max')
@@ -320,7 +320,7 @@ class SuperEpoch(Epoch):
 
     See Also
     --------
-    MneExperiment.epochs
+    MNEExperiment.epochs
     """
     DICT_ATTRS = Epoch.DICT_ATTRS + ('sub_epochs',)
     INHERITED_PARAMS = ('tmin', 'tmax', 'decim', 'samplingrate', 'baseline')
@@ -381,7 +381,7 @@ class EpochCollection(EpochBase):
 
     See Also
     --------
-    MneExperiment.epochs
+    MNEExperiment.epochs
     """
     # IMPLEMENTATION ALTERNATIVE?
     # ---------------------------
@@ -434,7 +434,7 @@ class ContinuousEpoch(EpochBase):
     data into multuple segments when there are long pauses between successive
     events.
 
-    When using :meth:`MneExperiment.load_epochs`, each row of the returned
+    When using :meth:`MNEExperiment.load_epochs`, each row of the returned
     :class:`Dataset` will contain the events in the epoch alongside the data.
 
     Parameters
