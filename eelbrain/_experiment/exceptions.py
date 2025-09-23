@@ -1,4 +1,4 @@
-"""Exceptions for MNEExperiment"""
+"""Exceptions for Pipeline"""
 
 
 class FileMissingError(Exception):

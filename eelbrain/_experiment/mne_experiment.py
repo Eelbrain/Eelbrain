@@ -1,5 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-"""MNEExperiment class to manage data from a experiment"""
+"""Pipeline class to manage data from a experiment"""
 from collections import defaultdict
 from datetime import datetime
 from glob import glob
@@ -176,7 +176,7 @@ def mtime_changed(first, second):
     return abs(first - second) >= 1
 
 
-class MNEExperiment(FileTree):
+class Pipeline(FileTree):
     """Analyze an MEG or EEG experiment
 
     Parameters
@@ -365,9 +365,9 @@ class MNEExperiment(FileTree):
         # Checks
         ########
         if root is None:
-            raise AttributeError("MNEExperiment subclasses must have root.")
+            raise AttributeError("Pipeline subclasses must have root.")
         if hasattr(self, 'cluster_criteria'):
-            raise AttributeError("MNEExperiment subclasses can not have a .cluster_criteria attribute anymore. Please remove the attribute, delete the eelbrain-cache folder and use the select_clusters analysis parameter.")
+            raise AttributeError("Pipeline subclasses can not have a .cluster_criteria attribute anymore. Please remove the attribute, delete the eelbrain-cache folder and use the select_clusters analysis parameter.")
         if not isinstance(self.auto_delete_cache, str):
             raise TypeError(f"{self.__class__.__name__}.auto_delete_cache={self.auto_delete_cache!r}")
         if not isinstance(self.auto_delete_results, bool):
@@ -1747,7 +1747,7 @@ class MNEExperiment(FileTree):
         --------
         Drop the last event from subject ``S01``::
 
-            class Experiment(MNEExperiment):
+            class Experiment(Pipeline):
 
                 def fix_events(self, ds):
                     if ds.info['subject'] == 'S01':
@@ -1790,7 +1790,7 @@ class MNEExperiment(FileTree):
         --------
         Add a label whenever trigger 2 follows trigger 1::
 
-            class Experiment(MNEExperiment):
+            class Experiment(Pipeline):
 
                 def label_events(self, ds):
                     # assign 'no' to all events
@@ -1805,7 +1805,7 @@ class MNEExperiment(FileTree):
         the recording only indicate trial onsets, and separate files contain
         events listed relative to these trial onsets::
 
-            class Experiment(MNEExperiment):
+            class Experiment(Pipeline):
 
                 def label_events(self, ds):
                     samplingrate = ds.info['sfreq']
@@ -3679,7 +3679,7 @@ class MNEExperiment(FileTree):
         Parameters
         ----------
         test
-            Test for which to create a report (entry in MNEExperiment.tests.
+            Test for which to create a report (entry in Pipeline.tests.
         tstart
             Beginning of the time window for the test in seconds
             (default is the beginning of the epoch).
@@ -5002,7 +5002,7 @@ class MNEExperiment(FileTree):
         Parameters
         ----------
         test
-            Test for which to create a report (entry in MNEExperiment.tests).
+            Test for which to create a report (entry in Pipeline.tests).
         parc
             Run the test separately in each label of parc.
 
@@ -5133,7 +5133,7 @@ class MNEExperiment(FileTree):
         Parameters
         ----------
         test : str
-            Test for which to create a report (entry in MNEExperiment.tests).
+            Test for which to create a report (entry in Pipeline.tests).
         parc : str
             Parcellation that defines ROIs.
         pmin : None | scalar, 1 > pmin > 0 | 'tfce'
@@ -5236,7 +5236,7 @@ class MNEExperiment(FileTree):
         Parameters
         ----------
         test : str
-            Test for which to create a report (entry in MNEExperiment.tests).
+            Test for which to create a report (entry in Pipeline.tests).
         pmin : None | scalar, 1 > pmin > 0 | 'tfce'
             Equivalent p-value for cluster threshold, or 'tfce' for
             threshold-free cluster enhancement.
@@ -5298,7 +5298,7 @@ class MNEExperiment(FileTree):
         Parameters
         ----------
         test : str
-            Test for which to create a report (entry in MNEExperiment.tests).
+            Test for which to create a report (entry in Pipeline.tests).
         sensors : sequence of str
             Names of the sensors which to include.
         pmin : None | scalar, 1 > pmin > 0 | 'tfce'
@@ -6241,7 +6241,7 @@ class MNEExperiment(FileTree):
         -----
         Can also be set through the ``inv`` state parameter (see :ref:`state-inv`).
         To determine the string corresponding to a given set of parameters,
-        use :meth:`MNEExperiment.inv_str`.
+        use :meth:`Pipeline.inv_str`.
 
         .. warning::
             Free and loose orientation inverse solutions have a non-zero
@@ -6790,7 +6790,7 @@ class MNEExperiment(FileTree):
         absent
             String to display when a given file is absent (default ``'-'``).
         ...
-            :meth:`MNEExperiment.iter` parameters.
+            :meth:`Pipeline.iter` parameters.
 
         Examples
         --------

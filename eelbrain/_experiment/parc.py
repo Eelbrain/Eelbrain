@@ -30,7 +30,7 @@ class Parcellation(Definition):
 
     def _make(
             self,
-            e,  # the MNEExperiment instance
+            e,  # the Pipeline instance
             parc: str,  # the name (contains radius for seeded parcellations)
     ) -> list:
         raise RuntimeError(f"Trying to make {self.__class__.__name__}")
@@ -56,7 +56,7 @@ class SubParc(Parcellation):
 
     See Also
     --------
-    MNEExperiment.parcs
+    Pipeline.parcs
 
     Examples
     --------
@@ -128,7 +128,7 @@ class CombinationParc(Parcellation):
 
     See Also
     --------
-    MNEExperiment.parcs
+    Pipeline.parcs
 
     Examples
     --------
@@ -253,7 +253,7 @@ class FreeSurferParc(Parcellation):
 
     See Also
     --------
-    MNEExperiment.parcs
+    Pipeline.parcs
 
     Examples
     --------
@@ -279,7 +279,7 @@ class FSAverageParc(Parcellation):
 
     See Also
     --------
-    MNEExperiment.parcs
+    Pipeline.parcs
 
     Examples
     --------
@@ -342,7 +342,7 @@ class SeededParc(Parcellation):
 
     See Also
     --------
-    MNEExperiment.parcs
+    Pipeline.parcs
 
     Parameters
     ----------
@@ -402,7 +402,7 @@ class IndividualSeededParc(SeededParc):
 
     See Also
     --------
-    MNEExperiment.parcs
+    Pipeline.parcs
 
     Examples
     --------

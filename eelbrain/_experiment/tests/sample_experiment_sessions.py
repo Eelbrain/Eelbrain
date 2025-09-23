@@ -20,7 +20,7 @@ from eelbrain.pipeline import *
 ROOT = "~/Data/SampleExperimentSessions"
 
 
-class SampleExperiment(MNEExperiment):
+class SampleExperiment(Pipeline):
 
     meg_system = 'neuromag306mag'
     stim_channel = 'STI 014'
