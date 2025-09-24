@@ -139,7 +139,7 @@ class RawPipe:
         return read_raw_bids(
             path,
             extra_params={'preload': preload},
-            verbose='ERROR',
+            verbose='critical',
         )
 
     def load_bad_channels(
@@ -302,11 +302,18 @@ class RawSource(RawPipe):
             out['connectivity'] = self.adjacency
         return out
 
+    def cache(self, path: BIDSPath) -> None:
+        "Make sure the file exists and is up to date"
+        raw_path = self.get_path(path)
+        if not exists(raw_path):
+            raise FileMissingError(f"Raw input file does not exist at expected location {raw_path}")
+        return None
+
     def _load(self, path: BIDSPath, preload):
         raw: mne.io.BaseRaw = read_raw_bids(
             path,
             extra_params={'preload': preload},
-            verbose='ERROR',
+            verbose='critical',
         )
         if self.rename_channels:
             if rename := {k: v for k, v in self.rename_channels.items() if k in raw.ch_names}:
@@ -449,13 +456,21 @@ class CachedRawPipe(RawPipe):
         out['source'] = self._source_name
         return out
 
-    def cache(self, path: BIDSPath) -> mne.io.BaseRaw:
+    def cache(
+            self,
+            path: BIDSPath,
+            load: bool = False,
+            preload: PreloadArg = False,
+    ) -> mne.io.BaseRaw | None:
         "Make sure the cache is up to date"
         cache_path = self.get_path(path, 'cache')
         if exists(cache_path):
             mtime = self.mtime(path, self._bad_chs_affect_cache)
             if mtime and getmtime(cache_path) >= mtime:
-                return
+                if load:
+                    return mne.io.read_raw_fif(cache_path, preload=preload, verbose='critical')
+                else:
+                    return None
         from .. import __version__
         # make sure the target directory exists
         makedirs(dirname(cache_path), exist_ok=True)
@@ -496,7 +511,7 @@ class CachedRawPipe(RawPipe):
         if raw is not None:
             pass
         elif self._cache:
-            raw = self.cache(path)
+            raw = self.cache(path, load=True, preload=preload)
         elif preload == -1:
             raw = self._make_info(path)
         else:
