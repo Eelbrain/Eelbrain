@@ -3,11 +3,11 @@
 .. _experiment-class-guide:
 
 ***********************************
-The :class:`MneExperiment` Pipeline
+The :class:`Pipeline` Pipeline
 ***********************************
 
 .. seealso::
-     - :class:`MneExperiment` class reference for details on all available methods
+     - :class:`Pipeline` class reference for details on all available methods
      - `Pipeline wiki page <https://github.com/christianbrodbeck/Eelbrain/wiki/MNE-Pipeline>`_
        for additional information
      - `TRFExperiment <https://trf-tools.readthedocs.io/latest/pipeline.html>`_: an experimental extension of the pipeline to Temporal Response Function analysis
@@ -19,7 +19,7 @@ The :class:`MneExperiment` Pipeline
 Introduction
 ============
 
-The :class:`MneExperiment` pipeline manages the following analysis steps:
+The :class:`Pipeline` pipeline manages the following analysis steps:
 
 #. Preprocessing
 #. Epoching
@@ -32,20 +32,20 @@ The pipeline automatizes the complete analysis, and provides an interface for pr
 It allows access to the data at any intermediate stage, to allow for customizing the analysis.
 It caches intermediate results to make access to these data fast and efficient.
 
-:class:`MneExperiment` is a template for the pipeline.
+:class:`Pipeline` is a template for the pipeline.
 This template is adapted to a specific experiment by specifying properties of the experiment as attributes (technically, by creating a `subclass <https://docs.python.org/3/tutorial/classes.html>`_).
 An instance of this pipeline then provides access to different analysis stages through its methods:
 
  - ``.load_...`` methods are for loading data and results.
-   Most of these return Eelbrain data types by default, but they can be used to load :mod:`mne` objects by setting ``ndvar=False`` (e.g., :meth:`MneExperiment.load_epochs`).
+   Most of these return Eelbrain data types by default, but they can be used to load :mod:`mne` objects by setting ``ndvar=False`` (e.g., :meth:`Pipeline.load_epochs`).
  - ``.show_...`` methods are for retrieving and displaying information at different stages.
  - ``.plot_...`` methods are for generating plots of the data.
  - ``.make_...`` methods are for generating various intermediate results.
    Most of these methods do not have to be called by the user, as they are invoked automatically when needed.
    An exception are those that require user input, like ICA component selection, which are mentioned below.
 
-For example, :meth:`MneExperiment.load_test` can be used to directly load a mass-univariate test result, without a need to explicitly load data at any intermediate stage.
-On the other hand, :meth:`MneExperiment.load_epochs` can be used to load the corresponding data epochs, for example to perform a different analysis that may not be implemented in the pipeline.
+For example, :meth:`Pipeline.load_test` can be used to directly load a mass-univariate test result, without a need to explicitly load data at any intermediate stage.
+On the other hand, :meth:`Pipeline.load_epochs` can be used to load the corresponding data epochs, for example to perform a different analysis that may not be implemented in the pipeline.
 
 
 Step by Step
@@ -63,7 +63,7 @@ Setting up the file structure
 The first steps for setting up the pipeline are:
 
 - Arranging the input data files in the expected file structure
-- Defining an :class:`MneExperiment` subclass with the parameters required to find those files
+- Defining an :class:`Pipeline` subclass with the parameters required to find those files
 
 The pipeline expects input dataset in `BIDS (Brain Imaging Data Structure) <https://bids.neuroimaging.io/>`_ format. In the schema below, curly brackets indicate slots that the pipeline will replace with specific names::
 
@@ -101,7 +101,7 @@ Assuming a subject without any session is named "S001", the pipeline will look f
 - The trans-file from the coregistration at ``~/Data/Experiment/derivatives/trans/sub-S001_trans.fif``
 - The FreeSurfer MRI-directory at ``~/Data/Experiment/derivatives/freesurfer/S001``
 
-The setup can be tested using :meth:`MneExperiment.show_subjects`, which shows a list of the subjects and corresponding MRIs that were discovered::
+The setup can be tested using :meth:`Pipeline.show_subjects`, which shows a list of the subjects and corresponding MRIs that were discovered::
 
     >>> e.show_subjects()
     #    subject   mri
@@ -113,7 +113,7 @@ The setup can be tested using :meth:`MneExperiment.show_subjects`, which shows a
 
 
 .. .. note::
-..     The default input format for M/EEG data is the FIFF format (``*-raw.fif`` files). To specify an alternative input data format, see :attr:`MneExperiment.raw`.
+..     The default input format for M/EEG data is the FIFF format (``*-raw.fif`` files). To specify an alternative input data format, see :attr:`Pipeline.raw`.
 
 Setting up the analysis code
 ----------------------------
@@ -122,13 +122,13 @@ It is recommended to organize analysis scripts in a dedicated folder.
 For example, we will assume that all analysis scripts will be saved in a directory called ``~/Code/MyProject``.
 This makes it easy to keep track of the history of this folder, for example using `Git <https://git-scm.com>`_.
 
-You will want to access the :class:`MneExperiment` subclass (``MyExperiment`` above) from different locations (for instance, from a terminal to do artifact rejection, and from different Jupyter Notebooks to pursue different analyses).
+You will want to access the :class:`Pipeline` subclass (``MyExperiment`` above) from different locations (for instance, from a terminal to do artifact rejection, and from different Jupyter Notebooks to pursue different analyses).
 Thus, it makes sense to define the experiment subclass in a separate Python file, and ``run`` or ``import`` that file as needed.
 IN the example above, the following would be saved in ``~/Code/MyProject/my_experiment.py``::
 
     from eelbrain.pipeline import *
 
-    class MyExperiment(MneExperiment):
+    class MyExperiment(Pipeline):
 
         modality = 'eeg'
 
@@ -160,7 +160,7 @@ Pre-processing
 --------------
 
 Make sure an appropriate pre-processing pipeline is defined as
-:attr:`MneExperiment.raw`.
+:attr:`Pipeline.raw`.
 
 To inspect raw data for a given pre-processing step use::
 
@@ -176,10 +176,10 @@ Which will plot a 10 s excerpt and allow scrolling through the rest of the data.
 Events
 ------
 
-If needed, set :attr:`MneExperiment.merge_triggers` to handle spurious events.
+If needed, set :attr:`Pipeline.merge_triggers` to handle spurious events.
 Then, add event labels.
 Initially, events are only labeled with the trigger ID. Use the
-:attr:`MneExperiment.variables` settings to add labels.
+:attr:`Pipeline.variables` settings to add labels.
 Events are represented as :class:`Dataset` objects and can be inspected with
 corresponding methods and functions, for example::
 
@@ -193,23 +193,23 @@ For more complex designs and variables, you can override methods that provide
 complete control over the events. These are the transformations applied to
 the triggers extracted from raw files (in this order):
 
- - :meth:`MneExperiment.fix_events`: Change event order, timing and remove/add
+ - :meth:`Pipeline.fix_events`: Change event order, timing and remove/add
    events
- - :attr:`MneExperiment.variables`: Add labels based on triggers
- - :meth:`MneExperiment.label_events`: Add any more complex labels
+ - :attr:`Pipeline.variables`: Add labels based on triggers
+ - :meth:`Pipeline.label_events`: Add any more complex labels
 
 
 Defining data epochs
 --------------------
 
-Once events are properly labeled, define :attr:`MneExperiment.epochs`.
+Once events are properly labeled, define :attr:`Pipeline.epochs`.
 
 There is one special epoch to define, which is called ``'cov'``. This is the
 data epoch that will be used to estimate the sensor noise covariance matrix for
 source estimation.
 
 In order to find the right ``sel`` epoch parameter, it can be useful to actually
-load the events with :meth:`MneExperiment.load_events` and test different
+load the events with :meth:`Pipeline.load_events` and test different
 selection strings. The epoch selection is determined by
 ``selection = event_ds.eval(epoch['sel'])``. Thus, a specific setting could be
 tested with::
@@ -224,9 +224,9 @@ Bad channels
 Flat channels are automatically excluded from the analysis.
 
 An initial check for noisy channels can be done by looking at the raw data (see
-:ref:`MneExperiment-preprocessing` above).
+:ref:`Pipeline-preprocessing` above).
 If this inspection reveals bad channels, they can be excluded using
-:meth:`MneExperiment.make_bad_channels`.
+:meth:`Pipeline.make_bad_channels`.
 
 Another good check for bad channels is plotting the average evoked response,
 and looking for channels which are uncorrelated with neighboring
@@ -248,11 +248,11 @@ The neighbor correlation can also be quantified, using::
 
 
 A simple way to cycle through subjects when performing a manual pre-processing
-step is :meth:`MneExperiment.next`.
+step is :meth:`Pipeline.next`.
 
 If a general threshold is adequate, the selection of bad channels based on
 neighbor-correlation can be automated using the
-:meth:`MneExperiment.make_bad_channels_neighbor_correlation` method::
+:meth:`Pipeline.make_bad_channels_neighbor_correlation` method::
 
     >>> for subject in e:
     ...     e.make_bad_channels_neighbor_correlation(0.3)
@@ -268,11 +268,11 @@ set to the ICA stage of the pipeline::
     >>> e.set(raw='ica')
     >>> e.make_ica_selection()
 
-See :meth:`MneExperiment.make_ica_selection` for more information on display
+See :meth:`Pipeline.make_ica_selection` for more information on display
 options and on how to precompute ICA decomposition for all subjects.
 
 When selecting ICA components for multiple subject, a simple way to cycle
-through subjects is :meth:`MneExperiment.next`, like::
+through subjects is :meth:`Pipeline.next`, like::
 
     >>> e.make_ica_selection(epoch='epoch', decim=10)
     >>> e.next()
@@ -287,7 +287,7 @@ Trial selection
 ---------------
 
 For each primary epoch that is defined, bad trials can be rejected using
-:meth:`MneExperiment.make_epoch_selection`. Rejections are specific to a given ``raw``
+:meth:`Pipeline.make_epoch_selection`. Rejections are specific to a given ``raw``
 state::
 
     >>> e.set(raw='ica1-40', epoch='word')
@@ -325,29 +325,29 @@ With preprocessing completed, there are different options for analyzing the
 data.
 
 The most flexible option is loading data from the desired processing stage using
-one of the many ``.load_...`` methods of the :class:`MneExperiment`. For
+one of the many ``.load_...`` methods of the :class:`Pipeline`. For
 example, load a :class:`Dataset` with source-localized condition averages using
-:meth:`MneExperiment.load_evoked_stc`, then test a hypothesis using one of the
+:meth:`Pipeline.load_evoked_stc`, then test a hypothesis using one of the
 mass-univariate test from the :mod:`testnd` module. To make this kind of
 analysis replicable, it is probably useful to write the complete analysis as a
 separate script that imports the experiment (see the `example experiment folder
 <https://github.com/christianbrodbeck/Eelbrain/tree/master/examples/mouse>`_).
 
 Many statistical comparisons can also be specified in the
-:attr:`MneExperiment.tests` attribute, and then loaded directly using the
-:meth:`MneExperiment.load_test` method. This has the advantage that the tests
+:attr:`Pipeline.tests` attribute, and then loaded directly using the
+:meth:`Pipeline.load_test` method. This has the advantage that the tests
 will be cached automatically and, once computed, can be loaded very quickly.
 However, these definitions are not quite as flexible as writing a custom script.
 
-Finally, for tests defined in :attr:`MneExperiment.tests`, the
-:class:`MneExperiment` can generate HTML report files. These are generated with
-the :meth:`MneExperiment.make_report` and :meth:`MneExperiment.make_report_rois`
+Finally, for tests defined in :attr:`Pipeline.tests`, the
+:class:`Pipeline` can generate HTML report files. These are generated with
+the :meth:`Pipeline.make_report` and :meth:`Pipeline.make_report_rois`
 methods.
 
 .. Warning::
     If source files are changed (raw files, epoch rejection or bad channel
     files, ...) reports are not updated automatically unless the corresponding
-    :meth:`MneExperiment.make_report` function is called again. For this reason
+    :meth:`Pipeline.make_report` function is called again. For this reason
     it is useful to have a script to generate all desired reports. Running the
     script ensures that all reports are up-to-date, and will only take seconds
     if nothing has to be recomputed (for an example see ``make-reports.py`` in
@@ -392,10 +392,10 @@ Experiment Definition
 Basic setup
 -----------
 
-.. py:attribute:: MneExperiment.owner
+.. py:attribute:: Pipeline.owner
    :type: str
 
-Set :attr:`MneExperiment.owner` to your email address if you want to be able to
+Set :attr:`Pipeline.owner` to your email address if you want to be able to
 receive notifications. Whenever you run a sequence of commands ``with
 mne_experiment.notification:`` you will get an email once the respective code
 has finished executing or run into an error, for example::
@@ -408,34 +408,34 @@ has finished executing or run into an error, for example::
 will send you an email as soon as the report is finished (or the program
 encountered an error)
 
-.. py:attribute:: MneExperiment.auto_delete_results
+.. py:attribute:: Pipeline.auto_delete_results
    :type: bool
 
-Whenever a :class:`MneExperiment` instance is initialized with a valid
+Whenever a :class:`Pipeline` instance is initialized with a valid
 ``root`` path, it checks whether changes in the class definition invalidate
 previously computed results. By default, the user is prompted to confirm
 the deletion of invalidated results. Set :attr:`auto_delete_results` to ``True``
 to delete them automatically without interrupting initialization.
 
-.. py:attribute:: MneExperiment.auto_delete_cache
+.. py:attribute:: Pipeline.auto_delete_cache
    :type: bool
 
-:class:`MneExperiment` caches various intermediate results. By default, if a
+:class:`Pipeline` caches various intermediate results. By default, if a
 change in the experiment definition would make cache files invalid, the outdated
 files are automatically deleted. Set :attr:`.auto_delete_cache` to ``'ask'`` to
 ask for confirmation before deleting files. This can be useful to prevent
 accidentally deleting files that take long to compute when editing the pipeline
 definition.
-When using this option, set :attr:`MneExperiment.screen_log_level` to
+When using this option, set :attr:`Pipeline.screen_log_level` to
 ``'debug'`` to learn about what change caused the cache to be invalid.
 
-.. py:attribute:: MneExperiment.screen_log_level
+.. py:attribute:: Pipeline.screen_log_level
    :type: str
 
 Determines the amount of information displayed on the screen while using
-an :class:`MneExperiment` (see :mod:`logging`).
+an :class:`Pipeline` (see :mod:`logging`).
 
-.. py:attribute:: MneExperiment.defaults
+.. py:attribute:: Pipeline.defaults
    :type: Dict[str, str]
 
 The defaults dictionary can contain default settings for
@@ -451,7 +451,7 @@ experiment analysis parameters (see :ref:`state-parameters`), e.g.::
 Finding files
 -------------
 
-.. py:attribute:: MneExperiment.ignore_entities
+.. py:attribute:: Pipeline.ignore_entities
    :type: Dict[str, list[str]]
 
 Exclude certain entities from the experiment, e.g.::
@@ -461,13 +461,13 @@ Exclude certain entities from the experiment, e.g.::
         'session': ['emptyroom'],
     }
 
-.. py:attribute:: MneExperiment.modality
+.. py:attribute:: Pipeline.modality
    :type: str
 
 Modality for the raw data directory. By default, this is ``meg``, i.e., the experiment will look for raw files at ``{root}/sub-{subject}/ses-{session}/meg/sub-{subject}_ses-{session}_task-{task}_run-{run}_meg.fif``. After setting ``modality = 'eeg'``, the experiment will look at ``{root}/sub-{subject}/ses-{session}/eeg/sub-{subject}_ses-{session}_task-{task}_run-{run}_eeg.fif``.
 
 
-.. py:attribute:: MneExperiment.preload
+.. py:attribute:: Pipeline.preload
    :type: bool
 
 Whether to preload raw data into memory before creating epochs. Default is ``False``. It is observed that in some datasets reading raw data when creating epochs is time consuming, and in these cases setting ``preload=True`` can speed up epoch creation.
@@ -477,24 +477,24 @@ Reading files
 -------------
 
 .. note::
-    Gain more control over reading files through adding a :class:`RawPipe` to :attr:`MneExperiment.raw`.
+    Gain more control over reading files through adding a :class:`RawPipe` to :attr:`Pipeline.raw`.
 
-.. py:attribute:: MneExperiment.stim_channel
+.. py:attribute:: Pipeline.stim_channel
    :type: str | Sequence[str]
 
 By default, events are loaded from all stim channels; use this parameter to restrict events to one or several stim channels.
 
-.. py:attribute:: MneExperiment.merge_triggers
+.. py:attribute:: Pipeline.merge_triggers
    :type: int
 
 Use a non-default ``merge`` parameter for :func:`.load.mne.events`.
 
-.. py:attribute:: MneExperiment.trigger_shift
+.. py:attribute:: Pipeline.trigger_shift
    :type: float | Dict[str, float]
 
 Set this attribute to shift all trigger times by a constant (in seconds). For example, with ``trigger_shift = 0.03`` a trigger that originally occurred 35.10 seconds into the recording will be shifted to 35.13. If the trigger delay differs between subjects, this attribute can also be a dictionary mapping subject names to shift values, e.g. ``trigger_shift = {'S001': 0.02, 'S002': 0.05, ...}``.
 
-.. py:attribute:: MneExperiment.meg_system
+.. py:attribute:: Pipeline.meg_system
    :type: str
 
 Specify the MEG system used to acquire the data so that the right sensor neighborhood graph can be loaded. This is usually automatic, but is needed for KIT files convert with with :mod:`mne` < 0.13. Equivalent to the ``sysname`` parameter in :func:`.load.mne.epochs_ndvar` etc. For example, for data from NYU New York, the correct value is ``meg_system="KIT-157"``.
@@ -503,7 +503,7 @@ Specify the MEG system used to acquire the data so that the right sensor neighbo
 Pre-processing (raw)
 --------------------
 
-.. py:attribute:: MneExperiment.raw
+.. py:attribute:: Pipeline.raw
 
 Define a pre-processing pipeline as a series of linked processing steps
 (:mod:`mne` refers to continuous data that is not time-locked to a specific event as :class:`~mne.io.Raw`, with filenames matching ``*-raw.fif``):
@@ -525,7 +525,7 @@ Each preprocessing step is defined as a named entry with its input as first argu
 The raw data that constitutes the input to the pipeline can be accessed as ``"raw"``
 For example, the following definition sets up a pipeline for MEG, using TSSS, a band-pass filter and ICA::
 
-    class Experiment(MneExperiment):
+    class Experiment(Pipeline):
 
         sessions = 'session'
         raw = {
@@ -539,7 +539,7 @@ To use ``raw --> TSSS --> 1-40 Hz band-pass --> ICA``, select ``e.set(raw="ica")
 
 The following is an example for EEG using band-pass filter, ICA and re-referencing::
 
-    class Experiment(MneExperiment):
+    class Experiment(Pipeline):
 
         data_dir = 'eeg'
         sessions = ['stories', 'tones']
@@ -555,7 +555,7 @@ The following is an example for EEG using band-pass filter, ICA and re-referenci
 
 
 .. note::
-    Continuous files take up a lot of hard drive space. By default, files for most pre-processing steps are cached. This can be controlled with the ``cache`` parameter: set ``cache=False`` to avoid caching. To delete files corresponding to a specific step (e.g., ``raw='1-40'``), use the :meth:`MneExperiment.rm` method::
+    Continuous files take up a lot of hard drive space. By default, files for most pre-processing steps are cached. This can be controlled with the ``cache`` parameter: set ``cache=False`` to avoid caching. To delete files corresponding to a specific step (e.g., ``raw='1-40'``), use the :meth:`Pipeline.rm` method::
 
         >>> e.rm('cached-raw-file', True, raw='1-40')
 
@@ -564,9 +564,9 @@ Events
 ------
 
 .. note::
-    Gain more control over events through overriding :meth:`MneExperiment.fix_events` and :meth:`MneExperiment.label_events`.
+    Gain more control over events through overriding :meth:`Pipeline.fix_events` and :meth:`Pipeline.label_events`.
 
-.. py:attribute:: MneExperiment.variables
+.. py:attribute:: Pipeline.variables
 
 Event variables add labels and variables to the events:
 
@@ -583,7 +583,7 @@ Most of the time, the main purpose of this attribute is to turn trigger
 values into meaningful labels::
 
 
-    class Mouse(MneExperiment):
+    class Mouse(Pipeline):
 
         variables = {
             'stimulus': LabelVar('trigger', {(162, 163): 'target', (166, 167): 'prime'}),
@@ -600,7 +600,7 @@ Unmentioned trigger values are assigned the empty string (``''``).
 Epochs
 ------
 
-.. py:attribute:: MneExperiment.epochs
+.. py:attribute:: Pipeline.epochs
 
 Epochs are specified as a ``{name: epoch_definition}`` dictionary. Names are
 :class:`str`, and ``epoch_definition`` are instances of the classes
@@ -634,10 +634,10 @@ Examples::
 Tests
 -----
 
-.. py:attribute:: MneExperiment.tests
+.. py:attribute:: Pipeline.tests
 
 Statistical tests are defined as ``{name: test_definition}`` dictionary.
-This allows automatic caching of permutation test results when using :meth:`MneExperiment.load_test`.
+This allows automatic caching of permutation test results when using :meth:`Pipeline.load_test`.
 Tests are defined using the following classes:
 
 .. autosummary::
@@ -663,11 +663,11 @@ Example::
 Subject groups
 --------------
 
-.. py:attribute:: MneExperiment.groups
+.. py:attribute:: Pipeline.groups
 
 A subject group called ``'all'`` containing all subjects is always implicitly
 defined. Additional subject groups can be defined in
-:attr:`MneExperiment.groups` with ``{name: group_definition}``
+:attr:`Pipeline.groups` with ``{name: group_definition}``
 entries:
 
 .. autosummary::
@@ -688,12 +688,12 @@ Example::
 Parcellations (:attr:`parcs`)
 -----------------------------
 
-.. py:attribute:: MneExperiment.parcs
+.. py:attribute:: Pipeline.parcs
 
 A parcellation determines how the brain surface is divided into regions.
 A number of standard parcellations are automatically defined (see
 :ref:`state-parc` below). Additional parcellations can be defined in
-the :attr:`MneExperiment.parcs` dictionary with ``{name: parc_definition}``
+the :attr:`Pipeline.parcs` dictionary with ``{name: parc_definition}``
 entries.
 
 
@@ -712,9 +712,9 @@ entries.
 Visualization defaults
 ----------------------
 
-.. py:attribute:: MneExperiment.brain_plot_defaults
+.. py:attribute:: Pipeline.brain_plot_defaults
 
-The :attr:`MneExperiment.brain_plot_defaults` dictionary can contain options
+The :attr:`Pipeline.brain_plot_defaults` dictionary can contain options
 that changes defaults for brain plots (for reports and movies). The following
 options are available:
 
@@ -722,7 +722,7 @@ surf : 'inflated' | 'pial' | 'smoothwm' | 'sphere' | 'white'
     Freesurfer surface to use as brain geometry.
 views : :class:`str` | iterator of :class:`str`
     View or views to show in the figure. Can also be set for each parcellation,
-    see :attr:`MneExperiment.parc`.
+    see :attr:`Pipeline.parc`.
 foreground : mayavi color
     Figure foreground color (i.e., the text color).
 background : mayavi color
@@ -736,16 +736,16 @@ smoothing_steps : ``None`` | :class:`int`
 State Parameters
 ================
 
-An :class:`MneExperiment` instance has a state, which determines what data and settings it is currently using.
+An :class:`Pipeline` instance has a state, which determines what data and settings it is currently using.
 Not all settings are always relevant.
-For example, :ref:`state-subject` is relevant for steps applied separately to each subject, like :meth:`~MneExperiment.make_ica_selection`, whereas :ref:`state-group` defines the group of subjects in group level analysis, such as in :meth:`~MneExperiment.load_test`.
+For example, :ref:`state-subject` is relevant for steps applied separately to each subject, like :meth:`~Pipeline.make_ica_selection`, whereas :ref:`state-group` defines the group of subjects in group level analysis, such as in :meth:`~Pipeline.load_test`.
 
-State Parameters can be set after an :class:`MneExperiment` has been initialized to affect the analysis, for example::
+State Parameters can be set after an :class:`Pipeline` has been initialized to affect the analysis, for example::
 
-    >>> my_experiment = MneExperiment()
+    >>> my_experiment = Pipeline()
     >>> my_experiment.set(raw='1-40', cov='noreg')
 
-sets up ``my_experiment`` to use a 1-40 Hz band-pass filter as preprocessing, and to use sensor covariance matrices without regularization. Most methods also accept state parameters, so :meth:`MneExperiment.set` does not have to be used separately.
+sets up ``my_experiment`` to use a 1-40 Hz band-pass filter as preprocessing, and to use sensor covariance matrices without regularization. Most methods also accept state parameters, so :meth:`Pipeline.set` does not have to be used separately.
 
 .. contents:: Contents
    :local:
@@ -781,7 +781,7 @@ Which run to work with.
 -------
 
 Select the preprocessing pipeline applied to the continuous data. Options are
-all the processing steps defined in :attr:`MneExperiment.raw`, as well as
+all the processing steps defined in :attr:`Pipeline.raw`, as well as
 ``"raw"`` for using unprocessed raw data.
 
 
@@ -798,7 +798,7 @@ Any subject in the experiment.
 ``group``
 ---------
 
-Any group defined in :attr:`MneExperiment.groups`. Will restrict the analysis
+Any group defined in :attr:`Pipeline.groups`. Will restrict the analysis
 to that group of subjects.
 
 
@@ -807,7 +807,7 @@ to that group of subjects.
 ``epoch``
 ---------
 
-Any epoch defined in :attr:`MneExperiment.epochs`. Specify the epoch on which
+Any epoch defined in :attr:`Pipeline.epochs`. Specify the epoch on which
 the analysis should be conducted.
 
 
@@ -830,12 +830,12 @@ While the :ref:`state-epoch` state parameter determines which events are
 included when loading data, the ``model`` parameter determines how these events
 are split into different condition cells. The parameter should be set to the
 name of a categorial event variable which defines the desired cells.
-In the :ref:`MneExperiment-example`,
+In the :ref:`Pipeline-example`,
 ``e.load_evoked(epoch='target', model='prediction')``
 would load responses to the target, averaged for expected and unexpected trials.
 
 Cells can also be defined based on crossing two variables using the ``%`` sign.
-In the :ref:`MneExperiment-example`, to load corresponding primes together with
+In the :ref:`Pipeline-example`, to load corresponding primes together with
 the targets, you would use
 ``e.load_evoked(epoch='word', model='stimulus % prediction')``.
 
@@ -872,7 +872,7 @@ The method for correcting the sensor covariance.
 'auto'
     Use automatic selection of the optimal regularization method, as described in :func:`mne.compute_covariance`.
 `empty_room`
-    Empty room covariance; for required setup, see :ref:`MneExperiment-intro-cov`.
+    Empty room covariance; for required setup, see :ref:`Pipeline-intro-cov`.
 'ad_hoc'
     Use diagonal covariance based on :func:`mne.cov.make_ad_hoc_cov`.
 
@@ -897,20 +897,20 @@ The source space to use.
 -------
 
 What inverse solution to use for source localization.
-``inv`` can be set with :meth:`MneExperiment.set_inv`,
+``inv`` can be set with :meth:`Pipeline.set_inv`,
 which has a detailed description of the options.
 ``inv`` can also be set directly using the appropriate string,
 e.g., ``e.set(inv='fixed-6-MNE-0')``.
 To determine the string corresponding to a given set of parameters,
-use :meth:`MneExperiment.inv_str`. For example::
+use :meth:`Pipeline.inv_str`. For example::
 
-    >>> MneExperiment.inv_str('fixed', snr=6, method='MNE', depth=0)
+    >>> Pipeline.inv_str('fixed', snr=6, method='MNE', depth=0)
     'fixed-6-MNE-0'
 
 Consequently, the following two are equivalent for setting ``inv``::
 
-    >>> MneExperiment.set_inv('fixed', snr=6, method='MNE', depth=0)
-    >>> MneExperiment.set(inv='fixed-6-MNE-0')
+    >>> Pipeline.set_inv('fixed', snr=6, method='MNE', depth=0)
+    >>> Pipeline.set(inv='fixed-6-MNE-0')
 
 
 .. _state-parc:
@@ -923,7 +923,7 @@ Parcellations included with FreeSurfer can directly be used:
 
 - FreeSurfer Parcellations: ``aparc.a2005s``, ``aparc.a2009s``, ``aparc``, ``aparc.DKTatlas``, ``PALS_B12_Brodmann``, ``PALS_B12_Lobes``, ``PALS_B12_OrbitoFrontal``, ``PALS_B12_Visuotopic``.
 
-Additional parcellation can be defined in the :attr:`MneExperiment.parcs`
+Additional parcellation can be defined in the :attr:`Pipeline.parcs`
 attribute. Parcellations are used in different contexts:
 
 - When loading source space data, the current ``parc`` state determines the parcellation of the source space (change the state parameter with ``e.set(parc='aparc')``).
