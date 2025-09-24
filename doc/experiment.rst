@@ -3,7 +3,7 @@
 .. _experiment-class-guide:
 
 ***********************************
-The :class:`Pipeline` Pipeline
+The :class:`Pipeline`
 ***********************************
 
 .. seealso::
@@ -19,7 +19,7 @@ The :class:`Pipeline` Pipeline
 Introduction
 ============
 
-The :class:`Pipeline` pipeline manages the following analysis steps:
+The :class:`Pipeline` manages the following analysis steps:
 
 #. Preprocessing
 #. Epoching
