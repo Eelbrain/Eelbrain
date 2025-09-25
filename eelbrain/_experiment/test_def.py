@@ -110,7 +110,7 @@ class TTestOneSample(Test):
 
     See Also
     --------
-    MneExperiment.tests
+    Pipeline.tests
     """
     kind = 'ttest_1samp'
     DICT_ATTRS = Test.DICT_ATTRS + ('tail',)
@@ -151,7 +151,7 @@ class TTestIndependent(Test):
 
     See Also
     --------
-    MneExperiment.tests
+    Pipeline.tests
 
     Examples
     --------
@@ -217,7 +217,7 @@ class TTestRelated(Test):
 
     See Also
     --------
-    MneExperiment.tests
+    Pipeline.tests
 
     Examples
     --------
@@ -273,7 +273,7 @@ class TContrastRelated(Test):
 
     See Also
     --------
-    MneExperiment.tests
+    Pipeline.tests
 
     Examples
     --------
@@ -315,7 +315,7 @@ class ANOVA(Test):
 
     See Also
     --------
-    MneExperiment.tests
+    Pipeline.tests
 
     Examples
     --------
@@ -387,7 +387,7 @@ class TwoStageTest(Test):
 
     See Also
     --------
-    MneExperiment.tests
+    Pipeline.tests
 
     Examples
     --------

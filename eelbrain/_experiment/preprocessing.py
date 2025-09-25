@@ -139,7 +139,7 @@ class RawPipe:
         return read_raw_bids(
             path,
             extra_params={'preload': preload},
-            verbose='ERROR',
+            verbose='critical',
         )
 
     def load_bad_channels(
@@ -216,7 +216,7 @@ class RawSource(RawPipe):
 
     See Also
     --------
-    MneExperiment.raw
+    Pipeline.raw
 
     Examples
     --------
@@ -302,11 +302,18 @@ class RawSource(RawPipe):
             out['connectivity'] = self.adjacency
         return out
 
+    def cache(self, path: BIDSPath) -> None:
+        "Make sure the file exists and is up to date"
+        raw_path = self.get_path(path)
+        if not exists(raw_path):
+            raise FileMissingError(f"Raw input file does not exist at expected location {raw_path}")
+        return None
+
     def _load(self, path: BIDSPath, preload):
         raw: mne.io.BaseRaw = read_raw_bids(
             path,
             extra_params={'preload': preload},
-            verbose='ERROR',
+            verbose='critical',
         )
         if self.rename_channels:
             if rename := {k: v for k, v in self.rename_channels.items() if k in raw.ch_names}:
@@ -449,13 +456,21 @@ class CachedRawPipe(RawPipe):
         out['source'] = self._source_name
         return out
 
-    def cache(self, path: BIDSPath) -> mne.io.BaseRaw:
+    def cache(
+            self,
+            path: BIDSPath,
+            load: bool = False,
+            preload: PreloadArg = False,
+    ) -> mne.io.BaseRaw | None:
         "Make sure the cache is up to date"
         cache_path = self.get_path(path, 'cache')
         if exists(cache_path):
             mtime = self.mtime(path, self._bad_chs_affect_cache)
             if mtime and getmtime(cache_path) >= mtime:
-                return
+                if load:
+                    return mne.io.read_raw_fif(cache_path, preload=preload, verbose='critical')
+                else:
+                    return None
         from .. import __version__
         # make sure the target directory exists
         makedirs(dirname(cache_path), exist_ok=True)
@@ -496,7 +511,7 @@ class CachedRawPipe(RawPipe):
         if raw is not None:
             pass
         elif self._cache:
-            raw = self.cache(path)
+            raw = self.cache(path, load=True, preload=preload)
         elif preload == -1:
             raw = self._make_info(path)
         else:
@@ -560,7 +575,7 @@ class RawFilter(CachedRawPipe):
 
     See Also
     --------
-    MneExperiment.raw
+    Pipeline.raw
     """
     def __init__(
             self,
@@ -700,7 +715,7 @@ class RawICA(CachedRawPipe):
 
     See Also
     --------
-    MneExperiment.raw
+    Pipeline.raw
     RawApplyICA
 
     Notes
@@ -711,7 +726,7 @@ class RawICA(CachedRawPipe):
     step, regardless of whether they were used to estimate the components or
     not.
 
-    Use :meth:`MneExperiment.make_ica_selection` for each subject to
+    Use :meth:`Pipeline.make_ica_selection` for each subject to
     select ICA components that should be removed. The arguments to that function
     determine what data is used to visualize the component time courses.
     For example, to determine which components load strongly on empty room data,
@@ -724,7 +739,7 @@ class RawICA(CachedRawPipe):
     --------
     Some ICA examples::
 
-        class Experiment(MneExperiment):
+        class Experiment(Pipeline):
 
             raw = {
                 '1-40': RawFilter('raw', 1, 40),
@@ -768,8 +783,8 @@ class RawICA(CachedRawPipe):
     ) -> list[str]:
         bad_chs = set()
         for task in self.task:
-            path.copy().update(task=task)
-            bad_chs.update(self.source.load_bad_channels(path, existing))
+            path_ = path.copy().update(task=task)
+            bad_chs.update(self.source.load_bad_channels(path_, existing))
         return sorted(bad_chs)
 
     def load_ica(self, path: BIDSPath) -> mne.preprocessing.ICA:
@@ -802,7 +817,7 @@ class RawICA(CachedRawPipe):
                 if missing := raw_set - ica_set:
                     return tuple(missing)
         if raise_on_mismatch and not names_match:
-            raise RuntimeError(f"The ICA channel names do not match the data channels for raw={raw_name!r}, {subject=}. Have the bad channels changed since the ICA was computed? Try to revert the data channels, or recompute the ICA using MneExperiment.make_ica().\nData: {', '.join(raw_ch_names)}\nICA:  {', '.join(ica.ch_names)}")
+            raise RuntimeError(f"The ICA channel names do not match the data channels for raw={raw_name!r}, {subject=}. Have the bad channels changed since the ICA was computed? Try to revert the data channels, or recompute the ICA using Pipeline.make_ica().\nData: {', '.join(raw_ch_names)}\nICA:  {', '.join(ica.ch_names)}")
         return names_match
 
     def load_concatenated_source_raw(
@@ -921,7 +936,7 @@ class RawApplyICA(CachedRawPipe):
 
     See Also
     --------
-    MneExperiment.raw
+    Pipeline.raw
 
     Notes
     -----
@@ -932,7 +947,7 @@ class RawApplyICA(CachedRawPipe):
     Estimate ICA components with 1-40 Hz band-pass filter and apply the ICA
     to data that is high pass filtered at 0.1 Hz::
 
-        class Experiment(MneExperiment):
+        class Experiment(Pipeline):
 
             raw = {
                 '1-40': RawFilter('raw', 1, 40),
@@ -1018,7 +1033,7 @@ class RawMaxwell(CachedRawPipe):
 
     See Also
     --------
-    MneExperiment.raw
+    Pipeline.raw
     """
 
     _bad_chs_affect_cache = True
@@ -1126,7 +1141,7 @@ class RawReReference(CachedRawPipe):
 
     See Also
     --------
-    MneExperiment.raw
+    Pipeline.raw
     """
     def __init__(
             self,

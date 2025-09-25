@@ -18,7 +18,7 @@ class Group(GroupBase):
 
     See Also
     --------
-    MneExperiment.groups
+    Pipeline.groups
     """
     def __init__(self, subjects: Collection[str]):
         if isinstance(subjects, str):
@@ -59,7 +59,7 @@ class SubGroup(GroupBase):
 
     See Also
     --------
-    MneExperiment.groups
+    Pipeline.groups
     """
     def __init__(self, base: str, exclude: Collection[str]):
         self.base = base
@@ -73,7 +73,7 @@ class SubGroup(GroupBase):
 
 
 def assemble_groups(groups: dict, subjects: Set[str]) -> dict:
-    if 'all' in groups:  # MneExperiment needs access to all subjects
+    if 'all' in groups:  # Pipeline needs access to all subjects
         raise DefinitionError("The group name 'all' is reserved and can't be used for a user-defined group")
     all_groups = {k: Group.coerce(v) for k, v in groups.items()}
     all_groups['all'] = Group(subjects)
