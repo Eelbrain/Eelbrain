@@ -921,7 +921,7 @@ Consequently, the following two are equivalent for setting ``inv``::
 
 .. _state-parc:
 
-``parc``/``mask`` (parcellations)
+``parc`` (parcellations)
 ---------------------------------
 
 The parcellation determines how the brain surface is divided into regions.
@@ -941,8 +941,8 @@ attribute. Parcellations are used in different contexts:
   ``mask='PALS_B12_Lobes'`` will perform a whole-brain test on the cortex, while
   discarding subcortical sources.
 
-Parcellations are set with their name, with the expception of
-:class:`SeededParc`: for those, the name is followed by the radious in mm, for
+Parcellations are set with their name, with the exception of
+:class:`SeededParc`: for those, the name is followed by the radius in mm, for
 example, to use seeds defined in a parcellation named ``'myparc'`` with a radius
 of 25 mm around the seed, use ``e.set(parc='myparc-25')``.
 
