@@ -71,8 +71,8 @@ The pipeline expects input dataset in `BIDS (Brain Imaging Data Structure) <http
     root                              {root}
     subject folder                       /sub-{subject}
     session folder                          /ses-{session}
-    modality folder                            /{modality}
-    raw data file                                 /sub-{subject}_ses-{session}_task-{task}_run-{run}_{modality}.fif
+    datatype folder                            /{datatype}
+    raw data file                                 /sub-{subject}_ses-{session}_task-{task}_run-{run}_{datatype}.fif
     derivatives root                     /derivatives
     trans file                              /trans/sub-{subject}_ses-{session}_trans.fif
     FreeSurfer MRI                          /freesurfer
@@ -83,7 +83,7 @@ The pipeline expects input dataset in `BIDS (Brain Imaging Data Structure) <http
     In BIDS specification, ``{root}/derivatives`` is for files that do not fit into the BIDS structure, such as FreeSurfer MRIs and Eelbrain-generated files.
 
 
-``{subject}``, ``{session}``, ``{task}``, ``{run}`` and ``{modality}`` are `BIDS entities <https://bids-specification.readthedocs.io/en/stable/appendices/entities.html>`_. ``{session}`` and ``{run}`` are optional. ``{modality}`` is ``meg`` by default.
+``{subject}``, ``{session}``, ``{task}`` and ``{run}`` are `BIDS entities <https://bids-specification.readthedocs.io/en/stable/appendices/entities.html>`_. ``{session}`` and ``{run}`` are optional.
 
 
 ``MRI`` files (including ``trans-file``) are optional and only needed for source localization. The ``{root}/derivatives/freesurfer`` directory is `FreeSurfer <https://surfer.nmr.mgh.harvard.edu>`_ subject directory. They either contain the files created by FreeSurfer's `recon-all <https://surfer.nmr.mgh.harvard.edu/fswiki/recon-all>`_ command, or are created by the MNE-Python coregistration utility for scaled template brains. (Note that the pipeline doesn't use the NIfTI format that BIDS specifies.) A corresponding ``trans-file`` is created with the MNE-Python coregistration utility in either case (see more information on using `structural MRIs <https://github.com/christianbrodbeck/Eelbrain/wiki/Coregistration%3A-Structural-MRI>`_ or the `fsaverage template brain <https://github.com/christianbrodbeck/Eelbrain/wiki/Coregistration%3A-Template-Brain>`_).
@@ -130,7 +130,7 @@ IN the example above, the following would be saved in ``~/Code/MyProject/my_expe
 
     class MyExperiment(Pipeline):
 
-        modality = 'eeg'
+        datatype = 'eeg'
 
     e = MyExperiment("~/Data/Experiment")
 
@@ -461,10 +461,10 @@ Exclude certain entities from the experiment, e.g.::
         'session': ['emptyroom'],
     }
 
-.. py:attribute:: Pipeline.modality
+.. py:attribute:: Pipeline.datatype
    :type: str
 
-Modality for the raw data directory. By default, this is ``meg``, i.e., the experiment will look for raw files at ``{root}/sub-{subject}/ses-{session}/meg/sub-{subject}_ses-{session}_task-{task}_run-{run}_meg.fif``. After setting ``modality = 'eeg'``, the experiment will look at ``{root}/sub-{subject}/ses-{session}/eeg/sub-{subject}_ses-{session}_task-{task}_run-{run}_eeg.fif``.
+Data type for the raw data directory. By default, this is ``meg``, i.e., the experiment will look for raw files at ``{root}/sub-{subject}/ses-{session}/meg/sub-{subject}_ses-{session}_task-{task}_run-{run}_meg.fif``. After setting ``datatype = 'eeg'``, the experiment will look at ``{root}/sub-{subject}/ses-{session}/eeg/sub-{subject}_ses-{session}_task-{task}_run-{run}_eeg.fif``.
 
 
 .. py:attribute:: Pipeline.preload
