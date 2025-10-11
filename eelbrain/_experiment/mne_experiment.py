@@ -2433,10 +2433,11 @@ class MneExperiment(FileTree):
             Morph the source estimates to the common brain
             (default ``False``, except when loading multiple subjects and ``ndvar=True``).
         mask
-            Discard data that is labelled ``unknown`` by the parcellation.
-            Parcellation name (:class:`str`) to specify a parcellation,
-            ``True`` to use the :ref:`state-parc` state parameter.
-            Only applies when ``ndvar=True``, default ``False``.
+            Discard data that is labeled ``unknown`` by the parcellation (default ``False``).
+            Use ``mask=True`` to use the parcellation in the :ref:`state-parc` state parameter.
+            ``mask`` can also be set to a parcellation name (:class:`str`) to specify a
+            parcellation to use directly.
+            Only applies when ``ndvar=True``.
         data_raw
             Keep the :class:`mne.io.Raw` instance in ``ds.info['raw']``
             (default False).
@@ -2801,10 +2802,11 @@ class MneExperiment(FileTree):
             Apply baseline correction using this period in sensor space.
             True to use the epoch's baseline specification. The default is True.
         mask
-            Discard data that is labelled ``unknown`` by the parcellation.
-            Parcellation name (:class:`str`) to specify a parcellation,
-            ``True`` to use the :ref:`state-parc` state parameter.
-            Only applies when ``ndvar=True``, default ``True``.
+            Discard data that is labeled ``unknown`` by the parcellation (default ``False``).
+            Use ``mask=True`` to use the parcellation in the :ref:`state-parc` state parameter.
+            ``mask`` can also be set to a parcellation name (:class:`str`) to specify a
+            parcellation to use directly.
+            Only applies when ``ndvar=True``.
         morph
             Morph the source estimates to the common brain
             (default ``False``, except when loading multiple subjects and ``ndvar=True``).
@@ -2848,10 +2850,11 @@ class MneExperiment(FileTree):
             Apply baseline correction using this period in sensor space.
             True to use the epoch's baseline specification. The default is True.
         mask
-            Discard data that is labelled ``unknown`` by the parcellation.
-            Parcellation name (:class:`str`) to specify a parcellation,
-            ``True`` to use the :ref:`state-parc` state parameter.
-            Only applies when ``ndvar=True``, default ``True``.
+            Discard data that is labeled ``unknown`` by the parcellation (default ``False``).
+            Use ``mask=True`` to use the parcellation in the :ref:`state-parc` state parameter.
+            ``mask`` can also be set to a parcellation name (:class:`str`) to specify a
+            parcellation to use directly.
+            Only applies when ``ndvar=True``.
         morph
             Morph the source estimates to the common brain
             (default ``False``, except when loading multiple subjects and ``ndvar=True``).
@@ -2914,10 +2917,11 @@ class MneExperiment(FileTree):
             Morph the source estimates to the common brain
             (default ``False``, except when loading multiple subjects and ``ndvar=True``).
         mask
-            Discard data that is labelled ``unknown`` by the parcellation.
-            Parcellation name (:class:`str`) to specify a parcellation,
-            ``True`` to use the :ref:`state-parc` state parameter.
-            Only applies when ``ndvar=True``, default ``False``.
+            Discard data that is labeled ``unknown`` by the parcellation (default ``False``).
+            Use ``mask=True`` to use the parcellation in the :ref:`state-parc` state parameter.
+            ``mask`` can also be set to a parcellation name (:class:`str`) to specify a
+            parcellation to use directly.
+            Only applies when ``ndvar=True``.
         data_raw
             Keep the :class:`mne.io.Raw` instance in ``ds.info['raw']``
             (default False).
@@ -3070,10 +3074,11 @@ class MneExperiment(FileTree):
         morph
             Morph the source estimates to the common_brain (default False).
         mask
-            Discard data that is labelled ``unknown`` by the parcellation.
-            Parcellation name (:class:`str`) to specify a parcellation,
-            ``True`` to use the :ref:`state-parc` state parameter.
-            Only applies when ``ndvar=True``, default ``False``.
+            Discard data that is labeled ``unknown`` by the parcellation (default ``False``).
+            Use ``mask=True`` to use the parcellation in the :ref:`state-parc` state parameter.
+            ``mask`` can also be set to a parcellation name (:class:`str`) to specify a
+            parcellation to use directly.
+            Only applies when ``ndvar=True``.
         vardef
             Name of a test defining additional variables.
         decim
@@ -3143,10 +3148,11 @@ class MneExperiment(FileTree):
             Return forward solution as :class:`NDVar` (default is
             :class:`mne.forward.Forward`).
         mask
-            Discard data that is labelled ``unknown`` by the parcellation.
-            Parcellation name (:class:`str`) to specify a parcellation,
-            ``True`` to use the :ref:`state-parc` state parameter.
-            Only applies when ``ndvar=True``, default ``False``.
+            Discard data that is labeled ``unknown`` by the parcellation (default ``False``).
+            Use ``mask=True`` to use the parcellation in the :ref:`state-parc` state parameter.
+            ``mask`` can also be set to a parcellation name (:class:`str`) to specify a
+            parcellation to use directly.
+            Only applies when ``ndvar=True``.
         ...
             State parameters.
 
@@ -3227,10 +3233,11 @@ class MneExperiment(FileTree):
             does not take into account any direction selectivity (loose/free
             orientation) or noise normalization properties.
         mask
-            Discard data that is labelled ``unknown`` by the parcellation.
-            Parcellation name (:class:`str`) to specify a parcellation,
-            ``True`` to use the :ref:`state-parc` state parameter.
-            Only applies when ``ndvar=True``, default ``False``.
+            Discard data that is labeled ``unknown`` by the parcellation (default ``False``).
+            Use ``mask=True`` to use the parcellation in the :ref:`state-parc` state parameter.
+            ``mask`` can also be set to a parcellation name (:class:`str`) to specify a
+            parcellation to use directly.
+            Only applies when ``ndvar=True``.
         ...
             Applicable :ref:`state-parameters`:
 
@@ -3507,10 +3514,11 @@ class MneExperiment(FileTree):
         Parameters
         ----------
         mask
-            Discard data that is labelled ``unknown`` by the parcellation.
-            Parcellation name (:class:`str`) to specify a parcellation,
-            ``True`` to use the :ref:`state-parc` state parameter.
-            Only applies when ``ndvar=True``, default ``False``.
+            Discard data that is labeled ``unknown`` by the parcellation (default ``False``).
+            Use ``mask=True`` to use the parcellation in the :ref:`state-parc` state parameter.
+            ``mask`` can also be set to a parcellation name (:class:`str`) to specify a
+            parcellation to use directly.
+            Only applies when ``ndvar=True``.
         morph
             Morph the source estimates to the common_brain (default False).
         ndvar
@@ -3846,6 +3854,11 @@ class MneExperiment(FileTree):
 
         mask
             Parcellation to use as anatomical mask in which to perform the test.
+            Discard data that is labeled ``unknown`` by the parcellation (default ``False``).
+            Use ``mask=True`` to use the parcellation in the :ref:`state-parc` state parameter.
+            ``mask`` can also be set to a parcellation name (:class:`str`) to specify a
+            parcellation to use directly.
+            Only applies when ``ndvar=True``.
         samples
             Number of random permutations of the data used to determine cluster
             *p*-values (default 10'000). If the test is already cached with a
@@ -5163,6 +5176,11 @@ class MneExperiment(FileTree):
 
         mask
             Parcellation to use as anatomical mask in which to perform the test.
+            Discard data that is labeled ``unknown`` by the parcellation (default ``False``).
+            Use ``mask=True`` to use the parcellation in the :ref:`state-parc` state parameter.
+            ``mask`` can also be set to a parcellation name (:class:`str`) to specify a
+            parcellation to use directly.
+            Only applies when ``ndvar=True``.
         pmin
             Equivalent p-value for cluster threshold, or 'tfce' for
             threshold-free cluster enhancement.
