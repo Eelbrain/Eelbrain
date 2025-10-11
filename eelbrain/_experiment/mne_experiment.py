@@ -211,6 +211,7 @@ class Pipeline(FileTree):
     # hard drive space ~ 100 mb/file
     check_raw_mtime: bool = True  # check raw input files' mtime for change
 
+    datatype: str = None
     extension: str = '.fif'
     ignore_entities: dict[str, list[str]] = {}
     preload: bool = False
@@ -510,15 +511,18 @@ class Pipeline(FileTree):
         self._tasks = tuple(get_entity_vals(root, 'task', **self.ignore_entities))
         self._acquisitions = tuple(get_entity_vals(root, 'acquisition', **self.ignore_entities))
         self._runs = tuple(get_entity_vals(root, 'run', **self.ignore_entities))
-        datatypes = tuple(get_datatypes(root))
-        if 'meg' in datatypes and 'eeg' in datatypes:
-            raise NotImplementedError(f"Both MEG and EEG data found in {root}. This is not supported currently.")
-        elif 'meg' in datatypes:
-            self._datatype = 'meg'
-        elif 'eeg' in datatypes:
-            self._datatype = 'eeg'
+        if self.datatype is not None:
+            self._datatype = self.datatype
         else:
-            raise NotImplementedError(f"No MEG or EEG data found in {root}. Pipeline requires one of these data types.")
+            datatypes = tuple(get_datatypes(root))
+            if 'meg' in datatypes and 'eeg' in datatypes:
+                raise DefinitionError(f"Can't infer datatype. Both MEG and EEG data found in {root}.")
+            elif 'meg' in datatypes:
+                self._datatype = 'meg'
+            elif 'eeg' in datatypes:
+                self._datatype = 'eeg'
+            else:
+                raise DefinitionError(f"Can't infer datatype. No MEG or EEG data found in {root}.")
 
         # groups
         self._groups = assemble_groups(self.groups, set(self._subjects))
