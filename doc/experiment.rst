@@ -63,7 +63,7 @@ Setting up the file structure
 The first steps for setting up the pipeline are:
 
 - Arranging the input data files in the expected file structure
-- Defining an :class:`Pipeline` subclass with the parameters required to find those files
+- Defining a :class:`Pipeline` subclass with the parameters required to find those files
 
 The pipeline expects input dataset in `BIDS (Brain Imaging Data Structure) <https://bids.neuroimaging.io/>`_ format. In the schema below, curly brackets indicate slots that the pipeline will replace with specific names::
 
@@ -75,7 +75,7 @@ The pipeline expects input dataset in `BIDS (Brain Imaging Data Structure) <http
     raw data file                                 /sub-{subject}_ses-{session}_task-{task}_run-{run}_{datatype}.fif
     derivatives root                     /derivatives
     trans file                              /trans/sub-{subject}_ses-{session}_trans.fif
-    FreeSurfer MRI                          /freesurfer
+    FreeSurfer SUBJECTS_DIR                          /freesurfer
     Eelbrain generated files                /eelbrain
 
 
@@ -83,7 +83,7 @@ The pipeline expects input dataset in `BIDS (Brain Imaging Data Structure) <http
     In BIDS specification, ``{root}/derivatives`` is for files that do not fit into the BIDS structure, such as FreeSurfer MRIs and Eelbrain-generated files.
 
 
-``{subject}``, ``{session}``, ``{task}`` and ``{run}`` are `BIDS entities <https://bids-specification.readthedocs.io/en/stable/appendices/entities.html>`_. ``{session}`` and ``{run}`` are optional.
+``{subject}``, ``{session}``, ``{task}`` and ``{run}`` are `BIDS entities <https://bids-specification.readthedocs.io/en/stable/appendices/entities.html>`_. ``{session}`` and ``{run}`` are optional. ``{datatype}`` is inferred by the pipeline from the data files, and can be ``'meg'`` or ``'eeg'``.
 
 
 ``MRI`` files (including ``trans-file``) are optional and only needed for source localization. The ``{root}/derivatives/freesurfer`` directory is `FreeSurfer <https://surfer.nmr.mgh.harvard.edu>`_ subject directory. They either contain the files created by FreeSurfer's `recon-all <https://surfer.nmr.mgh.harvard.edu/fswiki/recon-all>`_ command, or are created by the MNE-Python coregistration utility for scaled template brains. (Note that the pipeline doesn't use the NIfTI format that BIDS specifies.) A corresponding ``trans-file`` is created with the MNE-Python coregistration utility in either case (see more information on using `structural MRIs <https://github.com/christianbrodbeck/Eelbrain/wiki/Coregistration%3A-Structural-MRI>`_ or the `fsaverage template brain <https://github.com/christianbrodbeck/Eelbrain/wiki/Coregistration%3A-Template-Brain>`_).
@@ -124,13 +124,13 @@ This makes it easy to keep track of the history of this folder, for example usin
 
 You will want to access the :class:`Pipeline` subclass (``MyExperiment`` above) from different locations (for instance, from a terminal to do artifact rejection, and from different Jupyter Notebooks to pursue different analyses).
 Thus, it makes sense to define the experiment subclass in a separate Python file, and ``run`` or ``import`` that file as needed.
-IN the example above, the following would be saved in ``~/Code/MyProject/my_experiment.py``::
+In the example above, the following would be saved in ``~/Code/MyProject/my_experiment.py``::
 
     from eelbrain.pipeline import *
 
     class MyExperiment(Pipeline):
 
-        datatype = 'eeg'
+        # Define experiment attributes here
 
     e = MyExperiment("~/Data/Experiment")
 
@@ -461,10 +461,10 @@ Exclude certain entities from the experiment, e.g.::
         'session': ['emptyroom'],
     }
 
-.. py:attribute:: Pipeline.datatype
-   :type: str
+.. .. py:attribute:: Pipeline.datatype
+..    :type: str
 
-Data type for the raw data directory. By default, this is ``meg``, i.e., the experiment will look for raw files at ``{root}/sub-{subject}/ses-{session}/meg/sub-{subject}_ses-{session}_task-{task}_run-{run}_meg.fif``. After setting ``datatype = 'eeg'``, the experiment will look at ``{root}/sub-{subject}/ses-{session}/eeg/sub-{subject}_ses-{session}_task-{task}_run-{run}_eeg.fif``.
+.. Data type for the raw data directory. By default, this is ``meg``, i.e., the experiment will look for raw files at ``{root}/sub-{subject}/ses-{session}/meg/sub-{subject}_ses-{session}_task-{task}_run-{run}_meg.fif``. After setting ``datatype = 'eeg'``, the experiment will look at ``{root}/sub-{subject}/ses-{session}/eeg/sub-{subject}_ses-{session}_task-{task}_run-{run}_eeg.fif``.
 
 
 .. py:attribute:: Pipeline.preload
