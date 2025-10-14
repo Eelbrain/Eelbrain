@@ -75,7 +75,7 @@ The pipeline expects input dataset in `BIDS (Brain Imaging Data Structure) <http
     raw data file                                 /sub-{subject}_ses-{session}_task-{task}_run-{run}_{datatype}.fif
     derivatives root                     /derivatives
     trans file                              /trans/sub-{subject}_ses-{session}_trans.fif
-    FreeSurfer SUBJECTS_DIR                          /freesurfer
+    FreeSurfer SUBJECTS_DIR                 /freesurfer
     Eelbrain generated files                /eelbrain
 
 
