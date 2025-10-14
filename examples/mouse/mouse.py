@@ -2,7 +2,7 @@
 from eelbrain.pipeline import *
 
 
-class Mouse(MneExperiment):
+class Mouse(Pipeline):
 
     # Name of the experimental session(s), used to locate *-raw.fif files
     sessions = 'CAT'

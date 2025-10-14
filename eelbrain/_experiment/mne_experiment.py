@@ -1,5 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-"""MneExperiment class to manage data from a experiment"""
+"""Pipeline class to manage data from a experiment"""
 from collections import defaultdict
 from datetime import datetime
 from glob import glob
@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
 import numpy as np
 import mne
 from mne.minimum_norm import make_inverse_operator, apply_inverse, apply_inverse_epochs, apply_inverse_raw
-from mne_bids import BIDSPath, get_entity_vals
+from mne_bids import BIDSPath, get_entity_vals, get_datatypes
 
 from .. import fmtxt
 from .. import gui
@@ -176,7 +176,7 @@ def mtime_changed(first, second):
     return abs(first - second) >= 1
 
 
-class MneExperiment(FileTree):
+class Pipeline(FileTree):
     """Analyze an MEG or EEG experiment
 
     Parameters
@@ -211,7 +211,7 @@ class MneExperiment(FileTree):
     # hard drive space ~ 100 mb/file
     check_raw_mtime: bool = True  # check raw input files' mtime for change
 
-    datatype: str = 'meg'
+    datatype: str = None
     extension: str = '.fif'
     ignore_entities: dict[str, list[str]] = {}
     preload: bool = False
@@ -365,9 +365,9 @@ class MneExperiment(FileTree):
         # Checks
         ########
         if root is None:
-            raise AttributeError("MneExperiment subclasses must have root.")
+            raise AttributeError("Pipeline subclasses must have root.")
         if hasattr(self, 'cluster_criteria'):
-            raise AttributeError("MneExperiment subclasses can not have a .cluster_criteria attribute anymore. Please remove the attribute, delete the eelbrain-cache folder and use the select_clusters analysis parameter.")
+            raise AttributeError("Pipeline subclasses can not have a .cluster_criteria attribute anymore. Please remove the attribute, delete the eelbrain-cache folder and use the select_clusters analysis parameter.")
         if not isinstance(self.auto_delete_cache, str):
             raise TypeError(f"{self.__class__.__name__}.auto_delete_cache={self.auto_delete_cache!r}")
         if not isinstance(self.auto_delete_results, bool):
@@ -511,6 +511,18 @@ class MneExperiment(FileTree):
         self._tasks = tuple(get_entity_vals(root, 'task', **self.ignore_entities))
         self._acquisitions = tuple(get_entity_vals(root, 'acquisition', **self.ignore_entities))
         self._runs = tuple(get_entity_vals(root, 'run', **self.ignore_entities))
+        if self.datatype is not None:
+            self._datatype = self.datatype
+        else:
+            datatypes = tuple(get_datatypes(root))
+            if 'meg' in datatypes and 'eeg' in datatypes:
+                raise DefinitionError(f"Can't infer datatype. Both MEG and EEG data found in {root}.")
+            elif 'meg' in datatypes:
+                self._datatype = 'meg'
+            elif 'eeg' in datatypes:
+                self._datatype = 'eeg'
+            else:
+                raise DefinitionError(f"Can't infer datatype. No MEG or EEG data found in {root}.")
 
         # groups
         self._groups = assemble_groups(self.groups, set(self._subjects))
@@ -602,8 +614,8 @@ class MneExperiment(FileTree):
         self._register_field('task', self._tasks, depends_on=('epoch',), slave_handler=self._update_task, repr=True)
         self._register_field('acquisition', self._acquisitions or None, repr=True)
         self._register_field('run', self._runs or None, repr=True)
-        self._register_field('datatype', ('meg', 'eeg'), self.datatype, repr=True)
-        self._register_field('suffix', ('meg', 'eeg'), self.datatype, repr=True)
+        self._register_field('datatype', ('meg', 'eeg'), self._datatype, repr=True)
+        self._register_field('suffix', ('meg', 'eeg'), self._datatype, repr=True)
         self._register_field('extension', ('.fif', ), self.extension, repr=True)
 
         self._register_field('mri', sorted(self._mri_subjects), allow_empty=True)
@@ -741,7 +753,7 @@ class MneExperiment(FileTree):
             # subjects_with_raw_changes = set()
             for subject, session, task, acquisition, run in self.iter(('subject', 'session', 'task', 'acquisition', 'run'), group='all', raw='raw'):
                 key = (subject, session, task, acquisition, run)
-                raw_path = pipe.get_path(self._bids_path, on_error='ignore')
+                raw_path = pipe.get_path(self._bids_path)
                 if raw_path is None:
                     raw_missing.add(key)
                     if self.check_raw_mtime:
@@ -1747,7 +1759,7 @@ class MneExperiment(FileTree):
         --------
         Drop the last event from subject ``S01``::
 
-            class Experiment(MneExperiment):
+            class Experiment(Pipeline):
 
                 def fix_events(self, ds):
                     if ds.info['subject'] == 'S01':
@@ -1790,7 +1802,7 @@ class MneExperiment(FileTree):
         --------
         Add a label whenever trigger 2 follows trigger 1::
 
-            class Experiment(MneExperiment):
+            class Experiment(Pipeline):
 
                 def label_events(self, ds):
                     # assign 'no' to all events
@@ -1805,7 +1817,7 @@ class MneExperiment(FileTree):
         the recording only indicate trial onsets, and separate files contain
         events listed relative to these trial onsets::
 
-            class Experiment(MneExperiment):
+            class Experiment(Pipeline):
 
                 def label_events(self, ds):
                     samplingrate = ds.info['sfreq']
@@ -3679,7 +3691,7 @@ class MneExperiment(FileTree):
         Parameters
         ----------
         test
-            Test for which to create a report (entry in MneExperiment.tests.
+            Test for which to create a report (entry in Pipeline.tests.
         tstart
             Beginning of the time window for the test in seconds
             (default is the beginning of the epoch).
@@ -5002,7 +5014,7 @@ class MneExperiment(FileTree):
         Parameters
         ----------
         test
-            Test for which to create a report (entry in MneExperiment.tests).
+            Test for which to create a report (entry in Pipeline.tests).
         parc
             Run the test separately in each label of parc.
 
@@ -5133,7 +5145,7 @@ class MneExperiment(FileTree):
         Parameters
         ----------
         test : str
-            Test for which to create a report (entry in MneExperiment.tests).
+            Test for which to create a report (entry in Pipeline.tests).
         parc : str
             Parcellation that defines ROIs.
         pmin : None | scalar, 1 > pmin > 0 | 'tfce'
@@ -5236,7 +5248,7 @@ class MneExperiment(FileTree):
         Parameters
         ----------
         test : str
-            Test for which to create a report (entry in MneExperiment.tests).
+            Test for which to create a report (entry in Pipeline.tests).
         pmin : None | scalar, 1 > pmin > 0 | 'tfce'
             Equivalent p-value for cluster threshold, or 'tfce' for
             threshold-free cluster enhancement.
@@ -5298,7 +5310,7 @@ class MneExperiment(FileTree):
         Parameters
         ----------
         test : str
-            Test for which to create a report (entry in MneExperiment.tests).
+            Test for which to create a report (entry in Pipeline.tests).
         sensors : sequence of str
             Names of the sensors which to include.
         pmin : None | scalar, 1 > pmin > 0 | 'tfce'
@@ -6241,7 +6253,7 @@ class MneExperiment(FileTree):
         -----
         Can also be set through the ``inv`` state parameter (see :ref:`state-inv`).
         To determine the string corresponding to a given set of parameters,
-        use :meth:`MneExperiment.inv_str`.
+        use :meth:`Pipeline.inv_str`.
 
         .. warning::
             Free and loose orientation inverse solutions have a non-zero
@@ -6790,7 +6802,7 @@ class MneExperiment(FileTree):
         absent
             String to display when a given file is absent (default ``'-'``).
         ...
-            :meth:`MneExperiment.iter` parameters.
+            :meth:`Pipeline.iter` parameters.
 
         Examples
         --------
