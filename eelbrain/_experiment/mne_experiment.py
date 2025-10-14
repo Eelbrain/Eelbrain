@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
 import numpy as np
 import mne
 from mne.minimum_norm import make_inverse_operator, apply_inverse, apply_inverse_epochs, apply_inverse_raw
-from mne_bids import BIDSPath, get_entity_vals
+from mne_bids import BIDSPath, get_entity_vals, get_datatypes
 
 from .. import fmtxt
 from .. import gui
@@ -211,7 +211,7 @@ class Pipeline(FileTree):
     # hard drive space ~ 100 mb/file
     check_raw_mtime: bool = True  # check raw input files' mtime for change
 
-    datatype: str = 'meg'
+    datatype: str = None
     extension: str = '.fif'
     ignore_entities: dict[str, list[str]] = {}
     preload: bool = False
@@ -511,6 +511,18 @@ class Pipeline(FileTree):
         self._tasks = tuple(get_entity_vals(root, 'task', **self.ignore_entities))
         self._acquisitions = tuple(get_entity_vals(root, 'acquisition', **self.ignore_entities))
         self._runs = tuple(get_entity_vals(root, 'run', **self.ignore_entities))
+        if self.datatype is not None:
+            self._datatype = self.datatype
+        else:
+            datatypes = tuple(get_datatypes(root))
+            if 'meg' in datatypes and 'eeg' in datatypes:
+                raise DefinitionError(f"Can't infer datatype. Both MEG and EEG data found in {root}.")
+            elif 'meg' in datatypes:
+                self._datatype = 'meg'
+            elif 'eeg' in datatypes:
+                self._datatype = 'eeg'
+            else:
+                raise DefinitionError(f"Can't infer datatype. No MEG or EEG data found in {root}.")
 
         # groups
         self._groups = assemble_groups(self.groups, set(self._subjects))
@@ -602,8 +614,8 @@ class Pipeline(FileTree):
         self._register_field('task', self._tasks, depends_on=('epoch',), slave_handler=self._update_task, repr=True)
         self._register_field('acquisition', self._acquisitions or None, repr=True)
         self._register_field('run', self._runs or None, repr=True)
-        self._register_field('datatype', ('meg', 'eeg'), self.datatype, repr=True)
-        self._register_field('suffix', ('meg', 'eeg'), self.datatype, repr=True)
+        self._register_field('datatype', ('meg', 'eeg'), self._datatype, repr=True)
+        self._register_field('suffix', ('meg', 'eeg'), self._datatype, repr=True)
         self._register_field('extension', ('.fif', ), self.extension, repr=True)
 
         self._register_field('mri', sorted(self._mri_subjects), allow_empty=True)
@@ -741,7 +753,7 @@ class Pipeline(FileTree):
             # subjects_with_raw_changes = set()
             for subject, session, task, acquisition, run in self.iter(('subject', 'session', 'task', 'acquisition', 'run'), group='all', raw='raw'):
                 key = (subject, session, task, acquisition, run)
-                raw_path = pipe.get_path(self._bids_path, on_error='ignore')
+                raw_path = pipe.get_path(self._bids_path)
                 if raw_path is None:
                     raw_missing.add(key)
                     if self.check_raw_mtime:

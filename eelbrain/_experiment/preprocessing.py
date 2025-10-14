@@ -88,14 +88,18 @@ class RawPipe:
             self,
             path: BIDSPath,
             file_type: Literal['raw', 'bads', 'cache', 'ica'] = 'raw',
-            on_error: Literal['raise', 'warn', 'ignore'] = 'raise',
-    ) -> str | None:
-        if not path.find_matching_sidecar(on_error=on_error):
-            return None
+    ) -> str:
+        # Caller of this method should check whether raw exists or not.
+        # Channels file will be created if it doesn't exist.
         if file_type == 'raw':
             return str(path.fpath)
         elif file_type == 'bads':
-            return str(path.find_matching_sidecar('channels', '.tsv', on_error=on_error))
+            bads_path = path.fpath.parent / path.copy().update(suffix='channels', extension='.tsv').basename
+            if not exists(bads_path):
+                self.log.info("No channels.tsv found for %s, creating an empty one.", path.fpath)
+                makedirs(bads_path.parent, exist_ok=True)
+                pd.DataFrame(columns=['name', 'type', 'units', 'low_cutoff', 'high_cutoff', 'description', 'sampling_frequency', 'status', 'status_description']).to_csv(bads_path, sep='\t', index=False)
+            return str(bads_path)
         elif file_type == 'cache':
             return join(
                 self.cache_dir,
@@ -358,7 +362,7 @@ class RawSource(RawPipe):
     ) -> list[str]:
         bads_path = self.get_path(path, 'bads')
         channels_df = pd.read_csv(bads_path, sep='\t')
-        if (channels_df is None) or ('status' not in channels_df.columns.tolist()):
+        if 'status' not in channels_df.columns.tolist():
             self.log.info("Generating bad_channels for %s", path.fpath)
             self.make_bad_channels_auto(path)
         bad_chs = channels_df.query('status == "bad"')['name'].tolist()
@@ -374,7 +378,7 @@ class RawSource(RawPipe):
     ) -> None:
         bads_path = self.get_path(path, 'bads')
         channels_df = pd.read_csv(bads_path, sep='\t')
-        if (channels_df is None) or ('status' not in channels_df.columns.tolist()):
+        if 'status' not in channels_df.columns.tolist():
             old_bads = None
         else:
             old_bads = channels_df.query('status == "bad"')['name'].tolist()
@@ -416,6 +420,8 @@ class RawSource(RawPipe):
             bad_chs: bool = True,
     ) -> float | None:
         raw_path = self.get_path(path)
+        if not exists(raw_path):
+            raise FileMissingError(f"Raw input file does not exist at expected location {raw_path}")
         bads_path = self.get_path(path, 'bads')
         if bad_chs:
             return max(getmtime(raw_path), getmtime(bads_path))
