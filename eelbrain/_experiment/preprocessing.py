@@ -89,7 +89,7 @@ class RawPipe:
             path: BIDSPath,
             file_type: Literal['raw', 'bads', 'cache', 'ica'] = 'raw',
     ) -> str:
-        # Caller of this method should check whether raw exists or not. 
+        # Caller of this method should check whether raw exists or not.
         # Channels file will be created if it doesn't exist.
         if file_type == 'raw':
             return str(path.fpath)
