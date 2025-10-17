@@ -45,6 +45,7 @@ from numpy import newaxis
 
 from .._data_obj import NDVarArg, Dataset, VolumeSourceSpace
 from .._colorspaces import SYMMETRIC_CMAPS
+from .._config import CONFIG
 from ._base import ColorBarMixin, TimeSlicerEF, Layout, EelFigure, brain_data, butterfly_data, use_inline_backend
 from ._utsnd import Butterfly
 
@@ -313,7 +314,7 @@ class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
             data: Dataset = None,
             **kwargs):
         # Give wxPython a chance to initialize the menu before pyplot
-        if not use_inline_backend():
+        if CONFIG['eelbrain'] and not use_inline_backend():
             from .._wxgui import get_app
             get_app(jumpstart=True)
 
