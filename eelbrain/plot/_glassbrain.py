@@ -34,6 +34,7 @@ OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
 DAMAGE.
 
 """
+import logging
 import os
 from typing import Literal, Union
 import warnings
@@ -318,15 +319,16 @@ class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
             from .._wxgui import get_app
             get_app(jumpstart=True)
 
-        # nilearn imports  matplotlib.pyplot and messes with the backend unless
+        # nilearn imports matplotlib.pyplot and messes with the backend unless
         # DISPLAY is set
         old_display = os.environ.get('DISPLAY')
         if old_display is None:
             os.environ['DISPLAY'] = 'duh'
+        # logging.warning(f"*** IMPORTING *** {old_display=}")
         with warnings.catch_warnings():
-            warnings.filterwarnings('ignore', 'Trying to register the cmap', UserWarning)
             from nilearn.image import index_img
             from nilearn.plotting.displays import get_projector
+        raise ValueError("TEST")
         if old_display is None:
             del os.environ['DISPLAY']
 
