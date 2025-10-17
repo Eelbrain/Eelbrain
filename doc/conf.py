@@ -13,7 +13,24 @@ from datetime import datetime
 from itertools import chain
 import os
 from pathlib import Path
-from warnings import filterwarnings
+import sys
+
+# Keep GUI stacks from probing X
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("DISPLAY", "")
+
+# Force Matplotlib to headless *before* pyplot is imported
+os.environ.setdefault("MPLBACKEND", "Agg")
+import matplotlib
+matplotlib.use("Agg", force=True)
+
+# Now import pyplot and disable interactive mode so draw_if_interactive() is a no-op
+import matplotlib.pyplot as plt
+plt.ioff()
+
+# Optional tripwire to catch premature pyplot imports
+if "matplotlib.pyplot" in sys.modules and matplotlib.get_backend().lower() != "agg":
+    raise RuntimeError("pyplot imported with a GUI backend before Agg was set")
 
 import eelbrain.plot._brain_object  # make sure that Brain is available
 import eelbrain
@@ -93,6 +110,7 @@ example_order = {
         'sensor-lm.py',
         'sensor-two-stage.py',
         'compare-topographies.py',
+        'volume-source-space.py',
     ],
     'plots': [
         'boxplot.py',
