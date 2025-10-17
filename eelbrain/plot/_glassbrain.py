@@ -34,13 +34,13 @@ OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
 DAMAGE.
 
 """
-import logging
 import os
 from typing import Literal, Union
 import warnings
 import numbers
 from typing import Tuple
 
+import matplotlib
 import nibabel
 import numpy as np
 from numpy import newaxis
@@ -324,11 +324,10 @@ class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
         old_display = os.environ.get('DISPLAY')
         if old_display is None:
             os.environ['DISPLAY'] = 'duh'
-        # logging.warning(f"*** IMPORTING *** {old_display=}")
+        raise ValueError(f"TEST {old_display=} {matplotlib.get_backend()=}")
         with warnings.catch_warnings():
             from nilearn.image import index_img
             from nilearn.plotting.displays import get_projector
-        raise ValueError("TEST")
         if old_display is None:
             del os.environ['DISPLAY']
 
