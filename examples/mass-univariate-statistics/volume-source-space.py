@@ -40,13 +40,13 @@ result = testnd.Vector('src', sub="side == 'R'", data=data, samples=250, tfce=Tr
 # interactively. In a notebook, use different :class:`plot.GlassBrain` plots.
 # (see next section):
 
-from eelbrain_plotly_viz import EelbrainPlotly2DViz
+# from eelbrain_plotly_viz import EelbrainPlotly2DViz
 
-# Create visualization with sample data
-viz = EelbrainPlotly2DViz(result.difference)
+# # Create visualization with sample data
+# viz = EelbrainPlotly2DViz(result.difference)
 
-# Run interactive dashboard
-viz.run()
+# # Run interactive dashboard
+# viz.run()
 
 ""
 # butterfly, brain = plot.GlassBrain.butterfly(result)
@@ -63,7 +63,9 @@ data['a1l'] = data['src'].sub(source='ctx-lh-transversetemporal').norm('space').
 
 ###############################################################################
 # Plot source time course by side of auditory stimulus
+peak_time = 0.085
 p = plot.UTSStat('a1l', 'side', data=data, title='STC in left A1')
+p.add_vline(peak_time)
 
 ###############################################################################
 # Directional ROI
@@ -71,8 +73,14 @@ p = plot.UTSStat('a1l', 'side', data=data, title='STC in left A1')
 # An alternative is to project the signal onto a vector to extract signed
 # time course data. First, define an ROI with vector data in a desired
 # anatomical region:
+p = plot.GlassBrain(data['src'].sub(time=peak_time))
+
+""
+p = plot.GlassBrain(data['src'].sub(time=peak_time), display_mode='lzry')
+
+""
 roi_data = result.difference.sub(source='ctx-lh-transversetemporal', time=0.090)
-plot.GlassBrain(roi_data)
+p = plot.GlassBrain(roi_data)
 
 ###############################################################################
 # Then, project all data onto this vector:
