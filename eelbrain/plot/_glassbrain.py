@@ -40,13 +40,13 @@ import warnings
 import numbers
 from typing import Tuple
 
-import matplotlib
 import nibabel
 import numpy as np
 from numpy import newaxis
 
 from .._data_obj import NDVarArg, NDVar, Dataset, VolumeSourceSpace
 from .._colorspaces import SYMMETRIC_CMAPS
+from .._config import CONFIG
 from ._base import CMapArg, ColorBarMixin, TimeSlicerEF, Layout, EelFigure, brain_data, butterfly_data, use_inline_backend
 from ._utsnd import Butterfly
 
@@ -315,8 +315,8 @@ class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
             data: Dataset = None,
             **kwargs):
         # Give wxPython a chance to initialize the menu before pyplot
-        raise ValueError(f"TEST 1 {use_inline_backend()=} {matplotlib.get_backend()=}")
-        if not use_inline_backend():
+        # raise ValueError(f"TEST 1 {use_inline_backend()=} {matplotlib.get_backend()=}")
+        if CONFIG['eelbrain'] and not use_inline_backend():
             from .._wxgui import get_app
             get_app(jumpstart=True)
 
@@ -325,7 +325,7 @@ class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
         old_display = os.environ.get('DISPLAY')
         if old_display is None:
             os.environ['DISPLAY'] = 'duh'
-        raise ValueError(f"TEST 1 {old_display=} {matplotlib.get_backend()=}")
+        # raise ValueError(f"TEST 1 {old_display=} {matplotlib.get_backend()=}")
         with warnings.catch_warnings():
             from nilearn.image import index_img
             from nilearn.plotting.displays import get_projector
