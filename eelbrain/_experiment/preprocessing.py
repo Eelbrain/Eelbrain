@@ -13,7 +13,7 @@ from typing import Any, Collection, Dict, List, Literal, Sequence, Tuple, Union
 
 import mne
 from scipy import signal
-from mne_bids import BIDSPath, read_raw_bids, mark_channels
+from mne_bids import BIDSPath, mark_channels
 import pandas as pd
 
 from .. import load
@@ -98,7 +98,21 @@ class RawPipe:
             if not exists(bads_path):
                 self.log.info("No channels.tsv found for %s, creating an empty one.", path.fpath)
                 makedirs(bads_path.parent, exist_ok=True)
-                pd.DataFrame(columns=['name', 'type', 'units', 'low_cutoff', 'high_cutoff', 'description', 'sampling_frequency', 'status', 'status_description']).to_csv(bads_path, sep='\t', index=False)
+                if exists(str(path.fpath)):
+                    raw = mne.io.read_raw_fif(str(path.fpath), verbose='critical')
+                    ch_names = raw.ch_names
+                else:
+                    raise FileMissingError(f"Raw input file does not exist at expected location {path.fpath}")
+                ch_status = []
+                for name in ch_names:
+                    if name in raw.info['bads']:
+                        ch_status.append('bad')
+                    else:
+                        ch_status.append('good')
+                pd.DataFrame({
+                    'name': ch_names,
+                    'status': ch_status,
+                }).to_csv(bads_path, sep='\t', index=False)
             return str(bads_path)
         elif file_type == 'cache':
             return join(
@@ -129,9 +143,11 @@ class RawPipe:
         # bad channels
         if isinstance(add_bads, Sequence):
             raw.info['bads'] = list(add_bads)
+        elif add_bads:
+            raw.info['bads'] = self.load_bad_channels(path)
         elif add_bads is False:
             raw.info['bads'] = []
-        elif add_bads is not True:
+        else:
             raise TypeError(f"{add_bads=}")
         return raw
 
@@ -140,9 +156,10 @@ class RawPipe:
             path: BIDSPath,
             preload: PreloadArg,
     ) -> mne.io.BaseRaw:
-        return read_raw_bids(
-            path,
-            extra_params={'preload': preload},
+        raw_path = self.get_path(path)
+        return mne.io.read_raw_fif(
+            raw_path,
+            preload=preload,
             verbose='critical',
         )
 
@@ -314,9 +331,10 @@ class RawSource(RawPipe):
         return None
 
     def _load(self, path: BIDSPath, preload):
-        raw: mne.io.BaseRaw = read_raw_bids(
-            path,
-            extra_params={'preload': preload},
+        raw_path = self.get_path(path)
+        raw = mne.io.read_raw_fif(
+            raw_path,
+            preload=preload,
             verbose='critical',
         )
         if self.rename_channels:
