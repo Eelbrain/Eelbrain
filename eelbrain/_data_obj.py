@@ -10280,10 +10280,11 @@ class SourceSpaceBase(Dimension):
         if path.exists():
             return mne.read_source_spaces(str(path))
         else:
-            return self._setup_source_space(subjects_dir)
+            raise NotImplementedError(f"Subjects directory {subjects_dir} not found. Update with eelbrain.load.update_subjects_dir.")
+            return self._setup_source_space()
 
-    def _setup_source_space(self, subjects_dir):
-        raise NotImplementedError(f"Subjects directory {subjects_dir} not found. Update with eelbrain.load.update_subjects_dir.")
+    def _setup_source_space(self):
+        raise NotImplementedError
 
     def index_for_label(self, label):
         """Return the index for a label
