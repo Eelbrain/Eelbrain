@@ -30,7 +30,6 @@ from .definitions import log_dict_change, tuple_arg, typed_arg
 from .exceptions import FileMissingError
 
 AddBadsArg = Union[bool, Sequence[str]]
-PreloadArg = Union[bool, Literal[-1]]
 
 
 class RawPipe:
@@ -132,13 +131,11 @@ class RawPipe:
             self,
             path: BIDSPath,
             add_bads: AddBadsArg = True,
-            preload: PreloadArg = False,  # -1: info only, data will not be needed
+            preload: bool = False,
             raw: mne.io.BaseRaw = None,
     ) -> mne.io.BaseRaw:
         # raw
         if raw is None:
-            if preload == -1:
-                preload = False
             raw = self._load(path, preload)
         # bad channels
         if isinstance(add_bads, Sequence):
@@ -154,7 +151,7 @@ class RawPipe:
     def _load(
             self,
             path: BIDSPath,
-            preload: PreloadArg,
+            preload: bool,
     ) -> mne.io.BaseRaw:
         raw_path = self.get_path(path)
         return mne.io.read_raw_fif(
@@ -484,7 +481,7 @@ class CachedRawPipe(RawPipe):
             self,
             path: BIDSPath,
             load: bool = False,
-            preload: PreloadArg = False,
+            preload: bool = False,
     ) -> mne.io.BaseRaw | None:
         "Make sure the cache is up to date"
         cache_path = self.get_path(path, 'cache')
@@ -529,14 +526,14 @@ class CachedRawPipe(RawPipe):
             self,
             path: BIDSPath,
             add_bads: AddBadsArg = True,
-            preload: PreloadArg = False,  # -1: info only, data will not be needed
+            preload: bool = False,
             raw: mne.io.BaseRaw = None,
     ) -> mne.io.BaseRaw:
         if raw is not None:
             pass
         elif self._cache:
             raw = self.cache(path, load=True, preload=preload)
-        elif preload == -1:
+        elif preload == False:
             raw = self._make_info(path)
         else:
             raw = self._make(path, preload)
@@ -557,7 +554,7 @@ class CachedRawPipe(RawPipe):
         raise NotImplementedError
 
     def _make_info(self, path: BIDSPath) -> mne.io.BaseRaw:
-        return self.source.load(path, preload=-1)
+        return self.source.load(path, preload=False)
 
     def make_bad_channels(
             self,
@@ -873,7 +870,7 @@ class RawICA(CachedRawPipe):
         ica_path = self.get_path(path, 'ica')
         bad_channels = self.load_bad_channels(path)
         if exists(ica_path):
-            raw = self.source.load(path.copy().update(task=self.task[0]), bad_channels, preload=-1)
+            raw = self.source.load(path.copy().update(task=self.task[0]), bad_channels, preload=False)
             ica = mne.preprocessing.read_ica(ica_path)
             # equal channel names in different raw is guaranteed here
             if not self._check_ica_channels(ica, raw):
@@ -914,7 +911,7 @@ class RawICA(CachedRawPipe):
     def _make(
             self,
             path: BIDSPath,
-            preload: PreloadArg,
+            preload: bool,
     ) -> mne.io.BaseRaw:
         raw = self.source.load(path, preload=True)
         return self._apply(raw, path, self.name)
@@ -1022,7 +1019,7 @@ class RawApplyICA(CachedRawPipe):
     def _make(
             self,
             path: BIDSPath,
-            preload: PreloadArg,
+            preload: bool,
     ) -> mne.io.BaseRaw:
         raw = self.source.load(path, preload=True)
         return self.ica_source._apply(raw, path, self.name)
@@ -1073,7 +1070,7 @@ class RawMaxwell(CachedRawPipe):
     def _make(
             self,
             path: BIDSPath,
-            preload: PreloadArg,
+            preload: bool,
     ) -> mne.io.BaseRaw:
         raw = self.source.load(path)
         self.log.info("Raw %s: computing Maxwell filter for %s", self.name, path.fpath)
@@ -1099,7 +1096,7 @@ class RawOversampledTemporalProjection(CachedRawPipe):
     def _make(
             self,
             path: BIDSPath,
-            preload: PreloadArg,
+            preload: bool,
     ) -> mne.io.BaseRaw:
         raw = self.source.load(path)
         self.log.info("Raw %s: computing oversampled temporal projection for %s", self.name, path.fpath)
@@ -1124,7 +1121,7 @@ class RawUpdateBadChannels(CachedRawPipe):
     def _make(
             self,
             path: BIDSPath,
-            preload: PreloadArg,
+            preload: bool,
     ) -> mne.io.BaseRaw:
         return self.source.load(path, preload=preload)
 
@@ -1201,7 +1198,7 @@ class RawReReference(CachedRawPipe):
     def _make(
             self,
             path: BIDSPath,
-            preload: PreloadArg,
+            preload: bool,
     ) -> mne.io.BaseRaw:
         raw = self.source.load(path, preload=True)
         if self.add:

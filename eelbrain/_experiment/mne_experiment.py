@@ -5552,7 +5552,7 @@ class Pipeline(FileTree):
                                            brain_surfaces='white', show=False)
 
             # add to report
-            if 'sub' + subject == mrisubject:
+            if 'sub-' + subject == mrisubject:
                 title = subject
                 caption = "Coregistration for subject %s." % subject
             else:
