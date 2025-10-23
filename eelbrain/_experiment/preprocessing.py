@@ -1189,14 +1189,14 @@ class RawReReference(CachedRawPipe):
         if self.add:
             with warnings.catch_warnings():
                 warnings.filterwarnings('ignore', 'The locations of multiple reference channels are ignored', module='mne')
-                raw = mne.add_reference_channels(raw, self.add, copy=False)
+                raw = mne.add_reference_channels(raw, [*self.add], copy=False)
             # apply new channel position
             pipe = self.source
             while not isinstance(pipe, RawSource):
                 pipe = pipe.source
             if pipe.montage:
                 raw.set_montage(pipe.montage)
-        raw.set_eeg_reference(list(self.reference))
+        raw.set_eeg_reference([*self.reference])
         if self.drop:
             raw = raw.drop_channels(self.drop)
         return raw
