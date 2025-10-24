@@ -3331,7 +3331,6 @@ class Pipeline(FileTree):
         ...
             Applicable :ref:`state-parameters`:
 
-             - :ref:`state-session`: from which session to load raw data
              - :ref:`state-raw`: preprocessing pipeline
         """
         pipe = self._raw[self.get('raw', **kwargs)]
@@ -3354,6 +3353,20 @@ class Pipeline(FileTree):
             raw = load.mne.raw_ndvar(raw, sysname=sysname, adjacency=adjacency)
 
         return raw
+
+    def load_info(self, **kwargs) -> mne.Info:
+        """
+        Load the mne Info object without loading the raw data.
+
+        Parameters
+        ----------
+        ...
+            Applicable :ref:`state-parameters`:
+
+             - :ref:`state-raw`: preprocessing pipeline
+        """
+        pipe = self._raw[self.get('raw', **kwargs)]
+        return pipe.load_info(self._bids_path)
 
     def load_raw_stc(
             self,

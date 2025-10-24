@@ -160,6 +160,9 @@ class RawPipe:
             verbose='critical',
         )
 
+    def load_info(self, path: BIDSPath) -> mne.Info:
+        raise NotImplementedError
+
     def load_bad_channels(
             self,
             path: BIDSPath,
@@ -327,7 +330,11 @@ class RawSource(RawPipe):
             raise FileMissingError(f"Raw input file does not exist at expected location {raw_path}")
         return None
 
-    def _load(self, path: BIDSPath, preload):
+    def _load(
+            self,
+            path: BIDSPath,
+            preload: bool,
+    ) -> mne.io.BaseRaw:
         raw_path = self.get_path(path)
         raw = mne.io.read_raw_fif(
             raw_path,
@@ -346,6 +353,9 @@ class RawSource(RawPipe):
         #         dig_raw = self._load(subject, dig_recording, False)
         #         raw.set_montage(mne.channels.DigMontage(dig=dig_raw.info['dig']))
         return raw
+
+    def load_info(self, path: BIDSPath) -> mne.Info:
+        return self.load(path, preload=False).info
 
     def get_adjacency(self, data: str) -> Union[str, List[Tuple[str, str]], Path]:
         if data == 'eog':
@@ -533,11 +543,12 @@ class CachedRawPipe(RawPipe):
             pass
         elif self._cache:
             raw = self.cache(path, load=True, preload=preload)
-        elif preload == False:
-            raw = self._make_info(path)
         else:
             raw = self._make(path, preload)
         return RawPipe.load(self, path, add_bads, preload, raw)
+
+    def load_info(self, path: BIDSPath) -> mne.Info:
+        return self.source.load_info(path)
 
     def load_bad_channels(
             self,
@@ -552,9 +563,6 @@ class CachedRawPipe(RawPipe):
             preload: bool,
     ) -> mne.io.BaseRaw:
         raise NotImplementedError
-
-    def _make_info(self, path: BIDSPath) -> mne.io.BaseRaw:
-        return self.source.load(path, preload=False)
 
     def make_bad_channels(
             self,
@@ -633,16 +641,16 @@ class RawFilter(CachedRawPipe):
         raw.filter(*self.args, **self._use_kwargs, n_jobs=self.n_jobs)
         return raw
 
-    def _make_info(self, path: BIDSPath) -> mne.io.BaseRaw:
-        raw = super()._make_info(path)
+    def load_info(self, path: BIDSPath) -> mne.Info:
+        info = super().load_info(path)
         l_freq, h_freq = self.args
-        if l_freq and l_freq > (raw.info['highpass'] or 0):
-            with raw.info._unlock():
-                raw.info['highpass'] = float(l_freq)
-        if h_freq and h_freq < (raw.info['lowpass'] or raw.info['sfreq']):
-            with raw.info._unlock():
-                raw.info['lowpass'] = float(h_freq)
-        return raw
+        if l_freq and l_freq > (info['highpass'] or 0):
+            with info._unlock():
+                info['highpass'] = float(l_freq)
+        if h_freq and h_freq < (info['lowpass'] or info['sfreq']):
+            with info._unlock():
+                info['lowpass'] = float(h_freq)
+        return info
 
 
 class RawFilterElliptic(CachedRawPipe):
@@ -1216,11 +1224,11 @@ class RawReReference(CachedRawPipe):
             raw = raw.drop_channels(self.drop)
         return raw
 
-    def _make_info(self, path: BIDSPath) -> mne.io.BaseRaw:
+    def load_info(self, path: BIDSPath) -> mne.Info:
         if self.add or self.drop:
-            return self._make(path, False)
+            return self._make(path, False).info
         else:
-            return super()._make_info(path)
+            return super().load_info(path)
 
 
 def assemble_pipeline(
