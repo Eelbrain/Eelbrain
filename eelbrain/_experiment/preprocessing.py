@@ -355,7 +355,7 @@ class RawSource(RawPipe):
         return raw
 
     def load_info(self, path: BIDSPath) -> mne.Info:
-        return self.load(path, preload=False).info
+        return self.load(path).info
 
     def get_adjacency(self, data: str) -> Union[str, List[Tuple[str, str]], Path]:
         if data == 'eog':
@@ -816,6 +816,11 @@ class RawICA(CachedRawPipe):
             bad_chs.update(self.source.load_bad_channels(path_, existing))
         return sorted(bad_chs)
 
+    def load_info(self, path: BIDSPath) -> mne.Info:
+        info = super().load_info(path)
+        info['bads'] = self.load_bad_channels(path)
+        return info
+
     def load_ica(self, path: BIDSPath) -> mne.preprocessing.ICA:
         ica_path = self.get_path(path, 'ica')
         if not exists(ica_path):
@@ -878,7 +883,7 @@ class RawICA(CachedRawPipe):
         ica_path = self.get_path(path, 'ica')
         bad_channels = self.load_bad_channels(path)
         if exists(ica_path):
-            raw = self.source.load(path.copy().update(task=self.task[0]), bad_channels, preload=False)
+            raw = self.source.load(path.copy().update(task=self.task[0]), bad_channels)
             ica = mne.preprocessing.read_ica(ica_path)
             # equal channel names in different raw is guaranteed here
             if not self._check_ica_channels(ica, raw):
