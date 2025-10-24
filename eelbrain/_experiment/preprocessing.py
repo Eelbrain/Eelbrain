@@ -833,14 +833,14 @@ class RawICA(CachedRawPipe):
     @staticmethod
     def _check_ica_channels(
             ica: mne.preprocessing.ICA,
-            raw: mne.io.BaseRaw,
+            info: mne.Info,
             raise_on_mismatch: bool = False,
             raw_name: str = None,
             subject: str = None,
             return_missing: bool = False,  # if ICA is only missing channels, retrun those
     ) -> bool | tuple:
-        picks = mne.pick_types(raw.info, meg=True, eeg=True, ref_meg=False)
-        raw_ch_names = [raw.ch_names[i] for i in picks]
+        picks = mne.pick_types(info, meg=True, eeg=True, ref_meg=False)
+        raw_ch_names = [info.ch_names[i] for i in picks]
         names_match = ica.ch_names == raw_ch_names
         if return_missing:
             assert raise_on_mismatch
@@ -882,12 +882,11 @@ class RawICA(CachedRawPipe):
             run: list[str],
     ) -> str:
         ica_path = self.get_path(path, 'ica')
-        bad_channels = self.load_bad_channels(path)
         if exists(ica_path):
-            raw = self.source.load(path.copy().update(task=self.task[0]), bad_channels)
+            info = self.load_info(path.copy().update(task=self.task[0]))
             ica = mne.preprocessing.read_ica(ica_path)
             # equal channel names in different raw is guaranteed here
-            if not self._check_ica_channels(ica, raw):
+            if not self._check_ica_channels(ica, info):
                 self.log.info("Raw %s for subject=%r: ICA channels mismatch data channels, recomputing ICA...", self.name, path.entities['subject'])
             else:
                 mtimes = [self.source.mtime(path.copy().update(task=task), self._bad_chs_affect_cache) for task in self.task]
