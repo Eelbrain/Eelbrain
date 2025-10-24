@@ -161,6 +161,7 @@ class RawPipe:
         )
 
     def load_info(self, path: BIDSPath) -> mne.Info:
+        "Process the info without processing the raw data, return the processed info"
         raise NotImplementedError
 
     def load_bad_channels(
@@ -1029,6 +1030,11 @@ class RawApplyICA(CachedRawPipe):
     ) -> list[str]:
         return self.ica_source.load_bad_channels(path, existing)
 
+    def load_info(self, path: BIDSPath) -> mne.Info:
+        info = super().load_info(path)
+        info['bads'] = self.load_bad_channels(path)
+        return info
+
     def _make(
             self,
             path: BIDSPath,
@@ -1231,7 +1237,7 @@ class RawReReference(CachedRawPipe):
 
     def load_info(self, path: BIDSPath) -> mne.Info:
         if self.add or self.drop:
-            return self._make(path, False).info
+            return self.load(path).info
         else:
             return super().load_info(path)
 

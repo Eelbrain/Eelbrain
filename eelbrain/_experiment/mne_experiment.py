@@ -3354,7 +3354,7 @@ class Pipeline(FileTree):
 
         return raw
 
-    def load_info(self, **kwargs) -> mne.Info:
+    def _load_info(self, **kwargs) -> mne.Info:
         """
         Load the mne Info object without loading the raw data.
 
