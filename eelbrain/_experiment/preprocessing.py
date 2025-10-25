@@ -938,7 +938,7 @@ class RawICA(CachedRawPipe):
         self.log.debug("Raw %s: applying ICA for %s...", raw_name, path.fpath)
         raw.info['bads'] = self.load_bad_channels(path, existing=raw.ch_names)
         ica = self.load_ica(path)
-        missing = self._check_ica_channels(ica, raw, raise_on_mismatch=True, raw_name=raw_name, subject=path.entities['subject'], return_missing=True)
+        missing = self._check_ica_channels(ica, raw.info, raise_on_mismatch=True, raw_name=raw_name, subject=path.entities['subject'], return_missing=True)
         if missing:
             raw.drop_channels(missing)
         ica.apply(raw)
