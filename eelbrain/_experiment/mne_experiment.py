@@ -292,7 +292,7 @@ class Pipeline(FileTree):
     # MRI subject names: {subject: mrisubject} mappings
     # selected with e.set(mri=dict_name)
     # default is identity (mrisubject = subject)
-    mri_subjects = {'': keydefaultdict(lambda s: s)}
+    mri_subjects = {'': keydefaultdict(lambda s: 'sub-' + s)}
 
     # Parcellations
     __parcs = {
@@ -2847,7 +2847,7 @@ class Pipeline(FileTree):
                 self.make_annot(mrisubject=mri_subjects[meg_subjects[0]])
 
         # preload morph matrices
-        morph_sources = {subject for subject in from_subjects.values() if subject != common_brain}
+        morph_sources = {subject.removeprefix('sub-') for subject in from_subjects.values() if subject != common_brain}
         source_morphs = {subject: self.load_source_morph(subject=subject) for subject in morph_sources}
 
         # convert evoked objects
@@ -3331,7 +3331,6 @@ class Pipeline(FileTree):
         ...
             Applicable :ref:`state-parameters`:
 
-             - :ref:`state-session`: from which session to load raw data
              - :ref:`state-raw`: preprocessing pipeline
         """
         pipe = self._raw[self.get('raw', **kwargs)]
@@ -3354,6 +3353,20 @@ class Pipeline(FileTree):
             raw = load.mne.raw_ndvar(raw, sysname=sysname, adjacency=adjacency)
 
         return raw
+
+    def _load_info(self, **kwargs) -> mne.Info:
+        """
+        Load the mne Info object without loading the raw data.
+
+        Parameters
+        ----------
+        ...
+            Applicable :ref:`state-parameters`:
+
+             - :ref:`state-raw`: preprocessing pipeline
+        """
+        pipe = self._raw[self.get('raw', **kwargs)]
+        return pipe.load_info(self._bids_path)
 
     def load_raw_stc(
             self,
@@ -5552,7 +5565,7 @@ class Pipeline(FileTree):
                                            brain_surfaces='white', show=False)
 
             # add to report
-            if subject == mrisubject:
+            if 'sub-' + subject == mrisubject:
                 title = subject
                 caption = "Coregistration for subject %s." % subject
             else:
