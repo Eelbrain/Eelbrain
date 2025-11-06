@@ -640,7 +640,7 @@ def morph_source_space(
     if isinstance(source, SourceSpace):
         source_to = SourceSpace(vertices_to, subject_to, source.src, subjects_dir, parc_to)
     else:
-        src = f'vol-{morph.spacing}'
+        src = f'vol-{morph.zooms[0]:g}'
         source_to = VolumeSourceSpace(vertices_to, subject_to, src, subjects_dir, parc_to)
     if mask is True:
         if parc is True:

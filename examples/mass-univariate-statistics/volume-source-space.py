@@ -49,7 +49,6 @@ morph = mne.compute_source_morph(
     subjects_dir=y.source.subjects_dir,
     niter_affine=[10, 10, 5],
     niter_sdr=[10, 10, 5],  # just for speed
-    spacing=7,
     src_to=src_fs,
 )
 
