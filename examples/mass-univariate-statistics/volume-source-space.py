@@ -25,12 +25,6 @@ data = datasets.get_mne_sample(src='vol', ori='vector')
 data.head()
 
 ###############################################################################
-# Set the parcellation.
-# For reference, show the labels that are in the parcellation
-data['src'] = set_parc(data['src'], 'aparc+aseg')
-data['src'].source.parc.cells[:3]
-
-###############################################################################
 # One-sample test
 # ^^^^^^^^^^^^^^^
 # A one-sample test can be used to detect significant activations
@@ -38,25 +32,7 @@ data['src'].source.parc.cells[:3]
 result = testnd.Vector('src', sub="side == 'R'", data=data, samples=250, tfce=True, tstart=0.05, tstop=0.200)
 
 ###############################################################################
-# In a notebook, start an interactive vizualization using `LiveNeuron <https://github.com/liang-bo96/LiveNeuron>`_ (uncomment the code below):
-
-# from eelbrain_plotly_viz import EelbrainPlotly2DViz
-
-# viz = EelbrainPlotly2DViz(result.difference, layout_mode='horizontal', realtime=True, arrow_scale=0.2)
-# viz.show_in_jupyter()
-
-###############################################################################
-# A butterfly plot can give a quick overview of amplitudes over time.
-# In an interactive iPython session, a combination of butterfly and 
-# anatomical plot can be used with a window-based :mod:`matplotlib` 
-# backend, where the time can be adjusted interactively: 
-
-# butterfly, brain = plot.GlassBrain.butterfly(result)
-# brain.set_time(0.090)
-
-###############################################################################
-# For static visualization, we can use a combination of :class:`plot.Butterfly` and :class:`plot.GlassBrain` plots.
-# First, morph the data to the template brain for anatomical plotting.
+# Morph the data to the template brain for anatomical visualization.
 
 y = result.masked_difference()
 
@@ -72,11 +48,11 @@ morph = mne.compute_source_morph(
     verbose=True,
 )
 
-""
-# Morph to average brain for visualization
 y = morph_source_space(y, 'fsaverage', morph=morph)
 
-""
+###############################################################################
+# For static visualization, we can use a combination of :class:`plot.Butterfly` and :class:`plot.GlassBrain` plots.
+
 # Extract vector norm (amplitude)
 y_norm = y.norm('space')
 # Split data by hemisphere
@@ -89,47 +65,23 @@ for t in times:
     p.add_vline(t)
 
 ""
-# Glassbrain plots at the relevant time points
+# :class:`plot.GlassBrain` plots at the relevant time points
 for t in times:
     p = plot.GlassBrain(y.sub(time=t), title=f"{t*1000:.0f} ms", vmax=4)
 
 ###############################################################################
-# Amplitude in ROI
-# ^^^^^^^^^^^^^^^^
-# Extract the amplitude time course in the left auditory cortex:
-# Subset of data in transverse temporal gyrus
-# Vector length (norm)
-# Mean in the ROI
-data['a1l'] = data['src'].sub(source='ctx-lh-transversetemporal').norm('space').mean('source')
+# In a notebook, start an interactive visualization using `LiveNeuron <https://github.com/liang-bo96/LiveNeuron>`_ (uncomment the code below):
+
+# from eelbrain_plotly_viz import EelbrainPlotly2DViz
+
+# viz = EelbrainPlotly2DViz(result.difference, layout_mode='horizontal', realtime=True, arrow_scale=0.2)
+# viz.show_in_jupyter()
 
 ###############################################################################
-# Plot source time course by side of auditory stimulus
-peak_time = 0.085
-p = plot.UTSStat('a1l', 'side', data=data, title='STC in left A1')
-p.add_vline(peak_time)
+# A butterfly plot can give a quick overview of amplitudes over time.
+# In an interactive iPython session, a combination of butterfly and
+# anatomical plot can be used with a window-based :mod:`matplotlib`
+# backend, where the time can be adjusted interactively:
 
-###############################################################################
-# Directional ROI
-# ^^^^^^^^^^^^^^^
-# An alternative is to project the signal onto a vector to extract signed
-# time course data. First, define an ROI with vector data in a desired
-# anatomical region. Note that the overlay in the :
-roi_data = result.difference.sub(source='ctx-lh-transversetemporal', time=0.090)
-
-# roi_m = complete_source_space(roi_data)
-# roi_m = morph_source_space(roi_m, 'fsaverage', morph=morph)
-p = plot.GlassBrain(roi_data)
-
-""
-roi_data.source.vertices
-
-""
-roi_data.source.hemi
-
-""
-roi_data.source.coordinates
-
-###############################################################################
-# Then, project all data onto this vector:
-data['a1l_vec'] = roi_data.dot(data['src'], ('space', 'source'))
-p = plot.UTSStat('a1l_vec', 'side', data=data, title='STC in left A1')
+# butterfly, brain = plot.GlassBrain.butterfly(result)
+# brain.set_time(0.090)
