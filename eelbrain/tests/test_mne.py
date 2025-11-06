@@ -278,8 +278,13 @@ def test_morphing_volume():
     stc_ndvar = data[0, 'src']
 
     # Prepare SourceMorph
+    fname_src_fsaverage = Path(subjects_dir) / "fsaverage" / "bem" / "fsaverage-vol-7-src.fif"
+    if fname_src_fsaverage.exists():
+        src_fsaverage = mne.read_source_spaces(fname_src_fsaverage)
+    else:
+        src_fsaverage = mne.setup_volume_source_space('fsaverage', 7, subjects_dir=subjects_dir)
+        src_fsaverage.save(fname_src_fsaverage)
     src_from = stc_ndvar.source.get_source_space()
-    src_fsaverage = mne.read_source_spaces(subjects_dir / "fsaverage" / "bem" / "fsaverage-vol-5-src.fif")
     morph = mne.compute_source_morph(
         src_from, 'sample', 'fsaverage', subjects_dir,
         niter_affine=[10, 10, 5],
@@ -287,7 +292,7 @@ def test_morphing_volume():
         src_to=src_fsaverage,
     )
     stc_vol_m = morph.apply(stc_vol)
-    target = load.mne.stc_ndvar(stc_vol_m, 'fsaverage', 'vol-5', subjects_dir, 'dSPM', name='src')
+    target = load.mne.stc_ndvar(stc_vol_m, 'fsaverage', 'vol-7', subjects_dir, 'dSPM', name='src')
 
     # Apply to NDVar
     stc_ndvar_m = morph_source_space(stc_ndvar, morph=morph)
