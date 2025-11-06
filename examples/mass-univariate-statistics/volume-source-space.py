@@ -36,16 +36,21 @@ result = testnd.Vector('src', sub="side == 'R'", data=data, samples=250, tfce=Tr
 
 y = result.masked_difference()
 
-fname_src_fsaverage = Path(y.source.subjects_dir) / "fsaverage" / "bem" / "fsaverage-vol-5-src.fif"
-src_fs = mne.read_source_spaces(fname_src_fsaverage)
+fname_src_fsaverage = Path(y.source.subjects_dir) / "fsaverage" / "bem" / "fsaverage-vol-7-src.fif"
+if fname_src_fsaverage.exists():
+    src_fs = mne.read_source_spaces(fname_src_fsaverage)
+else:
+    src_fs = mne.setup_volume_source_space('fsaverage', 7, subjects_dir=y.source.subjects_dir)
+    src_fs.save(Path(y.source.subjects_dir) / "fsaverage" / "bem" / "fsaverage-vol-7-src.fif")
+
 morph = mne.compute_source_morph(
     y.source.get_source_space(),
     subject_from=y.source.subject,
     subjects_dir=y.source.subjects_dir,
     niter_affine=[10, 10, 5],
     niter_sdr=[10, 10, 5],  # just for speed
+    spacing=7,
     src_to=src_fs,
-    verbose=True,
 )
 
 y = morph_source_space(y, 'fsaverage', morph=morph)
