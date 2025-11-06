@@ -720,7 +720,7 @@ def butterfly_data(
 
     # find samplingrate
     if resample_ is not None:
-        raise NotImplementedError(f"resample_={resample_}")
+        raise NotImplementedError(f"{resample_=}")
 
     # find hemispheres to include
     if hemi is None:
@@ -732,7 +732,7 @@ def butterfly_data(
     elif hemi in ('lh', 'rh'):
         hemis = [hemi]
     else:
-        raise ValueError("hemi=%r" % (hemi,))
+        raise ValueError(f"{hemi=}")
 
     if kind == 'ndvar':
         if y.has_case:

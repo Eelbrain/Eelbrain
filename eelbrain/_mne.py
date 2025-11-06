@@ -487,8 +487,9 @@ def morph_source_space(
     mask
         Restrict output to known sources. If the parcellation of ``data`` is
         retained keep only sources with labels contained in ``data``, otherwise
-        remove only sources with ``”unknown-*”`` label (default is True unless
-        ``vertices_to`` is specified).
+        remove only sources with ``”unknown-*”`` label (default is True for
+        surface source space data, unless ``vertices_to`` is specified, and
+        False for volume source space data).
 
     Returns
     -------
@@ -544,6 +545,10 @@ def morph_source_space(
         source = ndvar.get_dim('source')
     subjects_dir = source.subjects_dir
     subject_from = source.subject
+    # verify parameters
+    if isinstance(source, VolumeSourceSpace):
+        if mask:
+            raise NotImplementedError(f"{mask=} for volume source space")
     # Verify subject_to
     if isinstance(morph, mne.SourceMorph):
         if subject_to is None:
@@ -595,27 +600,33 @@ def morph_source_space(
             default_vertices = source_space_vertices(source.kind, source.grade, subject_to, subjects_dir)
         lh_out = vertices_to == 'lh' or (vertices_to is None and has_lh_out)
         rh_out = vertices_to == 'rh' or (vertices_to is None and has_rh_out)
-        vertices_to = [
-            default_vertices[0] if lh_out else np.empty(0, int),
-            default_vertices[1] if rh_out else np.empty(0, int),
-        ]
-        if mask is None:
-            if source.parc is None:
-                mask = False
-            else:  # infer whether ndvar was masked
-                mask = not ('unknown-lh' in source.parc or 'unknown-rh' in source.parc)
+        if isinstance(source, VolumeSourceSpace):
+            if not lh_out and rh_out:
+                raise NotImplementedError(f"Masking by hemisphere in volume source space")
+            vertices_to = default_vertices
+        else:
+            vertices_to = [
+                default_vertices[0] if lh_out else np.empty(0, int),
+                default_vertices[1] if rh_out else np.empty(0, int),
+            ]
+            if mask is None:
+                if source.parc is None:
+                    mask = False
+                else:  # infer whether ndvar was masked
+                    mask = not ('unknown-lh' in source.parc or 'unknown-rh' in source.parc)
     elif not isinstance(vertices_to, list) or not len(vertices_to) == 2:
         raise ValueError(f"{vertices_to=}: must be a list of length 2")
 
     # check that requested data is available
-    n_to_lh = len(vertices_to[0])
-    n_to_rh = len(vertices_to[1])
-    if n_to_lh and not has_lh_out:
-        raise ValueError("Data on the left hemisphere was requested in vertices_to but is not available in ndvar")
-    elif n_to_rh and not has_rh_out:
-        raise ValueError("Data on the right hemisphere was requested in vertices_to but is not available in ndvar")
-    elif n_to_lh == 0 and n_to_rh == 0:
-        raise ValueError("No target vertices")
+    if isinstance(source, SourceSpace):
+        n_to_lh = len(vertices_to[0])
+        n_to_rh = len(vertices_to[1])
+        if n_to_lh and not has_lh_out:
+            raise ValueError("Data on the left hemisphere was requested in vertices_to but is not available in ndvar")
+        elif n_to_rh and not has_rh_out:
+            raise ValueError("Data on the right hemisphere was requested in vertices_to but is not available in ndvar")
+        elif n_to_lh == 0 and n_to_rh == 0:
+            raise ValueError("No target vertices")
 
     # parc for new source space
     if parc is True:
@@ -624,17 +635,13 @@ def morph_source_space(
         parc_to = parc
     if mask and parc_to is None:
         raise ValueError("Can't mask source space without parcellation...")
-    # check that annot files are available
-    if parc_to:
-        label_dir = Path(subjects_dir) / subject_to / 'label'
-        paths = [label_dir / f'{hemi}.{parc_to}.annot' for hemi in ('lh', 'rh')]
-        missing = [fname for fname in paths if not os.path.exists(fname)]
-        if missing:
-            missing = '\n'.join(missing)
-            raise IOError(f"Annotation files are missing for parc={parc_to!r}, subject={subject_to!r}. Use the parc parameter when morphing to set a different parcellation. The following files are missing:\n{missing}")
 
     # find target source space
-    source_to = SourceSpace(vertices_to, subject_to, source.src, subjects_dir, parc_to)
+    if isinstance(source, SourceSpace):
+        source_to = SourceSpace(vertices_to, subject_to, source.src, subjects_dir, parc_to)
+    else:
+        src = f'vol-{morph.spacing}'
+        source_to = VolumeSourceSpace(vertices_to, subject_to, src, subjects_dir, parc_to)
     if mask is True:
         if parc is True:
             keep_labels = source.parc.cells
@@ -653,7 +660,8 @@ def morph_source_space(
 
     if isinstance(morph, mne.SourceMorph):
         # Update morph matrix
-        morph = _morph_subset(morph, source.vertices, source_to.vertices)
+        if isinstance(source, SourceSpace):
+            morph = _morph_subset(morph, source.vertices, source_to.vertices)
         # Morph data
         stc, shape, dims, case_axis = ndvar_stc(ndvar)
         morphed_stc = morph.apply(stc)

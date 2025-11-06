@@ -1577,11 +1577,10 @@ def ndvar_stc(
             stc = mne.SourceEstimate(data, source_dim.vertices, tmin, tstep, source_dim.subject)
     elif isinstance(source_dim, VolumeSourceSpace):
         assert len(source_dim.vertices) == 1
-        vertices = source_dim.vertices[0]
         if is_vector_stc:
-            stc = mne.VolVectorSourceEstimate(data, vertices, tmin, tstep, source_dim.subject)
+            stc = mne.VolVectorSourceEstimate(data, source_dim.vertices, tmin, tstep, source_dim.subject)
         else:
-            stc = mne.VolSourceEstimate(data, vertices, tmin, tstep, source_dim.subject)
+            stc = mne.VolSourceEstimate(data, source_dim.vertices, tmin, tstep, source_dim.subject)
     return stc, target_shape, dims[1:], case_axis
 
 
