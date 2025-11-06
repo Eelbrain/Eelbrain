@@ -6,7 +6,6 @@ import string
 from typing import Literal, Optional, Tuple, Union
 
 import mne
-from mne import minimum_norm as mn
 import numpy as np
 
 from .. import _info, load
@@ -155,7 +154,7 @@ def get_mne_stc(ndvar=False, src='ico-5', subject='sample'):
     -----
     Source space only available for ``oct-4``, ``sample``.
     """
-    data_path = Path(mne.datasets.testing.data_path())
+    data_path = mne.datasets.testing.data_path()
     meg_sdir = data_path / 'MEG' / 'sample'
     subjects_dir = data_path / 'subjects'
     # scaled subject
@@ -168,15 +167,15 @@ def get_mne_stc(ndvar=False, src='ico-5', subject='sample'):
         data_subject = subject
 
     if src == 'vol-7':
-        inv = mn.read_inverse_operator(str(meg_sdir / 'sample_audvis_trunc-meg-vol-7-meg-inv.fif'))
-        evoked = mne.read_evokeds(str(meg_sdir / 'sample_audvis_trunc-ave.fif'), 'Left Auditory')
-        stc = mn.apply_inverse(evoked, inv, method='MNE', pick_ori='vector')
+        inv = mne.minimum_norm.read_inverse_operator(meg_sdir / 'sample_audvis_trunc-meg-vol-7-meg-inv.fif')
+        evoked = mne.read_evokeds(meg_sdir / 'sample_audvis_trunc-ave.fif', 'Left Auditory')
+        stc = mne.minimum_norm.apply_inverse(evoked, inv, method='MNE', pick_ori='vector')
         if data_subject == 'fsaverage':
             m = mne.compute_source_morph(stc, 'sample', data_subject, subjects_dir)
             stc = m.apply(stc)
             stc.subject = subject
         elif subject != 'sample':
-            raise ValueError(f"subject={subject!r}")
+            raise ValueError(f"{subject=}")
         if ndvar:
             return load.mne.stc_ndvar(stc, subject, 'vol-7', subjects_dir, 'MNE', sss_filename='{subject}-volume-7mm-src.fif')
         else:
@@ -372,11 +371,11 @@ def get_mne_sample(
 
         cov_file = meg_dir / 'sample_audvis-cov.fif'
         cov = mne.read_cov(cov_file)
-        inv = mn.make_inverse_operator(epochs.info, fwd, cov, loose=loose, depth=None, fixed=fixed)
+        inv = mne.minimum_norm.make_inverse_operator(epochs.info, fwd, cov, loose=loose, depth=None, fixed=fixed)
         mne.minimum_norm.write_inverse_operator(inv_file, inv)
     ds.info['inv'] = inv
 
-    stcs = mn.apply_inverse_epochs(epochs, inv, 1. / (snr ** 2), method, pick_ori=pick_ori)
+    stcs = mne.minimum_norm.apply_inverse_epochs(epochs, inv, 1. / (snr ** 2), method, pick_ori=pick_ori)
     ds['src'] = load.mne.stc_ndvar(stcs, subject, src_tag, subjects_dir, method, fixed)
     if stc:
         ds['stc'] = stcs
