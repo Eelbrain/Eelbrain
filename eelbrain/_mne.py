@@ -602,7 +602,7 @@ def morph_source_space(
         rh_out = vertices_to == 'rh' or (vertices_to is None and has_rh_out)
         if isinstance(source, VolumeSourceSpace):
             if not lh_out and rh_out:
-                raise NotImplementedError(f"Masking by hemisphere in volume source space")
+                raise NotImplementedError("Masking by hemisphere in volume source space")
             vertices_to = default_vertices
         else:
             vertices_to = [

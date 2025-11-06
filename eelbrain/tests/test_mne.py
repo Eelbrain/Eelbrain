@@ -281,7 +281,7 @@ def test_morphing_volume():
     src_from = stc_ndvar.source.get_source_space()
     src_fsaverage = mne.read_source_spaces(subjects_dir / "fsaverage" / "bem" / "fsaverage-vol-5-src.fif")
     morph = mne.compute_source_morph(
-        src_from,'sample', 'fsaverage', subjects_dir,
+        src_from, 'sample', 'fsaverage', subjects_dir,
         niter_affine=[10, 10, 5],
         niter_sdr=[10, 10, 5],  # just for speed
         src_to=src_fsaverage,
