@@ -15,7 +15,7 @@ Dataset
 ^^^^^^^
 Use the :mod:`mne` sample data:
 """
-# sphinx_gallery_thumbnail_number = 3
+# sphinx_gallery_thumbnail_number = 2
 from pathlib import Path
 
 from eelbrain import *
