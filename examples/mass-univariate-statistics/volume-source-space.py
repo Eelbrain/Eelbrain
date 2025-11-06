@@ -4,6 +4,8 @@
 Volume source space
 ===================
 
+.. currentmodule:: eelbrain
+
 Basic analysis of volume source space vector data.
 
 .. contents:: Contents
@@ -13,6 +15,7 @@ Dataset
 ^^^^^^^
 Use the :mod:`mne` sample data:
 """
+# sphinx_gallery_thumbnail_number = 3
 from pathlib import Path
 
 from eelbrain import *
@@ -68,8 +71,9 @@ times = [0.090, 0.160]
 for t in times:
     p.add_vline(t)
 
-""
+###############################################################################
 # :class:`plot.GlassBrain` plots at the relevant time points
+
 for t in times:
     p = plot.GlassBrain(y.sub(time=t), title=f"{t*1000:.0f} ms", vmax=4)
 
