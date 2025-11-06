@@ -56,10 +56,10 @@ result = testnd.Vector('src', sub="side == 'R'", data=data, samples=250, tfce=Tr
 
 ###############################################################################
 # For static visualization, we can use a combination of :class:`plot.Butterfly` and :class:`plot.GlassBrain` plots.
+# First, morph the data to the template brain for anatomical plotting.
 
 y = result.masked_difference()
 
-# mne.datasets.fetch_fsaverage(subjects_dir)
 fname_src_fsaverage = Path(y.source.subjects_dir) / "fsaverage" / "bem" / "fsaverage-vol-5-src.fif"
 src_fs = mne.read_source_spaces(fname_src_fsaverage)
 morph = mne.compute_source_morph(
@@ -113,9 +113,21 @@ p.add_vline(peak_time)
 # ^^^^^^^^^^^^^^^
 # An alternative is to project the signal onto a vector to extract signed
 # time course data. First, define an ROI with vector data in a desired
-# anatomical region:
+# anatomical region. Note that the overlay in the :
 roi_data = result.difference.sub(source='ctx-lh-transversetemporal', time=0.090)
+
+# roi_m = complete_source_space(roi_data)
+# roi_m = morph_source_space(roi_m, 'fsaverage', morph=morph)
 p = plot.GlassBrain(roi_data)
+
+""
+roi_data.source.vertices
+
+""
+roi_data.source.hemi
+
+""
+roi_data.source.coordinates
 
 ###############################################################################
 # Then, project all data onto this vector:
