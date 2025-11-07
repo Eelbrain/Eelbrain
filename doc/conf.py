@@ -13,11 +13,9 @@ from datetime import datetime
 from itertools import chain
 import os
 from pathlib import Path
-from warnings import filterwarnings
 
 import eelbrain.plot._brain_object  # make sure that Brain is available
 import eelbrain
-import mne
 from sphinx_gallery.sorting import ExplicitOrder, _SortKey
 
 
@@ -137,6 +135,7 @@ sphinx_gallery_conf = {
 
 # Disable tqdm (to avoid progress bar output in example gallery)
 os.environ['TQDM_DISABLE'] = '1'
+os.environ['MNE_TQDM'] = 'off'
 
 ################################################################################
 # Bibliography
