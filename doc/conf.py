@@ -135,8 +135,8 @@ sphinx_gallery_conf = {
     'reference_url': {'eelbrain': None},
 }
 
-# download datasets (to avoid progress bar output in example gallery)
-root = mne.datasets.mtrf.data_path()
+# Disable tqdm (to avoid progress bar output in example gallery)
+os.environ['TQDM_DISABLE'] = '1'
 
 ################################################################################
 # Bibliography
