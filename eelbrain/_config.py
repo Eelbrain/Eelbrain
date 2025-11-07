@@ -163,3 +163,8 @@ def configure(
         new['log'] = False
 
     CONFIG.update(new)
+
+
+def tqdm_disable():
+    """disable parameter for TQDM"""
+    return CONFIG['tqdm'] or bool(os.environ.get('TQDM_DISABLE'))

@@ -41,7 +41,7 @@ from scipy import ndimage
 from .. import fmtxt, _info, _text
 from ..fmtxt import FMText
 from .._celltable import Celltable
-from .._config import CONFIG, mpc
+from .._config import CONFIG, mpc, tqdm_disable
 from .._data_obj import (
     CategorialArg, CellArg, IndexArg, ModelArg, NDVarArg, VarArg,
     Dataset, Var, Factor, Interaction, NestedEffect,
@@ -3773,7 +3773,7 @@ class _MergedTemporalClusterDist:
 
 def distribution_worker(dist, in_queue, kill_beacon):
     "Worker that accumulates values and places them into the distribution"
-    for i in trange(dist.shape[0], desc="Permutation test", unit=' permutations', disable=CONFIG['tqdm']):
+    for i in trange(dist.shape[0], desc="Permutation test", unit=' permutations', disable=tqdm_disable()):
         dist[i] = in_queue.get()
         if kill_beacon.is_set():
             break
@@ -3980,7 +3980,7 @@ def distribution_worker_me(dists, in_queue, kill_beacon):
             break
     else:
         raise RuntimeError("No distirbutions")
-    for i in trange(n, desc="Permutation test", unit=' permutations', disable=CONFIG['tqdm']):
+    for i in trange(n, desc="Permutation test", unit=' permutations', disable=tqdm_disable()):
         for dist, v in zip(dists, in_queue.get()):
             if dist is not None:
                 dist[i] = v

@@ -16,7 +16,7 @@ import traceback
 import numpy as np
 
 from .. import fmtxt
-from .._config import CONFIG
+from .._config import tqdm_disable
 from .._text import enumeration, n_of, plural
 from .._utils import as_sequence, ask
 from .._utils.com import Notifier, NotNotifier
@@ -561,7 +561,7 @@ class TreeModel:
         if len(v_lists):
             # setup progress bar
             n = reduce(operator.mul, map(len, v_lists))
-            if CONFIG['tqdm'] and progress_bar:
+            if tqdm_disable() and progress_bar:
                 disable = False
                 if progress_bar is True:
                     progress_bar = ' '.join(iter_fields)

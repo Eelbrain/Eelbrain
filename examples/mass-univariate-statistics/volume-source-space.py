@@ -32,7 +32,7 @@ data.head()
 # One-sample test
 # ^^^^^^^^^^^^^^^
 # A one-sample test can be used to detect significant activations.
-# Performa a one-sample test on the right-ear trials only:
+# Perform a one-sample test on the right-ear trials only:
 
 result = testnd.Vector('src', sub="side == 'R'", data=data, samples=250, tfce=True, tstart=0.05, tstop=0.200)
 
