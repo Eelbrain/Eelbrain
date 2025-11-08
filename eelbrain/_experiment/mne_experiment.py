@@ -1705,8 +1705,8 @@ class Pipeline(FileTree):
         self._check_ds(ds, f'{self.__class__.__name__}.fix_events()', info)
 
         # add standard variables
-        ds['T'] = ds['i_start'] / ds.info['sfreq']
-        ds['SOA'] = ds['T'].diff(0)
+        ds['time'] = ds['i_start'] / ds.info['sfreq']
+        ds['SOA'] = ds['time'].diff(0)
         ds['subject'] = Factor([ds.info['subject']], repeat=ds.n_cases, random=True)
         if len(self._tasks) > 1:
             ds[:, 'task'] = ds.info['task']
@@ -2119,7 +2119,7 @@ class Pipeline(FileTree):
         if isinstance(epoch, ContinuousEpoch):
             # find splitting points
             split_threshold = epoch.split + (epoch.pad_end + epoch.pad_start)
-            diff = ds['T'].diff(to_begin=split_threshold + 1)
+            diff = ds['time'].diff(to_begin=split_threshold + 1)
             onsets = np.flatnonzero(diff >= split_threshold)
             # make sure we are not messing up user events
             if illegal := {'T_relative', 'events', 'tmax'}.intersection(ds):
@@ -2136,7 +2136,7 @@ class Pipeline(FileTree):
             ds.info['nested_events'] = 'events'
             ds['events'] = events
             tmin = -epoch.pad_start
-            ds['tmax'] = Var([e[-1, 'T'] - e[0, 'T'] + epoch.pad_end for e in events])
+            ds['tmax'] = Var([e[-1, 'time'] - e[0, 'time'] + epoch.pad_end for e in events])
             tmax = 'tmax'
 
         # load sensor space data
@@ -4275,7 +4275,7 @@ class Pipeline(FileTree):
             evoked_version = int(re.match(r"Eelbrain (\d+)", evoked[0].info['description']).group(1))
             if evoked_version >= 13:
                 ds = self.load_selected_events(data_raw=data_raw, vardef=vardef)
-                ds = ds.aggregate(model, drop_bad=True, equal_count=equal_count, drop=('i_start', 't_edf', 'T', 'index', 'trigger'))
+                ds = ds.aggregate(model, drop_bad=True, equal_count=equal_count, drop=('i_start', 't_edf', 'time', 'index', 'trigger'))
                 # check cells
                 if model_vars:
                     cells = [' % '.join(cell) or 'No comment' for cell in ds.zip(*model_vars)]
@@ -4301,7 +4301,7 @@ class Pipeline(FileTree):
             ds = self.load_epochs(ndvar=False, samplingrate=samplingrate, decim=decim, data_raw=data_raw, interpolate_bads='keep', vardef=vardef)
 
         # aggregate
-        ds_agg = ds.aggregate(model, drop_bad=True, equal_count=equal_count, drop=('i_start', 't_edf', 'T', 'index', 'trigger'), never_drop=('epochs',))
+        ds_agg = ds.aggregate(model, drop_bad=True, equal_count=equal_count, drop=('i_start', 't_edf', 'time', 'index', 'trigger'), never_drop=('epochs',))
         ds_agg.rename('epochs', 'evoked')
 
         # save
