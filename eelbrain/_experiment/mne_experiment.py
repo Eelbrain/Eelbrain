@@ -760,8 +760,7 @@ class Pipeline(FileTree):
             # subjects_with_raw_changes = set()
             for subject, session, task, acquisition, run in self.iter(('subject', 'session', 'task', 'acquisition', 'run'), group='all', raw='raw'):
                 key = (subject, session, task, acquisition, run)
-                raw_path = pipe.get_path(self._bids_path)
-                if raw_path is None:
+                if not self._bids_path.fpath.exists():
                     raw_missing.add(key)
                     if self.check_raw_mtime:
                         log.debug("Raw file missing: %s", self._bids_path.fpath)
