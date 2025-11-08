@@ -4,6 +4,7 @@ Installing
 
 For the simplest experience, follow the :ref:`install-full`.
 For alternative ways of installing, see :ref:`install-custom`.
+For development installation instructions, see :ref:`Development`.
 
 .. contents:: Contents
    :local:

@@ -2,31 +2,35 @@
 Development
 ***********
 
-Eelbrain is hosted on `GitHub <https://github.com/christianbrodbeck/Eelbrain>`_.
+Eelbrain is hosted on `GitHub <https://github.com/Eelbrain/Eelbrain>`_.
 
 
 The Development Version
 -----------------------
 
-Development takes place on the ``master`` branch, while release versions are maintained on
+Development takes place on the ``main`` branch, while release versions are maintained on
 branches called ``r/0.26`` etc. For further information on working with
 GitHub see `GitHub's instructions <https://help.github.com/articles/fork-a-repo/>`_.
 
 The repository contains a conda environment that contains everything needed to use Eelbrain except Eelbrain itself.
+First, clone the repository (or your `fork <https://help.github.com/articles/fork-a-repo>`_), and change into the repository directory::
+
+    $ git clone https://github.com/Eelbrain/Eelbrain.git
+    $ cd Eelbrain
+
 To generate the ``eeldev`` environment, use::
 
-    $ conda env create --file=env-dev.yml
+    $ mamba env create --file=env-dev.yml
 
-The development version of Eelbrain can then be installed through ``setup.py``::
+The development version of Eelbrain can then be installed with ``pip``::
 
-    $ conda activate eeldev
-    $ python setup.py develop
+    $ mamba activate eeldev
+    $ pip install -e .
 
 On macOS, the ``$ eelbrain`` shell script to run ``iPython`` with the framework
-build is not installed properly by ``setup.py``; in order to fix this, run::
+build is not installed properly by ``pip``; in order to fix this, run::
 
     $ ./fix-bin
-
 
 In Python, you can make sure that you are working with the development version::
 
@@ -38,7 +42,7 @@ In Python, you can make sure that you are working with the development version::
 Contributing
 ------------
 
-Contributions to code and documenation are welcome as pull requests into the ``master`` branch.
+Contributions to code and documentation are welcome as pull requests into the ``main`` branch.
 
 Style guides:
 
@@ -51,7 +55,6 @@ Useful tools:
 
 - Graphical frontend for git: `SourceTree <https://www.sourcetreeapp.com>`_
 - Python IDE: `PyCharm <https://www.jetbrains.com/pycharm>`_
-- Faster ``conda`` alternative: `Mamba <https://github.com/mamba-org/mamba>`_
 
 
 Testing
