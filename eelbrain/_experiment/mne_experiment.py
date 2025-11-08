@@ -17,7 +17,8 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
 import numpy as np
 import mne
 from mne.minimum_norm import make_inverse_operator, apply_inverse, apply_inverse_epochs, apply_inverse_raw
-from mne_bids import BIDSPath, get_entity_vals, get_datatypes
+import mne_bids
+from mne_bids import BIDSPath, get_entity_vals
 
 from .. import fmtxt
 from .. import gui
@@ -212,7 +213,6 @@ class Pipeline(FileTree):
     check_raw_mtime: bool = True  # check raw input files' mtime for change
 
     datatype: str = None
-    extension: str = '.fif'
     ignore_entities: dict[str, list[str]] = {}
     preload: bool = False
 
@@ -514,13 +514,20 @@ class Pipeline(FileTree):
         if self.datatype is not None:
             self._datatype = self.datatype
         else:
-            datatypes = tuple(get_datatypes(root))
+            datatypes = tuple(mne_bids.get_datatypes(root))
             if 'meg' in datatypes and 'eeg' in datatypes:
                 raise DefinitionError(f"Can't infer datatype. Both MEG and EEG data found in {root}.")
             elif 'meg' in datatypes:
                 self._datatype = 'meg'
+                extensions = ('.fif', )
             elif 'eeg' in datatypes:
                 self._datatype = 'eeg'
+                data_extensions = {path.extension for path in mne_bids.find_matching_paths(root, datatypes='eeg', suffixes='eeg', extensions=['.edf', '.vhdr', '.set', '.bdf', '.fif'])}
+                if len(data_extensions) == 0:
+                    raise FileMissingError(f"No EEG data files found in {root}.")
+                elif len(data_extensions) > 1:
+                    raise DefinitionError(f"Multiple EEG data file types found in {root}: {enumeration(sorted(data_extensions))}.")
+                extensions = tuple(data_extensions)
             else:
                 raise DefinitionError(f"Can't infer datatype. No MEG or EEG data found in {root}.")
 
@@ -616,7 +623,7 @@ class Pipeline(FileTree):
         self._register_field('run', self._runs or None, repr=True)
         self._register_field('datatype', ('meg', 'eeg'), self._datatype, repr=True)
         self._register_field('suffix', ('meg', 'eeg'), self._datatype, repr=True)
-        self._register_field('extension', ('.fif', ), self.extension, repr=True)
+        self._register_field('extension', extensions, repr=True)
 
         self._register_field('mri', sorted(self._mri_subjects), allow_empty=True)
         self._register_field('group', self._groups.keys(), 'all', post_set_handler=self._post_set_group)

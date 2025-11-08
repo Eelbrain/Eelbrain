@@ -327,7 +327,20 @@ class RawSource(RawPipe):
             preload: bool,
     ) -> mne.io.BaseRaw:
         raw_path = self.get_path(path)
-        raw = mne.io.read_raw_fif(
+        match path.extension:
+            case '.fif':
+                reader = mne.io.read_raw_fif
+            case '.edf':
+                reader = mne.io.read_raw_edf
+            case '.vhdr':
+                reader = mne.io.read_raw_brainvision
+            case '.set':
+                reader = mne.io.read_raw_eeglab
+            case '.bdf':
+                reader = mne.io.read_raw_bdf
+            case _:
+                raise RuntimeError(f"Unrecognized file format: {path.suffix}")
+        raw = reader(
             raw_path,
             preload=preload,
             verbose='critical',
