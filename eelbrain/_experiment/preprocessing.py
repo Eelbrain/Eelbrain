@@ -394,6 +394,7 @@ class RawSource(RawPipe):
         if 'status' not in channels_df.columns.tolist():
             self.log.info("Generating bad_channels for %s", path.fpath)
             self.make_bad_channels_auto(path)
+            channels_df = pd.read_csv(bads_path, sep='\t')
         bad_chs = channels_df.query('status == "bad"')['name'].tolist()
         if existing is not None:
             bad_chs = [ch for ch in bad_chs if ch in existing]
