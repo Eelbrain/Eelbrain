@@ -1263,7 +1263,7 @@ def assemble_pipeline(
                 if isinstance(pipe, RawICA):
                     missing = set(pipe.task).difference(tasks)
                     if missing:
-                        raise DefinitionError(f"RawICA {key!r} lists one or more non-exising tasks: {', '.join(missing)}")
+                        raise DefinitionError(f"RawICA {key!r} lists one or more non-exising tasks: {', '.join(missing)}. Available tasks: {', '.join(tasks)}.")
                 linked_raw[key] = pipe
         if len(raw) == n:
             raise DefinitionError(f"Unable to resolve source for raw {enumeration(raw)}, circular dependency?")
