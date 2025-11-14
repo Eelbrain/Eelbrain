@@ -338,7 +338,7 @@ def test_sample_tasks():
     assert_dataobj_equal(ds_super['meg'], combine((ds1['meg'], ds2['meg'])))
     # evoked
     dse_super = e.load_evoked(epoch='super', model='modality%side')
-    target = ds_super.aggregate('modality%side', drop=('i_start', 't_edf', 'T', 'index', 'trigger', 'task', 'interpolate_channels', 'epoch'))
+    target = ds_super.aggregate('modality%side', drop=('i_start', 't_edf', 'time', 'index', 'trigger', 'task', 'interpolate_channels', 'epoch'))
     assert_dataobj_equal(dse_super, target, 19)
 
     # conflicting task and epoch settings
