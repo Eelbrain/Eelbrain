@@ -754,7 +754,6 @@ class Pipeline(FileTree):
         raw_missing = input_state['raw_missing'] = set()
         raw_mtimes = input_state['raw-mtimes']
 
-        pipe = self._raw['raw']
         self._raw_samplingrate = {}  # {(subject, recording): samplingrate}
         with self._temporary_state:
             # subjects_with_raw_changes = set()
