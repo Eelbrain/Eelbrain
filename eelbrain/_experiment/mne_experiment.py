@@ -4092,7 +4092,7 @@ class Pipeline(FileTree):
         pipe = self._raw[self.get('raw', **kwargs)]
         pipe.make_bad_channels(self._bids_path, bad_chs, redo)
 
-    def make_bad_channels_auto(self, flat=1e-14, redo=False, **state):
+    def make_bad_channels_auto(self, flat=None, redo=False, **state):
         """Automatically detect bad channels
 
         Works on ``raw='raw'``
@@ -4101,7 +4101,7 @@ class Pipeline(FileTree):
         ----------
         flat : scalar
             Threshold for detecting flat channels: channels with ``std < flat``
-            are considered bad (default 1e-14).
+            are considered bad (default 1e-14 for MEG and 0 for EEG).
         redo : bool
             If the file already exists, replace it (instead of adding).
         ...

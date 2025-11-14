@@ -434,14 +434,20 @@ class RawSource(RawPipe):
             flat: float = None,
             redo: bool = False,
     ) -> None:
+        if flat is None:
+            if path.datatype == 'meg':
+                flat = 1e-14
+            elif path.datatype == 'eeg':
+                return
+            else:
+                raise NotImplementedError(f"{path.datatype=}")
+        elif flat == 0:
+            return
         raw = self.load(path, add_bads=False)
         bad_chs: list[str] = raw.info['bads']
-        if flat is None:
-            flat = 1e-14  # May need a setting to exclude the EEG reference?
-        if flat:
-            sysname = self.get_sysname(raw.info, path.entities['subject'], None)
-            raw = load.mne.raw_ndvar(raw, sysname=sysname, adjacency=self.adjacency)
-            bad_chs.extend(raw.sensor.names[raw.std('time') < flat])
+        sysname = self.get_sysname(raw.info, path.entities['subject'], None)
+        raw = load.mne.raw_ndvar(raw, sysname=sysname, adjacency=self.adjacency)
+        bad_chs.extend(raw.sensor.names[raw.std('time') < flat])
         self.make_bad_channels(path, bad_chs, redo)
 
     def mtime(
