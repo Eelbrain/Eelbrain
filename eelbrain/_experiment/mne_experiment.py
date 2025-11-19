@@ -6480,33 +6480,45 @@ class Pipeline(FileTree):
         return '' if fields['src'] == 'ico-4' else fields['src']
 
     def _update_raw_dir(self, fields: LayeredDict) -> str:
-        entities = {
-            k: v for k, v in fields.items()
-            if (k in BIDS_ENTITY_KEYS) and v and ('*' not in v)
-        }
+        entities = {}
+        for k, v in fields.items():
+            if (k in BIDS_ENTITY_KEYS) and v:
+                if '*' in v:
+                    return '*'
+                else:
+                    entities[k] = v
         bids_path = BIDSPath(root=self.root, **entities)
         bids_path.find_matching_sidecar(on_error='ignore')
         return str(bids_path.directory)
 
     def _update_raw_basename(self, fields: LayeredDict) -> str:
-        entities = {
-            k: v for k, v in fields.items()
-            if (k in BIDS_ENTITY_KEYS) and v and ('*' not in v)
-        }
+        entities = {}
+        for k, v in fields.items():
+            if (k in BIDS_ENTITY_KEYS) and v:
+                if '*' in v:
+                    return '*'
+                else:
+                    entities[k] = v
         bids_path = BIDSPath(root=self.root, **entities)
         bids_path.find_matching_sidecar(on_error='ignore')
         return splitext(bids_path.basename)[0]
 
     def _update_epoch_basename(self, fields: LayeredDict) -> str:
         raw_basename = self._update_raw_basename(fields)
+        if raw_basename == '*':
+            return '*'
         return remove_task(raw_basename)
 
     def _update_subject_session(self, fields: LayeredDict) -> str:
         raw_basename = self._update_raw_basename(fields)
+        if raw_basename == '*':
+            return '*'
         return get_subject_session(raw_basename)
 
     def _update_test_basename(self, fields: LayeredDict) -> str:
         epoch_basename = self._update_epoch_basename(fields)
+        if epoch_basename == '*':
+            return '*'
         return remove_subject(epoch_basename)
 
     def _eval_parc(self, parc):
