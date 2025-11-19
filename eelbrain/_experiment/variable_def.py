@@ -1,10 +1,10 @@
 """Variables
 
-With multiple sessions, the same variable name might have multiple definitions::
+With multiple tasks, the same variable name might have multiple definitions::
 
 variables = {
-    'name': [Var(session='1'), Var(session='2')],
-    'name2': Var(session='2'),
+    'name': [Var(task='1'), Var(task='2')],
+    'name2': Var(task='2'),
 }
 
 """

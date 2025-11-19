@@ -88,7 +88,7 @@ class Epoch(EpochBase):
 
     # to be set by subclass
     rej_file_epochs = None
-    sessions = None
+    tasks = None
 
     def __init__(self, tmin=-0.1, tmax=0.6, samplingrate=None, decim=None, baseline=None,
                  vars=None, trigger_shift=0., post_baseline_trigger_shift=None,
@@ -157,8 +157,8 @@ class PrimaryEpoch(Epoch):
 
     Parameters
     ----------
-    session : str
-        Session (raw file) from which to load data.
+    task : str
+        Task (raw file) from which to load data.
     sel : str
         Expression which evaluates in the events Dataset to the index of the
         events included in this Epoch specification.
@@ -212,29 +212,29 @@ class PrimaryEpoch(Epoch):
     --------
     Selecting events based on a categorial label::
 
-        PrimaryEpoch('session', "variable == 'label'")
+        PrimaryEpoch('task', "variable == 'label'")
 
     Based on multiple categorial labels::
 
-        PrimaryEpoch('session', "variable.isin(['label1', 'label2'])")
+        PrimaryEpoch('task', "variable.isin(['label1', 'label2'])")
 
     Based on multiple categorial variables::
 
-        PrimaryEpoch('session', "(variable == 'label') & (other_variable == 'other_label)")
+        PrimaryEpoch('task', "(variable == 'label') & (other_variable == 'other_label)")
 
     """
     DICT_ATTRS = Epoch.DICT_ATTRS + ('sel',)
 
-    def __init__(self, session, sel=None, **kwargs):
+    def __init__(self, task, sel=None, **kwargs):
         n_cases = kwargs.pop('n_cases', None)
         Epoch.__init__(self, **kwargs)
-        self.session = session
+        self.task = task
         self.sel = typed_arg(sel, str)
         self.n_cases = typed_arg(n_cases, int)
-        self.sessions = (session,)
+        self.tasks = (task,)
 
     def _repr_args(self):
-        args = [repr(self.session)]
+        args = [repr(self.task)]
         if self.sel is not None:
             args.append(repr(self.sel))
         for name, param in inspect.signature(Epoch).parameters.items():
@@ -300,8 +300,8 @@ class SecondaryEpoch(Epoch):
         out = Epoch._link(self, name, epochs)
         Epoch.__init__(out, **kwargs)
         out.rej_file_epochs = base.rej_file_epochs
-        out.session = base.session
-        out.sessions = base.sessions
+        out.task = base.task
+        out.tasks = base.tasks
         return out
 
 
@@ -357,12 +357,12 @@ class SuperEpoch(Epoch):
             kwargs[param] = values.pop()
         out = Epoch._link(self, name, epochs)
         Epoch.__init__(out, **kwargs)
-        # sessions, with preserved order
-        out.sessions = []
+        # tasks, with preserved order
+        out.tasks = []
         out.rej_file_epochs = []
         for e in sub_epochs:
-            if e.session not in out.sessions:
-                out.sessions.append(e.session)
+            if e.task not in out.tasks:
+                out.tasks.append(e.task)
             out.rej_file_epochs.extend(e.rej_file_epochs)
         return out
 
@@ -413,12 +413,12 @@ class EpochCollection(EpochBase):
                 raise DefinitionError(f"Epoch {name}: All sub-epochs must have the same setting for {param}, got {param_repr}")
             setattr(out, param, values.pop())
         # dependencies
-        sessions = set()
+        tasks = set()
         rej_file_epochs = set()
         for e in sub_epochs:
-            sessions.update(e.sessions)
+            tasks.update(e.tasks)
             rej_file_epochs.update(e.rej_file_epochs)
-        out.sessions = sorted(sessions)
+        out.tasks = sorted(tasks)
         out.rej_file_epochs = sorted(rej_file_epochs)
         return out
 
@@ -439,8 +439,8 @@ class ContinuousEpoch(EpochBase):
 
     Parameters
     ----------
-    session
-        Session (raw file) from which to load data.
+    task
+        Task (raw file) from which to load data.
     sel
         Expression which evaluates in the events Dataset to the index of the
         events included in this Epoch specification (default is all events).
@@ -466,11 +466,11 @@ class ContinuousEpoch(EpochBase):
         ``source_name`` can also be an interaction, in which case cells are joined
         with spaces (``"f1_cell f2_cell"``).
     """
-    DICT_ATTRS = ('name', 'session', 'sel', 'pad_start', 'pad_end', 'split', 'samplingrate', 'vars')
+    DICT_ATTRS = ('name', 'task', 'sel', 'pad_start', 'pad_end', 'split', 'samplingrate', 'vars')
 
     def __init__(
             self,
-            session: str,
+            task: str,
             sel: str = None,
             pad_start: float = 0.100,
             pad_end: float = 1.000,
@@ -479,14 +479,14 @@ class ContinuousEpoch(EpochBase):
             vars: dict = None,
     ):
         EpochBase.__init__(self)
-        self.session = typed_arg(session, str)
+        self.task = typed_arg(task, str)
         self.sel = typed_arg(sel, str)
         self.pad_start = typed_arg(pad_start, float)
         self.pad_end = typed_arg(pad_end, float)
         self.split = typed_arg(split, float)
         self.samplingrate = typed_arg(samplingrate, float, int)
         self.vars = vars
-        self.sessions = (session,)
+        self.tasks = (task,)
 
 
 def decim_param(

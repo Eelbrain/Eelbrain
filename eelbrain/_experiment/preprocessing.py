@@ -736,7 +736,7 @@ class RawICA(CachedRawPipe):
     source
         Name of the raw pipe to use for input data.
     task
-        Session(s) to use for estimating ICA components.
+        Task(s) to use for estimating ICA components.
     method
         Method for ICA decomposition (default: ``'extended-infomax'``; see
         :class:`mne.preprocessing.ICA`).
@@ -762,7 +762,7 @@ class RawICA(CachedRawPipe):
     -----
     This preprocessing step estimates one set of ICA components per subject,
     using the data specified in the ``task`` parameter. The selected
-    components are then removed from all data sessions during this preprocessing
+    components are then removed from all data tasks during this preprocessing
     step, regardless of whether they were used to estimate the components or
     not.
 
@@ -773,7 +773,7 @@ class RawICA(CachedRawPipe):
     use ``e.make_ica_selection(task='emptyroom')`` (assuming an
     ``'emptyroom'`` task is present).
 
-    This step merges bad channels from all sessions.
+    This step merges bad channels from all tasks.
 
     Examples
     --------

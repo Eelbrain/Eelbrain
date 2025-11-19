@@ -557,8 +557,7 @@ class Pipeline(FileTree):
         self._variables._check_trigger_vars()
 
         # epochs
-        # TODO: change `session` in epochs
-        epoch_default = {'session': self._tasks[0], **self.epoch_default}
+        epoch_default = {'task': self._tasks[0], **self.epoch_default}
         self._epochs = assemble_epochs(self.epochs, epoch_default)
 
         # epoch rejection
@@ -1166,7 +1165,7 @@ class Pipeline(FileTree):
         # evoked files are based on old events
         for subject, session, task, acquisition, run in invalid_cache['events']:
             for epoch, params in self._epochs.items():
-                if task not in params.sessions:
+                if task not in params.tasks:
                     continue
                 with self._temporary_state:
                     rm['evoked-file'].add({'subject': subject, 'session': session, 'task': task, 'acquisition': acquisition, 'run': run, 'epoch': epoch, 'suffix': self.get('suffix')})
@@ -3258,7 +3257,7 @@ class Pipeline(FileTree):
             (or group if ``group`` is specified).
         epoch
             Epoch to use for computing neighbor-correlation (by default, the
-            whole session is used).
+            whole task is used).
         add_bads
             Reject bad channels first.
         return_data
@@ -3286,8 +3285,8 @@ class Pipeline(FileTree):
             if epoch is True:
                 epoch = self.get('epoch')
             epoch_params = self._epochs[epoch]
-            if len(epoch_params.sessions) != 1:
-                raise ValueError(f"{epoch=}: epoch has multiple session")
+            if len(epoch_params.tasks) != 1:
+                raise ValueError(f"{epoch=}: epoch has multiple tasks")
             ds = self.load_epochs(add_bads=add_bads, epoch=epoch, reject=False, decim=1, **state)
             key = ds.info['sensor_types'][0]
             data = concatenate(ds[key])
@@ -3501,16 +3500,16 @@ class Pipeline(FileTree):
                 elif add_bads:
                     bad_channels = sorted(set.union(*(
                         set(self.load_bad_channels(task=task)) for
-                        task in epoch.sessions)))
+                        task in epoch.tasks)))
                 else:
                     bad_channels = []
                 # load events
-                for task in epoch.sessions:
+                for task in epoch.tasks:
                     self.set(task=task)
                     # load events for this task
                     task_dss = []
                     for sub_epoch in epoch.sub_epochs:
-                        if self._epochs[sub_epoch].session != task:
+                        if self._epochs[sub_epoch].task != task:
                             continue
                         ds = self.load_selected_events(subject, reject, add_bads, index, data_raw, epoch=sub_epoch)
                         ds[:, 'epoch'] = sub_epoch
@@ -3550,7 +3549,7 @@ class Pipeline(FileTree):
             dss = []
             with self._temporary_state:
                 if reject and rej_params['kind'] is not None:
-                    rej_file = self.get('rej-file', task=epoch.session)
+                    rej_file = self.get('rej-file', task=epoch.task)
                     if exists(rej_file):
                         ds_sel = load.unpickle(rej_file)
                     else:
@@ -3558,7 +3557,7 @@ class Pipeline(FileTree):
                         raise FileMissingError(f"The rejection file at {rej_file} does not exist. Run .make_epoch_selection() first.")
                 else:
                     ds_sel = None
-                ds = self.load_events(add_bads=add_bads, data_raw=data_raw, task=epoch.session)
+                ds = self.load_events(add_bads=add_bads, data_raw=data_raw, task=epoch.task)
 
             # primary event selection
             if epoch.sel:
@@ -4087,7 +4086,7 @@ class Pipeline(FileTree):
         --------
         make_bad_channels_auto : find bad channels automatically
         load_bad_channels : load the current bad_channels file
-        merge_bad_channels : merge bad channel definitions for all sessions
+        merge_bad_channels : merge bad channel definitions for all tasks
         """
         pipe = self._raw[self.get('raw', **kwargs)]
         pipe.make_bad_channels(self._bids_path, bad_chs, redo)
@@ -4130,7 +4129,7 @@ class Pipeline(FileTree):
             list of bad channels (e.g., 0.3).
         epoch
             Epoch to use for computing neighbor-correlation (by default, the
-            whole session is used).
+            whole task is used).
         add_bads
             Reject bad channels first.
         save
@@ -4366,16 +4365,16 @@ class Pipeline(FileTree):
             Load data from this :ref:`state-epoch` for visualization during
             component selection (does not affect the ICA components themselvs).
             If unspecified, the default is to load the data form the entire
-            :ref:`state-session` that the ICA is based on.
+            :ref:`state-task` that the ICA is based on.
         samplingrate
             Samplingrate in Hz for the visualization (set to a lower value to
             improve GUI performance; for raw data, the default is ~100 Hz, for
             epochs the default is the epoch setting).
         decim
             Data decimation factor (alternative to ``samplingrate``).
-        session
-            One or more sessions for which to plot the raw data (this parameter
-            can not be used together with ``epoch``; default is the session used
+        task
+            One or more tasks for which to plot the raw data (this parameter
+            can not be used together with ``epoch``; default is the task used
             for ICA estimation).
         ...
             State parameters.
@@ -4931,7 +4930,7 @@ class Pipeline(FileTree):
             else:
                 raise ValueError(f"The current epoch {epoch.name!r} is not a primary epoch and inherits selections from other epochs. Generate trial rejection for these epochs.")
 
-        path = self.get('rej-file', mkdir=True, task=epoch.session)
+        path = self.get('rej-file', mkdir=True, task=epoch.task)
 
         if auto is not None and overwrite is not True and exists(path):
             if overwrite is False:
@@ -5706,14 +5705,14 @@ class Pipeline(FileTree):
         return test_obj.make(y, ds, force_permutation, kwargs)
 
     def merge_bad_channels(self):
-        """Merge bad channel definitions for different sessions
+        """Merge bad channel definitions for different tasks
 
-        Load the bad channel definitions for all sessions of the current
-        subject and save the union for all sessions.
+        Load the bad channel definitions for all tasks of the current
+        subject and save the union for all tasks.
 
         See Also
         --------
-        make_bad_channels : set bad channels for a single session
+        make_bad_channels : set bad channels for a single task
         """
         n_chars = max(map(len, self._tasks))
         # collect bad channels
@@ -6470,9 +6469,9 @@ class Pipeline(FileTree):
         epoch = fields['epoch']
         if epoch in self._epochs:
             epoch = self._epochs[epoch]
-            return epoch.sessions[0]
+            return epoch.tasks[0]
         elif not epoch or epoch == '*':
-            return  # don't force session
+            return  # don't force task
         return '*'  # if a named epoch is not in _epochs it might be a removed epoch
 
     def _update_src_name(self, fields):
@@ -6743,9 +6742,9 @@ class Pipeline(FileTree):
         Parameters
         ----------
         tasks
-            By default, bad channels for the current session are shown. Set
+            By default, bad channels for the current task are shown. Set
             ``tasks`` to ``True`` to show bad channels for all tasks, or
-            a list of session names to show bad channeles for these tasks.
+            a list of task names to show bad channeles for these tasks.
         ...
             State parameters.
 
