@@ -77,6 +77,13 @@ CACHE_STATE_VERSION = 17
 #  16:  stim_channel attribute, store in input_state
 
 BIDS_ENTITY_KEYS = ['subject', 'session', 'task', 'acquisition', 'run', 'datatype', 'suffix', 'extension']
+BIDS_ENTITY_PREFIX_MAP = {
+    'subject': 'sub',
+    'session': 'ses',
+    'task': 'task',
+    'acquisition': 'acq',
+    'run': 'run',
+}
 
 # paths
 LOG_FILE = join('{root}', 'derivatives', 'eelbrain', 'eelbrain {name}.log')
@@ -143,6 +150,18 @@ def guess_y(ds, default=None):
     if default is not None:
         return default
     raise RuntimeError(f"Could not find data in {ds}")
+
+
+def generate_bids_template(entities: set[str]) -> str:
+    "Generate a BIDS filename template from entity names"
+    parts = []
+    for name in ('subject', 'session', 'task', 'acquisition', 'run'):
+        if name not in entities:
+            continue
+        prefix = BIDS_ENTITY_PREFIX_MAP[name]
+        parts.append(f'{prefix}-{{{name}}}')
+    parts.append('{suffix}')
+    return '_'.join(parts)
 
 
 class DictSet:
@@ -373,12 +392,45 @@ class Pipeline(FileTree):
         if not isinstance(self.auto_delete_results, bool):
             raise TypeError(f"{self.__class__.__name__}.auto_delete_results={self.auto_delete_results!r}")
 
+        # BIDS entities
+        self._subjects = tuple(get_entity_vals(root, 'subject', **self.ignore_entities))
+        self._sessions = tuple(get_entity_vals(root, 'session', **self.ignore_entities))
+        self._tasks = tuple(get_entity_vals(root, 'task', **self.ignore_entities))
+        self._acquisitions = tuple(get_entity_vals(root, 'acquisition', **self.ignore_entities))
+        self._runs = tuple(get_entity_vals(root, 'run', **self.ignore_entities))
+        if self.datatype is not None:
+            self._datatype = self.datatype
+        else:
+            datatypes = tuple(get_datatypes(root))
+            if 'meg' in datatypes and 'eeg' in datatypes:
+                raise DefinitionError(f"Can't infer datatype. Both MEG and EEG data found in {root}.")
+            elif 'meg' in datatypes:
+                self._datatype = 'meg'
+            elif 'eeg' in datatypes:
+                self._datatype = 'eeg'
+            else:
+                raise DefinitionError(f"Can't infer datatype. No MEG or EEG data found in {root}.")
+        available_entities = [
+            'subject',
+            'session' if self._sessions else None,
+            'acquisition' if self._acquisitions else None,
+            'task',
+            'run' if self._runs else None,
+        ]
+        available_entities = {f for f in available_entities if f is not None}
+
         ########################################################################
         # Templates
         ###########
         self._templates = {
             'equalize_evoked_count': ('', 'eq'),
 
+            'raw_basename': generate_bids_template({'subject', 'session', 'acquisition', 'task', 'run'} & available_entities),
+            'epoch_basename': generate_bids_template({'subject', 'session', 'acquisition', 'run'} & available_entities),
+            'subject_session': generate_bids_template({'subject', 'session'} & available_entities),
+            'test_basename': generate_bids_template({'session', 'run'} & available_entities),
+
+            'raw-dir': join('{root}', 'sub-{subject}', 'ses-{session}' if self._sessions else '', '{datatype}'),
             'deriv-dir': join('{root}', 'derivatives'),
 
             # one ica-file for each task group
@@ -505,32 +557,6 @@ class Pipeline(FileTree):
         ########################################################################
         # Experiment arguments
         ######################
-        # BIDS entities
-        self._subjects = tuple(get_entity_vals(root, 'subject', **self.ignore_entities))
-        self._sessions = tuple(get_entity_vals(root, 'session', **self.ignore_entities))
-        self._tasks = tuple(get_entity_vals(root, 'task', **self.ignore_entities))
-        self._acquisitions = tuple(get_entity_vals(root, 'acquisition', **self.ignore_entities))
-        self._runs = tuple(get_entity_vals(root, 'run', **self.ignore_entities))
-        if self.datatype is not None:
-            self._datatype = self.datatype
-        else:
-            datatypes = tuple(mne_bids.get_datatypes(root))
-            if 'meg' in datatypes and 'eeg' in datatypes:
-                raise DefinitionError(f"Can't infer datatype. Both MEG and EEG data found in {root}.")
-            elif 'meg' in datatypes:
-                self._datatype = 'meg'
-                extensions = ('.fif', )
-            elif 'eeg' in datatypes:
-                self._datatype = 'eeg'
-                data_extensions = {path.extension for path in mne_bids.find_matching_paths(root, datatypes='eeg', suffixes='eeg', extensions=['.edf', '.vhdr', '.set', '.bdf', '.fif'])}
-                if len(data_extensions) == 0:
-                    raise FileMissingError(f"No EEG data files found in {root}.")
-                elif len(data_extensions) > 1:
-                    raise DefinitionError(f"Multiple EEG data file types found in {root}: {enumeration(sorted(data_extensions))}.")
-                extensions = tuple(data_extensions)
-            else:
-                raise DefinitionError(f"Can't infer datatype. No MEG or EEG data found in {root}.")
-
         # groups
         self._groups = assemble_groups(self.groups, set(self._subjects))
 
@@ -618,10 +644,10 @@ class Pipeline(FileTree):
         self._register_field('subject', self._subjects, repr=True)
         self._register_field('session', self._sessions or None, repr=True)
         self._register_field('task', self._tasks, depends_on=('epoch',), slave_handler=self._update_task, repr=True)
-        self._register_field('acquisition', self._acquisitions or None, repr=True)
+        self._register_field('acquisition',  self._acquisitions or None, repr=True)
         self._register_field('run', self._runs or None, repr=True)
-        self._register_field('datatype', ('meg', 'eeg'), self._datatype, repr=True)
-        self._register_field('suffix', ('meg', 'eeg'), self._datatype, repr=True)
+        self._register_field('datatype', (self._datatype,), self._datatype, repr=True)
+        self._register_field('suffix', (self._datatype,), self._datatype, repr=True)
         self._register_field('extension', extensions, repr=True)
 
         self._register_field('mri', sorted(self._mri_subjects), allow_empty=True)
@@ -630,11 +656,6 @@ class Pipeline(FileTree):
         # raw
         raw_default = sorted(self.raw)[0] if self.raw else None
         self._register_field('raw', sorted(self._raw), default=raw_default, repr=True)
-        self._register_field('raw_dir', depends_on=BIDS_ENTITY_KEYS, slave_handler=self._update_raw_dir, repr=True)
-        self._register_field('raw_basename', depends_on=BIDS_ENTITY_KEYS, slave_handler=self._update_raw_basename, repr=True)
-        self._register_field('epoch_basename', depends_on=[key for key in BIDS_ENTITY_KEYS if key not in ('task')], slave_handler=self._update_epoch_basename, repr=True)
-        self._register_field('subject_session', depends_on=('subject', 'session'), slave_handler=self._update_subject_session, repr=True)
-        self._register_field('test_basename', depends_on=[key for key in BIDS_ENTITY_KEYS if key not in ('subject', 'task')], slave_handler=self._update_test_basename, repr=True)
         self._register_field('rej', self._artifact_rejection.keys(), self._artifact_rejection_default, allow_empty=True)
 
         # cov
@@ -6153,7 +6174,7 @@ class Pipeline(FileTree):
         Sets the current directory to raw-dir, and sets the SUBJECT and
         SUBJECTS_DIR to current values
         """
-        subp.run_mne_analyze(self.get('raw_dir'), self.get('mrisubject'),
+        subp.run_mne_analyze(self.get('raw-dir'), self.get('mrisubject'),
                              self.get('mri-sdir'), modal)
 
     def run_mne_browse_raw(self, modal=False):
@@ -6169,7 +6190,7 @@ class Pipeline(FileTree):
         Sets the current directory to raw-dir, and sets the SUBJECT and
         SUBJECTS_DIR to current values
         """
-        subp.run_mne_browse_raw(self.get('raw_dir'), self.get('mrisubject'), self.get('mri-sdir'), modal)
+        subp.run_mne_browse_raw(self.get('raw-dir'), self.get('mrisubject'), self.get('mri-sdir'), modal)
 
     def set(self, subject=None, match=True, allow_asterisk=False, **state):
         """
@@ -6477,48 +6498,6 @@ class Pipeline(FileTree):
     def _update_src_name(self, fields):
         "Because 'ico-4' is treated in filenames  as ''"
         return '' if fields['src'] == 'ico-4' else fields['src']
-
-    def _update_raw_dir(self, fields: LayeredDict) -> str:
-        entities = {}
-        for k, v in fields.items():
-            if (k in BIDS_ENTITY_KEYS) and v:
-                if '*' in v:
-                    return '*'
-                else:
-                    entities[k] = v
-        bids_path = BIDSPath(root=self.root, **entities)
-        bids_path.find_matching_sidecar(on_error='ignore')
-        return str(bids_path.directory)
-
-    def _update_raw_basename(self, fields: LayeredDict) -> str:
-        entities = {}
-        for k, v in fields.items():
-            if (k in BIDS_ENTITY_KEYS) and v:
-                if '*' in v:
-                    return '*'
-                else:
-                    entities[k] = v
-        bids_path = BIDSPath(root=self.root, **entities)
-        bids_path.find_matching_sidecar(on_error='ignore')
-        return splitext(bids_path.basename)[0]
-
-    def _update_epoch_basename(self, fields: LayeredDict) -> str:
-        raw_basename = self._update_raw_basename(fields)
-        if raw_basename == '*':
-            return '*'
-        return remove_task(raw_basename)
-
-    def _update_subject_session(self, fields: LayeredDict) -> str:
-        raw_basename = self._update_raw_basename(fields)
-        if raw_basename == '*':
-            return '*'
-        return get_subject_session(raw_basename)
-
-    def _update_test_basename(self, fields: LayeredDict) -> str:
-        epoch_basename = self._update_epoch_basename(fields)
-        if epoch_basename == '*':
-            return '*'
-        return remove_subject(epoch_basename)
 
     def _eval_parc(self, parc):
         if parc in self._parcs:
@@ -7123,7 +7102,7 @@ class Pipeline(FileTree):
         --------
         show_tree: show complete tree (including secondary, optional and cache)
         """
-        return self.show_tree(fields=['raw_dir', 'trans-file', 'mri-dir'])
+        return self.show_tree(fields=['raw-dir', 'trans-file', 'mri-dir'])
 
     def _surfer_plot_kwargs(self, surf=None, views=None, foreground=None, background=None, smoothing_steps=None, hemi=None):
         out = self._brain_plot_defaults.copy()
