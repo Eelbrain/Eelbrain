@@ -1393,12 +1393,6 @@ def remove_task(fname: str) -> str:
     return '_'.join(filtered_parts)
 
 
-def remove_subject(fname: str) -> str:
-    parts = fname.split('_')
-    filtered_parts = [part for part in parts if not part.startswith('sub-')]
-    return '_'.join(filtered_parts)
-
-
 def get_subject_session(fname: str) -> str:
     parts = fname.split('_')
     filtered_parts = [part for part in parts if (part.startswith('sub-') or part.startswith('ses-'))]
