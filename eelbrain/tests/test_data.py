@@ -1587,6 +1587,8 @@ def test_nested_effects():
 @skip_on_windows  # uses R
 def test_ols():
     "Test NDVar.ols() method"
+    pytest.importorskip("rpy2")
+
     from rpy2.robjects import r
 
     # data-type
@@ -1710,6 +1712,8 @@ def test_io_txt():
 @skip_on_windows  # uses R
 def test_r():
     "Test interaction with R through rpy2"
+    pytest.importorskip("rpy2")
+
     from rpy2.robjects import r
 
     r("data(sleep)")

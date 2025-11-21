@@ -1,8 +1,11 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+import pytest
+
 from eelbrain import datasets, load
 from eelbrain.testing import assert_dataobj_equal, file_path
 
 
+@pytest.mark.file_test
 def test_pickle():
     ds = datasets.get_uts()
 

@@ -2,7 +2,9 @@
 # https://packaging.python.org/en/latest/guides/modernize-setup-py-project/
 import os
 import platform
+import sys
 from setuptools import setup, find_packages, Extension
+from wheel.bdist_wheel import bdist_wheel
 
 import numpy as np
 
@@ -14,30 +16,61 @@ except ImportError:
     cythonize = False
 
 
+# https://github.com/joerick/python-abi3-package-sample/blob/main/setup.py
+class bdist_wheel_abi3(bdist_wheel):  # noqa: D101
+    def get_tag(self):  # noqa: D102
+        python, abi, plat = super().get_tag()
+
+        if python.startswith("cp"):
+            return "cp311", "abi3", plat
+
+        return python, abi, plat
+
+
 IS_WINDOWS = os.name == 'nt'
-IS_ARM = platform.machine().lower().startswith('arm')
+IS_MACOS = sys.platform == 'darwin'
+IS_AMD64 = platform.machine().lower() in ('x86_64', 'amd64')
 
 # Cython extensions
 base_args = {'define_macros': [("NPY_NO_DEPRECATED_API", "NPY_1_11_API_VERSION")]}
+ext_kwargs = {}
+setup_kwargs = {}
+if sys.version_info.minor >= 11 and platform.python_implementation() == "CPython":
+    # Can create an abi3 wheel (typed memoryviews first available in 3.11)!
+    base_args["define_macros"].append(("Py_LIMITED_API", "0x030B0000"))
+    ext_kwargs["py_limited_api"] = True
+    setup_kwargs["cmdclass"] = {"bdist_wheel": bdist_wheel_abi3}
+UNIX_COMPILE_ARGS = ['-Wno-unreachable-code', '-O3']
 if IS_WINDOWS:
     open_mp_args = {
         **base_args,
         'extra_compile_args': '/openmp',
     }
-elif IS_ARM:
+elif IS_MACOS:
+    # Not everyone will have OpenMP installed, so give a code path that allows building
+    # without it
+    if os.getenv("OPENMP_DISABLED") == "1":
+        OPENMP_ARGS = []
+        OPENMP_LINK_ARGS = []
+    else:
+        OPENMP_ARGS = ['-Xpreprocessor', '-fopenmp']
+        OPENMP_LINK_ARGS = ['-lomp']
     open_mp_args = {
         **base_args,
-        'extra_compile_args': ['-Wno-unreachable-code', '-Xpreprocessor', '-fopenmp', '-O3'],
-        'extra_link_args': ['-Xpreprocessor', '-fopenmp'],
+        'extra_compile_args': UNIX_COMPILE_ARGS + OPENMP_ARGS,
+        'extra_link_args': OPENMP_LINK_ARGS,
     }
-    base_args['extra_compile_args'] = ['-Wno-unreachable-code', '-O3']
-else:
+    base_args['extra_compile_args'] = UNIX_COMPILE_ARGS
+else:  # Some flavor of Linux
     open_mp_args = {
         **base_args,
-        'extra_compile_args': ['-Wno-unreachable-code', '-fopenmp', '-O3', '-mavx'],
+        'extra_compile_args': UNIX_COMPILE_ARGS + ['-fopenmp'],
         'extra_link_args': ['-fopenmp'],
     }
-    base_args['extra_compile_args'] = ['-Wno-unreachable-code', '-O3', '-mavx']
+    base_args['extra_compile_args'] = UNIX_COMPILE_ARGS
+if IS_AMD64 and not IS_WINDOWS:
+    open_mp_args["extra_compile_args"].append("-mavx")
+    base_args["extra_compile_args"].append("-mavx")
 ext = '.pyx' if cythonize else '.c'
 ext_cpp = '.pyx' if cythonize else '.cpp'
 extensions = [
@@ -57,4 +90,5 @@ setup(
     packages=find_packages(),
     ext_modules=extensions,
     scripts=['bin/eelbrain'],
+    **setup_kwargs,
 )

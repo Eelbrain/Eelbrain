@@ -303,6 +303,7 @@ def test_morphing_volume():
     assert_dataobj_equal(stc_ndvar_m[0], target)
 
 
+@pytest.mark.slow
 @requires_mne_sample_data
 def test_xhemi():
     y = datasets.get_mne_stc(ndvar=True)

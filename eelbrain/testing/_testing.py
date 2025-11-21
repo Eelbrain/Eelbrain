@@ -13,7 +13,6 @@ import numpy as np
 from numpy.testing import assert_array_equal
 import pytest
 
-import eelbrain._wxgui
 from .._config import CONFIG
 from .._data_obj import Dataset, NDVar, Var, Factor, isdatalist, isuv
 
@@ -116,31 +115,36 @@ def assert_source_space_equal(src1, src2):
     assert src1.subjects_dir == src2.subjects_dir
 
 
-class GUITestContext(ContextDecorator):
-    modules = (
-        eelbrain._wxgui.select_epochs,
-        eelbrain._wxgui.select_components,
-        eelbrain._wxgui.history,
-        eelbrain._wxgui.load_stcs,
-    )
+try:
+    import eelbrain._wxgui
+except ImportError:
+    def gui_test_context(f):
+        return f
+else:
+    class GUITestContext(ContextDecorator):
+        modules = (
+            eelbrain._wxgui.select_epochs,
+            eelbrain._wxgui.select_components,
+            eelbrain._wxgui.history,
+            eelbrain._wxgui.load_stcs,
+        )
 
-    def __init__(self):
-        self._i = 0
+        def __init__(self):
+            self._i = 0
 
-    def __enter__(self):
-        self._i += 1
-        if self._i == 1:
-            for mod in self.modules:
-                mod.TEST_MODE = True
+        def __enter__(self):
+            self._i += 1
+            if self._i == 1:
+                for mod in self.modules:
+                    mod.TEST_MODE = True
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self._i -= 1
-        if self._i == 0:
-            for mod in self.modules:
-                mod.TEST_MODE = False
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            self._i -= 1
+            if self._i == 0:
+                for mod in self.modules:
+                    mod.TEST_MODE = False
 
-
-gui_test_context = GUITestContext()
+    gui_test_context = GUITestContext()
 
 
 def gui_test(function):
@@ -197,14 +201,14 @@ def requires_framework_build(function):
 
 
 def requires_mne_sample_data(function):
-    if mne.datasets.sample.data_path(download=False):
+    if mne.datasets.sample.data_path(download=False) != Path("."):
         return function
     else:
         return pytest.mark.skip('mne sample data unavailable')(function)
 
 
 def requires_mne_testing_data(function):
-    if mne.datasets.testing.data_path(download=False):
+    if mne.datasets.testing.data_path(download=False) != Path("."):
         return function
     else:
         return pytest.mark.skip('mne testing data unavailable')(function)

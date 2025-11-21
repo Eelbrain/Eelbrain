@@ -20,6 +20,8 @@ DATASETS = {
 examples_dir = Path(__file__).parents[2] / 'examples'
 examples = list(examples_dir.glob('*/*.py'))
 
+pytest.importorskip("wx")
+
 
 @hide_plots
 @pytest.mark.parametrize("path", examples)

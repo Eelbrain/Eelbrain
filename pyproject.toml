@@ -1,7 +1,8 @@
 [build-system]
 requires = [
     "setuptools >= 64.0.0",
-    "numpy >= 1.20",
+    "wheel >= 0.37.0",
+    "numpy >= 2,< 3",  # build code 2.0 and 1.x compatible
     "cython >= 3",
     ]
 build-backend = "setuptools.build_meta"
@@ -72,7 +73,7 @@ gui = [
     'wxpython >= 4.0.3, != 4.1.0',
 ]
 full = [
-  'eelbrain[brain]',   
+  'eelbrain[brain]',
   'eelbrain[gui]',
 ]
 style = [
@@ -87,6 +88,44 @@ test = [
   'pytest >=8.0, < 8.1.1',
   'pytest-faulthandler',
   'pingouin'
+]
+
+[tool.cibuildwheel]
+# 3.11 is abi3 -- could build 3.9 3.10 etc. but let's keep it simple (SPEC0 is 3.12
+# as of 2025/11 anyway, but building for 3.11+ is good enough) and skip pypy as well
+build = "cp311-*"
+archs = ["native"]
+before-build = "pip install abi3audit"
+test-requires = [
+    "pytest",
+    "pingouin",
+]
+test-command = "pytest -m \"not (slow or framework_build or file_test)\" -rsx -v --pyargs eelbrain"
+
+[tool.cibuildwheel.linux]
+repair-wheel-command = [
+  "auditwheel repair -w {dest_dir} {wheel}",
+  "abi3audit --strict --report --verbose {wheel}",
+]
+
+[tool.cibuildwheel.macos]
+archs = ["native"]
+environment = { MACOSX_DEPLOYMENT_TARGET="11", SKIP_N_WORKERS_TESTS="1" }
+# https://mac.r-project.org/openmp/
+before-all = [
+  "wget https://mac.r-project.org/openmp/openmp-19.1.0-darwin20-Release.tar.gz",
+  "sudo tar -xzC / -f openmp-19.1.0-darwin20-Release.tar.gz"
+]
+repair-wheel-command = [
+  "delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}",
+  "abi3audit --strict --report --verbose {wheel}",
+]
+
+[tool.cibuildwheel.windows]
+before-build = "pip install delvewheel abi3audit"
+repair-wheel-command = [
+  "delvewheel repair -w {dest_dir} {wheel}",
+  "abi3audit --strict --report --verbose {wheel}",
 ]
 
 [tool.tomlsort]
@@ -105,7 +144,6 @@ tracker = 'https://github.com/Eelbrain/eelbrain/issues'
 include-package-data = false
 
 [tool.setuptools.packages.find]
-exclude = ['eelbrain*tests']
 include = ['eelbrain*']
 
 [tool.setuptools.dynamic]

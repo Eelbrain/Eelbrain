@@ -93,6 +93,7 @@ def test_load_fiff_ndvar():
     assert_array_equal(ndvar.get_data(('sensor', 'time')), data)
 
 
+@pytest.mark.file_test
 def test_load_fiff_sensor():
     umd_sqd_path = file_path('test_umd-raw.sqd')
     raw = mne.io.read_raw_kit(umd_sqd_path)

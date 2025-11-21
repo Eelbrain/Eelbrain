@@ -6,10 +6,12 @@ from numpy.testing import assert_allclose, assert_equal
 import pytest
 import scipy.stats
 
-from eelbrain import datasets, Model, Var
-from eelbrain._stats import stats
-from eelbrain._stats.permutation import permute_order, rand_rotation_matrices
-from eelbrain._utils.r_bridge import r
+pytest.importorskip("rpy2")
+
+from eelbrain import datasets, Model, Var  # noqa: E402
+from eelbrain._stats import stats  # noqa: E402
+from eelbrain._stats.permutation import permute_order, rand_rotation_matrices  # noqa: E402,E501
+from eelbrain._utils.r_bridge import r  # noqa: E402
 
 
 def test_corr():

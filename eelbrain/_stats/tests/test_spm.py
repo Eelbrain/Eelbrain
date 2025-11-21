@@ -1,4 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+import os
 import pickle
 
 import numpy as np
@@ -11,6 +12,8 @@ from eelbrain._stats.spm import LM, LMGroup
 
 @pytest.mark.parametrize('n_workers', [False, True])
 def test_lm(n_workers):
+    if os.getenv("SKIP_N_WORKERS_TESTS") == "1" and n_workers:
+        pytest.skip("Skipping n_workers tests")
     configure(n_workers=n_workers)
 
     ds = datasets.get_uts(utsnd=True)

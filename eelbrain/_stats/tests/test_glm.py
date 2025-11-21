@@ -6,13 +6,15 @@ from numpy import newaxis
 from numpy.testing import assert_allclose
 import pytest
 
-from eelbrain import datasets, load, test, testnd, Dataset, Factor, NDVar, Var
-from eelbrain._data_obj import UTS
-from eelbrain._exceptions import IncompleteModelError
-from eelbrain._stats import glm
-from eelbrain._stats.permutation import permute_order
-from eelbrain._utils.r_bridge import r, r_require, r_warning_filter
-from eelbrain.testing import assert_fmtxt_str_equals, requires_r_ez, file_path
+pytest.importorskip("rpy2")
+
+from eelbrain import datasets, load, test, testnd, Dataset, Factor, NDVar, Var  # noqa: E402,E501
+from eelbrain._data_obj import UTS  # noqa: E402
+from eelbrain._exceptions import IncompleteModelError  # noqa: E402
+from eelbrain._stats import glm  # noqa: E402
+from eelbrain._stats.permutation import permute_order  # noqa: E402
+from eelbrain._utils.r_bridge import r, r_require, r_warning_filter  # noqa: E402
+from eelbrain.testing import assert_fmtxt_str_equals, requires_r_ez, file_path  # noqa: E402,E501
 
 
 def assert_f_test_equal(f_test, r_res, r_row, f_lmf, f_nd, r_kind='aov'):

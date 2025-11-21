@@ -1,7 +1,7 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 from matplotlib.backend_bases import KeyEvent
 import numpy as np
-import wx
+import pytest
 
 from eelbrain import datasets, plot, testnd
 from eelbrain._utils import IS_WINDOWS
@@ -60,6 +60,8 @@ def test_plot_topomap_mne():
 @hide_plots
 def test_plot_topo_butterfly():
     "Test plot.TopoButterfly"
+    wx = pytest.importorskip("wx")
+
     ds = datasets.get_uts(utsnd=True)
 
     # single row

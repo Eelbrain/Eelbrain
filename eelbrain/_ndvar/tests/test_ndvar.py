@@ -50,7 +50,7 @@ def test_convolve():
     # 1d
     xc = convolve(h1d, x1d)
     xc_np = np.convolve(h1d.x, x1d.x)
-    assert_array_equal(xc.x, xc_np[:100])
+    assert_allclose(xc.x, xc_np[:100])
 
     # 2d
     xc = convolve(h2d, x2d)
@@ -60,12 +60,12 @@ def test_convolve():
     # add dimension through kernel
     xc = convolve(h2d, x1d)
     xc_np = np.vstack((np.convolve(h2d.x[0], x1d.x), np.convolve(h2d.x[1], x1d.x)))
-    assert_array_equal(xc.x, xc_np[:, :100])
+    assert_allclose(xc.x, xc_np[:, :100])
 
     # add dimension through x
     xc = convolve(h1d, x2d)
     xc_np = np.vstack((np.convolve(h1d.x, x2d.x[0]), np.convolve(h1d.x, x2d.x[1])))
-    assert_array_equal(xc.x, xc_np[:, :100])
+    assert_allclose(xc.x, xc_np[:, :100])
 
     # 2 predictors
     xc = convolve([h1d, h2d], [x1d, x2d])

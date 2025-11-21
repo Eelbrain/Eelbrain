@@ -3,11 +3,13 @@ from pathlib import Path
 
 import numpy as np
 from numpy.testing import assert_array_equal
+import pytest
 
 from eelbrain import Dataset, datasets, load
 from eelbrain.testing import TempDir, assert_dataobj_equal, assert_dataset_equal, file_path
 
 
+@pytest.mark.file_test
 def test_r_tsv_io():
     "Test reading output of write.table"
     path = file_path('r-write.table.txt')
@@ -18,6 +20,7 @@ def test_r_tsv_io():
     assert_array_equal(ds['bin'], [0, 0])
 
 
+@pytest.mark.file_test
 def test_tsv_io():
     """Test tsv I/O"""
     tempdir = TempDir()
