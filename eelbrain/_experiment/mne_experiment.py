@@ -7,7 +7,7 @@ import inspect
 from itertools import chain, product
 import logging
 import os
-from os.path import basename, exists, getmtime, isdir, join, relpath, splitext
+from os.path import basename, exists, getmtime, isdir, join, relpath
 from pathlib import Path
 import re
 import shutil
@@ -50,12 +50,12 @@ from .covariance import EpochCovariance, RawCovariance
 from .definitions import FieldCode, find_dependent_epochs, find_epochs_vars, log_dict_change, log_list_change, tuple_arg
 from .epochs import ContinuousEpoch, PrimaryEpoch, SecondaryEpoch, SuperEpoch, EpochBase, EpochCollection, assemble_epochs, decim_param
 from .exceptions import FileMissingError
-from .experiment import FileTree, LayeredDict
+from .experiment import FileTree
 from .groups import assemble_groups
 from .parc import SEEDED_PARC_RE, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, SeededParc, IndividualSeededParc, LabelParc, VolumeParc, Parcellation, SubParc, assemble_parcs
 from .preprocessing import (
     assemble_pipeline, RawPipe, RawSource, RawICA, RawApplyICA, RawFilter,
-    compare_pipelines, ask_to_delete_ica_files, remove_task, remove_subject, get_subject_session)
+    compare_pipelines, ask_to_delete_ica_files)
 from .test_def import (
     Test,
     ROITestResult, ROI2StageResult, TestDims, TwoStageTest,
@@ -401,13 +401,20 @@ class Pipeline(FileTree):
         if self.datatype is not None:
             self._datatype = self.datatype
         else:
-            datatypes = tuple(get_datatypes(root))
+            datatypes = tuple(mne_bids.get_datatypes(root))
             if 'meg' in datatypes and 'eeg' in datatypes:
                 raise DefinitionError(f"Can't infer datatype. Both MEG and EEG data found in {root}.")
             elif 'meg' in datatypes:
                 self._datatype = 'meg'
+                extensions = ('.fif',)
             elif 'eeg' in datatypes:
                 self._datatype = 'eeg'
+                data_extensions = {path.extension for path in mne_bids.find_matching_paths(root, datatypes='eeg', suffixes='eeg', extensions=['.edf', '.vhdr', '.set', '.bdf', '.fif'])}
+                if len(data_extensions) == 0:
+                    raise FileMissingError(f"No EEG data files found in {root}.")
+                elif len(data_extensions) > 1:
+                    raise DefinitionError(f"Multiple EEG data file types found in {root}: {enumeration(sorted(data_extensions))}.")
+                extensions = tuple(data_extensions)
             else:
                 raise DefinitionError(f"Can't infer datatype. No MEG or EEG data found in {root}.")
         available_entities = [
