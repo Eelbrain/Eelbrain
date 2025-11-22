@@ -28,6 +28,10 @@ def test_sample():
     assert e.get('subject') == 'R0000'
     assert e.get('subject', subject='R0002') == 'R0002'
 
+    # globbing
+    assert e._glob_pattern('ica-file', inclusive=True) == join(root, 'derivatives', 'ica', 'sub-*_meg_raw-*_ica.fif')
+    assert e._glob_pattern('ica-file', subject='R0002', inclusive=True) == join(root, 'derivatives', 'ica', 'sub-R0002_meg_raw-*_ica.fif')
+
     # events
     e.set('R0001', rej='')
     ds = e.load_selected_events(epoch='target')
