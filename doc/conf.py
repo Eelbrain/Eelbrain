@@ -16,6 +16,7 @@ from pathlib import Path
 
 import eelbrain.plot._brain_object  # make sure that Brain is available
 import eelbrain
+import mne
 from sphinx_gallery.sorting import ExplicitOrder, _SortKey
 
 
@@ -384,3 +385,9 @@ man_pages = [
     ('index', 'eelbrain', u'Eelbrain Documentation',
      [u'Christian Brodbeck'], 1)
 ]
+
+
+def setup(app):
+    """Set up the Sphinx app."""
+    # ensure we have the data necessary to build examples
+    mne.datasets.sample.data_path(verbose=True)

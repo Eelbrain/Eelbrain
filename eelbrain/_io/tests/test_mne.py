@@ -31,7 +31,7 @@ def test_load_events():
 
 @requires_mne_testing_data
 def test_load_fiff_ctf():
-    path = Path(mne.datasets.testing.data_path())
+    path = Path(mne.datasets.testing.data_path(download=False))
     raw_path = path / 'CTF' / 'testdata_ctf.ds'
     raw = mne.io.read_raw_ctf(raw_path)
     y = load.mne.raw_ndvar(raw)
@@ -40,7 +40,7 @@ def test_load_fiff_ctf():
 
 @requires_mne_sample_data
 def test_load_fiff_mne():
-    data_path = mne.datasets.sample.data_path()
+    data_path = mne.datasets.sample.data_path(download=False)
     fwd_path = os.path.join(data_path, 'MEG', 'sample', 'sample-ico-4-fwd.fif')
     evoked_path = os.path.join(data_path, 'MEG', 'sample', 'sample_audvis-no-filter-ave.fif')
     cov_path = os.path.join(data_path, 'MEG', 'sample', 'sample_audvis-cov.fif')
@@ -79,7 +79,7 @@ def test_load_fiff_mne():
 
 @requires_mne_testing_data
 def test_load_fiff_ndvar():
-    data_path = Path(mne.datasets.testing.data_path())
+    data_path = Path(mne.datasets.testing.data_path(download=False))
 
     # raw_ndvar for
     raw = mne.io.read_raw_fif(data_path / 'MEG/sample/sample_audvis_trunc_raw.fif')
@@ -105,7 +105,7 @@ def test_load_fiff_sensor():
 @pytest.mark.filterwarnings("ignore:The measurement information")
 def test_load_fiff_from_raw():
     "Test loading data from a fiff raw file"
-    data_path = mne.datasets.sample.data_path()
+    data_path = mne.datasets.sample.data_path(download=False)
     meg_path = os.path.join(data_path, 'MEG', 'sample')
     raw_path = os.path.join(meg_path, 'sample_audvis_filt-0-40_raw.fif')
     evt_path = os.path.join(meg_path, 'sample_audvis_filt-0-40_raw-eve.fif')

@@ -4,11 +4,12 @@ import numpy as np
 from eelbrain import datasets, plot, testnd, cwt_morlet
 from eelbrain.plot._figure import Figure
 from eelbrain.plot._utsnd import AxButterflyEpoch
-from eelbrain.testing import requires_mne_sample_data
+from eelbrain.testing import requires_mne_sample_data, requires_mne_testing_data
 from eelbrain.testing import hide_plots
 
 
 @hide_plots
+@requires_mne_testing_data
 def test_plot_butterfly():
     "Test plot.Butterfly"
     ds = datasets.get_uts(utsnd=True)

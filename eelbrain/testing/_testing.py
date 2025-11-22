@@ -197,14 +197,14 @@ def requires_framework_build(function):
 
 
 def requires_mne_sample_data(function):
-    if mne.datasets.sample.data_path(download=False):
+    if mne.datasets.has_dataset("sample"):
         return function
     else:
         return pytest.mark.skip('mne sample data unavailable')(function)
 
 
 def requires_mne_testing_data(function):
-    if mne.datasets.testing.data_path(download=False):
+    if mne.datasets.has_dataset("testing"):
         return function
     else:
         return pytest.mark.skip('mne testing data unavailable')(function)

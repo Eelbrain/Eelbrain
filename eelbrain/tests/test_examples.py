@@ -13,7 +13,7 @@ from eelbrain.testing import hide_plots, working_directory
 
 
 DATASETS = {
-    'mne_sample': bool(mne.datasets.sample.data_path(download=False))
+    'mne_sample': mne.datasets.has_dataset("sample"),
 }
 
 # find examples
@@ -22,7 +22,10 @@ examples = list(examples_dir.glob('*/*.py'))
 
 
 @hide_plots
-@pytest.mark.parametrize("path", examples)
+@pytest.mark.parametrize("path", [
+    pytest.param(example, id=example.relative_to(examples_dir).as_posix())
+    for example in examples
+])
 def test_example(tmp_path, path: Path):
     "Run the example script at ``filename``"
     # check for flags
@@ -42,7 +45,7 @@ def test_example(tmp_path, path: Path):
     required_datasets = re.findall(r"^# dataset: (\w+)$", text, re.MULTILINE)
     for dataset in required_datasets:
         if not DATASETS[dataset]:
-            raise pytest.skip(f"required dataset {dataset} not available")
+            pytest.skip(f"required dataset {dataset} not available")
     # set up context
     configure(show=False)
     with working_directory(tmp_path):
