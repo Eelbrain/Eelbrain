@@ -55,7 +55,7 @@ Step by Step
    :local:
 
 
-.. _MneExperiment-filestructure:
+.. _Pipeline-filestructure:
 
 Setting up the file structure
 -----------------------------
@@ -74,7 +74,7 @@ The pipeline expects input dataset in `BIDS (Brain Imaging Data Structure) <http
     datatype folder                            /{datatype}
     raw data file                                 /sub-{subject}_ses-{session}_task-{task}_run-{run}_{datatype}.fif
     derivatives root                     /derivatives
-    trans file                              /trans/sub-{subject}_ses-{session}_trans.fif
+    trans file                              /trans/sub-{subject}_ses-{session}_{datatype}_trans.fif
     FreeSurfer SUBJECTS_DIR                 /freesurfer
     Eelbrain generated files                /eelbrain
 
@@ -98,8 +98,8 @@ The final step to locating the files is providing the ``{root}`` location when i
 Assuming a subject without any session is named "S001", the pipeline will look for data at the following locations:
 
 - The raw data file at ``~/Data/Experiment/sub-S001/meg/sub-S001_task-words_meg.fif``
-- The trans-file from the coregistration at ``~/Data/Experiment/derivatives/trans/sub-S001_trans.fif``
-- The FreeSurfer MRI-directory at ``~/Data/Experiment/derivatives/freesurfer/S001``
+- The trans-file from the coregistration at ``~/Data/Experiment/derivatives/trans/sub-S001_meg_trans.fif``
+- The FreeSurfer MRI-directory at ``~/Data/Experiment/derivatives/freesurfer/sub-S001``
 
 The setup can be tested using :meth:`Pipeline.show_subjects`, which shows a list of the subjects and corresponding MRIs that were discovered::
 
@@ -154,7 +154,7 @@ Similarly, you can ``run my_experiment.py`` in the first cell of a Jupyter Noteb
     If your project contains Jupyter Notebooks, consider `Jupytext <https://jupytext.readthedocs.io/>`_ to efficiently track those notebooks in Git.
 
 
-.. _MneExperiment-preprocessing:
+.. _Pipeline-preprocessing:
 
 Pre-processing
 --------------
@@ -171,7 +171,7 @@ To inspect raw data for a given pre-processing step use::
 Which will plot a 10 s excerpt and allow scrolling through the rest of the data.
 
 
-.. _MneExperiment-events:
+.. _Pipeline-events:
 
 Events
 ------
@@ -304,19 +304,18 @@ To reject trials based on a pre-determined threshold, a loop can be used::
     ...
 
 
-.. _MneExperiment-intro-cov:
+.. _Pipeline-intro-cov:
 
 Empty room noise covariance
 ---------------------------
 
 To use empty room data for estimating the noise covariance, follow these steps:
 
- - Put an empty room recording in each subject’s MEG directory, just like the other MEG files, with session name ``emptyroom``. If you want to use the same empty room file for all subjects you can make links instead of copies to save space.
- - Add ``"emptyroom”`` as a session to the experiment definition.
+ - Put an empty room recording in each subject's MEG directory, just like the other MEG files, with task name ``emptyroom``. If you want to use the same empty room file for all subjects you can make links instead of copies to save space.
  - Use the empty room covariance though :ref:`state-cov` with ``e.set(cov='emptyroom')``
 
 
-.. _MneExperiment-intro-analysis:
+.. _Pipeline-intro-analysis:
 
 Analysis
 --------
@@ -355,7 +354,7 @@ methods.
     <https://github.com/christianbrodbeck/Eelbrain/tree/master/examples/mouse>`_).
 
 
-.. _MneExperiment-example:
+.. _Pipeline-example:
 
 Example
 =======
@@ -397,7 +396,7 @@ Basic setup
 
 Set :attr:`Pipeline.owner` to your email address if you want to be able to
 receive notifications. Whenever you run a sequence of commands ``with
-mne_experiment.notification:`` you will get an email once the respective code
+Pipeline.notification:`` you will get an email once the respective code
 has finished executing or run into an error, for example::
 
     >>> e = MyExperiment()
@@ -426,7 +425,7 @@ files are automatically deleted. Set :attr:`.auto_delete_cache` to ``'ask'`` to
 ask for confirmation before deleting files. This can be useful to prevent
 accidentally deleting files that take long to compute when editing the pipeline
 definition.
-When using this option, set :attr:`Pipeline.screen_log_level` to
+When using this option, set :attr:`screen_log_level` to
 ``'debug'`` to learn about what change caused the cache to be invalid.
 
 .. py:attribute:: Pipeline.screen_log_level
@@ -506,7 +505,7 @@ Pre-processing (raw)
 .. py:attribute:: Pipeline.raw
 
 Define a pre-processing pipeline as a series of linked processing steps
-(:mod:`mne` refers to continuous data that is not time-locked to a specific event as :class:`~mne.io.Raw`, with filenames matching ``*-raw.fif``):
+(:mod:`mne` refers to continuous data that is not time-locked to a specific event as :class:`~mne.io.Raw`, with filenames matching ``*_raw.fif``):
 
 .. autosummary::
    :toctree: generated
@@ -527,11 +526,10 @@ For example, the following definition sets up a pipeline for MEG, using TSSS, a 
 
     class Experiment(Pipeline):
 
-        sessions = 'session'
         raw = {
             'tsss': RawMaxwell('raw', st_duration=10., ignore_ref=True, st_correlation=0.9, st_only=True),
             '1-40': RawFilter('tsss', 1, 40),
-            'ica': RawICA('1-40', 'session', 'extended-infomax', n_components=0.99),
+            'ica': RawICA('1-40', 'task', 'extended-infomax', n_components=0.99),
         }
         
 To use the ``raw --> TSSS --> 1-40 Hz band-pass`` pipeline, use ``e.set(raw="1-40")``. 
@@ -541,8 +539,6 @@ The following is an example for EEG using band-pass filter, ICA and re-referenci
 
     class Experiment(Pipeline):
 
-        data_dir = 'eeg'
-        sessions = ['stories', 'tones']
         raw = {
             '1-20': RawFilter('raw', 1, 20, cache=False),
             'ica': RawICA('1-20', 'stories'),
