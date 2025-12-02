@@ -89,13 +89,12 @@ The pipeline expects input dataset in `BIDS (Brain Imaging Data Structure) <http
 ``MRI`` files (including ``trans-file``) are optional and only needed for source localization. The ``{root}/derivatives/freesurfer`` directory is `FreeSurfer <https://surfer.nmr.mgh.harvard.edu>`_ subject directory. They either contain the files created by FreeSurfer's `recon-all <https://surfer.nmr.mgh.harvard.edu/fswiki/recon-all>`_ command, or are created by the MNE-Python coregistration utility for scaled template brains. (Note that the pipeline doesn't use the NIfTI format that BIDS specifies.) A corresponding ``trans-file`` is created with the MNE-Python coregistration utility in either case (see more information on using `structural MRIs <https://github.com/Eelbrain/Eelbrain/wiki/Coregistration%3A-Structural-MRI>`_ or the `fsaverage template brain <https://github.com/Eelbrain/Eelbrain/wiki/Coregistration%3A-Template-Brain>`_).
 
 
-The final step to locating the files is providing the ``{root}`` location when initializing that subclass, for example::
+A BIDS dataset can be scanned by initializing a :class:`Pipeline` with the data ``{root}`` location, for example::
+
+    e = Pipeline("~/Data/Experiment")
 
 
-    e = MyExperiment("~/Data/Experiment")
-
-
-Assuming a subject without any session is named "S001", the pipeline will look for data at the following locations:
+Assuming a subject without explicit ``{session}`` is named "S001", the pipeline will look for data at the following locations:
 
 - The raw data file at ``~/Data/Experiment/sub-S001/meg/sub-S001_task-words_meg.fif``
 - The trans-file from the coregistration at ``~/Data/Experiment/derivatives/trans/sub-S001_meg_trans.fif``
@@ -112,9 +111,6 @@ The setup can be tested using :meth:`Pipeline.show_subjects`, which shows a list
     ...
 
 
-.. .. note::
-..     The default input format for M/EEG data is the FIFF format (``*-raw.fif`` files). To specify an alternative input data format, see :attr:`Pipeline.raw`.
-
 Setting up the analysis code
 ----------------------------
 
@@ -122,9 +118,14 @@ It is recommended to organize analysis scripts in a dedicated folder.
 For example, we will assume that all analysis scripts will be saved in a directory called ``~/Code/MyProject``.
 This makes it easy to keep track of the history of this folder, for example using `Git <https://git-scm.com>`_.
 
-You will want to access the :class:`Pipeline` subclass (``MyExperiment`` above) from different locations (for instance, from a terminal to do artifact rejection, and from different Jupyter Notebooks to pursue different analyses).
-Thus, it makes sense to define the experiment subclass in a separate Python file, and ``run`` or ``import`` that file as needed.
-In the example above, the following would be saved in ``~/Code/MyProject/my_experiment.py``::
+The analysis scripts will consist of two components:
+
+1. A :class:`Pipeline` subclass which describes the general experiment structure (``MyExperiment`` below).
+2. Analysis scripts (or Jupyter notebooks) using this subclass.
+
+You will want to access the :class:`Pipeline` subclass (``MyExperiment``) from different locations (for instance, from a terminal to do artifact rejection, and from different Jupyter Notebooks to pursue different analyses).
+Thus, it makes sense to define the experiment subclass in a separate Python file (e.g., ``MyProject/my_experiment.py``), and ``run`` or ``import`` that file as needed.
+Thus, ``MyProject/my_experiment.py`` may look like this::
 
     from eelbrain.pipeline import *
 
@@ -180,7 +181,7 @@ If needed, set :attr:`Pipeline.merge_triggers` to handle spurious events.
 Then, add event labels.
 Initially, events are only labeled with the trigger ID. Use the
 :attr:`Pipeline.variables` settings to add labels.
-Events are represented as :class:`Dataset` objects and can be inspected with
+Events are represented as :class:`~eelbrain.Dataset` objects and can be inspected with
 corresponding methods and functions, for example::
 
     >>> e = MyExperiment("~/Data/Experiment")
@@ -325,7 +326,7 @@ data.
 
 The most flexible option is loading data from the desired processing stage using
 one of the many ``.load_...`` methods of the :class:`Pipeline`. For
-example, load a :class:`Dataset` with source-localized condition averages using
+example, load a :class:`eelbrain.Dataset` with source-localized condition averages using
 :meth:`Pipeline.load_evoked_stc`, then test a hypothesis using one of the
 mass-univariate test from the :mod:`testnd` module. To make this kind of
 analysis replicable, it is probably useful to write the complete analysis as a
