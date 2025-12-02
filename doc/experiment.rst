@@ -8,7 +8,7 @@ The :class:`Pipeline`
 
 .. seealso::
      - :class:`Pipeline` class reference for details on all available methods
-     - `Pipeline wiki page <https://github.com/christianbrodbeck/Eelbrain/wiki/MNE-Pipeline>`_
+     - `Pipeline wiki page <https://github.com/Eelbrain/Eelbrain/wiki/MNE-Pipeline>`_
        for additional information
      - `TRFExperiment <https://trf-tools.readthedocs.io/latest/pipeline.html>`_: an experimental extension of the pipeline to Temporal Response Function analysis
 
@@ -86,7 +86,7 @@ The pipeline expects input dataset in `BIDS (Brain Imaging Data Structure) <http
 ``{subject}``, ``{session}``, ``{task}`` and ``{run}`` are `BIDS entities <https://bids-specification.readthedocs.io/en/stable/appendices/entities.html>`_. ``{session}`` and ``{run}`` are optional. ``{datatype}`` is inferred by the pipeline from the data files, and can be ``'meg'`` or ``'eeg'``.
 
 
-``MRI`` files (including ``trans-file``) are optional and only needed for source localization. The ``{root}/derivatives/freesurfer`` directory is `FreeSurfer <https://surfer.nmr.mgh.harvard.edu>`_ subject directory. They either contain the files created by FreeSurfer's `recon-all <https://surfer.nmr.mgh.harvard.edu/fswiki/recon-all>`_ command, or are created by the MNE-Python coregistration utility for scaled template brains. (Note that the pipeline doesn't use the NIfTI format that BIDS specifies.) A corresponding ``trans-file`` is created with the MNE-Python coregistration utility in either case (see more information on using `structural MRIs <https://github.com/christianbrodbeck/Eelbrain/wiki/Coregistration%3A-Structural-MRI>`_ or the `fsaverage template brain <https://github.com/christianbrodbeck/Eelbrain/wiki/Coregistration%3A-Template-Brain>`_).
+``MRI`` files (including ``trans-file``) are optional and only needed for source localization. The ``{root}/derivatives/freesurfer`` directory is `FreeSurfer <https://surfer.nmr.mgh.harvard.edu>`_ subject directory. They either contain the files created by FreeSurfer's `recon-all <https://surfer.nmr.mgh.harvard.edu/fswiki/recon-all>`_ command, or are created by the MNE-Python coregistration utility for scaled template brains. (Note that the pipeline doesn't use the NIfTI format that BIDS specifies.) A corresponding ``trans-file`` is created with the MNE-Python coregistration utility in either case (see more information on using `structural MRIs <https://github.com/Eelbrain/Eelbrain/wiki/Coregistration%3A-Structural-MRI>`_ or the `fsaverage template brain <https://github.com/Eelbrain/Eelbrain/wiki/Coregistration%3A-Template-Brain>`_).
 
 
 The final step to locating the files is providing the ``{root}`` location when initializing that subclass, for example::
@@ -330,7 +330,7 @@ example, load a :class:`Dataset` with source-localized condition averages using
 mass-univariate test from the :mod:`testnd` module. To make this kind of
 analysis replicable, it is probably useful to write the complete analysis as a
 separate script that imports the experiment (see the `example experiment folder
-<https://github.com/christianbrodbeck/Eelbrain/tree/master/examples/mouse>`_).
+<https://github.com/Eelbrain/Eelbrain/tree/master/examples/mouse>`_).
 
 Many statistical comparisons can also be specified in the
 :attr:`Pipeline.tests` attribute, and then loaded directly using the
@@ -351,7 +351,7 @@ methods.
     script ensures that all reports are up-to-date, and will only take seconds
     if nothing has to be recomputed (for an example see ``make-reports.py`` in
     the `example experiment folder
-    <https://github.com/christianbrodbeck/Eelbrain/tree/master/examples/mouse>`_).
+    <https://github.com/Eelbrain/Eelbrain/tree/master/examples/mouse>`_).
 
 
 .. _Pipeline-example:

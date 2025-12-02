@@ -7,9 +7,9 @@ Version History
 Known issues
 ============
 
-Check for open issues, or report new ones on `GitHub <https://github.com/christianbrodbeck/Eelbrain/issues>`_.
+Check for open issues, or report new ones on `GitHub <https://github.com/Eelbrain/Eelbrain/issues>`_.
 
-* Fixed in **0.38.3**, Windows only (`#52 <https://github.com/christianbrodbeck/Eelbrain/issues/52>`_): due to unexpected data loss in :class:`multiprocessing.sharedctypes.RawArray` for large arrays, permutation tests on large datasets using multiprocessing could return spurious results in which *p*-values for *all* clusters were reported as exactly 0.
+* Fixed in **0.38.3**, Windows only (`#52 <https://github.com/Eelbrain/Eelbrain/issues/52>`_): due to unexpected data loss in :class:`multiprocessing.sharedctypes.RawArray` for large arrays, permutation tests on large datasets using multiprocessing could return spurious results in which *p*-values for *all* clusters were reported as exactly 0.
 
 
 Major changes
@@ -465,9 +465,7 @@ New in 0.19
   correctly in Safari 9.0. Use :func:`plot.configure` to change the default
   format.
 * API: Improvements in :class:`plot.Topomap` with concomitant changes in the
-  constructor signature. For examples see the `meg/topographic plotting
-  <https://github.com/christianbrodbeck/Eelbrain/blob/r/0.19/examples/meg/topographic%20plotting.py>`_
-  example.
+  constructor signature.
 * API: :class:`plot.ColorList` has a new argument called `labels`.
 * API: :class:`testnd.ANOVA` attribute :attr:`~testnd.ANOVA.probability_maps`
   renamed to :attr:`~testnd.ANOVA.p` analogous to other :mod:`testnd` results.
