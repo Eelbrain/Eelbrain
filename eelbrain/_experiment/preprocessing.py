@@ -1,5 +1,10 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-"""Pre-processing operations based on NDVars"""
+"""Pre-processing operations based on NDVars
+
+Path templating: BIDSPath to handle optional entities in BIDS
+Entity information: BIDSPath object as a parameter
+
+"""
 from __future__ import annotations
 import warnings
 from copy import deepcopy
@@ -88,6 +93,7 @@ class RawPipe:
             path: BIDSPath,
             file_type: Literal['raw', 'bads', 'cache', 'ica'] = 'raw',
     ) -> str:
+        """BIDPath to path string"""
         # Caller of this method should check whether raw exists or not.
         # Channels file will be created if it doesn't exist.
         if file_type == 'raw':

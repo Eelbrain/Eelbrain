@@ -432,6 +432,8 @@ class Pipeline(FileTree):
         self._templates = {
             'equalize_evoked_count': ('', 'eq'),
 
+            # This templating approach to handle optional fields assumes that all
+            # subjects have the same optional entities.
             'raw_basename': generate_bids_template({'subject', 'session', 'acquisition', 'task', 'run'} & available_entities),
             'epoch_basename': generate_bids_template({'subject', 'session', 'acquisition', 'run'} & available_entities),
             'subject_session': generate_bids_template({'subject', 'session'} & available_entities),
