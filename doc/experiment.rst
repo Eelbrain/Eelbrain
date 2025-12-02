@@ -10,7 +10,7 @@ The :class:`Pipeline`
      - :class:`Pipeline` class reference for details on all available methods
      - `Pipeline wiki page <https://github.com/Eelbrain/Eelbrain/wiki/MNE-Pipeline>`_
        for additional information
-     - `TRFExperiment <https://trf-tools.readthedocs.io/latest/pipeline.html>`_: an experimental extension of the pipeline to Temporal Response Function analysis
+     - `TRFExperiment <https://trf-tools.readthedocs.io/bids/pipeline.html>`_: an experimental extension of the pipeline to Temporal Response Function analysis
 
 .. contents:: Contents
    :local:
@@ -60,12 +60,7 @@ Step by Step
 Setting up the file structure
 -----------------------------
 
-The first steps for setting up the pipeline are:
-
-- Arranging the input data files in the expected file structure
-- Defining a :class:`Pipeline` subclass with the parameters required to find those files
-
-The pipeline expects input dataset in `BIDS (Brain Imaging Data Structure) <https://bids.neuroimaging.io/>`_ format. In the schema below, curly brackets indicate slots that the pipeline will replace with specific names::
+The pipeline expects input dataset in `BIDS (Brain Imaging Data Structure) <https://bids.neuroimaging.io/>`_ format. (To convert your data into BIDS format, use the `MNE-BIDS <https://mne.tools/mne-bids/stable/use.html>_` library.) In the schema below, curly brackets indicate slots that the pipeline will replace with specific names::
 
 
     root                              {root}
