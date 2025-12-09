@@ -128,7 +128,7 @@ Coding Style and Documentation
     - **API Design**: Functions that handle data should accept data directly as a parameter (e.g., a ``y`` parameter for an ``NDVar``), analogous to existing plotting functions.
 
 **Type Hinting**
-    We use type hints in all function signatures (e.g., ``def my_function(y: NDVar) -> Figure:``).
+    We use type hints in all function signatures (see :mod:`typing`; e.g., ``def my_function(y: NDVar) -> Figure:``).
     There's no need to duplicate type information in docstrings if it is already present in the signature; the signature is the source of truth.
     For more information, see :mod:`typing` and the `Python documentation on type hints <https://docs.python.org/3/library/typing.html>`_.
 
