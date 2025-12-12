@@ -385,6 +385,7 @@ class Pipeline(FileTree):
         ########
         if root is None:
             raise AttributeError("Pipeline subclasses must have root.")
+        self.root = root = FileTree._eval_root(root)
         if hasattr(self, 'cluster_criteria'):
             raise AttributeError("Pipeline subclasses can not have a .cluster_criteria attribute anymore. Please remove the attribute, delete the eelbrain-cache folder and use the select_clusters analysis parameter.")
         if not isinstance(self.auto_delete_cache, str):
@@ -533,7 +534,6 @@ class Pipeline(FileTree):
                 self._templates.update(cls._values)
 
         # register fields in templates
-        self.root = root = FileTree._eval_root(root)
         self._bids_path = BIDSPath(root=root)
         FileTree.__init__(self)
         self.set(root=root)
