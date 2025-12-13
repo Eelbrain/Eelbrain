@@ -36,7 +36,7 @@ class SampleExperiment(Pipeline):
     }
 
     raw = {
-        'tsss': RawMaxwell('raw', st_duration=10., ignore_ref=True, st_correlation=.9, st_only=True),
+        'tsss': RawMaxwell('raw', st_duration=10., ignore_ref=True, st_correlation=.9, st_only=True, st_overlap=False),
         '1-40': RawFilter('tsss', 1, 40),
         'ica': RawICA('tsss', 'sample', method='fastica', n_components=0.95),
         'ica1-40': RawFilter('ica', 1, 40),
