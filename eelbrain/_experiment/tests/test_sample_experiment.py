@@ -1,6 +1,7 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Test Pipeline using mne-python sample data"""
 from os.path import join, exists
+from os import remove
 import pytest
 from warnings import catch_warnings, filterwarnings
 
@@ -315,13 +316,39 @@ def test_sample_tasks():
 
     root = join(tempdir, 'SampleExperiment')
     e = Experiment(root)
-    # bad channels
-    e.make_bad_channels('0111')
+
+    # get paths
+    pipe = e._raw[e.get('raw', raw='ica')]
+    bids_path = e._bids_path
+    assert pipe.get_path(bids_path, 'raw') == join(root, 'sub-R0000', 'meg', 'sub-R0000_task-sample1_meg.fif')
+    assert pipe.get_path(bids_path, 'bads') == join(root, 'sub-R0000', 'meg', 'sub-R0000_task-sample1_channels.tsv')
+    assert pipe.get_path(bids_path, 'cache') == join(root, 'derivatives', 'eelbrain', 'cache', 'raw', 'sub-R0000', 'sub-R0000_task-sample1_meg_raw-ica.fif')
+    assert pipe.get_path(bids_path, 'ica') == join(root, 'derivatives', 'ica', 'sub-R0000_meg_raw-ica_ica.fif')
+    e.set(raw='raw')
+
+    # automatically generate channels.tsv
+    bad_path = join(root, 'sub-R0000', 'meg', 'sub-R0000_task-sample1_channels.tsv')
+    remove(bad_path)
+    assert not exists(bad_path)
+    e.make_bad_channels('MEG 0111')
+    assert exists(bad_path)
     assert e.load_bad_channels() == ['MEG 0111']
+    # add another bad channel
+    e.make_bad_channels('MEG 0121')
+    assert e.load_bad_channels() == ['MEG 0111', 'MEG 0121']
+    # redo bad channels
+    e.make_bad_channels('MEG 0111', redo=True)
+    assert e.load_bad_channels() == ['MEG 0111']
+
+    # merge bad channels for ICA
     assert e.load_bad_channels(task='sample2') == []
-    e.show_bad_channels()
+    e.make_bad_channels('MEG 0121')
+    assert e.load_bad_channels(raw='ica') == ['MEG 0111', 'MEG 0121']
+    e.set(raw='raw')
+
+    # merge_bad_channels
     e.merge_bad_channels()
-    assert e.load_bad_channels(task='sample2') == ['MEG 0111']
+    assert e.load_bad_channels(task='sample2') == ['MEG 0111', 'MEG 0121']
     e.show_bad_channels()
 
     # rejection

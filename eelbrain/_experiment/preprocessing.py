@@ -421,7 +421,7 @@ class RawSource(RawPipe):
         # find new bad channels
         if isinstance(bad_chs, (str, int)):
             bad_chs = (bad_chs,)
-        raw = self.load(path, add_bads=False)
+        raw = self._load(path, False)
         sensor = load.mne.sensor_dim(raw.info, adjacency=self.adjacency)
         new_bads = sensor._normalize_sensor_names(bad_chs)
         # update with old bad channels
@@ -432,6 +432,8 @@ class RawSource(RawPipe):
         if new_bads == old_bads:
             return
         # write new bad channels
+        if redo:
+            mark_channels(path, ch_names='all', status='good')
         mark_channels(path, ch_names=new_bads, status='bad')
 
     def make_bad_channels_auto(
@@ -449,7 +451,7 @@ class RawSource(RawPipe):
                 raise NotImplementedError(f"{path.datatype=}")
         elif flat == 0:
             return
-        raw = self.load(path, add_bads=False)
+        raw = self._load(path, False)
         bad_chs: list[str] = raw.info['bads']
         sysname = self.get_sysname(raw.info, path.entities['subject'], None)
         raw = load.mne.raw_ndvar(raw, sysname=sysname, adjacency=self.adjacency)
