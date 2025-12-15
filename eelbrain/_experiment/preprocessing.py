@@ -14,7 +14,7 @@ import logging
 from os import makedirs, remove
 from os.path import basename, dirname, exists, getmtime
 from pathlib import Path
-from typing import Any, Collection, Dict, List, Sequence, Tuple, Union
+from typing import Any, Dict, List, Sequence, Tuple, Union
 
 import mne
 from scipy import signal
