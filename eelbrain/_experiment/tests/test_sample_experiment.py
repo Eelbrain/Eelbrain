@@ -318,12 +318,14 @@ def test_sample_tasks():
     e = Experiment(root)
 
     # get paths
+    pipe = e._raw[e.get('raw', raw='raw')]
+    bids_path = e._bids_path
+    assert pipe._raw_path(bids_path) == join(root, 'sub-R0000', 'meg', 'sub-R0000_task-sample1_meg.fif')
+    assert pipe._bads_path(bids_path) == join(root, 'sub-R0000', 'meg', 'sub-R0000_task-sample1_channels.tsv')
     pipe = e._raw[e.get('raw', raw='ica')]
     bids_path = e._bids_path
-    assert pipe.get_path(bids_path, 'raw') == join(root, 'sub-R0000', 'meg', 'sub-R0000_task-sample1_meg.fif')
-    assert pipe.get_path(bids_path, 'bads') == join(root, 'sub-R0000', 'meg', 'sub-R0000_task-sample1_channels.tsv')
-    assert pipe.get_path(bids_path, 'cache') == join(root, 'derivatives', 'eelbrain', 'cache', 'raw', 'sub-R0000', 'sub-R0000_task-sample1_meg_raw-ica.fif')
-    assert pipe.get_path(bids_path, 'ica') == join(root, 'derivatives', 'ica', 'sub-R0000_meg_raw-ica_ica.fif')
+    assert pipe._cache_path(bids_path) == join(root, 'derivatives', 'eelbrain', 'cache', 'raw', 'sub-R0000_meg', 'sub-R0000_task-sample1_meg_raw-ica.fif')
+    assert pipe._ica_path(bids_path) == join(root, 'derivatives', 'ica', 'sub-R0000_meg_raw-ica_ica.fif')
     e.set(raw='raw')
 
     # automatically generate channels.tsv
