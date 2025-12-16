@@ -34,6 +34,7 @@ from ..mne_fixes._version import MNE_VERSION, V0_19, V0_24
 from .definitions import log_dict_change, tuple_arg, typed_arg
 from .exceptions import FileMissingError
 
+MNE_VERBOSITY = 'WARNING'
 AddBadsArg = Union[bool, Sequence[str]]
 
 
@@ -219,7 +220,11 @@ class RawSource(RawPipe):
         return raw_path
 
     def _bads_path(self, path: BIDSPath) -> str:
-        return str(path.copy().update(suffix='channels', extension='.tsv').fpath)
+        return str(path.copy().update(
+            suffix='channels',
+            extension='.tsv',
+            split=None,
+        ).fpath)
 
     def cache(self, path: BIDSPath) -> bool:
         "Check if raw file exists without raising an error"
@@ -249,7 +254,7 @@ class RawSource(RawPipe):
         raw = reader(
             raw_path,
             preload=preload,
-            verbose='critical',
+            verbose=MNE_VERBOSITY,
         )
         if self.rename_channels:
             if rename := {k: v for k, v in self.rename_channels.items() if k in raw.ch_names}:
@@ -313,8 +318,9 @@ class RawSource(RawPipe):
             return
         # write new bad channels
         if override:
-            mark_channels(path, ch_names='all', status='good')
-        mark_channels(path, ch_names=new_bads, status='bad')
+            mark_channels(path, ch_names='all', status='good', verbose=MNE_VERBOSITY)
+        if new_bads:  # mne_bids < 0.17 handles empty list as 'all'
+            mark_channels(path, ch_names=new_bads, status='bad', verbose=MNE_VERBOSITY)
 
     def make_bad_channels_auto(
             self,
@@ -440,7 +446,7 @@ class CachedRawPipe(RawPipe):
             raw = mne.io.read_raw_fif(
                 cache_path,
                 preload=preload,
-                verbose='critical',
+                verbose=MNE_VERBOSITY,
             )
         else:
             raw = self._make(path, preload)
@@ -456,7 +462,7 @@ class CachedRawPipe(RawPipe):
                 raw = self._make(path, True)
             # save
             try:
-                raw.save(cache_path, overwrite=True, verbose='critical')
+                raw.save(cache_path, overwrite=True, verbose=MNE_VERBOSITY)
             except BaseException:
                 # clean up potentially corrupted file
                 if exists(cache_path):
