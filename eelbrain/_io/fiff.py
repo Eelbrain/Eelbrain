@@ -1016,7 +1016,7 @@ def raw_ndvar(
         Set the time axis of each :class:`NDVar` in the output to begin at 0.
         By default, the NDVars wll retain time information from the raw data.
     data
-        The kind of data to include (e.g., ``"'meg"``; see :func:`mne.pick_types`).
+        The kind of data to include (e.g., ``"meg"``; see :func:`mne.pick_types`).
         By default, guess based on the data in ``raw``.
     exclude
         Channels to exclude (:func:`mne.pick_types` kwarg).
