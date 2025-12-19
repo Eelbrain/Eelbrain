@@ -85,32 +85,33 @@ We follow a standard GitHub `workflow for Pull Requests <https://docs.github.com
 
 The steps below outline the recommended workflow.
 
-1. **Create a Fork** of [Eelbrain](https://github.com/Eelbrain/Eelbrain).
+1. **Create a Fork** of `Eelbrain <https://github.com/Eelbrain/Eelbrain>`_.
 2. **Create a Branch**: Create a new branch from ``main`` for each feature or fix.
 3. **Commit Changes**: Make your changes and commit them.
 4. **Test Locally**:
    Add tests for new features and bug fixes to ensure code quality and prevent regressions.
-   Run relevant tests before opening a pull request (see :ref:`dev-testing`).
+   Run existing tests to make sure nothing breaks (see :ref:`dev-testing`).
 5. **Push to Your Fork**: Push your branch to your fork on GitHub.
 6. **Open a Pull Request (PR)**:
-    - **Use Draft Mode**: `Draft mode <https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/about-pull-requests#draft-pull-requests>`_
-      allows you to make sure all checks pass before inviting feedback.
-    - Give the PR a descriptive title and describe the intended change.
-      `Link to relevant issues <https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue>`_ and discussions in the PR description.
-    - Monitor the checks, including:
-        - Tests: in case of failures, inspect the errors that occurred.
-        - Codecov: tells you whether tests cover your changes sufficiently.
-        - Docs: if you modified the documentation, ensure it builds as intended.
-    - **Ready for Review**: Switch the PR status to "Ready for Review" when the implementation is complete and all checks pass.
-      Invite reviews if you know reviewers with relevant background.
+   - **Use Draft Mode**: `Draft mode <https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/about-pull-requests#draft-pull-requests>`_
+     allows you to make sure all checks pass before inviting feedback.
+   - Give the PR a descriptive title and describe the intended change.
+     `Link to relevant issues <https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue>`_ and discussions in the PR description.
+   - Monitor the checks, including:
+       - Tests: in case of failures, inspect the errors that occurred.
+       - Codecov: tells you whether tests cover your changes sufficiently.
+       - Docs: if you modified the documentation, ensure it builds as intended.
+   - **Ready for Review**: Switch the PR status to "Ready for Review" when the implementation is complete and all checks pass.
+     Invite reviews from specific contributors only if you know they have relevant background to the specific issue.
 7. **Code Review**: The code review process is a collaborative effort to improve code quality.
-    - Apply feedback globally; if a reviewer notes an issue in one file, check if it exists elsewhere in your changes.
-    - When you have addressed all reviewer comments and checks are passing, signal that the PR is ready for another review by
-      leaving a comment (e.g., "Ready for re-review") or re-requesting a review via the GitHub UI.
-      This explicitly notifies the maintainers that you are ready for the next round.
-    - Try to address reviews promptly.
-      Re-review is easier when changes are fresh in mind.
-      in addition, the longer you wait, the more likely your changes will drift from the current codebase.
+   - Apply feedback globally; if a reviewer notes an issue in one file, check if it exists elsewhere in your changes.
+   - When you have addressed all reviewer comments and checks are passing, signal that the PR is ready for another review by
+     leaving a comment (e.g., "All comments addressed, ready for re-review") or
+     re-requesting a review from the contributors whose comments you addressed via the GitHub UI.
+     This explicitly notifies the maintainers that the code is ready for the next round.
+   - Try to address reviews promptly.
+     Re-review is easier when changes are fresh in mind.
+     in addition, the longer you wait, the more likely your changes will drift from the current codebase.
 
 
 .. _dev-testing:
@@ -147,9 +148,9 @@ Coding Style and Documentation
     To facilitate maintenance and consistent reviews, we follow the `PEP 8 style guide <https://peps.python.org/pep-0008/>`_.
     We recommend using tools to ensure compliance:
 
-    - IDEs like PyCharm and VSCode can alert you to style issues as you code.
+    - IDEs like PyCharm and VSCode can fix and alert you to style issues as you code.
     - **flake8**: Run ``$ flake8 eelbrain`` from the project root to check for issues locally.
-    - **autopep8**: Use this to automatically fix common style issues.
+    - **autopep8**: Use `this <https://pypi.org/project/autopep8/>`_ to automatically fix common style issues.
 
 **Consistent Naming and API Consistency**
     To make the library intuitive, we strive for consistency across the API:
