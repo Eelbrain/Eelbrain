@@ -124,27 +124,29 @@ The steps below outline the recommended workflow.
 Testing and Validation
 ----------------------
 
+Tests are embedded throughout the codebase in ``test`` folders.
 Tests for individual modules are included in folders called ``tests``, usually
 on the same level as the module.
-To run all tests, run ``$ make test`` from the Eelbrain project directory.
-On macOS, tests need to run with the framework build of Python;
-if you get a corresponding error, run ``$ ./fix-bin pytest`` from the
-``Eelbrain`` repository root.
 
-Running tests locally:
+Running tests locally (from the project root)::
 
-- ``$ make test`` (from the project root) runs all tests.
-- ``$ make test-no-gui`` runs tests that do not invoke GUIs.
-- ``$ make test-only-gui`` runs only the tests that invoke GUIs.
-- ``$ pytest path/to/test_file.py`` runs all tests in a specific file
-  (see also `pytest docs <https://docs.pytest.org/en/stable/how-to/usage.html>`_).
-- ``$ pytest path/to/test_file.py::test_func`` runs the specific test ``test_func()`` in ``path/to/test_file.py``.
+    $ make test                     # runs all tests
+    $ make test-no-gui              # runs tests that do not invoke GUIs
+    $ make test-only-gui            # runs only the tests that invoke GUIs
+    $ pytest path/to/test_file.py   # runs all tests in a specific file
+    $ pytest path/to/test_file.py::test_func  # runs test_func() in path/to/test_file.py
 
-An additional test for the :class:`eelbrain.MneExperiment` pipeline takes longer and can be run separately as needed::
+For more options, see the `pytest docs <https://docs.pytest.org/en/stable/how-to/usage.html>`_.
+
+An additional test for the :class:`eelbrain.MneExperiment` pipeline takes longer to run and can be run separately as needed::
 
     $ pytest --runslow eelbrain/_experiment/tests/test_sample_experiment.py::test_sample_source
 
 All pull requests trigger a Continuous Integration (CI) workflow that automatically runs the full test suite.
+
+On macOS, tests involving GUIs need to run with the framework build of Python;
+if you get a corresponding error, run ``$ ./fix-bin pytest`` from the
+``Eelbrain`` repository root.
 
 
 Coding Style and Documentation
