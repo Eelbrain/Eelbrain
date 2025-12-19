@@ -55,14 +55,14 @@ In Python, you can make sure that you are working with the development version::
 Opening Issues
 --------------
 
-Bug reports and feature requests are welcome on the `GitHub Issue Tracker <https://github.com/Eelbrain/Eelbrain/issues>`_.
+Bug reports and feature requests are welcome on the GitHub `Issue Tracker <https://github.com/Eelbrain/Eelbrain/issues>`_.
 If you're unsure whether something is a bug or an enhancement, feel free to ask in an issue.
-For other questions, consider asking on `GitHub Discussions <https://github.com/Eelbrain/Eelbrain/discussions>`_.
+For other questions, consider asking on GitHub `Discussions <https://github.com/Eelbrain/Eelbrain/discussions>`_.
 
 **Reporting Bugs**
     Effective bug reports help us fix issues faster. Please include:
 
-    - `**Minimal Reproducible Example** <https://en.wikipedia.org/wiki/Minimal_reproducible_example>`_: A short, self-contained code snippet that demonstrates the error. This is crucial for verification.
+    - **Minimal Reproducible Example** (`MRE <https://en.wikipedia.org/wiki/Minimal_reproducible_example>`_): A short, self-contained code snippet that demonstrates the error. This is crucial for verification.
     - **Version Information**: Run ``import eelbrain; print(eelbrain.__version__)`` and include the output.
     - **Traceback**: The complete error traceback text.
     - **Description**: A clear description of the expected behavior versus the actual behavior.
@@ -77,7 +77,7 @@ For other questions, consider asking on `GitHub Discussions <https://github.com/
 Pull Request Workflow
 ---------------------
 
-We follow a standard `GitHub workflow for Pull Requests (PRs) <https://docs.github.com/en/pull-requests>`_.
+We follow a standard GitHub `workflow for Pull Requests <https://docs.github.com/en/pull-requests>`_ (PRs).
 
 .. IMPORTANT::
    **Keep PRs small and focused**: Each PR should address a single issue or feature.
@@ -92,7 +92,7 @@ The steps below outline the recommended workflow.
    Add tests for new features and bug fixes to ensure code quality and prevent regressions.
    Run relevant tests before opening a pull request (see :ref:`dev-testing`).
 5. **Push to Your Fork**: Push your branch to your fork on GitHub.
-5. **Open a Pull Request (PR)**:
+6. **Open a Pull Request (PR)**:
     - **Use Draft Mode**: `Draft mode <https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/about-pull-requests#draft-pull-requests>`_
       allows you to make sure all checks pass before inviting feedback.
     - Give the PR a descriptive title and describe the intended change.
@@ -103,7 +103,7 @@ The steps below outline the recommended workflow.
         - Docs: if you modified the documentation, ensure it builds as intended.
     - **Ready for Review**: Switch the PR status to "Ready for Review" when the implementation is complete and all checks pass.
       Invite reviews if you know reviewers with relevant background.
-6. **Code Review**: The code review process is a collaborative effort to improve code quality.
+7. **Code Review**: The code review process is a collaborative effort to improve code quality.
     - Apply feedback globally; if a reviewer notes an issue in one file, check if it exists elsewhere in your changes.
     - When you have addressed all reviewer comments and checks are passing, signal that the PR is ready for another review by
       leaving a comment (e.g., "Ready for re-review") or re-requesting a review via the GitHub UI.
