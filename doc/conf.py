@@ -246,6 +246,7 @@ intersphinx_mapping = {
     'pandas': ('https://pandas.pydata.org/docs', None),
     'rpy2': ('https://rpy2.github.io/doc', None),
     'scipy': ('https://docs.scipy.org/doc/scipy', None),
+    'sphinx': ('https://www.sphinx-doc.org/en/master/', None),
     'surfer': ('https://pysurfer.github.io', None),
 }
 # http://sphinx.pocoo.org/ext/intersphinx.html

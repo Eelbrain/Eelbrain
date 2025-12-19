@@ -93,17 +93,22 @@ The steps below outline the recommended workflow.
    Run existing tests to make sure nothing breaks (see :ref:`dev-testing`).
 5. **Push to Your Fork**: Push your branch to your fork on GitHub.
 6. **Open a Pull Request (PR)**:
+
    - **Use Draft Mode**: `Draft mode <https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/about-pull-requests#draft-pull-requests>`_
      allows you to make sure all checks pass before inviting feedback.
    - Give the PR a descriptive title and describe the intended change.
      `Link to relevant issues <https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue>`_ and discussions in the PR description.
    - Monitor the checks, including:
+
        - Tests: in case of failures, inspect the errors that occurred.
        - Codecov: tells you whether tests cover your changes sufficiently.
        - Docs: if you modified the documentation, ensure it builds as intended.
+
    - **Ready for Review**: Switch the PR status to "Ready for Review" when the implementation is complete and all checks pass.
-     Invite reviews from specific contributors only if you know they have relevant background to the specific issue.
+     Invite reviews from specific contributors (only if they are specifically relevant or have previously agreed to review this PR).
+
 7. **Code Review**: The code review process is a collaborative effort to improve code quality.
+
    - Apply feedback globally; if a reviewer notes an issue in one file, check if it exists elsewhere in your changes.
    - When you have addressed all reviewer comments and checks are passing, signal that the PR is ready for another review by
      leaving a comment (e.g., "All comments addressed, ready for re-review") or
@@ -127,6 +132,7 @@ if you get a corresponding error, run ``$ ./fix-bin pytest`` from the
 ``Eelbrain`` repository root.
 
 Running tests locally:
+
 - ``$ make test`` (from the project root) runs all tests.
 - ``$ make test-no-gui`` runs tests that do not invoke GUIs.
 - ``$ make test-only-gui`` runs only the tests that invoke GUIs.
