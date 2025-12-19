@@ -28,6 +28,7 @@ from ._stats.testnd import NDTest, MultiEffectNDTest
 from ._trf._boosting import boosting, BoostingResult
 from ._trf._predictors import epoch_impulse_predictor, event_impulse_predictor
 from ._utils import set_log_level
+from ._utils.system import system_info
 
 from . import datasets
 from . import gui

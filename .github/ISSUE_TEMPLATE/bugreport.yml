@@ -56,15 +56,8 @@ body:
     id: version
     attributes:
       label: Eelbrain version
-      description: "Output of `import eelbrain; print(eelbrain.__version__)`."
-      placeholder: "dev / 0.xx.x / commit hash"
-    validations:
-      required: true
-  - type: input
-    id: platform
-    attributes:
-      label: Platform and Python
-      description: "OS and Python version (e.g., macOS 14.4, Python 3.10.12)."
+      description: "Output of `import eelbrain; eelbrain.system_info()`."
+      placeholder: "Platform: ..."
     validations:
       required: true
   - type: textarea
