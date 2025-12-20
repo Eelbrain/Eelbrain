@@ -57,23 +57,20 @@ Opening Issues
 
 Bug reports and feature requests are welcome on the GitHub `Issue Tracker <https://github.com/Eelbrain/Eelbrain/issues>`_.
 If you're unsure whether something is a bug or an enhancement, feel free to ask in an issue.
-For other questions, consider asking on GitHub `Discussions <https://github.com/Eelbrain/Eelbrain/discussions>`_.
+For other questions, consider using GitHub `Discussions <https://github.com/Eelbrain/Eelbrain/discussions>`_.
 
 **Reporting Bugs**
-    Please use a in the bug-report Issue and include as much information as possible.
+    Please open a bug-report `Issue <https://github.com/Eelbrain/Eelbrain/issues>`_ and include as much information as possible.
     Effective bug reports help us fix issues faster.
-
-    - **Minimal Reproducible Example** (`MRE <https://en.wikipedia.org/wiki/Minimal_reproducible_example>`_): A short, self-contained code snippet that demonstrates the error. This is crucial for verification.
-    - **Version Information**: Run ``import eelbrain; print(eelbrain.__version__)`` and include the output.
-    - **Traceback**: The complete error traceback text.
-    - **Description**: A clear description of the expected behavior versus the actual behavior.
 
 **Bug fixes**
     If you notice a bug and are able to fix it, we welcome a pull request.
     Ideally, include a test to preempt future regressions (see :ref:`dev-testing`).
 
 **Feature Requests**
-    If you are thinking about implementing a new feature, please **open an issue first** to discuss the design. This keeps efforts aligned with the roadmap and reduces the chance of duplicate work.
+    If you are thinking about implementing a new feature, please open an issue first to discuss the design.
+    This keeps efforts aligned with the roadmap and reduces the chance of duplicate work.
+
 
 Pull Request Workflow
 ---------------------
@@ -101,7 +98,7 @@ The steps below outline the recommended workflow.
      `Link to relevant issues <https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue>`_ and discussions in the PR description.
    - Monitor the checks, including:
 
-       - Tests: in case of failures, inspect the errors that occurred.
+       - Tests: in case of failures, you can inspect the errors that occurred.
        - Codecov: tells you whether tests cover your changes sufficiently.
        - Docs: if you modified the documentation, ensure it builds as intended.
 
@@ -113,7 +110,7 @@ The steps below outline the recommended workflow.
    - Apply feedback globally; if a reviewer notes an issue in one file, check if it exists elsewhere in your changes.
    - When you have addressed all reviewer comments and checks are passing, signal that the PR is ready for another review by
      leaving a comment (e.g., "All comments addressed, ready for re-review") or
-     re-requesting a review from the contributors whose comments you addressed via the GitHub UI.
+     re-requesting a review from the contributors whose comments you addressed, via the GitHub UI.
      This explicitly notifies the maintainers that the code is ready for the next round.
    - Try to address reviews promptly.
      Re-review is easier when changes are fresh in mind.
