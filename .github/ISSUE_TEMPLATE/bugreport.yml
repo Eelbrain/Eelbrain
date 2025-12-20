@@ -4,10 +4,13 @@ title: "[Bug]: "
 labels:
   - bug
 body:
+
   - type: markdown
     attributes:
       value: |
-        Thank you for taking the time to report a bug. Please include a minimal reproducible example and key details so we can triage quickly.
+        Thank you for taking the time to report a bug. 
+        Please include a minimal reproducible example and key details so we can triage quickly.
+
   - type: textarea
     id: description
     attributes:
@@ -15,11 +18,15 @@ body:
       description: "What went wrong? Briefly describe the issue."
     validations:
       required: true
+
   - type: textarea
     id: repro
     attributes:
       label: Minimal reproducible example
-      description: "A short, self-contained snippet or steps that trigger the bug."
+      description: |
+        Please provide a code snippet or minimal working example
+        ([MWE](https://en.wikipedia.org/wiki/Minimal_Working_Example))
+        to replicate your problem.
       placeholder: |
         ```python
         import eelbrain
@@ -27,17 +34,7 @@ body:
         ```
     validations:
       required: true
-  - type: textarea
-    id: steps
-    attributes:
-      label: Steps to reproduce
-      description: "List the exact steps to reproduce the issue."
-      placeholder: |
-        1. …
-        2. …
-        3. …
-    validations:
-      required: true
+
   - type: textarea
     id: expected
     attributes:
@@ -45,6 +42,7 @@ body:
       description: "What did you expect to happen?"
     validations:
       required: true
+
   - type: textarea
     id: actual
     attributes:
@@ -52,14 +50,18 @@ body:
       description: "What actually happened? Include full error messages or tracebacks."
     validations:
       required: true
+
   - type: input
     id: version
     attributes:
-      label: Eelbrain version
-      description: "Output of `import eelbrain; eelbrain.system_info()`."
+      label: Environment details
+      description: |
+        Please list the output of `import eelbrain; eelbrain.system_info()`
+        and any other relevant information on your setup not included there.
       placeholder: "Platform: ..."
     validations:
       required: true
+
   - type: textarea
     id: logs
     attributes:

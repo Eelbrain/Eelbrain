@@ -60,7 +60,8 @@ If you're unsure whether something is a bug or an enhancement, feel free to ask 
 For other questions, consider asking on GitHub `Discussions <https://github.com/Eelbrain/Eelbrain/discussions>`_.
 
 **Reporting Bugs**
-    Effective bug reports help us fix issues faster. Please include:
+    Please use a in the bug-report Issue and include as much information as possible.
+    Effective bug reports help us fix issues faster.
 
     - **Minimal Reproducible Example** (`MRE <https://en.wikipedia.org/wiki/Minimal_reproducible_example>`_): A short, self-contained code snippet that demonstrates the error. This is crucial for verification.
     - **Version Information**: Run ``import eelbrain; print(eelbrain.__version__)`` and include the output.
@@ -138,7 +139,7 @@ Running tests locally (from the project root)::
 
 For more options, see the `pytest docs <https://docs.pytest.org/en/stable/how-to/usage.html>`_.
 
-An additional test for the :class:`eelbrain.MneExperiment` pipeline takes longer to run and can be run separately as needed::
+An additional test for the :class:`MneExperiment` pipeline takes longer to run and can be run separately as needed::
 
     $ pytest --runslow eelbrain/_experiment/tests/test_sample_experiment.py::test_sample_source
 
