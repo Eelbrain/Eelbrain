@@ -767,7 +767,6 @@ class RawICA(CachedRawPipe):
             return_missing: bool = False,  # if ICA is missing channels, return those (they can be dropped in data)
     ) -> bool | tuple:
         "Check whether `ica` and `info` contain the same channels"
-        # NOTE: Does order matter here?
         picks = mne.pick_types(info, meg=True, eeg=True, ref_meg=False)
         raw_ch_names = [info.ch_names[i] for i in picks]
         if return_missing:

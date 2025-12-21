@@ -244,7 +244,6 @@ class Pipeline(FileTree):
     # merge adjacent events in the stimulus channel
     merge_triggers: int = None
     # add this value to all trigger times (in seconds); global shift, or {subject: shift, (subject, session): shift} dictionary
-    # NOTE: Is this what we want?
     trigger_shift: Union[float, Dict[Union[str, Tuple], float]] = 0
 
     # variables for automatic labeling {name: {trigger: label, triggers: label}}
