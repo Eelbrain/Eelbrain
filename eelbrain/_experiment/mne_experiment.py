@@ -2066,16 +2066,6 @@ class Pipeline(FileTree):
                     dss.append(ds)
             return combine(dss)
 
-        # NOTE: add_bads can't be str by type annotation
-        if isinstance(add_bads, str):
-            if add_bads == 'info':
-                add_bads_to_info = True
-                add_bads = True
-            else:
-                raise ValueError(f"{add_bads=}")
-        else:
-            add_bads_to_info = False
-
         with self._temporary_state:
             ds = self.load_selected_events(add_bads=add_bads, reject=reject, data_raw=True, vardef=vardef, cat=cat)
             if ds.n_cases == 0:
@@ -2198,7 +2188,7 @@ class Pipeline(FileTree):
         if ndvar:
             ds.info['sensor_types'] = sensor_types
             pipe = self._raw[self.get('raw')]
-            exclude = () if add_bads_to_info else 'bads'
+            exclude = 'bads'
             for data_kind in sensor_types:
                 sysname = pipe.get_sysname(info, ds.info['subject'], data_kind)
                 adjacency = pipe.get_adjacency(data_kind)
@@ -2212,8 +2202,6 @@ class Pipeline(FileTree):
                         ys = [getattr(y, data.sensor)('sensor') for y in ys]
                 else:
                     ys = load.mne.epochs_ndvar(ds['epochs'], data=data_kind, sysname=sysname, adjacency=adjacency, exclude=exclude)
-                    if add_bads_to_info:
-                        ys.info[BAD_CHANNELS] = ds['epochs'].info['bads']
                     if isinstance(data.sensor, str):
                         ys = getattr(ys, data.sensor)('sensor')
                 ds[name] = ys
