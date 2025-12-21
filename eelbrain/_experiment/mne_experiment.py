@@ -2462,8 +2462,7 @@ class Pipeline(FileTree):
         elif data_raw:
             ds.info['raw'] = self.load_raw(add_bads, preload=self.preload)
 
-        for k, v in entities.items():
-            ds.info[k] = v
+        ds.info.update(entities)
 
         if self.trigger_shift:
             if isinstance(self.trigger_shift, dict):
