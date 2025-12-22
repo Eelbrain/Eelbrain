@@ -2187,7 +2187,6 @@ class Pipeline(FileTree):
         if ndvar:
             ds.info['sensor_types'] = sensor_types
             pipe = self._raw[self.get('raw')]
-            exclude = 'bads'
             for data_kind in sensor_types:
                 sysname = pipe.get_sysname(info, ds.info['subject'], data_kind)
                 adjacency = pipe.get_adjacency(data_kind)
@@ -2196,11 +2195,11 @@ class Pipeline(FileTree):
                 else:
                     name = data_kind
                 if variable_tmax:
-                    ys = [load.mne.epochs_ndvar(e, data=data_kind, sysname=sysname, adjacency=adjacency, exclude=exclude, name=data_kind)[0] for e in ds['epochs']]
+                    ys = [load.mne.epochs_ndvar(e, data=data_kind, sysname=sysname, adjacency=adjacency, name=data_kind)[0] for e in ds['epochs']]
                     if isinstance(data.sensor, str):
                         ys = [getattr(y, data.sensor)('sensor') for y in ys]
                 else:
-                    ys = load.mne.epochs_ndvar(ds['epochs'], data=data_kind, sysname=sysname, adjacency=adjacency, exclude=exclude)
+                    ys = load.mne.epochs_ndvar(ds['epochs'], data=data_kind, sysname=sysname, adjacency=adjacency)
                     if isinstance(data.sensor, str):
                         ys = getattr(ys, data.sensor)('sensor')
                 ds[name] = ys
@@ -2332,7 +2331,7 @@ class Pipeline(FileTree):
             sns_ndvar = 'both'
             del_epochs = False
         else:
-            raise ValueError(f'keep_epochs={keep_epochs!r}')
+            raise ValueError(f'{keep_epochs=}')
 
         ds = self.load_epochs(subject, baseline, sns_ndvar, reject=reject, cat=cat, samplingrate=samplingrate, decim=decim, pad=pad, data_raw=data_raw, vardef=vardef)
 
