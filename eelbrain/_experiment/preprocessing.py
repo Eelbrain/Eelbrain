@@ -441,16 +441,16 @@ class CachedRawPipe(RawPipe):
             preload: bool,
     ) -> mne.io.BaseRaw:
         """Read cached raw or make one"""
+        if not self._cache:
+            return self._make(path, preload)
         cache_path = self._cache_path(path)
-        if self._cache and self.cache(path):
+        if self.cache(path):
             raw = mne.io.read_raw_fif(
                 cache_path,
                 preload=preload,
                 verbose=MNE_VERBOSITY,
             )
         else:
-            raw = self._make(path, preload)
-        if self._cache:
             from .. import __version__
             # make sure the target directory exists
             makedirs(dirname(cache_path), exist_ok=True)
@@ -462,9 +462,7 @@ class CachedRawPipe(RawPipe):
                 raw = self._make(path, True)
             # save
             try:
-                with warnings.catch_warnings():  # BIDS paths are not covered by mne standard
-                    warnings.filterwarnings('ignore', 'This filename', module='mne')
-                    raw.save(cache_path, overwrite=True, verbose=MNE_VERBOSITY)
+                raw.save(cache_path, overwrite=True, verbose='ERROR')
             except BaseException:
                 # clean up potentially corrupted file
                 if exists(cache_path):
@@ -572,7 +570,7 @@ class RawFilter(CachedRawPipe):
     ) -> mne.io.BaseRaw:
         raw = self.source.load(path, preload=True)
         self.log.info("Raw %s: filtering for %s...", self.name, path.fpath)
-        raw.filter(*self.args, **self._use_kwargs, n_jobs=self.n_jobs)
+        raw.filter(*self.args, **self._use_kwargs, n_jobs=self.n_jobs, verbose=MNE_VERBOSITY)
         return raw
 
     def load_info(self, path: BIDSPath) -> mne.Info:
@@ -1019,7 +1017,7 @@ class RawMaxwell(CachedRawPipe):
         raw = self.source.load(path)
         self.log.info("Raw %s: computing Maxwell filter for %s", self.name, path.fpath)
         with user_activity:
-            return mne.preprocessing.maxwell_filter(raw, bad_condition=self.bad_condition, **self.kwargs)
+            return mne.preprocessing.maxwell_filter(raw, bad_condition=self.bad_condition, verbose=MNE_VERBOSITY, **self.kwargs)
 
     def _as_dict(self, args: Sequence[str] = ()) -> dict:
         return CachedRawPipe._as_dict(self, [*args, 'kwargs'])
