@@ -319,8 +319,7 @@ class RawSource(RawPipe):
         # write new bad channels
         if override:
             mark_channels(path, ch_names='all', status='good', verbose=MNE_VERBOSITY)
-        if new_bads:  # mne_bids < 0.17 handles empty list as 'all'
-            mark_channels(path, ch_names=new_bads, status='bad', verbose=MNE_VERBOSITY)
+        mark_channels(path, ch_names=new_bads, status='bad', verbose=MNE_VERBOSITY)
 
     def make_bad_channels_auto(
             self,
