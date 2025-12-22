@@ -462,7 +462,9 @@ class CachedRawPipe(RawPipe):
                 raw = self._make(path, True)
             # save
             try:
-                raw.save(cache_path, overwrite=True, verbose=MNE_VERBOSITY)
+                with warnings.catch_warnings():  # BIDS paths are not covered by mne standard
+                    warnings.filterwarnings('ignore', 'This filename', module='mne')
+                    raw.save(cache_path, overwrite=True, verbose=MNE_VERBOSITY)
             except BaseException:
                 # clean up potentially corrupted file
                 if exists(cache_path):
