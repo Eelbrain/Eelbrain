@@ -444,11 +444,13 @@ class CachedRawPipe(RawPipe):
             return self._make(path, preload)
         cache_path = self._cache_path(path)
         if self.cache(path):
-            raw = mne.io.read_raw_fif(
-                cache_path,
-                preload=preload,
-                verbose=MNE_VERBOSITY,
-            )
+            with warnings.catch_warnings():  # BIDS paths are not covered by mne standard
+                warnings.filterwarnings('ignore', 'This filename', module='mne')
+                raw = mne.io.read_raw_fif(
+                    cache_path,
+                    preload=preload,
+                    verbose=MNE_VERBOSITY,
+                )
         else:
             from .. import __version__
             # make sure the target directory exists
