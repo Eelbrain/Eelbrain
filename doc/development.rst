@@ -128,10 +128,10 @@ on the same level as the module.
 
 Running tests locally (from the project root)::
 
-    $ make test                     # runs all tests
-    $ make test-no-gui              # runs tests that do not invoke GUIs
-    $ make test-only-gui            # runs only the tests that invoke GUIs
-    $ pytest path/to/test_file.py   # runs all tests in a specific file
+    $ make test                               # runs all tests
+    $ make test-no-gui                        # runs tests that do not invoke GUIs
+    $ make test-only-gui                      # runs only the tests that invoke GUIs
+    $ pytest path/to/test_file.py             # runs all tests in a specific file
     $ pytest path/to/test_file.py::test_func  # runs test_func() in path/to/test_file.py
 
 For more options, see the `pytest docs <https://docs.pytest.org/en/stable/how-to/usage.html>`_.
