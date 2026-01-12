@@ -7,6 +7,7 @@ from warnings import catch_warnings, filterwarnings
 
 import numpy as np
 from numpy.testing import assert_almost_equal, assert_array_equal
+import mne
 
 from eelbrain import *
 from eelbrain.pipeline import *
@@ -41,6 +42,12 @@ def test_sample():
     assert ds.n_cases == 20
     ds = e.load_selected_events(epoch='av')
     assert ds.n_cases == 39
+
+    # covariance
+    with e._temporary_state:
+        e.set(cov='emptyroom')
+        cov = e.load_cov()
+        assert isinstance(cov, mne.Covariance)
 
     # evoked cache invalidated by change in bads
     e.set('R0001', rej='', epoch='target')

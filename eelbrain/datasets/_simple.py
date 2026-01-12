@@ -583,6 +583,7 @@ def setup_samples_experiment(
     data_path = mne.datasets.sample.data_path()
     fsaverage_path = mne.datasets.fetch_fsaverage()
     raw_fname = join(data_path, "MEG", "sample", "sample_audvis_raw.fif")
+    emptyroom_fname = join(data_path, "MEG", "sample", "ernoise_raw.fif")
     event_id = {
         "Auditory/Left": 1,
         "Auditory/Right": 2,
@@ -647,6 +648,8 @@ def setup_samples_experiment(
                 allow_preload=True,
                 format='FIF',
             )
+        bids_path.update(task='noise', suffix='meg', extension='.fif')
+        shutil.copy(emptyroom_fname, bids_path.fpath)
 
     # freesurfer
     mri_sdir = root / 'derivatives' / 'freesurfer'
