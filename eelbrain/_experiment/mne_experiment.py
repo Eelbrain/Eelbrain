@@ -1267,7 +1267,7 @@ class Pipeline(FileTree):
                 self.set(epoch=cov.epoch)
                 return self._epochs_mtime()
             elif isinstance(cov, RawCovariance):
-                self.set(session=cov.session)
+                self.set(task=cov.session)
                 return self._raw_mtime()
             else:
                 raise TypeError(f"{cov=}")
@@ -4189,8 +4189,8 @@ class Pipeline(FileTree):
                 ds = self.load_epochs(None, True, False, decim=1, epoch=cov.epoch)
             covariance = cov.make(ds['epochs'], log_path)
         else:
-            with self._temporary_state:
-                raw = self.load_raw(task=cov.session)
+            empty_room_bids_path = self._bids_path.find_empty_room()
+            raw = self._raw['raw'].load(empty_room_bids_path)
             covariance = cov.make(raw)
         if MNE_VERSION >= V1:
             covariance.save(dest, overwrite=True)
