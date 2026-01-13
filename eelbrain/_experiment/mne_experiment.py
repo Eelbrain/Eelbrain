@@ -1,6 +1,7 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Pipeline class to manage data from a experiment"""
 from collections import defaultdict
+import copy
 from datetime import datetime
 from glob import glob
 import inspect
@@ -12,7 +13,6 @@ from pathlib import Path
 import re
 import shutil
 import time
-import copy
 from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
 
 import numpy as np
