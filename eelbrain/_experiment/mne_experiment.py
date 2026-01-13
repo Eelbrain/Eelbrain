@@ -401,7 +401,7 @@ class Pipeline(FileTree):
         ignore_tasks = ignore_entities.get('ignore_tasks', [])
         if 'noise' not in ignore_tasks:
             ignore_entities['ignore_tasks'] = list(ignore_tasks) + ['noise']
-            
+
         self._subjects = tuple(get_entity_vals(root, 'subject', **ignore_entities))
         self._sessions = tuple(get_entity_vals(root, 'session', **ignore_entities))
         self._tasks = tuple(get_entity_vals(root, 'task', **ignore_entities))
