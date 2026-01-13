@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import shutil
 import time
+import copy
 from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -395,12 +396,18 @@ class Pipeline(FileTree):
             raise TypeError(f"{self.__class__.__name__}.auto_delete_results={self.auto_delete_results!r}")
 
         # BIDS entities
-        self._subjects = tuple(get_entity_vals(root, 'subject', **self.ignore_entities))
-        self._sessions = tuple(get_entity_vals(root, 'session', **self.ignore_entities))
-        self._tasks = tuple(get_entity_vals(root, 'task', **self.ignore_entities))
-        self._acquisitions = tuple(get_entity_vals(root, 'acquisition', **self.ignore_entities))
-        self._runs = tuple(get_entity_vals(root, 'run', **self.ignore_entities))
-        self._splits = tuple(get_entity_vals(root, 'split', **self.ignore_entities))
+        # ignore task `noise` by default
+        ignore_entities = copy.deepcopy(self.ignore_entities)
+        ignore_tasks = ignore_entities.get('ignore_tasks', [])
+        if 'noise' not in ignore_tasks:
+            ignore_entities['ignore_tasks'] = list(ignore_tasks) + ['noise']
+            
+        self._subjects = tuple(get_entity_vals(root, 'subject', **ignore_entities))
+        self._sessions = tuple(get_entity_vals(root, 'session', **ignore_entities))
+        self._tasks = tuple(get_entity_vals(root, 'task', **ignore_entities))
+        self._acquisitions = tuple(get_entity_vals(root, 'acquisition', **ignore_entities))
+        self._runs = tuple(get_entity_vals(root, 'run', **ignore_entities))
+        self._splits = tuple(get_entity_vals(root, 'split', **ignore_entities))
         if self.datatype is not None:
             if self.datatype not in ('meg', 'eeg'):
                 raise DefinitionError(f"`datatype` must be 'meg' or 'eeg', not {self.datatype!r}.")
