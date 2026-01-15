@@ -5,9 +5,9 @@ from os import remove
 import pytest
 from warnings import catch_warnings, filterwarnings
 
+import mne
 import numpy as np
 from numpy.testing import assert_almost_equal, assert_array_equal
-import mne
 
 from eelbrain import *
 from eelbrain.pipeline import *
