@@ -31,7 +31,7 @@ from .._text import enumeration
 from .._utils import ask, deprecate_kwarg, user_activity
 from ..mne_fixes import CaptureLog
 from ..mne_fixes._version import MNE_VERSION, V0_19, V0_24
-from .definitions import log_dict_change, tuple_arg, typed_arg
+from .definitions import list_arg, log_dict_change, tuple_arg, typed_arg
 from .exceptions import FileMissingError
 
 MNE_VERBOSITY = 'WARNING'
@@ -1119,10 +1119,10 @@ class RawReReference(CachedRawPipe):
     ):
         CachedRawPipe.__init__(self, source, cache)
         if not isinstance(reference, str):
-            reference = tuple_arg('reference', reference, allow_none=False)
+            reference = list_arg('reference', reference, allow_none=False)
         self.reference = reference
-        self.add = tuple_arg('add', add)
-        self.drop = tuple_arg('drop', drop)
+        self.add = list_arg('add', add)
+        self.drop = list_arg('drop', drop)
 
     def _make(
             self,
@@ -1133,14 +1133,14 @@ class RawReReference(CachedRawPipe):
         if self.add:
             with warnings.catch_warnings():
                 warnings.filterwarnings('ignore', 'The locations of multiple reference channels are ignored', module='mne')
-                raw = mne.add_reference_channels(raw, [*self.add], copy=False)
+                raw = mne.add_reference_channels(raw, self.add, copy=False)
             # apply new channel position
             pipe = self.source
             while not isinstance(pipe, RawSource):
                 pipe = pipe.source
             if pipe.montage:
                 raw.set_montage(pipe.montage)
-        raw.set_eeg_reference([*self.reference])
+        raw.set_eeg_reference(self.reference)
         if self.drop:
             raw = raw.drop_channels(self.drop)
         return raw
