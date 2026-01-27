@@ -318,6 +318,7 @@ def test_sample_tasks():
 
         raw = {
             'ica': RawICA('raw', ('sample1', 'sample2'), 'fastica', max_iter=1),
+            'av-ref': RawReReference('raw'),
             **SampleExperiment.raw,
         }
 
@@ -417,3 +418,23 @@ def test_sample_neuromag():
     e.make_epoch_selection(auto={'mag': 2e-12, 'grad': 5e-11, 'eeg': 1.5e-4})
     ds = e.load_selected_events(reject='keep')
     assert ds['accept'].sum() == 69
+
+
+@requires_mne_sample_data
+def test_sample_eeg():
+    set_log_level('warning', 'mne')
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, 2, 1, 1, pick='eeg')
+
+    class Experiment(Pipeline):
+
+        raw = {
+            'av-ref': RawReReference('raw'),
+        }
+
+    root = join(tempdir, 'SampleExperiment')
+    e = Experiment(root)
+
+    # average reference
+    raw = e.load_raw(raw='av-ref')

@@ -632,24 +632,37 @@ def setup_samples_experiment(
     root.mkdir()
     bids_path = BIDSPath(root=root)
 
+    if pick == 'eeg':
+        datatype = 'eeg'
+        format = 'BrainVision'
+    else:
+        datatype = 'meg'
+        format = 'FIF'
+
     for subject in subjects:
         for task in tasks:
             start, stop = segs.pop()
             raw_ = raw.copy().crop(start, stop)
             raw_.load_data()
-            if pick:
+            if pick == 'eeg':
+                raw_.pick_types(eeg=True, stim=True, exclude=[])
+            elif pick:
                 raw_.pick_types(pick, stim=True, exclude=[])
-            bids_path.update(subject=subject, task=task, datatype='meg')
+            bids_path.update(subject=subject, task=task, datatype=datatype)
             write_raw_bids(
                 raw=raw_,
                 bids_path=bids_path,
                 event_id=event_id,
                 overwrite=True,
                 allow_preload=True,
-                format='FIF',
+                format=format,
             )
-        bids_path.update(task='noise', suffix='meg', extension='.fif')
-        shutil.copy(emptyroom_fname, bids_path.fpath)
+        if datatype == 'meg':
+            bids_path.update(task='noise', suffix='meg', extension='.fif')
+            shutil.copy(emptyroom_fname, bids_path.fpath)
+
+    if datatype == 'eeg':
+        return
 
     # freesurfer
     mri_sdir = root / 'derivatives' / 'freesurfer'
