@@ -438,3 +438,4 @@ def test_sample_eeg():
 
     # average reference
     raw = e.load_raw(raw='av-ref')
+    assert raw.info['custom_ref_applied'] == True
