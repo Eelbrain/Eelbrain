@@ -346,6 +346,8 @@ def test_sample_tasks():
     e.make_bad_channels('MEG 0121')
     assert e.load_bad_channels() == ['MEG 0111', 'MEG 0121']
     # redo bad channels
+    e.make_bad_channels([], redo=True)
+    assert e.load_bad_channels() == []
     e.make_bad_channels('MEG 0111', redo=True)
     assert e.load_bad_channels() == ['MEG 0111']
 

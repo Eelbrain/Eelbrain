@@ -321,7 +321,8 @@ class RawSource(RawPipe):
         # write new bad channels
         if redo:
             mark_channels(path, ch_names='all', status='good', verbose=MNE_VERBOSITY)
-        mark_channels(path, ch_names=new_bads, status='bad', verbose=MNE_VERBOSITY)
+        if len(new_bads):
+            mark_channels(path, ch_names=new_bads, status='bad', verbose=MNE_VERBOSITY)
 
     def make_bad_channels_auto(
             self,
