@@ -277,8 +277,10 @@ class RawSource(RawPipe):
         bads_path = self._bads_path(path)
         if exists(bads_path):
             channels_df = pd.read_csv(bads_path, sep='\t')
-            if not {'name', 'status'}.issubset(channels_df.columns.tolist()):
-                raise RuntimeError(f"channels.tsv file at {bads_path} is missing required column 'name' or 'status'. Please delete the file and regenerate it.")
+            if 'status' not in channels_df.columns:
+                return []
+            elif 'name' not in channels_df.columns:
+                raise RuntimeError(f"channels.tsv file at {bads_path} is missing required column 'name'. Please regenerate the file.")
             return channels_df.query('status == "bad"')['name'].tolist()
         # create channels file
         self.log.info("No channels.tsv found for %s, creating an empty one.", path.fpath)
