@@ -455,7 +455,6 @@ class Pipeline(FileTree):
             'raw-dir': join('{root}', 'sub-{subject}', 'ses-{session}' if self._sessions else '', '{datatype}'),
             'deriv-dir': join('{root}', 'derivatives'),
 
-            'raw-file': join('{raw-dir}', '{raw_basename}_{suffix}{extension}'),
             # one ica-file for each task group
             'ica-file': join('{deriv-dir}', 'ica', '{epoch_basename}_raw-{raw}_ica.fif'),  # hard-coded in RawPipe
             'trans-file': join('{deriv-dir}', 'trans', '{subject_session}_trans.fif'),
@@ -2813,7 +2812,7 @@ class Pipeline(FileTree):
 
         # preload morph matrices
         morph_sources = {subject.removeprefix('sub-') for subject in from_subjects.values() if subject != common_brain}
-        source_morphs = {'sub-' + subject: self.load_source_morph(subject=subject) for subject in morph_sources}
+        source_morphs = {subject: self.load_source_morph(subject=subject) for subject in morph_sources}
 
         # convert evoked objects
         method, make_kw, apply_kw = self._inv_params()
@@ -6793,8 +6792,7 @@ class Pipeline(FileTree):
                     ica = self.load_ica()
                     rows.append((subject, ica.n_components_, len(ica.exclude)))
                 except FileMissingError:
-                    path = self._bids_path.copy()
-                    if all(source_pipe.mtime(path.update(task=task), False) for task in pipe.task):
+                    if all(source_pipe.mtime(self._bids_path.copy().update(task=task), False) for task in pipe.task):
                         rows.append((subject, "No ICA-file", -1))
                     else:
                         rows.append((subject, "No data", -1))
@@ -6994,8 +6992,6 @@ class Pipeline(FileTree):
         mri_list = []
         mrisubject_list = []
         raw_list = []
-        datatype = self.get('datatype')
-        suffix = self.get('suffix')
         for subject in self.iter():
             subject_list.append(subject)
             mrisubject_ = self.get('mrisubject')
@@ -7003,8 +6999,8 @@ class Pipeline(FileTree):
             if raw:
                 query = BIDSPath(
                     subject=subject,
-                    datatype=datatype,
-                    suffix=suffix,
+                    datatype='meg',
+                    suffix='meg',
                     root=self.get('root'),
                 )
                 matches = query.match()
@@ -7030,7 +7026,7 @@ class Pipeline(FileTree):
         if mrisubject:
             ds['mrisubject'] = Factor(mrisubject_list)
         if raw:
-            ds['raw_files'] = Factor(raw_list)
+            ds['raw files'] = Factor(raw_list)
 
         if asds:
             return ds
@@ -7044,7 +7040,7 @@ class Pipeline(FileTree):
         --------
         show_tree: show complete tree (including secondary, optional and cache)
         """
-        return self.show_tree(fields=['raw-file', 'trans-file', 'mri-dir'])
+        return self.show_tree(fields=['raw-dir', 'trans-file', 'mri-dir'])
 
     def _surfer_plot_kwargs(self, surf=None, views=None, foreground=None, background=None, smoothing_steps=None, hemi=None):
         out = self._brain_plot_defaults.copy()
