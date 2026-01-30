@@ -271,14 +271,10 @@ def sequence_arg(
     if arg is None:
         if allow_none:
             return None
-        else:
-            raise TypeError(f"{name}={arg!r}: expected sequence of {item_type.__name__}")
     elif isinstance(arg, item_type):
         return sequence_type((arg,))
     elif isinstance(arg, Sequence):
         out = sequence_type(arg)
-    else:
-        raise TypeError(f"{name}={arg!r}: expected sequence of {item_type.__name__}")
-    if not all(isinstance(item, item_type) for item in out):
-        raise TypeError(f"{name}={arg!r}: expected sequence of {item_type.__name__}")
-    return out
+        if all(isinstance(item, item_type) for item in out):
+            return out
+    raise TypeError(f"{name}={arg!r}: expected sequence of {item_type.__name__}")
