@@ -48,7 +48,7 @@ from .._utils import IS_WINDOWS, ask, intervals, subp, keydefaultdict, log_level
 from .._utils.mne_utils import fix_annot_names, is_fake_mri
 from .._utils.notebooks import tqdm
 from .covariance import EpochCovariance, RawCovariance
-from .definitions import FieldCode, find_dependent_epochs, find_epochs_vars, log_dict_change, log_list_change, tuple_arg
+from .definitions import FieldCode, find_dependent_epochs, find_epochs_vars, log_dict_change, log_list_change, sequence_arg
 from .epochs import ContinuousEpoch, PrimaryEpoch, SecondaryEpoch, SuperEpoch, EpochBase, EpochCollection, assemble_epochs, decim_param
 from .exceptions import FileMissingError
 from .experiment import FileTree
@@ -755,7 +755,7 @@ class Pipeline(FileTree):
         # collect input file information
         # ==============================
         events = {}  # {(subject, recording): event_dataset}
-        self._stim_channel = tuple_arg(f'{self.__class__.__name__}.stim_channel', self.stim_channel)
+        self._stim_channel = sequence_arg(f'{self.__class__.__name__}.stim_channel', self.stim_channel)
 
         # saved mtimes
         input_state_file = join(cache_dir, 'input-state.pickle')

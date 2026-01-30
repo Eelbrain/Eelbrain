@@ -261,45 +261,24 @@ def typed_arg(arg, type_, secondary_type=None):
         return type_(arg)
 
 
-def list_arg(
+def sequence_arg(
         name: str,  # for error message
         arg: Sequence,
         item_type: Type = str,
         allow_none: bool = True,
+        sequence_type: Type = tuple,
 ):
     if arg is None:
         if allow_none:
             return None
         else:
-            raise TypeError(f"{name}={arg!r}")
+            raise TypeError(f"{name}={arg!r}: expected sequence of {item_type.__name__}")
     elif isinstance(arg, item_type):
-        return [arg]
-    elif isinstance(arg, list):
-        out = arg
+        return sequence_type((arg,))
+    elif isinstance(arg, Sequence):
+        out = sequence_type(arg)
     else:
-        out = list(arg)
+        raise TypeError(f"{name}={arg!r}: expected sequence of {item_type.__name__}")
     if not all(isinstance(item, item_type) for item in out):
-        raise TypeError(f"{name}={arg!r}: sequence of {item_type.__name__} required")
-    return out
-
-
-def tuple_arg(
-        name: str,  # for error message
-        arg: Sequence,
-        item_type: Type = str,
-        allow_none: bool = True,
-):
-    if arg is None:
-        if allow_none:
-            return None
-        else:
-            raise TypeError(f"{name}={arg!r}")
-    elif isinstance(arg, item_type):
-        return arg,
-    elif isinstance(arg, tuple):
-        out = arg
-    else:
-        out = tuple(arg)
-    if not all(isinstance(item, item_type) for item in out):
-        raise TypeError(f"{name}={arg!r}: sequence of {item_type.__name__} required")
+        raise TypeError(f"{name}={arg!r}: expected sequence of {item_type.__name__}")
     return out

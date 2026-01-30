@@ -6,7 +6,7 @@ from typing import Sequence, Union
 import mne
 
 from .._mne import combination_label, labels_from_mni_coords, rename_label, dissolve_label
-from .definitions import DefinitionError, Definition, tuple_arg
+from .definitions import DefinitionError, Definition, sequence_arg
 
 
 SEEDED_PARC_RE = re.compile(r'^(.+)-(\d+)$')
@@ -90,7 +90,7 @@ class SubParc(Parcellation):
     ):
         Parcellation.__init__(self, views)
         self.base = base
-        self.labels = tuple_arg('labels', labels)
+        self.labels = sequence_arg('labels', labels)
 
     def _make(self, e, parc):
         with e._temporary_state:
@@ -314,7 +314,7 @@ class LabelParc(Parcellation):
             views: Union[str, Sequence[str]] = None,
     ):
         Parcellation.__init__(self, views)
-        self.labels = tuple_arg('labels', labels)
+        self.labels = sequence_arg('labels', labels)
 
     def _make(self, e, parc):
         labels = []
