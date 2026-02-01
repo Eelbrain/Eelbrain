@@ -9,7 +9,11 @@ jobs:
     strategy:
       max-parallel: 5
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            python: "3.10"  # Lowest version supported on conda-forge
+          - os: macos-latest
+            python: "3.12"
 
     steps:
     - uses: actions/checkout@v4
