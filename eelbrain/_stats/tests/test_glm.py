@@ -12,7 +12,7 @@ from eelbrain._exceptions import IncompleteModelError
 from eelbrain._stats import glm
 from eelbrain._stats.permutation import permute_order
 from eelbrain._utils.r_bridge import r, r_require, r_warning_filter
-from eelbrain.testing import assert_fmtxt_str_equals, requires_r_ez, file_path
+from eelbrain.testing import assert_fmtxt_str_equals, file_path
 
 
 def assert_f_test_equal(f_test, r_res, r_row, f_lmf, f_nd, r_kind='aov'):
@@ -133,7 +133,6 @@ def test_anova():
         test.ANOVA('fltvar', ds['A'] * Factor(ds['B'] == 'b1'), data=ds)
 
 
-@requires_r_ez
 def test_anova_eq():
     "Test ANOVA against r-ez"
     r_require('ez')

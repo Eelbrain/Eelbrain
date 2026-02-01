@@ -210,18 +210,6 @@ def requires_mne_testing_data(function):
         return pytest.mark.skip('mne testing data unavailable')(function)
 
 
-def requires_r_ez(function):
-    from .._utils.r_bridge import r, r_warning_filter
-
-    with r_warning_filter:
-        success = r('require(ez)')[0]
-
-    if success:
-        return function
-    else:
-        return pytest.mark.skip('r-ez unavailable')(function)
-
-
 def skip_on_windows(function):
     if os.name == 'nt':
         return pytest.mark.skip('Test disabled on Windows')(function)

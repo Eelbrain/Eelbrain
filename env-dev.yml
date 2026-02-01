@@ -1,11 +1,10 @@
 # Environment for development
-# usage: $ conda env create --file=env-dev.yml
-# to run stats test, install r-ez with $ conda install -c ncil r-ez --no-deps
+# usage: $ mamba env create --file=env-dev.yml
 name: eeldev
 channels:
 - conda-forge
 dependencies:
-- python >= 3.8
+- python >= 3.10
 # packaging
 - pip
 - packaging
@@ -55,7 +54,7 @@ dependencies:
 # testing of R integration
 - rpy2 < 3.6.1
 - r-car
-# - r-ez  # requires ncil channel
+- r-ez
 # plotting brains
 - nibabel >= 2.5
 - mayavi >= 4.6.2  # conda-forge pinning faulty
