@@ -589,8 +589,8 @@ class Pipeline(FileTree):
         self._raw = assemble_pipeline(
             { 'raw': RawSource(), **self.raw },
             self._tasks,
-            join(root, 'derivatives', 'eelbrain', 'cache', 'raw', self._templates['subject_session'], f'{self._templates['raw_basename']}_raw-{{raw}}.fif'),
-            join(root, 'derivatives', 'ica', f'{self._templates['epoch_basename']}_raw-{{raw}}_ica.fif'),
+            join(root, 'derivatives', 'eelbrain', 'cache', 'raw', self._templates['subject_session'], f"{self._templates['raw_basename']}_raw-{{raw}}.fif"),
+            join(root, 'derivatives', 'ica', f"{self._templates['epoch_basename']}_raw-{{raw}}_ica.fif"),
             log,
         )
         raw_pipe: RawSource = self._raw['raw']
