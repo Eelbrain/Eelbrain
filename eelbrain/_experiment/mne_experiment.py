@@ -313,7 +313,7 @@ class Pipeline(FileTree):
     # MRI subject names: {subject: mrisubject} mappings
     # selected with e.set(mri=dict_name)
     # default is identity (mrisubject = subject)
-    mri_subjects = {'': keydefaultdict(lambda s: 'sub-' + s)}
+    mri_subjects = {'': keydefaultdict(lambda s: s)}
 
     # Parcellations
     __parcs = {
@@ -1618,6 +1618,7 @@ class Pipeline(FileTree):
             common_brain = self.get('common_brain')
             if common_brain and (not exclude or common_brain not in exclude):
                 mrisubjects.insert(0, common_brain)
+            mrisubjects = ['sub-' + s for s in mrisubjects if s != common_brain]
             return mrisubjects
         else:
             return FileTree.get_field_values(self, field, exclude)
@@ -6443,7 +6444,10 @@ class Pipeline(FileTree):
         mri = fields['mri']
         if subject == '*' or mri == '*':
             return '*'
-        return self._mri_subjects[mri][subject]
+        mrisubject = self._mri_subjects[mri][subject]
+        if mrisubject == self.get('common_brain'):
+            return mrisubject
+        return 'sub-' + mrisubject
 
     def _update_task(self, fields):
         epoch = fields['epoch']
