@@ -548,6 +548,7 @@ def setup_samples_experiment(
         n_subjects: int = 3,
         n_tasks: int = 1,
         n_segments: int = 4,
+        mris: bool = False,
         name: str = 'SampleExperiment',
         pick: str = 'mag',
 ):
@@ -562,19 +563,15 @@ def setup_samples_experiment(
         created within ``dst``.
     n_subjects
         Number of subjects.
+    n_tasks
+        Number of tasks per subject.
     n_segments
         Number of data segments to include in each file.
-    n_sessions
-        Number of sessions.
-    n_visits
-        Number of visits.
+    mris
+        Set up MRIs.
     name
         Name for the directory for the new experiment (default
         ``'SampleExperiment'``).
-    mris
-        Set up MRIs.
-    mris_only
-        Only create MRIs, skip MEG data (add MRIs to existing experiment data).
     pick
         Pick a certain channel type (``''`` to copy all channels).
     """
@@ -663,6 +660,8 @@ def setup_samples_experiment(
     if datatype == 'eeg':
         return
 
+    if not mris:
+        return
     # freesurfer
     mri_sdir = root / 'derivatives' / 'freesurfer'
     mri_sdir.mkdir(parents=True)
