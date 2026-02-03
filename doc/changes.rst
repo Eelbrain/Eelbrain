@@ -9,12 +9,13 @@ Known issues
 
 Check for open issues, or report new ones on `GitHub <https://github.com/Eelbrain/Eelbrain/issues>`_.
 
-* Fixed in **0.38.3**, Windows only (`#52 <https://github.com/Eelbrain/Eelbrain/issues/52>`_): due to unexpected data loss in :class:`multiprocessing.sharedctypes.RawArray` for large arrays, permutation tests on large datasets using multiprocessing could return spurious results in which *p*-values for *all* clusters were reported as exactly 0.
+* If using WSL (Windows Subsystem for Linux), please store your dataset on the Linux filesystem (e.g., under ``/home/username/...``) instead of the Windows filesystem (e.g., ``/mnt/c/...``) to avoid its slow cross-OS file access.
+
 
 Issues on prior versions
 -----------
 
-* If using WSL (Windows Subsystem for Linux), please store your dataset on the Linux filesystem (e.g., under ``/home/username/...``) instead of the Windows filesystem (e.g., ``/mnt/c/...``) to avoid its slow cross-OS file access.
+* Fixed in **0.38.3**, Windows only (`#52 <https://github.com/Eelbrain/Eelbrain/issues/52>`_): due to unexpected data loss in :class:`multiprocessing.sharedctypes.RawArray` for large arrays, permutation tests on large datasets using multiprocessing could return spurious results in which *p*-values for *all* clusters were reported as exactly 0.
 
 
 Major changes
