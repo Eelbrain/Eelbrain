@@ -71,6 +71,8 @@ The pipeline expects input dataset in `BIDS (Brain Imaging Data Structure) <http
     derivatives root                     /derivatives
     trans file                              /trans/sub-{subject}_ses-{session}_{datatype}_trans.fif
     FreeSurfer SUBJECTS_DIR                 /freesurfer
+    mri for each subject                       /sub-{subject}
+    mri for template brain                     /fsaverage
     Eelbrain generated files                /eelbrain
 
 
@@ -81,7 +83,7 @@ The pipeline expects input dataset in `BIDS (Brain Imaging Data Structure) <http
 ``{subject}``, ``{session}``, ``{task}`` and ``{run}`` are `BIDS entities <https://bids-specification.readthedocs.io/en/stable/appendices/entities.html>`_. ``{session}`` and ``{run}`` are optional. ``{datatype}`` is inferred by the pipeline from the data files, and can be ``'meg'`` or ``'eeg'``.
 
 
-``MRI`` files (including ``trans-file``) are optional and only needed for source localization. The ``{root}/derivatives/freesurfer`` directory is `FreeSurfer <https://surfer.nmr.mgh.harvard.edu>`_ subject directory. They either contain the files created by FreeSurfer's `recon-all <https://surfer.nmr.mgh.harvard.edu/fswiki/recon-all>`_ command, or are created by the MNE-Python coregistration utility for scaled template brains. (Note that the pipeline doesn't use the NIfTI format that BIDS specifies.) A corresponding ``trans-file`` is created with the MNE-Python coregistration utility in either case (see more information on using `structural MRIs <https://github.com/Eelbrain/Eelbrain/wiki/Coregistration%3A-Structural-MRI>`_ or the `fsaverage template brain <https://github.com/Eelbrain/Eelbrain/wiki/Coregistration%3A-Template-Brain>`_).
+``MRI`` files (including ``trans-file``) are optional and only needed for source localization. The ``{root}/derivatives/freesurfer`` directory is `FreeSurfer <https://surfer.nmr.mgh.harvard.edu>`_ subject directory. They either contain the files created by FreeSurfer's `recon-all <https://surfer.nmr.mgh.harvard.edu/fswiki/recon-all>`_ command, or are created by the MNE-Python coregistration utility for scaled template brains. An ``fsaverage`` folder can be used to store the template brain. Note that the pipeline doesn't use the NIfTI format that BIDS specifies. A corresponding ``trans-file`` is created with the MNE-Python coregistration utility in either case (see more information on using `structural MRIs <https://github.com/Eelbrain/Eelbrain/wiki/Coregistration%3A-Structural-MRI>`_ or the `fsaverage template brain <https://github.com/Eelbrain/Eelbrain/wiki/Coregistration%3A-Template-Brain>`_).
 
 
 A BIDS dataset can be scanned by initializing a :class:`Pipeline` with the data ``{root}`` location, for example::
@@ -454,6 +456,22 @@ Exclude certain entities from the experiment, e.g.::
     ignore_entities = {
         'subject': ['S666', 'S999'],
         'session': ['emptyroom'],
+    }
+
+.. py:attribute:: Pipeline.mri_subjects
+   :type: Dict[str, Dict[str, str]]
+
+Map MEG/EEG subjects to FreeSurfer MRI subjects. Keys in ``mri_subjects`` are names for different mappings and correspond to values of the :ref:`state parameter <state-parameters>` ``mri``; the inner dictionaries map :ref:`state-subject` values to MRI subject names (i.e., directory names under ``{root}/derivatives/freesurfer``). By default, an identity mapping is used (each subject uses their own MRI directory), but custom mappings can be defined, for example to let several subjects share a template brain or to point to individually scaled MRI subjects, e.g.::
+
+    mri_subjects = {
+        '': {  # default identity mapping
+            'S001': 'S001',
+            'S002': 'S002',
+        },
+        'fsaverage': {  # all subjects use the template brain
+            'S001': 'fsaverage',
+            'S002': 'fsaverage',
+        },
     }
 
 .. .. py:attribute:: Pipeline.datatype
