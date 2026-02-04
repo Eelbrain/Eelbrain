@@ -96,6 +96,7 @@ Assuming a subject without explicit ``{session}`` is named "S001", the pipeline 
 - The raw data file at ``~/Data/Experiment/sub-S001/meg/sub-S001_task-words_meg.fif``
 - The trans-file from the coregistration at ``~/Data/Experiment/derivatives/trans/sub-S001_meg_trans.fif``
 - The FreeSurfer MRI-directory at ``~/Data/Experiment/derivatives/freesurfer/sub-S001``
+- The template brain MRI-directory at ``~/Data/Experiment/derivatives/freesurfer/fsaverage``
 
 The setup can be tested using :meth:`Pipeline.show_subjects`, which shows a list of the subjects and corresponding MRIs that were discovered::
 
