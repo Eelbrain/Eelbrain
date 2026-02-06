@@ -92,7 +92,7 @@ LOG_FILE = join('{root}', 'derivatives', 'eelbrain', 'eelbrain {name}.log')
 LOG_FILE_OLD = join('{root}', '.eelbrain.log')
 
 # Allowable parameters
-COV_PARAMS = {'epoch', 'session', 'method', 'reg', 'keep_sample_mean', 'reg_eval_win_pad'}
+COV_PARAMS = {'epoch', 'method', 'reg', 'keep_sample_mean', 'reg_eval_win_pad'}
 INV_METHODS = ('MNE', 'dSPM', 'sLORETA', 'eLORETA', 'champ')
 SRC_RE = re.compile(r'^(ico|vol)-(\d+)(?:-(cortex|brainstem))?$')
 inv_re = re.compile(r"^(free|fixed|loose\.\d+|vec)"  # orientation constraint
@@ -306,7 +306,7 @@ class Pipeline(FileTree):
         'bestreg': EpochCovariance('cov', 'best'),
         'reg': EpochCovariance('cov', 'diagonal_fixed'),
         'noreg': EpochCovariance('cov', 'empirical'),
-        'emptyroom': RawCovariance('noise'),
+        'emptyroom': RawCovariance(),
         'ad_hoc': RawCovariance(method='ad_hoc'),
     }
 
@@ -619,13 +619,6 @@ class Pipeline(FileTree):
             else:
                 raise ValueError(f"kind={params['kind']!r} in artifact_rejection {name!r}")
         self._artifact_rejection = artifact_rejection
-
-        # noise covariance
-        for key, cov in self._covs.items():
-            cov.key = key
-            if isinstance(cov, RawCovariance) and cov.session is None:
-                # TODO: change `cov.session`
-                cov.session = self._tasks[0]
 
         # parcellations
         # make : can be made if non-existent
