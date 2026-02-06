@@ -308,10 +308,7 @@ To reject trials based on a pre-determined threshold, a loop can be used::
 Empty room noise covariance
 ---------------------------
 
-To use empty room data for estimating the noise covariance, follow these steps:
-
- - Put an empty room recording in each subject's MEG directory, just like the other MEG files, with task name ``noise``. If you want to use the same empty room file for all subjects you can make links instead of copies to save space.
- - Use the empty room covariance though :ref:`state-cov` with ``e.set(cov='emptyroom')``
+To use empty room data for estimating the noise covariance, follow `instruction in BIDS specification <https://bids-specification.readthedocs.io/en/stable/modality-specific-files/magnetoencephalography.html#empty-room-meg-recordings>`_
 
 
 .. _Pipeline-intro-analysis:
