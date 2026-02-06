@@ -1,7 +1,6 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Pipeline class to manage data from a experiment"""
 from collections import defaultdict
-import copy
 from datetime import datetime
 from glob import glob
 import inspect
@@ -306,7 +305,7 @@ class Pipeline(FileTree):
         'bestreg': EpochCovariance('cov', 'best'),
         'reg': EpochCovariance('cov', 'diagonal_fixed'),
         'noreg': EpochCovariance('cov', 'empirical'),
-        'emptyroom': RawCovariance('emptyroom'),
+        'emptyroom': RawCovariance('noise'),
         'ad_hoc': RawCovariance(method='ad_hoc'),
     }
 
@@ -396,18 +395,12 @@ class Pipeline(FileTree):
             raise TypeError(f"{self.__class__.__name__}.auto_delete_results={self.auto_delete_results!r}")
 
         # BIDS entities
-        # ignore task `noise` by default
-        ignore_entities = copy.deepcopy(self.ignore_entities)
-        ignore_tasks = ignore_entities.get('ignore_tasks', [])
-        if 'noise' not in ignore_tasks:
-            ignore_entities['ignore_tasks'] = list(ignore_tasks) + ['noise']
-
-        self._subjects = tuple(get_entity_vals(root, 'subject', **ignore_entities))
-        self._sessions = tuple(get_entity_vals(root, 'session', **ignore_entities))
-        self._tasks = tuple(get_entity_vals(root, 'task', **ignore_entities))
-        self._acquisitions = tuple(get_entity_vals(root, 'acquisition', **ignore_entities))
-        self._runs = tuple(get_entity_vals(root, 'run', **ignore_entities))
-        self._splits = tuple(get_entity_vals(root, 'split', **ignore_entities))
+        self._subjects = tuple(get_entity_vals(root, 'subject', **self.ignore_entities))
+        self._sessions = tuple(get_entity_vals(root, 'session', **self.ignore_entities))
+        self._tasks = tuple(get_entity_vals(root, 'task', **self.ignore_entities))
+        self._acquisitions = tuple(get_entity_vals(root, 'acquisition', **self.ignore_entities))
+        self._runs = tuple(get_entity_vals(root, 'run', **self.ignore_entities))
+        self._splits = tuple(get_entity_vals(root, 'split', **self.ignore_entities))
         if self.datatype is not None:
             if self.datatype not in ('meg', 'eeg'):
                 raise DefinitionError(f"`datatype` must be 'meg' or 'eeg', not {self.datatype!r}.")
@@ -1275,8 +1268,9 @@ class Pipeline(FileTree):
                 self.set(epoch=cov.epoch)
                 return self._epochs_mtime()
             elif isinstance(cov, RawCovariance):
-                self.set(task=cov.session)
-                return self._raw_mtime()
+                empty_room_bids_path = self._bids_path.find_empty_room()
+                pipe = self._raw['raw']
+                return pipe.mtime(empty_room_bids_path, bad_chs=True)
             else:
                 raise TypeError(f"{cov=}")
 

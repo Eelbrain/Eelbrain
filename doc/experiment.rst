@@ -310,7 +310,7 @@ Empty room noise covariance
 
 To use empty room data for estimating the noise covariance, follow these steps:
 
- - Put an empty room recording in each subject's MEG directory, just like the other MEG files, with task name ``emptyroom``. If you want to use the same empty room file for all subjects you can make links instead of copies to save space.
+ - Put an empty room recording in each subject's MEG directory, just like the other MEG files, with task name ``noise``. If you want to use the same empty room file for all subjects you can make links instead of copies to save space.
  - Use the empty room covariance though :ref:`state-cov` with ``e.set(cov='emptyroom')``
 
 
@@ -456,7 +456,7 @@ Exclude certain entities from the experiment, e.g.::
 
     ignore_entities = {
         'subject': ['S666', 'S999'],
-        'session': ['emptyroom'],
+        'session': ['02'],
     }
 
 .. py:attribute:: Pipeline.mri_subjects
