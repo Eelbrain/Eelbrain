@@ -697,9 +697,6 @@ class RawICA(CachedRawPipe):
     Use :meth:`Pipeline.make_ica_selection` for each subject to
     select ICA components that should be removed. The arguments to that function
     determine what data is used to visualize the component time courses.
-    For example, to determine which components load strongly on empty room data,
-    use ``e.make_ica_selection(task='noise')`` (assuming an
-    ``'noise'`` task is present).
 
     This step merges bad channels from all tasks.
 

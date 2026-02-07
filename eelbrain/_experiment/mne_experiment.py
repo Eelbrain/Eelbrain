@@ -1270,7 +1270,7 @@ class Pipeline(FileTree):
                 return self._epochs_mtime()
             elif isinstance(cov, RawCovariance):
                 empty_room_bids_path = self._bids_path.find_empty_room()
-                pipe = self._raw['raw']
+                pipe = self._raw[self.get('raw')]
                 return pipe.mtime(empty_room_bids_path, bad_chs=True)
             else:
                 raise TypeError(f"{cov=}")
@@ -1874,21 +1874,26 @@ class Pipeline(FileTree):
         self.make_annot(**state)
         return mne.read_labels_from_annot(self.get('mrisubject'), self.get('parc'), 'both', subjects_dir=self.get('mri-sdir'))
 
-    def load_bad_channels(self, **kwargs):
+    def load_bad_channels(self, noise: bool = False, **kwargs):
         """Load bad channels
 
         Parameters
         ----------
+        noise
+            Load bad channels for noise empty-room recording instead of the subject recording.
         ...
             State parameters.
 
         Returns
         -------
         bad_chs : list of str
-            Bad chnnels.
+            Bad channels.
         """
         pipe = self._raw[self.get('raw', **kwargs)]
-        return pipe.load_bad_channels(self._bids_path)
+        bids_path = self._bids_path
+        if noise:
+            bids_path = bids_path.find_empty_room()
+        return pipe.load_bad_channels(bids_path)
 
     def _load_bem(self):
         subject = self.get('mrisubject')
@@ -3271,6 +3276,7 @@ class Pipeline(FileTree):
             decim: int = None,
             tstart: float = None,
             tstop: float = None,
+            noise: bool = False,
             **kwargs,
     ) -> Union[mne.io.Raw, NDVar]:
         """
@@ -3296,13 +3302,18 @@ class Pipeline(FileTree):
             the ``tstart`` will be set to ``t = 0``.
         tstop
             Crop the raw data.
+        noise
+            Load corresponding empty-room data instead of current subject's raw data (default ``False``).
         ...
             Applicable :ref:`state-parameters`:
 
              - :ref:`state-raw`: preprocessing pipeline
         """
         pipe = self._raw[self.get('raw', **kwargs)]
-        raw = pipe.load(self._bids_path, add_bads)
+        bids_path = self._bids_path
+        if noise:
+            bids_path = bids_path.find_empty_room()
+        raw = pipe.load(bids_path, add_bads)
         if decim and decim > 1:
             assert samplingrate is None, "samplingrate and decim can't both be specified"
             samplingrate = int(round(raw.info['sfreq'] / decim))
@@ -4035,7 +4046,7 @@ class Pipeline(FileTree):
         labels = parc_def._make(self, parc)
         write_labels_to_annot(labels, mrisubject, parc, True, self.get('mri-sdir'))
 
-    def make_bad_channels(self, bad_chs=(), redo=False, **kwargs):
+    def make_bad_channels(self, bad_chs=(), redo=False, noise=False, **kwargs):
         """Write the bad channel definition file for a raw file
 
         If the file already exists, new bad channels are added to the old ones.
@@ -4050,6 +4061,8 @@ class Pipeline(FileTree):
             in the raw data, a ValueError is raised.
         redo : bool
             If the file already exists, replace it (instead of adding).
+        noise : bool
+            If True, make bad channels for the empty-room recording instead of the current subject's recording.
         ...
             State parameters.
 
@@ -4060,9 +4073,12 @@ class Pipeline(FileTree):
         merge_bad_channels : merge bad channel definitions for all tasks
         """
         pipe = self._raw[self.get('raw', **kwargs)]
-        pipe.make_bad_channels(self._bids_path, bad_chs, redo=redo)
+        bids_path = self._bids_path
+        if noise:
+            bids_path = bids_path.find_empty_room()
+        pipe.make_bad_channels(bids_path, bad_chs, redo=redo)
 
-    def make_bad_channels_auto(self, flat=None, redo=False, **state):
+    def make_bad_channels_auto(self, flat=None, redo=False, noise=False, **state):
         """Automatically detect bad channels
 
         Works on ``raw='raw'``
@@ -4074,13 +4090,18 @@ class Pipeline(FileTree):
             are considered bad (default 1e-14 for MEG and 0 for EEG).
         redo : bool
             If the file already exists, replace it (instead of adding).
+        noise : bool
+            If True, make bad channels for the empty-room recording instead of the current subject's recording.
         ...
             State parameters.
         """
         if state:
             self.set(**state)
         pipe = self._raw['raw']
-        pipe.make_bad_channels_auto(self._bids_path, flat, redo=redo)
+        bids_path = self._bids_path
+        if noise:
+            bids_path = bids_path.find_empty_room()
+        pipe.make_bad_channels_auto(bids_path, flat, redo=redo)
 
     def make_bad_channels_neighbor_correlation(
             self,
@@ -4209,7 +4230,7 @@ class Pipeline(FileTree):
             covariance = cov.make(ds['epochs'], log_path)
         else:
             empty_room_bids_path = self._bids_path.find_empty_room()
-            raw = self._raw['raw'].load(empty_room_bids_path)
+            raw = self._raw[self.get('raw')].load(empty_room_bids_path)
             covariance = cov.make(raw)
         if MNE_VERSION >= V1:
             covariance.save(dest, overwrite=True)

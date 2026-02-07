@@ -48,7 +48,7 @@ def test_sample():
 
     # covariance
     with e._temporary_state:
-        e.set(cov='emptyroom')
+        e.set(cov='emptyroom', raw='raw')
         cov = e.load_cov()
         assert isinstance(cov, mne.Covariance)
 
