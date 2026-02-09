@@ -57,6 +57,7 @@ def test_sample():
         cov = e.load_cov()
         assert isinstance(cov, mne.Covariance)
         assert e.load_bad_channels(noise=True) == []
+        e.load_cov()
 
     # evoked cache invalidated by change in bads
     e.set('R0001', rej='', epoch='target')
