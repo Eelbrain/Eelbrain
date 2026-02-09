@@ -24,7 +24,14 @@ def test_sample():
     datasets.setup_samples_experiment(tempdir, n_subjects=3, n_segments=2, mris=True)
 
     root = join(tempdir, 'SampleExperiment')
-    e = SampleExperiment(root)
+
+    class Experiment(SampleExperiment):
+        raw = {
+            'noise-tsss': RawMaxwell('raw', st_duration=10., ignore_ref=True, st_correlation=.9, st_only=True, st_overlap=False, coord_frame='meg'),
+            'noise-1-40': RawFilter('noise-tsss', 1, 40),
+            **SampleExperiment.raw,
+        }
+    e = Experiment(root)
 
     assert e.get('raw') == '1-40'
     assert e.get('subject') == 'R0000'
@@ -48,9 +55,14 @@ def test_sample():
 
     # covariance
     with e._temporary_state:
-        e.set(cov='emptyroom', raw='raw')
+        e.set(cov='emptyroom', raw='noise-tsss')
         cov = e.load_cov()
         assert isinstance(cov, mne.Covariance)
+        assert e.load_bad_channels(noise=True) == []
+        e.set(cov='emptyroom', raw='noise-1-40')
+        cov = e.load_cov()
+        assert isinstance(cov, mne.Covariance)
+        assert e.load_bad_channels(noise=True) == []
 
     # evoked cache invalidated by change in bads
     e.set('R0001', rej='', epoch='target')

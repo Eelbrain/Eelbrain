@@ -595,6 +595,12 @@ def setup_samples_experiment(
     raw.info['bads'] = []
     sfreq = raw.info['sfreq']
 
+    # read emptyroom raw
+    emptyroom_raw = mne.io.read_raw_fif(emptyroom_fname)
+    emptyroom_raw.info['line_freq'] = 60
+    emptyroom_raw.info['bads'] = []
+    sfreq = emptyroom_raw.info['sfreq']
+
     # segmentation
     n_recordings = n_subjects * n_tasks
     events = mne.find_events(raw)
@@ -655,7 +661,13 @@ def setup_samples_experiment(
             )
         if datatype == 'meg':
             bids_path.update(task='noise', suffix='meg', extension='.fif')
-            shutil.copy(emptyroom_fname, bids_path.fpath)
+            write_raw_bids(
+                raw=emptyroom_raw,
+                bids_path=bids_path,
+                overwrite=True,
+                allow_preload=True,
+                format=format,
+            )
 
     if datatype == 'eeg':
         return
