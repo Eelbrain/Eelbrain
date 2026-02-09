@@ -25,13 +25,7 @@ def test_sample():
 
     root = join(tempdir, 'SampleExperiment')
 
-    class Experiment(SampleExperiment):
-        raw = {
-            'noise-tsss': RawMaxwell('raw', st_duration=10., ignore_ref=True, st_correlation=.9, st_only=True, st_overlap=False, coord_frame='meg'),
-            'noise-1-40': RawFilter('noise-tsss', 1, 40),
-            **SampleExperiment.raw,
-        }
-    e = Experiment(root)
+    e = SampleExperiment(root)
 
     assert e.get('raw') == '1-40'
     assert e.get('subject') == 'R0000'
@@ -55,11 +49,11 @@ def test_sample():
 
     # covariance
     with e._temporary_state:
-        e.set(cov='emptyroom', raw='noise-tsss')
+        e.set(cov='emptyroom', raw='tsss')
         cov = e.load_cov()
         assert isinstance(cov, mne.Covariance)
         assert e.load_bad_channels(noise=True) == []
-        e.set(cov='emptyroom', raw='noise-1-40')
+        e.set(cov='emptyroom', raw='1-40')
         cov = e.load_cov()
         assert isinstance(cov, mne.Covariance)
         assert e.load_bad_channels(noise=True) == []

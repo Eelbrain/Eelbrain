@@ -983,7 +983,7 @@ class RawApplyICA(CachedRawPipe):
 
 
 class RawMaxwell(CachedRawPipe):
-    """Maxwell filter raw pipe
+    """Maxwell filter raw pipe. For empty room recordings, there is no `dev_head_t` information, `coord_frame = 'meg'` will be used automatically.
 
     Parameters
     ----------
@@ -1018,7 +1018,8 @@ class RawMaxwell(CachedRawPipe):
         raw = self.source.load(path)
         self.log.info("Raw %s: computing Maxwell filter for %s", self.name, path.fpath)
         with user_activity:
-            return mne.preprocessing.maxwell_filter(raw, bad_condition=self.bad_condition, verbose=MNE_VERBOSITY, **self.kwargs)
+            coord_frame = 'head' if raw.info['dev_head_t'] else 'meg'
+            return mne.preprocessing.maxwell_filter(raw, bad_condition=self.bad_condition, coord_frame=coord_frame, verbose=MNE_VERBOSITY, **self.kwargs)
 
     def _as_dict(self, args: Sequence[str] = ()) -> dict:
         return CachedRawPipe._as_dict(self, [*args, 'kwargs'])
