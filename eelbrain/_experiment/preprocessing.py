@@ -1018,7 +1018,7 @@ class RawMaxwell(CachedRawPipe):
         raw = self.source.load(path)
         self.log.info("Raw %s: computing Maxwell filter for %s", self.name, path.fpath)
         with user_activity:
-            coord_frame = 'head' if raw.info['dev_head_t'] else 'meg'
+            coord_frame = 'meg' if path.task == 'noise' else 'head'
             return mne.preprocessing.maxwell_filter(raw, bad_condition=self.bad_condition, coord_frame=coord_frame, verbose=MNE_VERBOSITY, **self.kwargs)
 
     def _as_dict(self, args: Sequence[str] = ()) -> dict:
