@@ -796,6 +796,8 @@ class Pipeline(FileTree):
                     if self.check_raw_mtime:
                         log.debug("Raw file missing: %s", self._bids_path.fpath)
                     continue
+                # bad channels
+                self.make_bad_channels_auto()
                 # events
                 events[key] = events_in = self.load_events(add_bads=False, data_raw=False)
                 self._raw_samplingrate[key] = events_in.info['sfreq']
