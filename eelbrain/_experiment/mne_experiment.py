@@ -798,6 +798,8 @@ class Pipeline(FileTree):
                     continue
                 # bad channels
                 self.make_bad_channels_auto()
+                if self._bids_path.find_empty_room().fpath.exists():
+                    self.make_bad_channels_auto(noise=True)
                 # events
                 events[key] = events_in = self.load_events(add_bads=False, data_raw=False)
                 self._raw_samplingrate[key] = events_in.info['sfreq']
@@ -1271,9 +1273,8 @@ class Pipeline(FileTree):
                 self.set(epoch=cov.epoch)
                 return self._epochs_mtime()
             elif isinstance(cov, RawCovariance):
-                empty_room_bids_path = self._bids_path.find_empty_room()
                 pipe = self._raw[self.get('raw')]
-                return pipe.mtime(empty_room_bids_path, bad_chs=True)
+                return pipe.mtime(self._bids_path, bad_chs=True, noise=True)
             else:
                 raise TypeError(f"{cov=}")
 
@@ -1893,9 +1894,7 @@ class Pipeline(FileTree):
         """
         pipe = self._raw[self.get('raw', **kwargs)]
         bids_path = self._bids_path
-        if noise:
-            bids_path = bids_path.find_empty_room()
-        return pipe.load_bad_channels(bids_path)
+        return pipe.load_bad_channels(bids_path, noise=noise)
 
     def _load_bem(self):
         subject = self.get('mrisubject')
@@ -3313,9 +3312,7 @@ class Pipeline(FileTree):
         """
         pipe = self._raw[self.get('raw', **kwargs)]
         bids_path = self._bids_path
-        if noise:
-            bids_path = bids_path.find_empty_room()
-        raw = pipe.load(bids_path, add_bads)
+        raw = pipe.load(bids_path, add_bads, noise=noise)
         if decim and decim > 1:
             assert samplingrate is None, "samplingrate and decim can't both be specified"
             samplingrate = int(round(raw.info['sfreq'] / decim))
@@ -4076,9 +4073,7 @@ class Pipeline(FileTree):
         """
         pipe = self._raw[self.get('raw', **kwargs)]
         bids_path = self._bids_path
-        if noise:
-            bids_path = bids_path.find_empty_room()
-        pipe.make_bad_channels(bids_path, bad_chs, redo=redo)
+        pipe.make_bad_channels(bids_path, bad_chs, redo=redo, noise=noise)
 
     def make_bad_channels_auto(self, flat=None, redo=False, noise=False, **state):
         """Automatically detect bad channels
@@ -4101,9 +4096,7 @@ class Pipeline(FileTree):
             self.set(**state)
         pipe = self._raw['raw']
         bids_path = self._bids_path
-        if noise:
-            bids_path = bids_path.find_empty_room()
-        pipe.make_bad_channels_auto(bids_path, flat, redo=redo)
+        pipe.make_bad_channels_auto(bids_path, flat, redo=redo, noise=noise)
 
     def make_bad_channels_neighbor_correlation(
             self,
@@ -4231,8 +4224,7 @@ class Pipeline(FileTree):
                 ds = self.load_epochs(None, True, False, decim=1, epoch=cov.epoch)
             covariance = cov.make(ds['epochs'], log_path)
         else:
-            empty_room_bids_path = self._bids_path.find_empty_room()
-            raw = self._raw[self.get('raw')].load(empty_room_bids_path)
+            raw = self.load_raw(noise=True)
             covariance = cov.make(raw)
         if MNE_VERSION >= V1:
             covariance.save(dest, overwrite=True)
