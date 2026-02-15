@@ -324,7 +324,7 @@ class RawSource(RawPipe):
         if old_bads is not None and not redo:
             new_bads = sorted(set(old_bads).union(new_bads))
         # print change
-        print(f"{self._bads_path(path)}: {old_bads} -> {new_bads}")
+        self.log.info("Bad channels: %s -> %s for %s", old_bads, new_bads, self._bads_path(path))
         if new_bads == old_bads:
             return
         # write new bad channels
