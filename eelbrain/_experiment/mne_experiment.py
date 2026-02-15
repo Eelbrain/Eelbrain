@@ -798,7 +798,7 @@ class Pipeline(FileTree):
                     continue
                 # bad channels
                 self.make_bad_channels_auto()
-                if self._bids_path.find_empty_room().fpath.exists():
+                if self._bids_path.datatype == 'meg' and self._bids_path.find_empty_room().fpath.exists():
                     self.make_bad_channels_auto(noise=True)
                 # events
                 events[key] = events_in = self.load_events(add_bads=False, data_raw=False)
