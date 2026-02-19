@@ -750,6 +750,7 @@ class Pipeline(FileTree):
         # ==============================
         events = {}  # {(subject, recording): event_dataset}
         self._stim_channel = sequence_arg(f'{self.__class__.__name__}.stim_channel', self.stim_channel)
+        init_bad_channels = False
 
         # saved mtimes
         input_state_file = join(cache_dir, 'input-state.pickle')
@@ -769,6 +770,7 @@ class Pipeline(FileTree):
                 'stim_channel': self._stim_channel,
                 'merge_triggers': self.merge_triggers,
             }
+            init_bad_channels = True
         else:
             events_changed = False
             if input_state['merge_triggers'] != self.merge_triggers:
@@ -788,6 +790,8 @@ class Pipeline(FileTree):
 
         self._raw_samplingrate = {}  # {(subject, recording): samplingrate}
         with self._temporary_state:
+            if init_bad_channels:
+                log.info("Initializing pipeline for the first time, automatically making bad channels for all raw files")
             # subjects_with_raw_changes = set()
             for subject, session, task, acquisition, run in self.iter(('subject', 'session', 'task', 'acquisition', 'run'), group='all', raw='raw'):
                 key = (subject, session, task, acquisition, run)
@@ -797,9 +801,10 @@ class Pipeline(FileTree):
                         log.debug("Raw file missing: %s", self._bids_path.fpath)
                     continue
                 # bad channels
-                self.make_bad_channels_auto()
-                if self._bids_path.datatype == 'meg' and self._bids_path.find_empty_room().fpath.exists():
-                    self.make_bad_channels_auto(noise=True)
+                if init_bad_channels:
+                    self.make_bad_channels_auto()
+                    if self._bids_path.datatype == 'meg' and self._bids_path.find_empty_room().fpath.exists():
+                        self.make_bad_channels_auto(noise=True)
                 # events
                 events[key] = events_in = self.load_events(add_bads=False, data_raw=False)
                 self._raw_samplingrate[key] = events_in.info['sfreq']
