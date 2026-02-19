@@ -340,7 +340,8 @@ class RawSource(RawPipe):
             redo: bool = False,
             noise: bool = False,
     ) -> None:
-        path = path if not noise else path.find_empty_room()
+        if noise:
+            path = path.find_empty_room()
         if flat is None:
             if path.datatype == 'meg':
                 flat = 1e-14
@@ -400,7 +401,8 @@ class RawSource(RawPipe):
             bad_chs: bool = True,
             noise: bool = False,
     ) -> float:
-        path = path if not noise else path.find_empty_room()
+        if noise:
+            path = path.find_empty_room()
         raw_path = self._raw_path(path)
         bads_path = self._bads_path(path)
         if bad_chs:
@@ -1009,7 +1011,7 @@ class RawApplyICA(CachedRawPipe):
 
 
 class RawMaxwell(CachedRawPipe):
-    """Maxwell filter raw pipe. For empty room recordings, there is no `dev_head_t` information, `coord_frame = 'meg'` will be used automatically.
+    """Maxwell filter raw pipe.
 
     Parameters
     ----------
@@ -1027,6 +1029,10 @@ class RawMaxwell(CachedRawPipe):
     See Also
     --------
     Pipeline.raw
+
+    Notes
+    -----
+    For empty room recordings, there is no `dev_head_t` information, `coord_frame = 'meg'` will be used automatically.
     """
 
     _bad_chs_affect_cache = True

@@ -1883,7 +1883,7 @@ class Pipeline(FileTree):
         Parameters
         ----------
         noise
-            Load bad channels for noise empty-room recording instead of the subject recording.
+            Load bad channels for empty-room noise recording instead of the subject recording.
         ...
             State parameters.
 
@@ -3304,7 +3304,7 @@ class Pipeline(FileTree):
         tstop
             Crop the raw data.
         noise
-            Load corresponding empty-room data instead of current subject's raw data (default ``False``).
+            Load corresponding empty-room data instead of current subject's task data (default ``False``).
         ...
             Applicable :ref:`state-parameters`:
 
@@ -4045,7 +4045,13 @@ class Pipeline(FileTree):
         labels = parc_def._make(self, parc)
         write_labels_to_annot(labels, mrisubject, parc, True, self.get('mri-sdir'))
 
-    def make_bad_channels(self, bad_chs=(), redo=False, noise=False, **kwargs):
+    def make_bad_channels(
+        self,
+        bad_chs: Union[Tuple[str], str, int] = (),
+        redo: bool = False,
+        noise: bool = False,
+        **kwargs: Any,
+    ) -> None:
         """Write the bad channel definition file for a raw file
 
         If the file already exists, new bad channels are added to the old ones.
@@ -4054,13 +4060,13 @@ class Pipeline(FileTree):
 
         Parameters
         ----------
-        bad_chs : iterator of str
+        bad_chs
             Names of the channels to set as bad. Numerical entries are
             interpreted as "MEG XXX". If bad_chs contains entries not present
             in the raw data, a ValueError is raised.
-        redo : bool
+        redo
             If the file already exists, replace it (instead of adding).
-        noise : bool
+        noise
             If True, make bad channels for the empty-room recording instead of the current subject's recording.
         ...
             State parameters.
@@ -4075,19 +4081,25 @@ class Pipeline(FileTree):
         bids_path = self._bids_path
         pipe.make_bad_channels(bids_path, bad_chs, redo=redo, noise=noise)
 
-    def make_bad_channels_auto(self, flat=None, redo=False, noise=False, **state):
+    def make_bad_channels_auto(
+        self,
+        flat: float = None,
+        redo: bool = False,
+        noise: bool = False,
+        **state: Any,
+    ) -> None:
         """Automatically detect bad channels
 
         Works on ``raw='raw'``
 
         Parameters
         ----------
-        flat : scalar
+        flat
             Threshold for detecting flat channels: channels with ``std < flat``
             are considered bad (default 1e-14 for MEG and 0 for EEG).
-        redo : bool
+        redo
             If the file already exists, replace it (instead of adding).
-        noise : bool
+        noise
             If True, make bad channels for the empty-room recording instead of the current subject's recording.
         ...
             State parameters.
