@@ -1032,7 +1032,7 @@ class RawMaxwell(CachedRawPipe):
 
     Notes
     -----
-    For empty room recordings, there is no `dev_head_t` information, `coord_frame = 'meg'` will be used automatically.
+    For empty room recordings, there is no ``dev_head_t`` information, ``coord_frame = 'meg'`` will be used automatically.
     """
 
     _bad_chs_affect_cache = True
