@@ -797,7 +797,6 @@ class Pipeline(FileTree):
             for subject, session, task, acquisition, run in self.iter(('subject', 'session', 'task', 'acquisition', 'run'), group='all', raw='raw'):
                 key = (subject, session, task, acquisition, run)
                 raw_path = self._bids_path.fpath
-                empty_room_path = self._bids_path.find_empty_room().fpath
 
                 if not raw_path.exists():
                     raw_missing.add(key)
@@ -809,9 +808,11 @@ class Pipeline(FileTree):
                 if raw_path.exists() and raw_path not in bads_initialized:
                     self.make_bad_channels_auto()
                     bads_initialized.add(raw_path)
-                if self._bids_path.datatype == 'meg' and empty_room_path.exists() and empty_room_path not in bads_initialized:
-                    self.make_bad_channels_auto(noise=True)
-                    bads_initialized.add(empty_room_path)
+                if self._bids_path.datatype == 'meg':
+                    empty_room_path = self._bids_path.find_empty_room().fpath
+                    if empty_room_path.exists() and empty_room_path not in bads_initialized:
+                        self.make_bad_channels_auto(noise=True)
+                        bads_initialized.add(empty_room_path)
 
                 # events
                 events[key] = events_in = self.load_events(add_bads=False, data_raw=False)
