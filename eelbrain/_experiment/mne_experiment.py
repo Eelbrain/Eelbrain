@@ -769,7 +769,6 @@ class Pipeline(FileTree):
                 'raw-mtimes': {},
                 'stim_channel': self._stim_channel,
                 'merge_triggers': self.merge_triggers,
-                'bads_initialized': set(),  # raw files with bad channels initialized by `make_bad_channels_auto()`
             }
         else:
             events_changed = False
@@ -787,7 +786,6 @@ class Pipeline(FileTree):
         # collect raw input info
         raw_missing = input_state['raw_missing'] = set()
         raw_mtimes = input_state['raw-mtimes']
-        bads_initialized = input_state['bads_initialized']
 
         self._raw_samplingrate = {}  # {(subject, recording): samplingrate}
         with self._temporary_state:
@@ -803,16 +801,6 @@ class Pipeline(FileTree):
                     if self.check_raw_mtime:
                         log.debug("Raw file missing: %s", raw_path)
                     continue
-
-                # bad channels
-                if raw_path.exists() and raw_path not in bads_initialized:
-                    self.make_bad_channels_auto()
-                    bads_initialized.add(raw_path)
-                if self._bids_path.datatype == 'meg':
-                    empty_room_path = self._bids_path.find_empty_room().fpath
-                    if empty_room_path.exists() and empty_room_path not in bads_initialized:
-                        self.make_bad_channels_auto(noise=True)
-                        bads_initialized.add(empty_room_path)
 
                 # events
                 events[key] = events_in = self.load_events(add_bads=False, data_raw=False)

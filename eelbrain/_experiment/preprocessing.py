@@ -342,21 +342,24 @@ class RawSource(RawPipe):
     ) -> None:
         if noise:
             path = path.find_empty_room()
-        if flat is None:
-            if path.datatype == 'meg':
-                flat = 1e-14
-            elif path.datatype == 'eeg':
-                return
-            else:
-                raise NotImplementedError(f"{path.datatype=}")
-        elif flat == 0:
+        if path.datatype == 'eeg' or flat == 0:
             return
+        elif path.datatype != 'meg':
+            raise NotImplementedError(f"{path.datatype=}")
+        self.make_bad_channels(path, self._detect_flat_channels(path, flat), redo)
+
+    def _detect_flat_channels(
+        self,
+        path: BIDSPath,
+        flat: float = 1e-14,
+    ) -> List[str]:
+        "Detect flat channels"
         raw = self._load(path, False)
         bad_chs: List[str] = raw.info['bads']
         sysname = self.get_sysname(raw.info, path.subject, None)
         raw = load.mne.raw_ndvar(raw, sysname=sysname, adjacency=self.adjacency)
         bad_chs.extend(raw.sensor.names[raw.std('time') < flat])
-        self.make_bad_channels(path, bad_chs, redo)
+        return bad_chs
 
     def _as_dict(self, args: Sequence[str] = ()) -> dict:
         out = RawPipe._as_dict(self, args)
@@ -496,6 +499,13 @@ class CachedRawPipe(RawPipe):
 
     def load_bad_channels(self, path: BIDSPath, noise: bool = False) -> list[str]:
         return self.source.load_bad_channels(path, noise=noise)
+
+    def _detect_flat_channels(
+        self,
+        path: BIDSPath,
+        flat: float = 1e-14,
+    ) -> List[str]:
+        return self.source._detect_flat_channels(path, flat)
 
     def _make(
             self,
@@ -1048,7 +1058,8 @@ class RawMaxwell(CachedRawPipe):
             preload: bool,
             noise: bool = False,
     ) -> mne.io.BaseRaw:
-        raw = self.source.load(path, noise=noise)
+        flat_chs = self._detect_flat_channels(path)
+        raw = self.source.load(path, add_bads=flat_chs, noise=noise)
         self.log.info("Raw %s: computing Maxwell filter for %s", self.name, path.fpath if not noise else path.find_empty_room().fpath)
         with user_activity:
             coord_frame = 'meg' if noise else 'head'
