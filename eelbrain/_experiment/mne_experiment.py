@@ -750,7 +750,6 @@ class Pipeline(FileTree):
         # ==============================
         events = {}  # {(subject, recording): event_dataset}
         self._stim_channel = sequence_arg(f'{self.__class__.__name__}.stim_channel', self.stim_channel)
-        init_bad_channels = False
 
         # saved mtimes
         input_state_file = join(cache_dir, 'input-state.pickle')
@@ -789,8 +788,6 @@ class Pipeline(FileTree):
 
         self._raw_samplingrate = {}  # {(subject, recording): samplingrate}
         with self._temporary_state:
-            if init_bad_channels:
-                log.info("Initializing pipeline for the first time, automatically making bad channels for all raw files")
             # subjects_with_raw_changes = set()
             for subject, session, task, acquisition, run in self.iter(('subject', 'session', 'task', 'acquisition', 'run'), group='all', raw='raw'):
                 key = (subject, session, task, acquisition, run)
