@@ -353,7 +353,7 @@ class RawSource(RawPipe):
             return
         raw = self._load(path, False)
         bad_chs: List[str] = raw.info['bads']
-        sysname = self.get_sysname(raw.info, path.subject, None)
+        sysname = self.get_sysname(raw.info, path.subject, path.datatype)
         raw = load.mne.raw_ndvar(raw, sysname=sysname, adjacency=self.adjacency)
         bad_chs.extend(raw.sensor.names[raw.std('time') < flat])
         self.make_bad_channels(path, bad_chs, redo)
@@ -1023,6 +1023,8 @@ class RawMaxwell(CachedRawPipe):
         Set to ``'warning'`` to proceed anyways.
     cache
         Cache the resulting raw files (default ``True``).
+    flat
+        Threshold for marking flat channels as bad (default 1e-14).
     ...
         :func:`mne.preprocessing.maxwell_filter` parameters.
 
@@ -1033,7 +1035,7 @@ class RawMaxwell(CachedRawPipe):
     Notes
     -----
     For empty room recordings, there is no ``dev_head_t`` information, ``coord_frame = 'meg'`` will be used automatically.
-    Flat channels are automatically marked as bad with a threshold of ``flat`` (default 1e-14).
+    Flat channels are automatically marked as bad with a threshold of parameter ``flat``.
     """
 
     _bad_chs_affect_cache = True
@@ -1058,8 +1060,8 @@ class RawMaxwell(CachedRawPipe):
             noise: bool = False,
     ) -> mne.io.BaseRaw:
         raw = self.source.load(path, noise=noise)
-        sysname = self.get_sysname(raw.info, path.subject, None)
-        adjacency = self.get_adjacency(None)
+        sysname = self.get_sysname(raw.info, path.subject, path.datatype)
+        adjacency = self.get_adjacency(path.datatype)
         raw_ndvar = load.mne.raw_ndvar(raw, sysname=sysname, adjacency=adjacency)
         raw.info['bads'].extend(raw_ndvar.sensor.names[raw_ndvar.std('time') < self.flat])
         self.log.info("Raw %s: computing Maxwell filter for %s", self.name, path.fpath if not noise else path.find_empty_room().fpath)
