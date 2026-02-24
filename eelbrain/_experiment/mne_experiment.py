@@ -4844,24 +4844,6 @@ class Pipeline(FileTree):
                         folder="{parc} {mrisubject} %s" % surf, resname=label,
                         ext='png')
 
-    def make_raw(self, **kwargs):
-        """Make a raw file
-
-        Parameters
-        ----------
-        ...
-            State parameters.
-
-        Notes
-        -----
-        Due to the electronics of the KIT system sensors, signal lower than
-        0.16 Hz is not recorded even when recording at DC.
-        """
-        if kwargs:
-            self.set(**kwargs)
-        pipe = self._raw[self.get('raw')]
-        pipe.cache(self._bids_path)
-
     def make_epoch_selection(
             self,
             samplingrate: int = None,

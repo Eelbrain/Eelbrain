@@ -73,7 +73,7 @@ class RawPipe:
     def _normalize_dict(state: dict) -> None:
         pass
 
-    def cache(self, path: BIDSPath, noise: bool = False) -> bool:
+    def is_cached(self, path: BIDSPath, noise: bool = False) -> bool:
         "Check if raw file exists and is up to date"
         raise NotImplementedError
 
@@ -230,7 +230,7 @@ class RawSource(RawPipe):
             split=None,
         ).fpath)
 
-    def cache(self, path: BIDSPath) -> bool:
+    def is_cached(self, path: BIDSPath) -> bool:
         "Check if raw file exists without raising an error"
         raw_path = str(path.fpath)
         return exists(raw_path)
@@ -443,7 +443,7 @@ class CachedRawPipe(RawPipe):
         "Get path to the cached raw file"
         return self.cache_path.format(raw=self.name, suffix=path.datatype, **path.entities)
 
-    def cache(self, path: BIDSPath) -> bool:
+    def is_cached(self, path: BIDSPath) -> bool:
         "Check if a cached raw file exists and is up to date"
         cache_path = self._cache_path(path)
         if exists(cache_path):
@@ -463,7 +463,7 @@ class CachedRawPipe(RawPipe):
         if not self._cache:
             return self._make(path, preload, noise=noise)
         cache_path = self._cache_path(path if not noise else path.find_empty_room())
-        if self.cache(path if not noise else path.find_empty_room()):
+        if self.is_cached(path if not noise else path.find_empty_room()):
             with warnings.catch_warnings():  # BIDS paths are not covered by mne standard
                 warnings.filterwarnings('ignore', 'This filename', module='mne')
                 raw = mne.io.read_raw_fif(
