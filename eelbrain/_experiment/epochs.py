@@ -289,6 +289,9 @@ class SecondaryEpoch(Epoch):
         Additional parameters override parameters of the ``base`` epoch, with the
         except for ``trigger_shift``, which is applied additively to the
         ``trigger_shift`` of the ``base`` epoch.
+    sel
+        Apply additional event selection `after` applying ``sel`` of the
+        ``base`` epoch.
     ...
         Override base-epoch parameters (see :class:`PrimaryEpoch`).
 
