@@ -126,7 +126,7 @@ def _t_contrast_rel_expand_cells(cells, all_cells):
         cells to be averaged).
     """
     # check all cells have same number of components
-    ns = set(1 if isinstance(cell, str) else len(cell) for cell in all_cells)
+    ns = {1 if isinstance(cell, str) else len(cell) for cell in all_cells}
     ns.update(1 if isinstance(cell, str) else len(cell) for cell in cells)
     if len(ns) > 1:
         msg = ("Not all cells have the same number of components: %s" %

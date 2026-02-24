@@ -1,3 +1,5 @@
+# autoflake: skip_file
+
 from ._experiment.mne_experiment import Pipeline
 from ._experiment.preprocessing import RawSource, RawFilter, RawICA, RawMaxwell, RawOversampledTemporalProjection, RawReReference, RawApplyICA
 from ._experiment.epochs import ContinuousEpoch, EpochCollection, PrimaryEpoch, SecondaryEpoch, SuperEpoch

@@ -1,4 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+# autoflake: skip_file
 """Create tables from data-objects"""
 
 from ._table import (

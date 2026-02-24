@@ -1,7 +1,6 @@
 """Figures for custom plots"""
 from functools import wraps
 from numbers import Real
-from typing import Union, Tuple
 
 import matplotlib.figure
 import matplotlib.patches
@@ -77,7 +76,7 @@ class AbsoluteLayoutFigure(XAxisMixin, Figure):
     def __init__(
             self,
             y_per_inch: Real,
-            xlim: Tuple[Real, Real] = None,
+            xlim: tuple[Real, Real] = None,
             ystep: float = None,  # spacing of y ticks
             **kwargs):
         self.y_per_inch = y_per_inch
@@ -92,10 +91,10 @@ class AbsoluteLayoutFigure(XAxisMixin, Figure):
     def add_axes(
             self,
             y_origin: Real,
-            ylim: Union[Real, Tuple[Real, Real]],
+            ylim: Real | tuple[Real, Real],
             left: Real,
             width: Real,
-            frame: Union[bool, str] = 't',
+            frame: bool | str = 't',
             yaxis: bool = True,
             **kwargs,  # for matplotlib Axes
     ):

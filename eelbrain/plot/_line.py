@@ -78,10 +78,9 @@ class LineStack(LegendMixin, XAxisMixin, EelFigure):
                 raise TypeError("The order parameter only applies if y is a "
                                 "single NDVar")
             ys = tuple(asndvar(y_, sub, ds) for y_ in y)
-            xdims = set(y_.get_dimnames((None,))[0] for y_ in ys)
+            xdims = {y_.get_dimnames((None,))[0] for y_ in ys}
             if len(xdims) > 1:
-                raise ValueError("NDVars must have same dimension, got %s" %
-                                 (tuple(xdims),))
+                raise ValueError(f"NDVars must have same dimension, got {tuple(xdims)}")
             xdim = xdims.pop()
             ydata = tuple(y_.get_data(xdim) for y_ in ys)
             ny = len(ydata)

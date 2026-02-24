@@ -86,7 +86,8 @@ from numbers import Real
 import os
 import re
 import time
-from typing import Any, Callable, Dict, Iterator, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Any, Literal, Optional, Union
+from collections.abc import Callable, Iterator, Sequence
 import weakref
 
 import matplotlib as mpl
@@ -124,7 +125,7 @@ defaults = {'maxw': 16, 'maxh': 10}
 # Types
 CMapArg = Any
 ColorArg = Any
-LegendArg = Optional[Union[str, int, Tuple[float, float], bool]]
+LegendArg = Optional[Union[str, int, tuple[float, float], bool]]
 
 
 class PlotType(Enum):
@@ -208,8 +209,8 @@ class AxisScale:
     """
     def __init__(
             self,
-            v: Union[NDVar, Var, Real, str, 'PlotData'],
-            label: Union[bool, str, Sequence[str]] = True,
+            v: NDVar | Var | Real | str | PlotData,
+            label: bool | str | Sequence[str] = True,
     ):
         if isinstance(v, str):
             data_unit = None
@@ -289,8 +290,8 @@ def find_uts_hlines(ndvar):
 
 def find_uts_ax_vlim(
         layers: Sequence[NDVar],
-        vlims: Dict = (),
-) -> (Optional[float], Optional[float]):
+        vlims: dict = (),
+) -> (float | None, float | None):
     """Find y axis limits for uts axes
 
     Parameters
@@ -327,9 +328,9 @@ def find_uts_ax_vlim(
 
 def find_fig_cmaps(
         epochs: Sequence[Sequence[NDVar]],
-        cmap: Union[dict, CMapArg] = None,
+        cmap: dict | CMapArg = None,
         alpha: bool = False,
-) -> Dict[str, CMapArg]:
+) -> dict[str, CMapArg]:
     """Find cmap for every meas
 
     Parameters
@@ -453,8 +454,8 @@ def find_fig_contours(epochs, vlims, contours_arg):
 
 def find_fig_vlims(
         plots: Sequence[Sequence[NDVar]],
-        vmax: Union[dict, float] = None,
-        vmin: Union[dict, float] = None,
+        vmax: dict | float = None,
+        vmin: dict | float = None,
         cmaps: dict = None,
         unmask: bool = True,
 ):
@@ -594,9 +595,9 @@ def fix_vlim_for_cmap(vmin, vmax, cmap):
 
 def find_data_dims(
         ndvar: NDVar,
-        dims: Union[int, Tuple[str, ...]],
+        dims: int | tuple[str, ...],
         extra_dim: str = None,
-) -> Tuple[Union[str, None], List[str]]:
+) -> tuple[str | None, list[str]]:
     """Find dimensions in data.
 
     Raise a ValueError if the dimensions don't match, except when the ``case``
@@ -659,9 +660,9 @@ def find_data_dims(
 
 def find_labels(
         cells: Sequence[CellArg],
-        labels_arg: Dict[CellArg: str] = None,
+        labels_arg: dict[CellArg: str] = None,
         delim: str = ' ',
-) -> Dict[CellArg, str]:
+) -> dict[CellArg, str]:
     if not labels_arg:
         return {cell: cellname(cell, delim) for cell in cells}
     labels = {}
@@ -679,7 +680,7 @@ def find_labels(
 
 
 def brain_data(
-        data: Union[NDVar, testnd.NDTest],
+        data: NDVar | testnd.NDTest,
         dataset: Dataset = None,
 ):
     # for GlassBrain and surfer brain
@@ -690,7 +691,7 @@ def brain_data(
 
 
 def butterfly_data(
-        data: Union[NDVar, testnd.NDTest],
+        data: NDVar | testnd.NDTest,
         hemi: str,
         resample_: int = None,
         colors: bool = False,
@@ -846,7 +847,7 @@ class Layer:
     def sub_time(self, time: float, data_only: bool = False):
         raise NotImplementedError
 
-    def for_plot(self, plot_type: PlotType) -> Iterator['DataLayer']:
+    def for_plot(self, plot_type: PlotType) -> Iterator[DataLayer]:
         raise NotImplementedError
 
 
@@ -901,7 +902,7 @@ class DataLayer(Layer):
             vmin, vmax = fix_vlim_for_cmap(vmin, vmax, cmap)
         return {'cmap': cmap, 'vmin': vmin, 'vmax': vmax, **self._plot_args}
 
-    def for_plot(self, plot_type: PlotType) -> Iterator['DataLayer']:
+    def for_plot(self, plot_type: PlotType) -> Iterator[DataLayer]:
         if self.plot_type == plot_type:
             yield self
         elif not np.ma.isMaskedArray(self.y.x):
@@ -970,7 +971,7 @@ class StatLayer(Layer):
     def get_dispersion(self, spec, within_subject) -> np.ndarray:
         return self._apply_mask(self.ct.variability(spec, within_subject, self.cell, True))
 
-    def for_plot(self, plot_type: PlotType) -> Iterator['DataLayer']:
+    def for_plot(self, plot_type: PlotType) -> Iterator[DataLayer]:
         if self.plot_type == plot_type:
             yield self
         elif self.mask is None:
@@ -988,7 +989,7 @@ class StatLayer(Layer):
 @dataclass(eq=False)
 class AxisData:
     """Represent one axis (multiple layers)"""
-    layers: List[Layer]
+    layers: list[Layer]
     title: str = None
 
     def __iter__(self):
@@ -1004,7 +1005,7 @@ class AxisData:
     def ndvars(self):
         return [layer.y for layer in self.layers]
 
-    def for_plot(self, plot_type: PlotType) -> 'AxisData':
+    def for_plot(self, plot_type: PlotType) -> AxisData:
         return replace(self, layers=[l for layer in self.layers for l in layer.for_plot(plot_type)])
 
     def bin(self, bin_length, tstart, tstop):
@@ -1065,16 +1066,16 @@ class PlotData:
      - DataLayer subclass that keeps reference to a CellTable?
 
     """
-    plot_data: List[AxisData]  # Data for each axis
+    plot_data: list[AxisData]  # Data for each axis
     dims: Sequence[str]  # Dimensions assigned to the axes
     frame_title: str = "unnamed data"  # Default window title
-    plot_names: List[Union[str, None]] = None  # Titles for the plots (all non-None axes)
-    plot_used: List[bool] = None  # List indicating which plot slots are used
+    plot_names: list[str | None] = None  # Titles for the plots (all non-None axes)
+    plot_used: list[bool] = None  # List indicating which plot slots are used
     plot_type: PlotType = PlotType.GENERAL
     ct: Celltable = None
-    x: Union[Factor, Interaction] = None
-    xax: Union[Factor, Interaction] = None
-    styles: Dict[CellArg, Style] = None
+    x: Factor | Interaction = None
+    xax: Factor | Interaction = None
+    styles: dict[CellArg, Style] = None
 
     def __post_init__(self):
         self.n_plots = len(self.plot_data)
@@ -1113,8 +1114,8 @@ class PlotData:
     @classmethod
     def from_args(
             cls,
-            y: Union[NDVarArg, Sequence[NDVarArg]],
-            dims: Union[int, Tuple[Optional[str], ...]],
+            y: NDVarArg | Sequence[NDVarArg],
+            dims: int | tuple[str | None, ...],
             xax: CategorialArg = None,
             data: Dataset = None,
             sub: IndexArg = None,
@@ -1249,15 +1250,15 @@ class PlotData:
     @classmethod
     def from_stats(
             cls,
-            y: Union[NDVarArg, Sequence[NDVarArg]],
+            y: NDVarArg | Sequence[NDVarArg],
             x: CategorialArg = None,
             xax: CategorialArg = None,
             match: CategorialArg = None,
             sub: IndexArg = None,
             ds: Dataset = None,
-            dims: Tuple[Union[str, None]] = None,
+            dims: tuple[str | None] = None,
             colors: dict = None,
-            mask: Union[NDVar, Dict[CellArg, NDVar]] = None,
+            mask: NDVar | dict[CellArg, NDVar] = None,
             level: Literal[1, 2, 3] = 1,
     ):
         if isinstance(y, (tuple, list)):
@@ -1342,7 +1343,7 @@ class PlotData:
         return cls(axes, dims, title, ct=ct, x=x, xax=xax, styles=styles)
 
     @classmethod
-    def empty(cls, plots: Union[int, List[bool]], dims: Sequence[str], title: str):
+    def empty(cls, plots: int | list[bool], dims: Sequence[str], title: str):
         """Empty PlotData object that can be filled by appending to layers
 
         Parameters
@@ -1406,7 +1407,7 @@ class PlotData:
         if time_dims:
             return reduce(UTS._union, time_dims)
 
-    def for_plot(self, plot_type: PlotType) -> 'PlotData':
+    def for_plot(self, plot_type: PlotType) -> PlotData:
         if self.plot_type == plot_type:
             return self
         plot_data = [ax.for_plot(plot_type) for ax in self.plot_data]
@@ -1496,13 +1497,13 @@ def frame_title(y, x=None, xax=None):
 
     if xax is None:
         if x is None:
-            return "%s" % (y,)
+            return f"{y}"
         else:
-            return "%s ~ %s" % (y, x)
+            return f"{y} ~ {x}"
     elif x is None:
-        return "%s | %s" % (y, xax)
+        return f"{y} | {xax}"
     else:
-        return "%s ~ %s | %s" % (y, x, xax)
+        return f"{y} ~ {x} | {xax}"
 
 
 class MatplotlibFigure:
@@ -1577,7 +1578,7 @@ class EelFigure(MatplotlibFigure):
     _can_set_xlim = False
     _has_frame = False
 
-    def __init__(self, data_desc: Optional[str], layout: BaseLayout):
+    def __init__(self, data_desc: str | None, layout: BaseLayout):
         """Parent class for Eelbrain figures.
 
         Parameters
@@ -1655,9 +1656,9 @@ class EelFigure(MatplotlibFigure):
 
     def _set_axtitle(
             self,
-            axtitle: Union[bool, str, Iterator[str]] = None,
+            axtitle: bool | str | Iterator[str] = None,
             data: PlotData = None,
-            axes: Union[List[matplotlib.axes.Axes], int] = None,
+            axes: list[matplotlib.axes.Axes] | int = None,
             names: Sequence[str] = None,
             **kwargs,
     ):
@@ -1797,9 +1798,9 @@ class EelFigure(MatplotlibFigure):
     def _on_motion_status_text(event):
         ax = event.inaxes
         if ax:
-            return ('x = %s, y = %s' % (
-                ax.xaxis.get_major_formatter().format_data_short(event.xdata),
-                ax.yaxis.get_major_formatter().format_data_short(event.ydata)))
+            x = ax.xaxis.get_major_formatter().format_data_short(event.xdata)
+            y = ax.yaxis.get_major_formatter().format_data_short(event.ydata)
+            return f'x = {x}, y = {y}'
         return ''
 
     def _on_motion_sub(self, event):
@@ -1813,13 +1814,11 @@ class EelFigure(MatplotlibFigure):
     def _register_key(self, key, press=None, release=None):
         if press:
             if key in self.__callback_key_press:
-                raise RuntimeError("Attempting to assign key press %r twice" %
-                                   key)
+                raise RuntimeError(f"Attempting to assign key press {key!r} twice")
             self.__callback_key_press[key] = press
         if release:
             if key in self.__callback_key_release:
-                raise RuntimeError("Attempting to assign key release %r twice" %
-                                   key)
+                raise RuntimeError(f"Attempting to assign key release {key!r} twice")
             self.__callback_key_release[key] = release
 
     def _remove_crosshairs(self, draw=False):
@@ -1838,7 +1837,6 @@ class EelFigure(MatplotlibFigure):
         Subclasses should add their toolbar items in this function which
         is called by ``CanvasFrame.FillToolBar()``.
         """
-        pass
 
     def close(self):
         "Close the figure."
@@ -1856,9 +1854,9 @@ class EelFigure(MatplotlibFigure):
     def _configure_axis(
             self,
             axis: str,  # 'x' | 'y'
-            ticklabels: Union[str, int, Sequence[int]],  # where to show tick-labels
+            ticklabels: str | int | Sequence[int],  # where to show tick-labels
             params: Iterable,  # (formatter, locator, label) for each Axes
-            axes: List[matplotlib.axes.Axes] = None,  # axes which to format
+            axes: list[matplotlib.axes.Axes] = None,  # axes which to format
     ):
         if axes is None:
             axes = self.axes
@@ -1935,11 +1933,11 @@ class EelFigure(MatplotlibFigure):
     def _configure_axis_data(
             self,
             axis: str,  # 'x' | 'y'
-            data: Union[NDVar, Var],  # data for default label
-            label: Union[bool, str],  # override label
-            ticklabels: Union[str, int, Sequence[int]] = True,  # where to show tick-labels
-            axes: List[matplotlib.axes.Axes] = None,  # axes which to format
-            labels: Dict[str, str] = None,  # user-provided labels
+            data: NDVar | Var,  # data for default label
+            label: bool | str,  # override label
+            ticklabels: str | int | Sequence[int] = True,  # where to show tick-labels
+            axes: list[matplotlib.axes.Axes] = None,  # axes which to format
+            labels: dict[str, str] = None,  # user-provided labels
     ):
         "Configure an axis based on data"
         if label is True and labels is not None:
@@ -1957,12 +1955,12 @@ class EelFigure(MatplotlibFigure):
     def _configure_axis_dim(
             self,
             axis: str,  # 'x' | 'y'
-            dim: Union[str, Dimension],  # The dimension assigned to the axis
-            label: Union[bool, str],  # axis labale
-            ticklabels: Union[str, int, Sequence[int]],  # where to show tick-labels
-            axes: List[matplotlib.axes.Axes] = None,  # axes which to format
+            dim: str | Dimension,  # The dimension assigned to the axis
+            label: bool | str,  # axis labale
+            ticklabels: str | int | Sequence[int],  # where to show tick-labels
+            axes: list[matplotlib.axes.Axes] = None,  # axes which to format
             scalar: bool = True,
-            data: List = None,
+            data: list = None,
     ):
         "Configure an axis based on a dimension"
         # Dimension objects
@@ -2157,7 +2155,7 @@ class EelFigure(MatplotlibFigure):
 
 def format_axes(
         ax: mpl.axes.Axes,
-        frame: Union[bool, str],
+        frame: bool | str,
         yaxis: bool,
 ):
     if frame == 't':
@@ -2194,9 +2192,9 @@ class BaseLayout:
             title: FMTextArg = None,
             autoscale: bool = False,
             name: str = None,
-            right_of: Union[EelFigure, int] = None,
-            below: Union[EelFigure, int] = None,
-            axes: Union[matplotlib.axes.Axes, List[matplotlib.axes.Axes]] = None,
+            right_of: EelFigure | int = None,
+            below: EelFigure | int = None,
+            axes: matplotlib.axes.Axes | list[matplotlib.axes.Axes] = None,
     ):
         self.h = h
         self.w = w
@@ -2319,7 +2317,7 @@ class Layout(BaseLayout):
 
     def __init__(
             self,
-            nax: Union[int, List[bool]],
+            nax: int | list[bool],
             ax_aspect: float,  # width / height
             axh_default: float,
             tight: bool = True,
@@ -2331,10 +2329,10 @@ class Layout(BaseLayout):
             rows: int = None,
             columns: int = None,
             dpi: float = None,
-            margins: Dict[str, float] = None,
+            margins: dict[str, float] = None,
             show: bool = True,
             run: bool = None,
-            frame: Union[bool, str] = True,
+            frame: bool | str = True,
             yaxis=True,
             share_axes: bool = False,
             **kwargs):
@@ -2426,7 +2424,7 @@ class Layout(BaseLayout):
             axes = [i for i, ax in enumerate(nax) if ax]
             nax = len(nax)
         else:
-            raise TypeError("nax=%r" % (nax,))
+            raise TypeError(f"nax={nax!r}")
 
         trim = None
         if not nax:
@@ -2585,13 +2583,13 @@ class ImLayout(Layout):
 
     def __init__(
             self,
-            nax: Union[int, List[bool]],
+            nax: int | list[bool],
             ax_aspect: float,  # width / height
             axh_default: float,
             margins: dict = None,
             default_margins: dict = None,
             title: str = None,
-            axtitle: Union[bool, Sequence[str]] = False,  # for default spacing
+            axtitle: bool | Sequence[str] = False,  # for default spacing
             **kwargs,
     ):
         if axtitle is True:
@@ -2654,10 +2652,10 @@ class VariableAspectLayout(BaseLayout):
             rows: int,
             axh_default: float,
             w_default: float,
-            aspect: Sequence[Optional[float]] = (None, 1),
+            aspect: Sequence[float | None] = (None, 1),
             ax_kwargs: Sequence[dict] = None,
             ax_frames: Sequence[bool] = None,
-            row_titles: Sequence[Optional[str]] = None,
+            row_titles: Sequence[str | None] = None,
             title: FMTextArg = None,
             h: float = None,
             w: float = None,
@@ -2764,7 +2762,7 @@ def subplots(
         hspace: float = None,
         height_ratios: Sequence[float] = None,
         **kwargs,
-) -> (matplotlib.figure.Figure, Union[matplotlib.axes.Axes, np.ndarray]):
+) -> (matplotlib.figure.Figure, matplotlib.axes.Axes | np.ndarray):
     """Specify :func:`matplotlib.pyplot.subplots` parameters in inches
 
     Parameters
@@ -2828,7 +2826,7 @@ class ColorBarMixin:
     def __init__(
             self,
             param_func: Callable = None,  # function to get cmap, vmin, vmax
-            data: Union[NDVar, Var, Real, str, 'PlotData'] = None,  # to infer unit
+            data: NDVar | Var | Real | str | PlotData = None,  # to infer unit
             mappable: Any = None,  # matplotlib mappable object
             default_kwargs: dict = None,  # default parameters for plotting colorbar
     ):
@@ -2851,7 +2849,7 @@ class ColorBarMixin:
 
     def plot_colorbar(
             self,
-            label: Union[bool, str] = True,
+            label: bool | str = True,
             label_position: Literal['left', 'right', 'top', 'bottom'] = None,
             label_rotation: float = None,
             **kwargs,
@@ -2968,7 +2966,7 @@ class ColorMapMixin(ColorBarMixin):
         if meas is None:
             meas = self._first_meas
         elif meas not in self._cmaps:
-            raise ValueError("meas=%r" % (meas,))
+            raise ValueError(f"meas={meas!r}")
 
         if vmax is None:
             vmin, vmax = fix_vlim_for_cmap(None, abs(v), self._cmaps[meas])
@@ -3002,8 +3000,8 @@ class LegendMixin:
     def __init__(
             self,
             loc: LegendArg,
-            handles: Dict[CellArg, Any],
-            labels: Dict[CellArg, str] = None,
+            handles: dict[CellArg, Any],
+            labels: dict[CellArg, str] = None,
             alt_sort: Iterable[CellArg] = None,
     ):
         """Legend toolbar menu mixin
@@ -3037,7 +3035,7 @@ class LegendMixin:
         self.__set_labels(labels)
         self.plot_legend(initial_loc)
 
-    def __set_labels(self, labels: Dict[CellArg, str] = None):
+    def __set_labels(self, labels: dict[CellArg, str] = None):
         if labels is not None:
             self.__labels = {key: asfmtext(label) for key, label in labels.items()}
 
@@ -3055,7 +3053,7 @@ class LegendMixin:
     def plot_legend(
             self,
             loc: LegendArg = 'fig',
-            labels: Dict[CellArg, str] = None,
+            labels: dict[CellArg, str] = None,
             **kwargs,
     ):
         """Plot the legend (or remove it from the figure).
@@ -3128,7 +3126,7 @@ class LegendMixin:
         p.save(*args, **kwargs)
         p.close()
 
-    def __plot(self, loc: LegendArg, labels: Dict[CellArg, str] = None, **kwargs):
+    def __plot(self, loc: LegendArg, labels: dict[CellArg, str] = None, **kwargs):
         self.__set_labels(labels)
         if loc and self.__handles:
             if self.__labels is None:
@@ -3194,7 +3192,7 @@ class TimeController:
         self.current_time = t
         self.fixate = fixate
 
-    def add_plot(self, plot: 'TimeSlicer'):
+    def add_plot(self, plot: TimeSlicer):
         if plot._time_controller is None:
             t = plot._validate_time(self.current_time)
             plot._set_time(t, self.fixate)
@@ -3246,7 +3244,7 @@ class TimeSlicer:
 
     def __init__(
             self,
-            time_dim: Union[UTS, Case] = None,
+            time_dim: UTS | Case = None,
             time_fixed: bool = None,
             display_text: matplotlib.text.Text = None,
             initial_time: float = None,
@@ -3258,7 +3256,7 @@ class TimeSlicer:
         if time_dim is not None:
             self._init_time_dim(time_dim)
 
-    def _init_time_dim(self, time_dim: Union[UTS, Case]):
+    def _init_time_dim(self, time_dim: UTS | Case):
         if self._time_dim is not None:
             if time_dim == self._time_dim:
                 return
@@ -3577,13 +3575,13 @@ class CategorialAxisMixin:
 
     def mark_pair(
             self,
-            cell_1: Union[float, CellArg],
-            cell_2: Union[float, CellArg],
+            cell_1: float | CellArg,
+            cell_2: float | CellArg,
             y: float,
             dy: float = None,
-            mark: Union[float, str] = None,
+            mark: float | str = None,
             color: Any = None,
-            nudge: Union[bool, float] = None,
+            nudge: bool | float = None,
             **text_args,
     ):
         """Mark a pair of categories with a line and a label
@@ -3673,8 +3671,8 @@ class XAxisMixin:
             self,
             epochs: Sequence[Sequence[NDVar]],
             xdim: str,
-            xlim: Union[float, Tuple[float, float]] = None,
-            axes: List[matplotlib.axes.Axes] = None,
+            xlim: float | tuple[float, float] = None,
+            axes: list[matplotlib.axes.Axes] = None,
             im: bool = False,
     ):
         """Compute axis bounds from data

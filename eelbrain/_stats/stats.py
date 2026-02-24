@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Literal, Sequence, Union
+from typing import Literal
+from collections.abc import Sequence
 
 import numpy as np
 import scipy.stats
@@ -24,7 +25,7 @@ class DispersionSpec:
     measure: Literal['SEM', 'CI', 'SD'] = 'SEM'
 
     @classmethod
-    def from_string(cls, string: Union[str, 'DispersionSpec']):
+    def from_string(cls, string: str | DispersionSpec):
         if isinstance(string, cls):
             return string
         m = re.match(r"^([.\d]*)(%?)(CI|SEM|SD)$", string.upper())
@@ -268,7 +269,7 @@ class Dispersion:
         self.model = model
         self.sem = sem
 
-    def get(self, spec: Union[str, DispersionSpec]):
+    def get(self, spec: str | DispersionSpec):
         spec = DispersionSpec.from_string(spec)
         if spec.measure == 'SEM':
             return self.sem * spec.multiplier

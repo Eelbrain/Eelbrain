@@ -1,7 +1,7 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 from copy import deepcopy
 import inspect
-from typing import Optional, Sequence
+from collections.abc import Sequence
 import math
 
 from .._exceptions import DefinitionError
@@ -525,7 +525,7 @@ class ContinuousEpoch(EpochBase):
 def decim_param(
         samplingrate: int,
         decim: int,
-        epoch: Optional[Epoch],
+        epoch: Epoch | None,
         info: dict,
         minimal: bool = False,  # try to infer minimally necessary samplingrate
 ) -> int:

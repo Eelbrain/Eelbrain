@@ -1,7 +1,8 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Statistical Parametric Mapping"""
 from itertools import repeat
-from typing import Dict, Literal, Sequence, Union
+from typing import Literal
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -119,7 +120,7 @@ class LM(MultiEffectNDTest):
             samples: int = 10000,
             pmin: float = None,
             tmin: float = None,
-            tfce: Union[float, bool] = False,
+            tfce: float | bool = False,
             tstart: float = None,
             tstop: float = None,
             force_permutation: bool = False,
@@ -239,7 +240,7 @@ class LM(MultiEffectNDTest):
 
     def predict(
             self,
-            values: Union[Sequence[float], Dict[str, float]],
+            values: Sequence[float] | dict[str, float],
             name: str = None,
     ) -> NDVar:
         """Predict ``y`` based on given values of ``x``

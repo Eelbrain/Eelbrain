@@ -4,7 +4,6 @@ import pstats
 
 import mne
 from eelbrain import *
-import eelbrain
 
 mne.set_log_level('warning')
 configure(n_workers=False)
@@ -27,7 +26,7 @@ parser.add_option("-n", dest="number", metavar="NUMBER",
 if options.file_ext is None:
     fname = 'profile_of_anova.profile'
 else:
-    fname = 'profile_of_anova_%s.profile' % options.file_ext
+    fname = f'profile_of_anova_{options.file_ext}.profile'
 
 sort = options.sort
 if options.number is None:
@@ -50,7 +49,7 @@ if make:
         statement = ("testnd.ANOVA('uts', 'A * B * rm', ds=ds, samples=100, "
                      "tfce=True, tstart=0, match='rm')")
     else:
-        raise ValueError("-m %s" % make)
+        raise ValueError(f"-m {make}")
     cProfile.run(statement, fname)
 
 

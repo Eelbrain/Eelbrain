@@ -9,7 +9,7 @@ Hopkins, K. D. (1976). A Simplified Method for Determining Expected Mean
     Squares and Error Terms in the Analysis of Variance. Journal of
     Experimental Education, 45(2), 13--18.
 """
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 from scipy.linalg import lstsq
@@ -172,8 +172,8 @@ class LM:
         # repr kwargs
         args = [self.y.name, self.x.name]
         if self.sub:
-            args.append('sub=%r' % getattr(self.sub, 'name', '<...>'))
-        return "LM(%s)" % ', '.join(args)
+            args.append(f"sub={getattr(self.sub, 'name', '<...>')!r}")
+        return f"LM({', '.join(args)})"
 
     def anova(self, title='ANOVA', empty=True, ems=False):
         """ANOVA table for the linear model"""
@@ -350,7 +350,7 @@ class _NDANOVA(MPTestMapper):
         self._flat_f_map = None
 
     def __repr__(self):
-        return '%s(%s)' % (self.__class__.__name__, self.x.name)
+        return f'{self.__class__.__name__}({self.x.name})'
 
     def map(self, y, perm=None):
         """Fit the model to multiple dependent variables

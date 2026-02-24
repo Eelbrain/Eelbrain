@@ -4,7 +4,7 @@ import logging
 import multiprocessing
 import os
 import sys
-from typing import Any, Dict, Literal, Union
+from typing import Any, Literal
 
 from matplotlib.colors import to_rgb
 
@@ -12,7 +12,7 @@ from ._utils import IS_OSX, IS_WINDOWS, ScreenHandler
 
 
 SUPPRESS_WARNINGS = True
-CONFIG: Dict[str, Any] = {
+CONFIG: dict[str, Any] = {
     'n_workers': multiprocessing.cpu_count(),
     'eelbrain': True,
     'autorun': None,
@@ -35,7 +35,7 @@ mpc = multiprocessing.get_context(method)
 
 
 def configure(
-        n_workers: Union[bool, int] = None,
+        n_workers: bool | int = None,
         frame: bool = None,
         autorun: bool = None,
         show: bool = None,
@@ -97,7 +97,7 @@ def configure(
     """
     # don't change values before raising an error
     logger = logging.getLogger('Eelbrain')
-    new: Dict[str, Any] = {}
+    new: dict[str, Any] = {}
     if n_workers is not None:
         if n_workers is True:
             new['n_workers'] = multiprocessing.cpu_count()

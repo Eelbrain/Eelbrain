@@ -1,7 +1,8 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 from itertools import chain
 import logging
-from typing import Any, Dict, Optional, Sequence, Type
+from typing import Any
+from collections.abc import Sequence
 
 from .._exceptions import DefinitionError
 from .._text import enumeration, plural
@@ -139,8 +140,8 @@ def compound(items):
 
 
 def dict_change(
-        old: Dict[str, Any],
-        new: Dict[str, Any],
+        old: dict[str, Any],
+        new: dict[str, Any],
 ):
     "Readable representation of dict change"
     lines = []
@@ -148,11 +149,11 @@ def dict_change(
     keys.update(old)
     for key in sorted(keys):
         if key not in new:
-            lines.append("%s: %r -> key removed" % (key, old[key]))
+            lines.append(f"{key}: {old[key]!r} -> key removed")
         elif key not in old:
-            lines.append("%s: new key -> %r" % (key, new[key]))
+            lines.append(f"{key}: new key -> {new[key]!r}")
         elif new[key] != old[key]:
-            lines.append("%s: %r -> %r" % (key, old[key], new[key]))
+            lines.append(f"{key}: {old[key]!r} -> {new[key]!r}")
     return lines
 
 
@@ -160,8 +161,8 @@ def log_dict_change(
         log: logging.Logger,
         kind: str,
         name: str,
-        old: Optional[Dict[str, Any]],
-        new: Optional[Dict[str, Any]],
+        old: dict[str, Any] | None,
+        new: dict[str, Any] | None,
 ):
     if new is None:
         log.warning("  %s %s removed", kind, name)
@@ -264,9 +265,9 @@ def typed_arg(arg, type_, secondary_type=None):
 def sequence_arg(
         name: str,  # for error message
         arg: Sequence,
-        item_type: Type = str,
+        item_type: type = str,
         allow_none: bool = True,
-        sequence_type: Type = tuple,
+        sequence_type: type = tuple,
 ):
     if arg is None:
         if allow_none:

@@ -5,7 +5,8 @@ from functools import partial, reduce
 from itertools import product
 from numbers import Number
 import operator
-from typing import Any, Literal, Sequence, Union
+from typing import Any, Literal
+from collections.abc import Sequence
 
 import matplotlib
 import mne
@@ -101,7 +102,7 @@ def annot(annot, subject='fsaverage', surf='smoothwm', borders=False, alpha=0.7,
             raise ValueError("Neither hemisphere contains more than one label")
 
     if title is None:
-        title = '%s - %s' % (subject, annot)
+        title = f'{subject} - {annot}'
 
     from ._brain_object import Brain
     brain = Brain(subject, hemi, surf, title, cortex,
@@ -1047,7 +1048,7 @@ def _bin_table_ims(data, hemi, views, brain_func):
     elif hemi == 'lh' or hemi == 'rh':
         hemis = [hemi]
     else:
-        raise ValueError("hemi=%s" % repr(hemi))
+        raise ValueError(f"hemi={hemi!r}")
 
     cmap_params = None
     for hemi in hemis:
@@ -1086,7 +1087,7 @@ class SPPlotType(Enum):
 @dataclass
 class SequencePlotterLayer:
     kind: SPLayer
-    data: Union[NDVar, mne.Label, mne.BiHemiLabel]
+    data: NDVar | mne.Label | mne.BiHemiLabel
     args: tuple
     kwargs: dict
     label: Sequence[str] = None
@@ -1299,7 +1300,7 @@ class SequencePlotter:
 
     def add_label(
             self,
-            mne_label: Union[mne.Label, mne.BiHemiLabel],
+            mne_label: mne.Label | mne.BiHemiLabel,
             *,
             overlay: bool = False,
             index: int = None,
@@ -1337,7 +1338,7 @@ class SequencePlotter:
             *args,
             static: bool = None,
             index: int = None,
-            label: Union[str, Sequence[str]] = None,
+            label: str | Sequence[str] = None,
             **kwargs,
     ):
         """Add a data layer to the brain plot
@@ -1457,7 +1458,7 @@ class SequencePlotter:
         layer = SequencePlotterLayer(kind, ndvar, args, {}, label, index, SPPlotType.LABEL)
         self._data.append(layer)
 
-    def add_pmap(self, res: Union[NDTest, NDVar], label=None, **kwargs):
+    def add_pmap(self, res: NDTest | NDVar, label=None, **kwargs):
         "See :meth:`~._brain_object.Brain.add_ndvar_p_map`"
         # interpret NDTest subtypes
         if isinstance(res, MultiEffectNDTest):
@@ -1544,9 +1545,9 @@ class SequencePlotter:
     def plot_table(
             self,
             hemi: Literal['lh', 'rh', 'both'] = None,
-            view: Union[str, Sequence[str]] = ('lateral', 'medial'),
+            view: str | Sequence[str] = ('lateral', 'medial'),
             orientation: Literal['horizontal', 'vertical'] = None,
-            labels: Union[bool, Sequence[str]] = True,
+            labels: bool | Sequence[str] = True,
             mode: Literal['rgb', 'rgba'] = 'rgb',
             antialiased: bool = False,
             rows: Sequence[str] = ('view',),

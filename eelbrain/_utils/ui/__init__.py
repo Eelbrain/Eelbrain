@@ -142,13 +142,12 @@ def test_targetpath(path, cancel=True):
 
     dirname = os.path.abspath(os.path.dirname(path))
     if not os.path.exists(dirname):
-        msg = ("The directory %r does not exist. Should it be created?" % dirname)
+        msg = f"The directory {dirname!r} does not exist. Should it be created?"
         answer = ask("Create Directory?", msg, cancel=cancel)
         if answer:
             os.makedirs(dirname)
         elif answer is None:  # cancel
-            err = ("User canceled because the directory %r does not exist"
-                   % dirname)
+            err = f"User canceled because the directory {dirname!r} does not exist"
             raise KeyboardInterrupt(err)
 
     return os.path.exists(dirname)

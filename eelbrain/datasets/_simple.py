@@ -3,7 +3,7 @@ from itertools import product
 from pathlib import Path
 import shutil
 import string
-from typing import Literal, Optional, Tuple, Union
+from typing import Literal
 from os.path import join
 
 import mne
@@ -230,8 +230,8 @@ def _mne_source_space(subject, src_tag, subjects_dir):
 def get_mne_sample(
         tmin: float = -0.1,
         tmax: float = 0.4,
-        baseline: Optional[Tuple[Optional[float], Optional[float]]] = (None, 0),
-        sns: Union[bool, Literal['eeg', 'mag', 'grad']] = False,
+        baseline: tuple[float | None, float | None] | None = (None, 0),
+        sns: bool | Literal['eeg', 'mag', 'grad'] = False,
         src: Literal[False, 'ico', 'vol'] = None,
         sub: str = "modality=='A'",
         ori: Literal['free', 'fixed', 'vector'] = 'free',

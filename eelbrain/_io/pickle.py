@@ -91,7 +91,7 @@ def pickle(
         if exception.args[0] == 'error return without exception set':
             if os.path.exists(dest):
                 os.remove(dest)
-            raise IOError("An error occurred while pickling. This could be due to an attempt to pickle an array (or NDVar) that is too big. Try saving several smaller arrays.")
+            raise OSError("An error occurred while pickling. This could be due to an attempt to pickle an array (or NDVar) that is too big. Try saving several smaller arrays.")
         else:
             raise
 

@@ -55,7 +55,8 @@ from io import BytesIO, StringIO
 import tempfile
 import time
 from types import MappingProxyType
-from typing import Any, Union, Iterable, List as ListType, Sequence
+from typing import Any, Union, List as ListType
+from collections.abc import Iterable, Sequence
 import webbrowser
 
 import numpy as np
@@ -188,13 +189,13 @@ def get_pdf(tex_obj):
         doc_class = '[border=2pt]{standalone}'
         standalone = True
     txt = tex(tex_obj, {'standalone': standalone})
-    document = """
-\\documentclass%s
-\\usepackage{booktabs}
-\\begin{document}
-%s
-\\end{document}
-""" % (doc_class, txt)
+    document = f"""
+\\documentclass{doc_class}
+\\usepackage{{booktabs}}
+\\begin{{document}}
+{txt}
+\\end{{document}}
+"""
     pdf = latex2pdf(document)
     return pdf
 
@@ -690,7 +691,7 @@ class FMTextElement:
             if self.tag in _TEX_SUBS:
                 txt = _TEX_SUBS[self.tag] % txt
             else:
-                txt = r"%s{%s}" % (self.tag, txt)
+                txt = fr"{self.tag}{{{txt}}}"
 
         return txt
 
@@ -863,7 +864,7 @@ class Link(FMTextElement):
         self.url = str(url)
 
     def get_html(self, env):
-        return '<a href="%s">%s</a>' % (self.url, FMTextElement.get_html(self, env))
+        return f'<a href="{self.url}">{FMTextElement.get_html(self, env)}</a>'
 
 
 class Number(FMTextElement):
@@ -873,7 +874,7 @@ class Number(FMTextElement):
             if getattr(content, 'ndim', None) == 0:
                 content = content.item()
             else:
-                raise TypeError("content=%s" % repr(content))
+                raise TypeError(f"content={content!r}")
         FMTextElement.__init__(self, content, tag)
         self.fmt = fmt
         self.drop0 = drop0
@@ -881,7 +882,7 @@ class Number(FMTextElement):
     def _repr_items(self):
         items = FMTextElement._repr_items(self)
         if self.fmt != '%s':
-            items.append('fmt=%r' % self.fmt)
+            items.append(f'fmt={self.fmt!r}')
         if self.drop0:
             items.append('drop0=True')
         return items
@@ -933,13 +934,13 @@ class Math(FMTextElement):
         items = [repr(self.content)]
         if self._equation:
             items.append("equation=True")
-        return "Math(%s)" % ', '.join(items)
+        return f"Math({', '.join(items)})"
 
     def get_html(self, env: dict = ENV):
         im = Image("LaTeX Equation", 'svg', self.content)
-        math_to_image("$%s$" % self.content, im, format='svg')
+        math_to_image(f"${self.content}$", im, format='svg')
         if self._equation:
-            return '\n<br>\n%s\n<br>\n' % im.get_html(env)
+            return f'\n<br>\n{im.get_html(env)}\n<br>\n'
         else:
             return im.get_html(env)
 
@@ -947,7 +948,7 @@ class Math(FMTextElement):
         if self._equation:
             return "\\begin{equation}$%s$\\end{equation}" % self.content
         else:
-            return "$%s$" % self.content
+            return f"${self.content}$"
 
 
 class EquationArray(FMTextElement):
@@ -962,13 +963,13 @@ class EquationArray(FMTextElement):
         FMTextElement.__init__(self, eqnarray)
 
     def __repr__(self):
-        return "EquationArray(%s)" % repr(self.content)
+        return f"EquationArray({self.content!r})"
 
     def get_html(self, env):
         ims = []
         for line in self.content:
             im = Image("LaTeX EquationArray", 'svg', line)
-            math_to_image("$%s$" % line.replace('&', ''), im, format='svg')
+            math_to_image(f"${line.replace('&', '')}$", im, format='svg')
             ims.append(im.get_html(env))
         return '\n<br>\n%s\n<br>\n' % '\n<br>\n'.join(ims)
 
@@ -1077,13 +1078,13 @@ class List(FMTextElement):
         if self.head is not None:
             items.append(self.head.get_html(env))
         tag = 'ol' if self.ordered else 'ul'
-        items.append('<%s>' % tag)
+        items.append(f'<{tag}>')
 
         # body
         for item in self.items:
             items.append(_html_element('li', item, env))
 
-        items.append('</%s>' % tag)
+        items.append(f'</{tag}>')
         return '\n'.join(items)
 
     def get_str(self, env: dict = ENV):
@@ -1094,10 +1095,10 @@ class List(FMTextElement):
         for item in self.items:
             if isinstance(item, List):
                 lines = item.get_str(env).splitlines()
-                out.append('- %s' % lines[0])
-                out.extend('  %s' % line for line in lines[1:])
+                out.append(f'- {lines[0]}')
+                out.extend(f'  {line}' for line in lines[1:])
             else:
-                out.append('- %s' % str(item))
+                out.append(f'- {item!s}')
         return '\n'.join(out)
 
 
@@ -1136,7 +1137,7 @@ class Cell(FMText):
         items = FMText._repr_items(self)
         if self.width != 1:
             i = min(2, len(items))
-            items.insert(i, 'width=%s' % self.width)
+            items.insert(i, f'width={self.width}')
         return items
 
     def __len__(self):
@@ -1155,13 +1156,12 @@ class Cell(FMText):
         return _html_element('td', html_repr, env, options)
 
     def get_rtf(self, env: dict = ENV):
-        return "%s\\intbl\\cell" % FMText.get_rtf(self, env)
+        return f"{FMText.get_rtf(self, env)}\\intbl\\cell"
 
     def get_tex(self, env: dict = ENV):
         tex_repr = FMText.get_tex(self, env)
         if self.width > 1 or self.just:
-            tex_repr = r"\multicolumn{%s}{%s}{%s}" % (self.width, self.just,
-                                                      tex_repr)
+            tex_repr = rf"\multicolumn{{{self.width}}}{{{self.just}}}{{{tex_repr}}}"
         return tex_repr
 
 
@@ -1190,7 +1190,7 @@ class Row(list):
                 self[i] = v
             return
         elif not isinstance(key, int):
-            raise TypeError("Row index %r" % (key,))
+            raise TypeError(f"Row index {key!r}")
 
         column = key if key >= 0 else key + self.n_columns
         if not 0 <= column < self.n_columns:
@@ -1212,7 +1212,7 @@ class Row(list):
         raise IndexError("Column %i is part of a multi-column cell" % (column,))
 
     def __repr__(self):
-        return "Row(%s)" % list.__repr__(self)
+        return f"Row({list.__repr__(self)})"
 
     def __str__(self):
         return ' '.join([str(cell) for cell in self])
@@ -1437,11 +1437,11 @@ class Table(FMTextElement):
                 for i, v in zip(range(start, stop, stride), value):
                     self[i, column] = v
             elif not isinstance(row, int):
-                raise TypeError("Table index %r" % (key,))
+                raise TypeError(f"Table index {key!r}")
             else:
                 self.rows[row][column] = value
         else:
-            raise IndexError("Table index %r" % (key,))
+            raise IndexError(f"Table index {key!r}")
 
     # adding texstrs ---
     def cell(
@@ -1525,9 +1525,9 @@ class Table(FMTextElement):
                 span = '%i-%i' % span
             elif isinstance(span, str):
                 if not re.match(r'\d+-\d+', span):
-                    raise ValueError("span=%r" % span)
+                    raise ValueError(f"span={span!r}")
             else:
-                raise TypeError("span=%r" % (span,))
+                raise TypeError(f"span={span!r}")
             self.rows.append(r"\cmidrule{%s}" % span)
 
     def title(self, content: FMTextLike):
@@ -1538,7 +1538,7 @@ class Table(FMTextElement):
         """Set the table caption"""
         self._caption = asfmtext_or_none(content)
 
-    def append(self, table: 'Table'):
+    def append(self, table: Table):
         "Append another table (has to have same column specification)"
         if table.columns != self.columns:
             raise ValueError(f"Trying to append table with table.colums={table.columns} to {self.columns}")
@@ -1919,7 +1919,7 @@ class Image(FMTextElement, BytesIO):
             out.append(repr(self._alt))
         v = self.getvalue()
         if len(v) > 0:
-            out.append('buf=%s...' % repr(v[:50]))
+            out.append(f'buf={v[:50]!r}...')
         return out
 
     def _repr_png_(self):  # iPython display method
@@ -2002,7 +2002,7 @@ class Figure(FMText):
         body = FMText.get_str(self, env)
         if self._caption:
             caption = str(self._caption)
-            return "%s\n\n%s\n" % (body, caption)
+            return f"{body}\n\n{caption}\n"
         else:
             return body + '\n'
 
@@ -2090,7 +2090,7 @@ class Section(FMText):
 
     def add_image_figure(
             self,
-            image: Union[Image, np.ndarray, FMTextArg],
+            image: Image | np.ndarray | FMTextArg,
             caption: FMTextArg,
             alt: str = None,
     ):
@@ -2238,7 +2238,7 @@ class Report(Section):
             self,
             title: FMTextLike,
             author: FMTextLike = None,
-            date: Union[FMTextLike, bool] = True,
+            date: FMTextLike | bool = True,
             content: FMTextLike = None,
             site_title: str = None,
     ):
@@ -2363,8 +2363,7 @@ class Report(Section):
         Includes informationon on the computer that created the report, time
         of creation, and version of selected packages.
         """
-        info = ["Created by %s on %s" % (socket.gethostname(),
-                                         time.strftime("%c"))]
+        info = [f"Created by {socket.gethostname()} on {time.strftime('%c')}"]
         for package in packages:
             if package in sys.modules:
                 mod = sys.modules[package]
@@ -2550,7 +2549,7 @@ def im_table(ims, header=None, name="im_table"):
 
     svg_h = y0 + im_h * n_rows
     svg_w = im_w * n_cols
-    svg = ['<svg width="{w}" height="{h}">'.format(w=svg_w, h=svg_h)]
+    svg = [f'<svg width="{svg_w}" height="{svg_h}">']
     if header is not None:
         assert len(header) == n_cols
         p = '<text x="{x}" y="{y}">{txt}</text>'

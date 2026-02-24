@@ -239,7 +239,7 @@ class CanvasFrame(EelbrainFrame):
         self.toolbar.update()
 
     def OnAttach(self, event):
-        get_app().Attach(self._eelfigure, "%s plot" % self._plot_name, 'p', self)
+        get_app().Attach(self._eelfigure, f"{self._plot_name} plot", 'p', self)
 
     def OnClose(self, event):
         # remove circular reference
@@ -258,9 +258,8 @@ class CanvasFrame(EelbrainFrame):
         self.OnSaveAs(event)
 
     def OnSaveAs(self, event):
-        default_file = '%s.pdf' % self.GetTitle().replace(': ', ' - ')
-        dlg = wx.FileDialog(self, "If no file type is selected below, it is "
-                                  "inferred from the extension.",
+        default_file = f"{self.GetTitle().replace(': ', ' - ')}.pdf"
+        dlg = wx.FileDialog(self, "If no file type is selected below, it is inferred from the extension.",
                             defaultFile=default_file,
                             wildcard="Any (*.*)|*.*|PDF (*.pdf)|*.pdf|PNG (*.png)|*.png",
                             style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT)

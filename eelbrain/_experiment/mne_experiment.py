@@ -13,7 +13,8 @@ from pathlib import Path
 import re
 import shutil
 import time
-from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Any, Literal, Optional, Union
+from collections.abc import Sequence
 
 import numpy as np
 import mne
@@ -104,7 +105,7 @@ inv_re = re.compile(r"^(free|fixed|loose\.\d+|vec)"  # orientation constraint
 
 
 # Argument types
-BaselineArg = Union[bool, Tuple[Optional[float], Optional[float]]]
+BaselineArg = Union[bool, tuple[Optional[float], Optional[float]]]
 DataArg = Union[str, TestDims]
 PMinArg = Union[Literal['tfce'], float, None]
 SubjectArg = Union[str, Literal[1, -1]]
@@ -221,7 +222,7 @@ class Pipeline(FileTree):
     """
     _safe_delete = 'cache-dir'
     path_version: int = 2
-    screen_log_level: Union[str, int] = logging.INFO
+    screen_log_level: str | int = logging.INFO
     auto_delete_results: bool = False
     auto_delete_cache: Literal['auto', 'ask', 'debug'] = 'auto'
     # what to do when the experiment class definition changed:
@@ -241,23 +242,23 @@ class Pipeline(FileTree):
     preload: bool = False
 
     # Raw preprocessing pipeline
-    raw: Dict[str, RawPipe] = {}
+    raw: dict[str, RawPipe] = {}
 
     # Load events from a subset of available stim channels
-    stim_channel: Union[str, Sequence[str]] = None
+    stim_channel: str | Sequence[str] = None
     # merge adjacent events in the stimulus channel
     merge_triggers: int = None
     # add this value to all trigger times (in seconds); global shift, or {subject: shift, (subject, session): shift} dictionary
-    trigger_shift: Union[float, Dict[Union[str, Tuple], float]] = 0
+    trigger_shift: float | dict[str | tuple, float] = 0
 
     # variables for automatic labeling {name: {trigger: label, triggers: label}}
-    variables: Dict[str, Any] = {}
+    variables: dict[str, Any] = {}
 
     # Default values for epoch definitions
     epoch_default = {'decim': 5}
 
     # named epochs
-    epochs: Dict[str, EpochBase] = {}
+    epochs: dict[str, EpochBase] = {}
 
     # Rejection
     # =========
@@ -298,7 +299,7 @@ class Pipeline(FileTree):
     groups = {}
 
     # whether to look for and load eye tracker data when loading raw files
-    has_edf = defaultdict(lambda: False)
+    has_edf = defaultdict(bool)
 
     # MEG-system (used as ``sysname`` to infer adjacency; for usage search `get_sysname`).
     meg_system = None
@@ -336,7 +337,7 @@ class Pipeline(FileTree):
         'lobes-op': CombinationParc('lobes', {'occipitoparietal': "occipital + parietal"}, ('lateral', 'medial')),
         'lobes-ot': CombinationParc('lobes', {'occipitotemporal': "occipital + temporal"}, ('lateral', 'medial')),
     }
-    parcs: Dict[str, Parcellation] = {}
+    parcs: dict[str, Parcellation] = {}
 
     # Frequencies:  lowbound, highbound, step
     _freqs = {'gamma': {'frequencies': np.arange(25, 50, 2),
@@ -366,7 +367,7 @@ class Pipeline(FileTree):
     # Tests
     # -----
     # Tests imply a model which is set automatically
-    tests: Dict[str, Test] = {}
+    tests: dict[str, Test] = {}
     _empty_test = False  # for TRFExperiment
     _cluster_criteria = {
         '': {'time': 0.025, 'sensor': 4, 'source': 10},
@@ -636,11 +637,11 @@ class Pipeline(FileTree):
         freqs = {}
         for name, f in chain(self._freqs.items(), self.freqs.items()):
             if name in freqs:
-                raise ValueError("Frequency %s defined twice" % name)
+                raise ValueError(f"Frequency {name} defined twice")
             elif 'frequencies' not in f:
-                raise KeyError("Frequency values missing for %s" % name)
+                raise KeyError(f"Frequency values missing for {name}")
             elif 'n_cycles' not in f:
-                raise KeyError("Number of cycles not defined for %s" % name)
+                raise KeyError(f"Number of cycles not defined for {name}")
             freqs[name] = f
         self._freqs = freqs
 
@@ -911,7 +912,7 @@ class Pipeline(FileTree):
                     if command == 'abort':
                         raise RuntimeError("User aborted invalid result deletion")
                     elif command != 'delete':
-                        raise RuntimeError("command=%r" % (command,))
+                        raise RuntimeError(f"command={command!r}")
                 # Ask for any files
                 if files and self.auto_delete_cache != 'auto':
                     options = {'delete': 'delete invalid files', 'abort': 'raise an error'}
@@ -932,7 +933,7 @@ class Pipeline(FileTree):
                         log.warning("Revalidating invalid cache")
                         files.clear()
                     else:
-                        raise RuntimeError("command=%s" % repr(command))
+                        raise RuntimeError(f"command={command!r}")
 
                 # delete invalid files
                 if files:
@@ -1460,7 +1461,7 @@ class Pipeline(FileTree):
     def _add_vars(
             self,
             ds: Dataset,
-            vardef: Union[None, str, Variables],
+            vardef: None | str | Variables,
             group_only: bool = False,
     ):
         """Add vars to the dataset
@@ -1516,7 +1517,7 @@ class Pipeline(FileTree):
 
         MRIs are currently not backed up.
         """
-        self._log.debug("Initiating backup to %s" % dst_root)
+        self._log.debug(f"Initiating backup to {dst_root}")
         root = self.get('root')
         root_len = len(root) + 1
 
@@ -1583,9 +1584,9 @@ class Pipeline(FileTree):
                 print("Abort.")
                 return
             else:
-                print("Backing up %i files ..." % len(pairs))
+                print(f"Backing up {len(pairs)} files ...")
 
-        self._log.info("Backing up %i files ..." % len(pairs))
+        self._log.info(f"Backing up {len(pairs)} files ...")
         # create directories
         for dirname in dirs:
             dirpath = join(dst_root, dirname)
@@ -1962,9 +1963,9 @@ class Pipeline(FileTree):
             self,
             subjects: SubjectArg = None,
             baseline: BaselineArg = False,
-            ndvar: Union[bool, Literal['both']] = True,
-            add_bads: Union[bool, List] = True,
-            reject: Union[bool, Literal['keep']] = True,
+            ndvar: bool | Literal['both'] = True,
+            add_bads: bool | list = True,
+            reject: bool | Literal['keep'] = True,
             cat: Sequence[CellArg] = None,
             samplingrate: int = None,
             decim: int = None,
@@ -2229,20 +2230,20 @@ class Pipeline(FileTree):
 
     def load_epochs_stc(
             self,
-            subjects: Union[str, int] = None,
+            subjects: str | int = None,
             baseline: BaselineArg = True,
             src_baseline: BaselineArg = False,
             cat: Sequence[CellArg] = None,
-            keep_epochs: Union[bool, str] = False,
+            keep_epochs: bool | str = False,
             morph: bool = None,
-            mask: Union[bool, str] = False,
+            mask: bool | str = False,
             data_raw: bool = False,
             vardef: str = None,
             samplingrate: int = None,
             decim: int = None,
             pad: float = 0,
             ndvar: bool = True,
-            reject: Union[bool, str] = True,
+            reject: bool | str = True,
             **state):
         """Load a Dataset with stcs for single epochs
 
@@ -2400,7 +2401,7 @@ class Pipeline(FileTree):
     def load_events(
             self,
             subject: str = None,
-            add_bads: Union[bool, List[str]] = True,
+            add_bads: bool | list[str] = True,
             data_raw: bool = False,
             **kwargs,
     ) -> Dataset:
@@ -2482,9 +2483,9 @@ class Pipeline(FileTree):
 
     def load_evoked(
             self,
-            subjects: Union[str, int] = None,
+            subjects: str | int = None,
             baseline: BaselineArg = False,
-            ndvar: Union[bool, int] = True,
+            ndvar: bool | int = True,
             cat: Sequence[CellArg] = None,
             samplingrate: int = None,
             decim: int = None,
@@ -2621,9 +2622,9 @@ class Pipeline(FileTree):
 
     def load_epochs_stf(
             self,
-            subjects: Union[str, int] = None,
+            subjects: str | int = None,
             baseline: BaselineArg = True,
-            mask: Union[bool, str] = True,
+            mask: bool | str = True,
             morph: bool = None,
             keep_stc: bool = False,
             **state):
@@ -2669,9 +2670,9 @@ class Pipeline(FileTree):
 
     def load_evoked_stf(
             self,
-            subjects: Union[str, int] = None,
+            subjects: str | int = None,
             baseline: BaselineArg = True,
-            mask: Union[bool, str] = True,
+            mask: bool | str = True,
             morph: bool = None,
             keep_stc: bool = False,
             **state):
@@ -2717,13 +2718,13 @@ class Pipeline(FileTree):
 
     def load_evoked_stc(
             self,
-            subjects: Union[str, int] = None,
+            subjects: str | int = None,
             baseline: BaselineArg = True,
             src_baseline: BaselineArg = False,
             cat: Sequence[CellArg] = None,
             keep_evoked: bool = False,
             morph: bool = None,
-            mask: Union[bool, str] = False,
+            mask: bool | str = False,
             data_raw: bool = False,
             vardef: str = None,
             samplingrate: int = None,
@@ -2876,14 +2877,14 @@ class Pipeline(FileTree):
 
     def load_induced_stc(
             self,
-            subjects: Union[str, int] = None,
-            frequencies: Union[float, Sequence[float]] = None,
-            n_cycles: Union[float, Sequence[float]] = None,
+            subjects: str | int = None,
+            frequencies: float | Sequence[float] = None,
+            n_cycles: float | Sequence[float] = None,
             pad: float = 0.250,
             baseline: BaselineArg = True,
             cat: Sequence[CellArg] = None,
             morph: bool = False,
-            mask: Union[bool, str] = False,
+            mask: bool | str = False,
             vardef: str = None,
             decim: int = 1,
             **state,
@@ -3055,9 +3056,9 @@ class Pipeline(FileTree):
             self,
             fiff: Any = None,
             ndvar: bool = False,
-            mask: Union[bool, str] = False,
+            mask: bool | str = False,
             **state,
-    ) -> Union[mne.minimum_norm.InverseOperator, NDVar]:
+    ) -> mne.minimum_norm.InverseOperator | NDVar:
         """Load the inverse operator
 
         Parameters
@@ -3133,7 +3134,7 @@ class Pipeline(FileTree):
     def _prepare_inv(
             self,
             fiff: Any,
-            mask: Union[bool, str],
+            mask: bool | str,
             morph: bool,
     ):
         # load inv
@@ -3162,7 +3163,7 @@ class Pipeline(FileTree):
             self,
             label: str,
             **kwargs,
-    ) -> Union[mne.Label, mne.BiHemiLabel]:
+    ) -> mne.Label | mne.BiHemiLabel:
         """Retrieve a label as mne Label object
 
         Parameters
@@ -3220,7 +3221,7 @@ class Pipeline(FileTree):
             add_bads: bool = True,
             return_data: bool = False,
             **state,
-    ) -> Union[NDVar, Dataset, Tuple[NDVar, NDVar]]:
+    ) -> NDVar | Dataset | tuple[NDVar, NDVar]:
         """Load sensor neighbor correlation
 
         Parameters
@@ -3275,7 +3276,7 @@ class Pipeline(FileTree):
 
     def load_raw(
             self,
-            add_bads: Union[bool, Sequence[str]] = True,
+            add_bads: bool | Sequence[str] = True,
             preload: bool = False,
             ndvar: bool = False,
             samplingrate: int = None,
@@ -3284,7 +3285,7 @@ class Pipeline(FileTree):
             tstop: float = None,
             noise: bool = False,
             **kwargs,
-    ) -> Union[mne.io.Raw, NDVar]:
+    ) -> mne.io.Raw | NDVar:
         """
         Load a raw file as mne Raw object.
 
@@ -3353,14 +3354,14 @@ class Pipeline(FileTree):
 
     def load_raw_stc(
             self,
-            mask: Union[bool, str] = False,
+            mask: bool | str = False,
             morph: bool = False,
             ndvar: bool = True,
             samplingrate: int = None,
             tstart: float = None,
             tstop: float = None,
             **kwargs,
-    ) -> Union[mne.SourceEstimate, mne.VectorSourceEstimate, mne.VolSourceEstimate, NDVar]:
+    ) -> mne.SourceEstimate | mne.VectorSourceEstimate | mne.VolSourceEstimate | NDVar:
         """
         Load a raw file as mne Raw object.
 
@@ -3402,10 +3403,10 @@ class Pipeline(FileTree):
 
     def load_selected_events(
             self,
-            subjects: Union[str, Literal[1, -1]] = None,
-            reject: Union[bool, Literal['keep']] = True,
-            add_bads: Union[bool, List[str]] = True,
-            index: Union[bool, str] = True,
+            subjects: str | Literal[1, -1] = None,
+            reject: bool | Literal['keep'] = True,
+            add_bads: bool | list[str] = True,
+            index: bool | str = True,
             data_raw: bool = False,
             vardef: str = None,
             cat: Sequence[CellArg] = None,
@@ -3579,7 +3580,7 @@ class Pipeline(FileTree):
                 elif reject is True:
                     ds = ds.sub(ds_sel['accept'])
                 else:
-                    raise RuntimeError("reject=%s" % repr(reject))
+                    raise RuntimeError(f"reject={reject!r}")
 
                 # bad channels
                 if add_bads:
@@ -3624,7 +3625,7 @@ class Pipeline(FileTree):
         test = self.get('test')
         test_obj = self._tests[test]
         if not isinstance(test_obj, TwoStageTest):
-            raise NotImplementedError("Test kind %r" % test_obj.__class__.__name__)
+            raise NotImplementedError(f"Test kind {test_obj.__class__.__name__!r}")
         ds = self.load_epochs_stc(subject, baseline, src_baseline, mask=True, vardef=test_obj.vars)
         return testnd.LM('src', test_obj.stage_1, data=ds, samples=0, subject=subject)
 
@@ -3633,7 +3634,7 @@ class Pipeline(FileTree):
             add_geom: bool = False,
             ndvar: bool = False,
             **state,
-    ) -> Union[mne.SourceSpaces, SourceSpace, VolumeSourceSpace]:
+    ) -> mne.SourceSpaces | SourceSpace | VolumeSourceSpace:
         """Load the current source space
 
         Parameters
@@ -3772,11 +3773,11 @@ class Pipeline(FileTree):
     def _load_test(
             self,
             test: str,
-            tstart: Optional[float],
-            tstop: Optional[float],
+            tstart: float | None,
+            tstop: float | None,
             pmin: PMinArg,
-            parc: Optional[str],
-            mask: Optional[str],
+            parc: str | None,
+            mask: str | None,
             samples: int,
             data: TestDims,
             baseline: BaselineArg,
@@ -3807,14 +3808,14 @@ class Pipeline(FileTree):
                     if not return_data:
                         return res
                 elif not make:
-                    raise IOError(f"The requested test {desc} is cached with samples={res.samples}, but you requested {samples=}; Set make=True to compute the test with the new number of samples.")
+                    raise OSError(f"The requested test {desc} is cached with samples={res.samples}, but you requested {samples=}; Set make=True to compute the test with the new number of samples.")
                 else:
                     res = None
         elif not make and exists(dst):
-            raise IOError(f"The requested test is outdated: {desc}. Set make=True to perform the test.")
+            raise OSError(f"The requested test is outdated: {desc}. Set make=True to perform the test.")
 
         if res is None and not make:
-            raise IOError(f"The requested test is not cached: {desc}. Set make=True to perform the test.")
+            raise OSError(f"The requested test is not cached: {desc}. Set make=True to perform the test.")
 
         #  parc/mask
         parc_dim = None
@@ -4052,7 +4053,7 @@ class Pipeline(FileTree):
 
     def make_bad_channels(
         self,
-        bad_chs: Union[Tuple[str], str, int] = (),
+        bad_chs: tuple[str] | str | int = (),
         redo: bool = False,
         noise: bool = False,
         **kwargs: Any,
@@ -4122,7 +4123,7 @@ class Pipeline(FileTree):
             add_bads: bool = True,
             save: bool = True,
             **state,
-    ) -> (NDVar, List[str]):
+    ) -> (NDVar, list[str]):
         """Iteratively exclude bad channels based on low average neighbor-correlation
 
         Parameters
@@ -4219,7 +4220,7 @@ class Pipeline(FileTree):
             if overwrite is False:
                 return
             elif overwrite is not True:
-                raise IOError(f"File already exists at {dst_path}; use the `overwrite` parameter")
+                raise OSError(f"File already exists at {dst_path}; use the `overwrite` parameter")
 
         src_path = self.get(temp, **{field: src})
         if isdir(src_path):
@@ -4357,7 +4358,7 @@ class Pipeline(FileTree):
             epoch: str = None,
             samplingrate: float = None,
             decim: int = None,
-            task: Union[str, Sequence[str]] = None,
+            task: str | Sequence[str] = None,
             **state,
     ):
         """Select ICA components to remove through a GUI
@@ -4634,7 +4635,7 @@ class Pipeline(FileTree):
             pmid = 0.0001
             pmin = 0.00001
         else:
-            raise ValueError("p=%s" % p)
+            raise ValueError(f"p={p}")
 
         data = TestDims("source", morph=True)
         brain_kwargs = self._surfer_plot_kwargs(surf, views, foreground, background,
@@ -4645,10 +4646,10 @@ class Pipeline(FileTree):
                 raise ValueError("If x is specified, c1 needs to be specified; "
                                  "got c1=%s" % repr(c1))
             elif c0:
-                resname = "t-test %s-%s {test_options} %s" % (c1, c0, surf)
+                resname = f"t-test {c1}-{c0} {{test_options}} {surf}"
                 cat = (c1, c0)
             else:
-                resname = "t-test %s {test_options} %s" % (c1, surf)
+                resname = f"t-test {c1} {{test_options}} {surf}"
                 cat = (c1,)
         elif c1 or c0:
             raise ValueError("If x is not specified, c1 and c0 should not be "
@@ -4773,13 +4774,13 @@ class Pipeline(FileTree):
     def _make_mri(self):
         mri_sdir = Path(self.get('mri-sdir'))
         if not mri_sdir.exists():
-            raise IOError(f"Cannot access MRI directory at {mri_sdir}")
+            raise OSError(f"Cannot access MRI directory at {mri_sdir}")
         mrisubject = self.get('mrisubject')
         if mrisubject == 'fsaverage':
             self._log.info("MRI for FSAverage is missing, trying to generate it.")
             mne.create_default_subject(subjects_dir=mri_sdir)
         else:
-            raise IOError(f"MRI for {mrisubject} is missing and cannot be created automatically")
+            raise OSError(f"MRI for {mrisubject} is missing and cannot be created automatically")
 
     def make_plot_annot(self, surf='inflated', redo=False, **state):
         """Create a figure for the contents of an annotation file
@@ -4848,7 +4849,7 @@ class Pipeline(FileTree):
             self,
             samplingrate: int = None,
             data: str = 'sensor',
-            auto: Union[float, dict] = None,
+            auto: float | dict = None,
             overwrite: bool = None,
             decim: int = None,
             **state):
@@ -4921,7 +4922,7 @@ class Pipeline(FileTree):
             if overwrite is False:
                 return
             elif overwrite is None:
-                raise IOError(self.format("A rejection file already exists for {subject}, epoch {epoch}, rej {rej}. Set the overwrite parameter to specify how to handle existing files."))
+                raise OSError(self.format("A rejection file already exists for {subject}, epoch {epoch}, rej {rej}. Set the overwrite parameter to specify how to handle existing files."))
             else:
                 raise TypeError(f"{overwrite=}")
 
@@ -5099,12 +5100,12 @@ class Pipeline(FileTree):
         self._report_test_info(report.add_section("Test Info"), ds, test, res, data, include)
         if parc:
             section = report.add_section(parc)
-            caption = "Labels in the %s parcellation." % parc
+            caption = f"Labels in the {parc} parcellation."
             self._report_parc_image(section, caption)
         elif mask:
-            title = "Whole Brain Masked by %s" % mask
+            title = f"Whole Brain Masked by {mask}"
             section = report.add_section(title)
-            caption = "Mask: %s" % mask.capitalize()
+            caption = f"Mask: {mask.capitalize()}"
             self._report_parc_image(section, caption)
 
         colors = plot.colors_for_categorial(ds.eval(res._plot_model()))
@@ -5124,12 +5125,12 @@ class Pipeline(FileTree):
         info_section = report.add_section("Test Info")
         if parc:
             section = report.add_section(parc)
-            caption = "Labels in the %s parcellation." % parc
+            caption = f"Labels in the {parc} parcellation."
             self._report_parc_image(section, caption)
         elif mask:
-            title = "Whole Brain Masked by %s" % mask
+            title = f"Whole Brain Masked by {mask}"
             section = report.add_section(title)
-            caption = "Mask: %s" % mask.capitalize()
+            caption = f"Mask: {mask.capitalize()}"
             self._report_parc_image(section, caption)
 
         # Design matrix
@@ -5211,7 +5212,7 @@ class Pipeline(FileTree):
             elif label.endswith('-rh'):
                 labels_rh.append(label)
             else:
-                raise NotImplementedError("Label named %s" % repr(label.name))
+                raise NotImplementedError(f"Label named {label.name!r}")
         labels_lh.sort()
         labels_rh.sort()
 
@@ -5227,7 +5228,7 @@ class Pipeline(FileTree):
 
         # add parc image
         section = report.add_section(parc)
-        caption = "ROIs in the %s parcellation." % parc
+        caption = f"ROIs in the {parc} parcellation."
         self._report_parc_image(section, caption, res.subjects)
 
         # add content body
@@ -5237,7 +5238,7 @@ class Pipeline(FileTree):
             res_i = res.res[label]
             ds = res_data[label]
             title = label[:-3].capitalize()
-            caption = "Mean in label %s." % label
+            caption = f"Mean in label {label}."
             n = len(ds['subject'].cells)
             if n < n_subjects:
                 title += ' (n=%i)' % n
@@ -5356,7 +5357,7 @@ class Pipeline(FileTree):
         eeg = ds['eeg']
         missing = [s for s in sensors if s not in eeg.sensor.names]
         if missing:
-            raise ValueError("The following sensors are not in the data: %s" % missing)
+            raise ValueError(f"The following sensors are not in the data: {missing}")
 
         # start report
         title = self.format('{raw_basename}_{test_basename}_epoch-{epoch}_test-{test}_options-{test_options}')
@@ -5438,7 +5439,7 @@ class Pipeline(FileTree):
             info.add_item(self.format("cov = {cov}"))
             info.add_item(self.format("inv = {inv}"))
         # test
-        info.add_item("test = %s  (%s)" % (test_obj.kind, test_obj.desc))
+        info.add_item(f"test = {test_obj.kind}  ({test_obj.desc})")
         if include is not None:
             info.add_item(f"Separate plots of all clusters with a p-value < {include}")
         section.append(info)
@@ -5561,9 +5562,9 @@ class Pipeline(FileTree):
             # add to report
             if 'sub-' + subject == mrisubject:
                 title = subject
-                caption = "Coregistration for subject %s." % subject
+                caption = f"Coregistration for subject {subject}."
             else:
-                title = "%s (%s)" % (subject, mrisubject)
+                title = f"{subject} ({mrisubject})"
                 caption = ("Coregistration for subject %s (MRI-subject %s)." %
                            (subject, mrisubject))
             section = report.add_section(title)
@@ -5653,10 +5654,10 @@ class Pipeline(FileTree):
             self,
             samples: int,
             pmin: PMinArg,
-            tstart: Union[None, float],
-            tstop: Union[None, float],
+            tstart: None | float,
+            tstop: None | float,
             data: DataArg,
-            parc_dim: Union[None, str],
+            parc_dim: None | str,
     ):
         "Compile kwargs for mass-univariate tests"
         kwargs = {'samples': samples, 'tstart': tstart, 'tstop': tstop, 'parc': parc_dim}
@@ -5671,7 +5672,7 @@ class Pipeline(FileTree):
             self,
             y: NDVarArg,  # Dependent variable
             ds: Dataset,  # Other variables
-            test: Union[Test, str],  # Test, or name of the test
+            test: Test | str,  # Test, or name of the test
             kwargs: dict = None,  # Test parameters from self._test_kwargs()
             force_permutation: bool = False,
             to_uv: str = None,  # NDVar method to make y  univariate
@@ -5780,9 +5781,9 @@ class Pipeline(FileTree):
             self,
             parc: str = None,
             surf: str = None,
-            views: Union[str, Sequence[str]] = None,
+            views: str | Sequence[str] = None,
             hemi: str = None,
-            borders: Union[bool, int] = False,
+            borders: bool | int = False,
             alpha: float = 0.7,
             w: int = None,
             h: int = None,
@@ -5899,8 +5900,8 @@ class Pipeline(FileTree):
 
     def plot_coregistration(
             self,
-            surfaces: Union[str, list, dict] = 'auto',
-            meg: Tuple[str, ...] = ('helmet', 'sensors'),
+            surfaces: str | list | dict = 'auto',
+            meg: tuple[str, ...] = ('helmet', 'sensors'),
             dig: bool = True,
             parallel: bool = True,
             **state):
@@ -5959,7 +5960,7 @@ class Pipeline(FileTree):
                 subjects.append(subject)
 
         colors = plot.colors_for_oneway(subjects)
-        title = "Whitened Global Field Power (%s)" % self.get('cov')
+        title = f"Whitened Global Field Power ({self.get('cov')})"
         fig = plot._base.Figure(1, title, h=7, run=run)
         ax = fig.axes[0]
         for subject, gfp in zip(subjects, gfps):
@@ -6577,7 +6578,7 @@ class Pipeline(FileTree):
             if not parc:
                 raise ValueError("Need parc for ROI definition")
             kwargs['parc'] = parc
-            kwargs['test_dims'] = '%s.%s' % (parc, data.source)
+            kwargs['test_dims'] = f'{parc}.{data.source}'
             if data.source == 'mean':
                 folder = f'{parc} ROIs'
             else:
@@ -6685,7 +6686,7 @@ class Pipeline(FileTree):
 
     def show_bad_channels(
             self,
-            tasks: Union[bool, str, Sequence[str]] = None,
+            tasks: bool | str | Sequence[str] = None,
             **state,
     ):
         """List bad channels
@@ -6867,7 +6868,7 @@ class Pipeline(FileTree):
         for subject in self:
             path = self.get('cov-info-file')
             if exists(path):
-                with open(path, 'r') as fid:
+                with open(path) as fid:
                     text = fid.read()
                 reg.append(float(text.strip()))
             else:
@@ -6988,7 +6989,7 @@ class Pipeline(FileTree):
             raw: bool = False,
             mri: bool = None,
             mrisubject: bool = False,
-            caption: Union[str, bool] = True,
+            caption: str | bool = True,
             asds: bool = False,
             **state,
     ):
@@ -7050,8 +7051,7 @@ class Pipeline(FileTree):
                 elif is_fake_mri(mri_dir):
                     mri_sdir = self.get('mri-sdir')
                     info = mne.coreg.read_mri_cfg(mrisubject_, mri_sdir)
-                    cell = "%s * %s" % (info['subject_from'],
-                                        str(info['scale']))
+                    cell = f"{info['subject_from']} * {info['scale']!s}"
                     mri_list.append(cell)
                 else:
                     mri_list.append(mrisubject_)

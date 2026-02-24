@@ -228,7 +228,7 @@ def file_path(name):
     if path.exists():
         return path
     else:
-        raise IOError("Testing file does not exist. Test can only be executed from source repository.")
+        raise OSError("Testing file does not exist. Test can only be executed from source repository.")
 
 
 def path(string):

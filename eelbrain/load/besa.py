@@ -166,11 +166,10 @@ def dat_set_paths(path, subjects=[], conditions=[]):
             path_ = path.format(subject=subject, condition=condition)
             paths_ = glob(path_)
             if len(paths_) == 0:
-                err = "No dat file found for %r/%r" % (subject, condition)
+                err = f"No dat file found for {subject!r}/{condition!r}"
                 raise ValueError(err)
             elif len(paths_) > 1:
-                err = ("Multiple dat files found for "
-                       "%r/%r" % (subject, condition))
+                err = f"Multiple dat files found for {subject!r}/{condition!r}"
                 raise ValueError(err)
             else:
                 paths.append(paths_[0])

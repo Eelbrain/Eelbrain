@@ -50,7 +50,7 @@ def assert_f_tests_equal(f_tests, r_res, fs, fnds, r_kind='aov'):
                                       'p': r_res[0][4][i]})
                     break
             else:
-                raise RuntimeError("Effect %s not in ezANOVA" % f_test_name)
+                raise RuntimeError(f"Effect {f_test_name} not in ezANOVA")
     elif r_kind == 'rmaov':
         r_results = [r_res[i][0] for i in range(len(f_tests))]
     else:

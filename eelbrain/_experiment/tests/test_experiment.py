@@ -23,7 +23,7 @@ def test_tree():
     vs = []
     for v in tree.iter('afield'):
         vs.append(v)
-        assert tree.get('apath') == '/%s/' % v
+        assert tree.get('apath') == f'/{v}/'
         tree.set(afield='a3')
         assert tree.get('afield') == 'a3'
         assert tree.get('apath') == '/a3/'

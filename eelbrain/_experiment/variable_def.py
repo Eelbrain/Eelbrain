@@ -9,7 +9,7 @@ variables = {
 
 """
 from fnmatch import fnmatch as fnmatch_func
-from typing import Dict, Sequence, Tuple, Union
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -76,12 +76,12 @@ class EvalVar(VarDef):
     _pickle_args = ('task', 'code')
 
     def __init__(self, code: str, task: str = None):
-        super(EvalVar, self).__init__(task)
+        super().__init__(task)
         assert isinstance(code, str)
         self.code = code
 
     def __repr__(self):
-        return "EvalVar(%r)" % self.code
+        return f"EvalVar({self.code!r})"
 
     @property
     def _eq_args(self):
@@ -123,12 +123,12 @@ class LabelVar(VarDef):
     def __init__(
             self,
             source: str,
-            codes: Dict[Union[str, float, Tuple[str, ...], Tuple[float, ...]], Union[str, float]],
-            default: Union[bool, str, float] = True,
+            codes: dict[str | float | tuple[str, ...] | tuple[float, ...], str | float],
+            default: bool | str | float = True,
             task: str = None,
             fnmatch: bool = False,
     ):
-        super(LabelVar, self).__init__(task)
+        super().__init__(task)
         self.source = source
         self.codes = codes
         self.labels = {}
@@ -208,10 +208,10 @@ class GroupVar(VarDef):
 
     def __init__(
             self,
-            groups: Union[Sequence[str], Dict[str, str]],
+            groups: Sequence[str] | dict[str, str],
             task: str = None,
     ):
-        super(GroupVar, self).__init__(task)
+        super().__init__(task)
         self.groups = groups
 
     def __repr__(self):

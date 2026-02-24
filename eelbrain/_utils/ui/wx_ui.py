@@ -1,5 +1,4 @@
 """WxPython-based implementation of the Eelbrain ui functions."""
-from typing import Optional
 
 from ..._wxgui import wx, get_app
 
@@ -24,7 +23,7 @@ def ask(
         title: str = "Overwrite File?",
         message: str = "Duplicate filename. Do you want to overwrite?",
         cancel: bool = False,
-        default: Optional[bool] = True,  # True=YES, False=NO, None=Nothing
+        default: bool | None = True,  # True=YES, False=NO, None=Nothing
 ):
     style = wx.YES_NO | wx.ICON_QUESTION
     if cancel:
@@ -74,7 +73,7 @@ def message(title, message="", icon='i'):
     elif icon is None:
         pass
     else:
-        raise ValueError("Invalid icon argument: %r" % icon)
+        raise ValueError(f"Invalid icon argument: {icon!r}")
     dlg = wx.MessageDialog(None, message, title, style)
     dlg.ShowModal()
 

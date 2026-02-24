@@ -17,10 +17,9 @@ import pickle
 import random
 import re
 import time
-from typing import List
 
 from eelbrain._utils import ask
-from pybtex.database import BibliographyData, parse_bytes, parse_file
+from pybtex.database import parse_bytes, parse_file
 import requests
 
 
@@ -50,7 +49,7 @@ BIORXIV_OBSOLETE = """
 ACRONYMS = ['EEG', 'MEG', 'MRI']
 
 
-def download_entries() -> List:
+def download_entries() -> list:
     entries = []
     # download entries
     total_results = None

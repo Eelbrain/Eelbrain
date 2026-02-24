@@ -56,10 +56,10 @@ class FilenameDropTarget(wx.FileDropTarget):
         self.text_target = text_target
 
     def OnDropFiles(self, x, y, filenames):
-        msg = "DROP! %r" % filenames
+        msg = f"DROP! {filenames!r}"
         logging.info(msg)
         if len(filenames) == 1:
-            filenames = "'%s'" % (filenames[0])
+            filenames = f"'{filenames[0]}'"
         self.text_target.ReplaceSelection(str(filenames))
 
 
@@ -69,7 +69,7 @@ class TextDropTarget(wx.TextDropTarget):
         self.text_target = text_target
 
     def OnDropText(self, x, y, text):
-        msg = "DROP! %r" % text
+        msg = f"DROP! {text!r}"
         logging.info(msg)
         self.text_target.ReplaceSelection(text)
 
@@ -107,7 +107,7 @@ class StringDropTarget(wx.DropTarget):
                 filenames = self.filedo.GetFilenames()
                 string = filename_repr(filenames)
 
-            msg = "OnData! %r" % string
+            msg = f"OnData! {string!r}"
             logging.info(msg)
             self.target.ReplaceSelection(string)
         return d

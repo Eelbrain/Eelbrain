@@ -1,3 +1,4 @@
+# autoflake: skip_file
 """Some basic statistical tests for univariate data."""
 __test__ = False
 from ._stats.glm import ANOVA

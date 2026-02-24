@@ -1,5 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-from typing import Sequence, Tuple
+from collections.abc import Sequence
 
 from .._data_obj import Dataset, IndexArg, VarArg
 from .. import fmtxt, plot
@@ -10,7 +10,7 @@ def scatter_table(
         color: VarArg = None,
         sub: IndexArg = None,
         data: Dataset = None,
-        diagonal: Tuple[float, float] = None,
+        diagonal: tuple[float, float] = None,
         rasterize: bool = None,
         markers: str = '.',
         alpha: float = 0.5,

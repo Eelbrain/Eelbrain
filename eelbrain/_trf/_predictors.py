@@ -1,7 +1,7 @@
 """Predictors for continuous data"""
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 from itertools import repeat
-from typing import Sequence, Tuple, Union
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -11,9 +11,9 @@ from .._utils import deprecate_ds_arg
 
 @deprecate_ds_arg
 def epoch_impulse_predictor(
-        shape: Union[NDVarArg, Tuple[int, UTS]],
-        value: Union[float, Sequence[float], str] = 1,
-        latency: Union[float, Sequence[float], str] = 0,
+        shape: NDVarArg | tuple[int, UTS],
+        value: float | Sequence[float] | str = 1,
+        latency: float | Sequence[float] | str = 0,
         name: str = None,
         data: Dataset = None,
 ) -> NDVar:
@@ -72,10 +72,10 @@ def epoch_impulse_predictor(
 
 @deprecate_ds_arg
 def event_impulse_predictor(
-        shape: Union[NDVarArg, UTS],
-        time: Union[str, Sequence[float]] = 'time',
-        value: Union[float, Sequence[float], str] = 1,
-        latency: Union[float, Sequence[float], str] = 0,
+        shape: NDVarArg | UTS,
+        time: str | Sequence[float] = 'time',
+        value: float | Sequence[float] | str = 1,
+        latency: float | Sequence[float] | str = 0,
         name: str = None,
         data: Dataset = None,
 ) -> NDVar:

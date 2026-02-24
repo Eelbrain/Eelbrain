@@ -5,7 +5,7 @@ import operator
 import os
 from pathlib import Path
 import re
-from typing import Dict, Union, List, Sequence
+from collections.abc import Sequence
 import warnings
 
 import numpy
@@ -36,7 +36,7 @@ ICO_SLICE_SUBJECTS = ('fsaverage', 'fsaverage_sym')
 
 def assert_subject_exists(subject, subjects_dir):
     if not os.path.exists(os.path.join(subjects_dir, subject)):
-        raise IOError(f"Subject {subject} does not exist in subjects_dir {subjects_dir}")
+        raise OSError(f"Subject {subject} does not exist in subjects_dir {subjects_dir}")
 
 
 def find_source_subject(subject, subjects_dir):
@@ -250,8 +250,8 @@ def label_from_annot(sss, subject, subjects_dir, parc=None, color=(0, 0, 0)):
 
 def labels_from_clusters(
         clusters: NDVar,
-        names: Union[Sequence[str], str] = None,
-) -> List[Union[mne.Label, mne.BiHemiLabel]]:
+        names: Sequence[str] | str = None,
+) -> list[mne.Label | mne.BiHemiLabel]:
     """Create Labels from source space clusters
 
     Parameters
@@ -394,8 +394,8 @@ def labels_from_mni_coords(seeds, extent=30., subject='fsaverage',
 
 def _morph_subset(
         morph: mne.SourceMorph,
-        vertices_from: List[np.ndarray],
-        vertices_to: List[np.ndarray],
+        vertices_from: list[np.ndarray],
+        vertices_to: list[np.ndarray],
 ) -> mne.SourceMorph:
     """Update :class:`mne.SourceMorph` for a subset of vertices"""
     if morph.shape is not None:
@@ -448,15 +448,15 @@ def _morph_subset(
 
 
 def morph_source_space(
-        data: Union[NDVar, SourceSpace],
+        data: NDVar | SourceSpace,
         subject_to: str = None,
-        vertices_to: Union[List, str] = None,
-        morph: Union[scipy.sparse.spmatrix, mne.SourceMorph] = None,
+        vertices_to: list | str = None,
+        morph: scipy.sparse.spmatrix | mne.SourceMorph = None,
         copy: bool = False,
-        parc: Union[bool, str] = True,
+        parc: bool | str = True,
         xhemi: bool = False,
         mask: bool = None,
-) -> Union[NDVar, SourceSpace]:
+) -> NDVar | SourceSpace:
     """Morph source estimate to a different MRI subject
 
     Parameters
@@ -740,7 +740,7 @@ def dissolve_label(labels, source, targets, subjects_dir=None,
     elif hemi == 'lh' or hemi == 'rh':
         hemis = (hemi,)
     else:
-        raise ValueError("hemi=%r" % hemi)
+        raise ValueError(f"hemi={hemi!r}")
 
     idx = {l.name: i for i, l in enumerate(labels)}
 
@@ -797,7 +797,7 @@ def rename_label(labels, old, new):
 
 
 def resample_ico_source_space(
-        data: Union[NDVar, SourceSpace],
+        data: NDVar | SourceSpace,
         to: int,
 ):
     """Sub-sample ICO source space
@@ -832,9 +832,9 @@ def resample_ico_source_space(
 def combination_label(
         name: str,
         exp: str,
-        labels: Dict[str, Label],
+        labels: dict[str, Label],
         subjects_dir: PathArg,
-) -> List[Label]:
+) -> list[Label]:
     """Create a label based on combination of existing labels
 
     Parameters
@@ -886,7 +886,7 @@ def xhemi(
         ndvar: NDVar,
         mask: bool = None,
         hemi: str = 'lh',
-        parc: Union[bool, str] = True,
+        parc: bool | str = True,
 ) -> (NDVar, NDVar):
     """Project data from both hemispheres to ``hemi`` of fsaverage_sym
 

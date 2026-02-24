@@ -2,7 +2,7 @@
 from itertools import cycle
 from math import ceil
 from numbers import Real
-from typing import Sequence, List, Tuple, Union
+from collections.abc import Sequence
 
 from colormath.color_objects import LCHabColor, sRGBColor
 from colormath.color_conversions import convert_color
@@ -36,7 +36,7 @@ def register_cmap(
         cmap: matplotlib.colors.Colormap,
         symmetric: bool = False,
         zero_based: bool = False,
-        alpha_version: Union[bool, str] = None,
+        alpha_version: bool | str = None,
 ):
     matplotlib.colormaps.register(cmap)
     if symmetric:
@@ -110,7 +110,7 @@ def make_seq_cmap(seq, val, name):
         elif len(col) == 2:
             (r0, g0, b0), (r1, g1, b1) = col
         else:
-            raise ValueError('col in seq: %s' % str(col))
+            raise ValueError(f'col in seq: {col!s}')
         red.append((v, r0, r1))
         green.append((v, g0, g1))
         blue.append((v, b0, b1))
@@ -189,12 +189,12 @@ def twoway_cmap(n1, hue_start=0.1, hue_shift=0.5, name=None, hues=None):
 
 def oneway_colors(
         n: int,
-        hue_start: Union[float, Sequence[float]] = 0.2,
-        light_range: Union[float, Tuple[float, float]] = 0.5,
+        hue_start: float | Sequence[float] = 0.2,
+        light_range: float | tuple[float, float] = 0.5,
         light_cycle: int = None,
         always_cycle_hue: bool = False,
         locations: Sequence[float] = None,
-        unambiguous: Union[bool, Sequence[int]] = None,
+        unambiguous: bool | Sequence[int] = None,
 ) -> list:
     "Create colors for categories (see docs at colors_for_oneway)"
     if unambiguous:
@@ -249,8 +249,8 @@ def twoway_colors(
         hue_start: float = 0.2,
         hue_shift: float = 0.,
         hues: Sequence[float] = None,
-        lightness: Union[float, Sequence[float]] = None,
-) -> List[Tuple[float, float, float]]:
+        lightness: float | Sequence[float] = None,
+) -> list[tuple[float, float, float]]:
     """Create colors for two-way interaction
 
     Parameters

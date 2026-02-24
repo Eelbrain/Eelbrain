@@ -1,7 +1,7 @@
 from copy import deepcopy
 import os
 import re
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import mne
 
@@ -19,7 +19,7 @@ class Parcellation(Definition):
 
     def __init__(
             self,
-            views: Union[str, Sequence[str]] = None,
+            views: str | Sequence[str] = None,
     ):
         self.views = views
 
@@ -86,7 +86,7 @@ class SubParc(Parcellation):
             self,
             base: str,
             labels: Sequence[str],
-            views: Union[str, Sequence[str]] = None,
+            views: str | Sequence[str] = None,
     ):
         Parcellation.__init__(self, views)
         self.base = base
@@ -175,7 +175,7 @@ class CombinationParc(Parcellation):
             self,
             base: str,
             labels: dict,
-            views: Union[str, Sequence[str]] = None,
+            views: str | Sequence[str] = None,
     ):
         Parcellation.__init__(self, views)
         self.base = base
@@ -206,7 +206,7 @@ class EelbrainParc(Parcellation):
     def __init__(
             self,
             morph_from_fsaverage: bool,
-            views: Union[str, Sequence[str]] = None,
+            views: str | Sequence[str] = None,
     ):
         Parcellation.__init__(self, views)
         self.morph_from_fsaverage = morph_from_fsaverage
@@ -311,7 +311,7 @@ class LabelParc(Parcellation):
     def __init__(
             self,
             labels: Sequence[str],
-            views: Union[str, Sequence[str]] = None,
+            views: str | Sequence[str] = None,
     ):
         Parcellation.__init__(self, views)
         self.labels = sequence_arg('labels', labels)

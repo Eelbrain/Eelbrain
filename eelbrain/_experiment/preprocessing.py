@@ -14,7 +14,8 @@ import logging
 from os import makedirs, remove
 from os.path import basename, dirname, exists, getmtime
 from pathlib import Path
-from typing import Any, Dict, List, Sequence, Tuple, Union
+from typing import Any, Union
+from collections.abc import Sequence
 
 import mne
 from scipy import signal
@@ -42,13 +43,13 @@ class RawPipe:
     name: str = None  # set on linking
     log: logging.Logger = None
 
-    def _can_link(self, pipes: Dict[str, RawPipe]) -> bool:
+    def _can_link(self, pipes: dict[str, RawPipe]) -> bool:
         raise NotImplementedError
 
     def _link(
             self,
             name: str,
-            pipes: Dict[str, RawPipe],
+            pipes: dict[str, RawPipe],
             cache_path: str,
             log: logging.Logger
     ) -> RawPipe:
@@ -77,7 +78,7 @@ class RawPipe:
         "Check if raw file exists and is up to date"
         raise NotImplementedError
 
-    def get_adjacency(self, data: str) -> Union[str, List[Tuple[str, str]], Path]:
+    def get_adjacency(self, data: str) -> str | list[tuple[str, str]] | Path:
         raise NotImplementedError
 
     def get_sysname(
@@ -120,13 +121,13 @@ class RawPipe:
         "Process the info without processing the raw data, return the processed info"
         raise NotImplementedError
 
-    def load_bad_channels(self, path: BIDSPath, noise: bool = False) -> List[str]:
+    def load_bad_channels(self, path: BIDSPath, noise: bool = False) -> list[str]:
         raise NotImplementedError
 
     def make_bad_channels(
             self,
             path: BIDSPath,
-            bad_chs: Union[Tuple[str], str, int],
+            bad_chs: tuple[str] | str | int,
             redo: bool,
             noise: bool = False,
     ) -> None:
@@ -189,7 +190,7 @@ class RawSource(RawPipe):
             sysname: str = None,
             rename_channels: dict = None,
             montage: str = None,
-            adjacency: Union[str, List[Tuple[str, str]], Path] = None,
+            adjacency: str | list[tuple[str, str]] | Path = None,
             **kwargs,
     ):
         RawPipe.__init__(self)
@@ -204,13 +205,13 @@ class RawSource(RawPipe):
         self.adjacency = adjacency
         self._kwargs = kwargs
 
-    def _can_link(self, pipes: Dict[str, RawPipe]) -> bool:
+    def _can_link(self, pipes: dict[str, RawPipe]) -> bool:
         return True
 
     def _link(
             self,
             name: str,
-            pipes: Dict[str, RawPipe],
+            pipes: dict[str, RawPipe],
             cache_path: str,
             log: logging.Logger,
     ) -> RawPipe:
@@ -278,7 +279,7 @@ class RawSource(RawPipe):
     def load_info(self, path: BIDSPath) -> mne.Info:
         return self.load(path).info
 
-    def load_bad_channels(self, path: BIDSPath, noise: bool = False) -> List[str]:
+    def load_bad_channels(self, path: BIDSPath, noise: bool = False) -> list[str]:
         "Get channels.tsv content, create if it does not exist"
         path = path if not noise else path.find_empty_room()
         bads_path = self._bads_path(path)
@@ -308,7 +309,7 @@ class RawSource(RawPipe):
     def make_bad_channels(
             self,
             path: BIDSPath,
-            bad_chs: Union[Tuple[str], str, int],
+            bad_chs: tuple[str] | str | int,
             redo: bool,
             noise: bool = False,
     ) -> None:
@@ -352,7 +353,7 @@ class RawSource(RawPipe):
         elif flat == 0:
             return
         raw = self._load(path, False)
-        bad_chs: List[str] = raw.info['bads']
+        bad_chs: list[str] = raw.info['bads']
         sysname = self.get_sysname(raw.info, path.subject, path.datatype)
         raw = load.mne.raw_ndvar(raw, sysname=sysname, adjacency=self.adjacency)
         bad_chs.extend(raw.sensor.names[raw.std('time') < flat])
@@ -372,7 +373,7 @@ class RawSource(RawPipe):
             out['connectivity'] = self.adjacency
         return out
 
-    def get_adjacency(self, data: str) -> Union[str, List[Tuple[str, str]], Path, None]:
+    def get_adjacency(self, data: str) -> str | list[tuple[str, str]] | Path | None:
         if data == 'eog':
             return None
         else:
@@ -422,13 +423,13 @@ class CachedRawPipe(RawPipe):
         self._source_name = source
         self._cache = cache
 
-    def _can_link(self, pipes: Dict[str, RawPipe]) -> bool:
+    def _can_link(self, pipes: dict[str, RawPipe]) -> bool:
         return self._source_name in pipes
 
     def _link(
             self,
             name: str,
-            pipes: Dict[str, RawPipe],
+            pipes: dict[str, RawPipe],
             cache_path: str,
             log: logging.Logger,
     ) -> RawPipe:
@@ -508,7 +509,7 @@ class CachedRawPipe(RawPipe):
     def make_bad_channels(
             self,
             path: BIDSPath,
-            bad_chs: Union[Tuple[str], str, int],
+            bad_chs: tuple[str] | str | int,
             redo: bool,
             noise: bool = False,
     ) -> None:
@@ -522,7 +523,7 @@ class CachedRawPipe(RawPipe):
         out['source'] = self._source_name
         return out
 
-    def get_adjacency(self, data: str) -> Union[str, List[Tuple[str, str]], Path]:
+    def get_adjacency(self, data: str) -> str | list[tuple[str, str]] | Path:
         return self.source.get_adjacency(data)
 
     def get_sysname(
@@ -571,7 +572,7 @@ class RawFilter(CachedRawPipe):
             l_freq: float = None,
             h_freq: float = None,
             cache: bool = True,
-            n_jobs: Union[str, int, None] = 1,
+            n_jobs: str | int | None = 1,
             **kwargs,
     ):
         CachedRawPipe.__init__(self, source, cache)
@@ -743,15 +744,15 @@ class RawICA(CachedRawPipe):
     """
     # set on linking
     ica_path: str = None
-    run: Union[str, Sequence[str]] = None
+    run: str | Sequence[str] = None
 
     def __init__(
             self,
             source: str,
-            task: Union[str, Sequence[str]],
+            task: str | Sequence[str],
             method: str = 'extended-infomax',
             random_state: int = 0,
-            fit_kwargs: Dict[str, Any] = None,
+            fit_kwargs: dict[str, Any] = None,
             cache: bool = False,
             **kwargs,
     ):
@@ -760,7 +761,7 @@ class RawICA(CachedRawPipe):
         self.kwargs = {'method': method, 'random_state': random_state, **kwargs}
         self.fit_kwargs = dict(fit_kwargs) if fit_kwargs else {}
 
-    def load_bad_channels(self, path: BIDSPath, noise: bool = False) -> List[str]:
+    def load_bad_channels(self, path: BIDSPath, noise: bool = False) -> list[str]:
         bad_chs = set()
         for task in self.task:
             path_ = path.copy().update(task=task)
@@ -807,8 +808,8 @@ class RawICA(CachedRawPipe):
     def load_concatenated_source_raw(
             self,
             path: BIDSPath,
-            tasks: Tuple[str],
-            runs: Tuple[str],
+            tasks: tuple[str],
+            runs: tuple[str],
     ) -> mne.io.BaseRaw:
         "Concatenate raws from different tasks and runs."
         # NOTE: this use bad channels in RawICA while loading tasks from user input.
@@ -830,7 +831,7 @@ class RawICA(CachedRawPipe):
     def make_ica(
             self,
             path: BIDSPath,
-            run: Tuple[str],
+            run: tuple[str],
     ) -> str:
         ica_path = self._ica_path(path)
         if exists(ica_path):
@@ -961,13 +962,13 @@ class RawApplyICA(CachedRawPipe):
         CachedRawPipe.__init__(self, source, cache)
         self._ica_source = ica
 
-    def _can_link(self, pipes: Dict[str, RawPipe]) -> bool:
+    def _can_link(self, pipes: dict[str, RawPipe]) -> bool:
         return CachedRawPipe._can_link(self, pipes) and self._ica_source in pipes
 
     def _link(
             self,
             name: str,
-            pipes: Dict[str, RawPipe],
+            pipes: dict[str, RawPipe],
             cache_path: str,
             log: logging.Logger,
     ) -> RawPipe:
@@ -1105,7 +1106,7 @@ class RawUpdateBadChannels(CachedRawPipe):
     def __init__(
             self,
             source: str,
-            bad_channels: Dict[str, Sequence[str]],
+            bad_channels: dict[str, Sequence[str]],
     ):
         CachedRawPipe.__init__(self, source, False)
         self.bad_channels = bad_channels
@@ -1160,9 +1161,9 @@ class RawReReference(CachedRawPipe):
     def __init__(
             self,
             source: str,
-            reference: Union[str, Sequence[str]] = 'average',
-            add: Union[str, Sequence[str]] = None,
-            drop: Union[str, Sequence[str]] = None,
+            reference: str | Sequence[str] = 'average',
+            add: str | Sequence[str] = None,
+            drop: str | Sequence[str] = None,
             cache: bool = False,
     ):
         CachedRawPipe.__init__(self, source, cache)
@@ -1218,8 +1219,8 @@ class RawReReference(CachedRawPipe):
 
 
 def assemble_pipeline(
-        raw: Dict[str, RawPipe],
-        tasks: Tuple[str],
+        raw: dict[str, RawPipe],
+        tasks: tuple[str],
         cache_path: str,
         ica_path: str,
         log: logging.Logger,
@@ -1248,10 +1249,10 @@ def assemble_pipeline(
 
 
 def compare_pipelines(
-        old: Dict[str, Dict],
-        new: Dict[str, Dict],
+        old: dict[str, dict],
+        new: dict[str, dict],
         log: logging.Logger,
-) -> Tuple[Dict[str, str], Dict[str, str]]:
+) -> tuple[dict[str, str], dict[str, str]]:
     """Return a tuple of raw keys for which definitions changed
 
     Parameters
@@ -1330,9 +1331,9 @@ def ask_to_delete_ica_files(
         msg = ("The definition for raw=%r has changed. The corresponding ICA "
                "files should probably be deleted." % (raw,))
     else:
-        raise RuntimeError("status=%r" % (status,))
+        raise RuntimeError(f"status={status!r}")
     command = ask(
-        "%s Delete %i files?" % (msg, len(filenames)),
+        f"{msg} Delete {len(filenames)} files?",
         (('abort', 'abort to fix the raw definition and try again'),
          ('delete', 'delete the invalid files'),
          ('ignore', 'pretend that the files are valid; you will not be warned again')))
@@ -1343,7 +1344,7 @@ def ask_to_delete_ica_files(
     elif command == 'abort':
         raise RuntimeError("User abort")
     elif command != 'ignore':
-        raise RuntimeError("command=%r" % (command,))
+        raise RuntimeError(f"command={command!r}")
 
 
 def normalize_dict(raw: dict) -> None:

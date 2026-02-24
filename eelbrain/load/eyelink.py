@@ -123,7 +123,7 @@ class Edf:
         self.__dict__.update(state)
 
     def __repr__(self):
-        return "Edf(%r)" % self.path
+        return f"Edf({self.path!r})"
 
     def assert_trigger_match(self, ds=None, trigger='trigger'):
         """
@@ -533,7 +533,7 @@ def read_edf(fname, what='events'):
         What type of information to read
     """
     if not os.path.isfile(fname):
-        err = "%r is not a file." % fname
+        err = f"{fname!r} is not a file."
         raise ValueError(err)
 
     temp_dir = tempfile.mkdtemp()
@@ -555,7 +555,7 @@ def read_edf(fname, what='events'):
     elif what == 'all':
         raise NotImplementedError()
     else:
-        raise ValueError("what must be 'events' or 'samples', not %r" % what)
+        raise ValueError(f"what must be 'events' or 'samples', not {what!r}")
 
     cmd.extend(('-nst',  # blocks output of start events
                 '-p', temp_dir,  # writes output with same name to <path> directory
@@ -571,8 +571,8 @@ def read_edf(fname, what='events'):
     ascname = os.path.extsep.join((name, 'asc'))
     asc_path = os.path.join(temp_dir, ascname)
     if not os.path.exists(asc_path):
-        print("======\nstdout\n======\n%s" % stdout)
-        print("======\nstderr\n======\n%s" % stderr)
+        print(f"======\nstdout\n======\n{stdout}")
+        print(f"======\nstderr\n======\n{stderr}")
         raise subprocess.CalledProcessError(p.returncode, cmd, (stdout, stderr))
     with open(asc_path) as asc_file:
         asc_str = asc_file.read()
@@ -607,8 +607,8 @@ def find_edf_artifacts(asc_str, kind='EBLINK|ESACC'):
     """
     for kind_part in kind.split('|'):
         if kind_part not in ['EBLINK', 'ESACC']:
-            raise ValueError("invalid kind parameter: %r" % kind)
-    re_artifact = re.compile(r'\b(%s)\t[LR]\t(\d+)\t(\d+)' % kind)
+            raise ValueError(f"invalid kind parameter: {kind!r}")
+    re_artifact = re.compile(rf'\b({kind})\t[LR]\t(\d+)\t(\d+)')
     artifacts = re_artifact.findall(asc_str)
     return artifacts
 

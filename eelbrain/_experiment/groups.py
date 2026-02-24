@@ -1,4 +1,4 @@
-from typing import Collection, Set
+from collections.abc import Collection
 
 from .definitions import Definition, DefinitionError
 
@@ -28,7 +28,7 @@ class Group(GroupBase):
             if len(self.subjects) != len(subjects):
                 raise DefinitionError(f"At least one duplicate subject in {subjects}")
 
-    def _link(self, key: str, all_subjects: Set[str]):
+    def _link(self, key: str, all_subjects: set[str]):
         missing = self.subjects - all_subjects
         if missing:
             raise DefinitionError(f"Group {key} contains non-existing subjects: {missing}")
@@ -65,14 +65,14 @@ class SubGroup(GroupBase):
         self.base = base
         self.exclude = {exclude} if isinstance(exclude, str) else set(exclude)
 
-    def _link(self, key: str, all_subjects: Set[str]):
+    def _link(self, key: str, all_subjects: set[str]):
         invalid = self.exclude - all_subjects
         if invalid:
             raise DefinitionError(f"Group {key} trying to exclude subjects not contained in its base {self.base}: {invalid}")
         return tuple(sorted(all_subjects - self.exclude))
 
 
-def assemble_groups(groups: dict, subjects: Set[str]) -> dict:
+def assemble_groups(groups: dict, subjects: set[str]) -> dict:
     if 'all' in groups:  # Pipeline needs access to all subjects
         raise DefinitionError("The group name 'all' is reserved and can't be used for a user-defined group")
     all_groups = {k: Group.coerce(v) for k, v in groups.items()}

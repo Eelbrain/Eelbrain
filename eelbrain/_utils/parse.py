@@ -1,6 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 import ast
-from typing import Set
 
 
 FLOAT_PATTERN = r"^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$"
@@ -11,7 +10,7 @@ FLOAT_NAN_PATTERN = r"^\s*(([Nn][Aa][Nn])|([-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)
 PERCENT_PATTERN = r"^\s*(([Nn][Aa][Nn])|([-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?))\s*%\S*$"
 
 
-def find_variables(expr: str) -> Set[str]:
+def find_variables(expr: str) -> set[str]:
     """Find the variables participating in an expressions
 
     Returns

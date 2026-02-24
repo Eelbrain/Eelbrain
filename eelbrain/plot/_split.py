@@ -1,6 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Plot data split for cross-validation"""
-from typing import Union
 
 from matplotlib.patches import Rectangle
 from matplotlib.ticker import MaxNLocator
@@ -85,7 +84,7 @@ class DataSplit(EelFigure, LegendMixin):
 
 @deprecate_ds_arg
 def preview_partitions(
-    cases: Union[int, NDVarArg] = 0,
+    cases: int | NDVarArg = 0,
     partitions: int = None,
     model: CategorialArg = None,
     validate: int = 1,

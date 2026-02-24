@@ -6,7 +6,6 @@ src = datasets.get_mne_sample(src='ico', sub=[0])['src']
 brain = plot.brain.brain(src.source, mask=False,hemi='lh',views='lat')
 """
 from logging import getLogger
-from typing import Optional
 
 from mayavi.core.ui.api import SceneEditor, MlabSceneModel
 import numpy as np
@@ -67,7 +66,7 @@ class BrainFrame(EelbrainFrame):
 
     def __init__(
             self,
-            parent: Optional[wx.Window],
+            parent: wx.Window | None,
             brain: Brain,
             title: str,
             width: int,
@@ -192,7 +191,7 @@ class BrainFrame(EelbrainFrame):
         self.OnSaveAs(event)
 
     def OnSaveAs(self, event):
-        default_file = '%s.png' % self.GetTitle().replace(': ', ' - ')
+        default_file = f"{self.GetTitle().replace(': ', ' - ')}.png"
         dlg = wx.FileDialog(self, "If no file type is selected below, it is "
                                   "inferred from the extension.",
                             defaultFile=default_file,

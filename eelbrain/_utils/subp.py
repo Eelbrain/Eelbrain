@@ -42,7 +42,7 @@ _test_bins = {'mne': ('mne_add_patch_info', 'mne_analyze'),
 def get_root(package):
     "Get the root path for a package"
     if package not in _env_vars:
-        raise KeyError("Unknown binary package: %r" % package)
+        raise KeyError(f"Unknown binary package: {package!r}")
     root = mne.get_config(_env_vars[package])
     if root:
         test_root(package, root)
@@ -58,7 +58,7 @@ def get_bin(package, name):
     if os.path.exists(bin_path):
         return bin_path
     else:
-        raise IOError("Binary does not exist: " + bin_path)
+        raise OSError("Binary does not exist: " + bin_path)
 
 
 def test_root(package, root):
@@ -76,8 +76,8 @@ def _ask_user_for_bin_dir(package):
         Binary package for which to set the directory. One from:
         ``['mne', 'freesurfer', 'edfapi']``
     """
-    title = "Select %s Directory" % package
-    message = "Please select the directory of the %s package." % package
+    title = f"Select {package} Directory"
+    message = f"Please select the directory of the {package} package."
     while True:
         answer = ui.ask_dir(title, message, must_exist=True)
         if answer:
@@ -87,7 +87,7 @@ def _ask_user_for_bin_dir(package):
             else:
                 ui.message("Wrong Directory", "This is not the right directory.")
         else:
-            raise IOError("%s directory not set" % package)
+            raise OSError(f"{package} directory not set")
 
 
 _verbose = 1
@@ -104,7 +104,7 @@ def command_exists(cmd):
 
 def open_in_finder(path):
     """Open ``path`` in the finder"""
-    os.system('open %s' % path)
+    os.system(f'open {path}')
 
 
 def get_fs_home():
@@ -154,7 +154,7 @@ def fs_home_problem(fs_home):
     if fs_home is None:
         return "The FreeSurfer path is not set"
     elif not os.path.exists(fs_home):
-        return "The FreeSurfer path does not exist: %s" % fs_home
+        return f"The FreeSurfer path does not exist: {fs_home}"
     else:
         test_path = os.path.join(fs_home, 'bin', 'mri_surf2surf')
         if not os.path.exists(test_path):
@@ -268,22 +268,22 @@ def setup_mri(subject, subjects_dir=None, ico=4, block=False, redo=False):
 
     # symlinks (MNE-manual 3.6, p. 24)
     for name in ['inner_skull', 'outer_skull', 'outer_skin']:
-        src = os.path.join('watershed', '%s_%s_surface' % (subject, name))
-        dest = os.path.join(bemdir, '%s.surf' % name)
+        src = os.path.join('watershed', f'{subject}_{name}_surface')
+        dest = os.path.join(bemdir, f'{name}.surf')
         if os.path.exists(dest):
             if os.path.islink(dest):
                 abs_src = os.path.join(bemdir, src)
                 if os.path.realpath(dest) == abs_src:
                     pass
                 else:
-                    logging.debug("replacing symlink: %r" % dest)
+                    logging.debug(f"replacing symlink: {dest!r}")
                     os.remove(dest)
                     os.symlink(src, dest)
                     # can raise an OSError: [Errno 13] Permission denied
             else:
-                raise IOError("%r exists and is no symlink" % dest)
+                raise OSError(f"{dest!r} exists and is no symlink")
         else:
-            logging.debug("creating symlink: %r" % dest)
+            logging.debug(f"creating symlink: {dest!r}")
             os.symlink(src, dest)
 
     # mne_setup_forward_model
@@ -308,13 +308,13 @@ def _run_mne_gui(name, cwd, modal, subject, subjects_dir):
         env['SUBJECT'] = subject
 
     setup_path = os.path.join(root, 'bin', 'mne_setup_sh').replace(' ', r'\ ')
-    setup = '. %s' % setup_path
+    setup = f'. {setup_path}'
 
     cmd = os.path.join(root, 'bin', name).replace(' ', r'\ ')
     p = subprocess.Popen(setup + ';' + cmd, shell=True, cwd=cwd, env=env)
 
     if modal:
-        print("Waiting for %s to be closed..." % name)
+        print(f"Waiting for {name} to be closed...")
         p.wait()
 
 
@@ -385,7 +385,7 @@ def _fs_hemis(arg):
     elif arg in ['lh', 'rh']:
         return [arg]
     else:
-        raise ValueError("hemi has to be 'lh', 'rh', or '*' (no %r)" % arg)
+        raise ValueError(f"hemi has to be 'lh', 'rh', or '*' (no {arg!r})")
 
 
 def _fs_subjects(arg, exclude=[], subjects_dir=None):

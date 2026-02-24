@@ -1,5 +1,5 @@
 """Exceptions used throughout Eelbrain"""
-from typing import Collection
+from collections.abc import Collection
 
 from ._text import enumeration, plural
 
