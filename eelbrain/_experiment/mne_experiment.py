@@ -233,7 +233,7 @@ class Pipeline(FileTree):
     # hard drive space ~ 100 mb/file
     check_raw_mtime: bool = True  # check raw input files' mtime for change
 
-    # datatype and extension are usually inferred from a BIDS dataset; override here if needed 
+    # datatype and extension are usually inferred from a BIDS dataset; override here if needed
     datatype: str = None
     extension: str = None
 
