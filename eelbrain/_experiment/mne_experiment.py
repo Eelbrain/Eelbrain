@@ -233,7 +233,10 @@ class Pipeline(FileTree):
     # hard drive space ~ 100 mb/file
     check_raw_mtime: bool = True  # check raw input files' mtime for change
 
+    # datatype and extension are usually inferred from a BIDS dataset; override here if needed 
     datatype: str = None
+    extension: str = None
+
     ignore_entities: dict[str, list[str]] = {}
     preload: bool = False
 
@@ -412,7 +415,10 @@ class Pipeline(FileTree):
         if self.datatype is not None:
             if self.datatype not in ('meg', 'eeg'):
                 raise DefinitionError(f"`datatype` must be 'meg' or 'eeg', not {self.datatype!r}.")
+            if not isinstance(self.extension, str):
+                raise TypeError(f"{self.__class__.__name__}.extension={self.extension!r} with {self.__class__.__name__}.datatype={self.datatype!r}; extension needs to be specified (e.g., '.fif').")
             self._datatype = self.datatype
+            extensions = (self.extension,)
         else:
             datatypes = tuple(mne_bids.get_datatypes(root))
             if 'meg' in datatypes and 'eeg' in datatypes:
