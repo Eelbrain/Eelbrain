@@ -983,8 +983,7 @@ class Frame(FileFrame):
         rejected = np.invert(self.doc.accept.x)
         sec = doc.add_section(_text.n_of(rejected.sum(), 'epoch') + ' rejected')
         if np.any(rejected):
-            para = fmtxt.delim_list(fmtxt.Link(epoch, f"epoch:{epoch}") for
-                                     epoch in np.flatnonzero(rejected))
+            para = fmtxt.delim_list(fmtxt.Link(epoch, f"epoch:{epoch}") for epoch in np.flatnonzero(rejected))
             sec.add_paragraph(para)
 
         # bad channels
@@ -1159,8 +1158,7 @@ class Frame(FileFrame):
                 doc.append("%s at %s:  reject %i of %i epochs:" %
                            (method, threshold, rejected.sum(), len(rejected)))
                 if np.any(rejected):
-                    para = fmtxt.delim_list(fmtxt.Link(epoch, "epoch:%i" % epoch) for
-                                             epoch in np.flatnonzero(rejected))
+                    para = fmtxt.delim_list(fmtxt.Link(epoch, "epoch:%i" % epoch) for epoch in np.flatnonzero(rejected))
                     doc.add_paragraph(para)
                 InfoFrame(self, "Rejection Info", doc.get_html())
             dlg.StoreConfig()
