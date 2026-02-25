@@ -90,6 +90,7 @@ The steps below outline the recommended workflow.
 5. **Test Locally**:
    Add tests for new features and bug fixes to ensure code quality and prevent regressions.
    Run existing tests to make sure nothing breaks (see :ref:`dev-testing`).
+   Run ``pre-commit run --all-files` from the project root to ensure compliance with our coding standards.
 6. **Push to Your Fork**: Push your branch to your fork on GitHub.
 7. **Open a Pull Request (PR)**:
 
@@ -156,8 +157,8 @@ Coding Style and Documentation
     We recommend using tools to ensure compliance:
 
     - IDEs like PyCharm and VSCode can fix and alert you to style issues as you code.
-    - **flake8**: Run ``$ flake8 eelbrain`` from the project root to check for issues locally.
-    - **autopep8**: Use `this <https://pypi.org/project/autopep8/>`_ to automatically fix common style issues.
+    - Run ``$ pre-commit run --all-files`` from the project root to check for issues locally.
+    - Use `this <https://pypi.org/project/autopep8/>`_ to automatically fix common style issues.
 
 **Consistent Naming and API Consistency**
     To make the library intuitive, we strive for consistency across the API:
