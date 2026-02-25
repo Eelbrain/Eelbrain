@@ -5646,7 +5646,7 @@ class Datalist(list):
         return f"Datalist({args})"
 
     def __str__(self):
-        return f"[{', '.join((self._item_repr(i) for i in self))}]"
+        return f"[{', '.join(self._item_repr(i) for i in self)}]"
 
     def _item_repr(self, item):
         if self._fmt == 'str':
