@@ -1,9 +1,9 @@
-name: Lint with flake8
+name: Lint with pre-commit
 
 on: [push, pull_request]
 
 jobs:
-  flake8-lint:
+  pre-commit:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
@@ -16,8 +16,8 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install flake8 pep8-naming
+        pip install pre-commit
 
-    - name: Run flake8
+    - name: Run pre-commit hooks
       run: |
-        flake8 eelbrain
+        pre-commit run --all-files
