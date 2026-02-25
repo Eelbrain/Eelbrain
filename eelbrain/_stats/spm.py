@@ -512,7 +512,7 @@ class LMGroup:
                 if lm_subject == subject:
                     break
             else:
-                raise ValueError(f"subject={subject!r}")
+                raise ValueError(f"{subject=}")
 
         table = lm.model.as_table(lm.coding)
         table.caption(f"Design matrix for {subject}")

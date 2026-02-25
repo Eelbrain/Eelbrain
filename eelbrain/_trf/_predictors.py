@@ -53,13 +53,13 @@ def epoch_impulse_predictor(
 
     if isinstance(shape, NDVar):
         if not shape.has_case:
-            raise ValueError(f'shape={shape!r}: has no case dimension')
+            raise ValueError(f'{shape=}: has no case dimension')
         n = len(shape)
         time = shape.get_dim('time')
     else:
         n, time = shape
         if not isinstance(time, UTS):
-            raise TypeError(f'shape={shape!r}: second item needs to be UTS instance')
+            raise TypeError(f'{shape=}: second item needs to be UTS instance')
 
     x = np.zeros((n, len(time)))
     t_index = time._array_index(latency)
@@ -107,7 +107,7 @@ def event_impulse_predictor(
     elif isinstance(shape, UTS):
         uts = shape
     else:
-        raise TypeError(f'shape={shape!r}')
+        raise TypeError(f'{shape=}')
 
     time, n = asarray(time, data=data, return_n=True)
     dt = uts.tstep / 2

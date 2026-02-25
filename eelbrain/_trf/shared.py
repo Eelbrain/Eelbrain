@@ -489,7 +489,7 @@ class DeconvolutionData:
         n = int(round(basis / self.time.tstep))
         w = scipy.signal.get_window(basis_window, n, False)
         if len(w) <= 1:
-            raise ValueError(f"basis={basis!r}: Window is {len(w)} samples long")
+            raise ValueError(f"{basis=}: Window is {len(w)} samples long")
         w /= w.sum()
         for xi in self.x:
             xi[:] = scipy.signal.convolve(xi, w, 'same')

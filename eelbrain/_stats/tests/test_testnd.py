@@ -23,7 +23,7 @@ def test_anova():
 
     testnd.ANOVA('utsnd', 'A*B', data=ds)
     for samples in (0, 2):
-        logging.info(f"TEST:  samples={samples!r}")
+        logging.info(f"TEST:  {samples=}")
         testnd.ANOVA('utsnd', 'A*B', data=ds, samples=samples)
         testnd.ANOVA('utsnd', 'A*B', data=ds, samples=samples, pmin=0.05)
         res = testnd.ANOVA('utsnd', 'A*B', data=ds, samples=samples, tfce=True)

@@ -81,7 +81,7 @@ def complete_source_space(
         Copy of ``ndvar`` with its SourceSpace dimension completed.
     """
     if mask and not isinstance(mask, bool):
-        raise TypeError(f"mask={mask!r}")
+        raise TypeError(f"{mask=}")
     source = ndvar.get_dim('source')
     axis = ndvar.get_axis('source')
     is_masked = isinstance(ndvar.x, np.ma.masked_array)
@@ -740,7 +740,7 @@ def dissolve_label(labels, source, targets, subjects_dir=None,
     elif hemi == 'lh' or hemi == 'rh':
         hemis = (hemi,)
     else:
-        raise ValueError(f"hemi={hemi!r}")
+        raise ValueError(f"{hemi=}")
 
     idx = {l.name: i for i, l in enumerate(labels)}
 
@@ -817,7 +817,7 @@ def resample_ico_source_space(
     else:
         raise TypeError(data)
     if source.grade <= to:
-        raise ValueError(f"to={to!r}: data alread of grade {source.grade}")
+        raise ValueError(f"{to=}: data alread of grade {source.grade}")
     vertices_to = source_space_vertices('ico', to, source.subject, source.subjects_dir)
     # restrict to vertices in source
     vertices_to = [np.intersect1d(vs_from, vs_to, True) for vs_from, vs_to in zip(source.vertices, vertices_to)]

@@ -41,7 +41,7 @@ def scatter_table(
     # row: start at 0; column: start at 1
     n_xs = len(xs)
     if n_xs < 2:
-        raise ValueError(f"xs={xs!r}: need at least 2 items")
+        raise ValueError(f"{xs=}: need at least 2 items")
     # color-bar placement
     cbar_row = n_xs - 2
     cbar_column = 1 if n_xs > 2 else 2

@@ -131,7 +131,7 @@ class ColorGrid(EelFigure):
                     y = row + 0.5
                     ax.plot([col, col + 1], [y, y], **styles[cell].line_args)
                 else:
-                    raise ValueError(f"shape={shape!r}")
+                    raise ValueError(f"{shape=}")
 
         # column labels
         self.column_labels = []
@@ -153,7 +153,7 @@ class ColorGrid(EelFigure):
                 ymax = n_rows
                 ymin = n_rows - self._layout.h / size
             else:
-                raise ValueError(f"column_label_position={column_label_position!r}")
+                raise ValueError(f"{column_label_position=}")
 
             ha = 'left' if tilt_labels else 'center'
             x_offset = 0 if tilt_labels else 0.5

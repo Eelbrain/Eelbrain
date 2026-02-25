@@ -1048,7 +1048,7 @@ def _bin_table_ims(data, hemi, views, brain_func):
     elif hemi == 'lh' or hemi == 'rh':
         hemis = [hemi]
     else:
-        raise ValueError(f"hemi={hemi!r}")
+        raise ValueError(f"{hemi=}")
 
     cmap_params = None
     for hemi in hemis:
@@ -1488,7 +1488,7 @@ class SequencePlotter:
         self._assert_has_frame_dim()
         missing = [x for x in order if x not in self._frame_dim]
         if missing:
-            raise ValueError(f"order={order!r}; the following elements are not part of the frame dimension: {', '.join(missing)}")
+            raise ValueError(f"{order=}; the following elements are not part of the frame dimension: {', '.join(missing)}")
         self._frame_order = order
 
     def _get_frame_labels(self, labels):

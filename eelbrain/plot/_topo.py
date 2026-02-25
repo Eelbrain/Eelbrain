@@ -155,9 +155,9 @@ class Topomap(SensorMapMixin, ColorMapMixin, TopoMapKey, EelFigure):
         if isinstance(proj, str):
             proj = repeat(proj, plot_data.n_plots)
         elif not isinstance(proj, Sequence):
-            raise TypeError(f"proj={proj!r}")
+            raise TypeError(f"{proj=}")
         elif len(proj) != plot_data.n_plots:
-            raise ValueError(f"proj={proj!r}: need as many proj as axes ({plot_data.n_plots})")
+            raise ValueError(f"{proj=}: need as many proj as axes ({plot_data.n_plots})")
 
         layout = ImLayout(plot_data.plot_used, 1.1, 2, margins, axtitle=axtitle, **kwargs)
         EelFigure.__init__(self, plot_data.frame_title, layout)
@@ -647,7 +647,7 @@ class PltTopomap(PltIm):
                 mask = matplotlib.patches.Circle((0.5, 0.5), clip_radius, transform=ax.transData)
                 default_head_radius = clip_radius
             else:
-                raise ValueError(f'clip={clip!r}')
+                raise ValueError(f'{clip=}')
         else:
             mask = None
             default_head_radius = None

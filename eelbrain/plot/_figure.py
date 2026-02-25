@@ -120,7 +120,7 @@ class AbsoluteLayoutFigure(XAxisMixin, Figure):
             ymin, ymax = -ylim, ylim
             ylim = (ymin, ymax)
         else:
-            raise TypeError(f"ylim={ylim!r}")
+            raise TypeError(f"{ylim=}")
 
         # [left, bottom, width, height]
         rect = [

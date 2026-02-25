@@ -992,7 +992,7 @@ def align1(d, to, by='index', out='data'):
     elif out == 'index':
         return align_idx
     else:
-        raise ValueError(f"out={out!r}")
+        raise ValueError(f"{out=}")
 
 
 def choose(choice, sources, name=None):
@@ -2325,7 +2325,7 @@ class _Effect:
 
         if descending:
             if not isinstance(descending, bool):
-                raise TypeError(f"descending={descending!r}, need bool")
+                raise TypeError(f"{descending=}, need bool")
             sort_idx = sort_idx[::-1]
 
         return sort_idx
@@ -4491,7 +4491,7 @@ class NDVar(Named):
             tail = () if last is None else (last,) if isinstance(last, str) else last
             n_mid = len(self.dims) - len(head) - len(tail)
             if n_mid < 0:
-                raise ValueError(f"first={first!r}, last={last!r}: more arguments than dimensions ({', '.join(self.dimnames)})")
+                raise ValueError(f"{first=}, {last=}: more arguments than dimensions ({', '.join(self.dimnames)})")
             out = [*head, *repeat(None, n_mid), *tail]
         elif len(names) != len(self.dims):
             raise ValueError(f"{names!r}: wrong number of dimensions for {self}")
@@ -4505,7 +4505,7 @@ class NDVar(Named):
             elif out[i] not in self.dimnames:
                 raise ValueError(f"NDVar has no {out[i]} dimension")
         if len(set(out)) != len(out):
-            arg_repr = f'{names!r}' if names else f"first={first!r}, last={last!r}"
+            arg_repr = f'{names!r}' if names else f"{first=}, {last=}"
             raise ValueError(f"{arg_repr}: duplicate name")
         return tuple(out)
 
@@ -5504,7 +5504,7 @@ class NDVar(Named):
         elif tail == -1:
             idx = self.x <= v
         else:
-            raise ValueError(f"Invalid value tail={tail!r}; need -1, 0 or 1")
+            raise ValueError(f"Invalid value {tail=}; need -1, 0 or 1")
         return NDVar(np.where(idx, self.x, 0), self.dims, name or self.name, self.info)
 
     def var(
@@ -6776,7 +6776,7 @@ class Dataset(dict):
             Number at which to start the index.
         """
         if not isinstance(name, str):
-            raise TypeError(f"name={name!r}")
+            raise TypeError(f"{name=}")
         self[name] = Var(np.arange(start, self.n_cases + start))
 
     def itercases(self, start=None, stop=None):
@@ -8950,7 +8950,7 @@ class Scalar(Dimension):
                 istop = len(self)
             n_source_steps = istop - istart
             if n_source_steps % nbins != 0:
-                raise ValueError(f"nbins={nbins!r}: length {n_source_steps} {self.name} can not be divided equally")
+                raise ValueError(f"{nbins=}: length {n_source_steps} {self.name} can not be divided equally")
             istep = int(n_source_steps / nbins)
             edges = list(self.values[istart:istop:istep])
             edges.append(stop)

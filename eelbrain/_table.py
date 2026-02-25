@@ -191,7 +191,7 @@ def frequencies(
         elif isinstance(y, Var):
             out[y.name or 'y'] = Var(cells)
         else:
-            raise RuntimeError(f"y={y!r}")
+            raise RuntimeError(f"{y=}")
         n = np.fromiter((np.sum(y == cell) for cell in cells), int, len(cells))
         n_underline = 0
         while (key := 'n' + '_' * n_underline) in out:
@@ -311,7 +311,7 @@ def melt(
                     cells.append(key)
                     cell_values.append(int(m.group(1)))
         else:
-            raise ValueError(f"cells={cells!r}; If specified as string, it needs to contain '%i' as a place-holder for an integer that identifies columns")
+            raise ValueError(f"{cells=}; If specified as string, it needs to contain '%i' as a place-holder for an integer that identifies columns")
     else:
         cell_values = cells
 
@@ -320,7 +320,7 @@ def melt(
     elif isinstance(labels, dict):
         cell_labels = [labels[v] for v in cell_values]
     elif len(labels) != len(cells):
-        raise ValueError(f"labels={labels!r}: needs as many entries as there are cells ({len(cells)})")
+        raise ValueError(f"{labels=}: needs as many entries as there are cells ({len(cells)})")
     else:
         cell_labels = labels
 
@@ -405,7 +405,7 @@ def melt_ndvar(
     elif labels is None:
         def label(x): return x
     else:
-        raise TypeError(f"labels={labels!r}")
+        raise TypeError(f"{labels=}")
 
     if varname is None:
         if ndvar.name is None:
@@ -495,7 +495,7 @@ def cast_to_ndvar(
         if name is None:
             names = [None for _ in range(len(data_vars))]
         elif isinstance(name, str):
-            raise TypeError(f"name={name!r}: single name for multiple variables")
+            raise TypeError(f"{name=}: single name for multiple variables")
         else:
             names = name
     dim_values, n = asuv(dim_values, sub, data, n, return_n=True)

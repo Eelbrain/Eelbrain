@@ -1080,7 +1080,7 @@ class WilcoxonSignedRank:
         elif tail == -1:
             alternative = 'less'
         else:
-            raise ValueError(f"tail={tail!r}")
+            raise ValueError(f"{tail=}")
         self.w, self.p = scipy.stats.wilcoxon(y1.x, y0.x, zero_method, correction, alternative)
         self._y = dataobj_repr(y1)
         self._x = x_name

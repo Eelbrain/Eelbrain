@@ -818,7 +818,7 @@ def _stc_to_volume(ndvar, src, dest='mri', mri_resolution=False, mni305=False):
     elif dest == 'surf':
         affine = affine.astype(float)
     else:
-        raise ValueError(f"dest={dest!r}")
+        raise ValueError(f"{dest=}")
 
     affine[:3] *= 1e3
     if mni305:

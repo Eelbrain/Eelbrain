@@ -2424,7 +2424,7 @@ class Layout(BaseLayout):
             axes = [i for i, ax in enumerate(nax) if ax]
             nax = len(nax)
         else:
-            raise TypeError(f"nax={nax!r}")
+            raise TypeError(f"{nax=}")
 
         trim = None
         if not nax:
@@ -2966,7 +2966,7 @@ class ColorMapMixin(ColorBarMixin):
         if meas is None:
             meas = self._first_meas
         elif meas not in self._cmaps:
-            raise ValueError(f"meas={meas!r}")
+            raise ValueError(f"{meas=}")
 
         if vmax is None:
             vmin, vmax = fix_vlim_for_cmap(None, abs(v), self._cmaps[meas])
@@ -3510,7 +3510,7 @@ class CategorialAxisMixin:
             if origin is not None:
                 ax.axvline(origin, color='k', linewidth=mpl.rcParams['axes.linewidth'], clip_on=False)
         else:
-            raise ValueError(f"axis={axis!r}")
+            raise ValueError(f"{axis=}")
 
         # axis label
         if label is True:

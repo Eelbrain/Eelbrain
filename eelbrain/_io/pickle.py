@@ -78,7 +78,7 @@ def pickle(
         if dest is False:
             raise RuntimeError("User canceled")
         else:
-            print(f'dest={dest!r}')
+            print(f'{dest=}')
     else:
         dest = Path(dest).expanduser()
         if not dest.suffix:

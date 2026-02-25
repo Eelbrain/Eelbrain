@@ -874,7 +874,7 @@ class Number(FMTextElement):
             if getattr(content, 'ndim', None) == 0:
                 content = content.item()
             else:
-                raise TypeError(f"content={content!r}")
+                raise TypeError(f"{content=}")
         FMTextElement.__init__(self, content, tag)
         self.fmt = fmt
         self.drop0 = drop0
@@ -1525,9 +1525,9 @@ class Table(FMTextElement):
                 span = '%i-%i' % span
             elif isinstance(span, str):
                 if not re.match(r'\d+-\d+', span):
-                    raise ValueError(f"span={span!r}")
+                    raise ValueError(f"{span=}")
             else:
-                raise TypeError(f"span={span!r}")
+                raise TypeError(f"{span=}")
             self.rows.append(r"\cmidrule{%s}" % span)
 
     def title(self, content: FMTextLike):

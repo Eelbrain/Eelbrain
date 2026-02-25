@@ -287,7 +287,7 @@ class Boxplot(CategorialAxisMixin, YLimMixin, _SimpleFigure):
         else:
             styles = find_cell_styles(ct.cells, colors)
         if label_fliers and ct.match is None:
-            raise TypeError(f"label_fliers={label_fliers!r} without specifying the match parameter: match is needed to determine labels")
+            raise TypeError(f"{label_fliers=} without specifying the match parameter: match is needed to determine labels")
         if ct.x is None and test is True:
             test = 0.
 

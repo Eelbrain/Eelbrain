@@ -52,7 +52,7 @@ class Alignement:
         elif last is None:
             pass
         else:
-            raise TypeError(f'last={last!r}')
+            raise TypeError(f'{last=}')
 
         # determine dimensions
         n_shared = len(shared_dims)
@@ -111,10 +111,10 @@ def concatenate(
         elif ndvars.has_case:
             ravel = 'case'
         else:
-            raise ValueError(f"ndvars={ndvars!r}: parameters are ambiguous since more than one dimension could be raveled for concatenation; specify ravel parameter")
+            raise ValueError(f"{ndvars=}: parameters are ambiguous since more than one dimension could be raveled for concatenation; specify ravel parameter")
         ndvars = [ndvars.sub(**{ravel: v}) for v in ndvars.get_dim(ravel)]
     elif ravel is not None:
-        raise TypeError(f'ravel={ravel!r}: parameter ony applies when ndvars is an NDVar')
+        raise TypeError(f'{ravel=}: parameter ony applies when ndvars is an NDVar')
     else:
         ndvars = list(ndvars)
     ndvar = ndvars[0]
@@ -150,7 +150,7 @@ def concatenate(
             if isinstance(out_dim, UTS):
                 if isinstance(tmin, str):
                     if tmin != 'first':
-                        raise ValueError(f"tmin={tmin!r}")
+                        raise ValueError(f"{tmin=}")
                 else:
                     out_dim = set_tmin(out_dim, tmin)
             x = np.concatenate([v.get_data(dim_names) for v in ndvars], axis)
@@ -763,7 +763,7 @@ def label_operator(labels, operation='mean', exclude=None, weights=None,
         Label operator, ``m.dot(data)`` extracts label mean/sum.
     """
     if operation not in ('mean', 'sum'):
-        raise ValueError(f"operation={operation!r}")
+        raise ValueError(f"{operation=}")
     dimname = labels.get_dimnames((None,))[0]
     dim = labels.get_dim(dimname)
     if weights is not None:
@@ -1007,7 +1007,7 @@ def powerlaw_noise(
         if isinstance(dim, UTS):
             break
     else:
-        raise ValueError(f"dims={dims!r}: No time dimension")
+        raise ValueError(f"{dims=}: No time dimension")
     if time_ax < len(shape) - 1:
         shape.append(shape.pop(time_ax))
     x = powerlaw_psd_gaussian(exponent, shape, rng)

@@ -1331,7 +1331,7 @@ def ask_to_delete_ica_files(
         msg = ("The definition for raw=%r has changed. The corresponding ICA "
                "files should probably be deleted." % (raw,))
     else:
-        raise RuntimeError(f"status={status!r}")
+        raise RuntimeError(f"{status=}")
     command = ask(
         f"{msg} Delete {len(filenames)} files?",
         (('abort', 'abort to fix the raw definition and try again'),
@@ -1344,7 +1344,7 @@ def ask_to_delete_ica_files(
     elif command == 'abort':
         raise RuntimeError("User abort")
     elif command != 'ignore':
-        raise RuntimeError(f"command={command!r}")
+        raise RuntimeError(f"{command=}")
 
 
 def normalize_dict(raw: dict) -> None:

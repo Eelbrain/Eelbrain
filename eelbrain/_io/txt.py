@@ -203,7 +203,7 @@ def tsv(
         # backwards compatibility
         types_ = ['afv'[v] for v in types]
     else:
-        raise TypeError(f'types={types!r}')
+        raise TypeError(f'{types=}')
 
     # check types values
     if len(types_) != n_columns:

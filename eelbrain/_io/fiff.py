@@ -105,7 +105,7 @@ def mne_raw(
         # MNE Raw supports list of file-names
         raw = mne.io.read_raw_fif(path, **kwargs)
     else:
-        raise TypeError(f"path={path!r}")
+        raise TypeError(f"{path=}")
 
     if proj:
         if proj is True:
@@ -744,7 +744,7 @@ def sensor_dim(
     if sysname and sysname.startswith('neuromag'):
         ch_unit = {ch['unit'] for ch in chs}
         if len(ch_unit) > 1:
-            raise RuntimeError(f"More than one channel kind for sysname={sysname!r}: {tuple(ch_unit)}")
+            raise RuntimeError(f"More than one channel kind for {sysname=}: {tuple(ch_unit)}")
         ch_unit = ch_unit.pop()
         if ch_unit == FIFF.FIFF_UNIT_T_M:
             sysname = 'neuromag306planar'
@@ -1230,7 +1230,7 @@ def evoked_ndvar(evoked, name=None, data=None, exclude='bads', vmax=None,
     elif isinstance(evoked, (tuple, list)):
         case_out = True
     else:
-        raise TypeError(f"evoked={evoked!r}")
+        raise TypeError(f"{evoked=}")
 
     # data type to load
     if data is None:

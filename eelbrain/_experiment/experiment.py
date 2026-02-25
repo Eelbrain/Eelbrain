@@ -341,7 +341,7 @@ class TreeModel:
             if values and len(values) > 1:
                 self._repr_kwargs_optional.append(key)
         elif repr is not False:
-            raise TypeError(f"repr={repr!r}")
+            raise TypeError(f"{repr=}")
 
         self._terminal_fields.append(key)
         self._fields[key] = ''
@@ -1066,7 +1066,7 @@ class FileTree(TreeModel):
                     for src in exist:
                         src_filenames.remove(src)
                 else:
-                    raise TypeError(f"overwrite={overwrite!r}")
+                    raise TypeError(f"{overwrite=}")
 
         if not confirm:
             print(f"{action} {self.get('root')} -> {dst_root}:")
@@ -1475,7 +1475,7 @@ class FileTree(TreeModel):
                     elif command in ('no', ''):
                         return
                     else:
-                        raise RuntimeError(f"command={command!r}")
+                        raise RuntimeError(f"{command=}")
 
             print('deleting...')
             dirs = (p for p, isdir in zip(files, is_dir) if isdir)

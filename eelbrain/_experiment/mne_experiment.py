@@ -912,7 +912,7 @@ class Pipeline(FileTree):
                     if command == 'abort':
                         raise RuntimeError("User aborted invalid result deletion")
                     elif command != 'delete':
-                        raise RuntimeError(f"command={command!r}")
+                        raise RuntimeError(f"{command=}")
                 # Ask for any files
                 if files and self.auto_delete_cache != 'auto':
                     options = {'delete': 'delete invalid files', 'abort': 'raise an error'}
@@ -933,7 +933,7 @@ class Pipeline(FileTree):
                         log.warning("Revalidating invalid cache")
                         files.clear()
                     else:
-                        raise RuntimeError(f"command={command!r}")
+                        raise RuntimeError(f"{command=}")
 
                 # delete invalid files
                 if files:
@@ -1452,7 +1452,7 @@ class Pipeline(FileTree):
             else:
                 return self.get('subject', subject=subjects, **kwargs), None
         else:
-            raise TypeError(f"subjects={subjects!r}")
+            raise TypeError(f"{subjects=}")
 
     def _cluster_criteria_kwargs(self, data):
         criteria = self._cluster_criteria[self.get('select_clusters')]
@@ -3450,12 +3450,12 @@ class Pipeline(FileTree):
         """
         # process arguments
         if reject not in (True, False, 'keep'):
-            raise ValueError(f"reject={reject!r}")
+            raise ValueError(f"{reject=}")
 
         if index is True:
             index = 'index'
         elif index and not isinstance(index, str):
-            raise TypeError(f"index={index!r}")
+            raise TypeError(f"{index=}")
 
         # case of loading events for a group
         subject, group = self._process_subject_arg(subjects, kwargs)
@@ -3580,7 +3580,7 @@ class Pipeline(FileTree):
                 elif reject is True:
                     ds = ds.sub(ds_sel['accept'])
                 else:
-                    raise RuntimeError(f"reject={reject!r}")
+                    raise RuntimeError(f"{reject=}")
 
                 # bad channels
                 if add_bads:
@@ -4952,13 +4952,13 @@ class Pipeline(FileTree):
             for key, threshold in auto_dict.items():
                 rej_ds['accept'] &= ds[key].abs().max(('sensor', 'time')) <= threshold
             # create description for info
-            args = [f"auto={auto!r}"]
+            args = [f"{auto=}"]
             if overwrite is True:
                 args.append("overwrite=True")
             if samplingrate is not None:
-                args.append(f"samplingrate={samplingrate!r}")
+                args.append(f"{samplingrate=}")
             if decim is not None:
-                args.append(f"decim={decim!r}")
+                args.append(f"{decim=}")
             rej_ds.info['desc'] = f"Created with {self.__class__.__name__}.make_epoch_selection({', '.join(args)})"
             # save
             save.pickle(rej_ds, path)
@@ -5635,7 +5635,7 @@ class Pipeline(FileTree):
                     voi_lat = ('Cerebral-Cortex', 'Cerebral-White-Matter')
                     remove_midline = True
                 else:
-                    raise RuntimeError(f'src={src!r}')
+                    raise RuntimeError(f'{src=}')
                 voi.extend('%s-%s' % fmt for fmt in product(('Left', 'Right'), voi_lat))
                 mri_dir = self.get('mri-dir', make=True)
                 sss = mne.setup_volume_source_space(subject, pos=float(param), bem=bem, mri=join(mri_dir, 'mri', 'aseg.mgz'), volume_label=voi, subjects_dir=mri_sdir)
@@ -6341,32 +6341,32 @@ class Pipeline(FileTree):
         "(ori, snr, method, depth, pick_normal)"
         m = inv_re.match(inv)
         if m is None:
-            raise ValueError(f"inv={inv!r}: invalid inverse specification")
+            raise ValueError(f"{inv=}: invalid inverse specification")
 
         ori, snr, method, depth, pick_normal = m.groups()
         if ori.startswith('loose'):
             ori = float(ori[5:])
             if not 0 < ori < 1:
-                raise ValueError(f"inv={inv!r}: loose parameter needs to be in range (0, 1)")
+                raise ValueError(f"{inv=}: loose parameter needs to be in range (0, 1)")
         elif pick_normal and ori in ('vec', 'fixed'):
-            raise ValueError(f"inv={inv!r}: {ori} incompatible with pick_normal")
+            raise ValueError(f"{inv=}: {ori} incompatible with pick_normal")
 
         if snr is None:
             snr = 0
         else:
             snr = float(snr)
             if snr < 0:
-                raise ValueError(f"inv={inv!r}: snr={snr!r}")
+                raise ValueError(f"{inv=}: {snr=}")
 
         if method not in INV_METHODS:
-            raise ValueError(f"inv={inv!r}: method={method!r}")
+            raise ValueError(f"{inv=}: {method=}")
 
         if depth is None:
             depth = 0.8
         else:
             depth = float(depth)
             if not 0 <= depth <= 1:
-                raise ValueError(f"inv={inv!r}: depth={depth!r}, needs to be in range [0, 1]")
+                raise ValueError(f"{inv=}: {depth=}, needs to be in range [0, 1]")
 
         return ori, snr, method, depth, bool(pick_normal)
 
@@ -6388,7 +6388,7 @@ class Pipeline(FileTree):
     def _inv_params(self):
         inv = self.get('inv')
         if '*' in inv:
-            raise ValueError(f'inv={inv!r} with wildcard')
+            raise ValueError(f'{inv=} with wildcard')
 
         ori, snr, method, depth, pick_normal = self._parse_inv(inv)
 
@@ -6399,7 +6399,7 @@ class Pipeline(FileTree):
         elif isinstance(ori, float):
             make_kw = {'loose': ori}
         else:
-            raise RuntimeError(f"inv={inv!r} (orientation={ori!r})")
+            raise RuntimeError(f"{inv=} (orientation={ori!r})")
 
         if depth is None:
             make_kw['depth'] = 0.8

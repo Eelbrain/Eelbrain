@@ -10,7 +10,7 @@ def enumeration(items: Iterable[object], link: str = 'and'):
     elif len(items) == 1:
         return items[0]
     else:
-        raise ValueError(f"items={items!r}")
+        raise ValueError(f"{items=}")
 
 
 def ms(t_s):

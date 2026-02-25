@@ -2844,7 +2844,7 @@ def get_map_processor(kind, *args):
     elif kind == 'raw':
         return StatMapProcessor(*args)
     else:
-        raise ValueError(f"kind={kind!r}")
+        raise ValueError(f"{kind=}")
 
 
 class NDPermutationDistribution:
@@ -3001,15 +3001,15 @@ class NDPermutationDistribution:
                 parc_indexes = np.arange(len(parc_dim))
             elif kind == 'tfce':
                 raise NotImplementedError(
-                    f"TFCE for parc={parc!r} ({parc_dim.__class__.__name__} dimension)")
+                    f"TFCE for {parc=} ({parc_dim.__class__.__name__} dimension)")
             elif parc_dim._adjacency_type == 'custom':
                 if not hasattr(parc_dim, 'parc'):
-                    raise NotImplementedError(f"parc={parc!r}: dimension has no parcellation")
+                    raise NotImplementedError(f"{parc=}: dimension has no parcellation")
                 parc_indexes = tuple(np.flatnonzero(parc_dim.parc == cell) for
                                      cell in parc_dim.parc.cells)
                 parc_dim = Categorial(parc, parc_dim.parc.cells)
             else:
-                raise NotImplementedError(f"parc={parc!r}")
+                raise NotImplementedError(f"{parc=}")
             dist_shape = (samples, len(parc_dim))
             dist_dims = ('case', parc_dim)
             max_axes = tuple(chain(range(parc_ax), range(parc_ax + 1, ndim)))
@@ -3248,7 +3248,7 @@ class NDPermutationDistribution:
         "Argument representation for TestResult repr"
         args = [f'samples={self.samples}']
         if pmin is not None:
-            args.append(f"pmin={pmin!r}")
+            args.append(f"{pmin=}")
         elif self.kind == 'tfce':
             arg = f"tfce={self.tfce!r}"
             if self.tfce_warning:

@@ -47,7 +47,7 @@ def tail_arg(tail):
         else:
             return -1
     except Exception:
-        raise TypeError(f"tail={tail!r}; needs to be 0, -1 or 1")
+        raise TypeError(f"{tail=}; needs to be 0, -1 or 1")
 
 
 class Test(Definition):
@@ -174,7 +174,7 @@ class TTestIndependent(Test):
             vars_ = {'group': GroupVar((c1, c0))}
         elif '%' in model:
             # assume 'group' is between, others are within
-            raise NotImplementedError(f"model={model!r}: model with % for {self.__class__.__name__}")
+            raise NotImplementedError(f"{model=}: model with % for {self.__class__.__name__}")
         else:
             vars_ = None
         tail = tail_arg(tail)

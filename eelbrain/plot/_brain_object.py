@@ -693,7 +693,7 @@ class Brain(TimeSlicer, surfer.Brain):
             if isinstance(p_map, MultiEffectNDTest):
                 raise NotImplementedError(f"plot.brain.p_map for {p_map.__class__.__name__}")
             elif param_map is not None:
-                raise TypeError(f"param_map={param_map!r} when p_map is NDTest result")
+                raise TypeError(f"{param_map=} when p_map is NDTest result")
             res = p_map
             p_map = res.p
             param_map = res._statistic_map

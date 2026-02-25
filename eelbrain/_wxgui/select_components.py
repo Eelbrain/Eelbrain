@@ -1607,5 +1607,5 @@ class InfoFrame(HTMLFrame):
             if m:
                 component = int(m.group(1))
                 continue
-            raise ValueError(f"url={url!r}")
+            raise ValueError(f"{url=}")
         self.Parent.GoToComponentEpoch(component, epoch)
