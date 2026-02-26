@@ -45,7 +45,7 @@ dependencies:
 - sphinxcontrib-bibtex
 - pydocstyle
 # testing
-- flake8
+- pre-commit
 - pytest
 - pytest-cov
 - pytest-faulthandler

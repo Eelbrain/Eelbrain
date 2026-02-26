@@ -90,7 +90,7 @@ The steps below outline the recommended workflow.
 5. **Test Locally**:
    Add tests for new features and bug fixes to ensure code quality and prevent regressions.
    Run existing tests to make sure nothing breaks (see :ref:`dev-testing`).
-   Run ``pre-commit run --all-files` from the project root to ensure compliance with our coding standards.
+   Run the ``pre-commit`` tools to ensure compliance with our coding standards (see :ref:`code-style` below).
 6. **Push to Your Fork**: Push your branch to your fork on GitHub.
 7. **Open a Pull Request (PR)**:
 
@@ -149,6 +149,8 @@ if you get a corresponding error, run ``$ ./fix-bin pytest`` from the
 ``Eelbrain`` repository root.
 
 
+.. _code-style
+
 Coding Style and Documentation
 ------------------------------
 
@@ -157,7 +159,10 @@ Coding Style and Documentation
     We recommend using tools to ensure compliance:
 
     - IDEs like PyCharm and VSCode can fix and alert you to style issues as you code.
-    - Run ``$ pre-commit run --all-files`` from the project root to check for issues locally.
+    - `pre-commit <https://pre-commit.com/>`_ can run tools that automatically detect, and often fix, common coding style issues.
+      Run ``$ pre-commit run --all-files`` from the project root to apply these tools locally.
+      The tools can also be run automatically on committing changes (see `pre-commit instructions <https://pre-commit.com/#3-install-the-git-hook-scripts>`_).
+      For the specific tools, see ``.pre-commit-config.yaml`` in the project root.
     - Use `this <https://pypi.org/project/autopep8/>`_ to automatically fix common style issues.
 
 **Consistent Naming and API Consistency**
