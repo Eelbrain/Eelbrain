@@ -30,7 +30,7 @@ colors = {'a1': (1, 0, 0), 'a2': (0, 0, 1)}
 p = plot.Barplot('fltvar', 'A', data=ds, w=2, colors=colors)
 
 colors = {
-    ('a1', 'b1'): 'red', 
+    ('a1', 'b1'): 'red',
     ('a1', 'b2'): (1, 1, 0),
     ('a2', 'b1'): (0, 0, 1),
     ('a2', 'b2'): (0, 1, 1),

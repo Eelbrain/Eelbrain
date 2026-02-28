@@ -32,6 +32,7 @@ class FigureCanvasPanel(FigureCanvasWxAgg):
     Subclass of mpl's Canvas to allow for more interaction with Eelbrain (such
     as copying the contents to the clipboard).
     """
+
     def __init__(self, parent, *args, **kwargs):
         """wx.Panel with a matplotlib figure
 
@@ -310,6 +311,7 @@ class CanvasFrame(EelbrainFrame):
 
 class TestCanvas(CanvasFrame):
     "This is a minimal CanvasFrame subclass"
+
     def __init__(self, effect=10, mpl_toolbar=True):
         CanvasFrame.__init__(self, title="Test MPL Frame", mpl_toolbar=mpl_toolbar)
         self.plot()

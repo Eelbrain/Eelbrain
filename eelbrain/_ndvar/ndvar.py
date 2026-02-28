@@ -1168,6 +1168,7 @@ def resample(
 
 class Filter:
     "Filter and downsample"
+
     def __init__(self, sfreq=None):
         self.sfreq = sfreq
 
@@ -1229,6 +1230,7 @@ class Butterworth(Filter):
     -----
     Uses :func:`scipy.signal.butter`.
     """
+
     def __init__(self, low, high, order, sfreq=None):
         if not low and not high:
             raise ValueError("Neither low nor high set")

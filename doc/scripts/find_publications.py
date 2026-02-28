@@ -167,7 +167,7 @@ def download():
                 # wait_hours += 1
                 base = 10 * 60 * 60
                 sleep_time = random.uniform(base + 5.432, base + 65.476)
-                print(f"sleeping for {sleep_time/3600:.1f} hours")
+                print(f"sleeping for {sleep_time / 3600:.1f} hours")
                 time.sleep(sleep_time)
                 continue
             break
@@ -181,7 +181,7 @@ def download():
         # else:
         #     base = 60*60
         #     sleep_time = random.uniform(base + 5.432, base + 335.476)
-        print(f"sleeping for {sleep_time/60:.1f} minutes")
+        print(f"sleeping for {sleep_time / 60:.1f} minutes")
         time.sleep(sleep_time)
     if not new:
         print("No new reference")

@@ -7,7 +7,6 @@ import eelbrain as e
 # settings
 n_samples = 1000
 
-
 #  Load data
 ds = e.datasets.get_mne_sample(tmin=-0.1, tmax=0.2, src='ico', sub="modality=='A'")
 
@@ -18,9 +17,9 @@ res = e.testnd.TTestIndependent('src', 'side', 'L', 'R', data=ds, samples=n_samp
 pmap = res.masked_parameter_map(pmin=0.05)
 
 # the next line could be used to plot the result for inspection
-# (any area that is significant at any time)
-##e.plot.brain.cluster(pmap.sum('time'), surf='inflated')
+# (any area that is significant at any time):
 
+# e.plot.brain.cluster(pmap.sum('time'), surf='inflated')
 
 # create an HTML report with the results form the test
 report = e.Report("Permutation Test", author="Prof. Enid Gumby")

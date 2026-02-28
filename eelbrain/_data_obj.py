@@ -175,6 +175,7 @@ DimsArg = Union[str, Sequence[str]]
 
 class IndexFormatter(Formatter):
     "Matplotlib tick-label formatter for categories"
+
     def __init__(self, labels):
         self.labels = labels
         self.n = len(labels)
@@ -2392,6 +2393,7 @@ class Factor(_Effect):
         >>> Factor('iiiooo')
         Factor(['i', 'i', 'i', 'o', 'o', 'o'])
     """
+
     def __init__(
             self,
             x: Iterable[Any],
@@ -3260,6 +3262,7 @@ class NDVar(Named):
     - Work with :class:`NDVar`: :ref:`exa-cluster-based-mu`
     - Convert :class:`NDVar` to univariate :class:`Var`: :ref:`exa-compare-topographies`
     """
+
     def __init__(
             self,
             x: ArrayLike,
@@ -7276,6 +7279,7 @@ class Interaction(_Effect):
     base : list
         All effects.
     """
+
     def __init__(self, base):
         base_ = EffectList()
         n_vars = 0
@@ -7600,6 +7604,7 @@ class Model:
         Effects included in the model (:class:`Var`, :class:`Factor`, etc.
         objects)
     """
+
     def __init__(self, x):
         effects = EffectList()
 
@@ -7892,6 +7897,7 @@ class Parametrization:
     A :class:`Model` is a list of effects. A :class:`Parametrization` contains
     a realization of those effects in a model matrix with named columns.
     """
+
     def __init__(
             self,
             model: Model,

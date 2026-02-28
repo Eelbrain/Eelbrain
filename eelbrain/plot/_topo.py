@@ -725,6 +725,7 @@ class AxTopomap(AxImArray):
     mark : list of IDs
         highlight a subset of the sensors
     """
+
     def __init__(
             self,
             ax: matplotlib.axes.Axes,

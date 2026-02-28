@@ -117,6 +117,7 @@ class LM:
         Test of the null-hypothesis that the model does not explain a
         significant amount of the variance in the dependent variable.
     """
+
     def __init__(
             self,
             y: VarArg,
@@ -339,6 +340,7 @@ class MPTestMapper:
 
 class _NDANOVA(MPTestMapper):
     """Efficiently fit a model to multiple dependent variables."""
+
     def __init__(self, x, effects, dfs_denom):
         self.x = x
         self.p = x._parametrize()
@@ -432,6 +434,7 @@ class _NDANOVA(MPTestMapper):
 
 class _BalancedNDANOVA(_NDANOVA):
     "For balanced but not fully specified models"
+
     def __init__(self, x, effects, dfs_denom):
         _NDANOVA.__init__(self, x, effects, dfs_denom)
 
@@ -458,6 +461,7 @@ class _BalancedNDANOVA(_NDANOVA):
 
 class _BalancedFixedNDANOVA(_BalancedNDANOVA):
     "For balanced but not fully specified models"
+
     def __init__(self, x):
         if x.df_error <= 0:
             raise ValueError(f"Model {x.name} is overspecified with df_error={x.df_error}; all effects are fixed, should one be random?")
@@ -484,6 +488,7 @@ class _BalancedMixedNDANOVA(_BalancedNDANOVA):
     -----
     E(MS) for F statistic is determined after Hopkins (1976)
     """
+
     def __init__(self, x):
         e_ms = hopkins_ems(x)
         df_den = tuple(sum(e.df for e in ms_effects) for ms_effects in e_ms)
@@ -609,6 +614,7 @@ class IncrementalComparisons:
     ems_idx : list[Union[int, None]]
         For each effect, the model-id of the E(MS) model.
     """
+
     def __init__(self, x):
         if x.df_error == 0:
             self.mixed = is_mixed = True
@@ -747,6 +753,7 @@ class IncrementalFTest:
     f, p : scalar
         F and p valuer of the comparison.
     """
+
     def __init__(self, lm1, lm0, ms_e=None, df_e=None, name=None):
         if lm1 is None:
             lm1_ss_res = 0
@@ -887,6 +894,7 @@ class ANOVA:
         ---------------------------------------------------
         Total      1005.87   29
     """
+
     def __init__(
             self,
             y: VarArg,

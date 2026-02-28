@@ -146,6 +146,7 @@ class PairwiseLegend(EelFigure):
     ...
         Also accepts :ref:`general-layout-parameters`.
     """
+
     def __init__(self, size: float = .3, trend: bool = False, **kwargs):
         i_start = 1 - bool(trend)
         levels = [.1, .05, .01, .001][i_start:]
@@ -703,6 +704,7 @@ class PltBoxplot(PltUvBase):
 
 class PltBarplot(PltUvBase):
     "Barplot from Celltable ``ct``"
+
     def __init__(
             self,
             ax: mpl.axes.Axes,

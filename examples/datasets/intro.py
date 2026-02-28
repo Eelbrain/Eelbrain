@@ -200,7 +200,7 @@ p = plot.Topomap(eeg_average)
 #
 # A :class:`Dataset` is a container for multiple variables
 # (:class:`Factor`, :class:`Var` and :class:`NDVar`) that describe the same
-# cases. It can be thought of as a data table with columns corresponding to 
+# cases. It can be thought of as a data table with columns corresponding to
 # different variables and rows to different cases.
 # Consider the dataset containing the simulated EEG data used above:
 
@@ -215,7 +215,7 @@ data.head()
 ###############################################################################
 # This dataset containes severeal univariate columns: ``cloze``, ``predictability``, and ``n_chars``.
 # The last line also indicates that the dataset contains an :class:`NDVar` called ``eeg``.
-# The :class:`NDVar` is not displayed as column because it contains many values per row. 
+# The :class:`NDVar` is not displayed as column because it contains many values per row.
 # In the :class:`NDVar`, the :class:`Case` dimension corresponds to the row in the dataset
 # (which here corresponds to simulated trial number):
 

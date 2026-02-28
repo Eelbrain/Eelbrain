@@ -65,6 +65,7 @@ class ChangeAction(Action):
         Description of the action
         list of (i, name, old, new) tuples
     """
+
     def __init__(self, desc, index=None, old_accept=None, new_accept=None,
                  old_path=None, new_path=None):
         self.desc = desc
@@ -101,6 +102,7 @@ class Document(FileDocument):
         epochs) and variables describing cases in epochs, used to plot
         condition averages.
     """
+
     def __init__(
             self,
             path: PathArg,
@@ -250,6 +252,7 @@ class Model(FileModel):
 
 class ContextMenu(wx.Menu):
     "Helper class for Menu to store component ID"
+
     def __init__(self, i_comp: int = None, i_epoch: int = None):
         wx.Menu.__init__(self)
         self.i_comp = i_comp

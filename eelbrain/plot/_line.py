@@ -64,6 +64,7 @@ class LineStack(LegendMixin, XAxisMixin, EelFigure):
      - ``f``: x-axis zoom in (reduce x axis range)
      - ``d``: x-axis zoom out (increase x axis range)
     """
+
     def __init__(self, y, x=None, sub=None, ds=None, offset='y.max() - y.min()',
                  ylim=None, xlim=None, xlabel=True, xticklabels=True,
                  ylabel=True, order=None, colors=None, ylabels=True, xdim=None,

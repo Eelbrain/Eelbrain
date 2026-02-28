@@ -580,6 +580,7 @@ linebreak = FMTextConstant(
 
 class FMTextElement:
     """A text element along with formatting specification"""
+
     def __init__(
             self,
             content: object,
@@ -790,6 +791,7 @@ class FMText(FMTextElement):
     'paragraph'
         A <p> tag in HTML, and simple line breaks in TeX.
     """
+
     def __init__(
             self,
             content: FMTextLike = None,
@@ -837,6 +839,7 @@ class Code(FMTextElement):
     code : str
         Multiline string to be displayed as code.
     """
+
     def __init__(self, content):
         assert isinstance(content, str)
         FMTextElement.__init__(self, content, 'code')
@@ -926,6 +929,7 @@ class Math(FMTextElement):
         Whether to display the expression as a separate equation (as
         oppposed to inline).
     """
+
     def __init__(self, content, equation=False):
         FMTextElement.__init__(self, content)
         self._equation = equation
@@ -959,6 +963,7 @@ class EquationArray(FMTextElement):
     eqnarray : tuple of str
         Tuple of lines for the equation array.
     """
+
     def __init__(self, eqnarray):
         FMTextElement.__init__(self, eqnarray)
 
@@ -983,6 +988,7 @@ class Stars(FMTextElement):
     Shortcut for adding stars to a table and spaces in place of absent stars,
     so that alignment to the right can be used.
     """
+
     def __init__(self, n, of=3, tag="^"):
         if isinstance(n, str):
             self.n = len(n.strip())
@@ -1008,6 +1014,7 @@ class Stars(FMTextElement):
 
 class List(FMTextElement):
     """Bulletted list of FMText elements"""
+
     def __init__(
             self,
             head: FMTextLike = None,
@@ -1167,6 +1174,7 @@ class Cell(FMText):
 
 class Row(list):
     """Row for a Table"""
+
     def __init__(self, n_columns, items=()):
         self.n_columns = n_columns
         list.__init__(self, (Cell.coerce(item) for item in items))
@@ -1377,6 +1385,7 @@ class Table(FMTextElement):
     >>> table.save_tex()
 
     """
+
     def __init__(
             self,
             columns: str,
@@ -2048,6 +2057,7 @@ class Section(FMText):
         Section content. Can also be constructed dynamically through the
         different .add_... methods.
     """
+
     def __init__(
             self,
             heading: FMTextLike,
@@ -2234,6 +2244,7 @@ class Report(Section):
     site_title : str
         Set the HTML site title (the default is the same as title).
     """
+
     def __init__(
             self,
             title: FMTextLike,

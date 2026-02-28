@@ -582,6 +582,7 @@ class PltUTS:
 
 class PltUTSClusters:
     """UTS cluster plot"""
+
     def __init__(
             self,
             ax: matplotlib.axes.Axes,

@@ -325,6 +325,7 @@ def n_decimals(number):
 
 class keydefaultdict(defaultdict):  # noqa
     "http://stackoverflow.com/a/2912455/166700"
+
     def __missing__(self, key):
         if self.default_factory is None:
             raise KeyError(key)

@@ -49,7 +49,7 @@ topography = ds['eeg'].sub(time=0.120)
 topography = normalize_in_cells(topography, 'sensor', 'predictability', ds)
 # "melt" the topography NDVar to turn the sensor dimension into a Factor
 ds_topography = table.melt_ndvar(topography, 'sensor', ds=ds)
-# Note EEG is a single column, and the last column indicates the sensor 
+# Note EEG is a single column, and the last column indicates the sensor
 ds_topography.head()
 
 ###############################################################################
@@ -75,7 +75,7 @@ dss = []
 for time in [0.120, 0.280]:
     ds_time = ds_average['subject',]  # A new dataset with the 'subject' variable only
     ds_time['eeg'] = ds_average['eeg'].sub(time=time)
-    ds_time[:, 'time'] = f'{time*1000:.0f} ms'
+    ds_time[:, 'time'] = f'{time * 1000:.0f} ms'
     dss.append(ds_time)
 ds_times = combine(dss)
 ds_times.summary()
@@ -86,7 +86,7 @@ ds_times.summary()
 topography = normalize_in_cells('eeg', 'sensor', 'time', data=ds_times)
 # "melt" the topography NDVar to turn the sensor dimension into a Factor
 ds_topography = table.melt_ndvar(topography, 'sensor', ds=ds_times)
-# Note EEG is a single column, and the last column indicates the sensor 
+# Note EEG is a single column, and the last column indicates the sensor
 ds_topography.head()
 
 ###############################################################################

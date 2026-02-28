@@ -21,6 +21,7 @@ class Figure(EelFigure):
     autoscale : bool
         Autoscale data axes (default False).
     """
+
     def __init__(self, nax=0, **kwargs):
         layout = Layout(nax, 1, 2, **kwargs)
         EelFigure.__init__(self, None, layout)

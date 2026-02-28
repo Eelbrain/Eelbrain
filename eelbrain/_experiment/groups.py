@@ -20,6 +20,7 @@ class Group(GroupBase):
     --------
     Pipeline.groups
     """
+
     def __init__(self, subjects: Collection[str]):
         if isinstance(subjects, str):
             self.subjects = {subjects}
@@ -61,6 +62,7 @@ class SubGroup(GroupBase):
     --------
     Pipeline.groups
     """
+
     def __init__(self, base: str, exclude: Collection[str]):
         self.base = base
         self.exclude = {exclude} if isinstance(exclude, str) else set(exclude)

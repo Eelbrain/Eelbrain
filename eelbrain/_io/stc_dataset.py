@@ -46,6 +46,7 @@ class DatasetSTCLoader:
     --------
     eelbrain.gui.load_stcs : a GUI to load source estimates into a Dataset
     """
+
     def __init__(self, data_dir):
         if not os.path.exists(data_dir):
             raise ValueError(f"Directory '{data_dir}' not found.")

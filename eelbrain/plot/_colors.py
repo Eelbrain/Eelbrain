@@ -59,6 +59,7 @@ class ColorGrid(EelFigure):
     row_labels : list of :class:`matplotlib.text.Text`
         Row labels.
     """
+
     def __init__(
             self,
             row_cells: Sequence[str],
@@ -255,6 +256,7 @@ class ColorList(EelFigure):
     labels : list of :class:`matplotlib.text.Text`
         Color labels.
     """
+
     def __init__(
             self,
             colors: dict[CellArg, Any],
@@ -408,6 +410,7 @@ class ColorBar(EelFigure):
     offset
         Additional offset when using ``right_of``/``left_of``/``below``.
     """
+
     def __init__(
             self,
             cmap: CMapArg,

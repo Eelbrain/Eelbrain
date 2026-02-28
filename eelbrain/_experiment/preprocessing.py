@@ -566,6 +566,7 @@ class RawFilter(CachedRawPipe):
     --------
     Pipeline.raw
     """
+
     def __init__(
             self,
             source: str,
@@ -1158,6 +1159,7 @@ class RawReReference(CachedRawPipe):
     --------
     Pipeline.raw
     """
+
     def __init__(
             self,
             source: str,

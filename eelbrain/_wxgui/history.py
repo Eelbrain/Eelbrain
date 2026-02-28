@@ -149,6 +149,7 @@ class History:
 
 class FileDocument:
     """Represent a file"""
+
     def __init__(self, path):
         self.saved = False  # managed by the history
         self.path = path

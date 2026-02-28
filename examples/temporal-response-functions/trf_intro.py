@@ -57,7 +57,7 @@ p = plot.UTS([x, trf, y], ylabel=['Stimulus (x)', 'TRF', 'Response (y)'], **plot
 x += np.random.normal(0, 0.1, x.shape)
 filter_data(x, 1, 40)
 y = convolve(trf, x)
-p =  plot.UTS([x, trf, y], ylabel=['Stimulus (x)', 'TRF', 'Response (y)'], **plot_args)
+p = plot.UTS([x, trf, y], ylabel=['Stimulus (x)', 'TRF', 'Response (y)'], **plot_args)
 
 ###############################################################################
 # Given a stimulus and a response, there are different methods to reconstruct

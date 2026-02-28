@@ -121,6 +121,7 @@ class STCLoaderFrame(EelbrainFrame):
 
 class FactorPanel(wx.Panel):
     """Panel to display a factor and its level names"""
+
     def __init__(self, parent, levels, idx, editable=True):
         super().__init__(parent)
         if editable:
@@ -140,6 +141,7 @@ class FactorPanel(wx.Panel):
 
 class MRIPanel(wx.Panel):
     """Panel containing MRI input fields (dir, subject, src)"""
+
     def __init__(self, parent):
         super().__init__(parent)
         sizer = wx.StaticBoxSizer(wx.VERTICAL, self, "")

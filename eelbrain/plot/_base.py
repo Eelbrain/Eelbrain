@@ -207,6 +207,7 @@ class AxisScale:
     label
         If ``label is True``, try to infer a label from ``v``.
     """
+
     def __init__(
             self,
             v: NDVar | Var | Real | str | PlotData,
@@ -1460,6 +1461,7 @@ class FigureFrame:
 
 class MatplotlibFrame(FigureFrame):
     "Cf. _wxgui.mpl_canvas"
+
     def __init__(self, **fig_kwargs):
         "Create self.figure and self.canvas attributes and return the figure"
         from matplotlib import pyplot
@@ -1508,6 +1510,7 @@ def frame_title(y, x=None, xax=None):
 
 class MatplotlibFigure:
     """Wrap a matplotlib figure for FMText"""
+
     def __init__(self, figure):
         self.figure = figure
 
@@ -2647,6 +2650,7 @@ class VariableAspectLayout(BaseLayout):
     row_titles
         One title per row.
     """
+
     def __init__(
             self,
             rows: int,
@@ -2823,6 +2827,7 @@ class ColorBarMixin:
     param_func : func
         Function that returns color-bar parameters.
     """
+
     def __init__(
             self,
             param_func: Callable = None,  # function to get cmap, vmin, vmax

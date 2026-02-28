@@ -728,6 +728,7 @@ class ImageTable(ColorBarMixin, EelFigure):
 
 class _BinTable(EelFigure, ColorBarMixin):
     """Super-class"""
+
     def __init__(self, ndvar, tstart, tstop, tstep, im_func, surf, views, hemi,
                  summary, title, foreground=None, background=None,
                  parallel=True, smoothing_steps=None, mask=True, margins=None,
@@ -770,6 +771,7 @@ class _BinTable(EelFigure, ColorBarMixin):
 
 class BinTable(_BinTable):
     """DSPM plot bin-table"""
+
     def __init__(self, ndvar, tstart=None, tstop=None, tstep=0.1,
                  fmin=13, fmax=22, fmid=None,
                  surf='smoothwm', views=('lat', 'med'), hemi=None,
@@ -813,6 +815,7 @@ class ClusterBinTable(_BinTable):
     title : str
         Figure title.
     """
+
     def __init__(self, ndvar, tstart=None, tstop=None, tstep=0.1,
                  surf='smoothwm', views=('lat', 'med'), hemi=None,
                  summary='sum', vmax=None, title=None, *args, **kwargs):

@@ -169,6 +169,7 @@ def generate_bids_template(entities: set[str]) -> str:
 
 class DictSet:
     """Helper class for list of dicts without duplicates"""
+
     def __init__(self):
         self._list = []
 

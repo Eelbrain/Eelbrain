@@ -138,7 +138,7 @@ Running tests locally (from the project root)::
 
 For more options, see the `pytest docs <https://docs.pytest.org/en/stable/how-to/usage.html>`_.
 
-An additional test for the :class:`MneExperiment` pipeline takes longer to run and can be run separately as needed::
+An additional test for the :class:`Pipeline` takes longer to run and can be run separately as needed::
 
     $ pytest --runslow eelbrain/_experiment/tests/test_sample_experiment.py::test_sample_source
 
@@ -159,11 +159,10 @@ Coding Style and Documentation
     We recommend using tools to ensure compliance:
 
     - IDEs like PyCharm and VSCode can fix and alert you to style issues as you code.
-    - `pre-commit <https://pre-commit.com/>`_ can run tools that automatically detect, and often fix, common coding style issues.
-      Run ``$ pre-commit run --all-files`` from the project root to apply these tools locally.
-      The tools can also be run automatically on committing changes (see `pre-commit instructions <https://pre-commit.com/#3-install-the-git-hook-scripts>`_).
+    - `pre-commit <https://pre-commit.com/>`_ can run tools that automatically detect, and often fix, common code style issues.
+      Use ``$ pre-commit run --all-files`` from the project root to run these tools locally.
+      The tools can also be run automatically upon committing changes (see `pre-commit instructions <https://pre-commit.com/#3-install-the-git-hook-scripts>`_).
       For the specific tools, see ``.pre-commit-config.yaml`` in the project root.
-    - Use `this <https://pypi.org/project/autopep8/>`_ to automatically fix common style issues.
 
 **Consistent Naming and API Consistency**
     To make the library intuitive, we strive for consistency across the API:

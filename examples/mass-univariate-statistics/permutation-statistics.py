@@ -29,8 +29,8 @@ p = plot.TopoButterfly(eeg, t=0.13, head_radius=0.35)
 ###############################################################################
 # Max statistic
 # -------------
-# The max statistic is simply the maximum across the entire *t*-map. 
-# The permutation distribution consist of ``max(t)`` for each permutation. 
+# The max statistic is simply the maximum across the entire *t*-map.
+# The permutation distribution consist of ``max(t)`` for each permutation.
 # This is the default, and is also the fastest test.
 
 result = testnd.TTestOneSample(eeg, samples=1000)
@@ -82,7 +82,7 @@ p = plot.SensorMap(eeg, adjacency=True)
 # A summary statistic is then computed for each cluster. In Eelbrain this is the *cluster-mass* statistic:
 # the sum of all values in the cluster
 # (i.e., the sum of the *t* values at all datapoints that are part of the cluster).
-# The clustering procedure is repeated in each permutation, and the largest cluster-mass value is retained, 
+# The clustering procedure is repeated in each permutation, and the largest cluster-mass value is retained,
 # to derive a permutation distribution for cluster-mass values expected under the null hypothesis.
 # Each cluster in the actual data can then be evaluated against this distribution.
 
@@ -107,7 +107,7 @@ result.find_clusters(pmin=0.05)
 # Threshold-free cluster enhancement (TFCE)
 # -----------------------------------------
 # TFCE is an image processing algorithm that enhances cluster-like features, but without setting an arbitrary threshold.
-# It thus combines the advantage the max statistic approach (not having to set an arbitrary threshold) with the advantage of the cluster-based test of increased sensitivity for effects that are extended in space and time. 
+# It thus combines the advantage the max statistic approach (not having to set an arbitrary threshold) with the advantage of the cluster-based test of increased sensitivity for effects that are extended in space and time.
 
 result = testnd.TTestOneSample(eeg, samples=1000, tfce=True)
 p = plot.TopoButterfly(result, t=0.13, head_radius=0.35)

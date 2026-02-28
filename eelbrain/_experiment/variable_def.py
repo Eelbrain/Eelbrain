@@ -264,6 +264,7 @@ class Variables:
     arg : str | tuple | dict
         The ``vars`` argument.
     """
+
     def __init__(self, arg: dict):
         if arg is None:
             arg = ()

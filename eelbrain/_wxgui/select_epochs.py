@@ -115,6 +115,7 @@ class ChangeAction(Action):
         Description of the action
         list of (i, name, old, new) tuples
     """
+
     def __init__(self, desc, index=None, old_accept=None, new_accept=None,
                  old_tag=None, new_tag=None, old_path=None, new_path=None,
                  old_bad_chs=None, new_bad_chs=None, old_interpolate=None,

@@ -331,6 +331,7 @@ class LMGroup:
     --------
     See :ref:`exa-two-stage` example.
     """
+
     def __init__(self, lms):
         # check lms
         lm0 = lms[0]
