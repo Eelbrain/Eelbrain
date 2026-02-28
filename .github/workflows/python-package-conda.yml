@@ -45,7 +45,7 @@ jobs:
       name: Test with GUIs and code-cov
       shell: bash -el {0}
       run: |
-        pytest eelbrain --cov --cov-branch --cov-report=xml
+        pytest eelbrain --cov --cov-branch --cov-report=xml --no-mayavi
     - if: matrix.os == 'macos-latest'
       name: Upload coverage to Codecov
       uses: codecov/codecov-action@v5
