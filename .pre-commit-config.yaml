@@ -19,6 +19,6 @@ repos:
         - --remove-unused-variables
         - --ignore-init-module-imports
 - repo: https://github.com/ikamensh/flynt/
-  rev: ''
+  rev: 1.0.6
   hooks:
     - id: flynt
