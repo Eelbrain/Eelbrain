@@ -86,7 +86,7 @@ from numbers import Real
 import os
 import re
 import time
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal
 from collections.abc import Callable, Iterator, Sequence
 import weakref
 
@@ -125,7 +125,7 @@ defaults = {'maxw': 16, 'maxh': 10}
 # Types
 CMapArg = Any
 ColorArg = Any
-LegendArg = Optional[Union[str, int, tuple[float, float], bool]]
+LegendArg = str | int | tuple[float, float] | bool | None
 
 
 class PlotType(Enum):

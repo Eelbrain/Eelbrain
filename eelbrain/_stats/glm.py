@@ -611,7 +611,7 @@ class IncrementalComparisons:
     comparisons : {int: (int, int)}
         Comparisons for testable effects in x; ordered dictionary mapping
         ``{effect_id: (model_1_id, int model_0_id)}``.
-    ems_idx : list[Union[int, None]]
+    ems_idx : list[int | None]
         For each effect, the model-id of the E(MS) model.
     """
 

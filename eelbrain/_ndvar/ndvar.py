@@ -12,7 +12,7 @@ from itertools import groupby, repeat, zip_longest
 from math import floor
 from numbers import Real
 import operator
-from typing import Any, Literal, Union
+from typing import Any, Literal
 from collections.abc import Callable, Sequence
 
 import mne
@@ -35,7 +35,7 @@ from .._utils.numpy_utils import aslice
 from ._convolve import convolve_2d
 
 
-NDNumeric = Union[NDVar, Var, np.ndarray, float]
+NDNumeric = NDVar | Var | np.ndarray | float
 SequenceOfNDNumeric = Sequence[NDNumeric]
 
 

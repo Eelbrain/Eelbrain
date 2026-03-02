@@ -8,7 +8,7 @@ from functools import reduce
 from itertools import chain, product
 from math import ceil
 import operator
-from typing import Any, Optional, Union
+from typing import Any
 from collections.abc import Sequence
 
 import numpy as np
@@ -505,6 +505,6 @@ def soft_threshold_colormap(
     return out
 
 
-ColorArg = Union[str, Sequence[float]]
-ColorsArg = Union[ColorArg, dict[CellArg, ColorArg], Sequence[ColorArg]]
-StylesDict = dict[Optional[CellArg], Style]
+ColorArg = str | Sequence[float]
+ColorsArg = ColorArg | dict[CellArg, ColorArg] | Sequence[ColorArg]
+StylesDict = dict[CellArg | None, Style]

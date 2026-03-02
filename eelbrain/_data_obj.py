@@ -110,7 +110,7 @@ import operator
 import os
 import re
 import string
-from typing import Any, Literal, Union
+from typing import Any, Literal
 from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
 from warnings import warn
 
@@ -168,9 +168,6 @@ _tex_wildcard = ("TeX (*.tex)", '*.tex')
 _tsv_wildcard = ("Plain Text Tab Separated Values (*.txt)", '*.txt')
 _txt_wildcard = ("Plain Text (*.txt)", '*.txt')
 EVAL_CONTEXT = {'numpy': numpy}  # updated at end of file
-
-AxisArg = Union[None, str, Sequence[str], 'NDVar']
-DimsArg = Union[str, Sequence[str]]
 
 
 class IndexFormatter(Formatter):
@@ -11354,17 +11351,19 @@ def intersect_dims(dims1, dims2, check_dims: bool = True):
 
 EVAL_CONTEXT.update(Var=Var, Factor=Factor, extrema=extrema)
 
-NDVarArg = Union[NDVar, str]
-VarArg = Union[Var, str]
-NumericArg = Union[Var, NDVar, str]
-CategorialVariable = Union[Factor, Interaction, NestedEffect]
-CategorialArg = Union[CategorialVariable, str]
-AdjacencyArg = Union[Literal['grid', 'none', 'vector', 'custom'], ArrayLike]
-FactorArg = Union[Factor, str]
-CellArg = Union[str, tuple[str, ...]]
-IndexArg = Union[Var, np.ndarray, str]
-ModelArg = Union[Model, Var, CategorialArg]
-UVArg = Union[VarArg, CategorialArg]
+NDVarArg = NDVar | str
+AxisArg = None | str | Sequence[str] | NDVar
+DimsArg = str | Sequence[str]
+VarArg = Var | str
+NumericArg = Var | NDVar | str
+CategorialVariable = Factor | Interaction | NestedEffect
+CategorialArg = CategorialVariable | str
+AdjacencyArg = Literal['grid', 'none', 'vector', 'custom'] | ArrayLike
+FactorArg = Factor | str
+CellArg = str | tuple[str, ...]
+IndexArg = Var | np.ndarray | str
+ModelArg = Model | Var | CategorialArg
+UVArg = VarArg | CategorialArg
 
 # Types that can be coerced to NDVar with asndvar(); lists of those can be too
 NDVarTypes = (NDVar, str, MNE_RAW, MNE_EPOCHS, MNE_EVOKED)

@@ -13,7 +13,7 @@ from pathlib import Path
 import re
 import shutil
 import time
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal
 from collections.abc import Sequence
 
 import numpy as np
@@ -105,10 +105,10 @@ inv_re = re.compile(r"^(free|fixed|loose\.\d+|vec)"  # orientation constraint
 
 
 # Argument types
-BaselineArg = Union[bool, tuple[Optional[float], Optional[float]]]
-DataArg = Union[str, TestDims]
-PMinArg = Union[Literal['tfce'], float, None]
-SubjectArg = Union[str, Literal[1, -1]]
+BaselineArg = bool | tuple[float | None, float | None]
+DataArg = str | TestDims
+PMinArg = Literal['tfce'] | float | None
+SubjectArg = str | Literal[1, -1]
 
 # Eelbrain 0.24 raw/preprocessing pipeline
 LEGACY_RAW = {

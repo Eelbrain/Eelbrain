@@ -2,7 +2,7 @@
 """Statistical tests for univariate variables"""
 from functools import cached_property
 import math
-from typing import Literal, Union
+from typing import Literal
 from collections.abc import Sequence
 
 import numpy as np
@@ -24,7 +24,7 @@ __test__ = False
 DEFAULT_LEVELS = {.05: '*', .01: '**', .001: '***'}
 DEFAULT_LEVELS_TREND = {.05: '*', .01: '**', .001: '***', .1: '`'}
 
-MCCArg = Union[bool, Literal['hochberg', 'bonferroni', 'holm']]
+MCCArg = bool | Literal['hochberg', 'bonferroni', 'holm']
 
 
 def get_levels(

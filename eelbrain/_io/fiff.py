@@ -10,7 +10,7 @@ import operator
 import os
 from pathlib import Path
 import re
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal
 from collections.abc import Sequence
 import warnings
 
@@ -45,8 +45,8 @@ except ImportError:
         KIT.SYSTEM_UMD_2014_12: 'KIT-UMD-3',
     }
 
-BaselineArg = Optional[tuple[Optional[float], Optional[float]]]
-AdjacencyArg = Union[str, Sequence[tuple[str, str]], np.ndarray]
+BaselineArg = tuple[float | None, float | None] | None
+AdjacencyArg = str | Sequence[tuple[str, str]] | np.ndarray
 DataArg = Literal['eeg', 'mag', 'grad']
 PicksArg = Any
 

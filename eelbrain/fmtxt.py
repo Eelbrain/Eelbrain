@@ -55,7 +55,7 @@ from io import BytesIO, StringIO
 import tempfile
 import time
 from types import MappingProxyType
-from typing import Any, Union, List as ListType
+from typing import Any
 from collections.abc import Iterable, Sequence
 import webbrowser
 
@@ -68,9 +68,6 @@ from ._types import PathArg
 from ._utils.tex import latex2pdf
 from ._utils import ui
 
-
-# types
-FMTextLike = Union['FMTextElement', str, float, Sequence]  # should be Tuple or List['FMTextLike'], but that causes https://github.com/tox-dev/sphinx-autodoc-typehints/issues/223
 
 ENV = MappingProxyType({})
 preferences = dict(
@@ -1225,7 +1222,7 @@ class Row(list):
     def __str__(self):
         return ' '.join([str(cell) for cell in self])
 
-    def _col_str_lens(self, env) -> ListType[int]:
+    def _col_str_lens(self, env) -> list[int]:
         "List of cell-str-lengths; multicolumns are handled poorly"
         lens = []
         for cell in self:
@@ -1287,11 +1284,11 @@ class Row(list):
             c_just: Sequence[str],  # global color alignment
             delimiter: str = '   ',
             env: dict = ENV,
-    ) -> ListType[str]:
+    ) -> list[str]:
         "String of the row using column spacing ``c_width``"
         # find strings for each column
         col = 0
-        col_strings: ListType[ListType[str]] = []
+        col_strings: list[list[str]] = []
         for cell in self:
             if cell.width == 1:
                 target_len = c_width[col]
@@ -1300,7 +1297,7 @@ class Row(list):
                 target_len += len(delimiter) * (cell.width - 1)
             raw_lines = cell.get_str(env).splitlines() or ['']
             # split long lines to fit into column
-            lines: ListType[str] = []
+            lines: list[str] = []
             for raw_line in raw_lines:
                 if len(raw_line) > target_len:  # TODO: nicer splitting
                     lines += [raw_line[i: i + target_len] for i in range(0, len(raw_line), target_len)]
@@ -2622,4 +2619,6 @@ def read_meta(file_path):
     return MetaParser(file_path).out
 
 
-FMTextArg = Union[str, ListType[str], FMTextElement, FMTextConstant]
+FMTextArg = str | list[str] | FMTextElement | FMTextConstant
+FMTextLike = FMTextElement | str | float
+FMTextLike |= Sequence[FMTextLike]

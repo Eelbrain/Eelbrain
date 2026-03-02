@@ -14,7 +14,7 @@ import logging
 from os import makedirs, remove
 from os.path import basename, dirname, exists, getmtime
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 from collections.abc import Sequence
 
 import mne
@@ -36,7 +36,7 @@ from .definitions import log_dict_change, sequence_arg, typed_arg
 from .exceptions import FileMissingError
 
 MNE_VERBOSITY = 'WARNING'
-AddBadsArg = Union[bool, Sequence[str]]
+AddBadsArg = bool | Sequence[str]
 
 
 class RawPipe:
