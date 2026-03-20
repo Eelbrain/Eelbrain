@@ -12,6 +12,7 @@ from numpy.testing import assert_almost_equal, assert_array_equal
 from eelbrain import *
 from eelbrain.pipeline import *
 from eelbrain._exceptions import DefinitionError
+from eelbrain._experiment.derivative_cache import MANIFEST_SUFFIX
 from eelbrain.testing import TempDir, assert_dataobj_equal, requires_mne_sample_data
 
 
@@ -52,16 +53,21 @@ def test_sample():
         e.set(cov='emptyroom', raw='tsss')
         cov = e.load_cov()
         assert isinstance(cov, mne.Covariance)
+        assert exists(e.get('cov-file') + MANIFEST_SUFFIX)
         assert e.load_bad_channels(noise=True) == []
         e.set(cov='emptyroom', raw='1-40')
         cov = e.load_cov()
         assert isinstance(cov, mne.Covariance)
+        assert exists(e.get('cov-file') + MANIFEST_SUFFIX)
         assert e.load_bad_channels(noise=True) == []
         e.load_cov()
 
     # evoked cache invalidated by change in bads
     e.set('R0001', rej='', epoch='target')
+    e.load_events()
+    assert exists(e.get('event-file') + MANIFEST_SUFFIX)
     ds = e.load_evoked(ndvar=False)
+    assert exists(e.get('evoked-file') + MANIFEST_SUFFIX)
     assert ds[0, 'evoked'].info['bads'] == []
     e.make_bad_channels(['MEG 0331'])
     ds = e.load_evoked(ndvar=False)
@@ -227,6 +233,12 @@ def test_sample():
         ds1 = e.load_evoked(raw='ica', rej='')
         ds2 = e.load_evoked(raw='apply-ica', rej='')
     assert_dataobj_equal(ds2, ds1)
+
+    e.set(raw='ica1-40', rej='')
+    _ = e.load_fwd()
+    assert exists(e.get('fwd-file') + MANIFEST_SUFFIX)
+    _ = e.load_inv()
+    assert exists(e.get('inv-file') + MANIFEST_SUFFIX)
 
     # rename subject
     # --------------

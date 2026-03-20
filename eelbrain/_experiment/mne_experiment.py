@@ -8,7 +8,7 @@ import inspect
 from itertools import chain, product
 import logging
 import os
-from os.path import basename, exists, getmtime, isdir, join, relpath
+from os.path import exists, getmtime, isdir, join, relpath
 from pathlib import Path
 import re
 import shutil
@@ -18,7 +18,7 @@ from collections.abc import Sequence
 
 import numpy as np
 import mne
-from mne.minimum_norm import make_inverse_operator, apply_inverse, apply_inverse_epochs, apply_inverse_raw
+from mne.minimum_norm import apply_inverse, apply_inverse_epochs, apply_inverse_raw
 import mne_bids
 from mne_bids import BIDSPath, get_entity_vals
 
@@ -39,7 +39,6 @@ from .._meeg import new_rejection_ds
 from .._mne import morph_source_space, shift_mne_epoch_trigger, find_source_subject, label_from_annot
 from ..mne_fixes import write_labels_to_annot, _interpolate_bads_eeg, _interpolate_bads_meg, suppress_mne_warning
 from ..mne_fixes._source_space import merge_volume_source_space, prune_volume_source_space, restrict_volume_source_space
-from ..mne_fixes._version import MNE_VERSION, V1
 from .._ndvar import concatenate, cwt_morlet, neighbor_correlation
 from .._stats.stats import ttest_t
 from .._stats.testnd import _MergedTemporalClusterDist
@@ -48,9 +47,15 @@ from .._types import PathArg
 from .._utils import IS_WINDOWS, ask, intervals, subp, keydefaultdict, log_level, ScreenHandler
 from .._utils.mne_utils import fix_annot_names, is_fake_mri
 from .._utils.notebooks import tqdm
-from .covariance import EpochCovariance, RawCovariance
+from .covariance import CovDerivative, EpochCovariance, RawCovariance
+from .derivative_cache import (
+    DerivativeContext, DerivativeRegistry,
+    Input,
+    file_fingerprint,
+)
 from .definitions import FieldCode, find_dependent_epochs, find_epochs_vars, log_dict_change, log_list_change, sequence_arg
 from .epochs import ContinuousEpoch, PrimaryEpoch, SecondaryEpoch, SuperEpoch, EpochBase, EpochCollection, assemble_epochs, decim_param
+from .events import EventsDerivative, EvokedDerivative
 from .exceptions import FileMissingError
 from .experiment import FileTree
 from .groups import assemble_groups
@@ -58,6 +63,7 @@ from .parc import SEEDED_PARC_RE, CombinationParc, EelbrainParc, FreeSurferParc,
 from .preprocessing import (
     assemble_pipeline, RawPipe, RawSource, RawICA, RawApplyICA, RawFilter,
     compare_pipelines, ask_to_delete_ica_files)
+from .source import FwdDerivative, InvDerivative
 from .test_def import (
     Test,
     ROITestResult, ROI2StageResult, TestDims, TwoStageTest,
@@ -102,6 +108,86 @@ inv_re = re.compile(r"^(free|fixed|loose\.\d+|vec)"  # orientation constraint
                     r"(?:-((?:0\.)?\d+))?"  # depth weighting
                     r"(?:-(pick_normal))?"
                     r"$")  # pick normal
+
+
+class RawInput(Input):
+    def __init__(
+            self,
+            name: str,
+            *,
+            raw: str | None = None,
+            bad_chs: bool = True,
+            noise: bool = False,
+    ):
+        self.name = name
+        self.raw = raw
+        self.bad_chs = bad_chs
+        self.noise = noise
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        p = ctx.pipeline
+        with p._temporary_state:
+            if ctx.state:
+                p.set(**ctx.state)
+            if self.raw is not None:
+                p.set(raw=self.raw)
+            pipe = p._raw[p.get('raw')]
+            path = p._bids_path if not self.noise else p._bids_path.find_empty_room()
+            meta = {
+                'raw': p.get('raw'),
+                'noise': self.noise,
+                'bad_chs': self.bad_chs,
+                'pipeline': pipe._as_dict(),
+                'mtime': pipe.mtime(path, self.bad_chs),
+            }
+            return {
+                'source': file_fingerprint(p.root, path.fpath, 'raw-source', metadata=meta),
+            }
+
+
+class NamedFileInput(Input):
+    def __init__(
+            self,
+            name: str,
+            *,
+            template: str,
+            kind: str,
+            digest: bool = False,
+            metadata: dict[str, Any] | None = None,
+    ):
+        self.name = name
+        self.template = template
+        self.kind = kind
+        self.digest = digest
+        self.metadata = metadata
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        p = ctx.pipeline
+        with p._temporary_state:
+            if ctx.state:
+                p.set(**ctx.state)
+            return file_fingerprint(p.root, p.get(self.template), self.kind, self.digest, self.metadata)
+
+
+class RejectionInput(Input):
+    name = 'rej-input'
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        p = ctx.pipeline
+        with p._temporary_state:
+            if ctx.state:
+                p.set(**ctx.state)
+            rej = p._artifact_rejection[p.get('rej')]
+            if rej['kind'] is None:
+                return {'kind': 'none'}
+            epoch = p._epochs[p.get('epoch')]
+            return {
+                'rej': p.get('rej'),
+                'files': [
+                    file_fingerprint(p.root, p.get('rej-file', epoch=e), 'rej-file')
+                    for e in epoch.rej_file_epochs
+                ],
+            }
 
 
 # Argument types
@@ -234,6 +320,7 @@ class Pipeline(FileTree):
     # moderate speed gain for loading source estimates (34 subjects: 20 vs 70 s)
     # hard drive space ~ 100 mb/file
     check_raw_mtime: bool = True  # check raw input files' mtime for change
+    cache_policy_overrides: dict[str, str | bool] = {}
 
     # datatype and extension are usually inferred from a BIDS dataset; override here if needed
     datatype: str = None
@@ -740,6 +827,7 @@ class Pipeline(FileTree):
 
         # Calls below might create new cache-dir
         cache_dir = self.get('cache-dir')
+        self._init_derivative_registry()
 
         # register experimental features
         self._subclass_init()
@@ -1223,6 +1311,85 @@ class Pipeline(FileTree):
 
     def _subclass_init(self):
         "Allow subclass to register experimental features"
+
+    def _init_derivative_registry(self):
+        self._derivatives = DerivativeRegistry(self)
+        self._register_inputs()
+        self._register_derivatives()
+
+    def _register_inputs(self):
+        self._derivatives.register(RawInput('raw-input-events', bad_chs=False))
+        self._derivatives.register(RawInput('raw-input-bads', bad_chs=True))
+        self._derivatives.register(RawInput('raw-input-source', raw='raw', bad_chs=False))
+        self._derivatives.register(RawInput('noise-raw-input', bad_chs=True, noise=True))
+        self._derivatives.register(NamedFileInput('trans-input', template='trans-file', kind='trans-file'))
+        self._derivatives.register(NamedFileInput('src-input', template='src-file', kind='src-file'))
+        self._derivatives.register(RejectionInput())
+
+    def _register_derivatives(self):
+        self._derivatives.register(EventsDerivative())
+        self._derivatives.register(EvokedDerivative())
+        self._derivatives.register(CovDerivative())
+        self._derivatives.register(FwdDerivative())
+        self._derivatives.register(InvDerivative())
+
+    def _load_derivative(
+            self,
+            name: str,  # Registered derivative name.
+            cache: bool | None = None,  # Explicit cache override for this load.
+            state: dict[str, Any] | None = None,  # State overrides before resolving the derivative.
+            options: dict[str, Any] | None = None,
+            **extra_options,  # Additional options merged on top of ``options``.
+    ):
+        merged_options = {}
+        if options:
+            merged_options.update(options)
+        if extra_options:
+            merged_options.update(extra_options)
+        return self._derivatives.load(name, cache=cache, state=state, options=merged_options)
+
+    def _extract_events_dataset(self):
+        self._log.debug("Extracting events for %s", self._bids_path.fpath)
+        raw = self.load_raw(add_bads=False, preload=self.preload)
+        ds = load.mne.events(raw, self.merge_triggers, stim_channel=self._stim_channel)
+        del ds.info['raw']
+        ds.info['sfreq'] = raw.info['sfreq']
+        ds.info['raw-mtime'] = self._raw_mtime(bad_chs=False)
+        return ds
+
+    def _evoked_default_cache(self, samplingrate, decim):
+        epoch = self._epochs[self.get('epoch')]
+        if samplingrate:
+            if epoch.samplingrate:
+                return samplingrate == epoch.samplingrate
+            raise NotImplementedError(f"load_evoked with {samplingrate=} for epoch with decim")
+        if decim:
+            if epoch.decim:
+                return decim == epoch.decim
+            key = self.get('subject'), self.get('session'), self.get('task'), self.get('acquisition'), self.get('run')
+            raw_samplingrate = self._raw_samplingrate[key]
+            return decim == raw_samplingrate / epoch.samplingrate
+        return True
+
+    def _evoked_dataset_from_cache(self, evoked, data_raw: bool, vardef: str):
+        model = self.get('model')
+        equal_count = self.get('equalize_evoked_count') == 'eq'
+        ds = self.load_selected_events(data_raw=data_raw, vardef=vardef)
+        ds = ds.aggregate(model, drop_bad=True, equal_count=equal_count, drop=('i_start', 't_edf', 'time', 'index', 'trigger'))
+        model_vars = model.split('%') if model else ()
+        if model_vars:
+            cells = [' % '.join(cell) or 'No comment' for cell in ds.zip(*model_vars)]
+        else:
+            cells = ['No comment']
+        comments = [e.comment for e in evoked]
+        if comments != cells:
+            if set(comments) == set(cells):
+                index = [comments.index(cell) for cell in cells]
+                evoked = [evoked[i] for i in index]
+            else:
+                raise RuntimeError(f"Error reading cached evoked: {comments=}, {cells=}")
+        ds['evoked'] = evoked
+        return ds
 
     def __iter__(self):
         "Iterate state through subjects and yield each subject name."
@@ -1943,10 +2110,7 @@ class Pipeline(FileTree):
         ...
             State parameters.
         """
-        cov = mne.read_cov(self.get('cov-file', make=True, **kwargs))
-        if cov.data.dtype != 'float64':  # ad_hoc covariance loads as >f8, which causes mne errors
-            cov['data'] = cov['data'].astype(float)
-        return cov
+        return self._load_derivative('cov', state=kwargs)
 
     def load_edf(self, **kwargs):
         """Load the edf file ("edf-file" template)
@@ -2431,42 +2595,20 @@ class Pipeline(FileTree):
              - :ref:`state-epoch`: which events to use and time window
 
         """
-        evt_file = self.get('event-file', mkdir=True, subject=subject, **kwargs)
-        entities = {k: self.get(k) for k in BIDS_ENTITY_KEYS}
-        subject = entities['subject']
-        session = entities['session']
+        state = dict(kwargs)
+        if subject is not None:
+            state['subject'] = subject
+        ds = self._load_derivative('events', state=state)
 
-        # search for and check cached version
-        ds = None
-        if exists(evt_file):
-            raw_mtime = self._raw_mtime(bad_chs=False)
-            ds = load.unpickle(evt_file)
-            if self.check_raw_mtime and mtime_changed(ds.info['raw-mtime'], raw_mtime):
-                self._log.debug("Raw file %s modification time changed %s -> %s", self._bids_path.fpath, ds.info['raw-mtime'], raw_mtime)
-                ds = None
-
-        # refresh cache
-        if ds is None:
-            self._log.debug("Extracting events for %s", self._bids_path.fpath)
-            raw = self.load_raw(add_bads, preload=self.preload)
-            ds = load.mne.events(raw, self.merge_triggers, stim_channel=self._stim_channel)
-            del ds.info['raw']
-            ds.info['sfreq'] = raw.info['sfreq']
-            ds.info['raw-mtime'] = self._raw_mtime(bad_chs=False)
-
-            # add edf
-            if self.has_edf[subject]:
-                edf = self.load_edf()
-                edf.add_t_to(ds)
-                ds.info['edf'] = edf
-
-            save.pickle(ds, evt_file)
+        with self._temporary_state:
+            if state:
+                self.set(**state)
+            entities = {k: self.get(k) for k in BIDS_ENTITY_KEYS}
+            subject = entities['subject']
+            session = entities['session']
             if data_raw:
-                ds.info['raw'] = raw
-        elif data_raw:
-            ds.info['raw'] = self.load_raw(add_bads, preload=self.preload)
-
-        ds.info.update(entities)
+                ds.info['raw'] = self.load_raw(add_bads, preload=self.preload)
+            ds.info.update(entities)
 
         if self.trigger_shift:
             if isinstance(self.trigger_shift, dict):
@@ -2585,7 +2727,17 @@ class Pipeline(FileTree):
                         err.append(f"{l}: {subjects}")
                     raise DimensionMismatchError('\n'.join(err))
         else:  # single subject
-            ds = self._make_evoked(samplingrate, decim, data_raw, vardef)
+            use_cache = self._evoked_default_cache(samplingrate, decim)
+            ds = self._load_derivative(
+                'evoked',
+                cache=use_cache,
+                options={
+                    'samplingrate': samplingrate,
+                    'decim': decim,
+                    'data_raw': data_raw,
+                    'vardef': vardef,
+                },
+            )
 
             if cat:
                 if not model:
@@ -3006,22 +3158,24 @@ class Pipeline(FileTree):
         elif isinstance(mask, str):
             state['parc'] = mask
             mask = True
-        fwd_file = self.get('fwd-file', make=True, **state)
-        src = self.get('src')
-        if ndvar:
-            if src.startswith('vol'):
-                parc = None
-                assert not mask
-            else:
-                self.make_annot()
-                parc = self.get('parc')
-            fwd = load.mne.forward_operator(fwd_file, src, self.get('mri-sdir'), parc, adjacency=False)
-            if mask:
-                fwd = fwd.sub(source=np.invert(
-                    fwd.source.parc.startswith('unknown')))
-            return fwd
-        else:
-            fwd = mne.read_forward_solution(fwd_file)
+        with self._temporary_state:
+            if state:
+                self.set(**state)
+            fwd = self._load_derivative('fwd')
+            fwd_file = self.get('fwd-file')
+            src = self.get('src')
+            if ndvar:
+                if src.startswith('vol'):
+                    parc = None
+                    assert not mask
+                else:
+                    self.make_annot()
+                    parc = self.get('parc')
+                fwd = load.mne.forward_operator(fwd_file, src, self.get('mri-sdir'), parc, adjacency=False)
+                if mask:
+                    fwd = fwd.sub(source=np.invert(
+                        fwd.source.parc.startswith('unknown')))
+                return fwd
             if surf_ori:
                 mne.convert_forward_solution(fwd, surf_ori, copy=False)
             return fwd
@@ -3094,43 +3248,18 @@ class Pipeline(FileTree):
             state['parc'] = mask
             mask = True
 
-        if state:
-            self.set(**state)
+        with self._temporary_state:
+            if state:
+                self.set(**state)
+            inv = self._load_derivative('inv', cache=self.cache_inv, options={'fiff': fiff})
 
-        inv = dst = None
-        if self.cache_inv:
-            with self._temporary_state:
-                dst = self.get('inv-file', mkdir=True)
-            if exists(dst) and cache_valid(getmtime(dst), self._inv_mtime()):
-                inv = mne.minimum_norm.read_inverse_operator(dst)
-
-        if inv is None:
-            src = self.get('src')
-            if src[:3] == 'vol':
-                inv = self.get('inv')
-                if not (inv.startswith('vec') or inv.startswith('free')):
-                    raise ValueError(f'{inv=} with {src=}: volume source space requires free or vector inverse')
-
-            if fiff is None:
-                fiff = self.load_raw()
-
-            method, make_kw, apply_kw = self._inv_params()
-            inv = make_inverse_operator(fiff.info, self.load_fwd(), self.load_cov(), use_cps=True, **make_kw)
-            if dst:
-                if MNE_VERSION >= V1:
-                    mne.minimum_norm.write_inverse_operator(dst, inv, overwrite=True)
-                else:
-                    mne.minimum_norm.write_inverse_operator(dst, inv)
-                # re-load to reduce precision to cached version
-                inv = mne.minimum_norm.read_inverse_operator(dst)
-
-        if ndvar:
-            inv = load.mne.inverse_operator(inv, self.get('src'), self.get('mri-sdir'), self.get('parc'))
-            if mask:
-                inv = inv.sub(source=~inv.source.parc.startswith('unknown'))
-        elif mask:
-            raise NotImplementedError("Masking for inverse operator")
-        return inv
+            if ndvar:
+                inv = load.mne.inverse_operator(inv, self.get('src'), self.get('mri-sdir'), self.get('parc'))
+                if mask:
+                    inv = inv.sub(source=~inv.source.parc.startswith('unknown'))
+            elif mask:
+                raise NotImplementedError("Masking for inverse operator")
+            return inv
 
     def _prepare_inv(
             self,
@@ -4230,72 +4359,16 @@ class Pipeline(FileTree):
 
     def make_cov(self):
         "Make a noise covariance (cov) file"
-        dest = self.get('cov-file', mkdir=True)
-        if exists(dest):
-            mtime = self._cov_mtime()
-            if mtime and getmtime(dest) > mtime:
-                return
-        self._log.debug("Make cov-file %s", dest)
-        cov = self._covs[self.get('cov')]
-        if isinstance(cov, EpochCovariance):
-            log_path = self.get('cov-info-file', mkdir=True)
-            with self._temporary_state:
-                ds = self.load_epochs(None, True, False, decim=1, epoch=cov.epoch)
-            covariance = cov.make(ds['epochs'], log_path)
-        else:
-            raw = self.load_raw(noise=True)
-            covariance = cov.make(raw)
-        if MNE_VERSION >= V1:
-            covariance.save(dest, overwrite=True)
-        else:
-            covariance.save(dest)
+        self._load_derivative('cov')
+        return self.get('cov-file')
 
     def _make_evoked(self, samplingrate, decim, data_raw, vardef):
         """Make files with evoked sensor data"""
-        dst = self.get('evoked-file', mkdir=True)
         epoch = self._epochs[self.get('epoch')]
-        # determine whether using default decimation
-        if samplingrate:
-            if epoch.samplingrate:
-                default_decim = samplingrate == epoch.samplingrate
-            else:
-                raise NotImplementedError(f"load_evoked with {samplingrate=} for epoch with decim")
-        elif decim:
-            if epoch.decim:
-                default_decim = decim == epoch.decim
-            else:
-                key = self.get('subject'), self.get('session'), self.get('task'), self.get('acquisition'), self.get('run')
-                raw_samplingrate = self._raw_samplingrate[key]
-                default_decim = decim == raw_samplingrate / epoch.samplingrate
-        else:
-            default_decim = True
-        use_cache = default_decim
         model = self.get('model')
         model_vars = model.split('%') if model else ()
         equal_count = self.get('equalize_evoked_count') == 'eq'
-        if use_cache and exists(dst) and cache_valid(getmtime(dst), self._evoked_mtime()):
-            evoked = mne.read_evokeds(dst, proj=False)
-            evoked_version = int(re.match(r"Eelbrain (\d+)", evoked[0].info['description']).group(1))
-            if evoked_version >= 13:
-                ds = self.load_selected_events(data_raw=data_raw, vardef=vardef)
-                ds = ds.aggregate(model, drop_bad=True, equal_count=equal_count, drop=('i_start', 't_edf', 'time', 'index', 'trigger'))
-                # check cells
-                if model_vars:
-                    cells = [' % '.join(cell) or 'No comment' for cell in ds.zip(*model_vars)]
-                else:
-                    cells = ['No comment']
-                comments = [e.comment for e in evoked]
-                if comments != cells:
-                    if set(comments) == set(cells):
-                        index = [comments.index(cell) for cell in cells]
-                        evoked = [evoked[i] for i in index]
-                    else:
-                        raise RuntimeError(f"Error reading cached evoked: {comments=}, {cells=}")
-                ds['evoked'] = evoked
-                return ds
-            self._log.debug("Evoked outdated (%s)", evoked[0].info['description'])
-
-        self._log.debug("Make evoked %s", dst)
+        self._log.debug("Make evoked %s", self.get('evoked-file'))
         # load the epochs (post baseline-correction trigger shift requires
         # baseline corrected evoked
         if epoch.post_baseline_trigger_shift:
@@ -4311,47 +4384,13 @@ class Pipeline(FileTree):
         for e, *cell in ds_agg.zip('evoked', *model_vars):
             e.info['description'] = f"Eelbrain {CACHE_STATE_VERSION}"
             e.comment = ' % '.join(cell)
-        if use_cache:
-            if MNE_VERSION >= V1:
-                mne.write_evokeds(dst, ds_agg['evoked'], overwrite=True)
-            else:
-                mne.write_evokeds(dst, ds_agg['evoked'])
-            # re-load to reduce precision to cached version
-            ds_agg['evoked'] = mne.read_evokeds(dst, proj=False)
 
         return ds_agg
 
     def make_fwd(self):
         """Make the forward model"""
-        raw = self.load_raw(add_bads=False)
-        with self._temporary_state:
-            dst = self.get('fwd-file')
-            if exists(dst):
-                if cache_valid(getmtime(dst), self._fwd_mtime()):
-                    return dst
-            # get trans for correct visit for fwd_session
-            trans = self.get('trans-file')
-
-        src = self.get('src-file', make=True)
-        src = mne.read_source_spaces(src)
-        self._log.debug(f"make_fwd {basename(dst)}...")
-        if self.get('mrisubject') == 'fsaverage':
-            bemsol = join(self.get('mri-dir'), 'bem', 'fsaverage-5120-5120-5120-bem-sol.fif')
-        else:
-            bem = self._load_bem()
-            bemsol = mne.make_bem_solution(bem)
-        # ignore_ref should be True for KIT
-        if 'kit_system_id' in raw.info:
-            is_kit = raw.info['kit_system_id'] is not None
-        else:
-            raise RuntimeError("Unclear how to set ignor_ref for legacy file without kit_system_id")
-
-        fwd = mne.make_forward_solution(raw.info, trans, src, bemsol, ignore_ref=is_kit)
-        for s, s0 in zip(fwd['src'], src):
-            if s['nuse'] != s0['nuse']:
-                raise RuntimeError(f"The forward solution {basename(dst)} contains fewer sources than the source space. This could be due to a corrupted bem file with sources outside of the inner skull surface.")
-        mne.write_forward_solution(dst, fwd, True)
-        return dst
+        self._load_derivative('fwd')
+        return self.get('fwd-file')
 
     @suppress_mne_warning
     def make_ica_selection(
