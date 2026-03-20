@@ -31,7 +31,6 @@ from .._ndvar import filter_data
 from .._text import enumeration
 from .._utils import ask, deprecate_kwarg, user_activity
 from ..mne_fixes import CaptureLog
-from ..mne_fixes._version import MNE_VERSION, V0_19, V0_24
 from .definitions import log_dict_change, sequence_arg, typed_arg
 from .exceptions import FileMissingError
 
@@ -858,7 +857,7 @@ class RawICA(CachedRawPipe):
         self.log.info("Raw %s: computing ICA decomposition for %s", self.name, path.subject)
         kwargs = self.kwargs.copy()
         kwargs.setdefault('max_iter', 256)
-        if MNE_VERSION > V0_19 and kwargs['method'] == 'extended-infomax':
+        if kwargs['method'] == 'extended-infomax':
             kwargs['method'] = 'infomax'
             kwargs['fit_params'] = {'extended': True}
 
@@ -868,10 +867,7 @@ class RawICA(CachedRawPipe):
         with user_activity:
             ica.fit(raw, **fit_kwargs)
         makedirs(dirname(ica_path), exist_ok=True)
-        if MNE_VERSION >= V0_24:
-            ica.save(ica_path, overwrite=True)
-        else:
-            ica.save(ica_path)
+        ica.save(ica_path, overwrite=True)
         return ica_path
 
     def _make(

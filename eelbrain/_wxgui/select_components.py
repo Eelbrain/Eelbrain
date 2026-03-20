@@ -34,7 +34,6 @@ from .._types import PathArg
 from .._utils.numpy_utils import INT_TYPES
 from .._utils.parse import FLOAT_PATTERN, POS_FLOAT_PATTERN
 from .._utils.system import IS_OSX
-from ..mne_fixes._version import MNE_VERSION, V0_24
 from ..plot._base import DISPLAY_UNIT, UNIT_FORMAT, AxisData, DataLayer, PlotType
 from ..plot._topo import AxTopomap
 from .frame import EelbrainDialog
@@ -212,10 +211,7 @@ class Document(FileDocument):
         self.callbacks.callback('case_change', index)
 
     def save(self):
-        if MNE_VERSION >= V0_24:
-            self.ica.save(self.path, overwrite=True)
-        else:
-            self.ica.save(self.path)
+        self.ica.save(self.path, overwrite=True)
 
     def explained_variance(self, component: int, format: bool = False):
         if component not in self._explained_variance:
