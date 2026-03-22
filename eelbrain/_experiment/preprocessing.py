@@ -176,6 +176,7 @@ def raw_data_dependency(
         ctx: DerivativeContext,
         *,
         raw: str | None = None,
+        label: str | None = None,
         noise: bool = False,
         add_bads: AddBadsArg = True,
 ) -> Dependency:
@@ -184,11 +185,13 @@ def raw_data_dependency(
     if isinstance(pipe, CachedRawPipe):
         return Dependency(
             pipe.raw_cache_node_name(),
+            label=label,
             state=lambda c, raw_name=raw: {'raw': raw_name},
             options=lambda c, noise_=noise: {'noise': noise_},
         )
     return Dependency(
         'raw-input-meeg',
+        label=label,
         state=lambda c, raw_name=raw: {'raw': raw_name},
         options=lambda c, noise_=noise, add_bads_=add_bads: {
             'noise': noise_,
@@ -1062,23 +1065,27 @@ class RawICA(CachedRawPipe):
 
     def ica_dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         deps = []
-        for state in self._source_states(ctx):
+        for i, state in enumerate(self._source_states(ctx)):
             source_state = dict(state)
+            stem = f"source-{i}"
             deps.append(
                 raw_data_dependency(
                     ctx,
                     raw=source_state.pop('raw'),
+                    label=f'{stem}:raw',
                     add_bads=False,
                 )
             )
             deps[-1] = Dependency(
                 deps[-1].name,
+                label=deps[-1].label,
                 state=lambda c, state_=state: dict(state_),
                 options=deps[-1].options,
             )
             deps.append(
                 Dependency(
                     'raw-input-bads',
+                    label=f'{stem}:bads',
                     state=lambda c, state_=state: dict(state_),
                 )
             )

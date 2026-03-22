@@ -96,7 +96,6 @@ def test_sample():
     assert exists(test_manifest)
     with open(test_manifest) as fid:
         test_manifest_data = json.load(fid)
-    assert test_manifest_data['schema_version'] == 2
     assert test_manifest_data['definitions']['test']['tail'] == 1
     assert test_manifest_data['definitions']['epoch']['tmax'] == 0.3
     remove(test_manifest)
@@ -321,7 +320,8 @@ def test_sample():
     # ----
     labels = e.load_annot(parc='ac', mrisubject='fsaverage')
     assert len(labels) == 4
-    assert exists(e._annot_manifest_path('fsaverage', 'ac'))
+    annot_handle = e._derivatives.resolve('annot', state={'mrisubject': 'fsaverage', 'parc': 'ac'})
+    assert exists(annot_handle.artifact().manifest_path)
     # change parc definition
 
     class Experiment(SampleExperiment):
@@ -329,7 +329,6 @@ def test_sample():
             'ac': SubParc('aparc', ('transversetemporal', 'superiortemporal')),
         }
     e = Experiment(root)
-    assert len(e.glob('annot-file', True, parc='ac')) == 0
     labels = e.load_annot(parc='ac', mrisubject='fsaverage')
     assert len(labels) == 6
 

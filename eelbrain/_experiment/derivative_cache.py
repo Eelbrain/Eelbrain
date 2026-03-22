@@ -175,11 +175,14 @@ class Dependency:
 
     ``name`` refers to either a registered :class:`Derivative` or a registered
     :class:`Input`, and the registry determines which kind of node it is.
+    ``label`` names this edge in dependency manifests; use it when the same
+    node can appear more than once with different state.
     ``state`` can override which keyed instance should be resolved.
     ``options`` can override load-time options for the dependency.
     """
 
     name: str
+    label: str | None = None
     state: Callable[[DerivativeContext], dict[str, Any]] | None = None
     options: Callable[[DerivativeContext], dict[str, Any]] | None = None
 
@@ -546,12 +549,15 @@ class DerivativeRegistry:
             options = dict(ctx.options)
             if dep.options:
                 options.update(dep.options(ctx))
+            key = dep.label or dep.name
+            if key in out:
+                raise RuntimeError(f"Duplicate dependency label {key!r} for node {node.name!r}")
             handle = self.resolve(
                 dep.name,
                 state=self._resolve_state(ctx.state, **(dep.state(ctx) if dep.state else {})),
                 options=options,
             )
-            out[dep.name] = handle.describe_dependency(cache)
+            out[key] = handle.describe_dependency(cache)
         return out
 
     def read_manifest(self, path: str) -> ArtifactManifest | None:

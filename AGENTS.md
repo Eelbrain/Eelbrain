@@ -8,3 +8,26 @@
 ## Verification
 
 - Use the repo's commit hooks to verify coding style before finishing a change, for example with `pre-commit run --all-files`.
+
+## Formatting
+
+- Prefer longer readable lines over fractionating expressions into many short lines.
+- In particular, keep chained path-building expressions on one line when they remain clear.
+
+Preferred:
+
+```python
+return str(Path(self.get('cache-dir')) / 'manifests' / 'annot' / mrisubject / f'{parc}{MANIFEST_SUFFIX}')
+```
+
+Avoid:
+
+```python
+return str(
+    Path(self.get('cache-dir'))
+    / 'manifests'
+    / 'annot'
+    / mrisubject
+    / f'{parc}{MANIFEST_SUFFIX}'
+)
+```

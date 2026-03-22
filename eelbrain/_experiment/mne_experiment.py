@@ -36,7 +36,7 @@ from .._io.pickle import update_subjects_dir
 from .._names import INTERPOLATE_CHANNELS
 from .._meeg import new_rejection_ds
 from .._mne import morph_source_space, shift_mne_epoch_trigger, find_source_subject, label_from_annot
-from ..mne_fixes import write_labels_to_annot, _interpolate_bads_eeg, _interpolate_bads_meg, suppress_mne_warning
+from ..mne_fixes import _interpolate_bads_eeg, _interpolate_bads_meg, suppress_mne_warning
 from ..mne_fixes._source_space import merge_volume_source_space, prune_volume_source_space, restrict_volume_source_space
 from .._ndvar import concatenate, cwt_morlet, neighbor_correlation
 from .._stats.stats import ttest_t
@@ -44,7 +44,7 @@ from .._stats.testnd import _MergedTemporalClusterDist
 from .._text import enumeration, n_of, plural
 from .._types import PathArg
 from .._utils import ask, intervals, subp, keydefaultdict, log_level, ScreenHandler
-from .._utils.mne_utils import fix_annot_names, is_fake_mri
+from .._utils.mne_utils import is_fake_mri
 from .._utils.notebooks import tqdm
 from .covariance import CovDerivative, EpochCovariance, RawCovariance
 from .derivative_cache import (
@@ -60,7 +60,7 @@ from .events import EventsDerivative, EvokedDerivative
 from .exceptions import FileMissingError
 from .experiment import FileTree
 from .groups import assemble_groups
-from .parc import SEEDED_PARC_RE, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, SeededParc, IndividualSeededParc, LabelParc, VolumeParc, Parcellation, assemble_parcs
+from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, SeededParc, IndividualSeededParc, LabelParc, VolumeParc, Parcellation, assemble_parcs
 from .preprocessing import (
     assemble_pipeline, CachedRawPipe, RawPipe, RawSource, RawICA, RawApplyICA, RawFilter,
 )
@@ -73,7 +73,6 @@ from .test_def import (
 from .variable_def import Variables
 
 
-ANNOT_MANIFEST_VERSION = 1
 RESULT_MANIFEST_VERSION = 1
 
 BIDS_ENTITY_KEYS = ('subject', 'session', 'task', 'acquisition', 'run', 'split')
@@ -823,7 +822,6 @@ class Pipeline(FileTree):
         # set initial values
         self.set(**state)
         self._store_state()
-        self._prune_stale_annot_files()
 
         ########################################################################
         # Cached analysis defaults
@@ -888,6 +886,7 @@ class Pipeline(FileTree):
         for pipe in self._raw.values():
             for node in pipe.cache_nodes():
                 self._derivatives.register(node)
+        self._derivatives.register(AnnotDerivative())
         self._derivatives.register(EventsDerivative())
         self._derivatives.register(EvokedDerivative())
         self._derivatives.register(CovDerivative())
@@ -973,186 +972,15 @@ class Pipeline(FileTree):
                 removed_any = True
         return removed_any
 
-    def _annot_definition(
-            self,
-            parc: str,
-    ) -> Parcellation | None:
-        if parc in self._parcs:
-            return self._parcs[parc]
-        match = SEEDED_PARC_RE.match(parc)
-        if match and isinstance(self._parcs.get(match.group(1)), SeededParc):
-            return self._parcs[match.group(1)]
-        return None
-
-    def _annot_manifest_path(
-            self,
-            mrisubject: str,
-            parc: str,
-    ) -> str:
-        return str(
-            Path(self.get('cache-dir'))
-            / 'manifests'
-            / 'annot'
-            / mrisubject
-            / f'{parc}{MANIFEST_SUFFIX}'
-        )
-
-    def _annot_file_paths(
-            self,
-            mrisubject: str,
-            parc: str,
-    ) -> list[str]:
-        with self._temporary_state:
-            self.set(mrisubject=mrisubject, parc=parc, match=False)
-            return [
-                self.get('annot-file', hemi=hemi)
-                for hemi in self.get_field_values('hemi')
-            ]
-
-    def _annot_files_exist(
-            self,
-            mrisubject: str,
-            parc: str,
-    ) -> bool:
-        return all(exists(path) for path in self._annot_file_paths(mrisubject, parc))
-
-    def _annot_is_managed(
-            self,
-            mrisubject: str,
-            parc: str,
-    ) -> bool:
-        parc_def = self._annot_definition(parc)
-        if parc_def is None or isinstance(parc_def, FreeSurferParc):
-            return False
-        if isinstance(parc_def, FSAverageParc):
-            with self._temporary_state:
-                self.set(mrisubject=mrisubject, parc=parc, match=False)
-                return mrisubject != self.get('common_brain')
-        return True
-
-    def _annot_file_dependencies(
+    def _annot_dependency(
             self,
             mrisubject: str,
             parc: str | None = None,
-    ) -> list[dict[str, Any]]:
-        with self._temporary_state:
-            self.set(mrisubject=mrisubject, match=False)
-            if parc is not None:
-                self.set(parc=parc, match=False)
-            return [
-                file_fingerprint(
-                    self.root,
-                    self.get('annot-file', hemi=hemi),
-                    'annot-file',
-                    metadata={
-                        'mrisubject': self.get('mrisubject'),
-                        'parc': self.get('parc'),
-                        'hemi': hemi,
-                    },
-                )
-                for hemi in self.get_field_values('hemi')
-            ]
-
-    def _current_annot_manifest(
-            self,
-            mrisubject: str,
-            parc: str,
     ) -> dict[str, Any]:
-        parc_def = self._annot_definition(parc)
-        if parc_def is None:
-            raise KeyError(parc)
-
-        manifest = {
-            'schema_version': ANNOT_MANIFEST_VERSION,
-            'mrisubject': mrisubject,
-            'parc': parc,
-            'definition': self._derivatives.canonicalize(parc_def._as_dict()),
-            'dependencies': {},
-        }
-        if hasattr(parc_def, 'base'):
-            manifest['dependencies']['base'] = self._annot_file_dependencies(mrisubject, parc_def.base)
-
-        with self._temporary_state:
-            self.set(mrisubject=mrisubject, parc=parc, match=False)
-            common_brain = self.get('common_brain')
-            is_fake = is_fake_mri(self.get('mri-dir'))
-        if mrisubject != common_brain and (parc_def.morph_from_fsaverage or is_fake):
-            manifest['dependencies']['common_brain'] = self._annot_file_dependencies(common_brain, parc)
-        return self._derivatives.canonicalize(manifest)
-
-    def _read_annot_manifest(
-            self,
-            mrisubject: str,
-            parc: str,
-    ) -> dict[str, Any] | None:
-        path = Path(self._annot_manifest_path(mrisubject, parc))
-        if not path.exists():
-            return None
-        try:
-            manifest = json.loads(path.read_text())
-        except Exception:
-            return None
-        if manifest.get('schema_version') != ANNOT_MANIFEST_VERSION:
-            return None
-        return manifest
-
-    def _write_annot_manifest(
-            self,
-            mrisubject: str,
-            parc: str,
-    ) -> None:
-        path = Path(self._annot_manifest_path(mrisubject, parc))
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(self._current_annot_manifest(mrisubject, parc), indent=2, sort_keys=True))
-
-    def _annot_files_valid(
-            self,
-            mrisubject: str,
-            parc: str,
-    ) -> bool:
-        if not self._annot_files_exist(mrisubject, parc):
-            return False
-        if not self._annot_is_managed(mrisubject, parc):
-            return True
-        manifest = self._read_annot_manifest(mrisubject, parc)
-        if manifest is None:
-            return False
-        return manifest == self._current_annot_manifest(mrisubject, parc)
-
-    def _delete_annot_files(
-            self,
-            mrisubject: str,
-            parc: str,
-    ) -> None:
-        for path in self._annot_file_paths(mrisubject, parc):
-            if exists(path):
-                os.remove(path)
-        manifest_path = self._annot_manifest_path(mrisubject, parc)
-        if exists(manifest_path):
-            os.remove(manifest_path)
-
-    def _prune_stale_annot_files(self) -> None:
-        subjects_dir = Path(self.get('mri-sdir'))
-        if not subjects_dir.exists():
-            return
-
-        seen = set()
-        for path in subjects_dir.glob('*/label/*.annot'):
-            name = path.name
-            if not (name.startswith('lh.') or name.startswith('rh.')):
-                continue
-            parc = name[3:-6]
-            mrisubject = path.parent.parent.name
-            key = (mrisubject, parc)
-            if key in seen:
-                continue
-            seen.add(key)
-
-            manifest_path = self._annot_manifest_path(mrisubject, parc)
-            if not exists(manifest_path):
-                continue
-            if self._annot_definition(parc) is None or not self._annot_files_valid(mrisubject, parc):
-                self._delete_annot_files(mrisubject, parc)
+        state = {'mrisubject': mrisubject}
+        if parc is not None:
+            state['parc'] = parc
+        return self._derivatives.resolve('annot', state=state).describe_dependency()
 
     def _result_manifest_path(self, dst: str) -> str:
         return f"{dst}{MANIFEST_SUFFIX}"
@@ -1235,14 +1063,14 @@ class Pipeline(FileTree):
         out = {'subjects': subjects}
         if data.source and data.parc_level:
             if single_subject:
-                out['annot'] = self._annot_file_dependencies(self.get('mrisubject'))
+                out['annot'] = self._annot_dependency(self.get('mrisubject'))
             elif data.parc_level == 'common':
-                out['annot'] = self._annot_file_dependencies(self.get('common_brain'))
+                out['annot'] = self._annot_dependency(self.get('common_brain'))
             elif data.parc_level == 'individual':
                 out['annot'] = [
                     {
                         'subject': state['subject'],
-                        'files': self._annot_file_dependencies(state['mrisubject']),
+                        'files': self._annot_dependency(state['mrisubject']),
                     }
                     for state in self._result_subject_states(False)
                 ]
@@ -1779,8 +1607,7 @@ class Pipeline(FileTree):
         ...
             State parameters.
         """
-        self.make_annot(**state)
-        return mne.read_labels_from_annot(self.get('mrisubject'), self.get('parc'), 'both', subjects_dir=self.get('mri-sdir'))
+        return self._load_derivative('annot', state=state)
 
     def load_bad_channels(self, noise: bool = False, **kwargs):
         """Load bad channels
@@ -3886,55 +3713,8 @@ class Pipeline(FileTree):
         return res_data, res
 
     def make_annot(self, **state):
-        """Make sure the annot files for both hemispheres exist
-
-        Parameters
-        ----------
-        ...
-            State parameters.
-        """
-        self.set(**state)
-
-        # variables
-        parc, parc_def = self._get_parc()
-        if parc_def is None or isinstance(parc_def, VolumeParc):
-            return
-
-        mrisubject = self.get('mrisubject')
-        common_brain = self.get('common_brain')
-        if self._annot_files_valid(mrisubject, parc):
-            return
-        if mrisubject != common_brain:
-            is_fake = is_fake_mri(self.get('mri-dir'))
-            if parc_def.morph_from_fsaverage or is_fake:
-                # make sure annot exists for common brain
-                self.set(mrisubject=common_brain, match=False)
-                self.make_annot()
-                self.set(mrisubject=mrisubject, match=False)
-                if self._annot_files_valid(mrisubject, parc):
-                    return
-                if is_fake:
-                    for _ in self.iter('hemi'):
-                        self.make_copy('annot-file', 'mrisubject', common_brain, mrisubject, overwrite=True)
-                else:
-                    self.get('label-dir', make=True)
-                    subjects_dir = self.get('mri-sdir')
-                    for hemi in ('lh', 'rh'):
-                        cmd = ["mri_surf2surf", "--srcsubject", common_brain,
-                               "--trgsubject", mrisubject, "--sval-annot", parc,
-                               "--tval", parc, "--hemi", hemi]
-                        subp.run_freesurfer_command(cmd, subjects_dir)
-                    fix_annot_names(mrisubject, parc, common_brain,
-                                    subjects_dir=subjects_dir)
-                if self._annot_is_managed(mrisubject, parc):
-                    self._write_annot_manifest(mrisubject, parc)
-                return
-
-        self._log.info("Make parcellation %s for %s", parc, mrisubject)
-        labels = parc_def._make(self, parc)
-        write_labels_to_annot(labels, mrisubject, parc, True, self.get('mri-sdir'))
-        if self._annot_is_managed(mrisubject, parc):
-            self._write_annot_manifest(mrisubject, parc)
+        """Ensure that annot files for the current parcellation exist."""
+        self._load_derivative('annot', state=state)
 
     def make_bad_channels(
         self,

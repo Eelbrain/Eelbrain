@@ -1,11 +1,17 @@
 from copy import deepcopy
 import os
+from pathlib import Path
 import re
+from typing import Any
 from collections.abc import Sequence
 
 import mne
 
 from .._mne import combination_label, labels_from_mni_coords, rename_label, dissolve_label
+from .._utils import subp
+from .._utils.mne_utils import fix_annot_names, is_fake_mri
+from ..mne_fixes import write_labels_to_annot
+from .derivative_cache import Artifact, Dependency, Derivative, DerivativeContext, file_fingerprint
 from .definitions import DefinitionError, Definition, sequence_arg
 
 
@@ -439,6 +445,240 @@ class IndividualSeededParc(SeededParc):
         seeds = {name: self.seeds[name][subject] for name in self.seeds}
         # filter out missing
         return {name: seed for name, seed in seeds.items() if seed}
+
+
+def _annot_state(
+        ctx: DerivativeContext,
+        **state,
+) -> tuple[str, Parcellation]:
+    p = ctx.pipeline
+    with p._temporary_state:
+        if ctx.state:
+            p.set(**ctx.state)
+        if state:
+            p.set(**state)
+        return p._get_parc()
+
+
+def _annot_file_paths(
+        ctx: DerivativeContext,
+        **state,
+) -> list[str]:
+    p = ctx.pipeline
+    with p._temporary_state:
+        if ctx.state:
+            p.set(**ctx.state)
+        if state:
+            p.set(**state)
+        return [
+            p.get('annot-file', hemi=hemi)
+            for hemi in p.get_field_values('hemi')
+        ]
+
+
+def _annot_files_exist(
+        ctx: DerivativeContext,
+        **state,
+) -> bool:
+    return all(Path(path).exists() for path in _annot_file_paths(ctx, **state))
+
+
+def _annot_file_fingerprints(
+        ctx: DerivativeContext,
+        **state,
+) -> list[dict[str, Any]]:
+    p = ctx.pipeline
+    with p._temporary_state:
+        if ctx.state:
+            p.set(**ctx.state)
+        if state:
+            p.set(**state)
+        return [
+            file_fingerprint(
+                p.root,
+                p.get('annot-file', hemi=hemi),
+                'annot-file',
+                metadata={
+                    'mrisubject': p.get('mrisubject'),
+                    'parc': p.get('parc'),
+                    'hemi': hemi,
+                },
+            )
+            for hemi in p.get_field_values('hemi')
+        ]
+
+
+def _label_file_fingerprints(
+        ctx: DerivativeContext,
+        parc_def: LabelParc,
+) -> list[dict[str, Any]]:
+    p = ctx.pipeline
+    hemis = ('lh.', 'rh.')
+    with p._temporary_state:
+        if ctx.state:
+            p.set(**ctx.state)
+        pattern = os.path.join(p.get('mri-dir'), 'label', '%s.label')
+        labels = []
+        for label in parc_def.labels:
+            if label.startswith(hemis):
+                labels.append(label)
+            else:
+                labels.extend(f'{hemi}{label}' for hemi in hemis)
+        return [
+            file_fingerprint(
+                p.root,
+                pattern % label,
+                'label-file',
+                metadata={'label': label, 'parc': p.get('parc')},
+            )
+            for label in labels
+        ]
+
+
+def _annot_labels(ctx: DerivativeContext) -> list[mne.Label]:
+    p = ctx.pipeline
+    with p._temporary_state:
+        if ctx.state:
+            p.set(**ctx.state)
+        return mne.read_labels_from_annot(
+            p.get('mrisubject'),
+            p.get('parc'),
+            'both',
+            subjects_dir=p.get('mri-sdir'),
+        )
+
+
+def _managed_annot(
+        ctx: DerivativeContext,
+        parc_def: Parcellation,
+) -> bool:
+    if isinstance(parc_def, FreeSurferParc):
+        return False
+    if isinstance(parc_def, FSAverageParc):
+        p = ctx.pipeline
+        with p._temporary_state:
+            if ctx.state:
+                p.set(**ctx.state)
+            return p.get('mrisubject') != p.get('common_brain')
+    return True
+
+
+class AnnotDerivative(Derivative[list[mne.Label]]):
+    name = 'annot'
+    key_fields = ('mrisubject', 'parc')
+
+    def path(
+            self,
+            ctx: DerivativeContext,
+            mkdir: bool = False,
+    ) -> str:
+        cache_dir = Path(ctx.path('cache-dir', mkdir=mkdir)) / 'annot' / ctx.get('mrisubject')
+        if mkdir:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+        return str(cache_dir / f"{ctx.get('parc')}.stamp")
+
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        parc, parc_def = _annot_state(ctx)
+        if parc_def is None or isinstance(parc_def, VolumeParc):
+            return ()
+
+        deps = []
+        base = getattr(parc_def, 'base', None)
+        if base:
+            deps.append(Dependency('annot', label='base', state=lambda c, base_=base: {'parc': base_}))
+        mask = getattr(parc_def, 'mask', None)
+        if mask:
+            deps.append(Dependency('annot', label='mask', state=lambda c, mask_=mask: {'parc': mask_}))
+
+        p = ctx.pipeline
+        with p._temporary_state:
+            if ctx.state:
+                p.set(**ctx.state)
+            mrisubject = p.get('mrisubject')
+            common_brain = p.get('common_brain')
+            fake_mri = is_fake_mri(p.get('mri-dir'))
+        if mrisubject != common_brain and (parc_def.morph_from_fsaverage or fake_mri):
+            deps.append(Dependency('annot', label='common-brain', state=lambda c, common_brain_=common_brain: {'mrisubject': common_brain_}))
+        return tuple(deps)
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        parc, parc_def = _annot_state(ctx)
+        if parc_def is None:
+            return {'parc': parc, 'kind': 'none'}
+
+        fingerprint = {
+            'parc': parc,
+            'definition': ctx.registry.canonicalize(parc_def._as_dict()),
+        }
+        if not _managed_annot(ctx, parc_def):
+            fingerprint['files'] = _annot_file_fingerprints(ctx)
+        elif isinstance(parc_def, LabelParc):
+            fingerprint['labels'] = _label_file_fingerprints(ctx, parc_def)
+        return fingerprint
+
+    def build(self, ctx: DerivativeContext) -> list[mne.Label]:
+        p = ctx.pipeline
+        with p._temporary_state:
+            if ctx.state:
+                p.set(**ctx.state)
+            parc, parc_def = p._get_parc()
+            if parc_def is None or isinstance(parc_def, VolumeParc):
+                return []
+            if not _managed_annot(ctx, parc_def):
+                return _annot_labels(ctx)
+
+            mrisubject = p.get('mrisubject')
+            common_brain = p.get('common_brain')
+            fake_mri = is_fake_mri(p.get('mri-dir'))
+            if mrisubject != common_brain and (parc_def.morph_from_fsaverage or fake_mri):
+                if fake_mri:
+                    for _ in p.iter('hemi'):
+                        p.make_copy('annot-file', 'mrisubject', common_brain, mrisubject, overwrite=True)
+                else:
+                    p.get('label-dir', make=True)
+                    subjects_dir = p.get('mri-sdir')
+                    for hemi in ('lh', 'rh'):
+                        cmd = [
+                            "mri_surf2surf",
+                            "--srcsubject", common_brain,
+                            "--trgsubject", mrisubject,
+                            "--sval-annot", parc,
+                            "--tval", parc,
+                            "--hemi", hemi,
+                        ]
+                        subp.run_freesurfer_command(cmd, subjects_dir)
+                    fix_annot_names(mrisubject, parc, common_brain, subjects_dir=subjects_dir)
+                return _annot_labels(ctx)
+
+            p._log.info("Make parcellation %s for %s", parc, mrisubject)
+            labels = parc_def._make(p, parc)
+            write_labels_to_annot(labels, mrisubject, parc, True, p.get('mri-sdir'))
+            return labels
+
+    def load(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+    ) -> list[mne.Label]:
+        return _annot_labels(ctx)
+
+    def save(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+            value: list[mne.Label],
+    ) -> None:
+        path = Path(artifact.path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("annot\n")
+
+    def validate(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+            manifest,
+    ) -> bool:
+        return _annot_files_exist(ctx)
 
 
 class VolumeParc(Parcellation):
