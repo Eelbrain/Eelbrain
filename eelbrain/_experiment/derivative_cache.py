@@ -224,6 +224,9 @@ class Derivative(DependencyNode[T]):
     ) -> str:
         return ctx.path(self.path_template, mkdir=mkdir)
 
+    def key(self, ctx: DerivativeContext) -> dict[str, Any]:
+        return ctx.registry.normalize_state(self.key_fields, ctx.state)
+
     def build(self, ctx: DerivativeContext) -> T:
         raise NotImplementedError
 
@@ -337,7 +340,7 @@ class DerivativeHandle(NodeHandle[T]):
         )
 
     def key(self) -> dict[str, Any]:
-        return self.registry.normalize_state(self.derivative.key_fields, self.state)
+        return self.derivative.key(self.ctx)
 
     def _manifest(self) -> ArtifactManifest | None:
         return self.registry.read_manifest(self.artifact().manifest_path)
@@ -383,6 +386,13 @@ class DerivativeHandle(NodeHandle[T]):
             },
             provenance=self.registry.canonicalize(self.derivative.provenance(self.ctx, value)),
         )
+
+    def is_valid(self, cache: bool | None = None) -> bool:
+        artifact = self.artifact()
+        manifest = self._manifest()
+        if manifest is None or not Path(artifact.path).exists():
+            return False
+        return self._is_valid(manifest, artifact, cache)
 
     def load(self, cache: bool | None = None) -> T:
         use_cache = self.registry.should_cache(self.derivative, cache)

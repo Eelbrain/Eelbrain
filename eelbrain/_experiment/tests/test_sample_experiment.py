@@ -18,6 +18,11 @@ from eelbrain._experiment.derivative_cache import MANIFEST_SUFFIX
 from eelbrain.testing import TempDir, assert_dataobj_equal, requires_mne_sample_data
 
 
+def _sampled_output_path(path: str, samples: int) -> str:
+    path_ = Path(path)
+    return str(path_.with_name(f"{path_.stem}_samples-{samples}{path_.suffix}"))
+
+
 @requires_mne_sample_data
 def test_sample():
     set_log_level('warning', 'mne')
@@ -92,12 +97,12 @@ def test_sample():
     # sensor space tests
     megs = [e.load_evoked(cat='auditory')['meg'] for _ in e]
     res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.rms', baseline=False, make=True)
-    test_manifest = e.get('test-file') + MANIFEST_SUFFIX
+    test_manifest = e._derivatives.manifest_path(_sampled_output_path(e.get('test-file'), 100))
     assert exists(test_manifest)
     with open(test_manifest) as fid:
         test_manifest_data = json.load(fid)
-    assert test_manifest_data['definitions']['test']['tail'] == 1
-    assert test_manifest_data['definitions']['epoch']['tmax'] == 0.3
+    assert test_manifest_data['fingerprint']['definitions']['test']['tail'] == 1
+    assert test_manifest_data['fingerprint']['definitions']['epoch']['tmax'] == 0.3
     remove(test_manifest)
     with pytest.raises(IOError):
         e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.rms', baseline=False)
@@ -346,14 +351,18 @@ def test_sample_source():
 
     # source space tests
     e.set(src='ico-4', rej='', epoch='auditory')
+    morph = e.load_source_morph(subject='R0000')
+    assert isinstance(morph, mne.SourceMorph)
+    assert exists(e._derivatives.resolve('source-morph', state={'subject': 'R0000'}).artifact().manifest_path)
     # These two tests are only identical if the evoked has been cached before the first test is loaded
     resp = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, parc='ac', make=True)
     resm = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, mask='ac', make=True)
+    assert exists(e._derivatives.manifest_path(e.get('src-file')))
     assert exists(e.get('fwd-file') + MANIFEST_SUFFIX)
     assert exists(e.get('inv-file') + MANIFEST_SUFFIX)
-    with open(e.get('test-file') + MANIFEST_SUFFIX) as fid:
+    with open(e._derivatives.manifest_path(_sampled_output_path(e.get('test-file'), 100))) as fid:
         source_manifest_data = json.load(fid)
-    assert source_manifest_data['definitions']['parc']['base'] == 'aparc'
+    assert source_manifest_data['fingerprint']['definitions']['parc']['base'] == 'aparc'
     assert_dataobj_equal(resp.t, resm.t)
     # ROI tests
     e.set(epoch='target')

@@ -11,23 +11,5 @@
 
 ## Formatting
 
-- Prefer longer readable lines over fractionating expressions into many short lines.
-- In particular, keep chained path-building expressions on one line when they remain clear.
-
-Preferred:
-
-```python
-return str(Path(self.get('cache-dir')) / 'manifests' / 'annot' / mrisubject / f'{parc}{MANIFEST_SUFFIX}')
-```
-
-Avoid:
-
-```python
-return str(
-    Path(self.get('cache-dir'))
-    / 'manifests'
-    / 'annot'
-    / mrisubject
-    / f'{parc}{MANIFEST_SUFFIX}'
-)
-```
+- Prefer longer readable lines over fractionating expressions into many short lines (we don't impose a maximum line length, but rely on soft wrapping instead). For example, keep chained path-building expressions and straightforward function and method calls on one line.
+- Distribute commands across multiple lines only when it increases readability (for example, arguments to a function, each with its own type hint and default value, and large dictionary initialization may be clearer when each is on its own line).

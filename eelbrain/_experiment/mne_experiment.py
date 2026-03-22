@@ -5,7 +5,6 @@ import copy
 from datetime import datetime
 import inspect
 from itertools import chain, product
-import json
 import logging
 import os
 from os.path import exists, getmtime, isdir, join, relpath
@@ -25,11 +24,9 @@ from .. import fmtxt
 from .. import gui
 from .. import load
 from .. import plot
-from .. import report as _report
 from .. import save
-from .. import table
 from .. import testnd
-from .._data_obj import CellArg, NDVarArg, Datalist, Dataset, Factor, Var, NDVar, SourceSpace, VolumeSourceSpace, align1, assert_is_legal_dataset_key, combine
+from .._data_obj import CellArg, NDVarArg, Datalist, Dataset, Factor, Var, NDVar, SourceSpace, VolumeSourceSpace, assert_is_legal_dataset_key, combine
 from .._exceptions import DefinitionError, DimensionMismatchError, OldVersionError
 from .._info import BAD_CHANNELS
 from .._io.pickle import update_subjects_dir
@@ -37,7 +34,6 @@ from .._names import INTERPOLATE_CHANNELS
 from .._meeg import new_rejection_ds
 from .._mne import morph_source_space, shift_mne_epoch_trigger, find_source_subject, label_from_annot
 from ..mne_fixes import _interpolate_bads_eeg, _interpolate_bads_meg, suppress_mne_warning
-from ..mne_fixes._source_space import merge_volume_source_space, prune_volume_source_space, restrict_volume_source_space
 from .._ndvar import concatenate, cwt_morlet, neighbor_correlation
 from .._stats.stats import ttest_t
 from .._stats.testnd import _MergedTemporalClusterDist
@@ -48,9 +44,10 @@ from .._utils.mne_utils import is_fake_mri
 from .._utils.notebooks import tqdm
 from .covariance import CovDerivative, EpochCovariance, RawCovariance
 from .derivative_cache import (
+    Artifact,
     Dependency, DerivativeContext, DerivativeRegistry,
+    Derivative,
     Input,
-    MANIFEST_SUFFIX,
     ProtectedArtifactError,
     file_fingerprint,
 )
@@ -64,16 +61,19 @@ from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc
 from .preprocessing import (
     assemble_pipeline, CachedRawPipe, RawPipe, RawSource, RawICA, RawApplyICA, RawFilter,
 )
-from .source import FwdDerivative, InvDerivative
+from .reports import (
+    CoregReportDerivative, EEGReportDerivative, EEGSensorsReportDerivative,
+    LMReportDerivative, ROIReportDerivative, SourceReportDerivative,
+    report_methods_brief, report_parc_image, report_subject_info,
+    report_test_info, sampled_artifact_path,
+)
+from .source import FwdDerivative, InvDerivative, SourceMorphDerivative, SrcDerivative
 from .test_def import (
     Test,
     ROITestResult, ROI2StageResult, TestDims, TwoStageTest,
     assemble_tests,
 )
 from .variable_def import Variables
-
-
-RESULT_MANIFEST_VERSION = 1
 
 BIDS_ENTITY_KEYS = ('subject', 'session', 'task', 'acquisition', 'run', 'split')
 BIDS_PATH_KEYS = ('datatype', 'suffix', 'extension', *BIDS_ENTITY_KEYS)
@@ -223,11 +223,142 @@ class RejectionInput(Input):
             }
 
 
+class TestResultDerivative(Derivative):
+    name = 'test-result'
+    path_template = 'test-file'
+    key_fields = ()
+
+    def key(self, ctx: DerivativeContext) -> dict[str, Any]:
+        p = ctx.pipeline
+        return ctx.registry.canonicalize({
+            'state': p._result_state_snapshot(False),
+            'samples': ctx.option('samples'),
+            'data': ctx.option('data').string,
+        })
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        p = ctx.pipeline
+        data = ctx.option('data')
+        return {
+            'data': data.string,
+            'definitions': p._result_definitions(),
+            'dependencies': p._result_dependencies(data),
+        }
+
+    def path(
+            self,
+            ctx: DerivativeContext,
+            mkdir: bool = False,
+    ) -> str:
+        path = sampled_artifact_path(ctx.option('dst'), ctx.option('samples'))
+        if mkdir:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def build(self, ctx: DerivativeContext):
+        return ctx.pipeline._compute_test_result(ctx)
+
+    def load(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+    ):
+        res = load.unpickle(artifact.path)
+        if ctx.option('data').source is True:
+            update_subjects_dir(res, ctx.get('mri-sdir'), 2)
+        return res
+
+    def save(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+            value,
+    ) -> None:
+        save.pickle(value, artifact.path)
+
+    def validate(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+            manifest,
+    ) -> bool:
+        return manifest.provenance.get('samples') == ctx.option('samples')
+
+    def provenance(
+            self,
+            ctx: DerivativeContext,
+            value,
+    ) -> dict[str, Any]:
+        return {'samples': value.samples}
+
+
+class MovieDerivative(Derivative[str]):
+    name = 'movie'
+    path_template = 'group-mov-file'
+    key_fields = ()
+
+    def key(self, ctx: DerivativeContext) -> dict[str, Any]:
+        p = ctx.pipeline
+        return ctx.registry.canonicalize({
+            'state': p._result_state_snapshot(ctx.option('single_subject', False)),
+            'single_subject': ctx.option('single_subject', False),
+            'movie_kind': ctx.option('movie_kind'),
+            'data': ctx.option('data').string,
+        })
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        p = ctx.pipeline
+        data = ctx.option('data')
+        return {
+            'movie_kind': ctx.option('movie_kind'),
+            'data': data.string,
+            'single_subject': ctx.option('single_subject', False),
+            'definitions': p._result_definitions(),
+            'dependencies': p._result_dependencies(data, ctx.option('single_subject', False)),
+        }
+
+    def path(
+            self,
+            ctx: DerivativeContext,
+            mkdir: bool = False,
+    ) -> str:
+        path = ctx.option('dst')
+        if mkdir:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def build(self, ctx: DerivativeContext) -> str:
+        return ctx.pipeline._build_movie_output(ctx)
+
+    def load(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+    ) -> str:
+        return artifact.path
+
+    def save(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+            value: str,
+    ) -> None:
+        return
+
+    def provenance(
+            self,
+            ctx: DerivativeContext,
+            value: str,
+    ) -> dict[str, Any]:
+        return {'movie_kind': ctx.option('movie_kind')}
+
+
 # Argument types
 BaselineArg = bool | tuple[float | None, float | None]
 DataArg = str | TestDims
 PMinArg = Literal['tfce'] | float | None
 SubjectArg = str | Literal[1, -1]
+_USE_CTX = object()
 
 # Eelbrain 0.24 raw/preprocessing pipeline
 LEGACY_RAW = {
@@ -551,7 +682,6 @@ class Pipeline(FileTree):
             'cached-raw-file': join('{raw-cache-dir}', '{raw_basename}_raw-{raw}.fif'),
 
             'event-file': join('{raw-cache-dir}', '{raw_basename}_raw-{raw}_evts.pickle'),
-            'interp-file': join('{raw-cache-dir}', '{raw_basename}_raw-{raw}_interp.pickle'),
 
             # evoked
             'evoked-file': join('{cache-dir}', 'evoked', '{epoch_basename}_raw-{raw}_epoch-{epoch}_rej-{rej}_model-{model}_count-{equalize_evoked_count}_ave.fif'),
@@ -799,7 +929,7 @@ class Pipeline(FileTree):
         self._bind_cache('fwd-file', self.make_fwd)
 
         # currently only used for .rm()
-        self._secondary_cache['cached-raw-file'] = ('event-file', 'interp-file')
+        self._secondary_cache['cached-raw-file'] = ('event-file',)
 
         ########################################################################
         # Finalize
@@ -879,17 +1009,27 @@ class Pipeline(FileTree):
         self._derivatives.register(RawMEEGInput())
         self._derivatives.register(RawBadChannelsInput())
         self._derivatives.register(NamedFileInput('trans-input', template='trans-file', kind='trans-file'))
-        self._derivatives.register(NamedFileInput('src-input', template='src-file', kind='src-file'))
+        self._derivatives.register(NamedFileInput('bem-input', template='bem-file', kind='bem-file'))
         self._derivatives.register(RejectionInput())
 
     def _register_derivatives(self):
         for pipe in self._raw.values():
             for node in pipe.cache_nodes():
                 self._derivatives.register(node)
+        self._derivatives.register(TestResultDerivative())
+        self._derivatives.register(SourceReportDerivative())
+        self._derivatives.register(ROIReportDerivative())
+        self._derivatives.register(EEGReportDerivative())
+        self._derivatives.register(EEGSensorsReportDerivative())
+        self._derivatives.register(LMReportDerivative())
+        self._derivatives.register(CoregReportDerivative())
+        self._derivatives.register(MovieDerivative())
         self._derivatives.register(AnnotDerivative())
         self._derivatives.register(EventsDerivative())
         self._derivatives.register(EvokedDerivative())
         self._derivatives.register(CovDerivative())
+        self._derivatives.register(SrcDerivative())
+        self._derivatives.register(SourceMorphDerivative())
         self._derivatives.register(FwdDerivative())
         self._derivatives.register(InvDerivative())
 
@@ -981,9 +1121,6 @@ class Pipeline(FileTree):
         if parc is not None:
             state['parc'] = parc
         return self._derivatives.resolve('annot', state=state).describe_dependency()
-
-    def _result_manifest_path(self, dst: str) -> str:
-        return f"{dst}{MANIFEST_SUFFIX}"
 
     def _result_state_snapshot(
             self,
@@ -1087,53 +1224,6 @@ class Pipeline(FileTree):
         if parc and parc in self._parcs:
             definitions['parc'] = self._parcs[parc]._as_dict()
         return self._derivatives.canonicalize(definitions)
-
-    def _current_result_manifest(
-            self,
-            data: TestDims,
-            single_subject: bool = False,
-    ) -> dict[str, Any]:
-        return {
-            'schema_version': RESULT_MANIFEST_VERSION,
-            'data': data.string,
-            'single_subject': single_subject,
-            'state': self._result_state_snapshot(single_subject),
-            'definitions': self._result_definitions(),
-            'dependencies': self._result_dependencies(data, single_subject),
-        }
-
-    def _read_result_manifest(self, dst: str) -> dict[str, Any] | None:
-        path = Path(self._result_manifest_path(dst))
-        if not path.exists():
-            return None
-        try:
-            manifest = json.loads(path.read_text())
-        except Exception:
-            return None
-        if manifest.get('schema_version') != RESULT_MANIFEST_VERSION:
-            return None
-        return manifest
-
-    def _write_result_manifest(
-            self,
-            dst: str,
-            data: TestDims,
-            single_subject: bool = False,
-    ) -> None:
-        path = Path(self._result_manifest_path(dst))
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(self._current_result_manifest(data, single_subject), indent=2, sort_keys=True))
-
-    def _result_file_valid(
-            self,
-            dst: str,
-            data: TestDims,
-            single_subject: bool = False,
-    ) -> bool:
-        if not exists(dst):
-            return False
-        manifest = self._read_result_manifest(dst)
-        return manifest == self._current_result_manifest(data, single_subject)
 
     def _process_subject_arg(self, subjects, kwargs):
         """Process subject arg for methods that work on groups and subjects
@@ -1911,15 +2001,8 @@ class Pipeline(FileTree):
         if reject and bads_individual:
             assert not variable_tmax
             if 'mag' in sensor_types:
-                interp_path = self.get('interp-file')
-                if exists(interp_path):
-                    interp_cache = load.unpickle(interp_path)
-                else:
-                    interp_cache = {}
-                n_in_cache = len(interp_cache)
+                interp_cache = {}
                 _interpolate_bads_meg(ds['epochs'], bads_individual, interp_cache)
-                if len(interp_cache) > n_in_cache:
-                    save.pickle(interp_cache, interp_path)
             if 'eeg' in sensor_types:
                 _interpolate_bads_eeg(ds['epochs'], bads_individual)
 
@@ -2890,21 +2973,7 @@ class Pipeline(FileTree):
         ...
             State parameters.
         """
-        dst = self.get('source-morph-file', **state)
-        if exists(dst):
-            return mne.read_source_morph(dst)
-
-        self._log.debug("Make source-morph-file %s", dst)
-        subjects_dir = self.get('mri-sdir')
-        subject_to = self.get('common_brain')
-        subject_from = self.get('mrisubject')
-
-        src_to = self.load_src(mrisubject=subject_to, match=False)
-        src_from = self.load_src(mrisubject=subject_from, match=False)
-
-        morph = mne.compute_source_morph(src_from, subject_from, subject_to, subjects_dir, src_to=src_to, precompute=True)
-        morph.save(dst)
-        return morph
+        return self._load_derivative('source-morph', state=state)
 
     def load_neighbor_correlation(
             self,
@@ -3370,16 +3439,19 @@ class Pipeline(FileTree):
             mlab.points3d(*src.coordinates.T)
             mlab.show()
         """
-        fpath = self.get('src-file', make=True, **state)
+        src_spaces = self._load_derivative('src', state=state)
         if ndvar:
-            src = self.get('src')
-            mri_sdir = self.get('mri-sdir')
-            mri_subject = self.get('mrisubject')
-            if src.startswith('vol'):
-                return VolumeSourceSpace.from_file(mri_sdir, mri_subject, src)
-            parc = self.get('parc')
-            return SourceSpace.from_file(mri_sdir, mri_subject, src, parc)
-        return mne.read_source_spaces(fpath, add_geom)
+            with self._temporary_state:
+                src = self.get('src', **state)
+                mri_sdir = self.get('mri-sdir')
+                mri_subject = self.get('mrisubject')
+                if src.startswith('vol'):
+                    return VolumeSourceSpace.from_file(mri_sdir, mri_subject, src)
+                parc = self.get('parc')
+                return SourceSpace.from_file(mri_sdir, mri_subject, src, parc)
+        if add_geom:
+            return mne.read_source_spaces(self.get('src-file', **state), add_geom)
+        return src_spaces
 
     def load_test(
             self,
@@ -3503,42 +3575,111 @@ class Pipeline(FileTree):
     ):
         "Load a cached test after _set_analysis_options() has been called"
         test_obj = self._tests[test]
+        options = {
+            'data': data,
+            'samples': samples,
+            'dst': self.get('test-file', mkdir=True),
+            'test': test,
+            'tstart': tstart,
+            'tstop': tstop,
+            'pmin': pmin,
+            'parc': parc,
+            'mask': mask,
+            'baseline': baseline,
+            'src_baseline': src_baseline,
+            'smooth': smooth,
+            'samplingrate': samplingrate,
+            '_allow_protected_overwrite': make,
+        }
+        handle = self._derivatives.resolve('test-result', options=options)
+        dst = handle.artifact().path
+        desc = relpath(dst, self.get('test-dir'))
 
-        dst = self.get('test-file', mkdir=True)
-
-        # try to load cached test
-        res = None
-        desc = self._get_rel('test-file', 'test-dir')
-        if self._result_file_valid(dst, data):
+        if handle.is_valid():
             try:
-                res = load.unpickle(dst)
-                if data.source is True:
-                    update_subjects_dir(res, self.get('mri-sdir'), 2)
+                res = handle.load()
             except OldVersionError:
                 res = None
             else:
-                if res.samples >= samples or res.samples == -1:
-                    self._log.info("Load cached test: %s", desc)
-                    if not return_data:
-                        return res
-                elif not make:
-                    raise OSError(f"The requested test {desc} is cached with samples={res.samples}, but you requested {samples=}; Set make=True to compute the test with the new number of samples.")
-                else:
-                    res = None
+                self._log.info("Load cached test: %s", desc)
+                if not return_data:
+                    return res
         elif not make and exists(dst):
             raise OSError(f"The requested test is outdated: {desc}. Set make=True to perform the test.")
+        else:
+            res = None
 
         if res is None and not make:
             raise OSError(f"The requested test is not cached: {desc}. Set make=True to perform the test.")
+        elif res is None:
+            res = handle.load()
+            if not return_data:
+                return res
 
-        #  parc/mask
+        res_data, res = self._materialize_test_request(test_obj, data, baseline, src_baseline, mask, parc, pmin, tstart, tstop, samples, smooth, samplingrate, res, True, desc)
+
+        if return_data:
+            return res_data, res
+        else:
+            return res
+
+    def _load_test_context(
+            self,
+            ctx: DerivativeContext,
+            return_data: bool,
+            make: bool,
+            data: TestDims | object = _USE_CTX,
+            parc: str | None | object = _USE_CTX,
+            mask: str | None | object = _USE_CTX,
+    ):
+        if data is _USE_CTX:
+            data = ctx.option('data')
+        if parc is _USE_CTX:
+            parc = ctx.option('parc')
+        if mask is _USE_CTX:
+            mask = ctx.option('mask')
+        return self._load_test(
+            ctx.option('test'),
+            ctx.option('tstart'),
+            ctx.option('tstop'),
+            ctx.option('pmin'),
+            parc,
+            mask,
+            ctx.option('samples'),
+            data,
+            ctx.option('baseline'),
+            ctx.option('src_baseline'),
+            return_data,
+            make,
+            ctx.option('smooth'),
+            ctx.option('samplingrate'),
+        )
+
+    def _materialize_test_request(
+            self,
+            test_obj: Test,
+            data: TestDims,
+            baseline: BaselineArg,
+            src_baseline: BaselineArg,
+            mask: str | bool | None,
+            parc: str | None,
+            pmin: PMinArg,
+            tstart: float | None,
+            tstop: float | None,
+            samples: int,
+            smooth: float | None,
+            samplingrate: int | None,
+            res,
+            return_data: bool,
+            desc: str | None = None,
+    ):
         parc_dim = None
         if data.source is True:
             if parc:
                 mask = True
                 parc_dim = 'source'
             elif mask:
-                if pmin is None:  # can as well collect dist for parc
+                if pmin is None:
                     parc_dim = 'source'
         elif isinstance(data.source, str):
             if not isinstance(parc, str):
@@ -3560,40 +3701,80 @@ class Pipeline(FileTree):
             if smooth:
                 raise NotImplementedError(f"{smooth=}: smoothing for two-stage tests")
             if isinstance(data.source, str):
-                res_data, res = self._make_test_rois_2stage(baseline, src_baseline, test_obj, samples, test_kwargs, res, data, return_data, samplingrate)
+                return self._make_test_rois_2stage(baseline, src_baseline, test_obj, samples, test_kwargs, res, data, return_data, samplingrate)
             elif data.source is True:
-                res_data, res = self._make_test_2stage(baseline, src_baseline, mask, test_obj, test_kwargs, res, data, return_data, samplingrate)
+                return self._make_test_2stage(baseline, src_baseline, mask, test_obj, test_kwargs, res, data, return_data, samplingrate)
             else:
                 raise NotImplementedError(f"Two-stage test with data={data.string!r}")
         elif isinstance(data.source, str):
             if smooth:
                 raise TypeError(f"{smooth=} for ROI tests")
-            res_data, res = self._make_test_rois(baseline, src_baseline, test_obj, samples, pmin, test_kwargs, res, data, samplingrate)
-        else:
-            if data.sensor:
-                res_data = self.load_evoked(True, baseline, True, test_obj.cat, samplingrate, data=data, vardef=test_obj.vars)
-                if len(res_data.info['sensor_types']) > 1:
-                    desc = ', '.join(res_data.info['sensor_types'])
-                    raise RuntimeError(f"Data contains more than one sensor type ({desc}). Mass-univariate tests are not designed for multiple sensor types. Use the data argument to perform test on one sensor type.")
-            elif data.source:
-                res_data = self.load_evoked_stc(True, baseline, src_baseline, test_obj.cat, morph=True, mask=mask, vardef=test_obj.vars, samplingrate=samplingrate)
-                if smooth:
-                    res_data[data.y_name] = res_data[data.y_name].smooth('source', smooth, 'gaussian')
-            else:
-                raise ValueError(f"data={data.string!r}")
+            return self._make_test_rois(baseline, src_baseline, test_obj, samples, pmin, test_kwargs, res, data, samplingrate)
 
-            if do_test:
-                self._log.info("Make test: %s", desc)
-                res = self._make_test(data.y_name, res_data, test_obj, test_kwargs)
+        if data.sensor:
+            res_data = self.load_evoked(True, baseline, True, test_obj.cat, samplingrate, data=data, vardef=test_obj.vars)
+            if len(res_data.info['sensor_types']) > 1:
+                desc_ = ', '.join(res_data.info['sensor_types'])
+                raise RuntimeError(f"Data contains more than one sensor type ({desc_}). Mass-univariate tests are not designed for multiple sensor types. Use the data argument to perform test on one sensor type.")
+        elif data.source:
+            res_data = self.load_evoked_stc(True, baseline, src_baseline, test_obj.cat, morph=True, mask=mask, vardef=test_obj.vars, samplingrate=samplingrate)
+            if smooth:
+                res_data[data.y_name] = res_data[data.y_name].smooth('source', smooth, 'gaussian')
+        else:
+            raise ValueError(f"data={data.string!r}")
 
         if do_test:
-            save.pickle(res, dst)
-            self._write_result_manifest(dst, data)
+            self._log.info("Make test: %s", desc)
+            res = self._make_test(data.y_name, res_data, test_obj, test_kwargs)
 
         if return_data:
             return res_data, res
-        else:
-            return res
+        return None, res
+
+    def _materialize_test_context(
+            self,
+            ctx: DerivativeContext,
+            res,
+            return_data: bool,
+            desc: str | None = None,
+    ):
+        test_obj = self._tests[ctx.option('test')]
+        return self._materialize_test_request(test_obj, ctx.option('data'), ctx.option('baseline'), ctx.option('src_baseline'), ctx.option('mask'), ctx.option('parc'), ctx.option('pmin'), ctx.option('tstart'), ctx.option('tstop'), ctx.option('samples'), ctx.option('smooth'), ctx.option('samplingrate'), res, return_data, desc)
+
+    def _test_kwargs_context(
+            self,
+            ctx: DerivativeContext,
+            data: DataArg,
+            parc_dim: None | str,
+    ):
+        return self._test_kwargs(ctx.option('samples'), ctx.option('pmin'), ctx.option('tstart'), ctx.option('tstop'), data, parc_dim)
+
+    def _load_spm_context(
+            self,
+            ctx: DerivativeContext,
+    ):
+        return self._load_spm(ctx.option('baseline'), ctx.option('src_baseline'))
+
+    def _load_evoked_stc_context(
+            self,
+            ctx: DerivativeContext,
+            subjects: SubjectArg = None,
+            morph: bool = False,
+            cat: Sequence[CellArg] = None,
+    ):
+        return self.load_evoked_stc(subjects, ctx.option('baseline'), ctx.option('src_baseline'), morph=morph, cat=cat)
+
+    def _load_epochs_stc_context(
+            self,
+            ctx: DerivativeContext,
+            subjects: SubjectArg = None,
+            cat: Sequence[CellArg] = None,
+    ):
+        return self.load_epochs_stc(subjects, ctx.option('baseline'), ctx.option('src_baseline'), cat=cat)
+
+    def _compute_test_result(self, ctx: DerivativeContext):
+        _, res = self._materialize_test_context(ctx, None, False, relpath(sampled_artifact_path(ctx.option('dst'), ctx.option('samples')), self.get('test-dir')))
+        return res
 
     @staticmethod
     def _src_to_label_tc(ds, func):
@@ -4152,20 +4333,22 @@ class Pipeline(FileTree):
         else:
             dst = os.path.expanduser(dst)
 
-        if not redo and self._result_file_valid(dst, data, group is None):
+        options = {
+            'dst': dst,
+            'data': data,
+            'single_subject': group is None,
+            'movie_kind': 'ga-dspm',
+            'subject': subject,
+            'baseline': baseline,
+            'src_baseline': src_baseline,
+            'fmin': fmin,
+            'brain_kwargs': brain_kwargs,
+            'time_dilation': time_dilation,
+            '_allow_protected_overwrite': True,
+        }
+        if not redo and self._derivatives.resolve('movie', options=options).is_valid():
             return
-
-        if group is None:
-            ds = self.load_evoked_stc(subject, baseline, src_baseline)
-            y = ds['src']
-        else:
-            ds = self.load_evoked_stc(group, baseline, src_baseline, morph=True)
-            y = ds['srcm']
-
-        brain = plot.brain.dspm(y, fmin, fmin * 3, colorbar=False, **brain_kwargs)
-        brain.save_movie(dst, time_dilation)
-        brain.close()
-        self._write_result_manifest(dst, data, group is None)
+        self._load_derivative('movie', options=options, _allow_protected_overwrite=True)
 
     def make_mov_ttest(self, subjects=None, model='', c1=None, c0=None, p=0.05,
                        baseline=True, src_baseline=False,
@@ -4277,45 +4460,80 @@ class Pipeline(FileTree):
             else:
                 dst = os.path.expanduser(dst)
 
-            if not redo and self._result_file_valid(dst, data, group is None):
+            options = {
+                'dst': dst,
+                'data': data,
+                'single_subject': group is None,
+                'movie_kind': 'ttest',
+                'subject': subject,
+                'group': group,
+                'baseline': baseline,
+                'src_baseline': src_baseline,
+                'cat': cat,
+                'p': p,
+                'pmin': pmin,
+                'pmid': pmid,
+                'surf': surf,
+                'time_dilation': time_dilation,
+                'cluster_state': state,
+                '_allow_protected_overwrite': True,
+            }
+            if not redo and self._derivatives.resolve('movie', options=options).is_valid():
                 return
+        self._load_derivative('movie', options=options, _allow_protected_overwrite=True)
 
-            if group is None:
-                ds = self.load_epochs_stc(subject, baseline, src_baseline, cat=cat)
+    def _build_movie_output(self, ctx: DerivativeContext) -> str:
+        kind = ctx.option('movie_kind')
+        dst = ctx.option('dst')
+        if kind == 'ga-dspm':
+            if ctx.option('single_subject'):
+                ds = self._load_evoked_stc_context(ctx, ctx.option('subject'))
+                y = ds['src']
+            else:
+                ds = self._load_evoked_stc_context(ctx, self.get('group'), morph=True)
+                y = ds['srcm']
+            brain = plot.brain.dspm(y, ctx.option('fmin'), ctx.option('fmin') * 3, colorbar=False, **ctx.option('brain_kwargs'))
+        elif kind == 'ttest':
+            cluster_state = dict(ctx.option('cluster_state') or {})
+            if ctx.option('single_subject'):
+                ds = self._load_epochs_stc_context(ctx, ctx.option('subject'), cat=ctx.option('cat'))
                 y = 'src'
             else:
-                ds = self.load_evoked_stc(group, baseline, src_baseline, morph=True, cat=cat)
+                ds = self._load_evoked_stc_context(ctx, ctx.option('group'), morph=True, cat=ctx.option('cat'))
                 y = 'srcm'
-
-            # find/apply cluster criteria
-            state = self._cluster_criteria_kwargs(data)
-            if state:
-                state.update(samples=0, pmin=p)
-
-        # compute t-maps
-        if c0:
-            if group:
-                res = testnd.TTestRelated(y, model, c1, c0, match='subject', data=ds, **state)
+            if cluster_state:
+                cluster_state.update(samples=0, pmin=ctx.option('p'))
+            if '{test_options}' in self.get('resname'):
+                raise RuntimeError("Movie state not fully initialized")
+            if ctx.get('model') and ctx.option('cat') and len(ctx.option('cat')) == 2:
+                c1, c0 = ctx.option('cat')
+                if ctx.option('single_subject'):
+                    res = testnd.TTestIndependent(y, ctx.get('model'), c1, c0, data=ds, **cluster_state)
+                else:
+                    res = testnd.TTestRelated(y, ctx.get('model'), c1, c0, match='subject', data=ds, **cluster_state)
+            elif ctx.option('cat'):
+                res = testnd.TTestOneSample(y, data=ds, **cluster_state)
             else:
-                res = testnd.TTestIndependent(y, model, c1, c0, data=ds, **state)
+                res = testnd.TTestOneSample(y, data=ds, **cluster_state)
+            if cluster_state:
+                tmap = res.masked_parameter_map(None)
+            else:
+                tmap = res.t
+            brain = plot.brain.dspm(
+                tmap,
+                ttest_t(ctx.option('p'), res.df),
+                ttest_t(ctx.option('pmin'), res.df),
+                ttest_t(ctx.option('pmid'), res.df),
+                surf=ctx.option('surf'),
+            )
         else:
-            res = testnd.TTestOneSample(y, data=ds, **state)
-
-        # select cluster-corrected t-map
-        if state:
-            tmap = res.masked_parameter_map(None)
-        else:
-            tmap = res.t
-
-        # make movie
-        brain = plot.brain.dspm(tmap, ttest_t(p, res.df), ttest_t(pmin, res.df),
-                                ttest_t(pmid, res.df), surf=surf)
-        brain.save_movie(dst, time_dilation)
+            raise RuntimeError(f"{kind=}")
+        brain.save_movie(dst, ctx.option('time_dilation'))
         brain.close()
-        self._write_result_manifest(dst, data, group is None)
+        return dst
 
-    def make_mrat_evoked(self, **kwargs):
-        """Produce the sensor data fiff files needed for MRAT sensor analysis
+    def export_mrat_evoked(self, **kwargs):
+        """Export the sensor data FIF files needed for MRAT sensor analysis
 
         Parameters
         ----------
@@ -4328,7 +4546,7 @@ class Pipeline(FileTree):
 
         >>> experiment.set(model='factor1%factor2')
         >>> for _ in experiment:
-        >>>     experiment.make_mrat_evoked()
+        >>>     experiment.export_mrat_evoked()
         ...
         """
         ds = self.load_evoked(ndvar=False, **kwargs)
@@ -4343,8 +4561,8 @@ class Pipeline(FileTree):
             evoked = case['evoked']
             evoked.save(path)
 
-    def make_mrat_stcs(self, **kwargs):
-        """Produce the STC files needed for the MRAT analysis tool
+    def export_mrat_stcs(self, **kwargs):
+        """Export the STC files needed for the MRAT analysis tool
 
         Parameters
         ----------
@@ -4358,7 +4576,7 @@ class Pipeline(FileTree):
         >>> experiment.set_inv('free')
         >>> experiment.set(model='factor1%factor2')
         >>> for _ in experiment:
-        >>>     experiment.make_mrat_stcs()
+        >>>     experiment.export_mrat_stcs()
         ...
         """
         ds = self.load_evoked_stc(morph=True, ndvar=False, **kwargs)
@@ -4404,9 +4622,7 @@ class Pipeline(FileTree):
             mrisubject = self.get('common_brain')
             self.set(mrisubject=mrisubject, match=False)
 
-        dst = self.get('res-file', mkdir=True, ext='png',
-                       analysis='Source Annot',
-                       resname="{parc} {mrisubject} %s" % surf)
+        dst = self.get('res-file', mkdir=True, ext='png', analysis='Source Annot', resname="{parc} {mrisubject} %s" % surf)
         if not redo and exists(dst):
             return
 
@@ -4582,26 +4798,6 @@ class Pipeline(FileTree):
 
         gui.select_epochs(ds, y_name, path=path, vlim=vlim, mark=eog_sns)
 
-    def _need_not_recompute_report(self, dst, samples, data, redo):
-        "Check (and log) whether the report needs to be redone"
-        desc = self._get_rel('report-file', 'res-dir')
-        if not exists(dst):
-            self._log.debug("New report: %s", desc)
-        elif redo:
-            self._log.debug("Redoing report: %s", desc)
-        elif not self._result_file_valid(dst, data):
-            self._log.debug("Report outdated: %s", desc)
-        else:
-            meta = fmtxt.read_meta(dst)
-            if 'samples' in meta:
-                if int(meta['samples']) >= samples:
-                    self._log.debug("Report up to date: %s", desc)
-                    return True
-                else:
-                    self._log.debug("Report file used %s samples, recomputing with %i: %s", meta['samples'], samples, desc)
-            else:
-                self._log.debug("Report metadata is missing the number of samples, recomputing: %s", desc)
-
     def make_report(
             self,
             test: str,
@@ -4679,77 +4875,24 @@ class Pipeline(FileTree):
         data = TestDims('source', morph=True)
         self._set_analysis_options(data, baseline, src_baseline, pmin, tstart, tstop, parc, mask)
         dst = self.get('report-file', mkdir=True, test=test)
-        if self._need_not_recompute_report(dst, samples, data, redo):
+        options = {
+            'dst': dst,
+            'data': data,
+            'samples': samples,
+            'test': test,
+            'baseline': baseline,
+            'src_baseline': src_baseline,
+            'pmin': pmin,
+            'tstart': tstart,
+            'tstop': tstop,
+            'parc': parc,
+            'mask': mask,
+            'include': include,
+            '_allow_protected_overwrite': True,
+        }
+        if not redo and self._derivatives.resolve('source-report', options=options).is_valid():
             return
-
-        # start report
-        title = self.format('{raw_basename}_{test_basename}_epoch-{epoch}_test-{test}_options-{test_options}')
-        report = fmtxt.Report(title)
-        report.add_paragraph(self._report_methods_brief(dst))
-
-        if isinstance(self._tests[test], TwoStageTest):
-            self._two_stage_report(report, data, test, baseline, src_baseline, pmin, samples, tstart, tstop, parc, mask, include)
-        else:
-            self._evoked_report(report, data, test, baseline, src_baseline, pmin, samples, tstart, tstop, parc, mask, include)
-
-        # report signature
-        report.sign(('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'))
-        report.save_html(dst, meta={'samples': samples})
-        self._write_result_manifest(dst, data)
-
-    def _evoked_report(self, report, data, test, baseline, src_baseline, pmin, samples, tstart, tstop, parc, mask, include):
-        # load data
-        ds, res = self._load_test(test, tstart, tstop, pmin, parc, mask, samples, data, baseline, src_baseline, True, True)
-
-        # info
-        surfer_kwargs = self._surfer_plot_kwargs()
-        self._report_test_info(report.add_section("Test Info"), ds, test, res, data, include)
-        if parc:
-            section = report.add_section(parc)
-            caption = f"Labels in the {parc} parcellation."
-            self._report_parc_image(section, caption)
-        elif mask:
-            title = f"Whole Brain Masked by {mask}"
-            section = report.add_section(title)
-            caption = f"Mask: {mask.capitalize()}"
-            self._report_parc_image(section, caption)
-
-        colors = plot.colors_for_categorial(ds.eval(res._plot_model()))
-        report.append(_report.source_time_results(res, ds, colors, include, surfer_kwargs, parc=parc))
-
-    def _two_stage_report(self, report, data, test, baseline, src_baseline, pmin, samples, tstart, tstop, parc, mask, include):
-        test_obj = self._tests[test]
-        return_data = bool(test_obj.model)
-        rlm = self._load_test(test, tstart, tstop, pmin, parc, mask, samples, data, baseline, src_baseline, return_data, True)
-        if return_data:
-            group_ds, rlm = rlm
-        else:
-            group_ds = None
-
-        # start report
-        surfer_kwargs = self._surfer_plot_kwargs()
-        info_section = report.add_section("Test Info")
-        if parc:
-            section = report.add_section(parc)
-            caption = f"Labels in the {parc} parcellation."
-            self._report_parc_image(section, caption)
-        elif mask:
-            title = f"Whole Brain Masked by {mask}"
-            section = report.add_section(title)
-            caption = f"Mask: {mask.capitalize()}"
-            self._report_parc_image(section, caption)
-
-        # Design matrix
-        section = report.add_section("Design Matrix")
-        section.append(rlm.design())
-
-        # add results to report
-        for term in rlm.column_names:
-            res = rlm.tests[term]
-            ds = rlm.coefficients_dataset(term, long=True)
-            report.append(_report.source_time_results(res, ds, None, include, surfer_kwargs, term, y='coeff'))
-
-        self._report_test_info(info_section, group_ds or ds, test_obj, res, data)
+        self._load_derivative('source-report', options=options, _allow_protected_overwrite=True)
 
     def make_report_rois(self, test, parc=None, pmin=None, tstart=None, tstop=None,
                          samples=10000, baseline=True, src_baseline=False,
@@ -4804,56 +4947,22 @@ class Pipeline(FileTree):
         data = TestDims('source.mean')
         self._set_analysis_options(data, baseline, src_baseline, pmin, tstart, tstop, parc)
         dst = self.get('report-file', mkdir=True, test=test)
-        if self._need_not_recompute_report(dst, samples, data, redo):
+        options = {
+            'dst': dst,
+            'data': data,
+            'samples': samples,
+            'test': test,
+            'baseline': baseline,
+            'src_baseline': src_baseline,
+            'pmin': pmin,
+            'tstart': tstart,
+            'tstop': tstop,
+            'parc': parc,
+            '_allow_protected_overwrite': True,
+        }
+        if not redo and self._derivatives.resolve('roi-report', options=options).is_valid():
             return
-
-        res_data, res = self._load_test(test, tstart, tstop, pmin, parc, None, samples, data, baseline, src_baseline, True, True)
-
-        # sorted labels
-        labels_lh = []
-        labels_rh = []
-        for label in res.res.keys():
-            if label.endswith('-lh'):
-                labels_lh.append(label)
-            elif label.endswith('-rh'):
-                labels_rh.append(label)
-            else:
-                raise NotImplementedError(f"Label named {label.name!r}")
-        labels_lh.sort()
-        labels_rh.sort()
-
-        # start report
-        title = self.format('{raw_basename}_{test_basename}_epoch-{epoch}_test-{test}_options-{test_options}')
-        report = fmtxt.Report(title)
-
-        # method intro (compose it later when data is available)
-        ds0 = res_data[label]
-        res0 = res.res[label]
-        info_section = report.add_section("Test Info")
-        self._report_test_info(info_section, res.n_trials_ds, test_obj, res0, data)
-
-        # add parc image
-        section = report.add_section(parc)
-        caption = f"ROIs in the {parc} parcellation."
-        self._report_parc_image(section, caption, res.subjects)
-
-        # add content body
-        n_subjects = len(res.subjects)
-        colors = plot.colors_for_categorial(ds0.eval(res0._plot_model()))
-        for label in chain(labels_lh, labels_rh):
-            res_i = res.res[label]
-            ds = res_data[label]
-            title = label[:-3].capitalize()
-            caption = f"Mean in label {label}."
-            n = len(ds['subject'].cells)
-            if n < n_subjects:
-                title += ' (n=%i)' % n
-                caption += " Data from %i of %i subjects." % (n, n_subjects)
-            section.append(_report.time_results(res_i, ds, colors, title, caption, merged_dist=res.merged_dist))
-
-        report.sign(('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'))
-        report.save_html(dst, meta={'samples': samples})
-        self._write_result_manifest(dst, data)
+        self._load_derivative('roi-report', options=options, _allow_protected_overwrite=True)
 
     def _make_report_eeg(self, test, pmin=None, tstart=None, tstop=None,
                          samples=10000, baseline=True, include=1, **state):
@@ -4890,31 +4999,22 @@ class Pipeline(FileTree):
         dst = self.get('report-file', mkdir=True, fmatch=False, test=test,
                        folder="EEG Spatio-Temporal", modality='eeg',
                        **state)
-        if self._need_not_recompute_report(dst, samples, data, False):
+        options = {
+            'dst': dst,
+            'data': data,
+            'samples': samples,
+            'test': test,
+            'baseline': baseline,
+            'pmin': pmin,
+            'tstart': tstart,
+            'tstop': tstop,
+            'include': include,
+            '_allow_protected_overwrite': True,
+        }
+        if not self._derivatives.resolve('eeg-report', options=options).is_valid():
+            self._load_derivative('eeg-report', options=options, _allow_protected_overwrite=True)
+        else:
             return
-
-        # load data
-        ds, res = self.load_test(test, tstart, tstop, pmin, samples=samples, data='sensor', baseline=baseline, return_data=True, make=True)
-
-        # start report
-        title = self.format('{raw_basename}_{test_basename}_epoch-{epoch}_test-{test}_options-{test_options}')
-        report = fmtxt.Report(title)
-
-        # info
-        info_section = report.add_section("Test Info")
-        self._report_test_info(info_section, ds, test, res, data, include)
-
-        # add adjacency image
-        p = plot.SensorMap(ds['eeg'], adjacency=True, show=False)
-        image_conn = p.image("adjacency.png")
-        info_section.add_figure("Sensor map with adjacency", image_conn)
-        p.close()
-
-        colors = plot.colors_for_categorial(ds.eval(res._plot_model()))
-        report.append(_report.sensor_time_results(res, ds, colors, include))
-        report.sign(('eelbrain', 'mne', 'scipy', 'numpy'))
-        report.save_html(dst, meta={'samples': samples})
-        self._write_result_manifest(dst, data)
 
     def _make_report_eeg_sensors(self, test, sensors=('FZ', 'CZ', 'PZ', 'O1', 'O2'),
                                  pmin=None, tstart=None, tstop=None,
@@ -4954,145 +5054,34 @@ class Pipeline(FileTree):
         self._set_analysis_options(data, baseline, None, pmin, tstart, tstop)
         dst = self.get('report-file', mkdir=True, fmatch=False, test=test,
                        folder="EEG Sensors", modality='eeg', **state)
-        if self._need_not_recompute_report(dst, samples, data, redo):
+        options = {
+            'dst': dst,
+            'data': data,
+            'samples': samples,
+            'test': test,
+            'baseline': baseline,
+            'pmin': pmin,
+            'tstart': tstart,
+            'tstop': tstop,
+            'sensors': sensors,
+            '_allow_protected_overwrite': True,
+        }
+        if not redo and self._derivatives.resolve('eeg-sensors-report', options=options).is_valid():
             return
-
-        # load data
-        test_obj = self._tests[test]
-        ds = self.load_evoked(self.get('group'), baseline, True, vardef=test_obj.vars)
-
-        # test that sensors are in the data
-        eeg = ds['eeg']
-        missing = [s for s in sensors if s not in eeg.sensor.names]
-        if missing:
-            raise ValueError(f"The following sensors are not in the data: {missing}")
-
-        # start report
-        title = self.format('{raw_basename}_{test_basename}_epoch-{epoch}_test-{test}_options-{test_options}')
-        report = fmtxt.Report(title)
-
-        # info
-        info_section = report.add_section("Test Info")
-
-        # add sensor map
-        p = plot.SensorMap(ds['eeg'], show=False)
-        p.mark_sensors(sensors)
-        info_section.add_figure("Sensor map", p)
-        p.close()
-
-        # main body
-        caption = "Signal at %s."
-        test_kwargs = self._test_kwargs(samples, pmin, tstart, tstop, ('time', 'sensor'), None)
-        ress = [self._make_test(eeg.sub(sensor=sensor), ds, test_obj, test_kwargs) for
-                sensor in sensors]
-        colors = plot.colors_for_categorial(ds.eval(ress[0]._plot_model()))
-        for sensor, res in zip(sensors, ress):
-            report.append(_report.time_results(res, ds, colors, sensor, caption % sensor))
-
-        self._report_test_info(info_section, ds, test, res, data)
-        report.sign(('eelbrain', 'mne', 'scipy', 'numpy'))
-        report.save_html(dst, meta={'samples': samples})
-        self._write_result_manifest(dst, data)
+        self._load_derivative('eeg-sensors-report', options=options, _allow_protected_overwrite=True)
 
     @staticmethod
     def _report_methods_brief(path):
-        path = Path(path)
-        items = [*path.parts[:-1], path.stem]
-        return fmtxt.List('Methods brief', items[-3:])
+        return report_methods_brief(path)
 
     def _report_subject_info(self, ds, model):
-        """Table with subject information
-
-        Parameters
-        ----------
-        ds : Dataset
-            Dataset with ``subject`` and ``n`` variables, and any factors in
-            ``model``.
-        model : str
-            The model used for aggregating.
-        """
-        s_ds = self.show_subjects(asds=True)
-        if 'n' in ds:
-            if model:
-                n_ds = table.repmeas('n', model, 'subject', data=ds)
-            else:
-                n_ds = ds
-            n_ds_aligned = align1(n_ds, s_ds['subject'], 'subject')
-            s_ds.update(n_ds_aligned)
-        return s_ds.as_table(midrule=True, count=True, caption="All subjects included in the analysis with trials per condition")
+        return report_subject_info(self, ds, model)
 
     def _report_test_info(self, section, ds, test, res, data, include=None, model=True):
-        """Top-level report info function
-
-        Returns
-        -------
-        info : Table
-            Table with preprocessing and test info.
-        """
-        test_obj = self._tests[test] if isinstance(test, str) else test
-
-        # List of preprocessing parameters
-        info = fmtxt.List("Analysis:")
-        # epoch
-        epoch = self.format('epoch = {epoch}')
-        evoked_kind = self.get('evoked_kind')
-        if evoked_kind:
-            epoch += f' {evoked_kind}'
-        if model is True:
-            model = self.get('model')
-        if model:
-            epoch += f" ~ {model}"
-        info.add_item(epoch)
-        # inverse solution
-        if data.source:
-            info.add_item(self.format("cov = {cov}"))
-            info.add_item(self.format("inv = {inv}"))
-        # test
-        info.add_item(f"test = {test_obj.kind}  ({test_obj.desc})")
-        if include is not None:
-            info.add_item(f"Separate plots of all clusters with a p-value < {include}")
-        section.append(info)
-
-        # Statistical methods (for temporal tests, res is only representative)
-        info = res.info_list()
-        section.append(info)
-
-        # subjects and state
-        section.append(self._report_subject_info(ds, test_obj.model))
-        section.append(self.show_state(hide=('hemi', 'subject', 'mrisubject')))
-        return info
+        return report_test_info(self, section, ds, test, res, data, include, model)
 
     def _report_parc_image(self, section, caption, subjects=None):
-        "Add picture of the current parcellation"
-        parc_name, parc = self._get_parc()
-        with self._temporary_state:
-            if isinstance(parc, IndividualSeededParc):
-                if subjects is None:
-                    raise RuntimeError("subjects needs to be specified for "
-                                       "plotting individual parcellations")
-                legend = None
-                for subject in self:
-                    # make sure there is at least one label
-                    if all(l.name.startswith('unknown-') for l in self.load_annot()):
-                        section.add_image_figure("No labels", subject)
-                        continue
-                    brain = self.plot_annot()
-                    if legend is None:
-                        p = brain.plot_legend(show=False)
-                        legend = p.image('parc-legend')
-                        p.close()
-                    section.add_image_figure(brain.image('parc'), subject)
-                    brain.close()
-                return
-
-            # one parc for all subjects
-            self.set(mrisubject=self.get('common_brain'))
-            brain = self.plot_annot(axw=500)
-        legend = brain.plot_legend(show=False)
-        content = [brain.image('parc'), legend.image('parc-legend')]
-        section.add_image_figure(content, caption)
-        brain.close()
-        legend.close()
+        return report_parc_image(self, section, caption, subjects)
 
     def _make_report_lm(self, pmin=0.01, baseline=True, src_baseline=False,
                         mask='lobes'):
@@ -5109,17 +5098,18 @@ class Pipeline(FileTree):
         with self._temporary_state:
             self._set_analysis_options('source', baseline, src_baseline, pmin, None, None, mask=mask)
             dst = self.get('subject-spm-report', mkdir=True)
-            lm = self._load_spm(baseline, src_baseline)
-
-            title = self.format('{raw_basename}_{test_basename}_epoch-{epoch}_test-{test}_options-{test_options}')
-            surfer_kwargs = self._surfer_plot_kwargs()
-
-        report = fmtxt.Report(title)
-        report.append(_report.source_time_lm(lm, pmin, surfer_kwargs))
-
-        # report signature
-        report.sign(('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'))
-        report.save_html(dst)
+            options = {
+                'dst': dst,
+                'data': TestDims('source'),
+                'samples': None,
+                'single_subject': True,
+                'baseline': baseline,
+                'src_baseline': src_baseline,
+                'pmin': pmin,
+                'mask': mask,
+                '_allow_protected_overwrite': True,
+            }
+            self._load_derivative('lm-report', options=options, _allow_protected_overwrite=True)
 
     def make_report_coreg(self, file_name=None, **state):
         """Create HTML report with plots of the MEG/MRI coregistration
@@ -5131,60 +5121,22 @@ class Pipeline(FileTree):
         ...
             State parameters.
         """
-        from matplotlib import pyplot
-        from mayavi import mlab
-
-        mri = self.get('mri', **state)
-        group = self.get('group')
-        title = 'Coregistration'
-        if group != 'all':
-            title += ' ' + group
-        if mri:
-            title += ' ' + mri
+        self.set(**state)
         if file_name is None:
+            title = 'Coregistration'
+            if self.get('group') != 'all':
+                title += ' ' + self.get('group')
+            if self.get('mri'):
+                title += ' ' + self.get('mri')
             file_name = join(self.get('methods-dir', mkdir=True), title + '.html')
-        report = fmtxt.Report(title)
-        for subject in self:
-            mrisubject = self.get('mrisubject')
-            fig = self.plot_coregistration()
-            fig.scene.camera.parallel_projection = True
-            fig.scene.camera.parallel_scale = .175
-            mlab.draw(fig)
-
-            # front
-            mlab.view(90, 90, 1, figure=fig)
-            im_front = fmtxt.Image.from_array(mlab.screenshot(figure=fig), 'front')
-
-            # left
-            mlab.view(0, 270, 1, roll=90, figure=fig)
-            im_left = fmtxt.Image.from_array(mlab.screenshot(figure=fig), 'left')
-
-            mlab.close(fig)
-
-            # MRI/BEM figure
-            if is_fake_mri(self.get('mri-dir')):
-                bem_fig = None
-            else:
-                bem_fig = mne.viz.plot_bem(mrisubject, self.get('mri-sdir'),
-                                           brain_surfaces='white', show=False)
-
-            # add to report
-            if 'sub-' + subject == mrisubject:
-                title = subject
-                caption = f"Coregistration for subject {subject}."
-            else:
-                title = f"{subject} ({mrisubject})"
-                caption = ("Coregistration for subject %s (MRI-subject %s)." %
-                           (subject, mrisubject))
-            section = report.add_section(title)
-            if bem_fig is None:
-                section.add_figure(caption, (im_front, im_left))
-            else:
-                section.add_figure(caption, (im_front, im_left, bem_fig))
-                pyplot.close(bem_fig)
-
-        report.sign()
-        report.save_html(file_name)
+        self._load_derivative(
+            'coreg-report',
+            options={
+                'dst': file_name,
+                '_allow_protected_overwrite': True,
+            },
+            _allow_protected_overwrite=True,
+        )
 
     def make_src(self, **state):
         """Make the source space
@@ -5194,70 +5146,7 @@ class Pipeline(FileTree):
         ...
             State parameters.
         """
-        dst = self.get('src-file', **state)
-        subject = self.get('mrisubject')
-        common_brain = self.get('common_brain')
-
-        is_scaled = (subject != common_brain) and is_fake_mri(self.get('mri-dir'))
-
-        if is_scaled:
-            # make sure the source space exists for the original
-            with self._temporary_state:
-                self.make_src(mrisubject=common_brain)
-                orig = self.get('src-file')
-
-            if exists(dst):
-                if getmtime(dst) >= getmtime(orig):
-                    return
-                os.remove(dst)
-
-            src = self.get('src')
-            self._log.info(f"Scaling {src} source space for {subject}...")
-            subjects_dir = self.get('mri-sdir')
-            mne.scale_source_space(subject, f'{{subject}}-{src}-src.fif', subjects_dir=subjects_dir, n_jobs=1)
-        elif exists(dst):
-            return
-        else:
-            src = self.get('src')
-            mri_sdir = self.get('mri-sdir')
-            kind, param, special = SRC_RE.match(src).groups()
-            grade = int(param)
-            self._log.info(f"Generating {src} source space for {subject}...")
-            if kind == 'vol':
-                if subject == 'fsaverage':
-                    bem = self.get('bem-file')
-                else:
-                    raise NotImplementedError("Volume source space for subject other than fsaverage")
-                if special == 'brainstem':
-                    name = 'brainstem'
-                    voi = ['Brain-Stem', '3rd-Ventricle']
-                    voi_lat = ('Thalamus-Proper', 'VentralDC')
-                    remove_midline = False
-                elif special == 'cortex':
-                    name = 'cortex'
-                    voi = []
-                    voi_lat = ('Cerebral-Cortex',)
-                    remove_midline = True
-                elif not special:
-                    name = 'cortex'
-                    voi = []
-                    voi_lat = ('Cerebral-Cortex', 'Cerebral-White-Matter')
-                    remove_midline = True
-                else:
-                    raise RuntimeError(f'{src=}')
-                voi.extend('%s-%s' % fmt for fmt in product(('Left', 'Right'), voi_lat))
-                mri_dir = self.get('mri-dir', make=True)
-                sss = mne.setup_volume_source_space(subject, pos=float(param), bem=bem, mri=join(mri_dir, 'mri', 'aseg.mgz'), volume_label=voi, subjects_dir=mri_sdir)
-                sss = merge_volume_source_space(sss, name)
-                if special is None:
-                    sss = restrict_volume_source_space(sss, grade, mri_sdir, subject, grow=1)
-                sss = prune_volume_source_space(sss, grade, 3, remove_midline=remove_midline, fill_holes=4)
-            else:
-                assert not special
-                spacing = kind + param
-                sss = mne.setup_source_space(subject, spacing=spacing, add_dist=True, subjects_dir=mri_sdir, n_jobs=1)
-            Path(dst).parent.mkdir(exist_ok=True)
-            mne.write_source_spaces(dst, sss)
+        self._load_derivative('src', state=state)
 
     def _test_kwargs(
             self,
