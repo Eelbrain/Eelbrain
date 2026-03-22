@@ -41,7 +41,6 @@ AddBadsArg = bool | Sequence[str]
 class RawPipe:
     name: str = None  # set on linking
     log: logging.Logger = None
-    pipeline: Any = None
 
     def _can_link(self, pipes: dict[str, RawPipe]) -> bool:
         raise NotImplementedError
@@ -105,6 +104,36 @@ class RawPipe:
             raise TypeError(f"{add_bads=}")
         return raw
 
+    def load_derivative_name(self) -> str | None:
+        return None
+
+    def load_derivative_cache(self) -> bool | None:
+        return None
+
+    def load_derivative_options(
+            self,
+            *,
+            add_bads: AddBadsArg = True,
+            preload: bool = False,
+            noise: bool = False,
+    ) -> dict[str, Any]:
+        return {
+            'add_bads': add_bads,
+            'preload': preload,
+            'noise': noise,
+        }
+
+    def raw_dependency_name(self) -> str:
+        return self.load_derivative_name() or 'raw-input-meeg'
+
+    def raw_dependency_options(
+            self,
+            *,
+            add_bads: AddBadsArg = True,
+            noise: bool = False,
+    ) -> dict[str, Any]:
+        return self.load_derivative_options(add_bads=add_bads, preload=False, noise=noise)
+
     def _load(
             self,
             path: BIDSPath,
@@ -159,17 +188,33 @@ def load_raw_dependency(
         noise: bool = False,
         state: dict[str, Any] | None = None,
 ) -> mne.io.BaseRaw:
+    return load_raw_pipe(ctx.pipeline, raw, state, add_bads=add_bads, preload=preload, noise=noise)
+
+
+def load_raw_pipe(
+        pipeline,
+        raw: str,
+        state: dict[str, Any] | None = None,
+        *,
+        add_bads: AddBadsArg = True,
+        preload: bool = False,
+        noise: bool = False,
+) -> mne.io.BaseRaw:
     state_ = dict(state or ())
     state_['raw'] = raw
-    pipe = ctx.pipeline._raw[raw]
-    options = {
-        'add_bads': add_bads,
-        'preload': preload,
-        'noise': noise,
-    }
-    if isinstance(pipe, CachedRawPipe):
-        return ctx.load(pipe.raw_cache_node_name(), state=state_, options=options)
-    return ctx.load('raw-input-meeg', state=state_, options=options)
+    pipe = pipeline._raw[raw]
+    node_name = pipe.load_derivative_name()
+    if node_name is None:
+        with pipeline._temporary_state:
+            pipeline.set(**state_)
+            bids_path = pipeline._bids_path.copy()
+        return pipe.load(bids_path, add_bads, preload=preload, noise=noise)
+    return pipeline._load_derivative(
+        node_name,
+        cache=pipe.load_derivative_cache(),
+        state=state_,
+        options=pipe.load_derivative_options(add_bads=add_bads, preload=preload, noise=noise),
+    )
 
 
 def raw_data_dependency(
@@ -182,21 +227,11 @@ def raw_data_dependency(
 ) -> Dependency:
     raw = ctx.get('raw') if raw is None else raw
     pipe = ctx.pipeline._raw[raw]
-    if isinstance(pipe, CachedRawPipe):
-        return Dependency(
-            pipe.raw_cache_node_name(),
-            label=label,
-            state=lambda c, raw_name=raw: {'raw': raw_name},
-            options=lambda c, noise_=noise: {'noise': noise_},
-        )
     return Dependency(
-        'raw-input-meeg',
+        pipe.raw_dependency_name(),
         label=label,
         state=lambda c, raw_name=raw: {'raw': raw_name},
-        options=lambda c, noise_=noise, add_bads_=add_bads: {
-            'noise': noise_,
-            'add_bads': add_bads_,
-        },
+        options=lambda c, noise_=noise, add_bads_=add_bads: pipe.raw_dependency_options(add_bads=add_bads_, noise=noise_),
     )
 
 
@@ -434,6 +469,9 @@ class RawSource(RawPipe):
         #         dig_raw = self._load(subject, dig_recording, False)
         #         raw.set_montage(mne.channels.DigMontage(dig=dig_raw.info['dig']))
         return raw
+
+    def load_derivative_name(self) -> str | None:
+        return 'raw-input-meeg'
 
     def load_info(self, path: BIDSPath) -> mne.Info:
         return self.load(path).info
@@ -691,25 +729,13 @@ class CachedRawPipe(RawPipe):
             preload: bool,
             noise: bool = False,
     ) -> mne.io.BaseRaw:
-        if self.pipeline is None:
-            return self._make(path, preload, noise=noise)
+        return self._make(path, preload, noise=noise)
 
-        state = {
-            key: value
-            for key, value in path.entities.items()
-            if value is not None and key in ('subject', 'session', 'task', 'acquisition', 'run', 'split')
-        }
-        state['raw'] = self.name
-        return self.pipeline._load_derivative(
-            self.raw_cache_node_name(),
-            cache=self._cache,
-            state=state,
-            options={
-                'add_bads': False,
-                'preload': preload,
-                'noise': noise,
-            },
-        )
+    def load_derivative_name(self) -> str | None:
+        return self.raw_cache_node_name()
+
+    def load_derivative_cache(self) -> bool | None:
+        return self._cache
 
     def load_info(self, path: BIDSPath) -> mne.Info:
         return self.source.load_info(path)

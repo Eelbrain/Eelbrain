@@ -55,7 +55,7 @@ from .experiment import FileTree
 from .groups import assemble_groups
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, SeededParc, IndividualSeededParc, LabelParc, VolumeParc, Parcellation, assemble_parcs
 from .preprocessing import (
-    assemble_pipeline, CachedRawPipe, RawPipe, RawSource, RawICA, RawApplyICA, RawFilter,
+    assemble_pipeline, RawPipe, RawSource, RawICA, RawApplyICA, RawFilter, load_raw_pipe,
 )
 from .reports import (
     CoregReportDerivative, EEGReportDerivative, EEGSensorsReportDerivative,
@@ -669,8 +669,6 @@ class Pipeline(FileTree):
             join(root, 'derivatives', 'ica', f"{self._templates['epoch_basename']}_raw-{{raw}}_ica.fif"),
             log,
         )
-        for pipe in self._raw.values():
-            pipe.pipeline = self
         raw_pipe: RawSource = self._raw['raw']
 
         # legacy adjacency determination
@@ -2841,31 +2839,9 @@ class Pipeline(FileTree):
 
              - :ref:`state-raw`: preprocessing pipeline
         """
-        pipe = self._raw[self.get('raw', **kwargs)]
-        bids_path = self._bids_path
-        if isinstance(pipe, CachedRawPipe):
-            raw = self._load_derivative(
-                pipe.raw_cache_node_name(),
-                cache=pipe._cache,
-                state=kwargs,
-                options={
-                    'add_bads': add_bads,
-                    'preload': preload,
-                    'noise': noise,
-                },
-            )
-        elif isinstance(pipe, RawSource):
-            raw = self._load_derivative(
-                'raw-input-meeg',
-                state=kwargs,
-                options={
-                    'add_bads': add_bads,
-                    'preload': preload,
-                    'noise': noise,
-                },
-            )
-        else:
-            raw = pipe.load(bids_path, add_bads, preload=preload, noise=noise)
+        raw_name = self.get('raw', **kwargs)
+        pipe = self._raw[raw_name]
+        raw = load_raw_pipe(self, raw_name, kwargs, add_bads=add_bads, preload=preload, noise=noise)
         if decim and decim > 1:
             assert samplingrate is None, "samplingrate and decim can't both be specified"
             samplingrate = int(round(raw.info['sfreq'] / decim))
