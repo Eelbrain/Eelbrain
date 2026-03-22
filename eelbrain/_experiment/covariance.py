@@ -7,7 +7,8 @@ from typing import Any
 import mne
 import numpy
 
-from .derivative_cache import Dependency, Derivative, DerivativeContext
+from .derivative_cache import Artifact, Dependency, Derivative, DerivativeContext
+from .preprocessing import raw_data_dependency
 
 
 @dataclass
@@ -82,10 +83,10 @@ class CovDerivative(Derivative[mne.Covariance]):
         if isinstance(cov, EpochCovariance):
             return (
                 Dependency('events', state=self._events_state),
-                Dependency('raw-input-bads'),
+                raw_data_dependency(ctx),
                 Dependency('rej-input', state=self._rej_state),
             )
-        return (Dependency('noise-raw-input'),)
+        return (raw_data_dependency(ctx, noise=True),)
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
         p = ctx.pipeline
@@ -114,11 +115,20 @@ class CovDerivative(Derivative[mne.Covariance]):
             raw = p.load_raw(noise=True)
             return cov.make(raw)
 
-    def load(self, ctx: DerivativeContext, path: str) -> mne.Covariance:
-        cov = mne.read_cov(path)
+    def load(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+    ) -> mne.Covariance:
+        cov = mne.read_cov(artifact.path)
         if cov.data.dtype != 'float64':
             cov['data'] = cov['data'].astype(float)
         return cov
 
-    def save(self, ctx: DerivativeContext, path: str, value: mne.Covariance) -> None:
-        value.save(path, overwrite=True)
+    def save(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+            value: mne.Covariance,
+    ) -> None:
+        value.save(artifact.path, overwrite=True)

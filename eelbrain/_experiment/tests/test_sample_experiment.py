@@ -1,7 +1,9 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Test Pipeline using mne-python sample data"""
+import json
 from os.path import join, exists
 from os import remove
+from pathlib import Path
 import pytest
 from warnings import catch_warnings, filterwarnings
 
@@ -50,6 +52,9 @@ def test_sample():
 
     # covariance
     with e._temporary_state:
+        raw = e.load_raw(raw='1-40')
+        assert isinstance(raw, mne.io.BaseRaw)
+        assert exists(e.get('cached-raw-file', raw='1-40') + MANIFEST_SUFFIX)
         e.set(cov='emptyroom', raw='tsss')
         cov = e.load_cov()
         assert isinstance(cov, mne.Covariance)
@@ -87,6 +92,37 @@ def test_sample():
     # sensor space tests
     megs = [e.load_evoked(cat='auditory')['meg'] for _ in e]
     res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.rms', baseline=False, make=True)
+    test_manifest = e.get('test-file') + MANIFEST_SUFFIX
+    assert exists(test_manifest)
+    with open(test_manifest) as fid:
+        test_manifest_data = json.load(fid)
+    assert test_manifest_data['schema_version'] == 2
+    assert test_manifest_data['definitions']['test']['tail'] == 1
+    assert test_manifest_data['definitions']['epoch']['tmax'] == 0.3
+    remove(test_manifest)
+    with pytest.raises(IOError):
+        e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.rms', baseline=False)
+    _ = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.rms', baseline=False, make=True)
+    assert exists(test_manifest)
+
+    class ChangedTestExperiment(SampleExperiment):
+        tests = {
+            **SampleExperiment.tests,
+            'a>v': TTestRelated('modality', 'auditory', 'visual'),
+        }
+
+    with pytest.raises(IOError):
+        ChangedTestExperiment(root).load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.rms', baseline=False)
+
+    class ChangedEpochExperiment(SampleExperiment):
+        epochs = {
+            **SampleExperiment.epochs,
+            'target': PrimaryEpoch('sample', "event == 'target'", tmax=0.2, decim=5),
+        }
+
+    with pytest.raises(IOError):
+        ChangedEpochExperiment(root).load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.rms', baseline=False)
+
     meg_rms = combine(meg.rms('sensor') for meg in megs).mean('case', name='auditory')
     assert_dataobj_equal(res.c1_mean, meg_rms, decimal=21)
     res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.mean', baseline=False, make=True)
@@ -219,6 +255,7 @@ def test_sample():
         }
     e = Experiment(root)
     ica_path = e.make_ica(raw='ica')
+    assert exists(ica_path + MANIFEST_SUFFIX)
     e.set(raw='ica1-40', model='')
     e.make_epoch_selection(auto=2e-12, overwrite=True)
     ds1 = e.load_evoked(raw='ica1-40')
@@ -233,12 +270,8 @@ def test_sample():
         ds1 = e.load_evoked(raw='ica', rej='')
         ds2 = e.load_evoked(raw='apply-ica', rej='')
     assert_dataobj_equal(ds2, ds1)
-
-    e.set(raw='ica1-40', rej='')
-    _ = e.load_fwd()
-    assert exists(e.get('fwd-file') + MANIFEST_SUFFIX)
-    _ = e.load_inv()
-    assert exists(e.get('inv-file') + MANIFEST_SUFFIX)
+    # Source-space forward/inverse coverage lives in test_sample_source(), so
+    # this fast test stays comparable to main.
 
     # rename subject
     # --------------
@@ -316,6 +349,11 @@ def test_sample_source():
     # These two tests are only identical if the evoked has been cached before the first test is loaded
     resp = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, parc='ac', make=True)
     resm = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, mask='ac', make=True)
+    assert exists(e.get('fwd-file') + MANIFEST_SUFFIX)
+    assert exists(e.get('inv-file') + MANIFEST_SUFFIX)
+    with open(e.get('test-file') + MANIFEST_SUFFIX) as fid:
+        source_manifest_data = json.load(fid)
+    assert source_manifest_data['definitions']['parc']['base'] == 'aparc'
     assert_dataobj_equal(resp.t, resm.t)
     # ROI tests
     e.set(epoch='target')
@@ -326,6 +364,15 @@ def test_sample_source():
     res = ress.res['transversetemporal-lh']
     assert res.samples == -1
     assert res.tests['intercept'].p.min() == 1 / 7
+
+    class ChangedParcExperiment(SampleExperiment):
+        parcs = {
+            **SampleExperiment.parcs,
+            'ac': SubParc('aparc', ('superiortemporal',)),
+        }
+
+    with pytest.raises(IOError):
+        ChangedParcExperiment(root).load_test('left=right', 0.05, 0.2, 0.05, samples=100, data='source.rms', parc='ac')
 
 
 @requires_mne_sample_data
@@ -379,7 +426,6 @@ def test_sample_tasks():
     e.make_bad_channels('MEG 0121')
     assert e.load_bad_channels(raw='ica') == ['MEG 0111', 'MEG 0121']
     e.set(raw='raw')
-
     # merge_bad_channels
     e.merge_bad_channels()
     assert e.load_bad_channels(task='sample2') == ['MEG 0111', 'MEG 0121']
@@ -419,6 +465,29 @@ def test_sample_tasks():
     with catch_warnings():
         filterwarnings('ignore', "FastICA did not converge", UserWarning)
         assert e.make_ica() == join(root, 'derivatives', 'ica', 'sub-R0000_meg_raw-ica_ica.fif')
+
+
+@requires_mne_sample_data
+def test_evoked_cache_reuse():
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, 2, 2, 1)
+    root = join(tempdir, 'SampleExperiment')
+    e = SampleExperiment(root)
+    e.set(subject='R0000', epoch='target1', rej='')
+
+    _ = e.load_evoked(ndvar=False)
+    evoked_path = Path(e.get('evoked-file'))
+    manifest_path = Path(f"{evoked_path}{MANIFEST_SUFFIX}")
+    assert manifest_path.exists()
+    mtimes_1 = (evoked_path.stat().st_mtime_ns, manifest_path.stat().st_mtime_ns)
+
+    _ = e.load_evoked(ndvar=False)
+    mtimes_2 = (evoked_path.stat().st_mtime_ns, manifest_path.stat().st_mtime_ns)
+
+    assert mtimes_1 == mtimes_2
 
 
 @requires_mne_sample_data

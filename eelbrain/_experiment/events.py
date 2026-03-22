@@ -9,10 +9,15 @@ import mne
 
 from .. import load, save
 from .._data_obj import Dataset
-from .derivative_cache import CachePolicy, Dependency, Derivative, DerivativeContext
+from .derivative_cache import Artifact, CachePolicy, Dependency, Derivative, DerivativeContext
+from .preprocessing import raw_data_dependency
 
 
 BIDS_ENTITY_KEYS = ('subject', 'session', 'task', 'acquisition', 'run', 'split')
+
+
+def _evoked_comments(evoked: list[mne.Evoked]) -> list[str]:
+    return [e.comment or 'No comment' for e in evoked]
 
 
 class EventsDerivative(Derivative[Dataset]):
@@ -21,7 +26,12 @@ class EventsDerivative(Derivative[Dataset]):
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw')
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
-        return (Dependency('raw-input-events'),)
+        return (
+            Dependency(
+                'raw-input-meeg',
+                options=lambda c: {'add_bads': False},
+            ),
+        )
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
         subject = ctx.get('subject')
@@ -53,8 +63,12 @@ class EventsDerivative(Derivative[Dataset]):
             ds.info.update(entities)
             return ds
 
-    def load(self, ctx: DerivativeContext, path: str) -> Dataset:
-        ds = load.unpickle(path)
+    def load(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+    ) -> Dataset:
+        ds = load.unpickle(artifact.path)
         p = ctx.pipeline
         with p._temporary_state:
             if ctx.state:
@@ -62,8 +76,13 @@ class EventsDerivative(Derivative[Dataset]):
             ds.info.update({k: p.get(k) for k in BIDS_ENTITY_KEYS})
         return ds
 
-    def save(self, ctx: DerivativeContext, path: str, value: Dataset) -> None:
-        save.pickle(value, path)
+    def save(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+            value: Dataset,
+    ) -> None:
+        save.pickle(value, artifact.path)
 
 
 class EvokedDerivative(Derivative[Dataset]):
@@ -78,7 +97,7 @@ class EvokedDerivative(Derivative[Dataset]):
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         return (
             Dependency('events'),
-            Dependency('raw-input-bads'),
+            raw_data_dependency(ctx),
             Dependency('rej-input'),
         )
 
@@ -111,8 +130,12 @@ class EvokedDerivative(Derivative[Dataset]):
                 ctx.option('vardef'),
             )
 
-    def load(self, ctx: DerivativeContext, path: str) -> Dataset:
-        evoked = mne.read_evokeds(path, proj=False)
+    def load(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+    ) -> Dataset:
+        evoked = mne.read_evokeds(artifact.path, proj=False)
         p = ctx.pipeline
         with p._temporary_state:
             if ctx.state:
@@ -123,12 +146,22 @@ class EvokedDerivative(Derivative[Dataset]):
                 ctx.option('vardef'),
             )
 
-    def save(self, ctx: DerivativeContext, path: str, value: Dataset) -> None:
-        mne.write_evokeds(path, value['evoked'], overwrite=True)
+    def save(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+            value: Dataset,
+    ) -> None:
+        mne.write_evokeds(artifact.path, value['evoked'], overwrite=True)
 
-    def validate(self, ctx: DerivativeContext, path: str, manifest) -> bool:
-        evoked = mne.read_evokeds(path, proj=False)
-        return [e.comment for e in evoked] == manifest.provenance.get('comments', [])
+    def validate(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+            manifest,
+    ) -> bool:
+        evoked = mne.read_evokeds(artifact.path, proj=False)
+        return _evoked_comments(evoked) == manifest.provenance.get('comments', [])
 
     def provenance(self, ctx: DerivativeContext, value: Dataset) -> dict[str, Any]:
-        return {'comments': [e.comment for e in value['evoked']]}
+        return {'comments': _evoked_comments(value['evoked'])}

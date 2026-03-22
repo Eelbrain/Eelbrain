@@ -6,6 +6,7 @@ from datetime import datetime
 from glob import glob
 import inspect
 from itertools import chain, product
+import json
 import logging
 import os
 from os.path import exists, getmtime, isdir, join, relpath
@@ -49,11 +50,12 @@ from .._utils.mne_utils import fix_annot_names, is_fake_mri
 from .._utils.notebooks import tqdm
 from .covariance import CovDerivative, EpochCovariance, RawCovariance
 from .derivative_cache import (
-    DerivativeContext, DerivativeRegistry,
+    Dependency, DerivativeContext, DerivativeRegistry,
     Input,
+    MANIFEST_SUFFIX,
     file_fingerprint,
 )
-from .definitions import FieldCode, find_dependent_epochs, find_epochs_vars, log_dict_change, log_list_change, sequence_arg
+from .definitions import FieldCode, find_dependent_epochs, find_epochs_vars, log_dict_change, sequence_arg
 from .epochs import ContinuousEpoch, PrimaryEpoch, SecondaryEpoch, SuperEpoch, EpochBase, EpochCollection, assemble_epochs, decim_param
 from .events import EventsDerivative, EvokedDerivative
 from .exceptions import FileMissingError
@@ -61,7 +63,7 @@ from .experiment import FileTree
 from .groups import assemble_groups
 from .parc import SEEDED_PARC_RE, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, SeededParc, IndividualSeededParc, LabelParc, VolumeParc, Parcellation, SubParc, assemble_parcs
 from .preprocessing import (
-    assemble_pipeline, RawPipe, RawSource, RawICA, RawApplyICA, RawFilter,
+    assemble_pipeline, CachedRawPipe, RawPipe, RawSource, RawICA, RawApplyICA, RawFilter,
     compare_pipelines, ask_to_delete_ica_files)
 from .source import FwdDerivative, InvDerivative
 from .test_def import (
@@ -69,11 +71,12 @@ from .test_def import (
     ROITestResult, ROI2StageResult, TestDims, TwoStageTest,
     assemble_tests,
 )
-from .variable_def import GroupVar, Variables
+from .variable_def import Variables
 
 
 # current cache state version
 CACHE_STATE_VERSION = 17
+RESULT_MANIFEST_VERSION = 2
 # History:
 #  10:  input_state: share forward-solutions between sessions
 #  11:  add samplingrate to epochs
@@ -110,39 +113,81 @@ inv_re = re.compile(r"^(free|fixed|loose\.\d+|vec)"  # orientation constraint
                     r"$")  # pick normal
 
 
-class RawInput(Input):
-    def __init__(
-            self,
-            name: str,
-            *,
-            raw: str | None = None,
-            bad_chs: bool = True,
-            noise: bool = False,
-    ):
-        self.name = name
-        self.raw = raw
-        self.bad_chs = bad_chs
-        self.noise = noise
+class RawBadChannelsInput(Input):
+    name = 'raw-input-bads'
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
         p = ctx.pipeline
         with p._temporary_state:
             if ctx.state:
                 p.set(**ctx.state)
-            if self.raw is not None:
-                p.set(raw=self.raw)
             pipe = p._raw[p.get('raw')]
-            path = p._bids_path if not self.noise else p._bids_path.find_empty_room()
-            meta = {
-                'raw': p.get('raw'),
-                'noise': self.noise,
-                'bad_chs': self.bad_chs,
-                'pipeline': pipe._as_dict(),
-                'mtime': pipe.mtime(path, self.bad_chs),
-            }
+            noise = ctx.option('noise', False)
+            path = p._bids_path
             return {
-                'source': file_fingerprint(p.root, path.fpath, 'raw-source', metadata=meta),
+                'raw': p.get('raw'),
+                'noise': noise,
+                'pipeline': pipe._as_dict(),
+                'bad_channels': pipe.load_bad_channels(path, noise=noise),
+                'mtime': pipe.mtime(path if not noise else path.find_empty_room(), True, noise=noise),
             }
+
+    def load(self, ctx: DerivativeContext) -> list[str]:
+        p = ctx.pipeline
+        with p._temporary_state:
+            if ctx.state:
+                p.set(**ctx.state)
+            pipe = p._raw[p.get('raw')]
+            return pipe.load_bad_channels(p._bids_path, noise=ctx.option('noise', False))
+
+
+class RawMEEGInput(Input):
+    name = 'raw-input-meeg'
+
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        add_bads = ctx.option('add_bads', True)
+        if add_bads is True:
+            return (
+                Dependency(
+                    'raw-input-bads',
+                    options=lambda c: {'noise': c.option('noise', False)},
+                ),
+            )
+        return ()
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        p = ctx.pipeline
+        with p._temporary_state:
+            if ctx.state:
+                p.set(**ctx.state)
+            pipe = p._raw[p.get('raw')]
+            noise = ctx.option('noise', False)
+            path = p._bids_path if not noise else p._bids_path.find_empty_room()
+            return {
+                'source': file_fingerprint(
+                    p.root,
+                    path.fpath,
+                    'raw-source',
+                    metadata={
+                        'raw': p.get('raw'),
+                        'noise': noise,
+                        'pipeline': pipe._as_dict(),
+                    },
+                ),
+            }
+
+    def load(self, ctx: DerivativeContext) -> mne.io.BaseRaw:
+        p = ctx.pipeline
+        with p._temporary_state:
+            if ctx.state:
+                p.set(**ctx.state)
+            pipe = p._raw[p.get('raw')]
+            return pipe.load(
+                p._bids_path,
+                add_bads=ctx.option('add_bads', True),
+                preload=ctx.option('preload', False),
+                noise=ctx.option('noise', False),
+            )
 
 
 class NamedFileInput(Input):
@@ -204,7 +249,7 @@ LEGACY_RAW = {
     '1-40': RawFilter('raw', 1, 40, method='iir'),
 }
 
-CACHE_HELP = "A change in the {experiment} class definition (or the input files) means that some {filetype} files no longer reflect the current definition. In order to keep local results consistent with the definition, these files should be deleted. If you want to keep a copy of the results, be sure to move them to a different location before proceding. If you think the change in the definition was a mistake, you can select 'abort', revert the change and try again."
+CACHE_HELP = "A change in the {experiment} class definition (or the input files) means that some {filetype} files no longer reflect the current definition. In order to keep local results consistent with the definition, these files should be deleted. If you want to keep a copy of the results, be sure to move them to a different location before proceeding. If you think the change in the definition was a mistake, you can select 'abort', revert the change and try again."
 
 ################################################################################
 
@@ -274,18 +319,6 @@ class DictSet:
             self.add(item)
 
 
-def cache_valid(mtime, *source_mtimes):
-    "Determine whether mtime is up-to-date"
-    if mtime is not None:
-        if all(t is not None for t in source_mtimes):
-            return mtime >= max(source_mtimes)
-
-
-def mtime_changed(first, second):
-    "Some circumstances cause mtimes to be rounded to whole seconds"
-    return abs(first - second) >= 1
-
-
 class Pipeline(FileTree):
     """Analyze an MEG or EEG experiment
 
@@ -310,7 +343,6 @@ class Pipeline(FileTree):
     _safe_delete = 'cache-dir'
     path_version: int = 2
     screen_log_level: str | int = logging.INFO
-    auto_delete_results: bool = False
     auto_delete_cache: Literal['auto', 'ask', 'debug'] = 'auto'
     # what to do when the experiment class definition changed:
     #   'auto': Automatically delete outdated files
@@ -319,7 +351,6 @@ class Pipeline(FileTree):
     cache_inv: bool = True  # Whether to cache inverse solution
     # moderate speed gain for loading source estimates (34 subjects: 20 vs 70 s)
     # hard drive space ~ 100 mb/file
-    check_raw_mtime: bool = True  # check raw input files' mtime for change
     cache_policy_overrides: dict[str, str | bool] = {}
 
     # datatype and extension are usually inferred from a BIDS dataset; override here if needed
@@ -484,8 +515,6 @@ class Pipeline(FileTree):
             raise AttributeError("Pipeline subclasses can not have a .cluster_criteria attribute anymore. Please remove the attribute, delete the eelbrain-cache folder and use the select_clusters analysis parameter.")
         if not isinstance(self.auto_delete_cache, str):
             raise TypeError(f"{self.__class__.__name__}.auto_delete_cache={self.auto_delete_cache!r}")
-        if not isinstance(self.auto_delete_results, bool):
-            raise TypeError(f"{self.__class__.__name__}.auto_delete_results={self.auto_delete_results!r}")
 
         # BIDS entities
         # ignore task `noise` by default
@@ -861,7 +890,6 @@ class Pipeline(FileTree):
         if input_state is None:
             input_state = {
                 'version': CACHE_STATE_VERSION,
-                'raw-mtimes': {},
                 'stim_channel': self._stim_channel,
                 'merge_triggers': self.merge_triggers,
             }
@@ -880,27 +908,19 @@ class Pipeline(FileTree):
 
         # collect raw input info
         raw_missing = input_state['raw_missing'] = set()
-        raw_mtimes = input_state['raw-mtimes']
-
         self._raw_samplingrate = {}  # {(subject, recording): samplingrate}
         with self._temporary_state:
-            # subjects_with_raw_changes = set()
             for subject, session, task, acquisition, run in self.iter(('subject', 'session', 'task', 'acquisition', 'run'), group='all', raw='raw'):
                 key = (subject, session, task, acquisition, run)
                 raw_path = self._bids_path.fpath
 
                 if not raw_path.exists():
                     raw_missing.add(key)
-                    if self.check_raw_mtime:
-                        log.debug("Raw file missing: %s", raw_path)
                     continue
 
                 # events
                 events[key] = events_in = self.load_events(add_bads=False, data_raw=False)
                 self._raw_samplingrate[key] = events_in.info['sfreq']
-                if key not in raw_mtimes or mtime_changed(events_in.info['raw-mtime'], raw_mtimes[key]):
-                    # subjects_with_raw_changes.add((subject, session))
-                    raw_mtimes[key] = events_in.info['raw-mtime']
 
         # check for digitizer data differences
         # ====================================
@@ -939,9 +959,7 @@ class Pipeline(FileTree):
             'stim_channel': self._stim_channel,
             'merge_triggers': self.merge_triggers,
             'raw': {k: v._as_dict() for k, v in self._raw.items()},
-            'groups': self._groups,
             'epochs': {k: v._as_dict() for k, v in self._epochs.items()},
-            'tests': {k: v._as_dict() for k, v in self._tests.items()},
             'parcs': {k: v._as_dict() for k, v in self._parcs.items()},
             'events': events,
         }
@@ -971,7 +989,6 @@ class Pipeline(FileTree):
                 # find actual files to delete
                 log.debug("Outdated cache files:")
                 files = set()
-                result_files = []
                 for temp, arg_dicts in rm.items():
                     for args in arg_dicts:
                         pattern = self._glob_pattern(temp, True, vmatch=False, **args)
@@ -983,25 +1000,7 @@ class Pipeline(FileTree):
                         log.debug(' >%s', rel_pattern)
                         for filename in rel_filenames:
                             log.debug(filename)
-                        # message to the screen unless log is already displayed
-                        if rel_pattern.startswith('results'):
-                            result_files.extend(rel_filenames)
 
-                # handle invalid files
-                n_result_files = len(result_files)
-                # Only ask for result files
-                if n_result_files and self.auto_delete_cache == 'auto' and not self.auto_delete_results:
-                    if self._screen_log_level > logging.DEBUG:
-                        msg = ["Outdated result files detected:", *result_files]
-                    else:
-                        msg = []
-                    msg.append(f"Delete {n_result_files} outdated results?")
-                    help_text = CACHE_HELP.format(experiment=self.__class__.__name__, filetype='result')
-                    command = ask('\n'.join(msg), options={'delete': 'delete invalid result files', 'abort': 'raise an error'}, help=help_text)
-                    if command == 'abort':
-                        raise RuntimeError("User aborted invalid result deletion")
-                    elif command != 'delete':
-                        raise RuntimeError(f"{command=}")
                 # Ask for any files
                 if files and self.auto_delete_cache != 'auto':
                     options = {'delete': 'delete invalid files', 'abort': 'raise an error'}
@@ -1009,7 +1008,7 @@ class Pipeline(FileTree):
                         options.update({'ignore': 'proceed without doing anything', 'revalidate': "don't delete any cache files but write a new cache-state file"})
                     elif self.auto_delete_cache != 'ask':
                         raise ValueError(f"{self.__class__.__name__}.auto_delete_cache={self.auto_delete_cache!r}")
-                    help_text = CACHE_HELP.format(experiment=self.__class__.__name__, filetype='cache and/or result')
+                    help_text = CACHE_HELP.format(experiment=self.__class__.__name__, filetype='cache')
                     command = ask("Outdated cache files. Choose 'delete' to proceed. WARNING: only choose 'ignore' or 'revalidate' if you know what you are doing.", options=options, help=help_text)
                     if command == 'delete':
                         pass
@@ -1026,13 +1025,7 @@ class Pipeline(FileTree):
 
                 # delete invalid files
                 if files:
-                    n_cache_files = len(files) - n_result_files
-                    descs = []
-                    if n_result_files:
-                        descs.append(f"{n_result_files} invalid result files")
-                    if n_cache_files:
-                        descs.append(f"{n_cache_files} invalid cache files")
-                    log.info(f"Deleting {' and '.join(descs)}...")
+                    log.info("Deleting %i invalid cache files...", len(files))
                     for path in files:
                         os.remove(path)
                 else:
@@ -1069,10 +1062,8 @@ class Pipeline(FileTree):
         # events (subject, recording):  overall change in events
         # variables:  event change restricted to certain variables
         # raw: preprocessing definition changed
-        # groups:  change in group members
         # epochs:  change in epoch parameters
         # parcs: parc def change
-        # tests: test def change
 
         # check events
         # key: (subject, recording)
@@ -1110,15 +1101,6 @@ class Pipeline(FileTree):
                         self._log.warning("  var changed: %s (%s) %i values changed", var, '/'.join(key), np.sum(new != old))
         for var, subject in invalid_cache['variable_for_subject']:
             invalid_cache['variables'].add(var)
-
-        # groups
-        for group, members in cache_state['groups'].items():
-            if group not in self._groups:
-                invalid_cache['groups'].add(group)
-                self._log.warning("  Group removed: %s", group)
-            elif members != self._groups[group]:
-                invalid_cache['groups'].add(group)
-                log_list_change(self._log, "Group", group, members, self._groups[group])
 
         # raw
         changed, changed_ica = compare_pipelines(cache_state['raw'], new_state['raw'], self._log)
@@ -1165,47 +1147,8 @@ class Pipeline(FileTree):
                 invalid_cache['parcs'].add(f'{parc}-??')
                 invalid_cache['parcs'].add(f'{parc}-???')
 
-        # tests
-        for test, old_params in cache_state['tests'].items():
-            new_params = new_state['tests'].get(test, None)
-            if old_params != new_params:
-                invalid_cache['tests'].add(test)
-                log_dict_change(self._log, "Test", test, old_params, new_params)
-
         # Secondary  invalidations
         # ========================
-        # changed events -> group result involving those subjects is also bad
-        if 'events' in invalid_cache:
-            subjects = {subject for subject, _, _, _, _ in invalid_cache['events']}
-            for group, members in cache_state['groups'].items():
-                if subjects.intersection(members):
-                    invalid_cache['groups'].add(group)
-
-        # group-variables using bad groups
-        if 'groups' in invalid_cache:
-            bad_groups = invalid_cache['groups']
-            for key, var in self._variables.vars.items():
-                if isinstance(var, GroupVar) and bad_groups.intersection(var.groups):
-                    invalid_cache['variables'].add(key)
-
-        # tests that depend on variables or group definitions
-        if 'groups' in invalid_cache or 'variables' in invalid_cache:
-            bad_groups = invalid_cache.get('groups', ())
-            bad_vars = invalid_cache.get('variables', ())
-            for test in cache_state['tests']:
-                if test in invalid_cache['tests'] or test not in self._tests:
-                    continue
-                test_obj = self._tests[test]
-                test_vars, test_groups = test_obj._find_test_vars()
-                bad_test_vars = test_vars.intersection(bad_vars)
-                if bad_test_vars:
-                    invalid_cache['tests'].add(test)
-                    self._log.debug("  Test %s depends on changed variables %s", test, ', '.join(bad_test_vars))
-                bad_test_groups = test_groups.intersection(bad_groups)
-                if bad_test_groups:
-                    invalid_cache['tests'].add(test)
-                    self._log.debug("  Test %s depends on changed groups %s", test, ', '.join(bad_test_groups))
-
         # epochs based on variables
         if 'variables' in invalid_cache:
             bad_vars = invalid_cache['variables']
@@ -1246,58 +1189,27 @@ class Pipeline(FileTree):
                 for _, _, _, _ in self.iter(('session', 'task', 'run', 'acquisition'), subject=subject):
                     rm['evoked-file'].add({'model': f'*{var}*', 'epoch_basename': self.get('epoch_basename')})
 
-        # groups
-        for group in invalid_cache['groups']:
-            rm['test-file'].add({'group': group})
-            rm['group-mov-file'].add({'group': group})
-            rm['report-file'].add({'group': group})
-
         # raw
         for raw in invalid_cache['raw']:
             rm['cached-raw-file'].add({'raw': raw})
             rm['evoked-file'].add({'raw': raw})
             rm['cov-file'].add({'raw': raw})
-            for analysis in (raw, f'{raw} *'):
-                state = {'analysis': analysis}
-                rm['test-file'].add(state)
-                rm['report-file'].add(state)
-                rm['group-mov-file'].add(state)
-                rm['subject-mov-file'].add(state)
 
         # epochs
         for epoch in invalid_cache['epochs']:
             rm['evoked-file'].add({'epoch': epoch})
-            rm['test-file'].add({'epoch': epoch})
-            rm['report-file'].add({'epoch': epoch})
-            rm['group-mov-file'].add({'epoch': epoch})
-            rm['subject-mov-file'].add({'epoch': epoch})
 
         # cov
         for cov in invalid_cache['cov']:
             rm['cov-file'].add({'cov': cov})
             rm['inv-file'].add({'cov': cov})
-            state = {'analysis': f'* {cov} *'}
-            rm['test-file'].add(state)
-            rm['report-file'].add(state)
-            rm['group-mov-file'].add(state)
-            rm['subject-mov-file'].add(state)
 
         # parcs
         for parc in invalid_cache['parcs']:
             rm['annot-file'].add({'parc': parc})
-            rm['test-file'].add({'test_dims': parc})
-            rm['test-file'].add({'test_dims': f'{parc}.*'})
-            rm['report-file'].add({'folder': parc})
-            rm['report-file'].add({'folder': f'{parc} *'})
-            rm['report-file'].add({'folder': f'{parc.capitalize()} *'})  # pre 0.26
             rm['res-file'].add({'analysis': 'Source Annot',
                                 'resname':  f'{parc} * *',
                                 'ext': 'p*'})
-
-        # tests
-        for test in invalid_cache['tests']:
-            rm['test-file'].add({'test': test})
-            rm['report-file'].add({'test': test})
 
         if not self.cache_inv:
             rm['inv-file'].add({})
@@ -1318,15 +1230,16 @@ class Pipeline(FileTree):
         self._register_derivatives()
 
     def _register_inputs(self):
-        self._derivatives.register(RawInput('raw-input-events', bad_chs=False))
-        self._derivatives.register(RawInput('raw-input-bads', bad_chs=True))
-        self._derivatives.register(RawInput('raw-input-source', raw='raw', bad_chs=False))
-        self._derivatives.register(RawInput('noise-raw-input', bad_chs=True, noise=True))
+        self._derivatives.register(RawMEEGInput())
+        self._derivatives.register(RawBadChannelsInput())
         self._derivatives.register(NamedFileInput('trans-input', template='trans-file', kind='trans-file'))
         self._derivatives.register(NamedFileInput('src-input', template='src-file', kind='src-file'))
         self._derivatives.register(RejectionInput())
 
     def _register_derivatives(self):
+        for pipe in self._raw.values():
+            for node in pipe.cache_nodes():
+                self._derivatives.register(node)
         self._derivatives.register(EventsDerivative())
         self._derivatives.register(EvokedDerivative())
         self._derivatives.register(CovDerivative())
@@ -1354,7 +1267,6 @@ class Pipeline(FileTree):
         ds = load.mne.events(raw, self.merge_triggers, stim_channel=self._stim_channel)
         del ds.info['raw']
         ds.info['sfreq'] = raw.info['sfreq']
-        ds.info['raw-mtime'] = self._raw_mtime(bad_chs=False)
         return ds
 
     def _evoked_default_cache(self, samplingrate, decim):
@@ -1413,14 +1325,6 @@ class Pipeline(FileTree):
                 removed_any = True
         return removed_any
 
-    # mtime methods
-    # -------------
-    # _mtime() functions return the time at which any input files affecting the
-    # given file changed, and None if inputs are missing. They don't check
-    # whether the file actually exists (usually there is no need to recompute an
-    # intermediate file if it is not needed).
-    # _file_mtime() functions directly return the file's mtime, or None if it
-    # does not exists or is outdated
     def _annot_file_mtime(self, make_for=None):
         """Return max mtime of annot files or None if they do not exist.
 
@@ -1440,141 +1344,178 @@ class Pipeline(FileTree):
                 return
         return mtime
 
-    def _cov_mtime(self):
-        cov = self._covs[self.get('cov')]
-        with self._temporary_state:
-            if isinstance(cov, EpochCovariance):
-                self.set(epoch=cov.epoch)
-                return self._epochs_mtime()
-            elif isinstance(cov, RawCovariance):
-                pipe = self._raw[self.get('raw')]
-                return pipe.mtime(self._bids_path, bad_chs=True, noise=True)
-            else:
-                raise TypeError(f"{cov=}")
+    def _result_manifest_path(self, dst: str) -> str:
+        return f"{dst}{MANIFEST_SUFFIX}"
 
-    def _epochs_mtime(self):
-        raw_mtime = self._raw_mtime()
-        if raw_mtime:
-            epoch = self._epochs[self.get('epoch')]
-            rej_mtime = self._rej_mtime(epoch)
-            if rej_mtime:
-                return max(raw_mtime, rej_mtime)
-
-    def _epochs_stc_mtime(self):
-        "Mtime affecting source estimates; does not check annot"
-        epochs_mtime = self._epochs_mtime()
-        if epochs_mtime:
-            inv_mtime = self._inv_mtime()
-            if inv_mtime:
-                return max(epochs_mtime, inv_mtime)
-
-    def _evoked_mtime(self):
-        return self._epochs_mtime()
-
-    def _evoked_stc_mtime(self):
-        "Mtime if up-to-date, else None; do not check annot"
-        evoked_mtime = self._evoked_mtime()
-        if evoked_mtime:
-            inv_mtime = self._inv_mtime()
-            if inv_mtime:
-                return max(evoked_mtime, inv_mtime)
-
-    def _fwd_mtime(self):
-        "The last time at which input files affecting fwd-file changed"
-        trans = self.get('trans-file')
-        if exists(trans):
-            src = self.get('src-file')
-            if exists(src):
-                raw_mtime = self._raw_mtime('raw', False)
-                if raw_mtime:
-                    trans_mtime = getmtime(trans)
-                    src_mtime = getmtime(src)
-                    return max(raw_mtime, trans_mtime, src_mtime)
-
-    def _inv_mtime(self):
-        fwd_mtime = self._fwd_mtime()
-        if fwd_mtime:
-            cov_mtime = self._cov_mtime()
-            if cov_mtime:
-                return max(cov_mtime, fwd_mtime)
-
-    def _raw_mtime(self, raw=None, bad_chs=True):
-        if raw is None:
-            raw = self.get('raw')
-        elif raw not in self._raw:
-            raise RuntimeError(f"{raw=}")
-        pipe = self._raw[raw]
-        return pipe.mtime(self._bids_path, bad_chs)
-
-    def _rej_mtime(self, epoch):
-        """rej-file mtime for secondary epoch definition
-
-        Parameters
-        ----------
-        epoch : dict
-            Epoch definition.
-        """
-        rej = self._artifact_rejection[self.get('rej')]
-        if rej['kind'] is None:
-            return 1  # no rejection
-        with self._temporary_state:
-            paths = [self.get('rej-file', epoch=e) for e in epoch.rej_file_epochs]
-        if all(exists(path) for path in paths):
-            mtime = max(getmtime(path) for path in paths)
-            return mtime
-
-    def _result_file_mtime(
+    def _result_state_snapshot(
             self,
-            dst: str,  # Filename
-            data: TestDims,
-            single_subject: bool = False,  # Whether the test is performed for a single subject (vs. the current group).
-    ):
-        """MTime if up-to-date, else None (for reports and movies)"""
-        if exists(dst):
-            mtime = self._result_mtime(data, single_subject)
-            if mtime:
-                dst_mtime = getmtime(dst)
-                if dst_mtime > mtime:
-                    return dst_mtime
-
-    def _result_mtime(self, data, single_subject):
-        "See ._result_file_mtime() above"
-        if data.source:
-            if data.parc_level:
-                if single_subject:
-                    out = self._annot_file_mtime(self.get('mrisubject'))
-                elif data.parc_level == 'common':
-                    out = self._annot_file_mtime(self.get('common_brain'))
-                elif data.parc_level == 'individual':
-                    out = 0
-                    for _ in self:
-                        mtime = self._annot_file_mtime()
-                        if mtime is None:
-                            return
-                        else:
-                            out = max(out, mtime)
-                else:
-                    raise RuntimeError(f"data={data.string!r}, parc_level={data.parc_level!r}")
-            else:
-                out = 1
-
-            if not out:
-                return
-            mtime_func = self._epochs_stc_mtime
-        else:
-            out = 1
-            mtime_func = self._epochs_mtime
-
+            single_subject: bool,
+    ) -> dict[str, Any]:
+        fields = (
+            'analysis', 'test', 'test_options', 'test_dims', 'epoch', 'raw',
+            'rej', 'cov', 'inv', 'src', 'mrisubject', 'model',
+            'equalize_evoked_count', 'parc', 'folder', 'resname',
+        )
+        state = {
+            field: self.get(field)
+            for field in fields
+        }
         if single_subject:
-            mtime_iterator = (mtime_func(),)
+            state['subject'] = self.get('subject')
         else:
-            mtime_iterator = (mtime_func() for _ in self)
+            state['group'] = self.get('group')
+        return self._derivatives.canonicalize(state)
 
-        for mtime in mtime_iterator:
-            if not mtime:
-                return
-            out = max(out, mtime)
-        return out
+    def _result_subject_states(
+            self,
+            single_subject: bool,
+    ) -> list[dict[str, Any]]:
+        fields = (
+            'subject', 'session', 'task', 'acquisition', 'run', 'split',
+            'raw', 'epoch', 'rej', 'cov', 'mrisubject', 'src', 'inv',
+        )
+        with self._temporary_state:
+            if single_subject:
+                return [{field: self.get(field) for field in fields}]
+            return [
+                {field: self.get(field) for field in fields}
+                for _ in self
+            ]
+
+    def _result_raw_dependency(
+            self,
+            state: dict[str, Any],
+    ) -> dict[str, Any]:
+        pipe = self._raw[state['raw']]
+        if isinstance(pipe, CachedRawPipe):
+            handle = self._derivatives.resolve(
+                pipe.raw_cache_node_name(),
+                state=state,
+                options={'noise': False},
+            )
+        else:
+            handle = self._derivatives.resolve(
+                'raw-input-meeg',
+                state=state,
+                options={'add_bads': True, 'noise': False},
+            )
+        return handle.describe_dependency()
+
+    def _annot_file_dependencies(
+            self,
+            mrisubject: str,
+    ) -> list[dict[str, Any]]:
+        with self._temporary_state:
+            self.set(mrisubject=mrisubject)
+            return [
+                file_fingerprint(
+                    self.root,
+                    self.get('annot-file', hemi=hemi),
+                    'annot-file',
+                    metadata={
+                        'mrisubject': self.get('mrisubject'),
+                        'parc': self.get('parc'),
+                        'hemi': hemi,
+                    },
+                )
+                for hemi in self.get_field_values('hemi')
+            ]
+
+    def _result_dependencies(
+            self,
+            data: TestDims,
+            single_subject: bool = False,
+    ) -> dict[str, Any]:
+        subjects = []
+        for state in self._result_subject_states(single_subject):
+            subject_dependencies = {
+                'state': {
+                    key: state[key]
+                    for key in BIDS_ENTITY_KEYS
+                    if state[key] is not None
+                },
+                'events': self._derivatives.resolve('events', state=state).describe_dependency(),
+                'raw': self._result_raw_dependency(state),
+                'rej': self._derivatives.resolve('rej-input', state=state).describe_dependency(),
+            }
+            if data.source:
+                subject_dependencies['inv'] = self._derivatives.resolve('inv', state=state).describe_dependency()
+            subjects.append(subject_dependencies)
+
+        out = {'subjects': subjects}
+        if data.source and data.parc_level:
+            if single_subject:
+                out['annot'] = self._annot_file_dependencies(self.get('mrisubject'))
+            elif data.parc_level == 'common':
+                out['annot'] = self._annot_file_dependencies(self.get('common_brain'))
+            elif data.parc_level == 'individual':
+                out['annot'] = [
+                    {
+                        'subject': state['subject'],
+                        'files': self._annot_file_dependencies(state['mrisubject']),
+                    }
+                    for state in self._result_subject_states(False)
+                ]
+            else:
+                raise RuntimeError(f"data={data.string!r}, parc_level={data.parc_level!r}")
+        return self._derivatives.canonicalize(out)
+
+    def _result_definitions(self) -> dict[str, Any]:
+        definitions = {
+            'test': self._tests[self.get('test')]._as_dict(),
+            'epoch': self._epochs[self.get('epoch')]._as_dict(),
+        }
+        parc = self.get('parc')
+        if parc and parc in self._parcs:
+            definitions['parc'] = self._parcs[parc]._as_dict()
+        return self._derivatives.canonicalize(definitions)
+
+    def _current_result_manifest(
+            self,
+            data: TestDims,
+            single_subject: bool = False,
+    ) -> dict[str, Any]:
+        return {
+            'schema_version': RESULT_MANIFEST_VERSION,
+            'data': data.string,
+            'single_subject': single_subject,
+            'state': self._result_state_snapshot(single_subject),
+            'definitions': self._result_definitions(),
+            'dependencies': self._result_dependencies(data, single_subject),
+        }
+
+    def _read_result_manifest(self, dst: str) -> dict[str, Any] | None:
+        path = Path(self._result_manifest_path(dst))
+        if not path.exists():
+            return None
+        try:
+            manifest = json.loads(path.read_text())
+        except Exception:
+            return None
+        if manifest.get('schema_version') != RESULT_MANIFEST_VERSION:
+            return None
+        return manifest
+
+    def _write_result_manifest(
+            self,
+            dst: str,
+            data: TestDims,
+            single_subject: bool = False,
+    ) -> None:
+        path = Path(self._result_manifest_path(dst))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(self._current_result_manifest(data, single_subject), indent=2, sort_keys=True))
+
+    def _result_file_valid(
+            self,
+            dst: str,
+            data: TestDims,
+            single_subject: bool = False,
+    ) -> bool:
+        if not exists(dst):
+            return False
+        manifest = self._read_result_manifest(dst)
+        return manifest == self._current_result_manifest(data, single_subject)
 
     def _process_subject_arg(self, subjects, kwargs):
         """Process subject arg for methods that work on groups and subjects
@@ -2731,6 +2672,7 @@ class Pipeline(FileTree):
             ds = self._load_derivative(
                 'evoked',
                 cache=use_cache,
+                state=state,
                 options={
                     'samplingrate': samplingrate,
                     'decim': decim,
@@ -3193,7 +3135,10 @@ class Pipeline(FileTree):
         ICA object for the current :ref:`state-raw` setting.
         """
         pipe = self._get_ica_pipe(state)
-        return pipe.load_ica(self._bids_path)
+        return self._load_derivative(
+            pipe.ica_cache_node_name(),
+            state={**state, 'raw': pipe.name},
+        )
 
     def _get_ica_pipe(self, state):
         raw = self.get('raw', **state)
@@ -3448,7 +3393,29 @@ class Pipeline(FileTree):
         """
         pipe = self._raw[self.get('raw', **kwargs)]
         bids_path = self._bids_path
-        raw = pipe.load(bids_path, add_bads, noise=noise)
+        if isinstance(pipe, CachedRawPipe):
+            raw = self._load_derivative(
+                pipe.raw_cache_node_name(),
+                cache=pipe._cache,
+                state=kwargs,
+                options={
+                    'add_bads': add_bads,
+                    'preload': preload,
+                    'noise': noise,
+                },
+            )
+        elif isinstance(pipe, RawSource):
+            raw = self._load_derivative(
+                'raw-input-meeg',
+                state=kwargs,
+                options={
+                    'add_bads': add_bads,
+                    'preload': preload,
+                    'noise': noise,
+                },
+            )
+        else:
+            raw = pipe.load(bids_path, add_bads, preload=preload, noise=noise)
         if decim and decim > 1:
             assert samplingrate is None, "samplingrate and decim can't both be specified"
             samplingrate = int(round(raw.info['sfreq'] / decim))
@@ -3925,7 +3892,7 @@ class Pipeline(FileTree):
         # try to load cached test
         res = None
         desc = self._get_rel('test-file', 'test-dir')
-        if self._result_file_mtime(dst, data):
+        if self._result_file_valid(dst, data):
             try:
                 res = load.unpickle(dst)
                 if data.source is True:
@@ -4004,6 +3971,7 @@ class Pipeline(FileTree):
 
         if do_test:
             save.pickle(res, dst)
+            self._write_result_manifest(dst, data)
 
         if return_data:
             return res_data, res
@@ -4158,7 +4126,11 @@ class Pipeline(FileTree):
                 self.set(mrisubject=common_brain, match=False)
                 common_brain_mtime = self.make_annot()
                 self.set(mrisubject=mrisubject, match=False)
-                if cache_valid(mtime, common_brain_mtime):
+                if (
+                        mtime is not None
+                        and common_brain_mtime is not None
+                        and mtime >= common_brain_mtime
+                ):
                     return mtime
                 elif is_fake:
                     for _ in self.iter('hemi'):
@@ -4495,7 +4467,15 @@ class Pipeline(FileTree):
 
         """
         pipe = self._get_ica_pipe(state)
-        return pipe.make_ica(self._bids_path, self._runs)
+        self._load_derivative(
+            pipe.ica_cache_node_name(),
+            state={**state, 'raw': pipe.name},
+        )
+        with self._temporary_state:
+            if state:
+                self.set(**state)
+            pipe = self._get_ica_pipe({})
+            return pipe._ica_path(self._bids_path)
 
     def make_link(self, temp, field, src, dst, redo=False):
         """Make a hard link
@@ -4588,7 +4568,7 @@ class Pipeline(FileTree):
         else:
             dst = os.path.expanduser(dst)
 
-        if not redo and self._result_file_mtime(dst, data, group is None):
+        if not redo and self._result_file_valid(dst, data, group is None):
             return
 
         if group is None:
@@ -4601,6 +4581,7 @@ class Pipeline(FileTree):
         brain = plot.brain.dspm(y, fmin, fmin * 3, colorbar=False, **brain_kwargs)
         brain.save_movie(dst, time_dilation)
         brain.close()
+        self._write_result_manifest(dst, data, group is None)
 
     def make_mov_ttest(self, subjects=None, model='', c1=None, c0=None, p=0.05,
                        baseline=True, src_baseline=False,
@@ -4712,7 +4693,7 @@ class Pipeline(FileTree):
             else:
                 dst = os.path.expanduser(dst)
 
-            if not redo and self._result_file_mtime(dst, data, group is None):
+            if not redo and self._result_file_valid(dst, data, group is None):
                 return
 
             if group is None:
@@ -4747,6 +4728,7 @@ class Pipeline(FileTree):
                                 ttest_t(pmid, res.df), surf=surf)
         brain.save_movie(dst, time_dilation)
         brain.close()
+        self._write_result_manifest(dst, data, group is None)
 
     def make_mrat_evoked(self, **kwargs):
         """Produce the sensor data fiff files needed for MRAT sensor analysis
@@ -5023,7 +5005,7 @@ class Pipeline(FileTree):
             self._log.debug("New report: %s", desc)
         elif redo:
             self._log.debug("Redoing report: %s", desc)
-        elif not self._result_file_mtime(dst, data):
+        elif not self._result_file_valid(dst, data):
             self._log.debug("Report outdated: %s", desc)
         else:
             meta = fmtxt.read_meta(dst)
@@ -5034,8 +5016,7 @@ class Pipeline(FileTree):
                 else:
                     self._log.debug("Report file used %s samples, recomputing with %i: %s", meta['samples'], samples, desc)
             else:
-                self._log.debug("Report created prior to Eelbrain 0.25, can not check number of samples. Delete manually to recompute: %s", desc)
-                return True
+                self._log.debug("Report metadata is missing the number of samples, recomputing: %s", desc)
 
     def make_report(
             self,
@@ -5130,6 +5111,7 @@ class Pipeline(FileTree):
         # report signature
         report.sign(('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'))
         report.save_html(dst, meta={'samples': samples})
+        self._write_result_manifest(dst, data)
 
     def _evoked_report(self, report, data, test, baseline, src_baseline, pmin, samples, tstart, tstop, parc, mask, include):
         # load data
@@ -5287,6 +5269,7 @@ class Pipeline(FileTree):
 
         report.sign(('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'))
         report.save_html(dst, meta={'samples': samples})
+        self._write_result_manifest(dst, data)
 
     def _make_report_eeg(self, test, pmin=None, tstart=None, tstop=None,
                          samples=10000, baseline=True, include=1, **state):
@@ -5346,7 +5329,8 @@ class Pipeline(FileTree):
         colors = plot.colors_for_categorial(ds.eval(res._plot_model()))
         report.append(_report.sensor_time_results(res, ds, colors, include))
         report.sign(('eelbrain', 'mne', 'scipy', 'numpy'))
-        report.save_html(dst)
+        report.save_html(dst, meta={'samples': samples})
+        self._write_result_manifest(dst, data)
 
     def _make_report_eeg_sensors(self, test, sensors=('FZ', 'CZ', 'PZ', 'O1', 'O2'),
                                  pmin=None, tstart=None, tstop=None,
@@ -5423,7 +5407,8 @@ class Pipeline(FileTree):
 
         self._report_test_info(info_section, ds, test, res, data)
         report.sign(('eelbrain', 'mne', 'scipy', 'numpy'))
-        report.save_html(dst)
+        report.save_html(dst, meta={'samples': samples})
+        self._write_result_manifest(dst, data)
 
     @staticmethod
     def _report_methods_brief(path):

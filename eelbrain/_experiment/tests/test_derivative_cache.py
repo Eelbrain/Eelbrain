@@ -3,9 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from eelbrain._experiment.derivative_cache import (
+    Artifact,
     ArtifactManifest,
     CachePolicy,
     Dependency,
@@ -88,6 +87,12 @@ class SourceInput(Input):
         path = ctx.pipeline.source_path(ctx.get('subject'))
         return file_fingerprint(ctx.pipeline.root, path, 'source-file', digest=True)
 
+    def load(self, ctx: DerivativeContext) -> str:
+        value = ctx.pipeline.source_path(ctx.get('subject')).read_text()
+        if ctx.option('upper', False):
+            return value.upper()
+        return value
+
 
 class ValueDerivative(Derivative[str]):
     name = 'value'
@@ -109,13 +114,22 @@ class ValueDerivative(Derivative[str]):
         self.build_calls += 1
         return ctx.pipeline.source_path(ctx.get('subject')).read_text()
 
-    def load(self, ctx: DerivativeContext, path: str) -> str:
+    def load(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+    ) -> str:
         self.load_calls += 1
-        return Path(path).read_text()
+        return Path(artifact.path).read_text()
 
-    def save(self, ctx: DerivativeContext, path: str, value: str) -> None:
+    def save(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+            value: str,
+    ) -> None:
         self.save_calls += 1
-        Path(path).write_text(value)
+        Path(artifact.path).write_text(value)
 
 
 class SummaryDerivative(Derivative[str]):
@@ -137,12 +151,21 @@ class SummaryDerivative(Derivative[str]):
         self.build_calls += 1
         return f"summary:{ctx.load('value')}"
 
-    def load(self, ctx: DerivativeContext, path: str) -> str:
+    def load(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+    ) -> str:
         self.load_calls += 1
-        return Path(path).read_text()
+        return Path(artifact.path).read_text()
 
-    def save(self, ctx: DerivativeContext, path: str, value: str) -> None:
-        Path(path).write_text(value)
+    def save(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+            value: str,
+    ) -> None:
+        Path(artifact.path).write_text(value)
 
 
 class EphemeralDerivative(Derivative[str]):
@@ -161,11 +184,20 @@ class EphemeralDerivative(Derivative[str]):
         self.build_calls += 1
         return f"ephemeral-{self.build_calls}"
 
-    def load(self, ctx: DerivativeContext, path: str) -> str:
-        return Path(path).read_text()
+    def load(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+    ) -> str:
+        return Path(artifact.path).read_text()
 
-    def save(self, ctx: DerivativeContext, path: str, value: str) -> None:
-        Path(path).write_text(value)
+    def save(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+            value: str,
+    ) -> None:
+        Path(artifact.path).write_text(value)
 
 
 def make_registry():
@@ -259,7 +291,7 @@ def test_disabled_by_default_derivative_skips_cache_by_default():
     assert not Path(f"{pipeline.get('ephemeral-file')}{MANIFEST_SUFFIX}").exists()
 
 
-def test_registry_resolve_returns_input_handle_and_load_rejects_input():
+def test_registry_resolve_returns_input_handle_and_loads_input():
     _, registry, _, _, _, _ = make_registry()
 
     handle = registry.resolve('source')
@@ -269,5 +301,5 @@ def test_registry_resolve_returns_input_handle_and_load_rejects_input():
     value_handle = registry.resolve('value')
     assert isinstance(value_handle, DerivativeHandle)
 
-    with pytest.raises(TypeError):
-        registry.load('source')
+    assert registry.load('source') == 'alpha'
+    assert registry.load('source', options={'upper': True}) == 'ALPHA'

@@ -406,17 +406,8 @@ has finished executing or run into an error, for example::
 will send you an email as soon as the report is finished (or the program
 encountered an error)
 
-.. py:attribute:: Pipeline.auto_delete_results
-   :type: bool
-
-Whenever a :class:`Pipeline` instance is initialized with a valid
-``root`` path, it checks whether changes in the class definition invalidate
-previously computed results. By default, the user is prompted to confirm
-the deletion of invalidated results. Set :attr:`auto_delete_results` to ``True``
-to delete them automatically without interrupting initialization.
-
 .. py:attribute:: Pipeline.auto_delete_cache
-   :type: bool
+   :type: str
 
 :class:`Pipeline` caches various intermediate results. By default, if a
 change in the experiment definition would make cache files invalid, the outdated
@@ -426,6 +417,8 @@ accidentally deleting files that take long to compute when editing the pipeline
 definition.
 When using this option, set :attr:`screen_log_level` to
 ``'debug'`` to learn about what change caused the cache to be invalid.
+Cached result files are validated when they are loaded; if a stored result is
+outdated, load it again with ``make=True`` to recompute it.
 
 .. py:attribute:: Pipeline.screen_log_level
    :type: str

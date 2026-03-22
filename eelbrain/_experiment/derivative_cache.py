@@ -87,6 +87,14 @@ class ArtifactManifest:
         return cls(**filtered)
 
 
+@dataclass(frozen=True)
+class Artifact:
+    """Resolved storage location for one cached derivative artifact."""
+
+    path: str
+    manifest_path: str
+
+
 @dataclass
 class DerivativeContext:
     """Bound state/options environment for resolving one node request."""
@@ -125,6 +133,7 @@ class DerivativeContext:
             self,
             name: str,
             state: dict[str, Any] | None = None,
+            options: dict[str, Any] | None = None,
             **extra_state,
     ):
         merged_state = dict(self.state)
@@ -132,7 +141,10 @@ class DerivativeContext:
             merged_state.update(state)
         if extra_state:
             merged_state.update(extra_state)
-        return self.registry.load(name, state=merged_state, options=self.options)
+        merged_options = dict(self.options)
+        if options:
+            merged_options.update(options)
+        return self.registry.load(name, state=merged_state, options=merged_options)
 
 
 @dataclass(frozen=True)
@@ -142,14 +154,16 @@ class Dependency:
     ``name`` refers to either a registered :class:`Derivative` or a registered
     :class:`Input`, and the registry determines which kind of node it is.
     ``state`` can override which keyed instance should be resolved.
+    ``options`` can override load-time options for the dependency.
     """
 
     name: str
     state: Callable[[DerivativeContext], dict[str, Any]] | None = None
+    options: Callable[[DerivativeContext], dict[str, Any]] | None = None
 
 
-class DependencyNode:
-    """Shared graph interface for derivatives and non-derivative inputs."""
+class DependencyNode(Generic[T]):
+    """Shared dependency/fingerprint interface for graph nodes."""
 
     name: str
 
@@ -160,11 +174,14 @@ class DependencyNode:
         raise NotImplementedError
 
 
-class Input(DependencyNode):
+class Input(DependencyNode[T]):
     """Behavioral interface for one non-derivative dependency."""
 
+    def load(self, ctx: DerivativeContext):
+        raise NotImplementedError
 
-class Derivative(DependencyNode, Generic[T]):
+
+class Derivative(DependencyNode[T]):
     """Behavioral interface for one cacheable derivative."""
 
     path_template: str
@@ -172,19 +189,31 @@ class Derivative(DependencyNode, Generic[T]):
     cache_policy: CachePolicy = CachePolicy.REQUIRED
     version: int = 1
 
+    def path(
+            self,
+            ctx: DerivativeContext,
+            mkdir: bool = False,
+    ) -> str:
+        return ctx.path(self.path_template, mkdir=mkdir)
+
     def build(self, ctx: DerivativeContext) -> T:
         raise NotImplementedError
 
-    def load(self, ctx: DerivativeContext, path: str) -> T:
+    def load(self, ctx: DerivativeContext, artifact: Artifact) -> T:
         raise NotImplementedError
 
-    def save(self, ctx: DerivativeContext, path: str, value: T) -> None:
+    def save(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+            value: T,
+    ) -> None:
         raise NotImplementedError
 
     def validate(
             self,
             ctx: DerivativeContext,
-            path: str,
+            artifact: Artifact,
             manifest: ArtifactManifest,
     ) -> bool:
         return True
@@ -197,12 +226,12 @@ class Derivative(DependencyNode, Generic[T]):
         return {}
 
 
-class NodeHandle:
+class NodeHandle(Generic[T]):
     """A dependency node plus its bound context for one concrete request."""
 
     def __init__(
             self,
-            node: DependencyNode,
+            node: DependencyNode[T],
             ctx: DerivativeContext,
     ):
         self.node = node
@@ -244,8 +273,11 @@ class NodeHandle:
             out['kind'] = 'input'
         return out
 
+    def load(self, cache: bool | None = None) -> T:
+        raise NotImplementedError
 
-class DerivativeHandle(NodeHandle, Generic[T]):
+
+class DerivativeHandle(NodeHandle[T]):
     """A derivative plus its bound context for one concrete load request."""
 
     node: Derivative[T]
@@ -254,21 +286,20 @@ class DerivativeHandle(NodeHandle, Generic[T]):
     def derivative(self) -> Derivative[T]:
         return self.node
 
-    def path(self, mkdir: bool = False) -> str:
-        return self.ctx.pipeline.get(self.derivative.path_template, mkdir=mkdir, **self.state)
-
-    def manifest_path(self) -> str:
-        return f"{self.path()}{MANIFEST_SUFFIX}"
+    def artifact(self, mkdir: bool = False) -> Artifact:
+        path = self.derivative.path(self.ctx, mkdir=mkdir)
+        return Artifact(path, f"{path}{MANIFEST_SUFFIX}")
 
     def key(self) -> dict[str, Any]:
         return self.registry.normalize_state(self.derivative.key_fields, self.state)
 
     def _manifest(self) -> ArtifactManifest | None:
-        return self.registry.read_manifest(self.manifest_path())
+        return self.registry.read_manifest(self.artifact().manifest_path)
 
     def _is_valid(
             self,
             manifest: ArtifactManifest,
+            artifact: Artifact,
             cache: bool | None = None,
     ) -> bool:
         if manifest.schema_version != MANIFEST_SCHEMA_VERSION:
@@ -283,24 +314,24 @@ class DerivativeHandle(NodeHandle, Generic[T]):
             return False
         if manifest.dependencies != self.dependency_fingerprints(cache):
             return False
-        if not self.derivative.validate(self.ctx, self.path(), manifest):
+        if not self.derivative.validate(self.ctx, artifact, manifest):
             return False
         return True
 
     def load(self, cache: bool | None = None) -> T:
         use_cache = self.registry.should_cache(self.derivative, cache)
-        path = self.path()
+        artifact = self.artifact()
         if use_cache:
             manifest = self._manifest()
-            if manifest and Path(path).exists() and self._is_valid(manifest, cache):
-                return self.derivative.load(self.ctx, path)
+            if manifest and Path(artifact.path).exists() and self._is_valid(manifest, artifact, cache):
+                return self.derivative.load(self.ctx, artifact)
 
         value = self.derivative.build(self.ctx)
         if not use_cache:
             return value
 
-        path = self.path(mkdir=True)
-        self.derivative.save(self.ctx, path, value)
+        artifact = self.artifact(mkdir=True)
+        self.derivative.save(self.ctx, artifact, value)
         manifest = ArtifactManifest(
             schema_version=MANIFEST_SCHEMA_VERSION,
             derivative=self.derivative.name,
@@ -315,25 +346,28 @@ class DerivativeHandle(NodeHandle, Generic[T]):
             },
             provenance=self.registry.canonicalize(self.derivative.provenance(self.ctx, value)),
         )
-        self.registry.write_manifest(self.manifest_path(), manifest)
-        return self.derivative.load(self.ctx, path)
+        self.registry.write_manifest(artifact.manifest_path, manifest)
+        return self.derivative.load(self.ctx, artifact)
 
 
-class InputHandle(NodeHandle):
-    """An input plus its bound context for one concrete fingerprint request."""
+class InputHandle(NodeHandle[T]):
+    """An input plus its bound context for one concrete load request."""
 
     def __init__(
             self,
-            input_: Input,
+            input_: Input[T],
             ctx: DerivativeContext,
     ):
         super().__init__(input_, ctx)
 
-    input: Input
+    input: Input[T]
 
     @property
-    def input(self) -> Input:
+    def input(self) -> Input[T]:
         return self.node
+
+    def load(self, cache: bool | None = None) -> T:
+        return self.input.load(self.ctx)
 
 
 class DerivativeRegistry:
@@ -341,9 +375,9 @@ class DerivativeRegistry:
 
     def __init__(self, pipeline: Any):
         self.pipeline = pipeline
-        self._nodes: dict[str, DependencyNode] = {}
+        self._nodes: dict[str, DependencyNode[Any]] = {}
 
-    def register(self, node: DependencyNode) -> None:
+    def register(self, node: DependencyNode[Any]) -> None:
         if node.name in self._nodes:
             raise RuntimeError(f"Dependency node {node.name!r} already registered")
         if not isinstance(node, (Derivative, Input)):
@@ -362,7 +396,7 @@ class DerivativeRegistry:
             merged_state.update(extra_state)
         return merged_state
 
-    def _get_node(self, name: str) -> DependencyNode:
+    def _get_node(self, name: str) -> DependencyNode[Any]:
         try:
             return self._nodes[name]
         except KeyError:
@@ -374,24 +408,25 @@ class DerivativeRegistry:
             state: dict[str, Any] | None = None,  # Base state for this node instance.
             options: dict[str, Any] | None = None,
             **extra_state,  # Additional state overrides merged on top of ``state``.
-    ) -> NodeHandle:
+    ) -> NodeHandle[Any]:
         node = self._get_node(name)
         ctx = DerivativeContext(self, self._resolve_state(state, **extra_state), options or {})
         if isinstance(node, Derivative):
             return DerivativeHandle(node, ctx)
-        return InputHandle(node, ctx)
+        elif isinstance(node, Input):
+            return InputHandle(node, ctx)
+        else:
+            raise TypeError(f"{node=}: Unsupported node type {type(node)!r}")
 
     def load(
             self,
-            name: str,  # Registered derivative name.
-            cache: bool | None = None,  # Explicit cache override for this load.
-            state: dict[str, Any] | None = None,  # Base state for this derivative instance.
+            name: str,  # Registered node name.
+            cache: bool | None = None,  # Explicit cache override for derivative loads.
+            state: dict[str, Any] | None = None,  # Base state for this node instance.
             options: dict[str, Any] | None = None,
             **extra_state,  # Additional state overrides merged on top of ``state``.
     ):
         handle = self.resolve(name, state=state, options=options, **extra_state)
-        if not isinstance(handle, DerivativeHandle):
-            raise TypeError(f"{name!r} is an input node and can not be loaded through the cache registry")
         return handle.load(cache)
 
     def should_cache(self, derivative: Derivative, cache: bool | None) -> bool:
@@ -414,16 +449,19 @@ class DerivativeRegistry:
 
     def dependency_fingerprints(
             self,
-            node: DependencyNode,  # Node whose dependencies are being fingerprinted.
+            node: DependencyNode[Any],  # Node whose dependencies are being fingerprinted.
             ctx: DerivativeContext,  # Bound state/options for the current load.
             cache: bool | None,  # Explicit cache override propagated to dependencies.
     ) -> dict[str, Any]:
         out = {}
         for dep in node.dependencies(ctx):
+            options = dict(ctx.options)
+            if dep.options:
+                options.update(dep.options(ctx))
             handle = self.resolve(
                 dep.name,
                 state=self._resolve_state(ctx.state, **(dep.state(ctx) if dep.state else {})),
-                options=ctx.options,
+                options=options,
             )
             out[dep.name] = handle.describe_dependency(cache)
         return out

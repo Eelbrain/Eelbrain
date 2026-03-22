@@ -9,7 +9,7 @@ from typing import Any
 import mne
 from mne.minimum_norm import make_inverse_operator
 
-from .derivative_cache import CachePolicy, Dependency, Derivative, DerivativeContext
+from .derivative_cache import Artifact, CachePolicy, Dependency, Derivative, DerivativeContext
 
 
 class FwdDerivative(Derivative[mne.Forward]):
@@ -22,7 +22,11 @@ class FwdDerivative(Derivative[mne.Forward]):
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         return (
-            Dependency('raw-input-source'),
+            Dependency(
+                'raw-input-meeg',
+                state=lambda c: {'raw': 'raw'},
+                options=lambda c: {'add_bads': False},
+            ),
             Dependency('trans-input'),
             Dependency('src-input'),
         )
@@ -68,11 +72,20 @@ class FwdDerivative(Derivative[mne.Forward]):
                     )
             return fwd
 
-    def load(self, ctx: DerivativeContext, path: str) -> mne.Forward:
-        return mne.read_forward_solution(path)
+    def load(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+    ) -> mne.Forward:
+        return mne.read_forward_solution(artifact.path)
 
-    def save(self, ctx: DerivativeContext, path: str, value: mne.Forward) -> None:
-        mne.write_forward_solution(path, value, overwrite=True)
+    def save(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+            value: mne.Forward,
+    ) -> None:
+        mne.write_forward_solution(artifact.path, value, overwrite=True)
 
 
 class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
@@ -118,13 +131,17 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
                 **make_kw,
             )
 
-    def load(self, ctx: DerivativeContext, path: str) -> mne.minimum_norm.InverseOperator:
-        return mne.minimum_norm.read_inverse_operator(path)
+    def load(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+    ) -> mne.minimum_norm.InverseOperator:
+        return mne.minimum_norm.read_inverse_operator(artifact.path)
 
     def save(
             self,
             ctx: DerivativeContext,
-            path: str,
+            artifact: Artifact,
             value: mne.minimum_norm.InverseOperator,
     ) -> None:
-        mne.minimum_norm.write_inverse_operator(path, value, overwrite=True)
+        mne.minimum_norm.write_inverse_operator(artifact.path, value, overwrite=True)
