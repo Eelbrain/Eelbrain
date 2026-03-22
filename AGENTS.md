@@ -3,13 +3,20 @@
 ## Sandbox Notes
 
 - If Python code using `multiprocessing.shared_memory` fails with `PermissionError: [Errno 1] Operation not permitted` while creating a `/psm_*` segment, rerun that command outside the sandbox with escalated permissions.
-- Changing writable directories or ordinary filesystem sandbox settings does not fix this issue, because `multiprocessing.shared_memory` relies on POSIX shared memory (`shm_open`), which is blocked by the sandbox.
+- This mainly matters for permutation/statistics code that uses POSIX shared memory; changing writable directories does not fix it.
 
 ## Verification
 
-- Use the repo's commit hooks to verify coding style before finishing a change, for example with `pre-commit run --all-files`.
+- Prefer targeted verification for the files and behavior you changed.
+- For hooks, use `pre-commit run --files <changed files>` rather than `--all-files`.
+- Run the smallest relevant pytest target first.
+- If you touch shared non-GUI behavior, finish with `make test-no-gui`.
+- If you touch GUI code, use the `pythonw`-based targets in `Makefile`.
+- If you change docstrings or public API docs, run `pydocstyle eelbrain`.
 
 ## Formatting
 
-- Prefer longer readable lines over fractionating expressions into many short lines (we don't impose a maximum line length, but rely on soft wrapping instead). For example, keep chained path-building expressions and straightforward function and method calls on one line.
-- Distribute commands across multiple lines only when it increases readability (for example, arguments to a function, each with its own type hint and default value, and large dictionary initialization may be clearer when each is on its own line).
+- Follow the surrounding style of the file you edit.
+- There is no hard line-length limit here; keep readable expressions on one line when that is clearer.
+- Reflow code only when it improves readability.
+- Avoid unrelated formatting cleanup in files you are not otherwise changing.
