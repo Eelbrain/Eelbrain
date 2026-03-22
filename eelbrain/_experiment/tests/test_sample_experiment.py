@@ -255,7 +255,7 @@ def test_sample():
         }
     e = Experiment(root)
     ica_path = e.make_ica(raw='ica')
-    assert exists(ica_path + MANIFEST_SUFFIX)
+    assert exists(e._derivatives.manifest_path(ica_path))
     e.set(raw='ica1-40', model='')
     e.make_epoch_selection(auto=2e-12, overwrite=True)
     ds1 = e.load_evoked(raw='ica1-40')
@@ -321,6 +321,7 @@ def test_sample():
     # ----
     labels = e.load_annot(parc='ac', mrisubject='fsaverage')
     assert len(labels) == 4
+    assert exists(e._annot_manifest_path('fsaverage', 'ac'))
     # change parc definition
 
     class Experiment(SampleExperiment):

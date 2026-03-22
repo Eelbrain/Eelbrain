@@ -11,8 +11,8 @@ from copy import deepcopy
 import fnmatch
 from itertools import chain
 import logging
-from os import makedirs, remove
-from os.path import basename, dirname, exists, getmtime
+from os import makedirs
+from os.path import basename, exists
 from pathlib import Path
 from typing import Any
 from collections.abc import Sequence
@@ -29,10 +29,9 @@ from .._io.fiff import KIT_NEIGHBORS
 from .._io.txt import read_adjacency
 from .._ndvar import filter_data
 from .._text import enumeration
-from .._utils import ask, deprecate_kwarg, user_activity
-from ..mne_fixes import CaptureLog
+from .._utils import deprecate_kwarg, user_activity
 from .derivative_cache import Artifact, CachePolicy, Dependency, DependencyNode, Derivative, DerivativeContext
-from .definitions import log_dict_change, sequence_arg, typed_arg
+from .definitions import sequence_arg, typed_arg
 from .exceptions import FileMissingError
 
 MNE_VERBOSITY = 'WARNING'
@@ -42,6 +41,7 @@ AddBadsArg = bool | Sequence[str]
 class RawPipe:
     name: str = None  # set on linking
     log: logging.Logger = None
+    pipeline: Any = None
 
     def _can_link(self, pipes: dict[str, RawPipe]) -> bool:
         raise NotImplementedError
@@ -73,10 +73,6 @@ class RawPipe:
     @staticmethod
     def _normalize_dict(state: dict) -> None:
         pass
-
-    def is_cached(self, path: BIDSPath, noise: bool = False) -> bool:
-        "Check if raw file exists and is up to date"
-        raise NotImplementedError
 
     def get_adjacency(self, data: str) -> str | list[tuple[str, str]] | Path:
         raise NotImplementedError
@@ -140,14 +136,6 @@ class RawPipe:
             redo: bool,
             noise: bool = False,
     ) -> None:
-        raise NotImplementedError
-
-    def mtime(
-            self,
-            path: BIDSPath,
-            bad_chs: bool = True,
-    ) -> float:
-        "Modification time of anything influencing the output of load"
         raise NotImplementedError
 
     def cache_nodes(self) -> tuple[DependencyNode[Any], ...]:
@@ -274,7 +262,29 @@ class ICADerivative(Derivative[mne.preprocessing.ICA]):
         return self._pipe(ctx).ica_dependencies(ctx)
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        fingerprint = self._pipe(ctx).ica_fingerprint(ctx)
+        fingerprint.pop('exclude', None)
+        return fingerprint
+
+    def dependency_fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
         return self._pipe(ctx).ica_fingerprint(ctx)
+
+    def can_reindex_protected_artifact(
+            self,
+            ctx: DerivativeContext,
+            artifact: Artifact,
+            manifest,
+            cache: bool | None = None,
+    ) -> bool:
+        if manifest.key != ctx.registry.normalize_state(self.key_fields, ctx.state):
+            return False
+        if manifest.dependencies != ctx.registry.dependency_fingerprints(self, ctx, cache):
+            return False
+        current = dict(self.fingerprint(ctx))
+        previous = dict(manifest.fingerprint)
+        current.pop('exclude', None)
+        previous.pop('exclude', None)
+        return current == previous
 
     def path(
             self,
@@ -381,11 +391,6 @@ class RawSource(RawPipe):
             extension='.tsv',
             split=None,
         ).fpath)
-
-    def is_cached(self, path: BIDSPath) -> bool:
-        "Check if raw file exists without raising an error"
-        raw_path = str(path.fpath)
-        return exists(raw_path)
 
     def _load(
             self,
@@ -547,21 +552,6 @@ class RawSource(RawPipe):
         kit_system_id = info.get('kit_system_id')
         return KIT_NEIGHBORS.get(kit_system_id)
 
-    def mtime(
-            self,
-            path: BIDSPath,
-            bad_chs: bool = True,
-            noise: bool = False,
-    ) -> float:
-        if noise:
-            path = path.find_empty_room()
-        raw_path = self._raw_path(path)
-        bads_path = self._bads_path(path)
-        if bad_chs:
-            return max(getmtime(raw_path), getmtime(bads_path))
-        else:
-            return getmtime(raw_path)
-
 
 class CachedRawPipe(RawPipe):
     _bad_chs_affect_cache: bool = False
@@ -692,53 +682,31 @@ class CachedRawPipe(RawPipe):
     ) -> None:
         value.save(artifact.path, overwrite=True, verbose='ERROR')
 
-    def is_cached(self, path: BIDSPath) -> bool:
-        "Check if a cached raw file exists and is up to date"
-        cache_path = self._cache_path(path)
-        if exists(cache_path):
-            mtime = self.mtime(path)
-            if mtime and getmtime(cache_path) >= mtime:
-                return True
-        return False
-
     def _load(
             self,
             path: BIDSPath,
             preload: bool,
             noise: bool = False,
     ) -> mne.io.BaseRaw:
-        """Read cached raw or make one"""
-        # Resolve empty room path for actual file reading, not for _make()
-        if not self._cache:
+        if self.pipeline is None:
             return self._make(path, preload, noise=noise)
-        cache_path = self._cache_path(path if not noise else path.find_empty_room())
-        if self.is_cached(path if not noise else path.find_empty_room()):
-            with warnings.catch_warnings():  # BIDS paths are not covered by mne standard
-                warnings.filterwarnings('ignore', 'This filename', module='mne')
-                raw = mne.io.read_raw_fif(
-                    cache_path,
-                    preload=preload,
-                    verbose=MNE_VERBOSITY,
-                )
-        else:
-            from .. import __version__
-            # make sure the target directory exists
-            makedirs(dirname(cache_path), exist_ok=True)
-            # generate new raw
-            with CaptureLog(cache_path[:-3] + 'log') as logger:
-                logger.info(f"eelbrain {__version__}")
-                logger.info(f"mne {mne.__version__}")
-                logger.info(repr(self._as_dict()))
-                raw = self._make(path, True, noise=noise)
-            # save
-            try:
-                raw.save(cache_path, overwrite=True, verbose='ERROR')
-            except BaseException:
-                # clean up potentially corrupted file
-                if exists(cache_path):
-                    remove(cache_path)
-                raise
-        return raw
+
+        state = {
+            key: value
+            for key, value in path.entities.items()
+            if value is not None and key in ('subject', 'session', 'task', 'acquisition', 'run', 'split')
+        }
+        state['raw'] = self.name
+        return self.pipeline._load_derivative(
+            self.raw_cache_node_name(),
+            cache=self._cache,
+            state=state,
+            options={
+                'add_bads': False,
+                'preload': preload,
+                'noise': noise,
+            },
+        )
 
     def load_info(self, path: BIDSPath) -> mne.Info:
         return self.source.load_info(path)
@@ -781,14 +749,6 @@ class CachedRawPipe(RawPipe):
             data: str,
     ) -> str | None:
         return self.source.get_sysname(info, subject, data)
-
-    def mtime(
-            self,
-            path: BIDSPath,
-            bad_chs: bool = True,
-            noise: bool = False,
-    ) -> float:
-        return self.source.mtime(path, bad_chs or self._bad_chs_affect_cache, noise=noise)
 
 
 class RawFilter(CachedRawPipe):
@@ -1077,7 +1037,7 @@ class RawICA(CachedRawPipe):
     def load_ica(self, path: BIDSPath) -> mne.preprocessing.ICA:
         ica_path = self._ica_path(path)
         if not exists(ica_path):
-            raise FileMissingError(f"ICA file {basename(ica_path)} does not exist for raw={self.name!r}. Run e.make_ica_selection() to create it.")
+            raise FileMissingError(f"ICA file {basename(ica_path)} does not exist for raw={self.name!r}. Run e.make_ica() to create it.")
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', 'Version 0.23 introduced max_iter', DeprecationWarning)
             return mne.preprocessing.read_ica(ica_path)
@@ -1196,53 +1156,11 @@ class RawICA(CachedRawPipe):
             raw.append(raw_)
         return raw
 
-    def make_ica(
-            self,
-            path: BIDSPath,
-            run: tuple[str],
-    ) -> str:
-        ica_path = self._ica_path(path)
-        if exists(ica_path):
-            info = self.load_info(path.copy().update(task=self.task[0]))
-            ica = mne.preprocessing.read_ica(ica_path)
-            # equal channel names in different raw is guaranteed here
-            if not self._check_ica_channels(ica, info):
-                self.log.info("Raw %s for subject=%r: ICA channels mismatch data channels, recomputing ICA...", self.name, path.subject)
-            else:
-                mtimes = [self.source.mtime(path.copy().update(task=task), self._bad_chs_affect_cache) for task in self.task]
-                if all(mtimes) and getmtime(ica_path) > max(mtimes):
-                    return ica_path
-                # Raw is newer than ICA file
-                command = ask(f"The input for the ICA of {path.subject} seems to have changed since the ICA was generated.", {'delete': 'delete and recompute the ICA', 'ignore': 'Keep using the old ICA'}, help="This message indicates that the modification date of the raw input data or of the bad channels file is more recent than that of the ICA file. If the data actually changed, ICA components might not be valid anymore and should be recomputed. If the change is spurious (e.g., the raw file was modified in a way that does not affect the ICA) load and resave the ICA file to stop seeing this message.")
-                if command == 'ignore':
-                    return ica_path
-                elif command == 'delete':
-                    remove(ica_path)
-                else:
-                    raise RuntimeError(f"{command=}")
-
-        raw = self.load_concatenated_source_raw(path, self.task, run)
-        ica = self.fit_ica(raw, path.subject)
-        makedirs(dirname(ica_path), exist_ok=True)
-        ica.save(ica_path, overwrite=True)
-        return ica_path
-
     def build_ica(self, ctx: DerivativeContext) -> mne.preprocessing.ICA:
         p = ctx.pipeline
         with p._temporary_state:
             if ctx.state:
                 p.set(**ctx.state)
-            ica_path = self._ica_path(p._bids_path)
-            if exists(ica_path):
-                info = self.load_info(p._bids_path.copy().update(task=self.task[0]))
-                ica = mne.preprocessing.read_ica(ica_path)
-                if self._check_ica_channels(ica, info):
-                    mtimes = [
-                        self.source.mtime(p._bids_path.copy().update(task=task), self._bad_chs_affect_cache)
-                        for task in self.task
-                    ]
-                    if all(mtimes) and getmtime(ica_path) > max(mtimes):
-                        return ica
 
             bad_channels = self.load_bad_channels(p._bids_path)
             path_list = []
@@ -1353,18 +1271,6 @@ class RawICA(CachedRawPipe):
             out['fit_kwargs'] = self.fit_kwargs
         return out
 
-    def mtime(
-            self,
-            path: BIDSPath,
-            bad_chs: bool = True,
-            noise: bool = False,
-    ) -> float:
-        mtime = CachedRawPipe.mtime(self, path, bad_chs or self._bad_chs_affect_cache, noise=noise)
-        if mtime:
-            ica_path = self._ica_path(path)
-            if exists(ica_path):
-                return max(mtime, getmtime(ica_path))
-
 
 class RawApplyICA(CachedRawPipe):
     """Apply ICA estimated in a :class:`RawICA` pipe
@@ -1466,18 +1372,6 @@ class RawApplyICA(CachedRawPipe):
             raw = self.load_source_raw(ctx, preload=True, noise=noise)
             ica = ctx.load(self.ica_source.ica_cache_node_name(), state={'raw': self.ica_source.name})
             return self.ica_source.apply_ica(p._bids_path, raw, ica, self.name)
-
-    def mtime(
-            self,
-            path: BIDSPath,
-            bad_chs: bool = True,
-            noise: bool = False,
-    ) -> float:
-        mtime = CachedRawPipe.mtime(self, path, bad_chs, noise=noise)
-        if mtime:
-            ica_mtime = self.ica_source.mtime(path, bad_chs)
-            if ica_mtime:
-                return max(mtime, ica_mtime)
 
 
 class RawMaxwell(CachedRawPipe):
@@ -1764,110 +1658,6 @@ def assemble_pipeline(
         if len(raw) == n:
             raise DefinitionError(f"Unable to resolve source for raw {enumeration(raw)}, circular dependency?")
     return linked_raw
-
-
-###############################################################################
-# Comparing pipelines
-######################
-
-
-def compare_pipelines(
-        old: dict[str, dict],
-        new: dict[str, dict],
-        log: logging.Logger,
-) -> tuple[dict[str, str], dict[str, str]]:
-    """Return a tuple of raw keys for which definitions changed
-
-    Parameters
-    ----------
-    old
-        A {name: params} dict for the previous preprocessing pipeline.
-    new
-        Current pipeline.
-    log
-        Logger for logging changes.
-
-    Returns
-    -------
-    bad_raw : {str: str}
-        ``{pipe_name: status}`` dictionary. Status can be 'new', 'removed' or
-        'changed'.
-    bad_ica : {str: str}
-        Same as ``bad_raw`` but only for RawICA pipes (for which ICA files
-        might have to be removed).
-    """
-    out = {}  # status:  good, changed, new, removed
-    to_check = []  # need to check whether source is still valid
-    keys = set(new).union(old)
-    for key in keys:
-        new_dict = new.get(key)
-        old_dict = old.get(key)
-        if new_dict is None:
-            out[key] = 'removed'
-        elif old_dict is None:
-            out[key] = 'new'
-        elif new_dict == old_dict:
-            if key == 'raw':
-                out[key] = 'good'
-            else:
-                to_check.append(key)
-            continue
-        else:
-            out[key] = 'changed'
-        log_dict_change(log, 'raw', key, old_dict, new_dict)
-
-    # secondary changes
-    while to_check:
-        n = len(to_check)
-        for key in tuple(to_check):
-            parents = [new[key][k] for k in ('source', 'ica_source') if k in new[key]]
-            if any(p not in out for p in parents):
-                continue
-            elif all(out[p] == 'good' for p in parents):
-                out[key] = 'good'
-            else:
-                out[key] = 'changed'
-                log.warning(f"  raw {key} parent changed")
-            to_check.remove(key)
-        if len(to_check) == n:
-            raise RuntimeError("Queue not decreasing")
-
-    bad_raw = {k: v for k, v in out.items() if v != 'good'}
-    bad_ica = {k: v for k, v in bad_raw.items() if new.get(k, old.get(k))['type'] == 'RawICA'}
-    return bad_raw, bad_ica
-
-
-def ask_to_delete_ica_files(
-        raw: mne.io.BaseRaw,
-        status: str,
-        filenames: list[str],
-) -> None:
-    "Ask whether outdated ICA files should be removed and act accordingly"
-    if status == 'new':
-        msg = ("The definition for raw=%r has been added, but ICA-files "
-               "already exist. These files might not correspond to the new "
-               "settings and should probably be deleted." % (raw,))
-    elif status == 'removed':
-        msg = ("The definition for raw=%r has been removed. The corresponsing "
-               "ICA files should probably be deleted:" % (raw,))
-    elif status == 'changed':
-        msg = ("The definition for raw=%r has changed. The corresponding ICA "
-               "files should probably be deleted." % (raw,))
-    else:
-        raise RuntimeError(f"{status=}")
-    command = ask(
-        f"{msg} Delete {len(filenames)} files?",
-        (('abort', 'abort to fix the raw definition and try again'),
-         ('delete', 'delete the invalid files'),
-         ('ignore', 'pretend that the files are valid; you will not be warned again')))
-
-    if command == 'delete':
-        for filename in filenames:
-            remove(filename)
-    elif command == 'abort':
-        raise RuntimeError("User abort")
-    elif command != 'ignore':
-        raise RuntimeError(f"{command=}")
 
 
 def normalize_dict(raw: dict) -> None:

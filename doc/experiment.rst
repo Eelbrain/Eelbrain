@@ -406,19 +406,14 @@ has finished executing or run into an error, for example::
 will send you an email as soon as the report is finished (or the program
 encountered an error)
 
-.. py:attribute:: Pipeline.auto_delete_cache
-   :type: str
-
-:class:`Pipeline` caches various intermediate results. By default, if a
-change in the experiment definition would make cache files invalid, the outdated
-files are automatically deleted. Set :attr:`.auto_delete_cache` to ``'ask'`` to
-ask for confirmation before deleting files. This can be useful to prevent
-accidentally deleting files that take long to compute when editing the pipeline
-definition.
-When using this option, set :attr:`screen_log_level` to
-``'debug'`` to learn about what change caused the cache to be invalid.
-Cached result files are validated when they are loaded; if a stored result is
-outdated, load it again with ``make=True`` to recompute it.
+:class:`Pipeline` caches intermediate results and validates them when they are
+loaded. If a stored cache entry or result is outdated, load it again with
+``make=True`` to recompute it. Cache files that are no longer reachable from
+the current pipeline definition are not deleted automatically. Files stored
+outside ``cache-dir`` are treated as user-managed outputs and are not
+overwritten automatically when they become stale; their manifest files are
+stored under ``cache-dir/manifests`` instead of next to the artifacts
+themselves.
 
 .. py:attribute:: Pipeline.screen_log_level
    :type: str
