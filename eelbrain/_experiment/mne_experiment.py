@@ -29,13 +29,11 @@ from .. import testnd
 from .._data_obj import CellArg, NDVarArg, Datalist, Dataset, Factor, Var, NDVar, SourceSpace, VolumeSourceSpace, assert_is_legal_dataset_key, combine
 from .._exceptions import DefinitionError, DimensionMismatchError, OldVersionError
 from .._info import BAD_CHANNELS
-from .._io.pickle import update_subjects_dir
 from .._names import INTERPOLATE_CHANNELS
 from .._meeg import new_rejection_ds
 from .._mne import morph_source_space, shift_mne_epoch_trigger, find_source_subject, label_from_annot
 from ..mne_fixes import _interpolate_bads_eeg, _interpolate_bads_meg, suppress_mne_warning
 from .._ndvar import concatenate, cwt_morlet, neighbor_correlation
-from .._stats.stats import ttest_t
 from .._stats.testnd import _MergedTemporalClusterDist
 from .._text import enumeration, n_of, plural
 from .._types import PathArg
@@ -44,9 +42,7 @@ from .._utils.mne_utils import is_fake_mri
 from .._utils.notebooks import tqdm
 from .covariance import CovDerivative, EpochCovariance, RawCovariance
 from .derivative_cache import (
-    Artifact,
     Dependency, DerivativeContext, DerivativeRegistry,
-    Derivative,
     Input,
     ProtectedArtifactError,
     file_fingerprint,
@@ -65,8 +61,9 @@ from .reports import (
     CoregReportDerivative, EEGReportDerivative, EEGSensorsReportDerivative,
     LMReportDerivative, ROIReportDerivative, SourceReportDerivative,
     report_methods_brief, report_parc_image, report_subject_info,
-    report_test_info, sampled_artifact_path,
+    report_test_info,
 )
+from .results import MovieDerivative, TestResultDerivative
 from .source import FwdDerivative, InvDerivative, SourceMorphDerivative, SrcDerivative
 from .test_def import (
     Test,
@@ -221,136 +218,6 @@ class RejectionInput(Input):
                     for e in epoch.rej_file_epochs
                 ],
             }
-
-
-class TestResultDerivative(Derivative):
-    name = 'test-result'
-    path_template = 'test-file'
-    key_fields = ()
-
-    def key(self, ctx: DerivativeContext) -> dict[str, Any]:
-        p = ctx.pipeline
-        return ctx.registry.canonicalize({
-            'state': p._result_state_snapshot(False),
-            'samples': ctx.option('samples'),
-            'data': ctx.option('data').string,
-        })
-
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        p = ctx.pipeline
-        data = ctx.option('data')
-        return {
-            'data': data.string,
-            'definitions': p._result_definitions(),
-            'dependencies': p._result_dependencies(data),
-        }
-
-    def path(
-            self,
-            ctx: DerivativeContext,
-            mkdir: bool = False,
-    ) -> str:
-        path = sampled_artifact_path(ctx.option('dst'), ctx.option('samples'))
-        if mkdir:
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
-        return path
-
-    def build(self, ctx: DerivativeContext):
-        return ctx.pipeline._compute_test_result(ctx)
-
-    def load(
-            self,
-            ctx: DerivativeContext,
-            artifact: Artifact,
-    ):
-        res = load.unpickle(artifact.path)
-        if ctx.option('data').source is True:
-            update_subjects_dir(res, ctx.get('mri-sdir'), 2)
-        return res
-
-    def save(
-            self,
-            ctx: DerivativeContext,
-            artifact: Artifact,
-            value,
-    ) -> None:
-        save.pickle(value, artifact.path)
-
-    def validate(
-            self,
-            ctx: DerivativeContext,
-            artifact: Artifact,
-            manifest,
-    ) -> bool:
-        return manifest.provenance.get('samples') == ctx.option('samples')
-
-    def provenance(
-            self,
-            ctx: DerivativeContext,
-            value,
-    ) -> dict[str, Any]:
-        return {'samples': value.samples}
-
-
-class MovieDerivative(Derivative[str]):
-    name = 'movie'
-    path_template = 'group-mov-file'
-    key_fields = ()
-
-    def key(self, ctx: DerivativeContext) -> dict[str, Any]:
-        p = ctx.pipeline
-        return ctx.registry.canonicalize({
-            'state': p._result_state_snapshot(ctx.option('single_subject', False)),
-            'single_subject': ctx.option('single_subject', False),
-            'movie_kind': ctx.option('movie_kind'),
-            'data': ctx.option('data').string,
-        })
-
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        p = ctx.pipeline
-        data = ctx.option('data')
-        return {
-            'movie_kind': ctx.option('movie_kind'),
-            'data': data.string,
-            'single_subject': ctx.option('single_subject', False),
-            'definitions': p._result_definitions(),
-            'dependencies': p._result_dependencies(data, ctx.option('single_subject', False)),
-        }
-
-    def path(
-            self,
-            ctx: DerivativeContext,
-            mkdir: bool = False,
-    ) -> str:
-        path = ctx.option('dst')
-        if mkdir:
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
-        return path
-
-    def build(self, ctx: DerivativeContext) -> str:
-        return ctx.pipeline._build_movie_output(ctx)
-
-    def load(
-            self,
-            ctx: DerivativeContext,
-            artifact: Artifact,
-    ) -> str:
-        return artifact.path
-
-    def save(
-            self,
-            ctx: DerivativeContext,
-            artifact: Artifact,
-            value: str,
-    ) -> None:
-        return
-
-    def provenance(
-            self,
-            ctx: DerivativeContext,
-            value: str,
-    ) -> dict[str, Any]:
-        return {'movie_kind': ctx.option('movie_kind')}
 
 
 # Argument types
@@ -1121,109 +988,6 @@ class Pipeline(FileTree):
         if parc is not None:
             state['parc'] = parc
         return self._derivatives.resolve('annot', state=state).describe_dependency()
-
-    def _result_state_snapshot(
-            self,
-            single_subject: bool,
-    ) -> dict[str, Any]:
-        fields = (
-            'analysis', 'test', 'test_options', 'test_dims', 'epoch', 'raw',
-            'rej', 'cov', 'inv', 'src', 'mrisubject', 'model',
-            'equalize_evoked_count', 'parc', 'folder', 'resname',
-        )
-        state = {
-            field: self.get(field)
-            for field in fields
-        }
-        if single_subject:
-            state['subject'] = self.get('subject')
-        else:
-            state['group'] = self.get('group')
-        return self._derivatives.canonicalize(state)
-
-    def _result_subject_states(
-            self,
-            single_subject: bool,
-    ) -> list[dict[str, Any]]:
-        fields = (
-            'subject', 'session', 'task', 'acquisition', 'run', 'split',
-            'raw', 'epoch', 'rej', 'cov', 'mrisubject', 'src', 'inv',
-        )
-        with self._temporary_state:
-            if single_subject:
-                return [{field: self.get(field) for field in fields}]
-            return [
-                {field: self.get(field) for field in fields}
-                for _ in self
-            ]
-
-    def _result_raw_dependency(
-            self,
-            state: dict[str, Any],
-    ) -> dict[str, Any]:
-        pipe = self._raw[state['raw']]
-        if isinstance(pipe, CachedRawPipe):
-            handle = self._derivatives.resolve(
-                pipe.raw_cache_node_name(),
-                state=state,
-                options={'noise': False},
-            )
-        else:
-            handle = self._derivatives.resolve(
-                'raw-input-meeg',
-                state=state,
-                options={'add_bads': True, 'noise': False},
-            )
-        return handle.describe_dependency()
-
-    def _result_dependencies(
-            self,
-            data: TestDims,
-            single_subject: bool = False,
-    ) -> dict[str, Any]:
-        subjects = []
-        for state in self._result_subject_states(single_subject):
-            subject_dependencies = {
-                'state': {
-                    key: state[key]
-                    for key in BIDS_ENTITY_KEYS
-                    if state[key] is not None
-                },
-                'events': self._derivatives.resolve('events', state=state).describe_dependency(),
-                'raw': self._result_raw_dependency(state),
-                'rej': self._derivatives.resolve('rej-input', state=state).describe_dependency(),
-            }
-            if data.source:
-                subject_dependencies['inv'] = self._derivatives.resolve('inv', state=state).describe_dependency()
-            subjects.append(subject_dependencies)
-
-        out = {'subjects': subjects}
-        if data.source and data.parc_level:
-            if single_subject:
-                out['annot'] = self._annot_dependency(self.get('mrisubject'))
-            elif data.parc_level == 'common':
-                out['annot'] = self._annot_dependency(self.get('common_brain'))
-            elif data.parc_level == 'individual':
-                out['annot'] = [
-                    {
-                        'subject': state['subject'],
-                        'files': self._annot_dependency(state['mrisubject']),
-                    }
-                    for state in self._result_subject_states(False)
-                ]
-            else:
-                raise RuntimeError(f"data={data.string!r}, parc_level={data.parc_level!r}")
-        return self._derivatives.canonicalize(out)
-
-    def _result_definitions(self) -> dict[str, Any]:
-        definitions = {
-            'test': self._tests[self.get('test')]._as_dict(),
-            'epoch': self._epochs[self.get('epoch')]._as_dict(),
-        }
-        parc = self.get('parc')
-        if parc and parc in self._parcs:
-            definitions['parc'] = self._parcs[parc]._as_dict()
-        return self._derivatives.canonicalize(definitions)
 
     def _process_subject_arg(self, subjects, kwargs):
         """Process subject arg for methods that work on groups and subjects
@@ -3772,10 +3536,6 @@ class Pipeline(FileTree):
     ):
         return self.load_epochs_stc(subjects, ctx.option('baseline'), ctx.option('src_baseline'), cat=cat)
 
-    def _compute_test_result(self, ctx: DerivativeContext):
-        _, res = self._materialize_test_context(ctx, None, False, relpath(sampled_artifact_path(ctx.option('dst'), ctx.option('samples')), self.get('test-dir')))
-        return res
-
     @staticmethod
     def _src_to_label_tc(ds, func):
         src = ds.pop('src')
@@ -4481,56 +4241,6 @@ class Pipeline(FileTree):
             if not redo and self._derivatives.resolve('movie', options=options).is_valid():
                 return
         self._load_derivative('movie', options=options, _allow_protected_overwrite=True)
-
-    def _build_movie_output(self, ctx: DerivativeContext) -> str:
-        kind = ctx.option('movie_kind')
-        dst = ctx.option('dst')
-        if kind == 'ga-dspm':
-            if ctx.option('single_subject'):
-                ds = self._load_evoked_stc_context(ctx, ctx.option('subject'))
-                y = ds['src']
-            else:
-                ds = self._load_evoked_stc_context(ctx, self.get('group'), morph=True)
-                y = ds['srcm']
-            brain = plot.brain.dspm(y, ctx.option('fmin'), ctx.option('fmin') * 3, colorbar=False, **ctx.option('brain_kwargs'))
-        elif kind == 'ttest':
-            cluster_state = dict(ctx.option('cluster_state') or {})
-            if ctx.option('single_subject'):
-                ds = self._load_epochs_stc_context(ctx, ctx.option('subject'), cat=ctx.option('cat'))
-                y = 'src'
-            else:
-                ds = self._load_evoked_stc_context(ctx, ctx.option('group'), morph=True, cat=ctx.option('cat'))
-                y = 'srcm'
-            if cluster_state:
-                cluster_state.update(samples=0, pmin=ctx.option('p'))
-            if '{test_options}' in self.get('resname'):
-                raise RuntimeError("Movie state not fully initialized")
-            if ctx.get('model') and ctx.option('cat') and len(ctx.option('cat')) == 2:
-                c1, c0 = ctx.option('cat')
-                if ctx.option('single_subject'):
-                    res = testnd.TTestIndependent(y, ctx.get('model'), c1, c0, data=ds, **cluster_state)
-                else:
-                    res = testnd.TTestRelated(y, ctx.get('model'), c1, c0, match='subject', data=ds, **cluster_state)
-            elif ctx.option('cat'):
-                res = testnd.TTestOneSample(y, data=ds, **cluster_state)
-            else:
-                res = testnd.TTestOneSample(y, data=ds, **cluster_state)
-            if cluster_state:
-                tmap = res.masked_parameter_map(None)
-            else:
-                tmap = res.t
-            brain = plot.brain.dspm(
-                tmap,
-                ttest_t(ctx.option('p'), res.df),
-                ttest_t(ctx.option('pmin'), res.df),
-                ttest_t(ctx.option('pmid'), res.df),
-                surf=ctx.option('surf'),
-            )
-        else:
-            raise RuntimeError(f"{kind=}")
-        brain.save_movie(dst, ctx.option('time_dilation'))
-        brain.close()
-        return dst
 
     def export_mrat_evoked(self, **kwargs):
         """Export the sensor data FIF files needed for MRAT sensor analysis

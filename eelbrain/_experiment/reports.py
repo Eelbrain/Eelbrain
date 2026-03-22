@@ -17,14 +17,8 @@ from .._data_obj import align1
 from .._utils.mne_utils import is_fake_mri
 from .derivative_cache import Artifact, Derivative, DerivativeContext, file_fingerprint
 from .parc import IndividualSeededParc
+from .results import ResultOutputDerivative
 from .test_def import TwoStageTest
-
-
-def sampled_artifact_path(path: str, samples: int | None) -> str:
-    if samples is None:
-        return path
-    path_ = Path(path)
-    return str(path_.with_name(f"{path_.stem}_samples-{samples}{path_.suffix}"))
 
 
 def report_methods_brief(path: str):
@@ -162,79 +156,16 @@ def _append_two_stage_report(p, report, ctx: DerivativeContext) -> None:
     report_test_info(p, info_section, group_ds or ds, test_obj, res, ctx.option('data'))
 
 
-class _ResultReportDerivative(Derivative[str]):
-    path_template = 'report-file'
-    key_fields = ()
-    single_subject = False
-
-    def extra_key(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return {}
-
-    def extra_fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return self.extra_key(ctx)
-
-    def key(self, ctx: DerivativeContext) -> dict[str, Any]:
-        data = ctx.option('data')
-        return ctx.registry.canonicalize({
-            'state': ctx.pipeline._result_state_snapshot(self.single_subject),
-            'samples': ctx.option('samples'),
-            'single_subject': self.single_subject,
-            'data': None if data is None else data.string,
-            **self.extra_key(ctx),
-        })
-
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        data = ctx.option('data')
-        return {
-            'data': None if data is None else data.string,
-            'single_subject': self.single_subject,
-            'definitions': ctx.pipeline._result_definitions(),
-            'dependencies': ctx.pipeline._result_dependencies(data, self.single_subject),
-            'extra': ctx.registry.canonicalize(self.extra_fingerprint(ctx)),
-        }
-
-    def path(
-            self,
-            ctx: DerivativeContext,
-            mkdir: bool = False,
-    ) -> str:
-        path = sampled_artifact_path(ctx.option('dst'), ctx.option('samples'))
-        if mkdir:
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
-        return path
-
-    def load(
-            self,
-            ctx: DerivativeContext,
-            artifact: Artifact,
-    ) -> str:
-        return artifact.path
-
-    def save(
-            self,
-            ctx: DerivativeContext,
-            artifact: Artifact,
-            value: str,
-    ) -> None:
-        return
-
-    def provenance(
-            self,
-            ctx: DerivativeContext,
-            value: str,
-    ) -> dict[str, Any]:
-        return {'samples': ctx.option('samples'), 'single_subject': self.single_subject}
-
-
-class SourceReportDerivative(_ResultReportDerivative):
+class SourceReportDerivative(ResultOutputDerivative[str]):
     name = 'source-report'
+    sampled_path = True
 
     def extra_key(self, ctx: DerivativeContext) -> dict[str, Any]:
         return {'include': ctx.option('include')}
 
     def build(self, ctx: DerivativeContext) -> str:
         p = ctx.pipeline
-        dst = sampled_artifact_path(ctx.option('dst'), ctx.option('samples'))
+        dst = self.path(ctx)
         report = fmtxt.Report(_report_title(p))
         report.add_paragraph(report_methods_brief(dst))
         if isinstance(p._tests[ctx.option('test')], TwoStageTest):
@@ -244,12 +175,13 @@ class SourceReportDerivative(_ResultReportDerivative):
         return _save_report(report, dst, ('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'), ctx.option('samples'))
 
 
-class ROIReportDerivative(_ResultReportDerivative):
+class ROIReportDerivative(ResultOutputDerivative[str]):
     name = 'roi-report'
+    sampled_path = True
 
     def build(self, ctx: DerivativeContext) -> str:
         p = ctx.pipeline
-        dst = sampled_artifact_path(ctx.option('dst'), ctx.option('samples'))
+        dst = self.path(ctx)
         res_data, res = p._load_test_context(ctx, True, True, mask=None)
         labels_lh = []
         labels_rh = []
@@ -283,15 +215,16 @@ class ROIReportDerivative(_ResultReportDerivative):
         return _save_report(report, dst, ('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'), ctx.option('samples'))
 
 
-class EEGReportDerivative(_ResultReportDerivative):
+class EEGReportDerivative(ResultOutputDerivative[str]):
     name = 'eeg-report'
+    sampled_path = True
 
     def extra_key(self, ctx: DerivativeContext) -> dict[str, Any]:
         return {'include': ctx.option('include')}
 
     def build(self, ctx: DerivativeContext) -> str:
         p = ctx.pipeline
-        dst = sampled_artifact_path(ctx.option('dst'), ctx.option('samples'))
+        dst = self.path(ctx)
         ds, res = p._load_test_context(ctx, True, True, parc=None, mask=None)
         report = fmtxt.Report(_report_title(p))
         info_section = report.add_section("Test Info")
@@ -305,15 +238,16 @@ class EEGReportDerivative(_ResultReportDerivative):
         return _save_report(report, dst, ('eelbrain', 'mne', 'scipy', 'numpy'), ctx.option('samples'))
 
 
-class EEGSensorsReportDerivative(_ResultReportDerivative):
+class EEGSensorsReportDerivative(ResultOutputDerivative[str]):
     name = 'eeg-sensors-report'
+    sampled_path = True
 
     def extra_key(self, ctx: DerivativeContext) -> dict[str, Any]:
         return {'sensors': tuple(ctx.option('sensors'))}
 
     def build(self, ctx: DerivativeContext) -> str:
         p = ctx.pipeline
-        dst = sampled_artifact_path(ctx.option('dst'), ctx.option('samples'))
+        dst = self.path(ctx)
         test_obj = p._tests[ctx.option('test')]
         ds = p.load_evoked(p.get('group'), ctx.option('baseline'), True, vardef=test_obj.vars)
         eeg = ds['eeg']
@@ -336,9 +270,10 @@ class EEGSensorsReportDerivative(_ResultReportDerivative):
         return _save_report(report, dst, ('eelbrain', 'mne', 'scipy', 'numpy'), ctx.option('samples'))
 
 
-class LMReportDerivative(_ResultReportDerivative):
+class LMReportDerivative(ResultOutputDerivative[str]):
     name = 'lm-report'
     single_subject = True
+    sampled_path = True
 
     def extra_key(self, ctx: DerivativeContext) -> dict[str, Any]:
         return {'mask': ctx.option('mask')}
@@ -347,7 +282,7 @@ class LMReportDerivative(_ResultReportDerivative):
         p = ctx.pipeline
         report = fmtxt.Report(_report_title(p))
         report.append(_report.source_time_lm(p._load_spm_context(ctx), ctx.option('pmin'), p._surfer_plot_kwargs()))
-        return _save_report(report, sampled_artifact_path(ctx.option('dst'), ctx.option('samples')), ('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'))
+        return _save_report(report, self.path(ctx), ('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'))
 
 
 class CoregReportDerivative(Derivative[str]):
