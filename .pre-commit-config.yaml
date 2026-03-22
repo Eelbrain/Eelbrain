@@ -1,9 +1,4 @@
 repos:
-- repo: https://github.com/PyCQA/flake8
-  rev: 7.3.0
-  hooks:
-    - id: flake8
-      files: 'eelbrain/'
 - repo: https://github.com/asottile/pyupgrade
   rev: v3.19.1
   hooks:
@@ -22,3 +17,8 @@ repos:
   rev: 1.0.6
   hooks:
     - id: flynt
+- repo: https://github.com/PyCQA/flake8
+  rev: 7.3.0
+  hooks:
+    - id: flake8
+      files: 'eelbrain/'
