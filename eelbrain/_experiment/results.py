@@ -13,12 +13,33 @@ from .. import save
 from .. import testnd
 from .._io.pickle import update_subjects_dir
 from .._stats.stats import ttest_t
-from .derivative_cache import Artifact, Derivative, DerivativeContext
+from .derivative_cache import Artifact, Derivative, DerivativeContext, Input, file_fingerprint
 from .preprocessing import CachedRawPipe
 from .test_def import TestDims
 
 T = TypeVar('T')
 BIDS_ENTITY_KEYS = ('subject', 'session', 'task', 'acquisition', 'run', 'split')
+
+
+class RejectionInput(Input):
+    name = 'rej-input'
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        p = ctx.pipeline
+        with p._temporary_state:
+            if ctx.state:
+                p.set(**ctx.state)
+            rej = p._artifact_rejection[p.get('rej')]
+            if rej['kind'] is None:
+                return {'kind': 'none'}
+            epoch = p._epochs[p.get('epoch')]
+            return {
+                'rej': p.get('rej'),
+                'files': [
+                    file_fingerprint(p.root, p.get('rej-file', epoch=e), 'rej-file')
+                    for e in epoch.rej_file_epochs
+                ],
+            }
 
 
 def sampled_artifact_path(path: str, samples: int | None) -> str:
@@ -58,7 +79,7 @@ def result_raw_dependency(p, state: dict[str, Any]) -> dict[str, Any]:
     if isinstance(pipe, CachedRawPipe):
         handle = p._derivatives.resolve(pipe.raw_cache_node_name(), state=state, options={'noise': False})
     else:
-        handle = p._derivatives.resolve('raw-input-meeg', state=state, options={'add_bads': True, 'noise': False})
+        handle = p._derivatives.resolve(pipe.raw_meeg_input_name(), state=state, options={'add_bads': True, 'noise': False})
     return handle.describe_dependency()
 
 

@@ -26,12 +26,7 @@ class EventsDerivative(Derivative[Dataset]):
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw')
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
-        return (
-            Dependency(
-                'raw-input-meeg',
-                options=lambda c: {'add_bads': False},
-            ),
-        )
+        return (raw_data_dependency(ctx, add_bads=False),)
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
         subject = ctx.get('subject')
@@ -53,7 +48,7 @@ class EventsDerivative(Derivative[Dataset]):
         with p._temporary_state:
             if ctx.state:
                 p.set(**ctx.state)
-            entities = {k: p.get(k) for k in BIDS_ENTITY_KEYS}
+            entities = {k: ctx.get(k) for k in BIDS_ENTITY_KEYS}
             subject = entities['subject']
             ds = p._extract_events_dataset()
             if p.has_edf[subject]:
@@ -69,11 +64,7 @@ class EventsDerivative(Derivative[Dataset]):
             artifact: Artifact,
     ) -> Dataset:
         ds = load.unpickle(artifact.path)
-        p = ctx.pipeline
-        with p._temporary_state:
-            if ctx.state:
-                p.set(**ctx.state)
-            ds.info.update({k: p.get(k) for k in BIDS_ENTITY_KEYS})
+        ds.info.update({k: ctx.get(k) for k in BIDS_ENTITY_KEYS})
         return ds
 
     def save(
@@ -106,13 +97,13 @@ class EvokedDerivative(Derivative[Dataset]):
         with p._temporary_state:
             if ctx.state:
                 p.set(**ctx.state)
-            epoch = p._epochs[p.get('epoch')]
+            epoch = p._epochs[ctx.get('epoch')]
             return {
-                'raw': p.get('raw'),
+                'raw': ctx.get('raw'),
                 'epoch': epoch.__dict__,
-                'rej': p.get('rej'),
-                'model': p.get('model'),
-                'equalize_evoked_count': p.get('equalize_evoked_count'),
+                'rej': ctx.get('rej'),
+                'model': ctx.get('model'),
+                'equalize_evoked_count': ctx.get('equalize_evoked_count'),
                 'vardef': ctx.option('vardef'),
                 'samplingrate': ctx.option('samplingrate'),
                 'decim': ctx.option('decim'),

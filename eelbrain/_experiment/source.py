@@ -5,14 +5,191 @@ from __future__ import annotations
 
 from itertools import product
 from os.path import basename, join
+import re
 from typing import Any
 
 import mne
 from mne.minimum_norm import make_inverse_operator
 
-from .derivative_cache import Artifact, CachePolicy, Dependency, Derivative, DerivativeContext
+from .covariance import cov_node_name
+from .derivative_cache import Artifact, CachePolicy, Dependency, Derivative, DerivativeContext, Input, file_fingerprint
+from .preprocessing import load_raw_dependency, raw_meeg_input_name
 from .._utils.mne_utils import is_fake_mri
 from ..mne_fixes._source_space import merge_volume_source_space, prune_volume_source_space, restrict_volume_source_space
+
+
+INV_METHODS = ('MNE', 'dSPM', 'sLORETA', 'eLORETA', 'champ')
+SRC_RE = re.compile(r'^(ico|vol)-(\d+)(?:-(cortex|brainstem))?$')
+INV_RE = re.compile(r"^(free|fixed|loose\.\d+|vec)"
+                    r"(?:-(\d*\.?\d+))?"
+                    rf"-({'|'.join(INV_METHODS)})"
+                    r"(?:-((?:0\.)?\d+))?"
+                    r"(?:-(pick_normal))?"
+                    r"$")
+
+
+def parse_src(src: str) -> tuple[str, str, str | None]:
+    m = SRC_RE.match(src)
+    if not m:
+        raise ValueError(f'src={src}')
+    kind, param, special = m.groups()
+    if special and kind != 'vol':
+        raise ValueError(f'src={src}')
+    return kind, param, special
+
+
+def eval_src(src: str) -> str:
+    parse_src(src)
+    return src
+
+
+def inv_str(
+        ori: str = 'free',
+        snr: float = 3,
+        method: str = 'dSPM',
+        depth: float = 0.8,
+        pick_normal: bool = False,
+) -> str:
+    if isinstance(ori, str):
+        if ori not in ('free', 'fixed', 'vec'):
+            raise ValueError(f"{ori=}; needs to be 'free', 'fixed', 'vec', or float")
+    elif not 0 < ori < 1:
+        raise ValueError(f"{ori=}; must be in range (0, 1)")
+    else:
+        ori = f'loose{str(ori)[1:]}'
+    items = [ori]
+
+    if snr > 0:
+        items.append(f'{snr:g}')
+    elif snr < 0:
+        raise ValueError(f"{snr=}")
+
+    if method in INV_METHODS:
+        items.append(method)
+    else:
+        raise ValueError(f"{method=}")
+
+    if not 0 <= depth <= 1:
+        raise ValueError(f"{depth=}; must be in range [0, 1]")
+    elif depth != 0.8:
+        items.append(f'{depth:g}')
+
+    if pick_normal:
+        if ori in ('vec', 'fixed'):
+            raise ValueError(f"{ori=} and pick_normal=True are incompatible")
+        items.append('pick_normal')
+
+    return '-'.join(items)
+
+
+def parse_inv(inv: str) -> tuple[str | float, float, str, float, bool]:
+    m = INV_RE.match(inv)
+    if m is None:
+        raise ValueError(f"{inv=}: invalid inverse specification")
+
+    ori, snr, method, depth, pick_normal = m.groups()
+    if ori.startswith('loose'):
+        ori = float(ori[5:])
+        if not 0 < ori < 1:
+            raise ValueError(f"{inv=}: loose parameter needs to be in range (0, 1)")
+    elif pick_normal and ori in ('vec', 'fixed'):
+        raise ValueError(f"{inv=}: {ori} incompatible with pick_normal")
+
+    if snr is None:
+        snr = 0
+    else:
+        snr = float(snr)
+        if snr < 0:
+            raise ValueError(f"{inv=}: {snr=}")
+
+    if method not in INV_METHODS:
+        raise ValueError(f"{inv=}: {method=}")
+
+    if depth is None:
+        depth = 0.8
+    else:
+        depth = float(depth)
+        if not 0 <= depth <= 1:
+            raise ValueError(f"{inv=}: {depth=}, needs to be in range [0, 1]")
+
+    return ori, snr, method, depth, bool(pick_normal)
+
+
+def eval_inv(inv: str) -> str:
+    return inv_str(*parse_inv(inv))
+
+
+def update_inv_cache(fields: dict[str, Any]) -> str:
+    if '*' in fields['inv']:
+        return fields['inv']
+    ori, _, _, depth, _ = INV_RE.match(fields['inv']).groups()
+    if depth:
+        return f'{ori}-{depth}'
+    return ori
+
+
+def inverse_operator_params(inv: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    if '*' in inv:
+        raise ValueError(f'{inv=} with wildcard')
+
+    ori, snr, method, depth, pick_normal = parse_inv(inv)
+    if ori == 'fixed':
+        make_kw = {'fixed': True}
+    elif ori == 'free' or ori == 'vec':
+        make_kw = {'loose': 1}
+    elif isinstance(ori, float):
+        make_kw = {'loose': ori}
+    else:
+        raise RuntimeError(f"{inv=} (orientation={ori!r})")
+
+    if depth is None:
+        make_kw['depth'] = 0.8
+    elif depth == 0:
+        make_kw['depth'] = None
+    else:
+        make_kw['depth'] = depth
+
+    apply_kw = {'method': method, 'lambda2': 1. / snr ** 2 if snr else 0}
+    if ori == 'vec':
+        apply_kw['pick_ori'] = 'vector'
+    elif pick_normal:
+        apply_kw['pick_ori'] = 'normal'
+
+    return method, make_kw, apply_kw
+
+
+class _NamedFileInput(Input):
+    def __init__(
+            self,
+            name: str,
+            *,
+            template: str,
+            kind: str,
+            digest: bool = False,
+            metadata: dict[str, Any] | None = None,
+    ):
+        self.name = name
+        self.template = template
+        self.kind = kind
+        self.digest = digest
+        self.metadata = metadata
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        p = ctx.pipeline
+        with p._temporary_state:
+            if ctx.state:
+                p.set(**ctx.state)
+            return file_fingerprint(p.root, p.get(self.template), self.kind, self.digest, self.metadata)
+
+
+class TransInput(_NamedFileInput):
+    def __init__(self):
+        super().__init__('trans-input', template='trans-file', kind='trans-file')
+
+
+class BemInput(_NamedFileInput):
+    def __init__(self):
+        super().__init__('bem-input', template='bem-file', kind='bem-file')
 
 
 class SrcDerivative(Derivative[mne.SourceSpaces]):
@@ -49,23 +226,23 @@ class SrcDerivative(Derivative[mne.SourceSpaces]):
             if ctx.state:
                 p.set(**ctx.state)
             dst = ctx.path('src-file', mkdir=True)
-            subject = p.get('mrisubject')
-            common_brain = p.get('common_brain')
-            src = p.get('src')
+            subject = ctx.get('mrisubject')
+            common_brain = ctx.get('common_brain')
+            src = ctx.get('src')
 
             if self._is_scaled(ctx):
                 ctx.load('src', mrisubject=common_brain)
                 p._log.info(f"Scaling {src} source space for {subject}...")
-                mne.scale_source_space(subject, f'{{subject}}-{src}-src.fif', subjects_dir=p.get('mri-sdir'), n_jobs=1)
+                mne.scale_source_space(subject, f'{{subject}}-{src}-src.fif', subjects_dir=ctx.get('mri-sdir'), n_jobs=1)
                 return mne.read_source_spaces(dst)
 
-            mri_sdir = p.get('mri-sdir')
-            kind, param, special = p._eval_src(src)
+            mri_sdir = ctx.get('mri-sdir')
+            kind, param, special = parse_src(src)
             grade = int(param)
             p._log.info(f"Generating {src} source space for {subject}...")
             if kind == 'vol':
                 if subject == 'fsaverage':
-                    bem = p.get('bem-file')
+                    bem = ctx.path('bem-file')
                 else:
                     raise NotImplementedError("Volume source space for subject other than fsaverage")
                 if special == 'brainstem':
@@ -86,7 +263,7 @@ class SrcDerivative(Derivative[mne.SourceSpaces]):
                 else:
                     raise RuntimeError(f'{src=}')
                 voi.extend('%s-%s' % fmt for fmt in product(('Left', 'Right'), voi_lat))
-                mri_dir = p.get('mri-dir', make=True)
+                mri_dir = ctx.path('mri-dir', make=True)
                 sss = mne.setup_volume_source_space(
                     subject,
                     pos=float(param),
@@ -183,8 +360,7 @@ class FwdDerivative(Derivative[mne.Forward]):
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         return (
             Dependency(
-                'raw-input-meeg',
-                state=lambda c: {'raw': 'raw'},
+                raw_meeg_input_name('raw'),
                 options=lambda c: {'add_bads': False},
             ),
             Dependency('trans-input'),
@@ -204,12 +380,12 @@ class FwdDerivative(Derivative[mne.Forward]):
         with p._temporary_state:
             if ctx.state:
                 p.set(**ctx.state)
-            raw = p.load_raw(add_bads=False)
+            raw = load_raw_dependency(ctx, ctx.get('raw'), add_bads=False)
             src = ctx.load('src')
-            dst = p.get('fwd-file')
+            dst = ctx.path('fwd-file')
             p._log.debug(f"make_fwd {basename(dst)}...")
-            if p.get('mrisubject') == 'fsaverage':
-                bemsol = join(p.get('mri-dir'), 'bem', 'fsaverage-5120-5120-5120-bem-sol.fif')
+            if ctx.get('mrisubject') == 'fsaverage':
+                bemsol = join(ctx.get('mri-dir'), 'bem', 'fsaverage-5120-5120-5120-bem-sol.fif')
             else:
                 bem = p._load_bem()
                 bemsol = mne.make_bem_solution(bem)
@@ -219,7 +395,7 @@ class FwdDerivative(Derivative[mne.Forward]):
                 raise RuntimeError("Unclear how to set ignor_ref for legacy file without kit_system_id")
             fwd = mne.make_forward_solution(
                 raw.info,
-                p.get('trans-file'),
+                ctx.path('trans-file'),
                 src,
                 bemsol,
                 ignore_ref=is_kit,
@@ -258,7 +434,7 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
     cache_policy = CachePolicy.OPTIONAL
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
-        return (Dependency('fwd'), Dependency('cov'))
+        return (Dependency('fwd'), Dependency(cov_node_name(ctx.get('cov'))))
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
         return {
@@ -271,25 +447,21 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
         }
 
     def build(self, ctx: DerivativeContext) -> mne.minimum_norm.InverseOperator:
-        p = ctx.pipeline
-        with p._temporary_state:
-            if ctx.state:
-                p.set(**ctx.state)
-            src = p.get('src')
-            inv = p.get('inv')
-            if src[:3] == 'vol' and not (inv.startswith('vec') or inv.startswith('free')):
-                raise ValueError(f'{inv=} with {src=}: volume source space requires free or vector inverse')
-            fiff = ctx.option('fiff')
-            if fiff is None:
-                fiff = p.load_raw()
-            _, make_kw, _ = p._inv_params()
-            return make_inverse_operator(
-                fiff.info,
-                ctx.load('fwd'),
-                ctx.load('cov'),
-                use_cps=True,
-                **make_kw,
-            )
+        src = ctx.get('src')
+        inv = ctx.get('inv')
+        if src[:3] == 'vol' and not (inv.startswith('vec') or inv.startswith('free')):
+            raise ValueError(f'{inv=} with {src=}: volume source space requires free or vector inverse')
+        fiff = ctx.option('fiff')
+        if fiff is None:
+            fiff = load_raw_dependency(ctx, ctx.get('raw'))
+        _, make_kw, _ = inverse_operator_params(inv)
+        return make_inverse_operator(
+            fiff.info,
+            ctx.load('fwd'),
+            ctx.load('cov'),
+            use_cps=True,
+            **make_kw,
+        )
 
     def load(
             self,

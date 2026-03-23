@@ -40,12 +40,10 @@ from .._types import PathArg
 from .._utils import ask, intervals, subp, keydefaultdict, log_level, ScreenHandler
 from .._utils.mne_utils import is_fake_mri
 from .._utils.notebooks import tqdm
-from .covariance import CovDerivative, EpochCovariance, RawCovariance
+from .covariance import CovDerivative, EpochCovariance, RawCovariance, cov_node_name
 from .derivative_cache import (
     DerivativeContext, DerivativeRegistry,
-    Input,
     ProtectedArtifactError,
-    file_fingerprint,
 )
 from .definitions import FieldCode, sequence_arg
 from .epochs import ContinuousEpoch, PrimaryEpoch, SecondaryEpoch, SuperEpoch, EpochBase, EpochCollection, assemble_epochs, decim_param
@@ -55,8 +53,8 @@ from .experiment import FileTree
 from .groups import assemble_groups
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, SeededParc, IndividualSeededParc, LabelParc, VolumeParc, Parcellation, assemble_parcs
 from .preprocessing import (
-    assemble_pipeline, RawBadChannelsInput, RawMEEGInput, RawPipe, RawSource,
-    RawICA, RawApplyICA, RawFilter, load_raw_pipe,
+    assemble_pipeline, RawPipe, RawSource, RawICA, RawApplyICA, RawFilter,
+    load_raw_pipe,
 )
 from .reports import (
     CoregReportDerivative, EEGReportDerivative, EEGSensorsReportDerivative,
@@ -64,8 +62,12 @@ from .reports import (
     report_methods_brief, report_parc_image, report_subject_info,
     report_test_info,
 )
-from .results import MovieDerivative, TestResultDerivative
-from .source import FwdDerivative, InvDerivative, SourceMorphDerivative, SrcDerivative
+from .results import MovieDerivative, RejectionInput, TestResultDerivative
+from .source import (
+    BemInput, FwdDerivative, InvDerivative, SourceMorphDerivative,
+    SrcDerivative, TransInput, eval_inv, eval_src, inv_str,
+    inverse_operator_params, parse_inv, update_inv_cache,
+)
 from .test_def import (
     Test,
     ROITestResult, ROI2StageResult, TestDims, TwoStageTest,
@@ -90,61 +92,6 @@ LOG_FILE_OLD = join('{root}', '.eelbrain.log')
 
 # Allowable parameters
 COV_PARAMS = {'epoch', 'method', 'reg', 'keep_sample_mean', 'reg_eval_win_pad'}
-INV_METHODS = ('MNE', 'dSPM', 'sLORETA', 'eLORETA', 'champ')
-SRC_RE = re.compile(r'^(ico|vol)-(\d+)(?:-(cortex|brainstem))?$')
-inv_re = re.compile(r"^(free|fixed|loose\.\d+|vec)"  # orientation constraint
-                    r"(?:-(\d*\.?\d+))?"  # SNR
-                    rf"-({'|'.join(INV_METHODS)})"  # method
-                    r"(?:-((?:0\.)?\d+))?"  # depth weighting
-                    r"(?:-(pick_normal))?"
-                    r"$")  # pick normal
-
-
-class NamedFileInput(Input):
-    def __init__(
-            self,
-            name: str,
-            *,
-            template: str,
-            kind: str,
-            digest: bool = False,
-            metadata: dict[str, Any] | None = None,
-    ):
-        self.name = name
-        self.template = template
-        self.kind = kind
-        self.digest = digest
-        self.metadata = metadata
-
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        p = ctx.pipeline
-        with p._temporary_state:
-            if ctx.state:
-                p.set(**ctx.state)
-            return file_fingerprint(p.root, p.get(self.template), self.kind, self.digest, self.metadata)
-
-
-class RejectionInput(Input):
-    name = 'rej-input'
-
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        p = ctx.pipeline
-        with p._temporary_state:
-            if ctx.state:
-                p.set(**ctx.state)
-            rej = p._artifact_rejection[p.get('rej')]
-            if rej['kind'] is None:
-                return {'kind': 'none'}
-            epoch = p._epochs[p.get('epoch')]
-            return {
-                'rej': p.get('rej'),
-                'files': [
-                    file_fingerprint(p.root, p.get('rej-file', epoch=e), 'rej-file')
-                    for e in epoch.rej_file_epochs
-                ],
-            }
-
-
 # Argument types
 BaselineArg = bool | tuple[float | None, float | None]
 DataArg = str | TestDims
@@ -796,10 +743,11 @@ class Pipeline(FileTree):
         self._register_derivatives()
 
     def _register_inputs(self):
-        self._derivatives.register(RawMEEGInput())
-        self._derivatives.register(RawBadChannelsInput())
-        self._derivatives.register(NamedFileInput('trans-input', template='trans-file', kind='trans-file'))
-        self._derivatives.register(NamedFileInput('bem-input', template='bem-file', kind='bem-file'))
+        for pipe in self._raw.values():
+            for node in pipe.input_nodes():
+                self._derivatives.register(node)
+        self._derivatives.register(TransInput())
+        self._derivatives.register(BemInput())
         self._derivatives.register(RejectionInput())
 
     def _register_derivatives(self):
@@ -817,7 +765,8 @@ class Pipeline(FileTree):
         self._derivatives.register(AnnotDerivative())
         self._derivatives.register(EventsDerivative())
         self._derivatives.register(EvokedDerivative())
-        self._derivatives.register(CovDerivative())
+        for cov_name, cov in self._covs.items():
+            self._derivatives.register(CovDerivative(cov_name, cov))
         self._derivatives.register(SrcDerivative())
         self._derivatives.register(SourceMorphDerivative())
         self._derivatives.register(FwdDerivative())
@@ -1445,7 +1394,8 @@ class Pipeline(FileTree):
         ...
             State parameters.
         """
-        return self._load_derivative('cov', state=kwargs)
+        cov_name = self.get('cov', **kwargs)
+        return self._load_derivative(cov_node_name(cov_name), state={**kwargs, 'cov': cov_name})
 
     def load_edf(self, **kwargs):
         """Load the edf file ("edf-file" template)
@@ -3736,7 +3686,7 @@ class Pipeline(FileTree):
 
     def make_cov(self):
         "Make a noise covariance (cov) file"
-        self._load_derivative('cov')
+        self._load_derivative(cov_node_name(self.get('cov')))
         return self.get('cov-file')
 
     def _make_evoked(self, samplingrate, decim, data_raw, vardef):
@@ -5414,116 +5364,23 @@ class Pipeline(FileTree):
             pick_normal: bool = False,
     ):
         "Construct inv string from settings; see :meth:`.set_inv`"
-        if isinstance(ori, str):
-            if ori not in ('free', 'fixed', 'vec'):
-                raise ValueError(f"{ori=}; needs to be 'free', 'fixed', 'vec', or float")
-        elif not 0 < ori < 1:
-            raise ValueError(f"{ori=}; must be in range (0, 1)")
-        else:
-            ori = f'loose{str(ori)[1:]}'
-        items = [ori]
-
-        if snr > 0:
-            items.append(f'{snr:g}')
-        elif snr < 0:
-            raise ValueError(f"{snr=}")
-
-        if method in INV_METHODS:
-            items.append(method)
-        else:
-            raise ValueError(f"{method=}")
-
-        if not 0 <= depth <= 1:
-            raise ValueError(f"{depth=}; must be in range [0, 1]")
-        elif depth != 0.8:
-            items.append(f'{depth:g}')
-
-        if pick_normal:
-            if ori in ('vec', 'fixed'):
-                raise ValueError(f"{ori=} and pick_normal=True are incompatible")
-            items.append('pick_normal')
-
-        return '-'.join(items)
+        return inv_str(ori, snr, method, depth, pick_normal)
 
     @staticmethod
-    def _parse_inv(inv: str) -> (str, float, str, float, bool):
+    def _parse_inv(inv: str) -> tuple[str | float, float, str, float, bool]:
         "(ori, snr, method, depth, pick_normal)"
-        m = inv_re.match(inv)
-        if m is None:
-            raise ValueError(f"{inv=}: invalid inverse specification")
-
-        ori, snr, method, depth, pick_normal = m.groups()
-        if ori.startswith('loose'):
-            ori = float(ori[5:])
-            if not 0 < ori < 1:
-                raise ValueError(f"{inv=}: loose parameter needs to be in range (0, 1)")
-        elif pick_normal and ori in ('vec', 'fixed'):
-            raise ValueError(f"{inv=}: {ori} incompatible with pick_normal")
-
-        if snr is None:
-            snr = 0
-        else:
-            snr = float(snr)
-            if snr < 0:
-                raise ValueError(f"{inv=}: {snr=}")
-
-        if method not in INV_METHODS:
-            raise ValueError(f"{inv=}: {method=}")
-
-        if depth is None:
-            depth = 0.8
-        else:
-            depth = float(depth)
-            if not 0 <= depth <= 1:
-                raise ValueError(f"{inv=}: {depth=}, needs to be in range [0, 1]")
-
-        return ori, snr, method, depth, bool(pick_normal)
+        return parse_inv(inv)
 
     @classmethod
     def _eval_inv(cls, inv):
-        return cls.inv_str(*cls._parse_inv(inv))
+        return eval_inv(inv)
 
     @staticmethod
     def _update_inv_cache(fields):
-        if '*' in fields['inv']:
-            return fields['inv']
-        m = inv_re.match(fields['inv'])
-        ori, snr, method, depth, pick_normal = m.groups()
-        if depth:
-            return f'{ori}-{depth}'
-        else:
-            return ori
+        return update_inv_cache(fields)
 
     def _inv_params(self):
-        inv = self.get('inv')
-        if '*' in inv:
-            raise ValueError(f'{inv=} with wildcard')
-
-        ori, snr, method, depth, pick_normal = self._parse_inv(inv)
-
-        if ori == 'fixed':
-            make_kw = {'fixed': True}
-        elif ori == 'free' or ori == 'vec':
-            make_kw = {'loose': 1}
-        elif isinstance(ori, float):
-            make_kw = {'loose': ori}
-        else:
-            raise RuntimeError(f"{inv=} (orientation={ori!r})")
-
-        if depth is None:
-            make_kw['depth'] = 0.8
-        elif depth == 0:
-            make_kw['depth'] = None
-        else:
-            make_kw['depth'] = depth
-
-        apply_kw = {'method': method, 'lambda2': 1. / snr ** 2 if snr else 0}
-        if ori == 'vec':
-            apply_kw['pick_ori'] = 'vector'
-        elif pick_normal:
-            apply_kw['pick_ori'] = 'normal'
-
-        return method, make_kw, apply_kw
+        return inverse_operator_params(self.get('inv'))
 
     def _eval_model(self, model):
         if model == '':
@@ -5550,13 +5407,7 @@ class Pipeline(FileTree):
         return '%'.join(model)
 
     def _eval_src(self, src):
-        m = SRC_RE.match(src)
-        if not m:
-            raise ValueError(f'src={src}')
-        kind, param, special = m.groups()
-        if special and kind != 'vol':
-            raise ValueError(f'src={src}')
-        return src
+        return eval_src(src)
 
     def _update_mrisubject(self, fields):
         subject = fields['subject']

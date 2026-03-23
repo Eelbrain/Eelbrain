@@ -17,6 +17,7 @@ from .._data_obj import align1
 from .._utils.mne_utils import is_fake_mri
 from .derivative_cache import Artifact, Derivative, DerivativeContext, file_fingerprint
 from .parc import IndividualSeededParc
+from .preprocessing import raw_meeg_input_name
 from .results import ResultOutputDerivative
 from .test_def import TwoStageTest
 
@@ -309,7 +310,7 @@ class CoregReportDerivative(Derivative[str]):
             subject_dependencies = {
                 'state': {key: state[key] for key in ('subject', 'session', 'task', 'acquisition', 'run', 'split') if state[key] is not None},
                 'mrisubject': state['mrisubject'],
-                'raw': ctx.registry.resolve('raw-input-meeg', state={**state, 'raw': 'raw'}, options={'add_bads': False, 'noise': False}).describe_dependency(),
+                'raw': ctx.registry.resolve(raw_meeg_input_name('raw'), state={**state, 'raw': 'raw'}, options={'add_bads': False, 'noise': False}).describe_dependency(),
                 'trans': ctx.registry.resolve('trans-input', state=state).describe_dependency(),
                 'mri': mri,
             }

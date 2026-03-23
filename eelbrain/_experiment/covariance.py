@@ -8,7 +8,11 @@ import mne
 import numpy
 
 from .derivative_cache import Artifact, Dependency, Derivative, DerivativeContext
-from .preprocessing import raw_data_dependency
+from .preprocessing import load_raw_dependency, raw_data_dependency
+
+
+def cov_node_name(cov: str) -> str:
+    return f'cov:{cov}'
 
 
 @dataclass
@@ -62,25 +66,31 @@ class EpochCovariance:
 
 
 class CovDerivative(Derivative[mne.Covariance]):
-    name = 'cov'
     path_template = 'cov-file'
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw', 'epoch', 'cov', 'rej')
 
+    def __init__(
+            self,
+            cov_name: str,
+            cov: RawCovariance | EpochCovariance,
+    ):
+        self.cov_name = cov_name
+        self.cov = cov
+        self.name = cov_node_name(cov_name)
+        self.cov.key = cov_name
+
     def _events_state(self, ctx: DerivativeContext) -> dict[str, Any]:
-        cov = ctx.pipeline._covs[ctx.get('cov')]
-        if isinstance(cov, EpochCovariance):
+        if isinstance(self.cov, EpochCovariance):
             return {}
         return {'raw': ctx.get('raw')}
 
     def _rej_state(self, ctx: DerivativeContext) -> dict[str, Any]:
-        cov = ctx.pipeline._covs[ctx.get('cov')]
-        if isinstance(cov, EpochCovariance):
-            return {'epoch': cov.epoch}
+        if isinstance(self.cov, EpochCovariance):
+            return {'epoch': self.cov.epoch}
         return {}
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
-        cov = ctx.pipeline._covs[ctx.get('cov')]
-        if isinstance(cov, EpochCovariance):
+        if isinstance(self.cov, EpochCovariance):
             return (
                 Dependency('events', state=self._events_state),
                 raw_data_dependency(ctx),
@@ -89,31 +99,25 @@ class CovDerivative(Derivative[mne.Covariance]):
         return (raw_data_dependency(ctx, noise=True),)
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        p = ctx.pipeline
-        with p._temporary_state:
-            if ctx.state:
-                p.set(**ctx.state)
-            cov = p._covs[p.get('cov')]
-            return {
-                'raw': p.get('raw'),
-                'cov': vars(cov).copy(),
-                'rej': p.get('rej'),
-                'epoch': p.get('epoch'),
-            }
+        return {
+            'raw': ctx.get('raw'),
+            'cov': vars(self.cov).copy(),
+            'rej': ctx.get('rej'),
+            'epoch': ctx.get('epoch'),
+        }
 
     def build(self, ctx: DerivativeContext) -> mne.Covariance:
-        p = ctx.pipeline
-        with p._temporary_state:
-            if ctx.state:
-                p.set(**ctx.state)
-            p._log.debug("Make cov-file %s", p.get('cov-file'))
-            cov = p._covs[p.get('cov')]
-            if isinstance(cov, EpochCovariance):
-                log_path = p.get('cov-info-file', mkdir=True)
-                ds = p.load_epochs(None, True, False, decim=1, epoch=cov.epoch)
-                return cov.make(ds['epochs'], log_path)
-            raw = p.load_raw(noise=True)
-            return cov.make(raw)
+        if isinstance(self.cov, EpochCovariance):
+            p = ctx.pipeline
+            with p._temporary_state:
+                if ctx.state:
+                    p.set(**ctx.state)
+                p._log.debug("Make cov-file %s", ctx.path('cov-file'))
+                log_path = ctx.path('cov-info-file', mkdir=True)
+                ds = p.load_epochs(None, True, False, decim=1, epoch=self.cov.epoch)
+                return self.cov.make(ds['epochs'], log_path)
+        raw = load_raw_dependency(ctx, ctx.get('raw'), noise=True)
+        return self.cov.make(raw)
 
     def load(
             self,
