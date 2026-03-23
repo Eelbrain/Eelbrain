@@ -8,7 +8,7 @@
 ## Verification
 
 - Prefer targeted verification for the files and behavior you changed.
-- For hooks, use `pre-commit run --files <changed files>` rather than `--all-files`.
+- To verify code style after making changes, run `pre-commit run --files <changed files>`.
 - Run the smallest relevant pytest target first.
 - If you touch shared non-GUI behavior, finish with `make test-no-gui`.
 - If you touch GUI code, use the `pythonw`-based targets in `Makefile`.
