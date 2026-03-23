@@ -42,7 +42,7 @@ from .._utils.mne_utils import is_fake_mri
 from .._utils.notebooks import tqdm
 from .covariance import CovDerivative, EpochCovariance, RawCovariance
 from .derivative_cache import (
-    Dependency, DerivativeContext, DerivativeRegistry,
+    DerivativeContext, DerivativeRegistry,
     Input,
     ProtectedArtifactError,
     file_fingerprint,
@@ -55,7 +55,8 @@ from .experiment import FileTree
 from .groups import assemble_groups
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, SeededParc, IndividualSeededParc, LabelParc, VolumeParc, Parcellation, assemble_parcs
 from .preprocessing import (
-    assemble_pipeline, RawPipe, RawSource, RawICA, RawApplyICA, RawFilter, load_raw_pipe,
+    assemble_pipeline, RawBadChannelsInput, RawMEEGInput, RawPipe, RawSource,
+    RawICA, RawApplyICA, RawFilter, load_raw_pipe,
 )
 from .reports import (
     CoregReportDerivative, EEGReportDerivative, EEGSensorsReportDerivative,
@@ -97,82 +98,6 @@ inv_re = re.compile(r"^(free|fixed|loose\.\d+|vec)"  # orientation constraint
                     r"(?:-((?:0\.)?\d+))?"  # depth weighting
                     r"(?:-(pick_normal))?"
                     r"$")  # pick normal
-
-
-class RawBadChannelsInput(Input):
-    name = 'raw-input-bads'
-
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        p = ctx.pipeline
-        with p._temporary_state:
-            if ctx.state:
-                p.set(**ctx.state)
-            pipe = p._raw[p.get('raw')]
-            noise = ctx.option('noise', False)
-            path = p._bids_path
-            return {
-                'raw': p.get('raw'),
-                'noise': noise,
-                'pipeline': pipe._as_dict(),
-                'bad_channels': pipe.load_bad_channels(path, noise=noise),
-            }
-
-    def load(self, ctx: DerivativeContext) -> list[str]:
-        p = ctx.pipeline
-        with p._temporary_state:
-            if ctx.state:
-                p.set(**ctx.state)
-            pipe = p._raw[p.get('raw')]
-            return pipe.load_bad_channels(p._bids_path, noise=ctx.option('noise', False))
-
-
-class RawMEEGInput(Input):
-    name = 'raw-input-meeg'
-
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
-        add_bads = ctx.option('add_bads', True)
-        if add_bads is True:
-            return (
-                Dependency(
-                    'raw-input-bads',
-                    options=lambda c: {'noise': c.option('noise', False)},
-                ),
-            )
-        return ()
-
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        p = ctx.pipeline
-        with p._temporary_state:
-            if ctx.state:
-                p.set(**ctx.state)
-            pipe = p._raw[p.get('raw')]
-            noise = ctx.option('noise', False)
-            path = p._bids_path if not noise else p._bids_path.find_empty_room()
-            return {
-                'source': file_fingerprint(
-                    p.root,
-                    path.fpath,
-                    'raw-source',
-                    metadata={
-                        'raw': p.get('raw'),
-                        'noise': noise,
-                        'pipeline': pipe._as_dict(),
-                    },
-                ),
-            }
-
-    def load(self, ctx: DerivativeContext) -> mne.io.BaseRaw:
-        p = ctx.pipeline
-        with p._temporary_state:
-            if ctx.state:
-                p.set(**ctx.state)
-            pipe = p._raw[p.get('raw')]
-            return pipe.load(
-                p._bids_path,
-                add_bads=ctx.option('add_bads', True),
-                preload=ctx.option('preload', False),
-                noise=ctx.option('noise', False),
-            )
 
 
 class NamedFileInput(Input):

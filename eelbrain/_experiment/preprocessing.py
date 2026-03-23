@@ -30,7 +30,10 @@ from .._io.txt import read_adjacency
 from .._ndvar import filter_data
 from .._text import enumeration
 from .._utils import deprecate_kwarg, user_activity
-from .derivative_cache import Artifact, CachePolicy, Dependency, DependencyNode, Derivative, DerivativeContext
+from .derivative_cache import (
+    Artifact, CachePolicy, Dependency, DependencyNode, Derivative,
+    DerivativeContext, Input, file_fingerprint,
+)
 from .definitions import sequence_arg, typed_arg
 from .exceptions import FileMissingError
 
@@ -179,6 +182,84 @@ def ica_cache_node_name(raw: str) -> str:
     return f'ica-cache:{raw}'
 
 
+def _ctx_raw_pipe(ctx: DerivativeContext) -> RawPipe:
+    return ctx.pipeline._raw[ctx.get('raw')]
+
+
+class RawBadChannelsInput(Input[list[str]]):
+    name = 'raw-input-bads'
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        p = ctx.pipeline
+        pipe = _ctx_raw_pipe(ctx)
+        noise = ctx.option('noise', False)
+        with p._temporary_state:
+            if ctx.state:
+                p.set(**ctx.state)
+            return {
+                'raw': p.get('raw'),
+                'noise': noise,
+                'pipeline': pipe._as_dict(),
+                'bad_channels': pipe.load_bad_channels(p._bids_path, noise=noise),
+            }
+
+    def load(self, ctx: DerivativeContext) -> list[str]:
+        p = ctx.pipeline
+        pipe = _ctx_raw_pipe(ctx)
+        with p._temporary_state:
+            if ctx.state:
+                p.set(**ctx.state)
+            return pipe.load_bad_channels(p._bids_path, noise=ctx.option('noise', False))
+
+
+class RawMEEGInput(Input[mne.io.BaseRaw]):
+    name = 'raw-input-meeg'
+
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        if ctx.option('add_bads', True) is True:
+            return (
+                Dependency(
+                    'raw-input-bads',
+                    options=lambda c: {'noise': c.option('noise', False)},
+                ),
+            )
+        return ()
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        p = ctx.pipeline
+        pipe = _ctx_raw_pipe(ctx)
+        noise = ctx.option('noise', False)
+        with p._temporary_state:
+            if ctx.state:
+                p.set(**ctx.state)
+            path = p._bids_path if not noise else p._bids_path.find_empty_room()
+            return {
+                'source': file_fingerprint(
+                    p.root,
+                    path.fpath,
+                    'raw-source',
+                    metadata={
+                        'raw': p.get('raw'),
+                        'noise': noise,
+                        'pipeline': pipe._as_dict(),
+                    },
+                ),
+            }
+
+    def load(self, ctx: DerivativeContext) -> mne.io.BaseRaw:
+        p = ctx.pipeline
+        pipe = _ctx_raw_pipe(ctx)
+        with p._temporary_state:
+            if ctx.state:
+                p.set(**ctx.state)
+            return pipe.load(
+                p._bids_path,
+                add_bads=ctx.option('add_bads', True),
+                preload=ctx.option('preload', False),
+                noise=ctx.option('noise', False),
+            )
+
+
 def load_raw_dependency(
         ctx: DerivativeContext,
         raw: str,
@@ -240,38 +321,32 @@ class ProcessedRawDerivative(Derivative[mne.io.BaseRaw]):
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw')
     cache_policy = CachePolicy.OPTIONAL
 
-    def __init__(self, raw_name: str):
-        self.raw_name = raw_name
-        self.name = raw_cache_node_name(raw_name)
-
-    def _pipe(self, ctx: DerivativeContext) -> CachedRawPipe:
-        pipe = ctx.pipeline._raw[self.raw_name]
-        if not isinstance(pipe, CachedRawPipe):
-            raise RuntimeError(f"ProcessedRawDerivative requires a cached raw pipe, got {pipe.__class__.__name__}")
-        return pipe
+    def __init__(self, pipe: CachedRawPipe):
+        self.pipe = pipe
+        self.name = raw_cache_node_name(pipe.name)
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
-        return self._pipe(ctx).cache_dependencies(ctx)
+        return self.pipe.cache_dependencies(ctx)
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return self._pipe(ctx).cache_fingerprint(ctx)
+        return self.pipe.cache_fingerprint(ctx)
 
     def path(
             self,
             ctx: DerivativeContext,
             mkdir: bool = False,
     ) -> str:
-        return self._pipe(ctx).cache_artifact_path(ctx, mkdir)
+        return self.pipe.cache_artifact_path(ctx, mkdir)
 
     def build(self, ctx: DerivativeContext) -> mne.io.BaseRaw:
-        return self._pipe(ctx).build_cache(ctx)
+        return self.pipe.build_cache(ctx)
 
     def load(
             self,
             ctx: DerivativeContext,
             artifact: Artifact,
     ) -> mne.io.BaseRaw:
-        return self._pipe(ctx).load_cache(ctx, artifact)
+        return self.pipe.load_cache(ctx, artifact)
 
     def save(
             self,
@@ -279,33 +354,27 @@ class ProcessedRawDerivative(Derivative[mne.io.BaseRaw]):
             artifact: Artifact,
             value: mne.io.BaseRaw,
     ) -> None:
-        self._pipe(ctx).save_cache(ctx, artifact, value)
+        self.pipe.save_cache(ctx, artifact, value)
 
 
 class ICADerivative(Derivative[mne.preprocessing.ICA]):
     path_template = 'ica-file'
     key_fields = ('subject', 'session', 'acquisition', 'run', 'split', 'raw')
 
-    def __init__(self, raw_name: str):
-        self.raw_name = raw_name
-        self.name = ica_cache_node_name(raw_name)
-
-    def _pipe(self, ctx: DerivativeContext) -> RawICA:
-        pipe = ctx.pipeline._raw[self.raw_name]
-        if not isinstance(pipe, RawICA):
-            raise RuntimeError(f"ICADerivative requires a RawICA pipe, got {pipe.__class__.__name__}")
-        return pipe
+    def __init__(self, pipe: RawICA):
+        self.pipe = pipe
+        self.name = ica_cache_node_name(pipe.name)
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
-        return self._pipe(ctx).ica_dependencies(ctx)
+        return self.pipe.ica_dependencies(ctx)
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        fingerprint = self._pipe(ctx).ica_fingerprint(ctx)
+        fingerprint = self.pipe.ica_fingerprint(ctx)
         fingerprint.pop('exclude', None)
         return fingerprint
 
     def dependency_fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return self._pipe(ctx).ica_fingerprint(ctx)
+        return self.pipe.ica_fingerprint(ctx)
 
     def can_reindex_protected_artifact(
             self,
@@ -329,17 +398,17 @@ class ICADerivative(Derivative[mne.preprocessing.ICA]):
             ctx: DerivativeContext,
             mkdir: bool = False,
     ) -> str:
-        return self._pipe(ctx).ica_artifact_path(ctx, mkdir)
+        return self.pipe.ica_artifact_path(ctx, mkdir)
 
     def build(self, ctx: DerivativeContext) -> mne.preprocessing.ICA:
-        return self._pipe(ctx).build_ica(ctx)
+        return self.pipe.build_ica(ctx)
 
     def load(
             self,
             ctx: DerivativeContext,
             artifact: Artifact,
     ) -> mne.preprocessing.ICA:
-        return self._pipe(ctx).load_ica_cache(ctx, artifact)
+        return self.pipe.load_ica_cache(ctx, artifact)
 
     def save(
             self,
@@ -347,7 +416,7 @@ class ICADerivative(Derivative[mne.preprocessing.ICA]):
             artifact: Artifact,
             value: mne.preprocessing.ICA,
     ) -> None:
-        self._pipe(ctx).save_ica_cache(ctx, artifact, value)
+        self.pipe.save_ica_cache(ctx, artifact, value)
 
 
 class RawSource(RawPipe):
@@ -630,7 +699,7 @@ class CachedRawPipe(RawPipe):
         return raw_cache_node_name(self.name)
 
     def cache_nodes(self) -> tuple[DependencyNode[Any], ...]:
-        return (ProcessedRawDerivative(self.name),)
+        return (ProcessedRawDerivative(self),)
 
     def cache_dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         return (
@@ -1052,7 +1121,7 @@ class RawICA(CachedRawPipe):
         return ica_cache_node_name(self.name)
 
     def cache_nodes(self) -> tuple[DependencyNode[Any], ...]:
-        return (*CachedRawPipe.cache_nodes(self), ICADerivative(self.name))
+        return (*CachedRawPipe.cache_nodes(self), ICADerivative(self))
 
     def cache_dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         return (
