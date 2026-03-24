@@ -58,11 +58,11 @@ from .preprocessing import (
 )
 from .reports import (
     CoregReportDerivative, EEGReportDerivative, EEGSensorsReportDerivative,
-    LMReportDerivative, ROIReportDerivative, SourceReportDerivative,
+    LMReportDerivative, ROIReportDerivative, ReportSupport, SourceReportDerivative,
     report_methods_brief, report_parc_image, report_subject_info,
     report_test_info,
 )
-from .results import MovieDerivative, RejectionInput, TestResultDerivative
+from .results import MovieDerivative, RejectionInput, ResultSupport, TestResultDerivative
 from .source import (
     BemInput, FwdDerivative, InvDerivative, SourceMorphDerivative,
     SrcDerivative, TransInput, eval_inv, eval_src, inv_str,
@@ -739,6 +739,8 @@ class Pipeline(FileTree):
 
     def _init_derivative_registry(self):
         self._derivatives = DerivativeRegistry(self)
+        self._result_support = ResultSupport(self, self._raw, self._tests, self._epochs, self._parcs)
+        self._report_support = ReportSupport(self, self._raw, self._tests, self._epochs, self._parcs)
         self._register_inputs()
         self._register_derivatives()
 
@@ -748,20 +750,20 @@ class Pipeline(FileTree):
                 self._derivatives.register(node)
         self._derivatives.register(TransInput())
         self._derivatives.register(BemInput())
-        self._derivatives.register(RejectionInput())
+        self._derivatives.register(RejectionInput(self.root, self._artifact_rejection, self._epochs))
 
     def _register_derivatives(self):
         for pipe in self._raw.values():
             for node in pipe.cache_nodes():
                 self._derivatives.register(node)
-        self._derivatives.register(TestResultDerivative())
-        self._derivatives.register(SourceReportDerivative())
-        self._derivatives.register(ROIReportDerivative())
-        self._derivatives.register(EEGReportDerivative())
-        self._derivatives.register(EEGSensorsReportDerivative())
-        self._derivatives.register(LMReportDerivative())
-        self._derivatives.register(CoregReportDerivative())
-        self._derivatives.register(MovieDerivative())
+        self._derivatives.register(TestResultDerivative(self._result_support))
+        self._derivatives.register(SourceReportDerivative(self._report_support))
+        self._derivatives.register(ROIReportDerivative(self._report_support))
+        self._derivatives.register(EEGReportDerivative(self._report_support))
+        self._derivatives.register(EEGSensorsReportDerivative(self._report_support))
+        self._derivatives.register(LMReportDerivative(self._report_support))
+        self._derivatives.register(CoregReportDerivative(self._report_support))
+        self._derivatives.register(MovieDerivative(self._result_support))
         self._derivatives.register(AnnotDerivative())
         self._derivatives.register(EventsDerivative())
         self._derivatives.register(EvokedDerivative())

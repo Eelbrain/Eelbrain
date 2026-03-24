@@ -1,9 +1,27 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-"""Pre-processing operations based on NDVars
+"""Raw preprocessing configuration and graph-node support.
 
-Path templating: passed from `Pipeline`
-Entity information: BIDSPath object as a parameter
+The raw preprocessing subsystem is organized around user-supplied
+configuration objects plus graph nodes built from them.
 
+:class:`RawPipe` is the configuration base class for the raw pipeline.
+:class:`RawPipe` subclasses implement a specific preprocessing step by
+overriding the :meth:`RawPipe._make` method,
+and expose user-configurable parameters during initialization.
+Users add thse :class:`RawPipe` subclass objects to :class:`Pipeline`.
+
+During :class:`Pipeline` initialization, the configured :class:`RawPipe`
+objects are normalized and bound into graph nodes. Those graph nodes
+use the bound :class:`RawPipe` objects to build and load concrete artifacts.
+The nodes manage artifact identity, dependency edges, and cache integration,
+while the :class:`RawPipe` objects supply preprocessing behavior and
+configuration.
+
+Caching, manifests, dependency traversal, protected-artifact handling, and
+cache policy belong to the lower cache and graph layers, not to
+:class:`RawPipe`. Extending the raw pipeline should work by adding
+:class:`RawPipe` subclasses and supplying them through :class:`Pipeline`,
+without editing the cache kernel.
 """
 from __future__ import annotations
 import warnings
@@ -275,28 +293,36 @@ class RawMEEGInput(Input[mne.io.BaseRaw]):
 
 def load_raw_dependency(
         ctx: DerivativeContext,
-        raw: str,
+        raw: str | None = None,
         *,
+        pipe: RawPipe | None = None,
         add_bads: AddBadsArg = True,
         preload: bool = False,
         noise: bool = False,
         state: dict[str, Any] | None = None,
 ) -> mne.io.BaseRaw:
-    return load_raw_pipe(ctx.pipeline, raw, state, add_bads=add_bads, preload=preload, noise=noise)
+    return load_raw_pipe(ctx.pipeline, raw, state, pipe=pipe, add_bads=add_bads, preload=preload, noise=noise)
 
 
 def load_raw_pipe(
         pipeline,
-        raw: str,
+        raw: str | None = None,
         state: dict[str, Any] | None = None,
         *,
+        pipe: RawPipe | None = None,
         add_bads: AddBadsArg = True,
         preload: bool = False,
         noise: bool = False,
 ) -> mne.io.BaseRaw:
+    if pipe is None:
+        if raw is None:
+            raise TypeError("load_raw_pipe() needs raw or pipe")
+        pipe = pipeline._raw[raw]
+    elif raw is None:
+        raw = pipe.name
+
     state_ = dict(state or ())
     state_['raw'] = raw
-    pipe = pipeline._raw[raw]
     node_name = pipe.load_derivative_name()
     if node_name is None:
         with pipeline._temporary_state:
@@ -315,12 +341,17 @@ def raw_data_dependency(
         ctx: DerivativeContext,
         *,
         raw: str | None = None,
+        pipe: RawPipe | None = None,
         label: str | None = None,
         noise: bool = False,
         add_bads: AddBadsArg = True,
 ) -> Dependency:
-    raw = ctx.get('raw') if raw is None else raw
-    pipe = ctx.pipeline._raw[raw]
+    if pipe is None:
+        raw = ctx.get('raw') if raw is None else raw
+        pipe = ctx.pipeline._raw[raw]
+    elif raw is None:
+        raw = pipe.name
+
     return Dependency(
         pipe.raw_dependency_name(),
         label=label,
@@ -724,6 +755,7 @@ class CachedRawPipe(RawPipe):
         return (
             raw_data_dependency(
                 ctx,
+                pipe=self.source,
                 raw=self.source.name,
                 noise=ctx.option('noise', False),
             ),
@@ -763,6 +795,7 @@ class CachedRawPipe(RawPipe):
         return load_raw_dependency(
             ctx,
             self.source.name,
+            pipe=self.source,
             add_bads=add_bads,
             preload=preload,
             noise=noise,
@@ -1100,6 +1133,7 @@ class RawICA(CachedRawPipe):
             }
 
     """
+
     # set on linking
     ica_path: str = None
     run: str | Sequence[str] = None
@@ -1185,6 +1219,7 @@ class RawICA(CachedRawPipe):
             deps.append(
                 raw_data_dependency(
                     ctx,
+                    pipe=self.source,
                     raw=source_state.pop('raw'),
                     label=f'{stem}:raw',
                     add_bads=False,
@@ -1198,7 +1233,7 @@ class RawICA(CachedRawPipe):
             )
             deps.append(
                 Dependency(
-                    raw_bad_channels_input_name(state['raw']),
+                    self.source.raw_bad_channels_input_name(),
                     label=f'{stem}:bads',
                     state=lambda c, state_=state: dict(state_),
                 )
@@ -1428,6 +1463,7 @@ class RawApplyICA(CachedRawPipe):
             }
 
     """
+
     ica_source = None  # set on linking
 
     def __init__(
