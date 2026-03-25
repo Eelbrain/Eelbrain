@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 from eelbrain._experiment.derivative_cache import (
-    Artifact,
     ArtifactManifest,
     CachePolicy,
     Dependency,
@@ -19,6 +18,9 @@ from eelbrain._experiment.derivative_cache import (
     file_fingerprint,
 )
 from eelbrain.testing import TempDir
+
+
+DEFAULT_STATE = {'subject': 's1', 'mode': 'default'}
 
 
 class _TemporaryState:
@@ -54,22 +56,22 @@ class FakePipeline:
             return state[key]
 
         if key == 'cache-dir':
-            path = self.root / 'cache'
+            path = self.root / 'derivatives' / 'eelbrain' / 'cache'
             if mkdir:
                 path.mkdir(parents=True, exist_ok=True)
             return str(path)
         if key == 'deriv-dir':
-            return str(self.root / 'derived')
+            return str(self.root / 'derivatives')
         if key == 'root':
             return str(self.root)
 
         subject = state['subject']
         if key == 'value-file':
-            path = self.root / 'cache' / subject / 'value.txt'
+            path = self.root / 'derivatives' / 'eelbrain' / 'cache' / subject / 'value.txt'
         elif key == 'summary-file':
-            path = self.root / 'cache' / subject / 'summary.txt'
+            path = self.root / 'derivatives' / 'eelbrain' / 'cache' / subject / 'summary.txt'
         elif key == 'ephemeral-file':
-            path = self.root / 'cache' / subject / 'ephemeral.txt'
+            path = self.root / 'derivatives' / 'eelbrain' / 'cache' / subject / 'ephemeral.txt'
         elif key == 'protected-file':
             path = self.root / 'derived' / subject / 'protected.txt'
         else:
@@ -90,12 +92,20 @@ class FakePipeline:
 class SourceInput(Input):
     name = 'source'
 
+    def __init__(self, root: str | Path):
+        self.root = Path(root)
+
+    def source_path(self, subject: str) -> Path:
+        path = self.root / 'inputs' / f'{subject}.txt'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, object]:
-        path = ctx.pipeline.source_path(ctx.get('subject'))
-        return file_fingerprint(ctx.pipeline.root, path, 'source-file', digest=True)
+        path = self.source_path(ctx.get('subject'))
+        return file_fingerprint(str(self.root), path, 'source-file', digest=True)
 
     def load(self, ctx: DerivativeContext) -> str:
-        value = ctx.pipeline.source_path(ctx.get('subject')).read_text()
+        value = self.source_path(ctx.get('subject')).read_text()
         if ctx.option('upper', False):
             return value.upper()
         return value
@@ -103,13 +113,19 @@ class SourceInput(Input):
 
 class ValueDerivative(Derivative[str]):
     name = 'value'
-    path_template = 'value-file'
     key_fields = ('subject',)
 
-    def __init__(self):
+    def __init__(self, root: str | Path):
+        self.root = Path(root)
         self.build_calls = 0
         self.load_calls = 0
         self.save_calls = 0
+
+    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> str:
+        path = self.root / 'derivatives' / 'eelbrain' / 'cache' / ctx.get('subject') / 'value.txt'
+        if mkdir:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        return str(path)
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         return (Dependency('source'),)
@@ -119,34 +135,39 @@ class ValueDerivative(Derivative[str]):
 
     def build(self, ctx: DerivativeContext) -> str:
         self.build_calls += 1
-        return ctx.pipeline.source_path(ctx.get('subject')).read_text()
+        return (self.root / 'inputs' / f"{ctx.get('subject')}.txt").read_text()
 
     def load(
             self,
             ctx: DerivativeContext,
-            artifact: Artifact,
-    ) -> str:
+            path: str) -> str:
         self.load_calls += 1
-        return Path(artifact.path).read_text()
+        return Path(path).read_text()
 
     def save(
             self,
             ctx: DerivativeContext,
-            artifact: Artifact,
+            path: str,
             value: str,
     ) -> None:
         self.save_calls += 1
-        Path(artifact.path).write_text(value)
+        Path(path).write_text(value)
 
 
 class SummaryDerivative(Derivative[str]):
     name = 'summary'
-    path_template = 'summary-file'
     key_fields = ('subject',)
 
-    def __init__(self):
+    def __init__(self, root: str | Path):
+        self.root = Path(root)
         self.build_calls = 0
         self.load_calls = 0
+
+    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> str:
+        path = self.root / 'derivatives' / 'eelbrain' / 'cache' / ctx.get('subject') / 'summary.txt'
+        if mkdir:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        return str(path)
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         return (Dependency('value'),)
@@ -161,28 +182,33 @@ class SummaryDerivative(Derivative[str]):
     def load(
             self,
             ctx: DerivativeContext,
-            artifact: Artifact,
-    ) -> str:
+            path: str) -> str:
         self.load_calls += 1
-        return Path(artifact.path).read_text()
+        return Path(path).read_text()
 
     def save(
             self,
             ctx: DerivativeContext,
-            artifact: Artifact,
+            path: str,
             value: str,
     ) -> None:
-        Path(artifact.path).write_text(value)
+        Path(path).write_text(value)
 
 
 class EphemeralDerivative(Derivative[str]):
     name = 'ephemeral'
-    path_template = 'ephemeral-file'
     key_fields = ('subject',)
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
 
-    def __init__(self):
+    def __init__(self, root: str | Path):
+        self.root = Path(root)
         self.build_calls = 0
+
+    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> str:
+        path = self.root / 'derivatives' / 'eelbrain' / 'cache' / ctx.get('subject') / 'ephemeral.txt'
+        if mkdir:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        return str(path)
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, object]:
         return {'subject': ctx.get('subject')}
@@ -194,23 +220,30 @@ class EphemeralDerivative(Derivative[str]):
     def load(
             self,
             ctx: DerivativeContext,
-            artifact: Artifact,
-    ) -> str:
-        return Path(artifact.path).read_text()
+            path: str) -> str:
+        return Path(path).read_text()
 
     def save(
             self,
             ctx: DerivativeContext,
-            artifact: Artifact,
+            path: str,
             value: str,
     ) -> None:
-        Path(artifact.path).write_text(value)
+        Path(path).write_text(value)
 
 
 class ProtectedDerivative(Derivative[str]):
     name = 'protected'
-    path_template = 'protected-file'
     key_fields = ('subject',)
+
+    def __init__(self, root: str | Path):
+        self.root = Path(root)
+
+    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> str:
+        path = self.root / 'derived' / ctx.get('subject') / 'protected.txt'
+        if mkdir:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        return str(path)
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         return (Dependency('source'),)
@@ -224,24 +257,23 @@ class ProtectedDerivative(Derivative[str]):
     def load(
             self,
             ctx: DerivativeContext,
-            artifact: Artifact,
-    ) -> str:
-        return Path(artifact.path).read_text()
+            path: str) -> str:
+        return Path(path).read_text()
 
     def save(
             self,
             ctx: DerivativeContext,
-            artifact: Artifact,
+            path: str,
             value: str,
     ) -> None:
-        Path(artifact.path).write_text(value)
+        Path(path).write_text(value)
 
 
 class ReindexableProtectedDerivative(ProtectedDerivative):
     name = 'reindexable-protected'
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, object]:
-        path = Path(ctx.path(self.path_template))
+        path = Path(self.path(ctx))
         text = path.read_text() if path.exists() else None
         return {
             'subject': ctx.get('subject'),
@@ -251,7 +283,7 @@ class ReindexableProtectedDerivative(ProtectedDerivative):
     def can_reindex_protected_artifact(
             self,
             ctx: DerivativeContext,
-            artifact: Artifact,
+            path: str,
             manifest: ArtifactManifest,
             cache: bool | None = None,
     ) -> bool:
@@ -267,13 +299,13 @@ def make_registry():
     pipeline = FakePipeline(root)
     pipeline.source_path('s1').write_text('alpha')
     pipeline.source_path('s2').write_text('beta')
-    registry = DerivativeRegistry(pipeline)
-    source = SourceInput()
-    value = ValueDerivative()
-    summary = SummaryDerivative()
-    ephemeral = EphemeralDerivative()
-    protected = ProtectedDerivative()
-    reindexable_protected = ReindexableProtectedDerivative()
+    registry = DerivativeRegistry(pipeline.root)
+    source = SourceInput(root)
+    value = ValueDerivative(root)
+    summary = SummaryDerivative(root)
+    ephemeral = EphemeralDerivative(root)
+    protected = ProtectedDerivative(root)
+    reindexable_protected = ReindexableProtectedDerivative(root)
     registry.register(source)
     registry.register(value)
     registry.register(summary)
@@ -303,8 +335,8 @@ def test_manifest_roundtrip_ignores_unknown_fields():
 def test_registry_load_caches_derivative_and_writes_manifest():
     pipeline, registry, _, value, _, _, _, _ = make_registry()
 
-    first = registry.load('value')
-    second = registry.load('value')
+    first = registry.load('value', state=DEFAULT_STATE)
+    second = registry.load('value', state=DEFAULT_STATE)
 
     assert first == second == 'alpha'
     assert value.build_calls == 1
@@ -325,13 +357,13 @@ def test_registry_load_caches_derivative_and_writes_manifest():
 def test_dependency_change_invalidates_downstream_derivatives():
     pipeline, registry, _, value, summary, _, _, _ = make_registry()
 
-    assert registry.load('summary') == 'summary:alpha'
+    assert registry.load('summary', state=DEFAULT_STATE) == 'summary:alpha'
     assert value.build_calls == 1
     assert summary.build_calls == 1
 
     pipeline.source_path().write_text('changed')
 
-    assert registry.load('summary') == 'summary:changed'
+    assert registry.load('summary', state=DEFAULT_STATE) == 'summary:changed'
     assert value.build_calls == 2
     assert summary.build_calls == 2
 
@@ -347,8 +379,8 @@ def test_non_key_state_does_not_invalidate_cache():
 def test_disabled_by_default_derivative_skips_cache_by_default():
     pipeline, registry, _, _, _, ephemeral, _, _ = make_registry()
 
-    first = registry.load('ephemeral')
-    second = registry.load('ephemeral')
+    first = registry.load('ephemeral', state=DEFAULT_STATE)
+    second = registry.load('ephemeral', state=DEFAULT_STATE)
 
     assert first == 'ephemeral-1'
     assert second == 'ephemeral-2'
@@ -360,21 +392,21 @@ def test_disabled_by_default_derivative_skips_cache_by_default():
 def test_registry_resolve_returns_input_handle_and_loads_input():
     _, registry, _, _, _, _, _, _ = make_registry()
 
-    handle = registry.resolve('source')
+    handle = registry.resolve('source', state=DEFAULT_STATE)
     assert isinstance(handle, InputHandle)
     assert handle.describe_dependency()['kind'] == 'input'
 
-    value_handle = registry.resolve('value')
+    value_handle = registry.resolve('value', state=DEFAULT_STATE)
     assert isinstance(value_handle, DerivativeHandle)
 
-    assert registry.load('source') == 'alpha'
-    assert registry.load('source', options={'upper': True}) == 'ALPHA'
+    assert registry.load('source', state=DEFAULT_STATE) == 'alpha'
+    assert registry.load('source', state=DEFAULT_STATE, options={'upper': True}) == 'ALPHA'
 
 
 def test_stale_external_artifact_is_protected():
     pipeline, registry, _, _, _, _, _, _ = make_registry()
 
-    assert registry.load('protected') == 'alpha'
+    assert registry.load('protected', state=DEFAULT_STATE) == 'alpha'
     protected_path = Path(pipeline.get('protected-file'))
     manifest_path = Path(registry.manifest_path(protected_path))
     assert protected_path.exists()
@@ -384,7 +416,7 @@ def test_stale_external_artifact_is_protected():
     pipeline.source_path().write_text('changed')
 
     try:
-        registry.load('protected')
+        registry.load('protected', state=DEFAULT_STATE)
     except ProtectedArtifactError as error:
         assert error.derivative == 'protected'
         assert error.path == str(protected_path)
@@ -392,19 +424,19 @@ def test_stale_external_artifact_is_protected():
         raise AssertionError("Expected ProtectedArtifactError")
 
     assert protected_path.read_text() == 'alpha'
-    assert registry.load('protected', options={'_allow_protected_overwrite': True}) == 'changed'
+    assert registry.load('protected', state=DEFAULT_STATE, options={'_allow_protected_overwrite': True}) == 'changed'
     assert protected_path.read_text() == 'changed'
 
 
 def test_protected_artifact_can_reindex_manifest():
     pipeline, registry, _, _, _, _, _, _ = make_registry()
 
-    assert registry.load('reindexable-protected') == 'alpha'
+    assert registry.load('reindexable-protected', state=DEFAULT_STATE) == 'alpha'
     protected_path = Path(pipeline.get('protected-file'))
     manifest_path = Path(registry.manifest_path(protected_path))
 
     protected_path.write_text('user-edit')
 
-    assert registry.load('reindexable-protected') == 'user-edit'
+    assert registry.load('reindexable-protected', state=DEFAULT_STATE) == 'user-edit'
     manifest = json.loads(manifest_path.read_text())
     assert manifest['fingerprint']['artifact_text'] == 'user-edit'

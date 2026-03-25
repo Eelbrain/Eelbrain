@@ -3,11 +3,13 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from collections.abc import Callable
 
 import mne
 import numpy
 
-from .derivative_cache import Artifact, Dependency, Derivative, DerivativeContext
+from .derivative_cache import Dependency, Derivative, DerivativeContext
+from .pathing import cov_file_path, cov_info_file_path
 from .preprocessing import load_raw_dependency, raw_data_dependency
 
 
@@ -39,7 +41,7 @@ class EpochCovariance:
     def make(
             self,
             epochs: mne.Epochs,
-            log_path: str,
+            log_path: Path,
     ) -> mne.Covariance:
         method = 'empirical' if self.method == 'best' else self.method
         cov = mne.compute_covariance(epochs, self.keep_sample_mean, method=method)
@@ -65,6 +67,12 @@ class EpochCovariance:
         return cov
 
 
+@dataclass
+class CovarianceSupport:
+    load_epochs: Callable[..., Any]
+    debug: Callable[[str, Any], None]
+
+
 class CovDerivative(Derivative[mne.Covariance]):
     path_template = 'cov-file'
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw', 'epoch', 'cov', 'rej')
@@ -73,11 +81,19 @@ class CovDerivative(Derivative[mne.Covariance]):
             self,
             cov_name: str,
             cov: RawCovariance | EpochCovariance,
+            support: CovarianceSupport,
     ):
         self.cov_name = cov_name
         self.cov = cov
+        self.support = support
         self.name = cov_node_name(cov_name)
         self.cov.key = cov_name
+
+    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> Path:
+        path = cov_file_path(ctx.state)
+        if mkdir:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        return path
 
     def _events_state(self, ctx: DerivativeContext) -> dict[str, Any]:
         if isinstance(self.cov, EpochCovariance):
@@ -108,23 +124,20 @@ class CovDerivative(Derivative[mne.Covariance]):
 
     def build(self, ctx: DerivativeContext) -> mne.Covariance:
         if isinstance(self.cov, EpochCovariance):
-            p = ctx.pipeline
-            with p._temporary_state:
-                if ctx.state:
-                    p.set(**ctx.state)
-                p._log.debug("Make cov-file %s", ctx.path('cov-file'))
-                log_path = ctx.path('cov-info-file', mkdir=True)
-                ds = p.load_epochs(None, True, False, decim=1, epoch=self.cov.epoch)
-                return self.cov.make(ds['epochs'], log_path)
+            cov_path = self.path(ctx, mkdir=True)
+            self.support.debug("Make cov-file %s", cov_path)
+            log_path = cov_info_file_path(ctx.state)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            ds = self.support.load_epochs(None, True, False, decim=1, epoch=self.cov.epoch)
+            return self.cov.make(ds['epochs'], log_path)
         raw = load_raw_dependency(ctx, ctx.get('raw'), noise=True)
         return self.cov.make(raw)
 
     def load(
             self,
             ctx: DerivativeContext,
-            artifact: Artifact,
-    ) -> mne.Covariance:
-        cov = mne.read_cov(artifact.path)
+            path: Path) -> mne.Covariance:
+        cov = mne.read_cov(path)
         if cov.data.dtype != 'float64':
             cov['data'] = cov['data'].astype(float)
         return cov
@@ -132,7 +145,7 @@ class CovDerivative(Derivative[mne.Covariance]):
     def save(
             self,
             ctx: DerivativeContext,
-            artifact: Artifact,
+            path: Path,
             value: mne.Covariance,
     ) -> None:
-        value.save(artifact.path, overwrite=True)
+        value.save(path, overwrite=True)

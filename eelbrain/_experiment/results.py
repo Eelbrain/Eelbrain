@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from os.path import relpath
 from typing import Any, TypeVar
+from collections.abc import Callable
 
 from .. import load
 from .. import plot
@@ -14,8 +15,8 @@ from .. import save
 from .. import testnd
 from .._io.pickle import update_subjects_dir
 from .._stats.stats import ttest_t
-from .derivative_cache import Artifact, Derivative, DerivativeContext, Input, file_fingerprint
-from .preprocessing import CachedRawPipe
+from .derivative_cache import Derivative, DerivativeContext, Input, file_fingerprint
+from .pathing import mri_sdir, rej_file_path, test_dir
 from .test_def import Test
 from .test_def import TestDims
 
@@ -45,7 +46,7 @@ class RejectionInput(Input):
         return {
             'rej': ctx.get('rej'),
             'files': [
-                file_fingerprint(self.root, ctx.path('rej-file', epoch=e), 'rej-file')
+                file_fingerprint(self.root, rej_file_path(ctx.state, epoch=e), 'rej-file')
                 for e in epoch.rej_file_epochs
             ],
         }
@@ -53,11 +54,18 @@ class RejectionInput(Input):
 
 @dataclass
 class ResultSupport:
-    pipeline: Any
-    raw_pipes: dict[str, Any]
     tests: dict[str, Test]
     epochs: dict[str, Any]
     parcs: dict[str, Any]
+    group_subject_states: Callable[[dict[str, Any], tuple[str, ...]], list[dict[str, Any]]]
+    load_test_request: Callable[..., Any]
+    materialize_test_request: Callable[..., Any]
+    load_spm_request: Callable[[bool, bool], Any]
+    test_kwargs_request: Callable[[int, Any, Any, Any, Any, Any], dict[str, Any]]
+    load_evoked_request: Callable[..., Any]
+    load_evoked_stc_request: Callable[..., Any]
+    load_epochs_stc_request: Callable[..., Any]
+    make_test_request: Callable[..., Any]
 
     def state_snapshot(
             self,
@@ -87,24 +95,14 @@ class ResultSupport:
         )
         if single_subject:
             return [{field: ctx.get(field) for field in fields}]
-
-        p = self.pipeline
-        with p._temporary_state:
-            if ctx.state:
-                p.set(**ctx.state)
-            return [{field: p.get(field) for field in fields} for _ in p]
+        return self.group_subject_states(ctx.state, fields)
 
     def raw_dependency(
             self,
             ctx: DerivativeContext,
             state: dict[str, Any],
     ) -> dict[str, Any]:
-        pipe = self.raw_pipes[state['raw']]
-        if isinstance(pipe, CachedRawPipe):
-            handle = ctx.registry.resolve(pipe.raw_cache_node_name(), state=state, options={'noise': False})
-        else:
-            handle = ctx.registry.resolve(pipe.raw_meeg_input_name(), state=state, options={'add_bads': True, 'noise': False})
-        return handle.describe_dependency()
+        return ctx.registry.resolve('raw', state={**ctx.state, **state}, options={'add_bads': True, 'noise': False}).describe_dependency()
 
     def dependencies(
             self,
@@ -116,26 +114,26 @@ class ResultSupport:
         for state in self.subject_states(ctx, single_subject):
             subject_dependencies = {
                 'state': {key: state[key] for key in BIDS_ENTITY_KEYS if state[key] is not None},
-                'events': ctx.registry.resolve('events', state=state).describe_dependency(),
+                'events': ctx.registry.resolve('events', state={**ctx.state, **state}).describe_dependency(),
                 'raw': self.raw_dependency(ctx, state),
-                'rej': ctx.registry.resolve('rej-input', state=state).describe_dependency(),
+                'rej': ctx.registry.resolve('rej-input', state={**ctx.state, **state}).describe_dependency(),
             }
             if data.source:
-                subject_dependencies['inv'] = ctx.registry.resolve('inv', state=state).describe_dependency()
+                subject_dependencies['inv'] = ctx.registry.resolve('inv', state={**ctx.state, **state}).describe_dependency()
             subjects.append(subject_dependencies)
 
         out = {'subjects': subjects}
         if data.source and data.parc_level:
             parc = ctx.get('parc')
             if single_subject:
-                out['annot'] = ctx.registry.resolve('annot', state={'mrisubject': ctx.get('mrisubject'), 'parc': parc}).describe_dependency()
+                out['annot'] = ctx.registry.resolve('annot', state={**ctx.state, 'mrisubject': ctx.get('mrisubject'), 'parc': parc}).describe_dependency()
             elif data.parc_level == 'common':
-                out['annot'] = ctx.registry.resolve('annot', state={'mrisubject': ctx.get('common_brain'), 'parc': parc}).describe_dependency()
+                out['annot'] = ctx.registry.resolve('annot', state={**ctx.state, 'mrisubject': ctx.get('common_brain'), 'parc': parc}).describe_dependency()
             elif data.parc_level == 'individual':
                 out['annot'] = [
                     {
                         'subject': state['subject'],
-                        'files': ctx.registry.resolve('annot', state={'mrisubject': state['mrisubject'], 'parc': parc}).describe_dependency(),
+                        'files': ctx.registry.resolve('annot', state={**ctx.state, 'mrisubject': state['mrisubject'], 'parc': parc}).describe_dependency(),
                     }
                     for state in self.subject_states(ctx, False)
                 ]
@@ -163,14 +161,13 @@ class ResultSupport:
             parc: str | None | object = USE_CTX,
             mask: str | None | bool | object = USE_CTX,
     ):
-        p = self.pipeline
         if data is USE_CTX:
             data = ctx.option('data')
         if parc is USE_CTX:
             parc = ctx.option('parc')
         if mask is USE_CTX:
             mask = ctx.option('mask')
-        return p._load_test(
+        return self.load_test_request(
             ctx.option('test'),
             ctx.option('tstart'),
             ctx.option('tstop'),
@@ -195,7 +192,7 @@ class ResultSupport:
             desc: str | None = None,
     ):
         test_obj = self.tests[ctx.option('test')]
-        return self.pipeline._materialize_test_request(
+        return self.materialize_test_request(
             test_obj,
             ctx.option('data'),
             ctx.option('baseline'),
@@ -214,7 +211,7 @@ class ResultSupport:
         )
 
     def load_spm(self, ctx: DerivativeContext):
-        return self.pipeline._load_spm(ctx.option('baseline'), ctx.option('src_baseline'))
+        return self.load_spm_request(ctx.option('baseline'), ctx.option('src_baseline'))
 
     def test_kwargs(
             self,
@@ -222,7 +219,17 @@ class ResultSupport:
             data,
             parc_dim: None | str,
     ):
-        return self.pipeline._test_kwargs(ctx.option('samples'), ctx.option('pmin'), ctx.option('tstart'), ctx.option('tstop'), data, parc_dim)
+        return self.test_kwargs_request(ctx.option('samples'), ctx.option('pmin'), ctx.option('tstart'), ctx.option('tstop'), data, parc_dim)
+
+    def load_evoked(
+            self,
+            ctx: DerivativeContext,
+            subjects=None,
+            ndvar: bool = True,
+            vardef: str | None = None,
+            data=None,
+    ):
+        return self.load_evoked_request(subjects, ctx.option('baseline'), ndvar, vardef=vardef, data=data)
 
     def load_evoked_stc(
             self,
@@ -231,7 +238,7 @@ class ResultSupport:
             morph: bool = False,
             cat=None,
     ):
-        return self.pipeline.load_evoked_stc(subjects, ctx.option('baseline'), ctx.option('src_baseline'), morph=morph, cat=cat)
+        return self.load_evoked_stc_request(subjects, ctx.option('baseline'), ctx.option('src_baseline'), morph=morph, cat=cat)
 
     def load_epochs_stc(
             self,
@@ -239,18 +246,21 @@ class ResultSupport:
             subjects=None,
             cat=None,
     ):
-        return self.pipeline.load_epochs_stc(subjects, ctx.option('baseline'), ctx.option('src_baseline'), cat=cat)
+        return self.load_epochs_stc_request(subjects, ctx.option('baseline'), ctx.option('src_baseline'), cat=cat)
+
+    def make_test(self, y, ds, test: Test, kwargs: dict[str, Any]):
+        return self.make_test_request(y, ds, test, kwargs)
 
     def result_desc(self, ctx: DerivativeContext) -> str:
         dst = sampled_artifact_path(ctx.option('dst'), ctx.option('samples'))
-        return relpath(dst, ctx.path('test-dir'))
+        return relpath(dst, test_dir(ctx.state))
 
 
-def sampled_artifact_path(path: str, samples: int | None) -> str:
+def sampled_artifact_path(path: str | Path, samples: int | None) -> Path:
+    path = Path(path)
     if samples is None:
         return path
-    path_ = Path(path)
-    return str(path_.with_name(f"{path_.stem}_samples-{samples}{path_.suffix}"))
+    return path.with_name(f"{path.stem}_samples-{samples}{path.suffix}")
 
 
 class ResultOutputDerivative(Derivative[T]):
@@ -292,23 +302,22 @@ class ResultOutputDerivative(Derivative[T]):
             self,
             ctx: DerivativeContext,
             mkdir: bool = False,
-    ) -> str:
-        path = sampled_artifact_path(ctx.option('dst'), ctx.option('samples')) if self.sampled_path else ctx.option('dst')
+    ) -> Path:
+        path = sampled_artifact_path(ctx.option('dst'), ctx.option('samples')) if self.sampled_path else Path(ctx.option('dst'))
         if mkdir:
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
     def load(
             self,
             ctx: DerivativeContext,
-            artifact: Artifact,
-    ) -> T:
-        return artifact.path
+            path: Path) -> T:
+        return path
 
     def save(
             self,
             ctx: DerivativeContext,
-            artifact: Artifact,
+            path: Path,
             value: T,
     ) -> None:
         return
@@ -333,25 +342,24 @@ class TestResultDerivative(ResultOutputDerivative):
     def load(
             self,
             ctx: DerivativeContext,
-            artifact: Artifact,
-    ):
-        res = load.unpickle(artifact.path)
+            path: Path):
+        res = load.unpickle(path)
         if ctx.option('data').source is True:
-            update_subjects_dir(res, ctx.get('mri-sdir'), 2)
+            update_subjects_dir(res, mri_sdir(ctx.state), 2)
         return res
 
     def save(
             self,
             ctx: DerivativeContext,
-            artifact: Artifact,
+            path: Path,
             value,
     ) -> None:
-        save.pickle(value, artifact.path)
+        save.pickle(value, path)
 
     def validate(
             self,
             ctx: DerivativeContext,
-            artifact: Artifact,
+            path: Path,
             manifest,
     ) -> bool:
         return manifest.provenance.get('samples') == ctx.option('samples')
@@ -364,16 +372,16 @@ class TestResultDerivative(ResultOutputDerivative):
         return {'samples': value.samples}
 
 
-class MovieDerivative(ResultOutputDerivative[str]):
+class MovieDerivative(ResultOutputDerivative[Path]):
     name = 'movie'
     path_template = 'group-mov-file'
 
     def extra_key(self, ctx: DerivativeContext) -> dict[str, Any]:
         return {'movie_kind': ctx.option('movie_kind')}
 
-    def build(self, ctx: DerivativeContext) -> str:
+    def build(self, ctx: DerivativeContext) -> Path:
         kind = ctx.option('movie_kind')
-        dst = ctx.option('dst')
+        dst = Path(ctx.option('dst'))
         if kind == 'ga-dspm':
             if ctx.option('single_subject'):
                 ds = self.support.load_evoked_stc(ctx, ctx.option('subject'))

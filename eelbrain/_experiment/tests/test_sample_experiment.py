@@ -325,8 +325,8 @@ def test_sample():
     # ----
     labels = e.load_annot(parc='ac', mrisubject='fsaverage')
     assert len(labels) == 4
-    annot_handle = e._derivatives.resolve('annot', state={'mrisubject': 'fsaverage', 'parc': 'ac'})
-    assert exists(annot_handle.artifact().manifest_path)
+    annot_handle = e._resolve_derivative('annot', state={'mrisubject': 'fsaverage', 'parc': 'ac'})
+    assert exists(annot_handle.manifest_path)
     # change parc definition
 
     class Experiment(SampleExperiment):
@@ -353,7 +353,7 @@ def test_sample_source():
     e.set(src='ico-4', rej='', epoch='auditory')
     morph = e.load_source_morph(subject='R0000')
     assert isinstance(morph, mne.SourceMorph)
-    assert exists(e._derivatives.resolve('source-morph', state={'subject': 'R0000'}).artifact().manifest_path)
+    assert exists(e._resolve_derivative('source-morph', state={'subject': 'R0000'}).manifest_path)
     # These two tests are only identical if the evoked has been cached before the first test is loaded
     resp = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, parc='ac', make=True)
     resm = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, mask='ac', make=True)

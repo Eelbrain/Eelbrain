@@ -32,7 +32,7 @@ from .._info import BAD_CHANNELS
 from .._names import INTERPOLATE_CHANNELS
 from .._meeg import new_rejection_ds
 from .._mne import morph_source_space, shift_mne_epoch_trigger, find_source_subject, label_from_annot
-from ..mne_fixes import _interpolate_bads_eeg, _interpolate_bads_meg, suppress_mne_warning
+from ..mne_fixes import _interpolate_bads_eeg, _interpolate_bads_meg, suppress_mne_warning, write_labels_to_annot
 from .._ndvar import concatenate, cwt_morlet, neighbor_correlation
 from .._stats.testnd import _MergedTemporalClusterDist
 from .._text import enumeration, n_of, plural
@@ -40,27 +40,23 @@ from .._types import PathArg
 from .._utils import ask, intervals, subp, keydefaultdict, log_level, ScreenHandler
 from .._utils.mne_utils import is_fake_mri
 from .._utils.notebooks import tqdm
-from .covariance import CovDerivative, EpochCovariance, RawCovariance, cov_node_name
-from .derivative_cache import (
-    DerivativeContext, DerivativeRegistry,
-    ProtectedArtifactError,
-)
+from .covariance import CovDerivative, CovarianceSupport, EpochCovariance, RawCovariance, cov_node_name
+from .derivative_cache import DerivativeRegistry, ProtectedArtifactError
 from .definitions import FieldCode, sequence_arg
 from .epochs import ContinuousEpoch, PrimaryEpoch, SecondaryEpoch, SuperEpoch, EpochBase, EpochCollection, assemble_epochs, decim_param
-from .events import EventsDerivative, EvokedDerivative
+from .events import EventsDerivative, EventsSupport, EvokedDerivative
 from .exceptions import FileMissingError
 from .experiment import FileTree
 from .groups import assemble_groups
-from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, SeededParc, IndividualSeededParc, LabelParc, VolumeParc, Parcellation, assemble_parcs
+from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, ParcSupport, Parcellation, SeededParc, VolumeParc, assemble_parcs
+from .pathing import rej_file_path
 from .preprocessing import (
-    assemble_pipeline, RawPipe, RawSource, RawICA, RawApplyICA, RawFilter,
-    load_raw_pipe,
+    ICA_INPUT, RawDerivative, assemble_pipeline, RawPipe, RawSource, RawICA,
+    RawFilter,
 )
 from .reports import (
     CoregReportDerivative, EEGReportDerivative, EEGSensorsReportDerivative,
     LMReportDerivative, ROIReportDerivative, ReportSupport, SourceReportDerivative,
-    report_methods_brief, report_parc_image, report_subject_info,
-    report_test_info,
 )
 from .results import MovieDerivative, RejectionInput, ResultSupport, TestResultDerivative
 from .source import (
@@ -97,7 +93,6 @@ BaselineArg = bool | tuple[float | None, float | None]
 DataArg = str | TestDims
 PMinArg = Literal['tfce'] | float | None
 SubjectArg = str | Literal[1, -1]
-_USE_CTX = object()
 
 # Eelbrain 0.24 raw/preprocessing pipeline
 LEGACY_RAW = {
@@ -534,13 +529,13 @@ class Pipeline(FileTree):
         self._mri_subjects = self.mri_subjects.copy()
 
         # preprocessing
-        self._raw = assemble_pipeline(
-            { 'raw': RawSource(), **self.raw },
+        self._raw = RawDerivative(assemble_pipeline(
+            {'raw': RawSource(), **self.raw},
             self._tasks,
             join(root, 'derivatives', 'eelbrain', 'cache', 'raw', self._templates['subject_session'], f"{self._templates['raw_basename']}_raw-{{raw}}.fif"),
             join(root, 'derivatives', 'ica', f"{self._templates['epoch_basename']}_raw-{{raw}}_ica.fif"),
             log,
-        )
+        ), self._runs)
         raw_pipe: RawSource = self._raw['raw']
 
         # legacy adjacency determination
@@ -703,7 +698,8 @@ class Pipeline(FileTree):
                 if not raw_path.exists():
                     continue
 
-                self._raw_samplingrate[key] = self._load_info().get('sfreq')
+                pipe = self._raw.pipe(self.get('raw'))
+                self._raw_samplingrate[key] = pipe.load_info(self._bids_path, self._raw).get('sfreq')
 
         # check for digitizer data differences
         # ====================================
@@ -738,24 +734,106 @@ class Pipeline(FileTree):
         "Allow subclass to register experimental features"
 
     def _init_derivative_registry(self):
-        self._derivatives = DerivativeRegistry(self)
-        self._result_support = ResultSupport(self, self._raw, self._tests, self._epochs, self._parcs)
-        self._report_support = ReportSupport(self, self._raw, self._tests, self._epochs, self._parcs)
+        self._derivative_state_fields = tuple(self._terminal_fields)
+        self._derivatives = DerivativeRegistry(self.get('root'))
+
+        def with_derivative_state(state, func, *args, **kwargs):
+            with self._temporary_state:
+                if state:
+                    self.set(expand_compounds=False, **state)
+                return func(*args, **kwargs)
+
+        def collect_states(state, fields, **iter_kwargs):
+            def iter_states():
+                iterator = self.iter(**iter_kwargs) if iter_kwargs else self
+                return [{field: self.get(field) for field in fields} for _ in iterator]
+            return with_derivative_state(state, iter_states)
+
+        def make_parcellation(parc, mrisubject, parc_def):
+            with self._temporary_state:
+                self.set(match=False, parc=parc, mrisubject=mrisubject)
+                return self._make_parc_labels(parc_def, parc)
+
+        events_state_keys = (
+            'subject', 'session', 'task', 'acquisition', 'run', 'split',
+            'raw', 'epoch', 'rej', 'model', 'equalize_evoked_count',
+        )
+
+        def with_state(state, func, *args):
+            with self._temporary_state:
+                if state:
+                    self.set(expand_compounds=False, **{k: state[k] for k in events_state_keys if k in state})
+                return func(*args)
+
+        self._events_support = EventsSupport(
+            self.trigger_shift,
+            sequence_arg(f'{self.__class__.__name__}.stim_channel', self.stim_channel),
+            self.merge_triggers,
+            repr(self._variables),
+            self.has_edf,
+            self._epochs,
+            lambda state: with_state(state, self._extract_events_dataset),
+            lambda state: with_state(state, self.load_edf),
+            lambda state, samplingrate, decim, data_raw, vardef: with_state(state, self._make_evoked, samplingrate, decim, data_raw, vardef),
+            lambda state, evoked, data_raw, vardef: with_state(state, self._evoked_dataset_from_cache, evoked, data_raw, vardef),
+        )
+        self._result_support = ResultSupport(
+            self._tests,
+            self._epochs,
+            self._parcs,
+            collect_states,
+            self._load_test,
+            self._materialize_test_request,
+            self._load_spm,
+            self._test_kwargs,
+            self.load_evoked,
+            self.load_evoked_stc,
+            self.load_epochs_stc,
+            self._make_test,
+        )
+        self._report_support = ReportSupport(
+            self._tests,
+            self._epochs,
+            self._parcs,
+            collect_states,
+            self._load_test,
+            self._materialize_test_request,
+            self._load_spm,
+            self._test_kwargs,
+            self.load_evoked,
+            self.load_evoked_stc,
+            self.load_epochs_stc,
+            self._make_test,
+            lambda state: with_derivative_state(state, self.show_subjects, asds=True),
+            lambda state, template: with_derivative_state(state, self.format, template),
+            lambda state: with_derivative_state(state, self.get, 'evoked_kind'),
+            lambda state, hide: with_derivative_state(state, self.show_state, hide=hide),
+            lambda state: with_derivative_state(state, self.format, '{raw_basename}_{test_basename}_epoch-{epoch}_test-{test}_options-{test_options}'),
+            lambda state: with_derivative_state(state, self._get_parc),
+            lambda state, subject=None: with_derivative_state({**state, **({'subject': subject} if subject is not None else {})}, self.load_annot),
+            lambda state, subject=None, axw=None: with_derivative_state({**state, **({'subject': subject} if subject is not None else {})}, self.plot_annot, axw=axw) if axw is not None else with_derivative_state({**state, **({'subject': subject} if subject is not None else {})}, self.plot_annot),
+            lambda state: with_derivative_state(state, self._surfer_plot_kwargs),
+            lambda state: collect_states(state, ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'mrisubject'), group=state.get('group'), raw='raw'),
+            lambda state: with_derivative_state({**state, 'raw': 'raw'}, self.plot_coregistration),
+        )
+        self._covariance_support = CovarianceSupport(self.load_epochs, self._log.debug)
+        self._parc_support = ParcSupport(
+            lambda state: with_derivative_state({'parc': state['parc']}, self._get_parc),
+            tuple(self.get_field_values('hemi')),
+            lambda state, parc, mrisubject, parc_def: make_parcellation(parc, mrisubject, parc_def),
+        )
         self._register_inputs()
         self._register_derivatives()
 
     def _register_inputs(self):
-        for pipe in self._raw.values():
-            for node in pipe.input_nodes():
-                self._derivatives.register(node)
+        for node in self._raw.input_nodes():
+            self._derivatives.register(node)
         self._derivatives.register(TransInput())
         self._derivatives.register(BemInput())
         self._derivatives.register(RejectionInput(self.root, self._artifact_rejection, self._epochs))
 
     def _register_derivatives(self):
-        for pipe in self._raw.values():
-            for node in pipe.cache_nodes():
-                self._derivatives.register(node)
+        self._derivatives.register(self._raw)
         self._derivatives.register(TestResultDerivative(self._result_support))
         self._derivatives.register(SourceReportDerivative(self._report_support))
         self._derivatives.register(ROIReportDerivative(self._report_support))
@@ -764,14 +842,14 @@ class Pipeline(FileTree):
         self._derivatives.register(LMReportDerivative(self._report_support))
         self._derivatives.register(CoregReportDerivative(self._report_support))
         self._derivatives.register(MovieDerivative(self._result_support))
-        self._derivatives.register(AnnotDerivative())
-        self._derivatives.register(EventsDerivative())
-        self._derivatives.register(EvokedDerivative())
+        self._derivatives.register(AnnotDerivative(self._parc_support))
+        self._derivatives.register(EventsDerivative(self._events_support))
+        self._derivatives.register(EvokedDerivative(self._events_support))
         for cov_name, cov in self._covs.items():
-            self._derivatives.register(CovDerivative(cov_name, cov))
-        self._derivatives.register(SrcDerivative())
+            self._derivatives.register(CovDerivative(cov_name, cov, self._covariance_support))
+        self._derivatives.register(SrcDerivative(self._log))
         self._derivatives.register(SourceMorphDerivative())
-        self._derivatives.register(FwdDerivative())
+        self._derivatives.register(FwdDerivative(self._log))
         self._derivatives.register(InvDerivative())
 
     def _load_derivative(
@@ -787,7 +865,38 @@ class Pipeline(FileTree):
             merged_options.update(options)
         if extra_options:
             merged_options.update(extra_options)
-        return self._derivatives.load(name, cache=cache, state=state, options=merged_options)
+        return self._resolve_derivative(name, state=state, options=merged_options).load(cache)
+
+    def _derivative_state(
+            self,
+            state: dict[str, Any] | None = None,
+            **extra_state,
+    ) -> dict[str, Any]:
+        merged_state = {}
+        if state:
+            merged_state.update(state)
+        if extra_state:
+            merged_state.update(extra_state)
+        with self._temporary_state:
+            if merged_state:
+                self.set(**merged_state)
+            out = {field: self.get(field) for field in self._derivative_state_fields}
+            out['root'] = self.get('root')
+            out['common_brain'] = self.get('common_brain')
+            return out
+
+    def _resolve_derivative(
+            self,
+            name: str,
+            state: dict[str, Any] | None = None,
+            options: dict[str, Any] | None = None,
+            **extra_state,
+    ):
+        return self._derivatives.resolve(
+            name,
+            state=self._derivative_state(state, **extra_state),
+            options=options,
+        )
 
     def _extract_events_dataset(self):
         self._log.debug("Extracting events for %s", self._bids_path.fpath)
@@ -852,16 +961,6 @@ class Pipeline(FileTree):
                 os.rmdir(dirpath)
                 removed_any = True
         return removed_any
-
-    def _annot_dependency(
-            self,
-            mrisubject: str,
-            parc: str | None = None,
-    ) -> dict[str, Any]:
-        state = {'mrisubject': mrisubject}
-        if parc is not None:
-            state['parc'] = parc
-        return self._derivatives.resolve('annot', state=state).describe_dependency()
 
     def _process_subject_arg(self, subjects, kwargs):
         """Process subject arg for methods that work on groups and subjects
@@ -1354,7 +1453,7 @@ class Pipeline(FileTree):
         """
         pipe = self._raw[self.get('raw', **kwargs)]
         bids_path = self._bids_path
-        return pipe.load_bad_channels(bids_path, noise=noise)
+        return pipe.load_bad_channels(bids_path, noise=noise, pipes=self._raw)
 
     def _load_bem(self):
         subject = self.get('mrisubject')
@@ -1534,6 +1633,7 @@ class Pipeline(FileTree):
             return combine(dss)
 
         with self._temporary_state:
+            self.set(subject=subject, epoch=epoch_name)
             ds = self.load_selected_events(add_bads=add_bads, reject=reject, data_raw=True, vardef=vardef, cat=cat)
             if ds.n_cases == 0:
                 if cat:
@@ -1649,8 +1749,8 @@ class Pipeline(FileTree):
             ds.info['sensor_types'] = sensor_types
             pipe = self._raw[self.get('raw')]
             for data_kind in sensor_types:
-                sysname = pipe.get_sysname(info, ds.info['subject'], data_kind)
-                adjacency = pipe.get_adjacency(data_kind)
+                sysname = pipe.get_sysname(info, ds.info['subject'], data_kind, self._raw)
+                adjacency = pipe.get_adjacency(data_kind, self._raw)
                 if data_kind == 'mag' and 'grad' not in sensor_types:
                     name = 'meg'
                 else:
@@ -2045,8 +2145,8 @@ class Pipeline(FileTree):
             info = evoked[0].info
             sensor_types = ds.info['sensor_types'] = data.data_to_ndvar(info)
             for sensor_type in sensor_types:
-                sysname = pipe.get_sysname(info, subject, sensor_type)
-                adjacency = pipe.get_adjacency(sensor_type)
+                sysname = pipe.get_sysname(info, subject, sensor_type, self._raw)
+                adjacency = pipe.get_adjacency(sensor_type, self._raw)
                 name = 'meg' if sensor_type == 'mag' else sensor_type
                 ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
                 if sensor_type != 'eog' and isinstance(data.sensor, str):
@@ -2473,23 +2573,8 @@ class Pipeline(FileTree):
         -------
         ICA object for the current :ref:`state-raw` setting.
         """
-        pipe = self._get_ica_pipe(state)
-        return self._load_derivative(
-            pipe.ica_cache_node_name(),
-            state={**state, 'raw': pipe.name},
-        )
-
-    def _get_ica_pipe(self, state):
-        raw = self.get('raw', **state)
-        pipe = self._raw[raw]
-        while not isinstance(pipe, RawICA):
-            if isinstance(pipe, RawSource):
-                raise ValueError(f"{raw=} does not involve ICA")
-            elif isinstance(pipe, RawApplyICA):
-                pipe = pipe.ica_source
-            else:
-                pipe = pipe.source
-        return pipe
+        pipe = self._raw.ica_pipe(self.get('raw', **state))
+        return self._resolve_derivative(ICA_INPUT, state={**state, 'raw': pipe.name}).load()
 
     def load_inv(
             self,
@@ -2717,8 +2802,7 @@ class Pipeline(FileTree):
              - :ref:`state-raw`: preprocessing pipeline
         """
         raw_name = self.get('raw', **kwargs)
-        pipe = self._raw[raw_name]
-        raw = load_raw_pipe(self, raw_name, kwargs, add_bads=add_bads, preload=preload, noise=noise)
+        raw = self._load_derivative('raw', state={**kwargs, 'raw': raw_name}, options={'add_bads': add_bads, 'preload': preload, 'noise': noise})
         if decim and decim > 1:
             assert samplingrate is None, "samplingrate and decim can't both be specified"
             samplingrate = int(round(raw.info['sfreq'] / decim))
@@ -2730,27 +2814,14 @@ class Pipeline(FileTree):
             raw.resample(samplingrate)
 
         if ndvar:
+            pipe = self._raw[raw_name]
             data = TestDims('sensor')
             data_kind = data.data_to_ndvar(raw.info)[0]
-            sysname = pipe.get_sysname(raw.info, self.get('subject'), data_kind)
-            adjacency = pipe.get_adjacency(data_kind)
+            sysname = pipe.get_sysname(raw.info, self.get('subject'), data_kind, self._raw)
+            adjacency = pipe.get_adjacency(data_kind, self._raw)
             raw = load.mne.raw_ndvar(raw, sysname=sysname, adjacency=adjacency)
 
         return raw
-
-    def _load_info(self, **kwargs) -> mne.Info:
-        """
-        Load the mne Info object without loading the raw data.
-
-        Parameters
-        ----------
-        ...
-            Applicable :ref:`state-parameters`:
-
-             - :ref:`state-raw`: preprocessing pipeline
-        """
-        pipe = self._raw[self.get('raw', **kwargs)]
-        return pipe.load_info(self._bids_path)
 
     def load_raw_stc(
             self,
@@ -2856,6 +2927,10 @@ class Pipeline(FileTree):
             index = 'index'
         elif index and not isinstance(index, str):
             raise TypeError(f"{index=}")
+        if kwargs:
+            with self._temporary_state:
+                self.set(**kwargs)
+                return self.load_selected_events(subjects, reject, add_bads, index, data_raw, vardef, cat)
 
         # case of loading events for a group
         subject, group = self._process_subject_arg(subjects, kwargs)
@@ -2892,7 +2967,9 @@ class Pipeline(FileTree):
                     for sub_epoch in epoch.sub_epochs:
                         if self._epochs[sub_epoch].task != task:
                             continue
-                        ds = self.load_selected_events(subject, reject, add_bads, index, data_raw, epoch=sub_epoch)
+                        with self._temporary_state:
+                            self.set(epoch=sub_epoch)
+                            ds = self.load_selected_events(subject, reject, add_bads, index, data_raw)
                         ds[:, 'epoch'] = sub_epoch
                         task_dss.append(ds)
                     ds = combine(task_dss)
@@ -2914,7 +2991,8 @@ class Pipeline(FileTree):
             ds.info[BAD_CHANNELS] = bad_channels
         elif isinstance(epoch, SecondaryEpoch):
             with self._temporary_state:
-                ds = self.load_selected_events(None, 'keep' if reject else False, add_bads, index, data_raw, epoch=epoch.sel_epoch)
+                self.set(epoch=epoch.sel_epoch)
+                ds = self.load_selected_events(None, 'keep' if reject else False, add_bads, index, data_raw)
 
             if epoch.sel:
                 ds = ds.sub(epoch.sel)
@@ -2926,14 +3004,15 @@ class Pipeline(FileTree):
                     ds = ds.sub('accept')
         else:
             rej_params = self._artifact_rejection[self.get('rej')]
+            selection_state = self._derivative_state({'epoch': epoch.name, 'task': epoch.task})
             # load files
             with self._temporary_state:
                 if reject and rej_params['kind'] is not None:
-                    rej_file = self.get('rej-file', task=epoch.task)
+                    rej_file = rej_file_path(selection_state)
                     if exists(rej_file):
                         ds_sel = load.unpickle(rej_file)
                     else:
-                        rej_file = self._get_rel('rej-file', 'root')
+                        rej_file = relpath(rej_file, self.get('root'))
                         raise FileMissingError(f"The rejection file at {rej_file} does not exist. Run .make_epoch_selection() first.")
                 else:
                     ds_sel = None
@@ -3208,8 +3287,8 @@ class Pipeline(FileTree):
             'samplingrate': samplingrate,
             '_allow_protected_overwrite': make,
         }
-        handle = self._derivatives.resolve('test-result', options=options)
-        dst = handle.artifact().path
+        handle = self._resolve_derivative('test-result', options=options)
+        dst = handle.artifact_path
         desc = relpath(dst, self.get('test-dir'))
 
         if handle.is_valid():
@@ -3239,38 +3318,6 @@ class Pipeline(FileTree):
             return res_data, res
         else:
             return res
-
-    def _load_test_context(
-            self,
-            ctx: DerivativeContext,
-            return_data: bool,
-            make: bool,
-            data: TestDims | object = _USE_CTX,
-            parc: str | None | object = _USE_CTX,
-            mask: str | None | object = _USE_CTX,
-    ):
-        if data is _USE_CTX:
-            data = ctx.option('data')
-        if parc is _USE_CTX:
-            parc = ctx.option('parc')
-        if mask is _USE_CTX:
-            mask = ctx.option('mask')
-        return self._load_test(
-            ctx.option('test'),
-            ctx.option('tstart'),
-            ctx.option('tstop'),
-            ctx.option('pmin'),
-            parc,
-            mask,
-            ctx.option('samples'),
-            data,
-            ctx.option('baseline'),
-            ctx.option('src_baseline'),
-            return_data,
-            make,
-            ctx.option('smooth'),
-            ctx.option('samplingrate'),
-        )
 
     def _materialize_test_request(
             self,
@@ -3347,47 +3394,6 @@ class Pipeline(FileTree):
         if return_data:
             return res_data, res
         return None, res
-
-    def _materialize_test_context(
-            self,
-            ctx: DerivativeContext,
-            res,
-            return_data: bool,
-            desc: str | None = None,
-    ):
-        test_obj = self._tests[ctx.option('test')]
-        return self._materialize_test_request(test_obj, ctx.option('data'), ctx.option('baseline'), ctx.option('src_baseline'), ctx.option('mask'), ctx.option('parc'), ctx.option('pmin'), ctx.option('tstart'), ctx.option('tstop'), ctx.option('samples'), ctx.option('smooth'), ctx.option('samplingrate'), res, return_data, desc)
-
-    def _test_kwargs_context(
-            self,
-            ctx: DerivativeContext,
-            data: DataArg,
-            parc_dim: None | str,
-    ):
-        return self._test_kwargs(ctx.option('samples'), ctx.option('pmin'), ctx.option('tstart'), ctx.option('tstop'), data, parc_dim)
-
-    def _load_spm_context(
-            self,
-            ctx: DerivativeContext,
-    ):
-        return self._load_spm(ctx.option('baseline'), ctx.option('src_baseline'))
-
-    def _load_evoked_stc_context(
-            self,
-            ctx: DerivativeContext,
-            subjects: SubjectArg = None,
-            morph: bool = False,
-            cat: Sequence[CellArg] = None,
-    ):
-        return self.load_evoked_stc(subjects, ctx.option('baseline'), ctx.option('src_baseline'), morph=morph, cat=cat)
-
-    def _load_epochs_stc_context(
-            self,
-            ctx: DerivativeContext,
-            subjects: SubjectArg = None,
-            cat: Sequence[CellArg] = None,
-    ):
-        return self.load_epochs_stc(subjects, ctx.option('baseline'), ctx.option('src_baseline'), cat=cat)
 
     @staticmethod
     def _src_to_label_tc(ds, func):
@@ -3544,7 +3550,7 @@ class Pipeline(FileTree):
         """
         pipe = self._raw[self.get('raw', **kwargs)]
         bids_path = self._bids_path
-        pipe.make_bad_channels(bids_path, bad_chs, redo=redo, noise=noise)
+        pipe.make_bad_channels(bids_path, bad_chs, redo=redo, noise=noise, pipes=self._raw)
 
     def make_bad_channels_auto(
         self,
@@ -3573,7 +3579,7 @@ class Pipeline(FileTree):
             self.set(**state)
         pipe = self._raw['raw']
         bids_path = self._bids_path
-        pipe.make_bad_channels_auto(bids_path, flat, redo=redo, noise=noise)
+        pipe.make_bad_channels_auto(bids_path, flat, redo=redo, noise=noise, pipes=self._raw)
 
     def make_bad_channels_neighbor_correlation(
             self,
@@ -3767,20 +3773,20 @@ class Pipeline(FileTree):
         path = self.make_ica(**state)
         # display data
         subject = self.get('subject')
-        pipe = self._get_ica_pipe(state)
-        bads = pipe.load_bad_channels(self._bids_path)
+        pipe = self._raw.ica_pipe(self.get('raw', **state))
+        bads = pipe.load_bad_channels(self._bids_path, pipes=self._raw)
         with self._temporary_state:
             if epoch is None:
                 if task is None:
                     task = pipe.task
-                raw = pipe.load_concatenated_source_raw(self._bids_path, task, self._runs)
+                raw = pipe.load_concatenated_source_raw(self._bids_path, task, self._runs, self._raw)
                 decim = decim_param(samplingrate, decim, None, raw.info, minimal=True)
                 info = raw.info
                 display_data = raw
             elif task is not None:
                 raise TypeError(f"{task=} with {epoch=}")
             else:
-                ds = self.load_epochs(ndvar=False, epoch=epoch, reject=False, raw=pipe.source.name, samplingrate=samplingrate, decim=decim, add_bads=bads)
+                ds = self.load_epochs(ndvar=False, epoch=epoch, reject=False, raw=pipe._source_name, samplingrate=samplingrate, decim=decim, add_bads=bads)
                 if isinstance(ds['epochs'], Datalist):  # variable-length epoch
                     data = np.concatenate([epoch.get_data()[0] for epoch in ds['epochs']], axis=1)  # n_epochs, n_channels, n_times
                     raw = mne.io.RawArray(data, ds[0, 'epochs'].info)
@@ -3791,8 +3797,8 @@ class Pipeline(FileTree):
                 display_data = ds
         data = TestDims('sensor')
         data_kind = data.data_to_ndvar(info)[0]
-        sysname = pipe.get_sysname(info, subject, data_kind)
-        adjacency = pipe.get_adjacency(data_kind)
+        sysname = pipe.get_sysname(info, subject, data_kind, self._raw)
+        adjacency = pipe.get_adjacency(data_kind, self._raw)
         frame = gui.select_components(path, display_data, sysname, adjacency, decim, debug)
         if debug:
             return frame
@@ -3823,13 +3829,10 @@ class Pipeline(FileTree):
         overwritten because the file lives outside the cache directory.
 
         """
-        pipe = self._get_ica_pipe(state)
-        derivative_state = {**state, 'raw': pipe.name}
+        pipe = self._raw.ica_pipe(self.get('raw', **state))
+        ctx = self._resolve_derivative(ICA_INPUT, state={**state, 'raw': pipe.name}).ctx
         try:
-            self._load_derivative(
-                pipe.ica_cache_node_name(),
-                state=derivative_state,
-            )
+            self._raw.ica_input.materialize(ctx)
         except ProtectedArtifactError as error:
             command = ask(
                 f"ICA file {Path(error.path).name} is stale. Overwrite it?",
@@ -3840,20 +3843,12 @@ class Pipeline(FileTree):
                 help="This ICA file is stored outside the cache directory and may contain manual component selections. It is not overwritten automatically.",
             )
             if command == 'overwrite':
-                self._load_derivative(
-                    pipe.ica_cache_node_name(),
-                    state=derivative_state,
-                    _allow_protected_overwrite=True,
-                )
+                self._raw.ica_input.materialize(ctx, allow_protected_overwrite=True)
             elif command != 'abort':
                 raise RuntimeError(f"{command=}")
             else:
                 raise RuntimeError("User aborted ICA overwrite")
-        with self._temporary_state:
-            if state:
-                self.set(**state)
-            pipe = self._get_ica_pipe({})
-            return pipe._ica_path(self._bids_path)
+        return str(pipe.ica_artifact_path(ctx))
 
     def make_link(self, temp, field, src, dst, redo=False):
         """Make a hard link
@@ -3959,7 +3954,7 @@ class Pipeline(FileTree):
             'time_dilation': time_dilation,
             '_allow_protected_overwrite': True,
         }
-        if not redo and self._derivatives.resolve('movie', options=options).is_valid():
+        if not redo and self._resolve_derivative('movie', options=options).is_valid():
             return
         self._load_derivative('movie', options=options, _allow_protected_overwrite=True)
 
@@ -4091,7 +4086,7 @@ class Pipeline(FileTree):
                 'cluster_state': state,
                 '_allow_protected_overwrite': True,
             }
-            if not redo and self._derivatives.resolve('movie', options=options).is_valid():
+            if not redo and self._resolve_derivative('movie', options=options).is_valid():
                 return
         self._load_derivative('movie', options=options, _allow_protected_overwrite=True)
 
@@ -4453,7 +4448,7 @@ class Pipeline(FileTree):
             'include': include,
             '_allow_protected_overwrite': True,
         }
-        if not redo and self._derivatives.resolve('source-report', options=options).is_valid():
+        if not redo and self._resolve_derivative('source-report', options=options).is_valid():
             return
         self._load_derivative('source-report', options=options, _allow_protected_overwrite=True)
 
@@ -4523,7 +4518,7 @@ class Pipeline(FileTree):
             'parc': parc,
             '_allow_protected_overwrite': True,
         }
-        if not redo and self._derivatives.resolve('roi-report', options=options).is_valid():
+        if not redo and self._resolve_derivative('roi-report', options=options).is_valid():
             return
         self._load_derivative('roi-report', options=options, _allow_protected_overwrite=True)
 
@@ -4574,7 +4569,7 @@ class Pipeline(FileTree):
             'include': include,
             '_allow_protected_overwrite': True,
         }
-        if not self._derivatives.resolve('eeg-report', options=options).is_valid():
+        if not self._resolve_derivative('eeg-report', options=options).is_valid():
             self._load_derivative('eeg-report', options=options, _allow_protected_overwrite=True)
         else:
             return
@@ -4629,22 +4624,18 @@ class Pipeline(FileTree):
             'sensors': sensors,
             '_allow_protected_overwrite': True,
         }
-        if not redo and self._derivatives.resolve('eeg-sensors-report', options=options).is_valid():
+        if not redo and self._resolve_derivative('eeg-sensors-report', options=options).is_valid():
             return
         self._load_derivative('eeg-sensors-report', options=options, _allow_protected_overwrite=True)
 
-    @staticmethod
-    def _report_methods_brief(path):
-        return report_methods_brief(path)
-
     def _report_subject_info(self, ds, model):
-        return report_subject_info(self, ds, model)
+        return self._report_support.report_subject_info(self._derivative_state(), ds, model)
 
     def _report_test_info(self, section, ds, test, res, data, include=None, model=True):
-        return report_test_info(self, section, ds, test, res, data, include, model)
+        return self._report_support.report_test_info(self._derivative_state(), section, ds, test, res, data, include, model)
 
     def _report_parc_image(self, section, caption, subjects=None):
-        return report_parc_image(self, section, caption, subjects)
+        return self._report_support.report_parc_image(self._derivative_state(), section, caption, subjects)
 
     def _make_report_lm(self, pmin=0.01, baseline=True, src_baseline=False,
                         mask='lobes'):
@@ -5468,6 +5459,12 @@ class Pipeline(FileTree):
         else:
             return parc, self._parcs[SEEDED_PARC_RE.match(parc).group(1)]
 
+    def _make_parc_labels(self, parc_def, parc):
+        self._log.info("Make parcellation %s for %s", parc, self.get('mrisubject'))
+        labels = parc_def._make(self, parc)
+        write_labels_to_annot(labels, self.get('mrisubject'), parc, True, self.get('mri-sdir'))
+        return labels
+
     def _post_set_test(self, _, test):
         if test != '*' and test in self._tests:  # with vmatch=False, test object might not be availale
             test_obj = self._tests[test]
@@ -5777,7 +5774,7 @@ class Pipeline(FileTree):
         pipe = source_pipe = self._raw[raw]
         pipeline = [pipe]
         while not isinstance(source_pipe, RawSource):
-            source_pipe = source_pipe.source
+            source_pipe = self._raw[source_pipe._source_name]
             pipeline.insert(0, source_pipe)
         print(f"Preprocessing pipeline: {' --> '.join(p.name for p in pipeline)}")
 

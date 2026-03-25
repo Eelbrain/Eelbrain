@@ -17,8 +17,8 @@ Within that framework:
 - :class:`Derivative` declares one computed node in the dependency graph.
 - :class:`NodeHandle` binds one node to the current pipeline state and cache
   options.
-- :class:`DerivativeRegistry` resolves dependencies, normalizes state, and
-  validates cached artifacts via sidecar manifests.
+- :class:`DerivativeRegistry` resolves dependencies and validates cached
+  artifacts via sidecar manifests.
 
 Manifests store the derivative fingerprint plus dependency fingerprints, so a
 cache hit is valid when the artifact, its normalized key, and its dependency
@@ -93,26 +93,18 @@ class ArtifactManifest:
         return cls(**filtered)
 
 
-@dataclass(frozen=True)
-class Artifact:
-    """Resolved storage location for one cached derivative artifact."""
-
-    path: str
-    manifest_path: str
-
-
 class ProtectedArtifactError(RuntimeError):
     """Refuse to overwrite a stale artifact that lives outside ``cache-dir``."""
 
     def __init__(
             self,
             derivative: str,
-            path: str,
+            path: Path,
     ):
         self.derivative = derivative
-        self.path = path
+        self.path = str(path)
         super().__init__(
-            f"Stale artifact for derivative {derivative!r} at {path!r} lives outside "
+            f"Stale artifact for derivative {derivative!r} at {self.path!r} lives outside "
             "the cache directory and will not be overwritten automatically."
         )
 
@@ -125,31 +117,11 @@ class DerivativeContext:
     state: dict[str, Any]
     options: dict[str, Any]
 
-    @property
-    def pipeline(self) -> Any:
-        return self.registry.pipeline
-
     def option(self, key: str, default=None):
         return self.options.get(key, default)
 
     def get(self, key: str):
-        with self.pipeline._temporary_state:
-            if self.state:
-                self.pipeline.set(**self.state)
-            return self.pipeline.get(key)
-
-    def path(
-            self,
-            template: str,
-            mkdir: bool = False,
-            **extra_state,
-    ) -> str:
-        with self.pipeline._temporary_state:
-            if self.state:
-                self.pipeline.set(**self.state)
-            if extra_state:
-                self.pipeline.set(**extra_state)
-            return self.pipeline.get(template, mkdir=mkdir)
+        return self.state[key]
 
     def load(
             self,
@@ -212,7 +184,6 @@ class Input(DependencyNode[T]):
 class Derivative(DependencyNode[T]):
     """Behavioral interface for one cacheable derivative."""
 
-    path_template: str
     key_fields: tuple[str, ...]
     cache_policy: CachePolicy = CachePolicy.REQUIRED
     version: int = 1
@@ -221,22 +192,31 @@ class Derivative(DependencyNode[T]):
             self,
             ctx: DerivativeContext,
             mkdir: bool = False,
-    ) -> str:
-        return ctx.path(self.path_template, mkdir=mkdir)
+    ) -> Path:
+        raise NotImplementedError
 
     def key(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return ctx.registry.normalize_state(self.key_fields, ctx.state)
+        return canonical_state_subset(ctx.state, self.key_fields)
+
+    def should_cache(
+            self,
+            ctx: DerivativeContext,
+            cache: bool | None,
+    ) -> bool:
+        if cache is not None:
+            return cache
+        return self.cache_policy != CachePolicy.DISABLED_BY_DEFAULT
 
     def build(self, ctx: DerivativeContext) -> T:
         raise NotImplementedError
 
-    def load(self, ctx: DerivativeContext, artifact: Artifact) -> T:
+    def load(self, ctx: DerivativeContext, path: Path) -> T:
         raise NotImplementedError
 
     def save(
             self,
             ctx: DerivativeContext,
-            artifact: Artifact,
+            path: Path,
             value: T,
     ) -> None:
         raise NotImplementedError
@@ -244,7 +224,7 @@ class Derivative(DependencyNode[T]):
     def validate(
             self,
             ctx: DerivativeContext,
-            artifact: Artifact,
+            path: Path,
             manifest: ArtifactManifest,
     ) -> bool:
         return True
@@ -252,7 +232,7 @@ class Derivative(DependencyNode[T]):
     def can_reindex_protected_artifact(
             self,
             ctx: DerivativeContext,
-            artifact: Artifact,
+            path: Path,
             manifest: ArtifactManifest,
             cache: bool | None = None,
     ) -> bool:
@@ -323,39 +303,41 @@ class NodeHandle(Generic[T]):
 class DerivativeHandle(NodeHandle[T]):
     """A derivative plus its bound context for one concrete load request."""
 
+    def __init__(
+            self,
+            derivative: Derivative[T],
+            ctx: DerivativeContext,
+    ):
+        super().__init__(derivative, ctx)
+        self.artifact_path = Path(self.node.path(self.ctx))
+        self.manifest_path = Path(self.registry.manifest_path(self.artifact_path))
+
     node: Derivative[T]
+    artifact_path: Path
+    manifest_path: Path
 
-    @property
-    def derivative(self) -> Derivative[T]:
-        return self.node
-
-    def artifact(self, mkdir: bool = False) -> Artifact:
-        path = self.derivative.path(self.ctx, mkdir=mkdir)
-        return Artifact(path, self.registry.manifest_path(path))
-
-    def _is_protected_artifact(self, artifact: Artifact) -> bool:
+    def _is_protected_artifact(self) -> bool:
         return (
-            Path(artifact.path).exists()
-            and not self.registry.is_cache_artifact(artifact.path)
+            self.artifact_path.exists()
+            and not self.registry.is_cache_artifact(self.artifact_path)
         )
 
     def key(self) -> dict[str, Any]:
-        return self.derivative.key(self.ctx)
+        return self.node.key(self.ctx)
 
     def _manifest(self) -> ArtifactManifest | None:
-        return self.registry.read_manifest(self.artifact().manifest_path)
+        return self.registry.read_manifest(self.manifest_path)
 
     def _is_valid(
             self,
             manifest: ArtifactManifest,
-            artifact: Artifact,
             cache: bool | None = None,
     ) -> bool:
         if manifest.schema_version != MANIFEST_SCHEMA_VERSION:
             return False
-        if manifest.derivative != self.derivative.name:
+        if manifest.derivative != self.node.name:
             return False
-        if manifest.derivative_version != self.derivative.version:
+        if manifest.derivative_version != self.node.version:
             return False
         if manifest.key != self.key():
             return False
@@ -363,7 +345,7 @@ class DerivativeHandle(NodeHandle[T]):
             return False
         if manifest.dependencies != self.dependency_fingerprints(cache):
             return False
-        if not self.derivative.validate(self.ctx, artifact, manifest):
+        if not self.node.validate(self.ctx, self.artifact_path, manifest):
             return False
         return True
 
@@ -374,51 +356,49 @@ class DerivativeHandle(NodeHandle[T]):
     ) -> ArtifactManifest:
         return ArtifactManifest(
             schema_version=MANIFEST_SCHEMA_VERSION,
-            derivative=self.derivative.name,
-            derivative_version=self.derivative.version,
+            derivative=self.node.name,
+            derivative_version=self.node.version,
             key=self.key(),
             fingerprint=self.current_fingerprint(),
             dependencies=self.dependency_fingerprints(cache),
-            cache_policy=self.derivative.cache_policy.value,
+            cache_policy=self.node.cache_policy.value,
             software={
                 'eelbrain_cache_schema': str(MANIFEST_SCHEMA_VERSION),
                 'mne': mne.__version__,
             },
-            provenance=self.registry.canonicalize(self.derivative.provenance(self.ctx, value)),
+            provenance=self.registry.canonicalize(self.node.provenance(self.ctx, value)),
         )
 
     def is_valid(self, cache: bool | None = None) -> bool:
-        artifact = self.artifact()
         manifest = self._manifest()
-        if manifest is None or not Path(artifact.path).exists():
+        if manifest is None or not self.artifact_path.exists():
             return False
-        return self._is_valid(manifest, artifact, cache)
+        return self._is_valid(manifest, cache)
 
     def load(self, cache: bool | None = None) -> T:
-        use_cache = self.registry.should_cache(self.derivative, cache)
-        artifact = self.artifact()
+        use_cache = self.node.should_cache(self.ctx, cache)
         if use_cache:
             manifest = self._manifest()
-            if manifest and Path(artifact.path).exists() and self._is_valid(manifest, artifact, cache):
-                return self.derivative.load(self.ctx, artifact)
-            if self._is_protected_artifact(artifact) and not self.ctx.option('_allow_protected_overwrite', False):
+            if manifest and self.artifact_path.exists() and self._is_valid(manifest, cache):
+                return self.node.load(self.ctx, self.artifact_path)
+            if self._is_protected_artifact() and not self.ctx.option('_allow_protected_overwrite', False):
                 if (
                         manifest
-                        and self.derivative.can_reindex_protected_artifact(self.ctx, artifact, manifest, cache)
+                        and self.node.can_reindex_protected_artifact(self.ctx, self.artifact_path, manifest, cache)
                 ):
-                    value = self.derivative.load(self.ctx, artifact)
-                    self.registry.write_manifest(artifact.manifest_path, self._build_manifest(value, cache))
+                    value = self.node.load(self.ctx, self.artifact_path)
+                    self.registry.write_manifest(self.manifest_path, self._build_manifest(value, cache))
                     return value
-                raise ProtectedArtifactError(self.derivative.name, artifact.path)
+                raise ProtectedArtifactError(self.node.name, self.artifact_path)
 
-        value = self.derivative.build(self.ctx)
+        value = self.node.build(self.ctx)
         if not use_cache:
             return value
 
-        artifact = self.artifact(mkdir=True)
-        self.derivative.save(self.ctx, artifact, value)
-        self.registry.write_manifest(artifact.manifest_path, self._build_manifest(value, cache))
-        return self.derivative.load(self.ctx, artifact)
+        self.artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        self.node.save(self.ctx, self.artifact_path, value)
+        self.registry.write_manifest(self.manifest_path, self._build_manifest(value, cache))
+        return self.node.load(self.ctx, self.artifact_path)
 
 
 class InputHandle(NodeHandle[T]):
@@ -431,21 +411,19 @@ class InputHandle(NodeHandle[T]):
     ):
         super().__init__(input_, ctx)
 
-    input: Input[T]
-
-    @property
-    def input(self) -> Input[T]:
-        return self.node
+    node: Input[T]
 
     def load(self, cache: bool | None = None) -> T:
-        return self.input.load(self.ctx)
+        return self.node.load(self.ctx)
 
 
 class DerivativeRegistry:
-    """Registry and resolver for dependency nodes bound to one pipeline."""
+    """Registry and resolver for dependency nodes bound to one experiment root."""
 
-    def __init__(self, pipeline: Any):
-        self.pipeline = pipeline
+    def __init__(self, root: str | Path):
+        self.root = Path(root)
+        self.deriv_dir = self.root / 'derivatives'
+        self.cache_dir = self.deriv_dir / 'eelbrain' / 'cache'
         self._nodes: dict[str, DependencyNode[Any]] = {}
 
     def register(self, node: DependencyNode[Any]) -> None:
@@ -500,16 +478,8 @@ class DerivativeRegistry:
         handle = self.resolve(name, state=state, options=options, **extra_state)
         return handle.load(cache)
 
-    def should_cache(self, derivative: Derivative, cache: bool | None) -> bool:
-        if cache is not None:
-            return cache
-        override = getattr(self.pipeline, 'cache_policy_overrides', {}).get(derivative.name)
-        if override is not None:
-            return override not in ('off', False)
-        return derivative.cache_policy != CachePolicy.DISABLED_BY_DEFAULT
-
     def is_cache_artifact(self, path: str | Path) -> bool:
-        cache_dir = Path(self.pipeline.get('cache-dir')).resolve()
+        cache_dir = self.cache_dir.resolve()
         artifact_path = Path(path).resolve()
         try:
             artifact_path.relative_to(cache_dir)
@@ -518,35 +488,25 @@ class DerivativeRegistry:
         else:
             return True
 
-    def manifest_path(self, path: str | Path) -> str:
+    def manifest_path(self, path: str | Path) -> Path:
         artifact_path = Path(path)
         if self.is_cache_artifact(artifact_path):
-            return f"{artifact_path}{MANIFEST_SUFFIX}"
+            return Path(f"{artifact_path}{MANIFEST_SUFFIX}")
 
-        manifest_root = Path(self.pipeline.get('cache-dir')) / 'manifests'
+        manifest_root = self.cache_dir / 'manifests'
         resolved_path = artifact_path.resolve()
         for label, root in (
-                ('deriv-dir', Path(self.pipeline.get('deriv-dir'))),
-                ('root', Path(self.pipeline.get('root'))),
+                ('deriv-dir', self.deriv_dir),
+                ('root', self.root),
         ):
             try:
                 relative = resolved_path.relative_to(root.resolve())
             except ValueError:
                 continue
-            return str(manifest_root / label / relative) + MANIFEST_SUFFIX
+            return Path(f"{manifest_root / label / relative}{MANIFEST_SUFFIX}")
 
         digest = hashlib.sha1(str(resolved_path).encode()).hexdigest()
-        return str(manifest_root / 'external' / digest) + MANIFEST_SUFFIX
-
-    def normalize_state(self, fields: tuple[str, ...], state: dict[str, Any]) -> dict[str, Any]:
-        with self.pipeline._temporary_state:
-            if state:
-                self.pipeline.set(**state)
-            normalized = {}
-            for key in fields:
-                value = self.pipeline.get(key)
-                normalized[key] = self.canonicalize(value)
-            return normalized
+        return Path(f"{manifest_root / 'external' / digest}{MANIFEST_SUFFIX}")
 
     def dependency_fingerprints(
             self,
@@ -570,14 +530,14 @@ class DerivativeRegistry:
             out[key] = handle.describe_dependency(cache)
         return out
 
-    def read_manifest(self, path: str) -> ArtifactManifest | None:
+    def read_manifest(self, path: str | Path) -> ArtifactManifest | None:
         manifest_path = Path(path)
         if not manifest_path.exists():
             return None
         data = json.loads(manifest_path.read_text())
         return ArtifactManifest.from_dict(data)
 
-    def write_manifest(self, path: str, manifest: ArtifactManifest) -> None:
+    def write_manifest(self, path: str | Path, manifest: ArtifactManifest) -> None:
         manifest_path = Path(path)
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         manifest_path.write_text(json.dumps(manifest.to_dict(), sort_keys=True, indent=2))
@@ -605,6 +565,7 @@ class DerivativeRegistry:
 def file_fingerprint(root: str, path: str | Path, kind: str, digest: bool = False, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
     """Fingerprint one input path using a project-relative location when possible."""
 
+    root = Path(root)
     path = Path(path)
     try:
         relative = str(path.relative_to(root))
@@ -619,3 +580,13 @@ def file_fingerprint(root: str, path: str | Path, kind: str, digest: bool = Fals
             sha1 = hashlib.sha1(path.read_bytes()).hexdigest()
         out = InputFingerprint(kind, relative, True, stat.st_size, stat.st_mtime, sha1, metadata or {})
     return asdict(out)
+
+
+def canonical_state_subset(
+        state: dict[str, Any],
+        fields: tuple[str, ...],
+) -> dict[str, Any]:
+    return {
+        key: DerivativeRegistry.canonicalize(state[key])
+        for key in fields
+    }
