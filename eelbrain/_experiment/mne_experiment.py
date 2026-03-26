@@ -663,6 +663,9 @@ class Pipeline(FileTree):
         # currently only used for .rm()
         self._secondary_cache['cached-raw-file'] = ('event-file',)
 
+        # Initialize dependency tree
+        self._init_derivative_registry()
+
         ########################################################################
         # Finalize
         ##########
@@ -671,9 +674,6 @@ class Pipeline(FileTree):
         log.info("*** %s initialized with root %s on %s ***", self.__class__.__name__, root, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
         level = logging.DEBUG if any('dev' in v for v in (__version__, mne.__version__)) else logging.INFO
         log.log(level, "Using eelbrain %s, mne %s.", __version__, mne.__version__)
-
-        # Calls below might create new cache-dir
-        self._init_derivative_registry()
 
         # register experimental features
         self._subclass_init()
@@ -822,17 +822,15 @@ class Pipeline(FileTree):
             tuple(self.get_field_values('hemi')),
             lambda state, parc, mrisubject, parc_def: make_parcellation(parc, mrisubject, parc_def),
         )
-        self._register_inputs()
-        self._register_derivatives()
 
-    def _register_inputs(self):
+        # Register inputs
         for node in self._raw.input_nodes():
             self._derivatives.register(node)
         self._derivatives.register(TransInput())
         self._derivatives.register(BemInput())
         self._derivatives.register(RejectionInput(self.root, self._artifact_rejection, self._epochs))
 
-    def _register_derivatives(self):
+        # Register derivatives
         self._derivatives.register(self._raw)
         self._derivatives.register(TestResultDerivative(self._result_support))
         self._derivatives.register(SourceReportDerivative(self._report_support))

@@ -1,10 +1,10 @@
 # AGENTS
 
-## Code Style
+## Code Structure
 
-- Be concise and make sure there is a single source of truth. 
-- Avoid multiple ways of getting the same object and pass-through functions.
-- Avoid defining new methods for single use.
+- Prefer direct implementations with one obvious source of truth.
+- Avoid thin pass-through helpers that only rename or forward existing behavior.
+- Do not add one-off helpers unless they materially improve readability, reuse, or testability.
 
 ## Sandbox Notes
 
@@ -14,8 +14,10 @@
 ## Verification
 
 - Prefer targeted verification for the files and behavior you changed.
-- To verify code style after making changes, run `pre-commit run --files <changed files>`.
-- Run the smallest relevant pytest target.
+- Always verify code style after making changes, run `pre-commit run --files <changed files>`.
+- Run the smallest relevant pytest target first.
+- If no narrower target is obvious, use `make test-no-gui` for non-GUI changes.
+- For GUI changes, use the `pythonw`-based targets in `Makefile`.
 
 ## Formatting
 
