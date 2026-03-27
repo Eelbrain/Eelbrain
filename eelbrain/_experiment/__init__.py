@@ -9,32 +9,33 @@ layers are independent/unaware of higher layers. The layers are:
 2. Domain-specific graph nodes and configuration
 3. :class:`Pipeline` user interface
 
+Higher layers may use lower layers, but lower layers must not reference higher
+layers.
 
-1. Cache and dependency graph kernel
-------------------------------------
+Cache kernel
+------------
 The cache kernel lives in :mod:`eelbrain._experiment.derivative_cache`. It is
 fully generic and owns manifests, normalized keys, dependency traversal,
 protected artifacts, and cache policy. It does not know experiment-specific
 concepts such as raw pipes, epochs, tests, reports, or :class:`Pipeline`.
 
-A dependency graph os constructed using :class:`DependencyNode` instances,
+The graph is constructed from :class:`DependencyNode` instances, typically
 typically using subclasses based on :class:`Input` and :class:`Derivative`.
 The :class:`DerivativeRegistry` exposes access to artifact produces by this
 pipeline through :meth:`DerivativeRegistry.load`.
 
-
-2. Graph nodes and configuration
---------------------------------
-Graph nodes implementing specific pipeline components
-live in modules such as :mod:`eelbrain._experiment.preprocessing`,
+Graph nodes and configuration
+-----------------------------
+Graph nodes implementing specific pipeline components live in modules such as
+:mod:`eelbrain._experiment.preprocessing`,
 :mod:`eelbrain._experiment.events`, :mod:`eelbrain._experiment.source`,
 :mod:`eelbrain._experiment.parc`, :mod:`eelbrain._experiment.results`, and
 :mod:`eelbrain._experiment.reports`.
 
-Each node represents one managed
-file or artifact family, has a path template plus logic for turning a key into
-a concrete path, and is initialized with the configuration and behavior it
-needs up front.
+Each node represents one managed file or artifact family, has a path template
+plus logic for turning a key into a concrete path, and is initialized with the
+configuration it needs up front.
+
 
 Graph nodes often have corresponding configuration objects that expose
 user settings.
@@ -51,6 +52,12 @@ a :class:`RawPipe` subclass
 2) lets the user choose preprocessing options and parameters through
 initialization parameters.
 
+Graph-layer behavior consumed by nodes must itself be explicit-state and
+pipeline-free. Lower layers may use pure helper functions in existing graph
+modules, but must not capture :class:`Pipeline`, depend on temporary facade
+state, or rely on :class:`FileTree` state-mutation helpers such as
+``set()``/``format()``/``iter()``/``show_state()``.
+
 Cache behavior is always supplied by the lower layers.
 Extending the system should work by adding configuration
 objects such as new :class:`RawPipe` subclasses, not by editing cache-kernel
@@ -65,11 +72,19 @@ For example, preprocessing with ICA requires both ICA files from an
 --------------------
 The primary user facade is :class:`Pipeline`, defined in
 :mod:`eelbrain._experiment.mne_experiment`. It is the public API, composes the
-graph from user configuration, and assembles state from initialization,
-:meth:`Pipeline.set`, and :meth:`Pipeline.load_*` / :meth:`Pipeline.make_*`
+graph from user configuration, and assembles a complete normalized state from
+initialization, :meth:`Pipeline.set`, and :meth:`Pipeline.load_*` / :meth:`Pipeline.make_*`
 calls. That assembled state becomes the key used to resolve the relevant graph
 nodes. :class:`Pipeline` exposes convenience methods, but caching and artifact
 management belong to the lower layers.
+
+- :class:`Pipeline` normalizes state and derivative-specific options
+- :class:`Pipeline` resolves the target node through :class:`DerivativeRegistry`
+- the derivative’s ``.build(ctx)` loads data from its dependencies through ``ctx.load(...)``
+  to create the result requested by the Pipeline
+
+In other words, ``Pipeline.load_x`` and ``Pipeline.show_x`` are facades over
+graph nodes, not execution backends.
 
 Configuration objects such as :class:`RawPipe`, epoch definitions, test
 definitions and related objects define
