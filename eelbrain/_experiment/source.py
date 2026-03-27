@@ -142,15 +142,6 @@ def eval_inv(inv: str) -> str:
     return inv_str(*parse_inv(inv))
 
 
-def update_inv_cache(fields: dict[str, Any]) -> str:
-    if '*' in fields['inv']:
-        return fields['inv']
-    ori, _, _, depth, _ = INV_RE.match(fields['inv']).groups()
-    if depth:
-        return f'{ori}-{depth}'
-    return ori
-
-
 def inverse_operator_params(inv: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
     if '*' in inv:
         raise ValueError(f'{inv=} with wildcard')
@@ -635,7 +626,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
     name = 'epochs-stc'
     key_fields = (
         'subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw',
-        'epoch', 'rej', 'cov', 'mrisubject', 'src', 'inv', 'inv-cache',
+        'epoch', 'rej', 'cov', 'mrisubject', 'src', 'inv',
     )
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
 
@@ -781,7 +772,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
     key_fields = (
         'subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw',
         'epoch', 'rej', 'model', 'equalize_evoked_count', 'cov', 'mrisubject',
-        'src', 'inv', 'inv-cache',
+        'src', 'inv',
     )
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
 

@@ -48,6 +48,7 @@ from .events import (
 from .exceptions import FileMissingError
 from .experiment import FileTree
 from .groups import assemble_groups
+from .pathing import deriv_dir, epoch_basename, join_stem_parts, results_dir
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, assemble_parcs
 from .preprocessing import (
     ICA_INPUT, RAW_BAD_CHANNELS_INPUT, RawDerivative, assemble_pipeline,
@@ -62,7 +63,7 @@ from .source import (
     BemInput, EpochsStcDerivative, EvokedStcDerivative, FwdDerivative,
     InvDerivative, SourceMorphDerivative, SrcDerivative, TransInput,
     eval_inv, eval_src, inv_str, inverse_operator_params, load_epochs_stc_request,
-    load_evoked_stc_request, update_inv_cache,
+    load_evoked_stc_request,
 )
 from .test_def import (
     Test,
@@ -109,19 +110,6 @@ def _mask_ndvar(y: NDVar):
     if mask.any():
         return y.sub(source=np.invert(mask))
     return y
-
-
-def _time_str(t):
-    "String for representing a time value"
-    if t is None:
-        return ''
-    else:
-        return '%i' % round(t * 1000)
-
-
-def _time_window_str(window, delim='-'):
-    "String for representing a time window"
-    return delim.join(map(_time_str, window))
 
 
 def guess_y(ds, default=None):
@@ -425,7 +413,7 @@ class Pipeline(FileTree):
             'cov-file': join('{raw-cache-dir}', '{epoch_basename}_raw-{raw}_cov-{cov}_rej-{rej}_cov.fif'),
             'cov-info-file': join('{raw-cache-dir}', '{epoch_basename}_raw-{raw}_cov-{cov}_rej-{rej}_info.txt'),
             # inverse solution
-            'inv-file': join('{raw-cache-dir}', '{epoch_basename}_mrisubject-{mrisubject}_src-{src}_raw-{raw}_cov-{cov}_rej-{rej}_cache-{inv-cache}_inv.fif'),
+            'inv-file': join('{raw-cache-dir}', '{epoch_basename}_mrisubject-{mrisubject}_src-{src}_raw-{raw}_cov-{cov}_rej-{rej}_inv-{inv}_inv.fif'),
 
             # MRIs
             'common_brain': 'fsaverage',
@@ -450,39 +438,12 @@ class Pipeline(FileTree):
 
             # group level: test files
             'test-dir': join('{cache-dir}', 'test'),
-            'test-file': join('{test-dir}', '{group}_{analysis}', '{test_basename}_epoch-{epoch}_test-{test}_options-{test_options}_dims-{test_dims}.pickle'),
             # result output files
-            # data processing parameters
-            #    > group
-            #        > kind of test
-            #    > single-subject
-            #        > kind of test
-            #            > subject
 
             # (method) plots
             'methods-dir': join('{deriv-dir}', 'eelbrain', 'methods'),
             'res-dir': join('{deriv-dir}', 'eelbrain', 'results'),
 
-            'res-file': join('{res-dir}', '{analysis}', '{resname}.{ext}'),
-            'res-deep-file': join('{res-dir}', '{analysis}', '{folder}', '{resname}.{ext}'),
-            'report-file': join('{res-dir}', '{group}_{analysis}', '{folder}', '{test_basename}_epoch-{epoch}_test-{test}_options-{test_options}.html'),
-            'group-mov-file': join('{res-dir}', '{group}_{analysis}', '{epoch_basename}_{epoch}_{test_options}_{resname}.mov'),
-            'subject-res-dir': join('{res-dir}', '{analysis}_subjects'),
-            'subject-spm-report': join('{subject-res-dir}', '{epoch_basename}_{epoch}_{test}_{test_options}', '{subject}.html'),
-            'subject-mov-file': join('{subject-res-dir}', '{epoch_basename}_{epoch}_{test_options}_{resname}', '{subject}.mov'),
-
-            # plots
-            # plot corresponding to a report (and using same folder structure)
-            'res-plot-dir': join('{deriv-dir}', 'eelbrain', 'result plots', '{group}_{analysis}', '{folder}', '{test_basename}_epoch-{epoch}_test-{test}_options-{test_options}'),
-
-            # MRAT
-            'mrat_condition': '',
-            'mrat-root': join('{deriv-dir}', 'mrat'),
-            'mrat-sns-root': join('{mrat-root}', '{sns_kind}', '{epoch_basename}_epoch-{epoch}_rej-{rej}_model-{model}_count-{equalize_evoked_count}'),
-            'mrat-src-root': join('{mrat-root}', '{src_kind}', '{epoch_basename}_epoch-{epoch}_rej-{rej}_model-{model}_count-{equalize_evoked_count}'),
-            'mrat-sns-file': join('{mrat-sns-root}', '{mrat_condition}', '{mrat_condition}_{subject}-ave.fif'),
-            'mrat_info-file': join('{mrat-root}', '{subject} info.txt'),
-            'mrat-src-file': join('{mrat-src-root}', '{mrat_condition}', '{mrat_condition}_{subject}'),
         }
 
         # update templates with _values
@@ -617,11 +578,7 @@ class Pipeline(FileTree):
         self._register_field('rej', self._artifact_rejection.keys(), self._artifact_rejection_default, allow_empty=True)
 
         # cov
-        if 'bestreg' in self._covs:
-            default_cov = 'bestreg'
-        else:
-            default_cov = None
-        self._register_field('cov', sorted(self._covs), default_cov)
+        self._register_field('cov', sorted(self._covs))
         self._register_field('inv', default='free-3-dSPM', eval_handler=self._eval_inv)
         self._register_field('model', eval_handler=self._eval_model)
         self._register_field('test', test_values, post_set_handler=self._post_set_test, allow_empty=self._empty_test, repr=False)
@@ -633,28 +590,6 @@ class Pipeline(FileTree):
 
         # # slave fields
         self._register_field('mrisubject', depends_on=('mri', 'subject'), slave_handler=self._update_mrisubject, repr=False)
-        self._register_field('src-name', depends_on=('src',), slave_handler=self._update_src_name, repr=False)
-        self._register_field('inv-cache', depends_on='inv', slave_handler=self._update_inv_cache, repr=False)
-
-        # # fields used internally
-        self._register_field('analysis', repr=False)
-        self._register_field('test_options', repr=False)
-        self._register_field('name', repr=False)
-        self._register_field('folder', repr=False)
-        self._register_field('resname', repr=False)
-        self._register_field('ext', repr=False)
-        self._register_field('test_dims', repr=False)
-
-        # compounds
-        self._register_compound('sns_kind', ('raw',))
-        self._register_compound('inv_kind', ('sns_kind', 'cov', 'rej', 'inv-cache'))
-        self._register_compound('src_kind', ('sns_kind', 'cov', 'mri', 'src-name', 'inv'))
-        self._register_compound('evoked_kind', ('rej', 'equalize_evoked_count'))
-        self._register_compound('evoked_sns_kind', ('sns_kind', 'evoked_kind'))
-        self._register_compound('evoked_src_kind', ('src_kind', 'evoked_kind'))
-
-        # currently only used for .rm()
-        self._secondary_cache['cached-raw-file'] = ('event-file',)
 
         # Initialize dependency tree
         self._init_derivative_registry()
@@ -2494,11 +2429,9 @@ class Pipeline(FileTree):
         """
         self.set(test=test, **state)
         data = TestDims.coerce(data, morph=True)
-        self._set_analysis_options(data, baseline, src_baseline, pmin, tstart, tstop, parc, mask, samplingrate, smooth=smooth)
         options = {
             'data': data,
             'samples': samples,
-            'dst': self.get('test-file', mkdir=True),
             'test': test,
             'tstart': tstart,
             'tstop': tstop,
@@ -2871,15 +2804,9 @@ class Pipeline(FileTree):
         subject, group = self._process_subject_arg(subjects, state)
         data = TestDims("source", morph=bool(group))
         brain_kwargs = self._surfer_plot_kwargs(surf, views, foreground, background, smoothing_steps, hemi)
-        self._set_analysis_options(data, baseline, src_baseline, None, None, None)
-        self.set(equalize_evoked_count='', resname=f"GA dSPM {brain_kwargs['surf']} {fmin}")
+        self.set(equalize_evoked_count='')
 
-        if dst is None:
-            if group is None:
-                dst = self.get('subject-mov-file', mkdir=True)
-            else:
-                dst = self.get('group-mov-file', mkdir=True)
-        else:
+        if dst is not None:
             dst = os.path.expanduser(dst)
 
         options = {
@@ -2983,30 +2910,20 @@ class Pipeline(FileTree):
                 raise ValueError("If x is specified, c1 needs to be specified; "
                                  "got c1=%s" % repr(c1))
             elif c0:
-                resname = f"t-test {c1}-{c0} {{test_options}} {surf}"
                 cat = (c1, c0)
             else:
-                resname = f"t-test {c1} {{test_options}} {surf}"
                 cat = (c1,)
         elif c1 or c0:
             raise ValueError("If x is not specified, c1 and c0 should not be "
                              "specified either; got c1=%s, c0=%s"
                              % (repr(c1), repr(c0)))
         else:
-            resname = "t-test GA {test_options} %s" % surf
             cat = None
 
-        state.update(resname=resname, model=model)
+        state.update(model=model)
         with self._temporary_state:
             subject, group = self._process_subject_arg(subjects, state)
-            self._set_analysis_options(data, baseline, src_baseline, p, None, None)
-
-            if dst is None:
-                if group is None:
-                    dst = self.get('subject-mov-file', mkdir=True)
-                else:
-                    dst = self.get('group-mov-file', mkdir=True)
-            else:
+            if dst is not None:
                 dst = os.path.expanduser(dst)
 
             options = {
@@ -3049,14 +2966,16 @@ class Pipeline(FileTree):
         ...
         """
         ds = self.load_evoked(ndvar=False, **kwargs)
+        state = self._resolve_derivative('evoked-ds', state=kwargs).ctx.state
+        root = deriv_dir(state) / 'mrat' / state['raw'] / f"{epoch_basename(state)}_epoch-{state['epoch']}_rej-{state['rej']}_model-{state['model']}_count-{state['equalize_evoked_count']}"
 
         # create fiffs
-        model = self.get('model')
+        model = state['model']
         factors = [f.strip() for f in model.split('%')]
         for case in ds.itercases():
             condition = '_'.join(case[f] for f in factors)
-            path = self.get('mrat-sns-file', mkdir=True,
-                            mrat_condition=condition)
+            path = root / condition / f"{condition}_{state['subject']}-ave.fif"
+            path.parent.mkdir(parents=True, exist_ok=True)
             evoked = case['evoked']
             evoked.save(path)
 
@@ -3079,18 +2998,22 @@ class Pipeline(FileTree):
         ...
         """
         ds = self.load_evoked_stc(morph=True, ndvar=False, **kwargs)
+        state = self._resolve_derivative('evoked-stc', state=kwargs, options={'morph': True, 'ndvar': False}).ctx.state
+        kind = '_'.join((state['raw'], state['cov'], state['mri'], state['src'], state['inv']))
+        root = deriv_dir(state) / 'mrat' / kind / f"{epoch_basename(state)}_epoch-{state['epoch']}_rej-{state['rej']}_model-{state['model']}_count-{state['equalize_evoked_count']}"
 
         # save condition info
-        info_file = self.get('mrat_info-file', mkdir=True)
+        info_file = deriv_dir(state) / 'mrat' / f"{state['subject']} info.txt"
+        info_file.parent.mkdir(parents=True, exist_ok=True)
         ds.save_txt(info_file)
 
         # create stcs
-        model = self.get('model')
+        model = state['model']
         factors = [f.strip() for f in model.split('%')]
         for case in ds.itercases():
             condition = '_'.join(case[f] for f in factors)
-            path = self.get('mrat-src-file', mkdir=True,
-                            mrat_condition=condition)
+            path = root / condition / f"{condition}_{state['subject']}"
+            path.parent.mkdir(parents=True, exist_ok=True)
             stc = case['stcm']
             stc.save(path)
 
@@ -3106,32 +3029,44 @@ class Pipeline(FileTree):
         ...
             State parameters.
         """
-        if is_fake_mri(self.get('mri-dir', **state)):
-            mrisubject = self.get('common_brain')
-            self.set(mrisubject=mrisubject, match=False)
+        with self._temporary_state:
+            if state:
+                self.set(**state)
+            if is_fake_mri(self.get('mri-dir')):
+                self.set(mrisubject=self.get('common_brain'), match=False)
 
-        dst = self.get('res-file', mkdir=True, ext='png', analysis='Source Annot', resname="{parc} {mrisubject} %s" % surf)
-        if not redo and exists(dst):
-            return
+            export_state = self._derivative_state()
+            stem = join_stem_parts(
+                f"parc-{export_state['parc']}",
+                f"mrisubject-{export_state['mrisubject']}",
+                f"surf-{surf}",
+            )
+            dst = results_dir(export_state) / 'source-annot' / f'{stem}.png'
+            if not redo and dst.exists():
+                return
+            dst.parent.mkdir(parents=True, exist_ok=True)
 
-        brain = self.plot_annot(surf=surf, axw=600)
-        brain.save_image(dst, 'rgba', True)
-        legend = brain.plot_legend(show=False)
-        legend.save(dst[:-3] + 'pdf', facecolor="none")
-        brain.close()
-        legend.close()
+            brain = self.plot_annot(surf=surf, axw=600)
+            brain.save_image(dst, 'rgba', True)
+            legend = brain.plot_legend(show=False)
+            legend.save(dst.with_suffix('.pdf'), facecolor="none")
+            brain.close()
+            legend.close()
 
     def make_plot_label(self, label, surf='inflated', redo=False, **state):
-        if is_fake_mri(self.get('mri-dir', **state)):
-            mrisubject = self.get('common_brain')
-            self.set(mrisubject=mrisubject, match=False)
+        with self._temporary_state:
+            if state:
+                self.set(**state)
+            if is_fake_mri(self.get('mri-dir')):
+                self.set(mrisubject=self.get('common_brain'), match=False)
 
-        dst = self._make_plot_label_dst(surf, label)
-        if not redo and exists(dst):
-            return
+            dst = self._make_plot_label_dst(surf, label)
+            if not redo and dst.exists():
+                return
+            dst.parent.mkdir(parents=True, exist_ok=True)
 
-        brain = self.plot_label(label, surf=surf)
-        brain.save_image(dst, 'rgba', True)
+            brain = self.plot_label(label, surf=surf)
+            brain.save_image(dst, 'rgba', True)
 
     def make_plots_labels(self, surf='inflated', redo=False, **state):
         self.set(**state)
@@ -3151,9 +3086,13 @@ class Pipeline(FileTree):
             brain.remove_labels(hemi='lh')
 
     def _make_plot_label_dst(self, surf, label):
-        return self.get('res-deep-file', mkdir=True, analysis='Source Labels',
-                        folder="{parc} {mrisubject} %s" % surf, resname=label,
-                        ext='png')
+        state = self._derivative_state()
+        directory = results_dir(state) / 'source-labels' / join_stem_parts(
+            f"parc-{state['parc']}",
+            f"mrisubject-{state['mrisubject']}",
+            f"surf-{surf}",
+        )
+        return directory / f'{join_stem_parts(label)}.png'
 
     def make_epoch_selection(
             self,
@@ -3361,10 +3300,7 @@ class Pipeline(FileTree):
 
         self.set(**state)
         data = TestDims('source', morph=True)
-        self._set_analysis_options(data, baseline, src_baseline, pmin, tstart, tstop, parc, mask)
-        dst = self.get('report-file', mkdir=True, test=test)
         options = {
-            'dst': dst,
             'data': data,
             'samples': samples,
             'test': test,
@@ -3433,10 +3369,7 @@ class Pipeline(FileTree):
         if not parc:
             raise ValueError("No parcellation specified")
         data = TestDims('source.mean')
-        self._set_analysis_options(data, baseline, src_baseline, pmin, tstart, tstop, parc)
-        dst = self.get('report-file', mkdir=True, test=test)
         options = {
-            'dst': dst,
             'data': data,
             'samples': samples,
             'test': test,
@@ -3463,13 +3396,8 @@ class Pipeline(FileTree):
             State parameters.
         """
         self.set(**state)
-        if file_name is None:
-            title = 'Coregistration'
-            if self.get('group') != 'all':
-                title += ' ' + self.get('group')
-            if self.get('mri'):
-                title += ' ' + self.get('mri')
-            file_name = join(self.get('methods-dir', mkdir=True), title + '.html')
+        if file_name is not None:
+            file_name = os.path.expanduser(file_name)
         self._load_derivative(
             'coreg-report',
             options={
@@ -4105,10 +4033,6 @@ class Pipeline(FileTree):
     def _eval_inv(cls, inv):
         return eval_inv(inv)
 
-    @staticmethod
-    def _update_inv_cache(fields):
-        return update_inv_cache(fields)
-
     def _inv_params(self):
         return inverse_operator_params(self.get('inv'))
 
@@ -4158,10 +4082,6 @@ class Pipeline(FileTree):
             return  # don't force task
         return '*'  # if a named epoch is not in _epochs it might be a removed epoch
 
-    def _update_src_name(self, fields):
-        "Because 'ico-4' is treated in filenames  as ''"
-        return '' if fields['src'] == 'ico-4' else fields['src']
-
     def _eval_parc(self, parc):
         if parc in self._parcs:
             if isinstance(self._parcs[parc], SeededParc):
@@ -4201,152 +4121,6 @@ class Pipeline(FileTree):
             test_obj = self._tests[test]
             if test_obj.model is not None:
                 self.set(model=test_obj.model)
-
-    def _set_analysis_options(
-            self,
-            data: DataArg,
-            baseline: BaselineArg,
-            src_baseline: BaselineArg,
-            pmin: PMinArg,
-            tstart: float = None,
-            tstop: float = None,
-            parc: str = None,
-            mask: str = None,
-            samplingrate: float = None,
-            test_options: Sequence[str] = (),  # Additional, test-specific tags (for use by TRFExperiment only)
-            folder_options: Sequence[str] = (),
-            smooth: float = None,
-    ):
-        """Set templates for paths with test parameters
-
-        analysis:  preprocessing up to source estimate epochs (not parcellation)
-        folder: parcellation (human readable)
-        test_dims: parcellation (as used for spatio-temporal cluster test
-        test_options: baseline, permutation test method etc.
-
-        also sets `parc`
-        """
-        data = TestDims.coerce(data)
-        # data kind (sensor or source space)
-        if data.sensor:
-            analysis = '{evoked_sns_kind}'
-        elif data.source:
-            analysis = '{evoked_src_kind}'
-        else:
-            raise RuntimeError(f"data={data.string!r}")
-
-        # determine report folder (reports) and test_dims (test-files)
-        kwargs = {'test_dims': data.string}
-        if data.source is True:
-            if parc is None:
-                if mask:
-                    folder = f"{mask} masked"
-                    kwargs['parc'] = mask
-                    if pmin is None:
-                        # When not doing clustering, parc does not affect
-                        # results, so we don't need to distinguish parc and mask
-                        kwargs['test_dims'] = mask
-                    else:  # parc means disconnecting
-                        kwargs['test_dims'] = f'{mask}-mask'
-                else:
-                    folder = "Whole Brain"
-                    # only compute unmasked test once (probably rare anyways)
-                    if self.get('src').startswith('vol'):
-                        kwargs['parc'] = 'aparc+aseg'
-                    else:
-                        kwargs['parc'] = 'aparc'
-                    kwargs['test_dims'] = 'unmasked'
-            elif mask:
-                raise ValueError("Can't specify mask together with parc")
-            elif pmin is None or pmin == 'tfce':
-                raise NotImplementedError(f"Threshold-free test ({pmin=}) is not implemented for parcellation (parc parameter). Use a mask instead, or do a cluster-based test.")
-            else:
-                folder = parc
-                kwargs['parc'] = parc
-                kwargs['test_dims'] = parc
-        elif data.source:  # source-space ROIs
-            if not parc:
-                raise ValueError("Need parc for ROI definition")
-            kwargs['parc'] = parc
-            kwargs['test_dims'] = f'{parc}.{data.source}'
-            if data.source == 'mean':
-                folder = f'{parc} ROIs'
-            else:
-                folder = f'{parc} {data.source}'
-        elif parc:
-            raise ValueError(f"Sensor analysis (data={data.string!r}) can't have parc")
-        elif data.sensor:
-            folder = 'Sensor' if data.y_name == 'meg' else 'EEG'
-            if data.sensor is not True:
-                folder = f'{folder} {data.sensor}'
-        else:
-            raise RuntimeError(f"data={data.string!r}")
-
-        if folder_options:
-            folder += ' ' + ' '.join(folder_options)
-
-        # test properties
-        items = []
-
-        # baseline (default is baseline correcting in sensor space)
-        epoch_baseline = self._epochs[self.get('epoch')].baseline
-        if src_baseline:
-            assert data.source
-            if baseline is True or baseline == epoch_baseline:
-                items.append('snsbl')
-            elif baseline:
-                items.append(f'snsbl={_time_window_str(baseline)}')
-
-            if src_baseline is True or src_baseline == epoch_baseline:
-                items.append('srcbl')
-            else:
-                items.append(f'srcbl={_time_window_str(src_baseline)}')
-        else:
-            if not baseline:
-                items.append('nobl')
-            elif baseline is True or baseline == epoch_baseline:
-                pass
-            else:
-                items.append(f'bl={_time_window_str(baseline)}')
-
-        # smoothing
-        if smooth:
-            if data.sensor:
-                raise TypeError(f"{smooth=} for sensor space data (data={data.string!r})")
-            mm = smooth * 1000.
-            if int(mm) != mm:
-                raise ValueError(f"{smooth=}: needs to be an even number of mm")
-            elif mm > 50.:
-                raise ValueError(f"{smooth=}: value seems too big ({mm:.0f} mm)")
-            items.append(f"s{int(mm)}mm")
-
-        # pmin
-        if pmin is not None:
-            # source adjacency
-            adjacency = self.get('adjacency')
-            if adjacency and not data.source:
-                raise NotImplementedError(f"{adjacency=} is not implemented for {data=}")
-            elif adjacency:
-                items.append(adjacency)
-
-            items.append(str(pmin))
-
-            # cluster criteria
-            if pmin != 'tfce':
-                select_clusters = self.get('select_clusters')
-                if select_clusters:
-                    items.append(select_clusters)
-
-        # time window
-        if tstart is not None or tstop is not None:
-            items.append(_time_window_str((tstart, tstop)))
-        if samplingrate is not None:
-            # allow non-int samplingrate (it is still constrained by being divisor of original samplingrate)
-            items.append(f'{samplingrate:g}Hz')
-
-        items.extend(test_options)
-
-        self.set(test_options=' '.join(items), analysis=analysis, folder=folder, **kwargs)
 
     def show_bad_channels(
             self,

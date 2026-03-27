@@ -16,12 +16,42 @@ from eelbrain.pipeline import *
 from eelbrain._exceptions import DefinitionError
 from eelbrain._experiment.derivative_cache import MANIFEST_SUFFIX
 from eelbrain._experiment.reports import _report_subject_info
+from eelbrain._experiment.test_def import TestDims as _TestDims
 from eelbrain.testing import TempDir, assert_dataobj_equal, requires_mne_sample_data
 
 
-def _sampled_output_path(path: str, samples: int) -> str:
-    path_ = Path(path)
-    return str(path_.with_name(f"{path_.stem}_samples-{samples}{path_.suffix}"))
+def _test_result_manifest_path(
+        e,
+        test: str,
+        tstart: float,
+        tstop: float,
+        pmin,
+        *,
+        samples: int,
+        data: str,
+        baseline=True,
+        src_baseline=None,
+        parc=None,
+        mask=None,
+        smooth=None,
+        samplingrate=None,
+) -> Path:
+    handle = e._resolve_derivative('test-result', options={
+        'data': _TestDims.coerce(data, morph=True),
+        'samples': samples,
+        'test': test,
+        'tstart': tstart,
+        'tstop': tstop,
+        'pmin': pmin,
+        'parc': parc,
+        'mask': mask,
+        'baseline': baseline,
+        'src_baseline': src_baseline,
+        'smooth': smooth,
+        'samplingrate': samplingrate,
+        '_allow_protected_overwrite': False,
+    })
+    return e._derivatives.manifest_path(handle.artifact_path)
 
 
 @requires_mne_sample_data
@@ -98,7 +128,7 @@ def test_sample():
     # sensor space tests
     megs = [e.load_evoked(cat='auditory')['meg'] for _ in e]
     res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.rms', baseline=False, make=True)
-    test_manifest = e._derivatives.manifest_path(_sampled_output_path(e.get('test-file'), 100))
+    test_manifest = _test_result_manifest_path(e, 'a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.rms', baseline=False)
     assert exists(test_manifest)
     with open(test_manifest) as fid:
         test_manifest_data = json.load(fid)
@@ -361,7 +391,7 @@ def test_sample_source():
     assert exists(e._derivatives.manifest_path(e.get('src-file')))
     assert exists(e.get('fwd-file') + MANIFEST_SUFFIX)
     assert exists(e.get('inv-file') + MANIFEST_SUFFIX)
-    with open(e._derivatives.manifest_path(_sampled_output_path(e.get('test-file'), 100))) as fid:
+    with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=100, data='source', parc='ac')) as fid:
         source_manifest_data = json.load(fid)
     assert source_manifest_data['fingerprint']['definitions']['parc']['base'] == 'aparc'
     assert_dataobj_equal(resp.t, resm.t)

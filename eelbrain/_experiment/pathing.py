@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
+from typing import Any
 
 from mne_bids import BIDSPath
 
@@ -73,6 +76,14 @@ def cache_dir(state: dict[str, str | None]) -> Path:
 
 def log_dir(state: dict[str, str | None]) -> Path:
     return deriv_dir(state) / 'eelbrain' / 'logs'
+
+
+def results_dir(state: dict[str, str | None]) -> Path:
+    return deriv_dir(state) / 'eelbrain' / 'results'
+
+
+def methods_dir(state: dict[str, str | None]) -> Path:
+    return deriv_dir(state) / 'eelbrain' / 'methods'
 
 
 def raw_cache_dir(state: dict[str, str | None]) -> Path:
@@ -151,11 +162,11 @@ def source_morph_file_path(state: dict[str, str | None]) -> Path:
 
 
 def epochs_stc_file_path(state: dict[str, str | None]) -> Path:
-    return cache_dir(state) / 'epochs-stc' / f"{epoch_basename(state)}_mrisubject-{state['mrisubject']}_src-{state['src']}_raw-{state['raw']}_cov-{state['cov']}_rej-{state['rej']}_cache-{state['inv-cache']}_stc.pickle"
+    return cache_dir(state) / 'epochs-stc' / f"{epoch_basename(state)}_mrisubject-{state['mrisubject']}_src-{state['src']}_raw-{state['raw']}_cov-{state['cov']}_rej-{state['rej']}_inv-{state['inv']}_stc.pickle"
 
 
 def evoked_stc_file_path(state: dict[str, str | None]) -> Path:
-    return cache_dir(state) / 'evoked-stc' / f"{epoch_basename(state)}_mrisubject-{state['mrisubject']}_src-{state['src']}_raw-{state['raw']}_cov-{state['cov']}_rej-{state['rej']}_model-{state['model']}_count-{state['equalize_evoked_count']}_cache-{state['inv-cache']}_stc.pickle"
+    return cache_dir(state) / 'evoked-stc' / f"{epoch_basename(state)}_mrisubject-{state['mrisubject']}_src-{state['src']}_raw-{state['raw']}_cov-{state['cov']}_rej-{state['rej']}_model-{state['model']}_count-{state['equalize_evoked_count']}_inv-{state['inv']}_stc.pickle"
 
 
 def label_dir(state: dict[str, str | None]) -> Path:
@@ -175,8 +186,78 @@ def fwd_file_path(state: dict[str, str | None]) -> Path:
 
 
 def inv_file_path(state: dict[str, str | None]) -> Path:
-    return raw_cache_dir(state) / f"{epoch_basename(state)}_mrisubject-{state['mrisubject']}_src-{state['src']}_raw-{state['raw']}_cov-{state['cov']}_rej-{state['rej']}_cache-{state['inv-cache']}_inv.fif"
+    return raw_cache_dir(state) / f"{epoch_basename(state)}_mrisubject-{state['mrisubject']}_src-{state['src']}_raw-{state['raw']}_cov-{state['cov']}_rej-{state['rej']}_inv-{state['inv']}_inv.fif"
 
 
 def test_dir(state: dict[str, str | None]) -> Path:
     return cache_dir(state) / 'test'
+
+
+def time_str(t) -> str:
+    if t is None:
+        return ''
+    return f'{round(t * 1000):d}'
+
+
+def time_window_str(window, delim='-') -> str:
+    return delim.join(map(time_str, window))
+
+
+def _slug(value: Any) -> str:
+    return str(value).replace('/', '-').replace(' ', '_')
+
+
+def join_stem_parts(*parts: Any) -> str:
+    out = []
+    for part in parts:
+        if part in (None, '', False):
+            continue
+        if isinstance(part, (list, tuple)):
+            out.extend(_slug(item) for item in part if item not in (None, '', False))
+        else:
+            out.append(_slug(part))
+    return '_'.join(out)
+
+
+def _short_hash(data: Any) -> str:
+    payload = json.dumps(data, sort_keys=True, separators=(',', ':'), default=str)
+    return hashlib.sha1(payload.encode()).hexdigest()[:12]
+
+
+def test_result_cache_path(
+        state: dict[str, str | None],
+        stem: str,
+        key: dict[str, Any],
+) -> Path:
+    group = _slug(state.get('group') or 'all')
+    return test_dir(state) / group / f'{stem}_key-{_short_hash(key)}.pickle'
+
+
+def report_export_path(
+        state: dict[str, str | None],
+        report_kind: str,
+        stem: str,
+        single_subject: bool = False,
+) -> Path:
+    if single_subject:
+        return results_dir(state) / report_kind / 'subjects' / _slug(state['subject']) / f'{stem}.html'
+    return results_dir(state) / report_kind / 'groups' / _slug(state['group']) / f'{stem}.html'
+
+
+def movie_export_path(
+        state: dict[str, str | None],
+        stem: str,
+        single_subject: bool = False,
+) -> Path:
+    if single_subject:
+        return results_dir(state) / 'movies' / 'subjects' / _slug(state['subject']) / f'{stem}.mov'
+    return results_dir(state) / 'movies' / 'groups' / _slug(state['group']) / f'{stem}.mov'
+
+
+def coreg_report_path(state: dict[str, str | None]) -> Path:
+    title = 'Coregistration'
+    if state.get('group') != 'all':
+        title += f" {state['group']}"
+    if state.get('mri'):
+        title += f" {state['mri']}"
+    return methods_dir(state) / f'{title}.html'

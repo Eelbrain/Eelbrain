@@ -4,7 +4,8 @@
 Report nodes are the lower-level implementation of the public
 ``Pipeline.make_report*`` and ``Pipeline.show_*`` paths. They orchestrate by
 loading dependency derivatives through ``ctx.load(...)`` and pure lower-layer
-helpers. They must not receive bound facade methods as execution backends.
+helpers. They own default public export paths directly from semantic
+state/options and must not receive bound facade methods as execution backends.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from .._data_obj import Dataset, Factor, align1
 from .._utils.mne_utils import is_fake_mri
 from .derivative_cache import DerivativeContext, file_fingerprint
 from .parc import IndividualSeededParc, SEEDED_PARC_RE
-from .pathing import mri_dir, mri_sdir, trans_file_path
+from .pathing import coreg_report_path, mri_dir, mri_sdir, trans_file_path
 from .results import ResultOutputDerivative
 from .test_def import TwoStageTest
 
@@ -46,8 +47,9 @@ def _format_text(state: dict[str, Any], template: str) -> str:
 
 
 def _evoked_kind(state: dict[str, Any]) -> str | None:
-    value = state.get('evoked_kind')
-    return None if value in (None, '') else value
+    parts = [state.get('rej'), state.get('equalize_evoked_count')]
+    value = '_'.join(part for part in parts if part not in (None, ''))
+    return value or None
 
 
 def _show_state(state: dict[str, Any], hide: tuple[str, ...]):
@@ -63,11 +65,8 @@ def _show_state(state: dict[str, Any], hide: tuple[str, ...]):
     return table_
 
 
-def _report_title(state: dict[str, Any]) -> str:
-    resname = state.get('resname')
-    if resname:
-        return Path(resname).stem
-    return 'report'
+def _report_title(path: str | Path) -> str:
+    return Path(path).stem
 
 
 def _annot_state(node: ResultOutputDerivative, state: dict[str, Any]):
@@ -319,7 +318,7 @@ class SourceReportDerivative(ResultOutputDerivative[Path]):
 
     def build(self, ctx: DerivativeContext) -> Path:
         dst = self.path(ctx)
-        report = fmtxt.Report(_report_title(ctx.state))
+        report = fmtxt.Report(_report_title(dst))
         report.add_paragraph(report_methods_brief(dst))
         if isinstance(self.tests[ctx.option('test')], TwoStageTest):
             _append_two_stage_report(self, report, ctx)
@@ -346,7 +345,7 @@ class ROIReportDerivative(ResultOutputDerivative[Path]):
                 raise NotImplementedError(f"Label named {label!r}")
         labels_lh.sort()
         labels_rh.sort()
-        report = fmtxt.Report(_report_title(ctx.state))
+        report = fmtxt.Report(_report_title(dst))
         first_label = (labels_lh or labels_rh)[0]
         info_section = report.add_section("Test Info")
         _report_test_info(self, ctx.state, info_section, res.n_trials_ds, self.tests[ctx.option('test')], res.res[first_label], ctx.option('data'))
@@ -377,7 +376,7 @@ class EEGReportDerivative(ResultOutputDerivative[Path]):
     def build(self, ctx: DerivativeContext) -> Path:
         dst = self.path(ctx)
         ds, res = self.load_test(ctx, True, True, parc=None, mask=None)
-        report = fmtxt.Report(_report_title(ctx.state))
+        report = fmtxt.Report(_report_title(dst))
         info_section = report.add_section("Test Info")
         _report_test_info(self, ctx.state, info_section, ds, ctx.option('test'), res, ctx.option('data'), ctx.option('include'))
         sensor_map = plot.SensorMap(ds['eeg'], adjacency=True, show=False)
@@ -405,7 +404,7 @@ class EEGSensorsReportDerivative(ResultOutputDerivative[Path]):
         missing = [sensor for sensor in sensors if sensor not in eeg.sensor.names]
         if missing:
             raise ValueError(f"The following sensors are not in the data: {missing}")
-        report = fmtxt.Report(_report_title(ctx.state))
+        report = fmtxt.Report(_report_title(dst))
         info_section = report.add_section("Test Info")
         sensor_map = plot.SensorMap(ds['eeg'], show=False)
         sensor_map.mark_sensors(sensors)
@@ -429,14 +428,14 @@ class LMReportDerivative(ResultOutputDerivative[Path]):
         return {'mask': ctx.option('mask')}
 
     def build(self, ctx: DerivativeContext) -> Path:
-        report = fmtxt.Report(_report_title(ctx.state))
+        dst = self.path(ctx)
+        report = fmtxt.Report(_report_title(dst))
         report.append(_report.source_time_lm(self.load_spm(ctx), ctx.option('pmin'), _surfer_plot_kwargs(self, ctx.state)))
-        return _save_report(report, self.path(ctx), ('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'))
+        return _save_report(report, dst, ('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'))
 
 
 class CoregReportDerivative(ResultOutputDerivative[Path]):
     name = 'coreg-report'
-    path_template = 'report-file'
     key_fields = ()
 
     def key(self, ctx: DerivativeContext) -> dict[str, Any]:
@@ -450,7 +449,8 @@ class CoregReportDerivative(ResultOutputDerivative[Path]):
             ctx: DerivativeContext,
             mkdir: bool = False,
     ) -> Path:
-        path = Path(ctx.option('dst'))
+        dst = ctx.option('dst')
+        path = Path(dst) if dst else coreg_report_path(ctx.state)
         if mkdir:
             path.parent.mkdir(parents=True, exist_ok=True)
         return path

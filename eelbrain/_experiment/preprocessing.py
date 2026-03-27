@@ -18,8 +18,9 @@ while the :class:`RawPipe` objects supply preprocessing behavior and
 configuration.
 
 The public ``Pipeline.load_raw`` method is a facade over these graph nodes.
-Raw orchestration, chaining, and cached artifact loading belong in the raw
-derivative family, not in bound :class:`Pipeline` methods.
+Raw orchestration, chaining, cached artifact loading, and internal cache-path
+generation belong in the raw derivative family, not in bound
+:class:`Pipeline` methods.
 
 Caching, manifests, dependency traversal, protected-artifact handling, and
 cache policy belong to the lower cache and graph layers, not to

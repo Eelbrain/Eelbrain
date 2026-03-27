@@ -32,9 +32,11 @@ Graph nodes implementing specific pipeline components live in modules such as
 :mod:`eelbrain._experiment.parc`, :mod:`eelbrain._experiment.results`, and
 :mod:`eelbrain._experiment.reports`.
 
-Each node represents one managed file or artifact family, has a path template
-plus logic for turning a key into a concrete path, and is initialized with the
-configuration it needs up front.
+Each node represents one managed file or artifact family and is initialized
+with the configuration it needs up front. Cache derivatives own their internal
+artifact paths directly from semantic state/options. End-product export
+derivatives may additionally define default public paths for reports, movies,
+and similar user-facing outputs.
 
 
 Graph nodes often have corresponding configuration objects that expose
@@ -57,6 +59,12 @@ pipeline-free. Lower layers may use pure helper functions in existing graph
 modules, but must not capture :class:`Pipeline`, depend on temporary facade
 state, or rely on :class:`FileTree` state-mutation helpers such as
 ``set()``/``format()``/``iter()``/``show_state()``.
+
+Naming-only fields used for human-readable export paths must not live in
+canonical derivative state or cache fingerprints. When a derivative needs
+functionality that was previously implemented in ``Pipeline.load_x`` or
+``Pipeline.show_x``, that behavior belongs in the dependency derivative or in
+pure lower-layer helpers, not in the facade.
 
 Cache behavior is always supplied by the lower layers.
 Extending the system should work by adding configuration
