@@ -2,14 +2,9 @@
 from collections import defaultdict
 import difflib
 from functools import cached_property, reduce
-from glob import glob
 from itertools import chain, product
 import operator
-import os
 import re
-import shutil
-import subprocess
-from time import localtime, strftime
 from collections.abc import Callable, Sequence
 import traceback
 
@@ -17,11 +12,10 @@ import numpy as np
 
 from .. import fmtxt
 from .._config import tqdm_disable
-from .._text import enumeration, n_of, plural
-from .._utils import as_sequence, ask
+from .._utils import as_sequence
 from .._utils.com import Notifier, NotNotifier
 from .._utils.notebooks import tqdm
-from .definitions import check_names, compound
+from .definitions import check_names
 
 
 def _etree_expand(node, state):
@@ -139,13 +133,10 @@ class TreeModel:
         self._fields = LayeredDict()
         self._field_values = LayeredDict()
         self._terminal_fields = []
-        self._secondary_cache = defaultdict(tuple)  # secondary cache-files
         self._repr_kwargs = []
         self._repr_kwargs_optional = []
 
         # scaffold for hooks
-        self._compound_members = {}
-        self._compounds = defaultdict(list)
         self._eval_handlers = defaultdict(list)
         self._post_set_handlers = defaultdict(list)
         self._set_handlers = {}
@@ -232,26 +223,6 @@ class TreeModel:
                     missing.add(field)
         if missing:
             raise KeyError(f"The following fields occur in templates but are undefined: {', '.join(sorted(missing))}")
-
-    def _register_compound(self, key, elements):
-        """Register a field that is composed out of other fields
-
-        The compound always reflects ``' '.join(elements)`` including only
-        elements that are not empty.
-
-        Parameters
-        ----------
-        key : str
-            The name of the compound field.
-        elements : tuple of str
-            The field names of the elements.
-        """
-        self._compound_members[key] = elements
-        for e in elements:
-            self._compounds[e].append(key)
-            self._bind_post_set(e, self._update_compounds)
-        self._fields[key] = None
-        self._update_compound(key)
 
     def _register_constant(self, key, value):
         value = self._defaults.get(key, value)
@@ -375,38 +346,6 @@ class TreeModel:
         self._slave_handlers[key] = handler
         self._fields[key] = handler(self._fields)
 
-    def expand_template(self, temp, keep=()):
-        """Expand all constant variables in a template
-
-        Parameters
-        ----------
-        temp : str
-            Template or name of the template which should be expanded.
-        keep : container (implements __contains__)
-            Names of the variables which should not be expanded.
-
-        Returns
-        -------
-        formatted_temp : str
-            Template with all variables replaced by their values, except
-            variables which have entries in field_values or in ``keep``.
-        """
-        temp = self._fields.get(temp, temp)
-
-        while True:
-            stop = True
-            for name in self._fmt_pattern.findall(temp):
-                if (name in keep) or (self._field_values.get(name, False)):
-                    pass
-                else:
-                    temp = temp.replace('{%s}' % name, self._fields[name])
-                    stop = False
-
-            if stop:
-                break
-
-        return temp
-
     def find_keys(self, temp, root=True):
         """Find all terminal field names that are relevant for a template.
 
@@ -425,11 +364,8 @@ class TreeModel:
         if temp in self._terminal_fields:
             return [temp]
 
-        if temp in self._compound_members:
-            temporary_keys = list(self._compound_members[temp])
-        else:
-            temp = self._fields.get(temp, temp)
-            temporary_keys = self._fmt_pattern.findall(temp)
+        temp = self._fields.get(temp, temp)
+        temporary_keys = self._fmt_pattern.findall(temp)
 
         keys = []
         while temporary_keys:
@@ -471,12 +407,6 @@ class TreeModel:
 
     def get(self, temp, **state):
         return self.format('{%s}' % temp, **state)
-
-    def _get_rel(self, temp, start):
-        "Get the path of ``temp`` relative to ``start`` (both field names)"
-        abs_ = self.get(temp)
-        start_ = self.get(start)
-        return os.path.relpath(abs_, start_)
 
     def get_field_values(self, field, exclude=()):
         """Find values for a field taking into account exclusion
@@ -581,43 +511,6 @@ class TreeModel:
         else:
             yield ()
 
-    def iter_temp(self, temp, exclude=None, values={}, **constants):
-        """
-        Iterate through all paths conforming to a template given in ``temp``.
-
-        Parameters
-        ----------
-        temp : str
-            Name of a template in the Pipeline.templates dictionary, or
-            a path template with variables indicated as in ``'{var_name}'``
-        """
-        # if the name is an existing template, retrieve it
-        temp = self.expand_template(temp, values.keys())
-
-        # find variables for iteration
-        variables = set(self._fmt_pattern.findall(temp))
-        variables.difference_update(constants)
-
-        for _ in self.iter(variables, exclude, values, **constants):
-            path = temp.format(**self._fields)
-            yield path
-
-    def _partial(self, temp, skip=()):
-        "Format a template while leaving some slots unfilled"
-        skip = set(skip)
-        fields = self._fields.copy()
-        fields.update({k: '{%s}' % k for k in skip})
-        string = '{%s}' % temp
-
-        while set(self._fmt_pattern.findall(string)).difference(skip):
-            string = string.format(**fields)
-
-        return string
-
-    def _copy_state(self) -> (dict, dict):
-        """Copy of the state that can be used with ``._restore_state()``"""
-        return self._fields.copy(), self._field_values.copy()
-
     def _restore_state(self, state=-1, discard_tip=True):
         """Restore a previously stored state
 
@@ -647,7 +540,7 @@ class TreeModel:
         """
         self._restore_state(0, False)
 
-    def set(self, match=True, allow_asterisk=False, **state):
+    def set(self, match=True, **state):
         """Set the value of one or more fields.
 
         Parameters
@@ -655,35 +548,12 @@ class TreeModel:
         match : bool
             For fields with pre-defined values, only allow valid values (default
             ``True``).
-        allow_asterisk : bool
-            If a value contains ``'*'``, set the value without the normal value
-            evaluation and checking mechanisms (default ``False``).
         ... :
             Fields and values to set. Invalid fields raise a KeyError. Unless
             match == False, Invalid values raise a ValueError.
         """
         if not state:
             return
-
-        # expand compounds
-        if state.pop('expand_compounds', True):
-            for k in list(state):
-                if k in self._compound_members:
-                    fields = self._compound_members[k]
-                    v = state.pop(k)
-                    values = v.split(' ')
-                    for i, field in enumerate(fields):
-                        field_values = self._field_values[field]
-                        vi = values[i] if len(values) > i else None
-                        if vi in field_values:
-                            continue
-                        elif '' in field_values:
-                            values.insert(i, '')
-                        else:
-                            raise ValueError(f"{k}={v!r}")
-                    if len(values) != len(fields):
-                        raise ValueError(f"{k}={v!r}")
-                    state.update(zip(fields, values))
 
         handled_state = {}  # fields with special set handlers
         for k in list(state):
@@ -698,8 +568,6 @@ class TreeModel:
                 continue
             elif not isinstance(v, str):
                 raise TypeError(f"{k}={v!r}: Values have to be strings")
-            elif '*' in v and allow_asterisk:
-                continue
             # eval values
             eval_handlers = self._eval_handlers[k]
             if eval_handlers:
@@ -861,635 +729,3 @@ class TreeModel:
     @cached_property
     def _temporary_state(self):
         return _TempStateController(self)
-
-    def _update_compound(self, key):
-        items = [self.get(k) for k in self._compound_members[key]]
-        self.set(**{key: compound(items)}, expand_compounds=False)
-
-    def _update_compounds(self, key, _):
-        for compound_ in self._compounds[key]:
-            self._update_compound(compound_)
-
-
-class FileTree(TreeModel):
-    """:class:`TreeModel` subclass for a file system hierarchy"""
-    _repr_args = ('root',)
-    _safe_delete = 'root'  # directory from which to rm without warning
-
-    def __init__(self, **state):
-        TreeModel.__init__(self, **state)
-        self._make_handlers = {}
-        self._cache_handlers = {}
-        self._register_field('root', eval_handler=self._eval_root)
-
-    def _bind_cache(self, key, handler):
-        """Bind a cache function to a ``*-file`` key
-
-        The cache function is called every time the file name is retrieved and
-        should recreate the file if it is outdated.
-
-        The cache function can return the filename of the created file since
-        it is called every time the specific file is requested. Note that this
-        causes problems for ``glob()``.
-        """
-        if key in self._cache_handlers:
-            raise RuntimeError(f"Cache handler for {key!r} already defined")
-        elif key in self._make_handlers:
-            raise RuntimeError(f"Already defined make handler for {key!r}")
-        self._cache_handlers[key] = handler
-
-    def _bind_make(self, key, handler):
-        """Bind a make function to a ``*-file`` key
-
-        The make function is called only when the file name is retrieved and
-        the file does not exist.
-        """
-        if key in self._cache_handlers:
-            raise RuntimeError(f"Already defined cache handler for {key!r}")
-        elif key in self._make_handlers:
-            raise RuntimeError(f"Make handler for {key!r} already defined")
-        self._make_handlers[key] = handler
-
-    @staticmethod
-    def _eval_root(root):
-        root = os.path.abspath(os.path.expanduser(root))
-        if root != '':
-            root = os.path.normpath(root)
-        return root
-
-    def get(
-            self,
-            temp: str,
-            fmatch: bool = False,
-            vmatch: bool = True,
-            match: bool = True,
-            mkdir: bool = False,
-            make: bool = False,
-            **state,
-    ):
-        """
-        Retrieve a formatted template
-
-        Parameters
-        ----------
-        temp
-            Name of the requested template.
-        fmatch
-            "File-match": If the template contains asterisk (``*``), use ``glob`` to
-            expand it. An IOError is raised if the pattern does not match
-            exactly one file.
-        vmatch
-            "Value match": Require existence of the assigned value (only
-            applies for fields with stored values).
-        match
-            Do any matching (i.e., ``match=False`` sets ``fmatch`` as well as
-            ``vmatch`` to ``False``).
-        mkdir
-            If the directory containing the file does not exist, create it.
-        make
-            If a requested file does not exists, make it if possible.
-        """
-        if not match:
-            fmatch = vmatch = False
-
-        path = TreeModel.get(self, temp, vmatch=vmatch, **state)
-        path = os.path.expanduser(path)
-
-        # assert the presence of the file
-        if fmatch and ('*' in path):
-            paths = glob(path)
-            if len(paths) == 0 and make and temp in self._make_handlers:
-                self._make_handlers[temp]()
-                paths = glob(path)
-
-            if len(paths) == 1:
-                path = paths[0]
-            elif len(paths) > 1:
-                raise OSError(f"More than one files match {path!r}: {paths}")
-            else:
-                raise OSError(f"No file found for {path!r}")
-
-        # create the directory
-        if mkdir:
-            if temp.endswith('dir'):
-                dirname = path
-            else:
-                dirname = os.path.dirname(path)
-            if not os.path.exists(dirname):
-                root = self.get('root')
-                if root == '':
-                    raise OSError("Prevented from creating directories because root is not set")
-                elif os.path.exists(root):
-                    os.makedirs(dirname)
-                else:
-                    raise OSError(f"Prevented from creating directories because root does not exist: {root!r}")
-
-        # make the file
-        if make:
-            if temp in self._cache_handlers:
-                path = self._cache_handlers[temp]() or path
-            elif not os.path.exists(path):
-                if temp in self._make_handlers:
-                    with self._temporary_state:
-                        self._make_handlers[temp]()
-                elif temp.endswith('-dir'):
-                    os.makedirs(path)
-                else:
-                    raise RuntimeError(f"No make handler for {temp!r}")
-
-        return path
-
-    def glob(self, temp, inclusive=False, **state) -> list[str]:
-        """Find all files matching a certain pattern
-
-        Parameters
-        ----------
-        temp : str
-            Name of the path template for which to find files.
-        inclusive : bool
-            Treat all unspecified fields as ``*`` (default False).
-
-        See Also
-        --------
-        copy : Copy files.
-        move : Move files.
-        rm : Delete files.
-
-        Notes
-        -----
-        State parameters can include an asterisk ('*') to match multiple files.
-        Uses :func:`glob.glob`.
-        """
-        pattern = self._glob_pattern(temp, inclusive, **state)
-        return glob(pattern)
-
-    def _glob_pattern(self, temp, inclusive=False, **state) -> str:
-        if inclusive:
-            for key in self._terminal_fields:
-                if key in state or key == 'root':
-                    continue
-                elif key in self._field_values and len(self._field_values[key]) == 1:
-                    continue
-                state[key] = '*'
-        with self._temporary_state:
-            pattern = self.get(temp, allow_asterisk=True, **state)
-        return pattern
-
-    def _find_files_with_target(self, action, temp, dst_root, inclusive, overwrite, confirm, state):
-        if dst_root is None:
-            if 'root' not in state:
-                raise TypeError("Need to specify at least one of root and dst_root")
-            dst_root = self.get('root')
-        if not os.path.exists(dst_root):
-            raise OSError(f'Destination does not exist: {dst_root}')
-        src_filenames = self.glob(temp, inclusive, **state)
-        n = len(src_filenames)
-        if n == 0:
-            print("No files matching pattern.")
-            return None, None
-
-        root = self.get('root')
-        errors = [filename for filename in src_filenames if not filename.startswith(root)]
-        if errors:
-            raise ValueError(f"{len(errors)} files are not located in the root directory ({errors[0]}, ...)")
-        rel_filenames = {src: os.path.relpath(src, root) for src in src_filenames}
-        dst_filenames = {src: os.path.join(dst_root, filename) for src, filename in rel_filenames.items()}
-        if overwrite is not True:
-            exist = [src for src, dst in dst_filenames.items() if os.path.exists(dst)]
-            if exist:
-                if overwrite is None:
-                    raise ValueError(f"{len(exist)} of {n} files already exist; use overwrite parameter")
-                elif overwrite is False:
-                    if len(exist) == n:
-                        print(f"All {n} files already exist; use overwrite=True to replace them")
-                        return None, None
-                    n -= len(exist)
-                    for src in exist:
-                        src_filenames.remove(src)
-                else:
-                    raise TypeError(f"{overwrite=}")
-
-        if not confirm:
-            print(f"{action} {self.get('root')} -> {dst_root}:")
-            for src in src_filenames:
-                print("  " + rel_filenames[src])
-            if input(f"{action} {n} files? (confirm with 'yes'): ") != 'yes':
-                return None, None
-        return src_filenames, [dst_filenames[src] for src in src_filenames]
-
-    def copy(self, temp, dst_root=None, inclusive=False, confirm=False, overwrite=None, **state):
-        """Copy files to a different root folder
-
-        Parameters
-        ----------
-        temp : str
-            Name of the path template for which to find files.
-        dst_root : str
-            Path to the root to which the files should be moved. If the target
-            is the experiment's root directory, specify ``root`` as the source
-            root and leave ``dst_root`` unspecified.
-        inclusive : bool
-            Treat all unspecified fields as ``*`` (default False).
-        confirm : bool
-            Skip asking for confirmation before copying the files.
-        overwrite : bool
-            ``True`` to overwrite target files if they already exist. ``False``
-            to quietly keep exising files.
-
-        See Also
-        --------
-        glob : Find all files matching a template.
-        move : Move files.
-        rm : Delete files.
-        make_copy : Copy a file by substituting a field
-
-        Notes
-        -----
-        State parameters can include an asterisk ('*') to match multiple files.
-        """
-        src_filenames, dst_filenames = self._find_files_with_target('Copy', temp, dst_root, inclusive, overwrite, confirm, state)
-        if not src_filenames:
-            return
-        for src, dst in tqdm(zip(src_filenames, dst_filenames), "Copying", len(src_filenames)):
-            dirname = os.path.dirname(dst)
-            if not os.path.exists(dirname):
-                os.makedirs(dirname)
-
-            if os.path.isdir(src):
-                shutil.copytree(src, dst)
-            else:
-                shutil.copy(src, dst)
-
-    def move(self, temp, dst_root=None, inclusive=False, confirm=False, overwrite=None, **state):
-        """Move files to a different root folder
-
-        Parameters
-        ----------
-        temp : str
-            Name of the path template for which to find files.
-        dst_root : str
-            Path to the root to which the files should be moved. If the target
-            is the experiment's root directory, specify ``root`` as the source
-            root and leave ``dst_root`` unspecified.
-        inclusive : bool
-            Treat all unspecified fields as ``*`` (default False).
-        confirm : bool
-            Skip asking for confirmation before moving the files.
-        overwrite : bool
-            Overwrite target files if they already exist.
-
-        See Also
-        --------
-        copy : Copy files.
-        glob : Find all files matching a template.
-        rm : Delete files.
-
-        Notes
-        -----
-        State parameters can include an asterisk ('*') to match multiple files.
-        """
-        if overwrite is False:
-            raise ValueError(f"{overwrite=}")
-        src_filenames, dst_filenames = self._find_files_with_target('Move', temp, dst_root, inclusive, overwrite, confirm, state)
-        if not src_filenames:
-            return
-        for src, dst in tqdm(zip(src_filenames, dst_filenames), "Moving", len(src_filenames)):
-            dirname = os.path.dirname(dst)
-            if not os.path.exists(dirname):
-                os.makedirs(dirname)
-            os.rename(src, dst)
-
-    def show_file_status(
-            self,
-            temp,
-            row,
-            col: str = None,
-            count: bool = True,
-            present: str = 'time',
-            absent: str = '-',
-            **kwargs,
-    ):
-        """Compile a table about the existence of files
-
-        Parameters
-        ----------
-        temp
-            The name of the path template for the files to examine.
-        row
-            Field over which to alternate rows.
-        col
-            Field over which to alternate columns (default is a single column).
-        count
-            Add a column with a number for each line (default True).
-        present
-            String to display when a given file is present. ``'time'`` to use
-            last modification date and time (default); ``'date'`` for date only.
-        absent
-            String to display when a given file is absent (default ``'-'``).
-        ...
-            ``self.iter()`` kwargs.
-        """
-        if col is None:
-            col_v = (None,)
-            ncol = 1
-        else:
-            col_v = self.get_field_values(col)
-            ncol = len(col_v)
-
-        # table header
-        table = fmtxt.Table('r' * bool(count) + 'l' * (ncol + 1))
-        if count:
-            table.cell()
-        table.cell(row)
-        if col is None:
-            table.cell(temp)
-        else:
-            for name in col_v:
-                table.cell(name)
-        table.midrule()
-
-        # body
-        for i, row_v in enumerate(self.iter(row, **kwargs)):
-            if count:
-                table.cell(i)
-            table.cell(row_v)
-            for v in col_v:
-                if v is None:
-                    path = self.get(temp)
-                else:
-                    path = self.get(temp, **{col: v})
-
-                if os.path.exists(path):
-                    if present == 'time':
-                        r = strftime('%x %X', localtime(os.path.getmtime(path)))
-                    elif present == 'date':
-                        r = strftime('%x', localtime(os.path.getmtime(path)))
-                    else:
-                        r = present
-                else:
-                    r = absent
-                table.cell(r)
-
-        return table
-
-    def show_file_status_mult(self, files, fields, count=True, present='X',
-                              absent='-', **kwargs):
-        """
-        Compile a table about the existence of multiple files
-
-        Parameters
-        ----------
-        files : str | list of str
-            The names of the path templates whose existence to list.
-        fields : str | list of str
-            The names of the variables for which to list files (i.e., for each
-            unique combination of ``fields``, list ``files``).
-        count : bool
-            Add a column with a number for each subject.
-        present : str
-            String to display when a given file is present.
-        absent : str
-            String to display when a given file is absent.
-
-        Examples
-        --------
-        >>> e.show_file_status_mult(['raw-file', 'trans-file', 'fwd-file'],
-        ... 'subject')
-             Subject   Raw-file   Trans-file   Fwd-file
-        -----------------------------------------------
-         0   AD001     X          X            X
-         1   AD002     X          X            X
-         2   AD003     X          X            X
-        ...
-        """
-        if not isinstance(files, (list, tuple)):
-            files = [files]
-        if not isinstance(fields, (list, tuple)):
-            fields = [fields]
-
-        ncol = (len(fields) + len(files))
-        table = fmtxt.Table('r' * bool(count) + 'l' * ncol)
-        if count:
-            table.cell()
-        for name in fields + files:
-            table.cell(name.capitalize())
-        table.midrule()
-
-        for i, _ in enumerate(self.iter(fields, **kwargs)):
-            if count:
-                table.cell(i)
-
-            for field in fields:
-                table.cell(self.get(field))
-
-            for temp in files:
-                path = self.get(temp)
-                if os.path.exists(path):
-                    table.cell(present)
-                else:
-                    table.cell(absent)
-
-        return table
-
-    def show_in_finder(self, temp, **kwargs):
-        "Reveal the file corresponding to the ``temp`` template in the Finder."
-        fname = self.get(temp, **kwargs)
-        subprocess.call(["open", "-R", fname])
-
-    def rename(self, old, new, exclude=False):
-        """Rename all files corresponding to a pattern (or template)
-
-        Parameters
-        ----------
-        old : str
-            Template for the files to be renamed. Can interpret '*', but will
-            raise an error in cases where more than one file fit the pattern.
-        new : str
-            Template for the new names.
-
-        Examples
-        --------
-        The following command will collect a specific file for each subject and
-        place it in a common folder:
-
-        >>> e.rename('info-file', '/some_other_place/{subject}_info.txt')
-        """
-        new = self.expand_template(new)
-        files = []
-        for old_name in self.iter_temp(old, exclude):
-            if '*' in old_name:
-                matches = glob(old_name)
-                if len(matches) == 1:
-                    old_name = matches[0]
-                elif len(matches) > 1:
-                    err = f"Several files fit the pattern {old_name!r}"
-                    raise ValueError(err)
-
-            if os.path.exists(old_name):
-                new_name = self.format(new)
-                files.append((old_name, new_name))
-
-        if not files:
-            print(f"No files found for {old!r}")
-            return
-
-        old_pf = os.path.commonprefix([pair[0] for pair in files])
-        new_pf = os.path.commonprefix([pair[1] for pair in files])
-        n_pf_old = len(old_pf)
-        n_pf_new = len(new_pf)
-
-        table = fmtxt.Table('lll')
-        table.cells('Old', '', 'New')
-        table.midrule()
-        table.caption(f"{old_pf} -> {new_pf}")
-        for old, new in files:
-            table.cells(old[n_pf_old:], '->', new[n_pf_new:])
-
-        print(table)
-
-        msg = f"Rename {len(files)} files (confirm with 'yes')? "
-        if input(msg) == 'yes':
-            for old, new in files:
-                dirname = os.path.dirname(new)
-                if not os.path.exists(dirname):
-                    os.makedirs(dirname)
-                os.rename(old, new)
-
-    def rename_field(self, temp, field, old, new, exclude=False, **kwargs):
-        """Change the value of one field in paths corresponding to a template
-
-        Parameters
-        ----------
-        temp : str
-            Template name.
-        field : str
-            Field to change.
-        old : str
-            Old value.
-        new : str
-            New value.
-        kwargs :
-            ``self.iter_temp`` arguments.
-        """
-        items = []  # (tag, src, dst)
-        kwargs[field] = old
-        dst_kwa = {field: new}
-        for src in self.iter_temp(temp, exclude, ** kwargs):
-            dst = self.get(temp, **dst_kwa)
-            if os.path.exists(src):
-                if os.path.exists(dst):
-                    tag = 'o'
-                else:
-                    tag = ' '
-            else:
-                tag = 'm'
-            items.append((tag, src, dst))
-
-        src_prefix = os.path.commonprefix(tuple(item[1] for item in items))
-        dst_prefix = os.path.commonprefix(tuple(item[2] for item in items))
-        src_crop = len(src_prefix)
-        dst_crop = len(dst_prefix)
-
-        # print info
-        if src_prefix == dst_prefix:
-            lines = ['in ' + src_prefix, '']
-        else:
-            lines = [src_prefix, '->' + dst_prefix, '']
-
-        for tag, src, dst in items:
-            lines.append(f'{tag} {src[src_crop:]} -> {dst[dst_crop:]}')
-        lines.append('')
-        msg = 'Legend  m: source is missing;  o: will overwite a file'
-        lines.append(msg)
-        print('\n'.join(lines))
-        rename = tuple(item for item in items if item[0] == ' ')
-        if not rename:
-            return
-
-        msg = f"Rename {len(rename)} files (confirm with 'yes')? "
-        if input(msg) != 'yes':
-            return
-
-        for _, src, dst in rename:
-            os.rename(src, dst)
-        print("Done")
-
-    def rm(self, temp, inclusive=False, confirm=False, **constants):
-        """Remove all files corresponding to a template
-
-        Asks for confirmation before deleting anything. Uses glob, so
-        individual templates can be set to '*'.
-
-        Parameters
-        ----------
-        temp : str
-            Name of the path template for which to find and delete files.
-        inclusive : bool
-            Treat all unspecified fields as ``*`` (default False).
-        confirm : bool
-            Confirm removal of the selected files. If False (default) the user
-            is prompted for confirmation with a list of files; if True, the
-            files are removed immediately.
-        **others** :
-            Set field values (values can be '*' to match all).
-
-        See Also
-        --------
-        glob : Find all files matching a template.
-        copy : Copy files
-        move : Move files.
-        """
-        files = self.glob(temp, inclusive, **constants)
-        secondary_files = []
-        for stemp in self._secondary_cache[temp]:
-            secondary_files.extend(self.glob(stemp, inclusive, **constants))
-
-        if files or secondary_files:
-            is_dir = [os.path.isdir(path) for path in files]
-            # Confirm deletion
-            if not confirm:
-                n_dirs = sum(is_dir)
-                n_files = len(files) - n_dirs
-                desc = []
-                if n_dirs:
-                    desc.append(n_of(n_dirs, 'directory'))
-                if n_files:
-                    desc.append(n_of(n_files, 'file'))
-                if secondary_files:
-                    desc.append(n_of(len(secondary_files), 'secondary file'))
-                info = f"Delete {enumeration(desc)}?"
-
-                # Confirm if deleting files not in managed space
-                safe_root = self.get(self._safe_delete)
-                n_unsafe = len(files) - sum(path.startswith(safe_root) for path in files)
-                if n_unsafe:
-                    info += f"\n!\n! {plural('item', n_unsafe)} outside of {self._safe_delete}\n!"
-
-                # prompt
-                while not confirm:
-                    command = ask(info, {'yes': 'delete files', 'no': "don't delete files (default)", 'show': 'list the files'}, allow_empty=True)
-                    if command == 'yes':
-                        confirm = True
-                    elif command == 'show':
-                        print(f"root: {self.get('root')}\n")
-                        print('\n'.join(self._remove_root(files)))
-                    elif command in ('no', ''):
-                        return
-                    else:
-                        raise RuntimeError(f"{command=}")
-
-            print('deleting...')
-            dirs = (p for p, isdir in zip(files, is_dir) if isdir)
-            files = (p for p, isdir in zip(files, is_dir) if not isdir)
-            for path in dirs:
-                shutil.rmtree(path)
-            for path in chain(files, secondary_files):
-                os.remove(path)
-        else:
-            print(f"No files found for {temp!r}")
-
-    def _remove_root(self, paths):
-        root = self.get('root')
-        root_len = len(root)
-        return (path[root_len:] if path.startswith(root) else path
-                for path in paths)

@@ -57,7 +57,7 @@ initialization parameters.
 Graph-layer behavior consumed by nodes must itself be explicit-state and
 pipeline-free. Lower layers may use pure helper functions in existing graph
 modules, but must not capture :class:`Pipeline`, depend on temporary facade
-state, or rely on :class:`FileTree` state-mutation helpers such as
+state, or rely on facade state-mutation helpers such as
 ``set()``/``format()``/``iter()``/``show_state()``.
 
 Naming-only fields used for human-readable export paths must not live in
@@ -100,6 +100,6 @@ analysis behavior in an extensible way. They are supplied by the user through
 :class:`Pipeline`.
 """
 
-from .experiment import TreeModel, FileTree
+from .experiment import TreeModel
 from .mne_experiment import Pipeline
 from .test_def import ROITestResult, ROI2StageResult

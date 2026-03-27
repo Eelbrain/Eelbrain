@@ -4,7 +4,7 @@
 These graph nodes own the work behind the event/epoch/evoked ``load_x`` paths.
 They may be initialized with configuration objects, immutable values, and
 explicit dataset-transform hooks, but they must not receive bound
-:class:`Pipeline` or :class:`FileTree` methods as execution backends.
+:class:`Pipeline` methods as execution backends.
 
 When higher-level derivatives need events, epochs, or evoked sensor data, they
 should load these nodes through :meth:`DerivativeContext.load` rather than call

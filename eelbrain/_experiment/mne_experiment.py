@@ -7,9 +7,8 @@ import inspect
 from itertools import chain, product
 import logging
 import os
-from os.path import exists, isdir, join
+from os.path import exists, join
 from pathlib import Path
-import shutil
 from typing import Any, Literal
 from collections.abc import Sequence
 
@@ -46,7 +45,7 @@ from .events import (
     SelectedEventsDerivative, load_evoked_request,
 )
 from .exceptions import FileMissingError
-from .experiment import FileTree
+from .experiment import TreeModel
 from .groups import assemble_groups
 from .pathing import deriv_dir, epoch_basename, join_stem_parts, results_dir
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, assemble_parcs
@@ -134,7 +133,7 @@ def generate_bids_template(entities: set[str]) -> str:
     return '_'.join(parts)
 
 
-class Pipeline(FileTree):
+class Pipeline(TreeModel):
     """Analyze an MEG or EEG experiment
 
     Parameters
@@ -155,7 +154,7 @@ class Pipeline(FileTree):
     .. seealso::
         Guide on using :ref:`experiment-class-guide`.
     """
-    _safe_delete = 'cache-dir'
+    _repr_args = ('root',)
     path_version: int = 2
     screen_log_level: str | int = logging.INFO
     cache_inv: bool = True  # Whether to cache inverse solution
@@ -283,16 +282,6 @@ class Pipeline(FileTree):
     # (default for factors not in this list is alphabetic)
     _model_order = []
 
-    # Backup
-    # ------
-    # basic state for a backup
-    _backup_state = {'subject': '*', 'mrisubject': '*', 'session': '*', 'raw': 'raw'}
-    # files to back up, together with state modifications on the basic state
-    _backup_files = (('rej-file', {'raw': '*', 'epoch': '*', 'rej': '*'}),
-                     ('trans-file', {}),
-                     ('mri-cfg-file', {}),
-                     ('log-dir', {}),)
-
     # Tests
     # -----
     # Tests imply a model which is set automatically
@@ -320,7 +309,7 @@ class Pipeline(FileTree):
         ########
         if root is None:
             raise AttributeError("Pipeline subclasses must have root.")
-        self.root = root = FileTree._eval_root(root)
+        self.root = root = self._eval_root(root)
         if hasattr(self, 'cluster_criteria'):
             raise AttributeError("Pipeline subclasses can not have a .cluster_criteria attribute anymore. Please remove the attribute, delete the eelbrain-cache folder and use the select_clusters analysis parameter.")
 
@@ -402,8 +391,6 @@ class Pipeline(FileTree):
             'raw-cache-dir': join('{cache-dir}', 'raw', '{subject_session}'),  # hard-coded in RawPipe
             'cached-raw-file': join('{raw-cache-dir}', '{raw_basename}_raw-{raw}.fif'),
 
-            'event-file': join('{raw-cache-dir}', '{raw_basename}_raw-{raw}_evts.pickle'),
-
             # evoked
             'evoked-file': join('{cache-dir}', 'evoked', '{epoch_basename}_raw-{raw}_epoch-{epoch}_rej-{rej}_model-{model}_count-{equalize_evoked_count}_ave.fif'),
 
@@ -412,37 +399,19 @@ class Pipeline(FileTree):
             # sensor covariance
             'cov-file': join('{raw-cache-dir}', '{epoch_basename}_raw-{raw}_cov-{cov}_rej-{rej}_cov.fif'),
             'cov-info-file': join('{raw-cache-dir}', '{epoch_basename}_raw-{raw}_cov-{cov}_rej-{rej}_info.txt'),
-            # inverse solution
-            'inv-file': join('{raw-cache-dir}', '{epoch_basename}_mrisubject-{mrisubject}_src-{src}_raw-{raw}_cov-{cov}_rej-{rej}_inv-{inv}_inv.fif'),
 
             # MRIs
             'common_brain': 'fsaverage',
             # MRI base files
             'mri-sdir': join('{deriv-dir}', 'freesurfer'),
             'mri-dir': join('{mri-sdir}', '{mrisubject}'),
-            'mri-cfg-file': join('{mri-dir}', 'MRI scaling parameters.cfg'),
-            'mri-file': join('{mri-dir}', 'mri', 'orig.mgz'),
 
             'bem-dir': join('{mri-dir}', 'bem'),
             'bem-file': join('{bem-dir}', '{mrisubject}-inner_skull-bem.fif'),
-            'bem-sol-file': join('{bem-dir}', '{mrisubject}-*-bem-sol.fif'),  # removed for 0.24
-            'head-bem-file': join('{bem-dir}', '{mrisubject}-head.fif'),
             'src-file': join('{bem-dir}', '{mrisubject}-{src}-src.fif'),
-            'fiducials-file': join('{bem-dir}', '{mrisubject}-fiducials.fif'),
-            # Morphing
-            'source-morph-file': join('{bem-dir}', '{mrisubject}-{common_brain}-{src}-morph.h5'),
             # Labels
             'hemi': ('lh', 'rh'),
-            'label-dir': join('{mri-dir}', 'label'),
-            'annot-file': join('{label-dir}', '{hemi}.{parc}.annot'),
-
-            # group level: test files
-            'test-dir': join('{cache-dir}', 'test'),
-            # result output files
-
-            # (method) plots
-            'methods-dir': join('{deriv-dir}', 'eelbrain', 'methods'),
-            'res-dir': join('{deriv-dir}', 'eelbrain', 'results'),
+            'annot-file': join('{mri-dir}', 'label', '{hemi}.{parc}.annot'),
 
         }
 
@@ -453,7 +422,8 @@ class Pipeline(FileTree):
 
         # register fields in templates
         self._bids_path = BIDSPath(root=root)
-        FileTree.__init__(self)
+        TreeModel.__init__(self)
+        self._register_field('root', eval_handler=self._eval_root)
         self.set(root=root)
 
         ########################################################################
@@ -655,7 +625,7 @@ class Pipeline(FileTree):
             #             raise FileDeficientError(f"Raw file {self._bids_path.basename} has dev_head_t that is different from other files.")
 
     def _restore_state(self, state=-1, discard_tip=True):
-        FileTree._restore_state(self, state=state, discard_tip=discard_tip)
+        TreeModel._restore_state(self, state=state, discard_tip=discard_tip)
         self._update_bids_path()
 
     def _subclass_init(self):
@@ -847,6 +817,40 @@ class Pipeline(FileTree):
         "Iterate state through subjects and yield each subject name."
         return self.iter()
 
+    @staticmethod
+    def _eval_root(root):
+        root = os.path.abspath(os.path.expanduser(root))
+        if root != '':
+            root = os.path.normpath(root)
+        return root
+
+    def get(
+            self,
+            temp: str,
+            vmatch: bool = True,
+            match: bool = True,
+            mkdir: bool = False,
+            **state,
+    ):
+        if not match:
+            vmatch = False
+
+        path = TreeModel.get(self, temp, vmatch=vmatch, **state)
+        path = os.path.expanduser(path)
+
+        if mkdir:
+            dirname = path if temp.endswith('dir') else os.path.dirname(path)
+            if not os.path.exists(dirname):
+                root = self.get('root')
+                if root == '':
+                    raise OSError("Prevented from creating directories because root is not set")
+                elif os.path.exists(root):
+                    os.makedirs(dirname)
+                else:
+                    raise OSError(f"Prevented from creating directories because root does not exist: {root!r}")
+
+        return path
+
     def _process_subject_arg(self, subjects, kwargs):
         """Process subject arg for methods that work on groups and subjects
 
@@ -893,10 +897,6 @@ class Pipeline(FileTree):
         else:
             raise TypeError(f"{subjects=}")
 
-    def _cluster_criteria_kwargs(self, data):
-        criteria = self._cluster_criteria[self.get('select_clusters')]
-        return {'min' + dim: criteria[dim] for dim in data.dims if dim in criteria}
-
     def get_field_values(self, field, exclude=(), **state):
         """Find values for a field taking into account exclusion
 
@@ -915,7 +915,7 @@ class Pipeline(FileTree):
             exclude = (exclude,)
 
         if field == 'mrisubject':
-            subjects = FileTree.get_field_values(self, 'subject')
+            subjects = TreeModel.get_field_values(self, 'subject')
             mri_subjects = self._mri_subjects[self.get('mri')]
             mrisubjects = sorted(mri_subjects[s] for s in subjects)
             if exclude:
@@ -926,7 +926,7 @@ class Pipeline(FileTree):
             mrisubjects = ['sub-' + s for s in mrisubjects if (s != common_brain and not s.startswith('sub-'))]
             return mrisubjects
         else:
-            return FileTree.get_field_values(self, field, exclude)
+            return TreeModel.get_field_values(self, field, exclude)
 
     def iter(self, fields='subject', exclude=None, values=None, progress_bar=None, **state):
         """
@@ -947,7 +947,7 @@ class Pipeline(FileTree):
         ...
             State parameters.
         """
-        return FileTree.iter(self, fields, exclude, values, progress_bar, **state)
+        return TreeModel.iter(self, fields, exclude, values, progress_bar, **state)
 
     def iter_range(self, start=None, stop=None, field='subject'):
         """Iterate through a range on a field with ordered values.
@@ -2585,48 +2585,6 @@ class Pipeline(FileTree):
             self.make_bad_channels(bad_chs)
         return full_nc, bad_chs
 
-    def make_copy(
-            self,
-            temp: str,
-            field: str,
-            src: str,
-            dst: str,
-            overwrite: bool = None,
-            **state,
-    ):
-        """Make a copy of a file to a new path by substituting one field value
-
-        Parameters
-        ----------
-        temp
-            Template of the file which to copy.
-        field
-            Field in which the source and target of the link are distinguished.
-        src
-            Value for field on the source file.
-        dst
-            Value for field on the destination filename.
-        overwrite
-            If the target file already exists, overwrite the old file.
-            The default is to raise an :exc:`IOError` if the file exists.
-            Set to ``False`` to quietly keep exising files.
-
-        See Also
-        --------
-        copy : Copy muliple files to a different root directory
-        """
-        dst_path = self.get(temp, mkdir=True, **{field: dst}, **state)
-        if exists(dst_path):
-            if overwrite is False:
-                return
-            elif overwrite is not True:
-                raise OSError(f"File already exists at {dst_path}; use the `overwrite` parameter")
-
-        src_path = self.get(temp, **{field: src})
-        if isdir(src_path):
-            raise ValueError("Can only copy files, not directories.")
-        shutil.copyfile(src_path, dst_path)
-
     @suppress_mne_warning
     def make_ica_selection(
             self,
@@ -3139,12 +3097,8 @@ class Pipeline(FileTree):
         -----
         By default, the epoch selection is different for each primary epoch and
         for each preprocessing setting (``raw``). To share the same epoch
-        selection, the corresponding selection file can be duplicated.
-        To quickly duplicate the files for several subjects from one
-        preprocessing setting to another, use :meth:`.make_copy`::
-
-            for subject in e:
-                e.make_copy('rej-file', 'raw', '0.1-40', '1-20')
+        selection, create the corresponding selection file for each target
+        preprocessing setting.
         """
         rej = self.get('rej', **state)
         rej_args = self._artifact_rejection[rej]
@@ -3884,7 +3838,7 @@ class Pipeline(FileTree):
         """
         subp.run_mne_browse_raw(self.get('raw-dir'), self.get('mrisubject'), self.get('mri-sdir'), modal)
 
-    def set(self, subject=None, match=True, allow_asterisk=False, **state):
+    def set(self, subject=None, match=True, **state):
         """
         Set variable values.
 
@@ -3896,9 +3850,6 @@ class Pipeline(FileTree):
         match : bool
             For fields with pre-defined values, only allow valid values (default
             ``True``).
-        allow_asterisk : bool
-            If a value contains ``'*'``, set the value without the normal value
-            evaluation and checking mechanisms (default ``False``).
         ...
             State parameters.
         """
@@ -3911,9 +3862,9 @@ class Pipeline(FileTree):
                 else:
                     state['subject'] = subject
                     subject = None
-        FileTree.set(self, match, allow_asterisk, **state)
+        TreeModel.set(self, match, **state)
         if subject is not None:
-            FileTree.set(self, match, allow_asterisk, subject=subject)
+            TreeModel.set(self, match, subject=subject)
         self._update_bids_path()
 
     def _post_set_group(self, _, group):
@@ -4193,55 +4144,6 @@ class Pipeline(FileTree):
                 t.cells(subject, ', '.join(bad_channels[subject]))
         return t
 
-    def show_file_status(
-            self,
-            temp: str,
-            col: str = None,
-            row: str = 'subject',
-            count: bool = True,
-            present: str = 'time',
-            absent: str = '-',
-            **kwargs,
-    ):
-        """Compile a table about the existence of files
-
-        Parameters
-        ----------
-        temp
-            The name of the path template for the files to examine.
-        col
-            Field over which to alternate columns (default is a single column).
-        row
-            Field over which to alternate rows (default 'subject').
-        count
-            Add a column with a number for each line (default True).
-        present
-            String to display when a given file is present. ``'time'`` to use
-            last modification date and time (default); ``'date'`` for date only.
-        absent
-            String to display when a given file is absent (default ``'-'``).
-        ...
-            :meth:`Pipeline.iter` parameters.
-
-        Examples
-        --------
-        >>> e.show_file_status('rej-file')
-            Subject   Rej-file
-        -------------------------------
-        0   A0005     07/22/15 13:03:08
-        1   A0008     07/22/15 13:07:57
-        2   A0028     07/22/15 13:22:04
-        3   A0048     07/22/15 13:25:29
-        >>> e.show_file_status('rej-file', 'raw')
-            Subject   0-40   0.1-40              1-40   Clm
-        ---------------------------------------------------
-        0   A0005     -      07/22/15 13:03:08   -      -
-        1   A0008     -      07/22/15 13:07:57   -      -
-        2   A0028     -      07/22/15 13:22:04   -      -
-        3   A0048     -      07/22/15 13:25:29   -      -
-        """
-        return FileTree.show_file_status(self, temp, row, col, count, present, absent, **kwargs)
-
     def show_raw_info(self, **state):
         """Display the selected pipeline for raw processing
 
@@ -4507,15 +4409,6 @@ class Pipeline(FileTree):
             return ds
         else:
             return ds.as_table(midrule=True, count=True)
-
-    def show_input_tree(self):
-        """Print a tree of the files needed as input
-
-        See Also
-        --------
-        show_tree: show complete tree (including secondary, optional and cache)
-        """
-        return self.show_tree(fields=['raw-file', 'trans-file', 'mri-dir'])
 
     def _surfer_plot_kwargs(self, surf=None, views=None, foreground=None, background=None, smoothing_steps=None, hemi=None):
         out = self._brain_plot_defaults.copy()

@@ -70,9 +70,10 @@ def test_sample():
     assert e.get('subject') == 'R0000'
     assert e.get('subject', subject='R0002') == 'R0002'
 
-    # globbing
-    assert e._glob_pattern('ica-file', inclusive=True) == join(root, 'derivatives', 'ica', 'sub-*_meg_raw-*_ica.fif')
-    assert e._glob_pattern('ica-file', subject='R0002', inclusive=True) == join(root, 'derivatives', 'ica', 'sub-R0002_meg_raw-*_ica.fif')
+    # wildcard formatting
+    with e._temporary_state:
+        assert e.get('ica-file', match=False, subject='*', raw='*') == join(root, 'derivatives', 'ica', 'sub-*_meg_raw-*_ica.fif')
+        assert e.get('ica-file', match=False, subject='R0002', raw='*') == join(root, 'derivatives', 'ica', 'sub-R0002_meg_raw-*_ica.fif')
 
     # events
     e.set('R0001', rej='')
@@ -106,7 +107,7 @@ def test_sample():
     # evoked cache invalidated by change in bads
     e.set('R0001', rej='', epoch='target')
     e.load_events()
-    assert exists(e.get('event-file') + MANIFEST_SUFFIX)
+    assert exists(e._resolve_derivative('events').manifest_path)
     ds = e.load_evoked(ndvar=False)
     assert exists(e.get('evoked-file') + MANIFEST_SUFFIX)
     assert ds[0, 'evoked'].info['bads'] == []
@@ -390,7 +391,7 @@ def test_sample_source():
     resm = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, mask='ac', make=True)
     assert exists(e._derivatives.manifest_path(e.get('src-file')))
     assert exists(e.get('fwd-file') + MANIFEST_SUFFIX)
-    assert exists(e.get('inv-file') + MANIFEST_SUFFIX)
+    assert exists(e._resolve_derivative('inv').manifest_path)
     with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=100, data='source', parc='ac')) as fid:
         source_manifest_data = json.load(fid)
     assert source_manifest_data['fingerprint']['definitions']['parc']['base'] == 'aparc'
