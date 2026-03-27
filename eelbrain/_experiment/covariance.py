@@ -1,14 +1,19 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-"""Covariance matrix computation and cache nodes."""
+"""Covariance derivatives.
+
+These nodes depend on lower-level epoch/raw derivatives through
+``ctx.load(...)``. They must not receive injected ``Pipeline.load_*`` methods.
+"""
 from dataclasses import dataclass, field
+import logging
 from pathlib import Path
 from typing import Any
-from collections.abc import Callable
 
 import mne
 import numpy
 
 from .derivative_cache import Dependency, Derivative, DerivativeContext
+from .events import EPOCHS_DATA
 from .pathing import cov_file_path, cov_info_file_path
 from .preprocessing import load_raw_dependency, raw_data_dependency
 
@@ -67,12 +72,6 @@ class EpochCovariance:
         return cov
 
 
-@dataclass
-class CovarianceSupport:
-    load_epochs: Callable[..., Any]
-    debug: Callable[[str, Any], None]
-
-
 class CovDerivative(Derivative[mne.Covariance]):
     path_template = 'cov-file'
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw', 'epoch', 'cov', 'rej')
@@ -81,11 +80,11 @@ class CovDerivative(Derivative[mne.Covariance]):
             self,
             cov_name: str,
             cov: RawCovariance | EpochCovariance,
-            support: CovarianceSupport,
+            log: logging.Logger,
     ):
         self.cov_name = cov_name
         self.cov = cov
-        self.support = support
+        self.log = log
         self.name = cov_node_name(cov_name)
         self.cov.key = cov_name
 
@@ -107,11 +106,21 @@ class CovDerivative(Derivative[mne.Covariance]):
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         if isinstance(self.cov, EpochCovariance):
-            return (
-                Dependency('events', state=self._events_state),
-                raw_data_dependency(ctx),
-                Dependency('rej-input', state=self._rej_state),
-            )
+            return (Dependency(EPOCHS_DATA, options=lambda c: {
+                'baseline': True,
+                'ndvar': False,
+                'add_bads': True,
+                'reject': False,
+                'samplingrate': None,
+                'decim': 1,
+                'pad': 0,
+                'data_raw': False,
+                'vardef': None,
+                'data': 'sensor',
+                'trigger_shift': True,
+                'interpolate_bads': False,
+                'epoch': self.cov.epoch,
+            }),)
         return (raw_data_dependency(ctx, noise=True),)
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
@@ -125,10 +134,23 @@ class CovDerivative(Derivative[mne.Covariance]):
     def build(self, ctx: DerivativeContext) -> mne.Covariance:
         if isinstance(self.cov, EpochCovariance):
             cov_path = self.path(ctx, mkdir=True)
-            self.support.debug("Make cov-file %s", cov_path)
+            self.log.debug("Make cov-file %s", cov_path)
             log_path = cov_info_file_path(ctx.state)
             log_path.parent.mkdir(parents=True, exist_ok=True)
-            ds = self.support.load_epochs(None, True, False, decim=1, epoch=self.cov.epoch)
+            ds = ctx.load(EPOCHS_DATA, state={'epoch': self.cov.epoch}, options={
+                'baseline': True,
+                'ndvar': False,
+                'add_bads': True,
+                'reject': False,
+                'samplingrate': None,
+                'decim': 1,
+                'pad': 0,
+                'data_raw': False,
+                'vardef': None,
+                'data': 'sensor',
+                'trigger_shift': True,
+                'interpolate_bads': False,
+            })
             return self.cov.make(ds['epochs'], log_path)
         raw = load_raw_dependency(ctx, ctx.get('raw'), noise=True)
         return self.cov.make(raw)

@@ -52,7 +52,7 @@ class VarDef:
     def __eq__(self, other):
         return isinstance(other, self.__class__) and other._eq_args == self._eq_args
 
-    def apply(self, ds, e):
+    def apply(self, ds, groups):
         raise NotImplementedError
 
     def input_vars(self):
@@ -87,7 +87,7 @@ class EvalVar(VarDef):
     def _eq_args(self):
         return self.code,
 
-    def apply(self, ds, e):
+    def apply(self, ds, groups):
         return as_vardef_var(ds.eval(self.code))
 
     def input_vars(self):
@@ -160,7 +160,7 @@ class LabelVar(VarDef):
     def _eq_args(self):
         return self.source, self.labels, self.default, self.fnmatch
 
-    def apply(self, ds, e):
+    def apply(self, ds, groups):
         source = ds.eval(self.source)
         if self.fnmatch:
             labels = {}
@@ -221,8 +221,8 @@ class GroupVar(VarDef):
     def _eq_args(self):
         return self.groups,
 
-    def apply(self, ds, e):
-        return e.label_groups(ds['subject'], self.groups)
+    def apply(self, ds, groups):
+        return label_groups(ds['subject'], self.groups, groups)
 
     @classmethod
     def from_string(cls, string):
@@ -320,10 +320,24 @@ class Variables:
     def __eq__(self, other):
         return isinstance(other, Variables) and other.vars == self.vars
 
-    def apply(self, ds, e, group_only=False):
+    def apply(self, ds, groups, group_only=False):
         task = ds.info.get('task', None)
         for name, vdef in self.vars.items():
             if group_only and not isinstance(vdef, GroupVar):
                 continue
             elif vdef.task is None or vdef.task == task:
-                ds[name] = vdef.apply(ds, e)
+                ds[name] = vdef.apply(ds, groups)
+
+
+def label_groups(subject, groups, subject_groups):
+    """Generate Factor for group membership."""
+    if not isinstance(groups, dict):
+        groups = {g: g for g in groups}
+    labels = {s: [label for group, label in groups.items() if s in subject_groups[group]] for s in subject.cells}
+    problems = [s for s, g in labels.items() if len(g) != 1]
+    if problems:
+        desc = (', '.join(labels[s]) if labels[s] else 'no group' for s in problems)
+        msg = ', '.join('%s (%s)' % pair for pair in zip(problems, desc))
+        raise ValueError(f"Groups {groups} are not unique for subjects: {msg}")
+    labels = {s: g[0] for s, g in labels.items()}
+    return Factor(subject, labels=labels)

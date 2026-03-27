@@ -1,15 +1,16 @@
+from __future__ import annotations
+
 from copy import deepcopy
-from dataclasses import dataclass
 import os
 from pathlib import Path
 import re
 from typing import Any
-from collections.abc import Callable
 from collections.abc import Sequence
 
 import mne
 
 from .._mne import combination_label, labels_from_mni_coords, rename_label, dissolve_label
+from ..mne_fixes import write_labels_to_annot
 from .._utils import subp
 from .._utils.mne_utils import fix_annot_names, is_fake_mri
 from .pathing import annot_file_path, annot_stamp_path, label_dir, mri_dir, mri_sdir
@@ -38,7 +39,8 @@ class Parcellation(Definition):
 
     def _make(
             self,
-            e,  # the Pipeline instance
+            ctx: DerivativeContext,
+            annot: AnnotDerivative,
             parc: str,  # the name (contains radius for seeded parcellations)
     ) -> list:
         raise RuntimeError(f"Trying to make {self.__class__.__name__}")
@@ -100,9 +102,8 @@ class SubParc(Parcellation):
         self.base = base
         self.labels = sequence_arg('labels', labels)
 
-    def _make(self, e, parc):
-        with e._temporary_state:
-            base = {l.name: l for l in e.load_annot(parc=self.base)}
+    def _make(self, ctx: DerivativeContext, annot: AnnotDerivative, parc: str):
+        base = {l.name: l for l in annot.load_annot(ctx, parc=self.base)}
         hemis = ('-lh', '-rh')
         labels = []
         for label in self.labels:
@@ -189,10 +190,9 @@ class CombinationParc(Parcellation):
         self.base = base
         self.labels = labels
 
-    def _make(self, e, parc):
-        with e._temporary_state:
-            base = {l.name: l for l in e.load_annot(parc=self.base)}
-        subjects_dir = e.get('mri-sdir')
+    def _make(self, ctx: DerivativeContext, annot: AnnotDerivative, parc: str):
+        base = {l.name: l for l in annot.load_annot(ctx, parc=self.base)}
+        subjects_dir = mri_sdir(ctx.state)
         labels = []
         for name, exp in self.labels.items():
             labels += combination_label(name, exp, base, subjects_dir)
@@ -219,16 +219,15 @@ class EelbrainParc(Parcellation):
         Parcellation.__init__(self, views)
         self.morph_from_fsaverage = morph_from_fsaverage
 
-    def _make(self, e, parc):
+    def _make(self, ctx: DerivativeContext, annot: AnnotDerivative, parc: str):
         assert parc == 'lobes'
-        subject = e.get('mrisubject')
-        subjects_dir = e.get('mri-sdir')
+        subject = ctx.get('mrisubject')
+        subjects_dir = mri_sdir(ctx.state)
         if subject != 'fsaverage':
             raise RuntimeError(f"lobes parcellation can only be created for fsaverage, not for {subject}")
 
         # load source annot
-        with e._temporary_state:
-            labels = e.load_annot(parc='PALS_B12_Lobes')
+        labels = annot.load_annot(ctx, parc='PALS_B12_Lobes')
 
         # sort labels
         labels = [l for l in labels if l.name[:-3] != 'MEDIAL.WALL']
@@ -273,8 +272,8 @@ class FreeSurferParc(Parcellation):
     """
     kind = 'subject_parc'
 
-    def _make(self, e, parc):
-        subject = e.get('mrisubject')
+    def _make(self, ctx: DerivativeContext, annot: AnnotDerivative, parc: str):
+        subject = ctx.get('mrisubject')
         raise FileNotFoundError(f"At least one annot file for the parcellation {parc} is missing for {subject}")
 
 
@@ -300,9 +299,9 @@ class FSAverageParc(Parcellation):
     kind = 'fsaverage_parc'
     morph_from_fsaverage = True
 
-    def _make(self, e, parc):
-        common_brain = e.get('common_brain')
-        assert e.get('mrisubject') == common_brain
+    def _make(self, ctx: DerivativeContext, annot: AnnotDerivative, parc: str):
+        common_brain = ctx.get('common_brain')
+        assert ctx.get('mrisubject') == common_brain
         raise FileNotFoundError(f"At least one annot file for the parcellation {parc} is missing for {common_brain}")
 
 
@@ -324,10 +323,10 @@ class LabelParc(Parcellation):
         Parcellation.__init__(self, views)
         self.labels = sequence_arg('labels', labels)
 
-    def _make(self, e, parc):
+    def _make(self, ctx: DerivativeContext, annot: AnnotDerivative, parc: str):
         labels = []
         hemis = ('lh.', 'rh.')
-        path = os.path.join(e.get('mri-dir'), 'label', '%s.label')
+        path = os.path.join(mri_dir(ctx.state), 'label', '%s.label')
         for label in self.labels:
             if label.startswith(hemis):
                 labels.append(mne.read_label(path % label))
@@ -391,12 +390,11 @@ class SeededParc(Parcellation):
     def seeds_for_subject(self, subject):
         return self.seeds
 
-    def _make(self, e, parc):
+    def _make(self, ctx: DerivativeContext, annot: AnnotDerivative, parc: str):
         if self.mask:
-            with e._temporary_state:
-                e.make_annot(parc=self.mask)
-        subject = e.get('mrisubject')
-        subjects_dir = e.get('mri-sdir')
+            annot.ensure_annot(ctx, parc=self.mask)
+        subject = ctx.get('mrisubject')
+        subjects_dir = mri_sdir(ctx.state)
         seeds = self.seeds_for_subject(subject)
         name, extent = SEEDED_PARC_RE.match(parc).groups()
         return labels_from_mni_coords(seeds, float(extent), subject, self.surface, self.mask, subjects_dir, parc)
@@ -449,16 +447,26 @@ class IndividualSeededParc(SeededParc):
         return {name: seed for name, seed in seeds.items() if seed}
 
 
-@dataclass
-class ParcSupport:
-    annot_state_for: Callable[[dict[str, Any]], tuple[str, Parcellation]]
-    hemis: tuple[str, ...]
-    make_parcellation: Callable[[dict[str, Any], str, str, Parcellation], list[mne.Label]]
+class AnnotDerivative(Derivative[list[mne.Label]]):
+    name = 'annot'
+    key_fields = ('mrisubject', 'parc')
+
+    def __init__(self, parcs: dict[str, Parcellation], hemis: tuple[str, ...]):
+        self.parcs = parcs
+        self.hemis = hemis
 
     def annot_state(self, state: dict[str, Any]) -> tuple[str, Parcellation]:
-        return self.annot_state_for(state)
+        parc = state['parc']
+        if parc == '':
+            return '', None
+        if parc in self.parcs:
+            return parc, self.parcs[parc]
+        match = SEEDED_PARC_RE.match(parc)
+        if match is None:
+            raise ValueError(f"{parc=}: unknown parcellation")
+        return parc, self.parcs[match.group(1)]
 
-    def annot_file_paths(self, state: dict[str, Any]) -> list[str]:
+    def annot_file_paths(self, state: dict[str, Any]) -> list[Path]:
         return [annot_file_path(state, hemi) for hemi in self.hemis]
 
     def annot_file_fingerprints(self, state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -501,13 +509,38 @@ class ParcSupport:
             return state['mrisubject'] != state['common_brain']
         return True
 
+    def load_annot(
+            self,
+            ctx: DerivativeContext,
+            *,
+            parc: str | None = None,
+            mrisubject: str | None = None,
+    ) -> list[mne.Label]:
+        state = {}
+        if parc is not None:
+            state['parc'] = parc
+        if mrisubject is not None:
+            state['mrisubject'] = mrisubject
+        return ctx.load('annot', state=state)
 
-class AnnotDerivative(Derivative[list[mne.Label]]):
-    name = 'annot'
-    key_fields = ('mrisubject', 'parc')
+    def ensure_annot(
+            self,
+            ctx: DerivativeContext,
+            *,
+            parc: str | None = None,
+            mrisubject: str | None = None,
+    ) -> None:
+        self.load_annot(ctx, parc=parc, mrisubject=mrisubject)
 
-    def __init__(self, support: ParcSupport):
-        self.support = support
+    def make_parcellation(
+            self,
+            ctx: DerivativeContext,
+            parc: str,
+            parc_def: Parcellation,
+    ) -> list[mne.Label]:
+        labels = parc_def._make(ctx, self, parc)
+        write_labels_to_annot(labels, ctx.get('mrisubject'), parc, True, mri_sdir(ctx.state))
+        return labels
 
     def path(
             self,
@@ -520,7 +553,7 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
         return path
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
-        parc, parc_def = self.support.annot_state(ctx.state)
+        parc, parc_def = self.annot_state(ctx.state)
         if parc_def is None or isinstance(parc_def, VolumeParc):
             return ()
 
@@ -540,7 +573,7 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
         return tuple(deps)
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        parc, parc_def = self.support.annot_state(ctx.state)
+        parc, parc_def = self.annot_state(ctx.state)
         if parc_def is None:
             return {'parc': parc, 'kind': 'none'}
 
@@ -548,25 +581,25 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
             'parc': parc,
             'definition': ctx.registry.canonicalize(parc_def._as_dict()),
         }
-        if not self.support.managed_annot(ctx.state, parc_def):
-            fingerprint['files'] = self.support.annot_file_fingerprints(ctx.state)
+        if not self.managed_annot(ctx.state, parc_def):
+            fingerprint['files'] = self.annot_file_fingerprints(ctx.state)
         elif isinstance(parc_def, LabelParc):
-            fingerprint['labels'] = self.support.label_file_fingerprints(ctx.state, parc_def)
+            fingerprint['labels'] = self.label_file_fingerprints(ctx.state, parc_def)
         return fingerprint
 
     def build(self, ctx: DerivativeContext) -> list[mne.Label]:
-        parc, parc_def = self.support.annot_state(ctx.state)
+        parc, parc_def = self.annot_state(ctx.state)
         if parc_def is None or isinstance(parc_def, VolumeParc):
             return []
-        if not self.support.managed_annot(ctx.state, parc_def):
-            return self.support.annot_labels(ctx.state)
+        if not self.managed_annot(ctx.state, parc_def):
+            return self.annot_labels(ctx.state)
 
         mrisubject = ctx.get('mrisubject')
         common_brain = ctx.get('common_brain')
         fake_mri = is_fake_mri(mri_dir(ctx.state))
         if mrisubject != common_brain and (parc_def.morph_from_fsaverage or fake_mri):
             if fake_mri:
-                for hemi in self.support.hemis:
+                for hemi in self.hemis:
                     src = annot_file_path({**ctx.state, 'mrisubject': common_brain}, hemi)
                     dst = annot_file_path(ctx.state, hemi)
                     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -585,15 +618,15 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
                     ]
                     subp.run_freesurfer_command(cmd, subjects_dir)
                 fix_annot_names(mrisubject, parc, common_brain, subjects_dir=subjects_dir)
-            return self.support.annot_labels(ctx.state)
+            return self.annot_labels(ctx.state)
 
-        return self.support.make_parcellation(ctx.state, parc, mrisubject, parc_def)
+        return self.make_parcellation(ctx, parc, parc_def)
 
     def load(
             self,
             ctx: DerivativeContext,
             path: Path) -> list[mne.Label]:
-        return self.support.annot_labels(ctx.state)
+        return self.annot_labels(ctx.state)
 
     def save(
             self,
@@ -610,7 +643,7 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
             path: Path,
             manifest,
     ) -> bool:
-        return all(path.exists() for path in self.support.annot_file_paths(ctx.state))
+        return all(path.exists() for path in self.annot_file_paths(ctx.state))
 
 
 class VolumeParc(Parcellation):

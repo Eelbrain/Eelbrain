@@ -7,16 +7,15 @@ import inspect
 from itertools import chain, product
 import logging
 import os
-from os.path import exists, getmtime, isdir, join, relpath
+from os.path import exists, isdir, join
 from pathlib import Path
-import re
 import shutil
 from typing import Any, Literal
 from collections.abc import Sequence
 
 import numpy as np
 import mne
-from mne.minimum_norm import apply_inverse, apply_inverse_epochs, apply_inverse_raw
+from mne.minimum_norm import apply_inverse_raw
 import mne_bids
 from mne_bids import BIDSPath, get_entity_vals
 
@@ -25,51 +24,51 @@ from .. import gui
 from .. import load
 from .. import plot
 from .. import save
-from .. import testnd
-from .._data_obj import CellArg, NDVarArg, Datalist, Dataset, Factor, Var, NDVar, SourceSpace, VolumeSourceSpace, assert_is_legal_dataset_key, combine
-from .._exceptions import DefinitionError, DimensionMismatchError, OldVersionError
+from .._data_obj import CellArg, Datalist, Dataset, Factor, Var, NDVar, SourceSpace, VolumeSourceSpace, assert_is_legal_dataset_key, combine
+from .._exceptions import DefinitionError
 from .._info import BAD_CHANNELS
 from .._names import INTERPOLATE_CHANNELS
 from .._meeg import new_rejection_ds
-from .._mne import morph_source_space, shift_mne_epoch_trigger, find_source_subject, label_from_annot
-from ..mne_fixes import _interpolate_bads_eeg, _interpolate_bads_meg, suppress_mne_warning, write_labels_to_annot
+from .._mne import find_source_subject, label_from_annot
+from ..mne_fixes import suppress_mne_warning
 from .._ndvar import concatenate, cwt_morlet, neighbor_correlation
-from .._stats.testnd import _MergedTemporalClusterDist
-from .._text import enumeration, n_of, plural
+from .._text import enumeration
 from .._types import PathArg
-from .._utils import ask, intervals, subp, keydefaultdict, log_level, ScreenHandler
+from .._utils import ask, subp, keydefaultdict, log_level, ScreenHandler
 from .._utils.mne_utils import is_fake_mri
-from .._utils.notebooks import tqdm
-from .covariance import CovDerivative, CovarianceSupport, EpochCovariance, RawCovariance, cov_node_name
+from .covariance import CovDerivative, EpochCovariance, RawCovariance, cov_node_name
 from .derivative_cache import DerivativeRegistry, ProtectedArtifactError
-from .definitions import FieldCode, sequence_arg
-from .epochs import ContinuousEpoch, PrimaryEpoch, SecondaryEpoch, SuperEpoch, EpochBase, EpochCollection, assemble_epochs, decim_param
-from .events import EventsDerivative, EventsSupport, EvokedDerivative
+from .definitions import sequence_arg
+from .epochs import PrimaryEpoch, SecondaryEpoch, SuperEpoch, EpochBase, assemble_epochs, decim_param
+from .events import (
+    EDF_INPUT, EdfInput, EpochsDerivative, EventsDerivative,
+    EvokedDataDerivative, EvokedDerivative, SELECTED_EVENTS,
+    SelectedEventsDerivative, load_evoked_request,
+)
 from .exceptions import FileMissingError
 from .experiment import FileTree
 from .groups import assemble_groups
-from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, ParcSupport, Parcellation, SeededParc, VolumeParc, assemble_parcs
-from .pathing import rej_file_path
+from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, assemble_parcs
 from .preprocessing import (
-    ICA_INPUT, RawDerivative, assemble_pipeline, RawPipe, RawSource, RawICA,
-    RawFilter,
+    ICA_INPUT, RAW_BAD_CHANNELS_INPUT, RawDerivative, assemble_pipeline,
+    RawPipe, RawSource, RawICA, RawFilter,
 )
 from .reports import (
     CoregReportDerivative, EEGReportDerivative, EEGSensorsReportDerivative,
-    LMReportDerivative, ROIReportDerivative, ReportSupport, SourceReportDerivative,
+    LMReportDerivative, ROIReportDerivative, SourceReportDerivative,
 )
-from .results import MovieDerivative, RejectionInput, ResultSupport, TestResultDerivative
+from .results import MovieDerivative, RejectionInput, TestResultDerivative
 from .source import (
-    BemInput, FwdDerivative, InvDerivative, SourceMorphDerivative,
-    SrcDerivative, TransInput, eval_inv, eval_src, inv_str,
-    inverse_operator_params, parse_inv, update_inv_cache,
+    BemInput, EpochsStcDerivative, EvokedStcDerivative, FwdDerivative,
+    InvDerivative, SourceMorphDerivative, SrcDerivative, TransInput,
+    eval_inv, eval_src, inv_str, inverse_operator_params, load_epochs_stc_request,
+    load_evoked_stc_request, update_inv_cache,
 )
 from .test_def import (
     Test,
-    ROITestResult, ROI2StageResult, TestDims, TwoStageTest,
-    assemble_tests,
+    TestDims, TwoStageTest, assemble_tests,
 )
-from .variable_def import Variables
+from .variable_def import Variables, label_groups as label_groups_var
 
 BIDS_ENTITY_KEYS = ('subject', 'session', 'task', 'acquisition', 'run', 'split')
 BIDS_PATH_KEYS = ('datatype', 'suffix', 'extension', *BIDS_ENTITY_KEYS)
@@ -246,7 +245,7 @@ class Pipeline(FileTree):
     # MEG-system (used as ``sysname`` to infer adjacency; for usage search `get_sysname`).
     meg_system = None
 
-    # kwargs for regularization of the covariance matrix (see .make_cov())
+    # kwargs for regularization of the covariance matrix
     _covs = {
         'auto': EpochCovariance('cov', 'auto'),
         'bestreg': EpochCovariance('cov', 'best'),
@@ -654,12 +653,6 @@ class Pipeline(FileTree):
         self._register_compound('evoked_sns_kind', ('sns_kind', 'evoked_kind'))
         self._register_compound('evoked_src_kind', ('src_kind', 'evoked_kind'))
 
-        # Define make handlers
-        self._bind_make('mri-dir', self._make_mri)
-        self._bind_cache('cov-file', self.make_cov)
-        self._bind_cache('src-file', self.make_src)
-        self._bind_cache('fwd-file', self.make_fwd)
-
         # currently only used for .rm()
         self._secondary_cache['cached-raw-file'] = ('event-file',)
 
@@ -737,114 +730,133 @@ class Pipeline(FileTree):
         self._derivative_state_fields = tuple(self._terminal_fields)
         self._derivatives = DerivativeRegistry(self.get('root'))
 
-        def with_derivative_state(state, func, *args, **kwargs):
-            with self._temporary_state:
-                if state:
-                    self.set(expand_compounds=False, **state)
-                return func(*args, **kwargs)
-
-        def collect_states(state, fields, **iter_kwargs):
-            def iter_states():
-                iterator = self.iter(**iter_kwargs) if iter_kwargs else self
-                return [{field: self.get(field) for field in fields} for _ in iterator]
-            return with_derivative_state(state, iter_states)
-
-        def make_parcellation(parc, mrisubject, parc_def):
-            with self._temporary_state:
-                self.set(match=False, parc=parc, mrisubject=mrisubject)
-                return self._make_parc_labels(parc_def, parc)
-
-        events_state_keys = (
-            'subject', 'session', 'task', 'acquisition', 'run', 'split',
-            'raw', 'epoch', 'rej', 'model', 'equalize_evoked_count',
-        )
-
-        def with_state(state, func, *args):
-            with self._temporary_state:
-                if state:
-                    self.set(expand_compounds=False, **{k: state[k] for k in events_state_keys if k in state})
-                return func(*args)
-
-        self._events_support = EventsSupport(
-            self.trigger_shift,
-            sequence_arg(f'{self.__class__.__name__}.stim_channel', self.stim_channel),
-            self.merge_triggers,
-            repr(self._variables),
-            self.has_edf,
-            self._epochs,
-            lambda state: with_state(state, self._extract_events_dataset),
-            lambda state: with_state(state, self.load_edf),
-            lambda state, samplingrate, decim, data_raw, vardef: with_state(state, self._make_evoked, samplingrate, decim, data_raw, vardef),
-            lambda state, evoked, data_raw, vardef: with_state(state, self._evoked_dataset_from_cache, evoked, data_raw, vardef),
-        )
-        self._result_support = ResultSupport(
-            self._tests,
-            self._epochs,
-            self._parcs,
-            collect_states,
-            self._load_test,
-            self._materialize_test_request,
-            self._load_spm,
-            self._test_kwargs,
-            self.load_evoked,
-            self.load_evoked_stc,
-            self.load_epochs_stc,
-            self._make_test,
-        )
-        self._report_support = ReportSupport(
-            self._tests,
-            self._epochs,
-            self._parcs,
-            collect_states,
-            self._load_test,
-            self._materialize_test_request,
-            self._load_spm,
-            self._test_kwargs,
-            self.load_evoked,
-            self.load_evoked_stc,
-            self.load_epochs_stc,
-            self._make_test,
-            lambda state: with_derivative_state(state, self.show_subjects, asds=True),
-            lambda state, template: with_derivative_state(state, self.format, template),
-            lambda state: with_derivative_state(state, self.get, 'evoked_kind'),
-            lambda state, hide: with_derivative_state(state, self.show_state, hide=hide),
-            lambda state: with_derivative_state(state, self.format, '{raw_basename}_{test_basename}_epoch-{epoch}_test-{test}_options-{test_options}'),
-            lambda state: with_derivative_state(state, self._get_parc),
-            lambda state, subject=None: with_derivative_state({**state, **({'subject': subject} if subject is not None else {})}, self.load_annot),
-            lambda state, subject=None, axw=None: with_derivative_state({**state, **({'subject': subject} if subject is not None else {})}, self.plot_annot, axw=axw) if axw is not None else with_derivative_state({**state, **({'subject': subject} if subject is not None else {})}, self.plot_annot),
-            lambda state: with_derivative_state(state, self._surfer_plot_kwargs),
-            lambda state: collect_states(state, ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'mrisubject'), group=state.get('group'), raw='raw'),
-            lambda state: with_derivative_state({**state, 'raw': 'raw'}, self.plot_coregistration),
-        )
-        self._covariance_support = CovarianceSupport(self.load_epochs, self._log.debug)
-        self._parc_support = ParcSupport(
-            lambda state: with_derivative_state({'parc': state['parc']}, self._get_parc),
-            tuple(self.get_field_values('hemi')),
-            lambda state, parc, mrisubject, parc_def: make_parcellation(parc, mrisubject, parc_def),
-        )
-
         # Register inputs
         for node in self._raw.input_nodes():
             self._derivatives.register(node)
+        self._derivatives.register(EdfInput())
         self._derivatives.register(TransInput())
         self._derivatives.register(BemInput())
         self._derivatives.register(RejectionInput(self.root, self._artifact_rejection, self._epochs))
 
         # Register derivatives
         self._derivatives.register(self._raw)
-        self._derivatives.register(TestResultDerivative(self._result_support))
-        self._derivatives.register(SourceReportDerivative(self._report_support))
-        self._derivatives.register(ROIReportDerivative(self._report_support))
-        self._derivatives.register(EEGReportDerivative(self._report_support))
-        self._derivatives.register(EEGSensorsReportDerivative(self._report_support))
-        self._derivatives.register(LMReportDerivative(self._report_support))
-        self._derivatives.register(CoregReportDerivative(self._report_support))
-        self._derivatives.register(MovieDerivative(self._result_support))
-        self._derivatives.register(AnnotDerivative(self._parc_support))
-        self._derivatives.register(EventsDerivative(self._events_support))
-        self._derivatives.register(EvokedDerivative(self._events_support))
+        self._derivatives.register(EventsDerivative(
+            self.trigger_shift,
+            sequence_arg(f'{self.__class__.__name__}.stim_channel', self.stim_channel),
+            self.merge_triggers,
+            self._variables,
+            self._groups,
+            self.has_edf,
+            self.preload,
+            type(self).fix_events,
+            type(self).label_events,
+            self.__class__.__name__,
+            len(self._tasks) > 1,
+            len(self._sessions) > 1,
+        ))
+        self._derivatives.register(SelectedEventsDerivative(self._raw, self._epochs, self._tests, self._artifact_rejection, self._groups))
+        self._derivatives.register(EpochsDerivative(self._raw, self._epochs, self._log))
+        self._derivatives.register(EvokedDerivative(self._epochs))
+        self._derivatives.register(EvokedDataDerivative(self._raw, self._epochs))
+        self._derivatives.register(AnnotDerivative(self._parcs, tuple(self.get_field_values('hemi'))))
+        self._derivatives.register(EpochsStcDerivative(self._epochs))
+        self._derivatives.register(EvokedStcDerivative(self._epochs))
+        self._derivatives.register(TestResultDerivative(
+            self._tests,
+            self._epochs,
+            self._parcs,
+            self._groups,
+            self._field_values,
+            self._mri_subjects,
+            self.get('common_brain'),
+            self._cluster_criteria,
+            self._log,
+        ))
+        self._derivatives.register(SourceReportDerivative(
+            self._tests,
+            self._epochs,
+            self._parcs,
+            self._groups,
+            self._field_values,
+            self._mri_subjects,
+            self.get('common_brain'),
+            self._cluster_criteria,
+            self._log,
+            {**self._brain_plot_defaults, **self.brain_plot_defaults},
+        ))
+        self._derivatives.register(ROIReportDerivative(
+            self._tests,
+            self._epochs,
+            self._parcs,
+            self._groups,
+            self._field_values,
+            self._mri_subjects,
+            self.get('common_brain'),
+            self._cluster_criteria,
+            self._log,
+            {**self._brain_plot_defaults, **self.brain_plot_defaults},
+        ))
+        self._derivatives.register(EEGReportDerivative(
+            self._tests,
+            self._epochs,
+            self._parcs,
+            self._groups,
+            self._field_values,
+            self._mri_subjects,
+            self.get('common_brain'),
+            self._cluster_criteria,
+            self._log,
+            {**self._brain_plot_defaults, **self.brain_plot_defaults},
+        ))
+        self._derivatives.register(EEGSensorsReportDerivative(
+            self._tests,
+            self._epochs,
+            self._parcs,
+            self._groups,
+            self._field_values,
+            self._mri_subjects,
+            self.get('common_brain'),
+            self._cluster_criteria,
+            self._log,
+            {**self._brain_plot_defaults, **self.brain_plot_defaults},
+        ))
+        self._derivatives.register(LMReportDerivative(
+            self._tests,
+            self._epochs,
+            self._parcs,
+            self._groups,
+            self._field_values,
+            self._mri_subjects,
+            self.get('common_brain'),
+            self._cluster_criteria,
+            self._log,
+            {**self._brain_plot_defaults, **self.brain_plot_defaults},
+        ))
+        self._derivatives.register(CoregReportDerivative(
+            self._tests,
+            self._epochs,
+            self._parcs,
+            self._groups,
+            self._field_values,
+            self._mri_subjects,
+            self.get('common_brain'),
+            self._cluster_criteria,
+            self._log,
+            {**self._brain_plot_defaults, **self.brain_plot_defaults},
+        ))
+        self._derivatives.register(MovieDerivative(
+            self._tests,
+            self._epochs,
+            self._parcs,
+            self._groups,
+            self._field_values,
+            self._mri_subjects,
+            self.get('common_brain'),
+            self._cluster_criteria,
+            self._log,
+        ))
         for cov_name, cov in self._covs.items():
-            self._derivatives.register(CovDerivative(cov_name, cov, self._covariance_support))
+            self._derivatives.register(CovDerivative(cov_name, cov, self._log))
         self._derivatives.register(SrcDerivative(self._log))
         self._derivatives.register(SourceMorphDerivative())
         self._derivatives.register(FwdDerivative(self._log))
@@ -896,69 +908,9 @@ class Pipeline(FileTree):
             options=options,
         )
 
-    def _extract_events_dataset(self):
-        self._log.debug("Extracting events for %s", self._bids_path.fpath)
-        raw = self.load_raw(add_bads=False, preload=self.preload)
-        ds = load.mne.events(raw, self.merge_triggers, stim_channel=self._stim_channel)
-        del ds.info['raw']
-        ds.info['sfreq'] = raw.info['sfreq']
-        return ds
-
-    def _evoked_default_cache(self, samplingrate, decim):
-        epoch = self._epochs[self.get('epoch')]
-        if samplingrate:
-            if epoch.samplingrate:
-                return samplingrate == epoch.samplingrate
-            raise NotImplementedError(f"load_evoked with {samplingrate=} for epoch with decim")
-        if decim:
-            if epoch.decim:
-                return decim == epoch.decim
-            key = self.get('subject'), self.get('session'), self.get('task'), self.get('acquisition'), self.get('run')
-            raw_samplingrate = self._raw_samplingrate[key]
-            return decim == raw_samplingrate / epoch.samplingrate
-        return True
-
-    def _evoked_dataset_from_cache(self, evoked, data_raw: bool, vardef: str):
-        model = self.get('model')
-        equal_count = self.get('equalize_evoked_count') == 'eq'
-        ds = self.load_selected_events(data_raw=data_raw, vardef=vardef)
-        ds = ds.aggregate(model, drop_bad=True, equal_count=equal_count, drop=('i_start', 't_edf', 'time', 'index', 'trigger'))
-        model_vars = model.split('%') if model else ()
-        if model_vars:
-            cells = [' % '.join(cell) or 'No comment' for cell in ds.zip(*model_vars)]
-        else:
-            cells = ['No comment']
-        comments = [e.comment for e in evoked]
-        if comments != cells:
-            if set(comments) == set(cells):
-                index = [comments.index(cell) for cell in cells]
-                evoked = [evoked[i] for i in index]
-            else:
-                raise RuntimeError(f"Error reading cached evoked: {comments=}, {cells=}")
-        ds['evoked'] = evoked
-        return ds
-
     def __iter__(self):
         "Iterate state through subjects and yield each subject name."
         return self.iter()
-
-    def _cleanup_cache(self):
-        """Remove empty directories
-
-        Notes
-        -----
-        Could be problematic if expecting eelfarm results.
-        """
-        while self._cleanup_cache_pass():
-            pass
-
-    def _cleanup_cache_pass(self):
-        removed_any = False
-        for dirpath, dirnames, filenames in os.walk(self.get('cache-dir'), topdown=False):
-            if len(dirnames) + len(filenames) == 0:
-                os.rmdir(dirpath)
-                removed_any = True
-        return removed_any
 
     def _process_subject_arg(self, subjects, kwargs):
         """Process subject arg for methods that work on groups and subjects
@@ -1009,144 +961,6 @@ class Pipeline(FileTree):
     def _cluster_criteria_kwargs(self, data):
         criteria = self._cluster_criteria[self.get('select_clusters')]
         return {'min' + dim: criteria[dim] for dim in data.dims if dim in criteria}
-
-    def _add_vars(
-            self,
-            ds: Dataset,
-            vardef: None | str | Variables,
-            group_only: bool = False,
-    ):
-        """Add vars to the dataset
-
-        Parameters
-        ----------
-        ds
-            Event dataset.
-        vardef
-            Variable definition.
-        group_only
-            Apply GroupVars in ``self.variables`` (when adding variables to a
-            dataset that does not originate from events, such as TRFs).
-        """
-        if vardef is None:
-            return
-        elif isinstance(vardef, str):
-            try:
-                vardef = self._tests[vardef].vars
-            except KeyError:
-                raise ValueError(f"{vardef=}")
-        elif not isinstance(vardef, Variables):
-            vardef = Variables(vardef)
-        vardef.apply(ds, self, group_only)
-
-    def _backup(self, dst_root, v=False):
-        """Backup all essential files to ``dst_root``.
-
-        .. warning::
-            Method is out of data and probably does not work as expected.
-
-        Parameters
-        ----------
-        dst_root : str
-            Directory to use as root for the backup.
-        v : bool
-            Verbose mode:  list all files that will be copied and ask for
-            confirmation.
-
-        Notes
-        -----
-        For repeated backups ``dst_root`` can be the same. If a file has been
-        previously backed up, it is only copied if the local copy has been
-        modified more recently than the previous backup. If the backup has been
-        modified more recently than the local copy, a warning is displayed.
-
-        Currently, the following files are included in the backup::
-
-         * All rejection files
-         * The trans-file
-         * All files in the ``meg/{subject}/logs`` directory
-         * For scaled MRIs, the file specifying the scale parameters
-
-        MRIs are currently not backed up.
-        """
-        self._log.debug(f"Initiating backup to {dst_root}")
-        root = self.get('root')
-        root_len = len(root) + 1
-
-        dirs = []  # directories to create
-        pairs = []  # (src, dst) pairs to copy
-        for temp, state_mod in self._backup_files:
-            # determine state
-            if state_mod:
-                state = self._backup_state.copy()
-                state.update(state_mod)
-            else:
-                state = self._backup_state
-
-            # find files to back up
-            if temp.endswith('dir'):
-                paths = []
-                for dirpath in self.glob(temp, **state):
-                    for root_, _, filenames in os.walk(dirpath):
-                        paths.extend(join(root_, fn) for fn in filenames)
-            else:
-                paths = self.glob(temp, **state)
-
-            # convert to (src, dst) pairs
-            for src in paths:
-                if not src.startswith(root):
-                    raise ValueError("Can only backup files in root directory")
-                tail = src[root_len:]
-                dst = join(dst_root, tail)
-                if exists(dst):
-                    src_m = getmtime(src)
-                    dst_m = getmtime(dst)
-                    if dst_m == src_m:
-                        continue
-                    elif dst_m > src_m:
-                        self._log.warning("Backup more recent than original: %s", tail)
-                        continue
-                else:
-                    i = 0
-                    while True:
-                        i = tail.find(os.sep, i + 1)
-                        if i == -1:
-                            break
-                        path = tail[:i]
-                        if path not in dirs:
-                            dirs.append(path)
-
-                pairs.append((src, dst))
-
-        if len(pairs) == 0:
-            if v:
-                print("All files backed up.")
-            else:
-                self._log.info("All files backed up.")
-            return
-
-        # verbose file list
-        if v:
-            paths = [relpath(src, root) for src, _ in pairs]
-            print('\n'.join(paths))
-            cmd = 'x'
-            while cmd not in 'yn':
-                cmd = input("Proceed ([y]/n)? ")
-            if cmd == 'n':
-                print("Abort.")
-                return
-            else:
-                print(f"Backing up {len(pairs)} files ...")
-
-        self._log.info(f"Backing up {len(pairs)} files ...")
-        # create directories
-        for dirname in dirs:
-            dirpath = join(dst_root, dirname)
-            if not exists(dirpath):
-                os.mkdir(dirpath)
-        # copy files
-        for src, dst in pairs:
-            shutil.copy2(src, dst)
 
     def get_field_values(self, field, exclude=(), **state):
         """Find values for a field taking into account exclusion
@@ -1229,39 +1043,6 @@ class Pipeline(FileTree):
                 self._restore_state(discard_tip=False)
                 self.set(**{field: value})
                 yield value
-
-    def _label_events(self, ds):
-        # subclass fix events
-        info = ds.info
-        ds = self.fix_events(ds)
-        self._check_ds(ds, f'{self.__class__.__name__}.fix_events()', info)
-
-        # add standard variables
-        ds['time'] = ds['i_start'] / ds.info['sfreq']
-        ds['SOA'] = ds['time'].diff(0)
-        ds['subject'] = Factor([ds.info['subject']], repeat=ds.n_cases, random=True)
-        if len(self._tasks) > 1:
-            ds[:, 'task'] = ds.info['task']
-        if len(self._sessions) > 1:
-            ds[:, 'session'] = ds.info['session']
-        self._variables.apply(ds, self)
-
-        # subclass label_events
-        info = ds.info
-        ds = self.label_events(ds)
-        self._check_ds(ds, f'{self.__class__.__name__}.label_events()', info)
-        return ds
-
-    @staticmethod
-    def _check_ds(ds, source, info):
-        if not isinstance(ds, Dataset):
-            raise DefinitionError(f"{source} needs to return the events Dataset. Got {ds!r}.")
-        elif 'i_start' not in ds:
-            raise DefinitionError(f"The Dataset returned by {source} does not contain a variable called `i_start`. This variable is required to ascribe events to data samples.")
-        elif 'trigger' not in ds:
-            raise DefinitionError(f"The Dataset returned by {source} does not contain a variable called `trigger`. This variable is required to check rejection files.")
-        elif ds.info is not info:
-            ds.info.update(info)
 
     def fix_events(self, ds):
         """Modify event order or timing
@@ -1410,16 +1191,7 @@ class Pipeline(FileTree):
         group : Factor
             A :class:`Factor` that labels the group for each subject.
         """
-        if not isinstance(groups, dict):
-            groups = {g: g for g in groups}
-        labels = {s: [label for group, label in groups.items() if s in self._groups[group]] for s in subject.cells}
-        problems = [s for s, g in labels.items() if len(g) != 1]
-        if problems:
-            desc = (', '.join(labels[s]) if labels[s] else 'no group' for s in problems)
-            msg = ', '.join('%s (%s)' % pair for pair in zip(problems, desc))
-            raise ValueError(f"Groups {groups} are not unique for subjects: {msg}")
-        labels = {s: g[0] for s, g in labels.items()}
-        return Factor(subject, labels=labels)
+        return label_groups_var(subject, groups, self._groups)
 
     def load_annot(self, **state):
         """Load a parcellation (from an annot file)
@@ -1449,41 +1221,8 @@ class Pipeline(FileTree):
         bad_chs : list of str
             Bad channels.
         """
-        pipe = self._raw[self.get('raw', **kwargs)]
-        bids_path = self._bids_path
-        return pipe.load_bad_channels(bids_path, noise=noise, pipes=self._raw)
-
-    def _load_bem(self):
-        subject = self.get('mrisubject')
-        if subject == 'fsaverage' or is_fake_mri(self.get('mri-dir')):
-            return mne.read_bem_surfaces(self.get('bem-file'))
-        else:
-            bem_dir = self.get('bem-dir')
-            surfs = ('brain', 'inner_skull', 'outer_skull', 'outer_skin')
-            paths = {s: join(bem_dir, s + '.surf') for s in surfs}
-            missing = [s for s in surfs if not exists(paths[s])]
-            if missing:
-                for surf in missing[:]:
-                    path = paths[surf]
-                    if os.path.islink(path):
-                        # try to fix broken symlinks
-                        bem_dir = Path(self.get('bem-dir'))
-                        new_target = Path('watershed') / f'{subject}_{surf}_surface'
-                        if (bem_dir / new_target).exists():
-                            self._log.info("Fixing broken symlink for %s %s surface file", subject, surf)
-                            os.unlink(path)
-                            os.symlink(new_target, path)
-                            missing.remove(surf)
-                        else:
-                            self._log.error("%s missing for %s", new_target, subject)
-                if missing:
-                    self._log.info("%s %s missing for %s. Running mne.make_watershed_bem()...", enumeration(missing).capitalize(), plural('surface', len(missing)), subject)
-                    # re-run watershed_bem
-                    # mne-python expects the environment variable
-                    os.environ['FREESURFER_HOME'] = subp.get_fs_home()
-                    mne.bem.make_watershed_bem(subject, self.get('mri-sdir'), overwrite=True)
-
-            return mne.make_bem_model(subject, conductivity=(0.3,), subjects_dir=self.get('mri-sdir'))
+        raw_name = self.get('raw', **kwargs)
+        return self._load_derivative(RAW_BAD_CHANNELS_INPUT, state={**kwargs, 'raw': raw_name}, options={'noise': noise})
 
     def load_cov(self, **kwargs):
         """Load the covariance matrix
@@ -1504,8 +1243,7 @@ class Pipeline(FileTree):
         ...
             State parameters.
         """
-        path = self.get('edf-file', fmatch=False, **kwargs)
-        return load.eyelink.Edf(path)
+        return self._resolve_derivative(EDF_INPUT, state=kwargs).load()
 
     @suppress_mne_warning
     def load_epochs(
@@ -1596,180 +1334,47 @@ class Pipeline(FileTree):
              - :ref:`state-rej`: which trials to use
 
         """
-        data: TestDims = TestDims.coerce(data)
+        data = TestDims.coerce(data)
         if not data.sensor:
             raise ValueError(f"data={data.string!r}; load_evoked is for loading sensor data")
-        elif data.sensor is not True:
+        if data.sensor is not True:
             if not ndvar:
                 raise ValueError(f"data={data.string!r} with ndvar=False")
-            elif interpolate_bads:
+            if interpolate_bads:
                 raise ValueError(f"{interpolate_bads=} with data={data.string!r}")
-        if ndvar:
-            if isinstance(ndvar, str):
-                if ndvar != 'both':
-                    raise ValueError(f"{ndvar=}")
+        if isinstance(ndvar, str) and ndvar != 'both':
+            raise ValueError(f"{ndvar=}")
+
         subject, group = self._process_subject_arg(subjects, state)
+        options = {
+            'baseline': baseline,
+            'ndvar': ndvar,
+            'add_bads': add_bads,
+            'reject': reject,
+            'cat': cat,
+            'samplingrate': samplingrate,
+            'decim': decim,
+            'pad': pad,
+            'data_raw': data_raw,
+            'vardef': vardef,
+            'data': data,
+            'trigger_shift': trigger_shift,
+            'tmin': tmin,
+            'tmax': tmax,
+            'tstop': tstop,
+            'interpolate_bads': interpolate_bads,
+        }
+        if group is None:
+            if subject is not None:
+                state['subject'] = subject
+            return self._load_derivative('epochs-ds', state=state, options=options)
+
         epoch_name = self.get('epoch')
-
-        if group is not None:
-            dss = []
-            for _ in self.iter(group=group, progress_bar=f"Load {epoch_name}"):
-                ds = self.load_epochs(None, baseline, ndvar, add_bads, reject, cat, samplingrate, decim, pad, data_raw, vardef, data, True, tmin, tmax, tstop, interpolate_bads)
-                dss.append(ds)
-
-            return combine(dss)
-
-        # single subject
-        epoch = self._epochs[epoch_name]
-        if isinstance(epoch, EpochCollection):
-            dss = []
-            with self._temporary_state:
-                for sub_epoch in epoch.collect:
-                    ds = self.load_epochs(subject, baseline, ndvar, add_bads, reject, cat, samplingrate, decim, pad, data_raw, vardef, data, trigger_shift, tmin, tmax, tstop, interpolate_bads, epoch=sub_epoch)
-                    ds[:, 'epoch'] = sub_epoch
-                    dss.append(ds)
-            return combine(dss)
-
-        with self._temporary_state:
-            self.set(subject=subject, epoch=epoch_name)
-            ds = self.load_selected_events(add_bads=add_bads, reject=reject, data_raw=True, vardef=vardef, cat=cat)
-            if ds.n_cases == 0:
-                if cat:
-                    raise RuntimeError(f"No events left for epoch={epoch.name!r}, {subject=} in {cat=}")
-                else:
-                    raise RuntimeError(f"No events left for epoch={epoch.name!r}, {subject=}")
-
-        if isinstance(epoch, ContinuousEpoch):
-            # find splitting points
-            split_threshold = epoch.split + (epoch.pad_end + epoch.pad_start)
-            diff = ds['time'].diff(to_begin=split_threshold + 1)
-            onsets = np.flatnonzero(diff >= split_threshold)
-            # make sure we are not messing up user events
-            if illegal := {'T_relative', 'events', 'tmax'}.intersection(ds):
-                raise RuntimeError(f"Events contain variables with reserved names: {', '.join(illegal)}")
-            # split events
-            events = [ds[i1:i2] for i1, i2 in intervals(chain(onsets, [None]))]
-            # update event times
-            raw_samplingrate = ds.info['raw'].info['sfreq']
-            for events_i in events:
-                sample_i = events_i['i_start'] - events_i[0, 'i_start']
-                events_i['T_relative'] = sample_i / raw_samplingrate
-            # convert to variable epoch length format
-            ds = ds[onsets]
-            ds.info['nested_events'] = 'events'
-            ds['events'] = events
-            tmin = -epoch.pad_start
-            ds['tmax'] = Var([e[-1, 'time'] - e[0, 'time'] + epoch.pad_end for e in events])
-            tmax = 'tmax'
-
-        # load sensor space data
-        if tmin is None:
-            tmin = epoch.tmin
-        if tmax is None and tstop is None:
-            tmax = epoch.tmax
-        if baseline is True:
-            baseline = epoch.baseline
-
-        if isinstance(tmax, str):
-            tmax = ds.eval(tmax)
-            assert isinstance(tmax, Var)
-            assert not epoch.post_baseline_trigger_shift, 'not implemented with variable tmax'
-            variable_tmax = True
-        else:
-            variable_tmax = False
-
-        if pad:
-            if baseline:
-                b0, b1 = baseline
-                if b0 is None:
-                    b0 = tmin
-                if b1 is None:
-                    b1 = tmax
-                baseline = (b0, b1)
-            tmin -= pad
-            if tmax is not None:
-                tmax = tmax + pad
-            elif tstop is not None:
-                tstop = tstop + pad
-        decim = decim_param(samplingrate, decim, epoch, ds.info)
-
-        if variable_tmax:
-            ds['epochs'] = load.mne.variable_length_mne_epochs(ds, tmin, tmax, baseline, allow_truncation=True, decim=decim, reject_by_annotation=False)
-            epochs_list = ds['epochs']
-        else:
-            n = ds.n_cases
-            ds = load.mne.add_mne_epochs(ds, tmin, tmax, baseline, decim=decim, drop_bad_chs=False, tstop=tstop, reject_by_annotation=False)
-            if ds.n_cases != n:
-                self._log.warning(f"{n_of(n - ds.n_cases, 'epoch')} missing for {subject}/{epoch_name}")
-
-            # post baseline-correction trigger shift
-            if trigger_shift and epoch.post_baseline_trigger_shift:
-                ds['epochs'] = shift_mne_epoch_trigger(ds['epochs'], ds[epoch.post_baseline_trigger_shift], epoch.post_baseline_trigger_shift_min, epoch.post_baseline_trigger_shift_max)
-            epochs_list = [ds['epochs']]
-        info = epochs_list[0].info
-
-        sensor_types = data.data_to_ndvar(info)
-
-        # determine channels to interpolate
-        bads_all = None
-        bads_individual = None
-        if interpolate_bads:
-            bads_all = info['bads']
-            if ds.info[INTERPOLATE_CHANNELS] and any(ds[INTERPOLATE_CHANNELS]):
-                bads_individual = ds[INTERPOLATE_CHANNELS]
-                if bads_all:
-                    base = set(bads_all)
-                    bads_individual = [sorted(base.union(bads)) if set(bads).difference(base) else [] for bads in bads_individual]
-
-        # interpolate bad channels
-        if bads_all:
-            if isinstance(interpolate_bads, str):
-                if interpolate_bads == 'keep':
-                    reset_bads = False
-                else:
-                    raise ValueError(f"{interpolate_bads=}")
-            else:
-                reset_bads = True
-
-            for epochs in epochs_list:
-                epochs.interpolate_bads(reset_bads=reset_bads)
-
-        # interpolate channels
-        if reject and bads_individual:
-            assert not variable_tmax
-            if 'mag' in sensor_types:
-                interp_cache = {}
-                _interpolate_bads_meg(ds['epochs'], bads_individual, interp_cache)
-            if 'eeg' in sensor_types:
-                _interpolate_bads_eeg(ds['epochs'], bads_individual)
-
-        if ndvar:
-            ds.info['sensor_types'] = sensor_types
-            pipe = self._raw[self.get('raw')]
-            for data_kind in sensor_types:
-                sysname = pipe.get_sysname(info, ds.info['subject'], data_kind, self._raw)
-                adjacency = pipe.get_adjacency(data_kind, self._raw)
-                if data_kind == 'mag' and 'grad' not in sensor_types:
-                    name = 'meg'
-                else:
-                    name = data_kind
-                if variable_tmax:
-                    ys = [load.mne.epochs_ndvar(e, data=data_kind, sysname=sysname, adjacency=adjacency, name=data_kind)[0] for e in ds['epochs']]
-                    if isinstance(data.sensor, str):
-                        ys = [getattr(y, data.sensor)('sensor') for y in ys]
-                else:
-                    ys = load.mne.epochs_ndvar(ds['epochs'], data=data_kind, sysname=sysname, adjacency=adjacency)
-                    if isinstance(data.sensor, str):
-                        ys = getattr(ys, data.sensor)('sensor')
-                ds[name] = ys
-
-            if ndvar != 'both':
-                del ds['epochs']
-
-        if not data_raw:
-            del ds.info['raw']
-
-        return ds
+        dss = [
+            self._load_derivative('epochs-ds', options=options)
+            for _ in self.iter(group=group, progress_bar=f"Load {epoch_name}")
+        ]
+        return combine(dss)
 
     def load_epochs_stc(
             self,
@@ -1858,88 +1463,32 @@ class Pipeline(FileTree):
         epochs_dataset : Dataset
             Dataset containing single trial data (epochs).
         """
-        epoch_name = self.get('epoch')
-        epoch = self._epochs[epoch_name]
-        if not baseline and src_baseline and epoch.post_baseline_trigger_shift:
-            raise NotImplementedError("src_baseline with post_baseline_trigger_shift")
         subject, group = self._process_subject_arg(subjects, state)
+        if isinstance(mask, str):
+            state['parc'] = mask
+        options = {
+            'baseline': baseline,
+            'src_baseline': src_baseline,
+            'cat': cat,
+            'keep_epochs': keep_epochs,
+            'morph': morph,
+            'mask': mask,
+            'data_raw': data_raw,
+            'vardef': vardef,
+            'samplingrate': samplingrate,
+            'decim': decim,
+            'pad': pad,
+            'ndvar': ndvar,
+            'reject': reject,
+        }
         if group is not None:
-            if data_raw:
-                raise ValueError(f"{data_raw=} with group: Can not combine raw data from multiple subjects.")
-            elif keep_epochs:
-                raise ValueError(f"{keep_epochs=} with group: Can not combine Epochs objects for different subjects. Set keep_epochs=False (default).")
-            elif morph is None:
-                morph = True
-            elif not morph:
-                raise ValueError(f"{morph=} with group: Source estimates can only be combined after morphing data to common brain model. Set morph=True.")
-            dss = []
-            for _ in self.iter(group=group, progress_bar=f"Load {epoch_name} STC"):
-                ds = self.load_epochs_stc(None, baseline, src_baseline, cat, keep_epochs, morph, mask, False, vardef, samplingrate, decim, pad, ndvar, reject)
-                dss.append(ds)
-            return combine(dss)
+            epoch_name = self.get('epoch')
+            subjects_ = [subject_ for subject_ in self.iter(group=group, progress_bar=f"Load {epoch_name} STC")]
+            return load_epochs_stc_request(self._derivatives, self._groups, self.get('group'), self._derivative_state(state), options, subjects_)
 
-        if keep_epochs is True:
-            sns_ndvar = False
-            del_epochs = False
-        elif keep_epochs is False:
-            sns_ndvar = False
-            del_epochs = True
-        elif keep_epochs == 'ndvar':
-            sns_ndvar = 'both'
-            del_epochs = True
-        elif keep_epochs == 'both':
-            sns_ndvar = 'both'
-            del_epochs = False
-        else:
-            raise ValueError(f'{keep_epochs=}')
-
-        ds = self.load_epochs(subject, baseline, sns_ndvar, reject=reject, cat=cat, samplingrate=samplingrate, decim=decim, pad=pad, data_raw=data_raw, vardef=vardef)
-
-        if src_baseline is True:
-            src_baseline = epoch.baseline
-
-        is_variable_time = isinstance(ds['epochs'], Datalist)
-        if is_variable_time:
-            epoch_list = ds['epochs']
-        else:
-            epoch_list = [ds['epochs']]
-
-        inv, label, mri_sdir, mrisubject, is_scaled, parc = self._prepare_inv(epoch_list[0], mask, morph)
-        method, make_kw, apply_kw = self._inv_params()
-        stc_list = [apply_inverse_epochs(epoch, inv, label=label, **apply_kw) for epoch in epoch_list]
-        if is_variable_time:
-            stc_list = [stc for stc, in stc_list]
-
-        if ndvar:
-            src = self.get('src')
-            ndvar_list = [load.mne.stc_ndvar(stc, mrisubject, src, mri_sdir, method, make_kw.get('fixed', False), parc=parc, adjacency=self.get('adjacency')) for stc in stc_list]
-            if src_baseline:
-                for v in ndvar_list:
-                    v -= v.summary(time=src_baseline)
-
-            if morph:
-                common_brain = self.get('common_brain')
-                with self._temporary_state:
-                    self.make_annot(mrisubject=common_brain)
-                ndvar_list = [morph_source_space(v, common_brain) for v in ndvar_list]
-                if mask and not is_scaled:
-                    ndvar_list = [_mask_ndvar(v) for v in ndvar_list]
-                key = 'srcm'
-            else:
-                key = 'src'
-            src_var = ndvar_list
-        else:
-            if src_baseline:
-                raise NotImplementedError("Baseline for SourceEstimate")
-            if morph:
-                raise NotImplementedError("Morphing for SourceEstimate")
-            key = 'stc'
-            src_var = stc_list
-
-        ds[key] = src_var if is_variable_time else src_var[0]
-        if del_epochs:
-            del ds['epochs']
-        return ds
+        if subject is not None:
+            state['subject'] = subject
+        return self._load_derivative('epochs-stc', state=state, options=options)
 
     def load_events(
             self,
@@ -1977,30 +1526,9 @@ class Pipeline(FileTree):
         if subject is not None:
             state['subject'] = subject
         ds = self._load_derivative('events', state=state)
-
-        with self._temporary_state:
-            if state:
-                self.set(**state)
-            entities = {k: self.get(k) for k in BIDS_ENTITY_KEYS}
-            subject = entities['subject']
-            session = entities['session']
-            if data_raw:
-                ds.info['raw'] = self.load_raw(add_bads, preload=self.preload)
-            ds.info.update(entities)
-
-        if self.trigger_shift:
-            if isinstance(self.trigger_shift, dict):
-                if (subject, session) in self.trigger_shift:
-                    trigger_shift = self.trigger_shift[(subject, session)]
-                else:
-                    trigger_shift = self.trigger_shift[subject]
-            else:
-                trigger_shift = self.trigger_shift
-
-            if trigger_shift:
-                ds['i_start'] += int(round(trigger_shift * ds.info['sfreq']))
-
-        return self._label_events(ds)
+        if data_raw:
+            ds.info['raw'] = self.load_raw(add_bads, preload=self.preload, **state)
+        return ds
 
     def load_evoked(
             self,
@@ -2065,92 +1593,35 @@ class Pipeline(FileTree):
         bad/excluded. When loading group level data, datasets are merged using
         interpolated data.
         """
-        subject, group = self._process_subject_arg(subjects, state)
-        epoch_name = self.get('epoch')
-        epoch = self._epochs[epoch_name]
         data = TestDims.coerce(data)
         if not data.sensor:
             raise ValueError(f"data={data.string!r}; load_evoked is for loading sensor data")
         elif data.sensor is not True and not ndvar:
             raise ValueError(f"data={data.string!r} with ndvar=False")
+        subject, group = self._process_subject_arg(subjects, state)
+        epoch_name = self.get('epoch')
+        epoch = self._epochs[epoch_name]
         if baseline is True:
             baseline = epoch.baseline
+        options = {
+            'baseline': baseline,
+            'ndvar': ndvar,
+            'cat': cat,
+            'samplingrate': samplingrate,
+            'decim': decim,
+            'data_raw': data_raw,
+            'vardef': vardef,
+            'data': data,
+        }
+        if group is None:
+            if subject is not None:
+                state['subject'] = subject
+            return self._load_derivative('evoked-ds', state=state, options=options)
+
         model = self.get('model')
-
-        if group is not None:
-            # when aggregating across sensors, do it before combining subjects
-            # to avoid losing sensors that are not shared
-            individual_ndvar = isinstance(data.sensor, str)
-            desc = f'by {model}' if model else 'average'
-            dss = [self.load_evoked(None, baseline, individual_ndvar, cat, samplingrate, decim, data_raw, vardef, data)
-                   for _ in self.iter(group=group, progress_bar=f"Load {epoch_name} {desc}")]
-            if individual_ndvar:
-                ndvar = False
-            elif ndvar:
-                # set interpolated channels to good
-                for ds in dss:
-                    for e in ds['evoked']:
-                        e.info['bads'] = []
-            ds = combine(dss, incomplete='drop')
-
-            if not ndvar and not individual_ndvar:
-                # check consistency in MNE objects' number of time points
-                lens = [len(e.times) for e in ds['evoked']]
-                ulens = set(lens)
-                if len(ulens) > 1:
-                    err = ["Unequal time axis sampling (len):"]
-                    alens = np.array(lens)
-                    for l in ulens:
-                        subjects = ', '.join(ds[alens == l, 'subject'].cells)
-                        err.append(f"{l}: {subjects}")
-                    raise DimensionMismatchError('\n'.join(err))
-        else:  # single subject
-            use_cache = self._evoked_default_cache(samplingrate, decim)
-            ds = self._load_derivative(
-                'evoked',
-                cache=use_cache,
-                state=state,
-                options={
-                    'samplingrate': samplingrate,
-                    'decim': decim,
-                    'data_raw': data_raw,
-                    'vardef': vardef,
-                },
-            )
-
-            if cat:
-                if not model:
-                    raise TypeError(f"{cat=} with {model=}: the cat parameter only applies when a model is specified")
-                model = ds.eval(model)
-                idx = model.isin(cat)
-                ds = ds.sub(idx)
-                if ds.n_cases == 0:
-                    raise RuntimeError(f"Selection with {cat=} resulted in empty Dataset")
-
-            # baseline correction
-            if isinstance(baseline, str):
-                raise NotImplementedError
-            elif baseline and not epoch.post_baseline_trigger_shift:
-                for e in ds['evoked']:
-                    mne.baseline.rescale(e.data, e.times, baseline, 'mean', copy=False)
-
-        # convert to NDVar
-        if ndvar:
-            evoked = ds['evoked']
-            if ndvar == 1:
-                del ds['evoked']
-            pipe = self._raw[self.get('raw')]
-            info = evoked[0].info
-            sensor_types = ds.info['sensor_types'] = data.data_to_ndvar(info)
-            for sensor_type in sensor_types:
-                sysname = pipe.get_sysname(info, subject, sensor_type, self._raw)
-                adjacency = pipe.get_adjacency(sensor_type, self._raw)
-                name = 'meg' if sensor_type == 'mag' else sensor_type
-                ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
-                if sensor_type != 'eog' and isinstance(data.sensor, str):
-                    ds[name] = getattr(ds[name], data.sensor)('sensor')
-
-        return ds
+        desc = f'by {model}' if model else 'average'
+        subjects_ = [subject_ for subject_ in self.iter(group=group, progress_bar=f"Load {epoch_name} {desc}")]
+        return load_evoked_request(self._derivatives, self._raw, self._groups, self.get('group'), self._derivative_state(state), options, subjects_)
 
     def load_epochs_stf(
             self,
@@ -2321,91 +1792,28 @@ class Pipeline(FileTree):
         """
         if isinstance(mask, str):
             state['parc'] = mask
-        # load sensor data (needs state in case it has 'group' entry)
-        sns_ndvar = 2 if keep_evoked + ndvar > 1 else 0
-        ds = self.load_evoked(subjects, baseline, sns_ndvar, cat, samplingrate, decim, data_raw, vardef, **state)
+        subject, group = self._process_subject_arg(subjects, state)
+        options = {
+            'baseline': baseline,
+            'src_baseline': src_baseline,
+            'cat': cat,
+            'keep_evoked': keep_evoked,
+            'morph': morph,
+            'mask': mask,
+            'data_raw': data_raw,
+            'vardef': vardef,
+            'samplingrate': samplingrate,
+            'decim': decim,
+            'ndvar': ndvar,
+        }
+        if group is None:
+            if subject is not None:
+                state['subject'] = subject
+            return self._load_derivative('evoked-stc', state=state, options=options)
 
-        # check baseline
-        epoch = self._epochs[self.get('epoch')]
-        if src_baseline and epoch.post_baseline_trigger_shift:
-            raise NotImplementedError(f"{src_baseline=}: post_baseline_trigger_shift is not implemented for baseline correction in source space")
-        elif src_baseline is True:
-            src_baseline = epoch.baseline
-
-        # MRI subjects
-        common_brain = self.get('common_brain')
-        meg_subjects = ds['subject'].cells
-        from_subjects = {}  # for the purpose of morphing
-        mri_subjects = {}  # for representing
-        for subject in meg_subjects:
-            mri_subjects[subject] = self.get('mrisubject', subject=subject)
-            if is_fake_mri(self.get('mri-dir')):
-                from_subjects[subject] = common_brain
-            else:
-                from_subjects[subject] = mri_subjects[subject]
-
-        # make sure annot files are available (needed only for NDVar)
-        if ndvar:
-            if morph is None and len(meg_subjects) > 1:
-                morph = True
-            if morph:
-                self.make_annot(mrisubject=common_brain)
-            elif len(meg_subjects) > 1:
-                raise ValueError("ndvar=True, morph=False with multiple subjects: Can't create ndvars with data from different brains")
-            else:
-                self.make_annot(mrisubject=mri_subjects[meg_subjects[0]])
-
-        # preload morph matrices
-        morph_sources = {subject.removeprefix('sub-') for subject in from_subjects.values() if subject != common_brain}
-        source_morphs = {'sub-' + subject: self.load_source_morph(subject=subject) for subject in morph_sources}
-
-        # convert evoked objects
-        method, make_kw, apply_kw = self._inv_params()
-        stcs = []
-        invs = {}
-        for subject, evoked in tqdm(ds.zip('subject', 'evoked'), "Localize", ds.n_cases):
-            # get inv
-            if subject in invs:
-                inv = invs[subject]
-            else:
-                inv = invs[subject] = self.load_inv(evoked, subject=subject)
-
-            # apply inv
-            stc = apply_inverse(evoked, inv, **apply_kw)
-
-            # baseline correction
-            if src_baseline:
-                mne.baseline.rescale(stc._data, stc.times, src_baseline, 'mean', copy=False)
-
-            if morph:
-                subject_from = from_subjects[subject]
-                if subject_from == common_brain:
-                    stc.subject = common_brain
-                else:
-                    stc = source_morphs[subject_from].apply(stc)
-            stcs.append(stc)
-
-        # add to Dataset
-        if ndvar:
-            if morph:
-                key, subject = 'srcm', common_brain
-            else:
-                key, subject = 'src', mri_subjects[meg_subjects[0]]
-            src = self.get('src')
-            mri_sdir = self.get('mri-sdir')
-            fixed = make_kw.get('fixed', False)
-            parc = self.get('parc') or None
-            stcs = load.mne.stc_ndvar(stcs, subject, src, mri_sdir, method, fixed, parc=parc, adjacency=self.get('adjacency'))
-            if mask:
-                stcs = _mask_ndvar(stcs)
-        else:
-            key = 'stcm' if morph else 'stc'
-        ds[key] = stcs
-
-        if ndvar == 1 or not keep_evoked:
-            del ds['evoked']
-
-        return ds
+        epoch_name = self.get('epoch')
+        subjects_ = [subject_ for subject_ in self.iter(group=group, progress_bar=f"Load {epoch_name} STC")]
+        return load_evoked_stc_request(self._derivatives, self._groups, self.get('group'), self._derivative_state(state), options, subjects_)
 
     def load_induced_stc(
             self,
@@ -2917,194 +2325,33 @@ class Pipeline(FileTree):
         When trial rejection is set to automatic, not rejection is performed
         because no epochs are loaded.
         """
-        # process arguments
         if reject not in (True, False, 'keep'):
             raise ValueError(f"{reject=}")
-
         if index is True:
             index = 'index'
         elif index and not isinstance(index, str):
             raise TypeError(f"{index=}")
-        if kwargs:
-            with self._temporary_state:
-                self.set(**kwargs)
-                return self.load_selected_events(subjects, reject, add_bads, index, data_raw, vardef, cat)
-
-        # case of loading events for a group
-        subject, group = self._process_subject_arg(subjects, kwargs)
+        state = dict(kwargs)
+        subject, group = self._process_subject_arg(subjects, state)
+        options = {
+            'reject': reject,
+            'add_bads': add_bads,
+            'index': index,
+            'data_raw': data_raw,
+            'vardef': vardef,
+            'cat': cat,
+        }
         if group is not None:
             if data_raw:
                 raise ValueError(f"data_var={data_raw!r}: can't keep raw when combining subjects")
-            dss = [self.load_selected_events(reject=reject, add_bads=add_bads, index=index, vardef=vardef) for _ in self.iter(group=group)]
-            ds = combine(dss)
-            return ds
-
-        epoch = self._epochs[self.get('epoch')]
-        if isinstance(epoch, EpochCollection):
-            raise ValueError(f"epoch={self.get('epoch')!r}; can't load events for collection epoch")
-
-        # rejection comes from somewhere else
-        if isinstance(epoch, SuperEpoch):
-            with self._temporary_state:
-                dss = []
-                raw = None
-                # find bad channels
-                if isinstance(add_bads, Sequence):
-                    bad_channels = list(add_bads)
-                elif add_bads:
-                    bad_channels = sorted(set.union(*(
-                        set(self.load_bad_channels(task=task)) for
-                        task in epoch.tasks)))
-                else:
-                    bad_channels = []
-                # load events
-                for task in epoch.tasks:
-                    self.set(task=task)
-                    # load events for this task
-                    task_dss = []
-                    for sub_epoch in epoch.sub_epochs:
-                        if self._epochs[sub_epoch].task != task:
-                            continue
-                        with self._temporary_state:
-                            self.set(epoch=sub_epoch)
-                            ds = self.load_selected_events(subject, reject, add_bads, index, data_raw)
-                        ds[:, 'epoch'] = sub_epoch
-                        task_dss.append(ds)
-                    ds = combine(task_dss)
-                    dss.append(ds)
-                    # combine raw
-                    if data_raw:
-                        raw_ = task_dss[0].info['raw']
-                        raw_.info['bads'] = bad_channels
-                        if raw is None:
-                            raw = raw_
-                        else:
-                            ds['i_start'] += raw.last_samp + 1 - raw_.first_samp
-                            raw.append(raw_)  # FIXME: if one is cached and not the other, they may be different types
-
-            # combine bad channels
-            ds = combine(dss)
-            if data_raw:
-                ds.info['raw'] = raw
-            ds.info[BAD_CHANNELS] = bad_channels
-        elif isinstance(epoch, SecondaryEpoch):
-            with self._temporary_state:
-                self.set(epoch=epoch.sel_epoch)
-                ds = self.load_selected_events(None, 'keep' if reject else False, add_bads, index, data_raw)
-
-            if epoch.sel:
-                ds = ds.sub(epoch.sel)
-            if index:
-                ds.index(index)
-
-            if reject is True:
-                if self._artifact_rejection[self.get('rej')]['kind'] is not None:
-                    ds = ds.sub('accept')
-        else:
-            rej_params = self._artifact_rejection[self.get('rej')]
-            selection_state = self._derivative_state({'epoch': epoch.name, 'task': epoch.task})
-            # load files
-            with self._temporary_state:
-                if reject and rej_params['kind'] is not None:
-                    rej_file = rej_file_path(selection_state)
-                    if exists(rej_file):
-                        ds_sel = load.unpickle(rej_file)
-                    else:
-                        rej_file = relpath(rej_file, self.get('root'))
-                        raise FileMissingError(f"The rejection file at {rej_file} does not exist. Run .make_epoch_selection() first.")
-                else:
-                    ds_sel = None
-                ds = self.load_events(add_bads=add_bads, data_raw=data_raw, task=epoch.task)
-
-            # primary event selection
-            if epoch.sel:
-                ds = ds.sub(epoch.sel)
-            if index:
-                ds.index(index)
-            if epoch.n_cases is not None and ds.n_cases != epoch.n_cases:
-                raise RuntimeError(f"Number of epochs {ds.n_cases}, expected {epoch.n_cases}")
-
-            # rejection
-            if ds_sel is not None:
-                # file length - if epochs exceed the raw data, epoch-selection will quietly drop those epochs and they will be missing from the selction file
-                if ds_sel.info.get('epochs.selection') is not None:
-                    ds = ds[ds_sel.info['epochs.selection']]
-                # older files don't have 'epochs.selection'
-                if ds_sel.n_cases != ds.n_cases:
-                    if np.all(ds[:ds_sel.n_cases, 'trigger'] == ds_sel['trigger']):
-                        ds = ds[:ds_sel.n_cases]
-                        test_passed = True
-                    elif np.all(ds[-ds_sel.n_cases:, 'trigger'] == ds_sel['trigger']):
-                        ds = ds[-ds_sel.n_cases:]
-                        test_passed = True
-                elif np.all(ds['trigger'] == ds_sel['trigger']):
-                    test_passed = True
-                if not test_passed:
-                    raise RuntimeError(f"The epoch selection file contains different events (trigger IDs) from the data loaded from the raw file. If the events included in the epoch were changed intentionally,  redo epoch selection for {subject}/{epoch.name}")
-
-                if rej_params['interpolation']:
-                    ds.info[INTERPOLATE_CHANNELS] = True
-                    if INTERPOLATE_CHANNELS in ds_sel:
-                        ds[INTERPOLATE_CHANNELS] = ds_sel[INTERPOLATE_CHANNELS]
-                    else:
-                        ds[INTERPOLATE_CHANNELS] = Datalist([[]] * ds.n_cases, INTERPOLATE_CHANNELS, 'strlist')
-                else:
-                    ds.info[INTERPOLATE_CHANNELS] = False
-
-                # subset events
-                if reject == 'keep':
-                    ds['accept'] = ds_sel['accept']
-                elif reject is True:
-                    ds = ds.sub(ds_sel['accept'])
-                else:
-                    raise RuntimeError(f"{reject=}")
-
-                # bad channels
-                if add_bads:
-                    if BAD_CHANNELS in ds_sel.info:
-                        ds.info[BAD_CHANNELS] = ds_sel.info[BAD_CHANNELS]
-                    else:
-                        ds.info[BAD_CHANNELS] = []
-            else:  # no artifact rejection
-                ds.info[INTERPOLATE_CHANNELS] = False
-                ds.info[BAD_CHANNELS] = []
-
-        # apply trigger-shift
-        if epoch.trigger_shift:
-            shift = epoch.trigger_shift
-            if isinstance(shift, str):
-                shift = ds.eval(shift)
-            if isinstance(shift, Var):
-                shift = shift.x
-                if np.isnan(shift).any():
-                    raise RuntimeError(f"The epoch shift contains NaNs for {subject}/{epoch.name}\n{shift=}")
-
-            if np.isscalar(shift):
-                ds['i_start'] += int(round(shift * ds.info['sfreq']))
-            else:
-                ds['i_start'] += np.round(shift * ds.info['sfreq']).astype(int)
-
-        # Additional variables
-        self._add_vars(ds, epoch.vars)
-        self._add_vars(ds, vardef)
-
-        # apply cat subset
-        if cat:
-            model = ds.eval(self.get('model'))
-            idx = model.isin(cat)
-            ds = ds.sub(idx)
-
-        return ds
-
-    def _load_spm(self, baseline=True, src_baseline=False):
-        "Load LM"
-        subject = self.get('subject')
-        test = self.get('test')
-        test_obj = self._tests[test]
-        if not isinstance(test_obj, TwoStageTest):
-            raise NotImplementedError(f"Test kind {test_obj.__class__.__name__!r}")
-        ds = self.load_epochs_stc(subject, baseline, src_baseline, mask=True, vardef=test_obj.vars)
-        return testnd.LM('src', test_obj.stage_1, data=ds, samples=0, subject=subject)
+            epoch_name = self.get('epoch', **state)
+            return combine([
+                self._load_derivative(SELECTED_EVENTS, options=options)
+                for _ in self.iter(group=group, progress_bar=f"Load {epoch_name} events")
+            ])
+        if subject is not None:
+            state['subject'] = subject
+        return self._load_derivative(SELECTED_EVENTS, state=state, options=options)
 
     def load_src(
             self,
@@ -3248,27 +2495,6 @@ class Pipeline(FileTree):
         self.set(test=test, **state)
         data = TestDims.coerce(data, morph=True)
         self._set_analysis_options(data, baseline, src_baseline, pmin, tstart, tstop, parc, mask, samplingrate, smooth=smooth)
-        return self._load_test(test, tstart, tstop, pmin, parc, mask, samples, data, baseline, src_baseline, return_data, make, smooth, samplingrate)
-
-    def _load_test(
-            self,
-            test: str,
-            tstart: float | None,
-            tstop: float | None,
-            pmin: PMinArg,
-            parc: str | None,
-            mask: str | None,
-            samples: int,
-            data: TestDims,
-            baseline: BaselineArg,
-            src_baseline: BaselineArg,
-            return_data: bool,
-            make: bool,
-            smooth: float = None,
-            samplingrate: int = None,
-    ):
-        "Load a cached test after _set_analysis_options() has been called"
-        test_obj = self._tests[test]
         options = {
             'data': data,
             'samples': samples,
@@ -3286,229 +2512,7 @@ class Pipeline(FileTree):
             '_allow_protected_overwrite': make,
         }
         handle = self._resolve_derivative('test-result', options=options)
-        dst = handle.artifact_path
-        desc = relpath(dst, self.get('test-dir'))
-
-        if handle.is_valid():
-            try:
-                res = handle.load()
-            except OldVersionError:
-                res = None
-            else:
-                self._log.info("Load cached test: %s", desc)
-                if not return_data:
-                    return res
-        elif not make and exists(dst):
-            raise OSError(f"The requested test is outdated: {desc}. Set make=True to perform the test.")
-        else:
-            res = None
-
-        if res is None and not make:
-            raise OSError(f"The requested test is not cached: {desc}. Set make=True to perform the test.")
-        elif res is None:
-            res = handle.load()
-            if not return_data:
-                return res
-
-        res_data, res = self._materialize_test_request(test_obj, data, baseline, src_baseline, mask, parc, pmin, tstart, tstop, samples, smooth, samplingrate, res, True, desc)
-
-        if return_data:
-            return res_data, res
-        else:
-            return res
-
-    def _materialize_test_request(
-            self,
-            test_obj: Test,
-            data: TestDims,
-            baseline: BaselineArg,
-            src_baseline: BaselineArg,
-            mask: str | bool | None,
-            parc: str | None,
-            pmin: PMinArg,
-            tstart: float | None,
-            tstop: float | None,
-            samples: int,
-            smooth: float | None,
-            samplingrate: int | None,
-            res,
-            return_data: bool,
-            desc: str | None = None,
-    ):
-        parc_dim = None
-        if data.source is True:
-            if parc:
-                mask = True
-                parc_dim = 'source'
-            elif mask:
-                if pmin is None:
-                    parc_dim = 'source'
-        elif isinstance(data.source, str):
-            if not isinstance(parc, str):
-                raise TypeError(f"parc needs to be set for ROI test (data={data.string!r})")
-            elif mask is not None:
-                raise TypeError(f"{mask=}: invalid for data={data.string!r}")
-        elif parc is not None:
-            raise TypeError(f"{parc=}: invalid for data={data.string!r}")
-        elif mask is not None:
-            raise TypeError(f"{mask=}: invalid for data={data.string!r}")
-
-        do_test = res is None
-        if do_test:
-            test_kwargs = self._test_kwargs(samples, pmin, tstart, tstop, data, parc_dim)
-        else:
-            test_kwargs = None
-
-        if isinstance(test_obj, TwoStageTest):
-            if smooth:
-                raise NotImplementedError(f"{smooth=}: smoothing for two-stage tests")
-            if isinstance(data.source, str):
-                return self._make_test_rois_2stage(baseline, src_baseline, test_obj, samples, test_kwargs, res, data, return_data, samplingrate)
-            elif data.source is True:
-                return self._make_test_2stage(baseline, src_baseline, mask, test_obj, test_kwargs, res, data, return_data, samplingrate)
-            else:
-                raise NotImplementedError(f"Two-stage test with data={data.string!r}")
-        elif isinstance(data.source, str):
-            if smooth:
-                raise TypeError(f"{smooth=} for ROI tests")
-            return self._make_test_rois(baseline, src_baseline, test_obj, samples, pmin, test_kwargs, res, data, samplingrate)
-
-        if data.sensor:
-            res_data = self.load_evoked(True, baseline, True, test_obj.cat, samplingrate, data=data, vardef=test_obj.vars)
-            if len(res_data.info['sensor_types']) > 1:
-                desc_ = ', '.join(res_data.info['sensor_types'])
-                raise RuntimeError(f"Data contains more than one sensor type ({desc_}). Mass-univariate tests are not designed for multiple sensor types. Use the data argument to perform test on one sensor type.")
-        elif data.source:
-            res_data = self.load_evoked_stc(True, baseline, src_baseline, test_obj.cat, morph=True, mask=mask, vardef=test_obj.vars, samplingrate=samplingrate)
-            if smooth:
-                res_data[data.y_name] = res_data[data.y_name].smooth('source', smooth, 'gaussian')
-        else:
-            raise ValueError(f"data={data.string!r}")
-
-        if do_test:
-            self._log.info("Make test: %s", desc)
-            res = self._make_test(data.y_name, res_data, test_obj, test_kwargs)
-
-        if return_data:
-            return res_data, res
-        return None, res
-
-    @staticmethod
-    def _src_to_label_tc(ds, func):
-        src = ds.pop('src')
-        out = {}
-        for label in src.source.parc.cells:
-            if label.startswith('unknown-'):
-                continue
-            label_ds = ds.copy()
-            label_ds['label_tc'] = getattr(src, func)(source=label)
-            out[label] = label_ds
-        return out
-
-    def _make_test_rois(self, baseline, src_baseline, test_obj, samples, pmin, test_kwargs, res, data, samplingrate):
-        # load data
-        dss_list = []
-        n_trials_dss = []
-        labels = set()
-        subjects = self.get_field_values('subject')
-        for _ in self.iter(progress_bar="Loading data"):
-            ds = self.load_evoked_stc(1, baseline, src_baseline, vardef=test_obj.vars, samplingrate=samplingrate)
-            dss = self._src_to_label_tc(ds, data.source)
-            n_trials_dss.append(ds)
-            dss_list.append(dss)
-            labels.update(dss.keys())
-
-        label_dss = {label: [dss[label] for dss in dss_list if label in dss] for label in labels}
-        label_data = {label: combine(dss, incomplete='drop') for label, dss in label_dss.items()}
-        if res is not None:
-            return label_data, res
-
-        n_trials_ds = combine(n_trials_dss, incomplete='drop')
-
-        # n subjects per label
-        n_per_label = {label: len(dss) for label, dss in label_dss.items()}
-
-        # compute results
-        do_mcc = (
-            len(labels) > 1  # more than one ROI
-            and pmin not in (None, 'tfce')  # not implemented
-            and len(set(n_per_label.values())) == 1  # equal n permutations
-        )
-        label_results = {
-            label: self._make_test('label_tc', ds, test_obj, test_kwargs, do_mcc)
-            for label, ds in label_data.items()
-        }
-
-        if do_mcc:
-            cdists = [res._cdist for res in label_results.values()]
-            merged_dist = _MergedTemporalClusterDist(cdists)
-        else:
-            merged_dist = None
-
-        res = ROITestResult(subjects, samples, n_trials_ds, merged_dist, label_results)
-        return label_data, res
-
-    def _make_test_rois_2stage(self, baseline, src_baseline, test_obj, samples, test_kwargs, res, data, return_data, samplingrate):
-        # stage 1
-        lms = []
-        res_data = []
-        n_trials_dss = []
-        subjects = self.get_field_values('subject')
-        for subject in self.iter(progress_bar="Loading stage 1 models"):
-            if test_obj.model is None:
-                ds = self.load_epochs_stc(1, baseline, src_baseline, mask=True, vardef=test_obj.vars, samplingrate=samplingrate)
-            else:
-                ds = self.load_evoked_stc(1, baseline, src_baseline, mask=True, vardef=test_obj.vars, model=test_obj.model, samplingrate=samplingrate)
-
-            dss = self._src_to_label_tc(ds, data.source)
-            if res is None:
-                lms.append({label: test_obj.make_stage_1('label_tc', ds, subject) for label, ds in dss.items()})
-                n_trials_dss.append(ds)
-            if return_data:
-                res_data.append(dss)
-
-        # stage 2
-        if res is None:
-            labels = set(chain.from_iterable(lms))
-            ress = {}
-            for label in sorted(labels):
-                label_lms = [subject_lms[label] for subject_lms in lms if label in subject_lms]
-                if len(label_lms) <= 2:
-                    continue
-                ress[label] = test_obj.make_stage_2(label_lms, test_kwargs)
-            n_trials_ds = combine(n_trials_dss, incomplete='drop')
-            res = ROI2StageResult(subjects, samples, n_trials_ds, None, ress)
-
-        if return_data:
-            data_out = {}
-            for label in res.keys():
-                label_data = [subject_data[label] for subject_data in res_data if label in subject_data]
-                data_out[label] = combine(label_data)
-        else:
-            data_out = None
-        return data_out, res
-
-    def _make_test_2stage(self, baseline, src_baseline, mask, test_obj, test_kwargs, res, data, return_data, samplingrate):
-        # stage 1
-        lms = []
-        res_data = []
-        for subject in self.iter(progress_bar="Loading stage 1 models"):
-            if test_obj.model is None:
-                ds = self.load_epochs_stc(1, baseline, src_baseline, morph=True, mask=mask, vardef=test_obj.vars, samplingrate=samplingrate)
-            else:
-                ds = self.load_evoked_stc(1, baseline, src_baseline, morph=True, mask=mask, vardef=test_obj.vars, model=test_obj.model, samplingrate=samplingrate)
-
-            if res is None:
-                lms.append(test_obj.make_stage_1(data.y_name, ds, subject))
-            if return_data:
-                res_data.append(ds)
-
-        # stage 2
-        if res is None:
-            res = test_obj.make_stage_2(lms, test_kwargs)
-        if return_data:
-            res_data = combine(res_data)
-        return res_data, res
+        return handle.node.load_test(handle.ctx, return_data, make)
 
     def make_annot(self, **state):
         """Ensure that annot files for the current parcellation exist."""
@@ -3690,41 +2694,6 @@ class Pipeline(FileTree):
             raise ValueError("Can only copy files, not directories.")
         shutil.copyfile(src_path, dst_path)
 
-    def make_cov(self):
-        "Make a noise covariance (cov) file"
-        self._load_derivative(cov_node_name(self.get('cov')))
-        return self.get('cov-file')
-
-    def _make_evoked(self, samplingrate, decim, data_raw, vardef):
-        """Make files with evoked sensor data"""
-        epoch = self._epochs[self.get('epoch')]
-        model = self.get('model')
-        model_vars = model.split('%') if model else ()
-        equal_count = self.get('equalize_evoked_count') == 'eq'
-        self._log.debug("Make evoked %s", self.get('evoked-file'))
-        # load the epochs (post baseline-correction trigger shift requires
-        # baseline corrected evoked
-        if epoch.post_baseline_trigger_shift:
-            ds = self.load_epochs(ndvar=False, baseline=True, samplingrate=samplingrate, decim=decim, data_raw=data_raw, interpolate_bads='keep', vardef=vardef)
-        else:
-            ds = self.load_epochs(ndvar=False, samplingrate=samplingrate, decim=decim, data_raw=data_raw, interpolate_bads='keep', vardef=vardef)
-
-        # aggregate
-        ds_agg = ds.aggregate(model, drop_bad=True, equal_count=equal_count, drop=('i_start', 't_edf', 'time', 'index', 'trigger'), never_drop=('epochs',))
-        ds_agg.rename('epochs', 'evoked')
-
-        # save
-        for e, *cell in ds_agg.zip('evoked', *model_vars):
-            e.info['description'] = "Eelbrain"
-            e.comment = ' % '.join(cell)
-
-        return ds_agg
-
-    def make_fwd(self):
-        """Make the forward model"""
-        self._load_derivative('fwd')
-        return self.get('fwd-file')
-
     @suppress_mne_warning
     def make_ica_selection(
             self,
@@ -3847,32 +2816,6 @@ class Pipeline(FileTree):
             else:
                 raise RuntimeError("User aborted ICA overwrite")
         return str(pipe.ica_artifact_path(ctx))
-
-    def make_link(self, temp, field, src, dst, redo=False):
-        """Make a hard link
-
-        Make a hard link at the file with the ``dst`` value on ``field``,
-        linking to the file with the ``src`` value of ``field``.
-
-        Parameters
-        ----------
-        temp : str
-            Template of the file for which to make a link.
-        field : str
-            Field in which the source and target of the link are distinguished.
-        src : str
-            Value for field on the source file.
-        dst : str
-            Value for field on the destination filename.
-        redo : bool
-            If the target file already exists, overwrite it.
-        """
-        dst_path = self.get(temp, **{field: dst})
-        if not redo and exists(dst_path):
-            return
-
-        src_path = self.get(temp, **{field: src})
-        os.link(src_path, dst_path)
 
     def make_mov_ga_dspm(self, subjects=None, baseline=True, src_baseline=False,
                          fmin=2, surf=None, views=None, hemi=None, time_dilation=4.,
@@ -4150,17 +3093,6 @@ class Pipeline(FileTree):
                             mrat_condition=condition)
             stc = case['stcm']
             stc.save(path)
-
-    def _make_mri(self):
-        mri_sdir = Path(self.get('mri-sdir'))
-        if not mri_sdir.exists():
-            raise OSError(f"Cannot access MRI directory at {mri_sdir}")
-        mrisubject = self.get('mrisubject')
-        if mrisubject == 'fsaverage':
-            self._log.info("MRI for FSAverage is missing, trying to generate it.")
-            mne.create_default_subject(subjects_dir=mri_sdir)
-        else:
-            raise OSError(f"MRI for {mrisubject} is missing and cannot be created automatically")
 
     def make_plot_annot(self, surf='inflated', redo=False, **state):
         """Create a figure for the contents of an annotation file
@@ -4520,149 +3452,6 @@ class Pipeline(FileTree):
             return
         self._load_derivative('roi-report', options=options, _allow_protected_overwrite=True)
 
-    def _make_report_eeg(self, test, pmin=None, tstart=None, tstop=None,
-                         samples=10000, baseline=True, include=1, **state):
-        # outdated (cache, load_test())
-        """Create an HTML report on EEG sensor space spatio-temporal clusters
-
-        Parameters
-        ----------
-        test : str
-            Test for which to create a report (entry in Pipeline.tests).
-        pmin : None | scalar, 1 > pmin > 0 | 'tfce'
-            Equivalent p-value for cluster threshold, or 'tfce' for
-            threshold-free cluster enhancement.
-        tstart : scalar
-            Beginning of the time window for the test in seconds
-            (default is the beginning of the epoch).
-        tstop : scalar
-            End of the time window for the test in seconds
-            (default is the end of the epoch).
-        samples : int > 0
-            Number of samples used to determine cluster p values for spatio-
-            temporal clusters (default 1000).
-        baseline : bool | tuple
-            Apply baseline correction using this period. True to use the epoch's
-            baseline specification (default).
-        include : 0 < scalar <= 1
-            Create plots for all clusters with p-values smaller or equal this
-            value (the default is 1, i.e. to show all clusters).
-        ...
-            State parameters.
-        """
-        data = TestDims("sensor")
-        self._set_analysis_options(data, baseline, None, pmin, tstart, tstop)
-        dst = self.get('report-file', mkdir=True, fmatch=False, test=test,
-                       folder="EEG Spatio-Temporal", modality='eeg',
-                       **state)
-        options = {
-            'dst': dst,
-            'data': data,
-            'samples': samples,
-            'test': test,
-            'baseline': baseline,
-            'pmin': pmin,
-            'tstart': tstart,
-            'tstop': tstop,
-            'include': include,
-            '_allow_protected_overwrite': True,
-        }
-        if not self._resolve_derivative('eeg-report', options=options).is_valid():
-            self._load_derivative('eeg-report', options=options, _allow_protected_overwrite=True)
-        else:
-            return
-
-    def _make_report_eeg_sensors(self, test, sensors=('FZ', 'CZ', 'PZ', 'O1', 'O2'),
-                                 pmin=None, tstart=None, tstop=None,
-                                 samples=10000, baseline=True, redo=False,
-                                 **state):
-        # outdated (cache)
-        """Create an HTML report on individual EEG sensors
-
-        Parameters
-        ----------
-        test : str
-            Test for which to create a report (entry in Pipeline.tests).
-        sensors : sequence of str
-            Names of the sensors which to include.
-        pmin : None | scalar, 1 > pmin > 0 | 'tfce'
-            Equivalent p-value for cluster threshold, or 'tfce' for
-            threshold-free cluster enhancement.
-        tstart : scalar
-            Beginning of the time window for the test in seconds
-            (default is the beginning of the epoch).
-        tstop : scalar
-            End of the time window for the test in seconds
-            (default is the end of the epoch).
-        samples : int > 0
-            Number of samples used to determine cluster p values for spatio-
-            temporal clusters (default 1000).
-        baseline : bool | tuple
-            Apply baseline correction using this period. True to use the epoch's
-            baseline specification (default).
-        redo : bool
-            If the target file already exists, delete and recreate it. This
-            only applies to the HTML result file, not to the test.
-        ...
-            State parameters.
-        """
-        data = TestDims('sensor.sub')
-        self._set_analysis_options(data, baseline, None, pmin, tstart, tstop)
-        dst = self.get('report-file', mkdir=True, fmatch=False, test=test,
-                       folder="EEG Sensors", modality='eeg', **state)
-        options = {
-            'dst': dst,
-            'data': data,
-            'samples': samples,
-            'test': test,
-            'baseline': baseline,
-            'pmin': pmin,
-            'tstart': tstart,
-            'tstop': tstop,
-            'sensors': sensors,
-            '_allow_protected_overwrite': True,
-        }
-        if not redo and self._resolve_derivative('eeg-sensors-report', options=options).is_valid():
-            return
-        self._load_derivative('eeg-sensors-report', options=options, _allow_protected_overwrite=True)
-
-    def _report_subject_info(self, ds, model):
-        return self._report_support.report_subject_info(self._derivative_state(), ds, model)
-
-    def _report_test_info(self, section, ds, test, res, data, include=None, model=True):
-        return self._report_support.report_test_info(self._derivative_state(), section, ds, test, res, data, include, model)
-
-    def _report_parc_image(self, section, caption, subjects=None):
-        return self._report_support.report_parc_image(self._derivative_state(), section, caption, subjects)
-
-    def _make_report_lm(self, pmin=0.01, baseline=True, src_baseline=False,
-                        mask='lobes'):
-        """Report for a first level (single subject) LM
-
-        Parameters
-        ----------
-        pmin : scalar
-            Threshold p-value for uncorrected SPMs.
-        """
-        if not isinstance(self._tests[self.get('test')], TwoStageTest):
-            raise NotImplementedError("Only two-stage tests")
-
-        with self._temporary_state:
-            self._set_analysis_options('source', baseline, src_baseline, pmin, None, None, mask=mask)
-            dst = self.get('subject-spm-report', mkdir=True)
-            options = {
-                'dst': dst,
-                'data': TestDims('source'),
-                'samples': None,
-                'single_subject': True,
-                'baseline': baseline,
-                'src_baseline': src_baseline,
-                'pmin': pmin,
-                'mask': mask,
-                '_allow_protected_overwrite': True,
-            }
-            self._load_derivative('lm-report', options=options, _allow_protected_overwrite=True)
-
     def make_report_coreg(self, file_name=None, **state):
         """Create HTML report with plots of the MEG/MRI coregistration
 
@@ -4699,51 +3488,6 @@ class Pipeline(FileTree):
             State parameters.
         """
         self._load_derivative('src', state=state)
-
-    def _test_kwargs(
-            self,
-            samples: int,
-            pmin: PMinArg,
-            tstart: None | float,
-            tstop: None | float,
-            data: DataArg,
-            parc_dim: None | str,
-    ):
-        "Compile kwargs for mass-univariate tests"
-        kwargs = {'samples': samples, 'tstart': tstart, 'tstop': tstop, 'parc': parc_dim}
-        if pmin == 'tfce':
-            kwargs['tfce'] = True
-        elif pmin is not None:
-            kwargs['pmin'] = pmin
-            kwargs.update(self._cluster_criteria_kwargs(data))
-        return kwargs
-
-    def _make_test(
-            self,
-            y: NDVarArg,  # Dependent variable
-            ds: Dataset,  # Other variables
-            test: Test | str,  # Test, or name of the test
-            kwargs: dict = None,  # Test parameters from self._test_kwargs()
-            force_permutation: bool = False,
-            to_uv: str = None,  # NDVar method to make y  univariate
-    ):
-        "Compute test results"
-        test_obj = test if isinstance(test, Test) else self._tests[test]
-        if isinstance(y, str):
-            y = ds.eval(y)
-        if to_uv or isinstance(y, Var):
-            if isinstance(y, NDVar):
-                dim = 'sensor' if y.has_dim('sensor') else 'source'
-                y = getattr(y, to_uv)(dim)
-            elif isinstance(y, Var):
-                pass
-            else:  # List
-                dim = 'sensor' if y[0].has_dim('sensor') else 'source'
-                y = combine([getattr(yi, to_uv)(dim) for yi in y])
-            return test_obj.make_uv(y, ds)
-        elif y.has_dim('space'):
-            return test_obj.make_vec(y, ds, force_permutation, kwargs)
-        return test_obj.make(y, ds, force_permutation, kwargs)
 
     def merge_bad_channels(self):
         """Merge bad channel definitions for different tasks
@@ -5357,11 +4101,6 @@ class Pipeline(FileTree):
         "Construct inv string from settings; see :meth:`.set_inv`"
         return inv_str(ori, snr, method, depth, pick_normal)
 
-    @staticmethod
-    def _parse_inv(inv: str) -> tuple[str | float, float, str, float, bool]:
-        "(ori, snr, method, depth, pick_normal)"
-        return parse_inv(inv)
-
     @classmethod
     def _eval_inv(cls, inv):
         return eval_inv(inv)
@@ -5456,12 +4195,6 @@ class Pipeline(FileTree):
             return parc, self._parcs[parc]
         else:
             return parc, self._parcs[SEEDED_PARC_RE.match(parc).group(1)]
-
-    def _make_parc_labels(self, parc_def, parc):
-        self._log.info("Make parcellation %s for %s", parc, self.get('mrisubject'))
-        labels = parc_def._make(self, parc)
-        write_labels_to_annot(labels, self.get('mrisubject'), parc, True, self.get('mri-sdir'))
-        return labels
 
     def _post_set_test(self, _, test):
         if test != '*' and test in self._tests:  # with vmatch=False, test object might not be availale
@@ -5614,32 +4347,6 @@ class Pipeline(FileTree):
         items.extend(test_options)
 
         self.set(test_options=' '.join(items), analysis=analysis, folder=folder, **kwargs)
-
-    @staticmethod
-    def _parse_test_options(test_options: FieldCode):
-        code = FieldCode.coerce(test_options)
-        out = {}
-        # baseline
-        if 'bl' in code.lookahead_1:
-            out['baseline'] = code.next()
-            if 'srcbl' in code.lookahead_1:
-                out['baseline'] = (out['baseline'], code.next())
-        # adjacency
-        if code.lookahead_1 == 'link-midline':
-            out['adjacency'] = code.next()
-        # pmin
-        if code.lookahead_1 == 'tfce' or code.lookahead_1.startswith('0.'):
-            out['pmin'] = code.next()
-        # time-window
-        if '-' in code.lookahead_1:
-            out['time_window'] = code.next()
-        # decim
-        m = re.match(r'(\d+)(Hz)?', code.lookahead_1)
-        if m:
-            num, is_sr = m.groups()
-            key = 'samplingrate' if is_sr else 'decim'
-            out[key] = code.next()
-        return out
 
     def show_bad_channels(
             self,

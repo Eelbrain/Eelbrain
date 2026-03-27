@@ -8,7 +8,7 @@ configuration objects plus graph nodes built from them.
 :class:`RawPipe` subclasses implement a specific preprocessing step by
 overriding the :meth:`RawPipe._make` method,
 and expose user-configurable parameters during initialization.
-Users add thse :class:`RawPipe` subclass objects to :class:`Pipeline`.
+Users add these :class:`RawPipe` subclass objects to :class:`Pipeline`.
 
 During :class:`Pipeline` initialization, the configured :class:`RawPipe`
 objects are normalized and bound into graph nodes. Those graph nodes
@@ -17,11 +17,15 @@ The nodes manage artifact identity, dependency edges, and cache integration,
 while the :class:`RawPipe` objects supply preprocessing behavior and
 configuration.
 
+The public ``Pipeline.load_raw`` method is a facade over these graph nodes.
+Raw orchestration, chaining, and cached artifact loading belong in the raw
+derivative family, not in bound :class:`Pipeline` methods.
+
 Caching, manifests, dependency traversal, protected-artifact handling, and
 cache policy belong to the lower cache and graph layers, not to
 :class:`RawPipe`. Extending the raw pipeline should work by adding
 :class:`RawPipe` subclasses and supplying them through :class:`Pipeline`,
-without editing the cache kernel.
+without editing the cache kernel or injecting facade behavior into nodes.
 """
 from __future__ import annotations
 import warnings

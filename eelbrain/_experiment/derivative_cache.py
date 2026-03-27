@@ -135,10 +135,7 @@ class DerivativeContext:
             merged_state.update(state)
         if extra_state:
             merged_state.update(extra_state)
-        merged_options = dict(self.options)
-        if options:
-            merged_options.update(options)
-        return self.registry.load(name, state=merged_state, options=merged_options)
+        return self.registry.load(name, state=merged_state, options=self.options if options is None else options)
 
 
 @dataclass(frozen=True)
@@ -516,9 +513,7 @@ class DerivativeRegistry:
     ) -> dict[str, Any]:
         out = {}
         for dep in node.dependencies(ctx):
-            options = dict(ctx.options)
-            if dep.options:
-                options.update(dep.options(ctx))
+            options = ctx.options if dep.options is None else dep.options(ctx)
             key = dep.label or dep.name
             if key in out:
                 raise RuntimeError(f"Duplicate dependency label {key!r} for node {node.name!r}")

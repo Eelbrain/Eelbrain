@@ -71,6 +71,10 @@ def cache_dir(state: dict[str, str | None]) -> Path:
     return deriv_dir(state) / 'eelbrain' / 'cache'
 
 
+def log_dir(state: dict[str, str | None]) -> Path:
+    return deriv_dir(state) / 'eelbrain' / 'logs'
+
+
 def raw_cache_dir(state: dict[str, str | None]) -> Path:
     return cache_dir(state) / 'raw' / subject_session_basename(state)
 
@@ -83,8 +87,20 @@ def event_file_path(state: dict[str, str | None]) -> Path:
     return raw_cache_dir(state) / f"{raw_basename(state)}_raw-{state['raw']}_evts.pickle"
 
 
+def selected_events_file_path(state: dict[str, str | None]) -> Path:
+    return cache_dir(state) / 'selected-events' / f"{epoch_basename(state)}_raw-{state['raw']}_epoch-{state['epoch']}_rej-{state['rej']}_sel.pickle"
+
+
 def evoked_file_path(state: dict[str, str | None]) -> Path:
     return cache_dir(state) / 'evoked' / f"{epoch_basename(state)}_raw-{state['raw']}_epoch-{state['epoch']}_rej-{state['rej']}_model-{state['model']}_count-{state['equalize_evoked_count']}_ave.fif"
+
+
+def epochs_file_path(state: dict[str, str | None]) -> Path:
+    return cache_dir(state) / 'epochs' / f"{epoch_basename(state)}_raw-{state['raw']}_epoch-{state['epoch']}_rej-{state['rej']}_epo.pickle"
+
+
+def evoked_dataset_file_path(state: dict[str, str | None]) -> Path:
+    return cache_dir(state) / 'evoked-dataset' / f"{epoch_basename(state)}_raw-{state['raw']}_epoch-{state['epoch']}_rej-{state['rej']}_model-{state['model']}_count-{state['equalize_evoked_count']}_ds.pickle"
 
 
 def trans_file_path(state: dict[str, str | None]) -> Path:
@@ -132,6 +148,14 @@ def src_file_path(state: dict[str, str | None]) -> Path:
 
 def source_morph_file_path(state: dict[str, str | None]) -> Path:
     return bem_dir(state) / f"{state['mrisubject']}-{state['common_brain']}-{state['src']}-morph.h5"
+
+
+def epochs_stc_file_path(state: dict[str, str | None]) -> Path:
+    return cache_dir(state) / 'epochs-stc' / f"{epoch_basename(state)}_mrisubject-{state['mrisubject']}_src-{state['src']}_raw-{state['raw']}_cov-{state['cov']}_rej-{state['rej']}_cache-{state['inv-cache']}_stc.pickle"
+
+
+def evoked_stc_file_path(state: dict[str, str | None]) -> Path:
+    return cache_dir(state) / 'evoked-stc' / f"{epoch_basename(state)}_mrisubject-{state['mrisubject']}_src-{state['src']}_raw-{state['raw']}_cov-{state['cov']}_rej-{state['rej']}_model-{state['model']}_count-{state['equalize_evoked_count']}_cache-{state['inv-cache']}_stc.pickle"
 
 
 def label_dir(state: dict[str, str | None]) -> Path:

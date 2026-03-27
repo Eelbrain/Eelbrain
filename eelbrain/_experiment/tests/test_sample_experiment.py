@@ -15,6 +15,7 @@ from eelbrain import *
 from eelbrain.pipeline import *
 from eelbrain._exceptions import DefinitionError
 from eelbrain._experiment.derivative_cache import MANIFEST_SUFFIX
+from eelbrain._experiment.reports import _report_subject_info
 from eelbrain.testing import TempDir, assert_dataobj_equal, requires_mne_sample_data
 
 
@@ -145,7 +146,7 @@ def test_sample():
     ds = Dataset()
     ds['subject'] = Factor(reversed(subjects))
     ds['n'] = Var(range(3))
-    _ = e._report_subject_info(ds, '')
+    _ = _report_subject_info(e._derivatives._get_node('source-report'), e._derivative_state(), ds, '')
 
     # post_baseline_trigger_shift
     # use multiple of tstep to shift by even number of samples
@@ -312,7 +313,7 @@ def test_sample():
     # ------------
     class Experiment(SampleExperiment):
         def label_events(self, ds):
-            SampleExperiment.label_events(self, ds)
+            ds = SampleExperiment.label_events(self, ds)
             ds = ds.sub("event == 'smiley'")
             ds['new_var'] = Var([i + 1 for i in ds['i_start']])
             return ds

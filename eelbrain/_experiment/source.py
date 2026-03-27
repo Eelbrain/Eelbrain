@@ -1,5 +1,12 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-"""Source-model cache nodes."""
+"""Source-model and source-data derivatives.
+
+These nodes own the reusable source-space products behind
+``Pipeline.load_inv``, ``Pipeline.load_evoked_stc``, and
+``Pipeline.load_epochs_stc``. Higher-level derivatives should load them
+through :meth:`DerivativeContext.load` instead of relying on injected facade
+methods.
+"""
 
 from __future__ import annotations
 
@@ -10,21 +17,28 @@ from os.path import basename, join
 from pathlib import Path
 import re
 from typing import Any
+from collections.abc import Sequence
 
 import mne
-from mne.minimum_norm import make_inverse_operator
+import numpy as np
+from mne.minimum_norm import apply_inverse, apply_inverse_epochs, make_inverse_operator
 
+from .. import load, save
+from .._data_obj import Dataset, Datalist, NDVar, combine
 from .covariance import cov_node_name
 from .derivative_cache import CachePolicy, Dependency, Derivative, DerivativeContext, Input, file_fingerprint
+from .events import EPOCHS_DATA, EVOKED_DATA
 from .pathing import (
-    bem_dir, bem_file_path, fwd_file_path, inv_file_path, mri_dir,
-    mri_sdir, source_morph_file_path, src_file_path, trans_file_path,
+    bem_dir, bem_file_path, epochs_stc_file_path, evoked_stc_file_path,
+    fwd_file_path, inv_file_path, mri_dir, mri_sdir, source_morph_file_path,
+    src_file_path, trans_file_path,
 )
 from .preprocessing import load_raw_dependency
 from .._text import enumeration, plural
 from .._utils import subp
 from .._utils.mne_utils import is_fake_mri
 from ..mne_fixes._source_space import merge_volume_source_space, prune_volume_source_space, restrict_volume_source_space
+from .._mne import find_source_subject, label_from_annot, morph_source_space
 
 
 INV_METHODS = ('MNE', 'dSPM', 'sLORETA', 'eLORETA', 'champ')
@@ -510,3 +524,380 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
             value: mne.minimum_norm.InverseOperator,
     ) -> None:
         mne.minimum_norm.write_inverse_operator(path, value, overwrite=True)
+
+
+def _mask_ndvar(y: NDVar):
+    if y.source.parc is None:
+        raise RuntimeError(f'{y} has no parcellation')
+    mask = y.source.parc.startswith('unknown')
+    if mask.any():
+        return y.sub(source=np.invert(mask))
+    return y
+
+
+def load_epochs_stc_group(
+        registry,
+        subjects: Sequence[str],
+        state: dict[str, Any],
+        options: dict[str, Any],
+) -> Dataset:
+    if options['data_raw']:
+        raise ValueError(f"data_raw={options['data_raw']!r} with group: Can not combine raw data from multiple subjects.")
+    if options['keep_epochs']:
+        raise ValueError(f"keep_epochs={options['keep_epochs']!r} with group: Can not combine Epochs objects for different subjects. Set keep_epochs=False (default).")
+    morph = options.get('morph')
+    if morph is None:
+        options = {**options, 'morph': True}
+    elif not morph:
+        raise ValueError(f"morph={morph!r} with group: Source estimates can only be combined after morphing data to common brain model. Set morph=True.")
+    dss = [registry.load('epochs-stc', state={**state, 'subject': subject}, options=options) for subject in subjects]
+    return combine(dss)
+
+
+def load_epochs_stc_request(
+        registry,
+        groups: dict[str, Sequence[str]],
+        current_group: str,
+        state: dict[str, Any],
+        options: dict[str, Any],
+        subjects,
+) -> Dataset:
+    if subjects is True:
+        subjects = current_group
+    elif subjects in (None, 1):
+        return registry.load('epochs-stc', state=state, options=options)
+    if isinstance(subjects, Sequence) and not isinstance(subjects, str):
+        return load_epochs_stc_group(registry, subjects, state, options)
+    if isinstance(subjects, str) and subjects in groups:
+        return load_epochs_stc_group(registry, groups[subjects], state, options)
+    return registry.load('epochs-stc', state={**state, 'subject': subjects}, options=options)
+
+
+def load_evoked_stc_group(
+        registry,
+        subjects: Sequence[str],
+        state: dict[str, Any],
+        options: dict[str, Any],
+) -> Dataset:
+    morph = options.get('morph')
+    if options['ndvar']:
+        if morph is None:
+            options = {**options, 'morph': True}
+        elif not morph:
+            raise ValueError("ndvar=True, morph=False with multiple subjects: Can't create ndvars with data from different brains")
+    dss = [registry.load('evoked-stc', state={**state, 'subject': subject}, options=options) for subject in subjects]
+    return combine(dss)
+
+
+def load_evoked_stc_request(
+        registry,
+        groups: dict[str, Sequence[str]],
+        current_group: str,
+        state: dict[str, Any],
+        options: dict[str, Any],
+        subjects,
+) -> Dataset:
+    if subjects is True:
+        subjects = current_group
+    elif subjects in (None, 1):
+        return registry.load('evoked-stc', state=state, options=options)
+    if isinstance(subjects, Sequence) and not isinstance(subjects, str):
+        return load_evoked_stc_group(registry, subjects, state, options)
+    if isinstance(subjects, str) and subjects in groups:
+        return load_evoked_stc_group(registry, groups[subjects], state, options)
+    return registry.load('evoked-stc', state={**state, 'subject': subjects}, options=options)
+
+
+def _prepare_inv(
+        ctx: DerivativeContext,
+        fiff: Any,
+        mask: bool | str,
+        morph: bool | None,
+):
+    parc = ctx.get('parc') or None
+    if isinstance(mask, str) and parc != mask:
+        parc = mask
+    if parc:
+        ctx.load('annot', state={'parc': parc})
+
+    inv = ctx.load('inv', options={'fiff': fiff})
+    subjects_dir = mri_sdir(ctx.state)
+    mrisubject = ctx.get('mrisubject')
+    is_scaled = find_source_subject(mrisubject, subjects_dir)
+    if mask and (is_scaled or not morph):
+        label = label_from_annot(inv['src'], mrisubject, subjects_dir, parc)
+    else:
+        label = None
+    return inv, label, subjects_dir, mrisubject, is_scaled, parc
+
+
+class EpochsStcDerivative(Derivative[Dataset]):
+    name = 'epochs-stc'
+    key_fields = (
+        'subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw',
+        'epoch', 'rej', 'cov', 'mrisubject', 'src', 'inv', 'inv-cache',
+    )
+    cache_policy = CachePolicy.DISABLED_BY_DEFAULT
+
+    def __init__(self, epochs: dict[str, Any]):
+        self.epochs = epochs
+
+    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> Path:
+        path = epochs_stc_file_path(ctx.state)
+        if mkdir:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        deps = [
+            Dependency(EPOCHS_DATA, options=lambda c: {
+                'baseline': c.option('baseline'),
+                'ndvar': False if c.option('keep_epochs', False) in (True, False) else 'both',
+                'reject': c.option('reject', True),
+                'cat': c.option('cat'),
+                'samplingrate': c.option('samplingrate'),
+                'decim': c.option('decim'),
+                'pad': c.option('pad', 0),
+                'data_raw': c.option('data_raw', False),
+                'vardef': c.option('vardef'),
+                'data': 'sensor',
+                'add_bads': True,
+            }),
+            Dependency('inv'),
+        ]
+        mask = ctx.option('mask', False)
+        if mask:
+            parc = ctx.get('parc') if mask is True else mask
+            deps.append(Dependency('annot', state=lambda c, parc_name=parc: {'parc': parc_name}))
+        if ctx.option('morph', False):
+            deps.append(Dependency('source-morph'))
+        return tuple(deps)
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        return ctx.registry.canonicalize({
+            'baseline': ctx.option('baseline'),
+            'src_baseline': ctx.option('src_baseline'),
+            'cat': ctx.option('cat'),
+            'keep_epochs': ctx.option('keep_epochs', False),
+            'morph': ctx.option('morph'),
+            'mask': ctx.option('mask'),
+            'data_raw': ctx.option('data_raw', False),
+            'vardef': repr(ctx.option('vardef')),
+            'samplingrate': ctx.option('samplingrate'),
+            'decim': ctx.option('decim'),
+            'pad': ctx.option('pad', 0),
+            'ndvar': ctx.option('ndvar', True),
+            'reject': ctx.option('reject', True),
+            'adjacency': ctx.get('adjacency'),
+        })
+
+    def build(self, ctx: DerivativeContext) -> Dataset:
+        epoch = self.epochs[ctx.get('epoch')]
+        keep_epochs = ctx.option('keep_epochs', False)
+        if keep_epochs is True:
+            sns_ndvar = False
+            del_epochs = False
+        elif keep_epochs is False:
+            sns_ndvar = False
+            del_epochs = True
+        elif keep_epochs == 'ndvar':
+            sns_ndvar = 'both'
+            del_epochs = True
+        elif keep_epochs == 'both':
+            sns_ndvar = 'both'
+            del_epochs = False
+        else:
+            raise ValueError(f"{keep_epochs=}")
+
+        ds = ctx.load(EPOCHS_DATA, options={
+            'baseline': ctx.option('baseline'),
+            'ndvar': sns_ndvar,
+            'reject': ctx.option('reject', True),
+            'cat': ctx.option('cat'),
+            'samplingrate': ctx.option('samplingrate'),
+            'decim': ctx.option('decim'),
+            'pad': ctx.option('pad', 0),
+            'data_raw': ctx.option('data_raw', False),
+            'vardef': ctx.option('vardef'),
+            'data': 'sensor',
+            'add_bads': True,
+        })
+
+        src_baseline = ctx.option('src_baseline', False)
+        if not ctx.option('baseline') and src_baseline and epoch.post_baseline_trigger_shift:
+            raise NotImplementedError("src_baseline with post_baseline_trigger_shift")
+        if src_baseline is True:
+            src_baseline = epoch.baseline
+
+        epoch_list = ds['epochs'] if isinstance(ds['epochs'], Datalist) else [ds['epochs']]
+        inv, label, subjects_dir, mrisubject, is_scaled, parc = _prepare_inv(ctx, epoch_list[0], ctx.option('mask', False), ctx.option('morph', False))
+        method, make_kw, apply_kw = inverse_operator_params(ctx.get('inv'))
+        stc_list = [apply_inverse_epochs(epoch_obj, inv, label=label, **apply_kw) for epoch_obj in epoch_list]
+        is_variable_time = isinstance(ds['epochs'], Datalist)
+        if is_variable_time:
+            stc_list = [stc for stc, in stc_list]
+
+        if ctx.option('ndvar', True):
+            src = ctx.get('src')
+            ndvar_list = [
+                load.mne.stc_ndvar(stc, mrisubject, src, subjects_dir, method, make_kw.get('fixed', False), parc=parc, adjacency=ctx.get('adjacency'))
+                for stc in stc_list
+            ]
+            if src_baseline:
+                for value in ndvar_list:
+                    value -= value.summary(time=src_baseline)
+            if ctx.option('morph', False):
+                common_brain = ctx.get('common_brain')
+                ctx.load('annot', state={'mrisubject': common_brain})
+                ndvar_list = [morph_source_space(value, common_brain) for value in ndvar_list]
+                if ctx.option('mask', False) and not is_scaled:
+                    ndvar_list = [_mask_ndvar(value) for value in ndvar_list]
+                key = 'srcm'
+            else:
+                key = 'src'
+            src_var = ndvar_list
+        else:
+            if src_baseline:
+                raise NotImplementedError("Baseline for SourceEstimate")
+            if ctx.option('morph', False):
+                raise NotImplementedError("Morphing for SourceEstimate")
+            key = 'stc'
+            src_var = stc_list
+
+        ds[key] = src_var if is_variable_time else src_var[0]
+        if del_epochs:
+            del ds['epochs']
+        return ds
+
+    def load(self, ctx: DerivativeContext, path: Path) -> Dataset:
+        return load.unpickle(path)
+
+    def save(self, ctx: DerivativeContext, path: Path, value: Dataset) -> None:
+        save.pickle(value, path)
+
+
+class EvokedStcDerivative(Derivative[Dataset]):
+    name = 'evoked-stc'
+    key_fields = (
+        'subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw',
+        'epoch', 'rej', 'model', 'equalize_evoked_count', 'cov', 'mrisubject',
+        'src', 'inv', 'inv-cache',
+    )
+    cache_policy = CachePolicy.DISABLED_BY_DEFAULT
+
+    def __init__(self, epochs: dict[str, Any]):
+        self.epochs = epochs
+
+    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> Path:
+        path = evoked_stc_file_path(ctx.state)
+        if mkdir:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        deps = [
+            Dependency(EVOKED_DATA, options=lambda c: {
+                'baseline': c.option('baseline'),
+                'ndvar': 2 if c.option('keep_evoked', False) and c.option('ndvar', True) else False,
+                'cat': c.option('cat'),
+                'samplingrate': c.option('samplingrate'),
+                'decim': c.option('decim'),
+                'data_raw': c.option('data_raw', False),
+                'vardef': c.option('vardef'),
+                'data': 'sensor',
+            }),
+            Dependency('inv'),
+        ]
+        mask = ctx.option('mask', False)
+        if mask:
+            parc = ctx.get('parc') if mask is True else mask
+            deps.append(Dependency('annot', state=lambda c, parc_name=parc: {'parc': parc_name}))
+        if ctx.option('morph', False):
+            deps.append(Dependency('source-morph'))
+        return tuple(deps)
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        return ctx.registry.canonicalize({
+            'baseline': ctx.option('baseline'),
+            'src_baseline': ctx.option('src_baseline'),
+            'cat': ctx.option('cat'),
+            'keep_evoked': ctx.option('keep_evoked', False),
+            'morph': ctx.option('morph'),
+            'mask': ctx.option('mask'),
+            'data_raw': ctx.option('data_raw', False),
+            'vardef': repr(ctx.option('vardef')),
+            'samplingrate': ctx.option('samplingrate'),
+            'decim': ctx.option('decim'),
+            'ndvar': ctx.option('ndvar', True),
+            'adjacency': ctx.get('adjacency'),
+        })
+
+    def build(self, ctx: DerivativeContext) -> Dataset:
+        keep_evoked = ctx.option('keep_evoked', False)
+        ndvar = ctx.option('ndvar', True)
+        sensor_ndvar = 2 if keep_evoked and ndvar else False
+        ds = ctx.load(EVOKED_DATA, options={
+            'baseline': ctx.option('baseline'),
+            'ndvar': sensor_ndvar,
+            'cat': ctx.option('cat'),
+            'samplingrate': ctx.option('samplingrate'),
+            'decim': ctx.option('decim'),
+            'data_raw': ctx.option('data_raw', False),
+            'vardef': ctx.option('vardef'),
+            'data': 'sensor',
+        })
+
+        src_baseline = ctx.option('src_baseline', False)
+        epoch = self.epochs[ctx.get('epoch')]
+        if src_baseline and epoch.post_baseline_trigger_shift:
+            raise NotImplementedError(f"{src_baseline=}: post_baseline_trigger_shift is not implemented for baseline correction in source space")
+        if src_baseline is True:
+            src_baseline = epoch.baseline
+        invs = {}
+        stcs = []
+        subject = ctx.get('subject')
+        mrisubject = ctx.get('mrisubject')
+        common_brain = ctx.get('common_brain')
+        if is_fake_mri(mri_dir(ctx.state)):
+            subject_from = common_brain
+        else:
+            subject_from = mrisubject
+        if ndvar:
+            target_subject = common_brain if ctx.option('morph', False) else mrisubject
+            ctx.load('annot', state={'mrisubject': target_subject, 'parc': ctx.get('parc')})
+        source_morph = None
+        if ctx.option('morph', False) and subject_from != common_brain:
+            source_morph = ctx.load('source-morph', state={'mrisubject': subject_from})
+
+        method, make_kw, apply_kw = inverse_operator_params(ctx.get('inv'))
+        for evoked in ds['evoked']:
+            inv = invs.setdefault(subject, ctx.load('inv', options={'fiff': evoked}))
+            stc = apply_inverse(evoked, inv, **apply_kw)
+            if src_baseline:
+                mne.baseline.rescale(stc._data, stc.times, src_baseline, 'mean', copy=False)
+            if ctx.option('morph', False):
+                if subject_from == common_brain:
+                    stc.subject = common_brain
+                else:
+                    stc = source_morph.apply(stc)
+            stcs.append(stc)
+
+        if ndvar:
+            key = 'srcm' if ctx.option('morph', False) else 'src'
+            target_subject = common_brain if ctx.option('morph', False) else mrisubject
+            stc_value = load.mne.stc_ndvar(stcs, target_subject, ctx.get('src'), mri_sdir(ctx.state), method, make_kw.get('fixed', False), parc=ctx.get('parc') or None, adjacency=ctx.get('adjacency'))
+            if ctx.option('mask', False):
+                stc_value = _mask_ndvar(stc_value)
+        else:
+            key = 'stcm' if ctx.option('morph', False) else 'stc'
+            stc_value = stcs
+        ds[key] = stc_value
+        if ndvar == 1 or not keep_evoked:
+            del ds['evoked']
+        return ds
+
+    def load(self, ctx: DerivativeContext, path: Path) -> Dataset:
+        return load.unpickle(path)
+
+    def save(self, ctx: DerivativeContext, path: Path, value: Dataset) -> None:
+        save.pickle(value, path)
