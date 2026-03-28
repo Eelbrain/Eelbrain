@@ -1,6 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Pipeline class to manage data from a experiment"""
-from collections import defaultdict
 import copy
 from datetime import datetime
 from itertools import chain, product
@@ -39,9 +38,8 @@ from .derivative_cache import DerivativeRegistry, ProtectedArtifactError
 from .definitions import sequence_arg
 from .epochs import PrimaryEpoch, SecondaryEpoch, SuperEpoch, EpochBase, assemble_epochs, decim_param
 from .events import (
-    EDF_INPUT, EdfInput, EpochsDerivative, EventsDerivative,
-    EvokedDataDerivative, EvokedDerivative, SELECTED_EVENTS,
-    SelectedEventsDerivative, load_evoked_request,
+    EpochsDerivative, EventsDerivative, EvokedDataDerivative, EvokedDerivative,
+    SELECTED_EVENTS, SelectedEventsDerivative, load_evoked_request,
 )
 from .exceptions import FileMissingError
 from .experiment import StateModel
@@ -209,9 +207,6 @@ class Pipeline(StateModel):
     # groups can be defined as subject lists: {'group': ('member1', 'member2', ...)}
     # or by exclusion: {'group': {'base': 'all', 'exclude': ('member1', 'member2')}}
     groups = {}
-
-    # whether to look for and load eye tracker data when loading raw files
-    has_edf = defaultdict(bool)
 
     # MEG-system (used as ``sysname`` to infer adjacency; for usage search `get_sysname`).
     meg_system = None
@@ -551,7 +546,6 @@ class Pipeline(StateModel):
                 self._derivatives.register(RawMEEGInput(raw_name, pipe, self._raw))
             if isinstance(pipe, RawICA):
                 self._derivatives.register(ICAInput(raw_name, pipe, self._raw, self._runs))
-        self._derivatives.register(EdfInput())
         self._derivatives.register(TransInput())
         self._derivatives.register(BemInput())
         self._derivatives.register(RejectionInput(self.root, self._artifact_rejection, self._epochs))
@@ -565,7 +559,6 @@ class Pipeline(StateModel):
             self.merge_triggers,
             self._variables,
             self._groups,
-            self.has_edf,
             self.preload,
             type(self).fix_events,
             type(self).label_events,
@@ -1057,16 +1050,6 @@ class Pipeline(StateModel):
         """
         cov_name = self.get('cov', **kwargs)
         return self._load_derivative(cov_node_name(cov_name), state={**kwargs, 'cov': cov_name})
-
-    def load_edf(self, **kwargs):
-        """Load the EDF log file for the current subject/session
-
-        Parameters
-        ----------
-        ...
-            State parameters.
-        """
-        return self._derivatives.resolve(EDF_INPUT, state=self._derivative_state(kwargs)).load()
 
     @suppress_mne_warning
     def load_epochs(

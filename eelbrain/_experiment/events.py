@@ -29,12 +29,12 @@ from .._text import n_of
 from .._mne import shift_mne_epoch_trigger
 from ..mne_fixes import _interpolate_bads_eeg, _interpolate_bads_meg
 from .definitions import sequence_arg
-from .derivative_cache import CachePolicy, Dependency, Derivative, DerivativeContext, Input, file_fingerprint
+from .derivative_cache import CachePolicy, Dependency, Derivative, DerivativeContext, file_fingerprint
 from .epochs import ContinuousEpoch, EpochCollection, SecondaryEpoch, SuperEpoch, decim_param
 from .exceptions import FileMissingError
 from .pathing import (
     epochs_file_path, event_file_path, evoked_dataset_file_path, evoked_file_path,
-    log_dir, rej_file_path, selected_events_file_path,
+    rej_file_path, selected_events_file_path,
 )
 from .preprocessing import load_raw_dependency, raw_bad_channels_input_name, raw_data_dependency, raw_node_name
 from .test_def import TestDims
@@ -42,7 +42,6 @@ from .variable_def import Variables
 
 
 BIDS_ENTITY_KEYS = ('subject', 'session', 'task', 'acquisition', 'run', 'split')
-EDF_INPUT = 'edf-input'
 SELECTED_EVENTS = 'selected-events'
 EPOCHS_DATA = 'epochs-ds'
 EVOKED_DATA = 'evoked-ds'
@@ -117,20 +116,6 @@ def load_evoked_request(
     return registry.load(EVOKED_DATA, state={**state, 'subject': subjects}, options=options)
 
 
-def _edf_paths(state: dict[str, Any]) -> list[Path]:
-    return sorted(log_dir(state).glob('*.edf'))
-
-
-def _edf_path(state: dict[str, Any]) -> Path:
-    paths = _edf_paths(state)
-    pattern = log_dir(state) / '*.edf'
-    if len(paths) == 1:
-        return paths[0]
-    if not paths:
-        raise OSError(f"No file found for {pattern!r}")
-    raise OSError(f"More than one files match {pattern!r}: {[str(path) for path in paths]}")
-
-
 def _check_ds(ds: Dataset, source: str, info: dict[str, Any]) -> Dataset:
     if not isinstance(ds, Dataset):
         raise DefinitionError(f"{source} needs to return the events Dataset. Got {ds!r}.")
@@ -162,19 +147,6 @@ def _apply_vardef(ds: Dataset, vardef: None | str | Variables, tests: dict[str, 
         vardef.apply(ds, groups)
 
 
-class EdfInput(Input):
-    name = EDF_INPUT
-
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        paths = _edf_paths(ctx.state)
-        if len(paths) == 1:
-            return file_fingerprint(ctx.get('root'), paths[0], 'edf-file')
-        return file_fingerprint(ctx.get('root'), log_dir(ctx.state) / '*.edf', 'edf-file', metadata={'matches': len(paths)})
-
-    def load(self, ctx: DerivativeContext):
-        return load.eyelink.Edf(_edf_path(ctx.state))
-
-
 class EventsDerivative(Derivative[Dataset]):
     name = 'events'
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw')
@@ -186,7 +158,6 @@ class EventsDerivative(Derivative[Dataset]):
             merge_triggers: Any,
             variables: Variables,
             groups: dict[str, Any],
-            has_edf: dict[str, Any],
             preload: bool,
             fix_events,
             label_events,
@@ -199,7 +170,6 @@ class EventsDerivative(Derivative[Dataset]):
         self.merge_triggers = merge_triggers
         self._variables = variables
         self._groups = groups
-        self.has_edf = has_edf
         self.preload = preload
         self.fix_events_impl = fix_events
         self.label_events_impl = label_events
@@ -215,10 +185,7 @@ class EventsDerivative(Derivative[Dataset]):
         return path
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
-        deps = [raw_data_dependency(ctx, add_bads=False)]
-        if self.has_edf[ctx.get('subject')]:
-            deps.append(Dependency(EDF_INPUT))
-        return tuple(deps)
+        return (raw_data_dependency(ctx, add_bads=False),)
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
         subject = ctx.get('subject')
@@ -232,7 +199,6 @@ class EventsDerivative(Derivative[Dataset]):
             'merge_triggers': self.merge_triggers,
             'trigger_shift': trigger_shift,
             'variables': self.variables_repr,
-            'has_edf': bool(self.has_edf[subject]),
             'fix_events': getattr(self.fix_events_impl, '__qualname__', repr(self.fix_events_impl)),
             'label_events': getattr(self.label_events_impl, '__qualname__', repr(self.label_events_impl)),
         }
@@ -246,10 +212,6 @@ class EventsDerivative(Derivative[Dataset]):
         del ds.info['raw']
         ds.info['sfreq'] = raw.info['sfreq']
         ds.info.update(entities)
-        if self.has_edf[subject]:
-            edf = ctx.load(EDF_INPUT)
-            edf.add_t_to(ds)
-            ds.info['edf'] = edf
 
         info = ds.info
         ds = _check_ds(self.fix_events_impl(self, ds), f'{self.owner_name}.fix_events()', info)
