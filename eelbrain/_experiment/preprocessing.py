@@ -235,12 +235,10 @@ class RawBadChannelsInput(Input[list[str]]):
         self.pipe = pipe
         self.pipes = pipes
 
-    def _state(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return raw_state(ctx.state, self.raw_name)
-
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
         noise = ctx.option('noise', False)
-        path = state_bids_path(self._state(ctx))
+        state = {**ctx.state, 'raw': self.raw_name}
+        path = state_bids_path(state)
         return {
             'raw': self.raw_name,
             'noise': noise,
@@ -249,7 +247,8 @@ class RawBadChannelsInput(Input[list[str]]):
         }
 
     def load(self, ctx: DerivativeContext) -> list[str]:
-        return self.pipe.load_bad_channels(state_bids_path(self._state(ctx)), noise=ctx.option('noise', False), pipes=self.pipes)
+        state = {**ctx.state, 'raw': self.raw_name}
+        return self.pipe.load_bad_channels(state_bids_path(state), noise=ctx.option('noise', False), pipes=self.pipes)
 
 
 class RawMEEGInput(Input[mne.io.BaseRaw]):
@@ -264,9 +263,6 @@ class RawMEEGInput(Input[mne.io.BaseRaw]):
         self.pipe = pipe
         self.pipes = pipes
 
-    def _state(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return raw_state(ctx.state, self.raw_name)
-
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         if ctx.option('add_bads', True) is True:
             return (
@@ -280,7 +276,8 @@ class RawMEEGInput(Input[mne.io.BaseRaw]):
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
         noise = ctx.option('noise', False)
-        path = state_bids_path(self._state(ctx), noise=noise)
+        state = {**ctx.state, 'raw': self.raw_name}
+        path = state_bids_path(state, noise=noise)
         return {
             'source': file_fingerprint(
                 ctx.get('root'),
@@ -295,8 +292,9 @@ class RawMEEGInput(Input[mne.io.BaseRaw]):
         }
 
     def load(self, ctx: DerivativeContext) -> mne.io.BaseRaw:
+        state = {**ctx.state, 'raw': self.raw_name}
         return self.pipe.load(
-            state_bids_path(self._state(ctx)),
+            state_bids_path(state),
             add_bads=ctx.option('add_bads', True),
             preload=ctx.option('preload', False),
             noise=ctx.option('noise', False),
@@ -321,20 +319,18 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         self.pipes = pipes
         self.runs = runs
 
-    def _state(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return raw_state(ctx.state, self.raw_name)
-
     def _path(self, ctx: DerivativeContext) -> Path:
-        return ica_file_path(self._state(ctx), raw=self.raw_name)
+        return ica_file_path({**ctx.state, 'raw': self.raw_name}, raw=self.raw_name)
 
     def _key(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return canonical_state_subset(self._state(ctx), self.key_fields)
+        return canonical_state_subset({**ctx.state, 'raw': self.raw_name}, self.key_fields)
 
     def _manifest(self, ctx: DerivativeContext) -> ArtifactManifest | None:
         return ctx.registry.read_manifest(ctx.registry.manifest_path(self._path(ctx)))
 
     def _load_value(self, ctx: DerivativeContext) -> mne.preprocessing.ICA:
-        return self.pipe.load_ica(state_bids_path(self._state(ctx)), raw_name=self.raw_name)
+        state = {**ctx.state, 'raw': self.raw_name}
+        return self.pipe.load_ica(state_bids_path(state), raw_name=self.raw_name)
 
     def _build_manifest(
             self,
@@ -385,7 +381,11 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         fingerprint = dict(self.fingerprint(ctx))
         path = self._path(ctx)
         fingerprint['ica_file'] = file_fingerprint(ctx.get('root'), path, 'ica-file')
-        fingerprint['exclude'] = self.pipe.load_ica(state_bids_path(self._state(ctx)), raw_name=self.raw_name).exclude if exists(path) else []
+        if exists(path):
+            state = {**ctx.state, 'raw': self.raw_name}
+            fingerprint['exclude'] = self.pipe.load_ica(state_bids_path(state), raw_name=self.raw_name).exclude
+        else:
+            fingerprint['exclude'] = []
         return fingerprint
 
     def load(self, ctx: DerivativeContext) -> mne.preprocessing.ICA:
@@ -429,9 +429,6 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         self.pipe = pipe
         self.pipes = pipes
         self.log = log
-
-    def _state(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return raw_state(ctx.state, self.raw_name)
 
     def should_cache(
             self,
@@ -477,7 +474,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         }
 
     def path(self, ctx: DerivativeContext, mkdir: bool = False) -> Path:
-        path = cached_raw_file_path(self._state(ctx))
+        path = cached_raw_file_path({**ctx.state, 'raw': self.raw_name})
         if mkdir:
             path.parent.mkdir(parents=True, exist_ok=True)
         return path
@@ -495,7 +492,8 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
             )
 
         noise = ctx.option('noise', False)
-        bids_path = state_bids_path(self._state(ctx))
+        state = {**ctx.state, 'raw': self.raw_name}
+        bids_path = state_bids_path(state)
 
         raw = load_raw_dependency(ctx, self.pipe._source_name, add_bads=True, preload=True, noise=noise)
         if isinstance(self.pipe, RawICA):
@@ -519,7 +517,8 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         if isinstance(add_bads, Sequence):
             raw.info['bads'] = list(add_bads)
         elif add_bads is True:
-            raw.info['bads'] = self.pipe.load_bad_channels(state_bids_path(self._state(ctx)), noise=ctx.option('noise', False), pipes=self.pipes)
+            state = {**ctx.state, 'raw': self.raw_name}
+            raw.info['bads'] = self.pipe.load_bad_channels(state_bids_path(state), noise=ctx.option('noise', False), pipes=self.pipes)
         elif add_bads is False:
             raw.info['bads'] = []
         else:
