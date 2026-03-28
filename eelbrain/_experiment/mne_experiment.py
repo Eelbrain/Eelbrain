@@ -3,7 +3,6 @@
 from collections import defaultdict
 import copy
 from datetime import datetime
-import inspect
 from itertools import chain, product
 import logging
 import os
@@ -47,7 +46,11 @@ from .events import (
 from .exceptions import FileMissingError
 from .experiment import TreeModel
 from .groups import assemble_groups
-from .pathing import deriv_dir, epoch_basename, join_stem_parts, results_dir
+from .pathing import (
+    cache_dir, cov_info_file_path, deriv_dir, epoch_basename, fwd_file_path,
+    join_stem_parts, mri_dir, mri_sdir, raw_basename, raw_dir,
+    rej_file_path, results_dir, src_file_path, trans_file_path,
+)
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, assemble_parcs
 from .preprocessing import (
     ICA_INPUT, RAW_BAD_CHANNELS_INPUT, RawDerivative, assemble_pipeline,
@@ -70,16 +73,7 @@ from .test_def import (
 )
 from .variable_def import Variables, label_groups as label_groups_var
 
-BIDS_ENTITY_KEYS = ('subject', 'session', 'task', 'acquisition', 'run', 'split')
-BIDS_PATH_KEYS = ('datatype', 'suffix', 'extension', *BIDS_ENTITY_KEYS)
-BIDS_ENTITY_PREFIX_MAP = {
-    'subject': 'sub',
-    'session': 'ses',
-    'task': 'task',
-    'acquisition': 'acq',
-    'run': 'run',
-    'split': 'split',
-}
+BIDS_PATH_KEYS = ('datatype', 'suffix', 'extension', 'subject', 'session', 'task', 'acquisition', 'run', 'split')
 
 # paths
 LOG_FILE = join('{root}', 'derivatives', 'eelbrain', 'eelbrain {name}.log')
@@ -119,18 +113,6 @@ def guess_y(ds, default=None):
     if default is not None:
         return default
     raise RuntimeError(f"Could not find data in {ds}")
-
-
-def generate_bids_template(entities: set[str]) -> str:
-    "Generate a BIDS filename template from entity names"
-    parts = []
-    for name in BIDS_ENTITY_KEYS:
-        if name not in entities:
-            continue
-        prefix = BIDS_ENTITY_PREFIX_MAP[name]
-        parts.append(f'{prefix}-{{{name}}}')
-    parts.append('{suffix}')
-    return '_'.join(parts)
 
 
 class Pipeline(TreeModel):
@@ -272,8 +254,6 @@ class Pipeline(TreeModel):
                         'n_cycles': 5}}
     freqs = {}
 
-    # specify additional templates
-    _values = {}
     # specify defaults for specific fields (e.g. specify the initial subject
     # name)
     defaults = {}
@@ -351,76 +331,6 @@ class Pipeline(TreeModel):
                 extensions = tuple(data_extensions)
             else:
                 raise DefinitionError(f"Can't infer datatype. No MEG or EEG data found in {root}.")
-        available_entities = [
-            'subject',
-            'session' if self._sessions else None,
-            'acquisition' if self._acquisitions else None,
-            'task',
-            'run' if self._runs else None,
-            'split' if self._splits else None,
-        ]
-        available_entities = {f for f in available_entities if f is not None}
-
-        ########################################################################
-        # Templates
-        ###########
-        self._templates = {
-            'equalize_evoked_count': ('', 'eq'),
-
-            # This templating approach to handle optional fields assumes that all
-            # subjects have the same optional entities.
-            'raw_basename': generate_bids_template({'subject', 'session', 'acquisition', 'task', 'run', 'split'} & available_entities),
-            'epoch_basename': generate_bids_template({'subject', 'session', 'acquisition', 'run', 'split'} & available_entities),
-            'subject_session': generate_bids_template({'subject', 'session'} & available_entities),
-            'test_basename': generate_bids_template({'session', 'run', 'split'} & available_entities),
-
-            'raw-dir': join('{root}', 'sub-{subject}', 'ses-{session}' if self._sessions else '', '{datatype}'),
-            'deriv-dir': join('{root}', 'derivatives'),
-
-            'raw-file': join('{raw-dir}', '{raw_basename}_{suffix}{extension}'),
-            # one ica-file for each task group
-            'ica-file': join('{deriv-dir}', 'ica', '{epoch_basename}_raw-{raw}_ica.fif'),  # hard-coded in RawPipe
-            'trans-file': join('{deriv-dir}', 'trans', '{subject_session}_trans.fif'),
-            # one rej-file for each raw
-            'rej-file': join('{deriv-dir}', 'eelbrain', 'epoch selection', '{epoch_basename}_raw-{raw}_epoch-{epoch}_rej-{rej}_epoch.pickle'),
-
-            'log-dir': join('{deriv-dir}', 'eelbrain', 'logs'),
-            'edf-file': join('{log-dir}', '*.edf'),
-
-            'cache-dir': join('{deriv-dir}', 'eelbrain', 'cache'),
-            'raw-cache-dir': join('{cache-dir}', 'raw', '{subject_session}'),  # hard-coded in RawPipe
-            'cached-raw-file': join('{raw-cache-dir}', '{raw_basename}_raw-{raw}.fif'),
-
-            # evoked
-            'evoked-file': join('{cache-dir}', 'evoked', '{epoch_basename}_raw-{raw}_epoch-{epoch}_rej-{rej}_model-{model}_count-{equalize_evoked_count}_ave.fif'),
-
-            # forward modeling:
-            'fwd-file': join('{raw-cache-dir}', '{epoch_basename}_mrisubject-{mrisubject}_src-{src}_fwd.fif'),
-            # sensor covariance
-            'cov-file': join('{raw-cache-dir}', '{epoch_basename}_raw-{raw}_cov-{cov}_rej-{rej}_cov.fif'),
-            'cov-info-file': join('{raw-cache-dir}', '{epoch_basename}_raw-{raw}_cov-{cov}_rej-{rej}_info.txt'),
-
-            # MRIs
-            'common_brain': 'fsaverage',
-            # MRI base files
-            'mri-sdir': join('{deriv-dir}', 'freesurfer'),
-            'mri-dir': join('{mri-sdir}', '{mrisubject}'),
-
-            'bem-dir': join('{mri-dir}', 'bem'),
-            'bem-file': join('{bem-dir}', '{mrisubject}-inner_skull-bem.fif'),
-            'src-file': join('{bem-dir}', '{mrisubject}-{src}-src.fif'),
-            # Labels
-            'hemi': ('lh', 'rh'),
-            'annot-file': join('{mri-dir}', 'label', '{hemi}.{parc}.annot'),
-
-        }
-
-        # update templates with _values
-        for cls in reversed(inspect.getmro(self.__class__)):
-            if hasattr(cls, '_values'):
-                self._templates.update(cls._values)
-
-        # register fields in templates
         self._bids_path = BIDSPath(root=root)
         TreeModel.__init__(self)
         self._register_field('root', eval_handler=self._eval_root)
@@ -435,7 +345,7 @@ class Pipeline(TreeModel):
         log_file_old = LOG_FILE_OLD.format(root=root)
         if exists(log_file_old):
             os.rename(log_file_old, log_file)
-        os.makedirs(self.get('cache-dir'), exist_ok=True)
+        os.makedirs(cache_dir({'root': root}), exist_ok=True)
         handler = logging.FileHandler(log_file)
         formatter = logging.Formatter("%(levelname)-8s %(asctime)s %(message)s", "%m-%d %H:%M")  # %(name)-12s
         handler.setFormatter(formatter)
@@ -462,8 +372,6 @@ class Pipeline(TreeModel):
         self._raw = RawDerivative(assemble_pipeline(
             {'raw': RawSource(), **self.raw},
             self._tasks,
-            join(root, 'derivatives', 'eelbrain', 'cache', 'raw', self._templates['subject_session'], f"{self._templates['raw_basename']}_raw-{{raw}}.fif"),
-            join(root, 'derivatives', 'ica', f"{self._templates['epoch_basename']}_raw-{{raw}}_ica.fif"),
             log,
         ), self._runs)
         raw_pipe: RawSource = self._raw['raw']
@@ -538,6 +446,9 @@ class Pipeline(TreeModel):
         self._register_field('datatype', (self._datatype,), repr=True)
         self._register_field('suffix', (self._datatype,), repr=True)
         self._register_field('extension', extensions, repr=True)
+        self._register_field('equalize_evoked_count', ('', 'eq'), allow_empty=True)
+        self._register_constant('common_brain', 'fsaverage')
+        self._register_field('hemi', ('lh', 'rh'))
 
         self._register_field('mri', sorted(self._mri_subjects), allow_empty=True)
         self._register_field('group', self._groups.keys(), 'all', post_set_handler=self._post_set_group)
@@ -576,7 +487,7 @@ class Pipeline(TreeModel):
         # register experimental features
         self._subclass_init()
 
-        # Check that the template model is complete
+        # Check that the format model is complete
         self._find_missing_fields()
 
         # set initial values
@@ -834,22 +745,9 @@ class Pipeline(TreeModel):
     ):
         if not match:
             vmatch = False
-
-        path = TreeModel.get(self, temp, vmatch=vmatch, **state)
-        path = os.path.expanduser(path)
-
         if mkdir:
-            dirname = path if temp.endswith('dir') else os.path.dirname(path)
-            if not os.path.exists(dirname):
-                root = self.get('root')
-                if root == '':
-                    raise OSError("Prevented from creating directories because root is not set")
-                elif os.path.exists(root):
-                    os.makedirs(dirname)
-                else:
-                    raise OSError(f"Prevented from creating directories because root does not exist: {root!r}")
-
-        return path
+            raise TypeError("Pipeline.get(..., mkdir=True) is no longer supported; create directories at the explicit path site")
+        return TreeModel.get(self, temp, vmatch=vmatch, **state)
 
     def _process_subject_arg(self, subjects, kwargs):
         """Process subject arg for methods that work on groups and subjects
@@ -1171,7 +1069,7 @@ class Pipeline(TreeModel):
         return self._load_derivative(cov_node_name(cov_name), state={**kwargs, 'cov': cov_name})
 
     def load_edf(self, **kwargs):
-        """Load the edf file ("edf-file" template)
+        """Load the EDF log file for the current subject/session
 
         Parameters
         ----------
@@ -1883,8 +1781,9 @@ class Pipeline(TreeModel):
         with self._temporary_state:
             if state:
                 self.set(**state)
+            state_ = self._derivative_state()
             fwd = self._load_derivative('fwd')
-            fwd_file = self.get('fwd-file')
+            fwd_file = fwd_file_path(state_)
             src = self.get('src')
             if ndvar:
                 if src.startswith('vol'):
@@ -1893,7 +1792,7 @@ class Pipeline(TreeModel):
                 else:
                     self.make_annot()
                     parc = self.get('parc')
-                fwd = load.mne.forward_operator(fwd_file, src, self.get('mri-sdir'), parc, adjacency=False)
+                fwd = load.mne.forward_operator(fwd_file, src, mri_sdir(state_), parc, adjacency=False)
                 if mask:
                     fwd = fwd.sub(source=np.invert(
                         fwd.source.parc.startswith('unknown')))
@@ -1964,7 +1863,7 @@ class Pipeline(TreeModel):
             inv = self._load_derivative('inv', cache=self.cache_inv, options={'fiff': fiff})
 
             if ndvar:
-                inv = load.mne.inverse_operator(inv, self.get('src'), self.get('mri-sdir'), self.get('parc'))
+                inv = load.mne.inverse_operator(inv, self.get('src'), mri_sdir(self._derivative_state()), self.get('parc'))
                 if mask:
                     inv = inv.sub(source=~inv.source.parc.startswith('unknown'))
             elif mask:
@@ -1989,15 +1888,15 @@ class Pipeline(TreeModel):
         inv = self.load_inv(fiff)
 
         # determine whether initial source-space can be restricted
-        mri_sdir = self.get('mri-sdir')
+        subjects_dir = str(mri_sdir(self._derivative_state()))
         mrisubject = self.get('mrisubject')
-        is_scaled = find_source_subject(mrisubject, mri_sdir)
+        is_scaled = find_source_subject(mrisubject, subjects_dir)
         if mask and (is_scaled or not morph):
-            label = label_from_annot(inv['src'], mrisubject, mri_sdir, parc)
+            label = label_from_annot(inv['src'], mrisubject, subjects_dir, parc)
         else:
             label = None
 
-        return inv, label, mri_sdir, mrisubject, is_scaled, parc
+        return inv, label, subjects_dir, mrisubject, is_scaled, parc
 
     def load_label(
             self,
@@ -2026,8 +1925,8 @@ class Pipeline(TreeModel):
     def _load_labels(self, regexp=None, **kwargs):
         """Load labels from an annotation file."""
         self.make_annot(**kwargs)
-        mri_sdir = self.get('mri-sdir')
-        labels = mne.read_labels_from_annot(self.get('mrisubject'), self.get('parc'), regexp=regexp, subjects_dir=mri_sdir)
+        subjects_dir = str(mri_sdir(self._derivative_state()))
+        labels = mne.read_labels_from_annot(self.get('mrisubject'), self.get('parc'), regexp=regexp, subjects_dir=subjects_dir)
         return {label.name: label for label in labels}
 
     def load_source_morph(self, **state):
@@ -2319,14 +2218,14 @@ class Pipeline(TreeModel):
         if ndvar:
             with self._temporary_state:
                 src = self.get('src', **state)
-                mri_sdir = self.get('mri-sdir')
+                subjects_dir = str(mri_sdir(self._derivative_state()))
                 mri_subject = self.get('mrisubject')
                 if src.startswith('vol'):
-                    return VolumeSourceSpace.from_file(mri_sdir, mri_subject, src)
+                    return VolumeSourceSpace.from_file(subjects_dir, mri_subject, src)
                 parc = self.get('parc')
-                return SourceSpace.from_file(mri_sdir, mri_subject, src, parc)
+                return SourceSpace.from_file(subjects_dir, mri_subject, src, parc)
         if add_geom:
-            return mne.read_source_spaces(self.get('src-file', **state), add_geom)
+            return mne.read_source_spaces(src_file_path(self._derivative_state(state)), add_geom)
         return src_spaces
 
     def load_test(
@@ -2990,7 +2889,7 @@ class Pipeline(TreeModel):
         with self._temporary_state:
             if state:
                 self.set(**state)
-            if is_fake_mri(self.get('mri-dir')):
+            if is_fake_mri(mri_dir(self._derivative_state())):
                 self.set(mrisubject=self.get('common_brain'), match=False)
 
             export_state = self._derivative_state()
@@ -3015,7 +2914,7 @@ class Pipeline(TreeModel):
         with self._temporary_state:
             if state:
                 self.set(**state)
-            if is_fake_mri(self.get('mri-dir')):
+            if is_fake_mri(mri_dir(self._derivative_state())):
                 self.set(mrisubject=self.get('common_brain'), match=False)
 
             dst = self._make_plot_label_dst(surf, label)
@@ -3029,7 +2928,7 @@ class Pipeline(TreeModel):
     def make_plots_labels(self, surf='inflated', redo=False, **state):
         self.set(**state)
         with self._temporary_state:
-            if is_fake_mri(self.get('mri-dir')):
+            if is_fake_mri(mri_dir(self._derivative_state())):
                 self.set(mrisubject=self.get('common_brain'), match=False)
 
             labels = tuple(self._load_labels().values())
@@ -3119,7 +3018,8 @@ class Pipeline(TreeModel):
             else:
                 raise ValueError(f"The current epoch {epoch.name!r} is not a primary epoch and inherits selections from other epochs. Generate trial rejection for these epochs.")
 
-        path = self.get('rej-file', mkdir=True, task=epoch.task)
+        path = rej_file_path(self._derivative_state(task=epoch.task))
+        path.parent.mkdir(parents=True, exist_ok=True)
 
         if auto is not None and overwrite is not True and exists(path):
             if overwrite is False:
@@ -3523,14 +3423,15 @@ class Pipeline(TreeModel):
         else:
             plot_on_scaled_common_brain = False
 
-        mri_sdir = self.get('mri-sdir')
-        if (not plot_on_scaled_common_brain) and is_fake_mri(self.get('mri-dir')):
+        state_ = self._derivative_state()
+        subjects_dir = str(mri_sdir(state_))
+        if (not plot_on_scaled_common_brain) and is_fake_mri(mri_dir(state_)):
             subject = self.get('common_brain')
         else:
             subject = self.get('mrisubject')
 
         kwa = self._surfer_plot_kwargs(surf, views, foreground, background, None, hemi)
-        brain = plot.brain.annot(parc_name, subject, borders=borders, alpha=alpha, w=w, h=h, axw=axw, axh=axh, subjects_dir=mri_sdir, **kwa)
+        brain = plot.brain.annot(parc_name, subject, borders=borders, alpha=alpha, w=w, h=h, axw=axw, axh=axh, subjects_dir=subjects_dir, **kwa)
         if seeds:
             from mayavi import mlab
 
@@ -3561,12 +3462,13 @@ class Pipeline(TreeModel):
 
         brain_args = self._surfer_plot_kwargs()
         brain_args.update(brain_kwargs)
-        brain_args['subjects_dir'] = self.get('mri-sdir')
+        state_ = self._derivative_state()
+        brain_args['subjects_dir'] = str(mri_sdir(state_))
         if 'hemi' not in brain_args:
             brain_args['hemi'] = self.get('hemi')
 
         # find subject
-        if common_brain and is_fake_mri(self.get('mri-dir')):
+        if common_brain and is_fake_mri(mri_dir(state_)):
             mrisubject = self.get('common_brain')
             self.set(mrisubject=mrisubject, match=False)
         else:
@@ -3604,7 +3506,8 @@ class Pipeline(TreeModel):
         self.set(**state)
         with self._temporary_state:
             raw = self.load_raw(raw='raw')
-        fig = mne.viz.plot_alignment(raw.info, self.get('trans-file'), self.get('mrisubject'), self.get('mri-sdir'), surfaces, meg=meg, dig=dig, interaction='terrain')
+        state_ = self._derivative_state()
+        fig = mne.viz.plot_alignment(raw.info, trans_file_path(state_), self.get('mrisubject'), mri_sdir(state_), surfaces, meg=meg, dig=dig, interaction='terrain')
         if parallel:
             fig.plotter.enable_parallel_projection()
         return fig
@@ -3796,7 +3699,8 @@ class Pipeline(TreeModel):
             State parameters.
         """
         raw = self.load_raw(add_bads, ndvar=True, decim=decim, **state)
-        name = self.format("{raw_basename}_raw-{raw}")
+        state_ = self._derivative_state(state)
+        name = join_stem_parts(raw_basename(state_), f'raw-{state_["raw"]}')
         if raw.info['meas'] == 'V':
             vmax = 1.5e-4
         elif raw.info['meas'] == 'B':
@@ -3820,8 +3724,9 @@ class Pipeline(TreeModel):
         Sets the current directory to raw-dir, and sets the SUBJECT and
         SUBJECTS_DIR to current values
         """
-        subp.run_mne_analyze(self.get('raw-dir'), self.get('mrisubject'),
-                             self.get('mri-sdir'), modal)
+        state_ = self._derivative_state()
+        subp.run_mne_analyze(str(raw_dir(state_)), self.get('mrisubject'),
+                             str(mri_sdir(state_)), modal)
 
     def run_mne_browse_raw(self, modal=False):
         """Run mne_analyze
@@ -3836,7 +3741,8 @@ class Pipeline(TreeModel):
         Sets the current directory to raw-dir, and sets the SUBJECT and
         SUBJECTS_DIR to current values
         """
-        subp.run_mne_browse_raw(self.get('raw-dir'), self.get('mrisubject'), self.get('mri-sdir'), modal)
+        state_ = self._derivative_state()
+        subp.run_mne_browse_raw(str(raw_dir(state_)), self.get('mrisubject'), str(mri_sdir(state_)), modal)
 
     def set(self, subject=None, match=True, **state):
         """
@@ -4206,7 +4112,7 @@ class Pipeline(TreeModel):
         subjects = []
         reg = []
         for subject in self:
-            path = self.get('cov-info-file')
+            path = cov_info_file_path(self._derivative_state())
             if exists(path):
                 with open(path) as fid:
                     text = fid.read()
@@ -4356,7 +4262,7 @@ class Pipeline(TreeModel):
             state['mri'] = mri
             mri = True
         elif mri is None:
-            mri = exists(self.get('mri-sdir'))
+            mri = exists(mri_sdir(self._derivative_state()))
         if state:
             self.set(**state)
 
@@ -4385,12 +4291,12 @@ class Pipeline(TreeModel):
                 basenames = [match.basename for match in matches]
                 raw_list.append(', '.join(basenames))
             if mri:
-                mri_dir = self.get('mri-dir')
-                if not exists(mri_dir):
+                subject_mri_dir = str(mri_dir(self._derivative_state()))
+                if not exists(subject_mri_dir):
                     mri_list.append('*missing')
-                elif is_fake_mri(mri_dir):
-                    mri_sdir = self.get('mri-sdir')
-                    info = mne.coreg.read_mri_cfg(mrisubject_, mri_sdir)
+                elif is_fake_mri(subject_mri_dir):
+                    subjects_dir = str(mri_sdir(self._derivative_state()))
+                    info = mne.coreg.read_mri_cfg(mrisubject_, subjects_dir)
                     cell = f"{info['subject_from']} * {info['scale']!s}"
                     mri_list.append(cell)
                 else:

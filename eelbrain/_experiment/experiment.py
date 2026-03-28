@@ -123,8 +123,6 @@ class TreeModel:
     owner = None  # email address as string (for notification)
     _auto_debug = False  # in notification block
     _fmt_pattern = re.compile(r'\{([\w-]+)}')
-    # a dictionary of static templates (i.e., templates that do not have any hooks)
-    _templates = {}
     defaults = {}
     _repr_args = ()
 
@@ -147,13 +145,6 @@ class TreeModel:
         # many values as we can
         self._defaults = dict(self.defaults)
         self._defaults.update(state)
-        for k, v in self._templates.items():
-            if v is None or isinstance(v, str):
-                self._register_constant(k, v)
-            elif isinstance(v, tuple):
-                self._register_field(k, v, v[0], allow_empty=True)
-            else:
-                raise TypeError(f"Invalid templates field value: {v!r}. Need None, tuple or string")
 
         if self.owner:
             task = self.__class__.__name__
@@ -559,7 +550,7 @@ class TreeModel:
         for k in list(state):
             v = state[k]
             if k not in self._fields:
-                raise TypeError(f"{k}={v!r}: No template named {k!r}")
+                raise TypeError(f"{k}={v!r}: No field named {k!r}")
             elif v is None:
                 state.pop(k)
                 continue

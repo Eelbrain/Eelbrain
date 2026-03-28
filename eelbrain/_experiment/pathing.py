@@ -70,6 +70,13 @@ def deriv_dir(state: dict[str, str | None]) -> Path:
     return Path(state['root']) / 'derivatives'
 
 
+def raw_dir(state: dict[str, str | None]) -> Path:
+    path = Path(state['root']) / f"sub-{state['subject']}"
+    if state.get('session'):
+        path /= f"ses-{state['session']}"
+    return path / state['datatype']
+
+
 def cache_dir(state: dict[str, str | None]) -> Path:
     return deriv_dir(state) / 'eelbrain' / 'cache'
 
@@ -88,6 +95,14 @@ def methods_dir(state: dict[str, str | None]) -> Path:
 
 def raw_cache_dir(state: dict[str, str | None]) -> Path:
     return cache_dir(state) / 'raw' / subject_session_basename(state)
+
+
+def ica_file_path(
+        state: dict[str, str | None],
+        *,
+        raw: str = 'ica',
+) -> Path:
+    return deriv_dir(state) / 'ica' / f"{epoch_basename(state)}_raw-{raw}_ica.fif"
 
 
 def cached_raw_file_path(state: dict[str, str | None]) -> Path:

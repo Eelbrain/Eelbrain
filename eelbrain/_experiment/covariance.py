@@ -73,7 +73,6 @@ class EpochCovariance:
 
 
 class CovDerivative(Derivative[mne.Covariance]):
-    path_template = 'cov-file'
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw', 'epoch', 'cov', 'rej')
 
     def __init__(

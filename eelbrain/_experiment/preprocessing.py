@@ -60,7 +60,7 @@ from .derivative_cache import (
 )
 from .definitions import sequence_arg, typed_arg
 from .exceptions import FileMissingError
-from .pathing import bids_path, cached_raw_file_path
+from .pathing import bids_path, cached_raw_file_path, ica_file_path
 
 MNE_VERBOSITY = 'WARNING'
 AddBadsArg = bool | Sequence[str]
@@ -77,7 +77,6 @@ class RawPipe:
             self,
             name: str,
             pipes: dict[str, RawPipe],
-            cache_path: str,
             log: logging.Logger
     ) -> RawPipe:
         raise NotImplementedError
@@ -427,7 +426,6 @@ class ICAInput(Input[mne.preprocessing.ICA]):
 
 class RawDerivative(Derivative[mne.io.BaseRaw]):
     name = RAW_NODE_NAME
-    path_template = 'cached-raw-file'
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw')
     cache_policy = CachePolicy.OPTIONAL
 
@@ -613,7 +611,6 @@ def raw_data_dependency(
 
 
 class ProcessedRawDerivative(Derivative[mne.io.BaseRaw]):
-    path_template = 'cached-raw-file'
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw')
     cache_policy = CachePolicy.OPTIONAL
 
@@ -653,7 +650,6 @@ class ProcessedRawDerivative(Derivative[mne.io.BaseRaw]):
 
 
 class ICADerivative(Derivative[mne.preprocessing.ICA]):
-    path_template = 'ica-file'
     key_fields = ('subject', 'session', 'acquisition', 'run', 'split', 'raw')
 
     def __init__(self, pipe: RawICA):
@@ -774,7 +770,6 @@ class RawSource(RawPipe):
             self,
             name: str,
             pipes: dict[str, RawPipe],
-            cache_path: str,
             log: logging.Logger,
     ) -> RawPipe:
         return RawPipe._link_base(self, name, log)
@@ -969,8 +964,6 @@ class RawSource(RawPipe):
 
 class CachedRawPipe(RawPipe):
     _bad_chs_affect_cache: bool = False
-    # set on linking
-    cache_path: str = None
 
     def __init__(self, source, cache=True):
         RawPipe.__init__(self)
@@ -984,21 +977,31 @@ class CachedRawPipe(RawPipe):
             self,
             name: str,
             pipes: dict[str, RawPipe],
-            cache_path: str,
             log: logging.Logger,
     ) -> RawPipe:
         if self._source_name not in pipes:
             raise DefinitionError(f"{self.__class__.__name__} {name!r} source {self._source_name!r} does not exist")
-        out = RawPipe._link_base(self, name, log)
-        out.cache_path = cache_path
-        return out
+        return RawPipe._link_base(self, name, log)
 
     def source_name(self) -> str:
         return self._source_name
 
     def _cache_path(self, path: BIDSPath) -> str:
         "Get path to the cached raw file"
-        return self.cache_path.format(raw=self.name, suffix=path.datatype, **path.entities)
+        state = {
+            'root': path.root,
+            'subject': path.subject,
+            'session': path.session,
+            'task': path.task,
+            'acquisition': path.acquisition,
+            'run': path.run,
+            'split': path.split,
+            'datatype': path.datatype,
+            'suffix': path.suffix,
+            'extension': path.extension,
+            'raw': self.name,
+        }
+        return str(cached_raw_file_path(state))
 
     def raw_cache_node_name(self) -> str:
         return raw_cache_node_name(self.name)
@@ -1354,8 +1357,6 @@ class RawICA(CachedRawPipe):
 
     """
 
-    # set on linking
-    ica_path: str = None
     run: str | Sequence[str] = None
 
     def __init__(
@@ -1389,7 +1390,19 @@ class RawICA(CachedRawPipe):
         return info
 
     def _ica_path(self, path: BIDSPath) -> str:
-        return self.ica_path.format(raw='ica', suffix=path.datatype, **path.entities)
+        state = {
+            'root': path.root,
+            'subject': path.subject,
+            'session': path.session,
+            'task': path.task,
+            'acquisition': path.acquisition,
+            'run': path.run,
+            'split': path.split,
+            'datatype': path.datatype,
+            'suffix': path.suffix,
+            'extension': path.extension,
+        }
+        return str(ica_file_path(state))
 
     def ica_cache_node_name(self) -> str:
         return ica_cache_node_name(self.name)
@@ -1688,10 +1701,9 @@ class RawApplyICA(CachedRawPipe):
             self,
             name: str,
             pipes: dict[str, RawPipe],
-            cache_path: str,
             log: logging.Logger,
     ) -> RawPipe:
-        return CachedRawPipe._link(self, name, pipes, cache_path, log)
+        return CachedRawPipe._link(self, name, pipes, log)
 
     def _as_dict(self, args: Sequence[str] = ()) -> dict:
         out = CachedRawPipe._as_dict(self, args)
@@ -1952,8 +1964,6 @@ class RawReReference(CachedRawPipe):
 def assemble_pipeline(
         raw: dict[str, RawPipe],
         tasks: tuple[str],
-        cache_path: str,
-        ica_path: str,
         log: logging.Logger,
 ) -> dict[str, RawPipe]:
     "Assemble preprocessing pipeline form a definition in a dict"
@@ -1962,12 +1972,11 @@ def assemble_pipeline(
         n = len(raw)
         for key in list(raw):
             if raw[key]._can_link(linked_raw):
-                pipe = raw.pop(key)._link(key, linked_raw, cache_path, log)
+                pipe = raw.pop(key)._link(key, linked_raw, log)
                 if isinstance(pipe, RawICA):
                     missing = set(pipe.task).difference(tasks)
                     if missing:
                         raise DefinitionError(f"RawICA {key!r} lists one or more non-exising tasks: {', '.join(missing)}. Available tasks: {', '.join(tasks)}.")
-                    pipe.ica_path = ica_path
                 linked_raw[key] = pipe
         if len(raw) == n:
             raise DefinitionError(f"Unable to resolve source for raw {enumeration(raw)}, circular dependency?")

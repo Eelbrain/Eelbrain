@@ -5,9 +5,12 @@ from eelbrain._experiment import TreeModel
 
 
 class Tree(TreeModel):
-    _templates = dict(apath="/{afield}/",
-                      afield=('a1', 'a2', 'a3'),
-                      field2=('', 'value'))
+    def __init__(self):
+        TreeModel.__init__(self)
+        self._register_field('afield', ('a1', 'a2', 'a3'))
+        self._register_field('field2', ('', 'value'), allow_empty=True)
+        self._register_constant('apath', '/{afield}/')
+        self._store_state()
 
 
 def test_tree():
@@ -38,13 +41,12 @@ def test_tree():
 
 
 class SlaveTree(TreeModel):
-    _templates = {'path': '{a}_{b}_{s}_{s_a}_{s_b}'}
-
     def __init__(self, a_seq, b_seq, c_seq):
         TreeModel.__init__(self)
         self._register_field('a', a_seq)
         self._register_field('b', b_seq, allow_empty=True)
         self._register_field('c', c_seq)
+        self._register_constant('path', '{a}_{b}_{s}_{s_a}_{s_b}')
         self._register_slave_field('s', 'a', lambda f: f['a'].upper())
         self._register_field('s_a', a_seq, depends_on='c', slave_handler=self._update_sa)
         self._register_field('s_b', b_seq, depends_on='c', slave_handler=self._update_sb, allow_empty=True)

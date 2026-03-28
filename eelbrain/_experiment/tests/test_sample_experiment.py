@@ -14,7 +14,7 @@ from numpy.testing import assert_almost_equal, assert_array_equal
 from eelbrain import *
 from eelbrain.pipeline import *
 from eelbrain._exceptions import DefinitionError
-from eelbrain._experiment.derivative_cache import MANIFEST_SUFFIX
+from eelbrain._experiment.pathing import ica_file_path
 from eelbrain._experiment.reports import _report_subject_info
 from eelbrain._experiment.test_def import TestDims as _TestDims
 from eelbrain.testing import TempDir, assert_dataobj_equal, requires_mne_sample_data
@@ -72,8 +72,11 @@ def test_sample():
 
     # wildcard formatting
     with e._temporary_state:
-        assert e.get('ica-file', match=False, subject='*', raw='*') == join(root, 'derivatives', 'ica', 'sub-*_meg_raw-*_ica.fif')
-        assert e.get('ica-file', match=False, subject='R0002', raw='*') == join(root, 'derivatives', 'ica', 'sub-R0002_meg_raw-*_ica.fif')
+        state = e._derivative_state()
+        state['subject'] = '*'
+        assert str(ica_file_path(state, raw='*')) == join(root, 'derivatives', 'ica', 'sub-*_meg_raw-*_ica.fif')
+        state['subject'] = 'R0002'
+        assert str(ica_file_path(state, raw='*')) == join(root, 'derivatives', 'ica', 'sub-R0002_meg_raw-*_ica.fif')
 
     # events
     e.set('R0001', rej='')
@@ -91,16 +94,16 @@ def test_sample():
     with e._temporary_state:
         raw = e.load_raw(raw='1-40')
         assert isinstance(raw, mne.io.BaseRaw)
-        assert exists(e.get('cached-raw-file', raw='1-40') + MANIFEST_SUFFIX)
+        assert exists(e._resolve_derivative('raw', state={'raw': '1-40'}).manifest_path)
         e.set(cov='emptyroom', raw='tsss')
         cov = e.load_cov()
         assert isinstance(cov, mne.Covariance)
-        assert exists(e.get('cov-file') + MANIFEST_SUFFIX)
+        assert exists(e._resolve_derivative('cov:emptyroom').manifest_path)
         assert e.load_bad_channels(noise=True) == []
         e.set(cov='emptyroom', raw='1-40')
         cov = e.load_cov()
         assert isinstance(cov, mne.Covariance)
-        assert exists(e.get('cov-file') + MANIFEST_SUFFIX)
+        assert exists(e._resolve_derivative('cov:emptyroom').manifest_path)
         assert e.load_bad_channels(noise=True) == []
         e.load_cov()
 
@@ -109,7 +112,7 @@ def test_sample():
     e.load_events()
     assert exists(e._resolve_derivative('events').manifest_path)
     ds = e.load_evoked(ndvar=False)
-    assert exists(e.get('evoked-file') + MANIFEST_SUFFIX)
+    assert exists(e._resolve_derivative('evoked').manifest_path)
     assert ds[0, 'evoked'].info['bads'] == []
     e.make_bad_channels(['MEG 0331'])
     ds = e.load_evoked(ndvar=False)
@@ -389,8 +392,8 @@ def test_sample_source():
     # These two tests are only identical if the evoked has been cached before the first test is loaded
     resp = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, parc='ac', make=True)
     resm = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, mask='ac', make=True)
-    assert exists(e._derivatives.manifest_path(e.get('src-file')))
-    assert exists(e.get('fwd-file') + MANIFEST_SUFFIX)
+    assert exists(e._resolve_derivative('src').manifest_path)
+    assert exists(e._resolve_derivative('fwd').manifest_path)
     assert exists(e._resolve_derivative('inv').manifest_path)
     with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=100, data='source', parc='ac')) as fid:
         source_manifest_data = json.load(fid)
@@ -520,8 +523,9 @@ def test_evoked_cache_reuse():
     e.set(subject='R0000', epoch='target1', rej='')
 
     _ = e.load_evoked(ndvar=False)
-    evoked_path = Path(e.get('evoked-file'))
-    manifest_path = Path(f"{evoked_path}{MANIFEST_SUFFIX}")
+    handle = e._resolve_derivative('evoked')
+    evoked_path = handle.artifact_path
+    manifest_path = handle.manifest_path
     assert manifest_path.exists()
     mtimes_1 = (evoked_path.stat().st_mtime_ns, manifest_path.stat().st_mtime_ns)
 
