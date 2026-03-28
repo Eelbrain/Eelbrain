@@ -142,12 +142,31 @@ class DerivativeContext:
 class Dependency:
     """One edge in the derivative graph.
 
-    ``name`` refers to either a registered :class:`Derivative` or a registered
-    :class:`Input`, and the registry determines which kind of node it is.
-    ``label`` names this edge in dependency manifests; use it when the same
-    node can appear more than once with different state.
-    ``state`` can override which keyed instance should be resolved.
-    ``options`` can override load-time options for the dependency.
+    Parameters
+    ----------
+    name
+        Registered node name for the dependency. This can refer to either a
+        registered :class:`Derivative` or a registered :class:`Input`.
+    label
+        Optional manifest label for this dependency edge. In most cases this
+        can be omitted, and the dependency name is used as the manifest key.
+        Set ``label`` when the same dependency name can appear more than once
+        in one dependency set with different state or options, so each edge
+        has a stable distinct name in the dependency manifest.
+    state
+        Optional callable that derives state overrides for this dependency from
+        the current parent :class:`DerivativeContext`. The returned mapping is
+        merged on top of the parent state before resolving the dependency.
+    options
+        Optional callable that derives option overrides for this dependency
+        from the current parent :class:`DerivativeContext`. The returned
+        mapping replaces the parent load options for this dependency request.
+
+    Notes
+    -----
+    :class:`Dependency` is a declarative description of one graph edge. It
+    does not resolve anything by itself; the registry evaluates it when the
+    parent node is fingerprinted or loaded.
     """
 
     name: str
@@ -157,29 +176,100 @@ class Dependency:
 
 
 class DependencyNode(Generic[T]):
-    """Shared dependency/fingerprint interface for graph nodes."""
+    """Base class for all registered dependency-graph nodes.
+
+    Subclasses participate in the cache graph by providing three pieces of
+    information:
+
+    - a stable ``name`` used for registry lookup and dependency edges
+    - a dependency list describing which other nodes this node needs
+    - a fingerprint describing whether the current request still matches the
+      artifact represented by this node
+
+    Most users should subclass :class:`Input` or :class:`Derivative` rather
+    than subclassing :class:`DependencyNode` directly.
+    """
 
     name: str
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        """Describe other registered nodes that this node depends on.
+
+        Override this when the node needs other inputs or derivatives.
+        Return one :class:`Dependency` per edge in the dependency graph.
+
+        Implementations should:
+
+        - return only direct dependencies needed by this node
+        - use ``state`` / ``options`` overrides on :class:`Dependency` when a
+          dependency should be resolved with different state or options than
+          the current request
+        - keep the result deterministic for a given ``ctx``, since dependency
+          manifests are part of cache validation
+
+        The default implementation returns no dependencies.
+        """
         return ()
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        """Describe the current version of this node's own inputs/settings.
+
+        Subclasses must override this method.
+
+        The fingerprint should contain all non-dependency information that
+        makes this node's result stale, such as configuration parameters,
+        source-file metadata, or definition snapshots. It should not duplicate
+        dependency manifests; those are tracked separately through
+        :meth:`dependencies`.
+        """
         raise NotImplementedError
 
     def dependency_fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        """Describe how this node should appear when used as a dependency.
+
+        Override this only when the dependency-facing fingerprint should be
+        smaller or different from the full artifact fingerprint. The default
+        implementation reuses :meth:`fingerprint`.
+        """
         return self.fingerprint(ctx)
 
 
 class Input(DependencyNode[T]):
-    """Behavioral interface for one non-derivative dependency."""
+    """Base class for non-cacheable external inputs.
+
+    Inputs represent artifacts that are not built by the cache system itself,
+    such as raw source files, manually curated metadata, or external logs.
+    They still participate in dependency manifests through
+    :meth:`DependencyNode.fingerprint`.
+    """
 
     def load(self, ctx: DerivativeContext):
+        """Materialize the input for the current request.
+
+        Subclasses must override this method.
+
+        Implementations should load and return the input value described by
+        ``ctx``. They should not write manifests or perform cache management;
+        the registry handles that around derivatives only.
+        """
         raise NotImplementedError
 
 
 class Derivative(DependencyNode[T]):
-    """Behavioral interface for one cacheable derivative."""
+    """Base class for one cache-managed derived artifact.
+
+    A derivative is a named artifact family that can be keyed, built, loaded,
+    saved, and validated. Subclasses normally override:
+
+    - :meth:`path` to choose the artifact location
+    - :meth:`fingerprint` to describe non-dependency staleness inputs
+    - :meth:`build` to compute the artifact
+    - :meth:`load` / :meth:`save` to serialize the artifact
+
+    More specialized subclasses may additionally override :meth:`key`,
+    :meth:`should_cache`, :meth:`validate`,
+    :meth:`can_reindex_protected_artifact`, or :meth:`provenance`.
+    """
 
     key_fields: tuple[str, ...]
     cache_policy: CachePolicy = CachePolicy.REQUIRED
@@ -190,9 +280,29 @@ class Derivative(DependencyNode[T]):
             ctx: DerivativeContext,
             mkdir: bool = False,
     ) -> Path:
+        """Return the concrete artifact path for this request.
+
+        Subclasses must override this method.
+
+        The returned path identifies where the artifact itself lives. For
+        artifacts inside ``cache-dir``, the registry writes the manifest next
+        to the artifact. For public/export artifacts outside ``cache-dir``,
+        the registry mirrors the manifest under ``cache-dir/manifests``.
+
+        Implementations should derive the path from semantic state/options
+        only. They should not perform dependency traversal or cache logic.
+        ``mkdir`` is provided for compatibility; callers should not rely on
+        ``path()`` to create directories.
+        """
         raise NotImplementedError
 
     def key(self, ctx: DerivativeContext) -> dict[str, Any]:
+        """Return the normalized key that identifies this artifact instance.
+
+        Override this only when the default ``key_fields`` subset is not
+        sufficient. The key should include only the state needed to distinguish
+        different concrete artifacts for this derivative.
+        """
         return canonical_state_subset(ctx.state, self.key_fields)
 
     def should_cache(
@@ -200,14 +310,37 @@ class Derivative(DependencyNode[T]):
             ctx: DerivativeContext,
             cache: bool | None,
     ) -> bool:
+        """Decide whether this request should read/write a cached artifact.
+
+        Override this when cache behavior depends on the current request, not
+        just on :attr:`cache_policy`. The return value should be deterministic
+        for a given ``ctx`` and explicit ``cache`` override.
+        """
         if cache is not None:
             return cache
         return self.cache_policy != CachePolicy.DISABLED_BY_DEFAULT
 
     def build(self, ctx: DerivativeContext) -> T:
+        """Compute the in-memory artifact value for this request.
+
+        Subclasses must override this method.
+
+        Implementations should do the actual work of the derivative, typically
+        by loading dependencies through ``ctx.load(...)`` and transforming
+        them into the resulting artifact value. They should return the
+        in-memory value and leave serialization to :meth:`save`.
+        """
         raise NotImplementedError
 
     def load(self, ctx: DerivativeContext, path: Path) -> T:
+        """Load a previously saved artifact from ``path``.
+
+        Subclasses must override this method.
+
+        Implementations should read ``path`` and return the in-memory value
+        produced by :meth:`build`. They should not perform staleness checks;
+        the registry calls this only after handling cache validation.
+        """
         raise NotImplementedError
 
     def save(
@@ -216,6 +349,14 @@ class Derivative(DependencyNode[T]):
             path: Path,
             value: T,
     ) -> None:
+        """Serialize ``value`` to ``path``.
+
+        Subclasses must override this method.
+
+        Implementations should write the artifact in a form that
+        :meth:`load` can reconstruct. They should only write the artifact
+        itself; the registry manages manifest files separately.
+        """
         raise NotImplementedError
 
     def validate(
@@ -224,6 +365,13 @@ class Derivative(DependencyNode[T]):
             path: Path,
             manifest: ArtifactManifest,
     ) -> bool:
+        """Perform derivative-specific cache validation.
+
+        Override this when path-local checks are needed in addition to key,
+        fingerprint, and dependency validation, for example schema checks on
+        the saved file itself. Return ``True`` when the artifact is still
+        usable for the current request.
+        """
         return True
 
     def can_reindex_protected_artifact(
@@ -233,6 +381,13 @@ class Derivative(DependencyNode[T]):
             manifest: ArtifactManifest,
             cache: bool | None = None,
     ) -> bool:
+        """Allow manifest-only refresh for protected non-cache artifacts.
+
+        Override this only for derivatives that store artifacts outside
+        ``cache-dir`` and can safely keep the existing artifact even when the
+        manifest is stale. Return ``True`` only when the artifact at ``path``
+        is still valid and it is safe to rewrite just the manifest.
+        """
         return False
 
     def provenance(
@@ -240,6 +395,13 @@ class Derivative(DependencyNode[T]):
             ctx: DerivativeContext,
             value: T,
     ) -> dict[str, Any]:
+        """Record optional extra provenance for the saved artifact.
+
+        Override this to add human-readable or debugging metadata to the
+        manifest after a successful build, for example dimensions, sample
+        counts, or export destinations. The return value should be JSON-like
+        and deterministic for the saved artifact.
+        """
         return {}
 
 
