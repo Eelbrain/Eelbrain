@@ -51,10 +51,9 @@ from .pathing import (
 )
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, assemble_parcs
 from .preprocessing import (
-    ICAInput, RawBadChannelsInput, RawDerivative, RawMEEGInput, RawPipe,
-    RawSource, RawICA, RawFilter, assemble_pipeline, get_ica_pipe,
-    get_ica_pipe_name, ica_input_name, raw_bad_channels_input_name,
-    raw_node_name,
+    ICAInput, RawBadChannelsInput, RawDerivative, RawPipe, RawSource, RawSourceInput, RawICA,
+    RawFilter, assemble_pipeline, get_ica_pipe, get_ica_pipe_name,
+    ica_input_name, raw_bad_channels_input_name, raw_node_name,
 )
 from .reports import (
     CoregReportDerivative, EEGReportDerivative, EEGSensorsReportDerivative,
@@ -543,7 +542,7 @@ class Pipeline(StateModel):
         for raw_name, pipe in self._raw.items():
             self._derivatives.register(RawBadChannelsInput(raw_name, pipe, self._raw))
             if isinstance(pipe, RawSource):
-                self._derivatives.register(RawMEEGInput(raw_name, pipe, self._raw))
+                self._derivatives.register(RawSourceInput(raw_name, pipe, self._raw))
             if isinstance(pipe, RawICA):
                 self._derivatives.register(ICAInput(raw_name, pipe, self._raw, self._runs))
         self._derivatives.register(TransInput())
@@ -552,7 +551,8 @@ class Pipeline(StateModel):
 
         # Register derivatives
         for raw_name, pipe in self._raw.items():
-            self._derivatives.register(RawDerivative(raw_name, pipe, self._raw, self._log))
+            if not isinstance(pipe, RawSource):
+                self._derivatives.register(RawDerivative(raw_name, pipe, self._raw, self._log))
         self._derivatives.register(EventsDerivative(
             self.trigger_shift,
             sequence_arg(f'{self.__class__.__name__}.stim_channel', self.stim_channel),

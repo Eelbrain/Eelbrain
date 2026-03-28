@@ -12,7 +12,8 @@ Users add these :class:`RawPipe` subclass objects to :class:`Pipeline`.
 
 During :class:`Pipeline` initialization, the configured :class:`RawPipe`
 objects are normalized and registered as explicit raw-side graph nodes.
-Each configured :class:`RawPipe` produces its own raw derivative node, and
+Each configured source :class:`RawPipe` produces one raw input node, and each
+configured processed :class:`RawPipe` produces one raw derivative node.
 :class:`RawICA` additionally produces an ICA input node. Those graph nodes use
 the bound :class:`RawPipe` objects to build and load concrete artifacts. The
 nodes manage artifact identity, dependency edges, and cache integration, while
@@ -162,10 +163,6 @@ def raw_bad_channels_input_name(raw: str) -> str:
     return f'raw-input-bads:{raw}'
 
 
-def raw_meeg_input_name(raw: str) -> str:
-    return f'raw-input-meeg:{raw}'
-
-
 def ica_input_name(raw: str) -> str:
     return f'ica-input:{raw}'
 
@@ -251,14 +248,14 @@ class RawBadChannelsInput(Input[list[str]]):
         return self.pipe.load_bad_channels(state_bids_path(state), noise=ctx.option('noise', False), pipes=self.pipes)
 
 
-class RawMEEGInput(Input[mne.io.BaseRaw]):
+class RawSourceInput(Input[mne.io.BaseRaw]):
     def __init__(
             self,
             raw_name: str,
             pipe: RawSource,
             pipes: dict[str, RawPipe],
     ):
-        self.name = raw_meeg_input_name(raw_name)
+        self.name = raw_node_name(raw_name)
         self.raw_name = raw_name
         self.pipe = pipe
         self.pipes = pipes
@@ -279,22 +276,20 @@ class RawMEEGInput(Input[mne.io.BaseRaw]):
         state = {**ctx.state, 'raw': self.raw_name}
         path = state_bids_path(state, noise=noise)
         return {
+            'raw': self.raw_name,
+            'noise': noise,
+            'pipe': self.pipe._as_dict(self.raw_name),
             'source': file_fingerprint(
                 ctx.get('root'),
                 path.fpath,
                 'raw-source',
-                metadata={
-                    'raw': self.raw_name,
-                    'noise': noise,
-                    'pipeline': self.pipe._as_dict(self.raw_name),
-                },
+                metadata={'raw': self.raw_name, 'noise': noise},
             ),
         }
 
     def load(self, ctx: DerivativeContext) -> mne.io.BaseRaw:
-        state = {**ctx.state, 'raw': self.raw_name}
         return self.pipe.load(
-            state_bids_path(state),
+            state_bids_path({**ctx.state, 'raw': self.raw_name}),
             add_bads=ctx.option('add_bads', True),
             preload=ctx.option('preload', False),
             noise=ctx.option('noise', False),
@@ -420,7 +415,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
     def __init__(
             self,
             raw_name: str,
-            pipe: RawPipe,
+            pipe: CachedRawPipe,
             pipes: dict[str, RawPipe],
             log: logging.Logger,
     ):
@@ -437,22 +432,9 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
     ) -> bool:
         if cache is not None:
             return cache
-        return isinstance(self.pipe, CachedRawPipe) and self.pipe._cache
+        return self.pipe._cache
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
-        if isinstance(self.pipe, RawSource):
-            return (
-                Dependency(
-                    raw_meeg_input_name(self.raw_name),
-                    state={'raw': self.raw_name},
-                    options={
-                        'add_bads': ctx.option('add_bads', True),
-                        'preload': ctx.option('preload', False),
-                        'noise': ctx.option('noise', False),
-                    },
-                ),
-            )
-
         deps = [
             Dependency(
                 raw_node_name(self.pipe._source_name),
@@ -480,17 +462,6 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         return path
 
     def build(self, ctx: DerivativeContext) -> mne.io.BaseRaw:
-        if isinstance(self.pipe, RawSource):
-            return ctx.load(
-                raw_meeg_input_name(self.raw_name),
-                state={'raw': self.raw_name},
-                options={
-                    'add_bads': ctx.option('add_bads', True),
-                    'preload': ctx.option('preload', False),
-                    'noise': ctx.option('noise', False),
-                },
-            )
-
         noise = ctx.option('noise', False)
         state = {**ctx.state, 'raw': self.raw_name}
         bids_path = state_bids_path(state)
