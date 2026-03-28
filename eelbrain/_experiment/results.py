@@ -39,6 +39,7 @@ from .pathing import (
     test_result_cache_path,
     time_window_str,
 )
+from .preprocessing import raw_node_name
 from .source import load_epochs_stc_request, load_evoked_stc_request
 from .test_def import ROI2StageResult, ROITestResult, Test, TestDims, TwoStageTest
 
@@ -265,7 +266,8 @@ class ResultOutputDerivative(Derivative[T]):
             ctx: DerivativeContext,
             state: dict[str, Any],
     ) -> dict[str, Any]:
-        return ctx.registry.resolve('raw', state={**ctx.state, **state}, options={'add_bads': True, 'noise': False}).describe_dependency()
+        raw = state.get('raw', ctx.get('raw'))
+        return ctx.registry.resolve(raw_node_name(raw), state={**ctx.state, **state, 'raw': raw}, options={'add_bads': True, 'noise': False}).describe_dependency()
 
     def result_dependencies(
             self,
@@ -522,8 +524,7 @@ class ResultOutputDerivative(Derivative[T]):
             'vardef': vardef,
             'data': data,
         }
-        raw = ctx.registry._get_node('raw')
-        return load_evoked_request(ctx.registry, raw, self.groups, ctx.get('group'), {**ctx.state, **state}, options, subjects)
+        return load_evoked_request(ctx.registry, self.groups, ctx.get('group'), {**ctx.state, **state}, options, subjects)
 
     def load_evoked_stc(
             self,

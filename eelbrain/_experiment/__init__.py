@@ -72,8 +72,9 @@ objects such as new :class:`RawPipe` subclasses, not by editing cache-kernel
 code.
 
 Some configuration objects may result in multiple dependency nodes.
-For example, preprocessing with ICA requires both ICA files from an
-:class:`Input` node and projecting the data in a :class:`Derivative` node.
+For example, each configured :class:`RawPipe` produces its own raw derivative
+node, and preprocessing with ICA additionally requires an ICA :class:`Input`
+node plus the raw derivative node that applies it.
 
 
 3. :class:`Pipeline`

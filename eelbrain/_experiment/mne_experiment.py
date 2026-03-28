@@ -48,13 +48,15 @@ from .experiment import TreeModel
 from .groups import assemble_groups
 from .pathing import (
     cache_dir, cov_info_file_path, deriv_dir, epoch_basename, fwd_file_path,
-    join_stem_parts, mri_dir, mri_sdir, raw_basename, raw_dir,
+    ica_file_path, join_stem_parts, mri_dir, mri_sdir, raw_basename, raw_dir,
     rej_file_path, results_dir, src_file_path, trans_file_path,
 )
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, assemble_parcs
 from .preprocessing import (
-    ICA_INPUT, RAW_BAD_CHANNELS_INPUT, RawDerivative, assemble_pipeline,
-    RawPipe, RawSource, RawICA, RawFilter,
+    ICAInput, RawBadChannelsInput, RawDerivative, RawMEEGInput, RawPipe,
+    RawSource, RawICA, RawFilter, assemble_pipeline, get_ica_pipe,
+    get_ica_pipe_name, ica_input_name, raw_bad_channels_input_name,
+    raw_node_name,
 )
 from .reports import (
     CoregReportDerivative, EEGReportDerivative, EEGSensorsReportDerivative,
@@ -369,11 +371,10 @@ class Pipeline(TreeModel):
         self._mri_subjects = self.mri_subjects.copy()
 
         # preprocessing
-        self._raw = RawDerivative(assemble_pipeline(
+        self._raw = assemble_pipeline(
             {'raw': RawSource(), **self.raw},
             self._tasks,
-            log,
-        ), self._runs)
+        )
         raw_pipe: RawSource = self._raw['raw']
 
         # legacy adjacency determination
@@ -507,7 +508,7 @@ class Pipeline(TreeModel):
                 if not raw_path.exists():
                     continue
 
-                pipe = self._raw.pipe(self.get('raw'))
+                pipe = self._raw[self.get('raw')]
                 self._raw_samplingrate[key] = pipe.load_info(self._bids_path, self._raw).get('sfreq')
 
         # check for digitizer data differences
@@ -547,15 +548,20 @@ class Pipeline(TreeModel):
         self._derivatives = DerivativeRegistry(self.get('root'))
 
         # Register inputs
-        for node in self._raw.input_nodes():
-            self._derivatives.register(node)
+        for raw_name, pipe in self._raw.items():
+            self._derivatives.register(RawBadChannelsInput(raw_name, pipe, self._raw))
+            if isinstance(pipe, RawSource):
+                self._derivatives.register(RawMEEGInput(raw_name, pipe, self._raw))
+            if isinstance(pipe, RawICA):
+                self._derivatives.register(ICAInput(raw_name, pipe, self._raw, self._runs))
         self._derivatives.register(EdfInput())
         self._derivatives.register(TransInput())
         self._derivatives.register(BemInput())
         self._derivatives.register(RejectionInput(self.root, self._artifact_rejection, self._epochs))
 
         # Register derivatives
-        self._derivatives.register(self._raw)
+        for raw_name, pipe in self._raw.items():
+            self._derivatives.register(RawDerivative(raw_name, pipe, self._raw, self._log))
         self._derivatives.register(EventsDerivative(
             self.trigger_shift,
             sequence_arg(f'{self.__class__.__name__}.stim_channel', self.stim_channel),
@@ -1042,7 +1048,7 @@ class Pipeline(TreeModel):
             Bad channels.
         """
         raw_name = self.get('raw', **kwargs)
-        return self._load_derivative(RAW_BAD_CHANNELS_INPUT, state={**kwargs, 'raw': raw_name}, options={'noise': noise})
+        return self._load_derivative(raw_bad_channels_input_name(raw_name), state={**kwargs, 'raw': raw_name}, options={'noise': noise})
 
     def load_cov(self, **kwargs):
         """Load the covariance matrix
@@ -1441,7 +1447,7 @@ class Pipeline(TreeModel):
         model = self.get('model')
         desc = f'by {model}' if model else 'average'
         subjects_ = [subject_ for subject_ in self.iter(group=group, progress_bar=f"Load {epoch_name} {desc}")]
-        return load_evoked_request(self._derivatives, self._raw, self._groups, self.get('group'), self._derivative_state(state), options, subjects_)
+        return load_evoked_request(self._derivatives, self._groups, self.get('group'), self._derivative_state(state), options, subjects_)
 
     def load_epochs_stf(
             self,
@@ -1800,8 +1806,8 @@ class Pipeline(TreeModel):
         -------
         ICA object for the current :ref:`state-raw` setting.
         """
-        pipe = self._raw.ica_pipe(self.get('raw', **state))
-        return self._derivatives.resolve(ICA_INPUT, state=self._derivative_state({**state, 'raw': pipe.name})).load()
+        raw_name = get_ica_pipe_name(self._raw, self.get('raw', **state))
+        return self._derivatives.resolve(ica_input_name(raw_name), state=self._derivative_state({**state, 'raw': raw_name})).load()
 
     def load_inv(
             self,
@@ -2029,7 +2035,7 @@ class Pipeline(TreeModel):
              - :ref:`state-raw`: preprocessing pipeline
         """
         raw_name = self.get('raw', **kwargs)
-        raw = self._load_derivative('raw', state={**kwargs, 'raw': raw_name}, options={'add_bads': add_bads, 'preload': preload, 'noise': noise})
+        raw = self._load_derivative(raw_node_name(raw_name), state={**kwargs, 'raw': raw_name}, options={'add_bads': add_bads, 'preload': preload, 'noise': noise})
         if decim and decim > 1:
             assert samplingrate is None, "samplingrate and decim can't both be specified"
             samplingrate = int(round(raw.info['sfreq'] / decim))
@@ -2517,7 +2523,7 @@ class Pipeline(TreeModel):
         path = self.make_ica(**state)
         # display data
         subject = self.get('subject')
-        pipe = self._raw.ica_pipe(self.get('raw', **state))
+        pipe = get_ica_pipe(self._raw, self.get('raw', **state))
         bads = pipe.load_bad_channels(self._bids_path, pipes=self._raw)
         with self._temporary_state:
             if epoch is None:
@@ -2573,10 +2579,12 @@ class Pipeline(TreeModel):
         overwritten because the file lives outside the cache directory.
 
         """
-        pipe = self._raw.ica_pipe(self.get('raw', **state))
-        ctx = self._derivatives.resolve(ICA_INPUT, state=self._derivative_state({**state, 'raw': pipe.name})).ctx
+        raw_name = get_ica_pipe_name(self._raw, self.get('raw', **state))
+        self._raw[raw_name]
+        handle = self._derivatives.resolve(ica_input_name(raw_name), state=self._derivative_state({**state, 'raw': raw_name}))
+        ctx = handle.ctx
         try:
-            self._raw.ica_input.materialize(ctx)
+            handle.node.materialize(ctx)
         except ProtectedArtifactError as error:
             command = ask(
                 f"ICA file {Path(error.path).name} is stale. Overwrite it?",
@@ -2587,12 +2595,12 @@ class Pipeline(TreeModel):
                 help="This ICA file is stored outside the cache directory and may contain manual component selections. It is not overwritten automatically.",
             )
             if command == 'overwrite':
-                self._raw.ica_input.materialize(ctx, allow_protected_overwrite=True)
+                handle.node.materialize(ctx, allow_protected_overwrite=True)
             elif command != 'abort':
                 raise RuntimeError(f"{command=}")
             else:
                 raise RuntimeError("User aborted ICA overwrite")
-        return str(pipe.ica_artifact_path(ctx))
+        return str(ica_file_path(ctx.state, raw=raw_name))
 
     def make_mov_ga_dspm(self, subjects=None, baseline=True, src_baseline=False,
                          fmin=2, surf=None, views=None, hemi=None, time_dilation=4.,

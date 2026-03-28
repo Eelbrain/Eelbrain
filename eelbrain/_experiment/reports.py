@@ -25,6 +25,7 @@ from .._utils.mne_utils import is_fake_mri
 from .derivative_cache import DerivativeContext, file_fingerprint
 from .parc import IndividualSeededParc, SEEDED_PARC_RE
 from .pathing import coreg_report_path, mri_dir, mri_sdir, trans_file_path
+from .preprocessing import raw_node_name
 from .results import ResultOutputDerivative
 from .test_def import TwoStageTest
 
@@ -203,7 +204,7 @@ def _coreg_fingerprint(node: ResultOutputDerivative, ctx: DerivativeContext) -> 
         subjects.append({
             'state': {key: state[key] for key in ('subject', 'session', 'task', 'acquisition', 'run', 'split') if state[key] is not None},
             'mrisubject': state['mrisubject'],
-            'raw': ctx.registry.resolve('raw', state={**ctx.state, **state, 'raw': 'raw'}, options={'add_bads': False, 'noise': False}).describe_dependency(),
+            'raw': ctx.registry.resolve(raw_node_name('raw'), state={**ctx.state, **state, 'raw': 'raw'}, options={'add_bads': False, 'noise': False}).describe_dependency(),
             'trans': ctx.registry.resolve('trans-input', state={**ctx.state, **state}).describe_dependency(),
             'mri': mri,
         })
@@ -225,7 +226,7 @@ def _build_coreg_report(node: ResultOutputDerivative, ctx: DerivativeContext) ->
     for state in _coreg_subject_states(node, ctx):
         subject = state['subject']
         mrisubject = state['mrisubject']
-        raw = ctx.registry.load('raw', state={**ctx.state, **state, 'raw': 'raw'}, options={'add_bads': False, 'noise': False})
+        raw = ctx.registry.load(raw_node_name('raw'), state={**ctx.state, **state, 'raw': 'raw'}, options={'add_bads': False, 'noise': False})
         fig = mne.viz.plot_alignment(raw.info, trans_file_path(state), mrisubject, mri_sdir(state), 'auto', meg=('helmet', 'sensors'), dig=True, interaction='terrain')
         fig.plotter.enable_parallel_projection()
         fig.scene.camera.parallel_projection = True

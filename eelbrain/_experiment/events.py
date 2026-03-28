@@ -36,7 +36,7 @@ from .pathing import (
     epochs_file_path, event_file_path, evoked_dataset_file_path, evoked_file_path,
     log_dir, rej_file_path, selected_events_file_path,
 )
-from .preprocessing import RAW_BAD_CHANNELS_INPUT, raw_data_dependency
+from .preprocessing import load_raw_dependency, raw_bad_channels_input_name, raw_data_dependency, raw_node_name
 from .test_def import TestDims
 from .variable_def import Variables
 
@@ -54,7 +54,6 @@ def _evoked_comments(evoked: list[mne.Evoked]) -> list[str]:
 
 def load_evoked_group(
         registry,
-        raw,
         subjects: Sequence[str],
         state: dict[str, Any],
         options: dict[str, Any],
@@ -84,13 +83,14 @@ def load_evoked_group(
     if ndvar and not individual_ndvar:
         evoked = ds['evoked']
         del ds['evoked']
-        pipe = raw.pipe(state['raw'])
+        raw_node = registry._get_node(raw_node_name(state['raw']))
+        pipe = raw_node.pipe
         info = evoked[0].info
         sensor_types = ds.info['sensor_types'] = data.data_to_ndvar(info)
         subject = ds[0, 'subject']
         for sensor_type in sensor_types:
-            sysname = pipe.get_sysname(info, subject, sensor_type, raw.pipes)
-            adjacency = pipe.get_adjacency(sensor_type, raw.pipes)
+            sysname = pipe.get_sysname(info, subject, sensor_type, raw_node.pipes)
+            adjacency = pipe.get_adjacency(sensor_type, raw_node.pipes)
             name = 'meg' if sensor_type == 'mag' else sensor_type
             ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
             if sensor_type != 'eog' and isinstance(data.sensor, str):
@@ -100,7 +100,6 @@ def load_evoked_group(
 
 def load_evoked_request(
         registry,
-        raw,
         groups: dict[str, Sequence[str]],
         current_group: str,
         state: dict[str, Any],
@@ -112,9 +111,9 @@ def load_evoked_request(
     elif subjects in (None, 1):
         return registry.load(EVOKED_DATA, state=state, options=options)
     if isinstance(subjects, Sequence) and not isinstance(subjects, str):
-        return load_evoked_group(registry, raw, subjects, state, options)
+        return load_evoked_group(registry, subjects, state, options)
     if isinstance(subjects, str) and subjects in groups:
-        return load_evoked_group(registry, raw, groups[subjects], state, options)
+        return load_evoked_group(registry, groups[subjects], state, options)
     return registry.load(EVOKED_DATA, state={**state, 'subject': subjects}, options=options)
 
 
@@ -242,7 +241,7 @@ class EventsDerivative(Derivative[Dataset]):
         entities = {k: ctx.get(k) for k in BIDS_ENTITY_KEYS}
         subject = entities['subject']
         session = entities['session']
-        raw = ctx.load('raw', options={'add_bads': False, 'preload': self.preload, 'noise': False})
+        raw = load_raw_dependency(ctx, add_bads=False, preload=self.preload, noise=False)
         ds = load.mne.events(raw, self.merge_triggers, stim_channel=self.stim_channel)
         del ds.info['raw']
         ds.info['sfreq'] = raw.info['sfreq']
@@ -317,8 +316,8 @@ class SelectedEventsDerivative(Derivative[Dataset]):
                 'task': task,
                 'events': ctx.registry.resolve('events', state=task_state).describe_dependency(),
                 'raw': ctx.registry.resolve(
-                    'raw',
-                    state=task_state,
+                    raw_node_name(task_state['raw']),
+                    state={**task_state, 'raw': task_state['raw']},
                     options={'add_bads': ctx.option('add_bads', True), 'preload': True, 'noise': False},
                 ).describe_dependency(),
             })
@@ -351,7 +350,7 @@ class SelectedEventsDerivative(Derivative[Dataset]):
     def _load_events(self, ctx: DerivativeContext, task: str, add_bads: bool | list[str], data_raw: bool) -> Dataset:
         state = {**ctx.state, 'task': task}
         ds = ctx.load('events', state=state)
-        raw = ctx.load('raw', state=state, options={'add_bads': add_bads, 'preload': True, 'noise': False})
+        raw = load_raw_dependency(ctx, add_bads=add_bads, preload=True, noise=False, state=state)
         ds.info['raw'] = raw
         if not data_raw and 'raw' in ds.info:
             del ds.info['raw']
@@ -379,7 +378,7 @@ class SelectedEventsDerivative(Derivative[Dataset]):
                 bad_channels = list(add_bads)
             elif add_bads:
                 bad_channels = sorted(set().union(*(
-                    set(ctx.load(RAW_BAD_CHANNELS_INPUT, state={**ctx.state, 'task': task}, options={'noise': False}))
+                    set(ctx.load(raw_bad_channels_input_name(ctx.get('raw')), state={**ctx.state, 'task': task}, options={'noise': False}))
                     for task in epoch.tasks
                 )))
             else:
@@ -685,7 +684,7 @@ class EpochsDerivative(Derivative[Dataset]):
         ndvar = ctx.option('ndvar', True)
         if ndvar:
             ds.info['sensor_types'] = sensor_types
-            pipe = self.raw.pipe(ctx.get('raw'))
+            pipe = self.raw[ctx.get('raw')]
             for data_kind in sensor_types:
                 sysname = pipe.get_sysname(info, ds.info['subject'], data_kind, self.raw)
                 adjacency = pipe.get_adjacency(data_kind, self.raw)
@@ -884,7 +883,7 @@ class EvokedDataDerivative(Derivative[Dataset]):
             evoked = ds['evoked']
             if ndvar == 1:
                 del ds['evoked']
-            pipe = self.raw.pipe(ctx.get('raw'))
+            pipe = self.raw[ctx.get('raw')]
             info = evoked[0].info
             sensor_types = ds.info['sensor_types'] = data.data_to_ndvar(info)
             subject = ctx.get('subject')
@@ -896,7 +895,7 @@ class EvokedDataDerivative(Derivative[Dataset]):
                 if sensor_type != 'eog' and isinstance(data.sensor, str):
                     ds[name] = getattr(ds[name], data.sensor)('sensor')
         if ctx.option('data_raw', False):
-            ds.info['raw'] = ctx.load('raw', options={'add_bads': True, 'preload': False, 'noise': False})
+            ds.info['raw'] = load_raw_dependency(ctx, add_bads=True, preload=False, noise=False)
         return ds
 
     def load(self, ctx: DerivativeContext, path: Path) -> Dataset:
