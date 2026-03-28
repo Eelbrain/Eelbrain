@@ -33,7 +33,7 @@ from .pathing import (
     fwd_file_path, inv_file_path, mri_dir, mri_sdir, source_morph_file_path,
     src_file_path, trans_file_path,
 )
-from .preprocessing import load_raw_dependency
+from .preprocessing import load_raw_dependency, raw_node_name
 from .._text import enumeration, plural
 from .._utils import subp
 from .._utils.mne_utils import is_fake_mri
@@ -236,7 +236,7 @@ class SrcDerivative(Derivative[mne.SourceSpaces]):
             deps.append(Dependency(
                 'src',
                 label='common-brain-src',
-                state=lambda c: {'mrisubject': c.get('common_brain')},
+                state={'mrisubject': ctx.get('common_brain')},
             ))
         elif ctx.get('src').startswith('vol'):
             deps.append(Dependency('bem-input'))
@@ -338,7 +338,7 @@ class SourceMorphDerivative(Derivative[mne.SourceMorph]):
             Dependency(
                 'src',
                 label='src-to',
-                state=lambda c: {'mrisubject': c.get('common_brain')},
+                state={'mrisubject': ctx.get('common_brain')},
             ),
         )
 
@@ -398,9 +398,9 @@ class FwdDerivative(Derivative[mne.Forward]):
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         return (
             Dependency(
-                'raw',
-                state=lambda c: {'raw': 'raw'},
-                options=lambda c: {'add_bads': False},
+                raw_node_name('raw'),
+                state={'raw': 'raw'},
+                options={'add_bads': False},
             ),
             Dependency('trans-input'),
             Dependency('src'),
@@ -641,16 +641,16 @@ class EpochsStcDerivative(Derivative[Dataset]):
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         deps = [
-            Dependency(EPOCHS_DATA, options=lambda c: {
-                'baseline': c.option('baseline'),
-                'ndvar': False if c.option('keep_epochs', False) in (True, False) else 'both',
-                'reject': c.option('reject', True),
-                'cat': c.option('cat'),
-                'samplingrate': c.option('samplingrate'),
-                'decim': c.option('decim'),
-                'pad': c.option('pad', 0),
-                'data_raw': c.option('data_raw', False),
-                'vardef': c.option('vardef'),
+            Dependency(EPOCHS_DATA, options={
+                'baseline': ctx.option('baseline'),
+                'ndvar': False if ctx.option('keep_epochs', False) in (True, False) else 'both',
+                'reject': ctx.option('reject', True),
+                'cat': ctx.option('cat'),
+                'samplingrate': ctx.option('samplingrate'),
+                'decim': ctx.option('decim'),
+                'pad': ctx.option('pad', 0),
+                'data_raw': ctx.option('data_raw', False),
+                'vardef': ctx.option('vardef'),
                 'data': 'sensor',
                 'add_bads': True,
             }),
@@ -659,7 +659,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
         mask = ctx.option('mask', False)
         if mask:
             parc = ctx.get('parc') if mask is True else mask
-            deps.append(Dependency('annot', state=lambda c, parc_name=parc: {'parc': parc_name}))
+            deps.append(Dependency('annot', state={'parc': parc}))
         if ctx.option('morph', False):
             deps.append(Dependency('source-morph'))
         return tuple(deps)
@@ -787,14 +787,14 @@ class EvokedStcDerivative(Derivative[Dataset]):
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         deps = [
-            Dependency(EVOKED_DATA, options=lambda c: {
-                'baseline': c.option('baseline'),
-                'ndvar': 2 if c.option('keep_evoked', False) and c.option('ndvar', True) else False,
-                'cat': c.option('cat'),
-                'samplingrate': c.option('samplingrate'),
-                'decim': c.option('decim'),
-                'data_raw': c.option('data_raw', False),
-                'vardef': c.option('vardef'),
+            Dependency(EVOKED_DATA, options={
+                'baseline': ctx.option('baseline'),
+                'ndvar': 2 if ctx.option('keep_evoked', False) and ctx.option('ndvar', True) else False,
+                'cat': ctx.option('cat'),
+                'samplingrate': ctx.option('samplingrate'),
+                'decim': ctx.option('decim'),
+                'data_raw': ctx.option('data_raw', False),
+                'vardef': ctx.option('vardef'),
                 'data': 'sensor',
             }),
             Dependency('inv'),
@@ -802,7 +802,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
         mask = ctx.option('mask', False)
         if mask:
             parc = ctx.get('parc') if mask is True else mask
-            deps.append(Dependency('annot', state=lambda c, parc_name=parc: {'parc': parc_name}))
+            deps.append(Dependency('annot', state={'parc': parc}))
         if ctx.option('morph', False):
             deps.append(Dependency('source-morph'))
         return tuple(deps)

@@ -272,8 +272,8 @@ class RawMEEGInput(Input[mne.io.BaseRaw]):
             return (
                 Dependency(
                     raw_bad_channels_input_name(self.raw_name),
-                    state=lambda c, raw_name=self.raw_name: {'raw': raw_name},
-                    options=lambda c: {'noise': c.option('noise', False)},
+                    state={'raw': self.raw_name},
+                    options={'noise': ctx.option('noise', False)},
                 ),
             )
         return ()
@@ -447,11 +447,11 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
             return (
                 Dependency(
                     raw_meeg_input_name(self.raw_name),
-                    state=lambda c, raw_name=self.raw_name: {'raw': raw_name},
-                    options=lambda c: {
-                        'add_bads': c.option('add_bads', True),
-                        'preload': c.option('preload', False),
-                        'noise': c.option('noise', False),
+                    state={'raw': self.raw_name},
+                    options={
+                        'add_bads': ctx.option('add_bads', True),
+                        'preload': ctx.option('preload', False),
+                        'noise': ctx.option('noise', False),
                     },
                 ),
             )
@@ -459,14 +459,14 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         deps = [
             Dependency(
                 raw_node_name(self.pipe._source_name),
-                state=lambda c, raw_name=self.pipe._source_name: {'raw': raw_name},
-                options=lambda c: {'add_bads': True, 'preload': False, 'noise': c.option('noise', False)},
+                state={'raw': self.pipe._source_name},
+                options={'add_bads': True, 'preload': False, 'noise': ctx.option('noise', False)},
             ),
         ]
         if isinstance(self.pipe, RawICA):
-            deps.append(Dependency(ica_input_name(self.raw_name), state=lambda c, raw_name=self.raw_name: {'raw': raw_name}))
+            deps.append(Dependency(ica_input_name(self.raw_name), state={'raw': self.raw_name}))
         elif isinstance(self.pipe, RawApplyICA):
-            deps.append(Dependency(ica_input_name(self.pipe._ica_source), state=lambda c, raw_name=self.pipe._ica_source: {'raw': raw_name}))
+            deps.append(Dependency(ica_input_name(self.pipe._ica_source), state={'raw': self.pipe._ica_source}))
         return tuple(deps)
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
@@ -564,8 +564,8 @@ def raw_data_dependency(
     return Dependency(
         raw_node_name(raw),
         label=label,
-        state=lambda c, raw_name=raw: {'raw': raw_name},
-        options=lambda c, noise_=noise, add_bads_=add_bads: {'add_bads': add_bads_, 'preload': False, 'noise': noise_},
+        state={'raw': raw},
+        options={'add_bads': add_bads, 'preload': False, 'noise': noise},
     )
 
 
@@ -1196,14 +1196,14 @@ class RawICA(CachedRawPipe):
             deps[-1] = Dependency(
                 deps[-1].name,
                 label=deps[-1].label,
-                state=lambda c, state_=state: dict(state_),
+                state=dict(state),
                 options=deps[-1].options,
             )
             deps.append(
                 Dependency(
                     raw_bad_channels_input_name(source_raw),
                     label=f'{stem}:bads',
-                    state=lambda c, state_=state: dict(state_),
+                    state=dict(state),
                 )
             )
         return tuple(deps)

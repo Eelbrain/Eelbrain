@@ -105,7 +105,7 @@ class CovDerivative(Derivative[mne.Covariance]):
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         if isinstance(self.cov, EpochCovariance):
-            return (Dependency(EPOCHS_DATA, options=lambda c: {
+            return (Dependency(EPOCHS_DATA, options={
                 'baseline': True,
                 'ndvar': False,
                 'add_bads': True,

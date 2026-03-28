@@ -39,7 +39,6 @@ import hashlib
 import json
 from pathlib import Path
 from typing import Any, Generic, TypeVar
-from collections.abc import Callable
 
 import mne
 
@@ -154,12 +153,11 @@ class Dependency:
         in one dependency set with different state or options, so each edge
         has a stable distinct name in the dependency manifest.
     state
-        Optional callable that derives state overrides for this dependency from
-        the current parent :class:`DerivativeContext`. The returned mapping is
-        merged on top of the parent state before resolving the dependency.
+        Optional state updates for this dependency. The mapping is merged on
+        top of the parent state before resolving the dependency.
     options
-        Optional callable that derives option overrides for this dependency
-        from the current parent :class:`DerivativeContext`. The returned
+        Optional complete options mapping for this dependency. When omitted,
+        the dependency inherits the parent load options. When provided, this
         mapping replaces the parent load options for this dependency request.
 
     Notes
@@ -171,8 +169,8 @@ class Dependency:
 
     name: str
     label: str | None = None
-    state: Callable[[DerivativeContext], dict[str, Any]] | None = None
-    options: Callable[[DerivativeContext], dict[str, Any]] | None = None
+    state: dict[str, Any] | None = None
+    options: dict[str, Any] | None = None
 
 
 class DependencyNode(Generic[T]):
@@ -675,13 +673,13 @@ class DerivativeRegistry:
     ) -> dict[str, Any]:
         out = {}
         for dep in node.dependencies(ctx):
-            options = ctx.options if dep.options is None else dep.options(ctx)
+            options = ctx.options if dep.options is None else dep.options
             key = dep.label or dep.name
             if key in out:
                 raise RuntimeError(f"Duplicate dependency label {key!r} for node {node.name!r}")
             handle = self.resolve(
                 dep.name,
-                state=self._resolve_state(ctx.state, **(dep.state(ctx) if dep.state else {})),
+                state=self._resolve_state(ctx.state, **(dep.state or {})),
                 options=options,
             )
             out[key] = handle.describe_dependency(cache)

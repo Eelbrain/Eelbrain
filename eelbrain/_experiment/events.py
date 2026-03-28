@@ -556,10 +556,14 @@ class EpochsDerivative(Derivative[Dataset]):
         epoch = self.epochs[ctx.get('epoch')]
         if isinstance(epoch, EpochCollection):
             return tuple(
-                Dependency(EPOCHS_DATA, state=lambda c, sub_epoch=sub_epoch: {'epoch': sub_epoch}, options=lambda c: {**c.options, 'data_raw': c.option('data_raw', False)})
+                Dependency(
+                    EPOCHS_DATA,
+                    state={'epoch': sub_epoch},
+                    options={**ctx.options, 'data_raw': ctx.option('data_raw', False)},
+                )
                 for sub_epoch in epoch.collect
             )
-        return (Dependency(SELECTED_EVENTS, options=lambda c: self._selected_events_options(c)),)
+        return (Dependency(SELECTED_EVENTS, options=self._selected_events_options(ctx)),)
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
         epoch = self.epochs[ctx.get('epoch')]
@@ -730,13 +734,13 @@ class EvokedDerivative(Derivative[Dataset]):
         return path
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
-        return (Dependency(EPOCHS_DATA, options=lambda c: {
-            'baseline': True if self.epochs[c.get('epoch')].post_baseline_trigger_shift else False,
+        return (Dependency(EPOCHS_DATA, options={
+            'baseline': True if self.epochs[ctx.get('epoch')].post_baseline_trigger_shift else False,
             'ndvar': False,
-            'samplingrate': c.option('samplingrate'),
-            'decim': c.option('decim'),
+            'samplingrate': ctx.option('samplingrate'),
+            'decim': ctx.option('decim'),
             'data_raw': False,
-            'vardef': c.option('vardef'),
+            'vardef': ctx.option('vardef'),
             'interpolate_bads': 'keep',
             'add_bads': True,
             'reject': True,
@@ -834,10 +838,10 @@ class EvokedDataDerivative(Derivative[Dataset]):
         return path
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
-        return (Dependency('evoked', options=lambda c: {
-            'samplingrate': c.option('samplingrate'),
-            'decim': c.option('decim'),
-            'vardef': c.option('vardef'),
+        return (Dependency('evoked', options={
+            'samplingrate': ctx.option('samplingrate'),
+            'decim': ctx.option('decim'),
+            'vardef': ctx.option('vardef'),
         }),)
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:

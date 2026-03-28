@@ -560,16 +560,16 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
         deps = []
         base = getattr(parc_def, 'base', None)
         if base:
-            deps.append(Dependency('annot', label='base', state=lambda c, base_=base: {'parc': base_}))
+            deps.append(Dependency('annot', label='base', state={'parc': base}))
         mask = getattr(parc_def, 'mask', None)
         if mask:
-            deps.append(Dependency('annot', label='mask', state=lambda c, mask_=mask: {'parc': mask_}))
+            deps.append(Dependency('annot', label='mask', state={'parc': mask}))
 
         mrisubject = ctx.get('mrisubject')
         common_brain = ctx.get('common_brain')
         fake_mri = is_fake_mri(mri_dir(ctx.state))
         if mrisubject != common_brain and (parc_def.morph_from_fsaverage or fake_mri):
-            deps.append(Dependency('annot', label='common-brain', state=lambda c, common_brain_=common_brain: {'mrisubject': common_brain_}))
+            deps.append(Dependency('annot', label='common-brain', state={'mrisubject': common_brain}))
         return tuple(deps)
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
