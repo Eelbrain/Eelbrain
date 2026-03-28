@@ -1,12 +1,12 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 from itertools import product
 
-from eelbrain._experiment import TreeModel
+from eelbrain._experiment import StateModel
 
 
-class Tree(TreeModel):
+class State(StateModel):
     def __init__(self):
-        TreeModel.__init__(self)
+        StateModel.__init__(self)
         self._register_field('afield', ('a1', 'a2', 'a3'))
         self._register_field('field2', ('', 'value'), allow_empty=True)
         self._register_constant('apath', '/{afield}/')
@@ -15,7 +15,7 @@ class Tree(TreeModel):
 
 def test_tree():
     "Test simple formatting in the tree"
-    tree = Tree()
+    tree = State()
     assert tree.get('apath') == '/a1/'
     vs = []
     for v in tree.iter('afield'):
@@ -37,12 +37,11 @@ def test_tree():
     # iterate
     assert list(tree.iter('afield')) == ['a1', 'a2', 'a3']
     assert list(tree.iter(('afield', 'field2'))) == [('a1', ''), ('a1', 'value'), ('a2', ''), ('a2', 'value'), ('a3', ''), ('a3', 'value')]
-    assert tree.find_keys('apath') == ['afield']
 
 
-class SlaveTree(TreeModel):
+class DependentState(StateModel):
     def __init__(self, a_seq, b_seq, c_seq):
-        TreeModel.__init__(self)
+        StateModel.__init__(self)
         self._register_field('a', a_seq)
         self._register_field('b', b_seq, allow_empty=True)
         self._register_field('c', c_seq)
@@ -71,7 +70,7 @@ def test_slave_tree():
     a_seq = ['a1', 'a2', 'a3']
     b_seq = ['b1', 'b2', '']
     c_seq = ['c1', 'c2']
-    tree = SlaveTree(a_seq, b_seq, c_seq)
+    tree = DependentState(a_seq, b_seq, c_seq)
 
     # set
     assert tree.get('a') == 'a1'
@@ -92,10 +91,6 @@ def test_slave_tree():
     tree.set(c='c1')
     assert tree.get('s_a') == 'a1'
     assert tree.get('s_b') == 'b1'
-
-    # finde terminal keys
-    assert tree.find_keys('c') == ['c']
-    assert tree.find_keys('path') == ['a', 'b', 's_a', 's_b']
 
     # .iter()
     assert list(tree.iter('a')) == a_seq

@@ -44,7 +44,7 @@ from .events import (
     SelectedEventsDerivative, load_evoked_request,
 )
 from .exceptions import FileMissingError
-from .experiment import TreeModel
+from .experiment import StateModel
 from .groups import assemble_groups
 from .pathing import (
     cache_dir, cov_info_file_path, deriv_dir, epoch_basename, fwd_file_path,
@@ -117,7 +117,7 @@ def guess_y(ds, default=None):
     raise RuntimeError(f"Could not find data in {ds}")
 
 
-class Pipeline(TreeModel):
+class Pipeline(StateModel):
     """Analyze an MEG or EEG experiment
 
     Parameters
@@ -334,7 +334,7 @@ class Pipeline(TreeModel):
             else:
                 raise DefinitionError(f"Can't infer datatype. No MEG or EEG data found in {root}.")
         self._bids_path = BIDSPath(root=root)
-        TreeModel.__init__(self)
+        StateModel.__init__(self)
         self._register_field('root', eval_handler=self._eval_root)
         self.set(root=root)
 
@@ -488,9 +488,6 @@ class Pipeline(TreeModel):
         # register experimental features
         self._subclass_init()
 
-        # Check that the format model is complete
-        self._find_missing_fields()
-
         # set initial values
         self.set(**state)
         self._store_state()
@@ -537,7 +534,7 @@ class Pipeline(TreeModel):
             #             raise FileDeficientError(f"Raw file {self._bids_path.basename} has dev_head_t that is different from other files.")
 
     def _restore_state(self, state=-1, discard_tip=True):
-        TreeModel._restore_state(self, state=state, discard_tip=discard_tip)
+        StateModel._restore_state(self, state=state, discard_tip=discard_tip)
         self._update_bids_path()
 
     def _subclass_init(self):
@@ -740,7 +737,7 @@ class Pipeline(TreeModel):
             vmatch = False
         if mkdir:
             raise TypeError("Pipeline.get(..., mkdir=True) is no longer supported; create directories at the explicit path site")
-        return TreeModel.get(self, temp, vmatch=vmatch, **state)
+        return StateModel.get(self, temp, vmatch=vmatch, **state)
 
     def _process_subject_arg(self, subjects, kwargs):
         """Process subject arg for methods that work on groups and subjects
@@ -806,7 +803,7 @@ class Pipeline(TreeModel):
             exclude = (exclude,)
 
         if field == 'mrisubject':
-            subjects = TreeModel.get_field_values(self, 'subject')
+            subjects = StateModel.get_field_values(self, 'subject')
             mri_subjects = self._mri_subjects[self.get('mri')]
             mrisubjects = sorted(mri_subjects[s] for s in subjects)
             if exclude:
@@ -817,7 +814,7 @@ class Pipeline(TreeModel):
             mrisubjects = ['sub-' + s for s in mrisubjects if (s != common_brain and not s.startswith('sub-'))]
             return mrisubjects
         else:
-            return TreeModel.get_field_values(self, field, exclude)
+            return StateModel.get_field_values(self, field, exclude)
 
     def iter(self, fields='subject', exclude=None, values=None, progress_bar=None, **state):
         """
@@ -838,7 +835,7 @@ class Pipeline(TreeModel):
         ...
             State parameters.
         """
-        return TreeModel.iter(self, fields, exclude, values, progress_bar, **state)
+        return StateModel.iter(self, fields, exclude, values, progress_bar, **state)
 
     def iter_range(self, start=None, stop=None, field='subject'):
         """Iterate through a range on a field with ordered values.
@@ -3767,9 +3764,9 @@ class Pipeline(TreeModel):
                 else:
                     state['subject'] = subject
                     subject = None
-        TreeModel.set(self, match, **state)
+        StateModel.set(self, match, **state)
         if subject is not None:
-            TreeModel.set(self, match, subject=subject)
+            StateModel.set(self, match, subject=subject)
         self._update_bids_path()
 
     def _post_set_group(self, _, group):

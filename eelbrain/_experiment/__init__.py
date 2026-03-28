@@ -101,6 +101,6 @@ analysis behavior in an extensible way. They are supplied by the user through
 :class:`Pipeline`.
 """
 
-from .experiment import TreeModel
+from .experiment import StateModel
 from .mne_experiment import Pipeline
 from .test_def import ROITestResult, ROI2StageResult

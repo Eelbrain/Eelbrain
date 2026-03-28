@@ -4,7 +4,6 @@ import difflib
 from functools import cached_property, reduce
 from itertools import chain, product
 import operator
-import re
 from collections.abc import Callable, Sequence
 import traceback
 
@@ -16,30 +15,6 @@ from .._utils import as_sequence
 from .._utils.com import Notifier, NotNotifier
 from .._utils.notebooks import tqdm
 from .definitions import check_names
-
-
-def _etree_expand(node, state):
-    for tk, tv in node.items():
-        if tk == '.':
-            continue
-
-        for k, v in state.items():
-            name = '{%s}' % tk
-            if str(v).startswith(name):
-                tv[k] = {'.': v.replace(name, '')}
-        if len(tv) > 1:
-            _etree_expand(tv, state)
-
-
-def _etree_node_repr(node, name, indent=0):
-    head = ' ' * indent
-    out = [(name, head + node['.'])]
-    for k, v in node.items():
-        if k == '.':
-            continue
-
-        out.extend(_etree_node_repr(v, k, indent=indent + 3))
-    return out
 
 
 class LayeredDict(dict):
@@ -111,9 +86,9 @@ class _TempStateController:
         self.experiment._restore_state()
 
 
-class TreeModel:
+class StateModel:
     """
-    A hierarchical collection of format strings and field values
+    A state model with registered fields, constants, and dependent values.
 
     Notes
     -----
@@ -122,7 +97,6 @@ class TreeModel:
     """
     owner = None  # email address as string (for notification)
     _auto_debug = False  # in notification block
-    _fmt_pattern = re.compile(r'\{([\w-]+)}')
     defaults = {}
     _repr_args = ()
 
@@ -197,23 +171,6 @@ class TreeModel:
         import scipy
         out.append(f"Eelbrain {__version__}\nmne-python {mne.__version__}\nSciPy {scipy.__version__}\nNumPy {np.__version__}")
         return out
-
-    def _find_missing_fields(self):
-        """Check that all field names occurring in templates are valid entries
-
-        Raises
-        ------
-        KeyError
-            If any field names occurring in templates are not registered fields.
-        """
-        # find field names occurring in field values but not as fields
-        missing = set()
-        for temp in self._fields.values():
-            for field in self._fmt_pattern.findall(temp):
-                if field not in self._fields:
-                    missing.add(field)
-        if missing:
-            raise KeyError(f"The following fields occur in templates but are undefined: {', '.join(sorted(missing))}")
 
     def _register_constant(self, key, value):
         value = self._defaults.get(key, value)
@@ -337,43 +294,8 @@ class TreeModel:
         self._slave_handlers[key] = handler
         self._fields[key] = handler(self._fields)
 
-    def find_keys(self, temp, root=True):
-        """Find all terminal field names that are relevant for a template.
-
-        Parameters
-        ----------
-        temp : str
-            Template (or field name) for which to find terminal field names.
-        root : bool
-            Include "root" if present (default True).
-
-        Returns
-        -------
-        keys : list
-            All terminal field names that are relevant for formatting ``temp``.
-        """
-        if temp in self._terminal_fields:
-            return [temp]
-
-        temp = self._fields.get(temp, temp)
-        temporary_keys = self._fmt_pattern.findall(temp)
-
-        keys = []
-        while temporary_keys:
-            key = temporary_keys.pop(0)
-            if key == 'root':
-                if root:
-                    keys.append('root')
-            elif key in self._terminal_fields:
-                keys.append(key)
-            else:
-                keys.extend(self.find_keys(key, root))
-
-        # remove duplicates
-        return list(dict.fromkeys(keys))
-
     def format(self, string: str, vmatch: bool = True, **kwargs) -> str:
-        """Format a string (i.e., replace any '{xxx}' fields with their values)
+        """Format a string with the current state values.
 
         Parameters
         ----------
@@ -387,17 +309,18 @@ class TreeModel:
         Returns
         -------
         str
-            The template temp formatted with current state values.
+            ``string`` formatted with current state values.
         """
         self.set(match=vmatch, **kwargs)
+        return string.format(**self._fields)
 
-        while self._fmt_pattern.search(string):
-            string = string.format(**self._fields)
-
-        return string
-
-    def get(self, temp, **state):
-        return self.format('{%s}' % temp, **state)
+    def get(self, key, vmatch: bool = True, **state):
+        if state:
+            self.set(match=vmatch, **state)
+        value = self._fields[key]
+        if isinstance(value, str) and '{' in value:
+            return value.format(**self._fields)
+        return value
 
     def get_field_values(self, field, exclude=()):
         """Find values for a field taking into account exclusion
@@ -445,13 +368,15 @@ class TreeModel:
         else:
             yield_str = False
 
-        # find actual fields to iterate over:
         iter_fields = []
         for field in fields:
-            for terminal_field in self.find_keys(field):
-                if (terminal_field in constants) or (terminal_field in iter_fields) or (terminal_field not in self._field_values):
-                    continue
-                iter_fields.append(terminal_field)
+            if field in constants or field in iter_fields:
+                continue
+            if field not in self._fields:
+                raise ValueError(f"{field!r}: not an iterable field")
+            if field not in self._field_values:
+                continue
+            iter_fields.append(field)
 
         # check values and exclude
         if values:
@@ -630,14 +555,12 @@ class TreeModel:
             print(table)
 
     def show_state(self, temp=None, empty=False, hide=()):
-        """List all top-level fields and their values
-
-        (Top-level fields are fields whose values do not contain templates)
+        """List field values.
 
         Parameters
         ----------
-        temp : None | str
-            Only show variables relevant to this template.
+        temp : None | str | sequence of str
+            Only show the specified field or fields.
         empty : bool
             Show empty variables (items whose value is the empty string '').
         hide : collection of str
@@ -646,7 +569,7 @@ class TreeModel:
         Returns
         -------
         state : Table
-            Table of (relevant) variables and their values.
+            Table of field values.
         """
         table = fmtxt.Table('lll')
         table.cells('Key', '*', 'Value')
@@ -655,8 +578,10 @@ class TreeModel:
 
         if temp is None:
             keys = chain(self._repr_kwargs, self._repr_kwargs_optional)
+        elif isinstance(temp, str):
+            keys = (temp,)
         else:
-            keys = self.find_keys(temp)
+            keys = temp
 
         for k in sorted(keys):
             if k in hide:
@@ -672,40 +597,6 @@ class TreeModel:
                 table.cells(k, mod, repr(v))
 
         return table
-
-    def show_tree(self, root='root', fields=None):
-        """
-        Print a tree of the filehierarchy implicit in the templates
-
-        Parameters
-        ----------
-        root : str
-            Name of the root template (e.g., 'besa-root').
-        fields : list of str
-            Which fields to include in the tree (default is all).
-        """
-        if fields is None:
-            fields = self._fields
-        else:
-            # find all implied fields
-            new_fields = set(fields)
-            fields = {}
-            while new_fields:
-                k = new_fields.pop()
-                fields[k] = v = self._fields[k]
-                new_fields.update([f for f in self._fmt_pattern.findall(v) if f not in fields])
-
-        tree = {'.': self.get(root)}
-        root_temp = '{%s}' % root
-        for k, v in fields.items():
-            if str(v).startswith(root_temp):
-                tree[k] = {'.': v.replace(root_temp, '')}
-        _etree_expand(tree, fields)
-        nodes = _etree_node_repr(tree, root)
-        name_len = max(len(n) for n, _ in nodes)
-        path_len = max(len(p) for _, p in nodes)
-        pad = ' ' * (80 - name_len - path_len)
-        print('\n'.join(n.ljust(name_len) + pad + p.ljust(path_len) for n, p in nodes))
 
     def _store_state(self):
         """Store the current state
