@@ -36,21 +36,25 @@ def _test_result_manifest_path(
         smooth=None,
         samplingrate=None,
 ) -> Path:
-    handle = e._resolve_derivative('test-result', options={
-        'data': _TestDims.coerce(data, morph=True),
-        'samples': samples,
-        'test': test,
-        'tstart': tstart,
-        'tstop': tstop,
-        'pmin': pmin,
-        'parc': parc,
-        'mask': mask,
-        'baseline': baseline,
-        'src_baseline': src_baseline,
-        'smooth': smooth,
-        'samplingrate': samplingrate,
-        '_allow_protected_overwrite': False,
-    })
+    handle = e._derivatives.resolve(
+        'test-result',
+        state=e._derivative_state(),
+        options={
+            'data': _TestDims.coerce(data, morph=True),
+            'samples': samples,
+            'test': test,
+            'tstart': tstart,
+            'tstop': tstop,
+            'pmin': pmin,
+            'parc': parc,
+            'mask': mask,
+            'baseline': baseline,
+            'src_baseline': src_baseline,
+            'smooth': smooth,
+            'samplingrate': samplingrate,
+            '_allow_protected_overwrite': False,
+        },
+    )
     return e._derivatives.manifest_path(handle.artifact_path)
 
 
@@ -94,25 +98,25 @@ def test_sample():
     with e._temporary_state:
         raw = e.load_raw(raw='1-40')
         assert isinstance(raw, mne.io.BaseRaw)
-        assert exists(e._resolve_derivative('raw', state={'raw': '1-40'}).manifest_path)
+        assert exists(e._derivatives.resolve('raw', state=e._derivative_state({'raw': '1-40'})).manifest_path)
         e.set(cov='emptyroom', raw='tsss')
         cov = e.load_cov()
         assert isinstance(cov, mne.Covariance)
-        assert exists(e._resolve_derivative('cov:emptyroom').manifest_path)
+        assert exists(e._derivatives.resolve('cov:emptyroom', state=e._derivative_state()).manifest_path)
         assert e.load_bad_channels(noise=True) == []
         e.set(cov='emptyroom', raw='1-40')
         cov = e.load_cov()
         assert isinstance(cov, mne.Covariance)
-        assert exists(e._resolve_derivative('cov:emptyroom').manifest_path)
+        assert exists(e._derivatives.resolve('cov:emptyroom', state=e._derivative_state()).manifest_path)
         assert e.load_bad_channels(noise=True) == []
         e.load_cov()
 
     # evoked cache invalidated by change in bads
     e.set('R0001', rej='', epoch='target')
     e.load_events()
-    assert exists(e._resolve_derivative('events').manifest_path)
+    assert exists(e._derivatives.resolve('events', state=e._derivative_state()).manifest_path)
     ds = e.load_evoked(ndvar=False)
-    assert exists(e._resolve_derivative('evoked').manifest_path)
+    assert exists(e._derivatives.resolve('evoked', state=e._derivative_state()).manifest_path)
     assert ds[0, 'evoked'].info['bads'] == []
     e.make_bad_channels(['MEG 0331'])
     ds = e.load_evoked(ndvar=False)
@@ -360,7 +364,7 @@ def test_sample():
     # ----
     labels = e.load_annot(parc='ac', mrisubject='fsaverage')
     assert len(labels) == 4
-    annot_handle = e._resolve_derivative('annot', state={'mrisubject': 'fsaverage', 'parc': 'ac'})
+    annot_handle = e._derivatives.resolve('annot', state=e._derivative_state({'mrisubject': 'fsaverage', 'parc': 'ac'}))
     assert exists(annot_handle.manifest_path)
     # change parc definition
 
@@ -388,13 +392,13 @@ def test_sample_source():
     e.set(src='ico-4', rej='', epoch='auditory')
     morph = e.load_source_morph(subject='R0000')
     assert isinstance(morph, mne.SourceMorph)
-    assert exists(e._resolve_derivative('source-morph', state={'subject': 'R0000'}).manifest_path)
+    assert exists(e._derivatives.resolve('source-morph', state=e._derivative_state({'subject': 'R0000'})).manifest_path)
     # These two tests are only identical if the evoked has been cached before the first test is loaded
     resp = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, parc='ac', make=True)
     resm = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, mask='ac', make=True)
-    assert exists(e._resolve_derivative('src').manifest_path)
-    assert exists(e._resolve_derivative('fwd').manifest_path)
-    assert exists(e._resolve_derivative('inv').manifest_path)
+    assert exists(e._derivatives.resolve('src', state=e._derivative_state()).manifest_path)
+    assert exists(e._derivatives.resolve('fwd', state=e._derivative_state()).manifest_path)
+    assert exists(e._derivatives.resolve('inv', state=e._derivative_state()).manifest_path)
     with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=100, data='source', parc='ac')) as fid:
         source_manifest_data = json.load(fid)
     assert source_manifest_data['fingerprint']['definitions']['parc']['base'] == 'aparc'
@@ -523,7 +527,7 @@ def test_evoked_cache_reuse():
     e.set(subject='R0000', epoch='target1', rej='')
 
     _ = e.load_evoked(ndvar=False)
-    handle = e._resolve_derivative('evoked')
+    handle = e._derivatives.resolve('evoked', state=e._derivative_state())
     evoked_path = handle.artifact_path
     manifest_path = handle.manifest_path
     assert manifest_path.exists()

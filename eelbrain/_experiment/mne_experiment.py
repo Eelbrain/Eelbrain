@@ -691,7 +691,7 @@ class Pipeline(TreeModel):
             merged_options.update(options)
         if extra_options:
             merged_options.update(extra_options)
-        return self._resolve_derivative(name, state=state, options=merged_options).load(cache)
+        return self._derivatives.resolve(name, state=self._derivative_state(state), options=merged_options).load(cache)
 
     def _derivative_state(
             self,
@@ -710,19 +710,6 @@ class Pipeline(TreeModel):
             out['root'] = self.get('root')
             out['common_brain'] = self.get('common_brain')
             return out
-
-    def _resolve_derivative(
-            self,
-            name: str,
-            state: dict[str, Any] | None = None,
-            options: dict[str, Any] | None = None,
-            **extra_state,
-    ):
-        return self._derivatives.resolve(
-            name,
-            state=self._derivative_state(state, **extra_state),
-            options=options,
-        )
 
     def __iter__(self):
         "Iterate state through subjects and yield each subject name."
@@ -1076,7 +1063,7 @@ class Pipeline(TreeModel):
         ...
             State parameters.
         """
-        return self._resolve_derivative(EDF_INPUT, state=kwargs).load()
+        return self._derivatives.resolve(EDF_INPUT, state=self._derivative_state(kwargs)).load()
 
     @suppress_mne_warning
     def load_epochs(
@@ -1814,7 +1801,7 @@ class Pipeline(TreeModel):
         ICA object for the current :ref:`state-raw` setting.
         """
         pipe = self._raw.ica_pipe(self.get('raw', **state))
-        return self._resolve_derivative(ICA_INPUT, state={**state, 'raw': pipe.name}).load()
+        return self._derivatives.resolve(ICA_INPUT, state=self._derivative_state({**state, 'raw': pipe.name})).load()
 
     def load_inv(
             self,
@@ -2343,7 +2330,7 @@ class Pipeline(TreeModel):
             'samplingrate': samplingrate,
             '_allow_protected_overwrite': make,
         }
-        handle = self._resolve_derivative('test-result', options=options)
+        handle = self._derivatives.resolve('test-result', state=self._derivative_state(), options=options)
         return handle.node.load_test(handle.ctx, return_data, make)
 
     def make_annot(self, **state):
@@ -2587,7 +2574,7 @@ class Pipeline(TreeModel):
 
         """
         pipe = self._raw.ica_pipe(self.get('raw', **state))
-        ctx = self._resolve_derivative(ICA_INPUT, state={**state, 'raw': pipe.name}).ctx
+        ctx = self._derivatives.resolve(ICA_INPUT, state=self._derivative_state({**state, 'raw': pipe.name})).ctx
         try:
             self._raw.ica_input.materialize(ctx)
         except ProtectedArtifactError as error:
@@ -2679,7 +2666,7 @@ class Pipeline(TreeModel):
             'time_dilation': time_dilation,
             '_allow_protected_overwrite': True,
         }
-        if not redo and self._resolve_derivative('movie', options=options).is_valid():
+        if not redo and self._derivatives.resolve('movie', state=self._derivative_state(), options=options).is_valid():
             return
         self._load_derivative('movie', options=options, _allow_protected_overwrite=True)
 
@@ -2801,7 +2788,7 @@ class Pipeline(TreeModel):
                 'cluster_state': state,
                 '_allow_protected_overwrite': True,
             }
-            if not redo and self._resolve_derivative('movie', options=options).is_valid():
+            if not redo and self._derivatives.resolve('movie', state=self._derivative_state(), options=options).is_valid():
                 return
         self._load_derivative('movie', options=options, _allow_protected_overwrite=True)
 
@@ -2823,7 +2810,7 @@ class Pipeline(TreeModel):
         ...
         """
         ds = self.load_evoked(ndvar=False, **kwargs)
-        state = self._resolve_derivative('evoked-ds', state=kwargs).ctx.state
+        state = self._derivatives.resolve('evoked-ds', state=self._derivative_state(kwargs)).ctx.state
         root = deriv_dir(state) / 'mrat' / state['raw'] / f"{epoch_basename(state)}_epoch-{state['epoch']}_rej-{state['rej']}_model-{state['model']}_count-{state['equalize_evoked_count']}"
 
         # create fiffs
@@ -2855,7 +2842,11 @@ class Pipeline(TreeModel):
         ...
         """
         ds = self.load_evoked_stc(morph=True, ndvar=False, **kwargs)
-        state = self._resolve_derivative('evoked-stc', state=kwargs, options={'morph': True, 'ndvar': False}).ctx.state
+        state = self._derivatives.resolve(
+            'evoked-stc',
+            state=self._derivative_state(kwargs),
+            options={'morph': True, 'ndvar': False},
+        ).ctx.state
         kind = '_'.join((state['raw'], state['cov'], state['mri'], state['src'], state['inv']))
         root = deriv_dir(state) / 'mrat' / kind / f"{epoch_basename(state)}_epoch-{state['epoch']}_rej-{state['rej']}_model-{state['model']}_count-{state['equalize_evoked_count']}"
 
@@ -3168,7 +3159,7 @@ class Pipeline(TreeModel):
             'include': include,
             '_allow_protected_overwrite': True,
         }
-        if not redo and self._resolve_derivative('source-report', options=options).is_valid():
+        if not redo and self._derivatives.resolve('source-report', state=self._derivative_state(), options=options).is_valid():
             return
         self._load_derivative('source-report', options=options, _allow_protected_overwrite=True)
 
@@ -3235,7 +3226,7 @@ class Pipeline(TreeModel):
             'parc': parc,
             '_allow_protected_overwrite': True,
         }
-        if not redo and self._resolve_derivative('roi-report', options=options).is_valid():
+        if not redo and self._derivatives.resolve('roi-report', state=self._derivative_state(), options=options).is_valid():
             return
         self._load_derivative('roi-report', options=options, _allow_protected_overwrite=True)
 
