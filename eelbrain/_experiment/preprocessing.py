@@ -213,6 +213,18 @@ def raw_state(
 
 
 class RawBadChannelsInput(Input[list[str]]):
+    """Access to bad channel definitions from channels sidecar files
+
+    There is one instance for every :class:`RawPipe` in the graph.
+    The instance's load method delegates to the RawPipe's load method,
+    which in turn traverses the :class:`RawPipe` tree.
+
+    Effectively, bad channels come from the :class:`RawSource`,
+    but some :class:`RawPipe` like ICA may modify them along the way.
+
+    In additiom to the channels file, bad channels can also be embedded in the
+    raw FIFF file. :class:`RawBadChannelsInput` is not aware of those.
+    """
     def __init__(
             self,
             raw_name: str,
@@ -657,7 +669,7 @@ class RawSource(RawPipe):
             elif 'name' not in channels_df.columns:
                 raise RuntimeError(f"channels.tsv file at {bads_path} is missing required column 'name'. Please regenerate the file.")
             return channels_df.query('status == "bad"')['name'].tolist()
-        # create channels file
+        # Create a channels file if none exists
         LOG.info("No channels.tsv found for %s, creating an empty one.", path.fpath)
         makedirs(Path(bads_path).parent, exist_ok=True)
         if exists(path.fpath):
