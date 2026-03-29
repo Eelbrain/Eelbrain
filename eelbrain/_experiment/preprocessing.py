@@ -69,6 +69,7 @@ LOG = logging.getLogger(__name__)
 
 class RawPipe:
     def _can_link(self, pipes: dict[str, RawPipe]) -> bool:
+        "Determine whether this pipe can be connected into the graph in ``pipes``"
         raise NotImplementedError
 
     def _as_dict(
@@ -1643,26 +1644,25 @@ class RawReReference(CachedRawPipe):
                 state[key] = sequence_arg(key, state[key])
 
 
-def assemble_pipeline(
+def validate_raw_graph(
         raw: dict[str, RawPipe],
         tasks: tuple[str],
-) -> dict[str, RawPipe]:
-    "Assemble preprocessing pipeline form a definition in a dict"
-    raw = dict(raw)
-    linked_raw = {}
-    while raw:
-        n = len(raw)
-        for key in list(raw):
-            if raw[key]._can_link(linked_raw):
-                pipe = raw.pop(key)
+) -> None:
+    "Validate the raw-pipe dependency graph."
+    pending = dict(raw)
+    resolved = {}
+    while pending:
+        n_pending = len(pending)
+        for key in list(pending):
+            if pending[key]._can_link(resolved):
+                pipe = pending.pop(key)
                 if isinstance(pipe, RawICA):
                     missing = set(pipe.task).difference(tasks)
                     if missing:
                         raise DefinitionError(f"RawICA {key!r} lists one or more non-exising tasks: {', '.join(missing)}. Available tasks: {', '.join(tasks)}.")
-                linked_raw[key] = pipe
-        if len(raw) == n:
-            raise DefinitionError(f"Unable to resolve source for raw {enumeration(raw)}, circular dependency?")
-    return linked_raw
+                resolved[key] = pipe
+        if len(pending) == n_pending:
+            raise DefinitionError(f"Unable to resolve source for raw {enumeration(pending)}, circular dependency?")
 
 
 def normalize_dict(raw: dict) -> None:

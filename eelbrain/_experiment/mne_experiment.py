@@ -52,8 +52,9 @@ from .pathing import (
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, assemble_parcs
 from .preprocessing import (
     ICAInput, RawBadChannelsInput, RawDerivative, RawPipe, RawSource, RawSourceInput, RawICA,
-    RawFilter, assemble_pipeline, get_ica_pipe, get_ica_pipe_name,
+    RawFilter, get_ica_pipe, get_ica_pipe_name,
     ica_input_name, raw_bad_channels_input_name, raw_node_name,
+    validate_raw_graph,
 )
 from .reports import (
     CoregReportDerivative, EEGReportDerivative, EEGSensorsReportDerivative,
@@ -365,10 +366,8 @@ class Pipeline(StateModel):
         self._mri_subjects = self.mri_subjects.copy()
 
         # preprocessing
-        self._raw = assemble_pipeline(
-            {'raw': RawSource(), **self.raw},
-            self._tasks,
-        )
+        self._raw = {'raw': RawSource(), **self.raw}
+        validate_raw_graph(self._raw, self._tasks)
         raw_pipe: RawSource = self._raw['raw']
 
         # legacy adjacency determination
