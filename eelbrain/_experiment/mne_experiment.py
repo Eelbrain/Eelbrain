@@ -38,7 +38,7 @@ from .derivative_cache import DerivativeRegistry, ProtectedArtifactError
 from .definitions import sequence_arg
 from .epochs import PrimaryEpoch, SecondaryEpoch, SuperEpoch, EpochBase, assemble_epochs, decim_param
 from .events import (
-    EpochsDerivative, EventsDerivative, EvokedDataDerivative, EvokedDerivative,
+    EpochsDerivative, EventsDerivative, EvokedDerivative,
     SELECTED_EVENTS, SelectedEventsDerivative, load_evoked_request,
 )
 from .exceptions import FileMissingError
@@ -569,7 +569,6 @@ class Pipeline(StateModel):
         self._derivatives.register(SelectedEventsDerivative(self._raw, self._epochs, self._tests, self._artifact_rejection, self._groups))
         self._derivatives.register(EpochsDerivative(self._raw, self._epochs, self._log))
         self._derivatives.register(EvokedDerivative(self._epochs))
-        self._derivatives.register(EvokedDataDerivative(self._raw, self._epochs))
         self._derivatives.register(AnnotDerivative(self._parcs, tuple(self.get_field_values('hemi'))))
         self._derivatives.register(EpochsStcDerivative(self._epochs))
         self._derivatives.register(EvokedStcDerivative(self._epochs))
@@ -1431,7 +1430,7 @@ class Pipeline(StateModel):
         if group is None:
             if subject is not None:
                 state['subject'] = subject
-            return self._load_derivative('evoked-ds', state=state, options=options)
+            return self._load_derivative('evoked', state=state, options=options)
 
         model = self.get('model')
         desc = f'by {model}' if model else 'average'
@@ -2824,7 +2823,7 @@ class Pipeline(StateModel):
         ...
         """
         ds = self.load_evoked(ndvar=False, **kwargs)
-        state = self._derivatives.resolve('evoked-ds', state=self._derivative_state(kwargs)).ctx.state
+        state = self._derivatives.resolve('evoked', state=self._derivative_state(kwargs)).ctx.state
         root = deriv_dir(state) / 'mrat' / state['raw'] / f"{epoch_basename(state)}_epoch-{state['epoch']}_rej-{state['rej']}_model-{state['model']}_count-{state['equalize_evoked_count']}"
 
         # create fiffs

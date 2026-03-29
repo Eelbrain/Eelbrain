@@ -125,10 +125,6 @@ def epochs_file_path(state: dict[str, str | None]) -> Path:
     return cache_dir(state) / 'epochs' / f"{epoch_basename(state)}_raw-{state['raw']}_epoch-{state['epoch']}_rej-{state['rej']}_epo.pickle"
 
 
-def evoked_dataset_file_path(state: dict[str, str | None]) -> Path:
-    return cache_dir(state) / 'evoked-dataset' / f"{epoch_basename(state)}_raw-{state['raw']}_epoch-{state['epoch']}_rej-{state['rej']}_model-{state['model']}_count-{state['equalize_evoked_count']}_ds.pickle"
-
-
 def trans_file_path(state: dict[str, str | None]) -> Path:
     return deriv_dir(state) / 'trans' / f"{subject_session_basename(state)}_trans.fif"
 

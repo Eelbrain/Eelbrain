@@ -29,7 +29,7 @@ from .. import load, save
 from .._data_obj import Dataset, Datalist, NDVar, combine
 from .covariance import cov_node_name
 from .derivative_cache import CachePolicy, Dependency, Derivative, DerivativeContext, Input, file_fingerprint
-from .events import EPOCHS_DATA, EVOKED_DATA
+from .events import EPOCHS_DATA
 from .pathing import (
     bem_dir, bem_file_path, epochs_stc_file_path, evoked_stc_file_path,
     fwd_file_path, inv_file_path, mri_dir, mri_sdir, source_morph_file_path,
@@ -875,7 +875,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         deps = [
-            Dependency(EVOKED_DATA, options={
+            Dependency('evoked', options={
                 'baseline': ctx.option('baseline'),
                 'ndvar': 2 if ctx.option('keep_evoked', False) and ctx.option('ndvar', True) else False,
                 'cat': ctx.option('cat'),
@@ -915,7 +915,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
         keep_evoked = ctx.option('keep_evoked', False)
         ndvar = ctx.option('ndvar', True)
         sensor_ndvar = 2 if keep_evoked and ndvar else False
-        ds = ctx.load(EVOKED_DATA, options={
+        ds = ctx.load('evoked', options={
             'baseline': ctx.option('baseline'),
             'ndvar': sensor_ndvar,
             'cat': ctx.option('cat'),

@@ -33,7 +33,7 @@ from .derivative_cache import CachePolicy, Dependency, Derivative, DerivativeCon
 from .epochs import ContinuousEpoch, EpochCollection, SecondaryEpoch, SuperEpoch, decim_param
 from .exceptions import FileMissingError
 from .pathing import (
-    epochs_file_path, event_file_path, evoked_dataset_file_path, evoked_file_path,
+    epochs_file_path, event_file_path, evoked_file_path,
     rej_file_path, selected_events_file_path,
 )
 from .preprocessing import load_raw_dependency, raw_bad_channels_input_name, raw_data_dependency, raw_node_name
@@ -44,7 +44,6 @@ from .variable_def import Variables
 BIDS_ENTITY_KEYS = ('subject', 'session', 'task', 'acquisition', 'run', 'split')
 SELECTED_EVENTS = 'selected-events'
 EPOCHS_DATA = 'epochs-ds'
-EVOKED_DATA = 'evoked-ds'
 
 
 def _evoked_comments(evoked: list[mne.Evoked]) -> list[str]:
@@ -59,7 +58,7 @@ def load_evoked_group(
 ) -> Dataset:
     data = TestDims.coerce(options['data'])
     individual_ndvar = isinstance(data.sensor, str)
-    dss = [registry.load(EVOKED_DATA, state={**state, 'subject': subject}, options={**options, 'ndvar': individual_ndvar}) for subject in subjects]
+    dss = [registry.load('evoked', state={**state, 'subject': subject}, options={**options, 'ndvar': individual_ndvar}) for subject in subjects]
     ndvar = options['ndvar']
     if individual_ndvar:
         ndvar = False
@@ -108,12 +107,12 @@ def load_evoked_request(
     if subjects is True:
         subjects = current_group
     elif subjects in (None, 1):
-        return registry.load(EVOKED_DATA, state=state, options=options)
+        return registry.load('evoked', state=state, options=options)
     if isinstance(subjects, Sequence) and not isinstance(subjects, str):
         return load_evoked_group(registry, subjects, state, options)
     if isinstance(subjects, str) and subjects in groups:
         return load_evoked_group(registry, groups[subjects], state, options)
-    return registry.load(EVOKED_DATA, state={**state, 'subject': subjects}, options=options)
+    return registry.load('evoked', state={**state, 'subject': subjects}, options=options)
 
 
 def _check_ds(ds: Dataset, source: str, info: dict[str, Any]) -> Dataset:
@@ -748,84 +747,8 @@ class EvokedDerivative(Derivative[Dataset]):
             evoked.comment = ' % '.join(cell)
         return ds_agg
 
-    def build(self, ctx: DerivativeContext) -> Dataset:
-        return self._build_evoked_dataset(ctx)
-
-    def load(self, ctx: DerivativeContext, path: Path) -> Dataset:
-        evoked = mne.read_evokeds(path, proj=False)
-        ds = self._build_evoked_dataset(ctx)
-        model = ctx.get('model')
-        model_vars = model.split('%') if model else ()
-        if model_vars:
-            cells = [' % '.join(cell) or 'No comment' for cell in ds.zip(*model_vars)]
-        else:
-            cells = ['No comment']
-        comments = [e.comment for e in evoked]
-        if comments != cells:
-            if set(comments) == set(cells):
-                index = [comments.index(cell) for cell in cells]
-                evoked = [evoked[i] for i in index]
-            else:
-                raise RuntimeError(f"Error reading cached evoked: {comments=}, {cells=}")
-        ds['evoked'] = evoked
-        return ds
-
-    def save(self, ctx: DerivativeContext, path: Path, value: Dataset) -> None:
-        mne.write_evokeds(path, value['evoked'], overwrite=True)
-
-    def validate(self, ctx: DerivativeContext, path: Path, manifest) -> bool:
-        evoked = mne.read_evokeds(path, proj=False)
-        return _evoked_comments(evoked) == manifest.provenance.get('comments', [])
-
-    def provenance(self, ctx: DerivativeContext, value: Dataset) -> dict[str, Any]:
-        return {'comments': _evoked_comments(value['evoked'])}
-
-
-class EvokedDataDerivative(Derivative[Dataset]):
-    name = EVOKED_DATA
-    key_fields = (
-        'subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw',
-        'epoch', 'rej', 'model', 'equalize_evoked_count',
-    )
-    cache_policy = CachePolicy.DISABLED_BY_DEFAULT
-
-    def __init__(self, raw, epochs: dict[str, Any]):
-        self.raw = raw
-        self.epochs = epochs
-
-    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> Path:
-        path = evoked_dataset_file_path(ctx.state)
-        if mkdir:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return path
-
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
-        return (Dependency('evoked', options={
-            'samplingrate': ctx.option('samplingrate'),
-            'decim': ctx.option('decim'),
-            'vardef': ctx.option('vardef'),
-        }),)
-
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        data = TestDims.coerce(ctx.option('data', 'sensor'))
-        return {
-            'baseline': ctx.option('baseline'),
-            'cat': sequence_arg('cat', ctx.option('cat')) if ctx.option('cat') else None,
-            'ndvar': ctx.option('ndvar', True),
-            'data': data.string,
-            'samplingrate': ctx.option('samplingrate'),
-            'decim': ctx.option('decim'),
-            'vardef': repr(ctx.option('vardef')),
-            'data_raw': ctx.option('data_raw', False),
-        }
-
-    def build(self, ctx: DerivativeContext) -> Dataset:
+    def _apply_load_options(self, ctx: DerivativeContext, ds: Dataset) -> Dataset:
         epoch = self.epochs[ctx.get('epoch')]
-        ds = ctx.load('evoked', options={
-            'samplingrate': ctx.option('samplingrate'),
-            'decim': ctx.option('decim'),
-            'vardef': ctx.option('vardef'),
-        })
         cat = ctx.option('cat')
         model = ctx.get('model')
         if cat:
@@ -849,13 +772,14 @@ class EvokedDataDerivative(Derivative[Dataset]):
             evoked = ds['evoked']
             if ndvar == 1:
                 del ds['evoked']
-            pipe = self.raw[ctx.get('raw')]
+            raw_node = ctx.registry._get_node(raw_node_name(ctx.get('raw')))
+            pipe = raw_node.pipe
             info = evoked[0].info
             sensor_types = ds.info['sensor_types'] = data.data_to_ndvar(info)
             subject = ctx.get('subject')
             for sensor_type in sensor_types:
-                sysname = pipe.get_sysname(info, subject, sensor_type, self.raw)
-                adjacency = pipe.get_adjacency(sensor_type, self.raw)
+                sysname = pipe.get_sysname(info, subject, sensor_type, raw_node.pipes)
+                adjacency = pipe.get_adjacency(sensor_type, raw_node.pipes)
                 name = 'meg' if sensor_type == 'mag' else sensor_type
                 ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
                 if sensor_type != 'eog' and isinstance(data.sensor, str):
@@ -864,8 +788,34 @@ class EvokedDataDerivative(Derivative[Dataset]):
             ds.info['raw'] = load_raw_dependency(ctx, add_bads=True, preload=False, noise=False)
         return ds
 
+    def build(self, ctx: DerivativeContext) -> Dataset:
+        return self._build_evoked_dataset(ctx)
+
     def load(self, ctx: DerivativeContext, path: Path) -> Dataset:
-        return load.unpickle(path)
+        evoked = mne.read_evokeds(path, proj=False)
+        ds = self._build_evoked_dataset(ctx)
+        model = ctx.get('model')
+        model_vars = model.split('%') if model else ()
+        if model_vars:
+            cells = [' % '.join(cell) or 'No comment' for cell in ds.zip(*model_vars)]
+        else:
+            cells = ['No comment']
+        comments = [e.comment for e in evoked]
+        if comments != cells:
+            if set(comments) == set(cells):
+                index = [comments.index(cell) for cell in cells]
+                evoked = [evoked[i] for i in index]
+            else:
+                raise RuntimeError(f"Error reading cached evoked: {comments=}, {cells=}")
+        ds['evoked'] = evoked
+        return self._apply_load_options(ctx, ds)
 
     def save(self, ctx: DerivativeContext, path: Path, value: Dataset) -> None:
-        save.pickle(value, path)
+        mne.write_evokeds(path, value['evoked'], overwrite=True)
+
+    def validate(self, ctx: DerivativeContext, path: Path, manifest) -> bool:
+        evoked = mne.read_evokeds(path, proj=False)
+        return _evoked_comments(evoked) == manifest.provenance.get('comments', [])
+
+    def provenance(self, ctx: DerivativeContext, value: Dataset) -> dict[str, Any]:
+        return {'comments': _evoked_comments(value['evoked'])}
