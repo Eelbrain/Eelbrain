@@ -45,9 +45,17 @@ def _bids_name(
     return '_'.join(parts)
 
 
-def bids_path(state: dict[str, str | None]) -> BIDSPath:
+def bids_path(
+        state: dict[str, str | None],
+        *,
+        noise: bool = False,
+) -> BIDSPath:
     kwargs = {key: _state_value(state, key) for key in BIDS_PATH_KEYS}
-    return BIDSPath(root=state['root'], **kwargs)
+    path = BIDSPath(root=state['root'], **kwargs)
+    if noise:
+        return path.find_empty_room()
+    else:
+        return path
 
 
 def subject_session_basename(state: dict[str, str | None]) -> str:
