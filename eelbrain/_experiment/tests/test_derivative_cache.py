@@ -13,7 +13,6 @@ from eelbrain._experiment.derivative_cache import (
     DerivativeRegistry,
     Input,
     InputHandle,
-    MANIFEST_SUFFIX,
     ProtectedArtifactError,
     file_fingerprint,
 )
@@ -114,18 +113,13 @@ class SourceInput(Input):
 class ValueDerivative(Derivative[str]):
     name = 'value'
     key_fields = ('subject',)
+    cache_suffix = '.txt'
 
     def __init__(self, root: str | Path):
         self.root = Path(root)
         self.build_calls = 0
         self.load_calls = 0
         self.save_calls = 0
-
-    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> str:
-        path = self.root / 'derivatives' / 'eelbrain' / 'cache' / ctx.get('subject') / 'value.txt'
-        if mkdir:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return str(path)
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         return (Dependency('source'),)
@@ -157,17 +151,12 @@ class ValueDerivative(Derivative[str]):
 class SummaryDerivative(Derivative[str]):
     name = 'summary'
     key_fields = ('subject',)
+    cache_suffix = '.txt'
 
     def __init__(self, root: str | Path):
         self.root = Path(root)
         self.build_calls = 0
         self.load_calls = 0
-
-    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> str:
-        path = self.root / 'derivatives' / 'eelbrain' / 'cache' / ctx.get('subject') / 'summary.txt'
-        if mkdir:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return str(path)
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         return (Dependency('value'),)
@@ -199,16 +188,11 @@ class EphemeralDerivative(Derivative[str]):
     name = 'ephemeral'
     key_fields = ('subject',)
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
+    cache_suffix = '.txt'
 
     def __init__(self, root: str | Path):
         self.root = Path(root)
         self.build_calls = 0
-
-    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> str:
-        path = self.root / 'derivatives' / 'eelbrain' / 'cache' / ctx.get('subject') / 'ephemeral.txt'
-        if mkdir:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return str(path)
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, object]:
         return {'subject': ctx.get('subject')}
@@ -343,10 +327,14 @@ def test_registry_load_caches_derivative_and_writes_manifest():
     assert value.save_calls == 1
     assert value.load_calls == 2
 
-    cache_path = Path(pipeline.get('value-file'))
-    manifest_path = Path(f"{cache_path}{MANIFEST_SUFFIX}")
+    handle = registry.resolve('value', state=DEFAULT_STATE)
+    cache_path = handle.artifact_path
+    manifest_path = handle.manifest_path
     assert cache_path.exists()
     assert manifest_path.exists()
+    assert cache_path.is_relative_to(registry.cache_dir / 'value')
+    assert cache_path.suffix == '.txt'
+    assert '_key-' in cache_path.name
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest['derivative'] == 'value'
@@ -376,17 +364,31 @@ def test_non_key_state_does_not_invalidate_cache():
     assert value.build_calls == 1
 
 
+def test_generic_cache_path_uses_node_name_and_key():
+    _, registry, _, _, _, _, _, _ = make_registry()
+
+    a = registry.resolve('value', state={'subject': 's1', 'mode': 'a'}).artifact_path
+    b = registry.resolve('value', state={'subject': 's1', 'mode': 'b'}).artifact_path
+    c = registry.resolve('value', state={'subject': 's2', 'mode': 'a'}).artifact_path
+
+    assert a == b
+    assert a != c
+    assert a.is_relative_to(registry.cache_dir / 'value')
+    assert c.is_relative_to(registry.cache_dir / 'value')
+
+
 def test_disabled_by_default_derivative_skips_cache_by_default():
-    pipeline, registry, _, _, _, ephemeral, _, _ = make_registry()
+    _, registry, _, _, _, ephemeral, _, _ = make_registry()
 
     first = registry.load('ephemeral', state=DEFAULT_STATE)
     second = registry.load('ephemeral', state=DEFAULT_STATE)
+    handle = registry.resolve('ephemeral', state=DEFAULT_STATE)
 
     assert first == 'ephemeral-1'
     assert second == 'ephemeral-2'
     assert ephemeral.build_calls == 2
-    assert not Path(pipeline.get('ephemeral-file')).exists()
-    assert not Path(f"{pipeline.get('ephemeral-file')}{MANIFEST_SUFFIX}").exists()
+    assert not handle.artifact_path.exists()
+    assert not handle.manifest_path.exists()
 
 
 def test_registry_resolve_returns_input_handle_and_loads_input():

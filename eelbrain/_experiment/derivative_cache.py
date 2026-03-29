@@ -45,6 +45,8 @@ import mne
 T = TypeVar('T')
 MANIFEST_SUFFIX = '.manifest.json'
 MANIFEST_SCHEMA_VERSION = 1
+DEFAULT_CACHE_LABEL = 'artifact'
+MAX_CACHE_LABEL_LEN = 96
 
 
 class CachePolicy(str, Enum):
@@ -106,6 +108,49 @@ class ProtectedArtifactError(RuntimeError):
             f"Stale artifact for derivative {derivative!r} at {self.path!r} lives outside "
             "the cache directory and will not be overwritten automatically."
         )
+
+
+def _slug_cache_path_part(value: Any) -> str:
+    text = str(value)
+    out = []
+    pending_sep = False
+    for char in text:
+        if char.isalnum():
+            out.append(char.lower())
+            pending_sep = False
+        elif out and not pending_sep:
+            out.append('-')
+            pending_sep = True
+    return ''.join(out).strip('-') or DEFAULT_CACHE_LABEL
+
+
+def _simple_cache_label(key: dict[str, Any]) -> str | None:
+    parts = []
+    for name, value in key.items():
+        if value in (None, ''):
+            continue
+        if isinstance(value, (str, int, float, bool)):
+            parts.append(f"{name}-{value}")
+    if not parts:
+        return None
+    return '_'.join(parts)
+
+
+def cache_artifact_path(
+        cache_dir: str | Path,
+        node_name: str,
+        key: dict[str, Any],
+        suffix: str,
+        *,
+        label: str | None = None,
+) -> Path:
+    """Build a cache path from derivative identity."""
+    key_json = json.dumps(key, sort_keys=True, separators=(',', ':'), default=str)
+    key_hash = hashlib.sha1(key_json.encode()).hexdigest()[:12]
+    label_text = label or _simple_cache_label(key) or DEFAULT_CACHE_LABEL
+    label_slug = _slug_cache_path_part(label_text)[:MAX_CACHE_LABEL_LEN].rstrip('-') or DEFAULT_CACHE_LABEL
+    node_slug = _slug_cache_path_part(node_name)
+    return Path(cache_dir) / node_slug / key_hash[:2] / f"{label_slug}_key-{key_hash}{suffix}"
 
 
 @dataclass
@@ -271,7 +316,18 @@ class Derivative(DependencyNode[T]):
 
     key_fields: tuple[str, ...]
     cache_policy: CachePolicy = CachePolicy.REQUIRED
+    cache_suffix: str | None = None
     version: int = 1
+
+    def cache_label(self, ctx: DerivativeContext) -> str | None:
+        """Return an optional readable label for the default cache path.
+
+        Override this for cache-managed derivatives that benefit from a more
+        readable stem than the default label derived from simple scalar key
+        fields. The label is only for readability; the hash derived from
+        :meth:`key` remains authoritative.
+        """
+        return _simple_cache_label(self.key(ctx))
 
     def path(
             self,
@@ -280,7 +336,9 @@ class Derivative(DependencyNode[T]):
     ) -> Path:
         """Return the concrete artifact path for this request.
 
-        Subclasses must override this method.
+        Subclasses may either override this method explicitly or declare
+        :attr:`cache_suffix` to use the default cache path scheme based on the
+        derivative name and :meth:`key`.
 
         The returned path identifies where the artifact itself lives. For
         artifacts inside ``cache-dir``, the registry writes the manifest next
@@ -292,7 +350,18 @@ class Derivative(DependencyNode[T]):
         ``mkdir`` is provided for compatibility; callers should not rely on
         ``path()`` to create directories.
         """
-        raise NotImplementedError
+        if self.cache_suffix is None:
+            raise NotImplementedError
+        path = cache_artifact_path(
+            ctx.registry.cache_dir,
+            self.name,
+            ctx.registry.canonicalize(self.key(ctx)),
+            self.cache_suffix,
+            label=self.cache_label(ctx),
+        )
+        if mkdir:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        return path
 
     def key(self, ctx: DerivativeContext) -> dict[str, Any]:
         """Return the normalized key that identifies this artifact instance.

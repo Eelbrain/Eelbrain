@@ -32,10 +32,7 @@ from .definitions import sequence_arg
 from .derivative_cache import CachePolicy, Dependency, Derivative, DerivativeContext, file_fingerprint
 from .epochs import ContinuousEpoch, EpochCollection, SecondaryEpoch, SuperEpoch, decim_param
 from .exceptions import FileMissingError
-from .pathing import (
-    epochs_file_path, event_file_path, evoked_file_path,
-    rej_file_path, selected_events_file_path,
-)
+from .pathing import rej_file_path
 from .preprocessing import load_raw_dependency, raw_bad_channels_input_name, raw_data_dependency, raw_node_name
 from .test_def import TestDims
 from .variable_def import Variables
@@ -149,6 +146,7 @@ def _apply_vardef(ds: Dataset, vardef: None | str | Variables, tests: dict[str, 
 class EventsDerivative(Derivative[Dataset]):
     name = 'events'
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw')
+    cache_suffix = '.pickle'
 
     def __init__(
             self,
@@ -176,12 +174,6 @@ class EventsDerivative(Derivative[Dataset]):
         self.multi_task = multi_task
         self.multi_session = multi_session
         self.variables_repr = repr(variables)
-
-    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> Path:
-        path = event_file_path(ctx.state)
-        if mkdir:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return path
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         return (raw_data_dependency(ctx, add_bads=False),)
@@ -244,6 +236,7 @@ class EventsDerivative(Derivative[Dataset]):
 class SelectedEventsDerivative(Derivative[Dataset]):
     name = SELECTED_EVENTS
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw', 'epoch', 'rej')
+    cache_suffix = '.pickle'
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
 
     def __init__(
@@ -259,12 +252,6 @@ class SelectedEventsDerivative(Derivative[Dataset]):
         self.tests = tests
         self.artifact_rejection = artifact_rejection
         self.groups = groups
-
-    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> Path:
-        path = selected_events_file_path(ctx.state)
-        if mkdir:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return path
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
         epoch = self.epochs[ctx.get('epoch')]
@@ -485,6 +472,7 @@ class SelectedEventsDerivative(Derivative[Dataset]):
 class EpochsDerivative(Derivative[Dataset]):
     name = EPOCHS_DATA
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw', 'epoch', 'rej')
+    cache_suffix = '.pickle'
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
 
     def __init__(
@@ -496,12 +484,6 @@ class EpochsDerivative(Derivative[Dataset]):
         self.raw = raw
         self.epochs = epochs
         self.log = log
-
-    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> Path:
-        path = epochs_file_path(ctx.state)
-        if mkdir:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return path
 
     def _selected_events_options(self, ctx: DerivativeContext) -> dict[str, Any]:
         return {
@@ -684,15 +666,10 @@ class EvokedDerivative(Derivative[Dataset]):
         'epoch', 'rej', 'model', 'equalize_evoked_count',
     )
     cache_policy = CachePolicy.OPTIONAL
+    cache_suffix = '-ave.fif'
 
     def __init__(self, epochs: dict[str, Any]):
         self.epochs = epochs
-
-    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> Path:
-        path = evoked_file_path(ctx.state)
-        if mkdir:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return path
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         return (Dependency(EPOCHS_DATA, options={

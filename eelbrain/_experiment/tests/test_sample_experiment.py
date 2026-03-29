@@ -14,7 +14,7 @@ from numpy.testing import assert_almost_equal, assert_array_equal
 from eelbrain import *
 from eelbrain.pipeline import *
 from eelbrain._exceptions import DefinitionError
-from eelbrain._experiment.pathing import cached_raw_file_path, ica_file_path
+from eelbrain._experiment.pathing import ica_file_path
 from eelbrain._experiment.preprocessing import raw_node_name
 from eelbrain._experiment.reports import _report_subject_info
 from eelbrain._experiment.test_def import TestDims as _TestDims
@@ -451,7 +451,10 @@ def test_sample_tasks():
     pipe = e._raw[e.get('raw', raw='ica')]
     bids_path = e._bids_path
     state = e._derivative_state(raw='ica')
-    assert str(cached_raw_file_path(state)) == join(root, 'derivatives', 'eelbrain', 'cache', 'raw', 'sub-R0000_meg', 'sub-R0000_task-sample1_meg_raw-ica.fif')
+    handle = e._derivatives.resolve(raw_node_name('ica'), state=state)
+    assert handle.artifact_path.is_relative_to(Path(root) / 'derivatives' / 'eelbrain' / 'cache' / 'raw-ica')
+    assert handle.artifact_path.suffix == '.fif'
+    assert '_key-' in handle.artifact_path.name
     assert str(ica_file_path(state, raw='ica')) == join(root, 'derivatives', 'ica', 'sub-R0000_meg_raw-ica_ica.fif')
     e.set(raw='raw')
 

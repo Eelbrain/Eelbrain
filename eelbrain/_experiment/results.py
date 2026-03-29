@@ -35,8 +35,6 @@ from .pathing import (
     rej_file_path,
     report_export_path,
     test_basename,
-    test_dir,
-    test_result_cache_path,
     time_window_str,
 )
 from .preprocessing import raw_node_name
@@ -360,7 +358,7 @@ class ResultOutputDerivative(Derivative[T]):
         }
         handle = ctx.registry.resolve('test-result', state=ctx.state, options=options)
         dst = handle.artifact_path
-        desc = relpath(dst, test_dir(ctx.state))
+        desc = relpath(dst, ctx.registry.cache_dir)
 
         if handle.is_valid():
             try:
@@ -753,7 +751,9 @@ class ResultOutputDerivative(Derivative[T]):
 
     def result_desc(self, ctx: DerivativeContext) -> str:
         dst = self.path(ctx)
-        return relpath(dst, test_dir(ctx.state))
+        if ctx.registry.is_cache_artifact(dst):
+            return relpath(dst, ctx.registry.cache_dir)
+        return relpath(dst, ctx.get('root'))
 
     def extra_key(self, ctx: DerivativeContext) -> dict[str, Any]:
         return {}
@@ -822,16 +822,11 @@ def sampled_artifact_path(path: str | Path, samples: int | None) -> Path:
 class TestResultDerivative(ResultOutputDerivative):
     name = 'test-result'
     sampled_path = True
+    cache_suffix = '.pickle'
+    path = Derivative.path
 
-    def path(
-            self,
-            ctx: DerivativeContext,
-            mkdir: bool = False,
-    ) -> Path:
-        path = sampled_artifact_path(test_result_cache_path(ctx.state, self.path_stem(ctx), self.cache_identity(ctx)), ctx.option('samples'))
-        if mkdir:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return path
+    def cache_label(self, ctx: DerivativeContext) -> str:
+        return join_stem_parts(self.path_stem(ctx), f'samples-{ctx.option("samples")}') if ctx.option('samples') is not None else self.path_stem(ctx)
 
     def build(self, ctx: DerivativeContext):
         _, res = self.materialize_test(ctx, None, False, self.result_desc(ctx))

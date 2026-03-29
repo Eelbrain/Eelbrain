@@ -31,9 +31,7 @@ from .covariance import cov_node_name
 from .derivative_cache import CachePolicy, Dependency, Derivative, DerivativeContext, Input, file_fingerprint
 from .events import EPOCHS_DATA
 from .pathing import (
-    bem_dir, bem_file_path, epochs_stc_file_path, evoked_stc_file_path,
-    fwd_file_path, inv_file_path, mri_dir, mri_sdir, source_morph_file_path,
-    src_file_path, trans_file_path,
+    bem_dir, bem_file_path, mri_dir, mri_sdir, src_file_path, trans_file_path,
 )
 from .preprocessing import load_raw_dependency, raw_node_name
 from .._text import enumeration, plural
@@ -381,12 +379,7 @@ class SrcDerivative(Derivative[mne.SourceSpaces]):
 class SourceMorphDerivative(Derivative[mne.SourceMorph]):
     name = 'source-morph'
     key_fields = ('mrisubject', 'common_brain', 'src')
-
-    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> Path:
-        path = source_morph_file_path(ctx.state)
-        if mkdir:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return path
+    cache_suffix = '-morph.h5'
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         return (
@@ -445,15 +438,10 @@ class FwdDerivative(Derivative[mne.Forward]):
         'subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw',
         'epoch', 'mrisubject', 'src',
     )
+    cache_suffix = '-fwd.fif'
 
     def __init__(self, log: logging.Logger):
         self.log = log
-
-    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> Path:
-        path = fwd_file_path(ctx.state)
-        if mkdir:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return path
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         return (
@@ -525,12 +513,7 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
         'epoch', 'rej', 'cov', 'mrisubject', 'src', 'inv',
     )
     cache_policy = CachePolicy.OPTIONAL
-
-    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> Path:
-        path = inv_file_path(ctx.state)
-        if mkdir:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return path
+    cache_suffix = '-inv.fif'
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         return (Dependency('fwd'), Dependency(cov_node_name(ctx.get('cov'))))
@@ -717,15 +700,10 @@ class EpochsStcDerivative(Derivative[Dataset]):
         'epoch', 'rej', 'cov', 'mrisubject', 'src', 'inv',
     )
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
+    cache_suffix = '.pickle'
 
     def __init__(self, epochs: dict[str, Any]):
         self.epochs = epochs
-
-    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> Path:
-        path = epochs_stc_file_path(ctx.state)
-        if mkdir:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return path
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         deps = [
@@ -863,15 +841,10 @@ class EvokedStcDerivative(Derivative[Dataset]):
         'src', 'inv',
     )
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
+    cache_suffix = '.pickle'
 
     def __init__(self, epochs: dict[str, Any]):
         self.epochs = epochs
-
-    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> Path:
-        path = evoked_stc_file_path(ctx.state)
-        if mkdir:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return path
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         deps = [

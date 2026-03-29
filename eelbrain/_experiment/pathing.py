@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from pathlib import Path
 from typing import Any
 
@@ -101,36 +99,12 @@ def methods_dir(state: dict[str, str | None]) -> Path:
     return deriv_dir(state) / 'eelbrain' / 'methods'
 
 
-def raw_cache_dir(state: dict[str, str | None]) -> Path:
-    return cache_dir(state) / 'raw' / subject_session_basename(state)
-
-
 def ica_file_path(
         state: dict[str, str | None],
         *,
         raw: str = 'ica',
 ) -> Path:
     return deriv_dir(state) / 'ica' / f"{epoch_basename(state)}_raw-{raw}_ica.fif"
-
-
-def cached_raw_file_path(state: dict[str, str | None]) -> Path:
-    return raw_cache_dir(state) / f"{raw_basename(state)}_raw-{state['raw']}.fif"
-
-
-def event_file_path(state: dict[str, str | None]) -> Path:
-    return raw_cache_dir(state) / f"{raw_basename(state)}_raw-{state['raw']}_evts.pickle"
-
-
-def selected_events_file_path(state: dict[str, str | None]) -> Path:
-    return cache_dir(state) / 'selected-events' / f"{epoch_basename(state)}_raw-{state['raw']}_epoch-{state['epoch']}_rej-{state['rej']}_sel.pickle"
-
-
-def evoked_file_path(state: dict[str, str | None]) -> Path:
-    return cache_dir(state) / 'evoked' / f"{epoch_basename(state)}_raw-{state['raw']}_epoch-{state['epoch']}_rej-{state['rej']}_model-{state['model']}_count-{state['equalize_evoked_count']}_ave.fif"
-
-
-def epochs_file_path(state: dict[str, str | None]) -> Path:
-    return cache_dir(state) / 'epochs' / f"{epoch_basename(state)}_raw-{state['raw']}_epoch-{state['epoch']}_rej-{state['rej']}_epo.pickle"
 
 
 def trans_file_path(state: dict[str, str | None]) -> Path:
@@ -146,14 +120,6 @@ def rej_file_path(
     epoch_name = state['epoch'] if epoch is None else epoch
     rej_name = state['rej'] if rej is None else rej
     return deriv_dir(state) / 'eelbrain' / 'epoch selection' / f"{epoch_basename(state)}_raw-{state['raw']}_epoch-{epoch_name}_rej-{rej_name}_epoch.pickle"
-
-
-def cov_file_path(state: dict[str, str | None]) -> Path:
-    return raw_cache_dir(state) / f"{epoch_basename(state)}_raw-{state['raw']}_cov-{state['cov']}_rej-{state['rej']}_cov.fif"
-
-
-def cov_info_file_path(state: dict[str, str | None]) -> Path:
-    return raw_cache_dir(state) / f"{epoch_basename(state)}_raw-{state['raw']}_cov-{state['cov']}_rej-{state['rej']}_info.txt"
 
 
 def mri_sdir(state: dict[str, str | None]) -> Path:
@@ -176,18 +142,6 @@ def src_file_path(state: dict[str, str | None]) -> Path:
     return bem_dir(state) / f"{state['mrisubject']}-{state['src']}-src.fif"
 
 
-def source_morph_file_path(state: dict[str, str | None]) -> Path:
-    return bem_dir(state) / f"{state['mrisubject']}-{state['common_brain']}-{state['src']}-morph.h5"
-
-
-def epochs_stc_file_path(state: dict[str, str | None]) -> Path:
-    return cache_dir(state) / 'epochs-stc' / f"{epoch_basename(state)}_mrisubject-{state['mrisubject']}_src-{state['src']}_raw-{state['raw']}_cov-{state['cov']}_rej-{state['rej']}_inv-{state['inv']}_stc.pickle"
-
-
-def evoked_stc_file_path(state: dict[str, str | None]) -> Path:
-    return cache_dir(state) / 'evoked-stc' / f"{epoch_basename(state)}_mrisubject-{state['mrisubject']}_src-{state['src']}_raw-{state['raw']}_cov-{state['cov']}_rej-{state['rej']}_model-{state['model']}_count-{state['equalize_evoked_count']}_inv-{state['inv']}_stc.pickle"
-
-
 def label_dir(state: dict[str, str | None]) -> Path:
     return mri_dir(state) / 'label'
 
@@ -198,18 +152,6 @@ def annot_file_path(state: dict[str, str | None], hemi: str) -> Path:
 
 def annot_stamp_path(state: dict[str, str | None]) -> Path:
     return cache_dir(state) / 'annot' / state['mrisubject'] / f'{state["parc"]}.stamp'
-
-
-def fwd_file_path(state: dict[str, str | None]) -> Path:
-    return raw_cache_dir(state) / f"{epoch_basename(state)}_mrisubject-{state['mrisubject']}_src-{state['src']}_fwd.fif"
-
-
-def inv_file_path(state: dict[str, str | None]) -> Path:
-    return raw_cache_dir(state) / f"{epoch_basename(state)}_mrisubject-{state['mrisubject']}_src-{state['src']}_raw-{state['raw']}_cov-{state['cov']}_rej-{state['rej']}_inv-{state['inv']}_inv.fif"
-
-
-def test_dir(state: dict[str, str | None]) -> Path:
-    return cache_dir(state) / 'test'
 
 
 def time_str(t) -> str:
@@ -236,20 +178,6 @@ def join_stem_parts(*parts: Any) -> str:
         else:
             out.append(_slug(part))
     return '_'.join(out)
-
-
-def _short_hash(data: Any) -> str:
-    payload = json.dumps(data, sort_keys=True, separators=(',', ':'), default=str)
-    return hashlib.sha1(payload.encode()).hexdigest()[:12]
-
-
-def test_result_cache_path(
-        state: dict[str, str | None],
-        stem: str,
-        key: dict[str, Any],
-) -> Path:
-    group = _slug(state.get('group') or 'all')
-    return test_dir(state) / group / f'{stem}_key-{_short_hash(key)}.pickle'
 
 
 def report_export_path(

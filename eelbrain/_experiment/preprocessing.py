@@ -60,7 +60,7 @@ from .derivative_cache import (
 )
 from .definitions import sequence_arg, typed_arg
 from .exceptions import FileMissingError
-from .pathing import bids_path, cached_raw_file_path, ica_file_path
+from .pathing import bids_path, ica_file_path
 
 MNE_VERBOSITY = 'WARNING'
 AddBadsArg = bool | Sequence[str]
@@ -415,6 +415,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
 class RawDerivative(Derivative[mne.io.BaseRaw]):
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split')
     cache_policy = CachePolicy.OPTIONAL
+    cache_suffix = '-raw.fif'
 
     def __init__(
             self,
@@ -458,12 +459,6 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
             'noise': bool(ctx.option('noise', False)),
             'pipe': self.pipe._as_dict(self.raw_name),
         }
-
-    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> Path:
-        path = cached_raw_file_path({**ctx.state, 'raw': self.raw_name})
-        if mkdir:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return path
 
     def build(self, ctx: DerivativeContext) -> mne.io.BaseRaw:
         noise = ctx.option('noise', False)

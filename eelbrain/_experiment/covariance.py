@@ -14,7 +14,6 @@ import numpy
 
 from .derivative_cache import Dependency, Derivative, DerivativeContext
 from .events import EPOCHS_DATA
-from .pathing import cov_file_path, cov_info_file_path
 from .preprocessing import load_raw_dependency, raw_data_dependency
 
 
@@ -74,6 +73,7 @@ class EpochCovariance:
 
 class CovDerivative(Derivative[mne.Covariance]):
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw', 'epoch', 'cov', 'rej')
+    cache_suffix = '-cov.fif'
 
     def __init__(
             self,
@@ -86,12 +86,6 @@ class CovDerivative(Derivative[mne.Covariance]):
         self.log = log
         self.name = cov_node_name(cov_name)
         self.cov.key = cov_name
-
-    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> Path:
-        path = cov_file_path(ctx.state)
-        if mkdir:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return path
 
     def _events_state(self, ctx: DerivativeContext) -> dict[str, Any]:
         if isinstance(self.cov, EpochCovariance):
@@ -134,8 +128,7 @@ class CovDerivative(Derivative[mne.Covariance]):
         if isinstance(self.cov, EpochCovariance):
             cov_path = self.path(ctx, mkdir=True)
             self.log.debug("Make cov-file %s", cov_path)
-            log_path = cov_info_file_path(ctx.state)
-            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path = cov_path.with_suffix('.info.txt')
             ds = ctx.load(EPOCHS_DATA, state={'epoch': self.cov.epoch}, options={
                 'baseline': True,
                 'ndvar': False,

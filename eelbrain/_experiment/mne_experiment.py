@@ -45,7 +45,7 @@ from .exceptions import FileMissingError
 from .experiment import StateModel
 from .groups import assemble_groups
 from .pathing import (
-    cache_dir, cov_info_file_path, deriv_dir, epoch_basename, fwd_file_path,
+    cache_dir, deriv_dir, epoch_basename,
     ica_file_path, join_stem_parts, mri_dir, mri_sdir, raw_basename, raw_dir,
     rej_file_path, results_dir, src_file_path, trans_file_path,
 )
@@ -1772,7 +1772,7 @@ class Pipeline(StateModel):
                 self.set(**state)
             state_ = self._derivative_state()
             fwd = self._load_derivative('fwd')
-            fwd_file = fwd_file_path(state_)
+            fwd_file = self._derivatives.resolve('fwd', state=state_).artifact_path
             src = self.get('src')
             if ndvar:
                 if src.startswith('vol'):
@@ -4115,7 +4115,8 @@ class Pipeline(StateModel):
         subjects = []
         reg = []
         for subject in self:
-            path = cov_info_file_path(self._derivative_state())
+            handle = self._derivatives.resolve(cov_node_name(self.get('cov')), state=self._derivative_state())
+            path = handle.artifact_path.with_suffix('.info.txt')
             if exists(path):
                 with open(path) as fid:
                     text = fid.read()
