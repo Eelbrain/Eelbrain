@@ -269,6 +269,17 @@ class ResultOutputDerivative(Derivative[T]):
         raw = state.get('raw', ctx.get('raw'))
         return ctx.registry.resolve(raw_node_name(raw), state={**ctx.state, **state, 'raw': raw}, options={'add_bads': True, 'noise': False}).describe_dependency()
 
+    def _result_parc(self, ctx: DerivativeContext) -> str | None:
+        parc = ctx.option('parc')
+        if parc:
+            return parc
+        mask = ctx.option('mask')
+        if mask is True:
+            return ctx.get('parc')
+        if isinstance(mask, str):
+            return mask
+        return None
+
     def result_dependencies(
             self,
             ctx: DerivativeContext,
@@ -289,7 +300,7 @@ class ResultOutputDerivative(Derivative[T]):
 
         out = {'subjects': subjects}
         if data.source and data.parc_level:
-            parc = ctx.get('parc')
+            parc = self._result_parc(ctx)
             if single_subject:
                 out['annot'] = ctx.registry.resolve('annot', state={**ctx.state, 'mrisubject': ctx.get('mrisubject'), 'parc': parc}).describe_dependency()
             elif data.parc_level == 'common':
@@ -311,7 +322,7 @@ class ResultOutputDerivative(Derivative[T]):
             'test': self.tests[ctx.get('test')]._as_dict(),
             'epoch': self.epochs[ctx.get('epoch')]._as_dict(),
         }
-        parc = ctx.get('parc')
+        parc = self._result_parc(ctx)
         if parc and parc in self.parcs:
             definitions['parc'] = self.parcs[parc]._as_dict()
         return ctx.registry.canonicalize(definitions)
@@ -395,7 +406,7 @@ class ResultOutputDerivative(Derivative[T]):
         parc_dim = None
         if data.source is True:
             if parc:
-                mask = True
+                mask = parc
                 parc_dim = 'source'
             elif mask and pmin is None:
                 parc_dim = 'source'
@@ -551,6 +562,7 @@ class ResultOutputDerivative(Derivative[T]):
             'src_baseline': src_baseline,
             'morph': morph,
             'cat': cat,
+            'parc': ctx.option('parc'),
             'mask': mask,
             'data_raw': data_raw,
             'vardef': vardef,
@@ -559,7 +571,16 @@ class ResultOutputDerivative(Derivative[T]):
             'ndvar': ndvar,
             'keep_evoked': False,
         }
-        return load_evoked_stc_request(ctx.registry, self.groups, ctx.get('group'), {**ctx.state, **state}, options, subjects)
+        return load_evoked_stc_request(
+            ctx.registry,
+            self.groups,
+            ctx.get('group'),
+            {**ctx.state, **state},
+            options,
+            self.mri_subjects,
+            self.common_brain,
+            subjects,
+        )
 
     def load_epochs_stc(
             self,
@@ -589,6 +610,7 @@ class ResultOutputDerivative(Derivative[T]):
             'cat': cat,
             'keep_epochs': keep_epochs,
             'morph': morph,
+            'parc': ctx.option('parc'),
             'mask': mask,
             'data_raw': data_raw,
             'vardef': vardef,
@@ -597,9 +619,25 @@ class ResultOutputDerivative(Derivative[T]):
             'ndvar': ndvar,
             'reject': reject,
         }
-        return load_epochs_stc_request(ctx.registry, self.groups, ctx.get('group'), {**ctx.state, **state}, options, subjects)
+        return load_epochs_stc_request(
+            ctx.registry,
+            self.groups,
+            ctx.get('group'),
+            {**ctx.state, **state},
+            options,
+            self.mri_subjects,
+            self.common_brain,
+            subjects,
+        )
 
-    def make_test(self, y, ds, test: Test, kwargs: dict[str, Any]):
+    def make_test(
+            self,
+            y,
+            ds,
+            test: Test,
+            kwargs: dict[str, Any],
+            force_permutation: bool = False,
+    ):
         test_obj = test if isinstance(test, Test) else self.tests[test]
         if isinstance(y, str):
             y = ds.eval(y)
@@ -609,8 +647,8 @@ class ResultOutputDerivative(Derivative[T]):
             dim = 'sensor' if y[0].has_dim('sensor') else 'source'
             return test_obj.make_uv(combine([getattr(yi, 'mean')(dim) for yi in y]), ds)
         if isinstance(y, NDVar) and y.has_dim('space'):
-            return test_obj.make_vec(y, ds, False, kwargs)
-        return test_obj.make(y, ds, False, kwargs)
+            return test_obj.make_vec(y, ds, force_permutation, kwargs)
+        return test_obj.make(y, ds, force_permutation, kwargs)
 
     @staticmethod
     def _src_to_label_tc(ds, func):
@@ -625,6 +663,11 @@ class ResultOutputDerivative(Derivative[T]):
         return out
 
     def _subjects(self, ctx: DerivativeContext) -> list[str]:
+        if self.single_subject:
+            return [ctx.get('subject')]
+        group = ctx.get('group')
+        if group not in (None, '', '*'):
+            return list(self.groups[group])
         return [item['subject'] for item in self.collect_states(ctx.state, ('subject',))]
 
     def _make_test_rois(self, ctx: DerivativeContext, baseline, src_baseline, test_obj, pmin, test_kwargs, res, data, samplingrate):
@@ -647,7 +690,10 @@ class ResultOutputDerivative(Derivative[T]):
         n_trials_ds = combine(n_trials_dss, incomplete='drop')
         n_per_label = {label: len(dss) for label, dss in label_dss.items()}
         do_mcc = len(labels) > 1 and pmin not in (None, 'tfce') and len(set(n_per_label.values())) == 1
-        label_results = {label: self.make_test('label_tc', ds, test_obj, test_kwargs) for label, ds in label_data.items()}
+        label_results = {
+            label: self.make_test('label_tc', ds, test_obj, test_kwargs, do_mcc)
+            for label, ds in label_data.items()
+        }
         merged_dist = _MergedTemporalClusterDist([res_._cdist for res_ in label_results.values()]) if do_mcc else None
         res = ROITestResult(subjects, ctx.option('samples'), n_trials_ds, merged_dist, label_results)
         return label_data, res

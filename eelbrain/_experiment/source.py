@@ -22,6 +22,8 @@ from collections.abc import Sequence
 import mne
 import numpy as np
 from mne.minimum_norm import apply_inverse, apply_inverse_epochs, make_inverse_operator
+from mne.morph import SourceMorph
+from scipy import sparse
 
 from .. import load, save
 from .._data_obj import Dataset, Datalist, NDVar, combine
@@ -170,6 +172,60 @@ def inverse_operator_params(inv: str) -> tuple[str, dict[str, Any], dict[str, An
         apply_kw['pick_ori'] = 'normal'
 
     return method, make_kw, apply_kw
+
+
+def _selected_parc(
+        ctx: DerivativeContext,
+        mask: bool | str = False,
+) -> str | None:
+    parc = ctx.option('parc') or ctx.get('parc') or None
+    if isinstance(mask, str):
+        return mask
+    return parc
+
+
+def _identity_source_morph(
+        subject_from: str,
+        subject_to: str,
+        src_from: mne.SourceSpaces,
+        src_to: mne.SourceSpaces,
+) -> SourceMorph:
+    """Create a trivial surface :class:`mne.SourceMorph` for scaled template brains.
+
+    This is only for the public ``load_source_morph()`` API in the special case
+    where a subject source space is a scaled copy of ``subject_to``. It is not
+    a general fallback for missing Freesurfer morph data.
+
+    The source spaces must therefore match exactly in their per-hemisphere
+    vertex definitions. If they do not, the scaled-source-space invariant of
+    the pipeline is broken and a real morph would be required.
+    """
+    vertices_from = [np.array(src['vertno'], int) for src in src_from[:2]]
+    vertices_to = [np.array(src['vertno'], int) for src in src_to[:2]]
+    if not all(np.array_equal(v_from, v_to) for v_from, v_to in zip(vertices_from, vertices_to)):
+        raise RuntimeError(
+            "Scaled source-space morph requires identical per-hemisphere vertices in source and target source spaces"
+        )
+    n_from = sum(len(vertices) for vertices in vertices_from)
+    return SourceMorph(
+        subject_from,
+        subject_to,
+        'surface',
+        None,
+        None,
+        None,
+        None,
+        None,
+        False,
+        sparse.eye(n_from, format='csr'),
+        vertices_to,
+        None,
+        None,
+        None,
+        None,
+        {'vertices_from': vertices_from},
+        None,
+    )
 
 
 def _load_bem(state: dict[str, Any], log: logging.Logger) -> mne.ConductorModel:
@@ -347,14 +403,18 @@ class SourceMorphDerivative(Derivative[mne.SourceMorph]):
             'mrisubject': ctx.get('mrisubject'),
             'common_brain': ctx.get('common_brain'),
             'src': ctx.get('src'),
+            'fake_mri': is_fake_mri(mri_dir(ctx.state)),
         }
 
     def build(self, ctx: DerivativeContext) -> mne.SourceMorph:
         subject_from = ctx.get('mrisubject')
         subject_to = ctx.get('common_brain')
         subjects_dir = mri_sdir(ctx.state)
-        src_from = ctx.load('src')
         src_to = ctx.load('src', mrisubject=subject_to)
+        if is_fake_mri(mri_dir(ctx.state)) and subject_from != subject_to:
+            src_from = ctx.load('src')
+            return _identity_source_morph(subject_from, subject_to, src_from, src_to)
+        src_from = ctx.load('src')
         return mne.compute_source_morph(
             src_from,
             subject_from,
@@ -497,7 +557,7 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
         return make_inverse_operator(
             fiff.info,
             ctx.load('fwd'),
-            ctx.load('cov'),
+            ctx.load(cov_node_name(ctx.get('cov'))),
             use_cps=True,
             **make_kw,
         )
@@ -531,6 +591,8 @@ def load_epochs_stc_group(
         subjects: Sequence[str],
         state: dict[str, Any],
         options: dict[str, Any],
+        mri_subjects: dict[str, dict[str, str]],
+        common_brain: str,
 ) -> Dataset:
     if options['data_raw']:
         raise ValueError(f"data_raw={options['data_raw']!r} with group: Can not combine raw data from multiple subjects.")
@@ -541,7 +603,10 @@ def load_epochs_stc_group(
         options = {**options, 'morph': True}
     elif not morph:
         raise ValueError(f"morph={morph!r} with group: Source estimates can only be combined after morphing data to common brain model. Set morph=True.")
-    dss = [registry.load('epochs-stc', state={**state, 'subject': subject}, options=options) for subject in subjects]
+    dss = [
+        registry.load('epochs-stc', state=_subject_state(state, subject, mri_subjects, common_brain), options=options)
+        for subject in subjects
+    ]
     return combine(dss)
 
 
@@ -551,6 +616,8 @@ def load_epochs_stc_request(
         current_group: str,
         state: dict[str, Any],
         options: dict[str, Any],
+        mri_subjects: dict[str, dict[str, str]],
+        common_brain: str,
         subjects,
 ) -> Dataset:
     if subjects is True:
@@ -558,10 +625,10 @@ def load_epochs_stc_request(
     elif subjects in (None, 1):
         return registry.load('epochs-stc', state=state, options=options)
     if isinstance(subjects, Sequence) and not isinstance(subjects, str):
-        return load_epochs_stc_group(registry, subjects, state, options)
+        return load_epochs_stc_group(registry, subjects, state, options, mri_subjects, common_brain)
     if isinstance(subjects, str) and subjects in groups:
-        return load_epochs_stc_group(registry, groups[subjects], state, options)
-    return registry.load('epochs-stc', state={**state, 'subject': subjects}, options=options)
+        return load_epochs_stc_group(registry, groups[subjects], state, options, mri_subjects, common_brain)
+    return registry.load('epochs-stc', state=_subject_state(state, subjects, mri_subjects, common_brain), options=options)
 
 
 def load_evoked_stc_group(
@@ -569,6 +636,8 @@ def load_evoked_stc_group(
         subjects: Sequence[str],
         state: dict[str, Any],
         options: dict[str, Any],
+        mri_subjects: dict[str, dict[str, str]],
+        common_brain: str,
 ) -> Dataset:
     morph = options.get('morph')
     if options['ndvar']:
@@ -576,7 +645,10 @@ def load_evoked_stc_group(
             options = {**options, 'morph': True}
         elif not morph:
             raise ValueError("ndvar=True, morph=False with multiple subjects: Can't create ndvars with data from different brains")
-    dss = [registry.load('evoked-stc', state={**state, 'subject': subject}, options=options) for subject in subjects]
+    dss = [
+        registry.load('evoked-stc', state=_subject_state(state, subject, mri_subjects, common_brain), options=options)
+        for subject in subjects
+    ]
     return combine(dss)
 
 
@@ -586,6 +658,8 @@ def load_evoked_stc_request(
         current_group: str,
         state: dict[str, Any],
         options: dict[str, Any],
+        mri_subjects: dict[str, dict[str, str]],
+        common_brain: str,
         subjects,
 ) -> Dataset:
     if subjects is True:
@@ -593,10 +667,26 @@ def load_evoked_stc_request(
     elif subjects in (None, 1):
         return registry.load('evoked-stc', state=state, options=options)
     if isinstance(subjects, Sequence) and not isinstance(subjects, str):
-        return load_evoked_stc_group(registry, subjects, state, options)
+        return load_evoked_stc_group(registry, subjects, state, options, mri_subjects, common_brain)
     if isinstance(subjects, str) and subjects in groups:
-        return load_evoked_stc_group(registry, groups[subjects], state, options)
-    return registry.load('evoked-stc', state={**state, 'subject': subjects}, options=options)
+        return load_evoked_stc_group(registry, groups[subjects], state, options, mri_subjects, common_brain)
+    return registry.load('evoked-stc', state=_subject_state(state, subjects, mri_subjects, common_brain), options=options)
+
+
+def _subject_state(
+        state: dict[str, Any],
+        subject: str,
+        mri_subjects: dict[str, dict[str, str]],
+        common_brain: str,
+) -> dict[str, Any]:
+    out = {**state, 'subject': subject}
+    mri = out.get('mri')
+    if mri not in (None, '', '*'):
+        mrisubject = mri_subjects[mri][subject]
+        if mrisubject != common_brain and not mrisubject.startswith('sub-'):
+            mrisubject = 'sub-' + mrisubject
+        out['mrisubject'] = mrisubject
+    return out
 
 
 def _prepare_inv(
@@ -605,9 +695,7 @@ def _prepare_inv(
         mask: bool | str,
         morph: bool | None,
 ):
-    parc = ctx.get('parc') or None
-    if isinstance(mask, str) and parc != mask:
-        parc = mask
+    parc = _selected_parc(ctx, mask)
     if parc:
         ctx.load('annot', state={'parc': parc})
 
@@ -658,7 +746,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
         ]
         mask = ctx.option('mask', False)
         if mask:
-            parc = ctx.get('parc') if mask is True else mask
+            parc = _selected_parc(ctx, mask)
             deps.append(Dependency('annot', state={'parc': parc}))
         if ctx.option('morph', False):
             deps.append(Dependency('source-morph'))
@@ -801,7 +889,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
         ]
         mask = ctx.option('mask', False)
         if mask:
-            parc = ctx.get('parc') if mask is True else mask
+            parc = _selected_parc(ctx, mask)
             deps.append(Dependency('annot', state={'parc': parc}))
         if ctx.option('morph', False):
             deps.append(Dependency('source-morph'))
@@ -853,9 +941,11 @@ class EvokedStcDerivative(Derivative[Dataset]):
             subject_from = common_brain
         else:
             subject_from = mrisubject
+        parc = _selected_parc(ctx, ctx.option('mask', False))
         if ndvar:
             target_subject = common_brain if ctx.option('morph', False) else mrisubject
-            ctx.load('annot', state={'mrisubject': target_subject, 'parc': ctx.get('parc')})
+            if parc:
+                ctx.load('annot', state={'mrisubject': target_subject, 'parc': parc})
         source_morph = None
         if ctx.option('morph', False) and subject_from != common_brain:
             source_morph = ctx.load('source-morph', state={'mrisubject': subject_from})
@@ -876,7 +966,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
         if ndvar:
             key = 'srcm' if ctx.option('morph', False) else 'src'
             target_subject = common_brain if ctx.option('morph', False) else mrisubject
-            stc_value = load.mne.stc_ndvar(stcs, target_subject, ctx.get('src'), mri_sdir(ctx.state), method, make_kw.get('fixed', False), parc=ctx.get('parc') or None, adjacency=ctx.get('adjacency'))
+            stc_value = load.mne.stc_ndvar(stcs, target_subject, ctx.get('src'), mri_sdir(ctx.state), method, make_kw.get('fixed', False), parc=parc, adjacency=ctx.get('adjacency'))
             if ctx.option('mask', False):
                 stc_value = _mask_ndvar(stc_value)
         else:

@@ -1290,7 +1290,16 @@ class Pipeline(StateModel):
         if group is not None:
             epoch_name = self.get('epoch')
             subjects_ = [subject_ for subject_ in self.iter(group=group, progress_bar=f"Load {epoch_name} STC")]
-            return load_epochs_stc_request(self._derivatives, self._groups, self.get('group'), self._derivative_state(state), options, subjects_)
+            return load_epochs_stc_request(
+                self._derivatives,
+                self._groups,
+                self.get('group'),
+                self._derivative_state(state),
+                options,
+                self._mri_subjects,
+                self.get('common_brain'),
+                subjects_,
+            )
 
         if subject is not None:
             state['subject'] = subject
@@ -1619,7 +1628,16 @@ class Pipeline(StateModel):
 
         epoch_name = self.get('epoch')
         subjects_ = [subject_ for subject_ in self.iter(group=group, progress_bar=f"Load {epoch_name} STC")]
-        return load_evoked_stc_request(self._derivatives, self._groups, self.get('group'), self._derivative_state(state), options, subjects_)
+        return load_evoked_stc_request(
+            self._derivatives,
+            self._groups,
+            self.get('group'),
+            self._derivative_state(state),
+            options,
+            self._mri_subjects,
+            self.get('common_brain'),
+            subjects_,
+        )
 
     def load_induced_stc(
             self,
@@ -1903,12 +1921,20 @@ class Pipeline(StateModel):
         return {label.name: label for label in labels}
 
     def load_source_morph(self, **state):
-        """Load the morph matrix from mrisubject to common_brain
+        """Load the source morph from mrisubject to common_brain
 
         Parameters
         ----------
         ...
             State parameters.
+
+        Notes
+        -----
+        For scaled template brains, no geometric morphing is required for the
+        internal NDVar code paths: :func:`eelbrain.morph_source_space` handles
+        that case directly from source-space metadata. In that situation this
+        method still returns a trivial identity :class:`mne.SourceMorph` for
+        compatibility with public STC-based workflows.
         """
         return self._load_derivative('source-morph', state=state)
 

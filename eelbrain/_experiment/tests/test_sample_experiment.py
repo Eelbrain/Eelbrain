@@ -408,7 +408,7 @@ def test_sample_source():
     e.set(epoch='target')
     ress = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, data='source.rms', parc='ac', make=True)
     res = ress.res['transversetemporal-lh']
-    assert res.p.min() == pytest.approx(0.429, abs=.001)
+    assert res.p.min() == 1 / 7
     ress = e.load_test('twostage', 0.05, 0.2, 0.05, samples=100, data='source.rms', parc='ac', make=True)
     res = ress.res['transversetemporal-lh']
     assert res.samples == -1
