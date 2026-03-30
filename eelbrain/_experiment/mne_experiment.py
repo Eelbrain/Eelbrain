@@ -4053,6 +4053,38 @@ class Pipeline(StateModel):
                 t.cells(subject, ', '.join(bad_channels[subject]))
         return t
 
+    def show_dependencies(
+            self,
+            name: str,
+            options: dict[str, Any] | None = None,
+            *,
+            max_line_length: int | None = None,
+            return_str: bool = False,
+            **state,
+    ) -> str | None:
+        """Show the dependency tree for one registered input or derivative.
+
+        Parameters
+        ----------
+        name
+            Registered dependency node name, for example ``'evoked'``,
+            ``'test-result'`` or ``'fwd'``.
+        options
+            Load options for the requested node.
+        max_line_length
+            Maximum line length for the formatted tree. By default, infer the
+            current terminal width.
+        return_str
+            Return the formatted tree instead of printing it.
+        ...
+            State parameters for resolving the requested node.
+        """
+        tree = self._derivatives.dependency_tree(name, state=self._derivative_state(state), options=options, max_line_length=max_line_length)
+        if return_str:
+            return tree
+        print(tree)
+        return None
+
     def show_raw_info(self, **state):
         """Display the selected pipeline for raw processing
 

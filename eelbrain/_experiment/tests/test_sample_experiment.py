@@ -74,6 +74,11 @@ def test_sample():
     assert e.get('raw') == '1-40'
     assert e.get('subject') == 'R0000'
     assert e.get('subject', subject='R0002') == 'R0002'
+    tree = e.show_dependencies('evoked', return_str=True)
+    assert 'evoked [derivative]' in tree
+    assert 'epochs-ds [derivative]' in tree
+    wrapped_tree = e.show_dependencies('evoked', max_line_length=60, return_str=True)
+    assert all(len(line) <= 60 for line in wrapped_tree.splitlines())
 
     # wildcard formatting
     with e._temporary_state:

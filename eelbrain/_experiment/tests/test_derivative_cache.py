@@ -184,6 +184,38 @@ class SummaryDerivative(Derivative[str]):
         Path(path).write_text(value)
 
 
+class ComparisonDerivative(Derivative[str]):
+    name = 'comparison'
+    key_fields = ('subject',)
+    cache_suffix = '.txt'
+
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        return (
+            Dependency('value', label='current'),
+            Dependency('value', label='other', state={'subject': 's2'}),
+        )
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, object]:
+        return {'subject': ctx.get('subject')}
+
+    def build(self, ctx: DerivativeContext) -> str:
+        return f"{ctx.load('value')} vs {ctx.load('value', subject='s2')}"
+
+    def load(
+            self,
+            ctx: DerivativeContext,
+            path: str) -> str:
+        return Path(path).read_text()
+
+    def save(
+            self,
+            ctx: DerivativeContext,
+            path: str,
+            value: str,
+    ) -> None:
+        Path(path).write_text(value)
+
+
 class EphemeralDerivative(Derivative[str]):
     name = 'ephemeral'
     key_fields = ('subject',)
@@ -287,16 +319,18 @@ def make_registry():
     source = SourceInput(root)
     value = ValueDerivative(root)
     summary = SummaryDerivative(root)
+    comparison = ComparisonDerivative()
     ephemeral = EphemeralDerivative(root)
     protected = ProtectedDerivative(root)
     reindexable_protected = ReindexableProtectedDerivative(root)
     registry.register(source)
     registry.register(value)
     registry.register(summary)
+    registry.register(comparison)
     registry.register(ephemeral)
     registry.register(protected)
     registry.register(reindexable_protected)
-    return pipeline, registry, source, value, summary, ephemeral, protected, reindexable_protected
+    return pipeline, registry, source, value, summary, comparison, ephemeral, protected, reindexable_protected
 
 
 def test_manifest_roundtrip_ignores_unknown_fields():
@@ -317,7 +351,7 @@ def test_manifest_roundtrip_ignores_unknown_fields():
 
 
 def test_registry_load_caches_derivative_and_writes_manifest():
-    pipeline, registry, _, value, _, _, _, _ = make_registry()
+    pipeline, registry, _, value, _, _, _, _, _ = make_registry()
 
     first = registry.load('value', state=DEFAULT_STATE)
     second = registry.load('value', state=DEFAULT_STATE)
@@ -343,7 +377,7 @@ def test_registry_load_caches_derivative_and_writes_manifest():
 
 
 def test_dependency_change_invalidates_downstream_derivatives():
-    pipeline, registry, _, value, summary, _, _, _ = make_registry()
+    pipeline, registry, _, value, summary, _, _, _, _ = make_registry()
 
     assert registry.load('summary', state=DEFAULT_STATE) == 'summary:alpha'
     assert value.build_calls == 1
@@ -357,7 +391,7 @@ def test_dependency_change_invalidates_downstream_derivatives():
 
 
 def test_non_key_state_does_not_invalidate_cache():
-    _, registry, _, value, _, _, _, _ = make_registry()
+    _, registry, _, value, _, _, _, _, _ = make_registry()
 
     assert registry.load('value', state={'subject': 's1', 'mode': 'a'}) == 'alpha'
     assert registry.load('value', state={'subject': 's1', 'mode': 'b'}) == 'alpha'
@@ -365,7 +399,7 @@ def test_non_key_state_does_not_invalidate_cache():
 
 
 def test_generic_cache_path_uses_node_name_and_key():
-    _, registry, _, _, _, _, _, _ = make_registry()
+    _, registry, _, _, _, _, _, _, _ = make_registry()
 
     a = registry.resolve('value', state={'subject': 's1', 'mode': 'a'}).artifact_path
     b = registry.resolve('value', state={'subject': 's1', 'mode': 'b'}).artifact_path
@@ -377,8 +411,33 @@ def test_generic_cache_path_uses_node_name_and_key():
     assert c.is_relative_to(registry.cache_dir / 'value')
 
 
+def test_dependency_tree_formats_ascii_dependencies():
+    _, registry, _, _, _, _, _, _, _ = make_registry()
+
+    tree = registry.dependency_tree('comparison', state=DEFAULT_STATE)
+
+    assert "comparison [derivative] {subject='s1'}" in tree
+    assert "current -> value [derivative] {subject='s1'}" in tree
+    assert "other -> value [derivative] {subject='s2'} [state: subject='s2']" in tree
+    assert 'source [input]' in tree
+    assert '├──' in tree
+    assert '└──' in tree
+
+
+def test_dependency_tree_respects_max_line_length():
+    _, registry, _, _, _, _, _, _, _ = make_registry()
+
+    tree = registry.dependency_tree('comparison', state=DEFAULT_STATE, max_line_length=44)
+    lines = tree.splitlines()
+
+    assert len(lines) > 4
+    assert all(len(line) <= 44 for line in lines)
+    assert "other -> value [derivative]" in tree
+    assert "{subject='s2'} [state: subject='s2']" in tree
+
+
 def test_disabled_by_default_derivative_skips_cache_by_default():
-    _, registry, _, _, _, ephemeral, _, _ = make_registry()
+    _, registry, _, _, _, _, ephemeral, _, _ = make_registry()
 
     first = registry.load('ephemeral', state=DEFAULT_STATE)
     second = registry.load('ephemeral', state=DEFAULT_STATE)
@@ -392,7 +451,7 @@ def test_disabled_by_default_derivative_skips_cache_by_default():
 
 
 def test_registry_resolve_returns_input_handle_and_loads_input():
-    _, registry, _, _, _, _, _, _ = make_registry()
+    _, registry, _, _, _, _, _, _, _ = make_registry()
 
     handle = registry.resolve('source', state=DEFAULT_STATE)
     assert isinstance(handle, InputHandle)
@@ -406,7 +465,7 @@ def test_registry_resolve_returns_input_handle_and_loads_input():
 
 
 def test_stale_external_artifact_is_protected():
-    pipeline, registry, _, _, _, _, _, _ = make_registry()
+    pipeline, registry, _, _, _, _, _, _, _ = make_registry()
 
     assert registry.load('protected', state=DEFAULT_STATE) == 'alpha'
     protected_path = Path(pipeline.get('protected-file'))
@@ -431,7 +490,7 @@ def test_stale_external_artifact_is_protected():
 
 
 def test_protected_artifact_can_reindex_manifest():
-    pipeline, registry, _, _, _, _, _, _ = make_registry()
+    pipeline, registry, _, _, _, _, _, _, _ = make_registry()
 
     assert registry.load('reindexable-protected', state=DEFAULT_STATE) == 'alpha'
     protected_path = Path(pipeline.get('protected-file'))
