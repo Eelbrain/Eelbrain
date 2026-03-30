@@ -34,8 +34,7 @@ from __future__ import annotations
 import warnings
 import fnmatch
 import logging
-from os import makedirs
-from os.path import basename, exists, relpath
+from os.path import exists, relpath
 from pathlib import Path
 from typing import Any
 from collections.abc import Sequence
@@ -73,25 +72,26 @@ _RAW_READER_WARNING_STATE: dict[str, dict[str, Any]] = {}
 
 
 def _raw_reader_warnings_path(root: str | Path) -> Path:
-    return Path(log_dir({'root': str(root)})) / 'raw-reader-warnings.log'
+    return log_dir({'root': Path(root)}) / 'raw-reader-warnings.log'
 
 
 def _record_raw_reader_warnings(
         root: str | Path,
-        raw_path: str,
+        raw_path: str | Path,
         warning_list: list[warnings.WarningMessage],
         log: logging.Logger | None = None,
 ) -> None:
     if not warning_list:
         return
-    root_str = str(root)
-    state = _RAW_READER_WARNING_STATE.get(root_str)
+    root_path = Path(root)
+    state = _RAW_READER_WARNING_STATE.get(str(root_path))
     if state is None:
-        details_path = _raw_reader_warnings_path(root_str)
+        details_path = _raw_reader_warnings_path(root_path)
         details_path.parent.mkdir(parents=True, exist_ok=True)
         details_path.write_text("Warnings emitted while reading raw data files.\n")
         state = {'count': 0, 'details_path': details_path, 'seen': set(), 'warned': False}
-        _RAW_READER_WARNING_STATE[root_str] = state
+        _RAW_READER_WARNING_STATE[str(root_path)] = state
+    raw_path = Path(raw_path)
     new_entries = []
     for message in warning_list:
         category = message.category.__name__
@@ -577,7 +577,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
     def load(self, ctx: DerivativeContext) -> mne.preprocessing.ICA:
         path = self._path(ctx)
         if not exists(path):
-            raise FileMissingError(f"ICA file {basename(path)} does not exist. Run e.make_ica() to create it.")
+            raise FileMissingError(f"ICA file {path.name} does not exist. Run e.make_ica() to create it.")
         value, current = self._current_value_manifest(ctx)
         previous = self._manifest(ctx)
         if not self._manifest_matches(previous, current):
@@ -796,15 +796,15 @@ class RawSource(RawPipe):
     def _can_link(self, pipes: dict[str, RawPipe]) -> bool:
         return True
 
-    def _raw_path(self, path: BIDSPath) -> str:
+    def _raw_path(self, path: BIDSPath) -> Path:
         "Get path to the raw file. Enforce existence."
-        raw_path = str(path.fpath)
-        if not exists(raw_path):
+        raw_path = Path(path.fpath)
+        if not raw_path.exists():
             raise FileMissingError(f"Raw input file does not exist at expected location {path.fpath}")
         return raw_path
 
-    def _bads_path(self, path: BIDSPath) -> str:
-        return str(path.copy().update(
+    def _bads_path(self, path: BIDSPath) -> Path:
+        return Path(path.copy().update(
             suffix='channels',
             extension='.tsv',
             split=None,
@@ -867,7 +867,7 @@ class RawSource(RawPipe):
             return channels_df.query('status == "bad"')['name'].tolist()
         # Create a channels file if none exists
         LOG.info("No channels.tsv found for %s, creating an empty one.", path.fpath)
-        makedirs(Path(bads_path).parent, exist_ok=True)
+        bads_path.parent.mkdir(parents=True, exist_ok=True)
         if exists(path.fpath):
             raw = self._load(path, preload=False, log=log)
             ch_names = raw.ch_names
@@ -1326,7 +1326,7 @@ class RawICA(CachedRawPipe):
             'extension': path.extension,
         }, raw_name), raw=raw_name)
         if not exists(ica_path):
-            raise FileMissingError(f"ICA file {basename(ica_path)} does not exist for raw={raw_name!r}. Run e.make_ica() to create it.")
+            raise FileMissingError(f"ICA file {ica_path.name} does not exist for raw={raw_name!r}. Run e.make_ica() to create it.")
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', 'Version 0.23 introduced max_iter', DeprecationWarning)
             return mne.preprocessing.read_ica(ica_path)

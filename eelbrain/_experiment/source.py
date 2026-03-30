@@ -13,7 +13,6 @@ from __future__ import annotations
 import logging
 from itertools import product
 import os
-from os.path import basename, join
 from pathlib import Path
 import re
 from typing import Any
@@ -233,14 +232,14 @@ def _load_bem(state: dict[str, Any], log: logging.Logger) -> mne.ConductorModel:
 
     bem_dir_ = bem_dir(state)
     surfs = ('brain', 'inner_skull', 'outer_skull', 'outer_skin')
-    paths = {surf: join(bem_dir_, surf + '.surf') for surf in surfs}
-    missing = [surf for surf in surfs if not Path(paths[surf]).exists()]
+    paths = {surf: bem_dir_ / f'{surf}.surf' for surf in surfs}
+    missing = [surf for surf in surfs if not paths[surf].exists()]
     if missing:
         for surf in missing[:]:
-            path = Path(paths[surf])
+            path = paths[surf]
             if path.is_symlink():
                 new_target = Path('watershed') / f'{subject}_{surf}_surface'
-                if (Path(bem_dir_) / new_target).exists():
+                if (bem_dir_ / new_target).exists():
                     log.info("Fixing broken symlink for %s %s surface file", subject, surf)
                     path.unlink()
                     path.symlink_to(new_target)
@@ -346,7 +345,7 @@ class SrcDerivative(Derivative[mne.SourceSpaces]):
                 subject,
                 pos=float(param),
                 bem=bem,
-                mri=join(mri_dir_, 'mri', 'aseg.mgz'),
+                mri=mri_dir_ / 'mri' / 'aseg.mgz',
                 volume_label=voi,
                 subjects_dir=subjects_dir,
             )
@@ -461,7 +460,7 @@ class FwdDerivative(Derivative[mne.Forward]):
         src = ctx.load('src')
         dst = self.path(ctx)
         if ctx.get('mrisubject') == 'fsaverage':
-            bemsol = join(mri_dir(ctx.state), 'bem', 'fsaverage-5120-5120-5120-bem-sol.fif')
+            bemsol = mri_dir(ctx.state) / 'bem' / 'fsaverage-5120-5120-5120-bem-sol.fif'
         else:
             bem = _load_bem(ctx.state, ctx.registry.log)
             bemsol = mne.make_bem_solution(bem)
@@ -479,7 +478,7 @@ class FwdDerivative(Derivative[mne.Forward]):
         for src_part, src_ref in zip(fwd['src'], src):
             if src_part['nuse'] != src_ref['nuse']:
                 raise RuntimeError(
-                    f"The forward solution {basename(dst)} contains fewer sources than the source space. "
+                    f"The forward solution {dst.name} contains fewer sources than the source space. "
                     "This could be due to a corrupted bem file with sources outside of the inner skull surface."
                 )
         return fwd

@@ -5,7 +5,7 @@ from datetime import datetime
 from itertools import chain, product
 import logging
 import os
-from os.path import exists, join
+from os.path import exists
 from pathlib import Path
 from typing import Any, Literal
 from collections.abc import Sequence
@@ -45,16 +45,15 @@ from .exceptions import FileMissingError
 from .experiment import StateModel
 from .groups import assemble_groups
 from .pathing import (
-    cache_dir, deriv_dir, epoch_basename,
-    ica_file_path, join_stem_parts, mri_dir, mri_sdir, raw_basename, raw_dir,
-    rej_file_path, results_dir, src_file_path, trans_file_path,
+    deriv_dir, epoch_basename, ica_file_path,
+    join_stem_parts, mri_dir, mri_sdir, raw_basename, raw_dir, rej_file_path,
+    results_dir, src_file_path, trans_file_path,
 )
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, assemble_parcs
 from .preprocessing import (
     ICAInput, RawBadChannelsInput, RawDerivative, RawPipe, RawSource, RawSourceInput, RawICA,
-    RawFilter, get_ica_pipe, get_ica_pipe_name,
-    ica_input_name, raw_bad_channels_input_name, raw_node_name,
-    validate_raw_graph,
+    get_ica_pipe, get_ica_pipe_name, ica_input_name,
+    raw_bad_channels_input_name, raw_node_name, validate_raw_graph,
 )
 from .reports import (
     CoregReportDerivative, EEGReportDerivative, EEGSensorsReportDerivative,
@@ -75,10 +74,6 @@ from .variable_def import Variables, label_groups as label_groups_var
 
 BIDS_PATH_KEYS = ('datatype', 'suffix', 'extension', 'subject', 'session', 'task', 'acquisition', 'run', 'split')
 
-# paths
-LOG_FILE = join('{root}', 'derivatives', 'eelbrain', 'eelbrain {name}.log')
-LOG_FILE_OLD = join('{root}', '.eelbrain.log')
-
 # Allowable parameters
 COV_PARAMS = {'epoch', 'method', 'reg', 'keep_sample_mean', 'reg_eval_win_pad'}
 # Argument types
@@ -86,14 +81,6 @@ BaselineArg = bool | tuple[float | None, float | None]
 DataArg = str | TestDims
 PMinArg = Literal['tfce'] | float | None
 SubjectArg = str | Literal[1, -1]
-
-# Eelbrain 0.24 raw/preprocessing pipeline
-LEGACY_RAW = {
-    '0-40': RawFilter('raw', None, 40, method='iir'),
-    '0.1-40': RawFilter('raw', 0.1, 40, l_trans_bandwidth=0.08, filter_length='60s'),
-    '0.2-40': RawFilter('raw', 0.2, 40, l_trans_bandwidth=0.08, filter_length='60s'),
-    '1-40': RawFilter('raw', 1, 40, method='iir'),
-}
 
 
 def _mask_ndvar(y: NDVar):
@@ -286,7 +273,7 @@ class Pipeline(StateModel):
         ########
         if root is None:
             raise AttributeError("Pipeline subclasses must have root.")
-        self.root = root = self._eval_root(root)
+        self.root = root = Path(root).absolute().expanduser()
         if hasattr(self, 'cluster_criteria'):
             raise AttributeError("Pipeline subclasses can not have a .cluster_criteria attribute anymore. Please remove the attribute, delete the eelbrain-cache folder and use the select_clusters analysis parameter.")
 
@@ -330,19 +317,14 @@ class Pipeline(StateModel):
                 raise DefinitionError(f"Can't infer datatype. No MEG or EEG data found in {root}.")
         self._bids_path = BIDSPath(root=root)
         StateModel.__init__(self)
-        self._register_field('root', eval_handler=self._eval_root)
-        self.set(root=root)
 
         ########################################################################
         # Logger
         ########
         # log-file
         self._log = log = logging.Logger(self.__class__.__name__, logging.DEBUG)
-        log_file = LOG_FILE.format(root=root, name=self.__class__.__name__)
-        log_file_old = LOG_FILE_OLD.format(root=root)
-        if exists(log_file_old):
-            os.rename(log_file_old, log_file)
-        os.makedirs(cache_dir({'root': root}), exist_ok=True)
+        log_file = root / 'derivatives' / 'eelbrain' / f'{self.__class__.__name__}.log'
+        os.makedirs(log_file.parent, exist_ok=True)
         handler = logging.FileHandler(log_file)
         formatter = logging.Formatter("%(levelname)-8s %(asctime)s %(message)s", "%m-%d %H:%M")  # %(name)-12s
         handler.setFormatter(formatter)
@@ -535,7 +517,7 @@ class Pipeline(StateModel):
 
     def _init_derivative_registry(self):
         self._derivative_state_fields = tuple(self._terminal_fields)
-        self._derivatives = DerivativeRegistry(self.get('root'), self._log)
+        self._derivatives = DerivativeRegistry(self.root, self._log)
 
         # Register inputs
         for raw_name, pipe in self._raw.items():
@@ -693,20 +675,13 @@ class Pipeline(StateModel):
             if merged_state:
                 self.set(**merged_state)
             out = {field: self.get(field) for field in self._derivative_state_fields}
-            out['root'] = self.get('root')
+            out['root'] = self.root
             out['common_brain'] = self.get('common_brain')
             return out
 
     def __iter__(self):
         "Iterate state through subjects and yield each subject name."
         return self.iter()
-
-    @staticmethod
-    def _eval_root(root):
-        root = os.path.abspath(os.path.expanduser(root))
-        if root != '':
-            root = os.path.normpath(root)
-        return root
 
     def get(
             self,
@@ -4338,7 +4313,7 @@ class Pipeline(StateModel):
                     subject=subject,
                     datatype=datatype,
                     suffix=suffix,
-                    root=self.get('root'),
+                    root=self.root,
                 )
                 matches = query.match()
                 basenames = [match.basename for match in matches]

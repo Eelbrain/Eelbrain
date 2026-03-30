@@ -483,8 +483,8 @@ def test_sample_tasks():
     # get paths
     pipe = e._raw[e.get('raw', raw='raw')]
     bids_path = e._bids_path
-    assert pipe._raw_path(bids_path) == join(root, 'sub-R0000', 'meg', 'sub-R0000_task-sample1_meg.fif')
-    assert pipe._bads_path(bids_path) == join(root, 'sub-R0000', 'meg', 'sub-R0000_task-sample1_channels.tsv')
+    assert pipe._raw_path(bids_path) == Path(root) / 'sub-R0000' / 'meg' / 'sub-R0000_task-sample1_meg.fif'
+    assert pipe._bads_path(bids_path) == Path(root) / 'sub-R0000' / 'meg' / 'sub-R0000_task-sample1_channels.tsv'
     pipe = e._raw[e.get('raw', raw='ica')]
     bids_path = e._bids_path
     state = e._derivative_state(raw='ica')

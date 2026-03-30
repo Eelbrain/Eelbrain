@@ -51,11 +51,11 @@ class RejectionInput(Input):
 
     def __init__(
             self,
-            root: str,
+            root: str | Path,
             artifact_rejection: dict[str, dict[str, Any]],
             epochs: dict[str, Any],
     ):
-        self.root = root
+        self.root = Path(root)
         self.artifact_rejection = artifact_rejection
         self.epochs = epochs
 
