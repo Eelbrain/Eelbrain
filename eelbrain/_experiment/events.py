@@ -479,11 +479,9 @@ class EpochsDerivative(Derivative[Dataset]):
             self,
             raw,
             epochs: dict[str, Any],
-            log,
     ):
         self.raw = raw
         self.epochs = epochs
-        self.log = log
 
     def _selected_events_options(self, ctx: DerivativeContext) -> dict[str, Any]:
         return {
@@ -598,7 +596,7 @@ class EpochsDerivative(Derivative[Dataset]):
             n = ds.n_cases
             ds = load.mne.add_mne_epochs(ds, tmin, tmax, baseline, decim=decim, drop_bad_chs=False, tstop=tstop, reject_by_annotation=False)
             if ds.n_cases != n:
-                self.log.warning("%s missing for %s/%s", n_of(n - ds.n_cases, 'epoch'), ctx.get('subject'), epoch_name)
+                ctx.registry.log.warning("%s missing for %s/%s", n_of(n - ds.n_cases, 'epoch'), ctx.get('subject'), epoch_name)
             if ctx.option('trigger_shift', True) and epoch.post_baseline_trigger_shift:
                 ds['epochs'] = shift_mne_epoch_trigger(ds['epochs'], ds[epoch.post_baseline_trigger_shift], epoch.post_baseline_trigger_shift_min, epoch.post_baseline_trigger_shift_max)
             epochs_list = [ds['epochs']]

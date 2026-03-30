@@ -12,8 +12,8 @@ labels must not be part of canonical cache identity.
 from __future__ import annotations
 
 from itertools import product
+import logging
 from pathlib import Path
-from os.path import relpath
 from typing import Any, TypeVar
 
 from .. import load
@@ -75,6 +75,7 @@ class RejectionInput(Input):
 
 class ResultOutputDerivative(Derivative[T]):
     key_fields = ()
+    cache_log_level = logging.INFO
     single_subject = False
     sampled_path = False
 
@@ -88,7 +89,6 @@ class ResultOutputDerivative(Derivative[T]):
             mri_subjects: dict[str, dict[str, str]],
             common_brain: str,
             cluster_criteria: dict[str, dict[str, Any]],
-            log: Any,
             brain_plot_defaults: dict[str, Any] | None = None,
     ):
         self.tests = tests
@@ -99,7 +99,6 @@ class ResultOutputDerivative(Derivative[T]):
         self.mri_subjects = mri_subjects
         self.common_brain = common_brain
         self.cluster_criteria = cluster_criteria
-        self.log = log
         self.brain_plot_defaults = {} if brain_plot_defaults is None else brain_plot_defaults
 
     def _field_options(
@@ -358,7 +357,7 @@ class ResultOutputDerivative(Derivative[T]):
         }
         handle = ctx.registry.resolve('test-result', state=ctx.state, options=options)
         dst = handle.artifact_path
-        desc = relpath(dst, ctx.registry.cache_dir)
+        desc = ctx.registry.describe_artifact_path(dst)
 
         if handle.is_valid():
             try:
@@ -366,7 +365,6 @@ class ResultOutputDerivative(Derivative[T]):
             except OldVersionError:
                 res = None
             else:
-                self.log.info("Load cached test: %s", desc)
                 if not return_data:
                     return res
         elif not make and dst.exists():
@@ -472,7 +470,6 @@ class ResultOutputDerivative(Derivative[T]):
             raise ValueError(f"data={data.string!r}")
 
         if do_test:
-            self.log.info("Make test: %s", desc)
             res = self.make_test(data.y_name, res_data, test_obj, test_kwargs)
 
         return (res_data, res) if return_data else (None, res)
@@ -750,10 +747,7 @@ class ResultOutputDerivative(Derivative[T]):
         return (combine(res_data), res) if return_data else (None, res)
 
     def result_desc(self, ctx: DerivativeContext) -> str:
-        dst = self.path(ctx)
-        if ctx.registry.is_cache_artifact(dst):
-            return relpath(dst, ctx.registry.cache_dir)
-        return relpath(dst, ctx.get('root'))
+        return ctx.registry.describe_artifact_path(self.path(ctx))
 
     def extra_key(self, ctx: DerivativeContext) -> dict[str, Any]:
         return {}

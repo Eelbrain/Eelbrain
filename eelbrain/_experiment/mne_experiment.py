@@ -535,7 +535,7 @@ class Pipeline(StateModel):
 
     def _init_derivative_registry(self):
         self._derivative_state_fields = tuple(self._terminal_fields)
-        self._derivatives = DerivativeRegistry(self.get('root'))
+        self._derivatives = DerivativeRegistry(self.get('root'), self._log)
 
         # Register inputs
         for raw_name, pipe in self._raw.items():
@@ -551,7 +551,7 @@ class Pipeline(StateModel):
         # Register derivatives
         for raw_name, pipe in self._raw.items():
             if not isinstance(pipe, RawSource):
-                self._derivatives.register(RawDerivative(raw_name, pipe, self._raw, self._log))
+                self._derivatives.register(RawDerivative(raw_name, pipe, self._raw))
         self._derivatives.register(EventsDerivative(
             self.trigger_shift,
             sequence_arg(f'{self.__class__.__name__}.stim_channel', self.stim_channel),
@@ -566,7 +566,7 @@ class Pipeline(StateModel):
             len(self._sessions) > 1,
         ))
         self._derivatives.register(SelectedEventsDerivative(self._raw, self._epochs, self._tests, self._artifact_rejection, self._groups))
-        self._derivatives.register(EpochsDerivative(self._raw, self._epochs, self._log))
+        self._derivatives.register(EpochsDerivative(self._raw, self._epochs))
         self._derivatives.register(EvokedDerivative(self._epochs))
         self._derivatives.register(AnnotDerivative(self._parcs, tuple(self.get_field_values('hemi'))))
         self._derivatives.register(EpochsStcDerivative(self._epochs))
@@ -580,7 +580,6 @@ class Pipeline(StateModel):
             self._mri_subjects,
             self.get('common_brain'),
             self._cluster_criteria,
-            self._log,
         ))
         self._derivatives.register(SourceReportDerivative(
             self._tests,
@@ -591,7 +590,6 @@ class Pipeline(StateModel):
             self._mri_subjects,
             self.get('common_brain'),
             self._cluster_criteria,
-            self._log,
             {**self._brain_plot_defaults, **self.brain_plot_defaults},
         ))
         self._derivatives.register(ROIReportDerivative(
@@ -603,7 +601,6 @@ class Pipeline(StateModel):
             self._mri_subjects,
             self.get('common_brain'),
             self._cluster_criteria,
-            self._log,
             {**self._brain_plot_defaults, **self.brain_plot_defaults},
         ))
         self._derivatives.register(EEGReportDerivative(
@@ -615,7 +612,6 @@ class Pipeline(StateModel):
             self._mri_subjects,
             self.get('common_brain'),
             self._cluster_criteria,
-            self._log,
             {**self._brain_plot_defaults, **self.brain_plot_defaults},
         ))
         self._derivatives.register(EEGSensorsReportDerivative(
@@ -627,7 +623,6 @@ class Pipeline(StateModel):
             self._mri_subjects,
             self.get('common_brain'),
             self._cluster_criteria,
-            self._log,
             {**self._brain_plot_defaults, **self.brain_plot_defaults},
         ))
         self._derivatives.register(LMReportDerivative(
@@ -639,7 +634,6 @@ class Pipeline(StateModel):
             self._mri_subjects,
             self.get('common_brain'),
             self._cluster_criteria,
-            self._log,
             {**self._brain_plot_defaults, **self.brain_plot_defaults},
         ))
         self._derivatives.register(CoregReportDerivative(
@@ -651,7 +645,6 @@ class Pipeline(StateModel):
             self._mri_subjects,
             self.get('common_brain'),
             self._cluster_criteria,
-            self._log,
             {**self._brain_plot_defaults, **self.brain_plot_defaults},
         ))
         self._derivatives.register(MovieDerivative(
@@ -663,13 +656,12 @@ class Pipeline(StateModel):
             self._mri_subjects,
             self.get('common_brain'),
             self._cluster_criteria,
-            self._log,
         ))
         for cov_name, cov in self._covs.items():
-            self._derivatives.register(CovDerivative(cov_name, cov, self._log))
-        self._derivatives.register(SrcDerivative(self._log))
+            self._derivatives.register(CovDerivative(cov_name, cov))
+        self._derivatives.register(SrcDerivative())
         self._derivatives.register(SourceMorphDerivative())
-        self._derivatives.register(FwdDerivative(self._log))
+        self._derivatives.register(FwdDerivative())
         self._derivatives.register(InvDerivative())
 
     def _load_derivative(

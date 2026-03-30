@@ -272,9 +272,6 @@ class SrcDerivative(Derivative[mne.SourceSpaces]):
     name = 'src'
     key_fields = ('mrisubject', 'src')
 
-    def __init__(self, log: logging.Logger):
-        self.log = log
-
     def _is_scaled(self, ctx: DerivativeContext) -> bool:
         return ctx.get('mrisubject') != ctx.get('common_brain') and is_fake_mri(mri_dir(ctx.state))
 
@@ -312,14 +309,14 @@ class SrcDerivative(Derivative[mne.SourceSpaces]):
 
         if self._is_scaled(ctx):
             ctx.load('src', mrisubject=common_brain)
-            self.log.info("Scaling %s source space for %s...", src, subject)
+            ctx.registry.log.info("Scaling %s source space for %s...", src, subject)
             mne.scale_source_space(subject, f'{{subject}}-{src}-src.fif', subjects_dir=mri_sdir(ctx.state), n_jobs=1)
             return mne.read_source_spaces(dst)
 
         subjects_dir = mri_sdir(ctx.state)
         kind, param, special = parse_src(src)
         grade = int(param)
-        self.log.info("Generating %s source space for %s...", src, subject)
+        ctx.registry.log.info("Generating %s source space for %s...", src, subject)
         if kind == 'vol':
             if subject == 'fsaverage':
                 bem = bem_file_path(ctx.state)
@@ -440,9 +437,6 @@ class FwdDerivative(Derivative[mne.Forward]):
     )
     cache_suffix = '-fwd.fif'
 
-    def __init__(self, log: logging.Logger):
-        self.log = log
-
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         return (
             Dependency(
@@ -466,11 +460,10 @@ class FwdDerivative(Derivative[mne.Forward]):
         raw = load_raw_dependency(ctx, ctx.get('raw'), add_bads=False)
         src = ctx.load('src')
         dst = self.path(ctx)
-        self.log.debug("make_fwd %s...", basename(dst))
         if ctx.get('mrisubject') == 'fsaverage':
             bemsol = join(mri_dir(ctx.state), 'bem', 'fsaverage-5120-5120-5120-bem-sol.fif')
         else:
-            bem = _load_bem(ctx.state, self.log)
+            bem = _load_bem(ctx.state, ctx.registry.log)
             bemsol = mne.make_bem_solution(bem)
         if 'kit_system_id' in raw.info:
             is_kit = raw.info['kit_system_id'] is not None

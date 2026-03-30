@@ -37,6 +37,7 @@ from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
 import hashlib
 import json
+import logging
 from pathlib import Path
 import shutil
 from typing import Any, Generic, TypeVar
@@ -325,6 +326,7 @@ class Derivative(DependencyNode[T]):
     key_fields: tuple[str, ...]
     cache_policy: CachePolicy = CachePolicy.REQUIRED
     cache_suffix: str | None = None
+    cache_log_level: int | None = logging.DEBUG
     version: int = 1
 
     def cache_label(self, ctx: DerivativeContext) -> str | None:
@@ -336,6 +338,36 @@ class Derivative(DependencyNode[T]):
         :meth:`key` remains authoritative.
         """
         return _simple_cache_label(self.key(ctx))
+
+    def cache_log_name(self, ctx: DerivativeContext) -> str:
+        """Return the human-readable artifact name for cache log messages."""
+        return self.name.replace('-', ' ')
+
+    def cache_log_path(self, ctx: DerivativeContext, path: Path) -> str:
+        """Return the displayed artifact path for cache log messages."""
+        return ctx.registry.describe_artifact_path(path)
+
+    def log_cache_hit(self, ctx: DerivativeContext, path: Path) -> None:
+        """Emit the standard cache-hit message for this derivative."""
+        self._log_cache_event(ctx, path, "Load cached")
+
+    def log_cache_build(self, ctx: DerivativeContext, path: Path) -> None:
+        """Emit the standard cache-build message for this derivative."""
+        self._log_cache_event(ctx, path, "Build")
+
+    def log_cache_reindex(self, ctx: DerivativeContext, path: Path) -> None:
+        """Emit the standard manifest-reindex message for this derivative."""
+        self._log_cache_event(ctx, path, "Reindex")
+
+    def _log_cache_event(
+            self,
+            ctx: DerivativeContext,
+            path: Path,
+            action: str,
+    ) -> None:
+        if self.cache_log_level is None:
+            return
+        ctx.registry.log.log(self.cache_log_level, "%s %s: %s", action, self.cache_log_name(ctx), self.cache_log_path(ctx, path))
 
     def path(
             self,
@@ -614,6 +646,7 @@ class DerivativeHandle(NodeHandle[T]):
         if use_cache:
             manifest = self._manifest()
             if manifest and self.artifact_path.exists() and self._is_valid(manifest, cache):
+                self.node.log_cache_hit(self.ctx, self.artifact_path)
                 return self.node.load(self.ctx, self.artifact_path)
             if self._is_protected_artifact() and not self.ctx.option('_allow_protected_overwrite', False):
                 if (
@@ -621,14 +654,18 @@ class DerivativeHandle(NodeHandle[T]):
                         and self.node.can_reindex_protected_artifact(self.ctx, self.artifact_path, manifest, cache)
                 ):
                     value = self.node.load(self.ctx, self.artifact_path)
+                    self.node.log_cache_reindex(self.ctx, self.artifact_path)
                     self.registry.write_manifest(self.manifest_path, self._build_manifest(value, cache))
                     return value
                 if self.ctx.option('_allow_protected_reindex', False):
                     value = self.node.load(self.ctx, self.artifact_path)
+                    self.node.log_cache_reindex(self.ctx, self.artifact_path)
                     self.registry.write_manifest(self.manifest_path, self._build_manifest(value, cache))
                     return value
                 raise ProtectedArtifactError(self.node.name, self.artifact_path)
 
+        if use_cache:
+            self.node.log_cache_build(self.ctx, self.artifact_path)
         value = self.node.build(self.ctx)
         if not use_cache:
             return value
@@ -658,8 +695,9 @@ class InputHandle(NodeHandle[T]):
 class DerivativeRegistry:
     """Registry and resolver for dependency nodes bound to one experiment root."""
 
-    def __init__(self, root: str | Path):
+    def __init__(self, root: str | Path, log: logging.Logger):
         self.root = Path(root)
+        self.log = log
         self.deriv_dir = self.root / 'derivatives'
         self.cache_dir = self.deriv_dir / 'eelbrain' / 'cache'
         self._nodes: dict[str, DependencyNode[Any]] = {}
@@ -715,6 +753,15 @@ class DerivativeRegistry:
     ):
         handle = self.resolve(name, state=state, options=options, **extra_state)
         return handle.load(cache)
+
+    def describe_artifact_path(self, path: str | Path) -> str:
+        artifact_path = Path(path)
+        if self.is_cache_artifact(artifact_path):
+            return str(artifact_path.relative_to(self.cache_dir))
+        try:
+            return str(artifact_path.relative_to(self.root))
+        except ValueError:
+            return str(artifact_path)
 
     def _dependency_handles(
             self,

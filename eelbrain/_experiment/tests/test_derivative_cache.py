@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from eelbrain._experiment.derivative_cache import (
@@ -315,7 +316,7 @@ def make_registry():
     pipeline = FakePipeline(root)
     pipeline.source_path('s1').write_text('alpha')
     pipeline.source_path('s2').write_text('beta')
-    registry = DerivativeRegistry(pipeline.root)
+    registry = DerivativeRegistry(pipeline.root, logging.getLogger('eelbrain.test.derivative_cache'))
     source = SourceInput(root)
     value = ValueDerivative(root)
     summary = SummaryDerivative(root)
@@ -358,6 +359,18 @@ def test_registry_load_caches_derivative_and_writes_manifest():
 
     assert first == second == 'alpha'
     assert value.build_calls == 1
+
+
+def test_registry_logs_cache_events(caplog):
+    _, registry, _, value, _, _, _, _, _ = make_registry()
+
+    with caplog.at_level(logging.DEBUG, logger='eelbrain.test.derivative_cache'):
+        registry.load('value', state=DEFAULT_STATE)
+        registry.load('value', state=DEFAULT_STATE)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(message.startswith('Build value: value/') for message in messages)
+    assert any(message.startswith('Load cached value: value/') for message in messages)
     assert value.save_calls == 1
     assert value.load_calls == 2
 

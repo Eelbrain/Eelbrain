@@ -5,7 +5,6 @@ These nodes depend on lower-level epoch/raw derivatives through
 ``ctx.load(...)``. They must not receive injected ``Pipeline.load_*`` methods.
 """
 from dataclasses import dataclass, field
-import logging
 from pathlib import Path
 from typing import Any
 
@@ -79,11 +78,9 @@ class CovDerivative(Derivative[mne.Covariance]):
             self,
             cov_name: str,
             cov: RawCovariance | EpochCovariance,
-            log: logging.Logger,
     ):
         self.cov_name = cov_name
         self.cov = cov
-        self.log = log
         self.name = cov_node_name(cov_name)
         self.cov.key = cov_name
 
@@ -127,7 +124,6 @@ class CovDerivative(Derivative[mne.Covariance]):
     def build(self, ctx: DerivativeContext) -> mne.Covariance:
         if isinstance(self.cov, EpochCovariance):
             cov_path = self.path(ctx, mkdir=True)
-            self.log.debug("Make cov-file %s", cov_path)
             log_path = cov_path.with_suffix('.info.txt')
             ds = ctx.load(EPOCHS_DATA, state={'epoch': self.cov.epoch}, options={
                 'baseline': True,

@@ -1,10 +1,12 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Test Pipeline using mne-python sample data"""
 import json
+import logging
 from os.path import join, exists
 from os import remove
 from pathlib import Path
 import pytest
+import warnings
 from warnings import catch_warnings, filterwarnings
 
 import mne
@@ -15,7 +17,7 @@ from eelbrain import *
 from eelbrain.pipeline import *
 from eelbrain._exceptions import DefinitionError
 from eelbrain._experiment.derivative_cache import ProtectedArtifactError
-from eelbrain._experiment.pathing import ica_file_path
+from eelbrain._experiment.pathing import ica_file_path, log_dir
 from eelbrain._experiment.preprocessing import raw_node_name
 from eelbrain._experiment.reports import _report_subject_info
 from eelbrain._experiment.test_def import TestDims as _TestDims
@@ -553,6 +555,43 @@ def test_sample_tasks():
     with catch_warnings():
         filterwarnings('ignore', "FastICA did not converge", UserWarning)
         assert e.make_ica() == join(root, 'derivatives', 'ica', 'sub-R0000_meg_raw-ica_ica.fif')
+
+
+@requires_mne_sample_data
+def test_raw_reader_warnings_are_summarized(monkeypatch):
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, n_subjects=1, n_segments=1, mris=False)
+    root = join(tempdir, 'SampleExperiment')
+    e = SampleExperiment(root)
+
+    original = mne.io.read_raw_fif
+
+    def read_raw_fif(*args, **kwargs):
+        warnings.warn("Synthetic raw reader warning 1", RuntimeWarning)
+        warnings.warn("Synthetic raw reader warning 2", RuntimeWarning)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(mne.io, 'read_raw_fif', read_raw_fif)
+
+    with catch_warnings(record=True) as record:
+        warnings.simplefilter('always')
+        e.load_raw(raw='raw')
+        e.load_raw(raw='raw')
+    assert not any('issued while reading raw data files' in str(w.message) for w in record)
+
+    details_path = Path(log_dir({'root': root})) / 'raw-reader-warnings.log'
+    assert details_path.exists()
+    text = details_path.read_text()
+    assert 'Synthetic raw reader warning 1' in text
+    assert 'Synthetic raw reader warning 2' in text
+
+    log_path = Path(next(handler.baseFilename for handler in e._log.handlers if isinstance(handler, logging.FileHandler)))
+    log_text = log_path.read_text()
+    assert str(details_path) in log_text
+    assert log_text.count('issued while reading raw data files') == 1
 
 
 @requires_mne_sample_data
