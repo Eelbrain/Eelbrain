@@ -1790,11 +1790,26 @@ class Pipeline(StateModel):
                 mne.convert_forward_solution(fwd, surf_ori, copy=False)
             return fwd
 
-    def load_ica(self, **state) -> mne.preprocessing.ICA:
+    def load_ica(
+            self,
+            accept_stale: bool = False,
+            **state,
+    ) -> mne.preprocessing.ICA:
         """Load the mne-python ICA object
 
         Parameters
         ----------
+        accept_stale
+            Accept an existing ICA file even when Eelbrain can not confirm
+            that it was created from the current data and ICA settings, for
+            example after changing the raw preprocessing used to estimate the
+            ICA. This rewrites the bookkeeping for that file instead of
+            raising :class:`ProtectedArtifactError`. Use this only when you
+            intentionally want to keep the existing file on your own
+            responsibility instead of reverting those changes or recomputing
+            the ICA. When Eelbrain detects a mismatch, the error message names
+            the raw step and setting that changed so you can decide whether to
+            revert that change.
         ...
             State parameters.
 
@@ -1803,7 +1818,11 @@ class Pipeline(StateModel):
         ICA object for the current :ref:`state-raw` setting.
         """
         raw_name = get_ica_pipe_name(self._raw, self.get('raw', **state))
-        return self._derivatives.resolve(ica_input_name(raw_name), state=self._derivative_state({**state, 'raw': raw_name})).load()
+        return self._derivatives.resolve(
+            ica_input_name(raw_name),
+            state=self._derivative_state({**state, 'raw': raw_name}),
+            options={'_allow_protected_reindex': accept_stale},
+        ).load()
 
     def load_inv(
             self,
@@ -2579,8 +2598,11 @@ class Pipeline(StateModel):
             >>> for subject in e:
             ...     e.make_ica()
 
-        If an existing ICA file is stale, you will be asked before it is
-        overwritten because the file lives outside the cache directory.
+        If an existing ICA file is stale, that means Eelbrain can still see
+        the file but can no longer confirm that it was created from the
+        current data and ICA settings. You will be asked whether to overwrite
+        it or incorporate it as-is. The error message explains which raw step
+        and setting changed so you can decide whether to revert that change.
 
         """
         raw_name = get_ica_pipe_name(self._raw, self.get('raw', **state))
@@ -2591,15 +2613,18 @@ class Pipeline(StateModel):
             handle.node.materialize(ctx)
         except ProtectedArtifactError as error:
             command = ask(
-                f"ICA file {Path(error.path).name} is stale. Overwrite it?",
+                f"ICA file {Path(error.path).name} is stale. How should it be handled?",
                 {
                     'overwrite': 'recompute ICA and overwrite the existing file',
+                    'incorporate': 'keep the existing file and rewrite its manifest to the current pipeline state',
                     'abort': 'keep the existing file and abort',
                 },
-                help="This ICA file is stored outside the cache directory and may contain manual component selections. It is not overwritten automatically.",
+                help="This ICA file may contain manual component selections, so Eelbrain does not replace it automatically when the current data and settings no longer match.",
             )
             if command == 'overwrite':
                 handle.node.materialize(ctx, allow_protected_overwrite=True)
+            elif command == 'incorporate':
+                handle.node.materialize(ctx, allow_protected_reindex=True)
             elif command != 'abort':
                 raise RuntimeError(f"{command=}")
             else:

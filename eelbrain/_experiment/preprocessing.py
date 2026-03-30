@@ -65,6 +65,10 @@ from .pathing import bids_path, ica_file_path
 MNE_VERBOSITY = 'WARNING'
 AddBadsArg = bool | Sequence[str]
 LOG = logging.getLogger(__name__)
+PIPE_ARG_NAMES = {
+    'RawFilter': ('l_freq', 'h_freq'),
+    'RawFilterElliptic': ('low_stop', 'low_pass', 'high_pass', 'high_stop', 'gpass', 'gstop'),
+}
 
 
 class RawPipe:
@@ -331,6 +335,151 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         state = {**ctx.state, 'raw': self.raw_name}
         return self.pipe.load_ica(bids_path(state), raw_name=self.raw_name)
 
+    def _reindex_existing(self, ctx: DerivativeContext) -> mne.preprocessing.ICA:
+        value = self._load_value(ctx)
+        ctx.registry.write_manifest(ctx.registry.manifest_path(self._path(ctx)), self._build_manifest(ctx, value))
+        return value
+
+    @staticmethod
+    def _manifest_matches(
+            previous: ArtifactManifest | None,
+            current: ArtifactManifest,
+    ) -> bool:
+        return (
+            previous is not None
+            and previous.schema_version == current.schema_version
+            and previous.derivative == current.derivative
+            and previous.derivative_version == current.derivative_version
+            and previous.key == current.key
+            and previous.fingerprint == current.fingerprint
+            and previous.dependencies == current.dependencies
+        )
+
+    @classmethod
+    def _first_difference(
+            cls,
+            old: Any,
+            new: Any,
+            path: tuple[str, ...] = (),
+    ) -> tuple[tuple[str, ...], Any, Any] | None:
+        if isinstance(old, dict) and isinstance(new, dict):
+            for key in sorted(set(old).union(new), key=str):
+                if key not in old:
+                    return (*path, str(key)), None, new[key]
+                if key not in new:
+                    return (*path, str(key)), old[key], None
+                diff = cls._first_difference(old[key], new[key], (*path, str(key)))
+                if diff is not None:
+                    return diff
+            return None
+        if isinstance(old, list) and isinstance(new, list):
+            for i in range(max(len(old), len(new))):
+                if i >= len(old):
+                    return (*path, f'[{i}]'), None, new[i]
+                if i >= len(new):
+                    return (*path, f'[{i}]'), old[i], None
+                diff = cls._first_difference(old[i], new[i], (*path, f'[{i}]'))
+                if diff is not None:
+                    return diff
+            return None
+        if old != new:
+            return path, old, new
+        return None
+
+    @staticmethod
+    def _format_difference_path(path: tuple[str, ...], strip_prefix: tuple[str, ...] = ()) -> str:
+        parts = list(path)
+        if strip_prefix and tuple(parts[:len(strip_prefix)]) == strip_prefix:
+            parts = parts[len(strip_prefix):]
+        out = []
+        for part in parts:
+            if part.startswith('['):
+                if out:
+                    out[-1] += part
+                else:
+                    out.append(part)
+            else:
+                out.append(part)
+        return '.'.join(out) or 'value'
+
+    def _stale_reason(
+            self,
+            previous: ArtifactManifest | None,
+            current: ArtifactManifest,
+    ) -> str:
+        if previous is None:
+            return "Eelbrain has no saved record for how this ICA file was created."
+
+        diff = self._first_difference(previous.fingerprint.get('pipe'), current.fingerprint.get('pipe'))
+        if diff is not None:
+            path, old, new = diff
+            pipe = current.fingerprint.get('pipe') or previous.fingerprint.get('pipe') or {}
+            field = self._format_pipe_setting(pipe, path)
+            return f"The ICA step {pipe.get('name', self.raw_name)!r} changed ({field}: {old!r} -> {new!r})."
+
+        diff = self._first_difference(previous.dependencies, current.dependencies)
+        if diff is not None:
+            path, old, new = diff
+            dep = path[0]
+            if dep.endswith(':raw'):
+                pipe = self._dependency_pipe(previous, current, dep)
+                field = self._format_pipe_setting(pipe, path[1:], ('fingerprint', 'pipeline'))
+                return f"This ICA was estimated using different settings for raw step {pipe.get('name', '?')!r} ({field}: {old!r} -> {new!r})."
+            if dep.endswith(':bads'):
+                if len(path) > 2 and path[1] == 'fingerprint' and path[2] == 'pipeline':
+                    pipe = self._dependency_pipe(previous, current, dep)
+                    field = self._format_pipe_setting(pipe, path[1:], ('fingerprint', 'pipeline'))
+                    return f"This ICA was estimated using different settings for raw step {pipe.get('name', '?')!r} ({field}: {old!r} -> {new!r})."
+                field = self._format_difference_path(path[1:], ('fingerprint',))
+                pipe = self._dependency_pipe(previous, current, dep)
+                return f"The bad-channel information used to estimate this ICA changed for raw step {pipe.get('name', '?')!r} ({field}: {old!r} -> {new!r})."
+            field = self._format_difference_path(path)
+            return f"One of the recorded ICA inputs changed ({field}: {old!r} -> {new!r})."
+
+        diff = self._first_difference(previous.fingerprint, current.fingerprint)
+        if diff is not None:
+            path, old, new = diff
+            field = self._format_difference_path(path)
+            return f"The recorded ICA settings changed ({field}: {old!r} -> {new!r})."
+
+        return "This ICA file no longer matches the current data and settings."
+
+    @staticmethod
+    def _dependency_pipe(
+            previous: ArtifactManifest | None,
+            current: ArtifactManifest,
+            dependency: str,
+    ) -> dict[str, Any]:
+        current_dep = current.dependencies.get(dependency, {})
+        previous_dep = {} if previous is None else previous.dependencies.get(dependency, {})
+        return current_dep.get('fingerprint', {}).get('pipeline') or previous_dep.get('fingerprint', {}).get('pipeline') or {}
+
+    @staticmethod
+    def _format_pipe_setting(
+            pipe: dict[str, Any],
+            path: tuple[str, ...],
+            strip_prefix: tuple[str, ...] = (),
+    ) -> str:
+        parts = list(path)
+        if strip_prefix and tuple(parts[:len(strip_prefix)]) == strip_prefix:
+            parts = parts[len(strip_prefix):]
+        if not parts:
+            return 'settings'
+        if len(parts) >= 2 and parts[0] == 'args' and parts[1].startswith('['):
+            index = int(parts[1][1:-1])
+            arg_names = PIPE_ARG_NAMES.get(pipe.get('type'))
+            parts = [arg_names[index] if arg_names and index < len(arg_names) else f'args[{index}]', *parts[2:]]
+        elif parts[0] in ('kwargs', 'fit_kwargs'):
+            parts = parts[1:] or [parts[0]]
+        return ICAInput._format_difference_path(tuple(parts))
+
+    def _current_value_manifest(
+            self,
+            ctx: DerivativeContext,
+    ) -> tuple[mne.preprocessing.ICA, ArtifactManifest]:
+        value = self._load_value(ctx)
+        return value, self._build_manifest(ctx, value)
+
     def _build_manifest(
             self,
             ctx: DerivativeContext,
@@ -350,18 +499,9 @@ class ICAInput(Input[mne.preprocessing.ICA]):
 
     def is_valid(self, ctx: DerivativeContext) -> bool:
         path = self._path(ctx)
-        manifest = self._manifest(ctx)
-        if manifest is None or not path.exists():
+        if not path.exists():
             return False
-        current = self._build_manifest(ctx, self._load_value(ctx))
-        return (
-            manifest.schema_version == current.schema_version
-            and manifest.derivative == current.derivative
-            and manifest.derivative_version == current.derivative_version
-            and manifest.key == current.key
-            and manifest.fingerprint == current.fingerprint
-            and manifest.dependencies == current.dependencies
-        )
+        return self._manifest_matches(self._manifest(ctx), self._current_value_manifest(ctx)[1])
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         return self.pipe.ica_dependencies(ctx, self.raw_name, self.runs)
@@ -391,20 +531,36 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         path = self._path(ctx)
         if not exists(path):
             raise FileMissingError(f"ICA file {basename(path)} does not exist. Run e.make_ica() to create it.")
-        if not self.is_valid(ctx):
-            raise ProtectedArtifactError(self.name, path)
-        return self._load_value(ctx)
+        value, current = self._current_value_manifest(ctx)
+        previous = self._manifest(ctx)
+        if not self._manifest_matches(previous, current):
+            if ctx.option('_allow_protected_reindex', False):
+                ctx.registry.write_manifest(ctx.registry.manifest_path(path), current)
+                return value
+            reason = self._stale_reason(previous, current)
+            raise ProtectedArtifactError(self.name, path, message=f"Existing ICA file {path.name!r} no longer matches the current data and ICA settings.", instructions=f"{reason} To make this ICA match the current pipeline again, revert the raw pipeline change or recompute the ICA. To keep using this existing ICA anyway, call e.load_ica(raw={self.raw_name!r}, accept_stale=True) once or run e.make_ica(raw={self.raw_name!r}) and choose 'incorporate'. To recompute it from the current data, run e.make_ica(raw={self.raw_name!r}) and choose 'overwrite'.")
+        return value
 
     def materialize(
             self,
             ctx: DerivativeContext,
             allow_protected_overwrite: bool = False,
+            allow_protected_reindex: bool = False,
     ) -> mne.preprocessing.ICA:
-        if self.is_valid(ctx):
-            return self.load(ctx)
         path = self._path(ctx)
+        previous = self._manifest(ctx)
+        current = None
+        if exists(path):
+            value, current = self._current_value_manifest(ctx)
+            if self._manifest_matches(previous, current):
+                return value
         if exists(path) and not allow_protected_overwrite:
-            raise ProtectedArtifactError(self.name, path)
+            if allow_protected_reindex:
+                assert current is not None
+                ctx.registry.write_manifest(ctx.registry.manifest_path(path), current)
+                return value
+            reason = self._stale_reason(previous, current)
+            raise ProtectedArtifactError(self.name, path, message=f"Existing ICA file {path.name!r} no longer matches the current data and ICA settings.", instructions=f"{reason} Use allow_protected_reindex=True to keep this ICA file and rewrite its manifest, or allow_protected_overwrite=True to recompute it.")
         value = self.pipe.build_ica(ctx, self.pipes, self.raw_name, self.runs)
         path.parent.mkdir(parents=True, exist_ok=True)
         value.save(path, overwrite=True)
@@ -632,11 +788,7 @@ class RawSource(RawPipe):
                 reader = mne.io.read_raw_bdf
             case _:
                 raise RuntimeError(f"Unrecognized file format: {path.suffix}")
-        raw = reader(
-            raw_path,
-            preload=preload,
-            verbose=MNE_VERBOSITY,
-        )
+        raw = reader(raw_path, preload=preload, verbose=MNE_VERBOSITY)
         if self.rename_channels:
             if rename := {k: v for k, v in self.rename_channels.items() if k in raw.ch_names}:
                 raw.rename_channels(rename)

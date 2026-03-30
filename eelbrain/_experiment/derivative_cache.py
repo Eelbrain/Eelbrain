@@ -96,19 +96,26 @@ class ArtifactManifest:
 
 
 class ProtectedArtifactError(RuntimeError):
-    """Refuse to overwrite a stale artifact that lives outside ``cache-dir``."""
+    """Refuse to replace a stale user-managed artifact automatically."""
 
     def __init__(
             self,
             derivative: str,
             path: Path,
+            message: str | None = None,
+            instructions: str | None = None,
     ):
         self.derivative = derivative
         self.path = str(path)
-        super().__init__(
-            f"Stale artifact for derivative {derivative!r} at {self.path!r} lives outside "
-            "the cache directory and will not be overwritten automatically."
+        self.message = message
+        self.instructions = instructions
+        text = message or (
+            f"Existing artifact for derivative {derivative!r} at {self.path!r} does not match "
+            "the current settings and was not replaced automatically."
         )
+        if instructions:
+            text += f" {instructions}"
+        super().__init__(text)
 
 
 def _slug_cache_path_part(value: Any) -> str:
@@ -613,6 +620,10 @@ class DerivativeHandle(NodeHandle[T]):
                         manifest
                         and self.node.can_reindex_protected_artifact(self.ctx, self.artifact_path, manifest, cache)
                 ):
+                    value = self.node.load(self.ctx, self.artifact_path)
+                    self.registry.write_manifest(self.manifest_path, self._build_manifest(value, cache))
+                    return value
+                if self.ctx.option('_allow_protected_reindex', False):
                     value = self.node.load(self.ctx, self.artifact_path)
                     self.registry.write_manifest(self.manifest_path, self._build_manifest(value, cache))
                     return value

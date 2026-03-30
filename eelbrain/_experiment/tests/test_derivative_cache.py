@@ -501,3 +501,13 @@ def test_protected_artifact_can_reindex_manifest():
     assert registry.load('reindexable-protected', state=DEFAULT_STATE) == 'user-edit'
     manifest = json.loads(manifest_path.read_text())
     assert manifest['fingerprint']['artifact_text'] == 'user-edit'
+
+
+def test_protected_artifact_can_be_incorporated_at_user_risk():
+    pipeline, registry, _, _, _, _, _, _, _ = make_registry()
+
+    assert registry.load('protected', state=DEFAULT_STATE) == 'alpha'
+    pipeline.source_path().write_text('changed')
+
+    assert registry.load('protected', state=DEFAULT_STATE, options={'_allow_protected_reindex': True}) == 'alpha'
+    assert registry.load('protected', state=DEFAULT_STATE) == 'alpha'

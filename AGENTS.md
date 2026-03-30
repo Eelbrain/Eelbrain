@@ -23,5 +23,6 @@
 
 - Follow the surrounding style of the file you edit.
 - There is no hard line-length limit here; keep readable expressions on one line when that is clearer.
+- For long strings, prefer one readable long literal over splitting the text into adjacent substrings just to wrap lines.
 - Reflow code only when it improves readability.
 - Avoid unrelated formatting cleanup in files you are not otherwise changing.

@@ -14,6 +14,7 @@ from numpy.testing import assert_almost_equal, assert_array_equal
 from eelbrain import *
 from eelbrain.pipeline import *
 from eelbrain._exceptions import DefinitionError
+from eelbrain._experiment.derivative_cache import ProtectedArtifactError
 from eelbrain._experiment.pathing import ica_file_path
 from eelbrain._experiment.preprocessing import raw_node_name
 from eelbrain._experiment.reports import _report_subject_info
@@ -299,12 +300,41 @@ def test_sample():
     # ---
     class Experiment(SampleExperiment):
         raw = {
-            'apply-ica': RawApplyICA('tsss', 'ica'),
             **SampleExperiment.raw,
+            'ica': RawICA('1-40', 'sample', method='fastica', n_components=0.95),
+            'apply-ica': RawApplyICA('1-40', 'ica'),
         }
     e = Experiment(root)
     ica_path = e.make_ica(raw='ica')
-    assert exists(e._derivatives.manifest_path(ica_path))
+    ica_manifest = e._derivatives.manifest_path(ica_path)
+    assert exists(ica_manifest)
+
+    class ChangedExperiment(Experiment):
+        raw = {
+            **Experiment.raw,
+            '1-40': RawFilter('tsss', 1, 41),
+            'ica': RawICA('1-40', 'sample', method='fastica', n_components=0.95),
+        }
+    e_changed = ChangedExperiment(root)
+    with pytest.raises(ProtectedArtifactError, match='estimated using different settings for raw step') as error:
+        e_changed.load_raw(raw='ica1-40')
+    assert "'1-40'" in str(error.value)
+    assert 'h_freq' in str(error.value)
+    assert '40' in str(error.value)
+    assert '41' in str(error.value)
+    assert 'revert the raw pipeline change' in str(error.value)
+    assert 'accept_stale=True' in str(error.value)
+    assert 'cache directory' not in str(error.value)
+    manifest_data = json.loads(Path(ica_manifest).read_text())
+    manifest_data['derivative_version'] += 1
+    Path(ica_manifest).write_text(json.dumps(manifest_data))
+    with pytest.raises(ProtectedArtifactError, match='accept_stale=True'):
+        e.load_raw(raw='ica1-40')
+    with pytest.raises(ProtectedArtifactError, match='choose .*incorporate'):
+        e.load_ica(raw='ica')
+    ica = e.load_ica(raw='ica', accept_stale=True)
+    assert isinstance(ica, mne.preprocessing.ICA)
+    assert isinstance(e.load_ica(raw='ica'), mne.preprocessing.ICA)
     e.set(raw='ica1-40', model='')
     e.make_epoch_selection(auto=2e-12, overwrite=True)
     ds1 = e.load_evoked(raw='ica1-40')
