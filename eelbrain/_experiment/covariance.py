@@ -12,7 +12,6 @@ import mne
 import numpy
 
 from .derivative_cache import Dependency, Derivative, DerivativeContext
-from .epochs import EPOCHS_DATA
 from .preprocessing import load_raw_dependency, raw_data_dependency
 
 
@@ -96,7 +95,7 @@ class CovDerivative(Derivative[mne.Covariance]):
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         if isinstance(self.cov, EpochCovariance):
-            return (Dependency(EPOCHS_DATA, options={
+            return (Dependency('epochs-ds', options={
                 'baseline': True,
                 'ndvar': False,
                 'add_bads': True,
@@ -125,7 +124,7 @@ class CovDerivative(Derivative[mne.Covariance]):
         if isinstance(self.cov, EpochCovariance):
             cov_path = self.path(ctx, mkdir=True)
             log_path = cov_path.with_suffix('.info.txt')
-            ds = ctx.load(EPOCHS_DATA, state={'epoch': self.cov.epoch}, options={
+            ds = ctx.load('epochs-ds', state={'epoch': self.cov.epoch}, options={
                 'baseline': True,
                 'ndvar': False,
                 'add_bads': True,

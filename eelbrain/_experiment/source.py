@@ -28,7 +28,6 @@ from .. import load, save
 from .._data_obj import Dataset, Datalist, NDVar, combine
 from .covariance import cov_node_name
 from .derivative_cache import CachePolicy, Dependency, Derivative, DerivativeContext, Input, file_fingerprint
-from .epochs import EPOCHS_DATA
 from .pathing import (
     bem_dir, bem_file_path, mri_dir, mri_sdir, src_file_path, trans_file_path,
 )
@@ -689,7 +688,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         deps = [
-            Dependency(EPOCHS_DATA, options={
+            Dependency('epochs-ds', options={
                 'baseline': ctx.option('baseline'),
                 'ndvar': False if ctx.option('keep_epochs', False) in (True, False) else 'both',
                 'reject': ctx.option('reject', True),
@@ -748,7 +747,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
         else:
             raise ValueError(f"{keep_epochs=}")
 
-        ds = ctx.load(EPOCHS_DATA, options={
+        ds = ctx.load('epochs-ds', options={
             'baseline': ctx.option('baseline'),
             'ndvar': sns_ndvar,
             'reject': ctx.option('reject', True),

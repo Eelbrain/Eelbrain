@@ -100,7 +100,6 @@ class RejectionInput(Input):
         }
 
 
-EPOCHS_DATA = 'epochs-ds'
 _EPOCHS_CACHE_INFO_KEY = '_epochs_cache_files'
 
 
@@ -625,7 +624,7 @@ class ContinuousEpoch(EpochBase):
 
 
 class EpochsDerivative(Derivative[Dataset]):
-    name = EPOCHS_DATA
+    name = 'epochs-ds'
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw', 'epoch', 'rej')
     cache_suffix = '.epochs'
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
@@ -652,7 +651,7 @@ class EpochsDerivative(Derivative[Dataset]):
         epoch = self.epochs[ctx.get('epoch')]
         if isinstance(epoch, EpochCollection):
             return tuple(
-                Dependency(EPOCHS_DATA, state={'epoch': sub_epoch}, options={**ctx.options, 'data_raw': ctx.option('data_raw', False)})
+                Dependency('epochs-ds', state={'epoch': sub_epoch}, options={**ctx.options, 'data_raw': ctx.option('data_raw', False)})
                 for sub_epoch in epoch.collect
             )
         return (Dependency('selected-events', options=self._selected_events_options(ctx)),)
@@ -677,7 +676,7 @@ class EpochsDerivative(Derivative[Dataset]):
         if isinstance(epoch, EpochCollection):
             dss = []
             for sub_epoch in epoch.collect:
-                ds = ctx.load(EPOCHS_DATA, state={'epoch': sub_epoch}, options={**ctx.options, 'data_raw': ctx.option('data_raw', False)})
+                ds = ctx.load('epochs-ds', state={'epoch': sub_epoch}, options={**ctx.options, 'data_raw': ctx.option('data_raw', False)})
                 ds[:, 'epoch'] = sub_epoch
                 dss.append(ds)
             return combine(dss)
@@ -864,7 +863,7 @@ class EvokedDerivative(Derivative[Dataset]):
         self.epochs = epochs
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
-        return (Dependency(EPOCHS_DATA, options={
+        return (Dependency('epochs-ds', options={
             'baseline': True if self.epochs[ctx.get('epoch')].post_baseline_trigger_shift else False,
             'ndvar': False,
             'samplingrate': ctx.option('samplingrate'),
@@ -892,7 +891,7 @@ class EvokedDerivative(Derivative[Dataset]):
 
     def _build_evoked_dataset(self, ctx: DerivativeContext) -> Dataset:
         epoch = self.epochs[ctx.get('epoch')]
-        ds = ctx.load(EPOCHS_DATA, options={
+        ds = ctx.load('epochs-ds', options={
             'baseline': True if epoch.post_baseline_trigger_shift else False,
             'ndvar': False,
             'samplingrate': ctx.option('samplingrate'),
