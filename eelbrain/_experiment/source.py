@@ -686,7 +686,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         deps = [
-            Dependency('epochs-ds', options={
+            Dependency('epochs-dataset', options={
                 'baseline': ctx.option('baseline'),
                 'ndvar': False if ctx.option('keep_epochs', False) in (True, False) else 'both',
                 'reject': ctx.option('reject', True),
@@ -745,7 +745,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
         else:
             raise ValueError(f"{keep_epochs=}")
 
-        ds = ctx.load('epochs-ds', options={
+        ds = ctx.load('epochs-dataset', options={
             'baseline': ctx.option('baseline'),
             'ndvar': sns_ndvar,
             'reject': ctx.option('reject', True),
@@ -827,7 +827,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         deps = [
-            Dependency('evoked', options={
+            Dependency('evoked-dataset', options={
                 'baseline': ctx.option('baseline'),
                 'ndvar': 2 if ctx.option('keep_evoked', False) and ctx.option('ndvar', True) else False,
                 'cat': ctx.option('cat'),
@@ -867,7 +867,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
         keep_evoked = ctx.option('keep_evoked', False)
         ndvar = ctx.option('ndvar', True)
         sensor_ndvar = 2 if keep_evoked and ndvar else False
-        ds = ctx.load('evoked', options={
+        ds = ctx.load('evoked-dataset', options={
             'baseline': ctx.option('baseline'),
             'ndvar': sensor_ndvar,
             'cat': ctx.option('cat'),

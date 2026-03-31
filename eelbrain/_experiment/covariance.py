@@ -95,20 +95,16 @@ class CovDerivative(Derivative[mne.Covariance]):
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         if isinstance(self.cov, EpochCovariance):
-            return (Dependency('epochs-ds', options={
+            return (Dependency('epochs', state={'epoch': self.cov.epoch}, options={
                 'baseline': True,
-                'ndvar': False,
                 'add_bads': True,
                 'reject': False,
                 'samplingrate': None,
                 'decim': 1,
                 'pad': 0,
-                'data_raw': False,
                 'vardef': None,
-                'data': 'sensor',
                 'trigger_shift': True,
                 'interpolate_bads': False,
-                'epoch': self.cov.epoch,
             }),)
         return (raw_data_dependency(ctx, noise=True),)
 
@@ -125,21 +121,18 @@ class CovDerivative(Derivative[mne.Covariance]):
             cov_path = self.path(ctx)
             cov_path.parent.mkdir(parents=True, exist_ok=True)
             log_path = cov_path.with_suffix('.info.txt')
-            ds = ctx.load('epochs-ds', state={'epoch': self.cov.epoch}, options={
+            epochs = ctx.load('epochs', state={'epoch': self.cov.epoch}, options={
                 'baseline': True,
-                'ndvar': False,
                 'add_bads': True,
                 'reject': False,
                 'samplingrate': None,
                 'decim': 1,
                 'pad': 0,
-                'data_raw': False,
                 'vardef': None,
-                'data': 'sensor',
                 'trigger_shift': True,
                 'interpolate_bads': False,
             })
-            return self.cov.make(ds['epochs'], log_path)
+            return self.cov.make(epochs, log_path)
         raw = load_raw_dependency(ctx, ctx.get('raw'), noise=True)
         return self.cov.make(raw)
 

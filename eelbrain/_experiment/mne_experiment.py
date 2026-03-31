@@ -36,7 +36,7 @@ from .._utils.mne_utils import is_fake_mri
 from .covariance import CovDerivative, EpochCovariance, RawCovariance, cov_node_name
 from .derivative_cache import DerivativeRegistry, ProtectedArtifactError
 from .configuration import sequence_arg
-from .epochs import EpochBase, EpochsDerivative, EvokedDerivative, PrimaryEpoch, RejectionInput, SecondaryEpoch, SuperEpoch, assemble_epochs, decim_param, load_evoked_request
+from .epochs import EpochBase, EpochsDatasetDerivative, EpochsDerivative, EvokedDatasetDerivative, EvokedDerivative, PrimaryEpoch, RejectionInput, SecondaryEpoch, SuperEpoch, assemble_epochs, decim_param, load_evoked_request
 from .events import EventsDerivative, SELECTED_EVENTS, SelectedEventsDerivative
 from .exceptions import FileMissingError
 from .experiment import StateModel
@@ -546,7 +546,9 @@ class Pipeline(StateModel):
         ))
         self._derivatives.register(SelectedEventsDerivative(self._raw, self._epochs, self._tests, self._artifact_rejection, self._groups))
         self._derivatives.register(EpochsDerivative(self._raw, self._epochs))
+        self._derivatives.register(EpochsDatasetDerivative(self._raw, self._epochs))
         self._derivatives.register(EvokedDerivative(self._epochs))
+        self._derivatives.register(EvokedDatasetDerivative(self._epochs))
         self._derivatives.register(AnnotDerivative(self._parcs, tuple(self.get_field_values('hemi'))))
         self._derivatives.register(EpochsStcDerivative(self._epochs))
         self._derivatives.register(EvokedStcDerivative(self._epochs))
@@ -1133,11 +1135,11 @@ class Pipeline(StateModel):
         if group is None:
             if subject is not None:
                 state['subject'] = subject
-            return self._load_derivative('epochs-ds', state=state, options=options)
+            return self._load_derivative('epochs-dataset', state=state, options=options)
 
         epoch_name = self.get('epoch')
         dss = [
-            self._load_derivative('epochs-ds', options=options)
+            self._load_derivative('epochs-dataset', options=options)
             for _ in self.iter(group=group, progress_bar=f"Load {epoch_name}")
         ]
         return combine(dss)
@@ -1390,7 +1392,7 @@ class Pipeline(StateModel):
         if group is None:
             if subject is not None:
                 state['subject'] = subject
-            return self._load_derivative('evoked', state=state, options=options)
+            return self._load_derivative('evoked-dataset', state=state, options=options)
 
         model = self.get('model')
         desc = f'by {model}' if model else 'average'

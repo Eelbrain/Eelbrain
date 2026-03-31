@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 from copy import deepcopy
 import inspect
+import json
 from collections.abc import Sequence
 import math
 import shutil
@@ -12,7 +13,7 @@ import shutil
 import mne
 import numpy as np
 
-from .. import load, save
+from .. import load
 from .._data_obj import Datalist, Dataset, Var, combine
 from .._exceptions import ConfigurationError, DimensionMismatchError
 from .._mne import shift_mne_epoch_trigger
@@ -20,7 +21,7 @@ from .._names import INTERPOLATE_CHANNELS
 from .._text import enumeration
 from .._text import n_of
 from ..mne_fixes import _interpolate_bads_eeg, _interpolate_bads_meg
-from .derivative_cache import CachePolicy, Dependency, Derivative, DerivativeContext, Input, file_fingerprint
+from .derivative_cache import CachePolicy, Dependency, Derivative, DerivativeContext, Input, UncachedDerivative, file_fingerprint
 from .configuration import Configuration, typed_arg
 from .pathing import rej_file_path
 from .preprocessing import load_raw_dependency, raw_node_name
@@ -100,11 +101,185 @@ class RejectionInput(Input):
         }
 
 
-_EPOCHS_CACHE_INFO_KEY = '_epochs_cache_files'
+_EPOCHS_METADATA_FILE = 'metadata.json'
 
 
 def _evoked_comments(evoked: list[mne.Evoked]) -> list[str]:
     return [e.comment or 'No comment' for e in evoked]
+
+
+def _epoch_data_name(sensor_type: str, sensor_types: Sequence[str]) -> str:
+    return 'meg' if sensor_type == 'mag' and 'grad' not in sensor_types else sensor_type
+
+
+def _epochs_selected_events_options(ctx: DerivativeContext) -> dict[str, Any]:
+    return {
+        'reject': ctx.option('reject', True),
+        'add_bads': ctx.option('add_bads', True),
+        'index': False,
+        'data_raw': True,
+        'vardef': ctx.option('vardef'),
+        'cat': ctx.option('cat'),
+        'trigger_shift': ctx.option('trigger_shift', True),
+        'tmax': ctx.option('tmax'),
+        'tstop': ctx.option('tstop'),
+        'interpolate_bads': ctx.option('interpolate_bads', False),
+    }
+
+
+def _prepare_epoch_dataset(
+        ctx: DerivativeContext,
+        epoch: Any,
+        ds: Dataset,
+) -> tuple[Dataset, float, Any, float | None, Any, int, bool]:
+    if ds.n_cases == 0:
+        raise RuntimeError(f"No events left for epoch={epoch.name!r}, subject={ctx.get('subject')!r}")
+
+    tmin = epoch.tmin if ctx.option('tmin') is None else ctx.option('tmin')
+    tmax = ctx.option('tmax')
+    tstop = ctx.option('tstop')
+    if tmax is None and tstop is None:
+        tmax = epoch.tmax
+    baseline = ctx.option('baseline', False)
+    if baseline is True:
+        baseline = epoch.baseline
+    pad = ctx.option('pad', 0)
+    if isinstance(tmax, str):
+        tmax = ds.eval(tmax)
+        assert isinstance(tmax, Var)
+        assert not epoch.post_baseline_trigger_shift, 'not implemented with variable tmax'
+        variable_tmax = True
+    else:
+        variable_tmax = False
+    if pad:
+        if baseline:
+            b0, b1 = baseline
+            baseline = (tmin if b0 is None else b0, tmax if b1 is None else b1)
+        tmin -= pad
+        if tmax is not None:
+            tmax = tmax + pad
+        elif tstop is not None:
+            tstop = tstop + pad
+    decim = decim_param(ctx.option('samplingrate'), ctx.option('decim'), epoch, ds.info)
+
+    if isinstance(epoch, ContinuousEpoch):
+        split_threshold = epoch.split + (epoch.pad_end + epoch.pad_start)
+        diff = ds['time'].diff(to_begin=split_threshold + 1)
+        onsets = np.flatnonzero(diff >= split_threshold)
+        illegal = {'T_relative', 'events', 'tmax'}.intersection(ds)
+        if illegal:
+            raise RuntimeError(f"Events contain variables with reserved names: {', '.join(illegal)}")
+        event_stops = [*onsets[1:], None]
+        events = [ds[i1:i2] for i1, i2 in zip(onsets, event_stops)]
+        raw_samplingrate = ds.info['raw'].info['sfreq']
+        for events_i in events:
+            sample_i = events_i['i_start'] - events_i[0, 'i_start']
+            events_i['T_relative'] = sample_i / raw_samplingrate
+        ds = ds[onsets]
+        ds.info['nested_events'] = 'events'
+        ds['events'] = events
+        tmin = -epoch.pad_start
+        ds['tmax'] = Var([e[-1, 'time'] - e[0, 'time'] + epoch.pad_end for e in events])
+        tmax = ds.eval('tmax')
+        variable_tmax = True
+
+    return ds, tmin, tmax, tstop, baseline, decim, variable_tmax
+
+
+def _aggregate_evoked_dataset(
+        ctx: DerivativeContext,
+        ds: Dataset,
+        value_name: str | None = None,
+) -> Dataset:
+    model = ctx.get('model')
+    equal_count = ctx.get('equalize_evoked_count') == 'eq'
+    aggregate_kwargs = {
+        'drop_bad': True,
+        'equal_count': equal_count,
+        'drop': ('i_start', 't_edf', 'time', 'index', 'trigger'),
+    }
+    if value_name is None:
+        ds_agg = ds.aggregate(model, **aggregate_kwargs)
+    else:
+        ds_agg = ds.aggregate(model, never_drop=(value_name,), **aggregate_kwargs)
+        ds_agg.rename(value_name, 'evoked')
+    model_vars = model.split('%') if model else ()
+    if value_name is not None:
+        for evoked, *cell in ds_agg.zip('evoked', *model_vars):
+            evoked.info['description'] = "Eelbrain"
+            evoked.comment = ' % '.join(cell)
+    return ds_agg
+
+
+def _epochs_selection_metadata(value) -> list[int] | list[list[int] | None] | None:
+    if isinstance(value, Datalist):
+        selections = []
+        for epochs in value:
+            selection = getattr(epochs, 'selection', None)
+            selections.append(None if selection is None else selection.tolist())
+        return selections
+    selection = getattr(value, 'selection', None)
+    return None if selection is None else selection.tolist()
+
+
+def _coerce_selection(selection: list[int] | None) -> np.ndarray | None:
+    if selection is None:
+        return None
+    return np.asarray(selection, dtype=int)
+
+
+def _apply_epochs_selection(ds: Dataset, selection: np.ndarray | None) -> Dataset:
+    if selection is None or (len(selection) == ds.n_cases and np.array_equal(selection, np.arange(ds.n_cases))):
+        return ds
+    ds = ds[selection]
+    ds.info = ds.info.copy()
+    ds.info['epochs.selection'] = selection
+    return ds
+
+
+def _build_evoked_shell(
+        ctx: DerivativeContext,
+        epochs: dict[str, Any],
+        epochs_options: dict[str, Any],
+        aggregate: bool = True,
+        state: dict[str, Any] | None = None,
+) -> Dataset:
+    state = ctx.state if state is None else {**ctx.state, **state}
+    selected_events_options = {
+        'reject': epochs_options['reject'],
+        'add_bads': epochs_options['add_bads'],
+        'index': False,
+        'data_raw': True,
+        'vardef': epochs_options.get('vardef'),
+        'cat': epochs_options.get('cat'),
+        'trigger_shift': epochs_options.get('trigger_shift', True),
+        'tmax': epochs_options.get('tmax'),
+        'tstop': epochs_options.get('tstop'),
+        'interpolate_bads': epochs_options.get('interpolate_bads', False),
+    }
+    epoch_name = state['epoch']
+    epoch = epochs[epoch_name]
+    if isinstance(epoch, EpochCollection):
+        dss = []
+        for sub_epoch in epoch.collect:
+            ds = _build_evoked_shell(ctx, epochs, epochs_options, aggregate=False, state={**state, 'epoch': sub_epoch})
+            ds[:, 'epoch'] = sub_epoch
+            dss.append(ds)
+        ds = combine(dss)
+    else:
+        ds = ctx.load('selected-events', state=state, options=selected_events_options)
+        ds, _, _, _, _, _, _ = _prepare_epoch_dataset(ctx, epoch, ds)
+        handle = ctx.registry.resolve('epochs', state=state, options=epochs_options)
+        metadata_path = handle.artifact_path / _EPOCHS_METADATA_FILE
+        metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else None
+        if metadata is not None:
+            selection = _coerce_selection(metadata.get('selection'))
+            ds = _apply_epochs_selection(ds, selection)
+
+    if aggregate:
+        return _aggregate_evoked_dataset(ctx, ds)
+    else:
+        return ds
 
 
 def load_evoked_group(
@@ -115,7 +290,7 @@ def load_evoked_group(
 ) -> Dataset:
     data = TestDims.coerce(options['data'])
     individual_ndvar = isinstance(data.sensor, str)
-    dss = [registry.load('evoked', state={**state, 'subject': subject}, options={**options, 'ndvar': individual_ndvar}) for subject in subjects]
+    dss = [registry.load('evoked-dataset', state={**state, 'subject': subject}, options={**options, 'ndvar': individual_ndvar}) for subject in subjects]
     ndvar = options['ndvar']
     if individual_ndvar:
         ndvar = False
@@ -164,7 +339,7 @@ def load_evoked_request(
         return load_evoked_group(registry, subjects, state, options)
     if isinstance(subjects, str) and subjects in groups:
         return load_evoked_group(registry, groups[subjects], state, options)
-    return registry.load('evoked', state={**state, 'subject': subjects}, options=options)
+    return registry.load('evoked-dataset', state={**state, 'subject': subjects}, options=options)
 
 
 class EpochBase(Configuration):
@@ -623,11 +798,11 @@ class ContinuousEpoch(EpochBase):
         self.tasks = (task,)
 
 
-class EpochsDerivative(Derivative[Dataset]):
-    name = 'epochs-ds'
+class EpochsDerivative(Derivative[Any]):
+    name = 'epochs'
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw', 'epoch', 'rej')
     cache_suffix = '.epochs'
-    cache_policy = CachePolicy.DISABLED_BY_DEFAULT
+    cache_policy = CachePolicy.OPTIONAL
 
     def __init__(
             self,
@@ -637,24 +812,14 @@ class EpochsDerivative(Derivative[Dataset]):
         self.raw = raw
         self.epochs = epochs
 
-    def _selected_events_options(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return {
-            'reject': ctx.option('reject', True),
-            'add_bads': ctx.option('add_bads', True),
-            'index': False,
-            'data_raw': True,
-            'vardef': ctx.option('vardef'),
-            'cat': ctx.option('cat'),
-        }
-
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         epoch = self.epochs[ctx.get('epoch')]
         if isinstance(epoch, EpochCollection):
             return tuple(
-                Dependency('epochs-ds', state={'epoch': sub_epoch}, options={**ctx.options, 'data_raw': ctx.option('data_raw', False)})
+                Dependency('epochs', state={'epoch': sub_epoch}, options=ctx.options)
                 for sub_epoch in epoch.collect
             )
-        return (Dependency('selected-events', options=self._selected_events_options(ctx)),)
+        return (Dependency('selected-events', options=_epochs_selected_events_options(ctx)),)
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
         epoch = self.epochs[ctx.get('epoch')]
@@ -663,20 +828,142 @@ class EpochsDerivative(Derivative[Dataset]):
             'options': ctx.registry.canonicalize({
                 key: ctx.option(key)
                 for key in (
-                    'baseline', 'samplingrate', 'decim', 'pad', 'data_raw',
-                    'data', 'trigger_shift', 'tmin', 'tmax', 'tstop',
-                    'interpolate_bads',
+                    'baseline', 'samplingrate', 'decim', 'pad', 'trigger_shift',
+                    'tmin', 'tmax', 'tstop', 'interpolate_bads',
                 )
             }),
         }
 
-    def build(self, ctx: DerivativeContext) -> Dataset:
+    def build(self, ctx: DerivativeContext):
         epoch_name = ctx.get('epoch')
         epoch = self.epochs[epoch_name]
         if isinstance(epoch, EpochCollection):
+            epochs_list = []
+            for sub_epoch in epoch.collect:
+                epoch_value = ctx.load('epochs', state={'epoch': sub_epoch})
+                if isinstance(epoch_value, Datalist):
+                    epochs_list.extend(epoch_value)
+                else:
+                    epochs_list.append(epoch_value)
+            return Datalist(epochs_list, 'epochs')
+
+        ds = ctx.load('selected-events', options=_epochs_selected_events_options(ctx))
+        ds, tmin, tmax, tstop, baseline, decim, variable_tmax = _prepare_epoch_dataset(ctx, epoch, ds)
+        if variable_tmax:
+            epoch_value = load.mne.variable_length_mne_epochs(ds, tmin, tmax, baseline, allow_truncation=True, decim=decim, reject_by_annotation=False)
+            epochs_list = epoch_value
+        else:
+            n = ds.n_cases
+            ds = load.mne.add_mne_epochs(ds, tmin, tmax, baseline, decim=decim, drop_bad_chs=False, tstop=tstop, reject_by_annotation=False)
+            if ds.n_cases != n:
+                ctx.registry.log.warning("%s missing for %s/%s", n_of(n - ds.n_cases, 'epoch'), ctx.get('subject'), epoch_name)
+            if ctx.option('trigger_shift', True) and epoch.post_baseline_trigger_shift:
+                ds['epochs'] = shift_mne_epoch_trigger(ds['epochs'], ds[epoch.post_baseline_trigger_shift], epoch.post_baseline_trigger_shift_min, epoch.post_baseline_trigger_shift_max)
+            epoch_value = ds['epochs']
+            epochs_list = [epoch_value]
+
+        info = epochs_list[0].info
+        bads_all = None
+        bads_individual = None
+        interpolate_bads = ctx.option('interpolate_bads', False)
+        if interpolate_bads:
+            bads_all = info['bads']
+            if ds.info[INTERPOLATE_CHANNELS] and any(ds[INTERPOLATE_CHANNELS]):
+                bads_individual = ds[INTERPOLATE_CHANNELS]
+                base = set(bads_all or ())
+                bads_individual = [sorted(base.union(bads)) if set(bads).difference(base) else [] for bads in bads_individual]
+
+        if bads_all:
+            reset_bads = interpolate_bads != 'keep'
+            for epochs in epochs_list:
+                epochs.interpolate_bads(reset_bads=reset_bads)
+        if ctx.option('reject', True) and bads_individual:
+            assert not variable_tmax
+            if 'mag' in TestDims.coerce('sensor').data_to_ndvar(info):
+                interp_cache = {}
+                _interpolate_bads_meg(epoch_value, bads_individual, interp_cache)
+            if 'eeg' in TestDims.coerce('sensor').data_to_ndvar(info):
+                _interpolate_bads_eeg(epoch_value, bads_individual)
+        return epoch_value
+
+    def load(self, ctx: DerivativeContext, path: Path):
+        metadata = json.loads((path / _EPOCHS_METADATA_FILE).read_text())
+        if metadata['kind'] == 'datalist':
+            return Datalist(
+                [mne.read_epochs(path / relpath, proj=False) for relpath in metadata['files']],
+                metadata['name'],
+                metadata['fmt'],
+            )
+        return mne.read_epochs(path / metadata['file'], proj=False)
+
+    def save(self, ctx: DerivativeContext, path: Path, value) -> None:
+        if path.exists():
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        path.mkdir()
+        if isinstance(value, Datalist):
+            epoch_files = []
+            for i, epochs in enumerate(value):
+                epoch_file = f'epochs-{i:04d}-epo.fif'
+                epochs.save(path / epoch_file, overwrite=True)
+                epoch_files.append(epoch_file)
+            metadata = {
+                'kind': 'datalist',
+                'files': epoch_files,
+                'name': value.name,
+                'fmt': value._fmt,
+                'selections': _epochs_selection_metadata(value),
+            }
+        else:
+            epoch_file = 'epochs-0000-epo.fif'
+            value.save(path / epoch_file, overwrite=True)
+            metadata = {'kind': 'single', 'file': epoch_file, 'selection': _epochs_selection_metadata(value)}
+        (path / _EPOCHS_METADATA_FILE).write_text(json.dumps(metadata, sort_keys=True, indent=2))
+
+
+class EpochsDatasetDerivative(UncachedDerivative[Dataset]):
+    name = 'epochs-dataset'
+    key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw', 'epoch', 'rej')
+
+    def __init__(
+            self,
+            raw,
+            epochs: dict[str, Any],
+    ):
+        self.raw = raw
+        self.epochs = epochs
+
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        epoch = self.epochs[ctx.get('epoch')]
+        if isinstance(epoch, EpochCollection):
+            return tuple(
+                Dependency('epochs-dataset', state={'epoch': sub_epoch}, options={**ctx.options, 'data_raw': ctx.option('data_raw', False)})
+                for sub_epoch in epoch.collect
+            )
+        return (
+            Dependency('selected-events', options=_epochs_selected_events_options(ctx)),
+            Dependency('epochs', options=ctx.options),
+        )
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        epoch = self.epochs[ctx.get('epoch')]
+        return {
+            'epoch': epoch._as_dict(),
+            'options': ctx.registry.canonicalize({
+                'ndvar': ctx.option('ndvar', True),
+                'data': ctx.option('data', 'sensor'),
+                'data_raw': ctx.option('data_raw', False),
+            }),
+        }
+
+    def build(self, ctx: DerivativeContext) -> Dataset:
+        epoch = self.epochs[ctx.get('epoch')]
+        if isinstance(epoch, EpochCollection):
             dss = []
             for sub_epoch in epoch.collect:
-                ds = ctx.load('epochs-ds', state={'epoch': sub_epoch}, options={**ctx.options, 'data_raw': ctx.option('data_raw', False)})
+                ds = ctx.load('epochs-dataset', state={'epoch': sub_epoch}, options={**ctx.options, 'data_raw': ctx.option('data_raw', False)})
                 ds[:, 'epoch'] = sub_epoch
                 dss.append(ds)
             return combine(dss)
@@ -687,109 +974,30 @@ class EpochsDerivative(Derivative[Dataset]):
         if data.sensor is not True and not ctx.option('ndvar', True):
             raise ValueError(f"data={data.string!r} with ndvar=False")
 
-        ds = ctx.load('selected-events', options=self._selected_events_options(ctx))
-        if ds.n_cases == 0:
-            raise RuntimeError(f"No events left for epoch={epoch.name!r}, subject={ctx.get('subject')!r}")
-
-        tmin = epoch.tmin if ctx.option('tmin') is None else ctx.option('tmin')
-        tmax = ctx.option('tmax')
-        tstop = ctx.option('tstop')
-        if tmax is None and tstop is None:
-            tmax = epoch.tmax
-        baseline = ctx.option('baseline', False)
-        if baseline is True:
-            baseline = epoch.baseline
-        pad = ctx.option('pad', 0)
-        if isinstance(tmax, str):
-            tmax = ds.eval(tmax)
-            assert isinstance(tmax, Var)
-            assert not epoch.post_baseline_trigger_shift, 'not implemented with variable tmax'
-            variable_tmax = True
-        else:
-            variable_tmax = False
-        if pad:
-            if baseline:
-                b0, b1 = baseline
-                baseline = (tmin if b0 is None else b0, tmax if b1 is None else b1)
-            tmin -= pad
-            if tmax is not None:
-                tmax = tmax + pad
-            elif tstop is not None:
-                tstop = tstop + pad
-        decim = decim_param(ctx.option('samplingrate'), ctx.option('decim'), epoch, ds.info)
-
-        if isinstance(epoch, ContinuousEpoch):
-            split_threshold = epoch.split + (epoch.pad_end + epoch.pad_start)
-            diff = ds['time'].diff(to_begin=split_threshold + 1)
-            onsets = np.flatnonzero(diff >= split_threshold)
-            illegal = {'T_relative', 'events', 'tmax'}.intersection(ds)
-            if illegal:
-                raise RuntimeError(f"Events contain variables with reserved names: {', '.join(illegal)}")
-            event_stops = [*onsets[1:], None]
-            events = [ds[i1:i2] for i1, i2 in zip(onsets, event_stops)]
-            raw_samplingrate = ds.info['raw'].info['sfreq']
-            for events_i in events:
-                sample_i = events_i['i_start'] - events_i[0, 'i_start']
-                events_i['T_relative'] = sample_i / raw_samplingrate
-            ds = ds[onsets]
-            ds.info['nested_events'] = 'events'
-            ds['events'] = events
-            tmin = -epoch.pad_start
-            ds['tmax'] = Var([e[-1, 'time'] - e[0, 'time'] + epoch.pad_end for e in events])
-            tmax = ds.eval('tmax')
-            variable_tmax = True
-
-        if variable_tmax:
-            ds['epochs'] = load.mne.variable_length_mne_epochs(ds, tmin, tmax, baseline, allow_truncation=True, decim=decim, reject_by_annotation=False)
-            epochs_list = ds['epochs']
-        else:
-            n = ds.n_cases
-            ds = load.mne.add_mne_epochs(ds, tmin, tmax, baseline, decim=decim, drop_bad_chs=False, tstop=tstop, reject_by_annotation=False)
-            if ds.n_cases != n:
-                ctx.registry.log.warning("%s missing for %s/%s", n_of(n - ds.n_cases, 'epoch'), ctx.get('subject'), epoch_name)
-            if ctx.option('trigger_shift', True) and epoch.post_baseline_trigger_shift:
-                ds['epochs'] = shift_mne_epoch_trigger(ds['epochs'], ds[epoch.post_baseline_trigger_shift], epoch.post_baseline_trigger_shift_min, epoch.post_baseline_trigger_shift_max)
-            epochs_list = [ds['epochs']]
-
-        info = epochs_list[0].info
-        sensor_types = data.data_to_ndvar(info)
-        bads_all = None
-        bads_individual = None
-        interpolate_bads = ctx.option('interpolate_bads', False)
-        if interpolate_bads:
-            bads_all = info['bads']
-            if ds.info[INTERPOLATE_CHANNELS] and any(ds[INTERPOLATE_CHANNELS]):
-                bads_individual = ds[INTERPOLATE_CHANNELS]
-                if bads_all:
-                    base = set(bads_all)
-                    bads_individual = [sorted(base.union(bads)) if set(bads).difference(base) else [] for bads in bads_individual]
-
-        if bads_all:
-            reset_bads = interpolate_bads != 'keep'
-            for epochs in epochs_list:
-                epochs.interpolate_bads(reset_bads=reset_bads)
-        if ctx.option('reject', True) and bads_individual:
-            assert not variable_tmax
-            if 'mag' in sensor_types:
-                interp_cache = {}
-                _interpolate_bads_meg(ds['epochs'], bads_individual, interp_cache)
-            if 'eeg' in sensor_types:
-                _interpolate_bads_eeg(ds['epochs'], bads_individual)
+        ds = ctx.load('selected-events', options=_epochs_selected_events_options(ctx))
+        ds, _, _, _, _, _, variable_tmax = _prepare_epoch_dataset(ctx, epoch, ds)
+        epoch_value = ctx.load('epochs')
+        if not isinstance(epoch_value, Datalist):
+            ds = _apply_epochs_selection(ds, getattr(epoch_value, 'selection', None))
+        ds['epochs'] = epoch_value
 
         ndvar = ctx.option('ndvar', True)
         if ndvar:
+            epochs_list = epoch_value if isinstance(epoch_value, Datalist) else [epoch_value]
+            info = epochs_list[0].info
+            sensor_types = data.data_to_ndvar(info)
             ds.info['sensor_types'] = sensor_types
             pipe = self.raw[ctx.get('raw')]
             for data_kind in sensor_types:
                 sysname = pipe.get_sysname(info, ds.info['subject'], data_kind, self.raw)
                 adjacency = pipe.get_adjacency(data_kind, self.raw)
-                name = 'meg' if data_kind == 'mag' and 'grad' not in sensor_types else data_kind
+                name = _epoch_data_name(data_kind, sensor_types)
                 if variable_tmax:
-                    ys = [load.mne.epochs_ndvar(e, data=data_kind, sysname=sysname, adjacency=adjacency, name=data_kind)[0] for e in ds['epochs']]
+                    ys = [load.mne.epochs_ndvar(e, data=data_kind, sysname=sysname, adjacency=adjacency, name=data_kind)[0] for e in epoch_value]
                     if isinstance(data.sensor, str):
                         ys = [getattr(y, data.sensor)('sensor') for y in ys]
                 else:
-                    ys = load.mne.epochs_ndvar(ds['epochs'], data=data_kind, sysname=sysname, adjacency=adjacency)
+                    ys = load.mne.epochs_ndvar(epoch_value, data=data_kind, sysname=sysname, adjacency=adjacency)
                     if isinstance(data.sensor, str):
                         ys = getattr(ys, data.sensor)('sensor')
                 ds[name] = ys
@@ -800,57 +1008,8 @@ class EpochsDerivative(Derivative[Dataset]):
             del ds.info['raw']
         return ds
 
-    def load(self, ctx: DerivativeContext, path: Path) -> Dataset:
-        ds = load.unpickle(path / 'dataset.pickle')
-        epoch_ref = ds.info.pop(_EPOCHS_CACHE_INFO_KEY, None)
-        if epoch_ref:
-            if epoch_ref['kind'] == 'datalist':
-                ds['epochs'] = Datalist(
-                    [mne.read_epochs(path / relpath, proj=False) for relpath in epoch_ref['files']],
-                    epoch_ref['name'],
-                    epoch_ref['fmt'],
-                )
-            else:
-                ds['epochs'] = mne.read_epochs(path / epoch_ref['file'], proj=False)
-        if ctx.option('data_raw', False):
-            ds.info = ds.info.copy()
-            ds.info['raw'] = load_raw_dependency(ctx, add_bads=True, preload=False, noise=False)
-        return ds
 
-    def save(self, ctx: DerivativeContext, path: Path, value: Dataset) -> None:
-        if path.exists():
-            if path.is_dir():
-                shutil.rmtree(path)
-            else:
-                path.unlink()
-        path.mkdir()
-
-        ds = value.copy()
-        ds.info = ds.info.copy()
-        ds.info.pop('raw', None)
-        if 'epochs' in ds:
-            epoch_value = ds['epochs']
-            if isinstance(epoch_value, Datalist):
-                epoch_files = []
-                for i, epochs in enumerate(epoch_value):
-                    epoch_file = f'epochs-{i:04d}-epo.fif'
-                    epochs.save(path / epoch_file, overwrite=True)
-                    epoch_files.append(epoch_file)
-                ds.info[_EPOCHS_CACHE_INFO_KEY] = {
-                    'kind': 'datalist',
-                    'files': epoch_files,
-                    'name': epoch_value.name,
-                    'fmt': epoch_value._fmt,
-                }
-            else:
-                epoch_file = 'epochs-0000-epo.fif'
-                epoch_value.save(path / epoch_file, overwrite=True)
-                ds.info[_EPOCHS_CACHE_INFO_KEY] = {'kind': 'single', 'file': epoch_file}
-            del ds['epochs']
-        save.pickle(ds, path / 'dataset.pickle')
-
-
-class EvokedDerivative(Derivative[Dataset]):
+class EvokedDerivative(Derivative[list[mne.Evoked]]):
     name = 'evoked'
     key_fields = (
         'subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw',
@@ -862,63 +1021,87 @@ class EvokedDerivative(Derivative[Dataset]):
     def __init__(self, epochs: dict[str, Any]):
         self.epochs = epochs
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
-        return (Dependency('epochs-ds', options={
+    def _epochs_options(self, ctx: DerivativeContext) -> dict[str, Any]:
+        return {
             'baseline': True if self.epochs[ctx.get('epoch')].post_baseline_trigger_shift else False,
-            'ndvar': False,
             'samplingrate': ctx.option('samplingrate'),
             'decim': ctx.option('decim'),
-            'data_raw': False,
             'vardef': ctx.option('vardef'),
             'interpolate_bads': 'keep',
             'add_bads': True,
             'reject': True,
             'cat': None,
             'trigger_shift': True,
+        }
+
+    def _epochs_dataset_options(self, ctx: DerivativeContext) -> dict[str, Any]:
+        return {
+            **self._epochs_options(ctx),
+            'ndvar': False,
+            'data_raw': False,
             'data': 'sensor',
-        }),)
+        }
+
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        return (Dependency('epochs', options=self._epochs_options(ctx)),)
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
         epoch = self.epochs[ctx.get('epoch')]
+        ds = _build_evoked_shell(ctx, self.epochs, self._epochs_options(ctx))
+        model = ctx.get('model')
+        if model:
+            model_value = ds.eval(model)
+            model_signature = model_value.x.tolist() if isinstance(model_value, Var) else list(model_value)
+        else:
+            model_signature = ds.n_cases
         return {
             'epoch': epoch._as_dict(),
-            'model': ctx.get('model'),
+            'model': model,
+            'model_signature': ctx.registry.canonicalize(model_signature),
             'equalize_evoked_count': ctx.get('equalize_evoked_count'),
             'samplingrate': ctx.option('samplingrate'),
             'decim': ctx.option('decim'),
             'vardef': repr(ctx.option('vardef')),
         }
 
-    def _aggregate_evoked_dataset(self, ctx: DerivativeContext, ds: Dataset, value_name: str | None = None) -> Dataset:
-        model = ctx.get('model')
-        equal_count = ctx.get('equalize_evoked_count') == 'eq'
-        aggregate_kwargs = {
-            'drop_bad': True,
-            'equal_count': equal_count,
-            'drop': ('i_start', 't_edf', 'time', 'index', 'trigger'),
-        }
-        if value_name is None:
-            ds_agg = ds.aggregate(model, **aggregate_kwargs)
-        else:
-            ds_agg = ds.aggregate(model, never_drop=(value_name,), **aggregate_kwargs)
-            ds_agg.rename(value_name, 'evoked')
-        model_vars = model.split('%') if model else ()
-        if value_name is not None:
-            for evoked, *cell in ds_agg.zip('evoked', *model_vars):
-                evoked.info['description'] = "Eelbrain"
-                evoked.comment = ' % '.join(cell)
-        return ds_agg
+    def build(self, ctx: DerivativeContext) -> list[mne.Evoked]:
+        return _aggregate_evoked_dataset(ctx, ctx.load('epochs-dataset', options=self._epochs_dataset_options(ctx)), 'epochs')['evoked']
 
-    def _build_evoked_shell(self, ctx: DerivativeContext) -> Dataset:
-        ds = ctx.load('selected-events', options={
-            'reject': True,
-            'add_bads': True,
-            'index': False,
-            'data_raw': False,
-            'vardef': ctx.option('vardef'),
-            'cat': None,
-        })
-        return self._aggregate_evoked_dataset(ctx, ds)
+    def load(self, ctx: DerivativeContext, path: Path) -> list[mne.Evoked]:
+        return mne.read_evokeds(path, proj=False)
+
+    def save(self, ctx: DerivativeContext, path: Path, value: list[mne.Evoked]) -> None:
+        mne.write_evokeds(path, value, overwrite=True)
+
+    def provenance(self, ctx: DerivativeContext, value: list[mne.Evoked]) -> dict[str, Any]:
+        return {'comments': _evoked_comments(value)}
+
+
+class EvokedDatasetDerivative(UncachedDerivative[Dataset]):
+    name = 'evoked-dataset'
+    key_fields = (
+        'subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw',
+        'epoch', 'rej', 'model', 'equalize_evoked_count',
+    )
+
+    def __init__(self, epochs: dict[str, Any]):
+        self.epochs = epochs
+
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        return (Dependency('evoked', options=ctx.options),)
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        epoch = self.epochs[ctx.get('epoch')]
+        return {
+            'epoch': epoch._as_dict(),
+            'options': ctx.registry.canonicalize({
+                'baseline': ctx.option('baseline', False),
+                'ndvar': ctx.option('ndvar', True),
+                'cat': ctx.option('cat'),
+                'data_raw': ctx.option('data_raw', False),
+                'data': ctx.option('data', 'sensor'),
+            }),
+        }
 
     def _apply_load_options(self, ctx: DerivativeContext, ds: Dataset) -> Dataset:
         epoch = self.epochs[ctx.get('epoch')]
@@ -959,29 +1142,13 @@ class EvokedDerivative(Derivative[Dataset]):
                     ds[name] = getattr(ds[name], data.sensor)('sensor')
         if ctx.option('data_raw', False):
             ds.info['raw'] = load_raw_dependency(ctx, add_bads=True, preload=False, noise=False)
+        elif 'raw' in ds.info:
+            del ds.info['raw']
         return ds
 
     def build(self, ctx: DerivativeContext) -> Dataset:
-        epoch = self.epochs[ctx.get('epoch')]
-        ds = ctx.load('epochs-ds', options={
-            'baseline': True if epoch.post_baseline_trigger_shift else False,
-            'ndvar': False,
-            'samplingrate': ctx.option('samplingrate'),
-            'decim': ctx.option('decim'),
-            'data_raw': False,
-            'vardef': ctx.option('vardef'),
-            'interpolate_bads': 'keep',
-            'add_bads': True,
-            'reject': True,
-            'cat': None,
-            'trigger_shift': True,
-            'data': 'sensor',
-        })
-        return self._aggregate_evoked_dataset(ctx, ds, 'epochs')
-
-    def load(self, ctx: DerivativeContext, path: Path) -> Dataset:
-        evoked = mne.read_evokeds(path, proj=False)
-        ds = self._build_evoked_shell(ctx)
+        evoked = ctx.load('evoked')
+        ds = _build_evoked_shell(ctx, self.epochs, EvokedDerivative._epochs_options(self, ctx))
         model = ctx.get('model')
         model_vars = model.split('%') if model else ()
         cells = [' % '.join(cell) or 'No comment' for cell in ds.zip(*model_vars)] if model_vars else ['No comment']
@@ -993,12 +1160,6 @@ class EvokedDerivative(Derivative[Dataset]):
         ds = ds[index]
         ds['evoked'] = evoked
         return self._apply_load_options(ctx, ds)
-
-    def save(self, ctx: DerivativeContext, path: Path, value: Dataset) -> None:
-        mne.write_evokeds(path, value['evoked'], overwrite=True)
-
-    def provenance(self, ctx: DerivativeContext, value: Dataset) -> dict[str, Any]:
-        return {'comments': _evoked_comments(value['evoked'])}
 
 
 def decim_param(

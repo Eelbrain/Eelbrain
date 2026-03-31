@@ -79,7 +79,7 @@ def test_sample():
     assert e.get('subject', subject='R0002') == 'R0002'
     tree = e.show_dependencies('evoked', return_str=True)
     assert 'evoked [derivative]' in tree
-    assert 'epochs-ds [derivative]' in tree
+    assert 'epochs [derivative]' in tree
     wrapped_tree = e.show_dependencies('evoked', max_line_length=60, return_str=True)
     assert all(len(line) <= 60 for line in wrapped_tree.splitlines())
 
@@ -630,10 +630,10 @@ def test_evoked_cached_load_bypasses_epochs(monkeypatch):
     e.set(subject='R0000', epoch='target1', rej='')
 
     target = e.load_evoked(ndvar=False)
-    epochs_node = e._derivatives._get_node('epochs-ds')
+    epochs_node = e._derivatives._get_node('epochs-dataset')
 
     def fail(*args, **kwargs):
-        raise AssertionError("Evoked cache hit should not load epochs-ds")
+        raise AssertionError("Evoked dataset load should not rebuild epochs-dataset on an evoked cache hit")
 
     monkeypatch.setattr(epochs_node, 'load', fail)
     monkeypatch.setattr(epochs_node, 'build', fail)
@@ -651,6 +651,73 @@ def test_evoked_cached_load_bypasses_epochs(monkeypatch):
     ds = e.load_evoked(ndvar=False)
     assert_dataobj_equal(ds, target, decimal=19)
     assert calls == 1
+
+
+@requires_mne_sample_data
+def test_evoked_cache_ignores_irrelevant_selected_events_changes(monkeypatch):
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, 1, 2, 1)
+    root = join(tempdir, 'SampleExperiment')
+    e = SampleExperiment(root)
+    e.set(subject='R0000', epoch='target1', rej='', model='modality')
+
+    _ = e.load_evoked(ndvar=False)
+    handle = e._derivatives.resolve('evoked', state=e._derivative_state())
+    mtimes_1 = (handle.artifact_path.stat().st_mtime_ns, handle.manifest_path.stat().st_mtime_ns)
+
+    node = e._derivatives._get_node('selected-events')
+    original_build = node.build
+    original_fingerprint = node.fingerprint
+
+    def build(ctx):
+        ds = original_build(ctx)
+        ds = ds.copy()
+        ds['marker'] = Var(np.arange(ds.n_cases), 'marker')
+        return ds
+
+    def fingerprint(ctx):
+        out = original_fingerprint(ctx)
+        out['irrelevant-change'] = True
+        return out
+
+    monkeypatch.setattr(node, 'build', build)
+    monkeypatch.setattr(node, 'fingerprint', fingerprint)
+
+    _ = e.load_evoked(ndvar=False)
+    mtimes_2 = (handle.artifact_path.stat().st_mtime_ns, handle.manifest_path.stat().st_mtime_ns)
+
+    assert mtimes_1 == mtimes_2
+
+
+@requires_mne_sample_data
+def test_evoked_cache_stales_on_model_change():
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, n_subjects=1, n_segments=2, mris=False)
+    root = join(tempdir, 'SampleExperiment')
+
+    e = SampleExperiment(root)
+    e.set(subject='R0000', epoch='target', rej='', model='modality')
+    _ = e.load_evoked(ndvar=False)
+
+    class ChangedExperiment(SampleExperiment):
+        variables = {
+            **SampleExperiment.variables,
+            'modality': {(1, 2): 'auditory_changed', (3, 4): 'visual'},
+        }
+
+    e_changed = ChangedExperiment(root)
+    e_changed.set(subject='R0000', epoch='target', rej='', model='modality')
+    handle = e_changed._derivatives.resolve('evoked', state=e_changed._derivative_state())
+
+    assert not handle.is_valid()
+    ds = e_changed.load_evoked(ndvar=False)
+    assert set(ds['modality'].cells) == {'auditory_changed', 'visual'}
 
 
 @requires_mne_sample_data
@@ -682,19 +749,79 @@ def test_epochs_cache_uses_fif():
         'tstop': None,
         'interpolate_bads': False,
     }
-    handle = e._derivatives.resolve('epochs-ds', state=e._derivative_state(), options=options)
-    ds = handle.load(cache=True)
+    handle = e._derivatives.resolve('epochs', state=e._derivative_state(), options=options)
+    epochs = handle.load(cache=True)
 
-    assert isinstance(ds['epochs'], mne.BaseEpochs)
+    assert isinstance(epochs, mne.BaseEpochs)
     assert handle.artifact_path.is_dir()
-    assert (handle.artifact_path / 'dataset.pickle').exists()
+    assert (handle.artifact_path / 'metadata.json').exists()
     assert list(handle.artifact_path.glob('*-epo.fif'))
 
     mtimes_1 = tuple(path.stat().st_mtime_ns for path in sorted(handle.artifact_path.iterdir()))
-    ds_cached = handle.load(cache=True)
+    epochs_cached = handle.load(cache=True)
+    mtimes_2 = tuple(path.stat().st_mtime_ns for path in sorted(handle.artifact_path.iterdir()))
+
+    assert isinstance(epochs_cached, mne.BaseEpochs)
+    assert mtimes_1 == mtimes_2
+
+
+@requires_mne_sample_data
+def test_epochs_cached_load_uses_current_selected_events(monkeypatch):
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, 1, 2, 1)
+    root = join(tempdir, 'SampleExperiment')
+    e = SampleExperiment(root)
+    e.set(subject='R0000', epoch='target1', rej='')
+
+    options = {
+        'baseline': False,
+        'ndvar': False,
+        'add_bads': True,
+        'reject': True,
+        'cat': None,
+        'samplingrate': None,
+        'decim': None,
+        'pad': 0,
+        'data_raw': False,
+        'vardef': None,
+        'data': 'sensor',
+        'trigger_shift': True,
+        'tmin': None,
+        'tmax': None,
+        'tstop': None,
+        'interpolate_bads': False,
+    }
+    handle = e._derivatives.resolve('epochs', state=e._derivative_state(), options=options)
+    ds = handle.load(cache=True)
+    assert isinstance(ds, mne.BaseEpochs)
+
+    mtimes_1 = tuple(path.stat().st_mtime_ns for path in sorted(handle.artifact_path.iterdir()))
+    node = e._derivatives._get_node('selected-events')
+    original_build = node.build
+    original_fingerprint = node.fingerprint
+
+    def build(ctx):
+        ds = original_build(ctx)
+        ds = ds.copy()
+        ds['marker'] = Var(np.arange(ds.n_cases), 'marker')
+        return ds
+
+    def fingerprint(ctx):
+        out = original_fingerprint(ctx)
+        out['irrelevant-change'] = True
+        return out
+
+    monkeypatch.setattr(node, 'build', build)
+    monkeypatch.setattr(node, 'fingerprint', fingerprint)
+
+    ds_cached = e.load_epochs(ndvar=False)
     mtimes_2 = tuple(path.stat().st_mtime_ns for path in sorted(handle.artifact_path.iterdir()))
 
     assert isinstance(ds_cached['epochs'], mne.BaseEpochs)
+    assert 'marker' in ds_cached
     assert mtimes_1 == mtimes_2
 
 

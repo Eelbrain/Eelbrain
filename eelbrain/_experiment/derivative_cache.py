@@ -509,6 +509,20 @@ class Derivative(DependencyNode[T]):
         return {}
 
 
+class UncachedDerivative(Derivative[T]):
+    """Base class for derived values that should never persist to the cache."""
+
+    cache_log_level = None
+    cache_suffix = '.uncached'
+
+    def should_cache(
+            self,
+            ctx: DerivativeContext,
+            cache: bool | None,
+    ) -> bool:
+        return False
+
+
 class NodeHandle(Generic[T]):
     """A dependency node plus its bound context for one concrete request."""
 
