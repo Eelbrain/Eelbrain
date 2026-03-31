@@ -543,7 +543,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             'exists': exists(path),
         }
 
-    def dependency_fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def dependency_fingerprint(self, ctx: DerivativeContext, view: str | None = None) -> dict[str, Any]:
         fingerprint = dict(self.fingerprint(ctx))
         path = self._path(ctx)
         fingerprint['ica_file'] = file_fingerprint(ctx.get('root'), path, 'ica-file')

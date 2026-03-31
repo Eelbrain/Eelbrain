@@ -210,51 +210,13 @@ class SelectedEventsDerivative(Derivative[Dataset]):
             'rej-files': rej_files,
         }
 
-    def dependency_fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        epoch = self.epochs[ctx.get('epoch')]
-        state = dict(ctx.state)
-        tasks = epoch.tasks if hasattr(epoch, 'tasks') else (epoch.task,)
-        raw_dependencies = []
-        for task in tasks:
-            task_state = {**state, 'task': task}
-            raw_dependencies.append({
-                'task': task,
-                'raw': ctx.registry.resolve(
-                    raw_node_name(task_state['raw']),
-                    state=task_state,
-                    options={'add_bads': ctx.option('add_bads', True), 'preload': True, 'noise': False},
-                ).describe_dependency(),
-            })
-
+    def dependency_fingerprint(self, ctx: DerivativeContext, view: str | None = None) -> dict[str, Any]:
+        if view is None:
+            return self.fingerprint(ctx)
+        if view != 'epochs':
+            raise ValueError(f"{self.name!r} does not define dependency view {view!r}")
         ds = self.build(ctx)
-        out = {
-            'n_cases': ds.n_cases,
-            'i_start': ds['i_start'].x.tolist(),
-            'trigger': ds['trigger'].x.tolist(),
-            'sfreq': ds.info['sfreq'],
-            'raw': raw_dependencies,
-        }
-        if ctx.option('interpolate_bads', False):
-            out['interpolate_channels'] = bool(ds.info.get(INTERPOLATE_CHANNELS, False))
-            if out['interpolate_channels'] and INTERPOLATE_CHANNELS in ds:
-                out[INTERPOLATE_CHANNELS] = [list(channels) for channels in ds[INTERPOLATE_CHANNELS]]
-
-        if isinstance(epoch.trigger_shift, str):
-            shift = ds.eval(epoch.trigger_shift)
-            out['trigger_shift'] = shift.x.tolist() if isinstance(shift, Var) else shift
-
-        tmax = ctx.option('tmax')
-        if tmax is None and ctx.option('tstop') is None:
-            tmax = epoch.tmax
-        if isinstance(tmax, str):
-            tmax_value = ds.eval(tmax)
-            out['tmax'] = tmax_value.x.tolist() if isinstance(tmax_value, Var) else tmax_value
-
-        if ctx.option('trigger_shift', True) and epoch.post_baseline_trigger_shift:
-            shift_values = ds[epoch.post_baseline_trigger_shift]
-            out['post_baseline_trigger_shift'] = shift_values.x.tolist() if isinstance(shift_values, Var) else list(shift_values)
-
-        return out
+        return {'i_start': ds['i_start'].x.tolist()}
 
     def _load_events(self, ctx: DerivativeContext, task: str, add_bads: bool | list[str], data_raw: bool) -> Dataset:
         state = {**ctx.state, 'task': task}

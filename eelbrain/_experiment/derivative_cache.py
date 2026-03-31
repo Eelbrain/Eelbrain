@@ -215,6 +215,11 @@ class Dependency:
         Optional complete options mapping for this dependency. When omitted,
         the dependency inherits the parent load options. When provided, this
         mapping replaces the parent load options for this dependency request.
+    view
+        Optional dependency view name. Use this when the dependency should be
+        validated through a reduced or specialized dependency fingerprint
+        rather than the dependency node's default dependency-facing
+        fingerprint.
 
     Notes
     -----
@@ -227,6 +232,7 @@ class Dependency:
     label: str | None = None
     state: dict[str, Any] | None = None
     options: dict[str, Any] | None = None
+    view: str | None = None
 
 
 class DependencyNode(Generic[T]):
@@ -278,12 +284,14 @@ class DependencyNode(Generic[T]):
         """
         raise NotImplementedError
 
-    def dependency_fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def dependency_fingerprint(self, ctx: DerivativeContext, view: str | None = None) -> dict[str, Any]:
         """Describe how this node should appear when used as a dependency.
 
         Override this only when the dependency-facing fingerprint should be
-        smaller or different from the full artifact fingerprint. The default
-        implementation reuses :meth:`fingerprint`.
+        smaller or different from the full artifact fingerprint. ``view`` can
+        be used to expose multiple named dependency fingerprints for the same
+        node. The default implementation ignores ``view`` and reuses
+        :meth:`fingerprint`.
         """
         return self.fingerprint(ctx)
 
@@ -555,17 +563,20 @@ class NodeHandle(Generic[T]):
     def current_fingerprint(self) -> dict[str, Any]:
         return self.registry.canonicalize(self.node.fingerprint(self.ctx))
 
-    def current_dependency_fingerprint(self) -> dict[str, Any]:
-        return self.registry.canonicalize(self.node.dependency_fingerprint(self.ctx))
+    def current_dependency_fingerprint(self, view: str | None = None) -> dict[str, Any]:
+        return self.registry.canonicalize(self.node.dependency_fingerprint(self.ctx, view))
 
     def describe_dependency(
             self,
             cache: bool | None = None,
+            view: str | None = None,
     ) -> dict[str, Any]:
         out = {
-            'fingerprint': self.current_dependency_fingerprint(),
+            'fingerprint': self.current_dependency_fingerprint(view),
             'dependencies': self.dependency_fingerprints(cache),
         }
+        if view is not None:
+            out['view'] = view
         if isinstance(self, DerivativeHandle):
             out['kind'] = 'derivative'
             out['key'] = self.key()
@@ -809,11 +820,12 @@ class DerivativeRegistry:
             parts.append(f"+{len(items) - max_items}")
         return ', '.join(parts)
 
-    def _tree_request_id(self, handle: NodeHandle[Any]) -> str:
+    def _tree_request_id(self, handle: NodeHandle[Any], view: str | None = None) -> str:
         return json.dumps({
             'name': handle.node.name,
             'state': self.canonicalize(handle.state),
             'options': self.canonicalize(handle.options),
+            'view': view,
         }, sort_keys=True, separators=(',', ':'))
 
     @staticmethod
@@ -911,13 +923,15 @@ class DerivativeRegistry:
                 state_text = self._tree_mapping_text(self.canonicalize(dep.state))
                 if state_text:
                     parts.append(f" [state: {state_text}]")
+            if dep and dep.view:
+                parts.append(f" [view: {dep.view}]")
             option_source = handle.options if dep is None else dep.options
             if option_source:
                 option_text = self._tree_mapping_text(self.canonicalize(option_source), values=False)
                 if option_text:
                     parts.append(f" [options: {option_text}]")
 
-            request_id = self._tree_request_id(handle)
+            request_id = self._tree_request_id(handle, dep.view if dep else None)
             if request_id in seen:
                 parts.append(' [seen]')
                 lines.extend(self._format_tree_line(first_prefix, continuation_prefix, parts, line_width))
@@ -972,7 +986,7 @@ class DerivativeRegistry:
         out = {}
         for dep, handle in self._dependency_handles(node, ctx):
             key = dep.label or dep.name
-            out[key] = handle.describe_dependency(cache)
+            out[key] = handle.describe_dependency(cache, dep.view)
         return out
 
     def read_manifest(self, path: str | Path) -> ArtifactManifest | None:

@@ -16,6 +16,7 @@ import numpy as np
 from .. import load
 from .._data_obj import Datalist, Dataset, Var, combine
 from .._exceptions import ConfigurationError, DimensionMismatchError
+from .._info import BAD_CHANNELS
 from .._mne import shift_mne_epoch_trigger
 from .._names import INTERPOLATE_CHANNELS
 from .._text import enumeration
@@ -819,7 +820,17 @@ class EpochsDerivative(Derivative[Any]):
                 Dependency('epochs', state={'epoch': sub_epoch}, options=ctx.options)
                 for sub_epoch in epoch.collect
             )
-        return (Dependency('selected-events', options=_epochs_selected_events_options(ctx)),)
+        return (
+            Dependency(
+                raw_node_name(ctx.get('raw')),
+                options={
+                    'add_bads': bool(ctx.option('interpolate_bads', False)),
+                    'preload': False,
+                    'noise': False,
+                },
+            ),
+            Dependency('selected-events', options=_epochs_selected_events_options(ctx), view='epochs'),
+        )
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
         epoch = self.epochs[ctx.get('epoch')]
@@ -943,7 +954,7 @@ class EpochsDatasetDerivative(UncachedDerivative[Dataset]):
                 for sub_epoch in epoch.collect
             )
         return (
-            Dependency('selected-events', options=_epochs_selected_events_options(ctx)),
+            Dependency('selected-events', options=_epochs_selected_events_options(ctx), view='epochs'),
             Dependency('epochs', options=ctx.options),
         )
 
@@ -957,6 +968,25 @@ class EpochsDatasetDerivative(UncachedDerivative[Dataset]):
                 'data_raw': ctx.option('data_raw', False),
             }),
         }
+
+    def dependency_fingerprint(self, ctx: DerivativeContext, view: str | None = None) -> dict[str, Any]:
+        if view is None:
+            return self.fingerprint(ctx)
+        if view != 'evoked':
+            raise ValueError(f"{self.name!r} does not define dependency view {view!r}")
+
+        fingerprint = dict(self.fingerprint(ctx))
+        ds = _build_evoked_shell(ctx, self.epochs, ctx.options)
+        model = ctx.get('model')
+        if model:
+            model_value = ds.eval(model)
+            fingerprint['model_signature'] = ctx.registry.canonicalize(model_value.x.tolist() if isinstance(model_value, Var) else list(model_value))
+        else:
+            fingerprint['model_signature'] = ds.n_cases
+        selected_events = ctx.load('selected-events', options=_epochs_selected_events_options(ctx))
+        raw = selected_events.info.get('raw')
+        fingerprint['bad_channels'] = tuple(raw.info['bads'] if raw is not None else selected_events.info.get(BAD_CHANNELS, ()))
+        return fingerprint
 
     def build(self, ctx: DerivativeContext) -> Dataset:
         epoch = self.epochs[ctx.get('epoch')]
@@ -977,6 +1007,16 @@ class EpochsDatasetDerivative(UncachedDerivative[Dataset]):
         ds = ctx.load('selected-events', options=_epochs_selected_events_options(ctx))
         ds, _, _, _, _, _, variable_tmax = _prepare_epoch_dataset(ctx, epoch, ds)
         epoch_value = ctx.load('epochs')
+        raw = ds.info.get('raw')
+        bads = raw.info['bads'] if raw is not None else ds.info.get(BAD_CHANNELS, [])
+        if isinstance(epoch_value, Datalist):
+            if any(epochs.info['bads'] != bads for epochs in epoch_value):
+                epoch_value = Datalist([epochs.copy() for epochs in epoch_value], epoch_value.name, epoch_value._fmt)
+                for epochs in epoch_value:
+                    epochs.info['bads'] = bads
+        elif epoch_value.info['bads'] != bads:
+            epoch_value = epoch_value.copy()
+            epoch_value.info['bads'] = bads
         if not isinstance(epoch_value, Datalist):
             ds = _apply_epochs_selection(ds, getattr(epoch_value, 'selection', None))
         ds['epochs'] = epoch_value
@@ -1043,21 +1083,10 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         }
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
-        return (Dependency('epochs', options=self._epochs_options(ctx)),)
+        return (Dependency('epochs-dataset', options=self._epochs_dataset_options(ctx), view='evoked'),)
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        epoch = self.epochs[ctx.get('epoch')]
-        ds = _build_evoked_shell(ctx, self.epochs, self._epochs_options(ctx))
-        model = ctx.get('model')
-        if model:
-            model_value = ds.eval(model)
-            model_signature = model_value.x.tolist() if isinstance(model_value, Var) else list(model_value)
-        else:
-            model_signature = ds.n_cases
         return {
-            'epoch': epoch._as_dict(),
-            'model': model,
-            'model_signature': ctx.registry.canonicalize(model_signature),
             'equalize_evoked_count': ctx.get('equalize_evoked_count'),
             'samplingrate': ctx.option('samplingrate'),
             'decim': ctx.option('decim'),
