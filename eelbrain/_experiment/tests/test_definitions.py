@@ -1,8 +1,29 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+import logging
+
 import pytest
 
 from eelbrain._experiment import test_def
-from eelbrain._experiment.definitions import DefinitionError, find_dependent_epochs, find_epoch_vars, find_epochs_vars, sequence_arg
+from eelbrain._experiment.configuration import Configuration, ConfigurationError, find_dependent_epochs, find_epoch_vars, find_epochs_vars, sequence_arg
+from eelbrain._experiment.derivative_cache import DerivativeRegistry
+from eelbrain._experiment.preprocessing import RawFilter, RawICA, RawReReference
+from eelbrain._experiment.variable_def import EvalVar, GroupVar, LabelVar, Variables
+from eelbrain.testing import TempDir
+
+
+class ExampleConfiguration(Configuration):
+    DICT_ATTRS = ('a', 'b')
+
+    def __init__(self, a, b):
+        self.a = a
+        self.b = b
+
+
+class ExampleSequenceConfiguration(Configuration):
+    DICT_ATTRS = ('items',)
+
+    def __init__(self, items):
+        self.items = sequence_arg('items', items, str, sequence_type=list)
 
 
 def test_find_epoch_vars():
@@ -36,7 +57,7 @@ def test_find_test_vars():
     assert test.model == 'a%b'
     assert test._find_test_vars() == ({'a', 'b'}, none)
     # between ANOVA
-    with pytest.raises(DefinitionError):
+    with pytest.raises(ConfigurationError):
         test_def.ANOVA('a*b*c')
     test = test_def.ANOVA('a*b*c', model='')
     assert test.model == ''
@@ -71,3 +92,63 @@ def test_sequence_arg():
         sequence_arg('sequence', ['a', 2], str)
     with pytest.raises(TypeError):
         sequence_arg('sequence', (1, 'b'), int)
+
+
+def test_config_base():
+    config = ExampleConfiguration('x', 1)
+    assert config._as_dict() == {'a': 'x', 'b': 1}
+    assert config == ExampleConfiguration('x', 1)
+    assert config != ExampleConfiguration('x', 2)
+    assert config == {'a': 'x', 'b': 1}
+
+
+def test_config_normalization():
+    config = ExampleSequenceConfiguration('x')
+    assert config.items == ['x']
+    assert config._as_dict() == {'items': ['x']}
+    assert config == ExampleSequenceConfiguration(['x'])
+
+
+def test_config_canonicalization_and_variables():
+    root = TempDir()
+    registry = DerivativeRegistry(root, logging.getLogger('eelbrain.test.config'))
+
+    variables = Variables({'x': EvalVar('a + b', task='task-a')})
+    canonical = registry.canonicalize({'vars': variables})
+    assert canonical == {'vars': {'x': {'task': 'task-a', 'code': 'a + b'}}}
+
+    test = test_def.ANOVA('x*subject', vars={'x': EvalVar('a + b', task='task-a')})
+    canonical_test = registry.canonicalize(test._as_dict())
+    assert canonical_test['vars'] == {'x': {'task': 'task-a', 'code': 'a + b'}}
+
+
+def test_vardef_semantic_identity():
+    assert EvalVar('a + b', task='task-a') != EvalVar('a + b', task='task-b')
+    assert GroupVar(('g1', 'g2'), task='task-a') != GroupVar(('g1', 'g2'), task='task-b')
+
+    compact = LabelVar('trigger', {(1, 2): 'target'}, task='task-a')
+    expanded = LabelVar('trigger', {1: 'target', 2: 'target'}, task='task-a')
+    assert compact == expanded
+    assert compact != LabelVar('trigger', {1: 'target', 2: 'target'}, task='task-b')
+
+
+def test_raw_pipe_semantic_dict():
+    pipe = RawFilter('raw', 1, 40, n_jobs=2, method='iir')
+    assert pipe._as_dict() == {
+        'type': 'RawFilter',
+        'source': 'raw',
+        'l_freq': 1,
+        'h_freq': 40,
+        'n_jobs': 2,
+        'kwargs': {'method': 'iir'},
+    }
+    assert 'name' not in pipe._as_dict()
+
+    ica = RawICA('raw', 'task-a')
+    assert ica.task == ('task-a',)
+    assert ica._as_dict()['task'] == ('task-a',)
+
+    reref = RawReReference('raw', ['A1', 'A2'], add='EXG1', drop='EXG8')
+    assert reref.reference == ['A1', 'A2']
+    assert reref.add == ['EXG1']
+    assert reref.drop == ['EXG8']

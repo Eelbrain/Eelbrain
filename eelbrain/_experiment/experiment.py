@@ -14,7 +14,7 @@ from .._config import tqdm_disable
 from .._utils import as_sequence
 from .._utils.com import Notifier, NotNotifier
 from .._utils.notebooks import tqdm
-from .definitions import check_names
+from .configuration import check_names
 
 
 class LayeredDict(dict):

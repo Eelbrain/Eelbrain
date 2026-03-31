@@ -15,7 +15,7 @@ from numpy.testing import assert_almost_equal, assert_array_equal
 
 from eelbrain import *
 from eelbrain.pipeline import *
-from eelbrain._exceptions import DefinitionError
+from eelbrain._exceptions import ConfigurationError
 from eelbrain._experiment.derivative_cache import ProtectedArtifactError
 from eelbrain._experiment.pathing import ica_file_path, log_dir
 from eelbrain._experiment.preprocessing import raw_node_name
@@ -251,13 +251,13 @@ def test_sample():
     # duplicate subject
     class BadExperiment(SampleExperiment):
         groups = {'group': ('R0001', 'R0002', 'R0002')}
-    with pytest.raises(DefinitionError):
+    with pytest.raises(ConfigurationError):
         BadExperiment(root)
 
     # non-existing subject
     class BadExperiment(SampleExperiment):
         groups = {'group': ('R0001', 'R0003', 'R0002')}
-    with pytest.raises(DefinitionError):
+    with pytest.raises(ConfigurationError):
         BadExperiment(root)
 
     # unsorted subjects

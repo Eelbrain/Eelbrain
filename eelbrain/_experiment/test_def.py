@@ -8,9 +8,9 @@ import mne
 from .. import testnd
 from .. import test
 from .._data_obj import CellArg
-from .._exceptions import DefinitionError
+from .._exceptions import ConfigurationError
 from .._utils.parse import find_variables
-from .definitions import Definition
+from .configuration import Configuration
 from .variable_def import Variables, GroupVar
 
 
@@ -34,7 +34,7 @@ def assemble_tests(test_dict):
         if kind in TEST_CLASSES:
             out[key] = TEST_CLASSES[kind](**params)
         else:
-            raise DefinitionError(f"Unknown test kind in test definition {key}: {kind}")
+            raise ConfigurationError(f"Unknown test kind in test definition {key}: {kind}")
     return out
 
 
@@ -50,7 +50,7 @@ def tail_arg(tail):
         raise TypeError(f"{tail=}; needs to be 0, -1 or 1")
 
 
-class Test(Definition):
+class Test(Configuration):
     "Baseclass for any test"
     kind = None
     DICT_ATTRS = ('kind', 'model', 'vars')
@@ -74,7 +74,7 @@ class Test(Definition):
         try:
             self.vars = Variables(vars)
         except Exception as error:
-            raise DefinitionError(f"vars={vars} ({error})")
+            raise ConfigurationError(f"vars={vars} ({error})")
         self._test_vars.extend(depend_on)
 
     def _find_test_vars(self):
@@ -344,7 +344,7 @@ class ANOVA(Test):
             if 'subject' in items:
                 items.remove('subject')
             elif not between_items:
-                raise DefinitionError(f"{x=} without model: for mixed ANOVA, 'subject' needs to be in x; for between-subject ANOVA, model needs to be set explicitly")
+                raise ConfigurationError(f"{x=} without model: for mixed ANOVA, 'subject' needs to be in x; for between-subject ANOVA, model needs to be set explicitly")
             model = '%'.join(items)
         else:
             model_items = list(filter(None, (item.strip() for item in model.split('%'))))

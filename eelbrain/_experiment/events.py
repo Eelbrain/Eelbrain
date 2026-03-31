@@ -11,10 +11,10 @@ import numpy as np
 
 from .. import load, save
 from .._data_obj import Datalist, Dataset, Factor, Var, combine
-from .._exceptions import DefinitionError
+from .._exceptions import ConfigurationError
 from .._info import BAD_CHANNELS
 from .._names import INTERPOLATE_CHANNELS
-from .definitions import sequence_arg
+from .configuration import sequence_arg
 from .derivative_cache import CachePolicy, Dependency, Derivative, DerivativeContext, file_fingerprint
 from .epochs import EpochCollection, SecondaryEpoch, SuperEpoch
 from .exceptions import FileMissingError
@@ -29,11 +29,11 @@ SELECTED_EVENTS = 'selected-events'
 
 def _check_ds(ds: Dataset, source: str, info: dict[str, Any]) -> Dataset:
     if not isinstance(ds, Dataset):
-        raise DefinitionError(f"{source} needs to return the events Dataset. Got {ds!r}.")
+        raise ConfigurationError(f"{source} needs to return the events Dataset. Got {ds!r}.")
     if 'i_start' not in ds:
-        raise DefinitionError(f"The Dataset returned by {source} does not contain a variable called `i_start`. This variable is required to ascribe events to data samples.")
+        raise ConfigurationError(f"The Dataset returned by {source} does not contain a variable called `i_start`. This variable is required to ascribe events to data samples.")
     if 'trigger' not in ds:
-        raise DefinitionError(f"The Dataset returned by {source} does not contain a variable called `trigger`. This variable is required to check rejection files.")
+        raise ConfigurationError(f"The Dataset returned by {source} does not contain a variable called `trigger`. This variable is required to check rejection files.")
     if ds.info is not info:
         ds.info.update(info)
     return ds

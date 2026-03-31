@@ -13,14 +13,14 @@ import numpy as np
 
 from .. import load, save
 from .._data_obj import Dataset, Var, combine
-from .._exceptions import DefinitionError, DimensionMismatchError
+from .._exceptions import ConfigurationError, DimensionMismatchError
 from .._mne import shift_mne_epoch_trigger
 from .._names import INTERPOLATE_CHANNELS
 from .._text import enumeration
 from .._text import n_of
 from ..mne_fixes import _interpolate_bads_eeg, _interpolate_bads_meg
 from .derivative_cache import CachePolicy, Dependency, Derivative, DerivativeContext, Input, file_fingerprint
-from .definitions import Definition, typed_arg
+from .configuration import Configuration, typed_arg
 from .pathing import rej_file_path
 from .preprocessing import load_raw_dependency, raw_node_name
 from .test_def import TestDims
@@ -68,7 +68,7 @@ def assemble_epochs(epoch_def, epoch_default):
             if secondary_epochs[key]._can_link(epochs):
                 epochs[key] = secondary_epochs.pop(key)._link(key, epochs)
         if len(secondary_epochs) == n:
-            raise DefinitionError(f"Can't resolve epoch dependencies for {enumeration(secondary_epochs)}")
+            raise ConfigurationError(f"Can't resolve epoch dependencies for {enumeration(secondary_epochs)}")
     return epochs
 
 
@@ -166,7 +166,7 @@ def load_evoked_request(
     return registry.load('evoked', state={**state, 'subject': subjects}, options=options)
 
 
-class EpochBase(Definition):
+class EpochBase(Configuration):
     baseline = None
     n_cases = None
     trigger_shift = None
@@ -216,10 +216,10 @@ class Epoch(EpochBase):
     ):
         if post_baseline_trigger_shift is not None:
             if post_baseline_trigger_shift_min is None or post_baseline_trigger_shift_max is None:
-                raise DefinitionError(f"{post_baseline_trigger_shift=} but missing post_baseline_trigger_shift_min and/or post_baseline_trigger_shift_max")
+                raise ConfigurationError(f"{post_baseline_trigger_shift=} but missing post_baseline_trigger_shift_min and/or post_baseline_trigger_shift_max")
             cut_time = post_baseline_trigger_shift_max - post_baseline_trigger_shift_min
             if not isinstance(tmax, str) and cut_time >= tmax - tmin:
-                raise DefinitionError("No data remaining after trigger shift")
+                raise ConfigurationError("No data remaining after trigger shift")
 
         if decim is not None:
             if decim < 1:
@@ -425,7 +425,7 @@ class SecondaryEpoch(Epoch):
     def _link(self, name, epochs):
         base = epochs[self.sel_epoch]
         if not isinstance(base, (PrimaryEpoch, SecondaryEpoch)):
-            raise DefinitionError(f"Epoch {name}, base={self.sel_epoch!r}: is {base.__class__.__name__}, needs to be PrimaryEpoch or SecondaryEpoch")
+            raise ConfigurationError(f"Epoch {name}, base={self.sel_epoch!r}: is {base.__class__.__name__}, needs to be PrimaryEpoch or SecondaryEpoch")
         kwargs = self._kwargs.copy()
         for param in self.INHERITED_PARAMS:
             if param not in kwargs:
@@ -473,11 +473,11 @@ class SuperEpoch(Epoch):
         # check sub-epochs
         for e in sub_epochs:
             if isinstance(e, SuperEpoch):
-                raise DefinitionError(f"Epoch {name}: SuperEpochs can not be defined recursively")
+                raise ConfigurationError(f"Epoch {name}: SuperEpochs can not be defined recursively")
             elif not isinstance(e, Epoch):
-                raise DefinitionError(f"Epoch {name}: sub-epochs must all by PrimaryEpochs")
+                raise ConfigurationError(f"Epoch {name}: sub-epochs must all by PrimaryEpochs")
             elif e.post_baseline_trigger_shift is not None:
-                raise DefinitionError(f"Epoch {name}: Super-epochs are merged on the level of events and can't contain epochs with post_baseline_trigger_shift")
+                raise ConfigurationError(f"Epoch {name}: Super-epochs are merged on the level of events and can't contain epochs with post_baseline_trigger_shift")
         # find inherited epoch parameters
         kwargs = self._kwargs.copy()
         for param in self.INHERITED_PARAMS:
@@ -486,7 +486,7 @@ class SuperEpoch(Epoch):
             values = {getattr(e, param) for e in sub_epochs}
             if len(values) > 1:
                 param_repr = ', '.join(repr(v) for v in values)
-                raise DefinitionError(f"Epoch {name}: All sub_epochs must have the same setting for {param}, got {param_repr}")
+                raise ConfigurationError(f"Epoch {name}: All sub_epochs must have the same setting for {param}, got {param_repr}")
             kwargs[param] = values.pop()
         out = Epoch._link(self, name, epochs)
         Epoch.__init__(out, **kwargs)
@@ -543,7 +543,7 @@ class EpochCollection(EpochBase):
             values = {getattr(e, param) for e in sub_epochs}
             if len(values) > 1:
                 param_repr = ', '.join(repr(v) for v in values)
-                raise DefinitionError(f"Epoch {name}: All sub-epochs must have the same setting for {param}, got {param_repr}")
+                raise ConfigurationError(f"Epoch {name}: All sub-epochs must have the same setting for {param}, got {param_repr}")
             setattr(out, param, values.pop())
         # dependencies
         tasks = set()

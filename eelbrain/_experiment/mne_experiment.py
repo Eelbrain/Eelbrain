@@ -22,7 +22,7 @@ from .. import load
 from .. import plot
 from .. import save
 from .._data_obj import CellArg, Datalist, Dataset, Factor, Var, NDVar, SourceSpace, VolumeSourceSpace, assert_is_legal_dataset_key, combine
-from .._exceptions import DefinitionError
+from .._exceptions import ConfigurationError
 from .._info import BAD_CHANNELS
 from .._names import INTERPOLATE_CHANNELS
 from .._meeg import new_rejection_ds
@@ -35,7 +35,7 @@ from .._utils import ask, subp, keydefaultdict, log_level, ScreenHandler
 from .._utils.mne_utils import is_fake_mri
 from .covariance import CovDerivative, EpochCovariance, RawCovariance, cov_node_name
 from .derivative_cache import DerivativeRegistry, ProtectedArtifactError
-from .definitions import sequence_arg
+from .configuration import sequence_arg
 from .epochs import EpochBase, EpochsDerivative, EvokedDerivative, PrimaryEpoch, RejectionInput, SecondaryEpoch, SuperEpoch, assemble_epochs, decim_param, load_evoked_request
 from .events import EventsDerivative, SELECTED_EVENTS, SelectedEventsDerivative
 from .exceptions import FileMissingError
@@ -290,7 +290,7 @@ class Pipeline(StateModel):
 
         if self.datatype is not None:
             if self.datatype not in ('meg', 'eeg'):
-                raise DefinitionError(f"`datatype` must be 'meg' or 'eeg', not {self.datatype!r}.")
+                raise ConfigurationError(f"`datatype` must be 'meg' or 'eeg', not {self.datatype!r}.")
             if not isinstance(self.extension, str):
                 raise TypeError(f"{self.__class__.__name__}.extension={self.extension!r} with {self.__class__.__name__}.datatype={self.datatype!r}; extension needs to be specified (e.g., '.fif').")
             self._datatype = self.datatype
@@ -298,7 +298,7 @@ class Pipeline(StateModel):
         else:
             datatypes = tuple(mne_bids.get_datatypes(root))
             if 'meg' in datatypes and 'eeg' in datatypes:
-                raise DefinitionError(f"Can't infer datatype. Both MEG and EEG data found in {root}.")
+                raise ConfigurationError(f"Can't infer datatype. Both MEG and EEG data found in {root}.")
             elif 'meg' in datatypes:
                 self._datatype = 'meg'
                 extensions = ('.fif',)
@@ -308,10 +308,10 @@ class Pipeline(StateModel):
                 if len(data_extensions) == 0:
                     raise FileMissingError(f"No EEG data files found in {root}.")
                 elif len(data_extensions) > 1:
-                    raise DefinitionError(f"Multiple EEG data file types found in {root}: {enumeration(sorted(data_extensions))}.")
+                    raise ConfigurationError(f"Multiple EEG data file types found in {root}: {enumeration(sorted(data_extensions))}.")
                 extensions = tuple(data_extensions)
             else:
-                raise DefinitionError(f"Can't infer datatype. No MEG or EEG data found in {root}.")
+                raise ConfigurationError(f"Can't infer datatype. No MEG or EEG data found in {root}.")
         self._bids_path = BIDSPath(root=root)
         StateModel.__init__(self)
 

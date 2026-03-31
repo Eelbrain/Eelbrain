@@ -15,13 +15,13 @@ from .._utils import subp
 from .._utils.mne_utils import fix_annot_names, is_fake_mri
 from .pathing import annot_file_path, annot_stamp_path, label_dir, mri_dir, mri_sdir
 from .derivative_cache import Dependency, Derivative, DerivativeContext, file_fingerprint
-from .definitions import DefinitionError, Definition, sequence_arg
+from .configuration import Configuration, ConfigurationError, sequence_arg
 
 
 SEEDED_PARC_RE = re.compile(r'^(.+)-(\d+)$')
 
 
-class Parcellation(Definition):
+class Parcellation(Configuration):
     DICT_ATTRS = ('kind',)
     kind = None  # used when comparing dict representations
     morph_from_fsaverage = False
@@ -436,12 +436,12 @@ class IndividualSeededParc(SeededParc):
         label_subjects = {label: sorted(self.seeds[label].keys()) for label in labels}
         subjects = label_subjects[labels[0]]
         if not all(label_subjects[label] == subjects for label in labels[1:]):
-            raise DefinitionError("Some labels are missing subjects")
+            raise ConfigurationError("Some labels are missing subjects")
         self.subjects = subjects
 
     def seeds_for_subject(self, subject):
         if subject not in self.subjects:
-            raise DefinitionError(f"Parcellation {self.name} not defined for subject {subject}")
+            raise ConfigurationError(f"Parcellation {self.name} not defined for subject {subject}")
         seeds = {name: self.seeds[name][subject] for name in self.seeds}
         # filter out missing
         return {name: seed for name, seed in seeds.items() if seed}
@@ -677,6 +677,6 @@ def assemble_parcs(items):
         elif obj == FSAverageParc.kind:
             parc = FSAverageParc(('lateral', 'medial'))
         else:
-            raise DefinitionError(f"parcellation {name!r}: {obj!r}")
+            raise ConfigurationError(f"parcellation {name!r}: {obj!r}")
         parcs[name] = parc._link(name)
     return parcs

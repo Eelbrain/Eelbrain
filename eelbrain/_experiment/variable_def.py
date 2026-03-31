@@ -16,7 +16,7 @@ import numpy as np
 from .._data_obj import Factor, Var, assert_is_legal_dataset_key
 from .._utils.numpy_utils import INT_TYPES
 from .._utils.parse import find_variables
-from .definitions import DefinitionError
+from .configuration import Configuration, ConfigurationError
 
 
 # Some event columns are reserved for Eelbrain
@@ -32,25 +32,10 @@ def as_vardef_var(v):
     return v
 
 
-class VarDef:
-    _pickle_args = ('task',)
+class VarDef(Configuration):
 
     def __init__(self, task):
         self.task = task
-
-    def __getstate__(self):
-        return {k: getattr(self, k) for k in self._pickle_args}
-
-    def __setstate__(self, state):
-        for k in self._pickle_args:
-            setattr(self, k, state[k])
-
-    @property
-    def _eq_args(self):
-        raise NotImplementedError
-
-    def __eq__(self, other):
-        return isinstance(other, self.__class__) and other._eq_args == self._eq_args
 
     def apply(self, ds, groups):
         raise NotImplementedError
@@ -73,7 +58,7 @@ class EvalVar(VarDef):
     --------
     Pipeline.variables
     """
-    _pickle_args = ('task', 'code')
+    DICT_ATTRS = ('task', 'code')
 
     def __init__(self, code: str, task: str = None):
         super().__init__(task)
@@ -82,10 +67,6 @@ class EvalVar(VarDef):
 
     def __repr__(self):
         return f"EvalVar({self.code!r})"
-
-    @property
-    def _eq_args(self):
-        return self.code,
 
     def apply(self, ds, groups):
         return as_vardef_var(ds.eval(self.code))
@@ -118,7 +99,7 @@ class LabelVar(VarDef):
     --------
     Pipeline.variables
     """
-    _pickle_args = ('task', 'source', 'codes', 'labels', 'is_factor', 'default', 'fnmatch')
+    DICT_ATTRS = ('task', 'source', 'labels', 'is_factor', 'default', 'fnmatch')
 
     def __init__(
             self,
@@ -137,7 +118,7 @@ class LabelVar(VarDef):
             if is_factor is None:
                 is_factor = isinstance(v, str)
             elif isinstance(v, str) != is_factor:
-                raise DefinitionError(f"LabelVar with {codes=}: value type inconsistent, need all or none to be str")
+                raise ConfigurationError(f"LabelVar with {codes=}: value type inconsistent, need all or none to be str")
 
             if isinstance(key, tuple):
                 for k in key:
@@ -155,10 +136,6 @@ class LabelVar(VarDef):
 
     def __repr__(self):
         return f"{self.__class__.__name__}({self.source!r}, {self.codes})"
-
-    @property
-    def _eq_args(self):
-        return self.source, self.labels, self.default, self.fnmatch
 
     def apply(self, ds, groups):
         source = ds.eval(self.source)
@@ -204,7 +181,7 @@ class GroupVar(VarDef):
         GroupVar(['patient', 'control'])
 
     """
-    _pickle_args = ('task', 'groups')
+    DICT_ATTRS = ('task', 'groups')
 
     def __init__(
             self,
@@ -216,10 +193,6 @@ class GroupVar(VarDef):
 
     def __repr__(self):
         return f"GroupVar({self.groups!r})"
-
-    @property
-    def _eq_args(self):
-        return self.groups,
 
     def apply(self, ds, groups):
         return label_groups(ds['subject'], self.groups, groups)
@@ -243,7 +216,7 @@ class GroupVar(VarDef):
 
 def parse_named_vardef(string):
     if '=' not in string:
-        raise DefinitionError(f"variable {string!r}: needs '='")
+        raise ConfigurationError(f"variable {string!r}: needs '='")
     name, vdef = string.split('=', 1)
     return name.strip(), parse_vardef(vdef)
 
@@ -256,7 +229,7 @@ def parse_vardef(string):
         return EvalVar(string)
 
 
-class Variables:
+class Variables(Configuration):
     """Set of variable definitions
 
     Parameters
@@ -295,30 +268,24 @@ class Variables:
                 elif isinstance(vdef, tuple):
                     vdef = LabelVar(*vdef)
                 else:
-                    raise DefinitionError(f"Variable {name!r}: {vdef!r}")
+                    raise ConfigurationError(f"Variable {name!r}: {vdef!r}")
 
             assert_is_legal_dataset_key(name)
             if name in RESERVED_VAR_KEYS:
-                raise DefinitionError(f"Variable {name!r}: reserved name")
+                raise ConfigurationError(f"Variable {name!r}: reserved name")
             self.vars[name] = vdef
 
-    def __getstate__(self):
-        return {'vars': self.vars}
-
-    def __setstate__(self, state):
-        self.vars = state['vars']
+    def _as_dict(self):
+        return self.vars
 
     def _check_trigger_vars(self):
         for key, var in self.vars.items():
             if isinstance(var, LabelVar) and var.source == 'trigger':
                 if not all(isinstance(v, INT_TYPES) for v in var.labels):
-                    raise DefinitionError(f"Variable {key!r}: {var} codes must be integers")
+                    raise ConfigurationError(f"Variable {key!r}: {var} codes must be integers")
 
     def __repr__(self):
         return '\n'.join(["Variables(", *(f'    {k!r}: {v},' for k, v in self.vars.items()), ')'])
-
-    def __eq__(self, other):
-        return isinstance(other, Variables) and other.vars == self.vars
 
     def apply(self, ds, groups, group_only=False):
         task = ds.info.get('task', None)

@@ -4,7 +4,7 @@ import logging
 from typing import Any
 from collections.abc import Sequence
 
-from .._exceptions import DefinitionError
+from .._exceptions import ConfigurationError
 from .._text import enumeration, plural
 from .._utils.parse import find_variables
 
@@ -96,16 +96,18 @@ class CodeError(Exception):
         Exception.__init__(self, error_str)
 
 
-class Definition:
+class Configuration:
     DICT_ATTRS = None
 
     def _as_dict(self):
+        if self.DICT_ATTRS is None:
+            raise NotImplementedError(f"{self.__class__.__name__}.DICT_ATTRS")
         return {k: getattr(self, k) for k in self.DICT_ATTRS}
 
     def __eq__(self, other):
         if isinstance(other, dict):
             return self._as_dict() == other
-        elif isinstance(other, Definition):
+        elif self.__class__ is other.__class__:
             return self._as_dict() == other._as_dict()
         else:
             return False
@@ -123,7 +125,7 @@ def name_ok(key: str, allow_empty: bool) -> bool:
 def check_names(keys, attribute, allow_empty: bool):
     invalid = [key for key in keys if not name_ok(key, allow_empty)]
     if invalid:
-        raise DefinitionError(f"Invalid {plural('name', len(invalid))} for {attribute}: {enumeration(invalid)}")
+        raise ConfigurationError(f"Invalid {plural('name', len(invalid))} for {attribute}: {enumeration(invalid)}")
 
 
 def compound(items):

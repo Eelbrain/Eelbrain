@@ -44,6 +44,8 @@ from typing import Any, Generic, TypeVar
 
 import mne
 
+from .configuration import Configuration
+
 T = TypeVar('T')
 MANIFEST_SUFFIX = '.manifest.json'
 MANIFEST_SCHEMA_VERSION = 1
@@ -978,6 +980,8 @@ class DerivativeRegistry:
 
     @staticmethod
     def canonicalize(value: Any) -> Any:
+        if isinstance(value, Configuration):
+            return DerivativeRegistry.canonicalize(value._as_dict())
         if isinstance(value, dict):
             return {str(k): DerivativeRegistry.canonicalize(v) for k, v in sorted(value.items(), key=lambda item: str(item[0]))}
         if isinstance(value, (list, tuple)):

@@ -16,8 +16,8 @@ class KeysMissing(KeyError):
         return f"{plural('Key', n)} {enumeration(map(repr, keys))} missing from {from_name}={from_dict!r}"
 
 
-class DefinitionError(Exception):
-    "Pipeline definition error"
+class ConfigurationError(Exception):
+    "Pipeline configuration error"
 
 
 class EvalError(Exception):
