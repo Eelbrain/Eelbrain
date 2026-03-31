@@ -434,36 +434,12 @@ class ResultOutputDerivative(Derivative[T]):
             return self._make_test_rois(ctx, baseline, src_baseline, test_obj, pmin, test_kwargs, res, data, samplingrate)
 
         if data.sensor:
-            res_data = self.load_evoked(
-                ctx,
-                ctx.get('group'),
-                baseline,
-                True,
-                test_obj.cat,
-                samplingrate,
-                None,
-                False,
-                test_obj.vars,
-                data,
-            )
+            res_data = self.load_group_evoked(ctx, baseline, True, test_obj.cat, samplingrate, None, False, test_obj.vars, data)
             if len(res_data.info['sensor_types']) > 1:
                 desc_ = ', '.join(res_data.info['sensor_types'])
                 raise RuntimeError(f"Data contains more than one sensor type ({desc_}). Mass-univariate tests are not designed for multiple sensor types. Use the data argument to perform test on one sensor type.")
         elif data.source:
-            res_data = self.load_evoked_stc(
-                ctx,
-                ctx.get('group'),
-                baseline,
-                src_baseline,
-                True,
-                test_obj.cat,
-                mask,
-                False,
-                test_obj.vars,
-                samplingrate,
-                None,
-                True,
-            )
+            res_data = self.load_group_evoked_stc(ctx, baseline, src_baseline, True, test_obj.cat, mask, False, test_obj.vars, samplingrate, None, True)
             if smooth:
                 res_data[data.y_name] = res_data[data.y_name].smooth('source', smooth, 'gaussian')
         else:
@@ -479,7 +455,7 @@ class ResultOutputDerivative(Derivative[T]):
         test_obj = self.tests[ctx.option('test')]
         if not isinstance(test_obj, TwoStageTest):
             raise NotImplementedError(f"Test kind {test_obj.__class__.__name__!r}")
-        ds = self.load_epochs_stc(ctx, subject, ctx.option('baseline'), ctx.option('src_baseline'), None, False, None, True, False, test_obj.vars)
+        ds = self.load_subject_epochs_stc(ctx, subject, ctx.option('baseline'), ctx.option('src_baseline'), None, False, None, True, False, test_obj.vars)
         return testnd.LM('src', test_obj.stage_1, data=ds, samples=0, subject=subject)
 
     def test_kwargs(
@@ -503,10 +479,9 @@ class ResultOutputDerivative(Derivative[T]):
             kwargs.update({'min' + dim: criteria[dim] for dim in data.dims if dim in criteria})
         return kwargs
 
-    def load_evoked(
+    def _evoked_options(
             self,
             ctx: DerivativeContext,
-            subjects=None,
             baseline=USE_CTX,
             ndvar: bool = True,
             cat=None,
@@ -515,12 +490,11 @@ class ResultOutputDerivative(Derivative[T]):
             data_raw: bool = False,
             vardef: str | None = None,
             data=None,
-            **state,
     ):
         if baseline is USE_CTX:
             baseline = ctx.option('baseline')
         data = TestDims.coerce(data)
-        options = {
+        return {
             'baseline': baseline,
             'ndvar': ndvar,
             'cat': cat,
@@ -530,12 +504,10 @@ class ResultOutputDerivative(Derivative[T]):
             'vardef': vardef,
             'data': data,
         }
-        return load_evoked_request(ctx.registry, self.groups, ctx.get('group'), {**ctx.state, **state}, options, subjects)
 
-    def load_evoked_stc(
+    def _evoked_stc_options(
             self,
             ctx: DerivativeContext,
-            subjects=None,
             baseline=USE_CTX,
             src_baseline=USE_CTX,
             morph: bool = False,
@@ -546,13 +518,12 @@ class ResultOutputDerivative(Derivative[T]):
             samplingrate: int | None = None,
             decim: int | None = None,
             ndvar: bool = True,
-            **state,
     ):
         if baseline is USE_CTX:
             baseline = ctx.option('baseline')
         if src_baseline is USE_CTX:
             src_baseline = ctx.option('src_baseline')
-        options = {
+        return {
             'baseline': baseline,
             'src_baseline': src_baseline,
             'morph': morph,
@@ -566,21 +537,10 @@ class ResultOutputDerivative(Derivative[T]):
             'ndvar': ndvar,
             'keep_evoked': False,
         }
-        return load_evoked_stc_request(
-            ctx.registry,
-            self.groups,
-            ctx.get('group'),
-            {**ctx.state, **state},
-            options,
-            self.mri_subjects,
-            self.common_brain,
-            subjects,
-        )
 
-    def load_epochs_stc(
+    def _epochs_stc_options(
             self,
             ctx: DerivativeContext,
-            subjects=None,
             baseline=USE_CTX,
             src_baseline=USE_CTX,
             cat=None,
@@ -593,13 +553,12 @@ class ResultOutputDerivative(Derivative[T]):
             decim: int | None = None,
             ndvar: bool = True,
             reject: bool | str = True,
-            **state,
     ):
         if baseline is USE_CTX:
             baseline = ctx.option('baseline')
         if src_baseline is USE_CTX:
             src_baseline = ctx.option('src_baseline')
-        options = {
+        return {
             'baseline': baseline,
             'src_baseline': src_baseline,
             'cat': cat,
@@ -614,16 +573,80 @@ class ResultOutputDerivative(Derivative[T]):
             'ndvar': ndvar,
             'reject': reject,
         }
-        return load_epochs_stc_request(
-            ctx.registry,
-            self.groups,
-            ctx.get('group'),
-            {**ctx.state, **state},
-            options,
-            self.mri_subjects,
-            self.common_brain,
-            subjects,
-        )
+
+    def load_group_evoked(
+            self,
+            ctx: DerivativeContext,
+            baseline=USE_CTX,
+            ndvar: bool = True,
+            cat=None,
+            samplingrate=None,
+            decim=None,
+            data_raw: bool = False,
+            vardef: str | None = None,
+            data=None,
+            **state,
+    ):
+        options = self._evoked_options(ctx, baseline, ndvar, cat, samplingrate, decim, data_raw, vardef, data)
+        return load_evoked_request(ctx.registry, self.groups, {**ctx.state, **state}, options, ctx.get('group'))
+
+    def load_group_evoked_stc(
+            self,
+            ctx: DerivativeContext,
+            baseline=USE_CTX,
+            src_baseline=USE_CTX,
+            morph: bool = False,
+            cat=None,
+            mask=False,
+            data_raw: bool = False,
+            vardef: str | None = None,
+            samplingrate: int | None = None,
+            decim: int | None = None,
+            ndvar: bool = True,
+            **state,
+    ):
+        options = self._evoked_stc_options(ctx, baseline, src_baseline, morph, cat, mask, data_raw, vardef, samplingrate, decim, ndvar)
+        return load_evoked_stc_request(ctx.registry, self.groups, {**ctx.state, **state}, options, self.mri_subjects, self.common_brain, ctx.get('group'))
+
+    def load_subject_evoked_stc(
+            self,
+            ctx: DerivativeContext,
+            subject: str,
+            baseline=USE_CTX,
+            src_baseline=USE_CTX,
+            morph: bool = False,
+            cat=None,
+            mask=False,
+            data_raw: bool = False,
+            vardef: str | None = None,
+            samplingrate: int | None = None,
+            decim: int | None = None,
+            ndvar: bool = True,
+            **state,
+    ):
+        options = self._evoked_stc_options(ctx, baseline, src_baseline, morph, cat, mask, data_raw, vardef, samplingrate, decim, ndvar)
+        return load_evoked_stc_request(ctx.registry, self.groups, {**ctx.state, **state}, options, self.mri_subjects, self.common_brain, subject)
+
+    def load_subject_epochs_stc(
+            self,
+            ctx: DerivativeContext,
+            subject: str,
+            baseline=USE_CTX,
+            src_baseline=USE_CTX,
+            cat=None,
+            keep_epochs: bool | str = False,
+            morph: bool | None = None,
+            mask: bool | str = False,
+            data_raw: bool = False,
+            vardef: str | None = None,
+            samplingrate: int | None = None,
+            decim: int | None = None,
+            ndvar: bool = True,
+            reject: bool | str = True,
+            **state,
+    ):
+        options = self._epochs_stc_options(ctx, baseline, src_baseline, cat, keep_epochs, morph, mask, data_raw, vardef, samplingrate, decim, ndvar, reject)
+        return load_epochs_stc_request(ctx.registry, self.groups, {**ctx.state, **state}, options, self.mri_subjects, self.common_brain, subject)
 
     def make_test(
             self,
@@ -671,7 +694,7 @@ class ResultOutputDerivative(Derivative[T]):
         labels = set()
         subjects = self._subjects(ctx)
         for subject in subjects:
-            ds = self.load_evoked_stc(ctx, subject, baseline, src_baseline, False, None, False, False, test_obj.vars, samplingrate)
+            ds = self.load_subject_evoked_stc(ctx, subject, baseline, src_baseline, False, None, False, False, test_obj.vars, samplingrate)
             dss = self._src_to_label_tc(ds, data.source)
             n_trials_dss.append(ds)
             dss_list.append(dss)
@@ -700,9 +723,9 @@ class ResultOutputDerivative(Derivative[T]):
         subjects = self._subjects(ctx)
         for subject in subjects:
             if test_obj.model is None:
-                ds = self.load_epochs_stc(ctx, subject, baseline, src_baseline, None, False, None, True, False, test_obj.vars, samplingrate)
+                ds = self.load_subject_epochs_stc(ctx, subject, baseline, src_baseline, None, False, None, True, False, test_obj.vars, samplingrate)
             else:
-                ds = self.load_evoked_stc(ctx, subject, baseline, src_baseline, False, None, True, False, test_obj.vars, samplingrate, model=test_obj.model)
+                ds = self.load_subject_evoked_stc(ctx, subject, baseline, src_baseline, False, None, True, False, test_obj.vars, samplingrate, model=test_obj.model)
             dss = self._src_to_label_tc(ds, data.source)
             if res is None:
                 lms.append({label: test_obj.make_stage_1('label_tc', label_ds, subject) for label, label_ds in dss.items()})
@@ -734,9 +757,9 @@ class ResultOutputDerivative(Derivative[T]):
         res_data = []
         for subject in self._subjects(ctx):
             if test_obj.model is None:
-                ds = self.load_epochs_stc(ctx, subject, baseline, src_baseline, None, False, True, mask, False, test_obj.vars, samplingrate)
+                ds = self.load_subject_epochs_stc(ctx, subject, baseline, src_baseline, None, False, True, mask, False, test_obj.vars, samplingrate)
             else:
-                ds = self.load_evoked_stc(ctx, subject, baseline, src_baseline, True, None, mask, False, test_obj.vars, samplingrate, model=test_obj.model)
+                ds = self.load_subject_evoked_stc(ctx, subject, baseline, src_baseline, True, None, mask, False, test_obj.vars, samplingrate, model=test_obj.model)
             if res is None:
                 lms.append(test_obj.make_stage_1(data.y_name, ds, subject))
             if return_data:
@@ -917,19 +940,19 @@ class MovieDerivative(ResultOutputDerivative[Path]):
         dst = self.path(ctx)
         if kind == 'ga-dspm':
             if ctx.option('single_subject'):
-                ds = self.load_evoked_stc(ctx, ctx.option('subject'))
+                ds = self.load_subject_evoked_stc(ctx, ctx.option('subject'))
                 y = ds['src']
             else:
-                ds = self.load_evoked_stc(ctx, ctx.get('group'), morph=True)
+                ds = self.load_group_evoked_stc(ctx, morph=True)
                 y = ds['srcm']
             brain = plot.brain.dspm(y, ctx.option('fmin'), ctx.option('fmin') * 3, colorbar=False, **ctx.option('brain_kwargs'))
         elif kind == 'ttest':
             cluster_state = dict(ctx.option('cluster_state') or {})
             if ctx.option('single_subject'):
-                ds = self.load_epochs_stc(ctx, ctx.option('subject'), cat=ctx.option('cat'))
+                ds = self.load_subject_epochs_stc(ctx, ctx.option('subject'), cat=ctx.option('cat'))
                 y = 'src'
             else:
-                ds = self.load_evoked_stc(ctx, ctx.option('group'), morph=True, cat=ctx.option('cat'))
+                ds = self.load_group_evoked_stc(ctx, morph=True, cat=ctx.option('cat'))
                 y = 'srcm'
             if cluster_state:
                 cluster_state.update(samples=0, pmin=ctx.option('p'))

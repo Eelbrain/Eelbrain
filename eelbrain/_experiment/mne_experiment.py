@@ -1256,7 +1256,6 @@ class Pipeline(StateModel):
             return load_epochs_stc_request(
                 self._derivatives,
                 self._groups,
-                self.get('group'),
                 self._derivative_state(state),
                 options,
                 self._mri_subjects,
@@ -1399,7 +1398,7 @@ class Pipeline(StateModel):
         model = self.get('model')
         desc = f'by {model}' if model else 'average'
         subjects_ = [subject_ for subject_ in self.iter(group=group, progress_bar=f"Load {epoch_name} {desc}")]
-        return load_evoked_request(self._derivatives, self._groups, self.get('group'), self._derivative_state(state), options, subjects_)
+        return load_evoked_request(self._derivatives, self._groups, self._derivative_state(state), options, subjects_)
 
     def load_epochs_stf(
             self,
@@ -1594,7 +1593,6 @@ class Pipeline(StateModel):
         return load_evoked_stc_request(
             self._derivatives,
             self._groups,
-            self.get('group'),
             self._derivative_state(state),
             options,
             self._mri_subjects,

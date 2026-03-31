@@ -588,15 +588,12 @@ def load_epochs_stc_group(
 def load_epochs_stc_request(
         registry,
         groups: dict[str, Sequence[str]],
-        current_group: str,
         state: dict[str, Any],
         options: dict[str, Any],
         mri_subjects: dict[str, dict[str, str]],
         common_brain: str,
         subjects,
 ) -> Dataset:
-    if subjects in (None, 1):
-        return registry.load('epochs-stc', state=state, options=options)
     if isinstance(subjects, Sequence) and not isinstance(subjects, str):
         return load_epochs_stc_group(registry, subjects, state, options, mri_subjects, common_brain)
     if isinstance(subjects, str) and subjects in groups:
@@ -628,15 +625,12 @@ def load_evoked_stc_group(
 def load_evoked_stc_request(
         registry,
         groups: dict[str, Sequence[str]],
-        current_group: str,
         state: dict[str, Any],
         options: dict[str, Any],
         mri_subjects: dict[str, dict[str, str]],
         common_brain: str,
         subjects,
 ) -> Dataset:
-    if subjects in (None, 1):
-        return registry.load('evoked-stc', state=state, options=options)
     if isinstance(subjects, Sequence) and not isinstance(subjects, str):
         return load_evoked_stc_group(registry, subjects, state, options, mri_subjects, common_brain)
     if isinstance(subjects, str) and subjects in groups:

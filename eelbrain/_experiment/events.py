@@ -96,13 +96,10 @@ def load_evoked_group(
 def load_evoked_request(
         registry,
         groups: dict[str, Sequence[str]],
-        current_group: str,
         state: dict[str, Any],
         options: dict[str, Any],
         subjects,
 ) -> Dataset:
-    if subjects in (None, 1):
-        return registry.load('evoked', state=state, options=options)
     if isinstance(subjects, Sequence) and not isinstance(subjects, str):
         return load_evoked_group(registry, subjects, state, options)
     if isinstance(subjects, str) and subjects in groups:
