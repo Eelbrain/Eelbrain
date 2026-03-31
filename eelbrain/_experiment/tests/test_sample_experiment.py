@@ -619,6 +619,51 @@ def test_evoked_cache_reuse():
 
 
 @requires_mne_sample_data
+def test_epochs_cache_uses_fif():
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, 1, 2, 1)
+    root = join(tempdir, 'SampleExperiment')
+    e = SampleExperiment(root)
+    e.set(subject='R0000', epoch='target1', rej='')
+
+    options = {
+        'baseline': False,
+        'ndvar': False,
+        'add_bads': True,
+        'reject': True,
+        'cat': None,
+        'samplingrate': None,
+        'decim': None,
+        'pad': 0,
+        'data_raw': False,
+        'vardef': None,
+        'data': 'sensor',
+        'trigger_shift': True,
+        'tmin': None,
+        'tmax': None,
+        'tstop': None,
+        'interpolate_bads': False,
+    }
+    handle = e._derivatives.resolve('epochs-ds', state=e._derivative_state(), options=options)
+    ds = handle.load(cache=True)
+
+    assert isinstance(ds['epochs'], mne.BaseEpochs)
+    assert handle.artifact_path.is_dir()
+    assert (handle.artifact_path / 'dataset.pickle').exists()
+    assert list(handle.artifact_path.glob('*-epo.fif'))
+
+    mtimes_1 = tuple(path.stat().st_mtime_ns for path in sorted(handle.artifact_path.iterdir()))
+    ds_cached = handle.load(cache=True)
+    mtimes_2 = tuple(path.stat().st_mtime_ns for path in sorted(handle.artifact_path.iterdir()))
+
+    assert isinstance(ds_cached['epochs'], mne.BaseEpochs)
+    assert mtimes_1 == mtimes_2
+
+
+@requires_mne_sample_data
 def test_sample_neuromag():
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment

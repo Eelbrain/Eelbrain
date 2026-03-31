@@ -7,12 +7,13 @@ from copy import deepcopy
 import inspect
 from collections.abc import Sequence
 import math
+import shutil
 
 import mne
 import numpy as np
 
 from .. import load, save
-from .._data_obj import Dataset, Var, combine
+from .._data_obj import Datalist, Dataset, Var, combine
 from .._exceptions import ConfigurationError, DimensionMismatchError
 from .._mne import shift_mne_epoch_trigger
 from .._names import INTERPOLATE_CHANNELS
@@ -100,6 +101,7 @@ class RejectionInput(Input):
 
 
 EPOCHS_DATA = 'epochs-ds'
+_EPOCHS_CACHE_INFO_KEY = '_epochs_cache_files'
 
 
 def _evoked_comments(evoked: list[mne.Evoked]) -> list[str]:
@@ -625,7 +627,7 @@ class ContinuousEpoch(EpochBase):
 class EpochsDerivative(Derivative[Dataset]):
     name = EPOCHS_DATA
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw', 'epoch', 'rej')
-    cache_suffix = '.pickle'
+    cache_suffix = '.epochs'
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
 
     def __init__(
@@ -800,10 +802,53 @@ class EpochsDerivative(Derivative[Dataset]):
         return ds
 
     def load(self, ctx: DerivativeContext, path: Path) -> Dataset:
-        return load.unpickle(path)
+        ds = load.unpickle(path / 'dataset.pickle')
+        epoch_ref = ds.info.pop(_EPOCHS_CACHE_INFO_KEY, None)
+        if epoch_ref:
+            if epoch_ref['kind'] == 'datalist':
+                ds['epochs'] = Datalist(
+                    [mne.read_epochs(path / relpath, proj=False) for relpath in epoch_ref['files']],
+                    epoch_ref['name'],
+                    epoch_ref['fmt'],
+                )
+            else:
+                ds['epochs'] = mne.read_epochs(path / epoch_ref['file'], proj=False)
+        if ctx.option('data_raw', False):
+            ds.info = ds.info.copy()
+            ds.info['raw'] = load_raw_dependency(ctx, add_bads=True, preload=False, noise=False)
+        return ds
 
     def save(self, ctx: DerivativeContext, path: Path, value: Dataset) -> None:
-        save.pickle(value, path)
+        if path.exists():
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        path.mkdir()
+
+        ds = value.copy()
+        ds.info = ds.info.copy()
+        ds.info.pop('raw', None)
+        if 'epochs' in ds:
+            epoch_value = ds['epochs']
+            if isinstance(epoch_value, Datalist):
+                epoch_files = []
+                for i, epochs in enumerate(epoch_value):
+                    epoch_file = f'epochs-{i:04d}-epo.fif'
+                    epochs.save(path / epoch_file, overwrite=True)
+                    epoch_files.append(epoch_file)
+                ds.info[_EPOCHS_CACHE_INFO_KEY] = {
+                    'kind': 'datalist',
+                    'files': epoch_files,
+                    'name': epoch_value.name,
+                    'fmt': epoch_value._fmt,
+                }
+            else:
+                epoch_file = 'epochs-0000-epo.fif'
+                epoch_value.save(path / epoch_file, overwrite=True)
+                ds.info[_EPOCHS_CACHE_INFO_KEY] = {'kind': 'single', 'file': epoch_file}
+            del ds['epochs']
+        save.pickle(ds, path / 'dataset.pickle')
 
 
 class EvokedDerivative(Derivative[Dataset]):
