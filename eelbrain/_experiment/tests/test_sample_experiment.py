@@ -619,6 +619,41 @@ def test_evoked_cache_reuse():
 
 
 @requires_mne_sample_data
+def test_evoked_cached_load_bypasses_epochs(monkeypatch):
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, 2, 2, 1)
+    root = join(tempdir, 'SampleExperiment')
+    e = SampleExperiment(root)
+    e.set(subject='R0000', epoch='target1', rej='')
+
+    target = e.load_evoked(ndvar=False)
+    epochs_node = e._derivatives._get_node('epochs-ds')
+
+    def fail(*args, **kwargs):
+        raise AssertionError("Evoked cache hit should not load epochs-ds")
+
+    monkeypatch.setattr(epochs_node, 'load', fail)
+    monkeypatch.setattr(epochs_node, 'build', fail)
+
+    calls = 0
+    original_read_evokeds = mne.read_evokeds
+
+    def read_evokeds(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_read_evokeds(*args, **kwargs)
+
+    monkeypatch.setattr(mne, 'read_evokeds', read_evokeds)
+
+    ds = e.load_evoked(ndvar=False)
+    assert_dataobj_equal(ds, target, decimal=19)
+    assert calls == 1
+
+
+@requires_mne_sample_data
 def test_epochs_cache_uses_fif():
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment

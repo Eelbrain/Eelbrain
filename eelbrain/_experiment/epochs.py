@@ -889,31 +889,36 @@ class EvokedDerivative(Derivative[Dataset]):
             'vardef': repr(ctx.option('vardef')),
         }
 
-    def _build_evoked_dataset(self, ctx: DerivativeContext) -> Dataset:
-        epoch = self.epochs[ctx.get('epoch')]
-        ds = ctx.load('epochs-ds', options={
-            'baseline': True if epoch.post_baseline_trigger_shift else False,
-            'ndvar': False,
-            'samplingrate': ctx.option('samplingrate'),
-            'decim': ctx.option('decim'),
-            'data_raw': False,
-            'vardef': ctx.option('vardef'),
-            'interpolate_bads': 'keep',
-            'add_bads': True,
-            'reject': True,
-            'cat': None,
-            'trigger_shift': True,
-            'data': 'sensor',
-        })
+    def _aggregate_evoked_dataset(self, ctx: DerivativeContext, ds: Dataset, value_name: str | None = None) -> Dataset:
         model = ctx.get('model')
         equal_count = ctx.get('equalize_evoked_count') == 'eq'
-        ds_agg = ds.aggregate(model, drop_bad=True, equal_count=equal_count, drop=('i_start', 't_edf', 'time', 'index', 'trigger'), never_drop=('epochs',))
-        ds_agg.rename('epochs', 'evoked')
+        aggregate_kwargs = {
+            'drop_bad': True,
+            'equal_count': equal_count,
+            'drop': ('i_start', 't_edf', 'time', 'index', 'trigger'),
+        }
+        if value_name is None:
+            ds_agg = ds.aggregate(model, **aggregate_kwargs)
+        else:
+            ds_agg = ds.aggregate(model, never_drop=(value_name,), **aggregate_kwargs)
+            ds_agg.rename(value_name, 'evoked')
         model_vars = model.split('%') if model else ()
-        for evoked, *cell in ds_agg.zip('evoked', *model_vars):
-            evoked.info['description'] = "Eelbrain"
-            evoked.comment = ' % '.join(cell)
+        if value_name is not None:
+            for evoked, *cell in ds_agg.zip('evoked', *model_vars):
+                evoked.info['description'] = "Eelbrain"
+                evoked.comment = ' % '.join(cell)
         return ds_agg
+
+    def _build_evoked_shell(self, ctx: DerivativeContext) -> Dataset:
+        ds = ctx.load('selected-events', options={
+            'reject': True,
+            'add_bads': True,
+            'index': False,
+            'data_raw': False,
+            'vardef': ctx.option('vardef'),
+            'cat': None,
+        })
+        return self._aggregate_evoked_dataset(ctx, ds)
 
     def _apply_load_options(self, ctx: DerivativeContext, ds: Dataset) -> Dataset:
         epoch = self.epochs[ctx.get('epoch')]
@@ -957,33 +962,40 @@ class EvokedDerivative(Derivative[Dataset]):
         return ds
 
     def build(self, ctx: DerivativeContext) -> Dataset:
-        return self._build_evoked_dataset(ctx)
+        epoch = self.epochs[ctx.get('epoch')]
+        ds = ctx.load('epochs-ds', options={
+            'baseline': True if epoch.post_baseline_trigger_shift else False,
+            'ndvar': False,
+            'samplingrate': ctx.option('samplingrate'),
+            'decim': ctx.option('decim'),
+            'data_raw': False,
+            'vardef': ctx.option('vardef'),
+            'interpolate_bads': 'keep',
+            'add_bads': True,
+            'reject': True,
+            'cat': None,
+            'trigger_shift': True,
+            'data': 'sensor',
+        })
+        return self._aggregate_evoked_dataset(ctx, ds, 'epochs')
 
     def load(self, ctx: DerivativeContext, path: Path) -> Dataset:
         evoked = mne.read_evokeds(path, proj=False)
-        ds = self._build_evoked_dataset(ctx)
+        ds = self._build_evoked_shell(ctx)
         model = ctx.get('model')
         model_vars = model.split('%') if model else ()
-        if model_vars:
-            cells = [' % '.join(cell) or 'No comment' for cell in ds.zip(*model_vars)]
-        else:
-            cells = ['No comment']
-        comments = [e.comment for e in evoked]
-        if comments != cells:
-            if set(comments) == set(cells):
-                index = [comments.index(cell) for cell in cells]
-                evoked = [evoked[i] for i in index]
-            else:
-                raise RuntimeError(f"Error reading cached evoked: {comments=}, {cells=}")
+        cells = [' % '.join(cell) or 'No comment' for cell in ds.zip(*model_vars)] if model_vars else ['No comment']
+        comments = _evoked_comments(evoked)
+        try:
+            index = [cells.index(comment) for comment in comments]
+        except ValueError:
+            raise RuntimeError(f"Error reading cached evoked: {comments=}, {cells=}") from None
+        ds = ds[index]
         ds['evoked'] = evoked
         return self._apply_load_options(ctx, ds)
 
     def save(self, ctx: DerivativeContext, path: Path, value: Dataset) -> None:
         mne.write_evokeds(path, value['evoked'], overwrite=True)
-
-    def validate(self, ctx: DerivativeContext, path: Path, manifest) -> bool:
-        evoked = mne.read_evokeds(path, proj=False)
-        return _evoked_comments(evoked) == manifest.provenance.get('comments', [])
 
     def provenance(self, ctx: DerivativeContext, value: Dataset) -> dict[str, Any]:
         return {'comments': _evoked_comments(value['evoked'])}
