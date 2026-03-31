@@ -36,11 +36,8 @@ from .._utils.mne_utils import is_fake_mri
 from .covariance import CovDerivative, EpochCovariance, RawCovariance, cov_node_name
 from .derivative_cache import DerivativeRegistry, ProtectedArtifactError
 from .definitions import sequence_arg
-from .epochs import EpochBase, PrimaryEpoch, RejectionInput, SecondaryEpoch, SuperEpoch, assemble_epochs, decim_param
-from .events import (
-    EpochsDerivative, EventsDerivative, EvokedDerivative,
-    SELECTED_EVENTS, SelectedEventsDerivative, load_evoked_request,
-)
+from .epochs import EpochBase, EpochsDerivative, EvokedDerivative, PrimaryEpoch, RejectionInput, SecondaryEpoch, SuperEpoch, assemble_epochs, decim_param, load_evoked_request
+from .events import EventsDerivative, SELECTED_EVENTS, SelectedEventsDerivative
 from .exceptions import FileMissingError
 from .experiment import StateModel
 from .groups import assemble_groups

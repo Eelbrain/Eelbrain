@@ -12,7 +12,7 @@ import mne
 import numpy
 
 from .derivative_cache import Dependency, Derivative, DerivativeContext
-from .events import EPOCHS_DATA
+from .epochs import EPOCHS_DATA
 from .preprocessing import load_raw_dependency, raw_data_dependency
 
 

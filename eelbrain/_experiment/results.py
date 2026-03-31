@@ -26,7 +26,7 @@ from .._io.pickle import update_subjects_dir
 from .._stats.stats import ttest_t
 from .._stats.testnd import _MergedTemporalClusterDist
 from .derivative_cache import Derivative, DerivativeContext
-from .events import load_evoked_request
+from .epochs import load_evoked_request
 from .pathing import (
     epoch_basename,
     join_stem_parts,

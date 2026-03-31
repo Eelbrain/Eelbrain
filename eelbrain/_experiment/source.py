@@ -28,7 +28,7 @@ from .. import load, save
 from .._data_obj import Dataset, Datalist, NDVar, combine
 from .covariance import cov_node_name
 from .derivative_cache import CachePolicy, Dependency, Derivative, DerivativeContext, Input, file_fingerprint
-from .events import EPOCHS_DATA
+from .epochs import EPOCHS_DATA
 from .pathing import (
     bem_dir, bem_file_path, mri_dir, mri_sdir, src_file_path, trans_file_path,
 )
