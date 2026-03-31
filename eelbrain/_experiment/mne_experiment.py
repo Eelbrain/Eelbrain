@@ -36,7 +36,7 @@ from .._utils.mne_utils import is_fake_mri
 from .covariance import CovDerivative, EpochCovariance, RawCovariance, cov_node_name
 from .derivative_cache import DerivativeRegistry, ProtectedArtifactError
 from .definitions import sequence_arg
-from .epochs import PrimaryEpoch, SecondaryEpoch, SuperEpoch, EpochBase, assemble_epochs, decim_param
+from .epochs import EpochBase, PrimaryEpoch, RejectionInput, SecondaryEpoch, SuperEpoch, assemble_epochs, decim_param
 from .events import (
     EpochsDerivative, EventsDerivative, EvokedDerivative,
     SELECTED_EVENTS, SelectedEventsDerivative, load_evoked_request,
@@ -59,7 +59,7 @@ from .reports import (
     CoregReportDerivative, EEGReportDerivative, EEGSensorsReportDerivative,
     LMReportDerivative, ROIReportDerivative, SourceReportDerivative,
 )
-from .results import MovieDerivative, RejectionInput, TestResultDerivative
+from .results import MovieDerivative, TestResultDerivative
 from .source import (
     BemInput, EpochsStcDerivative, EvokedStcDerivative, FwdDerivative,
     InvDerivative, SourceMorphDerivative, SrcDerivative, TransInput,

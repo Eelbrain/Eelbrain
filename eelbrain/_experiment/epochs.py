@@ -1,4 +1,6 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+from pathlib import Path
+from typing import Any
 from copy import deepcopy
 import inspect
 from collections.abc import Sequence
@@ -6,7 +8,9 @@ import math
 
 from .._exceptions import DefinitionError
 from .._text import enumeration
+from .derivative_cache import DerivativeContext, Input, file_fingerprint
 from .definitions import Definition, typed_arg
+from .pathing import rej_file_path
 
 
 def assemble_epochs(epoch_def, epoch_default):
@@ -53,6 +57,33 @@ def assemble_epochs(epoch_def, epoch_default):
         if len(secondary_epochs) == n:
             raise DefinitionError(f"Can't resolve epoch dependencies for {enumeration(secondary_epochs)}")
     return epochs
+
+
+class RejectionInput(Input):
+    name = 'rej-input'
+
+    def __init__(
+            self,
+            root: str | Path,
+            artifact_rejection: dict[str, dict[str, Any]],
+            epochs: dict[str, Any],
+    ):
+        self.root = Path(root)
+        self.artifact_rejection = artifact_rejection
+        self.epochs = epochs
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        rej = self.artifact_rejection[ctx.get('rej')]
+        if rej['kind'] is None:
+            return {'kind': 'none'}
+        epoch = self.epochs[ctx.get('epoch')]
+        return {
+            'rej': ctx.get('rej'),
+            'files': [
+                file_fingerprint(self.root, rej_file_path(ctx.state, epoch=e), 'rej-file')
+                for e in epoch.rej_file_epochs
+            ],
+        }
 
 
 class EpochBase(Definition):

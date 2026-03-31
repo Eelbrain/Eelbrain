@@ -25,14 +25,13 @@ from .._exceptions import OldVersionError
 from .._io.pickle import update_subjects_dir
 from .._stats.stats import ttest_t
 from .._stats.testnd import _MergedTemporalClusterDist
-from .derivative_cache import Derivative, DerivativeContext, Input, file_fingerprint
+from .derivative_cache import Derivative, DerivativeContext
 from .events import load_evoked_request
 from .pathing import (
     epoch_basename,
     join_stem_parts,
     movie_export_path,
     mri_sdir,
-    rej_file_path,
     report_export_path,
     test_basename,
     time_window_str,
@@ -44,33 +43,6 @@ from .test_def import ROI2StageResult, ROITestResult, Test, TestDims, TwoStageTe
 T = TypeVar('T')
 BIDS_ENTITY_KEYS = ('subject', 'session', 'task', 'acquisition', 'run', 'split')
 USE_CTX = object()
-
-
-class RejectionInput(Input):
-    name = 'rej-input'
-
-    def __init__(
-            self,
-            root: str | Path,
-            artifact_rejection: dict[str, dict[str, Any]],
-            epochs: dict[str, Any],
-    ):
-        self.root = Path(root)
-        self.artifact_rejection = artifact_rejection
-        self.epochs = epochs
-
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        rej = self.artifact_rejection[ctx.get('rej')]
-        if rej['kind'] is None:
-            return {'kind': 'none'}
-        epoch = self.epochs[ctx.get('epoch')]
-        return {
-            'rej': ctx.get('rej'),
-            'files': [
-                file_fingerprint(self.root, rej_file_path(ctx.state, epoch=e), 'rej-file')
-                for e in epoch.rej_file_epochs
-            ],
-        }
 
 
 class ResultOutputDerivative(Derivative[T]):
