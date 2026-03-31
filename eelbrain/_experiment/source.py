@@ -273,11 +273,8 @@ class SrcDerivative(Derivative[mne.SourceSpaces]):
     def _is_scaled(self, ctx: DerivativeContext) -> bool:
         return ctx.get('mrisubject') != ctx.get('common_brain') and is_fake_mri(mri_dir(ctx.state))
 
-    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> Path:
-        path = src_file_path(ctx.state)
-        if mkdir:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return path
+    def path(self, ctx: DerivativeContext) -> Path:
+        return src_file_path(ctx.state)
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         deps = []
@@ -300,7 +297,8 @@ class SrcDerivative(Derivative[mne.SourceSpaces]):
         }
 
     def build(self, ctx: DerivativeContext) -> mne.SourceSpaces:
-        dst = self.path(ctx, mkdir=True)
+        dst = self.path(ctx)
+        dst.parent.mkdir(parents=True, exist_ok=True)
         subject = ctx.get('mrisubject')
         common_brain = ctx.get('common_brain')
         src = ctx.get('src')

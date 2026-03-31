@@ -448,13 +448,9 @@ class CoregReportDerivative(ResultOutputDerivative[Path]):
     def path(
             self,
             ctx: DerivativeContext,
-            mkdir: bool = False,
     ) -> Path:
         dst = ctx.option('dst')
-        path = Path(dst) if dst else coreg_report_path(ctx.state)
-        if mkdir:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return path
+        return Path(dst) if dst else coreg_report_path(ctx.state)
 
     def build(self, ctx: DerivativeContext) -> Path:
         return _build_coreg_report(self, ctx)

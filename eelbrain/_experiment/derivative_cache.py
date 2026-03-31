@@ -374,7 +374,6 @@ class Derivative(DependencyNode[T]):
     def path(
             self,
             ctx: DerivativeContext,
-            mkdir: bool = False,
     ) -> Path:
         """Return the concrete artifact path for this request.
 
@@ -388,22 +387,18 @@ class Derivative(DependencyNode[T]):
         the registry mirrors the manifest under ``cache-dir/manifests``.
 
         Implementations should derive the path from semantic state/options
-        only. They should not perform dependency traversal or cache logic.
-        ``mkdir`` is provided for compatibility; callers should not rely on
-        ``path()`` to create directories.
+        only. They should not perform dependency traversal, create directories,
+        or perform cache logic.
         """
         if self.cache_suffix is None:
             raise NotImplementedError
-        path = cache_artifact_path(
+        return cache_artifact_path(
             ctx.registry.cache_dir,
             self.name,
             ctx.registry.canonicalize(self.key(ctx)),
             self.cache_suffix,
             label=self.cache_label(ctx),
         )
-        if mkdir:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return path
 
     def key(self, ctx: DerivativeContext) -> dict[str, Any]:
         """Return the normalized key that identifies this artifact instance.

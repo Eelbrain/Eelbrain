@@ -545,12 +545,8 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
     def path(
             self,
             ctx: DerivativeContext,
-            mkdir: bool = False,
     ) -> Path:
-        path = annot_stamp_path(ctx.state)
-        if mkdir:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return path
+        return annot_stamp_path(ctx.state)
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         parc, parc_def = self.annot_state(ctx.state)

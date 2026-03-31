@@ -769,14 +769,11 @@ class ResultOutputDerivative(Derivative[T]):
     def path(
             self,
             ctx: DerivativeContext,
-            mkdir: bool = False,
     ) -> Path:
         dst = ctx.option('dst')
         path = Path(dst) if dst else self.default_path(ctx)
         if self.sampled_path:
             path = sampled_artifact_path(path, ctx.option('samples'))
-        if mkdir:
-            path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
     def load(

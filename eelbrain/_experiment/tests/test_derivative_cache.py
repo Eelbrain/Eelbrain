@@ -256,11 +256,8 @@ class ProtectedDerivative(Derivative[str]):
     def __init__(self, root: str | Path):
         self.root = Path(root)
 
-    def path(self, ctx: DerivativeContext, mkdir: bool = False) -> str:
-        path = self.root / 'derived' / ctx.get('subject') / 'protected.txt'
-        if mkdir:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return str(path)
+    def path(self, ctx: DerivativeContext) -> str:
+        return str(self.root / 'derived' / ctx.get('subject') / 'protected.txt')
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
         return (Dependency('source'),)

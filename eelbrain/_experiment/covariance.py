@@ -122,7 +122,8 @@ class CovDerivative(Derivative[mne.Covariance]):
 
     def build(self, ctx: DerivativeContext) -> mne.Covariance:
         if isinstance(self.cov, EpochCovariance):
-            cov_path = self.path(ctx, mkdir=True)
+            cov_path = self.path(ctx)
+            cov_path.parent.mkdir(parents=True, exist_ok=True)
             log_path = cov_path.with_suffix('.info.txt')
             ds = ctx.load('epochs-ds', state={'epoch': self.cov.epoch}, options={
                 'baseline': True,
