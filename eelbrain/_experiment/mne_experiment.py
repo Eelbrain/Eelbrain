@@ -719,8 +719,6 @@ class Pipeline(StateModel):
         """
         if subjects is None:  # default:
             subjects = -1 if 'group' in kwargs else 1
-        elif subjects is True:  # legacy value:
-            subjects = -1
 
         if isinstance(subjects, int):
             if subjects == 1:

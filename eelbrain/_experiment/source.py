@@ -595,9 +595,7 @@ def load_epochs_stc_request(
         common_brain: str,
         subjects,
 ) -> Dataset:
-    if subjects is True:
-        subjects = current_group
-    elif subjects in (None, 1):
+    if subjects in (None, 1):
         return registry.load('epochs-stc', state=state, options=options)
     if isinstance(subjects, Sequence) and not isinstance(subjects, str):
         return load_epochs_stc_group(registry, subjects, state, options, mri_subjects, common_brain)
@@ -637,9 +635,7 @@ def load_evoked_stc_request(
         common_brain: str,
         subjects,
 ) -> Dataset:
-    if subjects is True:
-        subjects = current_group
-    elif subjects in (None, 1):
+    if subjects in (None, 1):
         return registry.load('evoked-stc', state=state, options=options)
     if isinstance(subjects, Sequence) and not isinstance(subjects, str):
         return load_evoked_stc_group(registry, subjects, state, options, mri_subjects, common_brain)

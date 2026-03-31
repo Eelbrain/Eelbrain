@@ -101,9 +101,7 @@ def load_evoked_request(
         options: dict[str, Any],
         subjects,
 ) -> Dataset:
-    if subjects is True:
-        subjects = current_group
-    elif subjects in (None, 1):
+    if subjects in (None, 1):
         return registry.load('evoked', state=state, options=options)
     if isinstance(subjects, Sequence) and not isinstance(subjects, str):
         return load_evoked_group(registry, subjects, state, options)

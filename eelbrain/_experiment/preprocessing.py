@@ -51,7 +51,7 @@ from .._io.fiff import KIT_NEIGHBORS
 from .._io.txt import read_adjacency
 from .._ndvar import filter_data
 from .._text import enumeration
-from .._utils import deprecate_kwarg, user_activity
+from .._utils import user_activity
 from .derivative_cache import (
     ArtifactManifest, CachePolicy, Dependency, Derivative,
     DerivativeContext, Input, MANIFEST_SCHEMA_VERSION, ProtectedArtifactError,
@@ -772,7 +772,6 @@ class RawSource(RawPipe):
     ...
     """
 
-    @deprecate_kwarg('connectivity', 'adjacency', '0.41', '0.42')
     def __init__(
             self,
             sysname: str = None,
@@ -951,7 +950,7 @@ class RawSource(RawPipe):
             else:
                 out['montage'] = self.montage
         if self.adjacency is not None:
-            out['connectivity'] = self.adjacency
+            out['adjacency'] = self.adjacency
         return out
 
     def get_adjacency(self, data: str, pipes: dict[str, RawPipe] = None) -> str | list[tuple[str, str]] | Path | None:
@@ -1094,14 +1093,9 @@ class RawFilter(CachedRawPipe):
         self.args = (l_freq, h_freq)
         self.kwargs = kwargs
         self.n_jobs = n_jobs
-        # mne backwards compatibility (fir_design default change 0.15 -> 0.16)
-        if 'use_kwargs' in kwargs:
-            self._use_kwargs = kwargs.pop('use_kwargs')
-        else:
-            self._use_kwargs = kwargs
 
     def filter_ndvar(self, ndvar, **kwargs):
-        return filter_data(ndvar, *self.args, **self._use_kwargs, **kwargs)
+        return filter_data(ndvar, *self.args, **self.kwargs, **kwargs)
 
     def _make(
             self,
@@ -1117,7 +1111,7 @@ class RawFilter(CachedRawPipe):
             raw = get_source_pipe(pipes, self).load(path, preload=True, noise=noise, pipes=pipes, log=log)
         logger = log or LOG
         logger.info("Raw %s: filtering for %s...", raw_name, path.fpath if not noise else path.find_empty_room().fpath)
-        raw.filter(*self.args, **self._use_kwargs, n_jobs=self.n_jobs, verbose=MNE_VERBOSITY)
+        raw.filter(*self.args, **self.kwargs, n_jobs=self.n_jobs, verbose=MNE_VERBOSITY)
         return raw
 
     def load_info(self, path: BIDSPath, pipes: dict[str, RawPipe] = None) -> mne.Info:
@@ -1327,9 +1321,7 @@ class RawICA(CachedRawPipe):
         }, raw_name), raw=raw_name)
         if not exists(ica_path):
             raise FileMissingError(f"ICA file {ica_path.name} does not exist for raw={raw_name!r}. Run e.make_ica() to create it.")
-        with warnings.catch_warnings():
-            warnings.filterwarnings('ignore', 'Version 0.23 introduced max_iter', DeprecationWarning)
-            return mne.preprocessing.read_ica(ica_path)
+        return mne.preprocessing.read_ica(ica_path)
 
     def _source_states(
             self,

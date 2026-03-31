@@ -436,7 +436,7 @@ class ResultOutputDerivative(Derivative[T]):
         if data.sensor:
             res_data = self.load_evoked(
                 ctx,
-                True,
+                ctx.get('group'),
                 baseline,
                 True,
                 test_obj.cat,

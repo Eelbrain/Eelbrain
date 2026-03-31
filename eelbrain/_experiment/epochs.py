@@ -149,17 +149,6 @@ class Epoch(EpochBase):
         self.post_baseline_trigger_shift_min = post_baseline_trigger_shift_min
         self.post_baseline_trigger_shift_max = post_baseline_trigger_shift_max
 
-    def _as_dict_24(self):
-        "Dict to be compared with Eelbrain 0.24 cache"
-        out = {k: v for k, v in self._as_dict().items() if v is not None}
-        if isinstance(self, (SecondaryEpoch, SuperEpoch)):
-            out['_rej_file_epochs'] = self.rej_file_epochs
-        if isinstance(self, PrimaryEpoch) and self.n_cases:
-            out['n_cases'] = self.n_cases
-        if out['trigger_shift'] == 0:
-            del out['trigger_shift']
-        return out
-
 
 class PrimaryEpoch(Epoch):
     """Epoch based on selecting events from a raw file
