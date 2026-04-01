@@ -283,66 +283,6 @@ def _build_evoked_shell(
         return ds
 
 
-def load_evoked_group(
-        registry,
-        subjects: Sequence[str],
-        state: dict[str, Any],
-        options: dict[str, Any],
-) -> Dataset:
-    data = TestDims.coerce(options['data'])
-    individual_ndvar = isinstance(data.sensor, str)
-    dss = [registry.load('evoked-dataset', state={**state, 'subject': subject}, options={**options, 'ndvar': individual_ndvar}) for subject in subjects]
-    ndvar = options['ndvar']
-    if individual_ndvar:
-        ndvar = False
-    elif ndvar:
-        for ds in dss:
-            for evoked in ds['evoked']:
-                evoked.info['bads'] = []
-    ds = combine(dss, incomplete='drop')
-    if not ndvar and not individual_ndvar:
-        lens = [len(evoked.times) for evoked in ds['evoked']]
-        ulens = set(lens)
-        if len(ulens) > 1:
-            err = ["Unequal time axis sampling (len):"]
-            alens = np.array(lens)
-            for length in ulens:
-                subjects_ = ', '.join(ds[alens == length, 'subject'].cells)
-                err.append(f"{length}: {subjects_}")
-            raise DimensionMismatchError('\n'.join(err))
-        return ds
-    if ndvar and not individual_ndvar:
-        evoked = ds['evoked']
-        del ds['evoked']
-        raw_node = registry._get_node(raw_node_name(state['raw']))
-        pipe = raw_node.pipe
-        info = evoked[0].info
-        sensor_types = ds.info['sensor_types'] = data.data_to_ndvar(info)
-        subject = ds[0, 'subject']
-        for sensor_type in sensor_types:
-            sysname = pipe.get_sysname(info, subject, sensor_type, raw_node.pipes)
-            adjacency = pipe.get_adjacency(sensor_type, raw_node.pipes)
-            name = 'meg' if sensor_type == 'mag' else sensor_type
-            ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
-            if sensor_type != 'eog' and isinstance(data.sensor, str):
-                ds[name] = getattr(ds[name], data.sensor)('sensor')
-    return ds
-
-
-def load_evoked_request(
-        registry,
-        groups: dict[str, Sequence[str]],
-        state: dict[str, Any],
-        options: dict[str, Any],
-        subjects,
-) -> Dataset:
-    if isinstance(subjects, Sequence) and not isinstance(subjects, str):
-        return load_evoked_group(registry, subjects, state, options)
-    if isinstance(subjects, str) and subjects in groups:
-        return load_evoked_group(registry, groups[subjects], state, options)
-    return registry.load('evoked-dataset', state={**state, 'subject': subjects}, options=options)
-
-
 class EpochBase(Configuration):
     baseline = None
     n_cases = None
@@ -1039,9 +979,6 @@ class EpochsDatasetDerivative(UncachedDerivative[Dataset]):
             fingerprint['model_signature'] = ctx.registry.canonicalize(model_value.x.tolist() if isinstance(model_value, Var) else list(model_value))
         else:
             fingerprint['model_signature'] = ds.n_cases
-        selected_events = ctx.load('selected-events', options=_epochs_selected_events_options(ctx))
-        raw = selected_events.info.get('raw')
-        fingerprint['bad_channels'] = tuple(raw.info['bads'] if raw is not None else selected_events.info.get(BAD_CHANNELS, ()))
         return fingerprint
 
     def build(self, ctx: DerivativeContext) -> Dataset:
@@ -1260,6 +1197,8 @@ class EvokedDatasetDerivative(UncachedDerivative[Dataset]):
     def build(self, ctx: DerivativeContext) -> Dataset:
         evoked = ctx.load('evoked')
         ds = _build_evoked_shell(ctx, self.epochs, EvokedDerivative._epochs_options(self, ctx))
+        raw = ds.info.get('raw')
+        bads = raw.info['bads'] if raw is not None else ds.info.get(BAD_CHANNELS, [])
         model = ctx.get('model')
         model_vars = model.split('%') if model else ()
         cells = [' % '.join(cell) or 'No comment' for cell in ds.zip(*model_vars)] if model_vars else ['No comment']
@@ -1269,8 +1208,103 @@ class EvokedDatasetDerivative(UncachedDerivative[Dataset]):
         except ValueError:
             raise RuntimeError(f"Error reading cached evoked: {comments=}, {cells=}") from None
         ds = ds[index]
+        if any(evoked_i.info['bads'] != bads for evoked_i in evoked):
+            evoked = [evoked_i.copy() for evoked_i in evoked]
+            for evoked_i in evoked:
+                evoked_i.info['bads'] = bads
         ds['evoked'] = evoked
         return self._apply_load_options(ctx, ds)
+
+
+class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
+    """Group-level sensor evoked dataset assembled from subject datasets.
+
+    Options
+    -------
+    baseline
+        Baseline correction to apply at load time.
+    ndvar
+        Whether to convert the returned data to NDVars.
+    cat
+        Optional subset of model cells to keep.
+    samplingrate
+        Sampling rate override for the underlying evoked artifact.
+    decim
+        Decimation override for the underlying evoked artifact.
+    data_raw
+        Whether to keep raw objects in ``ds.info['raw']`` for the subject
+        datasets before combining.
+    vardef
+        Extra variable definition set to evaluate before aggregation.
+    data
+        Sensor representation to return.
+    """
+    name = 'evoked-group-dataset'
+
+    def __init__(self, groups: dict[str, Sequence[str]]):
+        self.groups = groups
+
+    def key(self, ctx: DerivativeContext) -> dict[str, Any]:
+        group = ctx.get('group')
+        if group in (None, '', '*'):
+            raise RuntimeError(f"{self.name!r} requires an explicit group")
+        return {'group': group}
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        return self.key(ctx)
+
+    def _subject_options(self, ctx: DerivativeContext) -> dict[str, Any]:
+        return {**ctx.options, 'ndvar': isinstance(TestDims.coerce(ctx.option('data')).sensor, str)}
+
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        options = self._subject_options(ctx)
+        return tuple(
+            Dependency('evoked-dataset', label=subject, state={'subject': subject, 'group': None}, options=options)
+            for subject in self.groups[ctx.get('group')]
+        )
+
+    def build(self, ctx: DerivativeContext) -> Dataset:
+        data = TestDims.coerce(ctx.option('data'))
+        individual_ndvar = isinstance(data.sensor, str)
+        dss = [
+            ctx.load('evoked-dataset', state={'subject': subject, 'group': None}, options=self._subject_options(ctx))
+            for subject in self.groups[ctx.get('group')]
+        ]
+        ndvar = ctx.option('ndvar')
+        if individual_ndvar:
+            ndvar = False
+        elif ndvar:
+            for ds in dss:
+                for evoked in ds['evoked']:
+                    evoked.info['bads'] = []
+        ds = combine(dss, incomplete='drop')
+        if not ndvar and not individual_ndvar:
+            lens = [len(evoked.times) for evoked in ds['evoked']]
+            ulens = set(lens)
+            if len(ulens) > 1:
+                err = ["Unequal time axis sampling (len):"]
+                alens = np.array(lens)
+                for length in ulens:
+                    subjects = ', '.join(ds[alens == length, 'subject'].cells)
+                    err.append(f"{length}: {subjects}")
+                raise DimensionMismatchError('\n'.join(err))
+            return ds
+        if ndvar and not individual_ndvar:
+            evoked = ds['evoked']
+            del ds['evoked']
+            raw_node = ctx.registry._get_node(raw_node_name(ctx.get('raw')))
+            pipe = raw_node.pipe
+            info = evoked[0].info
+            sensor_types = ds.info['sensor_types'] = data.data_to_ndvar(info)
+            subject = ds[0, 'subject']
+            for sensor_type in sensor_types:
+                sysname = pipe.get_sysname(info, subject, sensor_type, raw_node.pipes)
+                adjacency = pipe.get_adjacency(sensor_type, raw_node.pipes)
+                name = 'meg' if sensor_type == 'mag' else sensor_type
+                ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
+                if sensor_type != 'eog' and isinstance(data.sensor, str):
+                    ds[name] = getattr(ds[name], data.sensor)('sensor')
+        return ds
 
 
 def decim_param(

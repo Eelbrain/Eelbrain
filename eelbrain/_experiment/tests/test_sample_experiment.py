@@ -132,6 +132,45 @@ def test_sample():
     assert ds[0, 'evoked'].info['bads'] == ['MEG 0331']
 
     e.set(rej='man', model='modality')
+    test_tree = e.show_dependencies(
+        'test-result',
+        options={
+            'data': _TestDims.coerce('sensor.rms', morph=True),
+            'samples': 100,
+            'test': 'a>v',
+            'tstart': 0.05,
+            'tstop': 0.2,
+            'pmin': 0.05,
+            'parc': None,
+            'mask': None,
+            'baseline': False,
+            'src_baseline': None,
+            'smooth': None,
+            'samplingrate': None,
+        },
+        return_str=True,
+    )
+    assert 'evoked-group-dataset [derivative]' in test_tree
+    movie_tree = e.show_dependencies(
+        'movie',
+        options={
+            'data': _TestDims.coerce('source', morph=True),
+            'single_subject': False,
+            'movie_kind': 'ttest',
+            'subject': None,
+            'baseline': False,
+            'src_baseline': None,
+            'cat': None,
+            'p': 0.05,
+            'pmin': 0.001,
+            'pmid': 0.01,
+            'surf': 'inflated',
+            'time_dilation': 4.0,
+            'cluster_state': {},
+        },
+        return_str=True,
+    )
+    assert 'evoked-stc-group-dataset [derivative]' in movie_tree
     sds = []
     for _ in e:
         e.make_epoch_selection(auto=2.5e-12)
@@ -151,6 +190,8 @@ def test_sample():
         test_manifest_data = json.load(fid)
     assert test_manifest_data['fingerprint']['definitions']['test']['tail'] == 1
     assert test_manifest_data['fingerprint']['definitions']['epoch']['tmax'] == 0.3
+    assert 'dependencies' not in test_manifest_data['fingerprint']
+    assert 'evoked-group-dataset' in test_manifest_data['dependencies']
     remove(test_manifest)
     with pytest.raises(IOError):
         e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.rms', baseline=False)
@@ -440,6 +481,9 @@ def test_sample_source():
     with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=100, data='source', parc='ac')) as fid:
         source_manifest_data = json.load(fid)
     assert source_manifest_data['fingerprint']['definitions']['parc']['base'] == 'aparc'
+    assert 'dependencies' not in source_manifest_data['fingerprint']
+    assert 'evoked-stc-group-dataset' in source_manifest_data['dependencies']
+    assert set(source_manifest_data['dependencies']['evoked-stc-group-dataset']['dependencies']) == {'R0000', 'R0001', 'R0002'}
     assert_dataobj_equal(resp.t, resm.t)
     # ROI tests
     e.set(epoch='target')

@@ -22,11 +22,11 @@ from .. import report as _report
 from .. import table
 from .._data_obj import Dataset, Factor, align1
 from .._utils.mne_utils import is_fake_mri
-from .derivative_cache import DerivativeContext, file_fingerprint
+from .derivative_cache import Dependency, DerivativeContext, file_fingerprint
 from .parc import IndividualSeededParc, SEEDED_PARC_RE
 from .pathing import coreg_report_path, mri_dir, mri_sdir, trans_file_path
 from .preprocessing import raw_node_name
-from .results import ResultOutputDerivative
+from .results import ResultOutputDerivative, _group_request_state, _subject_request_state, _test_result_options
 from .test_def import TwoStageTest
 
 
@@ -263,7 +263,8 @@ def _build_coreg_report(node: ResultOutputDerivative, ctx: DerivativeContext) ->
 
 
 def _append_source_report(node: ResultOutputDerivative, report, ctx: DerivativeContext) -> None:
-    ds, res = node.load_test(ctx, True, True)
+    test_node = ctx.registry._get_node('test-result')
+    ds, res = test_node.load_test(ctx, True, True)
     _report_test_info(node, ctx.state, report.add_section("Test Info"), ds, ctx.option('test'), res, ctx.option('data'), ctx.option('include'))
     parc = ctx.option('parc')
     mask = ctx.option('mask')
@@ -279,7 +280,8 @@ def _append_source_report(node: ResultOutputDerivative, report, ctx: DerivativeC
 
 def _append_two_stage_report(node: ResultOutputDerivative, report, ctx: DerivativeContext) -> None:
     test_obj = node.tests[ctx.option('test')]
-    result = node.load_test(ctx, bool(test_obj.model), True)
+    test_node = ctx.registry._get_node('test-result')
+    result = test_node.load_test(ctx, bool(test_obj.model), True)
     if test_obj.model:
         group_ds, rlm = result
     else:
@@ -322,6 +324,9 @@ class SourceReportDerivative(ResultOutputDerivative[Path]):
     def extra_key(self, ctx: DerivativeContext) -> dict[str, Any]:
         return {'include': ctx.option('include')}
 
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        return (Dependency('test-result', options=_test_result_options(ctx)),)
+
     def build(self, ctx: DerivativeContext) -> Path:
         dst = self.path(ctx)
         report = fmtxt.Report(_report_title(dst))
@@ -341,9 +346,13 @@ class ROIReportDerivative(ResultOutputDerivative[Path]):
     name = 'roi-report'
     sampled_path = True
 
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        return (Dependency('test-result', options=_test_result_options(ctx, mask=None)),)
+
     def build(self, ctx: DerivativeContext) -> Path:
         dst = self.path(ctx)
-        res_data, res = self.load_test(ctx, True, True, mask=None)
+        test_node = ctx.registry._get_node('test-result')
+        res_data, res = test_node.load_test(ctx, True, True, mask=None)
         labels_lh = []
         labels_rh = []
         for label in res.res.keys():
@@ -388,9 +397,13 @@ class EEGReportDerivative(ResultOutputDerivative[Path]):
     def extra_key(self, ctx: DerivativeContext) -> dict[str, Any]:
         return {'include': ctx.option('include')}
 
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        return (Dependency('test-result', options=_test_result_options(ctx, parc=None, mask=None)),)
+
     def build(self, ctx: DerivativeContext) -> Path:
         dst = self.path(ctx)
-        ds, res = self.load_test(ctx, True, True, parc=None, mask=None)
+        test_node = ctx.registry._get_node('test-result')
+        ds, res = test_node.load_test(ctx, True, True, parc=None, mask=None)
         report = fmtxt.Report(_report_title(dst))
         info_section = report.add_section("Test Info")
         _report_test_info(self, ctx.state, info_section, ds, ctx.option('test'), res, ctx.option('data'), ctx.option('include'))
@@ -415,10 +428,15 @@ class EEGSensorsReportDerivative(ResultOutputDerivative[Path]):
     def extra_key(self, ctx: DerivativeContext) -> dict[str, Any]:
         return {'sensors': tuple(ctx.option('sensors'))}
 
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        test_obj = self.tests[ctx.option('test')]
+        return (Dependency('evoked-group-dataset', state=_group_request_state(ctx), options=self._evoked_options(ctx, ndvar=True, vardef=test_obj.vars, data=ctx.option('data'))),)
+
     def build(self, ctx: DerivativeContext) -> Path:
         dst = self.path(ctx)
         test_obj = self.tests[ctx.option('test')]
-        ds = self.load_evoked(ctx, ctx.get('group'), True, test_obj.vars)
+        test_node = ctx.registry._get_node('test-result')
+        ds = ctx.load('evoked-group-dataset', state=_group_request_state(ctx), options=self._evoked_options(ctx, ndvar=True, vardef=test_obj.vars, data=ctx.option('data')))
         eeg = ds['eeg']
         sensors = ctx.option('sensors')
         missing = [sensor for sensor in sensors if sensor not in eeg.sensor.names]
@@ -430,8 +448,8 @@ class EEGSensorsReportDerivative(ResultOutputDerivative[Path]):
         sensor_map.mark_sensors(sensors)
         info_section.add_figure("Sensor map", sensor_map)
         sensor_map.close()
-        test_kwargs = self.test_kwargs(ctx, ('time', 'sensor'), None)
-        results = [self.make_test(eeg.sub(sensor=sensor), ds, test_obj, test_kwargs) for sensor in sensors]
+        test_kwargs = test_node.test_kwargs(ctx, ('time', 'sensor'), None)
+        results = [test_node.make_test(eeg.sub(sensor=sensor), ds, test_obj, test_kwargs) for sensor in sensors]
         colors = plot.colors_for_categorial(ds.eval(results[0]._plot_model()))
         for sensor, res in zip(sensors, results):
             report.append(_report.time_results(res, ds, colors, sensor, f"Signal at {sensor}."))
@@ -452,10 +470,14 @@ class LMReportDerivative(ResultOutputDerivative[Path]):
     def extra_key(self, ctx: DerivativeContext) -> dict[str, Any]:
         return {'mask': ctx.option('mask')}
 
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        test_obj = self.tests[ctx.option('test')]
+        return (Dependency('epochs-stc', state=_subject_request_state(ctx, ctx.get('subject')), options=self._epochs_stc_options(ctx, ctx.option('baseline'), ctx.option('src_baseline'), None, False, None, True, False, test_obj.vars)),)
+
     def build(self, ctx: DerivativeContext) -> Path:
         dst = self.path(ctx)
         report = fmtxt.Report(_report_title(dst))
-        report.append(_report.source_time_lm(self.load_spm(ctx), ctx.option('pmin'), _surfer_plot_kwargs(self, ctx.state)))
+        report.append(_report.source_time_lm(ctx.registry._get_node('test-result').load_spm(ctx), ctx.option('pmin'), _surfer_plot_kwargs(self, ctx.state)))
         return _save_report(report, dst, ('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'))
 
 

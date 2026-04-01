@@ -25,8 +25,7 @@ from .._exceptions import OldVersionError
 from .._io.pickle import update_subjects_dir
 from .._stats.stats import ttest_t
 from .._stats.testnd import _MergedTemporalClusterDist
-from .derivative_cache import Derivative, DerivativeContext
-from .epochs import load_evoked_request
+from .derivative_cache import Dependency, Derivative, DerivativeContext
 from .pathing import (
     epoch_basename,
     join_stem_parts,
@@ -36,13 +35,49 @@ from .pathing import (
     test_basename,
     time_window_str,
 )
-from .preprocessing import raw_node_name
-from .source import load_epochs_stc_request, load_evoked_stc_request
 from .test_def import ROI2StageResult, ROITestResult, Test, TestDims, TwoStageTest
 
 T = TypeVar('T')
-BIDS_ENTITY_KEYS = ('subject', 'session', 'task', 'acquisition', 'run', 'split')
 USE_CTX = object()
+
+
+def _group_request_state(ctx: DerivativeContext, **state) -> dict[str, Any]:
+    return {**ctx.state, **state, 'group': ctx.get('group'), 'subject': None}
+
+
+def _subject_request_state(ctx: DerivativeContext, subject: str, **state) -> dict[str, Any]:
+    return {**ctx.state, **state, 'subject': subject, 'group': None}
+
+
+def _test_result_options(
+        ctx: DerivativeContext,
+        *,
+        data: TestDims | object = USE_CTX,
+        parc: str | None | object = USE_CTX,
+        mask: str | None | bool | object = USE_CTX,
+        make: bool = False,
+) -> dict[str, Any]:
+    if data is USE_CTX:
+        data = ctx.option('data')
+    if parc is USE_CTX:
+        parc = ctx.option('parc')
+    if mask is USE_CTX:
+        mask = ctx.option('mask')
+    return {
+        'data': data,
+        'samples': ctx.option('samples'),
+        'test': ctx.option('test'),
+        'tstart': ctx.option('tstart'),
+        'tstop': ctx.option('tstop'),
+        'pmin': ctx.option('pmin'),
+        'parc': parc,
+        'mask': mask,
+        'baseline': ctx.option('baseline'),
+        'src_baseline': ctx.option('src_baseline'),
+        'smooth': ctx.option('smooth'),
+        'samplingrate': ctx.option('samplingrate'),
+        '_allow_protected_overwrite': make,
+    }
 
 
 class ResultOutputDerivative(Derivative[T]):
@@ -257,14 +292,6 @@ class ResultOutputDerivative(Derivative[T]):
             return [{field: ctx.get(field) for field in fields}]
         return self.collect_states(ctx.state, fields)
 
-    def raw_dependency(
-            self,
-            ctx: DerivativeContext,
-            state: dict[str, Any],
-    ) -> dict[str, Any]:
-        raw = state.get('raw', ctx.get('raw'))
-        return ctx.registry.resolve(raw_node_name(raw), state={**ctx.state, **state, 'raw': raw}, options={'add_bads': True, 'noise': False}).describe_dependency()
-
     def _result_parc(self, ctx: DerivativeContext) -> str | None:
         parc = ctx.option('parc')
         if parc:
@@ -276,43 +303,6 @@ class ResultOutputDerivative(Derivative[T]):
             return mask
         return None
 
-    def result_dependencies(
-            self,
-            ctx: DerivativeContext,
-            data: TestDims,
-            single_subject: bool = False,
-    ) -> dict[str, Any]:
-        subjects = []
-        for state in self.subject_states(ctx, single_subject):
-            subject_dependencies = {
-                'state': {key: state[key] for key in BIDS_ENTITY_KEYS if state[key] is not None},
-                'events': ctx.registry.resolve('events', state={**ctx.state, **state}).describe_dependency(),
-                'raw': self.raw_dependency(ctx, state),
-                'rej': ctx.registry.resolve('rej-input', state={**ctx.state, **state}).describe_dependency(),
-            }
-            if data.source:
-                subject_dependencies['inv'] = ctx.registry.resolve('inv', state={**ctx.state, **state}).describe_dependency()
-            subjects.append(subject_dependencies)
-
-        out = {'subjects': subjects}
-        if data.source and data.parc_level:
-            parc = self._result_parc(ctx)
-            if single_subject:
-                out['annot'] = ctx.registry.resolve('annot', state={**ctx.state, 'mrisubject': ctx.get('mrisubject'), 'parc': parc}).describe_dependency()
-            elif data.parc_level == 'common':
-                out['annot'] = ctx.registry.resolve('annot', state={**ctx.state, 'mrisubject': ctx.get('common_brain'), 'parc': parc}).describe_dependency()
-            elif data.parc_level == 'individual':
-                out['annot'] = [
-                    {
-                        'subject': state['subject'],
-                        'files': ctx.registry.resolve('annot', state={**ctx.state, 'mrisubject': state['mrisubject'], 'parc': parc}).describe_dependency(),
-                    }
-                    for state in self.subject_states(ctx, False)
-                ]
-            else:
-                raise RuntimeError(f"data={data.string!r}, parc_level={data.parc_level!r}")
-        return ctx.registry.canonicalize(out)
-
     def definitions(self, ctx: DerivativeContext) -> dict[str, Any]:
         definitions = {
             'test': self.tests[ctx.get('test')]._as_dict(),
@@ -322,161 +312,6 @@ class ResultOutputDerivative(Derivative[T]):
         if parc and parc in self.parcs:
             definitions['parc'] = self.parcs[parc]._as_dict()
         return ctx.registry.canonicalize(definitions)
-
-    def load_test(
-            self,
-            ctx: DerivativeContext,
-            return_data: bool,
-            make: bool,
-            *,
-            data: TestDims | object = USE_CTX,
-            parc: str | None | object = USE_CTX,
-            mask: str | None | bool | object = USE_CTX,
-    ):
-        if data is USE_CTX:
-            data = ctx.option('data')
-        if parc is USE_CTX:
-            parc = ctx.option('parc')
-        if mask is USE_CTX:
-            mask = ctx.option('mask')
-        options = {
-            'data': data,
-            'samples': ctx.option('samples'),
-            'test': ctx.option('test'),
-            'tstart': ctx.option('tstart'),
-            'tstop': ctx.option('tstop'),
-            'pmin': ctx.option('pmin'),
-            'parc': parc,
-            'mask': mask,
-            'baseline': ctx.option('baseline'),
-            'src_baseline': ctx.option('src_baseline'),
-            'smooth': ctx.option('smooth'),
-            'samplingrate': ctx.option('samplingrate'),
-            '_allow_protected_overwrite': make,
-        }
-        handle = ctx.registry.resolve('test-result', state=ctx.state, options=options)
-        dst = handle.artifact_path
-        desc = ctx.registry.describe_artifact_path(dst)
-
-        if handle.is_valid():
-            try:
-                res = handle.load()
-            except OldVersionError:
-                res = None
-            else:
-                if not return_data:
-                    return res
-        elif not make and dst.exists():
-            raise OSError(f"The requested test is outdated: {desc}. Set make=True to perform the test.")
-        else:
-            res = None
-
-        if res is None and not make:
-            raise OSError(f"The requested test is not cached: {desc}. Set make=True to perform the test.")
-        if res is None:
-            res = handle.load()
-            if not return_data:
-                return res
-
-        res_data, res = self.materialize_test(ctx, res, True, desc)
-        return (res_data, res) if return_data else res
-
-    def materialize_test(
-            self,
-            ctx: DerivativeContext,
-            res,
-            return_data: bool,
-            desc: str | None = None,
-    ):
-        test_obj = self.tests[ctx.option('test')]
-        data = ctx.option('data')
-        mask = ctx.option('mask')
-        parc = ctx.option('parc')
-        pmin = ctx.option('pmin')
-        smooth = ctx.option('smooth')
-        samplingrate = ctx.option('samplingrate')
-        baseline = ctx.option('baseline')
-        src_baseline = ctx.option('src_baseline')
-
-        parc_dim = None
-        if data.source is True:
-            if parc:
-                mask = parc
-                parc_dim = 'source'
-            elif mask and pmin is None:
-                parc_dim = 'source'
-        elif isinstance(data.source, str):
-            if not isinstance(parc, str):
-                raise TypeError(f"parc needs to be set for ROI test (data={data.string!r})")
-            if mask is not None:
-                raise TypeError(f"{mask=}: invalid for data={data.string!r}")
-        else:
-            if parc is not None:
-                raise TypeError(f"{parc=}: invalid for data={data.string!r}")
-            if mask is not None:
-                raise TypeError(f"{mask=}: invalid for data={data.string!r}")
-
-        do_test = res is None
-        test_kwargs = self.test_kwargs(ctx, data, parc_dim) if do_test else None
-
-        if isinstance(test_obj, TwoStageTest):
-            if smooth:
-                raise NotImplementedError(f"{smooth=}: smoothing for two-stage tests")
-            if isinstance(data.source, str):
-                return self._make_test_rois_2stage(ctx, baseline, src_baseline, test_obj, test_kwargs, res, data, return_data, samplingrate)
-            if data.source is True:
-                return self._make_test_2stage(ctx, baseline, src_baseline, mask, test_obj, test_kwargs, res, data, return_data, samplingrate)
-            raise NotImplementedError(f"Two-stage test with data={data.string!r}")
-        if isinstance(data.source, str):
-            if smooth:
-                raise TypeError(f"{smooth=} for ROI tests")
-            return self._make_test_rois(ctx, baseline, src_baseline, test_obj, pmin, test_kwargs, res, data, samplingrate)
-
-        if data.sensor:
-            res_data = self.load_group_evoked(ctx, baseline, True, test_obj.cat, samplingrate, None, False, test_obj.vars, data)
-            if len(res_data.info['sensor_types']) > 1:
-                desc_ = ', '.join(res_data.info['sensor_types'])
-                raise RuntimeError(f"Data contains more than one sensor type ({desc_}). Mass-univariate tests are not designed for multiple sensor types. Use the data argument to perform test on one sensor type.")
-        elif data.source:
-            res_data = self.load_group_evoked_stc(ctx, baseline, src_baseline, True, test_obj.cat, mask, False, test_obj.vars, samplingrate, None, True)
-            if smooth:
-                res_data[data.y_name] = res_data[data.y_name].smooth('source', smooth, 'gaussian')
-        else:
-            raise ValueError(f"data={data.string!r}")
-
-        if do_test:
-            res = self.make_test(data.y_name, res_data, test_obj, test_kwargs)
-
-        return (res_data, res) if return_data else (None, res)
-
-    def load_spm(self, ctx: DerivativeContext):
-        subject = ctx.get('subject')
-        test_obj = self.tests[ctx.option('test')]
-        if not isinstance(test_obj, TwoStageTest):
-            raise NotImplementedError(f"Test kind {test_obj.__class__.__name__!r}")
-        ds = self.load_subject_epochs_stc(ctx, subject, ctx.option('baseline'), ctx.option('src_baseline'), None, False, None, True, False, test_obj.vars)
-        return testnd.LM('src', test_obj.stage_1, data=ds, samples=0, subject=subject)
-
-    def test_kwargs(
-            self,
-            ctx: DerivativeContext,
-            data,
-            parc_dim: None | str,
-    ):
-        kwargs = {
-            'samples': ctx.option('samples'),
-            'tstart': ctx.option('tstart'),
-            'tstop': ctx.option('tstop'),
-            'parc': parc_dim,
-        }
-        pmin = ctx.option('pmin')
-        if pmin == 'tfce':
-            kwargs['tfce'] = True
-        elif pmin is not None:
-            kwargs['pmin'] = pmin
-            criteria = self.cluster_criteria[ctx.get('select_clusters')]
-            kwargs.update({'min' + dim: criteria[dim] for dim in data.dims if dim in criteria})
-        return kwargs
 
     def _evoked_options(
             self,
@@ -587,7 +422,7 @@ class ResultOutputDerivative(Derivative[T]):
             **state,
     ):
         options = self._evoked_options(ctx, baseline, ndvar, cat, samplingrate, decim, data_raw, vardef, data)
-        return load_evoked_request(ctx.registry, self.groups, {**ctx.state, **state}, options, ctx.get('group'))
+        return ctx.load('evoked-group-dataset', state=_group_request_state(ctx, **state), options=options)
 
     def load_group_evoked_stc(
             self,
@@ -605,7 +440,7 @@ class ResultOutputDerivative(Derivative[T]):
             **state,
     ):
         options = self._evoked_stc_options(ctx, baseline, src_baseline, morph, cat, mask, data_raw, vardef, samplingrate, decim, ndvar)
-        return load_evoked_stc_request(ctx.registry, self.groups, {**ctx.state, **state}, options, self.mri_subjects, self.common_brain, ctx.get('group'))
+        return ctx.load('evoked-stc-group-dataset', state=_group_request_state(ctx, **state), options=options)
 
     def load_subject_evoked_stc(
             self,
@@ -624,7 +459,7 @@ class ResultOutputDerivative(Derivative[T]):
             **state,
     ):
         options = self._evoked_stc_options(ctx, baseline, src_baseline, morph, cat, mask, data_raw, vardef, samplingrate, decim, ndvar)
-        return load_evoked_stc_request(ctx.registry, self.groups, {**ctx.state, **state}, options, self.mri_subjects, self.common_brain, subject)
+        return ctx.load('evoked-stc', state=_subject_request_state(ctx, subject, **state), options=options)
 
     def load_subject_epochs_stc(
             self,
@@ -645,7 +480,219 @@ class ResultOutputDerivative(Derivative[T]):
             **state,
     ):
         options = self._epochs_stc_options(ctx, baseline, src_baseline, cat, keep_epochs, morph, mask, data_raw, vardef, samplingrate, decim, ndvar, reject)
-        return load_epochs_stc_request(ctx.registry, self.groups, {**ctx.state, **state}, options, self.mri_subjects, self.common_brain, subject)
+        return ctx.load('epochs-stc', state=_subject_request_state(ctx, subject, **state), options=options)
+
+    def result_desc(self, ctx: DerivativeContext) -> str:
+        return ctx.registry.describe_artifact_path(self.path(ctx))
+
+    def extra_key(self, ctx: DerivativeContext) -> dict[str, Any]:
+        return {}
+
+    def extra_fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        return self.extra_key(ctx)
+
+    def key(self, ctx: DerivativeContext) -> dict[str, Any]:
+        return ctx.registry.canonicalize({
+            **self.cache_identity(ctx),
+            'samples': ctx.option('samples'),
+        })
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        return {
+            'identity': self.cache_identity(ctx),
+            'definitions': self.definitions(ctx),
+            'options': self.analysis_options(ctx),
+            'extra': ctx.registry.canonicalize(self.extra_fingerprint(ctx)),
+        }
+
+    def path(
+            self,
+            ctx: DerivativeContext,
+    ) -> Path:
+        dst = ctx.option('dst')
+        path = Path(dst) if dst else self.default_path(ctx)
+        if self.sampled_path:
+            path = sampled_artifact_path(path, ctx.option('samples'))
+        return path
+
+    def load(
+            self,
+            ctx: DerivativeContext,
+            path: Path) -> T:
+        return path
+
+    def save(
+            self,
+            ctx: DerivativeContext,
+            path: Path,
+            value: T,
+    ) -> None:
+        return
+
+    def provenance(
+            self,
+            ctx: DerivativeContext,
+            value: T,
+    ) -> dict[str, Any]:
+        return {'samples': ctx.option('samples'), 'single_subject': self.single_subject}
+
+
+def sampled_artifact_path(path: str | Path, samples: int | None) -> Path:
+    path = Path(path)
+    if samples is None:
+        return path
+    return path.with_name(f"{path.stem}_samples-{samples}{path.suffix}")
+
+
+class TestResultDerivative(ResultOutputDerivative):
+    """Cached statistical test result.
+
+    Uses the shared result-output options from
+    :class:`ResultOutputDerivative`.
+    """
+    name = 'test-result'
+    sampled_path = True
+    cache_suffix = '.pickle'
+    path = Derivative.path
+
+    def cache_label(self, ctx: DerivativeContext) -> str:
+        return join_stem_parts(self.path_stem(ctx), f'samples-{ctx.option("samples")}') if ctx.option('samples') is not None else self.path_stem(ctx)
+
+    def load_test(
+            self,
+            ctx: DerivativeContext,
+            return_data: bool,
+            make: bool,
+            *,
+            data: TestDims | object = USE_CTX,
+            parc: str | None | object = USE_CTX,
+            mask: str | None | bool | object = USE_CTX,
+    ):
+        options = _test_result_options(ctx, data=data, parc=parc, mask=mask, make=make)
+        handle = ctx.registry.resolve('test-result', state=ctx.state, options=options)
+        dst = handle.artifact_path
+        desc = ctx.registry.describe_artifact_path(dst)
+
+        if handle.is_valid():
+            try:
+                res = handle.load()
+            except OldVersionError:
+                res = None
+            else:
+                if not return_data:
+                    return res
+        elif not make and dst.exists():
+            raise OSError(f"The requested test is outdated: {desc}. Set make=True to perform the test.")
+        else:
+            res = None
+
+        if res is None and not make:
+            raise OSError(f"The requested test is not cached: {desc}. Set make=True to perform the test.")
+        if res is None:
+            res = handle.load()
+            if not return_data:
+                return res
+
+        res_data, res = self.materialize_test(ctx, res, True, desc)
+        return (res_data, res) if return_data else res
+
+    def materialize_test(
+            self,
+            ctx: DerivativeContext,
+            res,
+            return_data: bool,
+            desc: str | None = None,
+    ):
+        test_obj = self.tests[ctx.option('test')]
+        data = ctx.option('data')
+        mask = ctx.option('mask')
+        parc = ctx.option('parc')
+        pmin = ctx.option('pmin')
+        smooth = ctx.option('smooth')
+        samplingrate = ctx.option('samplingrate')
+        baseline = ctx.option('baseline')
+        src_baseline = ctx.option('src_baseline')
+
+        parc_dim = None
+        if data.source is True:
+            if parc:
+                mask = parc
+                parc_dim = 'source'
+            elif mask and pmin is None:
+                parc_dim = 'source'
+        elif isinstance(data.source, str):
+            if not isinstance(parc, str):
+                raise TypeError(f"parc needs to be set for ROI test (data={data.string!r})")
+            if mask is not None:
+                raise TypeError(f"{mask=}: invalid for data={data.string!r}")
+        else:
+            if parc is not None:
+                raise TypeError(f"{parc=}: invalid for data={data.string!r}")
+            if mask is not None:
+                raise TypeError(f"{mask=}: invalid for data={data.string!r}")
+
+        do_test = res is None
+        test_kwargs = self.test_kwargs(ctx, data, parc_dim) if do_test else None
+
+        if isinstance(test_obj, TwoStageTest):
+            if smooth:
+                raise NotImplementedError(f"{smooth=}: smoothing for two-stage tests")
+            if isinstance(data.source, str):
+                return self._make_test_rois_2stage(ctx, baseline, src_baseline, test_obj, test_kwargs, res, data, return_data, samplingrate)
+            if data.source is True:
+                return self._make_test_2stage(ctx, baseline, src_baseline, mask, test_obj, test_kwargs, res, data, return_data, samplingrate)
+            raise NotImplementedError(f"Two-stage test with data={data.string!r}")
+        if isinstance(data.source, str):
+            if smooth:
+                raise TypeError(f"{smooth=} for ROI tests")
+            return self._make_test_rois(ctx, baseline, src_baseline, test_obj, pmin, test_kwargs, res, data, samplingrate)
+
+        if data.sensor:
+            res_data = self.load_group_evoked(ctx, baseline, True, test_obj.cat, samplingrate, None, False, test_obj.vars, data)
+            if len(res_data.info['sensor_types']) > 1:
+                desc_ = ', '.join(res_data.info['sensor_types'])
+                raise RuntimeError(f"Data contains more than one sensor type ({desc_}). Mass-univariate tests are not designed for multiple sensor types. Use the data argument to perform test on one sensor type.")
+        elif data.source:
+            res_data = self.load_group_evoked_stc(ctx, baseline, src_baseline, True, test_obj.cat, mask, False, test_obj.vars, samplingrate, None, True)
+            if smooth:
+                res_data[data.y_name] = res_data[data.y_name].smooth('source', smooth, 'gaussian')
+        else:
+            raise ValueError(f"data={data.string!r}")
+
+        if do_test:
+            res = self.make_test(data.y_name, res_data, test_obj, test_kwargs)
+
+        return (res_data, res) if return_data else (None, res)
+
+    def load_spm(self, ctx: DerivativeContext):
+        subject = ctx.get('subject')
+        test_obj = self.tests[ctx.option('test')]
+        if not isinstance(test_obj, TwoStageTest):
+            raise NotImplementedError(f"Test kind {test_obj.__class__.__name__!r}")
+        ds = self.load_subject_epochs_stc(ctx, subject, ctx.option('baseline'), ctx.option('src_baseline'), None, False, None, True, False, test_obj.vars)
+        return testnd.LM('src', test_obj.stage_1, data=ds, samples=0, subject=subject)
+
+    def test_kwargs(
+            self,
+            ctx: DerivativeContext,
+            data,
+            parc_dim: None | str,
+    ):
+        dims = data.dims if hasattr(data, 'dims') else data
+        kwargs = {
+            'samples': ctx.option('samples'),
+            'tstart': ctx.option('tstart'),
+            'tstop': ctx.option('tstop'),
+            'parc': parc_dim,
+        }
+        pmin = ctx.option('pmin')
+        if pmin == 'tfce':
+            kwargs['tfce'] = True
+        elif pmin is not None:
+            kwargs['pmin'] = pmin
+            criteria = self.cluster_criteria[ctx.get('select_clusters')]
+            kwargs.update({'min' + dim: criteria[dim] for dim in dims if dim in criteria})
+        return kwargs
 
     def make_test(
             self,
@@ -680,12 +727,10 @@ class ResultOutputDerivative(Derivative[T]):
         return out
 
     def _subjects(self, ctx: DerivativeContext) -> list[str]:
-        if self.single_subject:
-            return [ctx.get('subject')]
         group = ctx.get('group')
         if group not in (None, '', '*'):
             return list(self.groups[group])
-        return [item['subject'] for item in self.collect_states(ctx.state, ('subject',))]
+        return [ctx.get('subject')]
 
     def _make_test_rois(self, ctx: DerivativeContext, baseline, src_baseline, test_obj, pmin, test_kwargs, res, data, samplingrate):
         dss_list = []
@@ -707,10 +752,7 @@ class ResultOutputDerivative(Derivative[T]):
         n_trials_ds = combine(n_trials_dss, incomplete='drop')
         n_per_label = {label: len(dss) for label, dss in label_dss.items()}
         do_mcc = len(labels) > 1 and pmin not in (None, 'tfce') and len(set(n_per_label.values())) == 1
-        label_results = {
-            label: self.make_test('label_tc', ds, test_obj, test_kwargs, do_mcc)
-            for label, ds in label_data.items()
-        }
+        label_results = {label: self.make_test('label_tc', ds, test_obj, test_kwargs, do_mcc) for label, ds in label_data.items()}
         merged_dist = _MergedTemporalClusterDist([res_._cdist for res_ in label_results.values()]) if do_mcc else None
         res = ROITestResult(subjects, ctx.option('samples'), n_trials_ds, merged_dist, label_results)
         return label_data, res
@@ -768,78 +810,82 @@ class ResultOutputDerivative(Derivative[T]):
             res = test_obj.make_stage_2(lms, test_kwargs)
         return (combine(res_data), res) if return_data else (None, res)
 
-    def result_desc(self, ctx: DerivativeContext) -> str:
-        return ctx.registry.describe_artifact_path(self.path(ctx))
-
-    def extra_key(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return {}
-
-    def extra_fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return self.extra_key(ctx)
-
-    def key(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return ctx.registry.canonicalize({
-            **self.cache_identity(ctx),
-            'samples': ctx.option('samples'),
-        })
-
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        test_obj = self.tests[ctx.option('test')]
         data = ctx.option('data')
-        return {
-            'identity': self.cache_identity(ctx),
-            'definitions': self.definitions(ctx),
-            'dependencies': self.result_dependencies(ctx, data, self.single_subject),
-            'options': self.analysis_options(ctx),
-            'extra': ctx.registry.canonicalize(self.extra_fingerprint(ctx)),
-        }
+        parc = ctx.option('parc')
+        mask = ctx.option('mask')
+        pmin = ctx.option('pmin')
+        samplingrate = ctx.option('samplingrate')
+        baseline = ctx.option('baseline')
+        src_baseline = ctx.option('src_baseline')
 
-    def path(
-            self,
-            ctx: DerivativeContext,
-    ) -> Path:
-        dst = ctx.option('dst')
-        path = Path(dst) if dst else self.default_path(ctx)
-        if self.sampled_path:
-            path = sampled_artifact_path(path, ctx.option('samples'))
-        return path
+        if data.source is True:
+            if parc:
+                mask = parc
+            elif mask and pmin is None:
+                mask = mask
+        elif isinstance(data.source, str):
+            mask = False
 
-    def load(
-            self,
-            ctx: DerivativeContext,
-            path: Path) -> T:
-        return path
+        if isinstance(test_obj, TwoStageTest):
+            deps = []
+            for subject in self._subjects(ctx):
+                if isinstance(data.source, str):
+                    if test_obj.model is None:
+                        deps.append(Dependency(
+                            'epochs-stc',
+                            label=subject,
+                            state=_subject_request_state(ctx, subject),
+                            options=self._epochs_stc_options(ctx, baseline, src_baseline, None, False, None, True, False, test_obj.vars, samplingrate),
+                        ))
+                    else:
+                        deps.append(Dependency(
+                            'evoked-stc',
+                            label=subject,
+                            state=_subject_request_state(ctx, subject, model=test_obj.model),
+                            options=self._evoked_stc_options(ctx, baseline, src_baseline, False, None, True, False, test_obj.vars, samplingrate),
+                        ))
+                elif data.source is True:
+                    if test_obj.model is None:
+                        deps.append(Dependency(
+                            'epochs-stc',
+                            label=subject,
+                            state=_subject_request_state(ctx, subject),
+                            options=self._epochs_stc_options(ctx, baseline, src_baseline, None, False, True, mask, False, test_obj.vars, samplingrate),
+                        ))
+                    else:
+                        deps.append(Dependency(
+                            'evoked-stc',
+                            label=subject,
+                            state=_subject_request_state(ctx, subject, model=test_obj.model),
+                            options=self._evoked_stc_options(ctx, baseline, src_baseline, True, None, mask, False, test_obj.vars, samplingrate),
+                        ))
+            return tuple(deps)
 
-    def save(
-            self,
-            ctx: DerivativeContext,
-            path: Path,
-            value: T,
-    ) -> None:
-        return
-
-    def provenance(
-            self,
-            ctx: DerivativeContext,
-            value: T,
-    ) -> dict[str, Any]:
-        return {'samples': ctx.option('samples'), 'single_subject': self.single_subject}
-
-
-def sampled_artifact_path(path: str | Path, samples: int | None) -> Path:
-    path = Path(path)
-    if samples is None:
-        return path
-    return path.with_name(f"{path.stem}_samples-{samples}{path.suffix}")
-
-
-class TestResultDerivative(ResultOutputDerivative):
-    name = 'test-result'
-    sampled_path = True
-    cache_suffix = '.pickle'
-    path = Derivative.path
-
-    def cache_label(self, ctx: DerivativeContext) -> str:
-        return join_stem_parts(self.path_stem(ctx), f'samples-{ctx.option("samples")}') if ctx.option('samples') is not None else self.path_stem(ctx)
+        if isinstance(data.source, str):
+            return tuple(
+                Dependency(
+                    'evoked-stc',
+                    label=subject,
+                    state=_subject_request_state(ctx, subject),
+                    options=self._evoked_stc_options(ctx, baseline, src_baseline, False, None, False, False, test_obj.vars, samplingrate),
+                )
+                for subject in self._subjects(ctx)
+            )
+        if data.sensor:
+            return (Dependency(
+                'evoked-group-dataset',
+                state=_group_request_state(ctx),
+                options=self._evoked_options(ctx, baseline, True, test_obj.cat, samplingrate, None, False, test_obj.vars, data),
+            ),)
+        if data.source:
+            return (Dependency(
+                'evoked-stc-group-dataset',
+                state=_group_request_state(ctx),
+                options=self._evoked_stc_options(ctx, baseline, src_baseline, True, test_obj.cat, mask, False, test_obj.vars, samplingrate, None, True),
+            ),)
+        return ()
 
     def build(self, ctx: DerivativeContext):
         _, res = self.materialize_test(ctx, None, False, self.result_desc(ctx))
@@ -879,6 +925,18 @@ class TestResultDerivative(ResultOutputDerivative):
 
 
 class MovieDerivative(ResultOutputDerivative[Path]):
+    """Rendered movie export from source-space data.
+
+    In addition to the shared result-output options, this derivative uses:
+
+    - ``movie_kind`` to choose the movie recipe
+    - ``single_subject`` / ``subject`` to choose subject vs group rendering
+    - ``cat`` for condition selection
+    - ``time_dilation`` for playback speed
+    - ``fmin`` and ``brain_kwargs`` for ``ga-dspm`` movies
+    - ``p``, ``pmin``, ``pmid``, ``surf``, and ``cluster_state`` for
+      ``ttest`` movies
+    """
     name = 'movie'
 
     def extra_key(self, ctx: DerivativeContext) -> dict[str, Any]:
@@ -931,24 +989,52 @@ class MovieDerivative(ResultOutputDerivative[Path]):
     def default_path(self, ctx: DerivativeContext) -> Path:
         return movie_export_path(ctx.state, self.path_stem(ctx), ctx.option('single_subject'))
 
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        kind = ctx.option('movie_kind')
+        if kind == 'ga-dspm':
+            if ctx.option('single_subject'):
+                return (Dependency(
+                    'evoked-stc',
+                    state=_subject_request_state(ctx, ctx.option('subject')),
+                    options=self._evoked_stc_options(ctx),
+                ),)
+            return (Dependency(
+                'evoked-stc-group-dataset',
+                state=_group_request_state(ctx),
+                options=self._evoked_stc_options(ctx, morph=True),
+            ),)
+        if kind == 'ttest':
+            if ctx.option('single_subject'):
+                return (Dependency(
+                    'epochs-stc',
+                    state=_subject_request_state(ctx, ctx.option('subject')),
+                    options=self._epochs_stc_options(ctx, cat=ctx.option('cat')),
+                ),)
+            return (Dependency(
+                'evoked-stc-group-dataset',
+                state=_group_request_state(ctx),
+                options=self._evoked_stc_options(ctx, morph=True, cat=ctx.option('cat')),
+            ),)
+        return ()
+
     def build(self, ctx: DerivativeContext) -> Path:
         kind = ctx.option('movie_kind')
         dst = self.path(ctx)
         if kind == 'ga-dspm':
             if ctx.option('single_subject'):
-                ds = self.load_subject_evoked_stc(ctx, ctx.option('subject'))
+                ds = ctx.load('evoked-stc', state=_subject_request_state(ctx, ctx.option('subject')), options=self._evoked_stc_options(ctx))
                 y = ds['src']
             else:
-                ds = self.load_group_evoked_stc(ctx, morph=True)
+                ds = ctx.load('evoked-stc-group-dataset', state=_group_request_state(ctx), options=self._evoked_stc_options(ctx, morph=True))
                 y = ds['srcm']
             brain = plot.brain.dspm(y, ctx.option('fmin'), ctx.option('fmin') * 3, colorbar=False, **ctx.option('brain_kwargs'))
         elif kind == 'ttest':
             cluster_state = dict(ctx.option('cluster_state') or {})
             if ctx.option('single_subject'):
-                ds = self.load_subject_epochs_stc(ctx, ctx.option('subject'), cat=ctx.option('cat'))
+                ds = ctx.load('epochs-stc', state=_subject_request_state(ctx, ctx.option('subject')), options=self._epochs_stc_options(ctx, cat=ctx.option('cat')))
                 y = 'src'
             else:
-                ds = self.load_group_evoked_stc(ctx, morph=True, cat=ctx.option('cat'))
+                ds = ctx.load('evoked-stc-group-dataset', state=_group_request_state(ctx), options=self._evoked_stc_options(ctx, morph=True, cat=ctx.option('cat')))
                 y = 'srcm'
             if cluster_state:
                 cluster_state.update(samples=0, pmin=ctx.option('p'))

@@ -36,7 +36,7 @@ from .._utils.mne_utils import is_fake_mri
 from .covariance import CovDerivative, EpochCovariance, RawCovariance, cov_node_name
 from .derivative_cache import DerivativeRegistry, ProtectedArtifactError
 from .configuration import sequence_arg
-from .epochs import EpochBase, EpochsDatasetDerivative, EpochsDerivative, EvokedDatasetDerivative, EvokedDerivative, PrimaryEpoch, RejectionInput, SecondaryEpoch, SuperEpoch, assemble_epochs, decim_param, load_evoked_request
+from .epochs import EpochBase, EpochsDatasetDerivative, EpochsDerivative, EvokedDatasetDerivative, EvokedDerivative, EvokedGroupDatasetDerivative, PrimaryEpoch, RejectionInput, SecondaryEpoch, SuperEpoch, assemble_epochs, decim_param
 from .events import EventsDerivative, SELECTED_EVENTS, SelectedEventsDerivative
 from .exceptions import FileMissingError
 from .experiment import StateModel
@@ -58,10 +58,10 @@ from .reports import (
 )
 from .results import MovieDerivative, TestResultDerivative
 from .source import (
-    BemInput, EpochsStcDerivative, EvokedStcDerivative, FwdDerivative,
+    BemInput, EpochsStcDerivative, EpochsStcGroupDatasetDerivative,
+    EvokedStcDerivative, EvokedStcGroupDatasetDerivative, FwdDerivative,
     InvDerivative, SourceMorphDerivative, SrcDerivative, TransInput,
-    eval_inv, eval_src, inv_str, inverse_operator_params, load_epochs_stc_request,
-    load_evoked_stc_request,
+    eval_inv, eval_src, inv_str, inverse_operator_params,
 )
 from .test_def import (
     Test,
@@ -549,9 +549,12 @@ class Pipeline(StateModel):
         self._derivatives.register(EpochsDatasetDerivative(self._raw, self._epochs))
         self._derivatives.register(EvokedDerivative(self._epochs))
         self._derivatives.register(EvokedDatasetDerivative(self._epochs))
+        self._derivatives.register(EvokedGroupDatasetDerivative(self._groups))
         self._derivatives.register(AnnotDerivative(self._parcs, tuple(self.get_field_values('hemi'))))
         self._derivatives.register(EpochsStcDerivative(self._epochs))
         self._derivatives.register(EvokedStcDerivative(self._epochs))
+        self._derivatives.register(EpochsStcGroupDatasetDerivative(self._groups, self._mri_subjects, self.get('common_brain')))
+        self._derivatives.register(EvokedStcGroupDatasetDerivative(self._groups, self._mri_subjects, self.get('common_brain')))
         self._derivatives.register(TestResultDerivative(
             self._tests,
             self._epochs,
@@ -671,9 +674,11 @@ class Pipeline(StateModel):
         if extra_state:
             merged_state.update(extra_state)
         with self._temporary_state:
+            explicit_none = {key: value for key, value in merged_state.items() if value is None}
             if merged_state:
-                self.set(**merged_state)
+                self.set(**{key: value for key, value in merged_state.items() if value is not None})
             out = {field: self.get(field) for field in self._derivative_state_fields}
+            out.update(explicit_none)
             out['root'] = self.root
             out['common_brain'] = self.get('common_brain')
             return out
@@ -1250,18 +1255,9 @@ class Pipeline(StateModel):
             'reject': reject,
         }
         if group is not None:
-            epoch_name = self.get('epoch')
-            subjects_ = [subject_ for subject_ in self.iter(group=group, progress_bar=f"Load {epoch_name} STC")]
-            return load_epochs_stc_request(
-                self._derivatives,
-                self._groups,
-                self._derivative_state(state),
-                options,
-                self._mri_subjects,
-                self.get('common_brain'),
-                subjects_,
-            )
-
+            state['group'] = group
+            return self._load_derivative('epochs-stc-group-dataset', state=state, options=options)
+        state['group'] = None
         if subject is not None:
             state['subject'] = subject
         return self._load_derivative('epochs-stc', state=state, options=options)
@@ -1389,15 +1385,13 @@ class Pipeline(StateModel):
             'vardef': vardef,
             'data': data,
         }
-        if group is None:
-            if subject is not None:
-                state['subject'] = subject
-            return self._load_derivative('evoked-dataset', state=state, options=options)
-
-        model = self.get('model')
-        desc = f'by {model}' if model else 'average'
-        subjects_ = [subject_ for subject_ in self.iter(group=group, progress_bar=f"Load {epoch_name} {desc}")]
-        return load_evoked_request(self._derivatives, self._groups, self._derivative_state(state), options, subjects_)
+        if group is not None:
+            state['group'] = group
+            return self._load_derivative('evoked-group-dataset', state=state, options=options)
+        state['group'] = None
+        if subject is not None:
+            state['subject'] = subject
+        return self._load_derivative('evoked-dataset', state=state, options=options)
 
     def load_epochs_stf(
             self,
@@ -1582,22 +1576,13 @@ class Pipeline(StateModel):
             'decim': decim,
             'ndvar': ndvar,
         }
-        if group is None:
-            if subject is not None:
-                state['subject'] = subject
-            return self._load_derivative('evoked-stc', state=state, options=options)
-
-        epoch_name = self.get('epoch')
-        subjects_ = [subject_ for subject_ in self.iter(group=group, progress_bar=f"Load {epoch_name} STC")]
-        return load_evoked_stc_request(
-            self._derivatives,
-            self._groups,
-            self._derivative_state(state),
-            options,
-            self._mri_subjects,
-            self.get('common_brain'),
-            subjects_,
-        )
+        if group is not None:
+            state['group'] = group
+            return self._load_derivative('evoked-stc-group-dataset', state=state, options=options)
+        state['group'] = None
+        if subject is not None:
+            state['subject'] = subject
+        return self._load_derivative('evoked-stc', state=state, options=options)
 
     def load_induced_stc(
             self,

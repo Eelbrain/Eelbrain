@@ -27,7 +27,7 @@ from scipy import sparse
 from .. import load, save
 from .._data_obj import Dataset, Datalist, NDVar, combine
 from .covariance import cov_node_name
-from .derivative_cache import CachePolicy, Dependency, Derivative, DerivativeContext, Input, file_fingerprint
+from .derivative_cache import CachePolicy, Dependency, Derivative, DerivativeContext, Input, UncachedDerivative, file_fingerprint
 from .pathing import (
     bem_dir, bem_file_path, mri_dir, mri_sdir, src_file_path, trans_file_path,
 )
@@ -558,90 +558,13 @@ def _mask_ndvar(y: NDVar):
     return y
 
 
-def load_epochs_stc_group(
-        registry,
-        subjects: Sequence[str],
-        state: dict[str, Any],
-        options: dict[str, Any],
-        mri_subjects: dict[str, dict[str, str]],
-        common_brain: str,
-) -> Dataset:
-    if options['data_raw']:
-        raise ValueError(f"data_raw={options['data_raw']!r} with group: Can not combine raw data from multiple subjects.")
-    if options['keep_epochs']:
-        raise ValueError(f"keep_epochs={options['keep_epochs']!r} with group: Can not combine Epochs objects for different subjects. Set keep_epochs=False (default).")
-    morph = options.get('morph')
-    if morph is None:
-        options = {**options, 'morph': True}
-    elif not morph:
-        raise ValueError(f"morph={morph!r} with group: Source estimates can only be combined after morphing data to common brain model. Set morph=True.")
-    dss = [
-        registry.load('epochs-stc', state=_subject_state(state, subject, mri_subjects, common_brain), options=options)
-        for subject in subjects
-    ]
-    return combine(dss)
-
-
-def load_epochs_stc_request(
-        registry,
-        groups: dict[str, Sequence[str]],
-        state: dict[str, Any],
-        options: dict[str, Any],
-        mri_subjects: dict[str, dict[str, str]],
-        common_brain: str,
-        subjects,
-) -> Dataset:
-    if isinstance(subjects, Sequence) and not isinstance(subjects, str):
-        return load_epochs_stc_group(registry, subjects, state, options, mri_subjects, common_brain)
-    if isinstance(subjects, str) and subjects in groups:
-        return load_epochs_stc_group(registry, groups[subjects], state, options, mri_subjects, common_brain)
-    return registry.load('epochs-stc', state=_subject_state(state, subjects, mri_subjects, common_brain), options=options)
-
-
-def load_evoked_stc_group(
-        registry,
-        subjects: Sequence[str],
-        state: dict[str, Any],
-        options: dict[str, Any],
-        mri_subjects: dict[str, dict[str, str]],
-        common_brain: str,
-) -> Dataset:
-    morph = options.get('morph')
-    if options['ndvar']:
-        if morph is None:
-            options = {**options, 'morph': True}
-        elif not morph:
-            raise ValueError("ndvar=True, morph=False with multiple subjects: Can't create ndvars with data from different brains")
-    dss = [
-        registry.load('evoked-stc', state=_subject_state(state, subject, mri_subjects, common_brain), options=options)
-        for subject in subjects
-    ]
-    return combine(dss)
-
-
-def load_evoked_stc_request(
-        registry,
-        groups: dict[str, Sequence[str]],
-        state: dict[str, Any],
-        options: dict[str, Any],
-        mri_subjects: dict[str, dict[str, str]],
-        common_brain: str,
-        subjects,
-) -> Dataset:
-    if isinstance(subjects, Sequence) and not isinstance(subjects, str):
-        return load_evoked_stc_group(registry, subjects, state, options, mri_subjects, common_brain)
-    if isinstance(subjects, str) and subjects in groups:
-        return load_evoked_stc_group(registry, groups[subjects], state, options, mri_subjects, common_brain)
-    return registry.load('evoked-stc', state=_subject_state(state, subjects, mri_subjects, common_brain), options=options)
-
-
 def _subject_state(
         state: dict[str, Any],
         subject: str,
         mri_subjects: dict[str, dict[str, str]],
         common_brain: str,
 ) -> dict[str, Any]:
-    out = {**state, 'subject': subject}
+    out = {**state, 'subject': subject, 'group': None}
     mri = out.get('mri')
     if mri not in (None, '', '*'):
         mrisubject = mri_subjects[mri][subject]
@@ -992,3 +915,112 @@ class EvokedStcDerivative(Derivative[Dataset]):
 
     def save(self, ctx: DerivativeContext, path: Path, value: Dataset) -> None:
         save.pickle(value, path)
+
+
+class EpochsStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
+    """Group-level dataset assembled from subject ``epochs-stc`` datasets.
+
+    Options
+    -------
+    Same options as :class:`EpochsStcDerivative`.
+
+    Notes
+    -----
+    ``data_raw`` and ``keep_epochs`` must be falsey, and
+    ``morph`` defaults to ``True`` when omitted.
+    """
+    name = 'epochs-stc-group-dataset'
+
+    def __init__(self, groups: dict[str, Sequence[str]], mri_subjects: dict[str, dict[str, str]], common_brain: str):
+        self.groups = groups
+        self.mri_subjects = mri_subjects
+        self.common_brain = common_brain
+
+    def key(self, ctx: DerivativeContext) -> dict[str, Any]:
+        group = ctx.get('group')
+        if group in (None, '', '*'):
+            raise RuntimeError(f"{self.name!r} requires an explicit group")
+        return {'group': group}
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        return self.key(ctx)
+
+    def _group_options(self, ctx: DerivativeContext) -> dict[str, Any]:
+        if ctx.option('data_raw'):
+            raise ValueError(f"data_raw={ctx.option('data_raw')!r} with group: Can not combine raw data from multiple subjects.")
+        if ctx.option('keep_epochs'):
+            raise ValueError(f"keep_epochs={ctx.option('keep_epochs')!r} with group: Can not combine Epochs objects for different subjects. Set keep_epochs=False (default).")
+        morph = ctx.option('morph')
+        if morph is None:
+            return {**ctx.options, 'morph': True}
+        if not morph:
+            raise ValueError(f"morph={morph!r} with group: Source estimates can only be combined after morphing data to common brain model. Set morph=True.")
+        return ctx.options
+
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        options = self._group_options(ctx)
+        return tuple(
+            Dependency('epochs-stc', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
+            for subject in self.groups[ctx.get('group')]
+        )
+
+    def build(self, ctx: DerivativeContext) -> Dataset:
+        options = self._group_options(ctx)
+        dss = [
+            ctx.load('epochs-stc', state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
+            for subject in self.groups[ctx.get('group')]
+        ]
+        return combine(dss)
+
+
+class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
+    """Group-level dataset assembled from subject ``evoked-stc`` datasets.
+
+    Options
+    -------
+    Same options as :class:`EvokedStcDerivative`.
+
+    Notes
+    -----
+    ``ndvar=True`` requires morphing to a common brain,
+    and ``morph`` defaults to ``True`` when omitted in that case.
+    """
+    name = 'evoked-stc-group-dataset'
+
+    def __init__(self, groups: dict[str, Sequence[str]], mri_subjects: dict[str, dict[str, str]], common_brain: str):
+        self.groups = groups
+        self.mri_subjects = mri_subjects
+        self.common_brain = common_brain
+
+    def key(self, ctx: DerivativeContext) -> dict[str, Any]:
+        group = ctx.get('group')
+        if group in (None, '', '*'):
+            raise RuntimeError(f"{self.name!r} requires an explicit group")
+        return {'group': group}
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        return self.key(ctx)
+
+    def _group_options(self, ctx: DerivativeContext) -> dict[str, Any]:
+        morph = ctx.option('morph')
+        if ctx.option('ndvar'):
+            if morph is None:
+                return {**ctx.options, 'morph': True}
+            if not morph:
+                raise ValueError("ndvar=True, morph=False with multiple subjects: Can't create ndvars with data from different brains")
+        return ctx.options
+
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        options = self._group_options(ctx)
+        return tuple(
+            Dependency('evoked-stc', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
+            for subject in self.groups[ctx.get('group')]
+        )
+
+    def build(self, ctx: DerivativeContext) -> Dataset:
+        options = self._group_options(ctx)
+        dss = [
+            ctx.load('evoked-stc', state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
+            for subject in self.groups[ctx.get('group')]
+        ]
+        return combine(dss)
