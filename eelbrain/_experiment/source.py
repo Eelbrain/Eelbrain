@@ -673,6 +673,37 @@ def _prepare_inv(
 
 
 class EpochsStcDerivative(Derivative[Dataset]):
+    """Source-space single-trial dataset derived from cached epochs.
+
+    Options
+    -------
+    baseline
+        Sensor-space baseline correction before inverse application.
+    src_baseline
+        Source-space baseline correction after inverse application.
+    cat
+        Optional subset of model cells to keep.
+    keep_epochs
+        Whether to keep the sensor epochs alongside source output.
+    morph
+        Whether to morph source data to the common brain.
+    mask
+        Optional source-space mask/parcellation to apply.
+    data_raw
+        Whether to keep raw objects in the dataset info.
+    vardef
+        Extra variable definition set to evaluate before source estimation.
+    samplingrate
+        Sampling rate override for the underlying epochs artifact.
+    decim
+        Decimation override for the underlying epochs artifact.
+    pad
+        Extra time padding to add before epoch extraction.
+    ndvar
+        Whether to return source output as NDVars.
+    reject
+        Whether to apply epoch rejection/interpolation state.
+    """
     name = 'epochs-stc'
     key_fields = (
         'subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw',
@@ -813,6 +844,33 @@ class EpochsStcDerivative(Derivative[Dataset]):
 
 
 class EvokedStcDerivative(Derivative[Dataset]):
+    """Source-space evoked dataset derived from cached evokeds.
+
+    Options
+    -------
+    baseline
+        Sensor-space baseline correction before inverse application.
+    src_baseline
+        Source-space baseline correction after inverse application.
+    cat
+        Optional subset of model cells to keep.
+    keep_evoked
+        Whether to keep the sensor evoked data alongside source output.
+    morph
+        Whether to morph source data to the common brain.
+    mask
+        Optional source-space mask/parcellation to apply.
+    data_raw
+        Whether to keep raw objects in the dataset info.
+    vardef
+        Extra variable definition set to evaluate before source estimation.
+    samplingrate
+        Sampling rate override for the underlying evoked artifact.
+    decim
+        Decimation override for the underlying evoked artifact.
+    ndvar
+        Whether to return source output as NDVars.
+    """
     name = 'evoked-stc'
     key_fields = (
         'subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw',

@@ -800,6 +800,31 @@ class ContinuousEpoch(EpochBase):
 
 
 class EpochsDerivative(Derivative[Any]):
+    """Cached MNE epochs artifact.
+
+    Options
+    -------
+    baseline
+        Baseline correction to apply while creating epochs.
+    samplingrate
+        Sampling rate override for the epoch extraction.
+    decim
+        Decimation override for the epoch extraction.
+    pad
+        Extra time padding to add before epoch extraction.
+    trigger_shift
+        Whether to apply trigger shifting from the epoch definition.
+    tmin, tmax, tstop
+        Time window overrides for epoch extraction.
+    interpolate_bads
+        Whether and how to interpolate bad channels while building epochs.
+    reject
+        Whether to apply per-epoch interpolation/rejection state.
+    cat
+        Optional subset of model cells to keep before epoch creation.
+    vardef
+        Extra variable definition set to evaluate on the selected events.
+    """
     name = 'epochs'
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw', 'epoch', 'rej')
     cache_suffix = '.epochs'
@@ -935,6 +960,37 @@ class EpochsDerivative(Derivative[Any]):
 
 
 class EpochsDatasetDerivative(UncachedDerivative[Dataset]):
+    """Dataset view of cached epochs.
+
+    Options
+    -------
+    ndvar
+        Whether to convert epoch data to NDVars (`True`, `False`, or `'both'`).
+    data
+        Sensor representation to return.
+    data_raw
+        Whether to keep the raw object in ``ds.info['raw']``.
+    baseline
+        Baseline correction to apply while building the cached epochs.
+    samplingrate
+        Sampling rate override for the underlying epochs artifact.
+    decim
+        Decimation override for the underlying epochs artifact.
+    pad
+        Extra time padding to add before epoch extraction.
+    trigger_shift
+        Whether to apply trigger shifting from the epoch definition.
+    tmin, tmax, tstop
+        Time window overrides for epoch extraction.
+    interpolate_bads
+        Whether and how to interpolate bad channels while building epochs.
+    reject
+        Whether to apply per-epoch interpolation/rejection state.
+    cat
+        Optional subset of model cells to keep before epoch creation.
+    vardef
+        Extra variable definition set to evaluate on the selected events.
+    """
     name = 'epochs-dataset'
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw', 'epoch', 'rej')
 
@@ -1050,6 +1106,17 @@ class EpochsDatasetDerivative(UncachedDerivative[Dataset]):
 
 
 class EvokedDerivative(Derivative[list[mne.Evoked]]):
+    """Cached MNE evoked artifact.
+
+    Options
+    -------
+    samplingrate
+        Sampling rate override for the underlying epochs artifact.
+    decim
+        Decimation override for the underlying epochs artifact.
+    vardef
+        Extra variable definition set to evaluate before aggregation.
+    """
     name = 'evoked'
     key_fields = (
         'subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw',
@@ -1107,6 +1174,21 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
 
 
 class EvokedDatasetDerivative(UncachedDerivative[Dataset]):
+    """Dataset view of cached evoked data for one subject.
+
+    Options
+    -------
+    baseline
+        Baseline correction to apply at load time.
+    ndvar
+        Whether to convert the returned data to NDVars.
+    cat
+        Optional subset of model cells to keep.
+    data_raw
+        Whether to keep the raw object in ``ds.info['raw']``.
+    data
+        Sensor representation to return.
+    """
     name = 'evoked-dataset'
     key_fields = (
         'subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw',

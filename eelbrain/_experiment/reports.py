@@ -311,6 +311,11 @@ def _save_report(report, dst: Path, packages: tuple[str, ...], samples: int | No
 
 
 class SourceReportDerivative(ResultOutputDerivative[Path]):
+    """HTML report for source-space test results.
+
+    Uses the shared result-output options and adds ``include`` to control
+    which clusters/terms receive separate plots.
+    """
     name = 'source-report'
     sampled_path = True
 
@@ -329,6 +334,10 @@ class SourceReportDerivative(ResultOutputDerivative[Path]):
 
 
 class ROIReportDerivative(ResultOutputDerivative[Path]):
+    """HTML report for ROI-based test results.
+
+    Uses the shared result-output options.
+    """
     name = 'roi-report'
     sampled_path = True
 
@@ -368,6 +377,11 @@ class ROIReportDerivative(ResultOutputDerivative[Path]):
 
 
 class EEGReportDerivative(ResultOutputDerivative[Path]):
+    """HTML report for sensor-space EEG test results.
+
+    Uses the shared result-output options and adds ``include`` to control
+    which clusters receive separate plots.
+    """
     name = 'eeg-report'
     sampled_path = True
 
@@ -390,6 +404,11 @@ class EEGReportDerivative(ResultOutputDerivative[Path]):
 
 
 class EEGSensorsReportDerivative(ResultOutputDerivative[Path]):
+    """HTML report for a fixed list of EEG sensors.
+
+    Uses the shared result-output options and adds ``sensors`` for the sensor
+    names to plot.
+    """
     name = 'eeg-sensors-report'
     sampled_path = True
 
@@ -421,6 +440,11 @@ class EEGSensorsReportDerivative(ResultOutputDerivative[Path]):
 
 
 class LMReportDerivative(ResultOutputDerivative[Path]):
+    """HTML report for the first-stage subject LM used by two-stage tests.
+
+    Uses the shared result-output options and adds ``mask`` for the optional
+    source-space mask to plot.
+    """
     name = 'lm-report'
     single_subject = True
     sampled_path = True
@@ -436,6 +460,13 @@ class LMReportDerivative(ResultOutputDerivative[Path]):
 
 
 class CoregReportDerivative(ResultOutputDerivative[Path]):
+    """HTML report for MEG/MRI coregistration.
+
+    Options
+    -------
+    dst
+        Optional explicit output path.
+    """
     name = 'coreg-report'
     key_fields = ()
 

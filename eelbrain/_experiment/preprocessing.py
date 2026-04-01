@@ -596,6 +596,18 @@ class ICAInput(Input[mne.preprocessing.ICA]):
 
 
 class RawDerivative(Derivative[mne.io.BaseRaw]):
+    """Cached raw pipeline artifact.
+
+    Options
+    -------
+    add_bads
+        Whether to apply bad channels to the loaded raw object.
+    preload
+        Whether to preload the returned raw object.
+    noise
+        Whether to resolve the corresponding empty-room recording instead of
+        the subject recording.
+    """
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split')
     cache_policy = CachePolicy.OPTIONAL
     cache_suffix = '-raw.fif'

@@ -46,6 +46,33 @@ USE_CTX = object()
 
 
 class ResultOutputDerivative(Derivative[T]):
+    """Shared base for cached result/report/movie outputs.
+
+    Options
+    -------
+    dst
+        Optional explicit output path.
+    samples
+        Permutation/sample count stored in the cache identity.
+    data
+        Analysis data family to use (sensor, source, ROI, ...).
+    test
+        Test definition to run.
+    tstart, tstop
+        Optional time window for the analysis.
+    pmin
+        Cluster-forming threshold or ``'tfce'``.
+    parc, mask
+        Optional parcellation or source-space mask controls.
+    baseline
+        Sensor-space baseline correction.
+    src_baseline
+        Source-space baseline correction.
+    samplingrate
+        Sampling rate override for upstream cached data.
+    smooth
+        Optional source-space smoothing.
+    """
     key_fields = ()
     cache_log_level = logging.INFO
     single_subject = False

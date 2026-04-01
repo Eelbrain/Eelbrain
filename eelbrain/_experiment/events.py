@@ -149,6 +149,23 @@ class EventsDerivative(Derivative[Dataset]):
 
 
 class SelectedEventsDerivative(Derivative[Dataset]):
+    """Selected event dataset for one epoch/rejection state.
+
+    Options
+    -------
+    reject
+        Whether to apply artifact rejection (`True`, `False`, or `'keep'`).
+    add_bads
+        Whether to load current bad channels into attached raw objects.
+    index
+        Whether to index the returned dataset, and which index name to use.
+    data_raw
+        Whether to keep the raw object in ``ds.info['raw']``.
+    vardef
+        Extra variable definition set to evaluate on the selected events.
+    cat
+        Optional subset of model cells to keep.
+    """
     name = SELECTED_EVENTS
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw', 'epoch', 'rej')
     cache_suffix = '.pickle'
