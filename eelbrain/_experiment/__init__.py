@@ -80,7 +80,7 @@ node plus the raw derivative node that applies it.
 3. :class:`Pipeline`
 --------------------
 The primary user facade is :class:`Pipeline`, defined in
-:mod:`eelbrain._experiment.mne_experiment`. It is the public API, composes the
+:mod:`eelbrain._experiment.pipeline`. It is the public API, composes the
 graph from user configuration, and assembles a complete normalized state from
 initialization, :meth:`Pipeline.set`, and :meth:`Pipeline.load_*` / :meth:`Pipeline.make_*`
 calls. That assembled state becomes the key used to resolve the relevant graph
