@@ -249,6 +249,41 @@ class EphemeralDerivative(Derivative[str]):
         Path(path).write_text(value)
 
 
+class CollidingDerivative(Derivative[str]):
+    name = 'colliding'
+    key_fields = ('subject', 'mode')
+    cache_suffix = '.txt'
+
+    def __init__(self, root: str | Path):
+        self.root = Path(root)
+        self.build_calls = {}
+
+    def path(self, ctx: DerivativeContext) -> Path:
+        return self.root / 'derivatives' / 'eelbrain' / 'cache' / 'colliding' / 'shared.txt'
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, object]:
+        return {'subject': ctx.get('subject'), 'mode': ctx.get('mode')}
+
+    def build(self, ctx: DerivativeContext) -> str:
+        key = (ctx.get('subject'), ctx.get('mode'))
+        self.build_calls[key] = self.build_calls.get(key, 0) + 1
+        return f"{ctx.get('subject')}:{ctx.get('mode')}:{self.build_calls[key]}"
+
+    def load(
+            self,
+            ctx: DerivativeContext,
+            path: str) -> str:
+        return Path(path).read_text()
+
+    def save(
+            self,
+            ctx: DerivativeContext,
+            path: str,
+            value: str,
+    ) -> None:
+        Path(path).write_text(value)
+
+
 class ProtectedDerivative(Derivative[str]):
     name = 'protected'
     key_fields = ('subject',)
@@ -419,6 +454,45 @@ def test_generic_cache_path_uses_node_name_and_key():
     assert a != c
     assert a.is_relative_to(registry.cache_dir / 'value')
     assert c.is_relative_to(registry.cache_dir / 'value')
+
+
+def test_cache_collision_sidecar_disambiguates_artifact_paths():
+    root = TempDir()
+    registry = DerivativeRegistry(root, logging.getLogger('eelbrain.test.derivative_cache'))
+    derivative = CollidingDerivative(root)
+    registry.register(derivative)
+
+    state_a = {'subject': 's1', 'mode': 'a'}
+    state_b = {'subject': 's1', 'mode': 'b'}
+
+    assert registry.load('colliding', state=state_a) == 's1:a:1'
+    handle_a = registry.resolve('colliding', state=state_a)
+    assert handle_a.artifact_path == handle_a.base_artifact_path
+
+    assert registry.load('colliding', state=state_b) == 's1:b:1'
+    handle_b = registry.resolve('colliding', state=state_b)
+    assert handle_b.base_artifact_path == handle_a.base_artifact_path
+    assert handle_b.artifact_path != handle_a.artifact_path
+    assert handle_b.artifact_path.name == 'shared_alt-1.txt'
+
+    sidecar_path = Path(f"{handle_a.base_artifact_path}.disambiguation.json")
+    assert sidecar_path.exists()
+    mapping = json.loads(sidecar_path.read_text())
+    assert len(mapping) == 1
+
+    assert registry.load('colliding', state=state_a) == 's1:a:1'
+    assert registry.load('colliding', state=state_b) == 's1:b:1'
+    assert derivative.build_calls == {('s1', 'a'): 1, ('s1', 'b'): 1}
+
+
+def test_unique_cache_paths_do_not_create_disambiguation_sidecar():
+    _, registry, _, value, _, _, _, _, _ = make_registry()
+
+    assert registry.load('value', state=DEFAULT_STATE) == 'alpha'
+    handle = registry.resolve('value', state=DEFAULT_STATE)
+
+    assert not Path(f"{handle.base_artifact_path}.disambiguation.json").exists()
+    assert value.build_calls == 1
 
 
 def test_dependency_tree_formats_ascii_dependencies():

@@ -51,6 +51,8 @@ MANIFEST_SUFFIX = '.manifest.json'
 MANIFEST_SCHEMA_VERSION = 1
 DEFAULT_CACHE_LABEL = 'artifact'
 MAX_CACHE_LABEL_LEN = 96
+CACHE_KEY_HASH_LEN = 12
+CACHE_DISAMBIGUATION_SUFFIX = '.disambiguation.json'
 
 
 class CachePolicy(str, Enum):
@@ -147,6 +149,25 @@ def _simple_cache_label(key: dict[str, Any]) -> str | None:
     return '_'.join(parts)
 
 
+def _cache_key_json(key: dict[str, Any]) -> str:
+    return json.dumps(key, sort_keys=True, separators=(',', ':'), default=str)
+
+
+def _full_cache_key_digest(key: dict[str, Any]) -> str:
+    return hashlib.sha1(_cache_key_json(key).encode()).hexdigest()
+
+
+def _cache_disambiguation_path(path: str | Path) -> Path:
+    return Path(f"{Path(path)}{CACHE_DISAMBIGUATION_SUFFIX}")
+
+
+def _disambiguated_cache_artifact_path(path: str | Path, suffix: str) -> Path:
+    path = Path(path)
+    if path.suffix:
+        return path.with_name(f"{path.stem}{suffix}{path.suffix}")
+    return path.with_name(f"{path.name}{suffix}")
+
+
 def cache_artifact_path(
         cache_dir: str | Path,
         node_name: str,
@@ -156,8 +177,7 @@ def cache_artifact_path(
         label: str | None = None,
 ) -> Path:
     """Build a cache path from derivative identity."""
-    key_json = json.dumps(key, sort_keys=True, separators=(',', ':'), default=str)
-    key_hash = hashlib.sha1(key_json.encode()).hexdigest()[:12]
+    key_hash = _full_cache_key_digest(key)[:CACHE_KEY_HASH_LEN]
     label_text = label or _simple_cache_label(key) or DEFAULT_CACHE_LABEL
     label_slug = _slug_cache_path_part(label_text)[:MAX_CACHE_LABEL_LEN].rstrip('-') or DEFAULT_CACHE_LABEL
     node_slug = _slug_cache_path_part(node_name)
@@ -597,10 +617,14 @@ class DerivativeHandle(NodeHandle[T]):
             ctx: DerivativeContext,
     ):
         super().__init__(derivative, ctx)
-        self.artifact_path = Path(self.node.path(self.ctx))
+        self._key = self.node.key(self.ctx)
+        self.base_artifact_path = Path(self.node.path(self.ctx))
+        self.artifact_path = Path(self.registry.resolve_cache_artifact_path(self.base_artifact_path, self._key))
         self.manifest_path = Path(self.registry.manifest_path(self.artifact_path))
 
     node: Derivative[T]
+    _key: dict[str, Any]
+    base_artifact_path: Path
     artifact_path: Path
     manifest_path: Path
 
@@ -611,7 +635,7 @@ class DerivativeHandle(NodeHandle[T]):
         )
 
     def key(self) -> dict[str, Any]:
-        return self.node.key(self.ctx)
+        return self._key
 
     def _manifest(self) -> ArtifactManifest | None:
         return self.registry.read_manifest(self.manifest_path)
@@ -784,6 +808,55 @@ class DerivativeRegistry:
             return str(artifact_path.relative_to(self.root))
         except ValueError:
             return str(artifact_path)
+
+    def _read_cache_disambiguation(self, path: str | Path) -> dict[str, str]:
+        sidecar_path = _cache_disambiguation_path(path)
+        if not sidecar_path.exists():
+            return {}
+        data = json.loads(sidecar_path.read_text())
+        if not isinstance(data, dict):
+            return {}
+        return {str(key): value for key, value in data.items() if isinstance(value, str)}
+
+    def _write_cache_disambiguation(self, path: str | Path, data: dict[str, str]) -> None:
+        sidecar_path = _cache_disambiguation_path(path)
+        sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+        sidecar_path.write_text(json.dumps(data, sort_keys=True, indent=2))
+
+    def resolve_cache_artifact_path(
+            self,
+            path: str | Path,
+            key: dict[str, Any],
+    ) -> Path:
+        artifact_path = Path(path)
+        if not self.is_cache_artifact(artifact_path):
+            return artifact_path
+
+        canonical_key = self.canonicalize(key)
+        digest = _full_cache_key_digest(canonical_key)
+        mapping = self._read_cache_disambiguation(artifact_path)
+        suffix = mapping.get(digest)
+        if suffix is not None:
+            return _disambiguated_cache_artifact_path(artifact_path, suffix)
+
+        if not artifact_path.exists():
+            return artifact_path
+
+        manifest = self.read_manifest(self.manifest_path(artifact_path))
+        if manifest is None or self.canonicalize(manifest.key) == canonical_key:
+            return artifact_path
+
+        used_suffixes = set(mapping.values())
+        index = 1
+        while True:
+            suffix = f"_alt-{index}"
+            if suffix not in used_suffixes:
+                break
+            index += 1
+
+        mapping[digest] = suffix
+        self._write_cache_disambiguation(artifact_path, mapping)
+        return _disambiguated_cache_artifact_path(artifact_path, suffix)
 
     def _dependency_handles(
             self,
