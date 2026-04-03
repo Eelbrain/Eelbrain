@@ -8,12 +8,11 @@ variables = {
 }
 
 """
+from typing import Any
 from fnmatch import fnmatch as fnmatch_func
 from collections.abc import Sequence
 
-import numpy as np
-
-from .._data_obj import Factor, Var, assert_is_legal_dataset_key
+from .._data_obj import Dataset, Factor, Var, asuv, assert_is_legal_dataset_key
 from .._utils.numpy_utils import INT_TYPES
 from .._utils.parse import find_variables
 from .configuration import Configuration, ConfigurationError
@@ -23,16 +22,8 @@ from .configuration import Configuration, ConfigurationError
 RESERVED_VAR_KEYS = ('subject', 'task', 'visit')
 
 
-def as_vardef_var(v):
-    "Coerce ds.eval() output for use as variable"
-    if isinstance(v, np.ndarray):
-        if v.dtype.kind == 'b':
-            return Var(v.astype(int))
-        return Var(v)
-    return v
-
-
 class VarDef(Configuration):
+    """Base class for adding variables to events"""
 
     def __init__(self, task):
         self.task = task
@@ -69,7 +60,7 @@ class EvalVar(VarDef):
         return f"EvalVar({self.code!r})"
 
     def apply(self, ds, groups):
-        return as_vardef_var(ds.eval(self.code))
+        return asuv(self.code, data=ds)
 
     def input_vars(self):
         return find_variables(self.code)
@@ -214,14 +205,14 @@ class GroupVar(VarDef):
         return ()
 
 
-def parse_named_vardef(string):
+def _parse_named_vardef(string):
     if '=' not in string:
         raise ConfigurationError(f"variable {string!r}: needs '='")
     name, vdef = string.split('=', 1)
-    return name.strip(), parse_vardef(vdef)
+    return name.strip(), _parse_vardef(vdef)
 
 
-def parse_vardef(string):
+def _parse_vardef(string):
     string = string.strip()
     if string.startswith('group:'):
         return GroupVar.from_string(string[6:])
@@ -251,11 +242,11 @@ class Variables(Configuration):
         self.vars = {}
         for item in arg:
             if isinstance(item, str):
-                name, vdef = parse_named_vardef(item)
+                name, vdef = _parse_named_vardef(item)
             else:
                 name, vdef = item
                 if isinstance(vdef, str):
-                    vdef = parse_vardef(vdef)
+                    vdef = _parse_vardef(vdef)
                 elif isinstance(vdef, VarDef):
                     pass
                 elif isinstance(vdef, dict):
@@ -287,6 +278,9 @@ class Variables(Configuration):
     def __repr__(self):
         return '\n'.join(["Variables(", *(f'    {k!r}: {v},' for k, v in self.vars.items()), ')'])
 
+    def __bool__(self):
+        return bool(self.vars)
+
     def apply(self, ds, groups, group_only=False):
         task = ds.info.get('task', None)
         for name, vdef in self.vars.items():
@@ -294,6 +288,18 @@ class Variables(Configuration):
                 continue
             elif vdef.task is None or vdef.task == task:
                 ds[name] = vdef.apply(ds, groups)
+
+
+def apply_vardef(
+        ds: Dataset,
+        vardef: Variables | None | str,
+        tests: dict[str, Any],
+        groups: dict[str, Any],
+) -> None:
+    if isinstance(vardef, str):
+        vardef = tests[vardef].vars
+    if vardef:
+        vardef.apply(ds, groups)
 
 
 def label_groups(subject, groups, subject_groups):

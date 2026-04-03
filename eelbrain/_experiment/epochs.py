@@ -119,7 +119,6 @@ def _epochs_selected_events_options(ctx: DerivativeContext) -> dict[str, Any]:
         'add_bads': ctx.option('add_bads', True),
         'index': False,
         'data_raw': True,
-        'vardef': ctx.option('vardef'),
         'cat': ctx.option('cat'),
         'trigger_shift': ctx.option('trigger_shift', True),
         'tmax': ctx.option('tmax'),
@@ -187,13 +186,14 @@ def _prepare_epoch_dataset(
     return ds, tmin, tmax, tstop, baseline, decim, variable_tmax
 
 
-def _aggregate_evoked_dataset(
-        ctx: DerivativeContext,
+def _aggregate_dataset(
+        model: str | None,
+        equalize_evoked_count: str | None,
         ds: Dataset,
         value_name: str | None = None,
+        out_name: str | None = None,
 ) -> Dataset:
-    model = ctx.get('model')
-    equal_count = ctx.get('equalize_evoked_count') == 'eq'
+    equal_count = equalize_evoked_count == 'eq'
     aggregate_kwargs = {
         'drop_bad': True,
         'equal_count': equal_count,
@@ -203,9 +203,20 @@ def _aggregate_evoked_dataset(
         ds_agg = ds.aggregate(model, **aggregate_kwargs)
     else:
         ds_agg = ds.aggregate(model, never_drop=(value_name,), **aggregate_kwargs)
-        ds_agg.rename(value_name, 'evoked')
-    model_vars = model.split('%') if model else ()
+        if out_name is not None and out_name != value_name:
+            ds_agg.rename(value_name, out_name)
+    return ds_agg
+
+
+def _aggregate_evoked_dataset(
+        model: str | None,
+        equalize_evoked_count: str | None,
+        ds: Dataset,
+        value_name: str | None = None,
+) -> Dataset:
+    ds_agg = _aggregate_dataset(model, equalize_evoked_count, ds, value_name, 'evoked' if value_name is not None else None)
     if value_name is not None:
+        model_vars = model.split('%') if model else ()
         for evoked, *cell in ds_agg.zip('evoked', *model_vars):
             evoked.info['description'] = "Eelbrain"
             evoked.comment = ' % '.join(cell)
@@ -238,6 +249,110 @@ def _apply_epochs_selection(ds: Dataset, selection: np.ndarray | None) -> Datase
     return ds
 
 
+def _select_model_cat(ds: Dataset, model: str | None, cat) -> Dataset:
+    if not cat:
+        return ds
+    if not model:
+        raise TypeError(f"{cat=} with {model=}: the cat parameter only applies when a model is specified")
+    idx = ds.eval(model).isin(cat)
+    ds = ds.sub(idx)
+    if ds.n_cases == 0:
+        raise RuntimeError(f"Selection with {cat=} resulted in empty Dataset")
+    return ds
+
+
+def _apply_evoked_load_options(
+        ds: Dataset,
+        *,
+        epoch: Any,
+        raw: dict[str, Any],
+        raw_name: str,
+        subject: str,
+        model: str | None,
+        baseline,
+        ndvar,
+        cat,
+        data_raw: bool,
+        data,
+        load_raw=None,
+) -> Dataset:
+    ds = _select_model_cat(ds, model, cat)
+
+    if baseline is True:
+        baseline = epoch.baseline
+    if baseline and not epoch.post_baseline_trigger_shift:
+        for evoked in ds['evoked']:
+            mne.baseline.rescale(evoked.data, evoked.times, baseline, 'mean', copy=False)
+
+    data = TestDims.coerce(data)
+    if ndvar:
+        evoked = ds['evoked']
+        if ndvar == 1:
+            del ds['evoked']
+        pipe = raw[raw_name]
+        info = evoked[0].info
+        sensor_types = ds.info['sensor_types'] = data.data_to_ndvar(info)
+        for sensor_type in sensor_types:
+            sysname = pipe.get_sysname(info, subject, sensor_type, raw)
+            adjacency = pipe.get_adjacency(sensor_type, raw)
+            name = 'meg' if sensor_type == 'mag' else sensor_type
+            ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
+            if sensor_type != 'eog' and isinstance(data.sensor, str):
+                ds[name] = getattr(ds[name], data.sensor)('sensor')
+    if data_raw:
+        if load_raw is None:
+            raise RuntimeError("data_raw=True requires a raw loader")
+        ds.info['raw'] = load_raw()
+    elif 'raw' in ds.info:
+        del ds.info['raw']
+    return ds
+
+
+def _combine_group_evoked_datasets(
+        dss: list[Dataset],
+        *,
+        raw: dict[str, Any],
+        raw_name: str,
+        data,
+        ndvar,
+) -> Dataset:
+    data = TestDims.coerce(data)
+    individual_ndvar = isinstance(data.sensor, str)
+    if individual_ndvar:
+        ndvar = False
+    elif ndvar:
+        for ds in dss:
+            for evoked in ds['evoked']:
+                evoked.info['bads'] = []
+    ds = combine(dss, incomplete='drop')
+    if not ndvar and not individual_ndvar:
+        lens = [len(evoked.times) for evoked in ds['evoked']]
+        ulens = set(lens)
+        if len(ulens) > 1:
+            err = ["Unequal time axis sampling (len):"]
+            alens = np.array(lens)
+            for length in ulens:
+                subjects = ', '.join(ds[alens == length, 'subject'].cells)
+                err.append(f"{length}: {subjects}")
+            raise DimensionMismatchError('\n'.join(err))
+        return ds
+    if ndvar and not individual_ndvar:
+        evoked = ds['evoked']
+        del ds['evoked']
+        pipe = raw[raw_name]
+        info = evoked[0].info
+        sensor_types = ds.info['sensor_types'] = data.data_to_ndvar(info)
+        subject = ds[0, 'subject']
+        for sensor_type in sensor_types:
+            sysname = pipe.get_sysname(info, subject, sensor_type, raw)
+            adjacency = pipe.get_adjacency(sensor_type, raw)
+            name = 'meg' if sensor_type == 'mag' else sensor_type
+            ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
+            if sensor_type != 'eog' and isinstance(data.sensor, str):
+                ds[name] = getattr(ds[name], data.sensor)('sensor')
+    return ds
+
+
 def _build_evoked_shell(
         ctx: DerivativeContext,
         epochs: dict[str, Any],
@@ -251,7 +366,6 @@ def _build_evoked_shell(
         'add_bads': epochs_options['add_bads'],
         'index': False,
         'data_raw': True,
-        'vardef': epochs_options.get('vardef'),
         'cat': epochs_options.get('cat'),
         'trigger_shift': epochs_options.get('trigger_shift', True),
         'tmax': epochs_options.get('tmax'),
@@ -278,7 +392,7 @@ def _build_evoked_shell(
             ds = _apply_epochs_selection(ds, selection)
 
     if aggregate:
-        return _aggregate_evoked_dataset(ctx, ds)
+        return _aggregate_evoked_dataset(ctx.get('model'), ctx.get('equalize_evoked_count'), ds)
     else:
         return ds
 
@@ -312,7 +426,7 @@ class EpochBase(Configuration):
 
 class Epoch(EpochBase):
     """Epoch definition base (non-functional baseclass)"""
-    DICT_ATTRS = ('name', 'tmin', 'tmax', 'decim', 'samplingrate', 'baseline', 'vars', 'trigger_shift', 'post_baseline_trigger_shift', 'post_baseline_trigger_shift_min', 'post_baseline_trigger_shift_max')
+    DICT_ATTRS = ('name', 'tmin', 'tmax', 'decim', 'samplingrate', 'baseline', 'trigger_shift', 'post_baseline_trigger_shift', 'post_baseline_trigger_shift_min', 'post_baseline_trigger_shift_max')
 
     # to be set by subclass
     rej_file_epochs = None
@@ -325,7 +439,6 @@ class Epoch(EpochBase):
             samplingrate: float = None,
             decim: int = None,
             baseline: tuple[float | None, float | None] = None,
-            vars: dict = None,
             trigger_shift: float | str = 0.,
             post_baseline_trigger_shift: str = None,
             post_baseline_trigger_shift_min: float = None,
@@ -371,7 +484,6 @@ class Epoch(EpochBase):
         self.samplingrate = typed_arg(samplingrate, float, int)
         self.decim = typed_arg(decim, int)
         self.baseline = baseline
-        self.vars = vars
         self.trigger_shift = trigger_shift
         self.post_baseline_trigger_shift = post_baseline_trigger_shift
         self.post_baseline_trigger_shift_min = post_baseline_trigger_shift_min
@@ -403,14 +515,6 @@ class PrimaryEpoch(Epoch):
     baseline : tuple
         The baseline of the epoch (default ``(None, 0)``; if ``tmin > 0``: no
         baseline; if ``tmax < 0``: the whole interval).
-    vars
-        Add new variables only for this epoch.
-        Each entry specifies a variable with the following schema:
-        ``{name: definition}``. ``definition`` can be either a string that is
-        evaluated in the events-Dataset`, or a
-        ``(source_name, {value: code})``-tuple.
-        ``source_name`` can also be an interaction, in which case cells are joined
-        with spaces (``"f1_cell f2_cell"``).
     trigger_shift
         Shift event triggers before extracting the data [in seconds]. Can be a
         float to shift all triggers by the same value, or a str indicating an event
@@ -420,8 +524,9 @@ class PrimaryEpoch(Epoch):
         ``trigger_shift`` of their base epoch.
     post_baseline_trigger_shift
         Shift the trigger (i.e., where epoch time = 0) after baseline correction.
-        The value of this entry has to be the name of an event variable providing
-        for each epoch the actual amount of time shift (in seconds). If the
+        The value of this entry is an expression that is evaluated in the
+        selected-events Dataset and needs to yield the actual amount of time
+        shift (in seconds) for each epoch. If the
         ``post_baseline_trigger_shift`` parameter is specified, the parameters
         ``post_baseline_trigger_shift_min`` and ``post_baseline_trigger_shift_max``
         are also needed, specifying the smallest and largest possible shift. These
@@ -462,14 +567,13 @@ class PrimaryEpoch(Epoch):
             samplingrate: float = None,
             decim: int = None,
             baseline: tuple[float | None, float | None] = None,
-            vars: dict = None,
             trigger_shift: float | str = 0.,
             post_baseline_trigger_shift: str = None,
             post_baseline_trigger_shift_min: float = None,
             post_baseline_trigger_shift_max: float = None,
             n_cases: int = None,
     ):
-        Epoch.__init__(self, tmin, tmax, samplingrate, decim, baseline, vars, trigger_shift, post_baseline_trigger_shift, post_baseline_trigger_shift_min, post_baseline_trigger_shift_max)
+        Epoch.__init__(self, tmin, tmax, samplingrate, decim, baseline, trigger_shift, post_baseline_trigger_shift, post_baseline_trigger_shift_min, post_baseline_trigger_shift_max)
         self.task = task
         self.sel = typed_arg(sel, str)
         self.n_cases = typed_arg(n_cases, int)
@@ -707,16 +811,8 @@ class ContinuousEpoch(EpochBase):
     samplingrate
         Target samplingrate. Needs to divide data samplingrate evenly (e.g.
         ``200`` for data sampled at 1000 Hz; default ``200``).
-    vars
-        Add new variables only for this epoch.
-        Each entry specifies a variable with the following schema:
-        ``{name: definition}``. ``definition`` can be either a string that is
-        evaluated in the events-Dataset`, or a
-        ``(source_name, {value: code})``-tuple.
-        ``source_name`` can also be an interaction, in which case cells are joined
-        with spaces (``"f1_cell f2_cell"``).
     """
-    DICT_ATTRS = ('name', 'task', 'sel', 'pad_start', 'pad_end', 'split', 'samplingrate', 'vars')
+    DICT_ATTRS = ('name', 'task', 'sel', 'pad_start', 'pad_end', 'split', 'samplingrate')
 
     def __init__(
             self,
@@ -726,7 +822,6 @@ class ContinuousEpoch(EpochBase):
             pad_end: float = 1.000,
             split: float = 10,
             samplingrate: float = 200,
-            vars: dict = None,
     ):
         EpochBase.__init__(self)
         self.task = typed_arg(task, str)
@@ -735,7 +830,6 @@ class ContinuousEpoch(EpochBase):
         self.pad_end = typed_arg(pad_end, float)
         self.split = typed_arg(split, float)
         self.samplingrate = typed_arg(samplingrate, float, int)
-        self.vars = vars
         self.tasks = (task,)
 
 
@@ -762,8 +856,6 @@ class EpochsDerivative(Derivative[Any]):
         Whether to apply per-epoch interpolation/rejection state.
     cat
         Optional subset of model cells to keep before epoch creation.
-    vardef
-        Extra variable definition set to evaluate on the selected events.
     """
     name = 'epochs'
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw', 'epoch', 'rej')
@@ -772,10 +864,8 @@ class EpochsDerivative(Derivative[Any]):
 
     def __init__(
             self,
-            raw,
             epochs: dict[str, Any],
     ):
-        self.raw = raw
         self.epochs = epochs
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
@@ -834,7 +924,8 @@ class EpochsDerivative(Derivative[Any]):
             if ds.n_cases != n:
                 ctx.registry.log.warning("%s missing for %s/%s", n_of(n - ds.n_cases, 'epoch'), ctx.get('subject'), epoch_name)
             if ctx.option('trigger_shift', True) and epoch.post_baseline_trigger_shift:
-                ds['epochs'] = shift_mne_epoch_trigger(ds['epochs'], ds[epoch.post_baseline_trigger_shift], epoch.post_baseline_trigger_shift_min, epoch.post_baseline_trigger_shift_max)
+                shift = ds.eval(epoch.post_baseline_trigger_shift)
+                ds['epochs'] = shift_mne_epoch_trigger(ds['epochs'], shift, epoch.post_baseline_trigger_shift_min, epoch.post_baseline_trigger_shift_max)
             epoch_value = ds['epochs']
             epochs_list = [epoch_value]
 
@@ -928,8 +1019,6 @@ class EpochsDatasetDerivative(UncachedDerivative[Dataset]):
         Whether to apply per-epoch interpolation/rejection state.
     cat
         Optional subset of model cells to keep before epoch creation.
-    vardef
-        Extra variable definition set to evaluate on the selected events.
     """
     name = 'epochs-dataset'
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw', 'epoch', 'rej')
@@ -1051,8 +1140,6 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         Sampling rate override for the underlying epochs artifact.
     decim
         Decimation override for the underlying epochs artifact.
-    vardef
-        Extra variable definition set to evaluate before aggregation.
     """
     name = 'evoked'
     key_fields = (
@@ -1070,7 +1157,6 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
             'baseline': True if self.epochs[ctx.get('epoch')].post_baseline_trigger_shift else False,
             'samplingrate': ctx.option('samplingrate'),
             'decim': ctx.option('decim'),
-            'vardef': ctx.option('vardef'),
             'interpolate_bads': 'keep',
             'add_bads': True,
             'reject': True,
@@ -1094,11 +1180,10 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
             'equalize_evoked_count': ctx.get('equalize_evoked_count'),
             'samplingrate': ctx.option('samplingrate'),
             'decim': ctx.option('decim'),
-            'vardef': repr(ctx.option('vardef')),
         }
 
     def build(self, ctx: DerivativeContext) -> list[mne.Evoked]:
-        return _aggregate_evoked_dataset(ctx, ctx.load('epochs-dataset', options=self._epochs_dataset_options(ctx)), 'epochs')['evoked']
+        return _aggregate_evoked_dataset(ctx.get('model'), ctx.get('equalize_evoked_count'), ctx.load('epochs-dataset', options=self._epochs_dataset_options(ctx)), 'epochs')['evoked']
 
     def load(self, ctx: DerivativeContext, path: Path) -> list[mne.Evoked]:
         return mne.read_evokeds(path, proj=False)
@@ -1132,7 +1217,8 @@ class EvokedDatasetDerivative(UncachedDerivative[Dataset]):
         'epoch', 'rej', 'model', 'equalize_evoked_count',
     )
 
-    def __init__(self, epochs: dict[str, Any]):
+    def __init__(self, raw, epochs: dict[str, Any]):
+        self.raw = raw
         self.epochs = epochs
 
     def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
@@ -1150,49 +1236,6 @@ class EvokedDatasetDerivative(UncachedDerivative[Dataset]):
                 'data': ctx.option('data', 'sensor'),
             }),
         }
-
-    def _apply_load_options(self, ctx: DerivativeContext, ds: Dataset) -> Dataset:
-        epoch = self.epochs[ctx.get('epoch')]
-        cat = ctx.option('cat')
-        model = ctx.get('model')
-        if cat:
-            if not model:
-                raise TypeError(f"{cat=} with {model=}: the cat parameter only applies when a model is specified")
-            idx = ds.eval(model).isin(cat)
-            ds = ds.sub(idx)
-            if ds.n_cases == 0:
-                raise RuntimeError(f"Selection with {cat=} resulted in empty Dataset")
-
-        baseline = ctx.option('baseline', False)
-        if baseline is True:
-            baseline = epoch.baseline
-        if baseline and not epoch.post_baseline_trigger_shift:
-            for evoked in ds['evoked']:
-                mne.baseline.rescale(evoked.data, evoked.times, baseline, 'mean', copy=False)
-
-        ndvar = ctx.option('ndvar', True)
-        data = TestDims.coerce(ctx.option('data', 'sensor'))
-        if ndvar:
-            evoked = ds['evoked']
-            if ndvar == 1:
-                del ds['evoked']
-            raw_node = ctx.registry._get_node(raw_node_name(ctx.get('raw')))
-            pipe = raw_node.pipe
-            info = evoked[0].info
-            sensor_types = ds.info['sensor_types'] = data.data_to_ndvar(info)
-            subject = ctx.get('subject')
-            for sensor_type in sensor_types:
-                sysname = pipe.get_sysname(info, subject, sensor_type, raw_node.pipes)
-                adjacency = pipe.get_adjacency(sensor_type, raw_node.pipes)
-                name = 'meg' if sensor_type == 'mag' else sensor_type
-                ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
-                if sensor_type != 'eog' and isinstance(data.sensor, str):
-                    ds[name] = getattr(ds[name], data.sensor)('sensor')
-        if ctx.option('data_raw', False):
-            ds.info['raw'] = load_raw_dependency(ctx, add_bads=True, preload=False, noise=False)
-        elif 'raw' in ds.info:
-            del ds.info['raw']
-        return ds
 
     def build(self, ctx: DerivativeContext) -> Dataset:
         evoked = ctx.load('evoked')
@@ -1213,7 +1256,20 @@ class EvokedDatasetDerivative(UncachedDerivative[Dataset]):
             for evoked_i in evoked:
                 evoked_i.info['bads'] = bads
         ds['evoked'] = evoked
-        return self._apply_load_options(ctx, ds)
+        return _apply_evoked_load_options(
+            ds,
+            epoch=self.epochs[ctx.get('epoch')],
+            raw=self.raw,
+            raw_name=ctx.get('raw'),
+            subject=ctx.get('subject'),
+            model=ctx.get('model'),
+            baseline=ctx.option('baseline', False),
+            ndvar=ctx.option('ndvar', True),
+            cat=ctx.option('cat'),
+            data_raw=ctx.option('data_raw', False),
+            data=ctx.option('data', 'sensor'),
+            load_raw=lambda: load_raw_dependency(ctx, add_bads=True, preload=False, noise=False),
+        )
 
 
 class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
@@ -1234,14 +1290,13 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
     data_raw
         Whether to keep raw objects in ``ds.info['raw']`` for the subject
         datasets before combining.
-    vardef
-        Extra variable definition set to evaluate before aggregation.
     data
         Sensor representation to return.
     """
     name = 'evoked-group-dataset'
 
-    def __init__(self, groups: dict[str, Sequence[str]]):
+    def __init__(self, raw, groups: dict[str, Sequence[str]]):
+        self.raw = raw
         self.groups = groups
 
     def key(self, ctx: DerivativeContext) -> dict[str, Any]:
@@ -1264,47 +1319,17 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
         )
 
     def build(self, ctx: DerivativeContext) -> Dataset:
-        data = TestDims.coerce(ctx.option('data'))
-        individual_ndvar = isinstance(data.sensor, str)
         dss = [
             ctx.load('evoked-dataset', state={'subject': subject, 'group': None}, options=self._subject_options(ctx))
             for subject in self.groups[ctx.get('group')]
         ]
-        ndvar = ctx.option('ndvar')
-        if individual_ndvar:
-            ndvar = False
-        elif ndvar:
-            for ds in dss:
-                for evoked in ds['evoked']:
-                    evoked.info['bads'] = []
-        ds = combine(dss, incomplete='drop')
-        if not ndvar and not individual_ndvar:
-            lens = [len(evoked.times) for evoked in ds['evoked']]
-            ulens = set(lens)
-            if len(ulens) > 1:
-                err = ["Unequal time axis sampling (len):"]
-                alens = np.array(lens)
-                for length in ulens:
-                    subjects = ', '.join(ds[alens == length, 'subject'].cells)
-                    err.append(f"{length}: {subjects}")
-                raise DimensionMismatchError('\n'.join(err))
-            return ds
-        if ndvar and not individual_ndvar:
-            evoked = ds['evoked']
-            del ds['evoked']
-            raw_node = ctx.registry._get_node(raw_node_name(ctx.get('raw')))
-            pipe = raw_node.pipe
-            info = evoked[0].info
-            sensor_types = ds.info['sensor_types'] = data.data_to_ndvar(info)
-            subject = ds[0, 'subject']
-            for sensor_type in sensor_types:
-                sysname = pipe.get_sysname(info, subject, sensor_type, raw_node.pipes)
-                adjacency = pipe.get_adjacency(sensor_type, raw_node.pipes)
-                name = 'meg' if sensor_type == 'mag' else sensor_type
-                ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
-                if sensor_type != 'eog' and isinstance(data.sensor, str):
-                    ds[name] = getattr(ds[name], data.sensor)('sensor')
-        return ds
+        return _combine_group_evoked_datasets(
+            dss,
+            raw=self.raw,
+            raw_name=ctx.get('raw'),
+            data=ctx.option('data'),
+            ndvar=ctx.option('ndvar'),
+        )
 
 
 def decim_param(

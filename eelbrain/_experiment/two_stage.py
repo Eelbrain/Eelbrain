@@ -1,0 +1,438 @@
+# Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+"""Two-stage test definitions and derivatives."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from .. import load, save, testnd
+from .._data_obj import Dataset, combine
+from .._io.pickle import update_subjects_dir
+from .._utils.parse import find_variables
+from .derivative_cache import Dependency, Derivative, DerivativeContext, UncachedDerivative
+from .pathing import mri_sdir
+from .results import (
+    ResultOutputDerivative,
+    _epochs_stc_options,
+    _evoked_stc_options,
+    _result_subjects,
+    _subject_request_state,
+    result_test_kwargs,
+)
+from .source import ROIData, roi_data_from_subject_datasets
+from .test_def import ROITestResult, Test
+from .variable_def import apply_vardef
+
+
+class TwoStageTest(Test):
+    """Two-stage test: T-test of regression coefficients
+
+    Stage 1: fit a regression model to the data for each subject.
+    Stage 2: test coefficients from stage 1 against 0 across subjects.
+
+    Parameters
+    ----------
+    stage_1 : str
+        Stage 1 model specification. Coding for categorial predictors uses 0/1 dummy
+        coding.
+    vars : dict
+        Add new variables for the stage 1 model. This is useful for specifying
+        coding schemes based on categorial variables.
+        Each entry specifies a variable with the following schema:
+        ``{name: definition}``. ``definition`` can be either a string that is
+        evaluated in the events-:class:`Dataset`, or a
+        ``(source_name, {value: code})``-tuple (see example below).
+        ``source_name`` can also be an interaction, in which case cells are joined
+        with spaces (``"f1_cell f2_cell"``).
+    model : str
+        This parameter can be supplied to perform stage 1 tests on condition
+        averages. If ``model`` is not specified, the stage1 model is fit on single
+        trial data.
+
+    See Also
+    --------
+    Pipeline.tests
+
+    Examples
+    --------
+    The first example assumes 2 categorical variables present in events,
+    'a' with values 'a1' and 'a2', and 'b' with values 'b1' and 'b2'. These are
+    recoded into 0/1 codes::
+
+        TwoStageTest(
+            "a_num + b_num + a_num * b_num + index + a_num * index",
+            vars={
+                'a_num': ('a', {'a1': 0, 'a2': 1}),
+                'b_num': ('b', {'b1': 0, 'b2': 1}),
+            }),
+
+    The second test definition uses the "index" variable which is always present
+    and specifies the chronological index of the events as an integer count.
+    This variable can thus be used to test for a linear change over time. Due
+    to the numeric nature of these variables interactions can be computed by
+    multiplication::
+
+        TwoStageTest("a_num + index + a_num * index",
+                     vars={'a_num': ('a', {'a1': 0, 'a2': 1})
+
+    Numerical variables can also defined using data-object methods (e.g.
+    :meth:`Factor.label_length`) or from interactions::
+
+        TwoStageTest('wordlength', vars={'wordlength': 'word.label_length()'})
+        TwoStageTest("ab", vars={'ab': ('a%b', {'a1 b1': 0, 'a1 b2': 1, 'a2 b1': 1, 'a2 b2': 2})})
+    """
+    kind = 'two-stage'
+    DICT_ATTRS = Test.DICT_ATTRS + ('stage_1',)
+
+    def __init__(self, stage_1: str, vars: dict = None, model: str = None):
+        Test.__init__(self, stage_1, model, vars=vars, depend_on=find_variables(stage_1))
+        self.stage_1 = stage_1
+
+    def make_stage_1(self, y, data, subject, sub=None):
+        """Assumes that model has already been applied"""
+        return testnd.LM(y, self.stage_1, sub=sub, data=data, samples=0, subject=subject)
+
+    @staticmethod
+    def make_stage_2(lms, kwargs):
+        lm = testnd.LMGroup(lms)
+        lm.compute_column_ttests(**kwargs)
+        return lm
+
+    def make(self, y, ds, force_permutation, kwargs):
+        lms = [self.make_stage_1(y, ds, subject, f"subject=={subject!r}") for subject in ds['subject'].cells]
+        return self.make_stage_2(lms, kwargs)
+
+
+class ROI2StageResult(ROITestResult):
+    """Test results for 2-stage tests in one or more ROIs
+
+    Attributes
+    ----------
+    subjects : tuple of str
+        Subjects included in the test.
+    samples : int
+        ``samples`` parameter used for permutation tests.
+    res : {str: LMGroup} dict
+        Test result for each ROI.
+    n_trials_ds : Dataset
+        Dataset describing how many trials were used in each condition per
+        subject.
+    """
+
+
+@dataclass
+class SubjectROILMResult:
+    lms: dict[str, Any]
+    n_trials_ds: Dataset
+
+
+def _resolved_mask(ctx: DerivativeContext):
+    parc = ctx.option('parc')
+    if parc:
+        return parc
+    return ctx.option('mask')
+
+
+def _two_stage_source_name(ds: Dataset) -> str:
+    for name in ('srcm', 'src', 'stcm', 'stc'):
+        if name in ds:
+            return name
+
+
+class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
+    """Prepared source-space data for two-stage level-1 fits.
+
+    Options
+    -------
+    data
+        Analysis data family. Sensor data is not supported.
+    baseline
+        Sensor-space baseline correction for upstream source estimates.
+    src_baseline
+        Source-space baseline correction.
+    parc, mask
+        Optional source-space parcellation or mask controls.
+    samplingrate
+        Sampling rate override for upstream cached data.
+    smooth
+        Optional source-space smoothing.
+    """
+    name = 'two-stage-data'
+    key_fields = (
+        'subject', 'group', 'epoch', 'raw', 'rej', 'model', 'equalize_evoked_count',
+        'test', 'cov', 'inv', 'src', 'mri',
+    )
+
+    def __init__(self, tests: dict[str, Test], epochs: dict[str, Any], groups: dict[str, tuple[str, ...] | list[str]]):
+        self.tests = tests
+        self.epochs = epochs
+        self.groups = groups
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        return {
+            'state': ctx.registry.canonicalize({
+                'group': ctx.get('group'),
+                'subject': ctx.get('subject'),
+                'epoch': ctx.get('epoch'),
+                'raw': ctx.get('raw'),
+                'rej': ctx.get('rej'),
+                'model': ctx.get('model'),
+                'equalize_evoked_count': ctx.get('equalize_evoked_count'),
+                'cov': ctx.get('cov'),
+                'inv': ctx.get('inv'),
+                'src': ctx.get('src'),
+                'mri': ctx.get('mri'),
+                'test': ctx.get('test'),
+            }),
+            'definitions': ctx.registry.canonicalize({
+                'test': self.tests[ctx.option('test')]._as_dict(),
+                'epoch': self.epochs[ctx.get('epoch')]._as_dict(),
+            }),
+            'options': ctx.registry.canonicalize({
+                'data': ctx.option('data').string,
+                'baseline': ctx.option('baseline'),
+                'src_baseline': ctx.option('src_baseline'),
+                'parc': ctx.option('parc'),
+                'mask': _resolved_mask(ctx),
+                'samplingrate': ctx.option('samplingrate'),
+                'smooth': ctx.option('smooth'),
+            }),
+        }
+
+    def _subject_dependency(self, ctx: DerivativeContext, subject: str) -> Dependency:
+        data = ctx.option('data')
+        test_obj = self.tests[ctx.option('test')]
+        samplingrate = ctx.option('samplingrate')
+        state = _subject_request_state(ctx, subject)
+        if data.source is True:
+            if test_obj.model is None or test_obj.vars:
+                return Dependency(
+                    'epochs-stc',
+                    label=subject,
+                    state=state,
+                    options=_epochs_stc_options(ctx, morph=data.morph, mask=_resolved_mask(ctx), samplingrate=samplingrate),
+                )
+            return Dependency(
+                'evoked-stc',
+                label=subject,
+                state={**state, 'model': test_obj.model},
+                options=_evoked_stc_options(ctx, morph=data.morph, cat=None, mask=_resolved_mask(ctx), samplingrate=samplingrate),
+            )
+        if test_obj.model is None or test_obj.vars:
+            return Dependency(
+                'epochs-stc',
+                label=subject,
+                state=state,
+                options=_epochs_stc_options(ctx, morph=None, mask=True, samplingrate=samplingrate),
+            )
+        return Dependency(
+            'evoked-stc',
+            label=subject,
+            state={**state, 'model': test_obj.model},
+            options=_evoked_stc_options(ctx, morph=False, cat=None, mask=True, samplingrate=samplingrate),
+        )
+
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        data = ctx.option('data')
+        if data.sensor:
+            return ()
+        return tuple(self._subject_dependency(ctx, subject) for subject in _result_subjects(self, ctx))
+
+    def _load_subject_data(self, ctx: DerivativeContext, subject: str) -> Dataset:
+        from .epochs import _aggregate_dataset
+
+        data = ctx.option('data')
+        test_obj = self.tests[ctx.option('test')]
+        state = _subject_request_state(ctx, subject)
+        samplingrate = ctx.option('samplingrate')
+
+        if data.source is True:
+            if test_obj.model is None or test_obj.vars:
+                ds = ctx.load('epochs-stc', state=state, options=_epochs_stc_options(ctx, morph=data.morph, mask=_resolved_mask(ctx), samplingrate=samplingrate))
+                if test_obj.vars:
+                    apply_vardef(ds, test_obj.vars, self.tests, self.groups)
+                if test_obj.model is not None:
+                    ds = _aggregate_dataset(test_obj.model, ctx.get('equalize_evoked_count'), ds, _two_stage_source_name(ds))
+            else:
+                ds = ctx.load('evoked-stc', state={**state, 'model': test_obj.model}, options=_evoked_stc_options(ctx, morph=data.morph, cat=None, mask=_resolved_mask(ctx), samplingrate=samplingrate))
+            if ctx.option('smooth'):
+                ds[data.y_name] = ds[data.y_name].smooth('source', ctx.option('smooth'), 'gaussian')
+            return ds
+
+        if ctx.option('smooth'):
+            raise TypeError(f"smooth={ctx.option('smooth')!r} for ROI two-stage tests")
+        if test_obj.model is None:
+            ds = ctx.load('epochs-stc', state=state, options=_epochs_stc_options(ctx, morph=None, mask=True, samplingrate=samplingrate))
+            if test_obj.vars:
+                apply_vardef(ds, test_obj.vars, self.tests, self.groups)
+            return ds
+        if not test_obj.vars:
+            return ctx.load('evoked-stc', state={**state, 'model': test_obj.model}, options=_evoked_stc_options(ctx, morph=False, cat=None, mask=True, samplingrate=samplingrate))
+        ds = ctx.load('epochs-stc', state=state, options=_epochs_stc_options(ctx, morph=None, mask=True, samplingrate=samplingrate))
+        apply_vardef(ds, test_obj.vars, self.tests, self.groups)
+        return _aggregate_dataset(test_obj.model, ctx.get('equalize_evoked_count'), ds, _two_stage_source_name(ds))
+
+    def build(self, ctx: DerivativeContext) -> Dataset | ROIData:
+        data = ctx.option('data')
+        test_obj = self.tests[ctx.option('test')]
+        if not isinstance(test_obj, TwoStageTest):
+            raise RuntimeError(f"{self.name!r} requires a TwoStageTest")
+        if data.sensor:
+            raise NotImplementedError(f"Two-stage test with data={data.string!r}")
+
+        dss = [self._load_subject_data(ctx, subject) for subject in _result_subjects(self, ctx)]
+        if ctx.get('group') in (None, '', '*'):
+            return dss[0]
+        if data.source is True:
+            return combine(dss)
+        return roi_data_from_subject_datasets(dss, data.source)
+
+
+class TwoStageLevel1Derivative(Derivative[Any]):
+    """Cached first-stage LM fit for one subject."""
+    name = 'two-stage-level-1'
+    key_fields = (
+        'subject', 'epoch', 'raw', 'rej', 'model', 'equalize_evoked_count',
+        'test', 'cov', 'inv', 'src', 'mri',
+    )
+    cache_suffix = '.pickle'
+
+    def __init__(self, tests: dict[str, Test]):
+        self.tests = tests
+
+    def key(self, ctx: DerivativeContext) -> dict[str, Any]:
+        subject = ctx.get('subject')
+        if subject in (None, '', '*'):
+            raise RuntimeError(f"{self.name!r} requires an explicit subject")
+        return super().key(ctx)
+
+    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+        return {
+            'state': ctx.registry.canonicalize({
+                'subject': ctx.get('subject'),
+                'epoch': ctx.get('epoch'),
+                'raw': ctx.get('raw'),
+                'rej': ctx.get('rej'),
+                'model': ctx.get('model'),
+                'equalize_evoked_count': ctx.get('equalize_evoked_count'),
+                'cov': ctx.get('cov'),
+                'inv': ctx.get('inv'),
+                'src': ctx.get('src'),
+                'mri': ctx.get('mri'),
+                'test': ctx.get('test'),
+            }),
+            'definitions': ctx.registry.canonicalize({
+                'test': self.tests[ctx.option('test')]._as_dict(),
+            }),
+            'options': ctx.registry.canonicalize({
+                'data': ctx.option('data').string,
+                'baseline': ctx.option('baseline'),
+                'src_baseline': ctx.option('src_baseline'),
+                'parc': ctx.option('parc'),
+                'mask': _resolved_mask(ctx),
+                'samplingrate': ctx.option('samplingrate'),
+                'smooth': ctx.option('smooth'),
+            }),
+        }
+
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        return (Dependency('two-stage-data', state=_subject_request_state(ctx, ctx.get('subject')), options=ctx.options),)
+
+    def build(self, ctx: DerivativeContext):
+        test_obj = self.tests[ctx.option('test')]
+        if not isinstance(test_obj, TwoStageTest):
+            raise RuntimeError(f"{self.name!r} requires a TwoStageTest")
+        data = ctx.option('data')
+        subject = ctx.get('subject')
+        if data.source is True:
+            ds = ctx.load('two-stage-data', state=_subject_request_state(ctx, subject), options=ctx.options)
+            return test_obj.make_stage_1(data.y_name, ds, subject)
+        if data.sensor:
+            raise NotImplementedError(f"Two-stage test with data={data.string!r}")
+        ds = ctx.load('two-stage-data', state=_subject_request_state(ctx, subject), options=ctx.options)
+        roi_data = roi_data_from_subject_datasets([ds], data.source)
+        return SubjectROILMResult(
+            {label: test_obj.make_stage_1('label_tc', label_ds, subject) for label, label_ds in roi_data.label_data.items()},
+            roi_data.n_trials_ds,
+        )
+
+    def load(self, ctx: DerivativeContext, path: Path):
+        value = load.unpickle(path)
+        if ctx.option('data').source:
+            update_subjects_dir(value, mri_sdir(ctx.state), 2)
+        return value
+
+    def save(self, ctx: DerivativeContext, path: Path, value) -> None:
+        save.pickle(value, path)
+
+
+class TwoStageLevel2Derivative(ResultOutputDerivative):
+    """Cached second-stage group result for two-stage tests."""
+    name = 'two-stage-level-2'
+    sampled_path = True
+    cache_suffix = '.pickle'
+    path = Derivative.path
+
+    def cache_label(self, ctx: DerivativeContext) -> str:
+        return self.path_stem(ctx) if ctx.option('samples') is None else f"{self.path_stem(ctx)}_samples-{ctx.option('samples')}"
+
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        return tuple(
+            Dependency('two-stage-level-1', label=subject, state=_subject_request_state(ctx, subject), options=ctx.options)
+            for subject in _result_subjects(self, ctx)
+        )
+
+    def build(self, ctx: DerivativeContext):
+        test_obj = self.tests[ctx.option('test')]
+        if not isinstance(test_obj, TwoStageTest):
+            raise RuntimeError(f"{self.name!r} requires a TwoStageTest")
+        data = ctx.option('data')
+        parc = ctx.option('parc')
+        mask = ctx.option('mask')
+        pmin = ctx.option('pmin')
+        parc_dim = None
+        if data.source is True:
+            if parc:
+                parc_dim = 'source'
+            elif mask and pmin is None:
+                parc_dim = 'source'
+        elif isinstance(data.source, str):
+            if not isinstance(parc, str):
+                raise TypeError(f"parc needs to be set for ROI test (data={data.string!r})")
+            if mask is not None:
+                raise TypeError(f"{mask=}: invalid for data={data.string!r}")
+        else:
+            raise NotImplementedError(f"Two-stage test with data={data.string!r}")
+        test_kwargs = result_test_kwargs(self, ctx, data, parc_dim)
+        subject_results = [ctx.load('two-stage-level-1', state=_subject_request_state(ctx, subject), options=ctx.options) for subject in _result_subjects(self, ctx)]
+        if data.source is True:
+            return test_obj.make_stage_2(subject_results, test_kwargs)
+
+        label_lms = {}
+        for subject_result in subject_results:
+            for label, lm in subject_result.lms.items():
+                label_lms.setdefault(label, []).append(lm)
+        results = {
+            label: test_obj.make_stage_2(lms, test_kwargs)
+            for label, lms in label_lms.items()
+            if len(lms) > 2
+        }
+        n_trials_ds = combine([subject_result.n_trials_ds for subject_result in subject_results], incomplete='drop')
+        return ROI2StageResult(_result_subjects(self, ctx), ctx.option('samples'), n_trials_ds, None, results)
+
+    def load(self, ctx: DerivativeContext, path: Path):
+        res = load.unpickle(path)
+        if ctx.option('data').source:
+            update_subjects_dir(res, mri_sdir(ctx.state), 2)
+        return res
+
+    def save(self, ctx: DerivativeContext, path: Path, value) -> None:
+        save.pickle(value, path)
+
+    def validate(self, ctx: DerivativeContext, path: Path, manifest) -> bool:
+        return manifest.provenance.get('samples') == ctx.option('samples')
+
+    def provenance(self, ctx: DerivativeContext, value) -> dict[str, Any]:
+        return {'samples': value.samples}

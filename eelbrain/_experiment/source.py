@@ -10,6 +10,7 @@ methods.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 from itertools import product
 import os
@@ -614,8 +615,6 @@ class EpochsStcDerivative(Derivative[Dataset]):
         Optional source-space mask/parcellation to apply.
     data_raw
         Whether to keep raw objects in the dataset info.
-    vardef
-        Extra variable definition set to evaluate before source estimation.
     samplingrate
         Sampling rate override for the underlying epochs artifact.
     decim
@@ -649,7 +648,6 @@ class EpochsStcDerivative(Derivative[Dataset]):
                 'decim': ctx.option('decim'),
                 'pad': ctx.option('pad', 0),
                 'data_raw': ctx.option('data_raw', False),
-                'vardef': ctx.option('vardef'),
                 'data': 'sensor',
                 'add_bads': True,
             }),
@@ -672,7 +670,6 @@ class EpochsStcDerivative(Derivative[Dataset]):
             'morph': ctx.option('morph'),
             'mask': ctx.option('mask'),
             'data_raw': ctx.option('data_raw', False),
-            'vardef': repr(ctx.option('vardef')),
             'samplingrate': ctx.option('samplingrate'),
             'decim': ctx.option('decim'),
             'pad': ctx.option('pad', 0),
@@ -708,7 +705,6 @@ class EpochsStcDerivative(Derivative[Dataset]):
             'decim': ctx.option('decim'),
             'pad': ctx.option('pad', 0),
             'data_raw': ctx.option('data_raw', False),
-            'vardef': ctx.option('vardef'),
             'data': 'sensor',
             'add_bads': True,
         })
@@ -785,8 +781,6 @@ class EvokedStcDerivative(Derivative[Dataset]):
         Optional source-space mask/parcellation to apply.
     data_raw
         Whether to keep raw objects in the dataset info.
-    vardef
-        Extra variable definition set to evaluate before source estimation.
     samplingrate
         Sampling rate override for the underlying evoked artifact.
     decim
@@ -815,7 +809,6 @@ class EvokedStcDerivative(Derivative[Dataset]):
                 'samplingrate': ctx.option('samplingrate'),
                 'decim': ctx.option('decim'),
                 'data_raw': ctx.option('data_raw', False),
-                'vardef': ctx.option('vardef'),
                 'data': 'sensor',
             }),
             Dependency('inv'),
@@ -837,7 +830,6 @@ class EvokedStcDerivative(Derivative[Dataset]):
             'morph': ctx.option('morph'),
             'mask': ctx.option('mask'),
             'data_raw': ctx.option('data_raw', False),
-            'vardef': repr(ctx.option('vardef')),
             'samplingrate': ctx.option('samplingrate'),
             'decim': ctx.option('decim'),
             'ndvar': ctx.option('ndvar', True),
@@ -855,7 +847,6 @@ class EvokedStcDerivative(Derivative[Dataset]):
             'samplingrate': ctx.option('samplingrate'),
             'decim': ctx.option('decim'),
             'data_raw': ctx.option('data_raw', False),
-            'vardef': ctx.option('vardef'),
             'data': 'sensor',
         })
 
@@ -1024,3 +1015,25 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
             for subject in self.groups[ctx.get('group')]
         ]
         return combine(dss)
+
+
+def roi_data_from_subject_datasets(dss: Sequence[Dataset], reducer: str) -> ROIData:
+    n_trials_dss = []
+    label_dss = {}
+    for ds in dss:
+        n_trials_dss.append(ds)
+        ds_n = ds.copy()
+        src = ds_n.pop(next(name for name in ('srcm', 'src', 'stcm', 'stc') if name in ds_n))
+        for label in src.source.parc.cells:
+            if label.startswith('unknown-'):
+                continue
+            label_ds = ds_n.copy()
+            label_ds['label_tc'] = getattr(src, reducer)(source=label)
+            label_dss.setdefault(label, []).append(label_ds)
+    return ROIData({label: combine(label_ds, incomplete='drop') for label, label_ds in label_dss.items()}, combine(n_trials_dss, incomplete='drop'))
+
+
+@dataclass
+class ROIData:
+    label_data: dict[str, Dataset]
+    n_trials_ds: Dataset

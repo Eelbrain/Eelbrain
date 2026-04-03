@@ -9,7 +9,6 @@ from .. import testnd
 from .. import test
 from .._data_obj import CellArg
 from .._exceptions import ConfigurationError
-from .._utils.parse import find_variables
 from .configuration import Configuration
 from .variable_def import Variables, GroupVar
 
@@ -18,24 +17,11 @@ __test__ = False
 TAIL_REPR = {0: '=', 1: '>', -1: '<'}
 
 
-def assemble_tests(test_dict):
+def validate_tests(test_dict):
     "Interpret dict with test definitions"
-    out = {}
-    for key, params in test_dict.items():
-        if isinstance(params, Test):
-            out[key] = params
-            continue
-        elif not isinstance(params, dict):
-            raise TypeError(f"Invalid object for test definition {key}: {params!r}")
-        params = params.copy()
-        if 'stage 1' in params:
-            params['stage_1'] = params.pop('stage 1')
-        kind = params.pop('kind')
-        if kind in TEST_CLASSES:
-            out[key] = TEST_CLASSES[kind](**params)
-        else:
-            raise ConfigurationError(f"Unknown test kind in test definition {key}: {kind}")
-    return out
+    for key, config in test_dict.items():
+        if not isinstance(config, Test):
+            raise TypeError(f"Invalid object for test definition {key}: {config!r}")
 
 
 def tail_arg(tail):
@@ -360,92 +346,6 @@ class ANOVA(Test):
         return test.ANOVA(y, self.x, data=ds)
 
 
-class TwoStageTest(Test):
-    """Two-stage test: T-test of regression coefficients
-
-    Stage 1: fit a regression model to the data for each subject.
-    Stage 2: test coefficients from stage 1 against 0 across subjects.
-
-    Parameters
-    ----------
-    stage_1 : str
-        Stage 1 model specification. Coding for categorial predictors uses 0/1 dummy
-        coding.
-    vars : dict
-        Add new variables for the stage 1 model. This is useful for specifying
-        coding schemes based on categorial variables.
-        Each entry specifies a variable with the following schema:
-        ``{name: definition}``. ``definition`` can be either a string that is
-        evaluated in the events-:class:`Dataset`, or a
-        ``(source_name, {value: code})``-tuple (see example below).
-        ``source_name`` can also be an interaction, in which case cells are joined
-        with spaces (``"f1_cell f2_cell"``).
-    model : str
-        This parameter can be supplied to perform stage 1 tests on condition
-        averages. If ``model`` is not specified, the stage1 model is fit on single
-        trial data.
-
-    See Also
-    --------
-    Pipeline.tests
-
-    Examples
-    --------
-    The first example assumes 2 categorical variables present in events,
-    'a' with values 'a1' and 'a2', and 'b' with values 'b1' and 'b2'. These are
-    recoded into 0/1 codes::
-
-        TwoStageTest("a_num + b_num + a_num * b_num + index + a_num * index"},
-                     vars={'a_num': ('a', {'a1': 0, 'a2': 1}),
-                           'b_num': ('b', {'b1': 0, 'b2': 1})})
-
-    The second test definition uses the "index" variable which is always present
-    and specifies the chronological index of the events as an integer count.
-    This variable can thus be used to test for a linear change over time. Due
-    to the numeric nature of these variables interactions can be computed by
-    multiplication::
-
-        TwoStageTest("a_num + index + a_num * index",
-                     vars={'a_num': ('a', {'a1': 0, 'a2': 1})
-
-    Numerical variables can also defined using data-object methods (e.g.
-    :meth:`Factor.label_length`) or from interactions::
-
-        TwoStageTest('wordlength', vars={'wordlength': 'word.label_length()'})
-        TwoStageTest("ab", vars={'ab': ('a%b', {'a1 b1': 0, 'a1 b2': 1, 'a2 b1': 1, 'a2 b2': 2})})
-    """
-    kind = 'two-stage'
-    DICT_ATTRS = Test.DICT_ATTRS + ('stage_1',)
-
-    def __init__(self, stage_1: str, vars: dict = None, model: str = None):
-        Test.__init__(self, stage_1, model, vars=vars, depend_on=find_variables(stage_1))
-        self.stage_1 = stage_1
-
-    def make_stage_1(self, y, data, subject, sub=None):
-        """Assumes that model has already been applied"""
-        return testnd.LM(y, self.stage_1, sub=sub, data=data, samples=0, subject=subject)
-
-    @staticmethod
-    def make_stage_2(lms, kwargs):
-        lm = testnd.LMGroup(lms)
-        lm.compute_column_ttests(**kwargs)
-        return lm
-
-    def make(self, y, ds, force_permutation, kwargs):
-        lms = [self.make_stage_1(y, ds, subject, f"subject=={subject!r}") for subject in ds['subject'].cells]
-        return self.make_stage_2(lms, kwargs)
-
-
-TEST_CLASSES = {
-    'anova': ANOVA,
-    'ttest_1samp': TTestOneSample,
-    'ttest_rel': TTestRelated,
-    'ttest_ind': TTestIndependent,
-    't_contrast_rel': TContrastRelated,
-    'two-stage': TwoStageTest,
-}
-
-
 class TestDims:
     """Data shape for test
 
@@ -562,20 +462,3 @@ class ROITestResult:
 
     def __setstate__(self, state):
         self.__init__(**state)
-
-
-class ROI2StageResult(ROITestResult):
-    """Test results for 2-stage tests in one or more ROIs
-
-    Attributes
-    ----------
-    subjects : tuple of str
-        Subjects included in the test.
-    samples : int
-        ``samples`` parameter used for permutation tests.
-    res : {str: LMGroup} dict
-        Test result for each ROI.
-    n_trials_ds : Dataset
-        Dataset describing how many trials were used in each condition per
-        subject.
-    """

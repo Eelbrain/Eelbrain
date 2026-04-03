@@ -15,11 +15,11 @@ from .._exceptions import ConfigurationError
 from .._info import BAD_CHANNELS
 from .._names import INTERPOLATE_CHANNELS
 from .configuration import sequence_arg
-from .derivative_cache import CachePolicy, Dependency, Derivative, DerivativeContext, file_fingerprint
+from .derivative_cache import CachePolicy, Dependency, Derivative, DerivativeContext
 from .epochs import EpochCollection, SecondaryEpoch, SuperEpoch
 from .exceptions import FileMissingError
 from .pathing import rej_file_path
-from .preprocessing import load_raw_dependency, raw_bad_channels_input_name, raw_data_dependency, raw_node_name
+from .preprocessing import load_raw_dependency, raw_data_dependency, raw_node_name
 from .variable_def import Variables
 
 
@@ -37,25 +37,6 @@ def _check_ds(ds: Dataset, source: str, info: dict[str, Any]) -> Dataset:
     if ds.info is not info:
         ds.info.update(info)
     return ds
-
-
-def _coerce_vardef(vardef: None | str | Variables, tests: dict[str, Any]) -> Variables | None:
-    if vardef is None:
-        return None
-    if isinstance(vardef, str):
-        try:
-            vardef = tests[vardef].vars
-        except KeyError:
-            raise ValueError(f"{vardef=}") from None
-    elif not isinstance(vardef, Variables):
-        vardef = Variables(vardef)
-    return vardef
-
-
-def _apply_vardef(ds: Dataset, vardef: None | str | Variables, tests: dict[str, Any], groups: dict[str, Any]) -> None:
-    vardef = _coerce_vardef(vardef, tests)
-    if vardef is not None:
-        vardef.apply(ds, groups)
 
 
 class EventsDerivative(Derivative[Dataset]):
@@ -161,8 +142,6 @@ class SelectedEventsDerivative(Derivative[Dataset]):
         Whether to index the returned dataset, and which index name to use.
     data_raw
         Whether to keep the raw object in ``ds.info['raw']``.
-    vardef
-        Extra variable definition set to evaluate on the selected events.
     cat
         Optional subset of model cells to keep.
     """
@@ -175,47 +154,33 @@ class SelectedEventsDerivative(Derivative[Dataset]):
             self,
             raw,
             epochs: dict[str, Any],
-            tests: dict[str, Any],
             artifact_rejection: dict[str, dict[str, Any]],
-            groups: dict[str, Any],
     ):
         self.raw = raw
         self.epochs = epochs
-        self.tests = tests
         self.artifact_rejection = artifact_rejection
-        self.groups = groups
+
+    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+        epoch = self.epochs[ctx.get('epoch')]
+        add_bads = ctx.option('add_bads', True)
+        tasks = epoch.tasks if hasattr(epoch, 'tasks') else (epoch.task,)
+        deps = [Dependency('rej-input', label='rej')]
+        for task in tasks:
+            task_state = {'task': task}
+            deps.append(Dependency('events', label=f'{task}:events', state=task_state))
+            deps.append(Dependency(
+                raw_node_name(ctx.get('raw')),
+                label=f'{task}:raw',
+                state={**task_state, 'raw': ctx.get('raw')},
+                options={'add_bads': add_bads, 'preload': True, 'noise': False},
+            ))
+        return tuple(deps)
 
     def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
         epoch = self.epochs[ctx.get('epoch')]
-        state = dict(ctx.state)
-        task_dependencies = []
-        tasks = epoch.tasks if hasattr(epoch, 'tasks') else (epoch.task,)
-        for task in tasks:
-            task_state = {**state, 'task': task}
-            task_dependencies.append({
-                'task': task,
-                'events': ctx.registry.resolve('events', state=task_state).describe_dependency(),
-                'raw': ctx.registry.resolve(
-                    raw_node_name(task_state['raw']),
-                    state={**task_state, 'raw': task_state['raw']},
-                    options={'add_bads': ctx.option('add_bads', True), 'preload': True, 'noise': False},
-                ).describe_dependency(),
-            })
-        rej_files = None
-        if self.artifact_rejection[ctx.get('rej')]['kind'] is not None:
-            rej_files = [
-                file_fingerprint(
-                    ctx.get('root'),
-                    rej_file_path({**state, 'epoch': epoch_name, 'task': self.epochs[epoch_name].task}),
-                    'rej-file',
-                    metadata={'epoch': epoch_name},
-                )
-                for epoch_name in epoch.rej_file_epochs
-            ]
-        return {
+        return ctx.registry.canonicalize({
             'epoch': epoch._as_dict(),
             'rej': ctx.get('rej'),
-            'vardef': repr(_coerce_vardef(ctx.option('vardef'), self.tests)),
             'options': ctx.registry.canonicalize({
                 'reject': ctx.option('reject', True),
                 'add_bads': ctx.option('add_bads', True),
@@ -223,9 +188,7 @@ class SelectedEventsDerivative(Derivative[Dataset]):
                 'data_raw': ctx.option('data_raw', False),
                 'cat': sequence_arg('cat', ctx.option('cat')) if ctx.option('cat') else None,
             }),
-            'dependencies': task_dependencies,
-            'rej-files': rej_files,
-        }
+        })
 
     def dependency_fingerprint(self, ctx: DerivativeContext, view: str | None = None) -> dict[str, Any]:
         if view is None:
@@ -235,15 +198,6 @@ class SelectedEventsDerivative(Derivative[Dataset]):
         ds = self.build(ctx)
         return {'i_start': ds['i_start'].x.tolist()}
 
-    def _load_events(self, ctx: DerivativeContext, task: str, add_bads: bool | list[str], data_raw: bool) -> Dataset:
-        state = {**ctx.state, 'task': task}
-        ds = ctx.load('events', state=state)
-        raw = load_raw_dependency(ctx, add_bads=add_bads, preload=True, noise=False, state=state)
-        ds.info['raw'] = raw
-        if not data_raw and 'raw' in ds.info:
-            del ds.info['raw']
-        return ds
-
     def _build_selected_events(
             self,
             ctx: DerivativeContext,
@@ -252,7 +206,6 @@ class SelectedEventsDerivative(Derivative[Dataset]):
             add_bads: bool | list[str],
             index: str | bool,
             data_raw: bool,
-            vardef: str | Variables | None,
             cat,
     ) -> Dataset:
         subject = ctx.get('subject')
@@ -264,11 +217,6 @@ class SelectedEventsDerivative(Derivative[Dataset]):
             raw = None
             if isinstance(add_bads, Sequence):
                 bad_channels = list(add_bads)
-            elif add_bads:
-                bad_channels = sorted(set().union(*(
-                    set(ctx.load(raw_bad_channels_input_name(ctx.get('raw')), state={**ctx.state, 'task': task}, options={'noise': False}))
-                    for task in epoch.tasks
-                )))
             else:
                 bad_channels = []
             for task in epoch.tasks:
@@ -276,25 +224,33 @@ class SelectedEventsDerivative(Derivative[Dataset]):
                 for sub_epoch in epoch.sub_epochs:
                     if self.epochs[sub_epoch].task != task:
                         continue
-                    ds = self._build_selected_events(ctx, self.epochs[sub_epoch], reject, add_bads, index, data_raw, None, None)
+                    ds = self._build_selected_events(ctx, self.epochs[sub_epoch], reject, add_bads, index, data_raw, None)
                     ds[:, 'epoch'] = sub_epoch
                     task_dss.append(ds)
+                if add_bads is True:
+                    for task_ds in task_dss:
+                        task_bads = task_ds.info[BAD_CHANNELS]
+                        if not task_bads and data_raw:
+                            task_bads = task_ds.info['raw'].info['bads']
+                        bad_channels.extend(task_bads)
                 ds = combine(task_dss)
                 dss.append(ds)
                 if data_raw:
                     raw_ = task_dss[0].info['raw']
-                    raw_.info['bads'] = bad_channels
                     if raw is None:
                         raw = raw_
                     else:
                         ds['i_start'] += raw.last_samp + 1 - raw_.first_samp
                         raw.append(raw_)
+            if add_bads is True:
+                bad_channels = sorted(set(bad_channels))
             ds = combine(dss)
             if data_raw:
+                raw.info['bads'] = bad_channels
                 ds.info['raw'] = raw
             ds.info[BAD_CHANNELS] = bad_channels
         elif isinstance(epoch, SecondaryEpoch):
-            ds = self._build_selected_events(ctx, self.epochs[epoch.sel_epoch], 'keep' if reject else False, add_bads, index, data_raw, None, None)
+            ds = self._build_selected_events(ctx, self.epochs[epoch.sel_epoch], 'keep' if reject else False, add_bads, index, data_raw, None)
             if epoch.sel:
                 ds = ds.sub(epoch.sel)
             if index:
@@ -312,7 +268,11 @@ class SelectedEventsDerivative(Derivative[Dataset]):
                     raise FileMissingError(f"The rejection file at {rej_file.relative_to(Path(ctx.get('root')))} does not exist. Run .make_epoch_selection() first.")
             else:
                 ds_sel = None
-            ds = self._load_events(ctx, epoch.task, add_bads, data_raw)
+            state = {**ctx.state, 'task': epoch.task}
+            ds = ctx.load('events', state=state)
+            ds.info['raw'] = load_raw_dependency(ctx, add_bads=add_bads, preload=True, noise=False, state=state)
+            if not data_raw and 'raw' in ds.info:
+                del ds.info['raw']
             if epoch.sel:
                 ds = ds.sub(epoch.sel)
             if index:
@@ -372,9 +332,6 @@ class SelectedEventsDerivative(Derivative[Dataset]):
             else:
                 ds['i_start'] += np.round(shift * ds.info['sfreq']).astype(int)
 
-        _apply_vardef(ds, epoch.vars, self.tests, self.groups)
-        _apply_vardef(ds, vardef, self.tests, self.groups)
-
         if cat:
             model = ds.eval(ctx.get('model'))
             ds = ds.sub(model.isin(cat))
@@ -398,7 +355,6 @@ class SelectedEventsDerivative(Derivative[Dataset]):
             ctx.option('add_bads', True),
             index,
             ctx.option('data_raw', False),
-            ctx.option('vardef'),
             ctx.option('cat'),
         )
 

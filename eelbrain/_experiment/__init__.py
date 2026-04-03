@@ -103,4 +103,5 @@ analysis behavior in an extensible way. They are supplied by the user through
 
 from .experiment import StateModel
 from .pipeline import Pipeline
-from .test_def import ROITestResult, ROI2StageResult
+from .test_def import ROITestResult
+from .two_stage import ROI2StageResult, TwoStageTest

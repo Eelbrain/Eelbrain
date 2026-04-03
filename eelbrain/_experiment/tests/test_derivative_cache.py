@@ -521,3 +521,14 @@ def test_protected_artifact_can_be_incorporated_at_user_risk():
 
     assert registry.load('protected', state=DEFAULT_STATE, options={'_allow_protected_reindex': True}) == 'alpha'
     assert registry.load('protected', state=DEFAULT_STATE) == 'alpha'
+
+
+def test_runtime_code_does_not_use_private_get_node():
+    experiment_dir = Path(__file__).resolve().parents[1]
+    offenders = []
+    for path in experiment_dir.glob('*.py'):
+        if path.name == 'derivative_cache.py':
+            continue
+        if '._get_node(' in path.read_text():
+            offenders.append(path.name)
+    assert offenders == []

@@ -21,6 +21,7 @@ from eelbrain._experiment.pathing import ica_file_path, log_dir
 from eelbrain._experiment.preprocessing import raw_node_name
 from eelbrain._experiment.reports import _report_subject_info
 from eelbrain._experiment.test_def import TestDims as _TestDims
+from eelbrain._experiment.variable_def import LabelVar, Variables
 from eelbrain.testing import TempDir, assert_dataobj_equal, requires_mne_sample_data
 
 
@@ -31,6 +32,7 @@ def _test_result_manifest_path(
         tstop: float,
         pmin,
         *,
+        node: str = 'test-result',
         samples: int,
         data: str,
         baseline=True,
@@ -40,26 +42,21 @@ def _test_result_manifest_path(
         smooth=None,
         samplingrate=None,
 ) -> Path:
-    handle = e._derivatives.resolve(
-        'test-result',
-        state=e._derivative_state(),
-        options={
-            'data': _TestDims.coerce(data, morph=True),
-            'samples': samples,
-            'test': test,
-            'tstart': tstart,
-            'tstop': tstop,
-            'pmin': pmin,
-            'parc': parc,
-            'mask': mask,
-            'baseline': baseline,
-            'src_baseline': src_baseline,
-            'smooth': smooth,
-            'samplingrate': samplingrate,
-            '_allow_protected_overwrite': False,
-        },
-    )
-    return e._derivatives.manifest_path(handle.artifact_path)
+    return e._derivatives.manifest_path(e._derivatives.resolve(node, state=e._derivative_state(), options={
+        'data': _TestDims.coerce(data, morph=True),
+        'samples': samples,
+        'test': test,
+        'tstart': tstart,
+        'tstop': tstop,
+        'pmin': pmin,
+        'parc': parc,
+        'mask': mask,
+        'baseline': baseline,
+        'src_baseline': src_baseline,
+        'smooth': smooth,
+        'samplingrate': samplingrate,
+        '_allow_protected_overwrite': False,
+    }).artifact_path)
 
 
 @requires_mne_sample_data
@@ -150,6 +147,7 @@ def test_sample():
         },
         return_str=True,
     )
+    assert 'evoked-test-data [derivative]' in test_tree
     assert 'evoked-group-dataset [derivative]' in test_tree
     movie_tree = e.show_dependencies(
         'movie',
@@ -191,7 +189,8 @@ def test_sample():
     assert test_manifest_data['fingerprint']['definitions']['test']['tail'] == 1
     assert test_manifest_data['fingerprint']['definitions']['epoch']['tmax'] == 0.3
     assert 'dependencies' not in test_manifest_data['fingerprint']
-    assert 'evoked-group-dataset' in test_manifest_data['dependencies']
+    assert 'evoked-test-data' in test_manifest_data['dependencies']
+    assert 'evoked-group-dataset' in test_manifest_data['dependencies']['evoked-test-data']['dependencies']
     remove(test_manifest)
     with pytest.raises(IOError):
         e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.rms', baseline=False)
@@ -267,9 +266,12 @@ def test_sample():
     class Experiment(SampleExperiment):
         epochs = {
             **SampleExperiment.epochs,
-            'v_shift': SecondaryEpoch('visual', vars={'shift': 'Var([0.0], repeat=len(side))'}),
-            'a_shift': SecondaryEpoch('auditory', vars={'shift': 'Var([0.1], repeat=len(side))'}),
-            'av_shift': SuperEpoch(('v_shift', 'a_shift'), post_baseline_trigger_shift='shift', post_baseline_trigger_shift_max=0.1, post_baseline_trigger_shift_min=0.0),
+            'av_shift': SuperEpoch(
+                ('visual', 'auditory'),
+                post_baseline_trigger_shift="Var.from_dict(modality, {'visual': 0.0, 'auditory': 0.1})",
+                post_baseline_trigger_shift_max=0.1,
+                post_baseline_trigger_shift_min=0.0,
+            ),
         }
         groups = {
             'group0': Group(['R0000']),
@@ -282,10 +284,10 @@ def test_sample():
     e = Experiment(root)
     events = e.load_selected_events(epoch='av_shift')
     ds = e.load_epochs(baseline=True, epoch='av_shift')
-    v = ds.sub("epoch=='v_shift'", 'meg')
+    v = ds.sub("epoch=='visual'", 'meg')
     v_target = e.load_epochs(baseline=True, epoch='visual')['meg'].sub(time=(-0.1, v.time.tstop))
     assert_almost_equal(v.x, v_target.x)
-    a = ds.sub("epoch=='a_shift'", 'meg').sub(time=(-0.1, 0.099))
+    a = ds.sub("epoch=='auditory'", 'meg').sub(time=(-0.1, 0.099))
     a_target = e.load_epochs(baseline=True, epoch='auditory')['meg'].sub(time=(0, 0.199))
     assert_almost_equal(a.x, a_target.x, decimal=20)
 
@@ -482,15 +484,32 @@ def test_sample_source():
         source_manifest_data = json.load(fid)
     assert source_manifest_data['fingerprint']['definitions']['parc']['base'] == 'aparc'
     assert 'dependencies' not in source_manifest_data['fingerprint']
-    assert 'evoked-stc-group-dataset' in source_manifest_data['dependencies']
-    assert set(source_manifest_data['dependencies']['evoked-stc-group-dataset']['dependencies']) == {'R0000', 'R0001', 'R0002'}
+    assert 'evoked-test-data' in source_manifest_data['dependencies']
+    assert 'evoked-stc-group-dataset' in source_manifest_data['dependencies']['evoked-test-data']['dependencies']
+    assert set(source_manifest_data['dependencies']['evoked-test-data']['dependencies']['evoked-stc-group-dataset']['dependencies']) == {'R0000', 'R0001', 'R0002'}
     assert_dataobj_equal(resp.t, resm.t)
     # ROI tests
     e.set(epoch='target')
     ress = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, data='source.rms', parc='ac', make=True)
+    with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=100, data='source.rms', parc='ac')) as fid:
+        roi_manifest_data = json.load(fid)
+    assert 'evoked-test-data' in roi_manifest_data['dependencies']
+    roi_deps = roi_manifest_data['dependencies']['evoked-test-data']['dependencies']
+    assert set(roi_deps) == {'R0000', 'R0001', 'R0002'}
+    assert all(roi_deps[subject]['name'] == 'evoked-stc' for subject in roi_deps)
     res = ress.res['transversetemporal-lh']
     assert res.p.min() == 1 / 7
     ress = e.load_test('twostage', 0.05, 0.2, 0.05, samples=100, data='source.rms', parc='ac', make=True)
+    with open(_test_result_manifest_path(e, 'twostage', 0.05, 0.2, 0.05, node='two-stage-level-2', samples=100, data='source.rms', parc='ac')) as fid:
+        two_stage_manifest_data = json.load(fid)
+    assert 'two-stage-level-1' in {dep['name'] for dep in two_stage_manifest_data['dependencies'].values()}
+    subject_dep = two_stage_manifest_data['dependencies']['R0000']
+    with open(Path(subject_dep['manifest'])) as fid:
+        level_1_manifest_data = json.load(fid)
+    assert level_1_manifest_data['dependencies']['two-stage-data']['dependencies']['R0000']['name'] == 'epochs-stc'
+    ds_return, _ = e.load_test('twostage', 0.05, 0.2, 0.05, samples=100, data='source', return_data=True, make=True)
+    assert isinstance(ds_return, Dataset)
+    assert 'subject' in ds_return
     res = ress.res['transversetemporal-lh']
     assert res.samples == -1
     assert res.tests['intercept'].p.min() == 1 / 7
@@ -599,6 +618,40 @@ def test_sample_tasks():
     with catch_warnings():
         filterwarnings('ignore', "FastICA did not converge", UserWarning)
         assert e.make_ica() == join(root, 'derivatives', 'ica', 'sub-R0000_meg_raw-ica_ica.fif')
+
+
+@requires_mne_sample_data
+def test_evoked_backed_test_vars_are_post_aggregation_only():
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    class Experiment(SampleExperiment):
+        tests = {
+            **SampleExperiment.tests,
+            'anova-ok': ANOVA('modality * modality_num * subject', model='modality', vars={'modality_num': ('modality', {'auditory': 0, 'visual': 1})}),
+            'anova-bad': ANOVA('modality_num * subject', vars={'modality_num': ('modality', {'auditory': 0, 'visual': 1})}),
+        }
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, n_subjects=3, n_segments=2, mris=False)
+    root = join(tempdir, 'SampleExperiment')
+    e = Experiment(root, rej='')
+
+    options = {
+        'data': _TestDims.coerce('sensor.mean', morph=True),
+        'test': 'anova-ok',
+        'baseline': False,
+        'src_baseline': None,
+        'parc': None,
+        'mask': None,
+        'smooth': None,
+        'samplingrate': None,
+    }
+    ds = e._derivatives.load('evoked-test-data', state=e._derivative_state({'test': 'anova-ok'}), options=options)
+    assert 'modality_num' in ds
+
+    with pytest.raises(ConfigurationError, match='post-aggregation dataset'):
+        e._derivatives.load('evoked-test-data', state=e._derivative_state({'test': 'anova-bad'}), options={**options, 'test': 'anova-bad'})
 
 
 @requires_mne_sample_data
@@ -909,6 +962,91 @@ def test_epochs_cached_load_uses_current_selected_events(monkeypatch):
     assert isinstance(ds_cached['epochs'], mne.BaseEpochs)
     assert 'marker' in ds_cached
     assert mtimes_1 == mtimes_2
+
+
+@requires_mne_sample_data
+def test_selected_events_manifest_uses_real_dependencies():
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, n_subjects=1, n_segments=2, mris=False)
+    root = join(tempdir, 'SampleExperiment')
+
+    e = SampleExperiment(root)
+    e.set(subject='R0000', epoch='target', rej='')
+    handle = e._derivatives.resolve('selected-events', state=e._derivative_state(), options={
+        'reject': True,
+        'add_bads': True,
+        'index': True,
+        'data_raw': False,
+        'vardef': None,
+        'cat': None,
+    })
+    _ = handle.load(cache=True)
+    manifest = json.loads(handle.manifest_path.read_text())
+
+    assert 'dependencies' not in manifest['fingerprint']
+    assert 'rej' in manifest['dependencies']
+    assert any(key.endswith(':events') for key in manifest['dependencies'])
+    assert any(key.endswith(':raw') for key in manifest['dependencies'])
+
+
+@requires_mne_sample_data
+def test_selected_events_vardef_is_local():
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, n_subjects=1, n_segments=2, mris=False)
+    root = join(tempdir, 'SampleExperiment')
+
+    e = SampleExperiment(root)
+    e.set(subject='R0000', epoch='target', rej='')
+    options = {
+        'reject': True,
+        'add_bads': True,
+        'index': True,
+        'data_raw': False,
+        'cat': None,
+    }
+    compact = Variables({'grouped': LabelVar('trigger', {(1, 2): 'target'}, task='sample')})
+    expanded = Variables({'grouped': LabelVar('trigger', {1: 'target', 2: 'target'}, task='sample')})
+    changed = Variables({'grouped': LabelVar('trigger', {1: 'target', 2: 'nontarget'}, task='sample')})
+
+    handle_compact = e._derivatives.resolve('selected-events', state=e._derivative_state(), options={**options, 'vardef': compact})
+    _ = handle_compact.load(cache=True)
+    handle_expanded = e._derivatives.resolve('selected-events', state=e._derivative_state(), options={**options, 'vardef': expanded})
+    handle_changed = e._derivatives.resolve('selected-events', state=e._derivative_state(), options={**options, 'vardef': changed})
+
+    assert 'vardef' not in handle_compact.current_fingerprint()
+    assert handle_expanded.current_fingerprint() == handle_compact.current_fingerprint()
+    assert handle_expanded.is_valid()
+    assert handle_changed.current_fingerprint() == handle_compact.current_fingerprint()
+    assert handle_changed.is_valid()
+
+    ds_compact = e.load_selected_events(vardef=compact)
+    ds_changed = e.load_selected_events(vardef=changed)
+    assert set(ds_compact['grouped'].cells) == {'', 'target'}
+    assert 'nontarget' in ds_changed['grouped'].cells
+
+
+@requires_mne_sample_data
+def test_coreg_report_dependencies_are_explicit():
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, n_subjects=2, n_segments=2, mris=True)
+    root = join(tempdir, 'SampleExperiment')
+
+    e = SampleExperiment(root)
+    handle = e._derivatives.resolve('coreg-report', state=e._derivative_state(), options={'dst': None})
+
+    assert 'dependencies' not in handle.current_fingerprint()
+    dependencies = handle.dependency_fingerprints()
+    assert any(key.endswith(':raw') for key in dependencies)
+    assert any(key.endswith(':trans') for key in dependencies)
 
 
 @requires_mne_sample_data

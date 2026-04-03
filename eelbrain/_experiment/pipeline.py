@@ -22,7 +22,7 @@ from .. import load
 from .. import plot
 from .. import save
 from .._data_obj import CellArg, Datalist, Dataset, Factor, Var, NDVar, SourceSpace, VolumeSourceSpace, assert_is_legal_dataset_key, combine
-from .._exceptions import ConfigurationError
+from .._exceptions import ConfigurationError, OldVersionError
 from .._info import BAD_CHANNELS
 from .._names import INTERPOLATE_CHANNELS
 from .._meeg import new_rejection_ds
@@ -36,7 +36,11 @@ from .._utils.mne_utils import is_fake_mri
 from .covariance import CovDerivative, EpochCovariance, RawCovariance, cov_node_name
 from .derivative_cache import DerivativeRegistry, ProtectedArtifactError
 from .configuration import sequence_arg
-from .epochs import EpochBase, EpochsDatasetDerivative, EpochsDerivative, EvokedDatasetDerivative, EvokedDerivative, EvokedGroupDatasetDerivative, PrimaryEpoch, RejectionInput, SecondaryEpoch, SuperEpoch, assemble_epochs, decim_param
+from .epochs import (
+    EpochBase, EpochsDatasetDerivative, EpochsDerivative, EvokedDatasetDerivative,
+    EvokedDerivative, EvokedGroupDatasetDerivative, PrimaryEpoch, RejectionInput,
+    SecondaryEpoch, SuperEpoch, _select_model_cat, assemble_epochs, decim_param,
+)
 from .events import EventsDerivative, SELECTED_EVENTS, SelectedEventsDerivative
 from .exceptions import FileMissingError
 from .experiment import StateModel
@@ -56,18 +60,19 @@ from .reports import (
     CoregReportDerivative, EEGReportDerivative, EEGSensorsReportDerivative,
     LMReportDerivative, ROIReportDerivative, SourceReportDerivative,
 )
-from .results import MovieDerivative, TestResultDerivative
+from .results import EvokedTestDataDerivative, MovieDerivative, TestResultDerivative
 from .source import (
     BemInput, EpochsStcDerivative, EpochsStcGroupDatasetDerivative,
     EvokedStcDerivative, EvokedStcGroupDatasetDerivative, FwdDerivative,
-    InvDerivative, SourceMorphDerivative, SrcDerivative, TransInput,
+    InvDerivative, ROIData, SourceMorphDerivative, SrcDerivative, TransInput,
     eval_inv, eval_src, inv_str, inverse_operator_params,
 )
 from .test_def import (
     Test,
-    TestDims, TwoStageTest, assemble_tests,
+    TestDims, validate_tests,
 )
-from .variable_def import Variables, label_groups as label_groups_var
+from .two_stage import TwoStageDataDerivative, TwoStageLevel1Derivative, TwoStageLevel2Derivative, TwoStageTest
+from .variable_def import Variables, apply_vardef, label_groups as label_groups_var
 
 BIDS_PATH_KEYS = ('datatype', 'suffix', 'extension', 'subject', 'session', 'task', 'acquisition', 'run', 'split')
 
@@ -392,10 +397,7 @@ class Pipeline(StateModel):
         self._freqs = freqs
 
         # tests
-        self._tests = assemble_tests(self.tests)
-        test_values = sorted(self._tests)
-        if self._empty_test:
-            test_values.insert(0, '')
+        validate_tests(self.tests)
 
         ########################################################################
         # Experiment class setup
@@ -435,7 +437,7 @@ class Pipeline(StateModel):
         self._register_field('cov', sorted(self._covs))
         self._register_field('inv', default='free-3-dSPM', eval_handler=self._eval_inv)
         self._register_field('model', eval_handler=self._eval_model)
-        self._register_field('test', test_values, post_set_handler=self._post_set_test, allow_empty=self._empty_test, repr=False)
+        self._register_field('test', sorted(self.tests), post_set_handler=self._post_set_test, allow_empty=self._empty_test, repr=False)
         self._register_field('parc', parc_values, 'aparc', eval_handler=self._eval_parc, allow_empty=True)
         self._register_field('freq', self._freqs.keys())
         self._register_field('src', default='ico-4', eval_handler=self._eval_src)
@@ -515,6 +517,17 @@ class Pipeline(StateModel):
     def _init_derivative_registry(self):
         self._derivative_state_fields = tuple(self._terminal_fields)
         self._derivatives = DerivativeRegistry(self.root, self._log)
+        result_args = (
+            self.tests,
+            self._epochs,
+            self._parcs,
+            self._groups,
+            self._field_values,
+            self._mri_subjects,
+            self.get('common_brain'),
+            self._cluster_criteria,
+        )
+        report_args = (*result_args, {**self._brain_plot_defaults, **self.brain_plot_defaults})
 
         # Register inputs
         for raw_name, pipe in self._raw.items():
@@ -544,103 +557,29 @@ class Pipeline(StateModel):
             len(self._tasks) > 1,
             len(self._sessions) > 1,
         ))
-        self._derivatives.register(SelectedEventsDerivative(self._raw, self._epochs, self._tests, self._artifact_rejection, self._groups))
-        self._derivatives.register(EpochsDerivative(self._raw, self._epochs))
+        self._derivatives.register(SelectedEventsDerivative(self._raw, self._epochs, self._artifact_rejection))
+        self._derivatives.register(EpochsDerivative(self._epochs))
         self._derivatives.register(EpochsDatasetDerivative(self._raw, self._epochs))
         self._derivatives.register(EvokedDerivative(self._epochs))
-        self._derivatives.register(EvokedDatasetDerivative(self._epochs))
-        self._derivatives.register(EvokedGroupDatasetDerivative(self._groups))
+        self._derivatives.register(EvokedDatasetDerivative(self._raw, self._epochs))
+        self._derivatives.register(EvokedGroupDatasetDerivative(self._raw, self._groups))
+        self._derivatives.register(EvokedTestDataDerivative(self.tests, self._epochs, self._groups))
+        self._derivatives.register(TwoStageDataDerivative(self.tests, self._epochs, self._groups))
+        self._derivatives.register(TwoStageLevel1Derivative(self.tests))
         self._derivatives.register(AnnotDerivative(self._parcs, tuple(self.get_field_values('hemi'))))
         self._derivatives.register(EpochsStcDerivative(self._epochs))
         self._derivatives.register(EvokedStcDerivative(self._epochs))
         self._derivatives.register(EpochsStcGroupDatasetDerivative(self._groups, self._mri_subjects, self.get('common_brain')))
         self._derivatives.register(EvokedStcGroupDatasetDerivative(self._groups, self._mri_subjects, self.get('common_brain')))
-        self._derivatives.register(TestResultDerivative(
-            self._tests,
-            self._epochs,
-            self._parcs,
-            self._groups,
-            self._field_values,
-            self._mri_subjects,
-            self.get('common_brain'),
-            self._cluster_criteria,
-        ))
-        self._derivatives.register(SourceReportDerivative(
-            self._tests,
-            self._epochs,
-            self._parcs,
-            self._groups,
-            self._field_values,
-            self._mri_subjects,
-            self.get('common_brain'),
-            self._cluster_criteria,
-            {**self._brain_plot_defaults, **self.brain_plot_defaults},
-        ))
-        self._derivatives.register(ROIReportDerivative(
-            self._tests,
-            self._epochs,
-            self._parcs,
-            self._groups,
-            self._field_values,
-            self._mri_subjects,
-            self.get('common_brain'),
-            self._cluster_criteria,
-            {**self._brain_plot_defaults, **self.brain_plot_defaults},
-        ))
-        self._derivatives.register(EEGReportDerivative(
-            self._tests,
-            self._epochs,
-            self._parcs,
-            self._groups,
-            self._field_values,
-            self._mri_subjects,
-            self.get('common_brain'),
-            self._cluster_criteria,
-            {**self._brain_plot_defaults, **self.brain_plot_defaults},
-        ))
-        self._derivatives.register(EEGSensorsReportDerivative(
-            self._tests,
-            self._epochs,
-            self._parcs,
-            self._groups,
-            self._field_values,
-            self._mri_subjects,
-            self.get('common_brain'),
-            self._cluster_criteria,
-            {**self._brain_plot_defaults, **self.brain_plot_defaults},
-        ))
-        self._derivatives.register(LMReportDerivative(
-            self._tests,
-            self._epochs,
-            self._parcs,
-            self._groups,
-            self._field_values,
-            self._mri_subjects,
-            self.get('common_brain'),
-            self._cluster_criteria,
-            {**self._brain_plot_defaults, **self.brain_plot_defaults},
-        ))
-        self._derivatives.register(CoregReportDerivative(
-            self._tests,
-            self._epochs,
-            self._parcs,
-            self._groups,
-            self._field_values,
-            self._mri_subjects,
-            self.get('common_brain'),
-            self._cluster_criteria,
-            {**self._brain_plot_defaults, **self.brain_plot_defaults},
-        ))
-        self._derivatives.register(MovieDerivative(
-            self._tests,
-            self._epochs,
-            self._parcs,
-            self._groups,
-            self._field_values,
-            self._mri_subjects,
-            self.get('common_brain'),
-            self._cluster_criteria,
-        ))
+        self._derivatives.register(TestResultDerivative(*result_args))
+        self._derivatives.register(TwoStageLevel2Derivative(*result_args))
+        self._derivatives.register(SourceReportDerivative(*report_args))
+        self._derivatives.register(ROIReportDerivative(*report_args))
+        self._derivatives.register(EEGReportDerivative(*report_args))
+        self._derivatives.register(EEGSensorsReportDerivative(*report_args))
+        self._derivatives.register(LMReportDerivative(*report_args))
+        self._derivatives.register(CoregReportDerivative(*report_args))
+        self._derivatives.register(MovieDerivative(*result_args))
         for cov_name, cov in self._covs.items():
             self._derivatives.register(CovDerivative(cov_name, cov))
         self._derivatives.register(SrcDerivative())
@@ -701,23 +640,29 @@ class Pipeline(StateModel):
             raise TypeError("Pipeline.get(..., mkdir=True) is no longer supported; create directories at the explicit path site")
         return StateModel.get(self, temp, vmatch=vmatch, **state)
 
-    def _process_subject_arg(self, subjects, kwargs):
+    def _process_subject_arg(
+            self,
+            subjects: SubjectArg | None,
+            kwargs: dict[str, str],
+    ) -> tuple[str | None, str | None]:
         """Process subject arg for methods that work on groups and subjects
 
         Parameters
         ----------
-        subjects : str | 1 | -1
+        subjects
             Subject(s) for which to load data. Can be a single subject
             name or a group name such as ``'all'``. ``1`` to use the current
             subject; ``-1`` for the current group. Default is current subject
             (or group if ``group`` is specified).
-        kwargs : dict
+        kwargs
             Additional state parameters to set.
 
         Returns
         -------
         subject : None | str
             Subject name if the value specifies a subject, None otherwise.
+            One of ``subject`` and ``group`` will always be a ``str``,
+            the other always ``None``.
         group : None | str
             Group name if the value specifies a group, None otherwise.
         """
@@ -730,7 +675,7 @@ class Pipeline(StateModel):
             elif subjects == -1:
                 return None, self.get('group', **kwargs)
             else:
-                raise ValueError(f"subjects={subjects}")
+                raise ValueError(f"{subjects=}")
         elif isinstance(subjects, str):
             if subjects in self.get_field_values('group'):
                 if 'group' in kwargs:
@@ -1031,7 +976,6 @@ class Pipeline(StateModel):
             decim: int = None,
             pad: float = 0,
             data_raw: bool = False,
-            vardef: str = None,
             data: str = 'sensor',
             trigger_shift: bool = True,
             tmin: float = None,
@@ -1081,8 +1025,6 @@ class Pipeline(StateModel):
         data_raw
             Keep the :class:`mne.io.Raw` instance in ``ds.info['raw']``
             (default False).
-        vardef
-            Name of a test defining additional variables.
         data
             Data to load; 'sensor' to load all sensor data (default);
             'sensor.rms' to return RMS over sensors. Only applies to NDVar
@@ -1129,7 +1071,6 @@ class Pipeline(StateModel):
             'decim': decim,
             'pad': pad,
             'data_raw': data_raw,
-            'vardef': vardef,
             'data': data,
             'trigger_shift': trigger_shift,
             'tmin': tmin,
@@ -1159,7 +1100,6 @@ class Pipeline(StateModel):
             morph: bool = None,
             mask: bool | str = False,
             data_raw: bool = False,
-            vardef: str = None,
             samplingrate: int = None,
             decim: int = None,
             pad: float = 0,
@@ -1203,8 +1143,6 @@ class Pipeline(StateModel):
         data_raw
             Keep the :class:`mne.io.Raw` instance in ``ds.info['raw']``
             (default False).
-        vardef
-            Name of a test defining additional variables.
         samplingrate
             Samplingrate in Hz for the analysis (default is specified in epoch
             definition).
@@ -1247,7 +1185,6 @@ class Pipeline(StateModel):
             'morph': morph,
             'mask': mask,
             'data_raw': data_raw,
-            'vardef': vardef,
             'samplingrate': samplingrate,
             'decim': decim,
             'pad': pad,
@@ -1311,7 +1248,6 @@ class Pipeline(StateModel):
             samplingrate: int = None,
             decim: int = None,
             data_raw: bool = False,
-            vardef: str = None,
             data: DataArg = 'sensor',
             **state):
         """
@@ -1343,8 +1279,6 @@ class Pipeline(StateModel):
         data_raw
             Keep the :class:`mne.io.Raw` instance in ``ds.info['raw']``
             (default False).
-        vardef
-            Name of a test defining additional variables.
         data
             Data to load; 'sensor' to load all sensor data (default);
             'sensor.rms' to return RMS over sensors. Only applies to NDVar
@@ -1382,7 +1316,6 @@ class Pipeline(StateModel):
             'samplingrate': samplingrate,
             'decim': decim,
             'data_raw': data_raw,
-            'vardef': vardef,
             'data': data,
         }
         if group is not None:
@@ -1499,7 +1432,6 @@ class Pipeline(StateModel):
             morph: bool = None,
             mask: bool | str = False,
             data_raw: bool = False,
-            vardef: str = None,
             samplingrate: int = None,
             decim: int = None,
             ndvar: bool = True,
@@ -1537,8 +1469,6 @@ class Pipeline(StateModel):
         data_raw
             Keep the :class:`mne.io.Raw` instance in ``ds.info['raw']``
             (default False).
-        vardef
-            Name of a test defining additional variables.
         samplingrate
             Samplingrate in Hz for the analysis (default is specified in epoch
             definition).
@@ -1571,7 +1501,6 @@ class Pipeline(StateModel):
             'morph': morph,
             'mask': mask,
             'data_raw': data_raw,
-            'vardef': vardef,
             'samplingrate': samplingrate,
             'decim': decim,
             'ndvar': ndvar,
@@ -1594,7 +1523,6 @@ class Pipeline(StateModel):
             cat: Sequence[CellArg] = None,
             morph: bool = False,
             mask: bool | str = False,
-            vardef: str = None,
             decim: int = 1,
             **state,
     ) -> Dataset:
@@ -1627,8 +1555,6 @@ class Pipeline(StateModel):
             ``mask`` can also be set to a parcellation name (:class:`str`) to specify a
             parcellation to use directly.
             Only applies when ``ndvar=True``.
-        vardef
-            Name of a test defining additional variables.
         decim
             Decimate time-frequency representation (cumulative with epoch
             decimation factor).
@@ -1662,12 +1588,12 @@ class Pipeline(StateModel):
         if group is not None:
             dss = []
             for _ in self.iter(group=group, progress_bar=f"Load induced {epoch_name}"):
-                ds = self.load_induced_stc(None, frequencies, n_cycles, pad, baseline, cat, morph, mask, vardef, decim)
+                ds = self.load_induced_stc(None, frequencies, n_cycles, pad, baseline, cat, morph, mask, decim)
                 dss.append(ds)
             return combine(dss)
 
         # 1 subject
-        ds = self.load_epochs_stc(1, baseline, False, cat, morph=morph, mask=mask, pad=pad, vardef=vardef)
+        ds = self.load_epochs_stc(1, baseline, False, cat, morph=morph, mask=mask, pad=pad)
         # conditions
         model = self.get('model') or None
         stc = ds['srcm' if morph else 'src']
@@ -2077,7 +2003,7 @@ class Pipeline(StateModel):
 
     def load_selected_events(
             self,
-            subjects: str | Literal[1, -1] = None,
+            subjects: SubjectArg = None,
             reject: bool | Literal['keep'] = True,
             add_bads: bool | list[str] = True,
             index: bool | str = True,
@@ -2111,7 +2037,8 @@ class Pipeline(StateModel):
             Keep the :class:`mne.io.Raw` instance in ``ds.info['raw']``
             (default False).
         vardef
-            Name of a test defining additional variables.
+            Name of a test defining additional variables to add to the returned
+            Dataset.
         cat
             Only load data for these cells (cells of the current ``model``).
         ...
@@ -2130,25 +2057,27 @@ class Pipeline(StateModel):
             raise TypeError(f"{index=}")
         state = dict(kwargs)
         subject, group = self._process_subject_arg(subjects, state)
+
+        if group is not None:
+            if data_raw:
+                raise ValueError(f"{data_raw=}: can't keep raw when combining subjects")
+            return combine([self.load_selected_events(subjects=subject_, reject=reject, index=index, vardef=vardef, cat=cat, **state) for subject_ in self.iter(group=group)])
+        elif subject is None:
+            raise RuntimeError(f"{subject=}, {group=}")
+
         options = {
             'reject': reject,
             'add_bads': add_bads,
             'index': index,
             'data_raw': data_raw,
-            'vardef': vardef,
-            'cat': cat,
+            'cat': None if vardef is not None else cat,
         }
-        if group is not None:
-            if data_raw:
-                raise ValueError(f"data_var={data_raw!r}: can't keep raw when combining subjects")
-            epoch_name = self.get('epoch', **state)
-            return combine([
-                self._load_derivative(SELECTED_EVENTS, options=options)
-                for _ in self.iter(group=group, progress_bar=f"Load {epoch_name} events")
-            ])
-        if subject is not None:
-            state['subject'] = subject
-        return self._load_derivative(SELECTED_EVENTS, state=state, options=options)
+
+        ds = self._load_derivative(SELECTED_EVENTS, options=options)
+        if vardef is not None:
+            apply_vardef(ds, vardef, self.tests, self._groups)
+            ds = _select_model_cat(ds, self.get('model', **state), cat)
+        return ds
 
     def load_src(
             self,
@@ -2306,8 +2235,37 @@ class Pipeline(StateModel):
             'samplingrate': samplingrate,
             '_allow_protected_overwrite': make,
         }
-        handle = self._derivatives.resolve('test-result', state=self._derivative_state(), options=options)
-        return handle.node.load_test(handle.ctx, return_data, make)
+        test_obj = self.tests[test]
+        result_node = 'two-stage-level-2' if isinstance(test_obj, TwoStageTest) else 'test-result'
+        data_node = 'two-stage-data' if isinstance(test_obj, TwoStageTest) else 'evoked-test-data'
+        handle = self._derivatives.resolve(result_node, state=self._derivative_state(), options=options)
+        dst = handle.artifact_path
+        desc = self._derivatives.describe_artifact_path(dst)
+
+        if handle.is_valid():
+            try:
+                res = handle.load()
+            except OldVersionError:
+                res = None
+            else:
+                if not return_data:
+                    return res
+        elif not make and dst.exists():
+            raise OSError(f"The requested test is outdated: {desc}. Set make=True to perform the test.")
+        else:
+            res = None
+
+        if res is None and not make:
+            raise OSError(f"The requested test is not cached: {desc}. Set make=True to perform the test.")
+        if res is None:
+            res = handle.load()
+            if not return_data:
+                return res
+
+        res_data = self._derivatives.load(data_node, state=self._derivative_state(), options=options)
+        if isinstance(res_data, ROIData):
+            res_data = res_data.label_data
+        return res_data, res
 
     def make_annot(self, **state):
         """Ensure that annot files for the current parcellation exist."""
@@ -3186,7 +3144,8 @@ class Pipeline(StateModel):
         --------
         load_test : load corresponding data and tests (use ``data="source.mean"``)
         """
-        test_obj = self._tests[test]
+        self.set(test=test, **state)
+        test_obj = self.tests[test]
         if samples < 1:
             raise ValueError("Need samples > 0 to run permutation test.")
         elif isinstance(test_obj, TwoStageTest):
@@ -3949,8 +3908,8 @@ class Pipeline(StateModel):
             return parc, self._parcs[SEEDED_PARC_RE.match(parc).group(1)]
 
     def _post_set_test(self, _, test):
-        if test != '*' and test in self._tests:  # with vmatch=False, test object might not be availale
-            test_obj = self._tests[test]
+        if test != '*' and test in self.tests:  # with vmatch=False, test object might not be availale
+            test_obj = self.tests[test]
             if test_obj.model is not None:
                 self.set(model=test_obj.model)
 
