@@ -298,7 +298,7 @@ class OptionDerivative(Derivative[str]):
         self.calls = []
 
     def fingerprint(self, ctx: Request) -> dict[str, object]:
-        return self.standard_fingerprint(ctx, state={'subject': ctx.state['subject']})
+        return self.standard_fingerprint(ctx, state_fields=('subject',))
 
     def build(self, ctx: Request) -> str:
         self.calls.append(('build', ctx.options['artifact'], ctx.view_options['view']))

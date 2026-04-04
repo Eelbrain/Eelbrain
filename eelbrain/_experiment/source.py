@@ -994,7 +994,7 @@ class EpochsStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
         return ctx.registry.canonicalize({'group': group, 'options': ctx.registry.canonicalize(ctx.options)})
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(ctx, state=self.key(ctx))
+        return self.standard_fingerprint(ctx, state_fields=('group',))
 
     def _group_options(self, ctx: Request) -> dict[str, Any]:
         data_raw = ctx.options['data_raw']
@@ -1053,7 +1053,7 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
         return ctx.registry.canonicalize({'group': group, 'options': ctx.registry.canonicalize(ctx.options)})
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(ctx, state=self.key(ctx))
+        return self.standard_fingerprint(ctx, state_fields=('group',))
 
     def _group_options(self, ctx: Request) -> dict[str, Any]:
         morph = ctx.options['morph']

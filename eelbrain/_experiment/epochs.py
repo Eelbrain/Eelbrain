@@ -117,15 +117,18 @@ def _epoch_data_name(sensor_type: str, sensor_types: Sequence[str]) -> str:
 def _epochs_selected_events_options(
         ctx: Request,
         *,
+        reject: bool | str | object = _USE_CTX_OPTION,
         add_bads: bool | list[str] = True,
         data_raw: bool = True,
         cat: Any = _USE_CTX_OPTION,
 ) -> dict[str, Any]:
+    if reject is _USE_CTX_OPTION:
+        reject = ctx.options['reject']
     if cat is _USE_CTX_OPTION:
         cat = ctx.options['cat']
     return ctx.options_for(
         'selected-events',
-        reject=ctx.options['reject'],
+        reject=reject,
         add_bads=add_bads,
         index=False,
         data_raw=data_raw,
@@ -137,19 +140,20 @@ def _prepare_epoch_dataset(
         ctx: Request,
         epoch: Any,
         ds: Dataset,
+        options: dict[str, Any],
 ) -> tuple[Dataset, float, Any, float | None, Any, int, bool]:
     if ds.n_cases == 0:
         raise RuntimeError(f"No events left for epoch={epoch.name!r}, subject={ctx.state['subject']!r}")
 
-    tmin = epoch.tmin if ctx.options['tmin'] is None else ctx.options['tmin']
-    tmax = ctx.options['tmax']
-    tstop = ctx.options['tstop']
+    tmin = epoch.tmin if options['tmin'] is None else options['tmin']
+    tmax = options['tmax']
+    tstop = options['tstop']
     if tmax is None and tstop is None:
         tmax = epoch.tmax
-    baseline = ctx.options['baseline']
+    baseline = options['baseline']
     if baseline is True:
         baseline = epoch.baseline
-    pad = ctx.options['pad']
+    pad = options['pad']
     if isinstance(tmax, str):
         tmax = ds.eval(tmax)
         assert isinstance(tmax, Var)
@@ -166,7 +170,7 @@ def _prepare_epoch_dataset(
             tmax = tmax + pad
         elif tstop is not None:
             tstop = tstop + pad
-    decim = decim_param(ctx.options['samplingrate'], ctx.options['decim'], epoch, ds.info)
+    decim = decim_param(options['samplingrate'], options['decim'], epoch, ds.info)
 
     if isinstance(epoch, ContinuousEpoch):
         split_threshold = epoch.split + (epoch.pad_end + epoch.pad_start)
@@ -382,12 +386,26 @@ def _build_evoked_shell(
             state=state,
             options=_epochs_selected_events_options(
                 ctx,
+                reject=True,
                 add_bads=epochs_options.get('add_bads', True),
                 data_raw=True,
                 cat=epochs_options.get('cat'),
             ),
         )
-        ds, _, _, _, _, _, _ = _prepare_epoch_dataset(ctx, epoch, ds)
+        ds, _, _, _, _, _, _ = _prepare_epoch_dataset(
+            ctx,
+            epoch,
+            ds,
+            {
+                'tmin': None,
+                'tmax': None,
+                'tstop': None,
+                'baseline': epochs_options['baseline'],
+                'pad': 0,
+                'samplingrate': epochs_options['samplingrate'],
+                'decim': epochs_options['decim'],
+            },
+        )
         handle = ctx.registry.resolve('epochs', state=state, options={key: value for key, value in epochs_options.items() if key != 'add_bads'})
         metadata_path = handle.artifact_path / _EPOCHS_METADATA_FILE
         metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else None
@@ -902,7 +920,7 @@ class EpochsDerivative(Derivative[Any]):
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         epoch = self.epochs[ctx.state['epoch']]
-        return self.standard_fingerprint(ctx, definitions={'epoch': epoch._as_dict()})
+        return self.standard_fingerprint(ctx, state_fields=self.key_fields, definitions={'epoch': epoch._as_dict()})
 
     def build(self, ctx: Request):
         epoch_name = ctx.state['epoch']
@@ -918,7 +936,7 @@ class EpochsDerivative(Derivative[Any]):
             return Datalist(epochs_list, 'epochs')
 
         ds = ctx.load('selected-events', options=_epochs_selected_events_options(ctx))
-        ds, tmin, tmax, tstop, baseline, decim, variable_tmax = _prepare_epoch_dataset(ctx, epoch, ds)
+        ds, tmin, tmax, tstop, baseline, decim, variable_tmax = _prepare_epoch_dataset(ctx, epoch, ds, ctx.options)
         if variable_tmax:
             epoch_value = load.mne.variable_length_mne_epochs(ds, tmin, tmax, baseline, allow_truncation=True, decim=decim, reject_by_annotation=False)
             epochs_list = epoch_value
@@ -1066,7 +1084,7 @@ class EpochsDatasetDerivative(UncachedDerivative[Dataset]):
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         epoch = self.epochs[ctx.state['epoch']]
-        return self.standard_fingerprint(ctx, definitions={'epoch': epoch._as_dict()})
+        return self.standard_fingerprint(ctx, state_fields=self.key_fields, definitions={'epoch': epoch._as_dict()})
 
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
         if view is None:
@@ -1105,7 +1123,7 @@ class EpochsDatasetDerivative(UncachedDerivative[Dataset]):
             raise ValueError(f"data={data.string!r} with ndvar=False")
 
         ds = ctx.load('selected-events', options=_epochs_selected_events_options(ctx, add_bads=ctx.view_options['add_bads']))
-        ds, _, _, _, _, _, variable_tmax = _prepare_epoch_dataset(ctx, epoch, ds)
+        ds, _, _, _, _, _, variable_tmax = _prepare_epoch_dataset(ctx, epoch, ds, ctx.options)
         epoch_value = ctx.load('epochs', options=ctx.options_for('epochs', *EpochsDerivative.OPTION_DEFAULTS))
         raw = ds.info.get('raw')
         bads = raw.info['bads'] if raw is not None else ds.info.get(BAD_CHANNELS, [])
@@ -1195,7 +1213,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         return (Dependency('epochs-dataset', options=self._epochs_dataset_options(ctx), view='evoked'),)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(ctx, extra={'equalize_evoked_count': ctx.state['equalize_evoked_count']})
+        return self.standard_fingerprint(ctx, state_fields=self.key_fields)
 
     def build(self, ctx: Request) -> list[mne.Evoked]:
         return _aggregate_evoked_dataset(ctx.state['model'], ctx.state['equalize_evoked_count'], ctx.load('epochs-dataset', options=self._epochs_dataset_options(ctx)), 'epochs')['evoked']
@@ -1250,7 +1268,7 @@ class EvokedDatasetDerivative(UncachedDerivative[Dataset]):
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         epoch = self.epochs[ctx.state['epoch']]
-        return self.standard_fingerprint(ctx, definitions={'epoch': epoch._as_dict()})
+        return self.standard_fingerprint(ctx, state_fields=self.key_fields, definitions={'epoch': epoch._as_dict()})
 
     def build(self, ctx: Request) -> Dataset:
         evoked = ctx.load('evoked', options=ctx.options_for('evoked', *EvokedDerivative.OPTION_DEFAULTS))

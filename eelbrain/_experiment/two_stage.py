@@ -177,20 +177,7 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return self.standard_fingerprint(
             ctx,
-            state={
-                'group': ctx.state['group'],
-                'subject': ctx.state['subject'],
-                'epoch': ctx.state['epoch'],
-                'raw': ctx.state['raw'],
-                'rej': ctx.state['rej'],
-                'model': ctx.state['model'],
-                'equalize_evoked_count': ctx.state['equalize_evoked_count'],
-                'cov': ctx.state['cov'],
-                'inv': ctx.state['inv'],
-                'src': ctx.state['src'],
-                'mri': ctx.state['mri'],
-                'test': ctx.options['test'],
-            },
+            state_fields=self.key_fields,
             definitions={
                 'test': self.tests[ctx.options['test']]._as_dict(),
                 'epoch': self.epochs[ctx.state['epoch']]._as_dict(),
@@ -311,19 +298,7 @@ class TwoStageLevel1Derivative(Derivative[Any]):
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return self.standard_fingerprint(
             ctx,
-            state={
-                'subject': ctx.state['subject'],
-                'epoch': ctx.state['epoch'],
-                'raw': ctx.state['raw'],
-                'rej': ctx.state['rej'],
-                'model': ctx.state['model'],
-                'equalize_evoked_count': ctx.state['equalize_evoked_count'],
-                'cov': ctx.state['cov'],
-                'inv': ctx.state['inv'],
-                'src': ctx.state['src'],
-                'mri': ctx.state['mri'],
-                'test': ctx.options['test'],
-            },
+            state_fields=self.key_fields,
             definitions={'test': self.tests[ctx.options['test']]._as_dict()},
             extra={'mask': _resolved_mask(ctx)},
         )

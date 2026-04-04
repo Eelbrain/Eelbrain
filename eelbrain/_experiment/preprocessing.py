@@ -655,7 +655,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         return tuple(deps)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(ctx, extra={'raw': self.raw_name, 'pipe': self.pipe._as_dict()})
+        return self.standard_fingerprint(ctx, state_fields=self.key_fields, definitions={'pipe': self.pipe._as_dict()})
 
     def build(self, ctx: Request) -> mne.io.BaseRaw:
         noise = ctx.options['noise']

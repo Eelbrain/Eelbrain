@@ -363,6 +363,18 @@ class ResultOutputDerivative(Derivative[T]):
             state['group'] = ctx.state['group']
         return ctx.registry.canonicalize(state)
 
+    def state_fields(
+            self,
+            ctx: Request,
+            single_subject: bool,
+    ) -> tuple[str, ...]:
+        data = ctx.options['data']
+        fields = ['epoch', 'raw', 'rej', 'model', 'equalize_evoked_count', 'test']
+        if data and data.source:
+            fields.extend(['cov', 'inv', 'src', 'mri'])
+        fields.append('subject' if single_subject else 'group')
+        return tuple(fields)
+
     def analysis_options(self, ctx: Request) -> dict[str, Any]:
         mask = ctx.options['mask']
         if mask is True:
@@ -478,7 +490,7 @@ class ResultOutputDerivative(Derivative[T]):
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return self.standard_fingerprint(
             ctx,
-            state=self.state_snapshot(ctx, self.single_subject),
+            state_fields=self.state_fields(ctx, self.single_subject),
             definitions=self.definitions(ctx),
             extra={'single_subject': self.single_subject, **self.extra_key(ctx)},
         )
@@ -582,20 +594,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return self.standard_fingerprint(
             ctx,
-            state={
-                'group': ctx.state['group'],
-                'subject': ctx.state['subject'],
-                'epoch': ctx.state['epoch'],
-                'raw': ctx.state['raw'],
-                'rej': ctx.state['rej'],
-                'model': ctx.state['model'],
-                'equalize_evoked_count': ctx.state['equalize_evoked_count'],
-                'cov': ctx.state['cov'],
-                'inv': ctx.state['inv'],
-                'src': ctx.state['src'],
-                'mri': ctx.state['mri'],
-                'test': ctx.options['test'],
-            },
+            state_fields=self.key_fields,
             definitions={
                 'test': self.tests[ctx.options['test']]._as_dict(),
                 'epoch': self.epochs[ctx.state['epoch']]._as_dict(),

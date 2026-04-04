@@ -174,8 +174,8 @@ class SelectedEventsDerivative(Derivative[Dataset]):
         epoch = self.epochs[ctx.state['epoch']]
         return self.standard_fingerprint(
             ctx,
+            state_fields=self.key_fields,
             definitions={'epoch': epoch._as_dict()},
-            extra={'rej': ctx.state['rej']},
         )
 
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:

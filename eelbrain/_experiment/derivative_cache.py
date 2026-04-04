@@ -344,7 +344,7 @@ class Derivative(DependencyNode[T]):
         fields. The label is only for readability; the hash derived from
         :meth:`key` remains authoritative.
         """
-        label_key = canonical_state_subset(ctx.state, self.key_fields)
+        label_key = self.key(ctx) if not self.key_fields else canonical_state_subset(ctx.state, self.key_fields)
         return _simple_cache_label(label_key)
 
     def cache_log_path(self, ctx: Request, path: Path) -> str:
@@ -480,18 +480,48 @@ class Derivative(DependencyNode[T]):
             self,
             ctx: Request,
             *,
-            state: dict[str, Any] | None = None,
+            state_fields: tuple[str, ...],
             definitions: dict[str, Any] | None = None,
             extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Assemble the common ``state`` / ``definitions`` / ``options`` shape.
 
-        This is the default helper for derivatives whose fingerprints are
-        mostly “options plus a few semantic snapshots”.
+        Parameters
+        ----------
+        ctx
+            Bound request for the current derivative load.
+        state_fields
+            State keys from ``ctx.state`` that materially define the artifact.
+            These keys are extracted directly from the request state and
+            embedded under the ``"state"`` key after canonicalization.
+        definitions
+            Optional configured object definitions embedded under the
+            ``"definitions"`` key. Use this for stable configuration snapshots
+            such as epoch definitions, test definitions, or pipe definitions
+            that explain what the derivative is building.
+        extra
+            Optional additional fingerprint fields merged at the top level
+            after canonicalization. Use this for small derivative-specific
+            values that do not fit naturally under ``state`` or
+            ``definitions``.
+
+        Returns
+        -------
+        fingerprint
+            Canonicalized fingerprint mapping containing the selected
+            ``state`` snapshot, any ``definitions`` snapshot, the current request
+            ``options`` when non-empty, and any extra top-level fields.
+
+        Notes
+        -----
+        This is the default helper for derivatives whose fingerprints mostly
+        consist of semantic state, configured definitions, request options,
+        and a few derivative-specific scalar values. If a relevant value is
+        not a direct entry in ``ctx.state``, it should usually go into
+        ``definitions`` or ``extra`` instead of being smuggled into
+        ``state_fields`` through a custom mapping.
         """
-        out = {}
-        if state:
-            out['state'] = ctx.registry.canonicalize(state)
+        out = {'state': canonical_state_subset(ctx.state, state_fields)}
         if definitions:
             out['definitions'] = ctx.registry.canonicalize(definitions)
         options = ctx.registry.canonicalize(ctx.options)
