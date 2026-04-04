@@ -108,7 +108,7 @@ class SourceInput(Input):
 
     def load(self, ctx: Request) -> str:
         value = self.source_path(ctx.state['subject']).read_text()
-        if ctx.view_option('upper', False):
+        if ctx.view_options['upper']:
             return value.upper()
         return value
 
@@ -301,16 +301,16 @@ class OptionDerivative(Derivative[str]):
         return self.standard_fingerprint(ctx, state={'subject': ctx.state['subject']})
 
     def build(self, ctx: Request) -> str:
-        self.calls.append(('build', ctx.option('artifact'), ctx.view_option('view')))
-        return f"artifact:{ctx.option('artifact')}"
+        self.calls.append(('build', ctx.options['artifact'], ctx.view_options['view']))
+        return f"artifact:{ctx.options['artifact']}"
 
     def load(self, ctx: Request, path: str) -> str:
-        self.calls.append(('load', ctx.option('artifact'), ctx.view_option('view')))
+        self.calls.append(('load', ctx.options['artifact'], ctx.view_options['view']))
         return Path(path).read_text()
 
     def apply_view_options(self, ctx: Request, value: str) -> str:
-        self.calls.append(('view', ctx.option('artifact'), ctx.view_option('view')))
-        return f"{value}|view:{ctx.view_option('view')}"
+        self.calls.append(('view', ctx.options['artifact'], ctx.view_options['view']))
+        return f"{value}|view:{ctx.view_options['view']}"
 
     def save(
             self,

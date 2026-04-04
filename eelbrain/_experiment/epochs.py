@@ -122,10 +122,10 @@ def _epochs_selected_events_options(
         cat: Any = _USE_CTX_OPTION,
 ) -> dict[str, Any]:
     if cat is _USE_CTX_OPTION:
-        cat = ctx.option('cat')
+        cat = ctx.options['cat']
     return ctx.options_for(
         'selected-events',
-        reject=ctx.option('reject', True),
+        reject=ctx.options['reject'],
         add_bads=add_bads,
         index=False,
         data_raw=data_raw,
@@ -141,15 +141,15 @@ def _prepare_epoch_dataset(
     if ds.n_cases == 0:
         raise RuntimeError(f"No events left for epoch={epoch.name!r}, subject={ctx.state['subject']!r}")
 
-    tmin = epoch.tmin if ctx.option('tmin') is None else ctx.option('tmin')
-    tmax = ctx.option('tmax')
-    tstop = ctx.option('tstop')
+    tmin = epoch.tmin if ctx.options['tmin'] is None else ctx.options['tmin']
+    tmax = ctx.options['tmax']
+    tstop = ctx.options['tstop']
     if tmax is None and tstop is None:
         tmax = epoch.tmax
-    baseline = ctx.option('baseline', False)
+    baseline = ctx.options['baseline']
     if baseline is True:
         baseline = epoch.baseline
-    pad = ctx.option('pad', 0)
+    pad = ctx.options['pad']
     if isinstance(tmax, str):
         tmax = ds.eval(tmax)
         assert isinstance(tmax, Var)
@@ -166,7 +166,7 @@ def _prepare_epoch_dataset(
             tmax = tmax + pad
         elif tstop is not None:
             tstop = tstop + pad
-    decim = decim_param(ctx.option('samplingrate'), ctx.option('decim'), epoch, ds.info)
+    decim = decim_param(ctx.options['samplingrate'], ctx.options['decim'], epoch, ds.info)
 
     if isinstance(epoch, ContinuousEpoch):
         split_threshold = epoch.split + (epoch.pad_end + epoch.pad_start)
@@ -895,7 +895,7 @@ class EpochsDerivative(Derivative[Any]):
         return (
             Dependency(
                 raw_node_name(ctx.state['raw']),
-                options=ctx.options_for(raw_node_name(ctx.state['raw']), add_bads=bool(ctx.option('interpolate_bads', False)), preload=False, noise=False),
+                options=ctx.options_for(raw_node_name(ctx.state['raw']), add_bads=bool(ctx.options['interpolate_bads']), preload=False, noise=False),
             ),
             Dependency('selected-events', options=_epochs_selected_events_options(ctx), view='epochs'),
         )
@@ -927,7 +927,7 @@ class EpochsDerivative(Derivative[Any]):
             ds = load.mne.add_mne_epochs(ds, tmin, tmax, baseline, decim=decim, drop_bad_chs=False, tstop=tstop, reject_by_annotation=False)
             if ds.n_cases != n:
                 ctx.registry.log.warning("%s missing for %s/%s", n_of(n - ds.n_cases, 'epoch'), ctx.state['subject'], epoch_name)
-            if ctx.option('trigger_shift', True) and epoch.post_baseline_trigger_shift:
+            if ctx.options['trigger_shift'] and epoch.post_baseline_trigger_shift:
                 shift = ds.eval(epoch.post_baseline_trigger_shift)
                 ds['epochs'] = shift_mne_epoch_trigger(ds['epochs'], shift, epoch.post_baseline_trigger_shift_min, epoch.post_baseline_trigger_shift_max)
             epoch_value = ds['epochs']
@@ -936,7 +936,7 @@ class EpochsDerivative(Derivative[Any]):
         info = epochs_list[0].info
         bads_all = None
         bads_individual = None
-        interpolate_bads = ctx.option('interpolate_bads', False)
+        interpolate_bads = ctx.options['interpolate_bads']
         if interpolate_bads:
             bads_all = info['bads']
             if ds.info[INTERPOLATE_CHANNELS] and any(ds[INTERPOLATE_CHANNELS]):
@@ -948,7 +948,7 @@ class EpochsDerivative(Derivative[Any]):
             reset_bads = interpolate_bads != 'keep'
             for epochs in epochs_list:
                 epochs.interpolate_bads(reset_bads=reset_bads)
-        if ctx.option('reject', True) and bads_individual:
+        if ctx.options['reject'] and bads_individual:
             assert not variable_tmax
             if 'mag' in TestDims.coerce('sensor').data_to_ndvar(info):
                 interp_cache = {}
@@ -1060,7 +1060,7 @@ class EpochsDatasetDerivative(UncachedDerivative[Dataset]):
                 for sub_epoch in epoch.collect
             )
         return (
-            Dependency('selected-events', options=_epochs_selected_events_options(ctx, add_bads=ctx.view_option('add_bads', True)), view='epochs'),
+            Dependency('selected-events', options=_epochs_selected_events_options(ctx, add_bads=ctx.view_options['add_bads']), view='epochs'),
             Dependency('epochs', options=ctx.options_for('epochs', *EpochsDerivative.OPTION_DEFAULTS)),
         )
 
@@ -1078,7 +1078,7 @@ class EpochsDatasetDerivative(UncachedDerivative[Dataset]):
         ds = _build_evoked_shell(
             ctx,
             self.epochs,
-            {**ctx.options_for('epochs', *EpochsDerivative.OPTION_DEFAULTS), 'add_bads': ctx.view_option('add_bads', True)},
+            {**ctx.options_for('epochs', *EpochsDerivative.OPTION_DEFAULTS), 'add_bads': ctx.view_options['add_bads']},
         )
         model = ctx.state['model']
         if model:
@@ -1098,13 +1098,13 @@ class EpochsDatasetDerivative(UncachedDerivative[Dataset]):
                 dss.append(ds)
             return combine(dss)
 
-        data = TestDims.coerce(ctx.option('data', 'sensor'))
+        data = TestDims.coerce(ctx.options['data'])
         if not data.sensor:
             raise ValueError(f"data={data.string!r}; load_evoked is for loading sensor data")
-        if data.sensor is not True and not ctx.option('ndvar', True):
+        if data.sensor is not True and not ctx.options['ndvar']:
             raise ValueError(f"data={data.string!r} with ndvar=False")
 
-        ds = ctx.load('selected-events', options=_epochs_selected_events_options(ctx, add_bads=ctx.view_option('add_bads', True)))
+        ds = ctx.load('selected-events', options=_epochs_selected_events_options(ctx, add_bads=ctx.view_options['add_bads']))
         ds, _, _, _, _, _, variable_tmax = _prepare_epoch_dataset(ctx, epoch, ds)
         epoch_value = ctx.load('epochs', options=ctx.options_for('epochs', *EpochsDerivative.OPTION_DEFAULTS))
         raw = ds.info.get('raw')
@@ -1121,7 +1121,7 @@ class EpochsDatasetDerivative(UncachedDerivative[Dataset]):
             ds = _apply_epochs_selection(ds, getattr(epoch_value, 'selection', None))
         ds['epochs'] = epoch_value
 
-        ndvar = ctx.option('ndvar', True)
+        ndvar = ctx.options['ndvar']
         if ndvar:
             epochs_list = epoch_value if isinstance(epoch_value, Datalist) else [epoch_value]
             info = epochs_list[0].info
@@ -1144,7 +1144,7 @@ class EpochsDatasetDerivative(UncachedDerivative[Dataset]):
             if ndvar != 'both':
                 del ds['epochs']
 
-        if not ctx.option('data_raw', False):
+        if not ctx.options['data_raw']:
             del ds.info['raw']
         return ds
 
@@ -1174,8 +1174,8 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
     def _epochs_options(self, ctx: Request) -> dict[str, Any]:
         return {
             'baseline': True if self.epochs[ctx.state['epoch']].post_baseline_trigger_shift else False,
-            'samplingrate': ctx.option('samplingrate'),
-            'decim': ctx.option('decim'),
+            'samplingrate': ctx.options['samplingrate'],
+            'decim': ctx.options['decim'],
             'interpolate_bads': 'keep',
             'add_bads': True,
             'reject': True,
@@ -1278,11 +1278,11 @@ class EvokedDatasetDerivative(UncachedDerivative[Dataset]):
             raw_name=ctx.state['raw'],
             subject=ctx.state['subject'],
             model=ctx.state['model'],
-            baseline=ctx.option('baseline', False),
-            ndvar=ctx.option('ndvar', True),
-            cat=ctx.option('cat'),
-            data_raw=ctx.option('data_raw', False),
-            data=ctx.option('data', 'sensor'),
+            baseline=ctx.options['baseline'],
+            ndvar=ctx.options['ndvar'],
+            cat=ctx.options['cat'],
+            data_raw=ctx.options['data_raw'],
+            data=ctx.options['data'],
             load_raw=lambda: load_raw_dependency(ctx, add_bads=True, preload=False, noise=False),
         )
 
@@ -1325,7 +1325,7 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
         return self.key(ctx)
 
     def _subject_options(self, ctx: Request) -> dict[str, Any]:
-        return ctx.options_for('evoked-dataset', 'baseline', 'cat', 'samplingrate', 'decim', 'data_raw', 'data', ndvar=isinstance(TestDims.coerce(ctx.option('data')).sensor, str))
+        return ctx.options_for('evoked-dataset', 'baseline', 'cat', 'samplingrate', 'decim', 'data_raw', 'data', ndvar=isinstance(TestDims.coerce(ctx.options['data']).sensor, str))
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         options = self._subject_options(ctx)
@@ -1343,8 +1343,8 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
             dss,
             raw=self.raw,
             raw_name=ctx.state['raw'],
-            data=ctx.option('data'),
-            ndvar=ctx.option('ndvar'),
+            data=ctx.options['data'],
+            ndvar=ctx.options['ndvar'],
         )
 
 

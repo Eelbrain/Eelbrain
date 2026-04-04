@@ -176,7 +176,7 @@ def _selected_parc(
         ctx: Request,
         mask: bool | str = False,
 ) -> str | None:
-    parc = ctx.option('parc') or ctx.state['parc'] or None
+    parc = ctx.options['parc'] or ctx.state['parc'] or None
     if isinstance(mask, str):
         return mask
     return parc
@@ -525,7 +525,7 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
         inv = ctx.state['inv']
         if src[:3] == 'vol' and not (inv.startswith('vec') or inv.startswith('free')):
             raise ValueError(f'{inv=} with {src=}: volume source space requires free or vector inverse')
-        fiff = ctx.view_option('fiff')
+        fiff = ctx.view_options['fiff']
         if fiff is None:
             fiff = load_raw_dependency(ctx, ctx.state['raw'])
         _, make_kw, _ = inverse_operator_params(inv)
@@ -657,23 +657,23 @@ class EpochsStcDerivative(Derivative[Dataset]):
         deps = [
             Dependency('epochs-dataset', options=ctx.options_for(
                 'epochs-dataset',
-                baseline=ctx.option('baseline'),
+                baseline=ctx.options['baseline'],
                 ndvar=False,
-                reject=ctx.option('reject', True),
-                cat=ctx.option('cat'),
-                samplingrate=ctx.option('samplingrate'),
-                decim=ctx.option('decim'),
-                pad=ctx.option('pad', 0),
+                reject=ctx.options['reject'],
+                cat=ctx.options['cat'],
+                samplingrate=ctx.options['samplingrate'],
+                decim=ctx.options['decim'],
+                pad=ctx.options['pad'],
                 data_raw=False,
                 data='sensor',
             )),
             Dependency('inv'),
         ]
-        mask = ctx.option('mask', False)
+        mask = ctx.options['mask']
         if mask:
             parc = _selected_parc(ctx, mask)
             deps.append(Dependency('annot', state={'parc': parc}))
-        if ctx.option('morph', False):
+        if ctx.options['morph']:
             deps.append(Dependency('source-morph'))
         return tuple(deps)
 
@@ -684,25 +684,25 @@ class EpochsStcDerivative(Derivative[Dataset]):
         epoch = self.epochs[ctx.state['epoch']]
         ds = ctx.load('epochs-dataset', options=ctx.options_for(
             'epochs-dataset',
-            baseline=ctx.option('baseline'),
+            baseline=ctx.options['baseline'],
             ndvar=False,
-            reject=ctx.option('reject', True),
-            cat=ctx.option('cat'),
-            samplingrate=ctx.option('samplingrate'),
-            decim=ctx.option('decim'),
-            pad=ctx.option('pad', 0),
+            reject=ctx.options['reject'],
+            cat=ctx.options['cat'],
+            samplingrate=ctx.options['samplingrate'],
+            decim=ctx.options['decim'],
+            pad=ctx.options['pad'],
             data_raw=False,
             data='sensor',
         ))
 
-        src_baseline = ctx.option('src_baseline', False)
-        if not ctx.option('baseline') and src_baseline and epoch.post_baseline_trigger_shift:
+        src_baseline = ctx.options['src_baseline']
+        if not ctx.options['baseline'] and src_baseline and epoch.post_baseline_trigger_shift:
             raise NotImplementedError("src_baseline with post_baseline_trigger_shift")
         if src_baseline is True:
             src_baseline = epoch.baseline
 
         epoch_list = ds['epochs'] if isinstance(ds['epochs'], Datalist) else [ds['epochs']]
-        inv, label, subjects_dir, mrisubject, is_scaled, parc = _prepare_inv(ctx, epoch_list[0], ctx.option('mask', False), ctx.option('morph', False))
+        inv, label, subjects_dir, mrisubject, is_scaled, parc = _prepare_inv(ctx, epoch_list[0], ctx.options['mask'], ctx.options['morph'])
         method, make_kw, apply_kw = inverse_operator_params(ctx.state['inv'])
         stc_list = [apply_inverse_epochs(epoch_obj, inv, label=label, **apply_kw) for epoch_obj in epoch_list]
         is_variable_time = isinstance(ds['epochs'], Datalist)
@@ -715,7 +715,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
                 for stc in values:
                     mne.baseline.rescale(stc._data, stc.times, src_baseline, 'mean', copy=False)
 
-        if ctx.option('morph', False):
+        if ctx.options['morph']:
             common_brain = ctx.state['common_brain']
             target_subject = common_brain
             ctx.load('annot', state={'mrisubject': common_brain})
@@ -743,7 +743,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
             load.mne.stc_ndvar(value, target_subject, src, subjects_dir, method, make_kw.get('fixed', False), parc=parc, adjacency=ctx.state['adjacency'])
             for value in stc_list
         ]
-        if ctx.option('mask', False) and ctx.option('morph', False) and not is_scaled:
+        if ctx.options['mask'] and ctx.options['morph'] and not is_scaled:
             ndvar_list = [_mask_ndvar(value) for value in ndvar_list]
 
         ds[stc_key] = stc_list if is_variable_time else stc_list[0]
@@ -752,8 +752,8 @@ class EpochsStcDerivative(Derivative[Dataset]):
 
     def apply_view_options(self, ctx: Request, ds: Dataset) -> Dataset:
         ds = ds.copy()
-        ndvar = ctx.view_option('ndvar', True)
-        keep_epochs = ctx.view_option('keep_epochs', False)
+        ndvar = ctx.view_options['ndvar']
+        keep_epochs = ctx.view_options['keep_epochs']
         if keep_epochs not in (True, False, 'ndvar', 'both'):
             raise ValueError(f"{keep_epochs=}")
 
@@ -785,7 +785,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
         elif not keep_epochs:
             del ds['epochs']
 
-        if ctx.view_option('data_raw', False):
+        if ctx.view_options['data_raw']:
             ds.info['raw'] = load_raw_dependency(ctx, add_bads=True, preload=False, noise=False)
         else:
             ds.info.pop('raw', None)
@@ -852,21 +852,21 @@ class EvokedStcDerivative(Derivative[Dataset]):
         deps = [
             Dependency('evoked-dataset', options=ctx.options_for(
                 'evoked-dataset',
-                baseline=ctx.option('baseline'),
+                baseline=ctx.options['baseline'],
                 ndvar=False,
-                cat=ctx.option('cat'),
-                samplingrate=ctx.option('samplingrate'),
-                decim=ctx.option('decim'),
+                cat=ctx.options['cat'],
+                samplingrate=ctx.options['samplingrate'],
+                decim=ctx.options['decim'],
                 data_raw=False,
                 data='sensor',
             )),
             Dependency('inv'),
         ]
-        mask = ctx.option('mask', False)
+        mask = ctx.options['mask']
         if mask:
             parc = _selected_parc(ctx, mask)
             deps.append(Dependency('annot', state={'parc': parc}))
-        if ctx.option('morph', False):
+        if ctx.options['morph']:
             deps.append(Dependency('source-morph'))
         return tuple(deps)
 
@@ -876,16 +876,16 @@ class EvokedStcDerivative(Derivative[Dataset]):
     def build(self, ctx: Request) -> Dataset:
         ds = ctx.load('evoked-dataset', options=ctx.options_for(
             'evoked-dataset',
-            baseline=ctx.option('baseline'),
+            baseline=ctx.options['baseline'],
             ndvar=False,
-            cat=ctx.option('cat'),
-            samplingrate=ctx.option('samplingrate'),
-            decim=ctx.option('decim'),
+            cat=ctx.options['cat'],
+            samplingrate=ctx.options['samplingrate'],
+            decim=ctx.options['decim'],
             data_raw=False,
             data='sensor',
         ))
 
-        src_baseline = ctx.option('src_baseline', False)
+        src_baseline = ctx.options['src_baseline']
         epoch = self.epochs[ctx.state['epoch']]
         if src_baseline and epoch.post_baseline_trigger_shift:
             raise NotImplementedError(f"{src_baseline=}: post_baseline_trigger_shift is not implemented for baseline correction in source space")
@@ -900,12 +900,12 @@ class EvokedStcDerivative(Derivative[Dataset]):
             subject_from = common_brain
         else:
             subject_from = mrisubject
-        parc = _selected_parc(ctx, ctx.option('mask', False))
-        target_subject = common_brain if ctx.option('morph', False) else mrisubject
+        parc = _selected_parc(ctx, ctx.options['mask'])
+        target_subject = common_brain if ctx.options['morph'] else mrisubject
         if parc:
             ctx.load('annot', state={'mrisubject': target_subject, 'parc': parc})
         source_morph = None
-        if ctx.option('morph', False) and subject_from != common_brain:
+        if ctx.options['morph'] and subject_from != common_brain:
             source_morph = ctx.load('source-morph', state={'mrisubject': subject_from})
 
         method, make_kw, apply_kw = inverse_operator_params(ctx.state['inv'])
@@ -914,25 +914,25 @@ class EvokedStcDerivative(Derivative[Dataset]):
             stc = apply_inverse(evoked, inv, **apply_kw)
             if src_baseline:
                 mne.baseline.rescale(stc._data, stc.times, src_baseline, 'mean', copy=False)
-            if ctx.option('morph', False):
+            if ctx.options['morph']:
                 if subject_from == common_brain:
                     stc.subject = common_brain
                 else:
                     stc = source_morph.apply(stc)
             stcs.append(stc)
 
-        src_key = 'srcm' if ctx.option('morph', False) else 'src'
-        stc_key = 'stcm' if ctx.option('morph', False) else 'stc'
+        src_key = 'srcm' if ctx.options['morph'] else 'src'
+        stc_key = 'stcm' if ctx.options['morph'] else 'stc'
         ds[src_key] = load.mne.stc_ndvar(stcs, target_subject, ctx.state['src'], mri_sdir(ctx.state), method, make_kw.get('fixed', False), parc=parc, adjacency=ctx.state['adjacency'])
-        if ctx.option('mask', False):
+        if ctx.options['mask']:
             ds[src_key] = _mask_ndvar(ds[src_key])
         ds[stc_key] = stcs
         return ds
 
     def apply_view_options(self, ctx: Request, ds: Dataset) -> Dataset:
         ds = ds.copy()
-        ndvar = ctx.view_option('ndvar', True)
-        keep_evoked = ctx.view_option('keep_evoked', False)
+        ndvar = ctx.view_options['ndvar']
+        keep_evoked = ctx.view_options['keep_evoked']
         stc_key = 'stcm' if 'stcm' in ds else 'stc'
         src_key = 'srcm' if 'srcm' in ds else 'src'
         if ndvar:
@@ -954,7 +954,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
         elif not keep_evoked:
             del ds['evoked']
 
-        if ctx.view_option('data_raw', False):
+        if ctx.view_options['data_raw']:
             ds.info['raw'] = load_raw_dependency(ctx, add_bads=True, preload=False, noise=False)
         else:
             ds.info.pop('raw', None)
@@ -997,13 +997,13 @@ class EpochsStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
         return self.standard_fingerprint(ctx, state=self.key(ctx))
 
     def _group_options(self, ctx: Request) -> dict[str, Any]:
-        data_raw = ctx.option('data_raw')
+        data_raw = ctx.options['data_raw']
         if data_raw:
             raise ValueError(f"data_raw={data_raw!r} with group: Can not combine raw data from multiple subjects.")
-        keep_epochs = ctx.option('keep_epochs')
+        keep_epochs = ctx.options['keep_epochs']
         if keep_epochs:
             raise ValueError(f"keep_epochs={keep_epochs!r} with group: Can not combine Epochs objects for different subjects. Set keep_epochs=False (default).")
-        morph = ctx.option('morph')
+        morph = ctx.options['morph']
         if morph is None:
             return ctx.options_for('epochs-stc', *EpochsStcDerivative.OPTION_DEFAULTS, *EpochsStcDerivative.VIEW_OPTION_DEFAULTS, morph=True)
         if not morph:
@@ -1056,8 +1056,8 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
         return self.standard_fingerprint(ctx, state=self.key(ctx))
 
     def _group_options(self, ctx: Request) -> dict[str, Any]:
-        morph = ctx.option('morph')
-        if ctx.option('ndvar'):
+        morph = ctx.options['morph']
+        if ctx.options['ndvar']:
             if morph is None:
                 return ctx.options_for('evoked-stc', *EvokedStcDerivative.OPTION_DEFAULTS, *EvokedStcDerivative.VIEW_OPTION_DEFAULTS, morph=True)
             if not morph:

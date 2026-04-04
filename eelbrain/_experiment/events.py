@@ -374,7 +374,7 @@ class SelectedEventsDerivative(Derivative[Dataset]):
         return ds
 
     def build(self, ctx: Request) -> Dataset:
-        reject = ctx.option('reject', True)
+        reject = ctx.options['reject']
         if reject not in (True, False, 'keep'):
             raise ValueError(f"{reject=}")
         return self._build_selected_events(
@@ -389,19 +389,19 @@ class SelectedEventsDerivative(Derivative[Dataset]):
 
     def apply_view_options(self, ctx: Request, ds: Dataset) -> Dataset:
         epoch = self.epochs[ctx.state['epoch']]
-        add_bads = ctx.view_option('add_bads', True)
-        data_raw = ctx.view_option('data_raw', False)
+        add_bads = ctx.view_options['add_bads']
+        data_raw = ctx.view_options['data_raw']
         if add_bads or data_raw:
             ds = self._view_raw(ctx, ds, epoch, add_bads, data_raw)
         else:
             ds = ds.copy()
             ds.info[BAD_CHANNELS] = []
             ds.info.pop('raw', None)
-        cat = ctx.view_option('cat')
+        cat = ctx.view_options['cat']
         if cat:
             model = ds.eval(ctx.state['model'])
             ds = ds.sub(model.isin(cat))
-        index = ctx.view_option('index', True)
+        index = ctx.view_options['index']
         if index is True:
             index = 'index'
         elif index and not isinstance(index, str):

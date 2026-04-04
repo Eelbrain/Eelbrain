@@ -130,10 +130,10 @@ class SubjectROILMResult:
 
 
 def _resolved_mask(ctx: Request):
-    parc = ctx.option('parc')
+    parc = ctx.options['parc']
     if parc:
         return parc
-    return ctx.option('mask')
+    return ctx.options['mask']
 
 
 def _two_stage_source_name(ds: Dataset) -> str:
@@ -189,19 +189,19 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
                 'inv': ctx.state['inv'],
                 'src': ctx.state['src'],
                 'mri': ctx.state['mri'],
-                'test': ctx.option('test'),
+                'test': ctx.options['test'],
             },
             definitions={
-                'test': self.tests[ctx.option('test')]._as_dict(),
+                'test': self.tests[ctx.options['test']]._as_dict(),
                 'epoch': self.epochs[ctx.state['epoch']]._as_dict(),
             },
             extra={'mask': _resolved_mask(ctx)},
         )
 
     def _subject_dependency(self, ctx: Request, subject: str) -> Dependency:
-        data = ctx.option('data')
-        test_obj = self.tests[ctx.option('test')]
-        samplingrate = ctx.option('samplingrate')
+        data = ctx.options['data']
+        test_obj = self.tests[ctx.options['test']]
+        samplingrate = ctx.options['samplingrate']
         state = _subject_request_state(ctx, subject)
         if data.source is True:
             if test_obj.model is None or test_obj.vars:
@@ -232,7 +232,7 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         )
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        data = ctx.option('data')
+        data = ctx.options['data']
         if data.sensor:
             return ()
         return tuple(self._subject_dependency(ctx, subject) for subject in _result_subjects(self, ctx))
@@ -240,10 +240,10 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
     def _load_subject_data(self, ctx: Request, subject: str) -> Dataset:
         from .epochs import _aggregate_dataset
 
-        data = ctx.option('data')
-        test_obj = self.tests[ctx.option('test')]
+        data = ctx.options['data']
+        test_obj = self.tests[ctx.options['test']]
         state = _subject_request_state(ctx, subject)
-        samplingrate = ctx.option('samplingrate')
+        samplingrate = ctx.options['samplingrate']
 
         if data.source is True:
             if test_obj.model is None or test_obj.vars:
@@ -254,12 +254,12 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
                     ds = _aggregate_dataset(test_obj.model, ctx.state['equalize_evoked_count'], ds, _two_stage_source_name(ds))
             else:
                 ds = ctx.load('evoked-stc', state={**state, 'model': test_obj.model}, options=_evoked_stc_options(ctx, morph=data.morph, cat=None, mask=_resolved_mask(ctx), samplingrate=samplingrate))
-            if ctx.option('smooth'):
-                ds[data.y_name] = ds[data.y_name].smooth('source', ctx.option('smooth'), 'gaussian')
+            if ctx.options['smooth']:
+                ds[data.y_name] = ds[data.y_name].smooth('source', ctx.options['smooth'], 'gaussian')
             return ds
 
-        if ctx.option('smooth'):
-            raise TypeError(f"smooth={ctx.option('smooth')!r} for ROI two-stage tests")
+        if ctx.options['smooth']:
+            raise TypeError(f"smooth={ctx.options['smooth']!r} for ROI two-stage tests")
         if test_obj.model is None:
             ds = ctx.load('epochs-stc', state=state, options=_epochs_stc_options(ctx, morph=None, mask=True, samplingrate=samplingrate))
             if test_obj.vars:
@@ -272,8 +272,8 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         return _aggregate_dataset(test_obj.model, ctx.state['equalize_evoked_count'], ds, _two_stage_source_name(ds))
 
     def build(self, ctx: Request) -> Dataset | ROIData:
-        data = ctx.option('data')
-        test_obj = self.tests[ctx.option('test')]
+        data = ctx.options['data']
+        test_obj = self.tests[ctx.options['test']]
         if not isinstance(test_obj, TwoStageTest):
             raise RuntimeError(f"{self.name!r} requires a TwoStageTest")
         if data.sensor:
@@ -322,9 +322,9 @@ class TwoStageLevel1Derivative(Derivative[Any]):
                 'inv': ctx.state['inv'],
                 'src': ctx.state['src'],
                 'mri': ctx.state['mri'],
-                'test': ctx.option('test'),
+                'test': ctx.options['test'],
             },
-            definitions={'test': self.tests[ctx.option('test')]._as_dict()},
+            definitions={'test': self.tests[ctx.options['test']]._as_dict()},
             extra={'mask': _resolved_mask(ctx)},
         )
 
@@ -332,10 +332,10 @@ class TwoStageLevel1Derivative(Derivative[Any]):
         return (Dependency('two-stage-data', state=_subject_request_state(ctx, ctx.state['subject']), options=ctx.options_for('two-stage-data', *RESULT_OPTION_DEFAULTS)),)
 
     def build(self, ctx: Request):
-        test_obj = self.tests[ctx.option('test')]
+        test_obj = self.tests[ctx.options['test']]
         if not isinstance(test_obj, TwoStageTest):
             raise RuntimeError(f"{self.name!r} requires a TwoStageTest")
-        data = ctx.option('data')
+        data = ctx.options['data']
         subject = ctx.state['subject']
         if data.source is True:
             ds = ctx.load('two-stage-data', state=_subject_request_state(ctx, subject), options=ctx.options_for('two-stage-data', *RESULT_OPTION_DEFAULTS))
@@ -351,7 +351,7 @@ class TwoStageLevel1Derivative(Derivative[Any]):
 
     def load(self, ctx: Request, path: Path):
         value = load.unpickle(path)
-        if ctx.option('data').source:
+        if ctx.options['data'].source:
             update_subjects_dir(value, mri_sdir(ctx.state), 2)
         return value
 
@@ -368,7 +368,7 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
     VIEW_OPTION_DEFAULTS = {}
 
     def cache_label(self, ctx: Request) -> str:
-        return self.path_stem(ctx) if ctx.option('samples') is None else f"{self.path_stem(ctx)}_samples-{ctx.option('samples')}"
+        return self.path_stem(ctx) if ctx.options['samples'] is None else f"{self.path_stem(ctx)}_samples-{ctx.options['samples']}"
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return tuple(
@@ -377,13 +377,13 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
         )
 
     def build(self, ctx: Request):
-        test_obj = self.tests[ctx.option('test')]
+        test_obj = self.tests[ctx.options['test']]
         if not isinstance(test_obj, TwoStageTest):
             raise RuntimeError(f"{self.name!r} requires a TwoStageTest")
-        data = ctx.option('data')
-        parc = ctx.option('parc')
-        mask = ctx.option('mask')
-        pmin = ctx.option('pmin')
+        data = ctx.options['data']
+        parc = ctx.options['parc']
+        mask = ctx.options['mask']
+        pmin = ctx.options['pmin']
         parc_dim = None
         if data.source is True:
             if parc:
@@ -412,11 +412,11 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
             if len(lms) > 2
         }
         n_trials_ds = combine([subject_result.n_trials_ds for subject_result in subject_results], incomplete='drop')
-        return ROI2StageResult(_result_subjects(self, ctx), ctx.option('samples'), n_trials_ds, None, results)
+        return ROI2StageResult(_result_subjects(self, ctx), ctx.options['samples'], n_trials_ds, None, results)
 
     def load(self, ctx: Request, path: Path):
         res = load.unpickle(path)
-        if ctx.option('data').source:
+        if ctx.options['data'].source:
             update_subjects_dir(res, mri_sdir(ctx.state), 2)
         return res
 
@@ -424,7 +424,7 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
         save.pickle(value, path)
 
     def validate(self, ctx: Request, path: Path, manifest) -> bool:
-        return manifest.provenance.get('samples') == ctx.option('samples')
+        return manifest.provenance.get('samples') == ctx.options['samples']
 
     def provenance(self, ctx: Request, value) -> dict[str, Any]:
         return {'samples': value.samples}

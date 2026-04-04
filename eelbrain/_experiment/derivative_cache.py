@@ -603,14 +603,6 @@ class Request(Generic[T]):
             self._artifact_path = Path(self.registry.resolve_cache_artifact_path(self._base_artifact_path, self._key))
             self._manifest_path = Path(self.registry.manifest_path(self._artifact_path))
 
-    def option(self, key: str, default=None):
-        """Return one non-view option declared by the current node."""
-        return self.options.get(key, default)
-
-    def view_option(self, key: str, default=None):
-        """Return one view-only option declared by the current node."""
-        return self.view_options.get(key, default)
-
     def has_control(self, control: str) -> bool:
         """Return whether this request includes one explicit execution control."""
         return control in self.controls

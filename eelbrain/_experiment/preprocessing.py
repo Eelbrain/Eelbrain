@@ -277,7 +277,7 @@ class RawBadChannelsInput(Input[list[str]]):
         self.pipes = pipes
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        noise = ctx.option('noise', False)
+        noise = ctx.options['noise']
         state = {**ctx.state, 'raw': self.raw_name}
         path = bids_path(state)
         return {
@@ -289,7 +289,7 @@ class RawBadChannelsInput(Input[list[str]]):
 
     def load(self, ctx: Request) -> list[str]:
         state = {**ctx.state, 'raw': self.raw_name}
-        return self.pipe.load_bad_channels(bids_path(state), noise=ctx.option('noise', False), pipes=self.pipes, log=ctx.registry.log)
+        return self.pipe.load_bad_channels(bids_path(state), noise=ctx.options['noise'], pipes=self.pipes, log=ctx.registry.log)
 
 
 class RawSourceInput(Input[mne.io.BaseRaw]):
@@ -308,18 +308,18 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         self.pipes = pipes
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        if ctx.view_option('add_bads', True) is True:
+        if ctx.view_options['add_bads'] is True:
             return (
                 Dependency(
                     raw_bad_channels_input_name(self.raw_name),
                     state={'raw': self.raw_name},
-                    options=ctx.options_for(raw_bad_channels_input_name(self.raw_name), noise=ctx.option('noise', False)),
+                    options=ctx.options_for(raw_bad_channels_input_name(self.raw_name), noise=ctx.options['noise']),
                 ),
             )
         return ()
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        noise = ctx.option('noise', False)
+        noise = ctx.options['noise']
         state = {**ctx.state, 'raw': self.raw_name}
         path = bids_path(state, noise=noise)
         return {
@@ -337,9 +337,9 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
     def load(self, ctx: Request) -> mne.io.BaseRaw:
         return self.pipe.load(
             bids_path({**ctx.state, 'raw': self.raw_name}),
-            add_bads=ctx.view_option('add_bads', True),
-            preload=ctx.view_option('preload', False),
-            noise=ctx.option('noise', False),
+            add_bads=ctx.view_options['add_bads'],
+            preload=ctx.view_options['preload'],
+            noise=ctx.options['noise'],
             pipes=self.pipes,
             log=ctx.registry.log,
         )
@@ -645,7 +645,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
             Dependency(
                 raw_node_name(self.pipe.source),
                 state={'raw': self.pipe.source},
-                options=ctx.options_for(raw_node_name(self.pipe.source), add_bads=True, preload=False, noise=ctx.option('noise', False)),
+                options=ctx.options_for(raw_node_name(self.pipe.source), add_bads=True, preload=False, noise=ctx.options['noise']),
             ),
         ]
         if isinstance(self.pipe, RawICA):
@@ -658,7 +658,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         return self.standard_fingerprint(ctx, extra={'raw': self.raw_name, 'pipe': self.pipe._as_dict()})
 
     def build(self, ctx: Request) -> mne.io.BaseRaw:
-        noise = ctx.option('noise', False)
+        noise = ctx.options['noise']
         state = {**ctx.state, 'raw': self.raw_name}
         path = bids_path(state)
 
@@ -681,14 +681,14 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         return raw
 
     def apply_view_options(self, ctx: Request, raw: mne.io.BaseRaw) -> mne.io.BaseRaw:
-        if ctx.view_option('preload', False) and not raw.preload:
+        if ctx.view_options['preload'] and not raw.preload:
             raw.load_data()
-        add_bads = ctx.view_option('add_bads', True)
+        add_bads = ctx.view_options['add_bads']
         if isinstance(add_bads, Sequence):
             raw.info['bads'] = list(add_bads)
         elif add_bads is True:
             state = {**ctx.state, 'raw': self.raw_name}
-            raw.info['bads'] = self.pipe.load_bad_channels(bids_path(state), noise=ctx.option('noise', False), pipes=self.pipes, log=ctx.registry.log)
+            raw.info['bads'] = self.pipe.load_bad_channels(bids_path(state), noise=ctx.options['noise'], pipes=self.pipes, log=ctx.registry.log)
         elif add_bads is False:
             raw.info['bads'] = []
         else:

@@ -206,10 +206,10 @@ class SourceReportDerivative(ResultOutputDerivative[Path]):
     OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'include': None}
 
     def extra_key(self, ctx: Request) -> dict[str, Any]:
-        return {'include': ctx.option('include')}
+        return {'include': ctx.options['include']}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        if isinstance(self.tests[ctx.option('test')], TwoStageTest):
+        if isinstance(self.tests[ctx.options['test']], TwoStageTest):
             return (
                 Dependency('two-stage-level-2', options=ctx.options_for('two-stage-level-2', *RESULT_OPTION_DEFAULTS)),
                 Dependency('two-stage-data', options=ctx.options_for('two-stage-data', *RESULT_OPTION_DEFAULTS)),
@@ -224,14 +224,14 @@ class SourceReportDerivative(ResultOutputDerivative[Path]):
         report = fmtxt.Report(_report_title(dst))
         path_items = [*dst.parts[:-1], dst.stem]
         report.add_paragraph(fmtxt.List('Methods brief', path_items[-3:]))
-        test_obj = self.tests[ctx.option('test')]
+        test_obj = self.tests[ctx.options['test']]
         if isinstance(test_obj, TwoStageTest):
             data_value = ctx.load('two-stage-data', options=ctx.options_for('two-stage-data', *RESULT_OPTION_DEFAULTS))
             rlm = ctx.load('two-stage-level-2', options=ctx.options_for('two-stage-level-2', *RESULT_OPTION_DEFAULTS))
 
             info_section = report.add_section("Test Info")
-            parc = ctx.option('parc')
-            mask = ctx.option('mask')
+            parc = ctx.options['parc']
+            mask = ctx.options['mask']
             if parc:
                 section = report.add_section(parc)
                 _report_parc_image(self, ctx.state, section, f"Labels in the {parc} parcellation.")
@@ -243,15 +243,15 @@ class SourceReportDerivative(ResultOutputDerivative[Path]):
             for term in rlm.column_names:
                 res = rlm.tests[term]
                 ds = rlm.coefficients_dataset(term, long=True)
-                report.append(_report.source_time_results(res, ds, None, ctx.option('include'), _surfer_plot_kwargs(self, ctx.state), term, y='coeff'))
-            _report_test_info(self, ctx.state, info_section, data_value, test_obj, res, ctx.option('data'))
+                report.append(_report.source_time_results(res, ds, None, ctx.options['include'], _surfer_plot_kwargs(self, ctx.state), term, y='coeff'))
+            _report_test_info(self, ctx.state, info_section, data_value, test_obj, res, ctx.options['data'])
         else:
             data_value = ctx.load('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES))
             ds = data_value
             res = ctx.load('test-result', options=_test_result_options(ctx))
-            _report_test_info(self, ctx.state, report.add_section("Test Info"), ds, ctx.option('test'), res, ctx.option('data'), ctx.option('include'))
-            parc = ctx.option('parc')
-            mask = ctx.option('mask')
+            _report_test_info(self, ctx.state, report.add_section("Test Info"), ds, ctx.options['test'], res, ctx.options['data'], ctx.options['include'])
+            parc = ctx.options['parc']
+            mask = ctx.options['mask']
             if parc:
                 section = report.add_section(parc)
                 _report_parc_image(self, ctx.state, section, f"Labels in the {parc} parcellation.")
@@ -259,8 +259,8 @@ class SourceReportDerivative(ResultOutputDerivative[Path]):
                 section = report.add_section(f"Whole Brain Masked by {mask}")
                 _report_parc_image(self, ctx.state, section, f"Mask: {mask.capitalize()}")
             colors = plot.colors_for_categorial(ds.eval(res._plot_model()))
-            report.append(_report.source_time_results(res, ds, colors, ctx.option('include'), _surfer_plot_kwargs(self, ctx.state), parc=parc))
-        return _save_report(report, dst, ('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'), ctx.option('samples'))
+            report.append(_report.source_time_results(res, ds, colors, ctx.options['include'], _surfer_plot_kwargs(self, ctx.state), parc=parc))
+        return _save_report(report, dst, ('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'), ctx.options['samples'])
 
 
 class ROIReportDerivative(ResultOutputDerivative[Path]):
@@ -272,7 +272,7 @@ class ROIReportDerivative(ResultOutputDerivative[Path]):
     sampled_path = True
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        if isinstance(self.tests[ctx.option('test')], TwoStageTest):
+        if isinstance(self.tests[ctx.options['test']], TwoStageTest):
             return ()
         return (
             Dependency('test-result', options=_test_result_options(ctx, mask=None)),
@@ -280,7 +280,7 @@ class ROIReportDerivative(ResultOutputDerivative[Path]):
         )
 
     def build(self, ctx: Request) -> Path:
-        if isinstance(self.tests[ctx.option('test')], TwoStageTest):
+        if isinstance(self.tests[ctx.options['test']], TwoStageTest):
             raise NotImplementedError("ROI report not implemented for two-stage tests")
         dst = self.path(ctx)
         roi_data = ctx.load('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES))
@@ -299,9 +299,9 @@ class ROIReportDerivative(ResultOutputDerivative[Path]):
         report = fmtxt.Report(_report_title(dst))
         first_label = (labels_lh or labels_rh)[0]
         info_section = report.add_section("Test Info")
-        _report_test_info(self, ctx.state, info_section, res.n_trials_ds, self.tests[ctx.option('test')], res.res[first_label], ctx.option('data'))
-        section = report.add_section(ctx.option('parc'))
-        _report_parc_image(self, ctx.state, section, f"ROIs in the {ctx.option('parc')} parcellation.", res.subjects)
+        _report_test_info(self, ctx.state, info_section, res.n_trials_ds, self.tests[ctx.options['test']], res.res[first_label], ctx.options['data'])
+        section = report.add_section(ctx.options['parc'])
+        _report_parc_image(self, ctx.state, section, f"ROIs in the {ctx.options['parc']} parcellation.", res.subjects)
         n_subjects = len(res.subjects)
         colors = plot.colors_for_categorial(roi_data.label_data[first_label].eval(res.res[first_label]._plot_model()))
         for label in chain(labels_lh, labels_rh):
@@ -314,7 +314,7 @@ class ROIReportDerivative(ResultOutputDerivative[Path]):
                 title += f' (n={n})'
                 caption += f" Data from {n} of {n_subjects} subjects."
             section.append(_report.time_results(res_i, ds, colors, title, caption, merged_dist=res.merged_dist))
-        return _save_report(report, dst, ('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'), ctx.option('samples'))
+        return _save_report(report, dst, ('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'), ctx.options['samples'])
 
 
 class EEGReportDerivative(ResultOutputDerivative[Path]):
@@ -328,10 +328,10 @@ class EEGReportDerivative(ResultOutputDerivative[Path]):
     OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'include': None}
 
     def extra_key(self, ctx: Request) -> dict[str, Any]:
-        return {'include': ctx.option('include')}
+        return {'include': ctx.options['include']}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        if isinstance(self.tests[ctx.option('test')], TwoStageTest):
+        if isinstance(self.tests[ctx.options['test']], TwoStageTest):
             return ()
         return (
             Dependency('test-result', options=_test_result_options(ctx, parc=None, mask=None)),
@@ -339,21 +339,21 @@ class EEGReportDerivative(ResultOutputDerivative[Path]):
         )
 
     def build(self, ctx: Request) -> Path:
-        if isinstance(self.tests[ctx.option('test')], TwoStageTest):
+        if isinstance(self.tests[ctx.options['test']], TwoStageTest):
             raise NotImplementedError("EEG report not implemented for two-stage tests")
         dst = self.path(ctx)
         ds = ctx.load('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES))
         res = ctx.load('test-result', options=_test_result_options(ctx, parc=None, mask=None))
         report = fmtxt.Report(_report_title(dst))
         info_section = report.add_section("Test Info")
-        _report_test_info(self, ctx.state, info_section, ds, ctx.option('test'), res, ctx.option('data'), ctx.option('include'))
+        _report_test_info(self, ctx.state, info_section, ds, ctx.options['test'], res, ctx.options['data'], ctx.options['include'])
         sensor_map = plot.SensorMap(ds['eeg'], adjacency=True, show=False)
         image_conn = sensor_map.image("adjacency.png")
         info_section.add_figure("Sensor map with adjacency", image_conn)
         sensor_map.close()
         colors = plot.colors_for_categorial(ds.eval(res._plot_model()))
-        report.append(_report.sensor_time_results(res, ds, colors, ctx.option('include')))
-        return _save_report(report, dst, ('eelbrain', 'mne', 'scipy', 'numpy'), ctx.option('samples'))
+        report.append(_report.sensor_time_results(res, ds, colors, ctx.options['include']))
+        return _save_report(report, dst, ('eelbrain', 'mne', 'scipy', 'numpy'), ctx.options['samples'])
 
 
 class EEGSensorsReportDerivative(ResultOutputDerivative[Path]):
@@ -367,22 +367,22 @@ class EEGSensorsReportDerivative(ResultOutputDerivative[Path]):
     OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'sensors': ()}
 
     def extra_key(self, ctx: Request) -> dict[str, Any]:
-        return {'sensors': tuple(ctx.option('sensors'))}
+        return {'sensors': tuple(ctx.options['sensors'])}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        self.tests[ctx.option('test')]
-        if isinstance(self.tests[ctx.option('test')], TwoStageTest):
+        self.tests[ctx.options['test']]
+        if isinstance(self.tests[ctx.options['test']], TwoStageTest):
             return ()
         return (Dependency('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES)),)
 
     def build(self, ctx: Request) -> Path:
-        if isinstance(self.tests[ctx.option('test')], TwoStageTest):
+        if isinstance(self.tests[ctx.options['test']], TwoStageTest):
             raise NotImplementedError("EEG sensor report not implemented for two-stage tests")
         dst = self.path(ctx)
-        test_obj = self.tests[ctx.option('test')]
+        test_obj = self.tests[ctx.options['test']]
         ds = ctx.load('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES))
         eeg = ds['eeg']
-        sensors = ctx.option('sensors')
+        sensors = ctx.options['sensors']
         missing = [sensor for sensor in sensors if sensor not in eeg.sensor.names]
         if missing:
             raise ValueError(f"The following sensors are not in the data: {missing}")
@@ -397,8 +397,8 @@ class EEGSensorsReportDerivative(ResultOutputDerivative[Path]):
         colors = plot.colors_for_categorial(ds.eval(results[0]._plot_model()))
         for sensor, res in zip(sensors, results):
             report.append(_report.time_results(res, ds, colors, sensor, f"Signal at {sensor}."))
-        _report_test_info(self, ctx.state, info_section, ds, ctx.option('test'), results[0], ctx.option('data'))
-        return _save_report(report, dst, ('eelbrain', 'mne', 'scipy', 'numpy'), ctx.option('samples'))
+        _report_test_info(self, ctx.state, info_section, ds, ctx.options['test'], results[0], ctx.options['data'])
+        return _save_report(report, dst, ('eelbrain', 'mne', 'scipy', 'numpy'), ctx.options['samples'])
 
 
 class LMReportDerivative(ResultOutputDerivative[Path]):
@@ -412,25 +412,25 @@ class LMReportDerivative(ResultOutputDerivative[Path]):
     sampled_path = True
 
     def extra_key(self, ctx: Request) -> dict[str, Any]:
-        return {'mask': ctx.option('mask')}
+        return {'mask': ctx.options['mask']}
 
     def _level_1_options(self, ctx: Request) -> dict[str, Any]:
         return ctx.options_for('two-stage-level-1', *RESULT_OPTION_DEFAULTS, data=TestDims.coerce('source', morph=False), smooth=None, parc=None, mask=True)
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        test_obj = self.tests[ctx.option('test')]
+        test_obj = self.tests[ctx.options['test']]
         if not isinstance(test_obj, TwoStageTest):
             return ()
         return (Dependency('two-stage-level-1', state=_subject_request_state(ctx, ctx.state['subject']), options=self._level_1_options(ctx)),)
 
     def build(self, ctx: Request) -> Path:
-        test_obj = self.tests[ctx.option('test')]
+        test_obj = self.tests[ctx.options['test']]
         if not isinstance(test_obj, TwoStageTest):
             raise TypeError("LM report requires a TwoStageTest")
         dst = self.path(ctx)
         report = fmtxt.Report(_report_title(dst))
         lm = ctx.load('two-stage-level-1', state=_subject_request_state(ctx, ctx.state['subject']), options=self._level_1_options(ctx))
-        report.append(_report.source_time_lm(lm, ctx.option('pmin'), _surfer_plot_kwargs(self, ctx.state)))
+        report.append(_report.source_time_lm(lm, ctx.options['pmin'], _surfer_plot_kwargs(self, ctx.state)))
         return _save_report(report, dst, ('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'))
 
 
@@ -480,7 +480,7 @@ class CoregReportDerivative(ResultOutputDerivative[Path]):
             self,
             ctx: Request,
     ) -> Path:
-        dst = ctx.view_option('dst')
+        dst = ctx.view_options['dst']
         return Path(dst) if dst else coreg_report_path(ctx.state)
 
     def build(self, ctx: Request) -> Path:
