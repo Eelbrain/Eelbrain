@@ -471,7 +471,7 @@ def cast_to_ndvar(
     -------
     short_ds
         Copy of ``ds``, aggregated over ``dim_values``, and with an
-        :class:`NDVar` containing the values form ``data`` and a new dimension
+        :class:`NDVar` containing the values from ``data`` and a new dimension
         reflecting ``dim_values``. If ``dim_values`` is a Factor, the new
         dimension is :class:`Categorial`; if ``dim_values`` is a :class:`Var`,
         it is :class:`Scalar`. The new dimension's name is ``dim``. The only
