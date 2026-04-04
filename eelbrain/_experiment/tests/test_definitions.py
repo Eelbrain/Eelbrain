@@ -7,6 +7,7 @@ from eelbrain._experiment import test_def
 from eelbrain._experiment.configuration import Configuration, ConfigurationError, find_dependent_epochs, find_epoch_vars, find_epochs_vars, sequence_arg
 from eelbrain._experiment.derivative_cache import DerivativeRegistry
 from eelbrain._experiment.preprocessing import RawFilter, RawICA, RawReReference
+from eelbrain._experiment.two_stage import TwoStageTest
 from eelbrain._experiment.variable_def import EvalVar, GroupVar, LabelVar, Variables
 from eelbrain.testing import TempDir
 
@@ -67,11 +68,11 @@ def test_find_test_vars():
     assert test.model == 'A'
     assert test._find_test_vars() == ({'A', 'GR'}, none)
     # two-stage
-    test = test_def.TwoStageTest("a + b + a*b", vars={'a': 'c * d', 'b': 'c * e'})
+    test = TwoStageTest("a + b + a*b", vars={'a': 'c * d', 'b': 'c * e'})
     assert test._find_test_vars() == ({'c', 'd', 'e'}, none)
-    test = test_def.TwoStageTest("a + b + a*b", vars={'a': 'c * d', 'b': 'c * e', 'x': 'something * nonexistent'})
+    test = TwoStageTest("a + b + a*b", vars={'a': 'c * d', 'b': 'c * e', 'x': 'something * nonexistent'})
     assert test._find_test_vars() == ({'c', 'd', 'e'}, none)
-    test = test_def.TwoStageTest("a + b + a*b", vars={'a': ('c%d', {}), 'b': ('c%e', {})})
+    test = TwoStageTest("a + b + a*b", vars={'a': ('c%d', {}), 'b': ('c%e', {})})
     assert test._find_test_vars() == ({'c', 'd', 'e'}, none)
 
 

@@ -14,7 +14,7 @@ from ..mne_fixes import write_labels_to_annot
 from .._utils import subp
 from .._utils.mne_utils import fix_annot_names, is_fake_mri
 from .pathing import annot_file_path, annot_stamp_path, label_dir, mri_dir, mri_sdir
-from .derivative_cache import Dependency, Derivative, DerivativeContext, file_fingerprint
+from .derivative_cache import Dependency, Derivative, Request, file_fingerprint
 from .configuration import Configuration, ConfigurationError, sequence_arg
 
 
@@ -39,7 +39,7 @@ class Parcellation(Configuration):
 
     def _make(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             annot: AnnotDerivative,
             parc: str,  # the name (contains radius for seeded parcellations)
     ) -> list:
@@ -102,7 +102,7 @@ class SubParc(Parcellation):
         self.base = base
         self.labels = sequence_arg('labels', labels)
 
-    def _make(self, ctx: DerivativeContext, annot: AnnotDerivative, parc: str):
+    def _make(self, ctx: Request, annot: AnnotDerivative, parc: str):
         base = {l.name: l for l in annot.load_annot(ctx, parc=self.base)}
         hemis = ('-lh', '-rh')
         labels = []
@@ -190,7 +190,7 @@ class CombinationParc(Parcellation):
         self.base = base
         self.labels = labels
 
-    def _make(self, ctx: DerivativeContext, annot: AnnotDerivative, parc: str):
+    def _make(self, ctx: Request, annot: AnnotDerivative, parc: str):
         base = {l.name: l for l in annot.load_annot(ctx, parc=self.base)}
         subjects_dir = mri_sdir(ctx.state)
         labels = []
@@ -219,9 +219,9 @@ class EelbrainParc(Parcellation):
         Parcellation.__init__(self, views)
         self.morph_from_fsaverage = morph_from_fsaverage
 
-    def _make(self, ctx: DerivativeContext, annot: AnnotDerivative, parc: str):
+    def _make(self, ctx: Request, annot: AnnotDerivative, parc: str):
         assert parc == 'lobes'
-        subject = ctx.get('mrisubject')
+        subject = ctx.state['mrisubject']
         subjects_dir = mri_sdir(ctx.state)
         if subject != 'fsaverage':
             raise RuntimeError(f"lobes parcellation can only be created for fsaverage, not for {subject}")
@@ -272,8 +272,8 @@ class FreeSurferParc(Parcellation):
     """
     kind = 'subject_parc'
 
-    def _make(self, ctx: DerivativeContext, annot: AnnotDerivative, parc: str):
-        subject = ctx.get('mrisubject')
+    def _make(self, ctx: Request, annot: AnnotDerivative, parc: str):
+        subject = ctx.state['mrisubject']
         raise FileNotFoundError(f"At least one annot file for the parcellation {parc} is missing for {subject}")
 
 
@@ -299,9 +299,9 @@ class FSAverageParc(Parcellation):
     kind = 'fsaverage_parc'
     morph_from_fsaverage = True
 
-    def _make(self, ctx: DerivativeContext, annot: AnnotDerivative, parc: str):
-        common_brain = ctx.get('common_brain')
-        assert ctx.get('mrisubject') == common_brain
+    def _make(self, ctx: Request, annot: AnnotDerivative, parc: str):
+        common_brain = ctx.state['common_brain']
+        assert ctx.state['mrisubject'] == common_brain
         raise FileNotFoundError(f"At least one annot file for the parcellation {parc} is missing for {common_brain}")
 
 
@@ -323,7 +323,7 @@ class LabelParc(Parcellation):
         Parcellation.__init__(self, views)
         self.labels = sequence_arg('labels', labels)
 
-    def _make(self, ctx: DerivativeContext, annot: AnnotDerivative, parc: str):
+    def _make(self, ctx: Request, annot: AnnotDerivative, parc: str):
         labels = []
         hemis = ('lh.', 'rh.')
         path = os.path.join(mri_dir(ctx.state), 'label', '%s.label')
@@ -390,10 +390,10 @@ class SeededParc(Parcellation):
     def seeds_for_subject(self, subject):
         return self.seeds
 
-    def _make(self, ctx: DerivativeContext, annot: AnnotDerivative, parc: str):
+    def _make(self, ctx: Request, annot: AnnotDerivative, parc: str):
         if self.mask:
             annot.ensure_annot(ctx, parc=self.mask)
-        subject = ctx.get('mrisubject')
+        subject = ctx.state['mrisubject']
         subjects_dir = mri_sdir(ctx.state)
         seeds = self.seeds_for_subject(subject)
         name, extent = SEEDED_PARC_RE.match(parc).groups()
@@ -511,7 +511,7 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
 
     def load_annot(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             *,
             parc: str | None = None,
             mrisubject: str | None = None,
@@ -525,7 +525,7 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
 
     def ensure_annot(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             *,
             parc: str | None = None,
             mrisubject: str | None = None,
@@ -534,21 +534,21 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
 
     def make_parcellation(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             parc: str,
             parc_def: Parcellation,
     ) -> list[mne.Label]:
         labels = parc_def._make(ctx, self, parc)
-        write_labels_to_annot(labels, ctx.get('mrisubject'), parc, True, mri_sdir(ctx.state))
+        write_labels_to_annot(labels, ctx.state['mrisubject'], parc, True, mri_sdir(ctx.state))
         return labels
 
     def path(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
     ) -> Path:
         return annot_stamp_path(ctx.state)
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         parc, parc_def = self.annot_state(ctx.state)
         if parc_def is None or isinstance(parc_def, VolumeParc):
             return ()
@@ -561,14 +561,14 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
         if mask:
             deps.append(Dependency('annot', label='mask', state={'parc': mask}))
 
-        mrisubject = ctx.get('mrisubject')
-        common_brain = ctx.get('common_brain')
+        mrisubject = ctx.state['mrisubject']
+        common_brain = ctx.state['common_brain']
         fake_mri = is_fake_mri(mri_dir(ctx.state))
         if mrisubject != common_brain and (parc_def.morph_from_fsaverage or fake_mri):
             deps.append(Dependency('annot', label='common-brain', state={'mrisubject': common_brain}))
         return tuple(deps)
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
         parc, parc_def = self.annot_state(ctx.state)
         if parc_def is None:
             return {'parc': parc, 'kind': 'none'}
@@ -583,15 +583,15 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
             fingerprint['labels'] = self.label_file_fingerprints(ctx.state, parc_def)
         return fingerprint
 
-    def build(self, ctx: DerivativeContext) -> list[mne.Label]:
+    def build(self, ctx: Request) -> list[mne.Label]:
         parc, parc_def = self.annot_state(ctx.state)
         if parc_def is None or isinstance(parc_def, VolumeParc):
             return []
         if not self.managed_annot(ctx.state, parc_def):
             return self.annot_labels(ctx.state)
 
-        mrisubject = ctx.get('mrisubject')
-        common_brain = ctx.get('common_brain')
+        mrisubject = ctx.state['mrisubject']
+        common_brain = ctx.state['common_brain']
         fake_mri = is_fake_mri(mri_dir(ctx.state))
         if mrisubject != common_brain and (parc_def.morph_from_fsaverage or fake_mri):
             if fake_mri:
@@ -620,13 +620,13 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
 
     def load(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: Path) -> list[mne.Label]:
         return self.annot_labels(ctx.state)
 
     def save(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: Path,
             value: list[mne.Label],
     ) -> None:
@@ -635,7 +635,7 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
 
     def validate(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: Path,
             manifest,
     ) -> bool:

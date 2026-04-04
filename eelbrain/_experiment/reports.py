@@ -22,11 +22,13 @@ from .. import report as _report
 from .. import table
 from .._data_obj import Dataset, Factor, align1
 from .._utils.mne_utils import is_fake_mri
-from .derivative_cache import Dependency, DerivativeContext, file_fingerprint
+from .derivative_cache import Dependency, Request, file_fingerprint
 from .parc import IndividualSeededParc, SEEDED_PARC_RE
 from .pathing import coreg_report_path, mri_dir, mri_sdir, trans_file_path
 from .preprocessing import raw_node_name
 from .results import (
+    RESULT_OPTION_DEFAULTS,
+    TEST_DATA_OPTION_NAMES,
     ResultOutputDerivative,
     _subject_request_state,
     _test_result_options,
@@ -182,7 +184,7 @@ def _report_parc_image(node: ResultOutputDerivative, state: dict[str, Any], sect
     legend.close()
 
 
-def _coreg_subject_states(node: ResultOutputDerivative, ctx: DerivativeContext) -> list[dict[str, Any]]:
+def _coreg_subject_states(node: ResultOutputDerivative, ctx: Request) -> list[dict[str, Any]]:
     return node.collect_states(ctx.state, ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'mrisubject'), raw='raw')
 
 
@@ -201,30 +203,31 @@ class SourceReportDerivative(ResultOutputDerivative[Path]):
     """
     name = 'source-report'
     sampled_path = True
+    OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'include': None}
 
-    def extra_key(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def extra_key(self, ctx: Request) -> dict[str, Any]:
         return {'include': ctx.option('include')}
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if isinstance(self.tests[ctx.option('test')], TwoStageTest):
             return (
-                Dependency('two-stage-level-2', options=ctx.options),
-                Dependency('two-stage-data', options=ctx.options),
+                Dependency('two-stage-level-2', options=ctx.options_for('two-stage-level-2', *RESULT_OPTION_DEFAULTS)),
+                Dependency('two-stage-data', options=ctx.options_for('two-stage-data', *RESULT_OPTION_DEFAULTS)),
             )
         return (
             Dependency('test-result', options=_test_result_options(ctx)),
-            Dependency('evoked-test-data', options=ctx.options),
+            Dependency('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES)),
         )
 
-    def build(self, ctx: DerivativeContext) -> Path:
+    def build(self, ctx: Request) -> Path:
         dst = self.path(ctx)
         report = fmtxt.Report(_report_title(dst))
         path_items = [*dst.parts[:-1], dst.stem]
         report.add_paragraph(fmtxt.List('Methods brief', path_items[-3:]))
         test_obj = self.tests[ctx.option('test')]
         if isinstance(test_obj, TwoStageTest):
-            data_value = ctx.load('two-stage-data')
-            rlm = ctx.load('two-stage-level-2')
+            data_value = ctx.load('two-stage-data', options=ctx.options_for('two-stage-data', *RESULT_OPTION_DEFAULTS))
+            rlm = ctx.load('two-stage-level-2', options=ctx.options_for('two-stage-level-2', *RESULT_OPTION_DEFAULTS))
 
             info_section = report.add_section("Test Info")
             parc = ctx.option('parc')
@@ -243,9 +246,9 @@ class SourceReportDerivative(ResultOutputDerivative[Path]):
                 report.append(_report.source_time_results(res, ds, None, ctx.option('include'), _surfer_plot_kwargs(self, ctx.state), term, y='coeff'))
             _report_test_info(self, ctx.state, info_section, data_value, test_obj, res, ctx.option('data'))
         else:
-            data_value = ctx.load('evoked-test-data')
+            data_value = ctx.load('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES))
             ds = data_value
-            res = ctx.load('test-result')
+            res = ctx.load('test-result', options=_test_result_options(ctx))
             _report_test_info(self, ctx.state, report.add_section("Test Info"), ds, ctx.option('test'), res, ctx.option('data'), ctx.option('include'))
             parc = ctx.option('parc')
             mask = ctx.option('mask')
@@ -268,20 +271,20 @@ class ROIReportDerivative(ResultOutputDerivative[Path]):
     name = 'roi-report'
     sampled_path = True
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if isinstance(self.tests[ctx.option('test')], TwoStageTest):
             return ()
         return (
             Dependency('test-result', options=_test_result_options(ctx, mask=None)),
-            Dependency('evoked-test-data', options=ctx.options),
+            Dependency('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES)),
         )
 
-    def build(self, ctx: DerivativeContext) -> Path:
+    def build(self, ctx: Request) -> Path:
         if isinstance(self.tests[ctx.option('test')], TwoStageTest):
             raise NotImplementedError("ROI report not implemented for two-stage tests")
         dst = self.path(ctx)
-        roi_data = ctx.load('evoked-test-data')
-        res = ctx.load('test-result')
+        roi_data = ctx.load('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES))
+        res = ctx.load('test-result', options=_test_result_options(ctx, mask=None))
         labels_lh = []
         labels_rh = []
         for label in res.res.keys():
@@ -322,24 +325,25 @@ class EEGReportDerivative(ResultOutputDerivative[Path]):
     """
     name = 'eeg-report'
     sampled_path = True
+    OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'include': None}
 
-    def extra_key(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def extra_key(self, ctx: Request) -> dict[str, Any]:
         return {'include': ctx.option('include')}
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if isinstance(self.tests[ctx.option('test')], TwoStageTest):
             return ()
         return (
             Dependency('test-result', options=_test_result_options(ctx, parc=None, mask=None)),
-            Dependency('evoked-test-data', options=ctx.options),
+            Dependency('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES)),
         )
 
-    def build(self, ctx: DerivativeContext) -> Path:
+    def build(self, ctx: Request) -> Path:
         if isinstance(self.tests[ctx.option('test')], TwoStageTest):
             raise NotImplementedError("EEG report not implemented for two-stage tests")
         dst = self.path(ctx)
-        ds = ctx.load('evoked-test-data')
-        res = ctx.load('test-result')
+        ds = ctx.load('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES))
+        res = ctx.load('test-result', options=_test_result_options(ctx, parc=None, mask=None))
         report = fmtxt.Report(_report_title(dst))
         info_section = report.add_section("Test Info")
         _report_test_info(self, ctx.state, info_section, ds, ctx.option('test'), res, ctx.option('data'), ctx.option('include'))
@@ -360,22 +364,23 @@ class EEGSensorsReportDerivative(ResultOutputDerivative[Path]):
     """
     name = 'eeg-sensors-report'
     sampled_path = True
+    OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'sensors': ()}
 
-    def extra_key(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def extra_key(self, ctx: Request) -> dict[str, Any]:
         return {'sensors': tuple(ctx.option('sensors'))}
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         self.tests[ctx.option('test')]
         if isinstance(self.tests[ctx.option('test')], TwoStageTest):
             return ()
-        return (Dependency('evoked-test-data', options=ctx.options),)
+        return (Dependency('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES)),)
 
-    def build(self, ctx: DerivativeContext) -> Path:
+    def build(self, ctx: Request) -> Path:
         if isinstance(self.tests[ctx.option('test')], TwoStageTest):
             raise NotImplementedError("EEG sensor report not implemented for two-stage tests")
         dst = self.path(ctx)
         test_obj = self.tests[ctx.option('test')]
-        ds = ctx.load('evoked-test-data')
+        ds = ctx.load('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES))
         eeg = ds['eeg']
         sensors = ctx.option('sensors')
         missing = [sensor for sensor in sensors if sensor not in eeg.sensor.names]
@@ -406,31 +411,25 @@ class LMReportDerivative(ResultOutputDerivative[Path]):
     single_subject = True
     sampled_path = True
 
-    def extra_key(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def extra_key(self, ctx: Request) -> dict[str, Any]:
         return {'mask': ctx.option('mask')}
 
-    def _level_1_options(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return {
-            **ctx.options,
-            'data': TestDims.coerce('source', morph=False),
-            'smooth': None,
-            'parc': None,
-            'mask': True,
-        }
+    def _level_1_options(self, ctx: Request) -> dict[str, Any]:
+        return ctx.options_for('two-stage-level-1', *RESULT_OPTION_DEFAULTS, data=TestDims.coerce('source', morph=False), smooth=None, parc=None, mask=True)
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         test_obj = self.tests[ctx.option('test')]
         if not isinstance(test_obj, TwoStageTest):
             return ()
-        return (Dependency('two-stage-level-1', state=_subject_request_state(ctx, ctx.get('subject')), options=self._level_1_options(ctx)),)
+        return (Dependency('two-stage-level-1', state=_subject_request_state(ctx, ctx.state['subject']), options=self._level_1_options(ctx)),)
 
-    def build(self, ctx: DerivativeContext) -> Path:
+    def build(self, ctx: Request) -> Path:
         test_obj = self.tests[ctx.option('test')]
         if not isinstance(test_obj, TwoStageTest):
             raise TypeError("LM report requires a TwoStageTest")
         dst = self.path(ctx)
         report = fmtxt.Report(_report_title(dst))
-        lm = ctx.load('two-stage-level-1', state=_subject_request_state(ctx, ctx.get('subject')), options=self._level_1_options(ctx))
+        lm = ctx.load('two-stage-level-1', state=_subject_request_state(ctx, ctx.state['subject']), options=self._level_1_options(ctx))
         report.append(_report.source_time_lm(lm, ctx.option('pmin'), _surfer_plot_kwargs(self, ctx.state)))
         return _save_report(report, dst, ('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'))
 
@@ -445,23 +444,24 @@ class CoregReportDerivative(ResultOutputDerivative[Path]):
     """
     name = 'coreg-report'
     key_fields = ()
+    OPTION_DEFAULTS = {}
 
-    def key(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return ctx.registry.canonicalize({'group': ctx.get('group'), 'mri': ctx.get('mri')})
+    def key(self, ctx: Request) -> dict[str, Any]:
+        return ctx.registry.canonicalize({'group': ctx.state['group'], 'mri': ctx.state['mri']})
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {
             'subjects': ctx.registry.canonicalize([
                 {
                     'state': {key: state[key] for key in ('subject', 'session', 'task', 'acquisition', 'run', 'split') if state[key] is not None},
                     'mrisubject': state['mrisubject'],
-                    'mri': file_fingerprint(ctx.get('root'), mri_dir({**ctx.state, **state}), 'mri-dir', metadata={'mrisubject': state['mrisubject']}),
+                    'mri': file_fingerprint(ctx.state['root'], mri_dir({**ctx.state, **state}), 'mri-dir', metadata={'mrisubject': state['mrisubject']}),
                 }
                 for state in _coreg_subject_states(self, ctx)
             ])
         }
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         deps = []
         for state in _coreg_subject_states(self, ctx):
             label = '_'.join(
@@ -478,21 +478,21 @@ class CoregReportDerivative(ResultOutputDerivative[Path]):
 
     def path(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
     ) -> Path:
-        dst = ctx.option('dst')
+        dst = ctx.view_option('dst')
         return Path(dst) if dst else coreg_report_path(ctx.state)
 
-    def build(self, ctx: DerivativeContext) -> Path:
+    def build(self, ctx: Request) -> Path:
         from matplotlib import pyplot
         from mayavi import mlab
 
         dst = self.path(ctx)
         title = 'Coregistration'
-        if ctx.get('group') != 'all':
-            title += ' ' + ctx.get('group')
-        if ctx.get('mri'):
-            title += ' ' + ctx.get('mri')
+        if ctx.state['group'] != 'all':
+            title += ' ' + ctx.state['group']
+        if ctx.state['mri']:
+            title += ' ' + ctx.state['mri']
 
         report = fmtxt.Report(title)
         for state in _coreg_subject_states(self, ctx):

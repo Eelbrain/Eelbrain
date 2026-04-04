@@ -14,12 +14,11 @@ from .._data_obj import Datalist, Dataset, Factor, Var, combine
 from .._exceptions import ConfigurationError
 from .._info import BAD_CHANNELS
 from .._names import INTERPOLATE_CHANNELS
-from .configuration import sequence_arg
-from .derivative_cache import CachePolicy, Dependency, Derivative, DerivativeContext
+from .derivative_cache import CachePolicy, Dependency, Derivative, Request
 from .epochs import EpochCollection, SecondaryEpoch, SuperEpoch
 from .exceptions import FileMissingError
 from .pathing import rej_file_path
-from .preprocessing import load_raw_dependency, raw_data_dependency, raw_node_name
+from .preprocessing import load_raw_dependency, raw_data_dependency
 from .variable_def import Variables
 
 
@@ -71,17 +70,17 @@ class EventsDerivative(Derivative[Dataset]):
         self.multi_session = multi_session
         self.variables_repr = repr(variables)
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (raw_data_dependency(ctx, add_bads=False),)
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        subject = ctx.get('subject')
-        session = ctx.get('session')
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        subject = ctx.state['subject']
+        session = ctx.state['session']
         trigger_shift = self.trigger_shift
         if isinstance(trigger_shift, dict):
             trigger_shift = trigger_shift.get((subject, session), trigger_shift.get(subject, 0))
         return {
-            'raw': ctx.get('raw'),
+            'raw': ctx.state['raw'],
             'stim_channel': self.stim_channel,
             'merge_triggers': self.merge_triggers,
             'trigger_shift': trigger_shift,
@@ -90,8 +89,8 @@ class EventsDerivative(Derivative[Dataset]):
             'label_events': getattr(self.label_events_impl, '__qualname__', repr(self.label_events_impl)),
         }
 
-    def build(self, ctx: DerivativeContext) -> Dataset:
-        entities = {k: ctx.get(k) for k in BIDS_ENTITY_KEYS}
+    def build(self, ctx: Request) -> Dataset:
+        entities = {k: ctx.state[k] for k in BIDS_ENTITY_KEYS}
         subject = entities['subject']
         session = entities['session']
         raw = load_raw_dependency(ctx, add_bads=False, preload=self.preload, noise=False)
@@ -120,12 +119,12 @@ class EventsDerivative(Derivative[Dataset]):
             ds['i_start'] += int(round(trigger_shift * ds.info['sfreq']))
         return ds
 
-    def load(self, ctx: DerivativeContext, path: Path) -> Dataset:
+    def load(self, ctx: Request, path: Path) -> Dataset:
         ds = load.unpickle(path)
-        ds.info.update({k: ctx.get(k) for k in BIDS_ENTITY_KEYS})
+        ds.info.update({k: ctx.state[k] for k in BIDS_ENTITY_KEYS})
         return ds
 
-    def save(self, ctx: DerivativeContext, path: Path, value: Dataset) -> None:
+    def save(self, ctx: Request, path: Path, value: Dataset) -> None:
         save.pickle(value, path)
 
 
@@ -149,6 +148,8 @@ class SelectedEventsDerivative(Derivative[Dataset]):
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw', 'epoch', 'rej')
     cache_suffix = '.pickle'
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
+    OPTION_DEFAULTS = {'reject': True}
+    VIEW_OPTION_DEFAULTS = {'add_bads': True, 'index': True, 'data_raw': False, 'cat': None}
 
     def __init__(
             self,
@@ -160,37 +161,24 @@ class SelectedEventsDerivative(Derivative[Dataset]):
         self.epochs = epochs
         self.artifact_rejection = artifact_rejection
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
-        epoch = self.epochs[ctx.get('epoch')]
-        add_bads = ctx.option('add_bads', True)
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        epoch = self.epochs[ctx.state['epoch']]
         tasks = epoch.tasks if hasattr(epoch, 'tasks') else (epoch.task,)
         deps = [Dependency('rej-input', label='rej')]
         for task in tasks:
             task_state = {'task': task}
             deps.append(Dependency('events', label=f'{task}:events', state=task_state))
-            deps.append(Dependency(
-                raw_node_name(ctx.get('raw')),
-                label=f'{task}:raw',
-                state={**task_state, 'raw': ctx.get('raw')},
-                options={'add_bads': add_bads, 'preload': True, 'noise': False},
-            ))
         return tuple(deps)
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        epoch = self.epochs[ctx.get('epoch')]
-        return ctx.registry.canonicalize({
-            'epoch': epoch._as_dict(),
-            'rej': ctx.get('rej'),
-            'options': ctx.registry.canonicalize({
-                'reject': ctx.option('reject', True),
-                'add_bads': ctx.option('add_bads', True),
-                'index': ctx.option('index', True),
-                'data_raw': ctx.option('data_raw', False),
-                'cat': sequence_arg('cat', ctx.option('cat')) if ctx.option('cat') else None,
-            }),
-        })
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        epoch = self.epochs[ctx.state['epoch']]
+        return self.standard_fingerprint(
+            ctx,
+            definitions={'epoch': epoch._as_dict()},
+            extra={'rej': ctx.state['rej']},
+        )
 
-    def dependency_fingerprint(self, ctx: DerivativeContext, view: str | None = None) -> dict[str, Any]:
+    def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
         if view is None:
             return self.fingerprint(ctx)
         if view != 'epochs':
@@ -200,7 +188,7 @@ class SelectedEventsDerivative(Derivative[Dataset]):
 
     def _build_selected_events(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             epoch,
             reject: bool | str,
             add_bads: bool | list[str],
@@ -208,7 +196,7 @@ class SelectedEventsDerivative(Derivative[Dataset]):
             data_raw: bool,
             cat,
     ) -> Dataset:
-        subject = ctx.get('subject')
+        subject = ctx.state['subject']
         if isinstance(epoch, EpochCollection):
             raise ValueError(f"epoch={epoch.name!r}; can't load events for collection epoch")
 
@@ -255,24 +243,21 @@ class SelectedEventsDerivative(Derivative[Dataset]):
                 ds = ds.sub(epoch.sel)
             if index:
                 ds.index(index)
-            if reject is True and self.artifact_rejection[ctx.get('rej')]['kind'] is not None:
+            if reject is True and self.artifact_rejection[ctx.state['rej']]['kind'] is not None:
                 ds = ds.sub('accept')
         else:
-            rej_params = self.artifact_rejection[ctx.get('rej')]
+            rej_params = self.artifact_rejection[ctx.state['rej']]
             selection_state = {**ctx.state, 'epoch': epoch.name, 'task': epoch.task}
             if reject and rej_params['kind'] is not None:
                 rej_file = rej_file_path(selection_state)
                 if rej_file.exists():
                     ds_sel = load.unpickle(rej_file)
                 else:
-                    raise FileMissingError(f"The rejection file at {rej_file.relative_to(Path(ctx.get('root')))} does not exist. Run .make_epoch_selection() first.")
+                    raise FileMissingError(f"The rejection file at {rej_file.relative_to(Path(ctx.state['root']))} does not exist. Run .make_epoch_selection() first.")
             else:
                 ds_sel = None
             state = {**ctx.state, 'task': epoch.task}
             ds = ctx.load('events', state=state)
-            ds.info['raw'] = load_raw_dependency(ctx, add_bads=add_bads, preload=True, noise=False, state=state)
-            if not data_raw and 'raw' in ds.info:
-                del ds.info['raw']
             if epoch.sel:
                 ds = ds.sub(epoch.sel)
             if index:
@@ -333,33 +318,100 @@ class SelectedEventsDerivative(Derivative[Dataset]):
                 ds['i_start'] += np.round(shift * ds.info['sfreq']).astype(int)
 
         if cat:
-            model = ds.eval(ctx.get('model'))
+            model = ds.eval(ctx.state['model'])
             ds = ds.sub(model.isin(cat))
         if not data_raw and 'raw' in ds.info:
             del ds.info['raw']
         return ds
 
-    def build(self, ctx: DerivativeContext) -> Dataset:
+    def _view_raw(
+            self,
+            ctx: Request,
+            ds: Dataset,
+            epoch,
+            add_bads: bool | list[str],
+            data_raw: bool,
+    ) -> Dataset:
+        tasks = list(ds['task'].cells) if 'task' in ds else []
+        if not tasks:
+            if hasattr(epoch, 'task'):
+                tasks = [epoch.task]
+            elif isinstance(epoch, SecondaryEpoch):
+                sel_epoch = self.epochs[epoch.sel_epoch]
+                tasks = list(getattr(sel_epoch, 'tasks', (sel_epoch.task,)))
+            else:
+                tasks = list(getattr(epoch, 'tasks', ()))
+        if not tasks:
+            return ds
+
+        ds = ds.copy()
+        raw_all = None
+        bad_channels = list(add_bads) if isinstance(add_bads, Sequence) else None
+        for i, task in enumerate(tasks):
+            raw = load_raw_dependency(ctx, add_bads=add_bads, preload=data_raw, noise=False, state={'task': task})
+            if bad_channels is None:
+                task_bads = raw.info['bads'] if add_bads else []
+            else:
+                task_bads = bad_channels
+            if data_raw:
+                if raw_all is None:
+                    raw_all = raw
+                else:
+                    offset = raw_all.last_samp + 1 - raw.first_samp
+                    if 'task' in ds:
+                        ds['i_start'].x[ds['task'] == task] += offset
+                    else:
+                        ds['i_start'] += offset
+                    raw_all.append(raw)
+            if bad_channels is None:
+                bad_channels = task_bads if i == 0 else sorted(set(bad_channels).union(task_bads))
+        ds.info[BAD_CHANNELS] = bad_channels or []
+        if data_raw and raw_all is not None:
+            raw_all.info['bads'] = ds.info[BAD_CHANNELS]
+            ds.info['raw'] = raw_all
+        else:
+            ds.info.pop('raw', None)
+        return ds
+
+    def build(self, ctx: Request) -> Dataset:
         reject = ctx.option('reject', True)
         if reject not in (True, False, 'keep'):
             raise ValueError(f"{reject=}")
-        index = ctx.option('index', True)
+        return self._build_selected_events(
+            ctx,
+            self.epochs[ctx.state['epoch']],
+            reject,
+            False,
+            False,
+            False,
+            None,
+        )
+
+    def apply_view_options(self, ctx: Request, ds: Dataset) -> Dataset:
+        epoch = self.epochs[ctx.state['epoch']]
+        add_bads = ctx.view_option('add_bads', True)
+        data_raw = ctx.view_option('data_raw', False)
+        if add_bads or data_raw:
+            ds = self._view_raw(ctx, ds, epoch, add_bads, data_raw)
+        else:
+            ds = ds.copy()
+            ds.info[BAD_CHANNELS] = []
+            ds.info.pop('raw', None)
+        cat = ctx.view_option('cat')
+        if cat:
+            model = ds.eval(ctx.state['model'])
+            ds = ds.sub(model.isin(cat))
+        index = ctx.view_option('index', True)
         if index is True:
             index = 'index'
         elif index and not isinstance(index, str):
             raise TypeError(f"{index=}")
-        return self._build_selected_events(
-            ctx,
-            self.epochs[ctx.get('epoch')],
-            reject,
-            ctx.option('add_bads', True),
-            index,
-            ctx.option('data_raw', False),
-            ctx.option('cat'),
-        )
+        if index:
+            ds.index(index)
+        return ds
 
-    def load(self, ctx: DerivativeContext, path: Path) -> Dataset:
+    def load(self, ctx: Request, path: Path) -> Dataset:
         return load.unpickle(path)
 
-    def save(self, ctx: DerivativeContext, path: Path, value: Dataset) -> None:
+    def save(self, ctx: Request, path: Path, value: Dataset) -> None:
         save.pickle(value, path)

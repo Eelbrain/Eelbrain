@@ -11,7 +11,7 @@ from typing import Any
 import mne
 import numpy
 
-from .derivative_cache import Dependency, Derivative, DerivativeContext
+from .derivative_cache import Dependency, Derivative, Request
 from .preprocessing import load_raw_dependency, raw_data_dependency
 
 
@@ -83,17 +83,17 @@ class CovDerivative(Derivative[mne.Covariance]):
         self.name = cov_node_name(cov_name)
         self.cov.key = cov_name
 
-    def _events_state(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def _events_state(self, ctx: Request) -> dict[str, Any]:
         if isinstance(self.cov, EpochCovariance):
             return {}
-        return {'raw': ctx.get('raw')}
+        return {'raw': ctx.state['raw']}
 
-    def _rej_state(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def _rej_state(self, ctx: Request) -> dict[str, Any]:
         if isinstance(self.cov, EpochCovariance):
             return {'epoch': self.cov.epoch}
         return {}
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if isinstance(self.cov, EpochCovariance):
             return (Dependency('epochs', state={'epoch': self.cov.epoch}, options={
                 'baseline': True,
@@ -108,15 +108,15 @@ class CovDerivative(Derivative[mne.Covariance]):
             }),)
         return (raw_data_dependency(ctx, noise=True),)
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {
-            'raw': ctx.get('raw'),
+            'raw': ctx.state['raw'],
             'cov': vars(self.cov).copy(),
-            'rej': ctx.get('rej'),
-            'epoch': ctx.get('epoch'),
+            'rej': ctx.state['rej'],
+            'epoch': ctx.state['epoch'],
         }
 
-    def build(self, ctx: DerivativeContext) -> mne.Covariance:
+    def build(self, ctx: Request) -> mne.Covariance:
         if isinstance(self.cov, EpochCovariance):
             cov_path = self.path(ctx)
             cov_path.parent.mkdir(parents=True, exist_ok=True)
@@ -133,12 +133,12 @@ class CovDerivative(Derivative[mne.Covariance]):
                 'interpolate_bads': False,
             })
             return self.cov.make(epochs, log_path)
-        raw = load_raw_dependency(ctx, ctx.get('raw'), noise=True)
+        raw = load_raw_dependency(ctx, ctx.state['raw'], noise=True)
         return self.cov.make(raw)
 
     def load(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: Path) -> mne.Covariance:
         cov = mne.read_cov(path)
         if cov.data.dtype != 'float64':
@@ -147,7 +147,7 @@ class CovDerivative(Derivative[mne.Covariance]):
 
     def save(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: Path,
             value: mne.Covariance,
     ) -> None:

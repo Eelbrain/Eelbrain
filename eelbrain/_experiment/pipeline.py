@@ -34,7 +34,7 @@ from .._types import PathArg
 from .._utils import ask, subp, keydefaultdict, log_level, ScreenHandler
 from .._utils.mne_utils import is_fake_mri
 from .covariance import CovDerivative, EpochCovariance, RawCovariance, cov_node_name
-from .derivative_cache import DerivativeRegistry, ProtectedArtifactError
+from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, DerivativeRegistry, ProtectedArtifactError
 from .configuration import sequence_arg
 from .epochs import (
     EpochBase, EpochsDatasetDerivative, EpochsDerivative, EvokedDatasetDerivative,
@@ -53,7 +53,7 @@ from .pathing import (
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, assemble_parcs
 from .preprocessing import (
     ICAInput, RawBadChannelsInput, RawDerivative, RawPipe, RawSource, RawSourceInput, RawICA,
-    get_ica_pipe, get_ica_pipe_name, ica_input_name,
+    REINDEX_ICA, get_ica_pipe, get_ica_pipe_name, ica_input_name,
     raw_bad_channels_input_name, raw_node_name, validate_raw_graph,
 )
 from .reports import (
@@ -567,8 +567,8 @@ class Pipeline(StateModel):
         self._derivatives.register(TwoStageDataDerivative(self.tests, self._epochs, self._groups))
         self._derivatives.register(TwoStageLevel1Derivative(self.tests))
         self._derivatives.register(AnnotDerivative(self._parcs, tuple(self.get_field_values('hemi'))))
-        self._derivatives.register(EpochsStcDerivative(self._epochs))
-        self._derivatives.register(EvokedStcDerivative(self._epochs))
+        self._derivatives.register(EpochsStcDerivative(self._raw, self._epochs))
+        self._derivatives.register(EvokedStcDerivative(self._raw, self._epochs))
         self._derivatives.register(EpochsStcGroupDatasetDerivative(self._groups, self._mri_subjects, self.get('common_brain')))
         self._derivatives.register(EvokedStcGroupDatasetDerivative(self._groups, self._mri_subjects, self.get('common_brain')))
         self._derivatives.register(TestResultDerivative(*result_args))
@@ -593,14 +593,10 @@ class Pipeline(StateModel):
             cache: bool | None = None,  # Explicit cache override for this load.
             state: dict[str, Any] | None = None,  # State overrides before resolving the derivative.
             options: dict[str, Any] | None = None,
-            **extra_options,  # Additional options merged on top of ``options``.
+            *,
+            controls: frozenset[str] | set[str] | tuple[str, ...] = (),
     ):
-        merged_options = {}
-        if options:
-            merged_options.update(options)
-        if extra_options:
-            merged_options.update(extra_options)
-        return self._derivatives.resolve(name, state=self._derivative_state(state), options=merged_options).load(cache)
+        return self._derivatives.resolve(name, state=self._derivative_state(state), options=options, controls=controls).load(cache)
 
     def _derivative_state(
             self,
@@ -1694,7 +1690,7 @@ class Pipeline(StateModel):
         return self._derivatives.resolve(
             ica_input_name(raw_name),
             state=self._derivative_state({**state, 'raw': raw_name}),
-            options={'_allow_protected_reindex': accept_stale},
+            controls={REINDEX_ICA} if accept_stale else (),
         ).load()
 
     def load_inv(
@@ -2233,7 +2229,6 @@ class Pipeline(StateModel):
             'src_baseline': src_baseline,
             'smooth': smooth,
             'samplingrate': samplingrate,
-            '_allow_protected_overwrite': make,
         }
         test_obj = self.tests[test]
         result_node = 'two-stage-level-2' if isinstance(test_obj, TwoStageTest) else 'test-result'
@@ -2513,7 +2508,7 @@ class Pipeline(StateModel):
         raw_name = get_ica_pipe_name(self._raw, self.get('raw', **state))
         self._raw[raw_name]
         handle = self._derivatives.resolve(ica_input_name(raw_name), state=self._derivative_state({**state, 'raw': raw_name}))
-        ctx = handle.ctx
+        ctx = handle
         try:
             handle.node.materialize(ctx)
         except ProtectedArtifactError as error:
@@ -2606,11 +2601,10 @@ class Pipeline(StateModel):
             'fmin': fmin,
             'brain_kwargs': brain_kwargs,
             'time_dilation': time_dilation,
-            '_allow_protected_overwrite': True,
         }
         if not redo and self._derivatives.resolve('movie', state=self._derivative_state(), options=options).is_valid():
             return
-        self._load_derivative('movie', options=options, _allow_protected_overwrite=True)
+        self._load_derivative('movie', options=options, controls={ALLOW_PROTECTED_OVERWRITE})
 
     def make_mov_ttest(self, subjects=None, model='', c1=None, c0=None, p=0.05,
                        baseline=True, src_baseline=False,
@@ -2728,11 +2722,10 @@ class Pipeline(StateModel):
                 'surf': surf,
                 'time_dilation': time_dilation,
                 'cluster_state': state,
-                '_allow_protected_overwrite': True,
             }
             if not redo and self._derivatives.resolve('movie', state=self._derivative_state(), options=options).is_valid():
                 return
-        self._load_derivative('movie', options=options, _allow_protected_overwrite=True)
+        self._load_derivative('movie', options=options, controls={ALLOW_PROTECTED_OVERWRITE})
 
     def export_mrat_evoked(self, **kwargs):
         """Export the sensor data FIF files needed for MRAT sensor analysis
@@ -2752,7 +2745,7 @@ class Pipeline(StateModel):
         ...
         """
         ds = self.load_evoked(ndvar=False, **kwargs)
-        state = self._derivatives.resolve('evoked', state=self._derivative_state(kwargs)).ctx.state
+        state = self._derivatives.resolve('evoked', state=self._derivative_state(kwargs)).state
         root = deriv_dir(state) / 'mrat' / state['raw'] / f"{epoch_basename(state)}_epoch-{state['epoch']}_rej-{state['rej']}_model-{state['model']}_count-{state['equalize_evoked_count']}"
 
         # create fiffs
@@ -2788,7 +2781,7 @@ class Pipeline(StateModel):
             'evoked-stc',
             state=self._derivative_state(kwargs),
             options={'morph': True, 'ndvar': False},
-        ).ctx.state
+        ).state
         kind = '_'.join((state['raw'], state['cov'], state['mri'], state['src'], state['inv']))
         root = deriv_dir(state) / 'mrat' / kind / f"{epoch_basename(state)}_epoch-{state['epoch']}_rej-{state['rej']}_model-{state['model']}_count-{state['equalize_evoked_count']}"
 
@@ -3099,11 +3092,10 @@ class Pipeline(StateModel):
             'parc': parc,
             'mask': mask,
             'include': include,
-            '_allow_protected_overwrite': True,
         }
         if not redo and self._derivatives.resolve('source-report', state=self._derivative_state(), options=options).is_valid():
             return
-        self._load_derivative('source-report', options=options, _allow_protected_overwrite=True)
+        self._load_derivative('source-report', options=options, controls={ALLOW_PROTECTED_OVERWRITE})
 
     def make_report_rois(self, test, parc=None, pmin=None, tstart=None, tstop=None,
                          samples=10000, baseline=True, src_baseline=False,
@@ -3167,11 +3159,10 @@ class Pipeline(StateModel):
             'tstart': tstart,
             'tstop': tstop,
             'parc': parc,
-            '_allow_protected_overwrite': True,
         }
         if not redo and self._derivatives.resolve('roi-report', state=self._derivative_state(), options=options).is_valid():
             return
-        self._load_derivative('roi-report', options=options, _allow_protected_overwrite=True)
+        self._load_derivative('roi-report', options=options, controls={ALLOW_PROTECTED_OVERWRITE})
 
     def make_report_coreg(self, file_name=None, **state):
         """Create HTML report with plots of the MEG/MRI coregistration
@@ -3188,11 +3179,8 @@ class Pipeline(StateModel):
             file_name = os.path.expanduser(file_name)
         self._load_derivative(
             'coreg-report',
-            options={
-                'dst': file_name,
-                '_allow_protected_overwrite': True,
-            },
-            _allow_protected_overwrite=True,
+            options={'dst': file_name},
+            controls={ALLOW_PROTECTED_OVERWRITE},
         )
 
     def make_src(self, **state):

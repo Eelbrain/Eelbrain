@@ -55,7 +55,6 @@ def _test_result_manifest_path(
         'src_baseline': src_baseline,
         'smooth': smooth,
         'samplingrate': samplingrate,
-        '_allow_protected_overwrite': False,
     }).artifact_path)
 
 
@@ -832,7 +831,7 @@ def test_epochs_dataset_dependency_views_distinguish_model_sensitivity():
     e = SampleExperiment(root)
     e.set(subject='R0000', epoch='target', rej='', model='modality')
     evoked_handle = e._derivatives.resolve('evoked', state=e._derivative_state(), options={})
-    epochs_dataset_handle = e._derivatives.resolve('epochs-dataset', state=evoked_handle.ctx.state, options=evoked_handle.node._epochs_dataset_options(evoked_handle.ctx))
+    epochs_dataset_handle = e._derivatives.resolve('epochs-dataset', state=evoked_handle.state, options=evoked_handle.node._epochs_dataset_options(evoked_handle))
 
     dataset_fingerprint = epochs_dataset_handle.describe_dependency()['fingerprint']
     evoked_fingerprint = epochs_dataset_handle.describe_dependency(view='evoked')['fingerprint']
@@ -849,7 +848,7 @@ def test_epochs_dataset_dependency_views_distinguish_model_sensitivity():
     e_changed = ChangedExperiment(root)
     e_changed.set(subject='R0000', epoch='target', rej='', model='modality')
     evoked_handle_changed = e_changed._derivatives.resolve('evoked', state=e_changed._derivative_state(), options={})
-    epochs_dataset_handle_changed = e_changed._derivatives.resolve('epochs-dataset', state=evoked_handle_changed.ctx.state, options=evoked_handle_changed.node._epochs_dataset_options(evoked_handle_changed.ctx))
+    epochs_dataset_handle_changed = e_changed._derivatives.resolve('epochs-dataset', state=evoked_handle_changed.state, options=evoked_handle_changed.node._epochs_dataset_options(evoked_handle_changed))
 
     assert epochs_dataset_handle_changed.describe_dependency()['fingerprint'] == dataset_fingerprint
     assert epochs_dataset_handle_changed.describe_dependency(view='evoked')['fingerprint'] != evoked_fingerprint
@@ -868,16 +867,11 @@ def test_epochs_cache_uses_fif():
 
     options = {
         'baseline': False,
-        'ndvar': False,
-        'add_bads': True,
         'reject': True,
         'cat': None,
         'samplingrate': None,
         'decim': None,
         'pad': 0,
-        'data_raw': False,
-        'vardef': None,
-        'data': 'sensor',
         'trigger_shift': True,
         'tmin': None,
         'tmax': None,
@@ -916,16 +910,11 @@ def test_epochs_cached_load_uses_current_selected_events(monkeypatch):
 
     options = {
         'baseline': False,
-        'ndvar': False,
-        'add_bads': True,
         'reject': True,
         'cat': None,
         'samplingrate': None,
         'decim': None,
         'pad': 0,
-        'data_raw': False,
-        'vardef': None,
-        'data': 'sensor',
         'trigger_shift': True,
         'tmin': None,
         'tmax': None,
@@ -980,7 +969,6 @@ def test_selected_events_manifest_uses_real_dependencies():
         'add_bads': True,
         'index': True,
         'data_raw': False,
-        'vardef': None,
         'cat': None,
     })
     _ = handle.load(cache=True)
@@ -989,7 +977,168 @@ def test_selected_events_manifest_uses_real_dependencies():
     assert 'dependencies' not in manifest['fingerprint']
     assert 'rej' in manifest['dependencies']
     assert any(key.endswith(':events') for key in manifest['dependencies'])
-    assert any(key.endswith(':raw') for key in manifest['dependencies'])
+    assert not any(key.endswith(':raw') for key in manifest['dependencies'])
+
+
+@requires_mne_sample_data
+def test_raw_cache_identity_ignores_view_options():
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, n_subjects=1, n_segments=2, mris=False)
+    root = join(tempdir, 'SampleExperiment')
+
+    e = SampleExperiment(root)
+    e.set(subject='R0000')
+    node_name = raw_node_name('1-40')
+    base_state = e._derivative_state()
+
+    handle_default = e._derivatives.resolve(node_name, state=base_state, options={'noise': False, 'preload': False, 'add_bads': True})
+    handle_view = e._derivatives.resolve(node_name, state=base_state, options={'noise': False, 'preload': True, 'add_bads': False})
+    handle_noise = e._derivatives.resolve(node_name, state=base_state, options={'noise': True, 'preload': False, 'add_bads': True})
+
+    assert handle_default.current_fingerprint() == handle_view.current_fingerprint()
+    assert handle_default.current_fingerprint() != handle_noise.current_fingerprint()
+
+
+@requires_mne_sample_data
+def test_selected_events_cache_identity_ignores_view_options():
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, n_subjects=1, n_segments=2, mris=False)
+    root = join(tempdir, 'SampleExperiment')
+
+    e = SampleExperiment(root)
+    e.set(subject='R0000', epoch='target', rej='', model='modality')
+    base_state = e._derivative_state()
+
+    handle_default = e._derivatives.resolve('selected-events', state=base_state, options={
+        'reject': True,
+        'add_bads': True,
+        'index': True,
+        'data_raw': False,
+        'cat': None,
+    })
+    handle_view = e._derivatives.resolve('selected-events', state=base_state, options={
+        'reject': True,
+        'add_bads': False,
+        'index': 'trial',
+        'data_raw': True,
+        'cat': ('auditory',),
+    })
+    handle_reject = e._derivatives.resolve('selected-events', state=base_state, options={
+        'reject': False,
+        'add_bads': True,
+        'index': True,
+        'data_raw': False,
+        'cat': None,
+    })
+
+    assert handle_default.current_fingerprint() == handle_view.current_fingerprint()
+    assert handle_default.current_fingerprint() != handle_reject.current_fingerprint()
+
+
+@requires_mne_sample_data
+def test_source_cache_identity_ignores_view_options():
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, n_subjects=1, n_segments=2, mris=True)
+    root = join(tempdir, 'SampleExperiment')
+
+    e = SampleExperiment(root)
+    e.set(subject='R0000', epoch='target', rej='', src='ico-4')
+    base_state = e._derivative_state()
+
+    epochs_stc_default = e._derivatives.resolve('epochs-stc', state=base_state, options={
+        'baseline': False,
+        'src_baseline': False,
+        'cat': None,
+        'morph': False,
+        'mask': False,
+        'samplingrate': None,
+        'decim': None,
+        'pad': 0,
+        'reject': True,
+        'ndvar': True,
+        'data_raw': False,
+        'keep_epochs': False,
+    })
+    epochs_stc_view = e._derivatives.resolve('epochs-stc', state=base_state, options={
+        'baseline': False,
+        'src_baseline': False,
+        'cat': None,
+        'morph': False,
+        'mask': False,
+        'samplingrate': None,
+        'decim': None,
+        'pad': 0,
+        'reject': True,
+        'ndvar': False,
+        'data_raw': True,
+        'keep_epochs': 'both',
+    })
+    epochs_stc_artifact = e._derivatives.resolve('epochs-stc', state=base_state, options={
+        'baseline': (-0.1, 0),
+        'src_baseline': False,
+        'cat': None,
+        'morph': False,
+        'mask': False,
+        'samplingrate': None,
+        'decim': None,
+        'pad': 0,
+        'reject': True,
+        'ndvar': True,
+        'data_raw': False,
+        'keep_epochs': False,
+    })
+
+    assert epochs_stc_default.current_fingerprint() == epochs_stc_view.current_fingerprint()
+    assert epochs_stc_default.current_fingerprint() != epochs_stc_artifact.current_fingerprint()
+
+    evoked_stc_default = e._derivatives.resolve('evoked-stc', state=base_state, options={
+        'baseline': False,
+        'src_baseline': False,
+        'cat': None,
+        'morph': False,
+        'mask': False,
+        'samplingrate': None,
+        'decim': None,
+        'ndvar': True,
+        'data_raw': False,
+        'keep_evoked': False,
+    })
+    evoked_stc_view = e._derivatives.resolve('evoked-stc', state=base_state, options={
+        'baseline': False,
+        'src_baseline': False,
+        'cat': None,
+        'morph': False,
+        'mask': False,
+        'samplingrate': None,
+        'decim': None,
+        'ndvar': False,
+        'data_raw': True,
+        'keep_evoked': True,
+    })
+    evoked_stc_artifact = e._derivatives.resolve('evoked-stc', state=base_state, options={
+        'baseline': (-0.1, 0),
+        'src_baseline': False,
+        'cat': None,
+        'morph': False,
+        'mask': False,
+        'samplingrate': None,
+        'decim': None,
+        'ndvar': True,
+        'data_raw': False,
+        'keep_evoked': False,
+    })
+
+    assert evoked_stc_default.current_fingerprint() == evoked_stc_view.current_fingerprint()
+    assert evoked_stc_default.current_fingerprint() != evoked_stc_artifact.current_fingerprint()
 
 
 @requires_mne_sample_data
@@ -1011,19 +1160,14 @@ def test_selected_events_vardef_is_local():
         'cat': None,
     }
     compact = Variables({'grouped': LabelVar('trigger', {(1, 2): 'target'}, task='sample')})
-    expanded = Variables({'grouped': LabelVar('trigger', {1: 'target', 2: 'target'}, task='sample')})
     changed = Variables({'grouped': LabelVar('trigger', {1: 'target', 2: 'nontarget'}, task='sample')})
 
-    handle_compact = e._derivatives.resolve('selected-events', state=e._derivative_state(), options={**options, 'vardef': compact})
-    _ = handle_compact.load(cache=True)
-    handle_expanded = e._derivatives.resolve('selected-events', state=e._derivative_state(), options={**options, 'vardef': expanded})
-    handle_changed = e._derivatives.resolve('selected-events', state=e._derivative_state(), options={**options, 'vardef': changed})
+    handle = e._derivatives.resolve('selected-events', state=e._derivative_state(), options=options)
+    _ = handle.load(cache=True)
 
-    assert 'vardef' not in handle_compact.current_fingerprint()
-    assert handle_expanded.current_fingerprint() == handle_compact.current_fingerprint()
-    assert handle_expanded.is_valid()
-    assert handle_changed.current_fingerprint() == handle_compact.current_fingerprint()
-    assert handle_changed.is_valid()
+    assert 'vardef' not in handle.current_fingerprint()
+    with pytest.raises(TypeError, match="undeclared option"):
+        e._derivatives.resolve('selected-events', state=e._derivative_state(), options={**options, 'vardef': compact})
 
     ds_compact = e.load_selected_events(vardef=compact)
     ds_changed = e.load_selected_events(vardef=changed)

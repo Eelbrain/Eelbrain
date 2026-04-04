@@ -26,7 +26,7 @@ from .._io.pickle import update_subjects_dir
 from .._text import enumeration
 from .._stats.stats import ttest_t
 from .._stats.testnd import _MergedTemporalClusterDist
-from .derivative_cache import Dependency, Derivative, DerivativeContext, UncachedDerivative
+from .derivative_cache import Dependency, Derivative, Request, UncachedDerivative
 from .pathing import (
     epoch_basename,
     join_stem_parts,
@@ -42,23 +42,47 @@ from .variable_def import apply_vardef
 
 T = TypeVar('T')
 USE_CTX = object()
+RESULT_OPTION_DEFAULTS = {
+    'samples': None,
+    'data': None,
+    'test': None,
+    'tstart': None,
+    'tstop': None,
+    'pmin': None,
+    'parc': None,
+    'mask': None,
+    'baseline': None,
+    'src_baseline': None,
+    'smooth': None,
+    'samplingrate': None,
+}
+
+TEST_DATA_OPTION_NAMES = (
+    'data',
+    'test',
+    'baseline',
+    'src_baseline',
+    'parc',
+    'mask',
+    'samplingrate',
+    'smooth',
+)
 
 
-def _group_request_state(ctx: DerivativeContext, **state) -> dict[str, Any]:
-    return {**ctx.state, **state, 'group': ctx.get('group'), 'subject': None}
+def _group_request_state(ctx: Request, **state) -> dict[str, Any]:
+    return {**ctx.state, **state, 'group': ctx.state['group'], 'subject': None}
 
 
-def _subject_request_state(ctx: DerivativeContext, subject: str, **state) -> dict[str, Any]:
+def _subject_request_state(ctx: Request, subject: str, **state) -> dict[str, Any]:
     return {**ctx.state, **state, 'subject': subject, 'group': None}
 
 
 def _test_result_options(
-        ctx: DerivativeContext,
+        ctx: Request,
         *,
         data: TestDims | object = USE_CTX,
         parc: str | None | object = USE_CTX,
         mask: str | None | bool | object = USE_CTX,
-        make: bool = False,
 ) -> dict[str, Any]:
     if data is USE_CTX:
         data = ctx.option('data')
@@ -79,12 +103,11 @@ def _test_result_options(
         'src_baseline': ctx.option('src_baseline'),
         'smooth': ctx.option('smooth'),
         'samplingrate': ctx.option('samplingrate'),
-        '_allow_protected_overwrite': make,
     }
 
 
 def _evoked_stc_options(
-        ctx: DerivativeContext,
+        ctx: Request,
         baseline=USE_CTX,
         src_baseline=USE_CTX,
         morph: bool = False,
@@ -99,23 +122,24 @@ def _evoked_stc_options(
         baseline = ctx.option('baseline')
     if src_baseline is USE_CTX:
         src_baseline = ctx.option('src_baseline')
-    return {
-        'baseline': baseline,
-        'src_baseline': src_baseline,
-        'morph': morph,
-        'cat': cat,
-        'parc': ctx.option('parc'),
-        'mask': mask,
-        'data_raw': data_raw,
-        'samplingrate': samplingrate,
-        'decim': decim,
-        'ndvar': ndvar,
-        'keep_evoked': False,
-    }
+    return ctx.options_for(
+        'evoked-stc',
+        baseline=baseline,
+        src_baseline=src_baseline,
+        morph=morph,
+        cat=cat,
+        parc=ctx.option('parc'),
+        mask=mask,
+        data_raw=data_raw,
+        samplingrate=samplingrate,
+        decim=decim,
+        ndvar=ndvar,
+        keep_evoked=False,
+    )
 
 
 def _epochs_stc_options(
-        ctx: DerivativeContext,
+        ctx: Request,
         baseline=USE_CTX,
         src_baseline=USE_CTX,
         cat=None,
@@ -132,30 +156,31 @@ def _epochs_stc_options(
         baseline = ctx.option('baseline')
     if src_baseline is USE_CTX:
         src_baseline = ctx.option('src_baseline')
-    return {
-        'baseline': baseline,
-        'src_baseline': src_baseline,
-        'cat': cat,
-        'keep_epochs': keep_epochs,
-        'morph': morph,
-        'parc': ctx.option('parc'),
-        'mask': mask,
-        'data_raw': data_raw,
-        'samplingrate': samplingrate,
-        'decim': decim,
-        'ndvar': ndvar,
-        'reject': reject,
-    }
+    return ctx.options_for(
+        'epochs-stc',
+        baseline=baseline,
+        src_baseline=src_baseline,
+        cat=cat,
+        keep_epochs=keep_epochs,
+        morph=morph,
+        parc=ctx.option('parc'),
+        mask=mask,
+        data_raw=data_raw,
+        samplingrate=samplingrate,
+        decim=decim,
+        ndvar=ndvar,
+        reject=reject,
+    )
 
 
-def _result_subjects(node, ctx: DerivativeContext) -> list[str]:
-    group = ctx.get('group')
+def _result_subjects(node, ctx: Request) -> list[str]:
+    group = ctx.state['group']
     if group not in (None, '', '*'):
         return list(node.groups[group])
-    return [ctx.get('subject')]
+    return [ctx.state['subject']]
 
 
-def result_test_kwargs(node, ctx: DerivativeContext, data, parc_dim: None | str):
+def result_test_kwargs(node, ctx: Request, data, parc_dim: None | str):
     dims = data.dims if hasattr(data, 'dims') else data
     kwargs = {
         'samples': ctx.option('samples'),
@@ -168,7 +193,7 @@ def result_test_kwargs(node, ctx: DerivativeContext, data, parc_dim: None | str)
         kwargs['tfce'] = True
     elif pmin is not None:
         kwargs['pmin'] = pmin
-        criteria = node.cluster_criteria[ctx.get('select_clusters')]
+        criteria = node.cluster_criteria[ctx.state['select_clusters']]
         kwargs.update({'min' + dim: criteria[dim] for dim in dims if dim in criteria})
     return kwargs
 
@@ -251,6 +276,8 @@ class ResultOutputDerivative(Derivative[T]):
     cache_log_level = logging.INFO
     single_subject = False
     sampled_path = False
+    OPTION_DEFAULTS = RESULT_OPTION_DEFAULTS
+    VIEW_OPTION_DEFAULTS = {'dst': None}
 
     def __init__(
             self,
@@ -322,24 +349,24 @@ class ResultOutputDerivative(Derivative[T]):
 
     def state_snapshot(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             single_subject: bool,
     ) -> dict[str, Any]:
         data = ctx.option('data')
         fields = ['epoch', 'raw', 'rej', 'model', 'equalize_evoked_count', 'test']
         if data and data.source:
             fields.extend(['cov', 'inv', 'src', 'mri'])
-        state = {field: ctx.get(field) for field in fields}
+        state = {field: ctx.state[field] for field in fields}
         if single_subject:
-            state['subject'] = ctx.get('subject')
+            state['subject'] = ctx.state['subject']
         else:
-            state['group'] = ctx.get('group')
+            state['group'] = ctx.state['group']
         return ctx.registry.canonicalize(state)
 
-    def analysis_options(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def analysis_options(self, ctx: Request) -> dict[str, Any]:
         mask = ctx.option('mask')
         if mask is True:
-            mask = ctx.get('parc')
+            mask = ctx.state['parc']
         data = ctx.option('data')
         return ctx.registry.canonicalize({
             'data': None if data is None else data.string,
@@ -352,11 +379,11 @@ class ResultOutputDerivative(Derivative[T]):
             'mask': mask,
             'samplingrate': ctx.option('samplingrate'),
             'smooth': ctx.option('smooth'),
-            'adjacency': ctx.get('adjacency'),
-            'select_clusters': ctx.get('select_clusters'),
+            'adjacency': ctx.state['adjacency'],
+            'select_clusters': ctx.state['select_clusters'],
         })
 
-    def cache_identity(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def cache_identity(self, ctx: Request) -> dict[str, Any]:
         return ctx.registry.canonicalize({
             'state': self.state_snapshot(ctx, self.single_subject),
             'options': self.analysis_options(ctx),
@@ -364,18 +391,18 @@ class ResultOutputDerivative(Derivative[T]):
             **self.extra_key(ctx),
         })
 
-    def _context_parts(self, ctx: DerivativeContext) -> list[str]:
+    def _context_parts(self, ctx: Request) -> list[str]:
         data = ctx.option('data')
-        parts = [f'data-{data.string}', f'raw-{ctx.get("raw")}', f'rej-{ctx.get("rej")}']
-        if ctx.get('model'):
-            parts.append(f'model-{ctx.get("model")}')
-        if ctx.get('equalize_evoked_count'):
-            parts.append(f'count-{ctx.get("equalize_evoked_count")}')
+        parts = [f'data-{data.string}', f'raw-{ctx.state["raw"]}', f'rej-{ctx.state["rej"]}']
+        if ctx.state['model']:
+            parts.append(f'model-{ctx.state["model"]}')
+        if ctx.state['equalize_evoked_count']:
+            parts.append(f'count-{ctx.state["equalize_evoked_count"]}')
         if data.source:
-            parts.extend((f'cov-{ctx.get("cov")}', f'src-{ctx.get("src")}', f'inv-{ctx.get("inv")}'))
+            parts.extend((f'cov-{ctx.state["cov"]}', f'src-{ctx.state["src"]}', f'inv-{ctx.state["inv"]}'))
         return parts
 
-    def _option_parts(self, ctx: DerivativeContext) -> list[str]:
+    def _option_parts(self, ctx: Request) -> list[str]:
         parts = []
         baseline = ctx.option('baseline')
         src_baseline = ctx.option('src_baseline')
@@ -395,15 +422,15 @@ class ResultOutputDerivative(Derivative[T]):
         if parc:
             parts.append(f'parc-{parc}')
         elif mask:
-            parts.append(f'mask-{ctx.get("parc") if mask is True else mask}')
+            parts.append(f'mask-{ctx.state["parc"] if mask is True else mask}')
         if pmin == 'tfce':
             parts.append('tfce')
         elif pmin is not None:
             parts.append(f'p-{pmin}')
-        if pmin not in (None, 'tfce') and ctx.get('select_clusters'):
-            parts.append(f'clusters-{ctx.get("select_clusters")}')
-        if pmin is not None and ctx.option('data').source and ctx.get('adjacency'):
-            parts.append(f'adj-{ctx.get("adjacency")}')
+        if pmin not in (None, 'tfce') and ctx.state['select_clusters']:
+            parts.append(f'clusters-{ctx.state["select_clusters"]}')
+        if pmin is not None and ctx.option('data').source and ctx.state['adjacency']:
+            parts.append(f'adj-{ctx.state["adjacency"]}')
         if ctx.option('tstart') is not None or ctx.option('tstop') is not None:
             parts.append(f'tw-{time_window_str((ctx.option("tstart"), ctx.option("tstop")))}')
         if samplingrate is not None:
@@ -412,55 +439,55 @@ class ResultOutputDerivative(Derivative[T]):
             parts.append(f'sm-{int(round(smooth * 1000))}mm')
         return parts
 
-    def path_stem(self, ctx: DerivativeContext) -> str:
-        return join_stem_parts(test_basename(ctx.state), f'epoch-{ctx.get("epoch")}', f'test-{ctx.option("test")}', self._context_parts(ctx), self._option_parts(ctx))
+    def path_stem(self, ctx: Request) -> str:
+        return join_stem_parts(test_basename(ctx.state), f'epoch-{ctx.state["epoch"]}', f'test-{ctx.option("test")}', self._context_parts(ctx), self._option_parts(ctx))
 
-    def default_path(self, ctx: DerivativeContext) -> Path:
+    def default_path(self, ctx: Request) -> Path:
         return report_export_path(ctx.state, self.name, self.path_stem(ctx), self.single_subject)
 
-    def _result_parc(self, ctx: DerivativeContext) -> str | None:
+    def _result_parc(self, ctx: Request) -> str | None:
         parc = ctx.option('parc')
         if parc:
             return parc
         mask = ctx.option('mask')
         if mask is True:
-            return ctx.get('parc')
+            return ctx.state['parc']
         if isinstance(mask, str):
             return mask
         return None
 
-    def definitions(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def definitions(self, ctx: Request) -> dict[str, Any]:
         definitions = {
-            'test': self.tests[ctx.get('test')]._as_dict(),
-            'epoch': self.epochs[ctx.get('epoch')]._as_dict(),
+            'test': self.tests[ctx.option('test')]._as_dict(),
+            'epoch': self.epochs[ctx.state['epoch']]._as_dict(),
         }
         parc = self._result_parc(ctx)
         if parc and parc in self.parcs:
             definitions['parc'] = self.parcs[parc]._as_dict()
         return ctx.registry.canonicalize(definitions)
 
-    def extra_key(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def extra_key(self, ctx: Request) -> dict[str, Any]:
         return {}
 
-    def key(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def key(self, ctx: Request) -> dict[str, Any]:
         return ctx.registry.canonicalize({
-            **self.cache_identity(ctx),
-            'samples': ctx.option('samples'),
+            'identity': self.cache_identity(ctx),
+            'options': ctx.registry.canonicalize(ctx.options),
         })
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return {
-            'identity': self.cache_identity(ctx),
-            'definitions': self.definitions(ctx),
-            'options': self.analysis_options(ctx),
-            'extra': ctx.registry.canonicalize(self.extra_key(ctx)),
-        }
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        return self.standard_fingerprint(
+            ctx,
+            state=self.state_snapshot(ctx, self.single_subject),
+            definitions=self.definitions(ctx),
+            extra={'single_subject': self.single_subject, **self.extra_key(ctx)},
+        )
 
     def path(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
     ) -> Path:
-        dst = ctx.option('dst')
+        dst = ctx.view_option('dst')
         path = Path(dst) if dst else self.default_path(ctx)
         if self.sampled_path:
             path = sampled_artifact_path(path, ctx.option('samples'))
@@ -468,13 +495,13 @@ class ResultOutputDerivative(Derivative[T]):
 
     def load(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: Path) -> T:
         return path
 
     def save(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: Path,
             value: T,
     ) -> None:
@@ -482,7 +509,7 @@ class ResultOutputDerivative(Derivative[T]):
 
     def provenance(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             value: T,
     ) -> dict[str, Any]:
         return {'samples': ctx.option('samples'), 'single_subject': self.single_subject}
@@ -518,61 +545,65 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         'subject', 'group', 'epoch', 'raw', 'rej', 'model', 'equalize_evoked_count',
         'test', 'cov', 'inv', 'src', 'mri',
     )
+    OPTION_DEFAULTS = {
+        'data': None,
+        'test': None,
+        'baseline': None,
+        'src_baseline': None,
+        'parc': None,
+        'mask': None,
+        'samplingrate': None,
+        'smooth': None,
+    }
 
     def __init__(self, tests: dict[str, Test], epochs: dict[str, Any], groups: dict[str, tuple[str, ...] | list[str]]):
         self.tests = tests
         self.epochs = epochs
         self.groups = groups
 
-    def _resolved_mask(self, ctx: DerivativeContext):
+    def _resolved_mask(self, ctx: Request):
         parc = ctx.option('parc')
         if parc:
             return parc
         return ctx.option('mask')
 
-    def _sensor_evoked_options(self, ctx: DerivativeContext, cat) -> dict[str, Any]:
-        return {
-            'baseline': ctx.option('baseline'),
-            'ndvar': True,
-            'cat': cat,
-            'samplingrate': ctx.option('samplingrate'),
-            'decim': None,
-            'data_raw': False,
-            'data': ctx.option('data'),
-        }
+    def _sensor_evoked_options(self, ctx: Request, cat) -> dict[str, Any]:
+        return ctx.options_for(
+            'evoked-dataset',
+            baseline=ctx.option('baseline'),
+            ndvar=True,
+            cat=cat,
+            samplingrate=ctx.option('samplingrate'),
+            decim=None,
+            data_raw=False,
+            data=ctx.option('data'),
+        )
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return {
-            'state': ctx.registry.canonicalize({
-                'group': ctx.get('group'),
-                'subject': ctx.get('subject'),
-                'epoch': ctx.get('epoch'),
-                'raw': ctx.get('raw'),
-                'rej': ctx.get('rej'),
-                'model': ctx.get('model'),
-                'equalize_evoked_count': ctx.get('equalize_evoked_count'),
-                'cov': ctx.get('cov'),
-                'inv': ctx.get('inv'),
-                'src': ctx.get('src'),
-                'mri': ctx.get('mri'),
-                'test': ctx.get('test'),
-            }),
-            'definitions': ctx.registry.canonicalize({
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        return self.standard_fingerprint(
+            ctx,
+            state={
+                'group': ctx.state['group'],
+                'subject': ctx.state['subject'],
+                'epoch': ctx.state['epoch'],
+                'raw': ctx.state['raw'],
+                'rej': ctx.state['rej'],
+                'model': ctx.state['model'],
+                'equalize_evoked_count': ctx.state['equalize_evoked_count'],
+                'cov': ctx.state['cov'],
+                'inv': ctx.state['inv'],
+                'src': ctx.state['src'],
+                'mri': ctx.state['mri'],
+                'test': ctx.option('test'),
+            },
+            definitions={
                 'test': self.tests[ctx.option('test')]._as_dict(),
-                'epoch': self.epochs[ctx.get('epoch')]._as_dict(),
-            }),
-            'options': ctx.registry.canonicalize({
-                'data': ctx.option('data').string,
-                'baseline': ctx.option('baseline'),
-                'src_baseline': ctx.option('src_baseline'),
-                'parc': ctx.option('parc'),
-                'mask': self._resolved_mask(ctx),
-                'samplingrate': ctx.option('samplingrate'),
-                'smooth': ctx.option('smooth'),
-            }),
-        }
+                'epoch': self.epochs[ctx.state['epoch']]._as_dict(),
+            },
+            extra={'mask': self._resolved_mask(ctx)},
+        )
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         data = ctx.option('data')
         test_obj = self.tests[ctx.option('test')]
         samplingrate = ctx.option('samplingrate')
@@ -581,14 +612,14 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
             return ()
 
         if data.sensor:
-            if ctx.get('group') not in (None, '', '*'):
-                return (Dependency('evoked-group-dataset', state={**ctx.state, 'group': ctx.get('group'), 'subject': None}, options=self._sensor_evoked_options(ctx, test_obj.cat)),)
-            return (Dependency('evoked-dataset', state={**ctx.state, 'subject': ctx.get('subject'), 'group': None}, options=self._sensor_evoked_options(ctx, test_obj.cat)),)
+            if ctx.state['group'] not in (None, '', '*'):
+                return (Dependency('evoked-group-dataset', state={**ctx.state, 'group': ctx.state['group'], 'subject': None}, options=self._sensor_evoked_options(ctx, test_obj.cat)),)
+            return (Dependency('evoked-dataset', state={**ctx.state, 'subject': ctx.state['subject'], 'group': None}, options=self._sensor_evoked_options(ctx, test_obj.cat)),)
 
         if data.source is True:
             return (Dependency(
                 'evoked-stc-group-dataset',
-                state={**ctx.state, 'group': ctx.get('group'), 'subject': None},
+                state={**ctx.state, 'group': ctx.state['group'], 'subject': None},
                 options=_evoked_stc_options(ctx, morph=True, cat=test_obj.cat, mask=mask, samplingrate=samplingrate),
             ),)
 
@@ -602,7 +633,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
             for subject in _result_subjects(self, ctx)
         )
 
-    def build(self, ctx: DerivativeContext) -> Dataset | ROIData:
+    def build(self, ctx: Request) -> Dataset | ROIData:
         data = ctx.option('data')
         test_obj = self.tests[ctx.option('test')]
         if test_obj.kind == 'two-stage':
@@ -612,10 +643,10 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
 
         if data.sensor:
             options = self._sensor_evoked_options(ctx, test_obj.cat)
-            if ctx.get('group') not in (None, '', '*'):
-                ds = ctx.load('evoked-group-dataset', state={**ctx.state, 'group': ctx.get('group'), 'subject': None}, options=options)
+            if ctx.state['group'] not in (None, '', '*'):
+                ds = ctx.load('evoked-group-dataset', state={**ctx.state, 'group': ctx.state['group'], 'subject': None}, options=options)
                 return _apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string)
-            ds = ctx.load('evoked-dataset', state={**ctx.state, 'subject': ctx.get('subject'), 'group': None}, options=options)
+            ds = ctx.load('evoked-dataset', state={**ctx.state, 'subject': ctx.state['subject'], 'group': None}, options=options)
             return _apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string)
 
         samplingrate = ctx.option('samplingrate')
@@ -623,7 +654,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
             mask = self._resolved_mask(ctx)
             ds = ctx.load(
                 'evoked-stc-group-dataset',
-                state={**ctx.state, 'group': ctx.get('group'), 'subject': None},
+                state={**ctx.state, 'group': ctx.state['group'], 'subject': None},
                 options=_evoked_stc_options(ctx, morph=True, cat=test_obj.cat, mask=mask, samplingrate=samplingrate),
             )
             ds = _apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string)
@@ -655,16 +686,17 @@ class TestResultDerivative(ResultOutputDerivative):
     sampled_path = True
     cache_suffix = '.pickle'
     path = Derivative.path
+    VIEW_OPTION_DEFAULTS = {}
 
-    def cache_label(self, ctx: DerivativeContext) -> str:
+    def cache_label(self, ctx: Request) -> str:
         return join_stem_parts(self.path_stem(ctx), f'samples-{ctx.option("samples")}') if ctx.option('samples') is not None else self.path_stem(ctx)
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if self.tests[ctx.option('test')].kind == 'two-stage':
             return ()
-        return (Dependency('evoked-test-data', options=ctx.options),)
+        return (Dependency('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES)),)
 
-    def build(self, ctx: DerivativeContext):
+    def build(self, ctx: Request):
         test_obj = self.tests[ctx.option('test')]
         if test_obj.kind == 'two-stage':
             raise RuntimeError(f"{self.name!r} does not handle two-stage tests")
@@ -689,7 +721,7 @@ class TestResultDerivative(ResultOutputDerivative):
             if mask is not None:
                 raise TypeError(f"{mask=}: invalid for data={data.string!r}")
         test_kwargs = result_test_kwargs(self, ctx, data, parc_dim)
-        data_value = ctx.load('evoked-test-data')
+        data_value = ctx.load('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES))
         if isinstance(data_value, ROIData):
             subjects = _result_subjects(self, ctx)
             n_per_label = {label: len(ds['subject'].cells) for label, ds in data_value.label_data.items()}
@@ -707,7 +739,7 @@ class TestResultDerivative(ResultOutputDerivative):
 
     def load(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: Path):
         res = load.unpickle(path)
         if ctx.option('data').source is True:
@@ -716,7 +748,7 @@ class TestResultDerivative(ResultOutputDerivative):
 
     def save(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: Path,
             value,
     ) -> None:
@@ -724,7 +756,7 @@ class TestResultDerivative(ResultOutputDerivative):
 
     def validate(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: Path,
             manifest,
     ) -> bool:
@@ -732,7 +764,7 @@ class TestResultDerivative(ResultOutputDerivative):
 
     def provenance(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             value,
     ) -> dict[str, Any]:
         return {'samples': value.samples}
@@ -752,8 +784,22 @@ class MovieDerivative(ResultOutputDerivative[Path]):
       ``ttest`` movies
     """
     name = 'movie'
+    OPTION_DEFAULTS = {
+        **RESULT_OPTION_DEFAULTS,
+        'movie_kind': None,
+        'time_dilation': 1.0,
+        'single_subject': False,
+        'subject': None,
+        'cat': None,
+        'fmin': None,
+        'brain_kwargs': None,
+        'p': None,
+        'pmid': None,
+        'surf': None,
+        'cluster_state': None,
+    }
 
-    def extra_key(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def extra_key(self, ctx: Request) -> dict[str, Any]:
         out = {'movie_kind': ctx.option('movie_kind'), 'time_dilation': ctx.option('time_dilation')}
         if ctx.option('movie_kind') == 'ga-dspm':
             out.update({
@@ -771,11 +817,11 @@ class MovieDerivative(ResultOutputDerivative[Path]):
             })
         return out
 
-    def path_stem(self, ctx: DerivativeContext) -> str:
+    def path_stem(self, ctx: Request) -> str:
         if ctx.option('movie_kind') == 'ga-dspm':
             return join_stem_parts(
                 epoch_basename(ctx.state),
-                f'epoch-{ctx.get("epoch")}',
+                f'epoch-{ctx.state["epoch"]}',
                 'ga-dspm',
                 self._context_parts(ctx),
                 self._option_parts(ctx),
@@ -791,7 +837,7 @@ class MovieDerivative(ResultOutputDerivative[Path]):
             contrast = f'{cat[0]}-{cat[1]}'
         return join_stem_parts(
             epoch_basename(ctx.state),
-            f'epoch-{ctx.get("epoch")}',
+            f'epoch-{ctx.state["epoch"]}',
             'ttest',
             self._context_parts(ctx),
             self._option_parts(ctx),
@@ -800,10 +846,10 @@ class MovieDerivative(ResultOutputDerivative[Path]):
             f'surf-{ctx.option("surf")}',
         )
 
-    def default_path(self, ctx: DerivativeContext) -> Path:
+    def default_path(self, ctx: Request) -> Path:
         return movie_export_path(ctx.state, self.path_stem(ctx), ctx.option('single_subject'))
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         kind = ctx.option('movie_kind')
         if kind == 'ga-dspm':
             if ctx.option('single_subject'):
@@ -831,7 +877,7 @@ class MovieDerivative(ResultOutputDerivative[Path]):
             ),)
         return ()
 
-    def build(self, ctx: DerivativeContext) -> Path:
+    def build(self, ctx: Request) -> Path:
         kind = ctx.option('movie_kind')
         dst = self.path(ctx)
         if kind == 'ga-dspm':
@@ -852,13 +898,14 @@ class MovieDerivative(ResultOutputDerivative[Path]):
                 y = 'srcm'
             if cluster_state:
                 cluster_state.update(samples=0, pmin=ctx.option('p'))
-            if ctx.get('model') and ctx.option('cat') and len(ctx.option('cat')) == 2:
-                c1, c0 = ctx.option('cat')
+            cat = ctx.option('cat')
+            if ctx.state['model'] and cat and len(cat) == 2:
+                c1, c0 = cat
                 if ctx.option('single_subject'):
-                    res = testnd.TTestIndependent(y, ctx.get('model'), c1, c0, data=ds, **cluster_state)
+                    res = testnd.TTestIndependent(y, ctx.state['model'], c1, c0, data=ds, **cluster_state)
                 else:
-                    res = testnd.TTestRelated(y, ctx.get('model'), c1, c0, match='subject', data=ds, **cluster_state)
-            elif ctx.option('cat'):
+                    res = testnd.TTestRelated(y, ctx.state['model'], c1, c0, match='subject', data=ds, **cluster_state)
+            elif cat:
                 res = testnd.TTestOneSample(y, data=ds, **cluster_state)
             else:
                 res = testnd.TTestOneSample(y, data=ds, **cluster_state)
@@ -878,7 +925,7 @@ class MovieDerivative(ResultOutputDerivative[Path]):
 
     def provenance(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             value: str,
     ) -> dict[str, Any]:
         return {'movie_kind': ctx.option('movie_kind')}

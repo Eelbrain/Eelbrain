@@ -4,16 +4,17 @@ import json
 import logging
 from pathlib import Path
 
+import pytest
+
 from eelbrain._experiment.derivative_cache import (
+    ALLOW_PROTECTED_OVERWRITE,
     ArtifactManifest,
     CachePolicy,
     Dependency,
     Derivative,
-    DerivativeContext,
-    DerivativeHandle,
+    Request,
     DerivativeRegistry,
     Input,
-    InputHandle,
     ProtectedArtifactError,
     file_fingerprint,
 )
@@ -91,6 +92,7 @@ class FakePipeline:
 
 class SourceInput(Input):
     name = 'source'
+    VIEW_OPTION_DEFAULTS = {'upper': False}
 
     def __init__(self, root: str | Path):
         self.root = Path(root)
@@ -100,13 +102,13 @@ class SourceInput(Input):
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, object]:
-        path = self.source_path(ctx.get('subject'))
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        path = self.source_path(ctx.state['subject'])
         return file_fingerprint(str(self.root), path, 'source-file', digest=True)
 
-    def load(self, ctx: DerivativeContext) -> str:
-        value = self.source_path(ctx.get('subject')).read_text()
-        if ctx.option('upper', False):
+    def load(self, ctx: Request) -> str:
+        value = self.source_path(ctx.state['subject']).read_text()
+        if ctx.view_option('upper', False):
             return value.upper()
         return value
 
@@ -122,26 +124,26 @@ class ValueDerivative(Derivative[str]):
         self.load_calls = 0
         self.save_calls = 0
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (Dependency('source'),)
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, object]:
-        return {'subject': ctx.get('subject')}
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {'subject': ctx.state['subject']}
 
-    def build(self, ctx: DerivativeContext) -> str:
+    def build(self, ctx: Request) -> str:
         self.build_calls += 1
-        return (self.root / 'inputs' / f"{ctx.get('subject')}.txt").read_text()
+        return (self.root / 'inputs' / f"{ctx.state['subject']}.txt").read_text()
 
     def load(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: str) -> str:
         self.load_calls += 1
         return Path(path).read_text()
 
     def save(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: str,
             value: str,
     ) -> None:
@@ -159,26 +161,26 @@ class SummaryDerivative(Derivative[str]):
         self.build_calls = 0
         self.load_calls = 0
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (Dependency('value'),)
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, object]:
-        return {'subject': ctx.get('subject')}
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {'subject': ctx.state['subject']}
 
-    def build(self, ctx: DerivativeContext) -> str:
+    def build(self, ctx: Request) -> str:
         self.build_calls += 1
         return f"summary:{ctx.load('value')}"
 
     def load(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: str) -> str:
         self.load_calls += 1
         return Path(path).read_text()
 
     def save(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: str,
             value: str,
     ) -> None:
@@ -190,27 +192,27 @@ class ComparisonDerivative(Derivative[str]):
     key_fields = ('subject',)
     cache_suffix = '.txt'
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (
             Dependency('value', label='current'),
             Dependency('value', label='other', state={'subject': 's2'}),
         )
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, object]:
-        return {'subject': ctx.get('subject')}
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {'subject': ctx.state['subject']}
 
-    def build(self, ctx: DerivativeContext) -> str:
+    def build(self, ctx: Request) -> str:
         return f"{ctx.load('value')} vs {ctx.load('value', subject='s2')}"
 
     def load(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: str) -> str:
         return Path(path).read_text()
 
     def save(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: str,
             value: str,
     ) -> None:
@@ -227,22 +229,22 @@ class EphemeralDerivative(Derivative[str]):
         self.root = Path(root)
         self.build_calls = 0
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, object]:
-        return {'subject': ctx.get('subject')}
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {'subject': ctx.state['subject']}
 
-    def build(self, ctx: DerivativeContext) -> str:
+    def build(self, ctx: Request) -> str:
         self.build_calls += 1
         return f"ephemeral-{self.build_calls}"
 
     def load(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: str) -> str:
         return Path(path).read_text()
 
     def save(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: str,
             value: str,
     ) -> None:
@@ -258,26 +260,61 @@ class CollidingDerivative(Derivative[str]):
         self.root = Path(root)
         self.build_calls = {}
 
-    def path(self, ctx: DerivativeContext) -> Path:
+    def path(self, ctx: Request) -> Path:
         return self.root / 'derivatives' / 'eelbrain' / 'cache' / 'colliding' / 'shared.txt'
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, object]:
-        return {'subject': ctx.get('subject'), 'mode': ctx.get('mode')}
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {'subject': ctx.state['subject'], 'mode': ctx.state['mode']}
 
-    def build(self, ctx: DerivativeContext) -> str:
-        key = (ctx.get('subject'), ctx.get('mode'))
+    def build(self, ctx: Request) -> str:
+        key = (ctx.state['subject'], ctx.state['mode'])
         self.build_calls[key] = self.build_calls.get(key, 0) + 1
-        return f"{ctx.get('subject')}:{ctx.get('mode')}:{self.build_calls[key]}"
+        return f"{ctx.state['subject']}:{ctx.state['mode']}:{self.build_calls[key]}"
 
     def load(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: str) -> str:
         return Path(path).read_text()
 
     def save(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
+            path: str,
+            value: str,
+    ) -> None:
+        Path(path).write_text(value)
+
+
+class OptionDerivative(Derivative[str]):
+    name = 'optioned'
+    key_fields = ('subject',)
+    cache_suffix = '.txt'
+    OPTION_DEFAULTS = {'artifact': 0}
+    VIEW_OPTION_DEFAULTS = {'view': 0}
+
+    def __init__(self, root: str | Path):
+        self.root = Path(root)
+        self.calls = []
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return self.standard_fingerprint(ctx, state={'subject': ctx.state['subject']})
+
+    def build(self, ctx: Request) -> str:
+        self.calls.append(('build', ctx.option('artifact'), ctx.view_option('view')))
+        return f"artifact:{ctx.option('artifact')}"
+
+    def load(self, ctx: Request, path: str) -> str:
+        self.calls.append(('load', ctx.option('artifact'), ctx.view_option('view')))
+        return Path(path).read_text()
+
+    def apply_view_options(self, ctx: Request, value: str) -> str:
+        self.calls.append(('view', ctx.option('artifact'), ctx.view_option('view')))
+        return f"{value}|view:{ctx.view_option('view')}"
+
+    def save(
+            self,
+            ctx: Request,
             path: str,
             value: str,
     ) -> None:
@@ -291,56 +328,31 @@ class ProtectedDerivative(Derivative[str]):
     def __init__(self, root: str | Path):
         self.root = Path(root)
 
-    def path(self, ctx: DerivativeContext) -> str:
-        return str(self.root / 'derived' / ctx.get('subject') / 'protected.txt')
+    def path(self, ctx: Request) -> str:
+        return str(self.root / 'derived' / ctx.state['subject'] / 'protected.txt')
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (Dependency('source'),)
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, object]:
-        return {'subject': ctx.get('subject')}
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {'subject': ctx.state['subject']}
 
-    def build(self, ctx: DerivativeContext) -> str:
+    def build(self, ctx: Request) -> str:
         return ctx.load('source')
 
     def load(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: str) -> str:
         return Path(path).read_text()
 
     def save(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: str,
             value: str,
     ) -> None:
         Path(path).write_text(value)
-
-
-class ReindexableProtectedDerivative(ProtectedDerivative):
-    name = 'reindexable-protected'
-
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, object]:
-        path = Path(self.path(ctx))
-        text = path.read_text() if path.exists() else None
-        return {
-            'subject': ctx.get('subject'),
-            'artifact_text': text,
-        }
-
-    def can_reindex_protected_artifact(
-            self,
-            ctx: DerivativeContext,
-            path: str,
-            manifest: ArtifactManifest,
-            cache: bool | None = None,
-    ) -> bool:
-        current = dict(self.fingerprint(ctx))
-        previous = dict(manifest.fingerprint)
-        current.pop('artifact_text', None)
-        previous.pop('artifact_text', None)
-        return current == previous
 
 
 def make_registry():
@@ -355,15 +367,13 @@ def make_registry():
     comparison = ComparisonDerivative()
     ephemeral = EphemeralDerivative(root)
     protected = ProtectedDerivative(root)
-    reindexable_protected = ReindexableProtectedDerivative(root)
     registry.register(source)
     registry.register(value)
     registry.register(summary)
     registry.register(comparison)
     registry.register(ephemeral)
     registry.register(protected)
-    registry.register(reindexable_protected)
-    return pipeline, registry, source, value, summary, comparison, ephemeral, protected, reindexable_protected
+    return pipeline, registry, source, value, summary, comparison, ephemeral, protected, None
 
 
 def test_manifest_roundtrip_ignores_unknown_fields():
@@ -534,15 +544,18 @@ def test_disabled_by_default_derivative_skips_cache_by_default():
     assert not handle.manifest_path.exists()
 
 
-def test_registry_resolve_returns_input_handle_and_loads_input():
+def test_registry_resolve_returns_request_for_input_and_derivative():
     _, registry, _, _, _, _, _, _, _ = make_registry()
 
     handle = registry.resolve('source', state=DEFAULT_STATE)
-    assert isinstance(handle, InputHandle)
+    assert isinstance(handle, Request)
     assert handle.describe_dependency()['kind'] == 'input'
+    with pytest.raises(TypeError, match="input 'source'"):
+        _ = handle.artifact_path
 
     value_handle = registry.resolve('value', state=DEFAULT_STATE)
-    assert isinstance(value_handle, DerivativeHandle)
+    assert isinstance(value_handle, Request)
+    assert value_handle.describe_dependency()['kind'] == 'derivative'
 
     assert registry.load('source', state=DEFAULT_STATE) == 'alpha'
     assert registry.load('source', state=DEFAULT_STATE, options={'upper': True}) == 'ALPHA'
@@ -569,32 +582,18 @@ def test_stale_external_artifact_is_protected():
         raise AssertionError("Expected ProtectedArtifactError")
 
     assert protected_path.read_text() == 'alpha'
-    assert registry.load('protected', state=DEFAULT_STATE, options={'_allow_protected_overwrite': True}) == 'changed'
+    assert registry.load('protected', state=DEFAULT_STATE, controls={ALLOW_PROTECTED_OVERWRITE}) == 'changed'
     assert protected_path.read_text() == 'changed'
 
 
-def test_protected_artifact_can_reindex_manifest():
-    pipeline, registry, _, _, _, _, _, _, _ = make_registry()
-
-    assert registry.load('reindexable-protected', state=DEFAULT_STATE) == 'alpha'
-    protected_path = Path(pipeline.get('protected-file'))
-    manifest_path = Path(registry.manifest_path(protected_path))
-
-    protected_path.write_text('user-edit')
-
-    assert registry.load('reindexable-protected', state=DEFAULT_STATE) == 'user-edit'
-    manifest = json.loads(manifest_path.read_text())
-    assert manifest['fingerprint']['artifact_text'] == 'user-edit'
-
-
-def test_protected_artifact_can_be_incorporated_at_user_risk():
+def test_protected_artifact_requires_derivative_owned_reindexing():
     pipeline, registry, _, _, _, _, _, _, _ = make_registry()
 
     assert registry.load('protected', state=DEFAULT_STATE) == 'alpha'
     pipeline.source_path().write_text('changed')
 
-    assert registry.load('protected', state=DEFAULT_STATE, options={'_allow_protected_reindex': True}) == 'alpha'
-    assert registry.load('protected', state=DEFAULT_STATE) == 'alpha'
+    with pytest.raises(ProtectedArtifactError):
+        registry.load('protected', state=DEFAULT_STATE, controls={'reindex_anything'})
 
 
 def test_runtime_code_does_not_use_private_get_node():
@@ -606,3 +605,50 @@ def test_runtime_code_does_not_use_private_get_node():
         if '._get_node(' in path.read_text():
             offenders.append(path.name)
     assert offenders == []
+
+
+def test_request_splits_artifact_and_view_options():
+    root = TempDir()
+    registry = DerivativeRegistry(root, logging.getLogger('eelbrain.test.derivative_cache'))
+    derivative = OptionDerivative(root)
+    registry.register(derivative)
+
+    handle = registry.resolve('optioned', state=DEFAULT_STATE, options={'artifact': 1, 'view': 2})
+
+    assert handle.options == {'artifact': 1}
+    assert handle.view_options == {'view': 2}
+    assert handle.current_fingerprint()['options'] == {'artifact': 1}
+    assert handle.options_for('optioned', artifact=4) == {'artifact': 4}
+    assert handle.options_for('optioned', 'view', artifact=4) == {'view': 2, 'artifact': 4}
+    with pytest.raises(TypeError, match="does not declare option"):
+        handle.options_for('optioned', artifact=4, extra=5)
+
+
+def test_registry_rejects_undeclared_options():
+    root = TempDir()
+    registry = DerivativeRegistry(root, logging.getLogger('eelbrain.test.derivative_cache'))
+    derivative = OptionDerivative(root)
+    registry.register(derivative)
+
+    with pytest.raises(TypeError, match="undeclared option"):
+        registry.resolve('optioned', state=DEFAULT_STATE, options={'artifact': 1, 'extra': 3})
+
+
+def test_request_applies_view_options_after_build_and_load():
+    root = TempDir()
+    registry = DerivativeRegistry(root, logging.getLogger('eelbrain.test.derivative_cache'))
+    derivative = OptionDerivative(root)
+    registry.register(derivative)
+
+    first = registry.load('optioned', state=DEFAULT_STATE, options={'artifact': 1, 'view': 2})
+    second = registry.load('optioned', state=DEFAULT_STATE, options={'artifact': 1, 'view': 3})
+
+    assert first == 'artifact:1|view:2'
+    assert second == 'artifact:1|view:3'
+    assert derivative.calls == [
+        ('build', 1, 2),
+        ('load', 1, 2),
+        ('view', 1, 2),
+        ('load', 1, 3),
+        ('view', 1, 3),
+    ]

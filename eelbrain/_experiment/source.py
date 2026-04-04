@@ -4,7 +4,7 @@
 These nodes own the reusable source-space products behind
 ``Pipeline.load_inv``, ``Pipeline.load_evoked_stc``, and
 ``Pipeline.load_epochs_stc``. Higher-level derivatives should load them
-through :meth:`DerivativeContext.load` instead of relying on injected facade
+through :meth:`Request.load` instead of relying on injected facade
 methods.
 """
 
@@ -28,16 +28,17 @@ from scipy import sparse
 from .. import load, save
 from .._data_obj import Dataset, Datalist, NDVar, combine
 from .covariance import cov_node_name
-from .derivative_cache import CachePolicy, Dependency, Derivative, DerivativeContext, Input, UncachedDerivative, file_fingerprint
+from .derivative_cache import CachePolicy, Dependency, Derivative, Request, Input, UncachedDerivative, file_fingerprint
 from .pathing import (
     bem_dir, bem_file_path, mri_dir, mri_sdir, src_file_path, trans_file_path,
 )
 from .preprocessing import load_raw_dependency, raw_node_name
+from .test_def import TestDims
 from .._text import enumeration, plural
 from .._utils import subp
 from .._utils.mne_utils import is_fake_mri
 from ..mne_fixes._source_space import merge_volume_source_space, prune_volume_source_space, restrict_volume_source_space
-from .._mne import find_source_subject, label_from_annot, morph_source_space
+from .._mne import find_source_subject, label_from_annot
 
 
 INV_METHODS = ('MNE', 'dSPM', 'sLORETA', 'eLORETA', 'champ')
@@ -172,10 +173,10 @@ def inverse_operator_params(inv: str) -> tuple[str, dict[str, Any], dict[str, An
 
 
 def _selected_parc(
-        ctx: DerivativeContext,
+        ctx: Request,
         mask: bool | str = False,
 ) -> str | None:
-    parc = ctx.option('parc') or ctx.get('parc') or None
+    parc = ctx.option('parc') or ctx.state['parc'] or None
     if isinstance(mask, str):
         return mask
     return parc
@@ -256,53 +257,53 @@ def _load_bem(state: dict[str, Any], log: logging.Logger) -> mne.ConductorModel:
 class TransInput(Input):
     name = 'trans-input'
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return file_fingerprint(ctx.get('root'), trans_file_path(ctx.state), 'trans-file')
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        return file_fingerprint(ctx.state['root'], trans_file_path(ctx.state), 'trans-file')
 
 
 class BemInput(Input):
     name = 'bem-input'
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return file_fingerprint(ctx.get('root'), bem_file_path(ctx.state), 'bem-file')
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        return file_fingerprint(ctx.state['root'], bem_file_path(ctx.state), 'bem-file')
 
 
 class SrcDerivative(Derivative[mne.SourceSpaces]):
     name = 'src'
     key_fields = ('mrisubject', 'src')
 
-    def _is_scaled(self, ctx: DerivativeContext) -> bool:
-        return ctx.get('mrisubject') != ctx.get('common_brain') and is_fake_mri(mri_dir(ctx.state))
+    def _is_scaled(self, ctx: Request) -> bool:
+        return ctx.state['mrisubject'] != ctx.state['common_brain'] and is_fake_mri(mri_dir(ctx.state))
 
-    def path(self, ctx: DerivativeContext) -> Path:
+    def path(self, ctx: Request) -> Path:
         return src_file_path(ctx.state)
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         deps = []
         if self._is_scaled(ctx):
             deps.append(Dependency(
                 'src',
                 label='common-brain-src',
-                state={'mrisubject': ctx.get('common_brain')},
+                state={'mrisubject': ctx.state['common_brain']},
             ))
-        elif ctx.get('src').startswith('vol'):
+        elif ctx.state['src'].startswith('vol'):
             deps.append(Dependency('bem-input'))
         return tuple(deps)
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {
-            'mrisubject': ctx.get('mrisubject'),
-            'src': ctx.get('src'),
-            'common_brain': ctx.get('common_brain'),
+            'mrisubject': ctx.state['mrisubject'],
+            'src': ctx.state['src'],
+            'common_brain': ctx.state['common_brain'],
             'fake_mri': is_fake_mri(mri_dir(ctx.state)),
         }
 
-    def build(self, ctx: DerivativeContext) -> mne.SourceSpaces:
+    def build(self, ctx: Request) -> mne.SourceSpaces:
         dst = self.path(ctx)
         dst.parent.mkdir(parents=True, exist_ok=True)
-        subject = ctx.get('mrisubject')
-        common_brain = ctx.get('common_brain')
-        src = ctx.get('src')
+        subject = ctx.state['mrisubject']
+        common_brain = ctx.state['common_brain']
+        src = ctx.state['src']
 
         if self._is_scaled(ctx):
             ctx.load('src', mrisubject=common_brain)
@@ -357,13 +358,13 @@ class SrcDerivative(Derivative[mne.SourceSpaces]):
 
     def load(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: Path) -> mne.SourceSpaces:
         return mne.read_source_spaces(path)
 
     def save(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: Path,
             value: mne.SourceSpaces,
     ) -> None:
@@ -375,27 +376,27 @@ class SourceMorphDerivative(Derivative[mne.SourceMorph]):
     key_fields = ('mrisubject', 'common_brain', 'src')
     cache_suffix = '-morph.h5'
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (
             Dependency('src', label='src-from'),
             Dependency(
                 'src',
                 label='src-to',
-                state={'mrisubject': ctx.get('common_brain')},
+                state={'mrisubject': ctx.state['common_brain']},
             ),
         )
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {
-            'mrisubject': ctx.get('mrisubject'),
-            'common_brain': ctx.get('common_brain'),
-            'src': ctx.get('src'),
+            'mrisubject': ctx.state['mrisubject'],
+            'common_brain': ctx.state['common_brain'],
+            'src': ctx.state['src'],
             'fake_mri': is_fake_mri(mri_dir(ctx.state)),
         }
 
-    def build(self, ctx: DerivativeContext) -> mne.SourceMorph:
-        subject_from = ctx.get('mrisubject')
-        subject_to = ctx.get('common_brain')
+    def build(self, ctx: Request) -> mne.SourceMorph:
+        subject_from = ctx.state['mrisubject']
+        subject_to = ctx.state['common_brain']
         subjects_dir = mri_sdir(ctx.state)
         src_to = ctx.load('src', mrisubject=subject_to)
         if is_fake_mri(mri_dir(ctx.state)) and subject_from != subject_to:
@@ -413,13 +414,13 @@ class SourceMorphDerivative(Derivative[mne.SourceMorph]):
 
     def load(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: Path) -> mne.SourceMorph:
         return mne.read_source_morph(path)
 
     def save(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: Path,
             value: mne.SourceMorph,
     ) -> None:
@@ -434,7 +435,7 @@ class FwdDerivative(Derivative[mne.Forward]):
     )
     cache_suffix = '-fwd.fif'
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (
             Dependency(
                 raw_node_name('raw'),
@@ -445,19 +446,19 @@ class FwdDerivative(Derivative[mne.Forward]):
             Dependency('src'),
         )
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {
-            'raw': ctx.get('raw'),
-            'epoch': ctx.get('epoch'),
-            'mrisubject': ctx.get('mrisubject'),
-            'src': ctx.get('src'),
+            'raw': ctx.state['raw'],
+            'epoch': ctx.state['epoch'],
+            'mrisubject': ctx.state['mrisubject'],
+            'src': ctx.state['src'],
         }
 
-    def build(self, ctx: DerivativeContext) -> mne.Forward:
-        raw = load_raw_dependency(ctx, ctx.get('raw'), add_bads=False)
+    def build(self, ctx: Request) -> mne.Forward:
+        raw = load_raw_dependency(ctx, ctx.state['raw'], add_bads=False)
         src = ctx.load('src')
         dst = self.path(ctx)
-        if ctx.get('mrisubject') == 'fsaverage':
+        if ctx.state['mrisubject'] == 'fsaverage':
             bemsol = mri_dir(ctx.state) / 'bem' / 'fsaverage-5120-5120-5120-bem-sol.fif'
         else:
             bem = _load_bem(ctx.state, ctx.registry.log)
@@ -483,13 +484,13 @@ class FwdDerivative(Derivative[mne.Forward]):
 
     def load(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: Path) -> mne.Forward:
         return mne.read_forward_solution(path)
 
     def save(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: Path,
             value: mne.Forward,
     ) -> None:
@@ -504,46 +505,47 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
     )
     cache_policy = CachePolicy.OPTIONAL
     cache_suffix = '-inv.fif'
+    VIEW_OPTION_DEFAULTS = {'fiff': None}
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
-        return (Dependency('fwd'), Dependency(cov_node_name(ctx.get('cov'))))
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        return (Dependency('fwd'), Dependency(cov_node_name(ctx.state['cov'])))
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {
-            'raw': ctx.get('raw'),
-            'epoch': ctx.get('epoch'),
-            'rej': ctx.get('rej'),
-            'cov': ctx.get('cov'),
-            'src': ctx.get('src'),
-            'inv': ctx.get('inv'),
+            'raw': ctx.state['raw'],
+            'epoch': ctx.state['epoch'],
+            'rej': ctx.state['rej'],
+            'cov': ctx.state['cov'],
+            'src': ctx.state['src'],
+            'inv': ctx.state['inv'],
         }
 
-    def build(self, ctx: DerivativeContext) -> mne.minimum_norm.InverseOperator:
-        src = ctx.get('src')
-        inv = ctx.get('inv')
+    def build(self, ctx: Request) -> mne.minimum_norm.InverseOperator:
+        src = ctx.state['src']
+        inv = ctx.state['inv']
         if src[:3] == 'vol' and not (inv.startswith('vec') or inv.startswith('free')):
             raise ValueError(f'{inv=} with {src=}: volume source space requires free or vector inverse')
-        fiff = ctx.option('fiff')
+        fiff = ctx.view_option('fiff')
         if fiff is None:
-            fiff = load_raw_dependency(ctx, ctx.get('raw'))
+            fiff = load_raw_dependency(ctx, ctx.state['raw'])
         _, make_kw, _ = inverse_operator_params(inv)
         return make_inverse_operator(
             fiff.info,
             ctx.load('fwd'),
-            ctx.load(cov_node_name(ctx.get('cov'))),
+            ctx.load(cov_node_name(ctx.state['cov'])),
             use_cps=True,
             **make_kw,
         )
 
     def load(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: Path) -> mne.minimum_norm.InverseOperator:
         return mne.minimum_norm.read_inverse_operator(path)
 
     def save(
             self,
-            ctx: DerivativeContext,
+            ctx: Request,
             path: Path,
             value: mne.minimum_norm.InverseOperator,
     ) -> None:
@@ -576,7 +578,7 @@ def _subject_state(
 
 
 def _prepare_inv(
-        ctx: DerivativeContext,
+        ctx: Request,
         fiff: Any,
         mask: bool | str,
         morph: bool | None,
@@ -587,7 +589,7 @@ def _prepare_inv(
 
     inv = ctx.load('inv', options={'fiff': fiff})
     subjects_dir = mri_sdir(ctx.state)
-    mrisubject = ctx.get('mrisubject')
+    mrisubject = ctx.state['mrisubject']
     is_scaled = find_source_subject(mrisubject, subjects_dir)
     if mask and (is_scaled or not morph):
         label = label_from_annot(inv['src'], mrisubject, subjects_dir, parc)
@@ -633,24 +635,38 @@ class EpochsStcDerivative(Derivative[Dataset]):
     )
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
     cache_suffix = '.pickle'
+    OPTION_DEFAULTS = {
+        'baseline': False,
+        'src_baseline': False,
+        'cat': None,
+        'parc': None,
+        'morph': None,
+        'mask': False,
+        'samplingrate': None,
+        'decim': None,
+        'pad': 0,
+        'reject': True,
+    }
+    VIEW_OPTION_DEFAULTS = {'ndvar': True, 'data_raw': False, 'keep_epochs': False}
 
-    def __init__(self, epochs: dict[str, Any]):
+    def __init__(self, raw, epochs: dict[str, Any]):
+        self.raw = raw
         self.epochs = epochs
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         deps = [
-            Dependency('epochs-dataset', options={
-                'baseline': ctx.option('baseline'),
-                'ndvar': False if ctx.option('keep_epochs', False) in (True, False) else 'both',
-                'reject': ctx.option('reject', True),
-                'cat': ctx.option('cat'),
-                'samplingrate': ctx.option('samplingrate'),
-                'decim': ctx.option('decim'),
-                'pad': ctx.option('pad', 0),
-                'data_raw': ctx.option('data_raw', False),
-                'data': 'sensor',
-                'add_bads': True,
-            }),
+            Dependency('epochs-dataset', options=ctx.options_for(
+                'epochs-dataset',
+                baseline=ctx.option('baseline'),
+                ndvar=False,
+                reject=ctx.option('reject', True),
+                cat=ctx.option('cat'),
+                samplingrate=ctx.option('samplingrate'),
+                decim=ctx.option('decim'),
+                pad=ctx.option('pad', 0),
+                data_raw=False,
+                data='sensor',
+            )),
             Dependency('inv'),
         ]
         mask = ctx.option('mask', False)
@@ -661,53 +677,23 @@ class EpochsStcDerivative(Derivative[Dataset]):
             deps.append(Dependency('source-morph'))
         return tuple(deps)
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return ctx.registry.canonicalize({
-            'baseline': ctx.option('baseline'),
-            'src_baseline': ctx.option('src_baseline'),
-            'cat': ctx.option('cat'),
-            'keep_epochs': ctx.option('keep_epochs', False),
-            'morph': ctx.option('morph'),
-            'mask': ctx.option('mask'),
-            'data_raw': ctx.option('data_raw', False),
-            'samplingrate': ctx.option('samplingrate'),
-            'decim': ctx.option('decim'),
-            'pad': ctx.option('pad', 0),
-            'ndvar': ctx.option('ndvar', True),
-            'reject': ctx.option('reject', True),
-            'adjacency': ctx.get('adjacency'),
-        })
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        return ctx.registry.canonicalize(ctx.options)
 
-    def build(self, ctx: DerivativeContext) -> Dataset:
-        epoch = self.epochs[ctx.get('epoch')]
-        keep_epochs = ctx.option('keep_epochs', False)
-        if keep_epochs is True:
-            sns_ndvar = False
-            del_epochs = False
-        elif keep_epochs is False:
-            sns_ndvar = False
-            del_epochs = True
-        elif keep_epochs == 'ndvar':
-            sns_ndvar = 'both'
-            del_epochs = True
-        elif keep_epochs == 'both':
-            sns_ndvar = 'both'
-            del_epochs = False
-        else:
-            raise ValueError(f"{keep_epochs=}")
-
-        ds = ctx.load('epochs-dataset', options={
-            'baseline': ctx.option('baseline'),
-            'ndvar': sns_ndvar,
-            'reject': ctx.option('reject', True),
-            'cat': ctx.option('cat'),
-            'samplingrate': ctx.option('samplingrate'),
-            'decim': ctx.option('decim'),
-            'pad': ctx.option('pad', 0),
-            'data_raw': ctx.option('data_raw', False),
-            'data': 'sensor',
-            'add_bads': True,
-        })
+    def build(self, ctx: Request) -> Dataset:
+        epoch = self.epochs[ctx.state['epoch']]
+        ds = ctx.load('epochs-dataset', options=ctx.options_for(
+            'epochs-dataset',
+            baseline=ctx.option('baseline'),
+            ndvar=False,
+            reject=ctx.option('reject', True),
+            cat=ctx.option('cat'),
+            samplingrate=ctx.option('samplingrate'),
+            decim=ctx.option('decim'),
+            pad=ctx.option('pad', 0),
+            data_raw=False,
+            data='sensor',
+        ))
 
         src_baseline = ctx.option('src_baseline', False)
         if not ctx.option('baseline') and src_baseline and epoch.post_baseline_trigger_shift:
@@ -717,48 +703,98 @@ class EpochsStcDerivative(Derivative[Dataset]):
 
         epoch_list = ds['epochs'] if isinstance(ds['epochs'], Datalist) else [ds['epochs']]
         inv, label, subjects_dir, mrisubject, is_scaled, parc = _prepare_inv(ctx, epoch_list[0], ctx.option('mask', False), ctx.option('morph', False))
-        method, make_kw, apply_kw = inverse_operator_params(ctx.get('inv'))
+        method, make_kw, apply_kw = inverse_operator_params(ctx.state['inv'])
         stc_list = [apply_inverse_epochs(epoch_obj, inv, label=label, **apply_kw) for epoch_obj in epoch_list]
         is_variable_time = isinstance(ds['epochs'], Datalist)
         if is_variable_time:
             stc_list = [stc for stc, in stc_list]
 
-        if ctx.option('ndvar', True):
-            src = ctx.get('src')
-            ndvar_list = [
-                load.mne.stc_ndvar(stc, mrisubject, src, subjects_dir, method, make_kw.get('fixed', False), parc=parc, adjacency=ctx.get('adjacency'))
-                for stc in stc_list
-            ]
-            if src_baseline:
-                for value in ndvar_list:
-                    value -= value.summary(time=src_baseline)
-            if ctx.option('morph', False):
-                common_brain = ctx.get('common_brain')
-                ctx.load('annot', state={'mrisubject': common_brain})
-                ndvar_list = [morph_source_space(value, common_brain) for value in ndvar_list]
-                if ctx.option('mask', False) and not is_scaled:
-                    ndvar_list = [_mask_ndvar(value) for value in ndvar_list]
-                key = 'srcm'
-            else:
-                key = 'src'
-            src_var = ndvar_list
-        else:
-            if src_baseline:
-                raise NotImplementedError("Baseline for SourceEstimate")
-            if ctx.option('morph', False):
-                raise NotImplementedError("Morphing for SourceEstimate")
-            key = 'stc'
-            src_var = stc_list
+        if src_baseline:
+            for value in stc_list:
+                values = value if isinstance(value, list) else [value]
+                for stc in values:
+                    mne.baseline.rescale(stc._data, stc.times, src_baseline, 'mean', copy=False)
 
-        ds[key] = src_var if is_variable_time else src_var[0]
-        if del_epochs:
-            del ds['epochs']
+        if ctx.option('morph', False):
+            common_brain = ctx.state['common_brain']
+            target_subject = common_brain
+            ctx.load('annot', state={'mrisubject': common_brain})
+            subject_from = common_brain if is_fake_mri(mri_dir(ctx.state)) else mrisubject
+            if subject_from == common_brain:
+                for value in stc_list:
+                    values = value if isinstance(value, list) else [value]
+                    for stc in values:
+                        stc.subject = common_brain
+            else:
+                source_morph = ctx.load('source-morph')
+                stc_list = [
+                    [source_morph.apply(stc) for stc in value] if isinstance(value, list) else source_morph.apply(value)
+                    for value in stc_list
+                ]
+            stc_key = 'stcm'
+            src_key = 'srcm'
+        else:
+            target_subject = mrisubject
+            stc_key = 'stc'
+            src_key = 'src'
+
+        src = ctx.state['src']
+        ndvar_list = [
+            load.mne.stc_ndvar(value, target_subject, src, subjects_dir, method, make_kw.get('fixed', False), parc=parc, adjacency=ctx.state['adjacency'])
+            for value in stc_list
+        ]
+        if ctx.option('mask', False) and ctx.option('morph', False) and not is_scaled:
+            ndvar_list = [_mask_ndvar(value) for value in ndvar_list]
+
+        ds[stc_key] = stc_list if is_variable_time else stc_list[0]
+        ds[src_key] = ndvar_list if is_variable_time else ndvar_list[0]
         return ds
 
-    def load(self, ctx: DerivativeContext, path: Path) -> Dataset:
+    def apply_view_options(self, ctx: Request, ds: Dataset) -> Dataset:
+        ds = ds.copy()
+        ndvar = ctx.view_option('ndvar', True)
+        keep_epochs = ctx.view_option('keep_epochs', False)
+        if keep_epochs not in (True, False, 'ndvar', 'both'):
+            raise ValueError(f"{keep_epochs=}")
+
+        stc_key = 'stcm' if 'stcm' in ds else 'stc'
+        src_key = 'srcm' if 'srcm' in ds else 'src'
+        if ndvar:
+            del ds[stc_key]
+        else:
+            del ds[src_key]
+
+        if keep_epochs in ('ndvar', 'both'):
+            epochs_value = ds['epochs']
+            epochs_list = epochs_value if isinstance(epochs_value, Datalist) else [epochs_value]
+            info = epochs_list[0].info
+            sensor_types = TestDims.coerce('sensor').data_to_ndvar(info)
+            ds.info['sensor_types'] = sensor_types
+            raw_pipe = self.raw[ctx.state['raw']]
+            for data_kind in sensor_types:
+                sysname = raw_pipe.get_sysname(info, ds.info['subject'], data_kind, self.raw)
+                adjacency = raw_pipe.get_adjacency(data_kind, self.raw)
+                name = 'meg' if data_kind == 'mag' and 'grad' not in sensor_types else data_kind
+                if isinstance(epochs_value, Datalist):
+                    ys = [load.mne.epochs_ndvar(value, data=data_kind, sysname=sysname, adjacency=adjacency, name=data_kind)[0] for value in epochs_value]
+                else:
+                    ys = load.mne.epochs_ndvar(epochs_value, data=data_kind, sysname=sysname, adjacency=adjacency)
+                ds[name] = ys
+            if keep_epochs == 'ndvar':
+                del ds['epochs']
+        elif not keep_epochs:
+            del ds['epochs']
+
+        if ctx.view_option('data_raw', False):
+            ds.info['raw'] = load_raw_dependency(ctx, add_bads=True, preload=False, noise=False)
+        else:
+            ds.info.pop('raw', None)
+        return ds
+
+    def load(self, ctx: Request, path: Path) -> Dataset:
         return load.unpickle(path)
 
-    def save(self, ctx: DerivativeContext, path: Path, value: Dataset) -> None:
+    def save(self, ctx: Request, path: Path, value: Dataset) -> None:
         save.pickle(value, path)
 
 
@@ -796,21 +832,34 @@ class EvokedStcDerivative(Derivative[Dataset]):
     )
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
     cache_suffix = '.pickle'
+    OPTION_DEFAULTS = {
+        'baseline': False,
+        'src_baseline': False,
+        'cat': None,
+        'parc': None,
+        'morph': False,
+        'mask': False,
+        'samplingrate': None,
+        'decim': None,
+    }
+    VIEW_OPTION_DEFAULTS = {'ndvar': True, 'data_raw': False, 'keep_evoked': False}
 
-    def __init__(self, epochs: dict[str, Any]):
+    def __init__(self, raw, epochs: dict[str, Any]):
+        self.raw = raw
         self.epochs = epochs
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         deps = [
-            Dependency('evoked-dataset', options={
-                'baseline': ctx.option('baseline'),
-                'ndvar': 2 if ctx.option('keep_evoked', False) and ctx.option('ndvar', True) else False,
-                'cat': ctx.option('cat'),
-                'samplingrate': ctx.option('samplingrate'),
-                'decim': ctx.option('decim'),
-                'data_raw': ctx.option('data_raw', False),
-                'data': 'sensor',
-            }),
+            Dependency('evoked-dataset', options=ctx.options_for(
+                'evoked-dataset',
+                baseline=ctx.option('baseline'),
+                ndvar=False,
+                cat=ctx.option('cat'),
+                samplingrate=ctx.option('samplingrate'),
+                decim=ctx.option('decim'),
+                data_raw=False,
+                data='sensor',
+            )),
             Dependency('inv'),
         ]
         mask = ctx.option('mask', False)
@@ -821,60 +870,45 @@ class EvokedStcDerivative(Derivative[Dataset]):
             deps.append(Dependency('source-morph'))
         return tuple(deps)
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return ctx.registry.canonicalize({
-            'baseline': ctx.option('baseline'),
-            'src_baseline': ctx.option('src_baseline'),
-            'cat': ctx.option('cat'),
-            'keep_evoked': ctx.option('keep_evoked', False),
-            'morph': ctx.option('morph'),
-            'mask': ctx.option('mask'),
-            'data_raw': ctx.option('data_raw', False),
-            'samplingrate': ctx.option('samplingrate'),
-            'decim': ctx.option('decim'),
-            'ndvar': ctx.option('ndvar', True),
-            'adjacency': ctx.get('adjacency'),
-        })
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        return ctx.registry.canonicalize(ctx.options)
 
-    def build(self, ctx: DerivativeContext) -> Dataset:
-        keep_evoked = ctx.option('keep_evoked', False)
-        ndvar = ctx.option('ndvar', True)
-        sensor_ndvar = 2 if keep_evoked and ndvar else False
-        ds = ctx.load('evoked-dataset', options={
-            'baseline': ctx.option('baseline'),
-            'ndvar': sensor_ndvar,
-            'cat': ctx.option('cat'),
-            'samplingrate': ctx.option('samplingrate'),
-            'decim': ctx.option('decim'),
-            'data_raw': ctx.option('data_raw', False),
-            'data': 'sensor',
-        })
+    def build(self, ctx: Request) -> Dataset:
+        ds = ctx.load('evoked-dataset', options=ctx.options_for(
+            'evoked-dataset',
+            baseline=ctx.option('baseline'),
+            ndvar=False,
+            cat=ctx.option('cat'),
+            samplingrate=ctx.option('samplingrate'),
+            decim=ctx.option('decim'),
+            data_raw=False,
+            data='sensor',
+        ))
 
         src_baseline = ctx.option('src_baseline', False)
-        epoch = self.epochs[ctx.get('epoch')]
+        epoch = self.epochs[ctx.state['epoch']]
         if src_baseline and epoch.post_baseline_trigger_shift:
             raise NotImplementedError(f"{src_baseline=}: post_baseline_trigger_shift is not implemented for baseline correction in source space")
         if src_baseline is True:
             src_baseline = epoch.baseline
         invs = {}
         stcs = []
-        subject = ctx.get('subject')
-        mrisubject = ctx.get('mrisubject')
-        common_brain = ctx.get('common_brain')
+        subject = ctx.state['subject']
+        mrisubject = ctx.state['mrisubject']
+        common_brain = ctx.state['common_brain']
         if is_fake_mri(mri_dir(ctx.state)):
             subject_from = common_brain
         else:
             subject_from = mrisubject
         parc = _selected_parc(ctx, ctx.option('mask', False))
-        if ndvar:
-            target_subject = common_brain if ctx.option('morph', False) else mrisubject
-            if parc:
-                ctx.load('annot', state={'mrisubject': target_subject, 'parc': parc})
+        target_subject = common_brain if ctx.option('morph', False) else mrisubject
+        if parc:
+            ctx.load('annot', state={'mrisubject': target_subject, 'parc': parc})
         source_morph = None
         if ctx.option('morph', False) and subject_from != common_brain:
             source_morph = ctx.load('source-morph', state={'mrisubject': subject_from})
 
-        method, make_kw, apply_kw = inverse_operator_params(ctx.get('inv'))
+        method, make_kw, apply_kw = inverse_operator_params(ctx.state['inv'])
         for evoked in ds['evoked']:
             inv = invs.setdefault(subject, ctx.load('inv', options={'fiff': evoked}))
             stc = apply_inverse(evoked, inv, **apply_kw)
@@ -887,24 +921,49 @@ class EvokedStcDerivative(Derivative[Dataset]):
                     stc = source_morph.apply(stc)
             stcs.append(stc)
 
-        if ndvar:
-            key = 'srcm' if ctx.option('morph', False) else 'src'
-            target_subject = common_brain if ctx.option('morph', False) else mrisubject
-            stc_value = load.mne.stc_ndvar(stcs, target_subject, ctx.get('src'), mri_sdir(ctx.state), method, make_kw.get('fixed', False), parc=parc, adjacency=ctx.get('adjacency'))
-            if ctx.option('mask', False):
-                stc_value = _mask_ndvar(stc_value)
-        else:
-            key = 'stcm' if ctx.option('morph', False) else 'stc'
-            stc_value = stcs
-        ds[key] = stc_value
-        if ndvar == 1 or not keep_evoked:
-            del ds['evoked']
+        src_key = 'srcm' if ctx.option('morph', False) else 'src'
+        stc_key = 'stcm' if ctx.option('morph', False) else 'stc'
+        ds[src_key] = load.mne.stc_ndvar(stcs, target_subject, ctx.state['src'], mri_sdir(ctx.state), method, make_kw.get('fixed', False), parc=parc, adjacency=ctx.state['adjacency'])
+        if ctx.option('mask', False):
+            ds[src_key] = _mask_ndvar(ds[src_key])
+        ds[stc_key] = stcs
         return ds
 
-    def load(self, ctx: DerivativeContext, path: Path) -> Dataset:
+    def apply_view_options(self, ctx: Request, ds: Dataset) -> Dataset:
+        ds = ds.copy()
+        ndvar = ctx.view_option('ndvar', True)
+        keep_evoked = ctx.view_option('keep_evoked', False)
+        stc_key = 'stcm' if 'stcm' in ds else 'stc'
+        src_key = 'srcm' if 'srcm' in ds else 'src'
+        if ndvar:
+            del ds[stc_key]
+        else:
+            del ds[src_key]
+
+        if keep_evoked and ndvar:
+            evoked = ds['evoked']
+            pipe = self.raw[ctx.state['raw']]
+            info = evoked[0].info
+            sensor_types = ds.info['sensor_types'] = TestDims.coerce('sensor').data_to_ndvar(info)
+            for sensor_type in sensor_types:
+                sysname = pipe.get_sysname(info, ctx.state['subject'], sensor_type, self.raw)
+                adjacency = pipe.get_adjacency(sensor_type, self.raw)
+                name = 'meg' if sensor_type == 'mag' else sensor_type
+                ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
+            del ds['evoked']
+        elif not keep_evoked:
+            del ds['evoked']
+
+        if ctx.view_option('data_raw', False):
+            ds.info['raw'] = load_raw_dependency(ctx, add_bads=True, preload=False, noise=False)
+        else:
+            ds.info.pop('raw', None)
+        return ds
+
+    def load(self, ctx: Request, path: Path) -> Dataset:
         return load.unpickle(path)
 
-    def save(self, ctx: DerivativeContext, path: Path, value: Dataset) -> None:
+    def save(self, ctx: Request, path: Path, value: Dataset) -> None:
         save.pickle(value, path)
 
 
@@ -921,45 +980,48 @@ class EpochsStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
     ``morph`` defaults to ``True`` when omitted.
     """
     name = 'epochs-stc-group-dataset'
+    OPTION_DEFAULTS = {**EpochsStcDerivative.OPTION_DEFAULTS, **EpochsStcDerivative.VIEW_OPTION_DEFAULTS}
 
     def __init__(self, groups: dict[str, Sequence[str]], mri_subjects: dict[str, dict[str, str]], common_brain: str):
         self.groups = groups
         self.mri_subjects = mri_subjects
         self.common_brain = common_brain
 
-    def key(self, ctx: DerivativeContext) -> dict[str, Any]:
-        group = ctx.get('group')
+    def key(self, ctx: Request) -> dict[str, Any]:
+        group = ctx.state['group']
         if group in (None, '', '*'):
             raise RuntimeError(f"{self.name!r} requires an explicit group")
-        return {'group': group}
+        return ctx.registry.canonicalize({'group': group, 'options': ctx.registry.canonicalize(ctx.options)})
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return self.key(ctx)
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        return self.standard_fingerprint(ctx, state=self.key(ctx))
 
-    def _group_options(self, ctx: DerivativeContext) -> dict[str, Any]:
-        if ctx.option('data_raw'):
-            raise ValueError(f"data_raw={ctx.option('data_raw')!r} with group: Can not combine raw data from multiple subjects.")
-        if ctx.option('keep_epochs'):
-            raise ValueError(f"keep_epochs={ctx.option('keep_epochs')!r} with group: Can not combine Epochs objects for different subjects. Set keep_epochs=False (default).")
+    def _group_options(self, ctx: Request) -> dict[str, Any]:
+        data_raw = ctx.option('data_raw')
+        if data_raw:
+            raise ValueError(f"data_raw={data_raw!r} with group: Can not combine raw data from multiple subjects.")
+        keep_epochs = ctx.option('keep_epochs')
+        if keep_epochs:
+            raise ValueError(f"keep_epochs={keep_epochs!r} with group: Can not combine Epochs objects for different subjects. Set keep_epochs=False (default).")
         morph = ctx.option('morph')
         if morph is None:
-            return {**ctx.options, 'morph': True}
+            return ctx.options_for('epochs-stc', *EpochsStcDerivative.OPTION_DEFAULTS, *EpochsStcDerivative.VIEW_OPTION_DEFAULTS, morph=True)
         if not morph:
             raise ValueError(f"morph={morph!r} with group: Source estimates can only be combined after morphing data to common brain model. Set morph=True.")
-        return ctx.options
+        return ctx.options_for('epochs-stc', *EpochsStcDerivative.OPTION_DEFAULTS, *EpochsStcDerivative.VIEW_OPTION_DEFAULTS)
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         options = self._group_options(ctx)
         return tuple(
             Dependency('epochs-stc', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
-            for subject in self.groups[ctx.get('group')]
+            for subject in self.groups[ctx.state['group']]
         )
 
-    def build(self, ctx: DerivativeContext) -> Dataset:
+    def build(self, ctx: Request) -> Dataset:
         options = self._group_options(ctx)
         dss = [
             ctx.load('epochs-stc', state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
-            for subject in self.groups[ctx.get('group')]
+            for subject in self.groups[ctx.state['group']]
         ]
         return combine(dss)
 
@@ -977,42 +1039,43 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
     and ``morph`` defaults to ``True`` when omitted in that case.
     """
     name = 'evoked-stc-group-dataset'
+    OPTION_DEFAULTS = {**EvokedStcDerivative.OPTION_DEFAULTS, **EvokedStcDerivative.VIEW_OPTION_DEFAULTS}
 
     def __init__(self, groups: dict[str, Sequence[str]], mri_subjects: dict[str, dict[str, str]], common_brain: str):
         self.groups = groups
         self.mri_subjects = mri_subjects
         self.common_brain = common_brain
 
-    def key(self, ctx: DerivativeContext) -> dict[str, Any]:
-        group = ctx.get('group')
+    def key(self, ctx: Request) -> dict[str, Any]:
+        group = ctx.state['group']
         if group in (None, '', '*'):
             raise RuntimeError(f"{self.name!r} requires an explicit group")
-        return {'group': group}
+        return ctx.registry.canonicalize({'group': group, 'options': ctx.registry.canonicalize(ctx.options)})
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return self.key(ctx)
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        return self.standard_fingerprint(ctx, state=self.key(ctx))
 
-    def _group_options(self, ctx: DerivativeContext) -> dict[str, Any]:
+    def _group_options(self, ctx: Request) -> dict[str, Any]:
         morph = ctx.option('morph')
         if ctx.option('ndvar'):
             if morph is None:
-                return {**ctx.options, 'morph': True}
+                return ctx.options_for('evoked-stc', *EvokedStcDerivative.OPTION_DEFAULTS, *EvokedStcDerivative.VIEW_OPTION_DEFAULTS, morph=True)
             if not morph:
                 raise ValueError("ndvar=True, morph=False with multiple subjects: Can't create ndvars with data from different brains")
-        return ctx.options
+        return ctx.options_for('evoked-stc', *EvokedStcDerivative.OPTION_DEFAULTS, *EvokedStcDerivative.VIEW_OPTION_DEFAULTS)
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         options = self._group_options(ctx)
         return tuple(
             Dependency('evoked-stc', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
-            for subject in self.groups[ctx.get('group')]
+            for subject in self.groups[ctx.state['group']]
         )
 
-    def build(self, ctx: DerivativeContext) -> Dataset:
+    def build(self, ctx: Request) -> Dataset:
         options = self._group_options(ctx)
         dss = [
             ctx.load('evoked-stc', state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
-            for subject in self.groups[ctx.get('group')]
+            for subject in self.groups[ctx.state['group']]
         ]
         return combine(dss)
 

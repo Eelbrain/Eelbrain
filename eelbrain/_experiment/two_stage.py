@@ -11,9 +11,10 @@ from .. import load, save, testnd
 from .._data_obj import Dataset, combine
 from .._io.pickle import update_subjects_dir
 from .._utils.parse import find_variables
-from .derivative_cache import Dependency, Derivative, DerivativeContext, UncachedDerivative
+from .derivative_cache import Dependency, Derivative, Request, UncachedDerivative
 from .pathing import mri_sdir
 from .results import (
+    RESULT_OPTION_DEFAULTS,
     ResultOutputDerivative,
     _epochs_stc_options,
     _evoked_stc_options,
@@ -128,7 +129,7 @@ class SubjectROILMResult:
     n_trials_ds: Dataset
 
 
-def _resolved_mask(ctx: DerivativeContext):
+def _resolved_mask(ctx: Request):
     parc = ctx.option('parc')
     if parc:
         return parc
@@ -164,44 +165,40 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         'subject', 'group', 'epoch', 'raw', 'rej', 'model', 'equalize_evoked_count',
         'test', 'cov', 'inv', 'src', 'mri',
     )
+    OPTION_DEFAULTS = {
+        **RESULT_OPTION_DEFAULTS,
+    }
 
     def __init__(self, tests: dict[str, Test], epochs: dict[str, Any], groups: dict[str, tuple[str, ...] | list[str]]):
         self.tests = tests
         self.epochs = epochs
         self.groups = groups
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return {
-            'state': ctx.registry.canonicalize({
-                'group': ctx.get('group'),
-                'subject': ctx.get('subject'),
-                'epoch': ctx.get('epoch'),
-                'raw': ctx.get('raw'),
-                'rej': ctx.get('rej'),
-                'model': ctx.get('model'),
-                'equalize_evoked_count': ctx.get('equalize_evoked_count'),
-                'cov': ctx.get('cov'),
-                'inv': ctx.get('inv'),
-                'src': ctx.get('src'),
-                'mri': ctx.get('mri'),
-                'test': ctx.get('test'),
-            }),
-            'definitions': ctx.registry.canonicalize({
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        return self.standard_fingerprint(
+            ctx,
+            state={
+                'group': ctx.state['group'],
+                'subject': ctx.state['subject'],
+                'epoch': ctx.state['epoch'],
+                'raw': ctx.state['raw'],
+                'rej': ctx.state['rej'],
+                'model': ctx.state['model'],
+                'equalize_evoked_count': ctx.state['equalize_evoked_count'],
+                'cov': ctx.state['cov'],
+                'inv': ctx.state['inv'],
+                'src': ctx.state['src'],
+                'mri': ctx.state['mri'],
+                'test': ctx.option('test'),
+            },
+            definitions={
                 'test': self.tests[ctx.option('test')]._as_dict(),
-                'epoch': self.epochs[ctx.get('epoch')]._as_dict(),
-            }),
-            'options': ctx.registry.canonicalize({
-                'data': ctx.option('data').string,
-                'baseline': ctx.option('baseline'),
-                'src_baseline': ctx.option('src_baseline'),
-                'parc': ctx.option('parc'),
-                'mask': _resolved_mask(ctx),
-                'samplingrate': ctx.option('samplingrate'),
-                'smooth': ctx.option('smooth'),
-            }),
-        }
+                'epoch': self.epochs[ctx.state['epoch']]._as_dict(),
+            },
+            extra={'mask': _resolved_mask(ctx)},
+        )
 
-    def _subject_dependency(self, ctx: DerivativeContext, subject: str) -> Dependency:
+    def _subject_dependency(self, ctx: Request, subject: str) -> Dependency:
         data = ctx.option('data')
         test_obj = self.tests[ctx.option('test')]
         samplingrate = ctx.option('samplingrate')
@@ -234,13 +231,13 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
             options=_evoked_stc_options(ctx, morph=False, cat=None, mask=True, samplingrate=samplingrate),
         )
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         data = ctx.option('data')
         if data.sensor:
             return ()
         return tuple(self._subject_dependency(ctx, subject) for subject in _result_subjects(self, ctx))
 
-    def _load_subject_data(self, ctx: DerivativeContext, subject: str) -> Dataset:
+    def _load_subject_data(self, ctx: Request, subject: str) -> Dataset:
         from .epochs import _aggregate_dataset
 
         data = ctx.option('data')
@@ -254,7 +251,7 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
                 if test_obj.vars:
                     apply_vardef(ds, test_obj.vars, self.tests, self.groups)
                 if test_obj.model is not None:
-                    ds = _aggregate_dataset(test_obj.model, ctx.get('equalize_evoked_count'), ds, _two_stage_source_name(ds))
+                    ds = _aggregate_dataset(test_obj.model, ctx.state['equalize_evoked_count'], ds, _two_stage_source_name(ds))
             else:
                 ds = ctx.load('evoked-stc', state={**state, 'model': test_obj.model}, options=_evoked_stc_options(ctx, morph=data.morph, cat=None, mask=_resolved_mask(ctx), samplingrate=samplingrate))
             if ctx.option('smooth'):
@@ -272,9 +269,9 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
             return ctx.load('evoked-stc', state={**state, 'model': test_obj.model}, options=_evoked_stc_options(ctx, morph=False, cat=None, mask=True, samplingrate=samplingrate))
         ds = ctx.load('epochs-stc', state=state, options=_epochs_stc_options(ctx, morph=None, mask=True, samplingrate=samplingrate))
         apply_vardef(ds, test_obj.vars, self.tests, self.groups)
-        return _aggregate_dataset(test_obj.model, ctx.get('equalize_evoked_count'), ds, _two_stage_source_name(ds))
+        return _aggregate_dataset(test_obj.model, ctx.state['equalize_evoked_count'], ds, _two_stage_source_name(ds))
 
-    def build(self, ctx: DerivativeContext) -> Dataset | ROIData:
+    def build(self, ctx: Request) -> Dataset | ROIData:
         data = ctx.option('data')
         test_obj = self.tests[ctx.option('test')]
         if not isinstance(test_obj, TwoStageTest):
@@ -283,7 +280,7 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
             raise NotImplementedError(f"Two-stage test with data={data.string!r}")
 
         dss = [self._load_subject_data(ctx, subject) for subject in _result_subjects(self, ctx)]
-        if ctx.get('group') in (None, '', '*'):
+        if ctx.state['group'] in (None, '', '*'):
             return dss[0]
         if data.source is True:
             return combine(dss)
@@ -298,73 +295,67 @@ class TwoStageLevel1Derivative(Derivative[Any]):
         'test', 'cov', 'inv', 'src', 'mri',
     )
     cache_suffix = '.pickle'
+    OPTION_DEFAULTS = {
+        **RESULT_OPTION_DEFAULTS,
+    }
 
     def __init__(self, tests: dict[str, Test]):
         self.tests = tests
 
-    def key(self, ctx: DerivativeContext) -> dict[str, Any]:
-        subject = ctx.get('subject')
+    def key(self, ctx: Request) -> dict[str, Any]:
+        subject = ctx.state['subject']
         if subject in (None, '', '*'):
             raise RuntimeError(f"{self.name!r} requires an explicit subject")
         return super().key(ctx)
 
-    def fingerprint(self, ctx: DerivativeContext) -> dict[str, Any]:
-        return {
-            'state': ctx.registry.canonicalize({
-                'subject': ctx.get('subject'),
-                'epoch': ctx.get('epoch'),
-                'raw': ctx.get('raw'),
-                'rej': ctx.get('rej'),
-                'model': ctx.get('model'),
-                'equalize_evoked_count': ctx.get('equalize_evoked_count'),
-                'cov': ctx.get('cov'),
-                'inv': ctx.get('inv'),
-                'src': ctx.get('src'),
-                'mri': ctx.get('mri'),
-                'test': ctx.get('test'),
-            }),
-            'definitions': ctx.registry.canonicalize({
-                'test': self.tests[ctx.option('test')]._as_dict(),
-            }),
-            'options': ctx.registry.canonicalize({
-                'data': ctx.option('data').string,
-                'baseline': ctx.option('baseline'),
-                'src_baseline': ctx.option('src_baseline'),
-                'parc': ctx.option('parc'),
-                'mask': _resolved_mask(ctx),
-                'samplingrate': ctx.option('samplingrate'),
-                'smooth': ctx.option('smooth'),
-            }),
-        }
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        return self.standard_fingerprint(
+            ctx,
+            state={
+                'subject': ctx.state['subject'],
+                'epoch': ctx.state['epoch'],
+                'raw': ctx.state['raw'],
+                'rej': ctx.state['rej'],
+                'model': ctx.state['model'],
+                'equalize_evoked_count': ctx.state['equalize_evoked_count'],
+                'cov': ctx.state['cov'],
+                'inv': ctx.state['inv'],
+                'src': ctx.state['src'],
+                'mri': ctx.state['mri'],
+                'test': ctx.option('test'),
+            },
+            definitions={'test': self.tests[ctx.option('test')]._as_dict()},
+            extra={'mask': _resolved_mask(ctx)},
+        )
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
-        return (Dependency('two-stage-data', state=_subject_request_state(ctx, ctx.get('subject')), options=ctx.options),)
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        return (Dependency('two-stage-data', state=_subject_request_state(ctx, ctx.state['subject']), options=ctx.options_for('two-stage-data', *RESULT_OPTION_DEFAULTS)),)
 
-    def build(self, ctx: DerivativeContext):
+    def build(self, ctx: Request):
         test_obj = self.tests[ctx.option('test')]
         if not isinstance(test_obj, TwoStageTest):
             raise RuntimeError(f"{self.name!r} requires a TwoStageTest")
         data = ctx.option('data')
-        subject = ctx.get('subject')
+        subject = ctx.state['subject']
         if data.source is True:
-            ds = ctx.load('two-stage-data', state=_subject_request_state(ctx, subject), options=ctx.options)
+            ds = ctx.load('two-stage-data', state=_subject_request_state(ctx, subject), options=ctx.options_for('two-stage-data', *RESULT_OPTION_DEFAULTS))
             return test_obj.make_stage_1(data.y_name, ds, subject)
         if data.sensor:
             raise NotImplementedError(f"Two-stage test with data={data.string!r}")
-        ds = ctx.load('two-stage-data', state=_subject_request_state(ctx, subject), options=ctx.options)
+        ds = ctx.load('two-stage-data', state=_subject_request_state(ctx, subject), options=ctx.options_for('two-stage-data', *RESULT_OPTION_DEFAULTS))
         roi_data = roi_data_from_subject_datasets([ds], data.source)
         return SubjectROILMResult(
             {label: test_obj.make_stage_1('label_tc', label_ds, subject) for label, label_ds in roi_data.label_data.items()},
             roi_data.n_trials_ds,
         )
 
-    def load(self, ctx: DerivativeContext, path: Path):
+    def load(self, ctx: Request, path: Path):
         value = load.unpickle(path)
         if ctx.option('data').source:
             update_subjects_dir(value, mri_sdir(ctx.state), 2)
         return value
 
-    def save(self, ctx: DerivativeContext, path: Path, value) -> None:
+    def save(self, ctx: Request, path: Path, value) -> None:
         save.pickle(value, path)
 
 
@@ -374,17 +365,18 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
     sampled_path = True
     cache_suffix = '.pickle'
     path = Derivative.path
+    VIEW_OPTION_DEFAULTS = {}
 
-    def cache_label(self, ctx: DerivativeContext) -> str:
+    def cache_label(self, ctx: Request) -> str:
         return self.path_stem(ctx) if ctx.option('samples') is None else f"{self.path_stem(ctx)}_samples-{ctx.option('samples')}"
 
-    def dependencies(self, ctx: DerivativeContext) -> tuple[Dependency, ...]:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return tuple(
-            Dependency('two-stage-level-1', label=subject, state=_subject_request_state(ctx, subject), options=ctx.options)
+            Dependency('two-stage-level-1', label=subject, state=_subject_request_state(ctx, subject), options=ctx.options_for('two-stage-level-1', *RESULT_OPTION_DEFAULTS))
             for subject in _result_subjects(self, ctx)
         )
 
-    def build(self, ctx: DerivativeContext):
+    def build(self, ctx: Request):
         test_obj = self.tests[ctx.option('test')]
         if not isinstance(test_obj, TwoStageTest):
             raise RuntimeError(f"{self.name!r} requires a TwoStageTest")
@@ -406,7 +398,7 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
         else:
             raise NotImplementedError(f"Two-stage test with data={data.string!r}")
         test_kwargs = result_test_kwargs(self, ctx, data, parc_dim)
-        subject_results = [ctx.load('two-stage-level-1', state=_subject_request_state(ctx, subject), options=ctx.options) for subject in _result_subjects(self, ctx)]
+        subject_results = [ctx.load('two-stage-level-1', state=_subject_request_state(ctx, subject), options=ctx.options_for('two-stage-level-1', *RESULT_OPTION_DEFAULTS)) for subject in _result_subjects(self, ctx)]
         if data.source is True:
             return test_obj.make_stage_2(subject_results, test_kwargs)
 
@@ -422,17 +414,17 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
         n_trials_ds = combine([subject_result.n_trials_ds for subject_result in subject_results], incomplete='drop')
         return ROI2StageResult(_result_subjects(self, ctx), ctx.option('samples'), n_trials_ds, None, results)
 
-    def load(self, ctx: DerivativeContext, path: Path):
+    def load(self, ctx: Request, path: Path):
         res = load.unpickle(path)
         if ctx.option('data').source:
             update_subjects_dir(res, mri_sdir(ctx.state), 2)
         return res
 
-    def save(self, ctx: DerivativeContext, path: Path, value) -> None:
+    def save(self, ctx: Request, path: Path, value) -> None:
         save.pickle(value, path)
 
-    def validate(self, ctx: DerivativeContext, path: Path, manifest) -> bool:
+    def validate(self, ctx: Request, path: Path, manifest) -> bool:
         return manifest.provenance.get('samples') == ctx.option('samples')
 
-    def provenance(self, ctx: DerivativeContext, value) -> dict[str, Any]:
+    def provenance(self, ctx: Request, value) -> dict[str, Any]:
         return {'samples': value.samples}
