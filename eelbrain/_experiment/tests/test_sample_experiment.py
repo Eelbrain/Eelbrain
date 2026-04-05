@@ -752,6 +752,42 @@ def test_evoked_cached_load_bypasses_epochs(monkeypatch):
 
 
 @requires_mne_sample_data
+def test_evoked_cached_load_applies_cat_without_rebuilding_epochs(monkeypatch):
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, 2, 2, 1)
+    root = join(tempdir, 'SampleExperiment')
+    e = SampleExperiment(root)
+    e.set(subject='R0000', epoch='target1', rej='', model='modality')
+
+    target = e.load_evoked(ndvar=False, cat='auditory')
+    epochs_node = e._derivatives._get_node('epochs')
+
+    def fail(*args, **kwargs):
+        raise AssertionError("Evoked dataset load should not rebuild epochs on an evoked cache hit")
+
+    monkeypatch.setattr(epochs_node, 'load', fail)
+    monkeypatch.setattr(epochs_node, 'build', fail)
+
+    calls = 0
+    original_read_evokeds = mne.read_evokeds
+
+    def read_evokeds(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_read_evokeds(*args, **kwargs)
+
+    monkeypatch.setattr(mne, 'read_evokeds', read_evokeds)
+
+    ds = e.load_evoked(ndvar=False, cat='auditory')
+    assert ds.n_cases == 1
+    assert_dataobj_equal(ds, target, decimal=19)
+    assert calls == 1
+
+
+@requires_mne_sample_data
 def test_evoked_cache_ignores_irrelevant_selected_events_changes(monkeypatch):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment

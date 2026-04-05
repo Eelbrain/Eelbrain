@@ -103,33 +103,10 @@ class RejectionInput(Input):
 
 
 _EPOCHS_METADATA_FILE = 'metadata.json'
-_USE_CTX_OPTION = object()
 
 
 def _evoked_comments(evoked: list[mne.Evoked]) -> list[str]:
     return [e.comment or 'No comment' for e in evoked]
-
-
-def _epochs_selected_events_options(
-        ctx: Request,
-        *,
-        reject: bool | str | object = _USE_CTX_OPTION,
-        add_bads: bool | list[str] = True,
-        data_raw: bool = True,
-        cat: Any = _USE_CTX_OPTION,
-) -> dict[str, Any]:
-    if reject is _USE_CTX_OPTION:
-        reject = ctx.options['reject']
-    if cat is _USE_CTX_OPTION:
-        cat = ctx.options['cat']
-    return ctx.options_for(
-        'selected-events',
-        reject=reject,
-        add_bads=add_bads,
-        index=False,
-        data_raw=data_raw,
-        cat=cat,
-    )
 
 
 def _prepare_epoch_dataset(
@@ -214,6 +191,7 @@ def _build_evoked_shell(
         state: dict[str, Any] | None = None,
 ) -> Dataset:
     state = ctx.state if state is None else {**ctx.state, **state}
+    cat = ctx.view_options.get('cat')
     epoch_name = state['epoch']
     epoch = epochs[epoch_name]
     if isinstance(epoch, EpochCollection):
@@ -227,12 +205,13 @@ def _build_evoked_shell(
         ds = ctx.load(
             'selected-events',
             state=state,
-            options=_epochs_selected_events_options(
-                ctx,
+            options=ctx.options_for(
+                'selected-events',
                 reject=True,
                 add_bads=epochs_options.get('add_bads', True),
+                index='index' if cat else False,
                 data_raw=True,
-                cat=epochs_options.get('cat'),
+                cat=cat,
             ),
         )
         ds, _, _, _, _, _, _ = _prepare_epoch_dataset(
@@ -249,13 +228,19 @@ def _build_evoked_shell(
                 'decim': epochs_options['decim'],
             },
         )
-        handle = ctx.registry.resolve('epochs', state=state, options={key: value for key, value in epochs_options.items() if key != 'add_bads'})
+        handle = ctx.registry.resolve(
+            'epochs',
+            state=state,
+            options={key: value for key, value in epochs_options.items() if key != 'add_bads'},
+        )
         metadata_path = handle.artifact_path / _EPOCHS_METADATA_FILE
         metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else None
         if metadata is not None:
             selection = metadata.get('selection')
             if selection is not None:
                 selection = np.asarray(selection, dtype=int)
+                if 'index' in ds:
+                    selection = np.flatnonzero(np.isin(ds['index'].x, selection))
             ds = _apply_epochs_selection(ds, selection)
 
     if aggregate:
@@ -780,7 +765,11 @@ class EpochsDerivative(Derivative[Any]):
                 raw_node_name(ctx.state['raw']),
                 options=ctx.options_for(raw_node_name(ctx.state['raw']), add_bads=bool(ctx.options['interpolate_bads']), preload=False, noise=False),
             ),
-            Dependency('selected-events', options=_epochs_selected_events_options(ctx), view='epochs'),
+            Dependency(
+                'selected-events',
+                options=ctx.options_for('selected-events', reject=ctx.options['reject'], add_bads=True, index=False, data_raw=True, cat=ctx.options['cat']),
+                view='epochs',
+            ),
         )
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
@@ -805,7 +794,10 @@ class EpochsDerivative(Derivative[Any]):
                     epochs_list.append(epoch_value)
             return Datalist(epochs_list, 'epochs')
 
-        ds = ctx.load('selected-events', options=_epochs_selected_events_options(ctx))
+        ds = ctx.load(
+            'selected-events',
+            options=ctx.options_for('selected-events', reject=ctx.options['reject'], add_bads=True, index=False, data_raw=True, cat=ctx.options['cat']),
+        )
         ds, tmin, tmax, tstop, baseline, decim, variable_tmax = _prepare_epoch_dataset(ctx, epoch, ds, ctx.options)
         if variable_tmax:
             epoch_value = load.mne.variable_length_mne_epochs(ds, tmin, tmax, baseline, allow_truncation=True, decim=decim, reject_by_annotation=False)
@@ -921,7 +913,17 @@ class EpochsDerivative(Derivative[Any]):
         if data.sensor is not True and not ctx.view_options['ndvar']:
             raise ValueError(f"data={data.string!r} with ndvar=False")
 
-        ds = ctx.load('selected-events', options=_epochs_selected_events_options(ctx, add_bads=ctx.view_options['add_bads']))
+        ds = ctx.load(
+            'selected-events',
+            options=ctx.options_for(
+                'selected-events',
+                reject=ctx.options['reject'],
+                add_bads=ctx.view_options['add_bads'],
+                index=False,
+                data_raw=True,
+                cat=ctx.options['cat'],
+            ),
+        )
         ds, _, _, _, _, _, variable_tmax = _prepare_epoch_dataset(ctx, epoch, ds, ctx.options)
         raw = ds.info.get('raw')
         bads = raw.info['bads'] if raw is not None else ds.info.get(BAD_CHANNELS, [])
@@ -1034,7 +1036,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         model_vars = model.split('%') if model else ()
         for evoked, *cell in data.zip('evoked', *model_vars):
             evoked.info['description'] = "Eelbrain"
-            evoked.comment = ' % '.join(cell)
+            evoked.comment = ' | '.join(cell)
         return data['evoked']
 
     def load(self, ctx: Request, path: Path) -> list[mne.Evoked]:
@@ -1049,26 +1051,19 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         bads = raw.info['bads'] if raw is not None else ds.info.get(BAD_CHANNELS, [])
         model = ctx.state['model']
         model_vars = model.split('%') if model else ()
-        cells = [' % '.join(cell) or 'No comment' for cell in ds.zip(*model_vars)] if model_vars else ['No comment']
-        comments = _evoked_comments(evoked)
+        cells = [' | '.join(cell) or 'No comment' for cell in ds.zip(*model_vars)] if model_vars else ['No comment']
+        evoked_by_cell = dict(zip(_evoked_comments(evoked), evoked))
+        if len(evoked_by_cell) != len(evoked):
+            raise RuntimeError(f"Cached evoked data contains duplicate comments: {_evoked_comments(evoked)!r}")
         try:
-            index = [cells.index(comment) for comment in comments]
-        except ValueError:
-            raise RuntimeError(f"Error reading cached evoked: {comments=}, {cells=}") from None
-        ds = ds[index]
+            evoked = [evoked_by_cell[cell] for cell in cells]
+        except KeyError:
+            raise RuntimeError(f"Error reading cached evoked: available={tuple(evoked_by_cell)}, requested={tuple(cells)}") from None
         if any(evoked_i.info['bads'] != bads for evoked_i in evoked):
             evoked = [evoked_i.copy() for evoked_i in evoked]
             for evoked_i in evoked:
                 evoked_i.info['bads'] = bads
         ds['evoked'] = evoked
-        cat = ctx.view_options['cat']
-        model = ctx.state['model']
-        if cat:
-            if not model:
-                raise TypeError(f"{cat=} with {model=}: the cat parameter only applies when a model is specified")
-            ds = ds.sub(ds.eval(model).isin(cat))
-            if ds.n_cases == 0:
-                raise RuntimeError(f"Selection with {cat=} resulted in empty Dataset")
 
         epoch = self.epochs[ctx.state['epoch']]
         baseline = ctx.view_options['baseline']
