@@ -581,7 +581,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
 
     def _sensor_evoked_options(self, ctx: Request, cat) -> dict[str, Any]:
         return ctx.options_for(
-            'evoked-dataset',
+            'evoked',
             baseline=ctx.options['baseline'],
             ndvar=True,
             cat=cat,
@@ -613,7 +613,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         if data.sensor:
             if ctx.state['group'] not in (None, '', '*'):
                 return (Dependency('evoked-group-dataset', state={**ctx.state, 'group': ctx.state['group'], 'subject': None}, options=self._sensor_evoked_options(ctx, test_obj.cat)),)
-            return (Dependency('evoked-dataset', state={**ctx.state, 'subject': ctx.state['subject'], 'group': None}, options=self._sensor_evoked_options(ctx, test_obj.cat)),)
+            return (Dependency('evoked', state={**ctx.state, 'subject': ctx.state['subject'], 'group': None}, options=self._sensor_evoked_options(ctx, test_obj.cat)),)
 
         if data.source is True:
             return (Dependency(
@@ -645,7 +645,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
             if ctx.state['group'] not in (None, '', '*'):
                 ds = ctx.load('evoked-group-dataset', state={**ctx.state, 'group': ctx.state['group'], 'subject': None}, options=options)
                 return _apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string)
-            ds = ctx.load('evoked-dataset', state={**ctx.state, 'subject': ctx.state['subject'], 'group': None}, options=options)
+            ds = ctx.load('evoked', state={**ctx.state, 'subject': ctx.state['subject'], 'group': None}, options=options)
             return _apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string)
 
         samplingrate = ctx.options['samplingrate']

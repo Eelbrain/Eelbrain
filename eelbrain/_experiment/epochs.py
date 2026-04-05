@@ -110,10 +110,6 @@ def _evoked_comments(evoked: list[mne.Evoked]) -> list[str]:
     return [e.comment or 'No comment' for e in evoked]
 
 
-def _epoch_data_name(sensor_type: str, sensor_types: Sequence[str]) -> str:
-    return 'meg' if sensor_type == 'mag' and 'grad' not in sensor_types else sensor_type
-
-
 def _epochs_selected_events_options(
         ctx: Request,
         *,
@@ -145,15 +141,31 @@ def _prepare_epoch_dataset(
     if ds.n_cases == 0:
         raise RuntimeError(f"No events left for epoch={epoch.name!r}, subject={ctx.state['subject']!r}")
 
+    if isinstance(epoch, ContinuousEpoch):
+        split_threshold = epoch.split + epoch.pad_start + epoch.pad_end
+        onsets = np.flatnonzero(ds['time'].diff(to_begin=split_threshold + 1) >= split_threshold)
+        illegal = {'T_relative', 'events', 'tmax'}.intersection(ds)
+        if illegal:
+            raise RuntimeError(f"Events contain variables with reserved names: {', '.join(illegal)}")
+        events = [ds[i1:i2] for i1, i2 in zip(onsets, [*onsets[1:], None])]
+        raw_samplingrate = ds.info['raw'].info['sfreq']
+        for events_i in events:
+            sample_i = events_i['i_start'] - events_i[0, 'i_start']
+            events_i['T_relative'] = sample_i / raw_samplingrate
+        ds = ds[onsets]
+        ds.info['nested_events'] = 'events'
+        ds['events'] = events
+        ds['tmax'] = Var([events_i[-1, 'time'] - events_i[0, 'time'] + epoch.pad_end for events_i in events])
+        baseline = epoch.baseline if options['baseline'] is True else options['baseline']
+        decim = decim_param(options['samplingrate'], options['decim'], epoch, ds.info)
+        return ds, -epoch.pad_start, ds.eval('tmax'), None, baseline, decim, True
+
     tmin = epoch.tmin if options['tmin'] is None else options['tmin']
     tmax = options['tmax']
     tstop = options['tstop']
     if tmax is None and tstop is None:
         tmax = epoch.tmax
-    baseline = options['baseline']
-    if baseline is True:
-        baseline = epoch.baseline
-    pad = options['pad']
+    baseline = epoch.baseline if options['baseline'] is True else options['baseline']
     if isinstance(tmax, str):
         tmax = ds.eval(tmax)
         assert isinstance(tmax, Var)
@@ -161,7 +173,7 @@ def _prepare_epoch_dataset(
         variable_tmax = True
     else:
         variable_tmax = False
-    if pad:
+    if pad := options['pad']:
         if baseline:
             b0, b1 = baseline
             baseline = (tmin if b0 is None else b0, tmax if b1 is None else b1)
@@ -171,66 +183,7 @@ def _prepare_epoch_dataset(
         elif tstop is not None:
             tstop = tstop + pad
     decim = decim_param(options['samplingrate'], options['decim'], epoch, ds.info)
-
-    if isinstance(epoch, ContinuousEpoch):
-        split_threshold = epoch.split + (epoch.pad_end + epoch.pad_start)
-        diff = ds['time'].diff(to_begin=split_threshold + 1)
-        onsets = np.flatnonzero(diff >= split_threshold)
-        illegal = {'T_relative', 'events', 'tmax'}.intersection(ds)
-        if illegal:
-            raise RuntimeError(f"Events contain variables with reserved names: {', '.join(illegal)}")
-        event_stops = [*onsets[1:], None]
-        events = [ds[i1:i2] for i1, i2 in zip(onsets, event_stops)]
-        raw_samplingrate = ds.info['raw'].info['sfreq']
-        for events_i in events:
-            sample_i = events_i['i_start'] - events_i[0, 'i_start']
-            events_i['T_relative'] = sample_i / raw_samplingrate
-        ds = ds[onsets]
-        ds.info['nested_events'] = 'events'
-        ds['events'] = events
-        tmin = -epoch.pad_start
-        ds['tmax'] = Var([e[-1, 'time'] - e[0, 'time'] + epoch.pad_end for e in events])
-        tmax = ds.eval('tmax')
-        variable_tmax = True
-
     return ds, tmin, tmax, tstop, baseline, decim, variable_tmax
-
-
-def _aggregate_dataset(
-        model: str | None,
-        equalize_evoked_count: str | None,
-        ds: Dataset,
-        value_name: str | None = None,
-        out_name: str | None = None,
-) -> Dataset:
-    equal_count = equalize_evoked_count == 'eq'
-    aggregate_kwargs = {
-        'drop_bad': True,
-        'equal_count': equal_count,
-        'drop': ('i_start', 't_edf', 'time', 'index', 'trigger'),
-    }
-    if value_name is None:
-        ds_agg = ds.aggregate(model, **aggregate_kwargs)
-    else:
-        ds_agg = ds.aggregate(model, never_drop=(value_name,), **aggregate_kwargs)
-        if out_name is not None and out_name != value_name:
-            ds_agg.rename(value_name, out_name)
-    return ds_agg
-
-
-def _aggregate_evoked_dataset(
-        model: str | None,
-        equalize_evoked_count: str | None,
-        ds: Dataset,
-        value_name: str | None = None,
-) -> Dataset:
-    ds_agg = _aggregate_dataset(model, equalize_evoked_count, ds, value_name, 'evoked' if value_name is not None else None)
-    if value_name is not None:
-        model_vars = model.split('%') if model else ()
-        for evoked, *cell in ds_agg.zip('evoked', *model_vars):
-            evoked.info['description'] = "Eelbrain"
-            evoked.comment = ' % '.join(cell)
-    return ds_agg
 
 
 def _epochs_selection_metadata(value) -> list[int] | list[list[int] | None] | None:
@@ -244,122 +197,12 @@ def _epochs_selection_metadata(value) -> list[int] | list[list[int] | None] | No
     return None if selection is None else selection.tolist()
 
 
-def _coerce_selection(selection: list[int] | None) -> np.ndarray | None:
-    if selection is None:
-        return None
-    return np.asarray(selection, dtype=int)
-
-
 def _apply_epochs_selection(ds: Dataset, selection: np.ndarray | None) -> Dataset:
     if selection is None or (len(selection) == ds.n_cases and np.array_equal(selection, np.arange(ds.n_cases))):
         return ds
     ds = ds[selection]
     ds.info = ds.info.copy()
     ds.info['epochs.selection'] = selection
-    return ds
-
-
-def _select_model_cat(ds: Dataset, model: str | None, cat) -> Dataset:
-    if not cat:
-        return ds
-    if not model:
-        raise TypeError(f"{cat=} with {model=}: the cat parameter only applies when a model is specified")
-    idx = ds.eval(model).isin(cat)
-    ds = ds.sub(idx)
-    if ds.n_cases == 0:
-        raise RuntimeError(f"Selection with {cat=} resulted in empty Dataset")
-    return ds
-
-
-def _apply_evoked_load_options(
-        ds: Dataset,
-        *,
-        epoch: Any,
-        raw: dict[str, Any],
-        raw_name: str,
-        subject: str,
-        model: str | None,
-        baseline,
-        ndvar,
-        cat,
-        data_raw: bool,
-        data,
-        load_raw=None,
-) -> Dataset:
-    ds = _select_model_cat(ds, model, cat)
-
-    if baseline is True:
-        baseline = epoch.baseline
-    if baseline and not epoch.post_baseline_trigger_shift:
-        for evoked in ds['evoked']:
-            mne.baseline.rescale(evoked.data, evoked.times, baseline, 'mean', copy=False)
-
-    data = TestDims.coerce(data)
-    if ndvar:
-        evoked = ds['evoked']
-        if ndvar == 1:
-            del ds['evoked']
-        pipe = raw[raw_name]
-        info = evoked[0].info
-        sensor_types = ds.info['sensor_types'] = data.data_to_ndvar(info)
-        for sensor_type in sensor_types:
-            sysname = pipe.get_sysname(info, subject, sensor_type, raw)
-            adjacency = pipe.get_adjacency(sensor_type, raw)
-            name = 'meg' if sensor_type == 'mag' else sensor_type
-            ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
-            if sensor_type != 'eog' and isinstance(data.sensor, str):
-                ds[name] = getattr(ds[name], data.sensor)('sensor')
-    if data_raw:
-        if load_raw is None:
-            raise RuntimeError("data_raw=True requires a raw loader")
-        ds.info['raw'] = load_raw()
-    elif 'raw' in ds.info:
-        del ds.info['raw']
-    return ds
-
-
-def _combine_group_evoked_datasets(
-        dss: list[Dataset],
-        *,
-        raw: dict[str, Any],
-        raw_name: str,
-        data,
-        ndvar,
-) -> Dataset:
-    data = TestDims.coerce(data)
-    individual_ndvar = isinstance(data.sensor, str)
-    if individual_ndvar:
-        ndvar = False
-    elif ndvar:
-        for ds in dss:
-            for evoked in ds['evoked']:
-                evoked.info['bads'] = []
-    ds = combine(dss, incomplete='drop')
-    if not ndvar and not individual_ndvar:
-        lens = [len(evoked.times) for evoked in ds['evoked']]
-        ulens = set(lens)
-        if len(ulens) > 1:
-            err = ["Unequal time axis sampling (len):"]
-            alens = np.array(lens)
-            for length in ulens:
-                subjects = ', '.join(ds[alens == length, 'subject'].cells)
-                err.append(f"{length}: {subjects}")
-            raise DimensionMismatchError('\n'.join(err))
-        return ds
-    if ndvar and not individual_ndvar:
-        evoked = ds['evoked']
-        del ds['evoked']
-        pipe = raw[raw_name]
-        info = evoked[0].info
-        sensor_types = ds.info['sensor_types'] = data.data_to_ndvar(info)
-        subject = ds[0, 'subject']
-        for sensor_type in sensor_types:
-            sysname = pipe.get_sysname(info, subject, sensor_type, raw)
-            adjacency = pipe.get_adjacency(sensor_type, raw)
-            name = 'meg' if sensor_type == 'mag' else sensor_type
-            ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
-            if sensor_type != 'eog' and isinstance(data.sensor, str):
-                ds[name] = getattr(ds[name], data.sensor)('sensor')
     return ds
 
 
@@ -410,13 +253,19 @@ def _build_evoked_shell(
         metadata_path = handle.artifact_path / _EPOCHS_METADATA_FILE
         metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else None
         if metadata is not None:
-            selection = _coerce_selection(metadata.get('selection'))
+            selection = metadata.get('selection')
+            if selection is not None:
+                selection = np.asarray(selection, dtype=int)
             ds = _apply_epochs_selection(ds, selection)
 
     if aggregate:
-        return _aggregate_evoked_dataset(ctx.state['model'], ctx.state['equalize_evoked_count'], ds)
-    else:
-        return ds
+        ds = ds.aggregate(
+            ctx.state['model'],
+            drop_bad=True,
+            equal_count=ctx.state['equalize_evoked_count'] == 'eq',
+            drop=('i_start', 't_edf', 'time', 'index', 'trigger'),
+        )
+    return ds
 
 
 class EpochBase(Configuration):
@@ -856,16 +705,25 @@ class ContinuousEpoch(EpochBase):
 
 
 class EpochsDerivative(Derivative[Any]):
-    """Cached MNE epochs artifact.
+    """Epoch dataset with cached MNE epochs as internal artifact.
 
     Options
     -------
+    ndvar
+        Whether to convert epoch data to NDVars (`True`, `False`, or `'both'`).
+    data
+        Sensor representation to return.
+    data_raw
+        Whether to keep the raw object in ``ds.info['raw']``.
+    add_bads
+        Whether to include current bad-channel information in the returned
+        selected-events dataset.
     baseline
-        Baseline correction to apply while creating epochs.
+        Baseline correction to apply while creating cached epochs.
     samplingrate
-        Sampling rate override for the epoch extraction.
+        Sampling rate override for epoch extraction.
     decim
-        Decimation override for the epoch extraction.
+        Decimation override for epoch extraction.
     pad
         Extra time padding to add before epoch extraction.
     trigger_shift
@@ -896,18 +754,25 @@ class EpochsDerivative(Derivative[Any]):
         'reject': True,
         'cat': None,
     }
+    VIEW_OPTION_DEFAULTS = {'ndvar': True, 'data': 'sensor', 'data_raw': False, 'add_bads': True}
 
     def __init__(
             self,
+            raw,
             epochs: dict[str, Any],
     ):
+        self.raw = raw
         self.epochs = epochs
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         epoch = self.epochs[ctx.state['epoch']]
         if isinstance(epoch, EpochCollection):
             return tuple(
-                Dependency('epochs', state={'epoch': sub_epoch}, options=ctx.options_for('epochs', *self.OPTION_DEFAULTS))
+                Dependency(
+                    'epochs',
+                    state={'epoch': sub_epoch},
+                    options=ctx.options_for('epochs', *self.OPTION_DEFAULTS, ndvar=False, data='sensor', data_raw=False),
+                )
                 for sub_epoch in epoch.collect
             )
         return (
@@ -928,7 +793,12 @@ class EpochsDerivative(Derivative[Any]):
         if isinstance(epoch, EpochCollection):
             epochs_list = []
             for sub_epoch in epoch.collect:
-                epoch_value = ctx.load('epochs', state={'epoch': sub_epoch}, options=ctx.options_for('epochs', *self.OPTION_DEFAULTS))
+                ds = ctx.load(
+                    'epochs',
+                    state={'epoch': sub_epoch},
+                    options=ctx.options_for('epochs', *self.OPTION_DEFAULTS, ndvar=False, data='sensor', data_raw=False),
+                )
+                epoch_value = ds['epochs']
                 if isinstance(epoch_value, Datalist):
                     epochs_list.extend(epoch_value)
                 else:
@@ -1011,81 +881,6 @@ class EpochsDerivative(Derivative[Any]):
             metadata = {'kind': 'single', 'file': epoch_file, 'selection': _epochs_selection_metadata(value)}
         (path / _EPOCHS_METADATA_FILE).write_text(json.dumps(metadata, sort_keys=True, indent=2))
 
-
-class EpochsDatasetDerivative(UncachedDerivative[Dataset]):
-    """Dataset view of cached epochs.
-
-    Options
-    -------
-    ndvar
-        Whether to convert epoch data to NDVars (`True`, `False`, or `'both'`).
-    data
-        Sensor representation to return.
-    data_raw
-        Whether to keep the raw object in ``ds.info['raw']``.
-    baseline
-        Baseline correction to apply while building the cached epochs.
-    samplingrate
-        Sampling rate override for the underlying epochs artifact.
-    decim
-        Decimation override for the underlying epochs artifact.
-    pad
-        Extra time padding to add before epoch extraction.
-    trigger_shift
-        Whether to apply trigger shifting from the epoch definition.
-    tmin, tmax, tstop
-        Time window overrides for epoch extraction.
-    interpolate_bads
-        Whether and how to interpolate bad channels while building epochs.
-    reject
-        Whether to apply per-epoch interpolation/rejection state.
-    cat
-        Optional subset of model cells to keep before epoch creation.
-    """
-    name = 'epochs-dataset'
-    key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw', 'epoch', 'rej')
-    OPTION_DEFAULTS = {
-        'baseline': False,
-        'samplingrate': None,
-        'decim': None,
-        'pad': 0,
-        'trigger_shift': True,
-        'tmin': None,
-        'tmax': None,
-        'tstop': None,
-        'interpolate_bads': False,
-        'reject': True,
-        'cat': None,
-        'ndvar': True,
-        'data': 'sensor',
-        'data_raw': False,
-    }
-    VIEW_OPTION_DEFAULTS = {'add_bads': True}
-
-    def __init__(
-            self,
-            raw,
-            epochs: dict[str, Any],
-    ):
-        self.raw = raw
-        self.epochs = epochs
-
-    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        epoch = self.epochs[ctx.state['epoch']]
-        if isinstance(epoch, EpochCollection):
-            return tuple(
-                Dependency('epochs-dataset', state={'epoch': sub_epoch}, options=ctx.options_for('epochs-dataset', *self.OPTION_DEFAULTS, *self.VIEW_OPTION_DEFAULTS))
-                for sub_epoch in epoch.collect
-            )
-        return (
-            Dependency('selected-events', options=_epochs_selected_events_options(ctx, add_bads=ctx.view_options['add_bads']), view='epochs'),
-            Dependency('epochs', options=ctx.options_for('epochs', *EpochsDerivative.OPTION_DEFAULTS)),
-        )
-
-    def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        epoch = self.epochs[ctx.state['epoch']]
-        return self.standard_fingerprint(ctx, state_fields=self.key_fields, definitions={'epoch': epoch._as_dict()})
-
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
         if view is None:
             return self.fingerprint(ctx)
@@ -1096,7 +891,7 @@ class EpochsDatasetDerivative(UncachedDerivative[Dataset]):
         ds = _build_evoked_shell(
             ctx,
             self.epochs,
-            {**ctx.options_for('epochs', *EpochsDerivative.OPTION_DEFAULTS), 'add_bads': ctx.view_options['add_bads']},
+            {**ctx.options_for('epochs', *self.OPTION_DEFAULTS), 'add_bads': ctx.view_options['add_bads']},
         )
         model = ctx.state['model']
         if model:
@@ -1106,25 +901,28 @@ class EpochsDatasetDerivative(UncachedDerivative[Dataset]):
             fingerprint['model_signature'] = ds.n_cases
         return fingerprint
 
-    def build(self, ctx: Request) -> Dataset:
+    def apply_view_options(self, ctx: Request, epoch_value):
         epoch = self.epochs[ctx.state['epoch']]
         if isinstance(epoch, EpochCollection):
             dss = []
             for sub_epoch in epoch.collect:
-                ds = ctx.load('epochs-dataset', state={'epoch': sub_epoch}, options=ctx.options_for('epochs-dataset', *self.OPTION_DEFAULTS, *self.VIEW_OPTION_DEFAULTS))
+                ds = ctx.load(
+                    'epochs',
+                    state={'epoch': sub_epoch},
+                    options=ctx.options_for('epochs', *self.OPTION_DEFAULTS, *self.VIEW_OPTION_DEFAULTS),
+                )
                 ds[:, 'epoch'] = sub_epoch
                 dss.append(ds)
             return combine(dss)
 
-        data = TestDims.coerce(ctx.options['data'])
+        data = TestDims.coerce(ctx.view_options['data'])
         if not data.sensor:
             raise ValueError(f"data={data.string!r}; load_evoked is for loading sensor data")
-        if data.sensor is not True and not ctx.options['ndvar']:
+        if data.sensor is not True and not ctx.view_options['ndvar']:
             raise ValueError(f"data={data.string!r} with ndvar=False")
 
         ds = ctx.load('selected-events', options=_epochs_selected_events_options(ctx, add_bads=ctx.view_options['add_bads']))
         ds, _, _, _, _, _, variable_tmax = _prepare_epoch_dataset(ctx, epoch, ds, ctx.options)
-        epoch_value = ctx.load('epochs', options=ctx.options_for('epochs', *EpochsDerivative.OPTION_DEFAULTS))
         raw = ds.info.get('raw')
         bads = raw.info['bads'] if raw is not None else ds.info.get(BAD_CHANNELS, [])
         if isinstance(epoch_value, Datalist):
@@ -1139,7 +937,7 @@ class EpochsDatasetDerivative(UncachedDerivative[Dataset]):
             ds = _apply_epochs_selection(ds, getattr(epoch_value, 'selection', None))
         ds['epochs'] = epoch_value
 
-        ndvar = ctx.options['ndvar']
+        ndvar = ctx.view_options['ndvar']
         if ndvar:
             epochs_list = epoch_value if isinstance(epoch_value, Datalist) else [epoch_value]
             info = epochs_list[0].info
@@ -1149,7 +947,7 @@ class EpochsDatasetDerivative(UncachedDerivative[Dataset]):
             for data_kind in sensor_types:
                 sysname = pipe.get_sysname(info, ds.info['subject'], data_kind, self.raw)
                 adjacency = pipe.get_adjacency(data_kind, self.raw)
-                name = _epoch_data_name(data_kind, sensor_types)
+                name = 'meg' if data_kind == 'mag' and 'grad' not in sensor_types else data_kind
                 if variable_tmax:
                     ys = [load.mne.epochs_ndvar(e, data=data_kind, sysname=sysname, adjacency=adjacency, name=data_kind)[0] for e in epoch_value]
                     if isinstance(data.sensor, str):
@@ -1162,74 +960,13 @@ class EpochsDatasetDerivative(UncachedDerivative[Dataset]):
             if ndvar != 'both':
                 del ds['epochs']
 
-        if not ctx.options['data_raw']:
+        if not ctx.view_options['data_raw']:
             del ds.info['raw']
         return ds
 
 
 class EvokedDerivative(Derivative[list[mne.Evoked]]):
-    """Cached MNE evoked artifact.
-
-    Options
-    -------
-    samplingrate
-        Sampling rate override for the underlying epochs artifact.
-    decim
-        Decimation override for the underlying epochs artifact.
-    """
-    name = 'evoked'
-    key_fields = (
-        'subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw',
-        'epoch', 'rej', 'model', 'equalize_evoked_count',
-    )
-    cache_policy = CachePolicy.OPTIONAL
-    cache_suffix = '-ave.fif'
-    OPTION_DEFAULTS = {'samplingrate': None, 'decim': None}
-
-    def __init__(self, epochs: dict[str, Any]):
-        self.epochs = epochs
-
-    def _epochs_options(self, ctx: Request) -> dict[str, Any]:
-        return {
-            'baseline': True if self.epochs[ctx.state['epoch']].post_baseline_trigger_shift else False,
-            'samplingrate': ctx.options['samplingrate'],
-            'decim': ctx.options['decim'],
-            'interpolate_bads': 'keep',
-            'add_bads': True,
-            'reject': True,
-            'cat': None,
-            'trigger_shift': True,
-        }
-
-    def _epochs_dataset_options(self, ctx: Request) -> dict[str, Any]:
-        return {
-            **self._epochs_options(ctx),
-            'ndvar': False,
-            'data_raw': False,
-            'data': 'sensor',
-        }
-
-    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        return (Dependency('epochs-dataset', options=self._epochs_dataset_options(ctx), view='evoked'),)
-
-    def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(ctx, state_fields=self.key_fields)
-
-    def build(self, ctx: Request) -> list[mne.Evoked]:
-        return _aggregate_evoked_dataset(ctx.state['model'], ctx.state['equalize_evoked_count'], ctx.load('epochs-dataset', options=self._epochs_dataset_options(ctx)), 'epochs')['evoked']
-
-    def load(self, ctx: Request, path: Path) -> list[mne.Evoked]:
-        return mne.read_evokeds(path, proj=False)
-
-    def save(self, ctx: Request, path: Path, value: list[mne.Evoked]) -> None:
-        mne.write_evokeds(path, value, overwrite=True)
-
-    def provenance(self, ctx: Request, value: list[mne.Evoked]) -> dict[str, Any]:
-        return {'comments': _evoked_comments(value)}
-
-
-class EvokedDatasetDerivative(UncachedDerivative[Dataset]):
-    """Dataset view of cached evoked data for one subject.
+    """Evoked dataset with cached MNE evoked objects as internal artifact.
 
     Options
     -------
@@ -1243,36 +980,71 @@ class EvokedDatasetDerivative(UncachedDerivative[Dataset]):
         Whether to keep the raw object in ``ds.info['raw']``.
     data
         Sensor representation to return.
+    samplingrate
+        Sampling rate override for the underlying epochs artifact.
+    decim
+        Decimation override for the underlying epochs artifact.
     """
-    name = 'evoked-dataset'
+    name = 'evoked'
     key_fields = (
         'subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw',
         'epoch', 'rej', 'model', 'equalize_evoked_count',
     )
-    OPTION_DEFAULTS = {
-        'baseline': False,
-        'ndvar': True,
-        'cat': None,
-        'samplingrate': None,
-        'decim': None,
-        'data_raw': False,
-        'data': 'sensor',
-    }
+    cache_policy = CachePolicy.OPTIONAL
+    cache_suffix = '-ave.fif'
+    OPTION_DEFAULTS = {'samplingrate': None, 'decim': None}
+    VIEW_OPTION_DEFAULTS = {'baseline': False, 'ndvar': True, 'cat': None, 'data_raw': False, 'data': 'sensor'}
 
     def __init__(self, raw, epochs: dict[str, Any]):
         self.raw = raw
         self.epochs = epochs
 
+    def _epochs_options(self, ctx: Request) -> dict[str, Any]:
+        return {
+            'baseline': True if self.epochs[ctx.state['epoch']].post_baseline_trigger_shift else False,
+            'samplingrate': ctx.options['samplingrate'],
+            'decim': ctx.options['decim'],
+            'interpolate_bads': 'keep',
+            'reject': True,
+            'cat': None,
+            'trigger_shift': True,
+            'ndvar': False,
+            'data_raw': False,
+            'data': 'sensor',
+            'add_bads': True,
+        }
+
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        return (Dependency('evoked', options=ctx.options_for('evoked', *EvokedDerivative.OPTION_DEFAULTS)),)
+        return (Dependency('epochs', options=self._epochs_options(ctx), view='evoked'),)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        epoch = self.epochs[ctx.state['epoch']]
-        return self.standard_fingerprint(ctx, state_fields=self.key_fields, definitions={'epoch': epoch._as_dict()})
+        return self.standard_fingerprint(ctx, state_fields=self.key_fields)
 
-    def build(self, ctx: Request) -> Dataset:
-        evoked = ctx.load('evoked', options=ctx.options_for('evoked', *EvokedDerivative.OPTION_DEFAULTS))
-        ds = _build_evoked_shell(ctx, self.epochs, EvokedDerivative._epochs_options(self, ctx))
+    def build(self, ctx: Request) -> list[mne.Evoked]:
+        model = ctx.state['model']
+        data = ctx.load('epochs', options=self._epochs_options(ctx))
+        data = data.aggregate(
+            model,
+            never_drop=('epochs',),
+            drop_bad=True,
+            equal_count=ctx.state['equalize_evoked_count'] == 'eq',
+            drop=('i_start', 't_edf', 'time', 'index', 'trigger'),
+        )
+        data.rename('epochs', 'evoked')
+        model_vars = model.split('%') if model else ()
+        for evoked, *cell in data.zip('evoked', *model_vars):
+            evoked.info['description'] = "Eelbrain"
+            evoked.comment = ' % '.join(cell)
+        return data['evoked']
+
+    def load(self, ctx: Request, path: Path) -> list[mne.Evoked]:
+        return mne.read_evokeds(path, proj=False)
+
+    def save(self, ctx: Request, path: Path, value: list[mne.Evoked]) -> None:
+        mne.write_evokeds(path, value, overwrite=True)
+
+    def apply_view_options(self, ctx: Request, evoked: list[mne.Evoked]) -> Dataset:
+        ds = _build_evoked_shell(ctx, self.epochs, self._epochs_options(ctx))
         raw = ds.info.get('raw')
         bads = raw.info['bads'] if raw is not None else ds.info.get(BAD_CHANNELS, [])
         model = ctx.state['model']
@@ -1289,20 +1061,44 @@ class EvokedDatasetDerivative(UncachedDerivative[Dataset]):
             for evoked_i in evoked:
                 evoked_i.info['bads'] = bads
         ds['evoked'] = evoked
-        return _apply_evoked_load_options(
-            ds,
-            epoch=self.epochs[ctx.state['epoch']],
-            raw=self.raw,
-            raw_name=ctx.state['raw'],
-            subject=ctx.state['subject'],
-            model=ctx.state['model'],
-            baseline=ctx.options['baseline'],
-            ndvar=ctx.options['ndvar'],
-            cat=ctx.options['cat'],
-            data_raw=ctx.options['data_raw'],
-            data=ctx.options['data'],
-            load_raw=lambda: load_raw_dependency(ctx, add_bads=True, preload=False, noise=False),
-        )
+        cat = ctx.view_options['cat']
+        model = ctx.state['model']
+        if cat:
+            if not model:
+                raise TypeError(f"{cat=} with {model=}: the cat parameter only applies when a model is specified")
+            ds = ds.sub(ds.eval(model).isin(cat))
+            if ds.n_cases == 0:
+                raise RuntimeError(f"Selection with {cat=} resulted in empty Dataset")
+
+        epoch = self.epochs[ctx.state['epoch']]
+        baseline = ctx.view_options['baseline']
+        if baseline is True:
+            baseline = epoch.baseline
+        if baseline and not epoch.post_baseline_trigger_shift:
+            for evoked_i in ds['evoked']:
+                mne.baseline.rescale(evoked_i.data, evoked_i.times, baseline, 'mean', copy=False)
+
+        data = TestDims.coerce(ctx.view_options['data'])
+        ndvar = ctx.view_options['ndvar']
+        if ndvar:
+            evoked = ds['evoked']
+            if ndvar == 1:
+                del ds['evoked']
+            info = evoked[0].info
+            sensor_types = ds.info['sensor_types'] = data.data_to_ndvar(info)
+            pipe = self.raw[ctx.state['raw']]
+            for sensor_type in sensor_types:
+                sysname = pipe.get_sysname(info, ctx.state['subject'], sensor_type, self.raw)
+                adjacency = pipe.get_adjacency(sensor_type, self.raw)
+                name = 'meg' if sensor_type == 'mag' else sensor_type
+                ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
+                if sensor_type != 'eog' and isinstance(data.sensor, str):
+                    ds[name] = getattr(ds[name], data.sensor)('sensor')
+        if ctx.view_options['data_raw']:
+            ds.info['raw'] = load_raw_dependency(ctx, add_bads=True, preload=False, noise=False)
+        elif 'raw' in ds.info:
+            del ds.info['raw']
+        return ds
 
 
 class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
@@ -1343,27 +1139,56 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
         return self.key(ctx)
 
     def _subject_options(self, ctx: Request) -> dict[str, Any]:
-        return ctx.options_for('evoked-dataset', 'baseline', 'cat', 'samplingrate', 'decim', 'data_raw', 'data', ndvar=isinstance(TestDims.coerce(ctx.options['data']).sensor, str))
+        return ctx.options_for('evoked', 'baseline', 'cat', 'samplingrate', 'decim', 'data_raw', 'data', ndvar=isinstance(TestDims.coerce(ctx.options['data']).sensor, str))
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         options = self._subject_options(ctx)
         return tuple(
-            Dependency('evoked-dataset', label=subject, state={'subject': subject, 'group': None}, options=options)
+            Dependency('evoked', label=subject, state={'subject': subject, 'group': None}, options=options)
             for subject in self.groups[ctx.state['group']]
         )
 
     def build(self, ctx: Request) -> Dataset:
         dss = [
-            ctx.load('evoked-dataset', state={'subject': subject, 'group': None}, options=self._subject_options(ctx))
+            ctx.load('evoked', state={'subject': subject, 'group': None}, options=self._subject_options(ctx))
             for subject in self.groups[ctx.state['group']]
         ]
-        return _combine_group_evoked_datasets(
-            dss,
-            raw=self.raw,
-            raw_name=ctx.state['raw'],
-            data=ctx.options['data'],
-            ndvar=ctx.options['ndvar'],
-        )
+        data = TestDims.coerce(ctx.options['data'])
+        ndvar = ctx.options['ndvar']
+        individual_ndvar = isinstance(data.sensor, str)
+        if individual_ndvar:
+            ndvar = False
+        elif ndvar:
+            for ds in dss:
+                for evoked in ds['evoked']:
+                    evoked.info['bads'] = []
+        ds = combine(dss, incomplete='drop')
+        if not ndvar and not individual_ndvar:
+            lens = [len(evoked.times) for evoked in ds['evoked']]
+            ulens = set(lens)
+            if len(ulens) > 1:
+                err = ["Unequal time axis sampling (len):"]
+                alens = np.array(lens)
+                for length in ulens:
+                    subjects = ', '.join(ds[alens == length, 'subject'].cells)
+                    err.append(f"{length}: {subjects}")
+                raise DimensionMismatchError('\n'.join(err))
+            return ds
+        if ndvar and not individual_ndvar:
+            evoked = ds['evoked']
+            del ds['evoked']
+            info = evoked[0].info
+            sensor_types = ds.info['sensor_types'] = data.data_to_ndvar(info)
+            pipe = self.raw[ctx.state['raw']]
+            subject = ds[0, 'subject']
+            for sensor_type in sensor_types:
+                sysname = pipe.get_sysname(info, subject, sensor_type, self.raw)
+                adjacency = pipe.get_adjacency(sensor_type, self.raw)
+                name = 'meg' if sensor_type == 'mag' else sensor_type
+                ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
+                if sensor_type != 'eog' and isinstance(data.sensor, str):
+                    ds[name] = getattr(ds[name], data.sensor)('sensor')
+        return ds
 
 
 def decim_param(

@@ -707,7 +707,7 @@ def test_evoked_cache_reuse():
     manifest_path = handle.manifest_path
     assert manifest_path.exists()
     manifest = json.loads(manifest_path.read_text())
-    assert manifest['dependencies']['epochs-dataset']['view'] == 'evoked'
+    assert manifest['dependencies']['epochs']['view'] == 'evoked'
     mtimes_1 = (evoked_path.stat().st_mtime_ns, manifest_path.stat().st_mtime_ns)
 
     _ = e.load_evoked(ndvar=False)
@@ -728,10 +728,10 @@ def test_evoked_cached_load_bypasses_epochs(monkeypatch):
     e.set(subject='R0000', epoch='target1', rej='')
 
     target = e.load_evoked(ndvar=False)
-    epochs_node = e._derivatives._get_node('epochs-dataset')
+    epochs_node = e._derivatives._get_node('epochs')
 
     def fail(*args, **kwargs):
-        raise AssertionError("Evoked dataset load should not rebuild epochs-dataset on an evoked cache hit")
+        raise AssertionError("Evoked dataset load should not rebuild epochs on an evoked cache hit")
 
     monkeypatch.setattr(epochs_node, 'load', fail)
     monkeypatch.setattr(epochs_node, 'build', fail)
@@ -820,7 +820,7 @@ def test_evoked_cache_stales_on_model_change():
 
 
 @requires_mne_sample_data
-def test_epochs_dataset_dependency_views_distinguish_model_sensitivity():
+def test_epochs_dependency_views_distinguish_model_sensitivity():
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
@@ -831,10 +831,10 @@ def test_epochs_dataset_dependency_views_distinguish_model_sensitivity():
     e = SampleExperiment(root)
     e.set(subject='R0000', epoch='target', rej='', model='modality')
     evoked_handle = e._derivatives.resolve('evoked', state=e._derivative_state(), options={})
-    epochs_dataset_handle = e._derivatives.resolve('epochs-dataset', state=evoked_handle.state, options=evoked_handle.node._epochs_dataset_options(evoked_handle))
+    epochs_handle = e._derivatives.resolve('epochs', state=evoked_handle.state, options=evoked_handle.node._epochs_options(evoked_handle))
 
-    dataset_fingerprint = epochs_dataset_handle.describe_dependency()['fingerprint']
-    evoked_fingerprint = epochs_dataset_handle.describe_dependency(view='evoked')['fingerprint']
+    dataset_fingerprint = epochs_handle.describe_dependency()['fingerprint']
+    evoked_fingerprint = epochs_handle.describe_dependency(view='evoked')['fingerprint']
 
     assert 'model_signature' not in dataset_fingerprint
     assert 'model_signature' in evoked_fingerprint
@@ -848,10 +848,10 @@ def test_epochs_dataset_dependency_views_distinguish_model_sensitivity():
     e_changed = ChangedExperiment(root)
     e_changed.set(subject='R0000', epoch='target', rej='', model='modality')
     evoked_handle_changed = e_changed._derivatives.resolve('evoked', state=e_changed._derivative_state(), options={})
-    epochs_dataset_handle_changed = e_changed._derivatives.resolve('epochs-dataset', state=evoked_handle_changed.state, options=evoked_handle_changed.node._epochs_dataset_options(evoked_handle_changed))
+    epochs_handle_changed = e_changed._derivatives.resolve('epochs', state=evoked_handle_changed.state, options=evoked_handle_changed.node._epochs_options(evoked_handle_changed))
 
-    assert epochs_dataset_handle_changed.describe_dependency()['fingerprint'] == dataset_fingerprint
-    assert epochs_dataset_handle_changed.describe_dependency(view='evoked')['fingerprint'] != evoked_fingerprint
+    assert epochs_handle_changed.describe_dependency()['fingerprint'] == dataset_fingerprint
+    assert epochs_handle_changed.describe_dependency(view='evoked')['fingerprint'] != evoked_fingerprint
 
 
 @requires_mne_sample_data
@@ -877,10 +877,16 @@ def test_epochs_cache_uses_fif():
         'tmax': None,
         'tstop': None,
         'interpolate_bads': False,
+        'ndvar': False,
+        'data': 'sensor',
+        'data_raw': False,
+        'add_bads': True,
     }
     handle = e._derivatives.resolve('epochs', state=e._derivative_state(), options=options)
-    epochs = handle.load(cache=True)
+    ds = handle.load(cache=True)
+    epochs = handle.node.load(handle, handle.artifact_path)
 
+    assert isinstance(ds['epochs'], mne.BaseEpochs)
     assert isinstance(epochs, mne.BaseEpochs)
     assert handle.artifact_path.is_dir()
     assert (handle.artifact_path / 'metadata.json').exists()
@@ -890,10 +896,10 @@ def test_epochs_cache_uses_fif():
     assert tuple(manifest['dependencies']['selected-events']['fingerprint']) == ('i_start',)
 
     mtimes_1 = tuple(path.stat().st_mtime_ns for path in sorted(handle.artifact_path.iterdir()))
-    epochs_cached = handle.load(cache=True)
+    ds_cached = handle.load(cache=True)
     mtimes_2 = tuple(path.stat().st_mtime_ns for path in sorted(handle.artifact_path.iterdir()))
 
-    assert isinstance(epochs_cached, mne.BaseEpochs)
+    assert isinstance(ds_cached['epochs'], mne.BaseEpochs)
     assert mtimes_1 == mtimes_2
 
 
@@ -920,10 +926,14 @@ def test_epochs_cached_load_uses_current_selected_events(monkeypatch):
         'tmax': None,
         'tstop': None,
         'interpolate_bads': False,
+        'ndvar': False,
+        'data': 'sensor',
+        'data_raw': False,
+        'add_bads': True,
     }
     handle = e._derivatives.resolve('epochs', state=e._derivative_state(), options=options)
     ds = handle.load(cache=True)
-    assert isinstance(ds, mne.BaseEpochs)
+    assert isinstance(ds['epochs'], mne.BaseEpochs)
 
     mtimes_1 = tuple(path.stat().st_mtime_ns for path in sorted(handle.artifact_path.iterdir()))
     node = e._derivatives._get_node('selected-events')

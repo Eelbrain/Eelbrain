@@ -37,9 +37,9 @@ from .covariance import CovDerivative, EpochCovariance, RawCovariance, cov_node_
 from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, DerivativeRegistry, ProtectedArtifactError
 from .configuration import sequence_arg
 from .epochs import (
-    EpochBase, EpochsDatasetDerivative, EpochsDerivative, EvokedDatasetDerivative,
+    EpochBase, EpochsDerivative,
     EvokedDerivative, EvokedGroupDatasetDerivative, PrimaryEpoch, RejectionInput,
-    SecondaryEpoch, SuperEpoch, _select_model_cat, assemble_epochs, decim_param,
+    SecondaryEpoch, SuperEpoch, assemble_epochs, decim_param,
 )
 from .events import EventsDerivative, SELECTED_EVENTS, SelectedEventsDerivative
 from .exceptions import FileMissingError
@@ -558,10 +558,8 @@ class Pipeline(StateModel):
             len(self._sessions) > 1,
         ))
         self._derivatives.register(SelectedEventsDerivative(self._raw, self._epochs, self._artifact_rejection))
-        self._derivatives.register(EpochsDerivative(self._epochs))
-        self._derivatives.register(EpochsDatasetDerivative(self._raw, self._epochs))
-        self._derivatives.register(EvokedDerivative(self._epochs))
-        self._derivatives.register(EvokedDatasetDerivative(self._raw, self._epochs))
+        self._derivatives.register(EpochsDerivative(self._raw, self._epochs))
+        self._derivatives.register(EvokedDerivative(self._raw, self._epochs))
         self._derivatives.register(EvokedGroupDatasetDerivative(self._raw, self._groups))
         self._derivatives.register(EvokedTestDataDerivative(self.tests, self._epochs, self._groups))
         self._derivatives.register(TwoStageDataDerivative(self.tests, self._epochs, self._groups))
@@ -1077,11 +1075,11 @@ class Pipeline(StateModel):
         if group is None:
             if subject is not None:
                 state['subject'] = subject
-            return self._load_derivative('epochs-dataset', state=state, options=options)
+            return self._load_derivative('epochs', state=state, options=options)
 
         epoch_name = self.get('epoch')
         dss = [
-            self._load_derivative('epochs-dataset', options=options)
+            self._load_derivative('epochs', options=options)
             for _ in self.iter(group=group, progress_bar=f"Load {epoch_name}")
         ]
         return combine(dss)
@@ -1320,7 +1318,7 @@ class Pipeline(StateModel):
         state['group'] = None
         if subject is not None:
             state['subject'] = subject
-        return self._load_derivative('evoked-dataset', state=state, options=options)
+        return self._load_derivative('evoked', state=state, options=options)
 
     def load_epochs_stf(
             self,
@@ -2066,13 +2064,10 @@ class Pipeline(StateModel):
             'add_bads': add_bads,
             'index': index,
             'data_raw': data_raw,
-            'cat': None if vardef is not None else cat,
+            'cat': cat,
         }
-
         ds = self._load_derivative(SELECTED_EVENTS, options=options)
-        if vardef is not None:
-            apply_vardef(ds, vardef, self.tests, self._groups)
-            ds = _select_model_cat(ds, self.get('model', **state), cat)
+        apply_vardef(ds, vardef, self.tests, self._groups)
         return ds
 
     def load_src(

@@ -655,8 +655,8 @@ class EpochsStcDerivative(Derivative[Dataset]):
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         deps = [
-            Dependency('epochs-dataset', options=ctx.options_for(
-                'epochs-dataset',
+            Dependency('epochs', options=ctx.options_for(
+                'epochs',
                 baseline=ctx.options['baseline'],
                 ndvar=False,
                 reject=ctx.options['reject'],
@@ -682,8 +682,8 @@ class EpochsStcDerivative(Derivative[Dataset]):
 
     def build(self, ctx: Request) -> Dataset:
         epoch = self.epochs[ctx.state['epoch']]
-        ds = ctx.load('epochs-dataset', options=ctx.options_for(
-            'epochs-dataset',
+        ds = ctx.load('epochs', options=ctx.options_for(
+            'epochs',
             baseline=ctx.options['baseline'],
             ndvar=False,
             reject=ctx.options['reject'],
@@ -850,8 +850,8 @@ class EvokedStcDerivative(Derivative[Dataset]):
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         deps = [
-            Dependency('evoked-dataset', options=ctx.options_for(
-                'evoked-dataset',
+            Dependency('evoked', options=ctx.options_for(
+                'evoked',
                 baseline=ctx.options['baseline'],
                 ndvar=False,
                 cat=ctx.options['cat'],
@@ -874,8 +874,8 @@ class EvokedStcDerivative(Derivative[Dataset]):
         return ctx.registry.canonicalize(ctx.options)
 
     def build(self, ctx: Request) -> Dataset:
-        ds = ctx.load('evoked-dataset', options=ctx.options_for(
-            'evoked-dataset',
+        ds = ctx.load('evoked', options=ctx.options_for(
+            'evoked',
             baseline=ctx.options['baseline'],
             ndvar=False,
             cat=ctx.options['cat'],
