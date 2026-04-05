@@ -925,9 +925,10 @@ def test_epochs_cache_uses_fif():
     assert isinstance(ds['epochs'], mne.BaseEpochs)
     assert isinstance(epochs, mne.BaseEpochs)
     assert handle.artifact_path.is_dir()
-    assert (handle.artifact_path / 'metadata.json').exists()
     assert list(handle.artifact_path.glob('*-epo.fif'))
     manifest = json.loads(handle.manifest_path.read_text())
+    assert manifest['artifact_metadata']['kind'] == 'single'
+    assert manifest['artifact_metadata']['file'] == 'epochs-0000-epo.fif'
     assert manifest['dependencies']['selected-events']['view'] == 'epochs'
     assert tuple(manifest['dependencies']['selected-events']['fingerprint']) == ('i_start',)
 

@@ -47,7 +47,7 @@ from .configuration import Configuration
 
 T = TypeVar('T')
 MANIFEST_SUFFIX = '.manifest.json'
-MANIFEST_SCHEMA_VERSION = 1
+MANIFEST_SCHEMA_VERSION = 2
 DEFAULT_CACHE_LABEL = 'artifact'
 MAX_CACHE_LABEL_LEN = 96
 CACHE_KEY_HASH_LEN = 12
@@ -89,6 +89,7 @@ class ArtifactManifest:
     cache_policy: str
     software: dict[str, str]
     provenance: dict[str, Any]
+    artifact_metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -463,6 +464,19 @@ class Derivative(DependencyNode[T]):
         """
         raise NotImplementedError
 
+    def artifact_metadata(
+            self,
+            ctx: Request,
+            value: T,
+    ) -> dict[str, Any]:
+        """Return serializer metadata for this artifact.
+
+        Override this when :meth:`load` or named views need small pieces of
+        metadata about the serialized artifact beyond the main fingerprint and
+        provenance, such as file lists or saved selection arrays.
+        """
+        return {}
+
     def apply_view_options(
             self,
             ctx: Request,
@@ -475,6 +489,22 @@ class Derivative(DependencyNode[T]):
         ``value`` unchanged.
         """
         return value
+
+    def load_view(
+            self,
+            ctx: Request,
+            view: str,
+    ):
+        """Load one named dependency/user-facing view for this derivative.
+
+        Override this when the derivative exposes a named view that should be
+        loaded through ``request.load(view=...)``. Implementations can call
+        :meth:`Request.load_artifact` when the named view should be projected
+        from the underlying artifact, or avoid loading the artifact entirely
+        when the view can be reconstructed from request state plus serializer
+        metadata.
+        """
+        raise ValueError(f"{self.name!r} does not define load view {view!r}")
 
     def standard_fingerprint(
             self,
@@ -627,6 +657,7 @@ class Request(Generic[T]):
         self._base_artifact_path: Path | None = None
         self._artifact_path: Path | None = None
         self._manifest_path: Path | None = None
+        self._artifact_metadata: dict[str, Any] | None = None
         if isinstance(node, Derivative):
             self._key = node.key(self)
             self._base_artifact_path = Path(node.path(self))
@@ -724,11 +755,20 @@ class Request(Generic[T]):
         assert self._key is not None
         return self._key
 
+    @property
+    def artifact_metadata(self) -> dict[str, Any]:
+        """Serializer metadata for the current derivative artifact, if any."""
+        if self._artifact_metadata is not None:
+            return self._artifact_metadata
+        if not isinstance(self.node, Derivative):
+            return {}
+        manifest = self._manifest()
+        if manifest is None:
+            return {}
+        return manifest.artifact_metadata
+
     def _manifest(self) -> ArtifactManifest | None:
         return self.registry.read_manifest(self.manifest_path)
-
-    def _is_protected_artifact(self) -> bool:
-        return self.artifact_path.exists() and not self.registry.is_cache_artifact(self.artifact_path)
 
     def _is_valid(
             self,
@@ -752,13 +792,38 @@ class Request(Generic[T]):
             return False
         return True
 
-    def _build_manifest(
-            self,
-            value: T,
-            cache: bool | None = None,
-    ) -> ArtifactManifest:
+    def is_valid(self, cache: bool | None = None) -> bool:
+        """Return whether the current derivative request already has a valid artifact."""
+        self._require_derivative()
+        manifest = self._manifest()
+        if manifest is None or not self.artifact_path.exists():
+            return False
+        return self._is_valid(manifest, cache)
+
+    def load_artifact(self, cache: bool | None = None) -> T:
+        """Load or build the underlying derivative artifact without view shaping."""
         derivative = self._require_derivative()
-        return ArtifactManifest(
+        use_cache = derivative.should_cache(self, cache)
+        if use_cache:
+            manifest = self._manifest()
+            if manifest and self.artifact_path.exists() and self._is_valid(manifest, cache):
+                self._artifact_metadata = manifest.artifact_metadata
+                derivative.log_cache_hit(self, self.artifact_path)
+                return derivative.load(self, self.artifact_path)
+            if self.artifact_path.exists() and not self.registry.is_cache_artifact(self.artifact_path) and not self.has_control(ALLOW_PROTECTED_OVERWRITE):
+                raise ProtectedArtifactError(derivative.name, self.artifact_path)
+
+        if use_cache:
+            derivative.log_cache_build(self, self.artifact_path)
+        artifact = derivative.build(self)
+        artifact_metadata = self.registry.canonicalize(derivative.artifact_metadata(self, artifact))
+        self._artifact_metadata = artifact_metadata
+        if not use_cache:
+            return artifact
+
+        self.artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        derivative.save(self, self.artifact_path, artifact)
+        manifest = ArtifactManifest(
             schema_version=MANIFEST_SCHEMA_VERSION,
             derivative=derivative.name,
             derivative_version=derivative.version,
@@ -770,43 +835,12 @@ class Request(Generic[T]):
                 'eelbrain_cache_schema': str(MANIFEST_SCHEMA_VERSION),
                 'mne': mne.__version__,
             },
-            provenance=self.registry.canonicalize(derivative.provenance(self, value)),
+            provenance=self.registry.canonicalize(derivative.provenance(self, artifact)),
+            artifact_metadata=artifact_metadata,
         )
-
-    def is_valid(self, cache: bool | None = None) -> bool:
-        """Return whether the current derivative request already has a valid artifact."""
-        self._require_derivative()
-        manifest = self._manifest()
-        if manifest is None or not self.artifact_path.exists():
-            return False
-        return self._is_valid(manifest, cache)
-
-    def _load_current(self, cache: bool | None = None) -> T:
-        if isinstance(self.node, Input):
-            return self.node.load(self)
-
-        derivative = self._require_derivative()
-        use_cache = derivative.should_cache(self, cache)
-        if use_cache:
-            manifest = self._manifest()
-            if manifest and self.artifact_path.exists() and self._is_valid(manifest, cache):
-                derivative.log_cache_hit(self, self.artifact_path)
-                artifact = derivative.load(self, self.artifact_path)
-                return derivative.apply_view_options(self, artifact)
-            if self._is_protected_artifact() and not self.has_control(ALLOW_PROTECTED_OVERWRITE):
-                raise ProtectedArtifactError(derivative.name, self.artifact_path)
-
-        if use_cache:
-            derivative.log_cache_build(self, self.artifact_path)
-        artifact = derivative.build(self)
-        if not use_cache:
-            return derivative.apply_view_options(self, artifact)
-
-        self.artifact_path.parent.mkdir(parents=True, exist_ok=True)
-        derivative.save(self, self.artifact_path, artifact)
-        self.registry.write_manifest(self.manifest_path, self._build_manifest(artifact, cache))
-        artifact = derivative.load(self, self.artifact_path)
-        return derivative.apply_view_options(self, artifact)
+        self.registry.write_manifest(self.manifest_path, manifest)
+        self._artifact_metadata = manifest.artifact_metadata
+        return derivative.load(self, self.artifact_path)
 
     def load(
             self,
@@ -815,6 +849,7 @@ class Request(Generic[T]):
             state: dict[str, Any] | None = None,
             options: dict[str, Any] | None = None,
             *,
+            view: str | None = None,
             controls: frozenset[str] | set[str] | tuple[str, ...] = (),
             **extra_state,
     ):
@@ -823,6 +858,8 @@ class Request(Generic[T]):
         ``request.load()`` materializes the current request.
         ``request.load('other-node', ...)`` resolves and loads another node,
         merging this request's state with any explicit state overrides.
+        ``view=...`` loads one named derivative view instead of the node's
+        default return value.
         Controls are never inherited implicitly; pass them explicitly when a
         nested load genuinely needs them.
         """
@@ -837,16 +874,27 @@ class Request(Generic[T]):
                 cache=cache,
                 state=merged_state,
                 options=options,
+                view=view,
                 controls=controls,
             )
 
         if state is not None or options is not None or extra_state or controls:
-            raise TypeError("Request.load() without a dependency name only accepts an optional cache override")
+            raise TypeError("Request.load() without a dependency name only accepts optional cache/view overrides")
         if name is not None and not isinstance(name, bool):
             raise TypeError(f"Unsupported Request.load() first argument: {name!r}")
         if name is not None and cache is not None:
             raise TypeError("Specify cache only once when loading the current request")
-        return self._load_current(name if isinstance(name, bool) else cache)
+        cache = name if isinstance(name, bool) else cache
+        if isinstance(self.node, Input):
+            if view is not None:
+                raise TypeError(f"Request for input {self.node.name!r} does not define view {view!r}")
+            return self.node.load(self)
+
+        derivative = self._require_derivative()
+        if view is not None:
+            return derivative.load_view(self, view)
+        artifact = self.load_artifact(cache)
+        return derivative.apply_view_options(self, artifact)
 
 
 class DerivativeRegistry:
@@ -920,11 +968,12 @@ class DerivativeRegistry:
             cache: bool | None = None,  # Explicit cache override for derivative loads.
             state: dict[str, Any] | None = None,  # Base state for this node instance.
             options: dict[str, Any] | None = None,
+            view: str | None = None,
             controls: frozenset[str] | set[str] | tuple[str, ...] = (),
             **extra_state,  # Additional state overrides merged on top of ``state``.
     ):
         handle = self.resolve(name, state=state, options=options, controls=controls, **extra_state)
-        return handle.load(cache)
+        return handle.load(cache, view=view)
 
     def describe_artifact_path(self, path: str | Path) -> str:
         artifact_path = Path(path)

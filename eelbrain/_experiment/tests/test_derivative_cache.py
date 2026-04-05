@@ -312,6 +312,16 @@ class OptionDerivative(Derivative[str]):
         self.calls.append(('view', ctx.options['artifact'], ctx.view_options['view']))
         return f"{value}|view:{ctx.view_options['view']}"
 
+    def artifact_metadata(self, ctx: Request, value: str) -> dict[str, object]:
+        return {'value': value}
+
+    def load_view(self, ctx: Request, view: str) -> str:
+        if view != 'echo':
+            return super().load_view(ctx, view)
+        value = ctx.load_artifact()
+        self.calls.append(('named-view', ctx.options['artifact'], ctx.view_options['view']))
+        return f"{value}|meta:{ctx.artifact_metadata['value']}"
+
     def save(
             self,
             ctx: Request,
@@ -651,4 +661,23 @@ def test_request_applies_view_options_after_build_and_load():
         ('view', 1, 2),
         ('load', 1, 3),
         ('view', 1, 3),
+    ]
+
+
+def test_request_loads_named_view_and_exposes_artifact_metadata():
+    root = TempDir()
+    registry = DerivativeRegistry(root, logging.getLogger('eelbrain.test.derivative_cache'))
+    derivative = OptionDerivative(root)
+    registry.register(derivative)
+
+    value = registry.load('optioned', state=DEFAULT_STATE, options={'artifact': 2, 'view': 7}, view='echo')
+    handle = registry.resolve('optioned', state=DEFAULT_STATE, options={'artifact': 2, 'view': 7})
+    manifest = json.loads(handle.manifest_path.read_text())
+
+    assert value == 'artifact:2|meta:artifact:2'
+    assert manifest['artifact_metadata'] == {'value': 'artifact:2'}
+    assert derivative.calls == [
+        ('build', 2, 7),
+        ('load', 2, 7),
+        ('named-view', 2, 7),
     ]

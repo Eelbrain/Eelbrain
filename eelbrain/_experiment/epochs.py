@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any
 from copy import deepcopy
 import inspect
-import json
 from collections.abc import Sequence
 import math
 import shutil
@@ -102,9 +101,6 @@ class RejectionInput(Input):
         }
 
 
-_EPOCHS_METADATA_FILE = 'metadata.json'
-
-
 def _evoked_comments(evoked: list[mne.Evoked]) -> list[str]:
     return [e.comment or 'No comment' for e in evoked]
 
@@ -180,76 +176,6 @@ def _apply_epochs_selection(ds: Dataset, selection: np.ndarray | None) -> Datase
     ds = ds[selection]
     ds.info = ds.info.copy()
     ds.info['epochs.selection'] = selection
-    return ds
-
-
-def _build_evoked_shell(
-        ctx: Request,
-        epochs: dict[str, Any],
-        epochs_options: dict[str, Any],
-        aggregate: bool = True,
-        state: dict[str, Any] | None = None,
-) -> Dataset:
-    state = ctx.state if state is None else {**ctx.state, **state}
-    cat = ctx.view_options.get('cat')
-    epoch_name = state['epoch']
-    epoch = epochs[epoch_name]
-    if isinstance(epoch, EpochCollection):
-        dss = []
-        for sub_epoch in epoch.collect:
-            ds = _build_evoked_shell(ctx, epochs, epochs_options, aggregate=False, state={**state, 'epoch': sub_epoch})
-            ds[:, 'epoch'] = sub_epoch
-            dss.append(ds)
-        ds = combine(dss)
-    else:
-        ds = ctx.load(
-            'selected-events',
-            state=state,
-            options=ctx.options_for(
-                'selected-events',
-                reject=True,
-                add_bads=epochs_options.get('add_bads', True),
-                index='index' if cat else False,
-                data_raw=True,
-                cat=cat,
-            ),
-        )
-        ds, _, _, _, _, _, _ = _prepare_epoch_dataset(
-            ctx,
-            epoch,
-            ds,
-            {
-                'tmin': None,
-                'tmax': None,
-                'tstop': None,
-                'baseline': epochs_options['baseline'],
-                'pad': 0,
-                'samplingrate': epochs_options['samplingrate'],
-                'decim': epochs_options['decim'],
-            },
-        )
-        handle = ctx.registry.resolve(
-            'epochs',
-            state=state,
-            options={key: value for key, value in epochs_options.items() if key != 'add_bads'},
-        )
-        metadata_path = handle.artifact_path / _EPOCHS_METADATA_FILE
-        metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else None
-        if metadata is not None:
-            selection = metadata.get('selection')
-            if selection is not None:
-                selection = np.asarray(selection, dtype=int)
-                if 'index' in ds:
-                    selection = np.flatnonzero(np.isin(ds['index'].x, selection))
-            ds = _apply_epochs_selection(ds, selection)
-
-    if aggregate:
-        ds = ds.aggregate(
-            ctx.state['model'],
-            drop_bad=True,
-            equal_count=ctx.state['equalize_evoked_count'] == 'eq',
-            drop=('i_start', 't_edf', 'time', 'index', 'trigger'),
-        )
     return ds
 
 
@@ -838,7 +764,7 @@ class EpochsDerivative(Derivative[Any]):
         return epoch_value
 
     def load(self, ctx: Request, path: Path):
-        metadata = json.loads((path / _EPOCHS_METADATA_FILE).read_text())
+        metadata = ctx.artifact_metadata
         if metadata['kind'] == 'datalist':
             return Datalist(
                 [mne.read_epochs(path / relpath, proj=False) for relpath in metadata['files']],
@@ -855,23 +781,21 @@ class EpochsDerivative(Derivative[Any]):
                 path.unlink()
         path.mkdir()
         if isinstance(value, Datalist):
-            epoch_files = []
             for i, epochs in enumerate(value):
-                epoch_file = f'epochs-{i:04d}-epo.fif'
-                epochs.save(path / epoch_file, overwrite=True)
-                epoch_files.append(epoch_file)
-            metadata = {
+                epochs.save(path / f'epochs-{i:04d}-epo.fif', overwrite=True)
+        else:
+            value.save(path / 'epochs-0000-epo.fif', overwrite=True)
+
+    def artifact_metadata(self, ctx: Request, value) -> dict[str, Any]:
+        if isinstance(value, Datalist):
+            return {
                 'kind': 'datalist',
-                'files': epoch_files,
+                'files': [f'epochs-{i:04d}-epo.fif' for i in range(len(value))],
                 'name': value.name,
                 'fmt': value._fmt,
                 'selections': _epochs_selection_metadata(value),
             }
-        else:
-            epoch_file = 'epochs-0000-epo.fif'
-            value.save(path / epoch_file, overwrite=True)
-            metadata = {'kind': 'single', 'file': epoch_file, 'selection': _epochs_selection_metadata(value)}
-        (path / _EPOCHS_METADATA_FILE).write_text(json.dumps(metadata, sort_keys=True, indent=2))
+        return {'kind': 'single', 'file': 'epochs-0000-epo.fif', 'selection': _epochs_selection_metadata(value)}
 
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
         if view is None:
@@ -880,11 +804,7 @@ class EpochsDerivative(Derivative[Any]):
             raise ValueError(f"{self.name!r} does not define dependency view {view!r}")
 
         fingerprint = dict(self.fingerprint(ctx))
-        ds = _build_evoked_shell(
-            ctx,
-            self.epochs,
-            {**ctx.options_for('epochs', *self.OPTION_DEFAULTS), 'add_bads': ctx.view_options['add_bads']},
-        )
+        ds = ctx.load(view='evoked')
         model = ctx.state['model']
         if model:
             model_value = ds.eval(model)
@@ -892,6 +812,65 @@ class EpochsDerivative(Derivative[Any]):
         else:
             fingerprint['model_signature'] = ds.n_cases
         return fingerprint
+
+    def load_view(self, ctx: Request, view: str):
+        if view != 'evoked':
+            return super().load_view(ctx, view)
+
+        epoch = self.epochs[ctx.state['epoch']]
+        if isinstance(epoch, EpochCollection):
+            dss = []
+            for sub_epoch in epoch.collect:
+                ds = ctx.load(
+                    'epochs',
+                    state={'epoch': sub_epoch},
+                    options=ctx.options_for('epochs', *self.OPTION_DEFAULTS, add_bads=ctx.view_options['add_bads']),
+                    view='evoked',
+                )
+                ds[:, 'epoch'] = sub_epoch
+                dss.append(ds)
+            return combine(dss)
+
+        cat = ctx.options['cat']
+        ds = ctx.load(
+            'selected-events',
+            options=ctx.options_for(
+                'selected-events',
+                reject=ctx.options['reject'],
+                add_bads=ctx.view_options['add_bads'],
+                index='index' if cat else False,
+                data_raw=True,
+                cat=cat,
+            ),
+        )
+        ds, _, _, _, _, _, _ = _prepare_epoch_dataset(
+            ctx,
+            epoch,
+            ds,
+            {
+                'tmin': None,
+                'tmax': None,
+                'tstop': None,
+                'baseline': ctx.options['baseline'],
+                'pad': 0,
+                'samplingrate': ctx.options['samplingrate'],
+                'decim': ctx.options['decim'],
+            },
+        )
+        selection = ctx.artifact_metadata.get('selection')
+        if selection is None and ctx.artifact_path.exists():
+            selection = getattr(ctx.load_artifact(), 'selection', None)
+        if selection is not None:
+            selection = np.asarray(selection, dtype=int)
+            if 'index' in ds:
+                selection = np.flatnonzero(np.isin(ds['index'].x, selection))
+            ds = _apply_epochs_selection(ds, selection)
+        return ds.aggregate(
+            ctx.state['model'],
+            drop_bad=True,
+            equal_count=ctx.state['equalize_evoked_count'] == 'eq',
+            drop=('i_start', 't_edf', 'time', 'index', 'trigger'),
+        )
 
     def apply_view_options(self, ctx: Request, epoch_value):
         epoch = self.epochs[ctx.state['epoch']]
@@ -1001,19 +980,19 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         self.raw = raw
         self.epochs = epochs
 
-    def _epochs_options(self, ctx: Request) -> dict[str, Any]:
+    def _epochs_options(self, ctx: Request, *, cat=None, add_bads: bool = True) -> dict[str, Any]:
         return {
             'baseline': True if self.epochs[ctx.state['epoch']].post_baseline_trigger_shift else False,
             'samplingrate': ctx.options['samplingrate'],
             'decim': ctx.options['decim'],
             'interpolate_bads': 'keep',
             'reject': True,
-            'cat': None,
+            'cat': cat,
             'trigger_shift': True,
             'ndvar': False,
             'data_raw': False,
             'data': 'sensor',
-            'add_bads': True,
+            'add_bads': add_bads,
         }
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
@@ -1046,7 +1025,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         mne.write_evokeds(path, value, overwrite=True)
 
     def apply_view_options(self, ctx: Request, evoked: list[mne.Evoked]) -> Dataset:
-        ds = _build_evoked_shell(ctx, self.epochs, self._epochs_options(ctx))
+        ds = ctx.load('epochs', options=self._epochs_options(ctx, cat=ctx.view_options['cat']), view='evoked')
         raw = ds.info.get('raw')
         bads = raw.info['bads'] if raw is not None else ds.info.get(BAD_CHANNELS, [])
         model = ctx.state['model']
