@@ -871,57 +871,30 @@ class EpochsDerivative(Derivative[Any]):
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
         if view is None:
             return self.fingerprint(ctx)
-        if view == 'shell':
-            return self.fingerprint(ctx)
-        if view != 'evoked':
+        if view != 'shell':
             raise ValueError(f"{self.name!r} does not define dependency view {view!r}")
-
-        fingerprint = dict(self.fingerprint(ctx))
-        ds = ctx.load(view='evoked')
-        model = ctx.state['model']
-        if model:
-            model_value = ds.eval(model)
-            fingerprint['model_signature'] = ctx.registry.canonicalize(model_value.x.tolist() if isinstance(model_value, Var) else list(model_value))
-        else:
-            fingerprint['model_signature'] = ds.n_cases
-        return fingerprint
+        return self.fingerprint(ctx)
 
     def load_view(self, ctx: Request, view: str):
-        if view not in {'shell', 'evoked'}:
+        if view != 'shell':
             return super().load_view(ctx, view)
 
         epoch = self.epochs[ctx.state['epoch']]
         if isinstance(epoch, EpochCollection):
-            if view == 'shell':
-                raise ValueError(f"{self.name!r} does not define view {view!r} for {epoch.__class__.__name__}")
-            dss = []
-            for sub_epoch in epoch.collect:
-                ds = ctx.load(
-                    'epochs',
-                    state={'epoch': sub_epoch},
-                    options=ctx.options_for('epochs', *self.OPTION_DEFAULTS, add_bads=ctx.view_options['add_bads']),
-                    view='evoked',
-                )
-                ds[:, 'epoch'] = sub_epoch
-                dss.append(ds)
-            return combine(dss)
+            raise ValueError(f"{self.name!r} does not define view {view!r} for {epoch.__class__.__name__}")
 
-        if view == 'shell':
-            ds = ctx.load(
+        ds = ctx.load(
+            'selected-events',
+            options=ctx.options_for(
                 'selected-events',
-                options=ctx.options_for(
-                    'selected-events',
-                    reject=ctx.options['reject'],
-                    add_bads=True,
-                    index='index' if ctx.options['cat'] else False,
-                    data_raw=True,
-                    cat=ctx.options['cat'],
-                ),
-            )
-            return epoch.prepare_selected_events(ds, ctx.state['subject'])
-
-        ds = ctx.load(view='shell')
-
+                reject=ctx.options['reject'],
+                add_bads=True,
+                index='index' if ctx.options['cat'] else False,
+                data_raw=True,
+                cat=ctx.options['cat'],
+            ),
+        )
+        ds = epoch.prepare_selected_events(ds, ctx.state['subject'])
         selection = ctx.artifact_metadata.get('selection')
         if selection is None and ctx.artifact_path.exists():
             selection = getattr(ctx.load_artifact(), 'selection', None)
@@ -930,12 +903,7 @@ class EpochsDerivative(Derivative[Any]):
             if 'index' in ds:
                 selection = np.flatnonzero(np.isin(ds['index'].x, selection))
             ds = _apply_epochs_selection(ds, selection)
-        return ds.aggregate(
-            ctx.state['model'],
-            drop_bad=True,
-            equal_count=ctx.state['equalize_evoked_count'] == 'eq',
-            drop=('i_start', 't_edf', 'time', 'index', 'trigger'),
-        )
+        return ds
 
     def apply_view_options(self, ctx: Request, epoch_value):
         epoch = self.epochs[ctx.state['epoch']]
@@ -985,8 +953,6 @@ class EpochsDerivative(Derivative[Any]):
         elif epoch_value.info['bads'] != bads:
             epoch_value = epoch_value.copy()
             epoch_value.info['bads'] = bads
-        if not isinstance(epoch_value, Datalist):
-            ds = _apply_epochs_selection(ds, getattr(epoch_value, 'selection', None))
         ds['epochs'] = epoch_value
 
         ndvar = ctx.view_options['ndvar']
@@ -1067,10 +1033,18 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         }
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        return (Dependency('epochs', options=self._epochs_options(ctx), view='evoked'),)
+        return (Dependency('epochs', options=self._epochs_options(ctx), view='shell'),)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(ctx, state_fields=self.key_fields)
+        fingerprint = self.standard_fingerprint(ctx, state_fields=self.key_fields)
+        ds = ctx.load(view='shell')
+        model = ctx.state['model']
+        if model:
+            model_value = ds.eval(model)
+            fingerprint['model_signature'] = ctx.registry.canonicalize(model_value.x.tolist() if isinstance(model_value, Var) else list(model_value))
+        else:
+            fingerprint['model_signature'] = ds.n_cases
+        return fingerprint
 
     def build(self, ctx: Request) -> list[mne.Evoked]:
         model = ctx.state['model']
@@ -1095,8 +1069,44 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
     def save(self, ctx: Request, path: Path, value: list[mne.Evoked]) -> None:
         mne.write_evokeds(path, value, overwrite=True)
 
+    def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
+        if view is None:
+            return self.fingerprint(ctx)
+        if view != 'shell':
+            raise ValueError(f"{self.name!r} does not define dependency view {view!r}")
+        return self.fingerprint(ctx)
+
+    def load_view(self, ctx: Request, view: str):
+        if view != 'shell':
+            return super().load_view(ctx, view)
+
+        epoch = self.epochs[ctx.state['epoch']]
+        if isinstance(epoch, EpochCollection):
+            dss = []
+            for sub_epoch in epoch.collect:
+                ds = ctx.load(
+                    'evoked',
+                    state={'epoch': sub_epoch},
+                    options=ctx.options_for('evoked', *self.OPTION_DEFAULTS),
+                    view='shell',
+                )
+                ds[:, 'epoch'] = sub_epoch
+                dss.append(ds)
+            return combine(dss)
+
+        data = ctx.load('epochs', options=self._epochs_options(ctx), view='shell')
+        return data.aggregate(
+            ctx.state['model'],
+            drop_bad=True,
+            equal_count=ctx.state['equalize_evoked_count'] == 'eq',
+            drop=('i_start', 't_edf', 'time', 'index', 'trigger'),
+        )
+
     def apply_view_options(self, ctx: Request, evoked: list[mne.Evoked]) -> Dataset:
-        ds = ctx.load('epochs', options=self._epochs_options(ctx, cat=ctx.view_options['cat']), view='evoked')
+        ds = ctx.load(view='shell')
+        cat = ctx.view_options['cat']
+        if cat:
+            ds = ds.sub(ds.eval(ctx.state['model']).isin(cat))
         raw = ds.info.get('raw')
         bads = raw.info['bads'] if raw is not None else ds.info.get(BAD_CHANNELS, [])
         model = ctx.state['model']

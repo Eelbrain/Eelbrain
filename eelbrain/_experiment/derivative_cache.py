@@ -497,12 +497,8 @@ class Derivative(DependencyNode[T]):
     ):
         """Load one named dependency/user-facing view for this derivative.
 
-        Override this when the derivative exposes a named view that should be
-        loaded through ``request.load(view=...)``. Implementations can call
-        :meth:`Request.load_artifact` when the named view should be projected
-        from the underlying artifact, or avoid loading the artifact entirely
-        when the view can be reconstructed from request state plus serializer
-        metadata.
+        Override this to expose data views that bypass the :meth:`load` method.
+        Views can be loaded through ``request.load(view=...)``.
         """
         raise ValueError(f"{self.name!r} does not define load view {view!r}")
 

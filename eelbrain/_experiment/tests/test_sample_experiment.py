@@ -870,10 +870,10 @@ def test_epochs_dependency_views_distinguish_model_sensitivity():
     epochs_handle = e._derivatives.resolve('epochs', state=evoked_handle.state, options=evoked_handle.node._epochs_options(evoked_handle))
 
     dataset_fingerprint = epochs_handle.describe_dependency()['fingerprint']
-    evoked_fingerprint = epochs_handle.describe_dependency(view='evoked')['fingerprint']
+    shell_fingerprint = evoked_handle.describe_dependency(view='shell')['fingerprint']
 
     assert 'model_signature' not in dataset_fingerprint
-    assert 'model_signature' in evoked_fingerprint
+    assert 'model_signature' in shell_fingerprint
 
     class ChangedExperiment(SampleExperiment):
         variables = {
@@ -887,7 +887,7 @@ def test_epochs_dependency_views_distinguish_model_sensitivity():
     epochs_handle_changed = e_changed._derivatives.resolve('epochs', state=evoked_handle_changed.state, options=evoked_handle_changed.node._epochs_options(evoked_handle_changed))
 
     assert epochs_handle_changed.describe_dependency()['fingerprint'] == dataset_fingerprint
-    assert epochs_handle_changed.describe_dependency(view='evoked')['fingerprint'] != evoked_fingerprint
+    assert evoked_handle_changed.describe_dependency(view='shell')['fingerprint'] != shell_fingerprint
 
 
 @requires_mne_sample_data
