@@ -4,7 +4,6 @@ from types import SimpleNamespace
 import pytest
 
 from eelbrain._data_obj import Dataset, Var
-from eelbrain._experiment.epochs import _prepare_epoch_dataset
 from eelbrain.pipeline import PrimaryEpoch, SecondaryEpoch, SuperEpoch, EpochCollection, ContinuousEpoch
 
 
@@ -29,11 +28,8 @@ def test_prepare_continuous_epoch_dataset():
     })
     ds.info['sfreq'] = 1000
     ds.info['raw'] = SimpleNamespace(info={'sfreq': 1000})
-    ctx = SimpleNamespace(state={'subject': 'R0001'})
-
-    ds, tmin, tmax, tstop, baseline, decim, variable_tmax = _prepare_epoch_dataset(
-        ctx,
-        epoch,
+    ds = epoch.prepare_selected_events(ds, 'R0001')
+    tmin, tmax, tstop, baseline, decim, variable_tmax = epoch.extraction_parameters(
         ds,
         {
             'baseline': False,

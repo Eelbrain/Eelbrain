@@ -105,60 +105,6 @@ def _evoked_comments(evoked: list[mne.Evoked]) -> list[str]:
     return [e.comment or 'No comment' for e in evoked]
 
 
-def _prepare_epoch_dataset(
-        ctx: Request,
-        epoch: Any,
-        ds: Dataset,
-        options: dict[str, Any],
-) -> tuple[Dataset, float, Any, float | None, Any, int, bool]:
-    if ds.n_cases == 0:
-        raise RuntimeError(f"No events left for epoch={epoch.name!r}, subject={ctx.state['subject']!r}")
-
-    if isinstance(epoch, ContinuousEpoch):
-        split_threshold = epoch.split + epoch.pad_start + epoch.pad_end
-        onsets = np.flatnonzero(ds['time'].diff(to_begin=split_threshold + 1) >= split_threshold)
-        illegal = {'T_relative', 'events', 'tmax'}.intersection(ds)
-        if illegal:
-            raise RuntimeError(f"Events contain variables with reserved names: {', '.join(illegal)}")
-        events = [ds[i1:i2] for i1, i2 in zip(onsets, [*onsets[1:], None])]
-        raw_samplingrate = ds.info['raw'].info['sfreq']
-        for events_i in events:
-            sample_i = events_i['i_start'] - events_i[0, 'i_start']
-            events_i['T_relative'] = sample_i / raw_samplingrate
-        ds = ds[onsets]
-        ds.info['nested_events'] = 'events'
-        ds['events'] = events
-        ds['tmax'] = Var([events_i[-1, 'time'] - events_i[0, 'time'] + epoch.pad_end for events_i in events])
-        baseline = epoch.baseline if options['baseline'] is True else options['baseline']
-        decim = decim_param(options['samplingrate'], options['decim'], epoch, ds.info)
-        return ds, -epoch.pad_start, ds.eval('tmax'), None, baseline, decim, True
-
-    tmin = epoch.tmin if options['tmin'] is None else options['tmin']
-    tmax = options['tmax']
-    tstop = options['tstop']
-    if tmax is None and tstop is None:
-        tmax = epoch.tmax
-    baseline = epoch.baseline if options['baseline'] is True else options['baseline']
-    if isinstance(tmax, str):
-        tmax = ds.eval(tmax)
-        assert isinstance(tmax, Var)
-        assert not epoch.post_baseline_trigger_shift, 'not implemented with variable tmax'
-        variable_tmax = True
-    else:
-        variable_tmax = False
-    if pad := options['pad']:
-        if baseline:
-            b0, b1 = baseline
-            baseline = (tmin if b0 is None else b0, tmax if b1 is None else b1)
-        tmin -= pad
-        if tmax is not None:
-            tmax = tmax + pad
-        elif tstop is not None:
-            tstop = tstop + pad
-    decim = decim_param(options['samplingrate'], options['decim'], epoch, ds.info)
-    return ds, tmin, tmax, tstop, baseline, decim, variable_tmax
-
-
 def _epochs_selection_metadata(value) -> list[int] | list[list[int] | None] | None:
     if isinstance(value, Datalist):
         selections = []
@@ -185,6 +131,62 @@ class EpochBase(Configuration):
     trigger_shift = None
     post_baseline_trigger_shift = None
     decim = None
+
+    def prepare_selected_events(
+            self,
+            ds: Dataset,
+            subject: str,
+    ) -> Dataset:
+        """Prepare the selected-events shell for this epoch.
+
+        Parameters
+        ----------
+        ds
+            Selected-events dataset for one subject after graph-level event
+            selection and load options have been applied.
+        subject
+            Subject identifier used for error messages.
+
+        Returns
+        -------
+        ds
+            Dataset to use as the event shell for epoch extraction.
+            Implementations may return a rewritten dataset, for example for
+            continuous epochs.
+        """
+        raise NotImplementedError(f"{self.__class__.__name__}.prepare_selected_events()")
+
+    def extraction_parameters(
+            self,
+            ds: Dataset,
+            options: dict[str, Any],
+    ) -> tuple[float, Any, float | None, Any, int, bool]:
+        """Compute epoch extraction parameters for a prepared shell.
+
+        Parameters
+        ----------
+        ds
+            Prepared event shell returned by :meth:`prepare_selected_events`.
+        options
+            `epochs` node options that affect extraction, such as time-window,
+            baseline, padding, and decimation overrides.
+
+        Returns
+        -------
+        tmin
+            Start of the extraction window in seconds.
+        tmax
+            End of the extraction window, or a per-epoch :class:`Var`.
+        tstop
+            Optional explicit stop time for fixed-length extraction.
+        baseline
+            Baseline interval to apply during epoch extraction.
+        decim
+            Decimation factor for MNE epoch extraction.
+        variable_tmax
+            Whether ``tmax`` varies per epoch.
+        """
+        raise NotImplementedError(f"{self.__class__.__name__}.extraction_parameters()")
 
     def _repr_args(self):
         args = []
@@ -270,6 +272,45 @@ class Epoch(EpochBase):
         self.post_baseline_trigger_shift = post_baseline_trigger_shift
         self.post_baseline_trigger_shift_min = post_baseline_trigger_shift_min
         self.post_baseline_trigger_shift_max = post_baseline_trigger_shift_max
+
+    def prepare_selected_events(
+            self,
+            ds: Dataset,
+            subject: str,
+    ) -> Dataset:
+        if ds.n_cases == 0:
+            raise RuntimeError(f"No events left for epoch={self.name!r}, subject={subject!r}")
+        return ds
+
+    def extraction_parameters(
+            self,
+            ds: Dataset,
+            options: dict[str, Any],
+    ) -> tuple[float, Any, float | None, Any, int, bool]:
+        tmin = self.tmin if options['tmin'] is None else options['tmin']
+        tmax = options['tmax']
+        tstop = options['tstop']
+        if tmax is None and tstop is None:
+            tmax = self.tmax
+        baseline = self.baseline if options['baseline'] is True else options['baseline']
+        if isinstance(tmax, str):
+            tmax = ds.eval(tmax)
+            assert isinstance(tmax, Var)
+            assert not self.post_baseline_trigger_shift, 'not implemented with variable tmax'
+            variable_tmax = True
+        else:
+            variable_tmax = False
+        if pad := options['pad']:
+            if baseline:
+                b0, b1 = baseline
+                baseline = (tmin if b0 is None else b0, tmax if b1 is None else b1)
+            tmin -= pad
+            if tmax is not None:
+                tmax = tmax + pad
+            elif tstop is not None:
+                tstop = tstop + pad
+        decim = decim_param(options['samplingrate'], options['decim'], self, ds.info)
+        return tmin, tmax, tstop, baseline, decim, variable_tmax
 
 
 class PrimaryEpoch(Epoch):
@@ -614,6 +655,39 @@ class ContinuousEpoch(EpochBase):
         self.samplingrate = typed_arg(samplingrate, float, int)
         self.tasks = (task,)
 
+    def prepare_selected_events(
+            self,
+            ds: Dataset,
+            subject: str,
+    ) -> Dataset:
+        if ds.n_cases == 0:
+            raise RuntimeError(f"No events left for epoch={self.name!r}, subject={subject!r}")
+
+        split_threshold = self.split + self.pad_start + self.pad_end
+        onsets = np.flatnonzero(ds['time'].diff(to_begin=split_threshold + 1) >= split_threshold)
+        illegal = {'T_relative', 'events', 'tmax'}.intersection(ds)
+        if illegal:
+            raise RuntimeError(f"Events contain variables with reserved names: {', '.join(illegal)}")
+        events = [ds[i1:i2] for i1, i2 in zip(onsets, [*onsets[1:], None])]
+        raw_samplingrate = ds.info['raw'].info['sfreq']
+        for events_i in events:
+            sample_i = events_i['i_start'] - events_i[0, 'i_start']
+            events_i['T_relative'] = sample_i / raw_samplingrate
+        ds = ds[onsets]
+        ds.info['nested_events'] = 'events'
+        ds['events'] = events
+        ds['tmax'] = Var([events_i[-1, 'time'] - events_i[0, 'time'] + self.pad_end for events_i in events])
+        return ds
+
+    def extraction_parameters(
+            self,
+            ds: Dataset,
+            options: dict[str, Any],
+    ) -> tuple[float, Any, float | None, Any, int, bool]:
+        baseline = self.baseline if options['baseline'] is True else options['baseline']
+        decim = decim_param(options['samplingrate'], options['decim'], self, ds.info)
+        return -self.pad_start, ds.eval('tmax'), None, baseline, decim, True
+
 
 class EpochsDerivative(Derivative[Any]):
     """Epoch dataset with cached MNE epochs as internal artifact.
@@ -720,11 +794,8 @@ class EpochsDerivative(Derivative[Any]):
                     epochs_list.append(epoch_value)
             return Datalist(epochs_list, 'epochs')
 
-        ds = ctx.load(
-            'selected-events',
-            options=ctx.options_for('selected-events', reject=ctx.options['reject'], add_bads=True, index=False, data_raw=True, cat=ctx.options['cat']),
-        )
-        ds, tmin, tmax, tstop, baseline, decim, variable_tmax = _prepare_epoch_dataset(ctx, epoch, ds, ctx.options)
+        ds = ctx.load(view='shell')
+        tmin, tmax, tstop, baseline, decim, variable_tmax = epoch.extraction_parameters(ds, ctx.options)
         if variable_tmax:
             epoch_value = load.mne.variable_length_mne_epochs(ds, tmin, tmax, baseline, allow_truncation=True, decim=decim, reject_by_annotation=False)
             epochs_list = epoch_value
@@ -800,6 +871,8 @@ class EpochsDerivative(Derivative[Any]):
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
         if view is None:
             return self.fingerprint(ctx)
+        if view == 'shell':
+            return self.fingerprint(ctx)
         if view != 'evoked':
             raise ValueError(f"{self.name!r} does not define dependency view {view!r}")
 
@@ -814,11 +887,13 @@ class EpochsDerivative(Derivative[Any]):
         return fingerprint
 
     def load_view(self, ctx: Request, view: str):
-        if view != 'evoked':
+        if view not in {'shell', 'evoked'}:
             return super().load_view(ctx, view)
 
         epoch = self.epochs[ctx.state['epoch']]
         if isinstance(epoch, EpochCollection):
+            if view == 'shell':
+                raise ValueError(f"{self.name!r} does not define view {view!r} for {epoch.__class__.__name__}")
             dss = []
             for sub_epoch in epoch.collect:
                 ds = ctx.load(
@@ -831,32 +906,22 @@ class EpochsDerivative(Derivative[Any]):
                 dss.append(ds)
             return combine(dss)
 
-        cat = ctx.options['cat']
-        ds = ctx.load(
-            'selected-events',
-            options=ctx.options_for(
+        if view == 'shell':
+            ds = ctx.load(
                 'selected-events',
-                reject=ctx.options['reject'],
-                add_bads=ctx.view_options['add_bads'],
-                index='index' if cat else False,
-                data_raw=True,
-                cat=cat,
-            ),
-        )
-        ds, _, _, _, _, _, _ = _prepare_epoch_dataset(
-            ctx,
-            epoch,
-            ds,
-            {
-                'tmin': None,
-                'tmax': None,
-                'tstop': None,
-                'baseline': ctx.options['baseline'],
-                'pad': 0,
-                'samplingrate': ctx.options['samplingrate'],
-                'decim': ctx.options['decim'],
-            },
-        )
+                options=ctx.options_for(
+                    'selected-events',
+                    reject=ctx.options['reject'],
+                    add_bads=True,
+                    index='index' if ctx.options['cat'] else False,
+                    data_raw=True,
+                    cat=ctx.options['cat'],
+                ),
+            )
+            return epoch.prepare_selected_events(ds, ctx.state['subject'])
+
+        ds = ctx.load(view='shell')
+
         selection = ctx.artifact_metadata.get('selection')
         if selection is None and ctx.artifact_path.exists():
             selection = getattr(ctx.load_artifact(), 'selection', None)
@@ -892,18 +957,24 @@ class EpochsDerivative(Derivative[Any]):
         if data.sensor is not True and not ctx.view_options['ndvar']:
             raise ValueError(f"data={data.string!r} with ndvar=False")
 
-        ds = ctx.load(
+        ds = ctx.load(view='shell')
+        _, _, _, _, _, variable_tmax = epoch.extraction_parameters(ds, ctx.options)
+        selected_events = ctx.load(
             'selected-events',
             options=ctx.options_for(
                 'selected-events',
                 reject=ctx.options['reject'],
                 add_bads=ctx.view_options['add_bads'],
                 index=False,
-                data_raw=True,
+                data_raw=ctx.view_options['data_raw'],
                 cat=ctx.options['cat'],
             ),
         )
-        ds, _, _, _, _, _, variable_tmax = _prepare_epoch_dataset(ctx, epoch, ds, ctx.options)
+        ds.info[BAD_CHANNELS] = selected_events.info.get(BAD_CHANNELS, [])
+        if 'raw' in selected_events.info:
+            ds.info['raw'] = selected_events.info['raw']
+        else:
+            ds.info.pop('raw', None)
         raw = ds.info.get('raw')
         bads = raw.info['bads'] if raw is not None else ds.info.get(BAD_CHANNELS, [])
         if isinstance(epoch_value, Datalist):
@@ -942,7 +1013,7 @@ class EpochsDerivative(Derivative[Any]):
                 del ds['epochs']
 
         if not ctx.view_options['data_raw']:
-            del ds.info['raw']
+            ds.info.pop('raw', None)
         return ds
 
 
