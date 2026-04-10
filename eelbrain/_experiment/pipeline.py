@@ -65,7 +65,7 @@ from .source import (
     BemInput, EpochsStcDerivative, EpochsStcGroupDatasetDerivative,
     EvokedStcDerivative, EvokedStcGroupDatasetDerivative, FwdDerivative,
     InvDerivative, ROIData, SourceMorphDerivative, SrcDerivative, TransInput,
-    eval_inv, eval_src, inv_str, inverse_operator_params,
+    InverseSolution, MinimumNormInverseSolution, eval_src,
 )
 from .test_def import (
     Test,
@@ -440,7 +440,7 @@ class Pipeline(StateModel):
         self._register_field('test', sorted(self.tests), post_set_handler=self._post_set_test, allow_empty=self._empty_test, repr=False)
         self._register_field('parc', parc_values, 'aparc', eval_handler=self._eval_parc, allow_empty=True)
         self._register_field('freq', self._freqs.keys())
-        self._register_field('src', default='ico-4', eval_handler=self._eval_src)
+        self._register_field('src', default='ico-4', eval_handler=eval_src)
         self._register_field('adjacency', ('', 'link-midline'), allow_empty=True)
         self._register_field('select_clusters', self._cluster_criteria.keys(), allow_empty=True)
 
@@ -1986,12 +1986,12 @@ class Pipeline(StateModel):
         """
         raw = self.load_raw(samplingrate=samplingrate, tstart=tstart, tstop=tstop, **kwargs)
         inv, label, mri_sdir, mrisubject, is_scaled, parc = self._prepare_inv(raw, mask, morph)
-        method, make_kw, apply_kw = self._inv_params()
-        stc = apply_inverse_raw(raw, inv, label=label, **apply_kw)
+        solution = InverseSolution.coerce(self.get('inv'))
+        stc = apply_inverse_raw(raw, inv, label=label, **solution.apply_kw)
 
         if ndvar:
             src = self.get('src')
-            return load.mne.stc_ndvar(stc, mrisubject, src, mri_sdir, method, make_kw.get('fixed', False), parc=parc, adjacency=self.get('adjacency'))
+            return solution.to_ndvar(stc, mrisubject, src, mri_sdir, parc=parc, adjacency=self.get('adjacency'))
         else:
             return stc
 
@@ -3801,14 +3801,11 @@ class Pipeline(StateModel):
             pick_normal: bool = False,
     ):
         "Construct inv string from settings; see :meth:`.set_inv`"
-        return inv_str(ori, snr, method, depth, pick_normal)
+        return MinimumNormInverseSolution(ori, snr, method, depth, pick_normal).string()
 
     @classmethod
     def _eval_inv(cls, inv):
-        return eval_inv(inv)
-
-    def _inv_params(self):
-        return inverse_operator_params(self.get('inv'))
+        return InverseSolution.coerce(inv).string()
 
     def _eval_model(self, model):
         if model == '':
@@ -3833,9 +3830,6 @@ class Pipeline(StateModel):
         if unordered_factors:
             model.extend(unordered_factors)
         return '%'.join(model)
-
-    def _eval_src(self, src):
-        return eval_src(src)
 
     def _update_mrisubject(self, fields):
         subject = fields['subject']

@@ -27,6 +27,7 @@ from scipy import sparse
 
 from .. import load, save
 from .._data_obj import Dataset, Datalist, NDVar, combine
+from .configuration import Configuration
 from .covariance import cov_node_name
 from .derivative_cache import CachePolicy, Dependency, Derivative, Request, Input, UncachedDerivative, file_fingerprint
 from .pathing import (
@@ -43,133 +44,206 @@ from .._mne import find_source_subject, label_from_annot
 
 INV_METHODS = ('MNE', 'dSPM', 'sLORETA', 'eLORETA', 'champ')
 SRC_RE = re.compile(r'^(ico|vol)-(\d+)(?:-(cortex|brainstem))?$')
-INV_RE = re.compile(r"^(free|fixed|loose\.\d+|vec)"
-                    r"(?:-(\d*\.?\d+))?"
-                    rf"-({'|'.join(INV_METHODS)})"
-                    r"(?:-((?:0\.)?\d+))?"
-                    r"(?:-(pick_normal))?"
-                    r"$")
+INV_RE = re.compile(
+    r"^"
+    r"(free|fixed|loose\.\d+|vec)"
+    r"(?:-(\d*\.?\d+))?"
+    rf"-({'|'.join(INV_METHODS)})"
+    r"(?:-((?:0\.)?\d+))?"
+    r"(?:-(pick_normal))?"
+    r"$"
+)
+
+
+class InverseSolution(Configuration):
+    """Internal normalized inverse-operator configuration."""
+
+    @classmethod
+    def coerce(cls, inv: str | InverseSolution) -> InverseSolution:
+        if isinstance(inv, InverseSolution):
+            return inv
+        if isinstance(inv, str):
+            return MinimumNormInverseSolution.from_string(inv)
+        raise TypeError(f"{inv=}: invalid inverse solution specification")
+
+    def string(self) -> str:
+        raise NotImplementedError(f"{self.__class__.__name__}.string()")
+
+    def validate_for_source_space(self, src: str) -> None:
+        raise NotImplementedError(f"{self.__class__.__name__}.validate_for_source_space()")
+
+    def build_operator(
+            self,
+            info: mne.Info,
+            fwd: mne.Forward,
+            cov: mne.Covariance,
+    ):
+        raise NotImplementedError(f"{self.__class__.__name__}.build_operator()")
+
+    def load_operator(self, path: Path):
+        raise NotImplementedError(f"{self.__class__.__name__}.load_operator()")
+
+    def save_operator(self, path: Path, value) -> None:
+        raise NotImplementedError(f"{self.__class__.__name__}.save_operator()")
+
+    def apply_epochs(self, epochs_obj, operator, label=None):
+        raise NotImplementedError(f"{self.__class__.__name__}.apply_epochs()")
+
+    def apply_evoked(self, evoked, operator):
+        raise NotImplementedError(f"{self.__class__.__name__}.apply_evoked()")
+
+    def to_ndvar(
+            self,
+            stc,
+            subject: str,
+            src: str,
+            subjects_dir: Path,
+            *,
+            parc: str | None,
+            adjacency: str,
+    ) -> NDVar:
+        return load.mne.stc_ndvar(stc, subject, src, subjects_dir, self.method, self.fixed, parc=parc, adjacency=adjacency)
+
+
+class MinimumNormInverseSolution(InverseSolution):
+    """Normalized minimum-norm inverse configuration."""
+
+    DICT_ATTRS = ('kind', 'ori', 'snr', 'method', 'depth', 'pick_normal')
+
+    def __init__(
+            self,
+            ori: str | float = 'free',
+            snr: float = 3,
+            method: str = 'dSPM',
+            depth: float = 0.8,
+            pick_normal: bool = False,
+    ):
+        if isinstance(ori, str):
+            if ori not in ('free', 'fixed', 'vec'):
+                raise ValueError(f"{ori=}; needs to be 'free', 'fixed', 'vec', or float")
+        elif not 0 < ori < 1:
+            raise ValueError(f"{ori=}; must be in range (0, 1)")
+        if snr < 0:
+            raise ValueError(f"{snr=}")
+        if method not in INV_METHODS:
+            raise ValueError(f"{method=}")
+        if not 0 <= depth <= 1:
+            raise ValueError(f"{depth=}; must be in range [0, 1]")
+        if pick_normal and ori in ('vec', 'fixed'):
+            raise ValueError(f"{ori=} and pick_normal=True are incompatible")
+
+        self.kind = 'minimum_norm'
+        self.ori = ori
+        self.snr = snr
+        self.method = method
+        self.depth = depth
+        self.pick_normal = pick_normal
+
+    @classmethod
+    def from_string(cls, inv: str) -> MinimumNormInverseSolution:
+        m = INV_RE.match(inv)
+        if m is None:
+            raise ValueError(f"{inv=}: invalid inverse specification")
+
+        ori, snr, method, depth, pick_normal = m.groups()
+        if ori.startswith('loose'):
+            ori = float(ori[5:])
+            if not 0 < ori < 1:
+                raise ValueError(f"{inv=}: loose parameter needs to be in range (0, 1)")
+
+        if snr is None:
+            snr = 0
+        else:
+            snr = float(snr)
+
+        if depth is None:
+            depth = 0.8
+        else:
+            depth = float(depth)
+
+        return cls(ori, snr, method, depth, bool(pick_normal))
+
+    def string(self) -> str:
+        if isinstance(self.ori, str):
+            ori = self.ori
+        else:
+            ori = f'loose{str(self.ori)[1:]}'
+        items = [ori]
+        if self.snr > 0:
+            items.append(f'{self.snr:g}')
+        items.append(self.method)
+        if self.depth != 0.8:
+            items.append(f'{self.depth:g}')
+        if self.pick_normal:
+            items.append('pick_normal')
+        return '-'.join(items)
+
+    def validate_for_source_space(self, src: str) -> None:
+        if src[:3] == 'vol' and self.ori not in ('free', 'vec'):
+            raise ValueError(f"{self.string()=!r} with {src=}: volume source space requires free or vector inverse")
+
+    @property
+    def make_kw(self) -> dict[str, Any]:
+        if self.ori == 'fixed':
+            out = {'fixed': True}
+        elif self.ori in ('free', 'vec'):
+            out = {'loose': 1}
+        else:
+            out = {'loose': self.ori}
+
+        if self.depth == 0:
+            out['depth'] = None
+        else:
+            out['depth'] = self.depth
+        return out
+
+    @property
+    def apply_kw(self) -> dict[str, Any]:
+        out = {'method': self.method, 'lambda2': 1. / self.snr ** 2 if self.snr else 0}
+        if self.ori == 'vec':
+            out['pick_ori'] = 'vector'
+        elif self.pick_normal:
+            out['pick_ori'] = 'normal'
+        return out
+
+    @property
+    def fixed(self) -> bool:
+        return self.make_kw.get('fixed', False)
+
+    def build_operator(
+            self,
+            info: mne.Info,
+            fwd: mne.Forward,
+            cov: mne.Covariance,
+    ):
+        return make_inverse_operator(info, fwd, cov, use_cps=True, **self.make_kw)
+
+    def load_operator(self, path: Path):
+        return mne.minimum_norm.read_inverse_operator(path)
+
+    def save_operator(self, path: Path, value) -> None:
+        mne.minimum_norm.write_inverse_operator(path, value, overwrite=True)
+
+    def apply_epochs(self, epochs_obj, operator, label=None):
+        return apply_inverse_epochs(epochs_obj, operator, label=label, **self.apply_kw)
+
+    def apply_evoked(self, evoked, operator):
+        return apply_inverse(evoked, operator, **self.apply_kw)
 
 
 def parse_src(src: str) -> tuple[str, str, str | None]:
     m = SRC_RE.match(src)
     if not m:
-        raise ValueError(f'src={src}')
+        raise ValueError(f'{src=}')
     kind, param, special = m.groups()
     if special and kind != 'vol':
-        raise ValueError(f'src={src}')
+        raise ValueError(f'{src=}')
     return kind, param, special
 
 
 def eval_src(src: str) -> str:
     parse_src(src)
     return src
-
-
-def inv_str(
-        ori: str = 'free',
-        snr: float = 3,
-        method: str = 'dSPM',
-        depth: float = 0.8,
-        pick_normal: bool = False,
-) -> str:
-    if isinstance(ori, str):
-        if ori not in ('free', 'fixed', 'vec'):
-            raise ValueError(f"{ori=}; needs to be 'free', 'fixed', 'vec', or float")
-    elif not 0 < ori < 1:
-        raise ValueError(f"{ori=}; must be in range (0, 1)")
-    else:
-        ori = f'loose{str(ori)[1:]}'
-    items = [ori]
-
-    if snr > 0:
-        items.append(f'{snr:g}')
-    elif snr < 0:
-        raise ValueError(f"{snr=}")
-
-    if method in INV_METHODS:
-        items.append(method)
-    else:
-        raise ValueError(f"{method=}")
-
-    if not 0 <= depth <= 1:
-        raise ValueError(f"{depth=}; must be in range [0, 1]")
-    elif depth != 0.8:
-        items.append(f'{depth:g}')
-
-    if pick_normal:
-        if ori in ('vec', 'fixed'):
-            raise ValueError(f"{ori=} and pick_normal=True are incompatible")
-        items.append('pick_normal')
-
-    return '-'.join(items)
-
-
-def parse_inv(inv: str) -> tuple[str | float, float, str, float, bool]:
-    m = INV_RE.match(inv)
-    if m is None:
-        raise ValueError(f"{inv=}: invalid inverse specification")
-
-    ori, snr, method, depth, pick_normal = m.groups()
-    if ori.startswith('loose'):
-        ori = float(ori[5:])
-        if not 0 < ori < 1:
-            raise ValueError(f"{inv=}: loose parameter needs to be in range (0, 1)")
-    elif pick_normal and ori in ('vec', 'fixed'):
-        raise ValueError(f"{inv=}: {ori} incompatible with pick_normal")
-
-    if snr is None:
-        snr = 0
-    else:
-        snr = float(snr)
-        if snr < 0:
-            raise ValueError(f"{inv=}: {snr=}")
-
-    if method not in INV_METHODS:
-        raise ValueError(f"{inv=}: {method=}")
-
-    if depth is None:
-        depth = 0.8
-    else:
-        depth = float(depth)
-        if not 0 <= depth <= 1:
-            raise ValueError(f"{inv=}: {depth=}, needs to be in range [0, 1]")
-
-    return ori, snr, method, depth, bool(pick_normal)
-
-
-def eval_inv(inv: str) -> str:
-    return inv_str(*parse_inv(inv))
-
-
-def inverse_operator_params(inv: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
-    if '*' in inv:
-        raise ValueError(f'{inv=} with wildcard')
-
-    ori, snr, method, depth, pick_normal = parse_inv(inv)
-    if ori == 'fixed':
-        make_kw = {'fixed': True}
-    elif ori == 'free' or ori == 'vec':
-        make_kw = {'loose': 1}
-    elif isinstance(ori, float):
-        make_kw = {'loose': ori}
-    else:
-        raise RuntimeError(f"{inv=} (orientation={ori!r})")
-
-    if depth is None:
-        make_kw['depth'] = 0.8
-    elif depth == 0:
-        make_kw['depth'] = None
-    else:
-        make_kw['depth'] = depth
-
-    apply_kw = {'method': method, 'lambda2': 1. / snr ** 2 if snr else 0}
-    if ori == 'vec':
-        apply_kw['pick_ori'] = 'vector'
-    elif pick_normal:
-        apply_kw['pick_ori'] = 'normal'
-
-    return method, make_kw, apply_kw
 
 
 def _selected_parc(
@@ -521,27 +595,18 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
         }
 
     def build(self, ctx: Request) -> mne.minimum_norm.InverseOperator:
-        src = ctx.state['src']
-        inv = ctx.state['inv']
-        if src[:3] == 'vol' and not (inv.startswith('vec') or inv.startswith('free')):
-            raise ValueError(f'{inv=} with {src=}: volume source space requires free or vector inverse')
+        solution = InverseSolution.coerce(ctx.state['inv'])
+        solution.validate_for_source_space(ctx.state['src'])
         fiff = ctx.view_options['fiff']
         if fiff is None:
             fiff = load_raw_dependency(ctx, ctx.state['raw'])
-        _, make_kw, _ = inverse_operator_params(inv)
-        return make_inverse_operator(
-            fiff.info,
-            ctx.load('fwd'),
-            ctx.load(cov_node_name(ctx.state['cov'])),
-            use_cps=True,
-            **make_kw,
-        )
+        return solution.build_operator(fiff.info, ctx.load('fwd'), ctx.load(cov_node_name(ctx.state['cov'])))
 
     def load(
             self,
             ctx: Request,
             path: Path) -> mne.minimum_norm.InverseOperator:
-        return mne.minimum_norm.read_inverse_operator(path)
+        return InverseSolution.coerce(ctx.state['inv']).load_operator(path)
 
     def save(
             self,
@@ -549,7 +614,7 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
             path: Path,
             value: mne.minimum_norm.InverseOperator,
     ) -> None:
-        mne.minimum_norm.write_inverse_operator(path, value, overwrite=True)
+        InverseSolution.coerce(ctx.state['inv']).save_operator(path, value)
 
 
 def _mask_ndvar(y: NDVar):
@@ -577,25 +642,115 @@ def _subject_state(
     return out
 
 
-def _prepare_inv(
+@dataclass
+class SourceProjection:
+    solution: InverseSolution
+    operator: Any
+    label: Any
+    subjects_dir: Path
+    target_subject: str
+    source_morph: SourceMorph | None
+    set_subject: str | None
+    parc: str | None
+    mask_after_ndvar: bool
+    stc_key: str
+    src_key: str
+
+    def morph_stcs(self, stc_value):
+        values = stc_value if isinstance(stc_value, list) else [stc_value]
+        if self.source_morph is not None:
+            values = [self.source_morph.apply(stc) for stc in values]
+        elif self.set_subject is not None:
+            for stc in values:
+                stc.subject = self.set_subject
+        return values if isinstance(stc_value, list) else values[0]
+
+    def add_to_dataset(self, ctx: Request, ds: Dataset, stc_value, *, variable_time: bool = False) -> None:
+        if variable_time:
+            src_value = [
+                self.solution.to_ndvar(stc, self.target_subject, ctx.state['src'], self.subjects_dir, parc=self.parc, adjacency=ctx.state['adjacency'])
+                for stc in stc_value
+            ]
+        else:
+            src_value = self.solution.to_ndvar(stc_value, self.target_subject, ctx.state['src'], self.subjects_dir, parc=self.parc, adjacency=ctx.state['adjacency'])
+        if self.mask_after_ndvar:
+            if variable_time:
+                src_value = [_mask_ndvar(value) for value in src_value]
+            else:
+                src_value = _mask_ndvar(src_value)
+        ds[self.stc_key] = stc_value
+        ds[self.src_key] = src_value
+
+
+def _prepare_source_projection(
         ctx: Request,
         fiff: Any,
         mask: bool | str,
         morph: bool | None,
-):
+        solution: InverseSolution,
+) -> SourceProjection:
     parc = _selected_parc(ctx, mask)
     if parc:
-        ctx.load('annot', state={'parc': parc})
+        target_subject = ctx.state['common_brain'] if morph else ctx.state['mrisubject']
+        ctx.load('annot', state={'mrisubject': target_subject, 'parc': parc})
 
-    inv = ctx.load('inv', options={'fiff': fiff})
+    operator = ctx.load('inv', options={'fiff': fiff})
     subjects_dir = mri_sdir(ctx.state)
     mrisubject = ctx.state['mrisubject']
     is_scaled = find_source_subject(mrisubject, subjects_dir)
     if mask and (is_scaled or not morph):
-        label = label_from_annot(inv['src'], mrisubject, subjects_dir, parc)
+        label = label_from_annot(operator['src'], mrisubject, subjects_dir, parc)
     else:
         label = None
-    return inv, label, subjects_dir, mrisubject, is_scaled, parc
+
+    target_subject = mrisubject
+    source_morph = None
+    set_subject = None
+    stc_key = 'stc'
+    src_key = 'src'
+    mask_after_ndvar = False
+    if morph:
+        target_subject = ctx.state['common_brain']
+        stc_key = 'stcm'
+        src_key = 'srcm'
+        subject_from = ctx.state['common_brain'] if is_fake_mri(mri_dir(ctx.state)) else mrisubject
+        if subject_from == ctx.state['common_brain']:
+            set_subject = ctx.state['common_brain']
+        else:
+            source_morph = ctx.load('source-morph', state={'mrisubject': subject_from})
+        mask_after_ndvar = bool(mask and not is_scaled)
+
+    return SourceProjection(
+        solution,
+        operator,
+        label,
+        subjects_dir,
+        target_subject,
+        source_morph,
+        set_subject,
+        parc,
+        mask_after_ndvar,
+        stc_key,
+        src_key,
+    )
+
+
+def _apply_source_baseline(stc_value, baseline) -> None:
+    if not baseline:
+        return
+    values = stc_value if isinstance(stc_value, list) else [stc_value]
+    for stc in values:
+        mne.baseline.rescale(stc._data, stc.times, baseline, 'mean', copy=False)
+
+
+def _source_dependencies(ctx: Request, sensor_dependency: Dependency) -> tuple[Dependency, ...]:
+    deps = [sensor_dependency, Dependency('inv')]
+    if ctx.options['mask']:
+        target_subject = ctx.state['common_brain'] if ctx.options['morph'] else ctx.state['mrisubject']
+        deps.append(Dependency('annot', state={'mrisubject': target_subject, 'parc': _selected_parc(ctx, ctx.options['mask'])}))
+    if ctx.options['morph'] and (ctx.state['common_brain'] if is_fake_mri(mri_dir(ctx.state)) else ctx.state['mrisubject']) != ctx.state['common_brain']:
+        deps.append(Dependency('source-morph'))
+    return tuple(deps)
 
 
 class EpochsStcDerivative(Derivative[Dataset]):
@@ -654,46 +809,15 @@ class EpochsStcDerivative(Derivative[Dataset]):
         self.epochs = epochs
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        deps = [
-            Dependency('epochs', options=ctx.options_for(
-                'epochs',
-                baseline=ctx.options['baseline'],
-                ndvar=False,
-                reject=ctx.options['reject'],
-                cat=ctx.options['cat'],
-                samplingrate=ctx.options['samplingrate'],
-                decim=ctx.options['decim'],
-                pad=ctx.options['pad'],
-                data_raw=False,
-                data='sensor',
-            )),
-            Dependency('inv'),
-        ]
-        mask = ctx.options['mask']
-        if mask:
-            parc = _selected_parc(ctx, mask)
-            deps.append(Dependency('annot', state={'parc': parc}))
-        if ctx.options['morph']:
-            deps.append(Dependency('source-morph'))
-        return tuple(deps)
+        return _source_dependencies(ctx, Dependency('epochs', options=ctx.options_for('epochs', baseline=ctx.options['baseline'], ndvar=False, reject=ctx.options['reject'], cat=ctx.options['cat'], samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], pad=ctx.options['pad'], data_raw=False, data='sensor')))
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return ctx.registry.canonicalize(ctx.options)
 
     def build(self, ctx: Request) -> Dataset:
         epoch = self.epochs[ctx.state['epoch']]
-        ds = ctx.load('epochs', options=ctx.options_for(
-            'epochs',
-            baseline=ctx.options['baseline'],
-            ndvar=False,
-            reject=ctx.options['reject'],
-            cat=ctx.options['cat'],
-            samplingrate=ctx.options['samplingrate'],
-            decim=ctx.options['decim'],
-            pad=ctx.options['pad'],
-            data_raw=False,
-            data='sensor',
-        ))
+        solution = InverseSolution.coerce(ctx.state['inv'])
+        ds = ctx.load('epochs', options=ctx.options_for('epochs', baseline=ctx.options['baseline'], ndvar=False, reject=ctx.options['reject'], cat=ctx.options['cat'], samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], pad=ctx.options['pad'], data_raw=False, data='sensor'))
 
         src_baseline = ctx.options['src_baseline']
         if not ctx.options['baseline'] and src_baseline and epoch.post_baseline_trigger_shift:
@@ -701,53 +825,18 @@ class EpochsStcDerivative(Derivative[Dataset]):
         if src_baseline is True:
             src_baseline = epoch.baseline
 
-        epoch_list = ds['epochs'] if isinstance(ds['epochs'], Datalist) else [ds['epochs']]
-        inv, label, subjects_dir, mrisubject, is_scaled, parc = _prepare_inv(ctx, epoch_list[0], ctx.options['mask'], ctx.options['morph'])
-        method, make_kw, apply_kw = inverse_operator_params(ctx.state['inv'])
-        stc_list = [apply_inverse_epochs(epoch_obj, inv, label=label, **apply_kw) for epoch_obj in epoch_list]
-        is_variable_time = isinstance(ds['epochs'], Datalist)
-        if is_variable_time:
-            stc_list = [stc for stc, in stc_list]
-
-        if src_baseline:
-            for value in stc_list:
-                values = value if isinstance(value, list) else [value]
-                for stc in values:
-                    mne.baseline.rescale(stc._data, stc.times, src_baseline, 'mean', copy=False)
-
-        if ctx.options['morph']:
-            common_brain = ctx.state['common_brain']
-            target_subject = common_brain
-            ctx.load('annot', state={'mrisubject': common_brain})
-            subject_from = common_brain if is_fake_mri(mri_dir(ctx.state)) else mrisubject
-            if subject_from == common_brain:
-                for value in stc_list:
-                    values = value if isinstance(value, list) else [value]
-                    for stc in values:
-                        stc.subject = common_brain
-            else:
-                source_morph = ctx.load('source-morph')
-                stc_list = [
-                    [source_morph.apply(stc) for stc in value] if isinstance(value, list) else source_morph.apply(value)
-                    for value in stc_list
-                ]
-            stc_key = 'stcm'
-            src_key = 'srcm'
+        epochs_value = ds['epochs']
+        epoch_list = epochs_value if isinstance(epochs_value, Datalist) else [epochs_value]
+        variable_time = isinstance(epochs_value, Datalist)
+        projection = _prepare_source_projection(ctx, epoch_list[0], ctx.options['mask'], ctx.options['morph'], solution)
+        stc_value = [solution.apply_epochs(epoch_obj, projection.operator, label=projection.label) for epoch_obj in epoch_list]
+        if variable_time:
+            stc_value = [value[0] for value in stc_value]
         else:
-            target_subject = mrisubject
-            stc_key = 'stc'
-            src_key = 'src'
-
-        src = ctx.state['src']
-        ndvar_list = [
-            load.mne.stc_ndvar(value, target_subject, src, subjects_dir, method, make_kw.get('fixed', False), parc=parc, adjacency=ctx.state['adjacency'])
-            for value in stc_list
-        ]
-        if ctx.options['mask'] and ctx.options['morph'] and not is_scaled:
-            ndvar_list = [_mask_ndvar(value) for value in ndvar_list]
-
-        ds[stc_key] = stc_list if is_variable_time else stc_list[0]
-        ds[src_key] = ndvar_list if is_variable_time else ndvar_list[0]
+            stc_value = stc_value[0]
+        _apply_source_baseline(stc_value, src_baseline)
+        stc_value = projection.morph_stcs(stc_value)
+        projection.add_to_dataset(ctx, ds, stc_value, variable_time=variable_time)
         return ds
 
     def apply_view_options(self, ctx: Request, ds: Dataset) -> Dataset:
@@ -849,41 +938,14 @@ class EvokedStcDerivative(Derivative[Dataset]):
         self.epochs = epochs
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        deps = [
-            Dependency('evoked', options=ctx.options_for(
-                'evoked',
-                baseline=ctx.options['baseline'],
-                ndvar=False,
-                cat=ctx.options['cat'],
-                samplingrate=ctx.options['samplingrate'],
-                decim=ctx.options['decim'],
-                data_raw=False,
-                data='sensor',
-            )),
-            Dependency('inv'),
-        ]
-        mask = ctx.options['mask']
-        if mask:
-            parc = _selected_parc(ctx, mask)
-            deps.append(Dependency('annot', state={'parc': parc}))
-        if ctx.options['morph']:
-            deps.append(Dependency('source-morph'))
-        return tuple(deps)
+        return _source_dependencies(ctx, Dependency('evoked', options=ctx.options_for('evoked', baseline=ctx.options['baseline'], ndvar=False, cat=ctx.options['cat'], samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], data_raw=False, data='sensor')))
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return ctx.registry.canonicalize(ctx.options)
 
     def build(self, ctx: Request) -> Dataset:
-        ds = ctx.load('evoked', options=ctx.options_for(
-            'evoked',
-            baseline=ctx.options['baseline'],
-            ndvar=False,
-            cat=ctx.options['cat'],
-            samplingrate=ctx.options['samplingrate'],
-            decim=ctx.options['decim'],
-            data_raw=False,
-            data='sensor',
-        ))
+        solution = InverseSolution.coerce(ctx.state['inv'])
+        ds = ctx.load('evoked', options=ctx.options_for('evoked', baseline=ctx.options['baseline'], ndvar=False, cat=ctx.options['cat'], samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], data_raw=False, data='sensor'))
 
         src_baseline = ctx.options['src_baseline']
         epoch = self.epochs[ctx.state['epoch']]
@@ -891,42 +953,11 @@ class EvokedStcDerivative(Derivative[Dataset]):
             raise NotImplementedError(f"{src_baseline=}: post_baseline_trigger_shift is not implemented for baseline correction in source space")
         if src_baseline is True:
             src_baseline = epoch.baseline
-        invs = {}
-        stcs = []
-        subject = ctx.state['subject']
-        mrisubject = ctx.state['mrisubject']
-        common_brain = ctx.state['common_brain']
-        if is_fake_mri(mri_dir(ctx.state)):
-            subject_from = common_brain
-        else:
-            subject_from = mrisubject
-        parc = _selected_parc(ctx, ctx.options['mask'])
-        target_subject = common_brain if ctx.options['morph'] else mrisubject
-        if parc:
-            ctx.load('annot', state={'mrisubject': target_subject, 'parc': parc})
-        source_morph = None
-        if ctx.options['morph'] and subject_from != common_brain:
-            source_morph = ctx.load('source-morph', state={'mrisubject': subject_from})
-
-        method, make_kw, apply_kw = inverse_operator_params(ctx.state['inv'])
-        for evoked in ds['evoked']:
-            inv = invs.setdefault(subject, ctx.load('inv', options={'fiff': evoked}))
-            stc = apply_inverse(evoked, inv, **apply_kw)
-            if src_baseline:
-                mne.baseline.rescale(stc._data, stc.times, src_baseline, 'mean', copy=False)
-            if ctx.options['morph']:
-                if subject_from == common_brain:
-                    stc.subject = common_brain
-                else:
-                    stc = source_morph.apply(stc)
-            stcs.append(stc)
-
-        src_key = 'srcm' if ctx.options['morph'] else 'src'
-        stc_key = 'stcm' if ctx.options['morph'] else 'stc'
-        ds[src_key] = load.mne.stc_ndvar(stcs, target_subject, ctx.state['src'], mri_sdir(ctx.state), method, make_kw.get('fixed', False), parc=parc, adjacency=ctx.state['adjacency'])
-        if ctx.options['mask']:
-            ds[src_key] = _mask_ndvar(ds[src_key])
-        ds[stc_key] = stcs
+        projection = _prepare_source_projection(ctx, ds['evoked'][0], ctx.options['mask'], ctx.options['morph'], solution)
+        stc_value = [solution.apply_evoked(evoked, projection.operator) for evoked in ds['evoked']]
+        _apply_source_baseline(stc_value, src_baseline)
+        stc_value = projection.morph_stcs(stc_value)
+        projection.add_to_dataset(ctx, ds, stc_value)
         return ds
 
     def apply_view_options(self, ctx: Request, ds: Dataset) -> Dataset:
