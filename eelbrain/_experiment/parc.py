@@ -20,6 +20,21 @@ from .configuration import Configuration, ConfigurationError, sequence_arg
 SEEDED_PARC_RE = re.compile(r'^(.+)-(\d+)$')
 
 
+def _resolve_parc(parcs: dict[str, Parcellation], parc: str) -> tuple[str, Parcellation | None]:
+    if parc == '':
+        return '', None
+    if parc in parcs:
+        return parc, parcs[parc]
+    match = SEEDED_PARC_RE.match(parc)
+    if match is None:
+        raise ValueError(f"{parc=}: unknown parcellation")
+    name = match.group(1)
+    resolved = parcs.get(name)
+    if not isinstance(resolved, SeededParc):
+        raise ValueError(f"{parc=}: unknown parcellation")
+    return parc, resolved
+
+
 class Parcellation(Configuration):
     DICT_ATTRS = ('kind',)
     kind = None  # used when comparing dict representations
@@ -449,17 +464,6 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
         self.parcs = parcs
         self.hemis = hemis
 
-    def annot_state(self, state: dict[str, Any]) -> tuple[str, Parcellation]:
-        parc = state['parc']
-        if parc == '':
-            return '', None
-        if parc in self.parcs:
-            return parc, self.parcs[parc]
-        match = SEEDED_PARC_RE.match(parc)
-        if match is None:
-            raise ValueError(f"{parc=}: unknown parcellation")
-        return parc, self.parcs[match.group(1)]
-
     def annot_file_paths(self, state: dict[str, Any]) -> list[Path]:
         return [annot_file_path(state, hemi) for hemi in self.hemis]
 
@@ -543,7 +547,7 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
         return annot_stamp_path(ctx.state)
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        parc, parc_def = self.annot_state(ctx.state)
+        parc, parc_def = _resolve_parc(self.parcs, ctx.state['parc'])
         if parc_def is None or isinstance(parc_def, VolumeParc):
             return ()
 
@@ -563,7 +567,7 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
         return tuple(deps)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        parc, parc_def = self.annot_state(ctx.state)
+        parc, parc_def = _resolve_parc(self.parcs, ctx.state['parc'])
         if parc_def is None:
             return {'parc': parc, 'kind': 'none'}
 
@@ -578,7 +582,7 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
         return fingerprint
 
     def build(self, ctx: Request) -> list[mne.Label]:
-        parc, parc_def = self.annot_state(ctx.state)
+        parc, parc_def = _resolve_parc(self.parcs, ctx.state['parc'])
         if parc_def is None or isinstance(parc_def, VolumeParc):
             return []
         if not self.managed_annot(ctx.state, parc_def):

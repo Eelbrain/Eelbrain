@@ -49,8 +49,6 @@ RESULT_OPTION_DEFAULTS = {
     'tstart': None,
     'tstop': None,
     'pmin': None,
-    'parc': None,
-    'mask': None,
     'baseline': None,
     'src_baseline': None,
     'smooth': None,
@@ -62,8 +60,6 @@ TEST_DATA_OPTION_NAMES = (
     'test',
     'baseline',
     'src_baseline',
-    'parc',
-    'mask',
     'samplingrate',
     'smooth',
 )
@@ -81,29 +77,24 @@ def _test_result_options(
         ctx: Request,
         *,
         data: TestDims | object = USE_CTX,
-        parc: str | None | object = USE_CTX,
-        mask: str | None | bool | object = USE_CTX,
 ) -> dict[str, Any]:
     if data is USE_CTX:
         data = ctx.options['data']
-    if parc is USE_CTX:
-        parc = ctx.options['parc']
-    if mask is USE_CTX:
-        mask = ctx.options['mask']
-    return {
+    out = {
         'data': data,
         'samples': ctx.options['samples'],
         'test': ctx.options['test'],
         'tstart': ctx.options['tstart'],
         'tstop': ctx.options['tstop'],
         'pmin': ctx.options['pmin'],
-        'parc': parc,
-        'mask': mask,
         'baseline': ctx.options['baseline'],
         'src_baseline': ctx.options['src_baseline'],
         'smooth': ctx.options['smooth'],
         'samplingrate': ctx.options['samplingrate'],
     }
+    if 'disconnect_labels' in ctx.options:
+        out['disconnect_labels'] = ctx.options['disconnect_labels']
+    return out
 
 
 def _evoked_stc_options(
@@ -112,7 +103,6 @@ def _evoked_stc_options(
         src_baseline=USE_CTX,
         morph: bool = False,
         cat=None,
-        mask=False,
         data_raw: bool = False,
         samplingrate: int | None = None,
         decim: int | None = None,
@@ -128,8 +118,6 @@ def _evoked_stc_options(
         src_baseline=src_baseline,
         morph=morph,
         cat=cat,
-        parc=ctx.options['parc'],
-        mask=mask,
         data_raw=data_raw,
         samplingrate=samplingrate,
         decim=decim,
@@ -145,7 +133,6 @@ def _epochs_stc_options(
         cat=None,
         keep_epochs: bool | str = False,
         morph: bool | None = None,
-        mask: bool | str = False,
         data_raw: bool = False,
         samplingrate: int | None = None,
         decim: int | None = None,
@@ -163,8 +150,6 @@ def _epochs_stc_options(
         cat=cat,
         keep_epochs=keep_epochs,
         morph=morph,
-        parc=ctx.options['parc'],
-        mask=mask,
         data_raw=data_raw,
         samplingrate=samplingrate,
         decim=decim,
@@ -261,12 +246,13 @@ class ResultOutputDerivative(Derivative[T]):
         Optional time window for the analysis.
     pmin
         Cluster-forming threshold or ``'tfce'``.
-    parc, mask
-        Optional parcellation or source-space mask controls.
     baseline
         Sensor-space baseline correction.
     src_baseline
         Source-space baseline correction.
+    disconnect_labels
+        Disconnect source-space cluster adjacency across labels from the
+        current ``parc`` state.
     samplingrate
         Sampling rate override for upstream cached data.
     smooth
@@ -355,7 +341,7 @@ class ResultOutputDerivative(Derivative[T]):
         data = ctx.options['data']
         fields = ['epoch', 'raw', 'rej', 'model', 'equalize_evoked_count', 'test']
         if data and data.source:
-            fields.extend(['cov', 'inv', 'src', 'mri'])
+            fields.extend(['cov', 'inv', 'src', 'mri', 'parc'])
         state = {field: ctx.state[field] for field in fields}
         if single_subject:
             state['subject'] = ctx.state['subject']
@@ -371,24 +357,20 @@ class ResultOutputDerivative(Derivative[T]):
         data = ctx.options['data']
         fields = ['epoch', 'raw', 'rej', 'model', 'equalize_evoked_count', 'test']
         if data and data.source:
-            fields.extend(['cov', 'inv', 'src', 'mri'])
+            fields.extend(['cov', 'inv', 'src', 'mri', 'parc'])
         fields.append('subject' if single_subject else 'group')
         return tuple(fields)
 
     def analysis_options(self, ctx: Request) -> dict[str, Any]:
-        mask = ctx.options['mask']
-        if mask is True:
-            mask = ctx.state['parc']
         data = ctx.options['data']
         return ctx.registry.canonicalize({
             'data': None if data is None else data.string,
             'baseline': ctx.options['baseline'],
             'src_baseline': ctx.options['src_baseline'],
+            'disconnect_labels': ctx.options.get('disconnect_labels', False),
             'pmin': ctx.options['pmin'],
             'tstart': ctx.options['tstart'],
             'tstop': ctx.options['tstop'],
-            'parc': ctx.options['parc'],
-            'mask': mask,
             'samplingrate': ctx.options['samplingrate'],
             'smooth': ctx.options['smooth'],
             'adjacency': ctx.state['adjacency'],
@@ -411,7 +393,7 @@ class ResultOutputDerivative(Derivative[T]):
         if ctx.state['equalize_evoked_count']:
             parts.append(f'count-{ctx.state["equalize_evoked_count"]}')
         if data.source:
-            parts.extend((f'cov-{ctx.state["cov"]}', f'src-{ctx.state["src"]}', f'inv-{ctx.state["inv"]}'))
+            parts.extend((f'cov-{ctx.state["cov"]}', f'src-{ctx.state["src"]}', f'inv-{ctx.state["inv"]}', f'parc-{ctx.state["parc"]}'))
         return parts
 
     def _option_parts(self, ctx: Request) -> list[str]:
@@ -419,8 +401,6 @@ class ResultOutputDerivative(Derivative[T]):
         baseline = ctx.options['baseline']
         src_baseline = ctx.options['src_baseline']
         pmin = ctx.options['pmin']
-        parc = ctx.options['parc']
-        mask = ctx.options['mask']
         samplingrate = ctx.options['samplingrate']
         smooth = ctx.options['smooth']
         if baseline is False:
@@ -431,10 +411,8 @@ class ResultOutputDerivative(Derivative[T]):
             parts.append('srcbl')
         elif src_baseline not in (None, False):
             parts.append(f'srcbl-{time_window_str(src_baseline)}')
-        if parc:
-            parts.append(f'parc-{parc}')
-        elif mask:
-            parts.append(f'mask-{ctx.state["parc"] if mask is True else mask}')
+        if ctx.options.get('disconnect_labels', False):
+            parts.append('disconnect-labels')
         if pmin == 'tfce':
             parts.append('tfce')
         elif pmin is not None:
@@ -457,25 +435,13 @@ class ResultOutputDerivative(Derivative[T]):
     def default_path(self, ctx: Request) -> Path:
         return report_export_path(ctx.state, self.name, self.path_stem(ctx), self.single_subject)
 
-    def _result_parc(self, ctx: Request) -> str | None:
-        parc = ctx.options['parc']
-        if parc:
-            return parc
-        mask = ctx.options['mask']
-        if mask is True:
-            return ctx.state['parc']
-        if isinstance(mask, str):
-            return mask
-        return None
-
     def definitions(self, ctx: Request) -> dict[str, Any]:
         definitions = {
             'test': self.tests[ctx.options['test']]._as_dict(),
             'epoch': self.epochs[ctx.state['epoch']]._as_dict(),
         }
-        parc = self._result_parc(ctx)
-        if parc and parc in self.parcs:
-            definitions['parc'] = self.parcs[parc]._as_dict()
+        if ctx.options['data'].source and ctx.state['parc'] in self.parcs:
+            definitions['parc'] = self.parcs[ctx.state['parc']]._as_dict()
         return ctx.registry.canonicalize(definitions)
 
     def extra_key(self, ctx: Request) -> dict[str, Any]:
@@ -545,8 +511,6 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         Sensor-space baseline correction.
     src_baseline
         Source-space baseline correction.
-    parc, mask
-        Optional source-space parcellation or mask controls.
     samplingrate
         Sampling rate override for upstream cached data.
     smooth
@@ -562,8 +526,6 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         'test': None,
         'baseline': None,
         'src_baseline': None,
-        'parc': None,
-        'mask': None,
         'samplingrate': None,
         'smooth': None,
     }
@@ -573,11 +535,15 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         self.epochs = epochs
         self.groups = groups
 
-    def _resolved_mask(self, ctx: Request):
-        parc = ctx.options['parc']
-        if parc:
-            return parc
-        return ctx.options['mask']
+    def _state_fields(self, ctx: Request) -> tuple[str, ...]:
+        if ctx.options['data'].source:
+            return (*self.key_fields, 'parc')
+        return self.key_fields
+
+    def key(self, ctx: Request) -> dict[str, Any]:
+        key = {field: ctx.state[field] for field in self._state_fields(ctx)}
+        key['options'] = ctx.registry.canonicalize(ctx.options)
+        return ctx.registry.canonicalize(key)
 
     def _sensor_evoked_options(self, ctx: Request, cat) -> dict[str, Any]:
         return ctx.options_for(
@@ -594,19 +560,17 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return self.standard_fingerprint(
             ctx,
-            state_fields=self.key_fields,
+            state_fields=self._state_fields(ctx),
             definitions={
                 'test': self.tests[ctx.options['test']]._as_dict(),
                 'epoch': self.epochs[ctx.state['epoch']]._as_dict(),
             },
-            extra={'mask': self._resolved_mask(ctx)},
         )
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
         samplingrate = ctx.options['samplingrate']
-        mask = self._resolved_mask(ctx)
 
         if data.sensor:
             if ctx.state['group'] not in (None, '', '*'):
@@ -617,7 +581,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
             return (Dependency(
                 'evoked-stc-group-dataset',
                 state={**ctx.state, 'group': ctx.state['group'], 'subject': None},
-                options=_evoked_stc_options(ctx, morph=True, cat=test_obj.cat, mask=mask, samplingrate=samplingrate),
+                options=_evoked_stc_options(ctx, morph=True, cat=test_obj.cat, samplingrate=samplingrate),
             ),)
 
         return tuple(
@@ -625,7 +589,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
                 'evoked-stc',
                 label=subject,
                 state={**ctx.state, 'subject': subject, 'group': None},
-                options=_evoked_stc_options(ctx, morph=False, cat=None, mask=False, samplingrate=samplingrate),
+                options=_evoked_stc_options(ctx, morph=False, cat=None, samplingrate=samplingrate),
             )
             for subject in _result_subjects(self, ctx)
         )
@@ -646,11 +610,10 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
 
         samplingrate = ctx.options['samplingrate']
         if data.source is True:
-            mask = self._resolved_mask(ctx)
             ds = ctx.load(
                 'evoked-stc-group-dataset',
                 state={**ctx.state, 'group': ctx.state['group'], 'subject': None},
-                options=_evoked_stc_options(ctx, morph=True, cat=test_obj.cat, mask=mask, samplingrate=samplingrate),
+                options=_evoked_stc_options(ctx, morph=True, cat=test_obj.cat, samplingrate=samplingrate),
             )
             ds = _apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string)
             if smooth := ctx.options['smooth']:
@@ -665,7 +628,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
             ds = ctx.load(
                 'evoked-stc',
                 state={**ctx.state, 'subject': subject, 'group': None},
-                options=_evoked_stc_options(ctx, morph=False, cat=None, mask=False, samplingrate=samplingrate),
+                options=_evoked_stc_options(ctx, morph=False, cat=None, samplingrate=samplingrate),
             )
             dss.append(_apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string))
         return roi_data_from_subject_datasets(dss, data.source)
@@ -681,6 +644,7 @@ class TestResultDerivative(ResultOutputDerivative):
     sampled_path = True
     cache_suffix = '.pickle'
     path = Derivative.path
+    OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'disconnect_labels': False}
     VIEW_OPTION_DEFAULTS = {}
 
     def cache_label(self, ctx: Request) -> str:
@@ -692,31 +656,22 @@ class TestResultDerivative(ResultOutputDerivative):
     def build(self, ctx: Request):
         test_obj = self.tests[ctx.options['test']]
         data = ctx.options['data']
-        parc = ctx.options['parc']
-        mask = ctx.options['mask']
-        pmin = ctx.options['pmin']
-        parc_dim = None
         if data.source is True:
-            if parc:
-                parc_dim = 'source'
-            elif mask and pmin is None:
-                parc_dim = 'source'
+            parc_dim = 'source' if ctx.options['disconnect_labels'] else None
         elif isinstance(data.source, str):
-            if not isinstance(parc, str):
-                raise TypeError(f"parc needs to be set for ROI test (data={data.string!r})")
-            if mask is not None:
-                raise TypeError(f"{mask=}: invalid for data={data.string!r}")
+            if ctx.options['disconnect_labels']:
+                raise TypeError(f"disconnect_labels={ctx.options['disconnect_labels']!r}: invalid for data={data.string!r}")
+            parc_dim = None
+        elif ctx.options['disconnect_labels']:
+            raise TypeError(f"disconnect_labels={ctx.options['disconnect_labels']!r}: invalid for data={data.string!r}")
         else:
-            if parc is not None:
-                raise TypeError(f"{parc=}: invalid for data={data.string!r}")
-            if mask is not None:
-                raise TypeError(f"{mask=}: invalid for data={data.string!r}")
+            parc_dim = None
         test_kwargs = result_test_kwargs(self, ctx, data, parc_dim)
         data_value = ctx.load('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES))
         if isinstance(data_value, ROIData):
             subjects = _result_subjects(self, ctx)
             n_per_label = {label: len(ds['subject'].cells) for label, ds in data_value.label_data.items()}
-            do_mcc = len(data_value.label_data) > 1 and pmin not in (None, 'tfce') and len(set(n_per_label.values())) == 1
+            do_mcc = len(data_value.label_data) > 1 and ctx.options['pmin'] not in (None, 'tfce') and len(set(n_per_label.values())) == 1
             label_results = {
                 label: make_result_test(self, 'label_tc', ds, test_obj, test_kwargs, do_mcc)
                 for label, ds in data_value.label_data.items()
@@ -777,6 +732,7 @@ class MovieDerivative(ResultOutputDerivative[Path]):
     name = 'movie'
     OPTION_DEFAULTS = {
         **RESULT_OPTION_DEFAULTS,
+        'disconnect_labels': False,
         'movie_kind': None,
         'time_dilation': 1.0,
         'single_subject': False,
@@ -889,6 +845,8 @@ class MovieDerivative(ResultOutputDerivative[Path]):
                 y = 'srcm'
             if cluster_state:
                 cluster_state.update(samples=0, pmin=ctx.options['p'])
+            if ctx.options['disconnect_labels']:
+                cluster_state['parc'] = 'source'
             cat = ctx.options['cat']
             if ctx.state['model'] and cat and len(cat) == 2:
                 c1, c0 = cat

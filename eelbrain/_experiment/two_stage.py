@@ -13,15 +13,7 @@ from .._io.pickle import update_subjects_dir
 from .._utils.parse import find_variables
 from .derivative_cache import Dependency, Derivative, Request, UncachedDerivative
 from .pathing import mri_sdir
-from .results import (
-    RESULT_OPTION_DEFAULTS,
-    ResultOutputDerivative,
-    _epochs_stc_options,
-    _evoked_stc_options,
-    _result_subjects,
-    _subject_request_state,
-    result_test_kwargs,
-)
+from .results import RESULT_OPTION_DEFAULTS, ResultOutputDerivative, _epochs_stc_options, _evoked_stc_options, _result_subjects, _subject_request_state, result_test_kwargs
 from .source import ROIData, roi_data_from_subject_datasets
 from .test_def import ROITestResult, Test
 from .variable_def import apply_vardef
@@ -129,13 +121,6 @@ class SubjectROILMResult:
     n_trials_ds: Dataset
 
 
-def _resolved_mask(ctx: Request):
-    parc = ctx.options['parc']
-    if parc:
-        return parc
-    return ctx.options['mask']
-
-
 def _two_stage_source_name(ds: Dataset) -> str:
     for name in ('srcm', 'src', 'stcm', 'stc'):
         if name in ds:
@@ -153,8 +138,6 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         Sensor-space baseline correction for upstream source estimates.
     src_baseline
         Source-space baseline correction.
-    parc, mask
-        Optional source-space parcellation or mask controls.
     samplingrate
         Sampling rate override for upstream cached data.
     smooth
@@ -163,7 +146,7 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
     name = 'two-stage-data'
     key_fields = (
         'subject', 'group', 'epoch', 'raw', 'rej', 'model', 'equalize_evoked_count',
-        'test', 'cov', 'inv', 'src', 'mri',
+        'test', 'cov', 'inv', 'src', 'mri', 'parc',
     )
     OPTION_DEFAULTS = {
         **RESULT_OPTION_DEFAULTS,
@@ -182,7 +165,6 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
                 'test': self.tests[ctx.options['test']]._as_dict(),
                 'epoch': self.epochs[ctx.state['epoch']]._as_dict(),
             },
-            extra={'mask': _resolved_mask(ctx)},
         )
 
     def _subject_dependency(self, ctx: Request, subject: str) -> Dependency:
@@ -196,26 +178,26 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
                     'epochs-stc',
                     label=subject,
                     state=state,
-                    options=_epochs_stc_options(ctx, morph=data.morph, mask=_resolved_mask(ctx), samplingrate=samplingrate),
+                    options=_epochs_stc_options(ctx, morph=data.morph, samplingrate=samplingrate),
                 )
             return Dependency(
                 'evoked-stc',
                 label=subject,
                 state={**state, 'model': test_obj.model},
-                options=_evoked_stc_options(ctx, morph=data.morph, cat=None, mask=_resolved_mask(ctx), samplingrate=samplingrate),
+                options=_evoked_stc_options(ctx, morph=data.morph, cat=None, samplingrate=samplingrate),
             )
         if test_obj.model is None or test_obj.vars:
             return Dependency(
                 'epochs-stc',
                 label=subject,
                 state=state,
-                options=_epochs_stc_options(ctx, morph=None, mask=True, samplingrate=samplingrate),
+                options=_epochs_stc_options(ctx, morph=None, samplingrate=samplingrate),
             )
         return Dependency(
             'evoked-stc',
             label=subject,
             state={**state, 'model': test_obj.model},
-            options=_evoked_stc_options(ctx, morph=False, cat=None, mask=True, samplingrate=samplingrate),
+            options=_evoked_stc_options(ctx, morph=False, cat=None, samplingrate=samplingrate),
         )
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
@@ -232,7 +214,7 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
 
         if data.source is True:
             if test_obj.model is None or test_obj.vars:
-                ds = ctx.load('epochs-stc', state=state, options=_epochs_stc_options(ctx, morph=data.morph, mask=_resolved_mask(ctx), samplingrate=samplingrate))
+                ds = ctx.load('epochs-stc', state=state, options=_epochs_stc_options(ctx, morph=data.morph, samplingrate=samplingrate))
                 if test_obj.vars:
                     apply_vardef(ds, test_obj.vars, self.tests, self.groups)
                 if test_obj.model is not None:
@@ -244,7 +226,7 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
                         drop=('i_start', 't_edf', 'time', 'index', 'trigger'),
                     )
             else:
-                ds = ctx.load('evoked-stc', state={**state, 'model': test_obj.model}, options=_evoked_stc_options(ctx, morph=data.morph, cat=None, mask=_resolved_mask(ctx), samplingrate=samplingrate))
+                ds = ctx.load('evoked-stc', state={**state, 'model': test_obj.model}, options=_evoked_stc_options(ctx, morph=data.morph, cat=None, samplingrate=samplingrate))
             if ctx.options['smooth']:
                 ds[data.y_name] = ds[data.y_name].smooth('source', ctx.options['smooth'], 'gaussian')
             return ds
@@ -252,13 +234,13 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         if ctx.options['smooth']:
             raise TypeError(f"smooth={ctx.options['smooth']!r} for ROI two-stage tests")
         if test_obj.model is None:
-            ds = ctx.load('epochs-stc', state=state, options=_epochs_stc_options(ctx, morph=None, mask=True, samplingrate=samplingrate))
+            ds = ctx.load('epochs-stc', state=state, options=_epochs_stc_options(ctx, morph=None, samplingrate=samplingrate))
             if test_obj.vars:
                 apply_vardef(ds, test_obj.vars, self.tests, self.groups)
             return ds
         if not test_obj.vars:
-            return ctx.load('evoked-stc', state={**state, 'model': test_obj.model}, options=_evoked_stc_options(ctx, morph=False, cat=None, mask=True, samplingrate=samplingrate))
-        ds = ctx.load('epochs-stc', state=state, options=_epochs_stc_options(ctx, morph=None, mask=True, samplingrate=samplingrate))
+            return ctx.load('evoked-stc', state={**state, 'model': test_obj.model}, options=_evoked_stc_options(ctx, morph=False, cat=None, samplingrate=samplingrate))
+        ds = ctx.load('epochs-stc', state=state, options=_epochs_stc_options(ctx, morph=None, samplingrate=samplingrate))
         apply_vardef(ds, test_obj.vars, self.tests, self.groups)
         return ds.aggregate(
             test_obj.model,
@@ -289,7 +271,7 @@ class TwoStageLevel1Derivative(Derivative[Any]):
     name = 'two-stage-level-1'
     key_fields = (
         'subject', 'epoch', 'raw', 'rej', 'model', 'equalize_evoked_count',
-        'test', 'cov', 'inv', 'src', 'mri',
+        'test', 'cov', 'inv', 'src', 'mri', 'parc',
     )
     cache_suffix = '.pickle'
     OPTION_DEFAULTS = {
@@ -310,7 +292,6 @@ class TwoStageLevel1Derivative(Derivative[Any]):
             ctx,
             state_fields=self.key_fields,
             definitions={'test': self.tests[ctx.options['test']]._as_dict()},
-            extra={'mask': _resolved_mask(ctx)},
         )
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
@@ -350,6 +331,7 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
     sampled_path = True
     cache_suffix = '.pickle'
     path = Derivative.path
+    OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'disconnect_labels': False}
     VIEW_OPTION_DEFAULTS = {}
 
     def cache_label(self, ctx: Request) -> str:
@@ -366,20 +348,12 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
         if not isinstance(test_obj, TwoStageTest):
             raise RuntimeError(f"{self.name!r} requires a TwoStageTest")
         data = ctx.options['data']
-        parc = ctx.options['parc']
-        mask = ctx.options['mask']
-        pmin = ctx.options['pmin']
-        parc_dim = None
         if data.source is True:
-            if parc:
-                parc_dim = 'source'
-            elif mask and pmin is None:
-                parc_dim = 'source'
+            parc_dim = 'source' if ctx.options['disconnect_labels'] else None
         elif isinstance(data.source, str):
-            if not isinstance(parc, str):
-                raise TypeError(f"parc needs to be set for ROI test (data={data.string!r})")
-            if mask is not None:
-                raise TypeError(f"{mask=}: invalid for data={data.string!r}")
+            if ctx.options['disconnect_labels']:
+                raise TypeError(f"disconnect_labels={ctx.options['disconnect_labels']!r}: invalid for data={data.string!r}")
+            parc_dim = None
         else:
             raise NotImplementedError(f"Two-stage test with data={data.string!r}")
         test_kwargs = result_test_kwargs(self, ctx, data, parc_dim)

@@ -23,7 +23,7 @@ from .. import table
 from .._data_obj import Dataset, Factor, align1
 from .._utils.mne_utils import is_fake_mri
 from .derivative_cache import Dependency, Request, file_fingerprint
-from .parc import IndividualSeededParc, SEEDED_PARC_RE
+from .parc import IndividualSeededParc, _resolve_parc
 from .pathing import coreg_report_path, mri_dir, mri_sdir, trans_file_path
 from .preprocessing import raw_node_name
 from .results import (
@@ -60,18 +60,6 @@ def _report_title(path: str | Path) -> str:
     return Path(path).stem
 
 
-def _annot_state(node: ResultOutputDerivative, state: dict[str, Any]):
-    parc = state['parc']
-    if parc == '':
-        return '', None
-    if parc in node.parcs:
-        return parc, node.parcs[parc]
-    match = SEEDED_PARC_RE.match(parc)
-    if match is None:
-        raise ValueError(f"{parc=}: unknown parcellation")
-    return parc, node.parcs[match.group(1)]
-
-
 def _load_annot(node: ResultOutputDerivative, state: dict[str, Any], subject: str | None = None) -> list[mne.Label]:
     load_state = dict(state)
     if subject is not None:
@@ -85,7 +73,7 @@ def _surfer_plot_kwargs(node: ResultOutputDerivative, state: dict[str, Any], sur
     if views:
         out['views'] = views
     else:
-        _, parc = _annot_state(node, state)
+        _, parc = _resolve_parc(node.parcs, state['parc'])
         if parc is not None and parc.views:
             out['views'] = parc.views
     if surf:
@@ -107,7 +95,7 @@ def _plot_annot(node: ResultOutputDerivative, state: dict[str, Any], subject: st
         plot_state['subject'] = subject
         plot_state['mrisubject'] = node._field_options(plot_state, 'mrisubject', subject=subject)[0]
 
-    parc_name, parc = _annot_state(node, plot_state)
+    parc_name, parc = _resolve_parc(node.parcs, plot_state['parc'])
     plot_on_scaled_common_brain = isinstance(parc, IndividualSeededParc)
     if (not plot_on_scaled_common_brain) and is_fake_mri(mri_dir(plot_state)):
         subject_name = plot_state['common_brain']
@@ -159,7 +147,7 @@ def _report_test_info(node: ResultOutputDerivative, state: dict[str, Any], secti
 
 
 def _report_parc_image(node: ResultOutputDerivative, state: dict[str, Any], section, caption, subjects=None):
-    _, parc = _annot_state(node, state)
+    _, parc = _resolve_parc(node.parcs, state['parc'])
     if isinstance(parc, IndividualSeededParc):
         if subjects is None:
             raise RuntimeError("subjects needs to be specified for plotting individual parcellations")
@@ -203,7 +191,7 @@ class SourceReportDerivative(ResultOutputDerivative[Path]):
     """
     name = 'source-report'
     sampled_path = True
-    OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'include': None}
+    OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'disconnect_labels': False, 'include': None}
 
     def extra_key(self, ctx: Request) -> dict[str, Any]:
         return {'include': ctx.options['include']}
@@ -211,7 +199,7 @@ class SourceReportDerivative(ResultOutputDerivative[Path]):
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if isinstance(self.tests[ctx.options['test']], TwoStageTest):
             return (
-                Dependency('two-stage-level-2', options=ctx.options_for('two-stage-level-2', *RESULT_OPTION_DEFAULTS)),
+                Dependency('two-stage-level-2', options=ctx.options_for('two-stage-level-2', *RESULT_OPTION_DEFAULTS, disconnect_labels=ctx.options['disconnect_labels'])),
                 Dependency('two-stage-data', options=ctx.options_for('two-stage-data', *RESULT_OPTION_DEFAULTS)),
             )
         return (
@@ -227,17 +215,14 @@ class SourceReportDerivative(ResultOutputDerivative[Path]):
         test_obj = self.tests[ctx.options['test']]
         if isinstance(test_obj, TwoStageTest):
             data_value = ctx.load('two-stage-data', options=ctx.options_for('two-stage-data', *RESULT_OPTION_DEFAULTS))
-            rlm = ctx.load('two-stage-level-2', options=ctx.options_for('two-stage-level-2', *RESULT_OPTION_DEFAULTS))
+            rlm = ctx.load('two-stage-level-2', options=ctx.options_for('two-stage-level-2', *RESULT_OPTION_DEFAULTS, disconnect_labels=ctx.options['disconnect_labels']))
 
             info_section = report.add_section("Test Info")
-            parc = ctx.options['parc']
-            mask = ctx.options['mask']
-            if parc:
-                section = report.add_section(parc)
-                _report_parc_image(self, ctx.state, section, f"Labels in the {parc} parcellation.")
-            elif mask:
-                section = report.add_section(f"Whole Brain Masked by {mask}")
-                _report_parc_image(self, ctx.state, section, f"Mask: {mask.capitalize()}")
+            parc = ctx.state['parc']
+            section_title = f"Disconnected Labels in {parc}" if ctx.options['disconnect_labels'] else f"Whole Brain Masked by {parc}"
+            caption = f"Labels in the {parc} parcellation with cluster adjacency disconnected across labels." if ctx.options['disconnect_labels'] else f"Whole-brain source test restricted to labels in the {parc} parcellation."
+            section = report.add_section(section_title)
+            _report_parc_image(self, ctx.state, section, caption)
 
             report.add_section("Design Matrix").append(rlm.design())
             for term in rlm.column_names:
@@ -250,16 +235,13 @@ class SourceReportDerivative(ResultOutputDerivative[Path]):
             ds = data_value
             res = ctx.load('test-result', options=_test_result_options(ctx))
             _report_test_info(self, ctx.state, report.add_section("Test Info"), ds, ctx.options['test'], res, ctx.options['data'], ctx.options['include'])
-            parc = ctx.options['parc']
-            mask = ctx.options['mask']
-            if parc:
-                section = report.add_section(parc)
-                _report_parc_image(self, ctx.state, section, f"Labels in the {parc} parcellation.")
-            elif mask:
-                section = report.add_section(f"Whole Brain Masked by {mask}")
-                _report_parc_image(self, ctx.state, section, f"Mask: {mask.capitalize()}")
+            parc = ctx.state['parc']
+            section_title = f"Disconnected Labels in {parc}" if ctx.options['disconnect_labels'] else f"Whole Brain Masked by {parc}"
+            caption = f"Labels in the {parc} parcellation with cluster adjacency disconnected across labels." if ctx.options['disconnect_labels'] else f"Whole-brain source test restricted to labels in the {parc} parcellation."
+            section = report.add_section(section_title)
+            _report_parc_image(self, ctx.state, section, caption)
             colors = plot.colors_for_categorial(ds.eval(res._plot_model()))
-            report.append(_report.source_time_results(res, ds, colors, ctx.options['include'], _surfer_plot_kwargs(self, ctx.state), parc=parc))
+            report.append(_report.source_time_results(res, ds, colors, ctx.options['include'], _surfer_plot_kwargs(self, ctx.state), parc=ctx.options['disconnect_labels']))
         return _save_report(report, dst, ('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'), ctx.options['samples'])
 
 
@@ -275,7 +257,7 @@ class ROIReportDerivative(ResultOutputDerivative[Path]):
         if isinstance(self.tests[ctx.options['test']], TwoStageTest):
             return ()
         return (
-            Dependency('test-result', options=_test_result_options(ctx, mask=None)),
+            Dependency('test-result', options=_test_result_options(ctx)),
             Dependency('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES)),
         )
 
@@ -284,7 +266,7 @@ class ROIReportDerivative(ResultOutputDerivative[Path]):
             raise NotImplementedError("ROI report not implemented for two-stage tests")
         dst = self.path(ctx)
         roi_data = ctx.load('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES))
-        res = ctx.load('test-result', options=_test_result_options(ctx, mask=None))
+        res = ctx.load('test-result', options=_test_result_options(ctx))
         labels_lh = []
         labels_rh = []
         for label in res.res.keys():
@@ -300,8 +282,8 @@ class ROIReportDerivative(ResultOutputDerivative[Path]):
         first_label = (labels_lh or labels_rh)[0]
         info_section = report.add_section("Test Info")
         _report_test_info(self, ctx.state, info_section, res.n_trials_ds, self.tests[ctx.options['test']], res.res[first_label], ctx.options['data'])
-        section = report.add_section(ctx.options['parc'])
-        _report_parc_image(self, ctx.state, section, f"ROIs in the {ctx.options['parc']} parcellation.", res.subjects)
+        section = report.add_section(ctx.state['parc'])
+        _report_parc_image(self, ctx.state, section, f"ROIs in the {ctx.state['parc']} parcellation.", res.subjects)
         n_subjects = len(res.subjects)
         colors = plot.colors_for_categorial(roi_data.label_data[first_label].eval(res.res[first_label]._plot_model()))
         for label in chain(labels_lh, labels_rh):
@@ -334,7 +316,7 @@ class EEGReportDerivative(ResultOutputDerivative[Path]):
         if isinstance(self.tests[ctx.options['test']], TwoStageTest):
             return ()
         return (
-            Dependency('test-result', options=_test_result_options(ctx, parc=None, mask=None)),
+            Dependency('test-result', options=_test_result_options(ctx)),
             Dependency('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES)),
         )
 
@@ -343,7 +325,7 @@ class EEGReportDerivative(ResultOutputDerivative[Path]):
             raise NotImplementedError("EEG report not implemented for two-stage tests")
         dst = self.path(ctx)
         ds = ctx.load('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES))
-        res = ctx.load('test-result', options=_test_result_options(ctx, parc=None, mask=None))
+        res = ctx.load('test-result', options=_test_result_options(ctx))
         report = fmtxt.Report(_report_title(dst))
         info_section = report.add_section("Test Info")
         _report_test_info(self, ctx.state, info_section, ds, ctx.options['test'], res, ctx.options['data'], ctx.options['include'])
@@ -403,19 +385,13 @@ class EEGSensorsReportDerivative(ResultOutputDerivative[Path]):
 
 class LMReportDerivative(ResultOutputDerivative[Path]):
     """HTML report for the first-stage subject LM used by two-stage tests.
-
-    Uses the shared result-output options and adds ``mask`` for the optional
-    source-space mask to plot.
     """
     name = 'lm-report'
     single_subject = True
     sampled_path = True
 
-    def extra_key(self, ctx: Request) -> dict[str, Any]:
-        return {'mask': ctx.options['mask']}
-
     def _level_1_options(self, ctx: Request) -> dict[str, Any]:
-        return ctx.options_for('two-stage-level-1', *RESULT_OPTION_DEFAULTS, data=TestDims.coerce('source', morph=False), smooth=None, parc=None, mask=True)
+        return ctx.options_for('two-stage-level-1', *RESULT_OPTION_DEFAULTS, data=TestDims.coerce('source', morph=False), smooth=None)
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         test_obj = self.tests[ctx.options['test']]

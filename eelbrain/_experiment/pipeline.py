@@ -50,7 +50,7 @@ from .pathing import (
     join_stem_parts, mri_dir, mri_sdir, raw_basename, raw_dir, rej_file_path,
     results_dir, src_file_path, trans_file_path,
 )
-from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc
+from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, _resolve_parc
 from .preprocessing import (
     ICAInput, RawBadChannelsInput, RawDerivative, RawPipe, RawSource, RawSourceInput, RawICA,
     REINDEX_ICA, assemble_raw_pipes, get_ica_pipe, get_ica_pipe_name,
@@ -65,7 +65,7 @@ from .source import (
     BemInput, EpochsStcDerivative, EpochsStcGroupDatasetDerivative,
     EvokedStcDerivative, EvokedStcGroupDatasetDerivative, FwdDerivative,
     InvDerivative, ROIData, SourceMorphDerivative, SrcDerivative, TransInput,
-    InverseSolution, MinimumNormInverseSolution, eval_src,
+    InverseSolution, MinimumNormInverseSolution, _drop_unknown_labels, _source_parc, eval_src,
 )
 from .test_def import (
     Test,
@@ -83,15 +83,6 @@ BaselineArg = bool | tuple[float | None, float | None]
 DataArg = str | TestDims
 PMinArg = Literal['tfce'] | float | None
 SubjectArg = str | Literal[1, -1]
-
-
-def _mask_ndvar(y: NDVar):
-    if y.source.parc is None:
-        raise RuntimeError(f'{y} has no parcellation')
-    mask = y.source.parc.startswith('unknown')
-    if mask.any():
-        return y.sub(source=np.invert(mask))
-    return y
 
 
 def guess_y(ds, default=None):
@@ -1092,7 +1083,6 @@ class Pipeline(StateModel):
             cat: Sequence[CellArg] = None,
             keep_epochs: bool | str = False,
             morph: bool = None,
-            mask: bool | str = False,
             data_raw: bool = False,
             samplingrate: int = None,
             decim: int = None,
@@ -1128,12 +1118,6 @@ class Pipeline(StateModel):
         morph
             Morph the source estimates to the common brain
             (default ``False``, except when loading multiple subjects and ``ndvar=True``).
-        mask
-            Discard data that is labeled ``unknown`` by the parcellation (default ``False``).
-            Use ``mask=True`` to use the parcellation in the :ref:`state-parc` state parameter.
-            ``mask`` can also be set to a parcellation name (:class:`str`) to specify a
-            parcellation to use directly.
-            Only applies when ``ndvar=True``.
         data_raw
             Keep the :class:`mne.io.Raw` instance in ``ds.info['raw']``
             (default False).
@@ -1168,16 +1152,14 @@ class Pipeline(StateModel):
         epochs_dataset : Dataset
             Dataset containing single trial data (epochs).
         """
+        self._current_source_parc(**state)
         subject, group = self._process_subject_arg(subjects, state)
-        if isinstance(mask, str):
-            state['parc'] = mask
         options = {
             'baseline': baseline,
             'src_baseline': src_baseline,
             'cat': cat,
             'keep_epochs': keep_epochs,
             'morph': morph,
-            'mask': mask,
             'data_raw': data_raw,
             'samplingrate': samplingrate,
             'decim': decim,
@@ -1324,7 +1306,6 @@ class Pipeline(StateModel):
             self,
             subjects: str | int = None,
             baseline: BaselineArg = True,
-            mask: bool | str = True,
             morph: bool = None,
             keep_stc: bool = False,
             **state):
@@ -1340,12 +1321,6 @@ class Pipeline(StateModel):
         baseline
             Apply baseline correction using this period in sensor space.
             True to use the epoch's baseline specification. The default is True.
-        mask
-            Discard data that is labeled ``unknown`` by the parcellation (default ``False``).
-            Use ``mask=True`` to use the parcellation in the :ref:`state-parc` state parameter.
-            ``mask`` can also be set to a parcellation name (:class:`str`) to specify a
-            parcellation to use directly.
-            Only applies when ``ndvar=True``.
         morph
             Morph the source estimates to the common brain
             (default ``False``, except when loading multiple subjects and ``ndvar=True``).
@@ -1355,7 +1330,7 @@ class Pipeline(StateModel):
         ...
             State parameters.
         """
-        ds = self.load_epochs_stc(subjects, baseline, ndvar=True, morph=morph, mask=mask, **state)
+        ds = self.load_epochs_stc(subjects, baseline, ndvar=True, morph=morph, **state)
         name = 'srcm' if 'srcm' in ds else 'src'
 
         # apply morlet transformation
@@ -1372,7 +1347,6 @@ class Pipeline(StateModel):
             self,
             subjects: str | int = None,
             baseline: BaselineArg = True,
-            mask: bool | str = True,
             morph: bool = None,
             keep_stc: bool = False,
             **state):
@@ -1388,12 +1362,6 @@ class Pipeline(StateModel):
         baseline
             Apply baseline correction using this period in sensor space.
             True to use the epoch's baseline specification. The default is True.
-        mask
-            Discard data that is labeled ``unknown`` by the parcellation (default ``False``).
-            Use ``mask=True`` to use the parcellation in the :ref:`state-parc` state parameter.
-            ``mask`` can also be set to a parcellation name (:class:`str`) to specify a
-            parcellation to use directly.
-            Only applies when ``ndvar=True``.
         morph
             Morph the source estimates to the common brain
             (default ``False``, except when loading multiple subjects and ``ndvar=True``).
@@ -1403,7 +1371,7 @@ class Pipeline(StateModel):
         ...
             State parameters.
         """
-        ds = self.load_evoked_stc(subjects, baseline, morph=morph, mask=mask, **state)
+        ds = self.load_evoked_stc(subjects, baseline, morph=morph, **state)
         name = 'srcm' if 'srcm' in ds else 'src'
 
         # apply morlet transformation
@@ -1424,7 +1392,6 @@ class Pipeline(StateModel):
             cat: Sequence[CellArg] = None,
             keep_evoked: bool = False,
             morph: bool = None,
-            mask: bool | str = False,
             data_raw: bool = False,
             samplingrate: int = None,
             decim: int = None,
@@ -1454,12 +1421,6 @@ class Pipeline(StateModel):
         morph
             Morph the source estimates to the common brain
             (default ``False``, except when loading multiple subjects and ``ndvar=True``).
-        mask
-            Discard data that is labeled ``unknown`` by the parcellation (default ``False``).
-            Use ``mask=True`` to use the parcellation in the :ref:`state-parc` state parameter.
-            ``mask`` can also be set to a parcellation name (:class:`str`) to specify a
-            parcellation to use directly.
-            Only applies when ``ndvar=True``.
         data_raw
             Keep the :class:`mne.io.Raw` instance in ``ds.info['raw']``
             (default False).
@@ -1484,8 +1445,7 @@ class Pipeline(StateModel):
              - :ref:`state-inv`: inverse solution
 
         """
-        if isinstance(mask, str):
-            state['parc'] = mask
+        self._current_source_parc(**state)
         subject, group = self._process_subject_arg(subjects, state)
         options = {
             'baseline': baseline,
@@ -1493,7 +1453,6 @@ class Pipeline(StateModel):
             'cat': cat,
             'keep_evoked': keep_evoked,
             'morph': morph,
-            'mask': mask,
             'data_raw': data_raw,
             'samplingrate': samplingrate,
             'decim': decim,
@@ -1516,7 +1475,6 @@ class Pipeline(StateModel):
             baseline: BaselineArg = True,
             cat: Sequence[CellArg] = None,
             morph: bool = False,
-            mask: bool | str = False,
             decim: int = 1,
             **state,
     ) -> Dataset:
@@ -1543,12 +1501,6 @@ class Pipeline(StateModel):
             Only load data for these cells (cells of model).
         morph
             Morph the source estimates to the common_brain (default False).
-        mask
-            Discard data that is labeled ``unknown`` by the parcellation (default ``False``).
-            Use ``mask=True`` to use the parcellation in the :ref:`state-parc` state parameter.
-            ``mask`` can also be set to a parcellation name (:class:`str`) to specify a
-            parcellation to use directly.
-            Only applies when ``ndvar=True``.
         decim
             Decimate time-frequency representation (cumulative with epoch
             decimation factor).
@@ -1564,8 +1516,7 @@ class Pipeline(StateModel):
              - :ref:`state-src`: source space
              - :ref:`state-inv`: inverse solution
         """
-        if isinstance(mask, str):
-            state['parc'] = mask
+        self._current_source_parc(**state)
         subject, group = self._process_subject_arg(subjects, state)
         if frequencies is None:
             frequencies = np.logspace(2, 5, 10, base=2)
@@ -1582,12 +1533,12 @@ class Pipeline(StateModel):
         if group is not None:
             dss = []
             for _ in self.iter(group=group, progress_bar=f"Load induced {epoch_name}"):
-                ds = self.load_induced_stc(None, frequencies, n_cycles, pad, baseline, cat, morph, mask, decim)
+                ds = self.load_induced_stc(None, frequencies, n_cycles, pad, baseline, cat, morph, decim)
                 dss.append(ds)
             return combine(dss)
 
         # 1 subject
-        ds = self.load_epochs_stc(1, baseline, False, cat, morph=morph, mask=mask, pad=pad)
+        ds = self.load_epochs_stc(1, baseline, False, cat, morph=morph, pad=pad)
         # conditions
         model = self.get('model') or None
         stc = ds['srcm' if morph else 'src']
@@ -1602,7 +1553,6 @@ class Pipeline(StateModel):
             self,
             surf_ori: bool = True,
             ndvar: bool = False,
-            mask: bool = False,
             **state):
         """Load the forward solution
 
@@ -1615,12 +1565,6 @@ class Pipeline(StateModel):
         ndvar
             Return forward solution as :class:`NDVar` (default is
             :class:`mne.forward.Forward`).
-        mask
-            Discard data that is labeled ``unknown`` by the parcellation (default ``False``).
-            Use ``mask=True`` to use the parcellation in the :ref:`state-parc` state parameter.
-            ``mask`` can also be set to a parcellation name (:class:`str`) to specify a
-            parcellation to use directly.
-            Only applies when ``ndvar=True``.
         ...
             State parameters.
 
@@ -1629,11 +1573,6 @@ class Pipeline(StateModel):
         forward_operator : mne.forward.Forward | NDVar
             Forward operator.
         """
-        if mask and not ndvar:
-            raise NotImplementedError("mask is only implemented for ndvar=True")
-        elif isinstance(mask, str):
-            state['parc'] = mask
-            mask = True
         with self._temporary_state:
             if state:
                 self.set(**state)
@@ -1642,16 +1581,12 @@ class Pipeline(StateModel):
             fwd_file = self._derivatives.resolve('fwd', state=state_).artifact_path
             src = self.get('src')
             if ndvar:
-                if src.startswith('vol'):
-                    parc = None
-                    assert not mask
-                else:
+                parc = self._current_source_parc()
+                if parc:
                     self.make_annot()
-                    parc = self.get('parc')
                 fwd = load.mne.forward_operator(fwd_file, src, mri_sdir(state_), parc, adjacency=False)
-                if mask:
-                    fwd = fwd.sub(source=np.invert(
-                        fwd.source.parc.startswith('unknown')))
+                if parc:
+                    fwd = _drop_unknown_labels(fwd)
                 return fwd
             if surf_ori:
                 mne.convert_forward_solution(fwd, surf_ori, copy=False)
@@ -1695,7 +1630,6 @@ class Pipeline(StateModel):
             self,
             fiff: Any = None,
             ndvar: bool = False,
-            mask: bool | str = False,
             **state,
     ) -> mne.minimum_norm.InverseOperator | NDVar:
         """Load the inverse operator
@@ -1710,12 +1644,6 @@ class Pipeline(StateModel):
             :class:`mne.minimum_norm.InverseOperator`). The NDVar representation
             does not take into account any direction selectivity (loose/free
             orientation) or noise normalization properties.
-        mask
-            Discard data that is labeled ``unknown`` by the parcellation (default ``False``).
-            Use ``mask=True`` to use the parcellation in the :ref:`state-parc` state parameter.
-            ``mask`` can also be set to a parcellation name (:class:`str`) to specify a
-            parcellation to use directly.
-            Only applies when ``ndvar=True``.
         ...
             Applicable :ref:`state-parameters`:
 
@@ -1726,36 +1654,25 @@ class Pipeline(StateModel):
              - :ref:`state-inv`: inverse solution
 
         """
-        if mask and not ndvar:
-            raise NotImplementedError("mask is only implemented for ndvar=True")
-        elif isinstance(mask, str):
-            state['parc'] = mask
-            mask = True
-
         with self._temporary_state:
             if state:
                 self.set(**state)
             inv = self._load_derivative('inv', cache=self.cache_inv, options={'fiff': fiff})
 
             if ndvar:
-                inv = load.mne.inverse_operator(inv, self.get('src'), mri_sdir(self._derivative_state()), self.get('parc'))
-                if mask:
-                    inv = inv.sub(source=~inv.source.parc.startswith('unknown'))
-            elif mask:
-                raise NotImplementedError("Masking for inverse operator")
+                parc = self._current_source_parc()
+                inv = load.mne.inverse_operator(inv, self.get('src'), mri_sdir(self._derivative_state()), parc)
+                if parc:
+                    inv = _drop_unknown_labels(inv)
             return inv
 
     def _prepare_inv(
             self,
             fiff: Any,
-            mask: bool | str,
             morph: bool,
     ):
         # load inv
-        parc = self.get('parc') or None
-        if isinstance(mask, str) and parc != mask:
-            parc = mask
-            self.set(parc=mask)
+        parc = self._current_source_parc()
         # make sure annotation exists
         if parc:
             self.make_annot()
@@ -1766,7 +1683,7 @@ class Pipeline(StateModel):
         subjects_dir = str(mri_sdir(self._derivative_state()))
         mrisubject = self.get('mrisubject')
         is_scaled = find_source_subject(mrisubject, subjects_dir)
-        if mask and (is_scaled or not morph):
+        if parc and (is_scaled or not morph):
             label = label_from_annot(inv['src'], mrisubject, subjects_dir, parc)
         else:
             label = None
@@ -1946,9 +1863,14 @@ class Pipeline(StateModel):
 
         return raw
 
+    def _current_source_parc(self, **state):
+        return _source_parc({
+            'src': self.get('src', **state),
+            'parc': self.get('parc', **state),
+        })
+
     def load_raw_stc(
             self,
-            mask: bool | str = False,
             morph: bool = False,
             ndvar: bool = True,
             samplingrate: int = None,
@@ -1961,12 +1883,6 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        mask
-            Discard data that is labeled ``unknown`` by the parcellation (default ``False``).
-            Use ``mask=True`` to use the parcellation in the :ref:`state-parc` state parameter.
-            ``mask`` can also be set to a parcellation name (:class:`str`) to specify a
-            parcellation to use directly.
-            Only applies when ``ndvar=True``.
         morph
             Morph the source estimates to the common_brain (default False).
         ndvar
@@ -1985,7 +1901,7 @@ class Pipeline(StateModel):
              - :ref:`state-raw`: preprocessing pipeline
         """
         raw = self.load_raw(samplingrate=samplingrate, tstart=tstart, tstop=tstop, **kwargs)
-        inv, label, mri_sdir, mrisubject, is_scaled, parc = self._prepare_inv(raw, mask, morph)
+        inv, label, mri_sdir, mrisubject, is_scaled, parc = self._prepare_inv(raw, morph)
         solution = InverseSolution._coerce(self.get('inv'))
         stc = apply_inverse_raw(raw, inv, label=label, **solution._apply_kw)
 
@@ -2117,8 +2033,7 @@ class Pipeline(StateModel):
             tstart: float = None,
             tstop: float = None,
             pmin: PMinArg = None,
-            parc: str = None,
-            mask: str = None,
+            disconnect_labels: bool = False,
             samples: int = 10000,
             data: str = 'source',
             baseline: BaselineArg = True,
@@ -2143,22 +2058,10 @@ class Pipeline(StateModel):
             (default is the end of the epoch).
         pmin
             Kind of test.
-        parc
-            Run the test separately in each label of parc.
-
-            .. Warning::
-                Results from spatio-temporal tests using ``parc`` are not
-                corrected for multiple comparisons. You must manually correct
-                for multiple comparisons based on the number of labels in
-                ``parc`` before interpreting *p*-values.
-
-        mask
-            Parcellation to use as anatomical mask in which to perform the test.
-            Discard data that is labeled ``unknown`` by the parcellation (default ``False``).
-            Use ``mask=True`` to use the parcellation in the :ref:`state-parc` state parameter.
-            ``mask`` can also be set to a parcellation name (:class:`str`) to specify a
-            parcellation to use directly.
-            Only applies when ``ndvar=True``.
+        disconnect_labels
+            For ``data='source'``, disconnect cluster adjacency across labels in
+            the current ``parc`` state. The default is to run one masked
+            whole-brain source test.
         samples
             Number of random permutations of the data used to determine cluster
             *p*-values (default 10'000). If the test is already cached with a
@@ -2211,6 +2114,12 @@ class Pipeline(StateModel):
         """
         self.set(test=test, **state)
         data = TestDims.coerce(data, morph=True)
+        if data.source:
+            self._current_source_parc(**state)
+            if isinstance(data.source, str) and disconnect_labels:
+                raise TypeError(f"{disconnect_labels=}: invalid for data={data.string!r}")
+        elif disconnect_labels:
+            raise TypeError(f"{disconnect_labels=}: invalid for data={data.string!r}")
         options = {
             'data': data,
             'samples': samples,
@@ -2218,8 +2127,7 @@ class Pipeline(StateModel):
             'tstart': tstart,
             'tstop': tstop,
             'pmin': pmin,
-            'parc': parc,
-            'mask': mask,
+            'disconnect_labels': disconnect_labels,
             'baseline': baseline,
             'src_baseline': src_baseline,
             'smooth': smooth,
@@ -2252,7 +2160,8 @@ class Pipeline(StateModel):
             if not return_data:
                 return res
 
-        res_data = self._derivatives.load(data_node, state=self._derivative_state(), options=options)
+        data_options = {key: value for key, value in options.items() if key != 'disconnect_labels'}
+        res_data = self._derivatives.load(data_node, state=self._derivative_state(), options=data_options)
         if isinstance(res_data, ROIData):
             res_data = res_data.label_data
         return res_data, res
@@ -2602,7 +2511,7 @@ class Pipeline(StateModel):
         self._load_derivative('movie', options=options, controls={ALLOW_PROTECTED_OVERWRITE})
 
     def make_mov_ttest(self, subjects=None, model='', c1=None, c0=None, p=0.05,
-                       baseline=True, src_baseline=False,
+                       baseline=True, src_baseline=False, disconnect_labels=False,
                        surf=None, views=None, hemi=None, time_dilation=4.,
                        foreground=None, background=None, smoothing_steps=None,
                        dst=None, redo=False, **state):
@@ -2633,6 +2542,9 @@ class Pipeline(StateModel):
             Apply baseline correction using this period in source space.
             True to use the epoch's baseline specification. The default is to
             not apply baseline correction.
+        disconnect_labels : bool
+            Disconnect cluster adjacency across labels from the current
+            ``parc`` state.
         surf : str
             Surface on which to plot data.
         views : str | tuple of str
@@ -2696,6 +2608,7 @@ class Pipeline(StateModel):
             cat = None
 
         state.update(model=model)
+        self._current_source_parc(**state)
         with self._temporary_state:
             subject, group = self._process_subject_arg(subjects, state)
             if dst is not None:
@@ -2710,6 +2623,7 @@ class Pipeline(StateModel):
                 'group': group,
                 'baseline': baseline,
                 'src_baseline': src_baseline,
+                'disconnect_labels': disconnect_labels,
                 'cat': cat,
                 'p': p,
                 'pmin': pmin,
@@ -3003,8 +2917,7 @@ class Pipeline(StateModel):
     def make_report(
             self,
             test: str,
-            parc: str = None,
-            mask: str = None,
+            disconnect_labels: bool = False,
             pmin: str = None,
             tstart: float = None,
             tstop: float = None,
@@ -3021,22 +2934,10 @@ class Pipeline(StateModel):
         ----------
         test
             Test for which to create a report (entry in Pipeline.tests).
-        parc
-            Run the test separately in each label of parc.
-
-            .. Warning::
-                Results from spatio-temporal tests using ``parc`` are not
-                corrected for multiple comparisons. You must manually correct
-                for multiple comparisons based on the number of labels in
-                ``parc`` before interpreting *p*-values.
-
-        mask
-            Parcellation to use as anatomical mask in which to perform the test.
-            Discard data that is labeled ``unknown`` by the parcellation (default ``False``).
-            Use ``mask=True`` to use the parcellation in the :ref:`state-parc` state parameter.
-            ``mask`` can also be set to a parcellation name (:class:`str`) to specify a
-            parcellation to use directly.
-            Only applies when ``ndvar=True``.
+        disconnect_labels
+            Disconnect source-space cluster adjacency across labels from the
+            current ``parc`` state instead of running one masked whole-brain
+            source test.
         pmin
             Equivalent p-value for cluster threshold, or 'tfce' for
             threshold-free cluster enhancement.
@@ -3074,6 +2975,7 @@ class Pipeline(StateModel):
             raise ValueError(f"{include=}: needs to be 0 < include <= 1")
 
         self.set(**state)
+        self._current_source_parc(**state)
         data = TestDims('source', morph=True)
         options = {
             'data': data,
@@ -3081,18 +2983,17 @@ class Pipeline(StateModel):
             'test': test,
             'baseline': baseline,
             'src_baseline': src_baseline,
+            'disconnect_labels': disconnect_labels,
             'pmin': pmin,
             'tstart': tstart,
             'tstop': tstop,
-            'parc': parc,
-            'mask': mask,
             'include': include,
         }
         if not redo and self._derivatives.resolve('source-report', state=self._derivative_state(), options=options).is_valid():
             return
         self._load_derivative('source-report', options=options, controls={ALLOW_PROTECTED_OVERWRITE})
 
-    def make_report_rois(self, test, parc=None, pmin=None, tstart=None, tstop=None,
+    def make_report_rois(self, test, pmin=None, tstart=None, tstop=None,
                          samples=10000, baseline=True, src_baseline=False,
                          redo=False, **state):
         """Create an HTML report on ROI time courses
@@ -3101,8 +3002,6 @@ class Pipeline(StateModel):
         ----------
         test : str
             Test for which to create a report (entry in Pipeline.tests).
-        parc : str
-            Parcellation that defines ROIs.
         pmin : None | scalar, 1 > pmin > 0 | 'tfce'
             Equivalent p-value for cluster threshold, or 'tfce' for
             threshold-free cluster enhancement.
@@ -3138,11 +3037,7 @@ class Pipeline(StateModel):
         elif isinstance(test_obj, TwoStageTest):
             raise NotImplementedError("ROI analysis not implemented for two-stage tests")
 
-        if parc is not None:
-            state['parc'] = parc
-        parc = self.get('parc', **state)
-        if not parc:
-            raise ValueError("No parcellation specified")
+        self._current_source_parc(**state)
         data = TestDims('source.mean')
         options = {
             'data': data,
@@ -3153,7 +3048,6 @@ class Pipeline(StateModel):
             'pmin': pmin,
             'tstart': tstart,
             'tstop': tstop,
-            'parc': parc,
         }
         if not redo and self._derivatives.resolve('roi-report', state=self._derivative_state(), options=options).is_valid():
             return
@@ -3851,6 +3745,8 @@ class Pipeline(StateModel):
         return '*'  # if a named epoch is not in _epochs it might be a removed epoch
 
     def _eval_parc(self, parc):
+        if not parc:
+            return ''
         if parc in self._parcs:
             if isinstance(self._parcs[parc], SeededParc):
                 raise ValueError(f"Seeded parc set without size, use e.g. parc='{parc}-25'")
@@ -3876,13 +3772,7 @@ class Pipeline(StateModel):
         params : dict | None
             The parc definition (``None`` for ``parc=''``).
         """
-        parc = self.get('parc')
-        if parc == '':
-            return '', None
-        elif parc in self._parcs:
-            return parc, self._parcs[parc]
-        else:
-            return parc, self._parcs[SEEDED_PARC_RE.match(parc).group(1)]
+        return _resolve_parc(self._parcs, self.get('parc'))
 
     def _post_set_test(self, _, test):
         if test != '*' and test in self.tests:  # with vmatch=False, test object might not be availale

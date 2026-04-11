@@ -246,13 +246,12 @@ def eval_src(src: str) -> str:
     return src
 
 
-def _selected_parc(
-        ctx: Request,
-        mask: bool | str = False,
-) -> str | None:
-    parc = ctx.options['parc'] or ctx.state['parc'] or None
-    if isinstance(mask, str):
-        return mask
+def _source_parc(state: dict[str, Any]) -> str | None:
+    if state['src'].startswith('vol'):
+        return None
+    parc = state['parc']
+    if not parc:
+        raise ValueError("Surface source-space workflows require state parc to be set")
     return parc
 
 
@@ -617,7 +616,7 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
         InverseSolution._coerce(ctx.state['inv'])._save_operator(path, value)
 
 
-def _mask_ndvar(y: NDVar):
+def _drop_unknown_labels(y: NDVar):
     if y.source.parc is None:
         raise RuntimeError(f'{y} has no parcellation')
     mask = y.source.parc.startswith('unknown')
@@ -652,7 +651,7 @@ class SourceProjection:
     source_morph: SourceMorph | None
     set_subject: str | None
     parc: str | None
-    mask_after_ndvar: bool
+    remove_unknown_after_ndvar: bool
     stc_key: str
     src_key: str
 
@@ -673,11 +672,11 @@ class SourceProjection:
             ]
         else:
             src_value = self.solution._to_ndvar(stc_value, self.target_subject, ctx.state['src'], self.subjects_dir, parc=self.parc, adjacency=ctx.state['adjacency'])
-        if self.mask_after_ndvar:
+        if self.remove_unknown_after_ndvar:
             if variable_time:
-                src_value = [_mask_ndvar(value) for value in src_value]
+                src_value = [_drop_unknown_labels(value) for value in src_value]
             else:
-                src_value = _mask_ndvar(src_value)
+                src_value = _drop_unknown_labels(src_value)
         ds[self.stc_key] = stc_value
         ds[self.src_key] = src_value
 
@@ -685,7 +684,6 @@ class SourceProjection:
 def _prepare_source_projection(
         ctx: Request,
         fiff: Any,
-        mask: bool | str,
         morph: bool | None,
         solution: InverseSolution,
 ) -> SourceProjection:
@@ -694,14 +692,14 @@ def _prepare_source_projection(
     source_subject = find_source_subject(mrisubject, subjects_dir) or mrisubject
     is_scaled = source_subject != mrisubject
     target_subject = ctx.state['common_brain'] if morph else mrisubject
-    parc = _selected_parc(ctx, mask)
+    parc = _source_parc(ctx.state)
     if parc:
         ctx.load('annot', state={'mrisubject': target_subject, 'parc': parc})
-        if mask and (is_scaled or not morph) and source_subject != target_subject:
+        if (is_scaled or not morph) and source_subject != target_subject:
             ctx.load('annot', state={'mrisubject': source_subject, 'parc': parc})
 
     operator = ctx.load('inv', options={'fiff': fiff})
-    if mask and (is_scaled or not morph):
+    if parc and (is_scaled or not morph):
         label = label_from_annot(operator['src'], source_subject, subjects_dir, parc)
     else:
         label = None
@@ -710,7 +708,7 @@ def _prepare_source_projection(
     set_subject = None
     stc_key = 'stc'
     src_key = 'src'
-    mask_after_ndvar = False
+    remove_unknown_after_ndvar = False
     if morph:
         target_subject = ctx.state['common_brain']
         stc_key = 'stcm'
@@ -720,7 +718,7 @@ def _prepare_source_projection(
             set_subject = ctx.state['common_brain']
         else:
             source_morph = ctx.load('source-morph', state={'mrisubject': subject_from})
-        mask_after_ndvar = bool(mask and not is_scaled)
+        remove_unknown_after_ndvar = bool(parc and not is_scaled)
 
     return SourceProjection(
         solution,
@@ -731,7 +729,7 @@ def _prepare_source_projection(
         source_morph,
         set_subject,
         parc,
-        mask_after_ndvar,
+        remove_unknown_after_ndvar,
         stc_key,
         src_key,
     )
@@ -747,14 +745,14 @@ def _apply_source_baseline(stc_value, baseline) -> None:
 
 def _source_dependencies(ctx: Request, sensor_dependency: Dependency) -> tuple[Dependency, ...]:
     deps = [sensor_dependency, Dependency('inv')]
-    parc = _selected_parc(ctx, ctx.options['mask'])
+    parc = _source_parc(ctx.state)
     if parc:
         subjects_dir = mri_sdir(ctx.state)
         mrisubject = ctx.state['mrisubject']
         source_subject = find_source_subject(mrisubject, subjects_dir) or mrisubject
         target_subject = ctx.state['common_brain'] if ctx.options['morph'] else mrisubject
         deps.append(Dependency('annot', state={'mrisubject': target_subject, 'parc': parc}))
-        if ctx.options['mask'] and (source_subject != mrisubject or not ctx.options['morph']) and source_subject != target_subject:
+        if (source_subject != target_subject) and (source_subject != mrisubject or not ctx.options['morph']):
             deps.append(Dependency('annot', label='source', state={'mrisubject': source_subject, 'parc': parc}))
     if ctx.options['morph'] and (ctx.state['common_brain'] if is_fake_mri(mri_dir(ctx.state)) else ctx.state['mrisubject']) != ctx.state['common_brain']:
         deps.append(Dependency('source-morph'))
@@ -776,8 +774,6 @@ class EpochsStcDerivative(Derivative[Dataset]):
         Whether to keep the sensor epochs alongside source output.
     morph
         Whether to morph source data to the common brain.
-    mask
-        Optional source-space mask/parcellation to apply.
     data_raw
         Whether to keep raw objects in the dataset info.
     samplingrate
@@ -794,7 +790,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
     name = 'epochs-stc'
     key_fields = (
         'subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw',
-        'epoch', 'rej', 'cov', 'mrisubject', 'src', 'inv',
+        'epoch', 'rej', 'cov', 'mrisubject', 'src', 'inv', 'parc',
     )
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
     cache_suffix = '.pickle'
@@ -802,9 +798,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
         'baseline': False,
         'src_baseline': False,
         'cat': None,
-        'parc': None,
         'morph': None,
-        'mask': False,
         'samplingrate': None,
         'decim': None,
         'pad': 0,
@@ -836,7 +830,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
         epochs_value = ds['epochs']
         epoch_list = epochs_value if isinstance(epochs_value, Datalist) else [epochs_value]
         variable_time = isinstance(epochs_value, Datalist)
-        projection = _prepare_source_projection(ctx, epoch_list[0], ctx.options['mask'], ctx.options['morph'], solution)
+        projection = _prepare_source_projection(ctx, epoch_list[0], ctx.options['morph'], solution)
         stc_value = [solution._apply_epochs(epoch_obj, projection.operator, label=projection.label) for epoch_obj in epoch_list]
         if variable_time:
             stc_value = [value[0] for value in stc_value]
@@ -910,8 +904,6 @@ class EvokedStcDerivative(Derivative[Dataset]):
         Whether to keep the sensor evoked data alongside source output.
     morph
         Whether to morph source data to the common brain.
-    mask
-        Optional source-space mask/parcellation to apply.
     data_raw
         Whether to keep raw objects in the dataset info.
     samplingrate
@@ -925,7 +917,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
     key_fields = (
         'subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw',
         'epoch', 'rej', 'model', 'equalize_evoked_count', 'cov', 'mrisubject',
-        'src', 'inv',
+        'src', 'inv', 'parc',
     )
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
     cache_suffix = '.pickle'
@@ -933,9 +925,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
         'baseline': False,
         'src_baseline': False,
         'cat': None,
-        'parc': None,
         'morph': False,
-        'mask': False,
         'samplingrate': None,
         'decim': None,
     }
@@ -961,7 +951,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
             raise NotImplementedError(f"{src_baseline=}: post_baseline_trigger_shift is not implemented for baseline correction in source space")
         if src_baseline is True:
             src_baseline = epoch.baseline
-        projection = _prepare_source_projection(ctx, ds['evoked'][0], ctx.options['mask'], ctx.options['morph'], solution)
+        projection = _prepare_source_projection(ctx, ds['evoked'][0], ctx.options['morph'], solution)
         stc_value = [solution._apply_evoked(evoked, projection.operator) for evoked in ds['evoked']]
         _apply_source_baseline(stc_value, src_baseline)
         stc_value = projection.morph_stcs(stc_value)
@@ -1030,10 +1020,10 @@ class EpochsStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
         group = ctx.state['group']
         if group in (None, '', '*'):
             raise RuntimeError(f"{self.name!r} requires an explicit group")
-        return ctx.registry.canonicalize({'group': group, 'options': ctx.registry.canonicalize(ctx.options)})
+        return ctx.registry.canonicalize({'group': group, 'parc': ctx.state['parc'], 'options': ctx.registry.canonicalize(ctx.options)})
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(ctx, state_fields=('group',))
+        return self.standard_fingerprint(ctx, state_fields=('group', 'parc'))
 
     def _group_options(self, ctx: Request) -> dict[str, Any]:
         data_raw = ctx.options['data_raw']
@@ -1089,10 +1079,10 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
         group = ctx.state['group']
         if group in (None, '', '*'):
             raise RuntimeError(f"{self.name!r} requires an explicit group")
-        return ctx.registry.canonicalize({'group': group, 'options': ctx.registry.canonicalize(ctx.options)})
+        return ctx.registry.canonicalize({'group': group, 'parc': ctx.state['parc'], 'options': ctx.registry.canonicalize(ctx.options)})
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(ctx, state_fields=('group',))
+        return self.standard_fingerprint(ctx, state_fields=('group', 'parc'))
 
     def _group_options(self, ctx: Request) -> dict[str, Any]:
         morph = ctx.options['morph']

@@ -35,10 +35,9 @@ def _test_result_manifest_path(
         node: str = 'test-result',
         samples: int,
         data: str,
+        disconnect_labels: bool = False,
         baseline=True,
         src_baseline=None,
-        parc=None,
-        mask=None,
         smooth=None,
         samplingrate=None,
 ) -> Path:
@@ -49,8 +48,7 @@ def _test_result_manifest_path(
         'tstart': tstart,
         'tstop': tstop,
         'pmin': pmin,
-        'parc': parc,
-        'mask': mask,
+        'disconnect_labels': disconnect_labels,
         'baseline': baseline,
         'src_baseline': src_baseline,
         'smooth': smooth,
@@ -140,8 +138,6 @@ def test_sample():
             'tstart': 0.05,
             'tstop': 0.2,
             'pmin': 0.05,
-            'parc': None,
-            'mask': None,
             'baseline': False,
             'src_baseline': None,
             'smooth': None,
@@ -477,28 +473,32 @@ def test_sample_source():
     e = SampleExperiment(root)
 
     # source space tests
-    e.set(src='ico-4', rej='', epoch='auditory')
+    e.set(src='ico-4', rej='', epoch='auditory', parc='ac')
     morph = e.load_source_morph(subject='R0000')
     assert isinstance(morph, mne.SourceMorph)
     assert exists(e._derivatives.resolve('source-morph', state=e._derivative_state({'subject': 'R0000'})).manifest_path)
-    # These two tests are only identical if the evoked has been cached before the first test is loaded
-    resp = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, parc='ac', make=True)
-    resm = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, mask='ac', make=True)
+    res = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, make=True)
+    res_labels = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, disconnect_labels=True, make=True)
     assert exists(e._derivatives.resolve('src', state=e._derivative_state()).manifest_path)
     assert exists(e._derivatives.resolve('fwd', state=e._derivative_state()).manifest_path)
     assert exists(e._derivatives.resolve('inv', state=e._derivative_state()).manifest_path)
-    with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=100, data='source', parc='ac')) as fid:
+    with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=100, data='source')) as fid:
         source_manifest_data = json.load(fid)
+    with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=100, data='source', disconnect_labels=True)) as fid:
+        disconnected_manifest_data = json.load(fid)
     assert source_manifest_data['fingerprint']['definitions']['parc']['base'] == 'aparc'
+    assert source_manifest_data['fingerprint']['state']['parc'] == 'ac'
     assert 'dependencies' not in source_manifest_data['fingerprint']
     assert 'evoked-test-data' in source_manifest_data['dependencies']
     assert 'evoked-stc-group-dataset' in source_manifest_data['dependencies']['evoked-test-data']['dependencies']
     assert set(source_manifest_data['dependencies']['evoked-test-data']['dependencies']['evoked-stc-group-dataset']['dependencies']) == {'R0000', 'R0001', 'R0002'}
-    assert_dataobj_equal(resp.t, resm.t)
+    assert source_manifest_data['fingerprint']['options']['disconnect_labels'] is False
+    assert disconnected_manifest_data['fingerprint']['options']['disconnect_labels'] is True
+    assert_dataobj_equal(res.t, res_labels.t)
     # ROI tests
     e.set(epoch='target')
-    ress = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, data='source.rms', parc='ac', make=True)
-    with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=100, data='source.rms', parc='ac')) as fid:
+    ress = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, data='source.rms', make=True)
+    with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=100, data='source.rms')) as fid:
         roi_manifest_data = json.load(fid)
     assert 'evoked-test-data' in roi_manifest_data['dependencies']
     roi_deps = roi_manifest_data['dependencies']['evoked-test-data']['dependencies']
@@ -506,8 +506,10 @@ def test_sample_source():
     assert all(roi_deps[subject]['name'] == 'evoked-stc' for subject in roi_deps)
     res = ress.res['transversetemporal-lh']
     assert res.p.min() == 1 / 7
-    ress = e.load_test('twostage', 0.05, 0.2, 0.05, samples=100, data='source.rms', parc='ac', make=True)
-    with open(_test_result_manifest_path(e, 'twostage', 0.05, 0.2, 0.05, node='two-stage-level-2', samples=100, data='source.rms', parc='ac')) as fid:
+    with pytest.raises(TypeError, match='disconnect_labels'):
+        e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, data='source.rms', disconnect_labels=True)
+    ress = e.load_test('twostage', 0.05, 0.2, 0.05, samples=100, data='source.rms', make=True)
+    with open(_test_result_manifest_path(e, 'twostage', 0.05, 0.2, 0.05, node='two-stage-level-2', samples=100, data='source.rms')) as fid:
         two_stage_manifest_data = json.load(fid)
     assert 'two-stage-level-1' in {dep['name'] for dep in two_stage_manifest_data['dependencies'].values()}
     subject_dep = two_stage_manifest_data['dependencies']['R0000']
@@ -528,7 +530,14 @@ def test_sample_source():
         }
 
     with pytest.raises(IOError):
-        ChangedParcExperiment(root).load_test('left=right', 0.05, 0.2, 0.05, samples=100, data='source.rms', parc='ac')
+        changed = ChangedParcExperiment(root)
+        changed.set(parc='ac')
+        changed.load_test('left=right', 0.05, 0.2, 0.05, samples=100, data='source.rms')
+
+    with e._temporary_state:
+        e.set(parc='')
+        with pytest.raises(ValueError, match='state parc'):
+            e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, make=True)
 
 
 @requires_mne_sample_data
@@ -649,8 +658,6 @@ def test_evoked_backed_test_vars_are_post_aggregation_only():
         'test': 'anova-ok',
         'baseline': False,
         'src_baseline': None,
-        'parc': None,
-        'mask': None,
         'smooth': None,
         'samplingrate': None,
     }
@@ -1114,7 +1121,6 @@ def test_source_cache_identity_ignores_view_options():
         'src_baseline': False,
         'cat': None,
         'morph': False,
-        'mask': False,
         'samplingrate': None,
         'decim': None,
         'pad': 0,
@@ -1128,7 +1134,6 @@ def test_source_cache_identity_ignores_view_options():
         'src_baseline': False,
         'cat': None,
         'morph': False,
-        'mask': False,
         'samplingrate': None,
         'decim': None,
         'pad': 0,
@@ -1142,7 +1147,6 @@ def test_source_cache_identity_ignores_view_options():
         'src_baseline': False,
         'cat': None,
         'morph': False,
-        'mask': False,
         'samplingrate': None,
         'decim': None,
         'pad': 0,
@@ -1160,7 +1164,6 @@ def test_source_cache_identity_ignores_view_options():
         'src_baseline': False,
         'cat': None,
         'morph': False,
-        'mask': False,
         'samplingrate': None,
         'decim': None,
         'ndvar': True,
@@ -1172,7 +1175,6 @@ def test_source_cache_identity_ignores_view_options():
         'src_baseline': False,
         'cat': None,
         'morph': False,
-        'mask': False,
         'samplingrate': None,
         'decim': None,
         'ndvar': False,
@@ -1184,7 +1186,6 @@ def test_source_cache_identity_ignores_view_options():
         'src_baseline': False,
         'cat': None,
         'morph': False,
-        'mask': False,
         'samplingrate': None,
         'decim': None,
         'ndvar': True,
