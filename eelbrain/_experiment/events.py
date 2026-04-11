@@ -108,7 +108,7 @@ class EventsDerivative(Derivative[Dataset]):
             ds[:, 'task'] = entities['task']
         if self.multi_session:
             ds[:, 'session'] = entities['session']
-        self._variables.apply(ds, self._groups)
+        self._variables._apply(ds, self._groups)
         info = ds.info
         ds = _check_ds(self.label_events_impl(self, ds), f'{self.owner_name}.label_events()', info)
 
@@ -184,7 +184,7 @@ class SelectedEventsDerivative(Derivative[Dataset]):
         if view != 'epochs':
             raise ValueError(f"{self.name!r} does not define dependency view {view!r}")
         ds = self.build(ctx)
-        return {'i_start': ds['i_start'].x.tolist()}
+        return {'i_start': ctx.registry.canonicalize(ds['i_start'])}
 
     def _build_selected_events(
             self,

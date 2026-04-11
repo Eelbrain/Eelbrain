@@ -3,6 +3,7 @@ import logging
 
 import pytest
 
+from eelbrain._data_obj import Factor, Interaction, Var
 from eelbrain._experiment import test_def
 from eelbrain._experiment.configuration import Configuration, ConfigurationError, find_dependent_epochs, find_epoch_vars, find_epochs_vars, sequence_arg
 from eelbrain._experiment.derivative_cache import DerivativeRegistry
@@ -121,6 +122,15 @@ def test_config_canonicalization_and_variables():
     test = test_def.ANOVA('x*subject', vars={'x': EvalVar('a + b', task='task-a')})
     canonical_test = registry.canonicalize(test._as_dict())
     assert canonical_test['vars'] == {'x': {'task': 'task-a', 'code': 'a + b'}}
+
+
+def test_canonicalize_data_objects():
+    root = TempDir()
+    registry = DerivativeRegistry(root, logging.getLogger('eelbrain.test.config'))
+
+    assert registry.canonicalize(Var([1, 2])) == [1, 2]
+    assert registry.canonicalize(Factor(['a', 'b'], random=True)) == ['a', 'b']
+    assert registry.canonicalize(Interaction([Factor(['a', 'b']), Factor(['x', 'y'])])) == [['a', 'x'], ['b', 'y']]
 
 
 def test_vardef_semantic_identity():

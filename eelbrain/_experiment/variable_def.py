@@ -28,10 +28,10 @@ class VarDef(Configuration):
     def __init__(self, task):
         self.task = task
 
-    def apply(self, ds, groups):
+    def _apply(self, ds, groups):
         raise NotImplementedError
 
-    def input_vars(self):
+    def _input_vars(self):
         raise NotImplementedError
 
 
@@ -59,10 +59,10 @@ class EvalVar(VarDef):
     def __repr__(self):
         return f"EvalVar({self.code!r})"
 
-    def apply(self, ds, groups):
+    def _apply(self, ds, groups):
         return asuv(self.code, data=ds)
 
-    def input_vars(self):
+    def _input_vars(self):
         return find_variables(self.code)
 
 
@@ -128,7 +128,7 @@ class LabelVar(VarDef):
     def __repr__(self):
         return f"{self.__class__.__name__}({self.source!r}, {self.codes})"
 
-    def apply(self, ds, groups):
+    def _apply(self, ds, groups):
         source = ds.eval(self.source)
         if self.fnmatch:
             labels = {}
@@ -143,7 +143,7 @@ class LabelVar(VarDef):
         else:
             return Var.from_dict(source, labels, default=self.default)
 
-    def input_vars(self):
+    def _input_vars(self):
         return find_variables(self.source)
 
 
@@ -185,11 +185,11 @@ class GroupVar(VarDef):
     def __repr__(self):
         return f"GroupVar({self.groups!r})"
 
-    def apply(self, ds, groups):
+    def _apply(self, ds, groups):
         return label_groups(ds['subject'], self.groups, groups)
 
     @classmethod
-    def from_string(cls, string):
+    def _from_string(cls, string):
         groups = {}
         for item in string.split(','):
             if ':' in item:
@@ -201,7 +201,7 @@ class GroupVar(VarDef):
             groups = tuple(sorted(groups))
         return cls(groups)
 
-    def input_vars(self):
+    def _input_vars(self):
         return ()
 
 
@@ -215,7 +215,7 @@ def _parse_named_vardef(string):
 def _parse_vardef(string):
     string = string.strip()
     if string.startswith('group:'):
-        return GroupVar.from_string(string[6:])
+        return GroupVar._from_string(string[6:])
     else:
         return EvalVar(string)
 
@@ -281,13 +281,13 @@ class Variables(Configuration):
     def __bool__(self):
         return bool(self.vars)
 
-    def apply(self, ds, groups, group_only=False):
+    def _apply(self, ds, groups, group_only=False):
         task = ds.info.get('task', None)
         for name, vdef in self.vars.items():
             if group_only and not isinstance(vdef, GroupVar):
                 continue
             elif vdef.task is None or vdef.task == task:
-                ds[name] = vdef.apply(ds, groups)
+                ds[name] = vdef._apply(ds, groups)
 
 
 def apply_vardef(
@@ -299,7 +299,7 @@ def apply_vardef(
     if isinstance(vardef, str):
         vardef = tests[vardef].vars
     if vardef:
-        vardef.apply(ds, groups)
+        vardef._apply(ds, groups)
 
 
 def label_groups(subject, groups, subject_groups):

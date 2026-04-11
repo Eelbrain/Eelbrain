@@ -210,13 +210,13 @@ def make_result_test(
     if isinstance(y, str):
         y = ds.eval(y)
     if isinstance(y, Var):
-        return test_obj.make_uv(y, ds)
+        return test_obj._make_uv(y, ds)
     if isinstance(y, list):
         dim = 'sensor' if y[0].has_dim('sensor') else 'source'
-        return test_obj.make_uv(combine([getattr(yi, 'mean')(dim) for yi in y]), ds)
+        return test_obj._make_uv(combine([getattr(yi, 'mean')(dim) for yi in y]), ds)
     if isinstance(y, NDVar) and y.has_dim('space'):
-        return test_obj.make_vec(y, ds, force_permutation, kwargs)
-    return test_obj.make(y, ds, force_permutation, kwargs)
+        return test_obj._make_vec(y, ds, force_permutation, kwargs)
+    return test_obj._make(y, ds, force_permutation, kwargs)
 
 
 def _validate_post_aggregation_test_vars(test_obj: Test, data_desc: str):
@@ -607,8 +607,6 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         test_obj = self.tests[ctx.options['test']]
         samplingrate = ctx.options['samplingrate']
         mask = self._resolved_mask(ctx)
-        if test_obj.kind == 'two-stage':
-            return ()
 
         if data.sensor:
             if ctx.state['group'] not in (None, '', '*'):
@@ -635,8 +633,6 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
     def build(self, ctx: Request) -> Dataset | ROIData:
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
-        if test_obj.kind == 'two-stage':
-            raise RuntimeError(f"{self.name!r} does not handle two-stage tests")
         if test_obj.vars:
             _validate_post_aggregation_test_vars(test_obj, data.string)
 
@@ -691,14 +687,10 @@ class TestResultDerivative(ResultOutputDerivative):
         return join_stem_parts(self.path_stem(ctx), f'samples-{ctx.options["samples"]}') if ctx.options['samples'] is not None else self.path_stem(ctx)
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        if self.tests[ctx.options['test']].kind == 'two-stage':
-            return ()
         return (Dependency('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES)),)
 
     def build(self, ctx: Request):
         test_obj = self.tests[ctx.options['test']]
-        if test_obj.kind == 'two-stage':
-            raise RuntimeError(f"{self.name!r} does not handle two-stage tests")
         data = ctx.options['data']
         parc = ctx.options['parc']
         mask = ctx.options['mask']

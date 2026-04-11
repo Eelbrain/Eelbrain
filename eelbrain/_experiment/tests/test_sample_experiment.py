@@ -73,6 +73,9 @@ def test_sample():
     assert e.get('raw') == '1-40'
     assert e.get('subject') == 'R0000'
     assert e.get('subject', subject='R0002') == 'R0002'
+    assert e._raw['raw'].name == 'raw'
+    assert e._parcs['ac'].name == 'ac'
+    assert e._parcs['lobes'].name == 'lobes'
     tree = e.show_dependencies('evoked', return_str=True)
     assert 'evoked [derivative]' in tree
     assert 'epochs [derivative]' in tree
@@ -307,6 +310,11 @@ def test_sample():
         groups = {'group': ('R0002', 'R0000', 'R0001')}
     e = Experiment(root)
     assert [s for s in e] == ['R0000', 'R0001', 'R0002']
+
+    class BadExperiment(SampleExperiment):
+        parcs = {'ac': 'aparc'}
+    with pytest.raises(TypeError, match="need Parcellation"):
+        BadExperiment(root)
 
     # changes
     class Changed(SampleExperiment):
@@ -707,7 +715,7 @@ def test_evoked_cache_reuse():
     manifest_path = handle.manifest_path
     assert manifest_path.exists()
     manifest = json.loads(manifest_path.read_text())
-    assert manifest['dependencies']['epochs']['view'] == 'evoked'
+    assert manifest['dependencies']['epochs']['view'] == 'shell'
     mtimes_1 = (evoked_path.stat().st_mtime_ns, manifest_path.stat().st_mtime_ns)
 
     _ = e.load_evoked(ndvar=False)

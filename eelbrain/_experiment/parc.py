@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 import os
 from pathlib import Path
 import re
@@ -31,11 +30,6 @@ class Parcellation(Configuration):
             views: str | Sequence[str] = None,
     ):
         self.views = views
-
-    def _link(self, name):
-        out = deepcopy(self)
-        out.name = name
-        return out
 
     def _make(
             self,
@@ -387,7 +381,7 @@ class SeededParc(Parcellation):
         self.mask = mask
         self.surface = surface
 
-    def seeds_for_subject(self, subject):
+    def _seeds_for_subject(self, subject):
         return self.seeds
 
     def _make(self, ctx: Request, annot: AnnotDerivative, parc: str):
@@ -395,7 +389,7 @@ class SeededParc(Parcellation):
             annot.ensure_annot(ctx, parc=self.mask)
         subject = ctx.state['mrisubject']
         subjects_dir = mri_sdir(ctx.state)
-        seeds = self.seeds_for_subject(subject)
+        seeds = self._seeds_for_subject(subject)
         name, extent = SEEDED_PARC_RE.match(parc).groups()
         return labels_from_mni_coords(seeds, float(extent), subject, self.surface, self.mask, subjects_dir, parc)
 
@@ -439,7 +433,7 @@ class IndividualSeededParc(SeededParc):
             raise ConfigurationError("Some labels are missing subjects")
         self.subjects = subjects
 
-    def seeds_for_subject(self, subject):
+    def _seeds_for_subject(self, subject):
         if subject not in self.subjects:
             raise ConfigurationError(f"Parcellation {self.name} not defined for subject {subject}")
         seeds = {name: self.seeds[name][subject] for name in self.seeds}
@@ -645,34 +639,3 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
 class VolumeParc(Parcellation):
     "Assume it exists"
     kind = 'volume'
-
-
-def parc_from_dict(name, params):
-    p = params.copy()
-    kind = p.pop('kind', None)
-    if kind is None:
-        raise KeyError(f"Parcellation {name} does not contain the required 'kind' entry")
-    elif kind not in PARC_CLASSES:
-        raise ValueError(f"Parcellation {name} contains an invalid 'kind' entry: {kind!r}")
-    cls = PARC_CLASSES[kind]
-    return cls(**p)
-
-
-PARC_CLASSES = {p.kind: p for p in (CombinationParc, FreeSurferParc, FSAverageParc, SeededParc, IndividualSeededParc)}
-
-
-def assemble_parcs(items):
-    parcs = {}
-    for name, obj in items:
-        if isinstance(obj, Parcellation):
-            parc = obj
-        elif isinstance(obj, dict):
-            parc = parc_from_dict(name, obj)
-        elif obj == FreeSurferParc.kind:
-            parc = FreeSurferParc(('lateral', 'medial'))
-        elif obj == FSAverageParc.kind:
-            parc = FSAverageParc(('lateral', 'medial'))
-        else:
-            raise ConfigurationError(f"parcellation {name!r}: {obj!r}")
-        parcs[name] = parc._link(name)
-    return parcs

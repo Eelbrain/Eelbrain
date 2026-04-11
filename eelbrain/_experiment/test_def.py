@@ -37,7 +37,7 @@ def tail_arg(tail):
 
 
 class Test(Configuration):
-    "Baseclass for any test"
+    """Base class for test definitions."""
     kind = None
     DICT_ATTRS = ('kind', 'model', 'vars')
 
@@ -70,18 +70,18 @@ class Test(Configuration):
         for name, variable in self.vars.vars.items():
             if name in vs:
                 vs.remove(name)
-                vs.update(variable.input_vars())
+                vs.update(variable._input_vars())
                 if isinstance(variable, GroupVar):
                     groups.update(variable.groups)
         return vs, groups
 
-    def make(self, y, ds, force_permutation, kwargs):
+    def _make(self, y, ds, force_permutation, kwargs):
         raise NotImplementedError(f"For {self.__class__.__name__}")
 
-    def make_vec(self, y, ds, force_permutation, kwargs):
+    def _make_vec(self, y, ds, force_permutation, kwargs):
         raise NotImplementedError(f"Vector test for {self.__class__.__name__}")
 
-    def make_uv(self, y, ds):
+    def _make_uv(self, y, ds):
         raise NotImplementedError(f"UV sets for {self.__class__.__name__}")
 
 
@@ -107,15 +107,15 @@ class TTestOneSample(Test):
         Test.__init__(self, desc, '')
         self.tail = tail
 
-    def make(self, y, ds, force_permutation, kwargs):
+    def _make(self, y, ds, force_permutation, kwargs):
         return testnd.TTestOneSample(y, match='subject', data=ds, tail=self.tail, force_permutation=force_permutation, **kwargs)
 
-    def make_vec(self, y, ds, force_permutation, kwargs):
+    def _make_vec(self, y, ds, force_permutation, kwargs):
         if self.tail:
             raise ValueError("Vector-tests cannot be tailed")
         return testnd.Vector(y, match='subject', data=ds, **kwargs)
 
-    def make_uv(self, y, ds):
+    def _make_uv(self, y, ds):
         return test.TTestOneSample(y, match='subject', data=ds, tail=self.tail)
 
 
@@ -174,10 +174,10 @@ class TTestIndependent(Test):
     def _as_dict(self):
         return {**Test._as_dict(self), 'model': self.between_model}
 
-    def make(self, y, ds, force_permutation, kwargs):
+    def _make(self, y, ds, force_permutation, kwargs):
         return testnd.TTestIndependent(y, self.between_model, self.c1, self.c0, 'subject', data=ds, tail=self.tail, force_permutation=force_permutation, **kwargs)
 
-    def make_uv(self, y, ds):
+    def _make_uv(self, y, ds):
         return test.TTestIndependent(y, self.between_model, self.c1, self.c0, 'subject', data=ds, tail=self.tail)
 
 
@@ -229,15 +229,15 @@ class TTestRelated(Test):
         self.c0 = c0
         self.tail = tail
 
-    def make(self, y, ds, force_permutation, kwargs):
+    def _make(self, y, ds, force_permutation, kwargs):
         return testnd.TTestRelated(y, self.model, self.c1, self.c0, 'subject', data=ds, tail=self.tail, force_permutation=force_permutation, **kwargs)
 
-    def make_vec(self, y, ds, force_permutation, kwargs):
+    def _make_vec(self, y, ds, force_permutation, kwargs):
         if self.tail:
             raise ValueError("Vector-tests cannot be tailed")
         return testnd.VectorDifferenceRelated(y, self.model, self.c1, self.c0, 'subject', data=ds, force_permutation=force_permutation, **kwargs)
 
-    def make_uv(self, y, ds):
+    def _make_uv(self, y, ds):
         return test.TTestRelated(y, self.model, self.c1, self.c0, 'subject', data=ds, tail=self.tail)
 
 
@@ -279,7 +279,7 @@ class TContrastRelated(Test):
         self.contrast = contrast
         self.tail = tail
 
-    def make(self, y, ds, force_permutation, kwargs):
+    def _make(self, y, ds, force_permutation, kwargs):
         return testnd.TContrastRelated(y, self.model, self.contrast, 'subject', data=ds, tail=self.tail, force_permutation=force_permutation, **kwargs)
 
 
@@ -339,10 +339,10 @@ class ANOVA(Test):
         Test.__init__(self, desc, model, vars=vars, depend_on=between_items)
         self.x = '*'.join(x_items)
 
-    def make(self, y, ds, force_permutation, kwargs):
+    def _make(self, y, ds, force_permutation, kwargs):
         return testnd.ANOVA(y, self.x, data=ds, force_permutation=force_permutation, **kwargs)
 
-    def make_uv(self, y, ds):
+    def _make_uv(self, y, ds):
         return test.ANOVA(y, self.x, data=ds)
 
 

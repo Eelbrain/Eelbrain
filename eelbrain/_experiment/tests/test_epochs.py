@@ -3,6 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from eelbrain._exceptions import ConfigurationError
+from eelbrain._experiment.epochs import assemble_epochs
 from eelbrain._data_obj import Dataset, Var
 from eelbrain.pipeline import PrimaryEpoch, SecondaryEpoch, SuperEpoch, EpochCollection, ContinuousEpoch
 
@@ -22,14 +24,15 @@ def test_epoch_repr():
 
 def test_prepare_continuous_epoch_dataset():
     epoch = ContinuousEpoch('task', 'stim == 1', pad_start=0.1, pad_end=0.2, split=0.5, samplingrate=200)
+    assert 'name' not in epoch._as_dict()
     ds = Dataset({
         'time': Var([0.0, 0.1, 0.2, 1.0, 1.1]),
         'i_start': Var([0, 100, 200, 1000, 1100]),
     })
     ds.info['sfreq'] = 1000
     ds.info['raw'] = SimpleNamespace(info={'sfreq': 1000})
-    ds = epoch.prepare_selected_events(ds, 'R0001')
-    tmin, tmax, tstop, baseline, decim, variable_tmax = epoch.extraction_parameters(
+    ds = epoch._prepare_selected_events(ds, 'R0001')
+    tmin, tmax, tstop, baseline, decim, variable_tmax = epoch._extraction_parameters(
         ds,
         {
             'baseline': False,
@@ -51,3 +54,62 @@ def test_prepare_continuous_epoch_dataset():
     assert decim == 5
     assert variable_tmax is True
     assert 'T_relative' in ds[0, 'events']
+
+
+def test_assemble_epochs_requires_epoch_objects():
+    with pytest.raises(TypeError, match='need an epoch definition'):
+        assemble_epochs({'target': {'task': 'sample'}})
+
+
+def test_assemble_epochs_requires_distinct_epoch_objects():
+    epoch = PrimaryEpoch('task')
+    with pytest.raises(TypeError, match='reuses the same epoch object'):
+        assemble_epochs({'a': epoch, 'b': epoch})
+
+
+def test_assemble_epochs_stores_dependent_parameters():
+    epochs = assemble_epochs({
+        'a': PrimaryEpoch('task-a'),
+        'b': PrimaryEpoch('task-b'),
+        'a-sub': SecondaryEpoch('a'),
+        'ab': SuperEpoch(('a', 'b')),
+        'collection': EpochCollection(('a', 'b')),
+        'cont': ContinuousEpoch('task-c'),
+    })
+
+    primary = epochs['a']
+    assert primary.name == 'a'
+    assert primary.rej_file_epochs == ('a',)
+    assert 'name' not in primary._as_dict()
+
+    secondary = epochs['a-sub']
+    assert secondary.name == 'a-sub'
+    assert secondary.task == 'task-a'
+    assert secondary.tasks == ('task-a',)
+    assert secondary.rej_file_epochs == ('a',)
+    assert 'name' not in secondary._as_dict()
+    assert 'task' not in secondary._as_dict()
+    assert 'tasks' not in secondary._as_dict()
+    assert 'rej_file_epochs' not in secondary._as_dict()
+
+    super_epoch = epochs['ab']
+    assert super_epoch.name == 'ab'
+    assert super_epoch.tasks == ['task-a', 'task-b']
+    assert super_epoch.rej_file_epochs == ['a', 'b']
+    assert 'name' not in super_epoch._as_dict()
+
+    collection = epochs['collection']
+    assert collection.name == 'collection'
+    assert collection.tasks == ['task-a', 'task-b']
+    assert collection.rej_file_epochs == ['a', 'b']
+    assert 'name' not in collection._as_dict()
+
+    continuous = epochs['cont']
+    assert continuous.name == 'cont'
+    assert continuous.rej_file_epochs == ('cont',)
+    assert 'name' not in continuous._as_dict()
+
+
+def test_assemble_epochs_detects_cycles():
+    with pytest.raises(ConfigurationError, match="Can't resolve epoch dependencies"):
+        assemble_epochs({'a': SecondaryEpoch('b'), 'b': SecondaryEpoch('a')})

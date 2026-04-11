@@ -98,11 +98,45 @@ class CodeError(Exception):
 
 class Configuration:
     DICT_ATTRS = None
+    name = None
 
-    def _as_dict(self):
+    def _as_dict(self) -> dict[str, Any]:
+        """Return the serialized semantic definition of this configuration.
+
+        This method is the base ``Configuration`` contract for turning a
+        configuration object into plain Python data. In the experiment graph,
+        the returned mapping is used as the stable definition for:
+
+        - configuration equality (:meth:`Configuration.__eq__`)
+        - cache fingerprints and manifests via
+          :meth:`eelbrain._experiment.derivative_cache.DerivativeRegistry.canonicalize`
+        - explicit derivative ``definitions`` payloads, for example for epoch,
+          test, parcellation, raw-pipe, and inverse-solution fingerprints
+
+        New subclasses should usually implement this by declaring
+        :attr:`DICT_ATTRS`, a tuple of attribute names that fully describes the
+        configuration's semantic definition. The base implementation then
+        returns ``{name: getattr(self, name) for name in self.DICT_ATTRS}``.
+
+        Include in :attr:`DICT_ATTRS` only deterministic definition fields that
+        should affect equality and cache identity. Do not include runtime or
+        graph-dependent fields that are cached later, such as bound names or
+        other dependent parameters populated by configuration-family-specific
+        resolution hooks.
+
+        Returns
+        -------
+        dict
+            Plain Python mapping describing the configuration's semantic
+            definition.
+        """
         if self.DICT_ATTRS is None:
             raise NotImplementedError(f"{self.__class__.__name__}.DICT_ATTRS")
         return {k: getattr(self, k) for k in self.DICT_ATTRS}
+
+    def _store_name(self, name: str) -> None:
+        """Store the bound name for diagnostics and runtime convenience."""
+        self.name = name
 
     def __eq__(self, other):
         if isinstance(other, dict):

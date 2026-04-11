@@ -50,11 +50,11 @@ from .pathing import (
     join_stem_parts, mri_dir, mri_sdir, raw_basename, raw_dir, rej_file_path,
     results_dir, src_file_path, trans_file_path,
 )
-from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, assemble_parcs
+from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc
 from .preprocessing import (
     ICAInput, RawBadChannelsInput, RawDerivative, RawPipe, RawSource, RawSourceInput, RawICA,
-    REINDEX_ICA, get_ica_pipe, get_ica_pipe_name, ica_input_name,
-    raw_bad_channels_input_name, raw_node_name, validate_raw_graph,
+    REINDEX_ICA, assemble_raw_pipes, get_ica_pipe, get_ica_pipe_name,
+    ica_input_name, raw_bad_channels_input_name, raw_node_name,
 )
 from .reports import (
     CoregReportDerivative, EEGReportDerivative, EEGSensorsReportDerivative,
@@ -153,9 +153,6 @@ class Pipeline(StateModel):
     # variables for automatic labeling {name: {trigger: label, triggers: label}}
     variables: dict[str, Any] = {}
 
-    # Default values for epoch definitions
-    epoch_default = {'decim': 5}
-
     # named epochs
     epochs: dict[str, EpochBase] = {}
 
@@ -216,7 +213,7 @@ class Pipeline(StateModel):
     mri_subjects = {'': keydefaultdict(lambda s: s)}
 
     # Parcellations
-    __parcs = {
+    _default_parcs = {
         'aparc.a2005s': FreeSurferParc(),
         'aparc.a2009s': FreeSurferParc(),
         'aparc': FreeSurferParc(),
@@ -350,8 +347,7 @@ class Pipeline(StateModel):
         self._mri_subjects = self.mri_subjects.copy()
 
         # preprocessing
-        self._raw = {'raw': RawSource(), **self.raw}
-        validate_raw_graph(self._raw, self._tasks)
+        self._raw = assemble_raw_pipes({'raw': RawSource(), **self.raw}, self._tasks)
         raw_pipe: RawSource = self._raw['raw']
 
         # legacy adjacency determination
@@ -364,8 +360,7 @@ class Pipeline(StateModel):
         self._variables._check_trigger_vars()
 
         # epochs
-        epoch_default = {'task': self._tasks[0], **self.epoch_default}
-        self._epochs = assemble_epochs(self.epochs, epoch_default)
+        self._epochs = assemble_epochs(self.epochs)
 
         # epoch rejection
         artifact_rejection = {}
@@ -381,7 +376,12 @@ class Pipeline(StateModel):
         # parcellations
         # make : can be made if non-existent
         # morph_from_fraverage : can be morphed from fsaverage to other subjects
-        self._parcs = assemble_parcs(chain(self.__parcs.items(), self.parcs.items()))
+        for name, parc in self.parcs.items():
+            if not isinstance(parc, Parcellation):
+                raise TypeError(f"parcs[{name!r}]={parc!r}: need Parcellation")
+        self._parcs = {**self._default_parcs, **self.parcs}
+        for name, parc in self._parcs.items():
+            parc._store_name(name)
         parc_values = [*self._parcs.keys(), '']
 
         # frequency
@@ -480,7 +480,7 @@ class Pipeline(StateModel):
                     continue
 
                 pipe = self._raw[self.get('raw')]
-                self._raw_samplingrate[key] = pipe.load_info(self._bids_path, self._raw).get('sfreq')
+                self._raw_samplingrate[key] = pipe._load_info(self._bids_path, self._raw).get('sfreq')
 
         # check for digitizer data differences
         # ====================================
@@ -1940,8 +1940,8 @@ class Pipeline(StateModel):
             pipe = self._raw[raw_name]
             data = TestDims('sensor')
             data_kind = data.data_to_ndvar(raw.info)[0]
-            sysname = pipe.get_sysname(raw.info, self.get('subject'), data_kind, self._raw)
-            adjacency = pipe.get_adjacency(data_kind, self._raw)
+            sysname = pipe._get_sysname(raw.info, self.get('subject'), data_kind, self._raw)
+            adjacency = pipe._get_adjacency(data_kind, self._raw)
             raw = load.mne.raw_ndvar(raw, sysname=sysname, adjacency=adjacency)
 
         return raw
@@ -1986,12 +1986,12 @@ class Pipeline(StateModel):
         """
         raw = self.load_raw(samplingrate=samplingrate, tstart=tstart, tstop=tstop, **kwargs)
         inv, label, mri_sdir, mrisubject, is_scaled, parc = self._prepare_inv(raw, mask, morph)
-        solution = InverseSolution.coerce(self.get('inv'))
-        stc = apply_inverse_raw(raw, inv, label=label, **solution.apply_kw)
+        solution = InverseSolution._coerce(self.get('inv'))
+        stc = apply_inverse_raw(raw, inv, label=label, **solution._apply_kw)
 
         if ndvar:
             src = self.get('src')
-            return solution.to_ndvar(stc, mrisubject, src, mri_sdir, parc=parc, adjacency=self.get('adjacency'))
+            return solution._to_ndvar(stc, mrisubject, src, mri_sdir, parc=parc, adjacency=self.get('adjacency'))
         else:
             return stc
 
@@ -2295,7 +2295,7 @@ class Pipeline(StateModel):
         """
         pipe = self._raw[self.get('raw', **kwargs)]
         bids_path = self._bids_path
-        pipe.make_bad_channels(bids_path, bad_chs, redo=redo, noise=noise, pipes=self._raw)
+        pipe._make_bad_channels(bids_path, bad_chs, redo=redo, noise=noise, pipes=self._raw)
 
     def make_bad_channels_auto(
         self,
@@ -2324,7 +2324,7 @@ class Pipeline(StateModel):
             self.set(**state)
         pipe = self._raw['raw']
         bids_path = self._bids_path
-        pipe.make_bad_channels_auto(bids_path, flat, redo=redo, noise=noise, pipes=self._raw)
+        pipe._make_bad_channels_auto(bids_path, flat, redo=redo, noise=noise, pipes=self._raw)
 
     def make_bad_channels_neighbor_correlation(
             self,
@@ -2442,19 +2442,19 @@ class Pipeline(StateModel):
         # display data
         subject = self.get('subject')
         pipe = get_ica_pipe(self._raw, self.get('raw', **state))
-        bads = pipe.load_bad_channels(self._bids_path, pipes=self._raw)
+        bads = pipe._load_bad_channels(self._bids_path, pipes=self._raw)
         with self._temporary_state:
             if epoch is None:
                 if task is None:
                     task = pipe.task
-                raw = pipe.load_concatenated_source_raw(self._bids_path, task, self._runs, self._raw)
+                raw = pipe._load_concatenated_source_raw(self._bids_path, task, self._runs, self._raw)
                 decim = decim_param(samplingrate, decim, None, raw.info, minimal=True)
                 info = raw.info
                 display_data = raw
             elif task is not None:
                 raise TypeError(f"{task=} with {epoch=}")
             else:
-                ds = self.load_epochs(ndvar=False, epoch=epoch, reject=False, raw=pipe._source_name, samplingrate=samplingrate, decim=decim, add_bads=bads)
+                ds = self.load_epochs(ndvar=False, epoch=epoch, reject=False, raw=pipe.source, samplingrate=samplingrate, decim=decim, add_bads=bads)
                 if isinstance(ds['epochs'], Datalist):  # variable-length epoch
                     data = np.concatenate([epoch.get_data()[0] for epoch in ds['epochs']], axis=1)  # n_epochs, n_channels, n_times
                     raw = mne.io.RawArray(data, ds[0, 'epochs'].info)
@@ -2465,8 +2465,8 @@ class Pipeline(StateModel):
                 display_data = ds
         data = TestDims('sensor')
         data_kind = data.data_to_ndvar(info)[0]
-        sysname = pipe.get_sysname(info, subject, data_kind, self._raw)
-        adjacency = pipe.get_adjacency(data_kind, self._raw)
+        sysname = pipe._get_sysname(info, subject, data_kind, self._raw)
+        adjacency = pipe._get_adjacency(data_kind, self._raw)
         frame = gui.select_components(path, display_data, sysname, adjacency, decim, debug)
         if debug:
             return frame
@@ -3352,7 +3352,7 @@ class Pipeline(StateModel):
         if seeds:
             from mayavi import mlab
 
-            seeds = parc.seeds_for_subject(subject)
+            seeds = parc._seeds_for_subject(subject)
             seed_points = {hemi: [np.atleast_2d(coords) for name, coords in seeds.items() if name.endswith(hemi)] for hemi in ('lh', 'rh')}
             plot_points = {hemi: np.vstack(points).T if len(points) else None for hemi, points in seed_points.items()}
             for hemisphere in brain.brains:
@@ -3801,11 +3801,11 @@ class Pipeline(StateModel):
             pick_normal: bool = False,
     ):
         "Construct inv string from settings; see :meth:`.set_inv`"
-        return MinimumNormInverseSolution(ori, snr, method, depth, pick_normal).string()
+        return MinimumNormInverseSolution(ori, snr, method, depth, pick_normal)._string()
 
     @classmethod
     def _eval_inv(cls, inv):
-        return InverseSolution.coerce(inv).string()
+        return InverseSolution._coerce(inv)._string()
 
     def _eval_model(self, model):
         if model == '':
@@ -4004,7 +4004,7 @@ class Pipeline(StateModel):
         pipe = source_pipe = self._raw[raw]
         pipeline = [pipe]
         while not isinstance(source_pipe, RawSource):
-            source_pipe = self._raw[source_pipe._source_name]
+            source_pipe = self._raw[source_pipe.source]
             pipeline.insert(0, source_pipe)
         print(f"Preprocessing pipeline: {' --> '.join(p.name for p in pipeline)}")
 

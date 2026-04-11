@@ -42,7 +42,9 @@ import shutil
 from typing import Any, Generic, TypeVar
 
 import mne
+import numpy as np
 
+from .._data_obj import Factor, Interaction, Var
 from .configuration import Configuration
 
 T = TypeVar('T')
@@ -1246,8 +1248,14 @@ class DerivativeRegistry:
 
     @staticmethod
     def canonicalize(value: Any) -> Any:
+        if isinstance(value, Var):
+            return DerivativeRegistry.canonicalize(value.x.tolist())
+        if isinstance(value, (Factor, Interaction)):
+            return DerivativeRegistry.canonicalize(list(value))
         if isinstance(value, Configuration):
             return DerivativeRegistry.canonicalize(value._as_dict())
+        if isinstance(value, np.ndarray):
+            return DerivativeRegistry.canonicalize(value.tolist())
         if isinstance(value, dict):
             return {str(k): DerivativeRegistry.canonicalize(v) for k, v in sorted(value.items(), key=lambda item: str(item[0]))}
         if isinstance(value, (list, tuple)):

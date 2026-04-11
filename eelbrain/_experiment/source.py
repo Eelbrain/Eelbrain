@@ -59,40 +59,40 @@ class InverseSolution(Configuration):
     """Internal normalized inverse-operator configuration."""
 
     @classmethod
-    def coerce(cls, inv: str | InverseSolution) -> InverseSolution:
+    def _coerce(cls, inv: str | InverseSolution) -> InverseSolution:
         if isinstance(inv, InverseSolution):
             return inv
         if isinstance(inv, str):
-            return MinimumNormInverseSolution.from_string(inv)
+            return MinimumNormInverseSolution._from_string(inv)
         raise TypeError(f"{inv=}: invalid inverse solution specification")
 
-    def string(self) -> str:
-        raise NotImplementedError(f"{self.__class__.__name__}.string()")
+    def _string(self) -> str:
+        raise NotImplementedError(f"{self.__class__.__name__}._string()")
 
-    def validate_for_source_space(self, src: str) -> None:
-        raise NotImplementedError(f"{self.__class__.__name__}.validate_for_source_space()")
+    def _validate_for_source_space(self, src: str) -> None:
+        raise NotImplementedError(f"{self.__class__.__name__}._validate_for_source_space()")
 
-    def build_operator(
+    def _build_operator(
             self,
             info: mne.Info,
             fwd: mne.Forward,
             cov: mne.Covariance,
     ):
-        raise NotImplementedError(f"{self.__class__.__name__}.build_operator()")
+        raise NotImplementedError(f"{self.__class__.__name__}._build_operator()")
 
-    def load_operator(self, path: Path):
-        raise NotImplementedError(f"{self.__class__.__name__}.load_operator()")
+    def _load_operator(self, path: Path):
+        raise NotImplementedError(f"{self.__class__.__name__}._load_operator()")
 
-    def save_operator(self, path: Path, value) -> None:
-        raise NotImplementedError(f"{self.__class__.__name__}.save_operator()")
+    def _save_operator(self, path: Path, value) -> None:
+        raise NotImplementedError(f"{self.__class__.__name__}._save_operator()")
 
-    def apply_epochs(self, epochs_obj, operator, label=None):
-        raise NotImplementedError(f"{self.__class__.__name__}.apply_epochs()")
+    def _apply_epochs(self, epochs_obj, operator, label=None):
+        raise NotImplementedError(f"{self.__class__.__name__}._apply_epochs()")
 
-    def apply_evoked(self, evoked, operator):
-        raise NotImplementedError(f"{self.__class__.__name__}.apply_evoked()")
+    def _apply_evoked(self, evoked, operator):
+        raise NotImplementedError(f"{self.__class__.__name__}._apply_evoked()")
 
-    def to_ndvar(
+    def _to_ndvar(
             self,
             stc,
             subject: str,
@@ -102,7 +102,7 @@ class InverseSolution(Configuration):
             parc: str | None,
             adjacency: str,
     ) -> NDVar:
-        return load.mne.stc_ndvar(stc, subject, src, subjects_dir, self.method, self.fixed, parc=parc, adjacency=adjacency)
+        return load.mne.stc_ndvar(stc, subject, src, subjects_dir, self.method, self._fixed, parc=parc, adjacency=adjacency)
 
 
 class MinimumNormInverseSolution(InverseSolution):
@@ -140,7 +140,7 @@ class MinimumNormInverseSolution(InverseSolution):
         self.pick_normal = pick_normal
 
     @classmethod
-    def from_string(cls, inv: str) -> MinimumNormInverseSolution:
+    def _from_string(cls, inv: str) -> MinimumNormInverseSolution:
         m = INV_RE.match(inv)
         if m is None:
             raise ValueError(f"{inv=}: invalid inverse specification")
@@ -163,7 +163,7 @@ class MinimumNormInverseSolution(InverseSolution):
 
         return cls(ori, snr, method, depth, bool(pick_normal))
 
-    def string(self) -> str:
+    def _string(self) -> str:
         if isinstance(self.ori, str):
             ori = self.ori
         else:
@@ -178,12 +178,12 @@ class MinimumNormInverseSolution(InverseSolution):
             items.append('pick_normal')
         return '-'.join(items)
 
-    def validate_for_source_space(self, src: str) -> None:
+    def _validate_for_source_space(self, src: str) -> None:
         if src[:3] == 'vol' and self.ori not in ('free', 'vec'):
-            raise ValueError(f"{self.string()=!r} with {src=}: volume source space requires free or vector inverse")
+            raise ValueError(f"{self._string()=!r} with {src=}: volume source space requires free or vector inverse")
 
     @property
-    def make_kw(self) -> dict[str, Any]:
+    def _make_kw(self) -> dict[str, Any]:
         if self.ori == 'fixed':
             out = {'fixed': True}
         elif self.ori in ('free', 'vec'):
@@ -198,7 +198,7 @@ class MinimumNormInverseSolution(InverseSolution):
         return out
 
     @property
-    def apply_kw(self) -> dict[str, Any]:
+    def _apply_kw(self) -> dict[str, Any]:
         out = {'method': self.method, 'lambda2': 1. / self.snr ** 2 if self.snr else 0}
         if self.ori == 'vec':
             out['pick_ori'] = 'vector'
@@ -207,28 +207,28 @@ class MinimumNormInverseSolution(InverseSolution):
         return out
 
     @property
-    def fixed(self) -> bool:
-        return self.make_kw.get('fixed', False)
+    def _fixed(self) -> bool:
+        return self._make_kw.get('fixed', False)
 
-    def build_operator(
+    def _build_operator(
             self,
             info: mne.Info,
             fwd: mne.Forward,
             cov: mne.Covariance,
     ):
-        return make_inverse_operator(info, fwd, cov, use_cps=True, **self.make_kw)
+        return make_inverse_operator(info, fwd, cov, use_cps=True, **self._make_kw)
 
-    def load_operator(self, path: Path):
+    def _load_operator(self, path: Path):
         return mne.minimum_norm.read_inverse_operator(path)
 
-    def save_operator(self, path: Path, value) -> None:
+    def _save_operator(self, path: Path, value) -> None:
         mne.minimum_norm.write_inverse_operator(path, value, overwrite=True)
 
-    def apply_epochs(self, epochs_obj, operator, label=None):
-        return apply_inverse_epochs(epochs_obj, operator, label=label, **self.apply_kw)
+    def _apply_epochs(self, epochs_obj, operator, label=None):
+        return apply_inverse_epochs(epochs_obj, operator, label=label, **self._apply_kw)
 
-    def apply_evoked(self, evoked, operator):
-        return apply_inverse(evoked, operator, **self.apply_kw)
+    def _apply_evoked(self, evoked, operator):
+        return apply_inverse(evoked, operator, **self._apply_kw)
 
 
 def parse_src(src: str) -> tuple[str, str, str | None]:
@@ -595,18 +595,18 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
         }
 
     def build(self, ctx: Request) -> mne.minimum_norm.InverseOperator:
-        solution = InverseSolution.coerce(ctx.state['inv'])
-        solution.validate_for_source_space(ctx.state['src'])
+        solution = InverseSolution._coerce(ctx.state['inv'])
+        solution._validate_for_source_space(ctx.state['src'])
         fiff = ctx.view_options['fiff']
         if fiff is None:
             fiff = load_raw_dependency(ctx, ctx.state['raw'])
-        return solution.build_operator(fiff.info, ctx.load('fwd'), ctx.load(cov_node_name(ctx.state['cov'])))
+        return solution._build_operator(fiff.info, ctx.load('fwd'), ctx.load(cov_node_name(ctx.state['cov'])))
 
     def load(
             self,
             ctx: Request,
             path: Path) -> mne.minimum_norm.InverseOperator:
-        return InverseSolution.coerce(ctx.state['inv']).load_operator(path)
+        return InverseSolution._coerce(ctx.state['inv'])._load_operator(path)
 
     def save(
             self,
@@ -614,7 +614,7 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
             path: Path,
             value: mne.minimum_norm.InverseOperator,
     ) -> None:
-        InverseSolution.coerce(ctx.state['inv']).save_operator(path, value)
+        InverseSolution._coerce(ctx.state['inv'])._save_operator(path, value)
 
 
 def _mask_ndvar(y: NDVar):
@@ -668,11 +668,11 @@ class SourceProjection:
     def add_to_dataset(self, ctx: Request, ds: Dataset, stc_value, *, variable_time: bool = False) -> None:
         if variable_time:
             src_value = [
-                self.solution.to_ndvar(stc, self.target_subject, ctx.state['src'], self.subjects_dir, parc=self.parc, adjacency=ctx.state['adjacency'])
+                self.solution._to_ndvar(stc, self.target_subject, ctx.state['src'], self.subjects_dir, parc=self.parc, adjacency=ctx.state['adjacency'])
                 for stc in stc_value
             ]
         else:
-            src_value = self.solution.to_ndvar(stc_value, self.target_subject, ctx.state['src'], self.subjects_dir, parc=self.parc, adjacency=ctx.state['adjacency'])
+            src_value = self.solution._to_ndvar(stc_value, self.target_subject, ctx.state['src'], self.subjects_dir, parc=self.parc, adjacency=ctx.state['adjacency'])
         if self.mask_after_ndvar:
             if variable_time:
                 src_value = [_mask_ndvar(value) for value in src_value]
@@ -816,7 +816,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
 
     def build(self, ctx: Request) -> Dataset:
         epoch = self.epochs[ctx.state['epoch']]
-        solution = InverseSolution.coerce(ctx.state['inv'])
+        solution = InverseSolution._coerce(ctx.state['inv'])
         ds = ctx.load('epochs', options=ctx.options_for('epochs', baseline=ctx.options['baseline'], ndvar=False, reject=ctx.options['reject'], cat=ctx.options['cat'], samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], pad=ctx.options['pad'], data_raw=False, data='sensor'))
 
         src_baseline = ctx.options['src_baseline']
@@ -829,7 +829,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
         epoch_list = epochs_value if isinstance(epochs_value, Datalist) else [epochs_value]
         variable_time = isinstance(epochs_value, Datalist)
         projection = _prepare_source_projection(ctx, epoch_list[0], ctx.options['mask'], ctx.options['morph'], solution)
-        stc_value = [solution.apply_epochs(epoch_obj, projection.operator, label=projection.label) for epoch_obj in epoch_list]
+        stc_value = [solution._apply_epochs(epoch_obj, projection.operator, label=projection.label) for epoch_obj in epoch_list]
         if variable_time:
             stc_value = [value[0] for value in stc_value]
         else:
@@ -861,8 +861,8 @@ class EpochsStcDerivative(Derivative[Dataset]):
             ds.info['sensor_types'] = sensor_types
             raw_pipe = self.raw[ctx.state['raw']]
             for data_kind in sensor_types:
-                sysname = raw_pipe.get_sysname(info, ds.info['subject'], data_kind, self.raw)
-                adjacency = raw_pipe.get_adjacency(data_kind, self.raw)
+                sysname = raw_pipe._get_sysname(info, ds.info['subject'], data_kind, self.raw)
+                adjacency = raw_pipe._get_adjacency(data_kind, self.raw)
                 name = 'meg' if data_kind == 'mag' and 'grad' not in sensor_types else data_kind
                 if isinstance(epochs_value, Datalist):
                     ys = [load.mne.epochs_ndvar(value, data=data_kind, sysname=sysname, adjacency=adjacency, name=data_kind)[0] for value in epochs_value]
@@ -944,7 +944,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
         return ctx.registry.canonicalize(ctx.options)
 
     def build(self, ctx: Request) -> Dataset:
-        solution = InverseSolution.coerce(ctx.state['inv'])
+        solution = InverseSolution._coerce(ctx.state['inv'])
         ds = ctx.load('evoked', options=ctx.options_for('evoked', baseline=ctx.options['baseline'], ndvar=False, cat=ctx.options['cat'], samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], data_raw=False, data='sensor'))
 
         src_baseline = ctx.options['src_baseline']
@@ -954,7 +954,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
         if src_baseline is True:
             src_baseline = epoch.baseline
         projection = _prepare_source_projection(ctx, ds['evoked'][0], ctx.options['mask'], ctx.options['morph'], solution)
-        stc_value = [solution.apply_evoked(evoked, projection.operator) for evoked in ds['evoked']]
+        stc_value = [solution._apply_evoked(evoked, projection.operator) for evoked in ds['evoked']]
         _apply_source_baseline(stc_value, src_baseline)
         stc_value = projection.morph_stcs(stc_value)
         projection.add_to_dataset(ctx, ds, stc_value)
@@ -977,8 +977,8 @@ class EvokedStcDerivative(Derivative[Dataset]):
             info = evoked[0].info
             sensor_types = ds.info['sensor_types'] = TestDims.coerce('sensor').data_to_ndvar(info)
             for sensor_type in sensor_types:
-                sysname = pipe.get_sysname(info, ctx.state['subject'], sensor_type, self.raw)
-                adjacency = pipe.get_adjacency(sensor_type, self.raw)
+                sysname = pipe._get_sysname(info, ctx.state['subject'], sensor_type, self.raw)
+                adjacency = pipe._get_adjacency(sensor_type, self.raw)
                 name = 'meg' if sensor_type == 'mag' else sensor_type
                 ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
             del ds['evoked']

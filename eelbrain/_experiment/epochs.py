@@ -1,11 +1,12 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Epoch definitions and epoch/evoked sensor derivatives."""
 
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Any
-from copy import deepcopy
+from typing import Any, Literal
 import inspect
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 import math
 import shutil
 
@@ -28,49 +29,65 @@ from .preprocessing import load_raw_dependency, raw_node_name
 from .test_def import TestDims
 
 
-def assemble_epochs(epoch_def, epoch_default):
+EpochBaselineArg = Literal[False] | tuple[float | None, float | None] | None
+
+
+def _shared_sub_epoch_parameters(name: str, sub_epochs: Sequence[EpochBase], parameters: Sequence[str]) -> dict[str, Any]:
+    out = {}
+    for param in parameters:
+        values = {getattr(sub_epoch, param) for sub_epoch in sub_epochs}
+        if len(values) > 1:
+            param_repr = ', '.join(repr(v) for v in values)
+            raise ConfigurationError(f"Epoch {name}: All sub-epochs must have the same setting for {param}, got {param_repr}")
+        out[param] = values.pop()
+    return out
+
+
+def assemble_epochs(epoch_def: Mapping[str, EpochBase]) -> dict[str, EpochBase]:
+    """Resolve epoch definitions and cache epoch-family dependent parameters.
+
+    This binds each epoch object's ``name`` and lets the epoch classes cache
+    deterministic graph-dependent parameters such as inherited epoch
+    parameters, ``task``/``tasks``, and ``rej_file_epochs``.
+    """
     epochs = {}
-    secondary_epochs = {}
-    super_epochs = {}
-    collections = {}
-    for name, parameters in epoch_def.items():
-        # into Epochs object
-        if isinstance(parameters, EpochBase):
-            epoch = parameters
-        elif isinstance(parameters, dict):
-            if 'base' in parameters:
-                epoch = SecondaryEpoch(**parameters)
-            elif 'sub_epochs' in parameters:
-                epoch = SuperEpoch(**parameters)
-            elif 'collect' in parameters:
-                epoch = EpochCollection(**parameters)
-            else:
-                kwargs = {**epoch_default, **parameters}
-                epoch = PrimaryEpoch(**kwargs)
-        else:
-            raise TypeError(f"Epoch {name}: {parameters!r}")
+    unresolved_epochs = {}
+    seen_epoch_ids = {}
+    for name, epoch in epoch_def.items():
+        if not isinstance(epoch, EpochBase):
+            raise TypeError(f"Epoch {name}: {epoch!r}; need an epoch definition")
+        previous_name = seen_epoch_ids.setdefault(id(epoch), name)
+        if previous_name != name:
+            raise TypeError(f"Epoch {name}: reuses the same epoch object as {previous_name!r}; define a separate EpochBase instance for each name")
+        epoch._store_name(name)
 
         if isinstance(epoch, (PrimaryEpoch, ContinuousEpoch)):
-            epochs[name] = epoch._link(name, epochs)
-        elif isinstance(epoch, SecondaryEpoch):
-            secondary_epochs[name] = epoch
-        elif isinstance(epoch, SuperEpoch):
-            super_epochs[name] = epoch
-        elif isinstance(epoch, EpochCollection):
-            collections[name] = epoch
+            epoch._store_dependent_parameters()
+            epochs[name] = epoch
+        elif isinstance(epoch, (SecondaryEpoch, SuperEpoch, EpochCollection)):
+            unresolved_epochs[name] = epoch
         else:
             raise RuntimeError(f"epoch_type={epoch.__class__.__name__}")
 
-    secondary_epochs.update(super_epochs)
-    secondary_epochs.update(collections)
-    # integrate secondary epochs (epochs with base parameter)
-    while secondary_epochs:
-        n = len(secondary_epochs)
-        for key in list(secondary_epochs):
-            if secondary_epochs[key]._can_link(epochs):
-                epochs[key] = secondary_epochs.pop(key)._link(key, epochs)
-        if len(secondary_epochs) == n:
-            raise ConfigurationError(f"Can't resolve epoch dependencies for {enumeration(secondary_epochs)}")
+    while unresolved_epochs:
+        n = len(unresolved_epochs)
+        for key in list(unresolved_epochs):
+            epoch = unresolved_epochs[key]
+            if isinstance(epoch, SecondaryEpoch):
+                ready = epoch.sel_epoch in epochs
+            elif isinstance(epoch, SuperEpoch):
+                ready = all(name in epochs for name in epoch.sub_epochs)
+            elif isinstance(epoch, EpochCollection):
+                ready = all(name in epochs for name in epoch.collect)
+            else:
+                raise RuntimeError(f"epoch_type={epoch.__class__.__name__}")
+            if not ready:
+                continue
+            epoch = unresolved_epochs.pop(key)
+            epoch._store_dependent_parameters(epochs)
+            epochs[key] = epoch
+        if len(unresolved_epochs) == n:
+            raise ConfigurationError(f"Can't resolve epoch dependencies for {enumeration(unresolved_epochs)}")
     return epochs
 
 
@@ -126,13 +143,15 @@ def _apply_epochs_selection(ds: Dataset, selection: np.ndarray | None) -> Datase
 
 
 class EpochBase(Configuration):
+    """Base class for epoch definitions."""
     baseline = None
     n_cases = None
     trigger_shift = None
     post_baseline_trigger_shift = None
     decim = None
+    _rej_file_epochs_from_name = False
 
-    def prepare_selected_events(
+    def _prepare_selected_events(
             self,
             ds: Dataset,
             subject: str,
@@ -154,9 +173,9 @@ class EpochBase(Configuration):
             Implementations may return a rewritten dataset, for example for
             continuous epochs.
         """
-        raise NotImplementedError(f"{self.__class__.__name__}.prepare_selected_events()")
+        raise NotImplementedError(f"{self.__class__.__name__}._prepare_selected_events()")
 
-    def extraction_parameters(
+    def _extraction_parameters(
             self,
             ds: Dataset,
             options: dict[str, Any],
@@ -166,7 +185,7 @@ class EpochBase(Configuration):
         Parameters
         ----------
         ds
-            Prepared event shell returned by :meth:`prepare_selected_events`.
+            Prepared event shell returned by :meth:`_prepare_selected_events`.
         options
             `epochs` node options that affect extraction, such as time-window,
             baseline, padding, and decimation overrides.
@@ -186,7 +205,7 @@ class EpochBase(Configuration):
         variable_tmax
             Whether ``tmax`` varies per epoch.
         """
-        raise NotImplementedError(f"{self.__class__.__name__}.extraction_parameters()")
+        raise NotImplementedError(f"{self.__class__.__name__}._extraction_parameters()")
 
     def _repr_args(self):
         args = []
@@ -202,32 +221,31 @@ class EpochBase(Configuration):
         args = ', '.join(self._repr_args())
         return f"{self.__class__.__name__}({args})"
 
-    def _link(self, name, epochs):
-        out = deepcopy(self)
-        out.name = name
-        return out
+    def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase] = None) -> None:
+        if self._rej_file_epochs_from_name:
+            self.rej_file_epochs = (self.name,)
 
 
 class Epoch(EpochBase):
     """Epoch definition base (non-functional baseclass)"""
-    DICT_ATTRS = ('name', 'tmin', 'tmax', 'decim', 'samplingrate', 'baseline', 'trigger_shift', 'post_baseline_trigger_shift', 'post_baseline_trigger_shift_min', 'post_baseline_trigger_shift_max')
+    DICT_ATTRS = ('tmin', 'tmax', 'decim', 'samplingrate', 'baseline', 'trigger_shift', 'post_baseline_trigger_shift', 'post_baseline_trigger_shift_min', 'post_baseline_trigger_shift_max')
 
     # to be set by subclass
     rej_file_epochs = None
     tasks = None
 
-    def __init__(
+    def _set_epoch_parameters(
             self,
             tmin: float | str = -0.1,
             tmax: float | str = 0.6,
             samplingrate: float = None,
             decim: int = None,
-            baseline: tuple[float | None, float | None] = None,
+            baseline: EpochBaselineArg = None,
             trigger_shift: float | str = 0.,
             post_baseline_trigger_shift: str = None,
             post_baseline_trigger_shift_min: float = None,
             post_baseline_trigger_shift_max: float = None,
-    ):
+    ) -> None:
         if post_baseline_trigger_shift is not None:
             if post_baseline_trigger_shift_min is None or post_baseline_trigger_shift_max is None:
                 raise ConfigurationError(f"{post_baseline_trigger_shift=} but missing post_baseline_trigger_shift_min and/or post_baseline_trigger_shift_max")
@@ -238,7 +256,7 @@ class Epoch(EpochBase):
         if decim is not None:
             if decim < 1:
                 raise ValueError(f"{decim=}")
-            elif samplingrate is not None:
+            if samplingrate is not None:
                 raise TypeError(f"{decim=} with {samplingrate=}: only one of these parameters can be specified at a time")
         elif samplingrate is not None:
             if samplingrate <= 0:
@@ -253,11 +271,9 @@ class Epoch(EpochBase):
                 baseline = (None, None)
             else:
                 baseline = (None, 0)
-        elif baseline is False:
-            pass
-        elif len(baseline) != 2:
-            raise ValueError(f"{baseline=}: needs to be length 2 tuple")
-        else:
+        elif baseline is not False:
+            if len(baseline) != 2:
+                raise ValueError(f"{baseline=}: needs to be length 2 tuple")
             baseline = (typed_arg(baseline[0], float), typed_arg(baseline[1], float))
 
         if not isinstance(trigger_shift, (float, str)):
@@ -273,7 +289,31 @@ class Epoch(EpochBase):
         self.post_baseline_trigger_shift_min = post_baseline_trigger_shift_min
         self.post_baseline_trigger_shift_max = post_baseline_trigger_shift_max
 
-    def prepare_selected_events(
+    def __init__(
+            self,
+            tmin: float | str = -0.1,
+            tmax: float | str = 0.6,
+            samplingrate: float = None,
+            decim: int = None,
+            baseline: EpochBaselineArg = None,
+            trigger_shift: float | str = 0.,
+            post_baseline_trigger_shift: str = None,
+            post_baseline_trigger_shift_min: float = None,
+            post_baseline_trigger_shift_max: float = None,
+    ):
+        self._set_epoch_parameters(
+            tmin,
+            tmax,
+            samplingrate,
+            decim,
+            baseline,
+            trigger_shift,
+            post_baseline_trigger_shift,
+            post_baseline_trigger_shift_min,
+            post_baseline_trigger_shift_max,
+        )
+
+    def _prepare_selected_events(
             self,
             ds: Dataset,
             subject: str,
@@ -282,7 +322,7 @@ class Epoch(EpochBase):
             raise RuntimeError(f"No events left for epoch={self.name!r}, subject={subject!r}")
         return ds
 
-    def extraction_parameters(
+    def _extraction_parameters(
             self,
             ds: Dataset,
             options: dict[str, Any],
@@ -380,6 +420,7 @@ class PrimaryEpoch(Epoch):
 
     """
     DICT_ATTRS = Epoch.DICT_ATTRS + ('sel',)
+    _rej_file_epochs_from_name = True
 
     def __init__(
             self,
@@ -389,7 +430,7 @@ class PrimaryEpoch(Epoch):
             tmax: float | str = 0.6,
             samplingrate: float = None,
             decim: int = None,
-            baseline: tuple[float | None, float | None] = None,
+            baseline: EpochBaselineArg = None,
             trigger_shift: float | str = 0.,
             post_baseline_trigger_shift: str = None,
             post_baseline_trigger_shift_min: float = None,
@@ -411,11 +452,6 @@ class PrimaryEpoch(Epoch):
             if value != param.default:
                 args.append(f'{name}={value!r}')
         return args
-
-    def _link(self, name, epochs):
-        out = Epoch._link(self, name, epochs)
-        out.rej_file_epochs = (name,)
-        return out
 
 
 class SecondaryEpoch(Epoch):
@@ -463,23 +499,17 @@ class SecondaryEpoch(Epoch):
         args.extend([f'{key}={value!r}' for key, value in self._kwargs.items()])
         return args
 
-    def _can_link(self, epochs):
-        return self.sel_epoch in epochs
-
-    def _link(self, name, epochs):
+    def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase]) -> None:
         base = epochs[self.sel_epoch]
         if not isinstance(base, (PrimaryEpoch, SecondaryEpoch)):
-            raise ConfigurationError(f"Epoch {name}, base={self.sel_epoch!r}: is {base.__class__.__name__}, needs to be PrimaryEpoch or SecondaryEpoch")
-        kwargs = self._kwargs.copy()
+            raise ConfigurationError(f"Epoch {self.name}, base={self.sel_epoch!r}: is {base.__class__.__name__}, needs to be PrimaryEpoch or SecondaryEpoch")
+        params = self._kwargs.copy()
         for param in self.INHERITED_PARAMS:
-            if param not in kwargs:
-                kwargs[param] = getattr(base, param)
-        out = Epoch._link(self, name, epochs)
-        Epoch.__init__(out, **kwargs)
-        out.rej_file_epochs = base.rej_file_epochs
-        out.task = base.task
-        out.tasks = base.tasks
-        return out
+            params.setdefault(param, getattr(base, param))
+        self._set_epoch_parameters(**params)
+        self.rej_file_epochs = base.rej_file_epochs
+        self.task = base.task
+        self.tasks = base.tasks
 
 
 class SuperEpoch(Epoch):
@@ -509,39 +539,21 @@ class SuperEpoch(Epoch):
     def _repr_args(self):
         return [repr(self.sub_epochs), *[f'{k}={v!r}' for k, v in self._kwargs.items()]]
 
-    def _can_link(self, epochs):
-        return all(name in epochs for name in self.sub_epochs)
-
-    def _link(self, name, epochs):
-        sub_epochs = [epochs[e] for e in self.sub_epochs]
-        # check sub-epochs
-        for e in sub_epochs:
-            if isinstance(e, SuperEpoch):
-                raise ConfigurationError(f"Epoch {name}: SuperEpochs can not be defined recursively")
-            elif not isinstance(e, Epoch):
-                raise ConfigurationError(f"Epoch {name}: sub-epochs must all by PrimaryEpochs")
-            elif e.post_baseline_trigger_shift is not None:
-                raise ConfigurationError(f"Epoch {name}: Super-epochs are merged on the level of events and can't contain epochs with post_baseline_trigger_shift")
-        # find inherited epoch parameters
-        kwargs = self._kwargs.copy()
-        for param in self.INHERITED_PARAMS:
-            if param in kwargs:
-                continue
-            values = {getattr(e, param) for e in sub_epochs}
-            if len(values) > 1:
-                param_repr = ', '.join(repr(v) for v in values)
-                raise ConfigurationError(f"Epoch {name}: All sub_epochs must have the same setting for {param}, got {param_repr}")
-            kwargs[param] = values.pop()
-        out = Epoch._link(self, name, epochs)
-        Epoch.__init__(out, **kwargs)
-        # tasks, with preserved order
-        out.tasks = []
-        out.rej_file_epochs = []
-        for e in sub_epochs:
-            if e.task not in out.tasks:
-                out.tasks.append(e.task)
-            out.rej_file_epochs.extend(e.rej_file_epochs)
-        return out
+    def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase]) -> None:
+        sub_epochs = [epochs[sub_epoch] for sub_epoch in self.sub_epochs]
+        for sub_epoch in sub_epochs:
+            if isinstance(sub_epoch, SuperEpoch):
+                raise ConfigurationError(f"Epoch {self.name}: SuperEpochs can not be defined recursively")
+            if not isinstance(sub_epoch, Epoch):
+                raise ConfigurationError(f"Epoch {self.name}: sub-epochs must all by PrimaryEpochs")
+            if sub_epoch.post_baseline_trigger_shift is not None:
+                raise ConfigurationError(f"Epoch {self.name}: Super-epochs are merged on the level of events and can't contain epochs with post_baseline_trigger_shift")
+        params = self._kwargs.copy()
+        for param, value in _shared_sub_epoch_parameters(self.name, sub_epochs, self.INHERITED_PARAMS).items():
+            params.setdefault(param, value)
+        self._set_epoch_parameters(**params)
+        self.tasks = list(dict.fromkeys(sub_epoch.task for sub_epoch in sub_epochs))
+        self.rej_file_epochs = [epoch_name for sub_epoch in sub_epochs for epoch_name in sub_epoch.rej_file_epochs]
 
 
 class EpochCollection(EpochBase):
@@ -576,28 +588,12 @@ class EpochCollection(EpochBase):
     def _repr_args(self):
         return [repr(self.collect)]
 
-    def _can_link(self, epochs):
-        return all(name in epochs for name in self.collect)
-
-    def _link(self, name, epochs):
-        sub_epochs = [epochs[e] for e in self.collect]
-        out = EpochBase._link(self, name, epochs)
-        # make sure basic attributes match
-        for param in SuperEpoch.INHERITED_PARAMS:
-            values = {getattr(e, param) for e in sub_epochs}
-            if len(values) > 1:
-                param_repr = ', '.join(repr(v) for v in values)
-                raise ConfigurationError(f"Epoch {name}: All sub-epochs must have the same setting for {param}, got {param_repr}")
-            setattr(out, param, values.pop())
-        # dependencies
-        tasks = set()
-        rej_file_epochs = set()
-        for e in sub_epochs:
-            tasks.update(e.tasks)
-            rej_file_epochs.update(e.rej_file_epochs)
-        out.tasks = sorted(tasks)
-        out.rej_file_epochs = sorted(rej_file_epochs)
-        return out
+    def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase]) -> None:
+        sub_epochs = [epochs[sub_epoch] for sub_epoch in self.collect]
+        for param, value in _shared_sub_epoch_parameters(self.name, sub_epochs, SuperEpoch.INHERITED_PARAMS).items():
+            setattr(self, param, value)
+        self.tasks = sorted({task for sub_epoch in sub_epochs for task in sub_epoch.tasks})
+        self.rej_file_epochs = sorted({epoch_name for sub_epoch in sub_epochs for epoch_name in sub_epoch.rej_file_epochs})
 
 
 class ContinuousEpoch(EpochBase):
@@ -635,7 +631,8 @@ class ContinuousEpoch(EpochBase):
         Target samplingrate. Needs to divide data samplingrate evenly (e.g.
         ``200`` for data sampled at 1000 Hz; default ``200``).
     """
-    DICT_ATTRS = ('name', 'task', 'sel', 'pad_start', 'pad_end', 'split', 'samplingrate')
+    DICT_ATTRS = ('task', 'sel', 'pad_start', 'pad_end', 'split', 'samplingrate')
+    _rej_file_epochs_from_name = True
 
     def __init__(
             self,
@@ -655,7 +652,7 @@ class ContinuousEpoch(EpochBase):
         self.samplingrate = typed_arg(samplingrate, float, int)
         self.tasks = (task,)
 
-    def prepare_selected_events(
+    def _prepare_selected_events(
             self,
             ds: Dataset,
             subject: str,
@@ -679,7 +676,7 @@ class ContinuousEpoch(EpochBase):
         ds['tmax'] = Var([events_i[-1, 'time'] - events_i[0, 'time'] + self.pad_end for events_i in events])
         return ds
 
-    def extraction_parameters(
+    def _extraction_parameters(
             self,
             ds: Dataset,
             options: dict[str, Any],
@@ -795,7 +792,7 @@ class EpochsDerivative(Derivative[Any]):
             return Datalist(epochs_list, 'epochs')
 
         ds = ctx.load(view='shell')
-        tmin, tmax, tstop, baseline, decim, variable_tmax = epoch.extraction_parameters(ds, ctx.options)
+        tmin, tmax, tstop, baseline, decim, variable_tmax = epoch._extraction_parameters(ds, ctx.options)
         if variable_tmax:
             epoch_value = load.mne.variable_length_mne_epochs(ds, tmin, tmax, baseline, allow_truncation=True, decim=decim, reject_by_annotation=False)
             epochs_list = epoch_value
@@ -894,7 +891,7 @@ class EpochsDerivative(Derivative[Any]):
                 cat=ctx.options['cat'],
             ),
         )
-        ds = epoch.prepare_selected_events(ds, ctx.state['subject'])
+        ds = epoch._prepare_selected_events(ds, ctx.state['subject'])
         selection = ctx.artifact_metadata.get('selection')
         if selection is None and ctx.artifact_path.exists():
             selection = getattr(ctx.load_artifact(), 'selection', None)
@@ -926,7 +923,7 @@ class EpochsDerivative(Derivative[Any]):
             raise ValueError(f"data={data.string!r} with ndvar=False")
 
         ds = ctx.load(view='shell')
-        _, _, _, _, _, variable_tmax = epoch.extraction_parameters(ds, ctx.options)
+        _, _, _, _, _, variable_tmax = epoch._extraction_parameters(ds, ctx.options)
         selected_events = ctx.load(
             'selected-events',
             options=ctx.options_for(
@@ -963,8 +960,8 @@ class EpochsDerivative(Derivative[Any]):
             ds.info['sensor_types'] = sensor_types
             pipe = self.raw[ctx.state['raw']]
             for data_kind in sensor_types:
-                sysname = pipe.get_sysname(info, ds.info['subject'], data_kind, self.raw)
-                adjacency = pipe.get_adjacency(data_kind, self.raw)
+                sysname = pipe._get_sysname(info, ds.info['subject'], data_kind, self.raw)
+                adjacency = pipe._get_adjacency(data_kind, self.raw)
                 name = 'meg' if data_kind == 'mag' and 'grad' not in sensor_types else data_kind
                 if variable_tmax:
                     ys = [load.mne.epochs_ndvar(e, data=data_kind, sysname=sysname, adjacency=adjacency, name=data_kind)[0] for e in epoch_value]
@@ -1041,7 +1038,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         model = ctx.state['model']
         if model:
             model_value = ds.eval(model)
-            fingerprint['model_signature'] = ctx.registry.canonicalize(model_value.x.tolist() if isinstance(model_value, Var) else list(model_value))
+            fingerprint['model_signature'] = ctx.registry.canonicalize(model_value)
         else:
             fingerprint['model_signature'] = ds.n_cases
         return fingerprint
@@ -1143,8 +1140,8 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
             sensor_types = ds.info['sensor_types'] = data.data_to_ndvar(info)
             pipe = self.raw[ctx.state['raw']]
             for sensor_type in sensor_types:
-                sysname = pipe.get_sysname(info, ctx.state['subject'], sensor_type, self.raw)
-                adjacency = pipe.get_adjacency(sensor_type, self.raw)
+                sysname = pipe._get_sysname(info, ctx.state['subject'], sensor_type, self.raw)
+                adjacency = pipe._get_adjacency(sensor_type, self.raw)
                 name = 'meg' if sensor_type == 'mag' else sensor_type
                 ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
                 if sensor_type != 'eog' and isinstance(data.sensor, str):
@@ -1237,8 +1234,8 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
             pipe = self.raw[ctx.state['raw']]
             subject = ds[0, 'subject']
             for sensor_type in sensor_types:
-                sysname = pipe.get_sysname(info, subject, sensor_type, self.raw)
-                adjacency = pipe.get_adjacency(sensor_type, self.raw)
+                sysname = pipe._get_sysname(info, subject, sensor_type, self.raw)
+                adjacency = pipe._get_adjacency(sensor_type, self.raw)
                 name = 'meg' if sensor_type == 'mag' else sensor_type
                 ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
                 if sensor_type != 'eog' and isinstance(data.sensor, str):
