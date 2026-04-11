@@ -689,21 +689,23 @@ def _prepare_source_projection(
         morph: bool | None,
         solution: InverseSolution,
 ) -> SourceProjection:
-    parc = _selected_parc(ctx, mask)
-    if parc:
-        target_subject = ctx.state['common_brain'] if morph else ctx.state['mrisubject']
-        ctx.load('annot', state={'mrisubject': target_subject, 'parc': parc})
-
-    operator = ctx.load('inv', options={'fiff': fiff})
     subjects_dir = mri_sdir(ctx.state)
     mrisubject = ctx.state['mrisubject']
-    is_scaled = find_source_subject(mrisubject, subjects_dir)
+    source_subject = find_source_subject(mrisubject, subjects_dir) or mrisubject
+    is_scaled = source_subject != mrisubject
+    target_subject = ctx.state['common_brain'] if morph else mrisubject
+    parc = _selected_parc(ctx, mask)
+    if parc:
+        ctx.load('annot', state={'mrisubject': target_subject, 'parc': parc})
+        if mask and (is_scaled or not morph) and source_subject != target_subject:
+            ctx.load('annot', state={'mrisubject': source_subject, 'parc': parc})
+
+    operator = ctx.load('inv', options={'fiff': fiff})
     if mask and (is_scaled or not morph):
-        label = label_from_annot(operator['src'], mrisubject, subjects_dir, parc)
+        label = label_from_annot(operator['src'], source_subject, subjects_dir, parc)
     else:
         label = None
 
-    target_subject = mrisubject
     source_morph = None
     set_subject = None
     stc_key = 'stc'
@@ -745,9 +747,15 @@ def _apply_source_baseline(stc_value, baseline) -> None:
 
 def _source_dependencies(ctx: Request, sensor_dependency: Dependency) -> tuple[Dependency, ...]:
     deps = [sensor_dependency, Dependency('inv')]
-    if ctx.options['mask']:
-        target_subject = ctx.state['common_brain'] if ctx.options['morph'] else ctx.state['mrisubject']
-        deps.append(Dependency('annot', state={'mrisubject': target_subject, 'parc': _selected_parc(ctx, ctx.options['mask'])}))
+    parc = _selected_parc(ctx, ctx.options['mask'])
+    if parc:
+        subjects_dir = mri_sdir(ctx.state)
+        mrisubject = ctx.state['mrisubject']
+        source_subject = find_source_subject(mrisubject, subjects_dir) or mrisubject
+        target_subject = ctx.state['common_brain'] if ctx.options['morph'] else mrisubject
+        deps.append(Dependency('annot', state={'mrisubject': target_subject, 'parc': parc}))
+        if ctx.options['mask'] and (source_subject != mrisubject or not ctx.options['morph']) and source_subject != target_subject:
+            deps.append(Dependency('annot', label='source', state={'mrisubject': source_subject, 'parc': parc}))
     if ctx.options['morph'] and (ctx.state['common_brain'] if is_fake_mri(mri_dir(ctx.state)) else ctx.state['mrisubject']) != ctx.state['common_brain']:
         deps.append(Dependency('source-morph'))
     return tuple(deps)

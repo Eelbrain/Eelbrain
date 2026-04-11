@@ -733,6 +733,7 @@ class Request(Generic[T]):
     ) -> dict[str, Any]:
         """Describe this request for inclusion in another node's manifest."""
         out = {
+            'name': self.node.name,
             'fingerprint': self.current_dependency_fingerprint(view),
             'dependencies': self.dependency_fingerprints(cache),
         }
@@ -741,6 +742,7 @@ class Request(Generic[T]):
         if isinstance(self.node, Derivative):
             out['kind'] = 'derivative'
             out['key'] = self.key()
+            out['manifest'] = str(self.manifest_path)
         else:
             out['kind'] = 'input'
         return out

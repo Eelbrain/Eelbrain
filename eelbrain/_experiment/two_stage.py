@@ -225,8 +225,6 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         return tuple(self._subject_dependency(ctx, subject) for subject in _result_subjects(self, ctx))
 
     def _load_subject_data(self, ctx: Request, subject: str) -> Dataset:
-        from .epochs import _aggregate_dataset
-
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
         state = _subject_request_state(ctx, subject)
@@ -238,7 +236,13 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
                 if test_obj.vars:
                     apply_vardef(ds, test_obj.vars, self.tests, self.groups)
                 if test_obj.model is not None:
-                    ds = _aggregate_dataset(test_obj.model, ctx.state['equalize_evoked_count'], ds, _two_stage_source_name(ds))
+                    ds = ds.aggregate(
+                        test_obj.model,
+                        never_drop=(_two_stage_source_name(ds),),
+                        drop_bad=True,
+                        equal_count=ctx.state['equalize_evoked_count'] == 'eq',
+                        drop=('i_start', 't_edf', 'time', 'index', 'trigger'),
+                    )
             else:
                 ds = ctx.load('evoked-stc', state={**state, 'model': test_obj.model}, options=_evoked_stc_options(ctx, morph=data.morph, cat=None, mask=_resolved_mask(ctx), samplingrate=samplingrate))
             if ctx.options['smooth']:
@@ -256,7 +260,13 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
             return ctx.load('evoked-stc', state={**state, 'model': test_obj.model}, options=_evoked_stc_options(ctx, morph=False, cat=None, mask=True, samplingrate=samplingrate))
         ds = ctx.load('epochs-stc', state=state, options=_epochs_stc_options(ctx, morph=None, mask=True, samplingrate=samplingrate))
         apply_vardef(ds, test_obj.vars, self.tests, self.groups)
-        return _aggregate_dataset(test_obj.model, ctx.state['equalize_evoked_count'], ds, _two_stage_source_name(ds))
+        return ds.aggregate(
+            test_obj.model,
+            never_drop=(_two_stage_source_name(ds),),
+            drop_bad=True,
+            equal_count=ctx.state['equalize_evoked_count'] == 'eq',
+            drop=('i_start', 't_edf', 'time', 'index', 'trigger'),
+        )
 
     def build(self, ctx: Request) -> Dataset | ROIData:
         data = ctx.options['data']

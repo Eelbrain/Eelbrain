@@ -559,13 +559,16 @@ def test_registry_resolve_returns_request_for_input_and_derivative():
 
     handle = registry.resolve('source', state=DEFAULT_STATE)
     assert isinstance(handle, Request)
+    assert handle.describe_dependency()['name'] == 'source'
     assert handle.describe_dependency()['kind'] == 'input'
     with pytest.raises(TypeError, match="input 'source'"):
         _ = handle.artifact_path
 
     value_handle = registry.resolve('value', state=DEFAULT_STATE)
     assert isinstance(value_handle, Request)
+    assert value_handle.describe_dependency()['name'] == 'value'
     assert value_handle.describe_dependency()['kind'] == 'derivative'
+    assert value_handle.describe_dependency()['manifest'] == str(value_handle.manifest_path)
 
     assert registry.load('source', state=DEFAULT_STATE) == 'alpha'
     assert registry.load('source', state=DEFAULT_STATE, options={'upper': True}) == 'ALPHA'
