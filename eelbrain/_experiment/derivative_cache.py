@@ -328,15 +328,39 @@ class Derivative(DependencyNode[T]):
     can describe cache identity without repeatedly open-coding option
     handling.
 
+    The main class attributes that subclasses may override are:
+
+    - ``name`` from :class:`DependencyNode`: stable registry name for this
+      derivative family
+    - ``OPTION_DEFAULTS``: request options that affect artifact identity,
+      build behavior, or both
+    - ``VIEW_OPTION_DEFAULTS``: request options that only shape the returned
+      value after the artifact has been built or loaded
+    - ``key_fields``: ``ctx.state`` fields that define the default artifact
+      key and default cache label
+    - ``cache_policy``: default caching mode used by :meth:`should_cache`
+    - ``cache_suffix``: file suffix for the default :meth:`path`
+      implementation; leave ``None`` when overriding :meth:`path` directly
+    - ``cache_log_level``: log level for standard cache hit/build messages,
+      or ``None`` to suppress them
+    - ``version``: derivative-local schema/version number included in
+      manifests and available to :meth:`validate`
+
     More specialized subclasses may additionally override :meth:`key`,
     :meth:`should_cache`, :meth:`validate`,
     :meth:`provenance`.
     """
 
+    # ``ctx.state`` fields that define the default artifact key. Override
+    # :meth:`key` directly when artifact identity is not just a state subset.
     key_fields: tuple[str, ...] = ()
+    # Default cache behavior when callers do not pass an explicit cache=...
     cache_policy: CachePolicy = CachePolicy.REQUIRED
+    # File suffix for the default :meth:`path` implementation.
     cache_suffix: str | None = None
+    # Log level for standard cache hit/build messages. Set to None to silence.
     cache_log_level: int | None = logging.DEBUG
+    # Derivative-local version recorded in manifests for compatibility checks.
     version: int = 1
 
     def cache_label(self, ctx: Request) -> str | None:
