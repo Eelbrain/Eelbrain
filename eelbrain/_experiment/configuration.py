@@ -110,8 +110,9 @@ class Configuration:
         - configuration equality (:meth:`Configuration.__eq__`)
         - cache fingerprints and manifests via
           :meth:`eelbrain._experiment.derivative_cache.DerivativeRegistry.canonicalize`
-        - explicit derivative ``definitions`` payloads, for example for epoch,
-          test, parcellation, raw-pipe, and inverse-solution fingerprints
+        - explicit derivative ``definitions`` payloads, i.e. serialized
+          configuration definitions for epoch, test, parcellation, raw-pipe,
+          and inverse-solution fingerprints
 
         New subclasses should usually implement this by declaring
         :attr:`DICT_ATTRS`, a tuple of attribute names that fully describes the

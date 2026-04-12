@@ -256,15 +256,21 @@ class DependencyNode(Generic[T]):
         return ()
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        """Describe the current version of this node's own inputs/settings.
+        """Information that uniquely identifies an artifact as valid.
 
         Subclasses must override this method.
 
-        The fingerprint should contain all non-dependency information that
-        makes this node's result stale, such as configuration parameters,
-        source-file metadata, or definition snapshots. It should not duplicate
-        dependency manifests; those are tracked separately through
-        :meth:`dependencies`.
+        The fingerprint should contain all non-dependency request information
+        that makes this node's result stale, usually request ``state`` /
+        ``options`` plus any serialized configuration definitions or external
+        file metadata that the node treats as part of its own validity. It
+        should not duplicate dependency manifests; those are tracked
+        separately through :meth:`dependencies`.
+
+        For :class:`Derivative` subclasses, this is distinct from
+        :meth:`Derivative.key`: the key chooses the cache slot/path for the
+        artifact, while the fingerprint records the richer validity/provenance
+        information that must match for that slot to be considered current.
         """
         raise NotImplementedError
 
@@ -308,7 +314,8 @@ class Derivative(DependencyNode[T]):
     saved, and validated. Subclasses normally override:
 
     - :meth:`path` to choose the artifact location
-    - :meth:`fingerprint` to describe non-dependency staleness inputs
+    - :meth:`fingerprint` to describe non-dependency request
+      state/options/definitions that determine staleness
     - :meth:`build` to compute the artifact
     - :meth:`load` / :meth:`save` to serialize the artifact
 
@@ -422,12 +429,17 @@ class Derivative(DependencyNode[T]):
         return ctx.registry.cache_dir / node_slug / key_hash[:2] / f"{label_slug}_key-{key_hash}{self.cache_suffix}"
 
     def key(self, ctx: Request) -> dict[str, Any]:
-        """Return the normalized key that identifies this artifact instance.
+        """The key used to generate a unique path for this artifact.
 
         Override this only when the default ``key_fields`` subset is not
         sufficient. The default implementation uses the configured
         ``key_fields`` subset of state and adds an ``options`` entry when the
         derivative's declared options also contribute to artifact identity.
+
+        The key is used to resolve the artifact path and should stay focused
+        on cache address/identity. It is narrower than :meth:`fingerprint`,
+        which records the fuller set of non-dependency request
+        state/options/definitions that make an existing artifact stale.
         """
         key = canonical_state_subset(ctx.state, self.key_fields)
         options = ctx.registry.canonicalize(ctx.options)
@@ -547,10 +559,10 @@ class Derivative(DependencyNode[T]):
             These keys are extracted directly from the request state and
             embedded under the ``"state"`` key after canonicalization.
         definitions
-            Optional configured object definitions embedded under the
-            ``"definitions"`` key. Use this for stable configuration snapshots
-            such as epoch definitions, test definitions, or pipe definitions
-            that explain what the derivative is building.
+            Optional serialized configuration definitions embedded under the
+            ``"definitions"`` key. Use this for stable snapshots such as epoch
+            definitions, test definitions, or pipe definitions that explain
+            what the derivative is building.
         extra
             Optional additional fingerprint fields merged at the top level
             after canonicalization. Use this for small derivative-specific
@@ -567,11 +579,11 @@ class Derivative(DependencyNode[T]):
         Notes
         -----
         This is the default helper for derivatives whose fingerprints mostly
-        consist of semantic state, configured definitions, request options,
-        and a few derivative-specific scalar values. If a relevant value is
-        not a direct entry in ``ctx.state``, it should usually go into
-        ``definitions`` or ``extra`` instead of being smuggled into
-        ``state_fields`` through a custom mapping.
+        consist of semantic state, serialized configuration definitions,
+        request options, and a few derivative-specific scalar values. If a
+        relevant value is not a direct entry in ``ctx.state``, it should
+        usually go into ``definitions`` or ``extra`` instead of being
+        smuggled into ``state_fields`` through a custom mapping.
         """
         out = {'state': canonical_state_subset(ctx.state, state_fields)}
         if definitions:
