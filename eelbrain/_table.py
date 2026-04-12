@@ -526,16 +526,18 @@ def cast_to_ndvar(
     case_indexes = [match == case for case in match.cells]
     samples_indexes = [dim_values == v for v in unique_dim_values]
     xs = [np.empty((n_cases, n_samples)) for _ in data_vars]
-    index = None
+    index = np.empty(dim_values.x.shape, dtype=bool)
     for i, case_index in enumerate(case_indexes):
-        try:
-            for j, sample_index in enumerate(samples_indexes):
-                index = np.logical_and(case_index, sample_index, out=index)
-                for x, data_var in zip(xs, data_vars):
-                    x[i, j] = data_var.x[index]
-        except ValueError:
-            if not np.any(index):
+        for j, sample_index in enumerate(samples_indexes):
+            np.logical_and(case_index, sample_index, out=index)
+            n_values = np.count_nonzero(index)
+            if n_values == 0:
                 raise ValueError(f"Case {match.cells[i]!r} is missing some values")
+            elif n_values > 1:
+                raise ValueError(f"Case {match.cells[i]!r} contains multiple values for {unique_dim_values[j]!r}")
+            value_index = index.argmax()
+            for x, data_var in zip(xs, data_vars):
+                x[i, j] = data_var.x[value_index]
 
     # package output dataset
     if data is None:
