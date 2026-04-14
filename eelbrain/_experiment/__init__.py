@@ -20,17 +20,16 @@ protected artifacts, and cache policy. It does not know experiment-specific
 concepts such as raw pipes, epochs, tests, reports, or :class:`Pipeline`.
 
 The graph is constructed from :class:`DependencyNode` instances, typically
-typically using subclasses based on :class:`Input` and :class:`Derivative`.
-The :class:`DerivativeRegistry` exposes access to artifact produces by this
+using :class:`Input` and :class:`Derivative` subclasses.
+The :class:`DerivativeRegistry` exposes access to artifacts produced by this
 pipeline through :meth:`DerivativeRegistry.load`.
 
 Graph nodes and configuration
 -----------------------------
 Graph nodes implementing specific pipeline components live in modules such as
 :mod:`eelbrain._experiment.preprocessing`,
-:mod:`eelbrain._experiment.events`, :mod:`eelbrain._experiment.source`,
-:mod:`eelbrain._experiment.parc`, :mod:`eelbrain._experiment.results`, and
-:mod:`eelbrain._experiment.reports`.
+:mod:`eelbrain._experiment.events`, and
+:mod:`eelbrain._experiment.source`.
 
 Each node represents one managed file or artifact family and is initialized
 with the configuration it needs up front. Cache derivatives own their internal
@@ -38,8 +37,7 @@ artifact paths directly from semantic state/options. End-product export
 derivatives may additionally define default public paths for reports, movies,
 and similar user-facing outputs.
 
-
-Graph nodes often have corresponding configuration objects that expose
+Graph nodes often have corresponding :class:`Configuration` objects that expose
 user settings.
 Configuration objects may also serve as plugin-like extensions, with multiple different
 configuration objects corresponding to one type of :class:`Derivative`.
@@ -54,27 +52,10 @@ a :class:`RawPipe` subclass
 2) lets the user choose preprocessing options and parameters through
 initialization parameters.
 
-Graph-layer behavior consumed by nodes must itself be explicit-state and
-pipeline-free. Lower layers may use pure helper functions in existing graph
-modules, but must not capture :class:`Pipeline`, depend on temporary facade
-state, or rely on facade state-mutation helpers such as
-``set()``/``format()``/``iter()``/``show_state()``.
-
-Naming-only fields used for human-readable export paths must not live in
-canonical derivative state or cache fingerprints. When a derivative needs
-functionality that was previously implemented in ``Pipeline.load_x`` or
-``Pipeline.show_x``, that behavior belongs in the dependency derivative or in
-pure lower-layer helpers, not in the facade.
-
-Cache behavior is always supplied by the lower layers.
-Extending the system should work by adding configuration
-objects such as new :class:`RawPipe` subclasses, not by editing cache-kernel
-code.
-
-Some configuration objects may result in multiple dependency nodes.
+Some configuration objects may govern to multiple dependency nodes.
 For example, each configured :class:`RawPipe` produces its own raw derivative
-node, and preprocessing with ICA additionally requires an ICA :class:`Input`
-node plus the raw derivative node that applies it.
+node, and preprocessing with ICA requires an ICA :class:`Input`
+node in addition to the raw derivative node that applies it.
 
 
 3. :class:`Pipeline`
@@ -92,13 +73,13 @@ management belong to the lower layers.
 - the derivative’s ``.build(ctx)` loads data from its dependencies through ``ctx.load(...)``
   to create the result requested by the Pipeline
 
-In other words, ``Pipeline.load_x`` and ``Pipeline.show_x`` are facades over
-graph nodes, not execution backends.
+In other words, :class:`Pipeline` methods like ``Pipeline.load_x`` and ``Pipeline.show_x``
+are facades over graph nodes.
 
 Configuration objects such as :class:`RawPipe`, epoch definitions, test
 definitions and related objects define
-analysis behavior in an extensible way. They are supplied by the user through
-:class:`Pipeline`.
+analysis behavior in an extensible way. They are supplied by the user as
+:class:`Pipeline` subclass attributes.
 """
 
 from .experiment import StateModel

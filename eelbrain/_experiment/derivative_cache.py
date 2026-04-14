@@ -1,23 +1,29 @@
 """Derivative-oriented cache primitives for :mod:`eelbrain._experiment`.
 
-The cache is organized around registered dependency nodes.
+The goal of this module is providing a general interface for building
+branching data analysis pipelines that allow caching intermediate results at
+each processing step.
+
+The cache is organized around a graph of registered dependency nodes.
+
+- :class:`Input` declares one source node in the dependency graph.
+- :class:`Derivative` declares one computed node in the dependency graph.
+- :class:`Request` binds one node to specific analysis parameters given in a
+  global pipeline state and local options.
+- :class:`DerivativeRegistry` resolves dependencies and validates cached
+  artifacts via sidecar manifests.
+
+Within that framework:
 
 - A derivative is *keyed* by the subset of pipeline state that selects which
-  artifact it represents, such as subject, raw pipeline, epoch, or covariance.
+  artifact it represents (such as subject, preprocessing applied, ...) and
+  relevant analysis options that affect building of the artifact.
 - A derivative is *built* by computing that artifact from the current pipeline
-  state.
+  state and options.
 - A derivative is *serialized* by saving the in-memory result to disk and
   loading it back later.
 - A derivative is *fingerprinted* by recording the normalized settings and
   inputs that determine whether a cached artifact is still valid.
-
-Within that framework:
-
-- :class:`Input` declares one source node in the dependency graph.
-- :class:`Derivative` declares one computed node in the dependency graph.
-- :class:`Request` binds one node to the current pipeline state and options.
-- :class:`DerivativeRegistry` resolves dependencies and validates cached
-  artifacts via sidecar manifests.
 
 Manifests store the derivative fingerprint plus dependency fingerprints, so a
 cache hit is valid when the artifact, its normalized key, and its dependency

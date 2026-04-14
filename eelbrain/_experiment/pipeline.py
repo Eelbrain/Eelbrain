@@ -1,5 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-"""Pipeline class to manage data from a experiment"""
+"""Pipeline class to manage data from an experiment"""
 import copy
 from datetime import datetime
 from itertools import chain, product
