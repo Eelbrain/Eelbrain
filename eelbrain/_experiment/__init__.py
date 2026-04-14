@@ -22,7 +22,7 @@ concepts such as raw pipes, epochs, tests, reports, or :class:`Pipeline`.
 The graph is constructed from :class:`DependencyNode` instances, typically
 using :class:`Input` and :class:`Derivative` subclasses.
 The :class:`DerivativeRegistry` exposes access to artifacts produced by this
-pipeline through :meth:`DerivativeRegistry.load`.
+pipeline through :meth:`DerivativeRegistry.resolve`.
 
 Graph nodes and configuration
 -----------------------------
@@ -70,8 +70,8 @@ management belong to the lower layers.
 
 - :class:`Pipeline` normalizes state and derivative-specific options
 - :class:`Pipeline` resolves the target node through :class:`DerivativeRegistry`
-- the derivative’s ``.build(ctx)` loads data from its dependencies through ``ctx.load(...)``
-  to create the result requested by the Pipeline
+- the derivative’s :meth:`~eelbrain._experiment.derivative_cache.Derivative.build` loads
+  data from its dependencies through ``ctx.load(...)`` to create the result requested by the Pipeline
 
 In other words, :class:`Pipeline` methods like ``Pipeline.load_x`` and ``Pipeline.show_x``
 are facades over graph nodes.

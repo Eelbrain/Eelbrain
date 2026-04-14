@@ -406,8 +406,8 @@ def test_manifest_roundtrip_ignores_unknown_fields():
 def test_registry_load_caches_derivative_and_writes_manifest():
     pipeline, registry, _, value, _, _, _, _, _ = make_registry()
 
-    first = registry.load('value', state=DEFAULT_STATE)
-    second = registry.load('value', state=DEFAULT_STATE)
+    first = registry.resolve('value', state=DEFAULT_STATE).load()
+    second = registry.resolve('value', state=DEFAULT_STATE).load()
 
     assert first == second == 'alpha'
     assert value.build_calls == 1
@@ -417,8 +417,8 @@ def test_registry_logs_cache_events(caplog):
     _, registry, _, value, _, _, _, _, _ = make_registry()
 
     with caplog.at_level(logging.DEBUG, logger='eelbrain.test.derivative_cache'):
-        registry.load('value', state=DEFAULT_STATE)
-        registry.load('value', state=DEFAULT_STATE)
+        registry.resolve('value', state=DEFAULT_STATE).load()
+        registry.resolve('value', state=DEFAULT_STATE).load()
 
     messages = [record.getMessage() for record in caplog.records]
     assert any(message.startswith('Build value: value/') for message in messages)
@@ -444,13 +444,13 @@ def test_registry_logs_cache_events(caplog):
 def test_dependency_change_invalidates_downstream_derivatives():
     pipeline, registry, _, value, summary, _, _, _, _ = make_registry()
 
-    assert registry.load('summary', state=DEFAULT_STATE) == 'summary:alpha'
+    assert registry.resolve('summary', state=DEFAULT_STATE).load() == 'summary:alpha'
     assert value.build_calls == 1
     assert summary.build_calls == 1
 
     pipeline.source_path().write_text('changed')
 
-    assert registry.load('summary', state=DEFAULT_STATE) == 'summary:changed'
+    assert registry.resolve('summary', state=DEFAULT_STATE).load() == 'summary:changed'
     assert value.build_calls == 2
     assert summary.build_calls == 2
 
@@ -458,8 +458,8 @@ def test_dependency_change_invalidates_downstream_derivatives():
 def test_non_key_state_does_not_invalidate_cache():
     _, registry, _, value, _, _, _, _, _ = make_registry()
 
-    assert registry.load('value', state={'subject': 's1', 'mode': 'a'}) == 'alpha'
-    assert registry.load('value', state={'subject': 's1', 'mode': 'b'}) == 'alpha'
+    assert registry.resolve('value', state={'subject': 's1', 'mode': 'a'}).load() == 'alpha'
+    assert registry.resolve('value', state={'subject': 's1', 'mode': 'b'}).load() == 'alpha'
     assert value.build_calls == 1
 
 
@@ -485,11 +485,11 @@ def test_cache_collision_sidecar_disambiguates_artifact_paths():
     state_a = {'subject': 's1', 'mode': 'a'}
     state_b = {'subject': 's1', 'mode': 'b'}
 
-    assert registry.load('colliding', state=state_a) == 's1:a:1'
+    assert registry.resolve('colliding', state=state_a).load() == 's1:a:1'
     handle_a = registry.resolve('colliding', state=state_a)
     assert handle_a.artifact_path == handle_a.base_artifact_path
 
-    assert registry.load('colliding', state=state_b) == 's1:b:1'
+    assert registry.resolve('colliding', state=state_b).load() == 's1:b:1'
     handle_b = registry.resolve('colliding', state=state_b)
     assert handle_b.base_artifact_path == handle_a.base_artifact_path
     assert handle_b.artifact_path != handle_a.artifact_path
@@ -500,15 +500,15 @@ def test_cache_collision_sidecar_disambiguates_artifact_paths():
     mapping = json.loads(sidecar_path.read_text())
     assert len(mapping) == 1
 
-    assert registry.load('colliding', state=state_a) == 's1:a:1'
-    assert registry.load('colliding', state=state_b) == 's1:b:1'
+    assert registry.resolve('colliding', state=state_a).load() == 's1:a:1'
+    assert registry.resolve('colliding', state=state_b).load() == 's1:b:1'
     assert derivative.build_calls == {('s1', 'a'): 1, ('s1', 'b'): 1}
 
 
 def test_unique_cache_paths_do_not_create_disambiguation_sidecar():
     _, registry, _, value, _, _, _, _, _ = make_registry()
 
-    assert registry.load('value', state=DEFAULT_STATE) == 'alpha'
+    assert registry.resolve('value', state=DEFAULT_STATE).load() == 'alpha'
     handle = registry.resolve('value', state=DEFAULT_STATE)
 
     assert not Path(f"{handle.base_artifact_path}.disambiguation.json").exists()
@@ -543,8 +543,8 @@ def test_dependency_tree_respects_max_line_length():
 def test_disabled_by_default_derivative_skips_cache_by_default():
     _, registry, _, _, _, _, ephemeral, _, _ = make_registry()
 
-    first = registry.load('ephemeral', state=DEFAULT_STATE)
-    second = registry.load('ephemeral', state=DEFAULT_STATE)
+    first = registry.resolve('ephemeral', state=DEFAULT_STATE).load()
+    second = registry.resolve('ephemeral', state=DEFAULT_STATE).load()
     handle = registry.resolve('ephemeral', state=DEFAULT_STATE)
 
     assert first == 'ephemeral-1'
@@ -570,14 +570,14 @@ def test_registry_resolve_returns_request_for_input_and_derivative():
     assert value_handle.describe_dependency()['kind'] == 'derivative'
     assert value_handle.describe_dependency()['manifest'] == str(value_handle.manifest_path)
 
-    assert registry.load('source', state=DEFAULT_STATE) == 'alpha'
-    assert registry.load('source', state=DEFAULT_STATE, options={'upper': True}) == 'ALPHA'
+    assert registry.resolve('source', state=DEFAULT_STATE).load() == 'alpha'
+    assert registry.resolve('source', state=DEFAULT_STATE, options={'upper': True}).load() == 'ALPHA'
 
 
 def test_stale_external_artifact_is_protected():
     pipeline, registry, _, _, _, _, _, _, _ = make_registry()
 
-    assert registry.load('protected', state=DEFAULT_STATE) == 'alpha'
+    assert registry.resolve('protected', state=DEFAULT_STATE).load() == 'alpha'
     protected_path = Path(pipeline.get('protected-file'))
     manifest_path = Path(registry.manifest_path(protected_path))
     assert protected_path.exists()
@@ -587,7 +587,7 @@ def test_stale_external_artifact_is_protected():
     pipeline.source_path().write_text('changed')
 
     try:
-        registry.load('protected', state=DEFAULT_STATE)
+        registry.resolve('protected', state=DEFAULT_STATE).load()
     except ProtectedArtifactError as error:
         assert error.derivative == 'protected'
         assert error.path == str(protected_path)
@@ -595,18 +595,18 @@ def test_stale_external_artifact_is_protected():
         raise AssertionError("Expected ProtectedArtifactError")
 
     assert protected_path.read_text() == 'alpha'
-    assert registry.load('protected', state=DEFAULT_STATE, controls={ALLOW_PROTECTED_OVERWRITE}) == 'changed'
+    assert registry.resolve('protected', state=DEFAULT_STATE, controls={ALLOW_PROTECTED_OVERWRITE}).load() == 'changed'
     assert protected_path.read_text() == 'changed'
 
 
 def test_protected_artifact_requires_derivative_owned_reindexing():
     pipeline, registry, _, _, _, _, _, _, _ = make_registry()
 
-    assert registry.load('protected', state=DEFAULT_STATE) == 'alpha'
+    assert registry.resolve('protected', state=DEFAULT_STATE).load() == 'alpha'
     pipeline.source_path().write_text('changed')
 
     with pytest.raises(ProtectedArtifactError):
-        registry.load('protected', state=DEFAULT_STATE, controls={'reindex_anything'})
+        registry.resolve('protected', state=DEFAULT_STATE, controls={'reindex_anything'}).load()
 
 
 def test_runtime_code_does_not_use_private_get_node():
@@ -653,8 +653,8 @@ def test_request_applies_view_options_after_build_and_load():
     derivative = OptionDerivative(root)
     registry.register(derivative)
 
-    first = registry.load('optioned', state=DEFAULT_STATE, options={'artifact': 1, 'view': 2})
-    second = registry.load('optioned', state=DEFAULT_STATE, options={'artifact': 1, 'view': 3})
+    first = registry.resolve('optioned', state=DEFAULT_STATE, options={'artifact': 1, 'view': 2}).load()
+    second = registry.resolve('optioned', state=DEFAULT_STATE, options={'artifact': 1, 'view': 3}).load()
 
     assert first == 'artifact:1|view:2'
     assert second == 'artifact:1|view:3'
@@ -673,7 +673,7 @@ def test_request_loads_named_view_and_exposes_artifact_metadata():
     derivative = OptionDerivative(root)
     registry.register(derivative)
 
-    value = registry.load('optioned', state=DEFAULT_STATE, options={'artifact': 2, 'view': 7}, view='echo')
+    value = registry.resolve('optioned', state=DEFAULT_STATE, options={'artifact': 2, 'view': 7}).load(view='echo')
     handle = registry.resolve('optioned', state=DEFAULT_STATE, options={'artifact': 2, 'view': 7})
     manifest = json.loads(handle.manifest_path.read_text())
 

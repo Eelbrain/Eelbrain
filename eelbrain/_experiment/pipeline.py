@@ -572,18 +572,13 @@ class Pipeline(StateModel):
     ):
         state_ = self._derivative_state(state)
         options_ = {} if options is None else dict(options)
-        return self._derivatives.resolve(name, state=state_, options=options_, controls=controls).load(cache)
+        return self._derivatives.resolve(name, state=state_, options=options_, controls=controls).load(cache=cache)
 
     def _derivative_state(
             self,
             state: dict[str, Any] | None = None,
-            **extra_state,
     ) -> dict[str, Any]:
-        merged_state = {}
-        if state:
-            merged_state.update(state)
-        if extra_state:
-            merged_state.update(extra_state)
+        merged_state = dict(state) if state else {}
         with self._temporary_state:
             explicit_none = {key: value for key, value in merged_state.items() if value is None}
             if merged_state:
@@ -2838,7 +2833,7 @@ class Pipeline(StateModel):
             else:
                 raise ValueError(f"The current epoch {epoch.name!r} is not a primary epoch and inherits selections from other epochs. Generate trial rejection for these epochs.")
 
-        path = rej_file_path(self._derivative_state(task=epoch.task))
+        path = rej_file_path(self._derivative_state({'task': epoch.task}))
         path.parent.mkdir(parents=True, exist_ok=True)
 
         if auto is not None and overwrite is not True and exists(path):

@@ -58,13 +58,29 @@ MANIFEST_SUFFIX = '.manifest.json'
 MANIFEST_SCHEMA_VERSION = 2
 DEFAULT_CACHE_LABEL = 'artifact'
 MAX_CACHE_LABEL_LEN = 96
+# Hash prefix length for artifact path components (hex chars, i.e. 48 bits).
+# Collisions at the path level are handled gracefully by the disambiguation
+# sidecar, so a shorter prefix is acceptable in exchange for more readable paths.
 CACHE_KEY_HASH_LEN = 12
 CACHE_DISAMBIGUATION_SUFFIX = '.disambiguation.json'
 ALLOW_PROTECTED_OVERWRITE = 'allow_protected_overwrite'
 
 
 class CachePolicy(str, Enum):
-    """How strongly the cache engine should prefer persistence for a derivative."""
+    """How strongly the cache engine should prefer persistence for a derivative.
+
+    REQUIRED
+        Caching is always on. The artifact is always written and read from disk.
+        Use for derivatives that are expensive to compute.
+    OPTIONAL
+        Caching is on by default but can be disabled by passing ``cache=False``
+        to the caller. Use for derivatives that are cheap to rebuild but
+        benefit from persistence across sessions.
+    DISABLED_BY_DEFAULT
+        Caching is opt-in: disabled unless the caller passes ``cache=True``
+        explicitly. Use for derived values that are fast to compute or that
+        should not accumulate on disk without explicit intent.
+    """
 
     REQUIRED = 'required'
     OPTIONAL = 'optional'
@@ -104,6 +120,9 @@ class ArtifactManifest:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ArtifactManifest:
+        # Unknown keys from newer schema versions are silently dropped so that
+        # manifests written by a newer Eelbrain can still be read by an older
+        # one. Structural validity (schema_version) is checked at the call site.
         allowed = {field_.name for field_ in fields(cls)}
         filtered = {key: value for key, value in data.items() if key in allowed}
         return cls(**filtered)
@@ -200,7 +219,11 @@ class Dependency:
         Optional dependency view name. Use this when the dependency should be
         validated through a reduced or specialized dependency fingerprint
         rather than the dependency node's default dependency-facing
-        fingerprint.
+        fingerprint. The named view is resolved through
+        :meth:`DependencyNode.dependency_fingerprint` with ``view`` forwarded
+        to the target node, which can expose multiple narrower fingerprint
+        projections of the same artifact. This affects cache validation only;
+        the dependency artifact itself is not loaded through this view.
 
     Notes
     -----
@@ -632,7 +655,14 @@ class Derivative(DependencyNode[T]):
 
 
 class UncachedDerivative(Derivative[T]):
-    """Base class for derived values that should never persist to the cache."""
+    """Base class for derived values that should never persist to the cache.
+
+    :meth:`should_cache` unconditionally returns ``False``, so ``build`` is
+    called on every request and no artifact is written to disk.
+    ``cache_suffix`` is set to a placeholder value so that the default
+    :meth:`path` implementation does not raise; in practice :meth:`path` is
+    never used, because the registry skips all file I/O when caching is off.
+    """
 
     cache_log_level = None
     cache_suffix = '.uncached'
@@ -886,47 +916,65 @@ class Request(Generic[T]):
 
     def load(
             self,
-            name: str | bool | None = None,
+            name: str | None = None,
             cache: bool | None = None,
             state: dict[str, Any] | None = None,
             options: dict[str, Any] | None = None,
             *,
             view: str | None = None,
             controls: frozenset[str] | set[str] | tuple[str, ...] = (),
-            **extra_state,
     ):
-        """Load this request, or a dependency relative to this request's state.
+        """Load this request, or a named dependency relative to this request's state.
 
-        ``request.load()`` materializes the current request.
-        ``request.load('other-node', ...)`` resolves and loads another node,
-        merging this request's state with any explicit state overrides.
-        ``view=...`` loads one named derivative view instead of the node's
-        default return value.
-        Controls are never inherited implicitly; pass them explicitly when a
-        nested load genuinely needs them.
+        Parameters
+        ----------
+        name
+            Registered node name to load as a dependency. When omitted or
+            ``None``, the current request itself is materialized.
+        cache
+            Override the node's default :class:`CachePolicy`. ``True`` forces
+            a cache read/write; ``False`` bypasses the cache and always
+            rebuilds. ``None`` (the default) defers to the node's own policy.
+            Only meaningful for :class:`Derivative` nodes; ignored for
+            :class:`Input` nodes.
+        state
+            State overrides merged on top of the current request's state
+            before resolving the dependency. Only valid when ``name`` is
+            given.
+        options
+            Option overrides for the target node. Only valid when ``name`` is
+            given; use :meth:`options_for` to forward options from the current
+            request.
+        view
+            Named view to load instead of the node's default return value.
+            Resolved through :meth:`Derivative.load_view` on the target node.
+        controls
+            Explicit execution controls forwarded to the nested load. Controls
+            are never inherited implicitly; pass them only when the nested load
+            genuinely requires them.
+
+        Returns
+        -------
+        value
+            The loaded artifact after view-option shaping, or the result of
+            :meth:`Derivative.load_view` when ``view`` is given.
+
+        Notes
+        -----
+        When loading the current request (``name`` is ``None``), only
+        ``cache`` and ``view`` are accepted; passing ``state``, ``options``,
+        or ``controls`` raises :class:`TypeError`.
         """
         if isinstance(name, str):
-            merged_state = dict(self.state)
-            if state:
-                merged_state.update(state)
-            if extra_state:
-                merged_state.update(extra_state)
-            return self.registry.load(
+            return self.registry.resolve(
                 name,
-                cache=cache,
-                state=merged_state,
+                state={**self.state, **(state or {})},
                 options=options,
-                view=view,
                 controls=controls,
-            )
+            ).load(cache=cache, view=view)
 
-        if state is not None or options is not None or extra_state or controls:
-            raise TypeError("Request.load() without a dependency name only accepts optional cache/view overrides")
-        if name is not None and not isinstance(name, bool):
-            raise TypeError(f"Unsupported Request.load() first argument: {name!r}")
-        if name is not None and cache is not None:
-            raise TypeError("Specify cache only once when loading the current request")
-        cache = name if isinstance(name, bool) else cache
+        if state is not None or options is not None or controls:
+            raise TypeError("Request.load() without a dependency name only accepts cache and view overrides")
         if isinstance(self.node, Input):
             if view is not None:
                 raise TypeError(f"Request for input {self.node.name!r} does not define view {view!r}")
@@ -956,18 +1004,6 @@ class DerivativeRegistry:
             raise TypeError(f"Unsupported node type: {type(node)!r}")
         self._nodes[node.name] = node
 
-    def _resolve_state(
-            self,
-            state: dict[str, Any] | None = None,
-            **extra_state,
-    ) -> dict[str, Any]:
-        merged_state = {}
-        if state:
-            merged_state.update(state)
-        if extra_state:
-            merged_state.update(extra_state)
-        return merged_state
-
     def _get_node(self, name: str) -> DependencyNode[Any]:
         try:
             return self._nodes[name]
@@ -976,11 +1012,10 @@ class DerivativeRegistry:
 
     def resolve(
             self,
-            name: str,  # Registered node name.
-            state: dict[str, Any] | None = None,  # Base state for this node instance.
+            name: str,
+            state: dict[str, Any] | None = None,
             options: dict[str, Any] | None = None,
             controls: frozenset[str] | set[str] | tuple[str, ...] = (),
-            **extra_state,  # Additional state overrides merged on top of ``state``.
     ) -> Request[Any]:
         node = self._get_node(name)
         node_options = {} if options is None else dict(options)
@@ -998,24 +1033,11 @@ class DerivativeRegistry:
         return Request(
             node=node,
             registry=self,
-            state=self._resolve_state(state, **extra_state),
+            state=dict(state) if state else {},
             options=options,
             view_options=view_options,
             controls=controls,
         )
-
-    def load(
-            self,
-            name: str,  # Registered node name.
-            cache: bool | None = None,  # Explicit cache override for derivative loads.
-            state: dict[str, Any] | None = None,  # Base state for this node instance.
-            options: dict[str, Any] | None = None,
-            view: str | None = None,
-            controls: frozenset[str] | set[str] | tuple[str, ...] = (),
-            **extra_state,  # Additional state overrides merged on top of ``state``.
-    ):
-        handle = self.resolve(name, state=state, options=options, controls=controls, **extra_state)
-        return handle.load(cache, view=view)
 
     def describe_artifact_path(self, path: str | Path) -> str:
         artifact_path = Path(path)
@@ -1089,7 +1111,7 @@ class DerivativeRegistry:
             keys.add(key)
             handle = self.resolve(
                 dep.name,
-                state=self._resolve_state(ctx.state, **(dep.state or {})),
+                state={**ctx.state, **(dep.state or {})},
                 options=dep.options,
             )
             out.append((dep, handle))
@@ -1162,7 +1184,6 @@ class DerivativeRegistry:
             state: dict[str, Any] | None = None,
             options: dict[str, Any] | None = None,
             max_line_length: int | None = None,
-            **extra_state,
     ) -> str:
         """Format one resolved dependency request as an ASCII tree.
 
@@ -1178,10 +1199,8 @@ class DerivativeRegistry:
             Maximum line length for the formatted tree. By default, infer the
             current terminal width and wrap long node descriptions onto
             continuation lines.
-        ...
-            Additional state overrides merged on top of ``state``.
         """
-        root = self.resolve(name, state=state, options=options, **extra_state)
+        root = self.resolve(name, state=state, options=options)
         line_width = self._tree_line_width(max_line_length)
         seen = set()
         lines = []
@@ -1292,6 +1311,20 @@ class DerivativeRegistry:
 
     @staticmethod
     def canonicalize(value: Any) -> Any:
+        """Recursively convert ``value`` to a JSON-serializable, stable form.
+
+        The output is suitable for fingerprints, keys, and manifests: dicts are
+        sorted by key, sets are sorted, numpy scalars are unwrapped, and
+        :class:`Path` objects become strings. Unrecognized types fall back to
+        ``repr()``.
+
+        Domain-specific types handled here (:class:`~eelbrain.Var`,
+        :class:`~eelbrain.Factor`, :class:`~eelbrain.Interaction`,
+        :class:`Configuration`) are an intentional coupling between the cache
+        kernel and the Eelbrain data model; they allow fingerprints and keys to
+        contain arbitrary data objects without callers having to pre-serialize
+        them.
+        """
         if isinstance(value, Var):
             return DerivativeRegistry.canonicalize(value.x.tolist())
         if isinstance(value, (Factor, Interaction)):

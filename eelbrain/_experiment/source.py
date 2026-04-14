@@ -379,7 +379,7 @@ class SrcDerivative(Derivative[mne.SourceSpaces]):
         src = ctx.state['src']
 
         if self._is_scaled(ctx):
-            ctx.load('src', mrisubject=common_brain)
+            ctx.load('src', state={'mrisubject': common_brain})
             ctx.registry.log.info("Scaling %s source space for %s...", src, subject)
             mne.scale_source_space(subject, f'{{subject}}-{src}-src.fif', subjects_dir=mri_sdir(ctx.state), n_jobs=1)
             return mne.read_source_spaces(dst)
@@ -471,7 +471,7 @@ class SourceMorphDerivative(Derivative[mne.SourceMorph]):
         subject_from = ctx.state['mrisubject']
         subject_to = ctx.state['common_brain']
         subjects_dir = mri_sdir(ctx.state)
-        src_to = ctx.load('src', mrisubject=subject_to)
+        src_to = ctx.load('src', state={'mrisubject': subject_to})
         if is_fake_mri(mri_dir(ctx.state)) and subject_from != subject_to:
             src_from = ctx.load('src')
             return _identity_source_morph(subject_from, subject_to, src_from, src_to)

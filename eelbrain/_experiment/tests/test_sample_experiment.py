@@ -593,7 +593,7 @@ def test_sample_tasks():
     assert pipe._bads_path(bids_path) == Path(root) / 'sub-R0000' / 'meg' / 'sub-R0000_task-sample1_channels.tsv'
     pipe = e._raw[e.get('raw', raw='ica')]
     bids_path = e._bids_path
-    state = e._derivative_state(raw='ica')
+    state = e._derivative_state(state={'raw': 'ica'})
     handle = e._derivatives.resolve(raw_node_name('ica'), state=state)
     assert handle.artifact_path.is_relative_to(Path(root) / 'derivatives' / 'eelbrain' / 'cache' / 'raw-ica')
     assert handle.artifact_path.suffix == '.fif'
@@ -688,11 +688,11 @@ def test_evoked_backed_test_vars_are_post_aggregation_only():
         'smooth': None,
         'samplingrate': None,
     }
-    ds = e._derivatives.load('evoked-test-data', state=e._derivative_state({'test': 'anova-ok'}), options=options)
+    ds = e._derivatives.resolve('evoked-test-data', state=e._derivative_state({'test': 'anova-ok'}), options=options).load()
     assert 'modality_num' in ds
 
     with pytest.raises(ConfigurationError, match='post-aggregation dataset'):
-        e._derivatives.load('evoked-test-data', state=e._derivative_state({'test': 'anova-bad'}), options={**options, 'test': 'anova-bad'})
+        e._derivatives.resolve('evoked-test-data', state=e._derivative_state({'test': 'anova-bad'}), options={**options, 'test': 'anova-bad'}).load()
 
 
 @requires_mne_sample_data
