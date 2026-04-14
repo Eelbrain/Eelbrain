@@ -241,13 +241,6 @@ class Pipeline(StateModel):
     # Tests imply a model which is set automatically
     tests: dict[str, Test] = {}
     _empty_test = False  # for TRFExperiment
-    _cluster_criteria = {
-        '': {'time': 0.025, 'sensor': 4, 'source': 10},
-        'all': {},
-        '10ms': {'time': 0.01, 'sensor': 4, 'source': 10},
-        'large': {'time': 0.025, 'sensor': 8, 'source': 20},
-    }
-
     # plotting
     # --------
     _brain_plot_defaults = {'surf': 'inflated'}
@@ -264,9 +257,6 @@ class Pipeline(StateModel):
         if root is None:
             raise AttributeError("Pipeline subclasses must have root.")
         self.root = root = Path(root).absolute().expanduser()
-        if hasattr(self, 'cluster_criteria'):
-            raise AttributeError("Pipeline subclasses can not have a .cluster_criteria attribute anymore. Please remove the attribute, delete the eelbrain-cache folder and use the select_clusters analysis parameter.")
-
         # BIDS entities
         # ignore task `noise` by default
         ignore_entities = copy.deepcopy(self.ignore_entities)
@@ -433,7 +423,6 @@ class Pipeline(StateModel):
         self._register_field('freq', self._freqs.keys())
         self._register_field('src', default='ico-4', eval_handler=eval_src)
         self._register_field('adjacency', ('', 'link-midline'), allow_empty=True)
-        self._register_field('select_clusters', self._cluster_criteria.keys(), allow_empty=True)
 
         # # slave fields
         self._register_field('mrisubject', depends_on=('mri', 'subject'), slave_handler=self._update_mrisubject, repr=False)
@@ -513,12 +502,8 @@ class Pipeline(StateModel):
             self._epochs,
             self._parcs,
             self._groups,
-            self._field_values,
-            self._mri_subjects,
-            self.get('common_brain'),
-            self._cluster_criteria,
         )
-        report_args = (*result_args, {**self._brain_plot_defaults, **self.brain_plot_defaults})
+        brain_report_args = (*result_args, self._mri_subjects, self.get('common_brain'), {**self._brain_plot_defaults, **self.brain_plot_defaults})
 
         # Register inputs
         for raw_name, pipe in self._raw.items():
@@ -558,16 +543,16 @@ class Pipeline(StateModel):
         self._derivatives.register(AnnotDerivative(self._parcs, tuple(self.get_field_values('hemi'))))
         self._derivatives.register(EpochsStcDerivative(self._raw, self._epochs))
         self._derivatives.register(EvokedStcDerivative(self._raw, self._epochs))
-        self._derivatives.register(EpochsStcGroupDatasetDerivative(self._groups, self._mri_subjects, self.get('common_brain')))
-        self._derivatives.register(EvokedStcGroupDatasetDerivative(self._groups, self._mri_subjects, self.get('common_brain')))
+        self._derivatives.register(EpochsStcGroupDatasetDerivative(self._mri_subjects, self.get('common_brain'), self._groups))
+        self._derivatives.register(EvokedStcGroupDatasetDerivative(self._mri_subjects, self.get('common_brain'), self._groups))
         self._derivatives.register(TestResultDerivative(*result_args))
         self._derivatives.register(TwoStageLevel2Derivative(*result_args))
-        self._derivatives.register(SourceReportDerivative(*report_args))
-        self._derivatives.register(ROIReportDerivative(*report_args))
-        self._derivatives.register(EEGReportDerivative(*report_args))
-        self._derivatives.register(EEGSensorsReportDerivative(*report_args))
-        self._derivatives.register(LMReportDerivative(*report_args))
-        self._derivatives.register(CoregReportDerivative(*report_args))
+        self._derivatives.register(SourceReportDerivative(*brain_report_args))
+        self._derivatives.register(ROIReportDerivative(*brain_report_args))
+        self._derivatives.register(EEGReportDerivative(*result_args))
+        self._derivatives.register(EEGSensorsReportDerivative(*result_args))
+        self._derivatives.register(LMReportDerivative(*brain_report_args))
+        self._derivatives.register(CoregReportDerivative(self._raw))
         self._derivatives.register(MovieDerivative(*result_args))
         for cov_name, cov in self._covs.items():
             self._derivatives.register(CovDerivative(cov_name, cov))
@@ -585,7 +570,9 @@ class Pipeline(StateModel):
             *,
             controls: frozenset[str] | set[str] | tuple[str, ...] = (),
     ):
-        return self._derivatives.resolve(name, state=self._derivative_state(state), options=options, controls=controls).load(cache)
+        state_ = self._derivative_state(state)
+        options_ = {} if options is None else dict(options)
+        return self._derivatives.resolve(name, state=state_, options=options_, controls=controls).load(cache)
 
     def _derivative_state(
             self,
@@ -1168,12 +1155,9 @@ class Pipeline(StateModel):
             'reject': reject,
         }
         if group is not None:
-            state['group'] = group
-            return self._load_derivative('epochs-stc-group-dataset', state=state, options=options)
-        state['group'] = None
-        if subject is not None:
-            state['subject'] = subject
-        return self._load_derivative('epochs-stc', state=state, options=options)
+            return self._load_derivative('epochs-stc-group-dataset', options=options)
+        else:
+            return self._load_derivative('epochs-stc', options=options)
 
     def load_events(
             self,
@@ -2116,10 +2100,7 @@ class Pipeline(StateModel):
         data = TestDims.coerce(data, morph=True)
         if data.source:
             self._current_source_parc(**state)
-            if isinstance(data.source, str) and disconnect_labels:
-                raise TypeError(f"{disconnect_labels=}: invalid for data={data.string!r}")
-        elif disconnect_labels:
-            raise TypeError(f"{disconnect_labels=}: invalid for data={data.string!r}")
+        data._testnd_parc(disconnect_labels)
         options = {
             'data': data,
             'samples': samples,
@@ -2136,7 +2117,8 @@ class Pipeline(StateModel):
         test_obj = self.tests[test]
         result_node = 'two-stage-level-2' if isinstance(test_obj, TwoStageTest) else 'test-result'
         data_node = 'two-stage-data' if isinstance(test_obj, TwoStageTest) else 'evoked-test-data'
-        handle = self._derivatives.resolve(result_node, state=self._derivative_state(), options=options)
+        result_state = self._derivative_state()
+        handle = self._derivatives.resolve(result_node, state=result_state, options=options)
         dst = handle.artifact_path
         desc = self._derivatives.describe_artifact_path(dst)
 
@@ -2161,7 +2143,8 @@ class Pipeline(StateModel):
                 return res
 
         data_options = {key: value for key, value in options.items() if key != 'disconnect_labels'}
-        res_data = self._derivatives.load(data_node, state=self._derivative_state(), options=data_options)
+        data_state = self._derivative_state()
+        res_data = self._derivatives.resolve(data_node, state=data_state, options=data_options).load()
         if isinstance(res_data, ROIData):
             res_data = res_data.label_data
         return res_data, res
@@ -2506,7 +2489,8 @@ class Pipeline(StateModel):
             'brain_kwargs': brain_kwargs,
             'time_dilation': time_dilation,
         }
-        if not redo and self._derivatives.resolve('movie', state=self._derivative_state(), options=options).is_valid():
+        handle_state = self._derivative_state()
+        if not redo and self._derivatives.resolve('movie', state=handle_state, options=options).is_valid():
             return
         self._load_derivative('movie', options=options, controls={ALLOW_PROTECTED_OVERWRITE})
 
@@ -2632,7 +2616,8 @@ class Pipeline(StateModel):
                 'time_dilation': time_dilation,
                 'cluster_state': state,
             }
-            if not redo and self._derivatives.resolve('movie', state=self._derivative_state(), options=options).is_valid():
+            handle_state = self._derivative_state()
+            if not redo and self._derivatives.resolve('movie', state=handle_state, options=options).is_valid():
                 return
         self._load_derivative('movie', options=options, controls={ALLOW_PROTECTED_OVERWRITE})
 
@@ -2989,7 +2974,8 @@ class Pipeline(StateModel):
             'tstop': tstop,
             'include': include,
         }
-        if not redo and self._derivatives.resolve('source-report', state=self._derivative_state(), options=options).is_valid():
+        handle_state = self._derivative_state()
+        if not redo and self._derivatives.resolve('source-report', state=handle_state, options=options).is_valid():
             return
         self._load_derivative('source-report', options=options, controls={ALLOW_PROTECTED_OVERWRITE})
 
@@ -3049,7 +3035,8 @@ class Pipeline(StateModel):
             'tstart': tstart,
             'tstop': tstop,
         }
-        if not redo and self._derivatives.resolve('roi-report', state=self._derivative_state(), options=options).is_valid():
+        handle_state = self._derivative_state()
+        if not redo and self._derivatives.resolve('roi-report', state=handle_state, options=options).is_valid():
             return
         self._load_derivative('roi-report', options=options, controls={ALLOW_PROTECTED_OVERWRITE})
 
@@ -3877,7 +3864,9 @@ class Pipeline(StateModel):
         ...
             State parameters for resolving the requested node.
         """
-        tree = self._derivatives.dependency_tree(name, state=self._derivative_state(state), options=options, max_line_length=max_line_length)
+        state_ = self._derivative_state(state)
+        options_ = {} if options is None else dict(options)
+        tree = self._derivatives.dependency_tree(name, state=state_, options=options_, max_line_length=max_line_length)
         if return_str:
             return tree
         print(tree)

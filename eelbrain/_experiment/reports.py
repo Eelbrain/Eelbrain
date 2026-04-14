@@ -22,20 +22,20 @@ from .. import report as _report
 from .. import table
 from .._data_obj import Dataset, Factor, align1
 from .._utils.mne_utils import is_fake_mri
-from .derivative_cache import Dependency, Request, file_fingerprint
+from .derivative_cache import Dependency, Derivative, Request, file_fingerprint
+from .groups import subjects_for_state
 from .parc import IndividualSeededParc, _resolve_parc
 from .pathing import coreg_report_path, mri_dir, mri_sdir, trans_file_path
-from .preprocessing import raw_node_name
+from .preprocessing import RawPipe, RawSource, raw_node_name
 from .results import (
     RESULT_OPTION_DEFAULTS,
     TEST_DATA_OPTION_NAMES,
     ResultOutputDerivative,
     _subject_request_state,
     _test_result_options,
-    make_result_test,
-    result_test_kwargs,
 )
-from .test_def import TestDims
+from .source import _subject_state
+from .test_def import ResolvedTestNDSpec, TestDims
 from .two_stage import TwoStageTest
 
 
@@ -60,15 +60,7 @@ def _report_title(path: str | Path) -> str:
     return Path(path).stem
 
 
-def _load_annot(node: ResultOutputDerivative, state: dict[str, Any], subject: str | None = None) -> list[mne.Label]:
-    load_state = dict(state)
-    if subject is not None:
-        load_state['subject'] = subject
-        load_state['mrisubject'] = node._field_options(load_state, 'mrisubject', subject=subject)[0]
-    return mne.read_labels_from_annot(load_state['mrisubject'], load_state['parc'], 'both', subjects_dir=mri_sdir(load_state))
-
-
-def _surfer_plot_kwargs(node: ResultOutputDerivative, state: dict[str, Any], surf=None, views=None, foreground=None, background=None, smoothing_steps=None, hemi=None) -> dict[str, Any]:
+def _surfer_plot_kwargs(node: BrainReportDerivative, state: dict[str, Any], surf=None, views=None, foreground=None, background=None, smoothing_steps=None, hemi=None) -> dict[str, Any]:
     out = dict(node.brain_plot_defaults)
     if views:
         out['views'] = views
@@ -89,27 +81,26 @@ def _surfer_plot_kwargs(node: ResultOutputDerivative, state: dict[str, Any], sur
     return out
 
 
-def _plot_annot(node: ResultOutputDerivative, state: dict[str, Any], subject: str | None = None, axw: int | None = None):
-    plot_state = dict(state)
-    if subject is not None:
-        plot_state['subject'] = subject
-        plot_state['mrisubject'] = node._field_options(plot_state, 'mrisubject', subject=subject)[0]
-
-    parc_name, parc = _resolve_parc(node.parcs, plot_state['parc'])
+def _plot_annot(
+        node: BrainReportDerivative,
+        state: dict[str, Any],
+        axw: int | None = None,
+):
+    parc_name, parc = _resolve_parc(node.parcs, state['parc'])
     plot_on_scaled_common_brain = isinstance(parc, IndividualSeededParc)
-    if (not plot_on_scaled_common_brain) and is_fake_mri(mri_dir(plot_state)):
-        subject_name = plot_state['common_brain']
+    if (not plot_on_scaled_common_brain) and is_fake_mri(mri_dir(state)):
+        subject_name = state['common_brain']
     else:
-        subject_name = plot_state['mrisubject']
-    kwa = _surfer_plot_kwargs(node, plot_state)
+        subject_name = state['mrisubject']
+    kwa = _surfer_plot_kwargs(node, state)
     if axw is not None:
         kwa['axw'] = axw
-    return plot.brain.annot(parc_name, subject_name, subjects_dir=mri_sdir(plot_state), **kwa)
+    return plot.brain.annot(parc_name, subject_name, subjects_dir=mri_sdir(state), **kwa)
 
 
-def _report_subject_info(node: ResultOutputDerivative, state: dict[str, Any], ds, model):
+def _report_subject_info(state: dict[str, Any], subjects: tuple[str, ...], ds, model):
     s_ds = Dataset(caption=f"Subjects in group {state['group']}")
-    s_ds['subject'] = Factor([item['subject'] for item in node.collect_states(state, ('subject',))])
+    s_ds['subject'] = Factor(subjects)
     if 'n' in ds:
         if model:
             n_ds = table.repmeas('n', model, 'subject', data=ds)
@@ -120,7 +111,7 @@ def _report_subject_info(node: ResultOutputDerivative, state: dict[str, Any], ds
     return s_ds.as_table(midrule=True, count=True, caption="All subjects included in the analysis with trials per condition")
 
 
-def _report_test_info(node: ResultOutputDerivative, state: dict[str, Any], section, ds, test, res, data, include=None, model=True):
+def _report_test_info(node: ResultOutputDerivative, state: dict[str, Any], subjects: tuple[str, ...], section, ds, test, res, data, include=None, model=True):
     test_obj = node.tests[test] if isinstance(test, str) else test
     info = fmtxt.List("Analysis:")
     epoch = _format_text(state, 'epoch = {epoch}')
@@ -141,22 +132,31 @@ def _report_test_info(node: ResultOutputDerivative, state: dict[str, Any], secti
     section.append(info)
     info = res.info_list()
     section.append(info)
-    section.append(_report_subject_info(node, state, ds, test_obj.model))
+    section.append(_report_subject_info(state, subjects, ds, test_obj.model))
     section.append(_show_state(state, ('hemi', 'subject', 'mrisubject')))
     return info
 
 
-def _report_parc_image(node: ResultOutputDerivative, state: dict[str, Any], section, caption, subjects=None):
+def _report_parc_image(
+        ctx: Request,
+        node: BrainReportDerivative,
+        state: dict[str, Any],
+        section,
+        caption,
+        subjects=None,
+):
     _, parc = _resolve_parc(node.parcs, state['parc'])
     if isinstance(parc, IndividualSeededParc):
         if subjects is None:
             raise RuntimeError("subjects needs to be specified for plotting individual parcellations")
         legend = None
         for subject in subjects:
-            if all(label.name.startswith('unknown-') for label in _load_annot(node, state, subject)):
+            plot_state = _subject_state(state, subject, node.mri_subjects, node.common_brain)
+            labels = ctx.load('annot', state=plot_state)
+            if all(label.name.startswith('unknown-') for label in labels):
                 section.add_image_figure("No labels", subject)
                 continue
-            brain = _plot_annot(node, state, subject, None)
+            brain = _plot_annot(node, plot_state)
             if legend is None:
                 legend_plot = brain.plot_legend(show=False)
                 legend = legend_plot.image('parc-legend')
@@ -165,15 +165,11 @@ def _report_parc_image(node: ResultOutputDerivative, state: dict[str, Any], sect
             brain.close()
         return
 
-    brain = _plot_annot(node, {**state, 'mrisubject': state['common_brain']}, None, 500)
+    brain = _plot_annot(node, {**state, 'mrisubject': state['common_brain']}, 500)
     legend = brain.plot_legend(show=False)
     section.add_image_figure([brain.image('parc'), legend.image('parc-legend')], caption)
     brain.close()
     legend.close()
-
-
-def _coreg_subject_states(node: ResultOutputDerivative, ctx: Request) -> list[dict[str, Any]]:
-    return node.collect_states(ctx.state, ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'mrisubject'), raw='raw')
 
 
 def _save_report(report, dst: Path, packages: tuple[str, ...], samples: int | None = None) -> Path:
@@ -183,7 +179,26 @@ def _save_report(report, dst: Path, packages: tuple[str, ...], samples: int | No
     return dst
 
 
-class SourceReportDerivative(ResultOutputDerivative[Path]):
+class BrainReportDerivative(ResultOutputDerivative[Path]):
+    """Result-output derivative with shared brain-plot defaults for reports."""
+
+    def __init__(
+            self,
+            tests: dict[str, Any],
+            epochs: dict[str, Any],
+            parcs: dict[str, Any],
+            groups: dict[str, tuple[str, ...] | list[str]],
+            mri_subjects: dict[str, dict[str, str]],
+            common_brain: str,
+            brain_plot_defaults: dict[str, Any] | None = None,
+    ):
+        ResultOutputDerivative.__init__(self, tests, epochs, parcs, groups)
+        self.mri_subjects = mri_subjects
+        self.common_brain = common_brain
+        self.brain_plot_defaults = {} if brain_plot_defaults is None else brain_plot_defaults
+
+
+class SourceReportDerivative(BrainReportDerivative):
     """HTML report for source-space test results.
 
     Uses the shared result-output options and adds ``include`` to control
@@ -193,7 +208,7 @@ class SourceReportDerivative(ResultOutputDerivative[Path]):
     sampled_path = True
     OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'disconnect_labels': False, 'include': None}
 
-    def extra_key(self, ctx: Request) -> dict[str, Any]:
+    def _identity_extra(self, ctx: Request) -> dict[str, Any]:
         return {'include': ctx.options['include']}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
@@ -209,6 +224,7 @@ class SourceReportDerivative(ResultOutputDerivative[Path]):
 
     def build(self, ctx: Request) -> Path:
         dst = self.path(ctx)
+        subjects = subjects_for_state(self.groups, ctx.state)
         report = fmtxt.Report(_report_title(dst))
         path_items = [*dst.parts[:-1], dst.stem]
         report.add_paragraph(fmtxt.List('Methods brief', path_items[-3:]))
@@ -222,36 +238,37 @@ class SourceReportDerivative(ResultOutputDerivative[Path]):
             section_title = f"Disconnected Labels in {parc}" if ctx.options['disconnect_labels'] else f"Whole Brain Masked by {parc}"
             caption = f"Labels in the {parc} parcellation with cluster adjacency disconnected across labels." if ctx.options['disconnect_labels'] else f"Whole-brain source test restricted to labels in the {parc} parcellation."
             section = report.add_section(section_title)
-            _report_parc_image(self, ctx.state, section, caption)
+            _report_parc_image(ctx, self, ctx.state, section, caption)
 
             report.add_section("Design Matrix").append(rlm.design())
             for term in rlm.column_names:
                 res = rlm.tests[term]
                 ds = rlm.coefficients_dataset(term, long=True)
                 report.append(_report.source_time_results(res, ds, None, ctx.options['include'], _surfer_plot_kwargs(self, ctx.state), term, y='coeff'))
-            _report_test_info(self, ctx.state, info_section, data_value, test_obj, res, ctx.options['data'])
+            _report_test_info(self, ctx.state, subjects, info_section, data_value, test_obj, res, ctx.options['data'])
         else:
             data_value = ctx.load('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES))
             ds = data_value
             res = ctx.load('test-result', options=_test_result_options(ctx))
-            _report_test_info(self, ctx.state, report.add_section("Test Info"), ds, ctx.options['test'], res, ctx.options['data'], ctx.options['include'])
+            _report_test_info(self, ctx.state, subjects, report.add_section("Test Info"), ds, ctx.options['test'], res, ctx.options['data'], ctx.options['include'])
             parc = ctx.state['parc']
             section_title = f"Disconnected Labels in {parc}" if ctx.options['disconnect_labels'] else f"Whole Brain Masked by {parc}"
             caption = f"Labels in the {parc} parcellation with cluster adjacency disconnected across labels." if ctx.options['disconnect_labels'] else f"Whole-brain source test restricted to labels in the {parc} parcellation."
             section = report.add_section(section_title)
-            _report_parc_image(self, ctx.state, section, caption)
+            _report_parc_image(ctx, self, ctx.state, section, caption)
             colors = plot.colors_for_categorial(ds.eval(res._plot_model()))
             report.append(_report.source_time_results(res, ds, colors, ctx.options['include'], _surfer_plot_kwargs(self, ctx.state), parc=ctx.options['disconnect_labels']))
         return _save_report(report, dst, ('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'), ctx.options['samples'])
 
 
-class ROIReportDerivative(ResultOutputDerivative[Path]):
+class ROIReportDerivative(BrainReportDerivative):
     """HTML report for ROI-based test results.
 
     Uses the shared result-output options.
     """
     name = 'roi-report'
     sampled_path = True
+    OPTION_DEFAULTS = RESULT_OPTION_DEFAULTS
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if isinstance(self.tests[ctx.options['test']], TwoStageTest):
@@ -281,9 +298,9 @@ class ROIReportDerivative(ResultOutputDerivative[Path]):
         report = fmtxt.Report(_report_title(dst))
         first_label = (labels_lh or labels_rh)[0]
         info_section = report.add_section("Test Info")
-        _report_test_info(self, ctx.state, info_section, res.n_trials_ds, self.tests[ctx.options['test']], res.res[first_label], ctx.options['data'])
+        _report_test_info(self, ctx.state, tuple(res.subjects), info_section, res.n_trials_ds, self.tests[ctx.options['test']], res.res[first_label], ctx.options['data'])
         section = report.add_section(ctx.state['parc'])
-        _report_parc_image(self, ctx.state, section, f"ROIs in the {ctx.state['parc']} parcellation.", res.subjects)
+        _report_parc_image(ctx, self, ctx.state, section, f"ROIs in the {ctx.state['parc']} parcellation.", res.subjects)
         n_subjects = len(res.subjects)
         colors = plot.colors_for_categorial(roi_data.label_data[first_label].eval(res.res[first_label]._plot_model()))
         for label in chain(labels_lh, labels_rh):
@@ -309,7 +326,7 @@ class EEGReportDerivative(ResultOutputDerivative[Path]):
     sampled_path = True
     OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'include': None}
 
-    def extra_key(self, ctx: Request) -> dict[str, Any]:
+    def _identity_extra(self, ctx: Request) -> dict[str, Any]:
         return {'include': ctx.options['include']}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
@@ -328,7 +345,7 @@ class EEGReportDerivative(ResultOutputDerivative[Path]):
         res = ctx.load('test-result', options=_test_result_options(ctx))
         report = fmtxt.Report(_report_title(dst))
         info_section = report.add_section("Test Info")
-        _report_test_info(self, ctx.state, info_section, ds, ctx.options['test'], res, ctx.options['data'], ctx.options['include'])
+        _report_test_info(self, ctx.state, subjects_for_state(self.groups, ctx.state), info_section, ds, ctx.options['test'], res, ctx.options['data'], ctx.options['include'])
         sensor_map = plot.SensorMap(ds['eeg'], adjacency=True, show=False)
         image_conn = sensor_map.image("adjacency.png")
         info_section.add_figure("Sensor map with adjacency", image_conn)
@@ -348,7 +365,7 @@ class EEGSensorsReportDerivative(ResultOutputDerivative[Path]):
     sampled_path = True
     OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'sensors': ()}
 
-    def extra_key(self, ctx: Request) -> dict[str, Any]:
+    def _identity_extra(self, ctx: Request) -> dict[str, Any]:
         return {'sensors': tuple(ctx.options['sensors'])}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
@@ -374,16 +391,16 @@ class EEGSensorsReportDerivative(ResultOutputDerivative[Path]):
         sensor_map.mark_sensors(sensors)
         info_section.add_figure("Sensor map", sensor_map)
         sensor_map.close()
-        test_kwargs = result_test_kwargs(self, ctx, ('time', 'sensor'), None)
-        results = [make_result_test(self, eeg.sub(sensor=sensor), ds, test_obj, test_kwargs) for sensor in sensors]
+        test_spec = ResolvedTestNDSpec.from_request(ctx, ctx.options['data'])
+        results = [test_spec.make_result(self, eeg.sub(sensor=sensor), ds, test_obj) for sensor in sensors]
         colors = plot.colors_for_categorial(ds.eval(results[0]._plot_model()))
         for sensor, res in zip(sensors, results):
             report.append(_report.time_results(res, ds, colors, sensor, f"Signal at {sensor}."))
-        _report_test_info(self, ctx.state, info_section, ds, ctx.options['test'], results[0], ctx.options['data'])
+        _report_test_info(self, ctx.state, subjects_for_state(self.groups, ctx.state), info_section, ds, ctx.options['test'], results[0], ctx.options['data'])
         return _save_report(report, dst, ('eelbrain', 'mne', 'scipy', 'numpy'), ctx.options['samples'])
 
 
-class LMReportDerivative(ResultOutputDerivative[Path]):
+class LMReportDerivative(BrainReportDerivative):
     """HTML report for the first-stage subject LM used by two-stage tests.
     """
     name = 'lm-report'
@@ -410,7 +427,7 @@ class LMReportDerivative(ResultOutputDerivative[Path]):
         return _save_report(report, dst, ('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'))
 
 
-class CoregReportDerivative(ResultOutputDerivative[Path]):
+class CoregReportDerivative(Derivative[Path]):
     """HTML report for MEG/MRI coregistration.
 
     Options
@@ -419,38 +436,35 @@ class CoregReportDerivative(ResultOutputDerivative[Path]):
         Optional explicit output path.
     """
     name = 'coreg-report'
-    key_fields = ()
+    key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'mri', 'mrisubject')
     OPTION_DEFAULTS = {}
+    VIEW_OPTION_DEFAULTS = {'dst': None}
 
-    def key(self, ctx: Request) -> dict[str, Any]:
-        return ctx.registry.canonicalize({'group': ctx.state['group'], 'mri': ctx.state['mri']})
+    def __init__(self, raw: dict[str, RawPipe]):
+        self.raw = raw
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {
-            'subjects': ctx.registry.canonicalize([
-                {
-                    'state': {key: state[key] for key in ('subject', 'session', 'task', 'acquisition', 'run', 'split') if state[key] is not None},
-                    'mrisubject': state['mrisubject'],
-                    'mri': file_fingerprint(ctx.state['root'], mri_dir({**ctx.state, **state}), 'mri-dir', metadata={'mrisubject': state['mrisubject']}),
-                }
-                for state in _coreg_subject_states(self, ctx)
-            ])
-        }
+        return self.standard_fingerprint(
+            ctx,
+            state_fields=self.key_fields,
+            extra={'mri': file_fingerprint(ctx.state['root'], mri_dir(ctx.state), 'mri-dir', metadata={'mrisubject': ctx.state['mrisubject']})},
+        )
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        deps = []
-        for state in _coreg_subject_states(self, ctx):
-            label = '_'.join(
-                [state['subject'], *[f'{key}-{state[key]}' for key in ('session', 'task', 'acquisition', 'run', 'split') if state[key] is not None]]
-            )
-            deps.append(Dependency(
-                raw_node_name('raw'),
-                label=f'{label}:raw',
-                state={**state, 'raw': 'raw'},
+        raw_name = ctx.state['raw']
+        pipe = self.raw[raw_name]
+        while not isinstance(pipe, RawSource):
+            raw_name = pipe.source
+            pipe = self.raw[raw_name]
+        return (
+            Dependency(
+                raw_node_name(raw_name),
+                label='raw',
+                state={**ctx.state, 'raw': raw_name},
                 options={'add_bads': False, 'noise': False},
-            ))
-            deps.append(Dependency('trans-input', label=f'{label}:trans', state=state))
-        return tuple(deps)
+            ),
+            Dependency('trans-input', label='trans', state=ctx.state),
+        )
 
     def path(
             self,
@@ -464,47 +478,52 @@ class CoregReportDerivative(ResultOutputDerivative[Path]):
         from mayavi import mlab
 
         dst = self.path(ctx)
-        title = 'Coregistration'
-        if ctx.state['group'] != 'all':
-            title += ' ' + ctx.state['group']
-        if ctx.state['mri']:
-            title += ' ' + ctx.state['mri']
+        raw_name = ctx.state['raw']
+        pipe = self.raw[raw_name]
+        while not isinstance(pipe, RawSource):
+            raw_name = pipe.source
+            pipe = self.raw[raw_name]
+        subject = ctx.state['subject']
+        mrisubject = ctx.state['mrisubject']
+        title = f"Coregistration {subject}"
+        if mrisubject != 'sub-' + subject:
+            title += f" ({mrisubject})"
 
         report = fmtxt.Report(title)
-        for state in _coreg_subject_states(self, ctx):
-            subject = state['subject']
-            mrisubject = state['mrisubject']
-            raw = ctx.load(raw_node_name('raw'), state={**state, 'raw': 'raw'}, options={'add_bads': False, 'noise': False})
-            fig = mne.viz.plot_alignment(raw.info, trans_file_path(state), mrisubject, mri_sdir(state), 'auto', meg=('helmet', 'sensors'), dig=True, interaction='terrain')
-            fig.plotter.enable_parallel_projection()
-            fig.scene.camera.parallel_projection = True
-            fig.scene.camera.parallel_scale = .175
-            mlab.draw(fig)
+        raw = ctx.load(raw_node_name(raw_name), state={**ctx.state, 'raw': raw_name}, options={'add_bads': False, 'noise': False})
+        fig = mne.viz.plot_alignment(raw.info, trans_file_path(ctx.state), mrisubject, mri_sdir(ctx.state), 'auto', meg=('helmet', 'sensors'), dig=True, interaction='terrain')
+        fig.plotter.enable_parallel_projection()
+        fig.scene.camera.parallel_projection = True
+        fig.scene.camera.parallel_scale = .175
+        mlab.draw(fig)
 
-            mlab.view(90, 90, 1, figure=fig)
-            im_front = fmtxt.Image.from_array(mlab.screenshot(figure=fig), 'front')
-            mlab.view(0, 270, 1, roll=90, figure=fig)
-            im_left = fmtxt.Image.from_array(mlab.screenshot(figure=fig), 'left')
-            mlab.close(fig)
+        mlab.view(90, 90, 1, figure=fig)
+        im_front = fmtxt.Image.from_array(mlab.screenshot(figure=fig), 'front')
+        mlab.view(0, 270, 1, roll=90, figure=fig)
+        im_left = fmtxt.Image.from_array(mlab.screenshot(figure=fig), 'left')
+        mlab.close(fig)
 
-            if is_fake_mri(mri_dir(state)):
-                bem_fig = None
-            else:
-                bem_fig = mne.viz.plot_bem(mrisubject, mri_sdir(state), brain_surfaces='white', show=False)
+        if is_fake_mri(mri_dir(ctx.state)):
+            bem_fig = None
+        else:
+            bem_fig = mne.viz.plot_bem(mrisubject, mri_sdir(ctx.state), brain_surfaces='white', show=False)
 
-            if 'sub-' + subject == mrisubject:
-                section_title = subject
-                caption = f"Coregistration for subject {subject}."
-            else:
-                section_title = f"{subject} ({mrisubject})"
-                caption = f"Coregistration for subject {subject} (MRI-subject {mrisubject})."
-            section = report.add_section(section_title)
-            if bem_fig is None:
-                section.add_figure(caption, (im_front, im_left))
-            else:
-                section.add_figure(caption, (im_front, im_left, bem_fig))
-                pyplot.close(bem_fig)
+        if 'sub-' + subject == mrisubject:
+            caption = f"Coregistration for subject {subject}."
+        else:
+            caption = f"Coregistration for subject {subject} (MRI-subject {mrisubject})."
+        if bem_fig is None:
+            report.add_figure(caption, (im_front, im_left))
+        else:
+            report.add_figure(caption, (im_front, im_left, bem_fig))
+            pyplot.close(bem_fig)
 
         report.sign()
         report.save_html(dst)
         return dst
+
+    def load(self, ctx: Request, path: Path) -> Path:
+        return path
+
+    def save(self, ctx: Request, path: Path, value: Path) -> None:
+        return

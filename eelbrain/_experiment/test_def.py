@@ -1,16 +1,23 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+from __future__ import annotations
+
+from dataclasses import dataclass
 from inspect import getfullargspec
 import re
 from collections.abc import Collection
+from typing import TYPE_CHECKING, Any
 
 import mne
 
 from .. import testnd
 from .. import test
-from .._data_obj import CellArg
+from .._data_obj import CellArg, Dataset, NDVar, Var, combine
 from .._exceptions import ConfigurationError
 from .configuration import Configuration
 from .variable_def import Variables, GroupVar
+
+if TYPE_CHECKING:
+    from .derivative_cache import Request
 
 
 __test__ = False
@@ -426,12 +433,70 @@ class TestDims:
             return False
         return self.string == other.string and self.time == other.time
 
+    def _testnd_parc(self, disconnect_labels: bool) -> str | None:
+        if self.source is True:
+            return 'source' if disconnect_labels else None
+        if disconnect_labels:
+            raise TypeError(f"{disconnect_labels=}: invalid for data={self.string!r}")
+        return None
+
     def data_to_ndvar(self, info: mne.Info) -> list[str]:
         assert self.sensor
         if self._to_ndvar is None:
             return info.get_channel_types(unique=True, only_data_chs=True)
         else:
             return self._to_ndvar
+
+
+@dataclass(frozen=True)
+class ResolvedTestNDSpec:
+    """Resolved request-local plan for `testnd` execution.
+
+    This combines a :class:`TestDims` semantic data description with the current
+    request-local ``testnd`` kwargs.
+    """
+
+    data: TestDims
+    kwargs: dict[str, Any]
+
+    @classmethod
+    def from_request(
+            cls,
+            ctx: Request,
+            data: TestDims,
+    ) -> ResolvedTestNDSpec:
+        pmin = ctx.options['pmin']
+        kwargs = {
+            'samples': ctx.options['samples'],
+            'tstart': ctx.options['tstart'],
+            'tstop': ctx.options['tstop'],
+            'parc': data._testnd_parc(ctx.options.get('disconnect_labels', False)),
+        }
+        if pmin == 'tfce':
+            kwargs['tfce'] = True
+        elif pmin is not None:
+            kwargs['pmin'] = pmin
+        return cls(data, kwargs)
+
+    def make_result(
+            self,
+            node: Any,
+            y: str | Var | NDVar | list[NDVar],
+            ds: Dataset,
+            test: Test,
+            force_permutation: bool = False,
+    ) -> Any:
+        test_obj = test if isinstance(test, Test) else node.tests[test]
+        if isinstance(y, str):
+            y = ds.eval(y)
+        if isinstance(y, Var):
+            return test_obj._make_uv(y, ds)
+        if isinstance(y, list):
+            dim = 'sensor' if y[0].has_dim('sensor') else 'source'
+            return test_obj._make_uv(combine([getattr(yi, 'mean')(dim) for yi in y]), ds)
+        if isinstance(y, NDVar) and y.has_dim('space'):
+            return test_obj._make_vec(y, ds, force_permutation, self.kwargs)
+        return test_obj._make(y, ds, force_permutation, self.kwargs)
 
 
 class ROITestResult:

@@ -11,7 +11,6 @@ labels must not be part of canonical cache identity.
 
 from __future__ import annotations
 
-from itertools import product
 import logging
 from pathlib import Path
 from typing import Any, TypeVar
@@ -20,13 +19,14 @@ from .. import load
 from .. import plot
 from .. import save
 from .. import testnd
-from .._data_obj import Dataset, NDVar, Var, combine
+from .._data_obj import Dataset
 from .._exceptions import ConfigurationError
 from .._io.pickle import update_subjects_dir
 from .._text import enumeration
 from .._stats.stats import ttest_t
 from .._stats.testnd import _MergedTemporalClusterDist
 from .derivative_cache import Dependency, Derivative, Request, UncachedDerivative
+from .groups import subjects_for_state
 from .pathing import (
     epoch_basename,
     join_stem_parts,
@@ -37,7 +37,7 @@ from .pathing import (
     time_window_str,
 )
 from .source import ROIData, roi_data_from_subject_datasets
-from .test_def import ROITestResult, Test, TestDims
+from .test_def import ROITestResult, ResolvedTestNDSpec, Test, TestDims
 from .variable_def import apply_vardef
 
 T = TypeVar('T')
@@ -158,52 +158,6 @@ def _epochs_stc_options(
     )
 
 
-def _result_subjects(node, ctx: Request) -> list[str]:
-    group = ctx.state['group']
-    if group not in (None, '', '*'):
-        return list(node.groups[group])
-    return [ctx.state['subject']]
-
-
-def result_test_kwargs(node, ctx: Request, data, parc_dim: None | str):
-    dims = data.dims if hasattr(data, 'dims') else data
-    kwargs = {
-        'samples': ctx.options['samples'],
-        'tstart': ctx.options['tstart'],
-        'tstop': ctx.options['tstop'],
-        'parc': parc_dim,
-    }
-    pmin = ctx.options['pmin']
-    if pmin == 'tfce':
-        kwargs['tfce'] = True
-    elif pmin is not None:
-        kwargs['pmin'] = pmin
-        criteria = node.cluster_criteria[ctx.state['select_clusters']]
-        kwargs.update({'min' + dim: criteria[dim] for dim in dims if dim in criteria})
-    return kwargs
-
-
-def make_result_test(
-        node,
-        y,
-        ds,
-        test: Test,
-        kwargs: dict[str, Any],
-        force_permutation: bool = False,
-):
-    test_obj = test if isinstance(test, Test) else node.tests[test]
-    if isinstance(y, str):
-        y = ds.eval(y)
-    if isinstance(y, Var):
-        return test_obj._make_uv(y, ds)
-    if isinstance(y, list):
-        dim = 'sensor' if y[0].has_dim('sensor') else 'source'
-        return test_obj._make_uv(combine([getattr(yi, 'mean')(dim) for yi in y]), ds)
-    if isinstance(y, NDVar) and y.has_dim('space'):
-        return test_obj._make_vec(y, ds, force_permutation, kwargs)
-    return test_obj._make(y, ds, force_permutation, kwargs)
-
-
 def _validate_post_aggregation_test_vars(test_obj: Test, data_desc: str):
     model_vars = set(filter(None, (test_obj.model or '').split('%')))
     missing_model_vars = sorted(model_vars.intersection(test_obj.vars.vars))
@@ -222,15 +176,39 @@ def _apply_post_aggregation_test_vars(ds, test_obj: Test, tests, groups, data_de
     try:
         apply_vardef(ds, test_obj.vars, tests, groups)
     except Exception as error:
-        raise ConfigurationError(
-            f"For evoked-backed {data_desc} tests, Test.vars must be computable from the post-aggregation dataset. "
-            f"Use TwoStageTest or Pipeline.variables for trial-level variables ({error})."
-        ) from None
+        raise ConfigurationError(f"For evoked-backed {data_desc} tests, Test.vars must be computable from the post-aggregation dataset. Use TwoStageTest or Pipeline.variables for trial-level variables ({error}).") from None
     return ds
 
 
 class ResultOutputDerivative(Derivative[T]):
     """Shared base for cached result/report/movie outputs.
+
+    This is a :class:`~eelbrain._experiment.derivative_cache.Derivative`
+    subclass with a fixed pattern:
+
+    - :meth:`key` encodes the logical analysis identity, independent of any
+      explicit output destination.
+    - :meth:`fingerprint` delegates to :meth:`Derivative.standard_fingerprint`
+      using shared result-state and configured test/epoch/parc definitions.
+    - :meth:`path` chooses a user-facing export path, with optional
+      ``samples``-specific disambiguation.
+    - :meth:`load` returns that path, and :meth:`save` is a no-op, because
+      subclasses normally create the final output file directly in
+      :meth:`build` rather than serializing a separate in-memory artifact.
+
+    The underscored helper methods are grouped by the derivative hook they
+    support:
+
+    - ``_key_*`` helpers feed :meth:`key`
+    - ``_fingerprint_*`` helpers feed :meth:`fingerprint`
+    - ``_path_*`` helpers feed :meth:`path`
+
+    Subclasses usually extend this template by overriding:
+
+    - :meth:`dependencies` and :meth:`build` as ordinary derivative hooks
+    - :meth:`_identity_extra` to add result-family-specific identity fields
+    - :meth:`_path_stem` or :meth:`_default_output_path` to customize export
+      naming
 
     Options
     -------
@@ -271,73 +249,18 @@ class ResultOutputDerivative(Derivative[T]):
             epochs: dict[str, Any],
             parcs: dict[str, Any],
             groups: dict[str, tuple[str, ...] | list[str]],
-            field_values: dict[str, tuple[str, ...] | list[str]],
-            mri_subjects: dict[str, dict[str, str]],
-            common_brain: str,
-            cluster_criteria: dict[str, dict[str, Any]],
-            brain_plot_defaults: dict[str, Any] | None = None,
     ):
         self.tests = tests
         self.epochs = epochs
         self.parcs = parcs
         self.groups = groups
-        self.field_values = field_values
-        self.mri_subjects = mri_subjects
-        self.common_brain = common_brain
-        self.cluster_criteria = cluster_criteria
-        self.brain_plot_defaults = {} if brain_plot_defaults is None else brain_plot_defaults
 
-    def _field_options(
-            self,
-            state: dict[str, Any],
-            field: str,
-            *,
-            subject: str | None = None,
-    ) -> list[Any]:
-        value = state.get(field)
-        if value not in (None, '', '*'):
-            return [value]
-        if field == 'subject':
-            group = state.get('group')
-            if group not in (None, '', '*'):
-                return list(self.groups[group])
-        if field == 'mrisubject':
-            if subject is None:
-                raise RuntimeError("mrisubject needs subject")
-            mri = state.get('mri', '')
-            value = self.mri_subjects[mri][subject]
-            if value == self.common_brain or value.startswith('sub-'):
-                return [value]
-            return ['sub-' + value]
-        return list(self.field_values.get(field, (value,)))
-
-    def collect_states(
-            self,
-            state: dict[str, Any],
-            fields: tuple[str, ...],
-            **fixed,
-    ) -> list[dict[str, Any]]:
-        merged_state = {**state, **fixed}
-        subjects = self._field_options(merged_state, 'subject') if 'subject' in fields else [merged_state.get('subject')]
-        other_fields = [field for field in fields if field not in ('subject', 'mrisubject')]
-        out = []
-        for subject in subjects:
-            options = [self._field_options(merged_state, field, subject=subject) for field in other_fields]
-            for values in product(*options) if options else [()]:
-                item = dict(merged_state)
-                if 'subject' in fields:
-                    item['subject'] = subject
-                item.update(zip(other_fields, values))
-                if 'mrisubject' in fields:
-                    item['mrisubject'] = self._field_options(item, 'mrisubject', subject=item['subject'])[0]
-                out.append({field: item[field] for field in fields})
-        return out
-
-    def state_snapshot(
+    def _key_state_snapshot(
             self,
             ctx: Request,
             single_subject: bool,
     ) -> dict[str, Any]:
+        """Canonical state subset used by :meth:`key`."""
         data = ctx.options['data']
         fields = ['epoch', 'raw', 'rej', 'model', 'equalize_evoked_count', 'test']
         if data and data.source:
@@ -346,22 +269,25 @@ class ResultOutputDerivative(Derivative[T]):
         if single_subject:
             state['subject'] = ctx.state['subject']
         else:
-            state['group'] = ctx.state['group']
+            state['subjects'] = subjects_for_state(self.groups, ctx.state)
         return ctx.registry.canonicalize(state)
 
-    def state_fields(
+    def _fingerprint_state_fields(
             self,
             ctx: Request,
             single_subject: bool,
     ) -> tuple[str, ...]:
+        """State keys forwarded to :meth:`Derivative.standard_fingerprint`."""
         data = ctx.options['data']
         fields = ['epoch', 'raw', 'rej', 'model', 'equalize_evoked_count', 'test']
         if data and data.source:
             fields.extend(['cov', 'inv', 'src', 'mri', 'parc'])
-        fields.append('subject' if single_subject else 'group')
+        if single_subject:
+            fields.append('subject')
         return tuple(fields)
 
-    def analysis_options(self, ctx: Request) -> dict[str, Any]:
+    def _key_analysis_options(self, ctx: Request) -> dict[str, Any]:
+        """Canonical analysis options used by :meth:`key`."""
         data = ctx.options['data']
         return ctx.registry.canonicalize({
             'data': None if data is None else data.string,
@@ -374,18 +300,19 @@ class ResultOutputDerivative(Derivative[T]):
             'samplingrate': ctx.options['samplingrate'],
             'smooth': ctx.options['smooth'],
             'adjacency': ctx.state['adjacency'],
-            'select_clusters': ctx.state['select_clusters'],
         })
 
-    def cache_identity(self, ctx: Request) -> dict[str, Any]:
+    def _key_identity(self, ctx: Request) -> dict[str, Any]:
+        """Stable logical identity shared by result-output cache keys."""
         return ctx.registry.canonicalize({
-            'state': self.state_snapshot(ctx, self.single_subject),
-            'options': self.analysis_options(ctx),
+            'state': self._key_state_snapshot(ctx, self.single_subject),
+            'options': self._key_analysis_options(ctx),
             'single_subject': self.single_subject,
-            **self.extra_key(ctx),
+            **self._identity_extra(ctx),
         })
 
-    def _context_parts(self, ctx: Request) -> list[str]:
+    def _path_context_parts(self, ctx: Request) -> list[str]:
+        """Path-stem parts derived from analysis context/state."""
         data = ctx.options['data']
         parts = [f'data-{data.string}', f'raw-{ctx.state["raw"]}', f'rej-{ctx.state["rej"]}']
         if ctx.state['model']:
@@ -396,7 +323,8 @@ class ResultOutputDerivative(Derivative[T]):
             parts.extend((f'cov-{ctx.state["cov"]}', f'src-{ctx.state["src"]}', f'inv-{ctx.state["inv"]}', f'parc-{ctx.state["parc"]}'))
         return parts
 
-    def _option_parts(self, ctx: Request) -> list[str]:
+    def _path_option_parts(self, ctx: Request) -> list[str]:
+        """Path-stem parts derived from analysis options."""
         parts = []
         baseline = ctx.options['baseline']
         src_baseline = ctx.options['src_baseline']
@@ -417,8 +345,6 @@ class ResultOutputDerivative(Derivative[T]):
             parts.append('tfce')
         elif pmin is not None:
             parts.append(f'p-{pmin}')
-        if pmin not in (None, 'tfce') and ctx.state['select_clusters']:
-            parts.append(f'clusters-{ctx.state["select_clusters"]}')
         if pmin is not None and ctx.options['data'].source and ctx.state['adjacency']:
             parts.append(f'adj-{ctx.state["adjacency"]}')
         if ctx.options['tstart'] is not None or ctx.options['tstop'] is not None:
@@ -429,13 +355,22 @@ class ResultOutputDerivative(Derivative[T]):
             parts.append(f'sm-{int(round(smooth * 1000))}mm')
         return parts
 
-    def path_stem(self, ctx: Request) -> str:
-        return join_stem_parts(test_basename(ctx.state), f'epoch-{ctx.state["epoch"]}', f'test-{ctx.options["test"]}', self._context_parts(ctx), self._option_parts(ctx))
+    def _path_stem(self, ctx: Request) -> str:
+        """Default export stem used by :meth:`path`."""
+        return join_stem_parts(
+            test_basename(ctx.state),
+            f'epoch-{ctx.state["epoch"]}',
+            f'test-{ctx.options["test"]}',
+            self._path_context_parts(ctx),
+            self._path_option_parts(ctx),
+        )
 
-    def default_path(self, ctx: Request) -> Path:
-        return report_export_path(ctx.state, self.name, self.path_stem(ctx), self.single_subject)
+    def _default_output_path(self, ctx: Request) -> Path:
+        """Default user-facing export path used when ``dst`` is not set."""
+        return report_export_path(ctx.state, self.name, self._path_stem(ctx), self.single_subject)
 
-    def definitions(self, ctx: Request) -> dict[str, Any]:
+    def _fingerprint_definitions(self, ctx: Request) -> dict[str, Any]:
+        """Configured definitions embedded in :meth:`fingerprint`."""
         definitions = {
             'test': self.tests[ctx.options['test']]._as_dict(),
             'epoch': self.epochs[ctx.state['epoch']]._as_dict(),
@@ -444,21 +379,26 @@ class ResultOutputDerivative(Derivative[T]):
             definitions['parc'] = self.parcs[ctx.state['parc']]._as_dict()
         return ctx.registry.canonicalize(definitions)
 
-    def extra_key(self, ctx: Request) -> dict[str, Any]:
+    def _identity_extra(self, ctx: Request) -> dict[str, Any]:
+        """Extra identity fields shared by :meth:`key` and :meth:`fingerprint`."""
         return {}
 
     def key(self, ctx: Request) -> dict[str, Any]:
         return ctx.registry.canonicalize({
-            'identity': self.cache_identity(ctx),
+            'identity': self._key_identity(ctx),
             'options': ctx.registry.canonicalize(ctx.options),
         })
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return self.standard_fingerprint(
             ctx,
-            state_fields=self.state_fields(ctx, self.single_subject),
-            definitions=self.definitions(ctx),
-            extra={'single_subject': self.single_subject, **self.extra_key(ctx)},
+            state_fields=self._fingerprint_state_fields(ctx, self.single_subject),
+            definitions=self._fingerprint_definitions(ctx),
+            extra={
+                'single_subject': self.single_subject,
+                'subjects': None if self.single_subject else subjects_for_state(self.groups, ctx.state),
+                **self._identity_extra(ctx),
+            },
         )
 
     def path(
@@ -466,7 +406,7 @@ class ResultOutputDerivative(Derivative[T]):
             ctx: Request,
     ) -> Path:
         dst = ctx.view_options['dst']
-        path = Path(dst) if dst else self.default_path(ctx)
+        path = Path(dst) if dst else self._default_output_path(ctx)
         if self.sampled_path:
             path = sampled_artifact_path(path, ctx.options['samples'])
         return path
@@ -518,7 +458,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
     """
     name = 'evoked-test-data'
     key_fields = (
-        'subject', 'group', 'epoch', 'raw', 'rej', 'model', 'equalize_evoked_count',
+        'subject', 'epoch', 'raw', 'rej', 'model', 'equalize_evoked_count',
         'test', 'cov', 'inv', 'src', 'mri',
     )
     OPTION_DEFAULTS = {
@@ -536,12 +476,16 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         self.groups = groups
 
     def _state_fields(self, ctx: Request) -> tuple[str, ...]:
+        fields = list(self.key_fields)
+        if ctx.state['group'] not in (None, '', '*'):
+            fields.remove('subject')
         if ctx.options['data'].source:
-            return (*self.key_fields, 'parc')
-        return self.key_fields
+            fields.append('parc')
+        return tuple(fields)
 
     def key(self, ctx: Request) -> dict[str, Any]:
         key = {field: ctx.state[field] for field in self._state_fields(ctx)}
+        key['subjects'] = subjects_for_state(self.groups, ctx.state)
         key['options'] = ctx.registry.canonicalize(ctx.options)
         return ctx.registry.canonicalize(key)
 
@@ -565,22 +509,31 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
                 'test': self.tests[ctx.options['test']]._as_dict(),
                 'epoch': self.epochs[ctx.state['epoch']]._as_dict(),
             },
+            extra={'subjects': subjects_for_state(self.groups, ctx.state)},
         )
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
         samplingrate = ctx.options['samplingrate']
+        subjects = subjects_for_state(self.groups, ctx.state)
+        group_active = ctx.state['group'] not in (None, '', '*')
 
         if data.sensor:
-            if ctx.state['group'] not in (None, '', '*'):
+            if group_active:
                 return (Dependency('evoked-group-dataset', state={**ctx.state, 'group': ctx.state['group'], 'subject': None}, options=self._sensor_evoked_options(ctx, test_obj.cat)),)
             return (Dependency('evoked', state={**ctx.state, 'subject': ctx.state['subject'], 'group': None}, options=self._sensor_evoked_options(ctx, test_obj.cat)),)
 
         if data.source is True:
+            if group_active:
+                return (Dependency(
+                    'evoked-stc-group-dataset',
+                    state={**ctx.state, 'group': ctx.state['group'], 'subject': None},
+                    options=_evoked_stc_options(ctx, morph=True, cat=test_obj.cat, samplingrate=samplingrate),
+                ),)
             return (Dependency(
-                'evoked-stc-group-dataset',
-                state={**ctx.state, 'group': ctx.state['group'], 'subject': None},
+                'evoked-stc',
+                state={**ctx.state, 'subject': ctx.state['subject'], 'group': None},
                 options=_evoked_stc_options(ctx, morph=True, cat=test_obj.cat, samplingrate=samplingrate),
             ),)
 
@@ -591,18 +544,20 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
                 state={**ctx.state, 'subject': subject, 'group': None},
                 options=_evoked_stc_options(ctx, morph=False, cat=None, samplingrate=samplingrate),
             )
-            for subject in _result_subjects(self, ctx)
+            for subject in subjects or (ctx.state['subject'],)
         )
 
     def build(self, ctx: Request) -> Dataset | ROIData:
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
+        subjects = subjects_for_state(self.groups, ctx.state)
+        group_active = ctx.state['group'] not in (None, '', '*')
         if test_obj.vars:
             _validate_post_aggregation_test_vars(test_obj, data.string)
 
         if data.sensor:
             options = self._sensor_evoked_options(ctx, test_obj.cat)
-            if ctx.state['group'] not in (None, '', '*'):
+            if group_active:
                 ds = ctx.load('evoked-group-dataset', state={**ctx.state, 'group': ctx.state['group'], 'subject': None}, options=options)
                 return _apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string)
             ds = ctx.load('evoked', state={**ctx.state, 'subject': ctx.state['subject'], 'group': None}, options=options)
@@ -610,11 +565,9 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
 
         samplingrate = ctx.options['samplingrate']
         if data.source is True:
-            ds = ctx.load(
-                'evoked-stc-group-dataset',
-                state={**ctx.state, 'group': ctx.state['group'], 'subject': None},
-                options=_evoked_stc_options(ctx, morph=True, cat=test_obj.cat, samplingrate=samplingrate),
-            )
+            node = 'evoked-stc-group-dataset' if group_active else 'evoked-stc'
+            state = {**ctx.state, 'group': ctx.state['group'], 'subject': None} if group_active else {**ctx.state, 'subject': ctx.state['subject'], 'group': None}
+            ds = ctx.load(node, state=state, options=_evoked_stc_options(ctx, morph=True, cat=test_obj.cat, samplingrate=samplingrate))
             ds = _apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string)
             if smooth := ctx.options['smooth']:
                 ds[data.y_name] = ds[data.y_name].smooth('source', smooth, 'gaussian')
@@ -624,7 +577,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
             raise TypeError(f"smooth={ctx.options['smooth']!r} for ROI tests")
 
         dss = []
-        for subject in _result_subjects(self, ctx):
+        for subject in subjects:
             ds = ctx.load(
                 'evoked-stc',
                 state={**ctx.state, 'subject': subject, 'group': None},
@@ -648,7 +601,7 @@ class TestResultDerivative(ResultOutputDerivative):
     VIEW_OPTION_DEFAULTS = {}
 
     def cache_label(self, ctx: Request) -> str:
-        return join_stem_parts(self.path_stem(ctx), f'samples-{ctx.options["samples"]}') if ctx.options['samples'] is not None else self.path_stem(ctx)
+        return join_stem_parts(self._path_stem(ctx), f'samples-{ctx.options["samples"]}') if ctx.options['samples'] is not None else self._path_stem(ctx)
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (Dependency('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES)),)
@@ -656,24 +609,14 @@ class TestResultDerivative(ResultOutputDerivative):
     def build(self, ctx: Request):
         test_obj = self.tests[ctx.options['test']]
         data = ctx.options['data']
-        if data.source is True:
-            parc_dim = 'source' if ctx.options['disconnect_labels'] else None
-        elif isinstance(data.source, str):
-            if ctx.options['disconnect_labels']:
-                raise TypeError(f"disconnect_labels={ctx.options['disconnect_labels']!r}: invalid for data={data.string!r}")
-            parc_dim = None
-        elif ctx.options['disconnect_labels']:
-            raise TypeError(f"disconnect_labels={ctx.options['disconnect_labels']!r}: invalid for data={data.string!r}")
-        else:
-            parc_dim = None
-        test_kwargs = result_test_kwargs(self, ctx, data, parc_dim)
+        test_spec = ResolvedTestNDSpec.from_request(ctx, data)
         data_value = ctx.load('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES))
         if isinstance(data_value, ROIData):
-            subjects = _result_subjects(self, ctx)
+            subjects = subjects_for_state(self.groups, ctx.state)
             n_per_label = {label: len(ds['subject'].cells) for label, ds in data_value.label_data.items()}
             do_mcc = len(data_value.label_data) > 1 and ctx.options['pmin'] not in (None, 'tfce') and len(set(n_per_label.values())) == 1
             label_results = {
-                label: make_result_test(self, 'label_tc', ds, test_obj, test_kwargs, do_mcc)
+                label: test_spec.make_result(self, 'label_tc', ds, test_obj, do_mcc)
                 for label, ds in data_value.label_data.items()
             }
             merged_dist = _MergedTemporalClusterDist([res._cdist for res in label_results.values()]) if do_mcc else None
@@ -681,7 +624,7 @@ class TestResultDerivative(ResultOutputDerivative):
         if data.sensor and len(data_value.info['sensor_types']) > 1:
             desc = ', '.join(data_value.info['sensor_types'])
             raise RuntimeError(f"Data contains more than one sensor type ({desc}). Mass-univariate tests are not designed for multiple sensor types. Use the data argument to perform test on one sensor type.")
-        return make_result_test(self, data.y_name, data_value, test_obj, test_kwargs)
+        return test_spec.make_result(self, test_spec.data.y_name, data_value, test_obj)
 
     def load(
             self,
@@ -746,7 +689,7 @@ class MovieDerivative(ResultOutputDerivative[Path]):
         'cluster_state': None,
     }
 
-    def extra_key(self, ctx: Request) -> dict[str, Any]:
+    def _identity_extra(self, ctx: Request) -> dict[str, Any]:
         out = {'movie_kind': ctx.options['movie_kind'], 'time_dilation': ctx.options['time_dilation']}
         if ctx.options['movie_kind'] == 'ga-dspm':
             out.update({
@@ -764,14 +707,14 @@ class MovieDerivative(ResultOutputDerivative[Path]):
             })
         return out
 
-    def path_stem(self, ctx: Request) -> str:
+    def _path_stem(self, ctx: Request) -> str:
         if ctx.options['movie_kind'] == 'ga-dspm':
             return join_stem_parts(
                 epoch_basename(ctx.state),
                 f'epoch-{ctx.state["epoch"]}',
                 'ga-dspm',
-                self._context_parts(ctx),
-                self._option_parts(ctx),
+                self._path_context_parts(ctx),
+                self._path_option_parts(ctx),
                 f'surf-{ctx.options["brain_kwargs"]["surf"]}',
                 f'fmin-{ctx.options["fmin"]:g}',
             )
@@ -786,15 +729,15 @@ class MovieDerivative(ResultOutputDerivative[Path]):
             epoch_basename(ctx.state),
             f'epoch-{ctx.state["epoch"]}',
             'ttest',
-            self._context_parts(ctx),
-            self._option_parts(ctx),
+            self._path_context_parts(ctx),
+            self._path_option_parts(ctx),
             f'contrast-{contrast}',
             f'p-{ctx.options["p"]}',
             f'surf-{ctx.options["surf"]}',
         )
 
-    def default_path(self, ctx: Request) -> Path:
-        return movie_export_path(ctx.state, self.path_stem(ctx), ctx.options['single_subject'])
+    def _default_output_path(self, ctx: Request) -> Path:
+        return movie_export_path(ctx.state, self._path_stem(ctx), ctx.options['single_subject'])
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         kind = ctx.options['movie_kind']

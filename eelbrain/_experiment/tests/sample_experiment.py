@@ -26,7 +26,6 @@ class SampleExperiment(Pipeline):
 
     defaults = {
         'epoch': 'target',
-        'select_clusters': 'all',
     }
 
     variables = {

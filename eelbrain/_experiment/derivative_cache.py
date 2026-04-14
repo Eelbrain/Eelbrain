@@ -423,7 +423,7 @@ class Derivative(DependencyNode[T]):
             raise NotImplementedError
         key = ctx.registry.canonicalize(self.key(ctx))
         key_hash = _full_cache_key_digest(key)[:CACHE_KEY_HASH_LEN]
-        label = self.cache_label(ctx)
+        label = self.cache_label(ctx) or DEFAULT_CACHE_LABEL
         label_slug = _slug_cache_path_part(label)[:MAX_CACHE_LABEL_LEN].rstrip('-') or DEFAULT_CACHE_LABEL
         node_slug = _slug_cache_path_part(self.name)
         return ctx.registry.cache_dir / node_slug / key_hash[:2] / f"{label_slug}_key-{key_hash}{self.cache_suffix}"

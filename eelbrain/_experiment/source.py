@@ -30,6 +30,7 @@ from .._data_obj import Dataset, Datalist, NDVar, combine
 from .configuration import Configuration
 from .covariance import cov_node_name
 from .derivative_cache import CachePolicy, Dependency, Derivative, Request, Input, UncachedDerivative, file_fingerprint
+from .groups import subjects_for_state
 from .pathing import (
     bem_dir, bem_file_path, mri_dir, mri_sdir, src_file_path, trans_file_path,
 )
@@ -1011,19 +1012,16 @@ class EpochsStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
     name = 'epochs-stc-group-dataset'
     OPTION_DEFAULTS = {**EpochsStcDerivative.OPTION_DEFAULTS, **EpochsStcDerivative.VIEW_OPTION_DEFAULTS}
 
-    def __init__(self, groups: dict[str, Sequence[str]], mri_subjects: dict[str, dict[str, str]], common_brain: str):
-        self.groups = groups
+    def __init__(self, mri_subjects: dict[str, dict[str, str]], common_brain: str, groups: dict[str, tuple[str, ...]]):
         self.mri_subjects = mri_subjects
         self.common_brain = common_brain
+        self.groups = groups
 
     def key(self, ctx: Request) -> dict[str, Any]:
-        group = ctx.state['group']
-        if group in (None, '', '*'):
-            raise RuntimeError(f"{self.name!r} requires an explicit group")
-        return ctx.registry.canonicalize({'group': group, 'parc': ctx.state['parc'], 'options': ctx.registry.canonicalize(ctx.options)})
+        return ctx.registry.canonicalize({'parc': ctx.state['parc'], 'subjects': subjects_for_state(self.groups, ctx.state), 'options': ctx.registry.canonicalize(ctx.options)})
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(ctx, state_fields=('group', 'parc'))
+        return self.standard_fingerprint(ctx, state_fields=('parc',))
 
     def _group_options(self, ctx: Request) -> dict[str, Any]:
         data_raw = ctx.options['data_raw']
@@ -1043,14 +1041,14 @@ class EpochsStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
         options = self._group_options(ctx)
         return tuple(
             Dependency('epochs-stc', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
-            for subject in self.groups[ctx.state['group']]
+            for subject in subjects_for_state(self.groups, ctx.state)
         )
 
     def build(self, ctx: Request) -> Dataset:
         options = self._group_options(ctx)
         dss = [
             ctx.load('epochs-stc', state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
-            for subject in self.groups[ctx.state['group']]
+            for subject in subjects_for_state(self.groups, ctx.state)
         ]
         return combine(dss)
 
@@ -1070,19 +1068,16 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
     name = 'evoked-stc-group-dataset'
     OPTION_DEFAULTS = {**EvokedStcDerivative.OPTION_DEFAULTS, **EvokedStcDerivative.VIEW_OPTION_DEFAULTS}
 
-    def __init__(self, groups: dict[str, Sequence[str]], mri_subjects: dict[str, dict[str, str]], common_brain: str):
-        self.groups = groups
+    def __init__(self, mri_subjects: dict[str, dict[str, str]], common_brain: str, groups: dict[str, tuple[str, ...]]):
         self.mri_subjects = mri_subjects
         self.common_brain = common_brain
+        self.groups = groups
 
     def key(self, ctx: Request) -> dict[str, Any]:
-        group = ctx.state['group']
-        if group in (None, '', '*'):
-            raise RuntimeError(f"{self.name!r} requires an explicit group")
-        return ctx.registry.canonicalize({'group': group, 'parc': ctx.state['parc'], 'options': ctx.registry.canonicalize(ctx.options)})
+        return ctx.registry.canonicalize({'parc': ctx.state['parc'], 'subjects': subjects_for_state(self.groups, ctx.state), 'options': ctx.registry.canonicalize(ctx.options)})
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(ctx, state_fields=('group', 'parc'))
+        return self.standard_fingerprint(ctx, state_fields=('parc',))
 
     def _group_options(self, ctx: Request) -> dict[str, Any]:
         morph = ctx.options['morph']
@@ -1097,14 +1092,14 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
         options = self._group_options(ctx)
         return tuple(
             Dependency('evoked-stc', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
-            for subject in self.groups[ctx.state['group']]
+            for subject in subjects_for_state(self.groups, ctx.state)
         )
 
     def build(self, ctx: Request) -> Dataset:
         options = self._group_options(ctx)
         dss = [
             ctx.load('evoked-stc', state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
-            for subject in self.groups[ctx.state['group']]
+            for subject in subjects_for_state(self.groups, ctx.state)
         ]
         return combine(dss)
 

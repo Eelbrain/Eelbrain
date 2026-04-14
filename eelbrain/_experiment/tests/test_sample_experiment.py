@@ -41,7 +41,8 @@ def _test_result_manifest_path(
         smooth=None,
         samplingrate=None,
 ) -> Path:
-    return e._derivatives.manifest_path(e._derivatives.resolve(node, state=e._derivative_state(), options={
+    state = e._derivative_state()
+    options = {
         'data': _TestDims.coerce(data, morph=True),
         'samples': samples,
         'test': test,
@@ -53,7 +54,8 @@ def _test_result_manifest_path(
         'src_baseline': src_baseline,
         'smooth': smooth,
         'samplingrate': samplingrate,
-    }).artifact_path)
+    }
+    return e._derivatives.manifest_path(e._derivatives.resolve(node, state=state, options=options).artifact_path)
 
 
 @requires_mne_sample_data
@@ -231,7 +233,7 @@ def test_sample():
     ds = Dataset()
     ds['subject'] = Factor(reversed(subjects))
     ds['n'] = Var(range(3))
-    _ = _report_subject_info(e._derivatives._get_node('source-report'), e._derivative_state(), ds, '')
+    _ = _report_subject_info(e._derivative_state(), tuple(subjects), ds, '')
 
     # post_baseline_trigger_shift
     # use multiple of tstep to shift by even number of samples
@@ -306,6 +308,31 @@ def test_sample():
         groups = {'group': ('R0002', 'R0000', 'R0001')}
     e = Experiment(root)
     assert [s for s in e] == ['R0000', 'R0001', 'R0002']
+
+    class Experiment(SampleExperiment):
+        groups = {
+            'ab': ('R0002', 'R0000'),
+            'alias': ('R0000', 'R0002'),
+        }
+    e = Experiment(root)
+    assert e._groups['ab'] == e._groups['alias'] == ('R0000', 'R0002')
+    result_options = {
+        'data': _TestDims.coerce('sensor.rms', morph=True),
+        'samples': 20,
+        'test': 'a>v',
+        'tstart': 0.05,
+        'tstop': 0.2,
+        'pmin': 0.05,
+        'baseline': False,
+        'src_baseline': None,
+        'smooth': None,
+        'samplingrate': None,
+    }
+    state_ab = e._derivative_state({'group': 'ab', 'rej': 'man', 'model': 'modality'})
+    handle_ab = e._derivatives.resolve('test-result', state=state_ab, options=result_options)
+    state_alias = e._derivative_state({'group': 'alias', 'rej': 'man', 'model': 'modality'})
+    handle_alias = e._derivatives.resolve('test-result', state=state_alias, options=result_options)
+    assert handle_ab.artifact_path == handle_alias.artifact_path
 
     class BadExperiment(SampleExperiment):
         parcs = {'ac': 'aparc'}
@@ -1245,8 +1272,7 @@ def test_coreg_report_dependencies_are_explicit():
 
     assert 'dependencies' not in handle.current_fingerprint()
     dependencies = handle.dependency_fingerprints()
-    assert any(key.endswith(':raw') for key in dependencies)
-    assert any(key.endswith(':trans') for key in dependencies)
+    assert set(dependencies) == {'raw', 'trans'}
 
 
 @requires_mne_sample_data

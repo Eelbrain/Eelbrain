@@ -12,10 +12,11 @@ from .._data_obj import Dataset, combine
 from .._io.pickle import update_subjects_dir
 from .._utils.parse import find_variables
 from .derivative_cache import Dependency, Derivative, Request, UncachedDerivative
+from .groups import subjects_for_state
 from .pathing import mri_sdir
-from .results import RESULT_OPTION_DEFAULTS, ResultOutputDerivative, _epochs_stc_options, _evoked_stc_options, _result_subjects, _subject_request_state, result_test_kwargs
+from .results import RESULT_OPTION_DEFAULTS, ResultOutputDerivative, _epochs_stc_options, _evoked_stc_options, _subject_request_state
 from .source import ROIData, roi_data_from_subject_datasets
-from .test_def import ROITestResult, Test
+from .test_def import ROITestResult, ResolvedTestNDSpec, Test
 from .variable_def import apply_vardef
 
 
@@ -145,7 +146,7 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
     """
     name = 'two-stage-data'
     key_fields = (
-        'subject', 'group', 'epoch', 'raw', 'rej', 'model', 'equalize_evoked_count',
+        'subject', 'epoch', 'raw', 'rej', 'model', 'equalize_evoked_count',
         'test', 'cov', 'inv', 'src', 'mri', 'parc',
     )
     OPTION_DEFAULTS = {
@@ -157,14 +158,26 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         self.epochs = epochs
         self.groups = groups
 
+    def _state_fields(self, ctx: Request) -> tuple[str, ...]:
+        if ctx.state['group'] in (None, '', '*'):
+            return self.key_fields
+        return tuple(field for field in self.key_fields if field != 'subject')
+
+    def key(self, ctx: Request) -> dict[str, Any]:
+        key = {field: ctx.state[field] for field in self._state_fields(ctx)}
+        key['subjects'] = subjects_for_state(self.groups, ctx.state)
+        key['options'] = ctx.registry.canonicalize(ctx.options)
+        return ctx.registry.canonicalize(key)
+
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return self.standard_fingerprint(
             ctx,
-            state_fields=self.key_fields,
+            state_fields=self._state_fields(ctx),
             definitions={
                 'test': self.tests[ctx.options['test']]._as_dict(),
                 'epoch': self.epochs[ctx.state['epoch']]._as_dict(),
             },
+            extra={'subjects': subjects_for_state(self.groups, ctx.state)},
         )
 
     def _subject_dependency(self, ctx: Request, subject: str) -> Dependency:
@@ -204,7 +217,8 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         data = ctx.options['data']
         if data.sensor:
             return ()
-        return tuple(self._subject_dependency(ctx, subject) for subject in _result_subjects(self, ctx))
+        subjects = subjects_for_state(self.groups, ctx.state)
+        return tuple(self._subject_dependency(ctx, subject) for subject in subjects)
 
     def _load_subject_data(self, ctx: Request, subject: str) -> Dataset:
         data = ctx.options['data']
@@ -258,8 +272,10 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         if data.sensor:
             raise NotImplementedError(f"Two-stage test with data={data.string!r}")
 
-        dss = [self._load_subject_data(ctx, subject) for subject in _result_subjects(self, ctx)]
-        if ctx.state['group'] in (None, '', '*'):
+        subjects = subjects_for_state(self.groups, ctx.state)
+        group_active = ctx.state['group'] not in (None, '', '*')
+        dss = [self._load_subject_data(ctx, subject) for subject in subjects]
+        if not group_active:
             return dss[0]
         if data.source is True:
             return combine(dss)
@@ -335,12 +351,13 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
     VIEW_OPTION_DEFAULTS = {}
 
     def cache_label(self, ctx: Request) -> str:
-        return self.path_stem(ctx) if ctx.options['samples'] is None else f"{self.path_stem(ctx)}_samples-{ctx.options['samples']}"
+        return self._path_stem(ctx) if ctx.options['samples'] is None else f"{self._path_stem(ctx)}_samples-{ctx.options['samples']}"
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        subjects = subjects_for_state(self.groups, ctx.state)
         return tuple(
             Dependency('two-stage-level-1', label=subject, state=_subject_request_state(ctx, subject), options=ctx.options_for('two-stage-level-1', *RESULT_OPTION_DEFAULTS))
-            for subject in _result_subjects(self, ctx)
+            for subject in subjects
         )
 
     def build(self, ctx: Request):
@@ -348,30 +365,25 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
         if not isinstance(test_obj, TwoStageTest):
             raise RuntimeError(f"{self.name!r} requires a TwoStageTest")
         data = ctx.options['data']
-        if data.source is True:
-            parc_dim = 'source' if ctx.options['disconnect_labels'] else None
-        elif isinstance(data.source, str):
-            if ctx.options['disconnect_labels']:
-                raise TypeError(f"disconnect_labels={ctx.options['disconnect_labels']!r}: invalid for data={data.string!r}")
-            parc_dim = None
-        else:
+        test_spec = ResolvedTestNDSpec.from_request(ctx, data)
+        subjects = subjects_for_state(self.groups, ctx.state)
+        if data.source is not True and not isinstance(data.source, str):
             raise NotImplementedError(f"Two-stage test with data={data.string!r}")
-        test_kwargs = result_test_kwargs(self, ctx, data, parc_dim)
-        subject_results = [ctx.load('two-stage-level-1', state=_subject_request_state(ctx, subject), options=ctx.options_for('two-stage-level-1', *RESULT_OPTION_DEFAULTS)) for subject in _result_subjects(self, ctx)]
+        subject_results = [ctx.load('two-stage-level-1', state=_subject_request_state(ctx, subject), options=ctx.options_for('two-stage-level-1', *RESULT_OPTION_DEFAULTS)) for subject in subjects]
         if data.source is True:
-            return test_obj.make_stage_2(subject_results, test_kwargs)
+            return test_obj.make_stage_2(subject_results, test_spec.kwargs)
 
         label_lms = {}
         for subject_result in subject_results:
             for label, lm in subject_result.lms.items():
                 label_lms.setdefault(label, []).append(lm)
         results = {
-            label: test_obj.make_stage_2(lms, test_kwargs)
+            label: test_obj.make_stage_2(lms, test_spec.kwargs)
             for label, lms in label_lms.items()
             if len(lms) > 2
         }
         n_trials_ds = combine([subject_result.n_trials_ds for subject_result in subject_results], incomplete='drop')
-        return ROI2StageResult(_result_subjects(self, ctx), ctx.options['samples'], n_trials_ds, None, results)
+        return ROI2StageResult(subjects, ctx.options['samples'], n_trials_ds, None, results)
 
     def load(self, ctx: Request, path: Path):
         res = load.unpickle(path)

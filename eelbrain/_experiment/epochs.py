@@ -24,6 +24,7 @@ from .._text import n_of
 from ..mne_fixes import _interpolate_bads_eeg, _interpolate_bads_meg
 from .derivative_cache import CachePolicy, Dependency, Derivative, Request, Input, UncachedDerivative, file_fingerprint
 from .configuration import Configuration, typed_arg
+from .groups import subjects_for_state
 from .pathing import rej_file_path
 from .preprocessing import load_raw_dependency, raw_node_name
 from .test_def import TestDims
@@ -1177,15 +1178,12 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
     name = 'evoked-group-dataset'
     OPTION_DEFAULTS = {'baseline': False, 'ndvar': True, 'cat': None, 'samplingrate': None, 'decim': None, 'data_raw': False, 'data': 'sensor'}
 
-    def __init__(self, raw, groups: dict[str, Sequence[str]]):
+    def __init__(self, raw, groups):
         self.raw = raw
         self.groups = groups
 
     def key(self, ctx: Request) -> dict[str, Any]:
-        group = ctx.state['group']
-        if group in (None, '', '*'):
-            raise RuntimeError(f"{self.name!r} requires an explicit group")
-        return ctx.registry.canonicalize({'group': group, 'options': ctx.registry.canonicalize(ctx.options)})
+        return ctx.registry.canonicalize({'subjects': subjects_for_state(self.groups, ctx.state), 'options': ctx.registry.canonicalize(ctx.options)})
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return self.key(ctx)
@@ -1197,13 +1195,13 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
         options = self._subject_options(ctx)
         return tuple(
             Dependency('evoked', label=subject, state={'subject': subject, 'group': None}, options=options)
-            for subject in self.groups[ctx.state['group']]
+            for subject in subjects_for_state(self.groups, ctx.state)
         )
 
     def build(self, ctx: Request) -> Dataset:
         dss = [
             ctx.load('evoked', state={'subject': subject, 'group': None}, options=self._subject_options(ctx))
-            for subject in self.groups[ctx.state['group']]
+            for subject in subjects_for_state(self.groups, ctx.state)
         ]
         data = TestDims.coerce(ctx.options['data'])
         ndvar = ctx.options['ndvar']
