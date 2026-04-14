@@ -82,7 +82,7 @@ analysis behavior in an extensible way. They are supplied by the user as
 :class:`Pipeline` subclass attributes.
 """
 
-from .experiment import StateModel
+from .state_model import StateModel
 from .pipeline import Pipeline
 from .test_def import ROITestResult
 from .two_stage import ROI2StageResult, TwoStageTest

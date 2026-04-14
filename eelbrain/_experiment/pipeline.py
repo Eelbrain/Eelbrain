@@ -43,7 +43,7 @@ from .epochs import (
 )
 from .events import EventsDerivative, SELECTED_EVENTS, SelectedEventsDerivative
 from .exceptions import FileMissingError
-from .experiment import StateModel
+from .state_model import StateModel
 from .groups import assemble_groups
 from .pathing import (
     deriv_dir, epoch_basename, ica_file_path,

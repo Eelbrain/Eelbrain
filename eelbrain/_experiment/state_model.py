@@ -1,4 +1,9 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+"""
+A state model with registered fields, constants, and dependent values.
+"""
+from __future__ import annotations
+
 from collections import defaultdict
 import difflib
 from functools import cached_property, reduce
@@ -76,14 +81,14 @@ class LayeredDict(dict):
 
 
 class _TempStateController:
-    def __init__(self, experiment):
-        self.experiment = experiment
+    def __init__(self, state: StateModel):
+        self.state = state
 
     def __enter__(self):
-        self.experiment._store_state()
+        self.state._store_state()
 
     def __exit__(self, exc_type, exc_value, traceback):
-        self.experiment._restore_state()
+        self.state._restore_state()
 
 
 class StateModel:
@@ -521,13 +526,12 @@ class StateModel:
             for handler in self._post_set_handlers[k]:
                 handler(k, v)
 
-    def show_fields(self, str_out=False):
-        """
-        Generate a table for all iterable fields and ther values.
+    def show_fields(self, str_out: bool = False) -> fmtxt.Table | None:
+        """A table for all iterable fields and their values.
 
         Parameters
         ----------
-        str_out : bool
+        str_out
             Return the table as a string (instead of printing it).
         """
         lines = []
