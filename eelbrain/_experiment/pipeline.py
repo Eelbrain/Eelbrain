@@ -538,7 +538,7 @@ class Pipeline(StateModel):
         self._derivatives.register(EvokedDerivative(self._raw, self._epochs))
         self._derivatives.register(EvokedGroupDatasetDerivative(self._raw, self._groups))
         self._derivatives.register(EvokedTestDataDerivative(self.tests, self._epochs, self._groups))
-        self._derivatives.register(TwoStageDataDerivative(self.tests, self._epochs, self._groups))
+        self._derivatives.register(TwoStageDataDerivative(self.tests, self._epochs))
         self._derivatives.register(TwoStageLevel1Derivative(self.tests))
         self._derivatives.register(AnnotDerivative(self._parcs, tuple(self.get_field_values('hemi'))))
         self._derivatives.register(EpochsStcDerivative(self._raw, self._epochs))

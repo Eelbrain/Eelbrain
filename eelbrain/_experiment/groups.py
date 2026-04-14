@@ -1,5 +1,4 @@
-from collections.abc import Collection, Mapping
-from typing import Any
+from collections.abc import Collection
 
 from .configuration import Configuration, ConfigurationError
 
@@ -92,14 +91,3 @@ def assemble_groups(groups: dict, subjects: set[str]) -> dict:
             raise ConfigurationError(f"Group {key} trying to exclude subjects not contained in its base {group.base}: {invalid}")
         groups[key] = tuple(sorted(base_subjects - group.exclude))
     return groups
-
-
-def subjects_for_state(groups: Mapping[str, tuple[str, ...]], state: Mapping[str, Any]) -> tuple[str, ...]:
-    """Resolve the canonical subject tuple for one request state."""
-    group = state['group']
-    if group in (None, '', '*'):
-        subject = state['subject']
-        if subject not in (None, '', '*'):
-            return (subject,)
-        raise RuntimeError(f"{state['group']=}, {state['subject']=}: need explicit subject or group")
-    return groups[group]

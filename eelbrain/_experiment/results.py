@@ -26,7 +26,6 @@ from .._text import enumeration
 from .._stats.stats import ttest_t
 from .._stats.testnd import _MergedTemporalClusterDist
 from .derivative_cache import Dependency, Derivative, Request, UncachedDerivative
-from .groups import subjects_for_state
 from .pathing import (
     epoch_basename,
     join_stem_parts,
@@ -66,11 +65,11 @@ TEST_DATA_OPTION_NAMES = (
 
 
 def _group_request_state(ctx: Request, **state) -> dict[str, Any]:
-    return {**ctx.state, **state, 'group': ctx.state['group'], 'subject': None}
+    return {**ctx.state, **state, 'subject': None}
 
 
 def _subject_request_state(ctx: Request, subject: str, **state) -> dict[str, Any]:
-    return {**ctx.state, **state, 'subject': subject, 'group': None}
+    return {**ctx.state, **state, 'subject': subject}
 
 
 def _test_result_options(
@@ -269,7 +268,7 @@ class ResultOutputDerivative(Derivative[T]):
         if single_subject:
             state['subject'] = ctx.state['subject']
         else:
-            state['subjects'] = subjects_for_state(self.groups, ctx.state)
+            state['subjects'] = tuple(self.groups[ctx.state['group']])
         return ctx.registry.canonicalize(state)
 
     def _fingerprint_state_fields(
@@ -396,7 +395,7 @@ class ResultOutputDerivative(Derivative[T]):
             definitions=self._fingerprint_definitions(ctx),
             extra={
                 'single_subject': self.single_subject,
-                'subjects': None if self.single_subject else subjects_for_state(self.groups, ctx.state),
+                'subjects': None if self.single_subject else tuple(self.groups[ctx.state['group']]),
                 **self._identity_extra(ctx),
             },
         )
@@ -458,7 +457,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
     """
     name = 'evoked-test-data'
     key_fields = (
-        'subject', 'epoch', 'raw', 'rej', 'model', 'equalize_evoked_count',
+        'group', 'epoch', 'raw', 'rej', 'model', 'equalize_evoked_count',
         'test', 'cov', 'inv', 'src', 'mri',
     )
     OPTION_DEFAULTS = {
@@ -477,15 +476,13 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
 
     def _state_fields(self, ctx: Request) -> tuple[str, ...]:
         fields = list(self.key_fields)
-        if ctx.state['group'] not in (None, '', '*'):
-            fields.remove('subject')
         if ctx.options['data'].source:
             fields.append('parc')
         return tuple(fields)
 
     def key(self, ctx: Request) -> dict[str, Any]:
         key = {field: ctx.state[field] for field in self._state_fields(ctx)}
-        key['subjects'] = subjects_for_state(self.groups, ctx.state)
+        key['subjects'] = tuple(self.groups[ctx.state['group']])
         key['options'] = ctx.registry.canonicalize(ctx.options)
         return ctx.registry.canonicalize(key)
 
@@ -509,31 +506,21 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
                 'test': self.tests[ctx.options['test']]._as_dict(),
                 'epoch': self.epochs[ctx.state['epoch']]._as_dict(),
             },
-            extra={'subjects': subjects_for_state(self.groups, ctx.state)},
+            extra={'subjects': tuple(self.groups[ctx.state['group']])},
         )
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
         samplingrate = ctx.options['samplingrate']
-        subjects = subjects_for_state(self.groups, ctx.state)
-        group_active = ctx.state['group'] not in (None, '', '*')
+        subjects = self.groups[ctx.state['group']]
 
         if data.sensor:
-            if group_active:
-                return (Dependency('evoked-group-dataset', state={**ctx.state, 'group': ctx.state['group'], 'subject': None}, options=self._sensor_evoked_options(ctx, test_obj.cat)),)
-            return (Dependency('evoked', state={**ctx.state, 'subject': ctx.state['subject'], 'group': None}, options=self._sensor_evoked_options(ctx, test_obj.cat)),)
+            return (Dependency('evoked-group-dataset', options=self._sensor_evoked_options(ctx, test_obj.cat)),)
 
         if data.source is True:
-            if group_active:
-                return (Dependency(
-                    'evoked-stc-group-dataset',
-                    state={**ctx.state, 'group': ctx.state['group'], 'subject': None},
-                    options=_evoked_stc_options(ctx, morph=True, cat=test_obj.cat, samplingrate=samplingrate),
-                ),)
             return (Dependency(
-                'evoked-stc',
-                state={**ctx.state, 'subject': ctx.state['subject'], 'group': None},
+                'evoked-stc-group-dataset',
                 options=_evoked_stc_options(ctx, morph=True, cat=test_obj.cat, samplingrate=samplingrate),
             ),)
 
@@ -541,33 +528,26 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
             Dependency(
                 'evoked-stc',
                 label=subject,
-                state={**ctx.state, 'subject': subject, 'group': None},
+                state={'subject': subject},
                 options=_evoked_stc_options(ctx, morph=False, cat=None, samplingrate=samplingrate),
             )
-            for subject in subjects or (ctx.state['subject'],)
+            for subject in subjects
         )
 
     def build(self, ctx: Request) -> Dataset | ROIData:
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
-        subjects = subjects_for_state(self.groups, ctx.state)
-        group_active = ctx.state['group'] not in (None, '', '*')
+        subjects = self.groups[ctx.state['group']]
         if test_obj.vars:
             _validate_post_aggregation_test_vars(test_obj, data.string)
 
         if data.sensor:
-            options = self._sensor_evoked_options(ctx, test_obj.cat)
-            if group_active:
-                ds = ctx.load('evoked-group-dataset', state={**ctx.state, 'group': ctx.state['group'], 'subject': None}, options=options)
-                return _apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string)
-            ds = ctx.load('evoked', state={**ctx.state, 'subject': ctx.state['subject'], 'group': None}, options=options)
+            ds = ctx.load('evoked-group-dataset', options=self._sensor_evoked_options(ctx, test_obj.cat))
             return _apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string)
 
         samplingrate = ctx.options['samplingrate']
         if data.source is True:
-            node = 'evoked-stc-group-dataset' if group_active else 'evoked-stc'
-            state = {**ctx.state, 'group': ctx.state['group'], 'subject': None} if group_active else {**ctx.state, 'subject': ctx.state['subject'], 'group': None}
-            ds = ctx.load(node, state=state, options=_evoked_stc_options(ctx, morph=True, cat=test_obj.cat, samplingrate=samplingrate))
+            ds = ctx.load('evoked-stc-group-dataset', options=_evoked_stc_options(ctx, morph=True, cat=test_obj.cat, samplingrate=samplingrate))
             ds = _apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string)
             if smooth := ctx.options['smooth']:
                 ds[data.y_name] = ds[data.y_name].smooth('source', smooth, 'gaussian')
@@ -580,7 +560,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         for subject in subjects:
             ds = ctx.load(
                 'evoked-stc',
-                state={**ctx.state, 'subject': subject, 'group': None},
+                state={'subject': subject},
                 options=_evoked_stc_options(ctx, morph=False, cat=None, samplingrate=samplingrate),
             )
             dss.append(_apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string))
@@ -612,7 +592,7 @@ class TestResultDerivative(ResultOutputDerivative):
         test_spec = ResolvedTestNDSpec.from_request(ctx, data)
         data_value = ctx.load('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES))
         if isinstance(data_value, ROIData):
-            subjects = subjects_for_state(self.groups, ctx.state)
+            subjects = list(self.groups[ctx.state['group']])
             n_per_label = {label: len(ds['subject'].cells) for label, ds in data_value.label_data.items()}
             do_mcc = len(data_value.label_data) > 1 and ctx.options['pmin'] not in (None, 'tfce') and len(set(n_per_label.values())) == 1
             label_results = {

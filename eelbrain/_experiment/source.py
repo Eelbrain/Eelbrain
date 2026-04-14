@@ -30,7 +30,6 @@ from .._data_obj import Dataset, Datalist, NDVar, combine
 from .configuration import Configuration
 from .covariance import cov_node_name
 from .derivative_cache import CachePolicy, Dependency, Derivative, Request, Input, UncachedDerivative, file_fingerprint
-from .groups import subjects_for_state
 from .pathing import (
     bem_dir, bem_file_path, mri_dir, mri_sdir, src_file_path, trans_file_path,
 )
@@ -632,7 +631,7 @@ def _subject_state(
         mri_subjects: dict[str, dict[str, str]],
         common_brain: str,
 ) -> dict[str, Any]:
-    out = {**state, 'subject': subject, 'group': None}
+    out = {**state, 'subject': subject}
     mri = out.get('mri')
     if mri not in (None, '', '*'):
         mrisubject = mri_subjects[mri][subject]
@@ -1018,7 +1017,7 @@ class EpochsStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
         self.groups = groups
 
     def key(self, ctx: Request) -> dict[str, Any]:
-        return ctx.registry.canonicalize({'parc': ctx.state['parc'], 'subjects': subjects_for_state(self.groups, ctx.state), 'options': ctx.registry.canonicalize(ctx.options)})
+        return ctx.registry.canonicalize({'parc': ctx.state['parc'], 'subjects': self.groups[ctx.state['group']], 'options': ctx.registry.canonicalize(ctx.options)})
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return self.standard_fingerprint(ctx, state_fields=('parc',))
@@ -1041,14 +1040,14 @@ class EpochsStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
         options = self._group_options(ctx)
         return tuple(
             Dependency('epochs-stc', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
-            for subject in subjects_for_state(self.groups, ctx.state)
+            for subject in self.groups[ctx.state['group']]
         )
 
     def build(self, ctx: Request) -> Dataset:
         options = self._group_options(ctx)
         dss = [
             ctx.load('epochs-stc', state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
-            for subject in subjects_for_state(self.groups, ctx.state)
+            for subject in self.groups[ctx.state['group']]
         ]
         return combine(dss)
 
@@ -1074,7 +1073,7 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
         self.groups = groups
 
     def key(self, ctx: Request) -> dict[str, Any]:
-        return ctx.registry.canonicalize({'parc': ctx.state['parc'], 'subjects': subjects_for_state(self.groups, ctx.state), 'options': ctx.registry.canonicalize(ctx.options)})
+        return ctx.registry.canonicalize({'parc': ctx.state['parc'], 'subjects': self.groups[ctx.state['group']], 'options': ctx.registry.canonicalize(ctx.options)})
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return self.standard_fingerprint(ctx, state_fields=('parc',))
@@ -1092,14 +1091,14 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
         options = self._group_options(ctx)
         return tuple(
             Dependency('evoked-stc', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
-            for subject in subjects_for_state(self.groups, ctx.state)
+            for subject in self.groups[ctx.state['group']]
         )
 
     def build(self, ctx: Request) -> Dataset:
         options = self._group_options(ctx)
         dss = [
             ctx.load('evoked-stc', state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
-            for subject in subjects_for_state(self.groups, ctx.state)
+            for subject in self.groups[ctx.state['group']]
         ]
         return combine(dss)
 

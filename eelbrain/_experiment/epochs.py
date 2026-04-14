@@ -24,7 +24,6 @@ from .._text import n_of
 from ..mne_fixes import _interpolate_bads_eeg, _interpolate_bads_meg
 from .derivative_cache import CachePolicy, Dependency, Derivative, Request, Input, UncachedDerivative, file_fingerprint
 from .configuration import Configuration, typed_arg
-from .groups import subjects_for_state
 from .pathing import rej_file_path
 from .preprocessing import load_raw_dependency, raw_node_name
 from .test_def import TestDims
@@ -1183,7 +1182,7 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
         self.groups = groups
 
     def key(self, ctx: Request) -> dict[str, Any]:
-        return ctx.registry.canonicalize({'subjects': subjects_for_state(self.groups, ctx.state), 'options': ctx.registry.canonicalize(ctx.options)})
+        return ctx.registry.canonicalize({'subjects': tuple(self.groups[ctx.state['group']]), 'options': ctx.registry.canonicalize(ctx.options)})
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return self.key(ctx)
@@ -1194,14 +1193,14 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         options = self._subject_options(ctx)
         return tuple(
-            Dependency('evoked', label=subject, state={'subject': subject, 'group': None}, options=options)
-            for subject in subjects_for_state(self.groups, ctx.state)
+            Dependency('evoked', label=subject, state={'subject': subject}, options=options)
+            for subject in self.groups[ctx.state['group']]
         )
 
     def build(self, ctx: Request) -> Dataset:
         dss = [
-            ctx.load('evoked', state={'subject': subject, 'group': None}, options=self._subject_options(ctx))
-            for subject in subjects_for_state(self.groups, ctx.state)
+            ctx.load('evoked', state={'subject': subject}, options=self._subject_options(ctx))
+            for subject in self.groups[ctx.state['group']]
         ]
         data = TestDims.coerce(ctx.options['data'])
         ndvar = ctx.options['ndvar']

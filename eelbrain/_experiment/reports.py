@@ -23,7 +23,6 @@ from .. import table
 from .._data_obj import Dataset, Factor, align1
 from .._utils.mne_utils import is_fake_mri
 from .derivative_cache import Dependency, Derivative, Request, file_fingerprint
-from .groups import subjects_for_state
 from .parc import IndividualSeededParc, _resolve_parc
 from .pathing import coreg_report_path, mri_dir, mri_sdir, trans_file_path
 from .preprocessing import RawPipe, RawSource, raw_node_name
@@ -224,7 +223,7 @@ class SourceReportDerivative(BrainReportDerivative):
 
     def build(self, ctx: Request) -> Path:
         dst = self.path(ctx)
-        subjects = subjects_for_state(self.groups, ctx.state)
+        subjects = self.groups[ctx.state['group']]
         report = fmtxt.Report(_report_title(dst))
         path_items = [*dst.parts[:-1], dst.stem]
         report.add_paragraph(fmtxt.List('Methods brief', path_items[-3:]))
@@ -345,7 +344,7 @@ class EEGReportDerivative(ResultOutputDerivative[Path]):
         res = ctx.load('test-result', options=_test_result_options(ctx))
         report = fmtxt.Report(_report_title(dst))
         info_section = report.add_section("Test Info")
-        _report_test_info(self, ctx.state, subjects_for_state(self.groups, ctx.state), info_section, ds, ctx.options['test'], res, ctx.options['data'], ctx.options['include'])
+        _report_test_info(self, ctx.state, self.groups[ctx.state['group']], info_section, ds, ctx.options['test'], res, ctx.options['data'], ctx.options['include'])
         sensor_map = plot.SensorMap(ds['eeg'], adjacency=True, show=False)
         image_conn = sensor_map.image("adjacency.png")
         info_section.add_figure("Sensor map with adjacency", image_conn)
@@ -396,7 +395,7 @@ class EEGSensorsReportDerivative(ResultOutputDerivative[Path]):
         colors = plot.colors_for_categorial(ds.eval(results[0]._plot_model()))
         for sensor, res in zip(sensors, results):
             report.append(_report.time_results(res, ds, colors, sensor, f"Signal at {sensor}."))
-        _report_test_info(self, ctx.state, subjects_for_state(self.groups, ctx.state), info_section, ds, ctx.options['test'], results[0], ctx.options['data'])
+        _report_test_info(self, ctx.state, self.groups[ctx.state['group']], info_section, ds, ctx.options['test'], results[0], ctx.options['data'])
         return _save_report(report, dst, ('eelbrain', 'mne', 'scipy', 'numpy'), ctx.options['samples'])
 
 
