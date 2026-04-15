@@ -150,11 +150,10 @@ def test_sample():
     assert 'evoked-test-data [derivative]' in test_tree
     assert 'evoked-group-dataset [derivative]' in test_tree
     movie_tree = e.show_dependencies(
-        'movie',
+        'movie-ttest',
         options={
             'data': _TestDims.coerce('source', morph=True),
             'single_subject': False,
-            'movie_kind': 'ttest',
             'subject': None,
             'baseline': False,
             'src_baseline': None,

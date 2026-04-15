@@ -46,7 +46,7 @@ from .exceptions import FileMissingError
 from .state_model import StateModel
 from .groups import assemble_groups
 from .pathing import (
-    deriv_dir, epoch_basename, ica_file_path,
+    BIDS_PATH_KEYS, deriv_dir, epoch_basename, ica_file_path,
     join_stem_parts, mri_dir, mri_sdir, raw_basename, raw_dir, rej_file_path,
     results_dir, src_file_path, trans_file_path,
 )
@@ -60,7 +60,7 @@ from .reports import (
     CoregReportDerivative, EEGReportDerivative, EEGSensorsReportDerivative,
     LMReportDerivative, ROIReportDerivative, SourceReportDerivative,
 )
-from .results import EvokedTestDataDerivative, MovieDerivative, TestResultDerivative
+from .results import DSPMMovieDerivative, EvokedTestDataDerivative, TTestMovieDerivative, TestResultDerivative
 from .source import (
     BemInput, EpochsStcDerivative, EpochsStcGroupDatasetDerivative,
     EvokedStcDerivative, EvokedStcGroupDatasetDerivative, FwdDerivative,
@@ -71,7 +71,6 @@ from .test_def import Test, TestDims, guess_y, validate_tests
 from .two_stage import TwoStageDataDerivative, TwoStageLevel1Derivative, TwoStageLevel2Derivative, TwoStageTest
 from .variable_def import Variables, apply_vardef, label_groups as label_groups_var
 
-BIDS_PATH_KEYS = ('datatype', 'suffix', 'extension', 'subject', 'session', 'task', 'acquisition', 'run', 'split')
 
 # Allowable parameters
 COV_PARAMS = {'epoch', 'method', 'reg', 'keep_sample_mean', 'reg_eval_win_pad'}
@@ -561,7 +560,8 @@ class Pipeline(StateModel):
         self._derivatives.register(EEGSensorsReportDerivative(*result_args))
         self._derivatives.register(LMReportDerivative(*brain_report_args))
         self._derivatives.register(CoregReportDerivative(self._raw))
-        self._derivatives.register(MovieDerivative(*result_args))
+        self._derivatives.register(DSPMMovieDerivative(*result_args))
+        self._derivatives.register(TTestMovieDerivative(*result_args))
 
     def _load_derivative(
             self,
@@ -570,11 +570,15 @@ class Pipeline(StateModel):
             state: dict[str, Any] | None = None,  # State overrides before resolving the derivative.
             options: dict[str, Any] | None = None,
             *,
+            redo: bool = True,  # When False, skip the load if the artifact is already up to date.
             controls: frozenset[str] | set[str] | tuple[str, ...] = (),
     ):
         state_ = self._derivative_state(state)
         options_ = {} if options is None else dict(options)
-        return self._derivatives.resolve(name, state=state_, options=options_, controls=controls).load(cache=cache)
+        handle = self._derivatives.resolve(name, state=state_, options=options_, controls=controls)
+        if not redo and handle.is_valid():
+            return None
+        return handle.load(cache=cache)
 
     def _derivative_state(
             self,
@@ -2415,35 +2419,48 @@ class Pipeline(StateModel):
                 raise RuntimeError("User aborted ICA overwrite")
         return str(ica_file_path(ctx.state, raw=raw_name))
 
-    def make_mov_ga_dspm(self, subjects=None, baseline=True, src_baseline=False,
-                         fmin=2, surf=None, views=None, hemi=None, time_dilation=4.,
-                         foreground=None, background=None, smoothing_steps=None,
-                         dst=None, redo=False, **state):
+    def make_movie_dspm(
+            self,
+            subjects: SubjectArg | None = None,
+            baseline: BaselineArg = True,
+            src_baseline: BaselineArg = False,
+            fmin: float = 2,
+            surf: str | None = None,
+            views: str | tuple[str, ...] | None = None,
+            hemi: str | None = None,
+            time_dilation: float = 4.,
+            foreground=None,
+            background=None,
+            smoothing_steps: int | None = None,
+            dst: PathArg | None = None,
+            redo: bool = False,
+            **state,
+    ) -> None:
         """Make a grand average movie from dSPM values (requires PySurfer 0.6)
 
         Parameters
         ----------
-        subjects : str | 1 | -1
+        subjects
             Subject(s) for which to load data. Can be a single subject
             name or a group name such as ``'all'``. ``1`` to use the current
             subject; ``-1`` for the current group. Default is current subject
             (or group if ``group`` is specified).
-        baseline : bool | tuple
+        baseline
             Apply baseline correction using this period in sensor space.
             True to use the epoch's baseline specification (default).
-        src_baseline : bool | tuple
+        src_baseline
             Apply baseline correction using this period in source space.
             True to use the epoch's baseline specification. The default is to
             not apply baseline correction.
-        fmin : scalar
+        fmin
             Minimum dSPM value to draw (default 2). fmax is 3 * fmin.
-        surf : str
+        surf
             Surface on which to plot data.
-        views : str | tuple of str
+        views
             View(s) of the brain to include in the movie.
         hemi : 'lh' | 'rh' | 'both' | 'split'
             Which hemispheres to plot.
-        time_dilation : scalar
+        time_dilation
             Factor by which to slow the passage of time. For example, with
             ``time_dilation=4`` (the default) a segment of data for 500 ms will
             last 2 s.
@@ -2451,16 +2468,16 @@ class Pipeline(StateModel):
             Figure foreground color (i.e., the text color).
         background : mayavi color
             Figure background color.
-        smoothing_steps : None | int
+        smoothing_steps
             Number of smoothing steps if data is spatially undersampled (pysurfer
             ``Brain.add_data()`` argument).
-        dst : str (optional)
+        dst
             Path to save the movie. The default is a file in the results
             folder with a name determined based on the input data. Plotting
             parameters (``view`` and all subsequent parameters) are not
             included in the filename. "~" is expanded to the user's home
             folder.
-        redo : bool
+        redo
             Make the movie even if the target file exists already.
         ...
             State parameters.
@@ -2478,7 +2495,6 @@ class Pipeline(StateModel):
             'dst': dst,
             'data': data,
             'single_subject': group is None,
-            'movie_kind': 'ga-dspm',
             'subject': subject,
             'baseline': baseline,
             'src_baseline': src_baseline,
@@ -2486,53 +2502,66 @@ class Pipeline(StateModel):
             'brain_kwargs': brain_kwargs,
             'time_dilation': time_dilation,
         }
-        handle_state = self._derivative_state()
-        if not redo and self._derivatives.resolve('movie', state=handle_state, options=options).is_valid():
-            return
-        self._load_derivative('movie', options=options, controls={ALLOW_PROTECTED_OVERWRITE})
+        self._load_derivative('movie-dspm', options=options, redo=redo, controls={ALLOW_PROTECTED_OVERWRITE})
 
-    def make_mov_ttest(self, subjects=None, model='', c1=None, c0=None, p=0.05,
-                       baseline=True, src_baseline=False, disconnect_labels=False,
-                       surf=None, views=None, hemi=None, time_dilation=4.,
-                       foreground=None, background=None, smoothing_steps=None,
-                       dst=None, redo=False, **state):
+    def make_movie_ttest(
+            self,
+            subjects: SubjectArg | None = None,
+            model: str = '',
+            c1: str | tuple | None = None,
+            c0: str | tuple | float | None = None,
+            p: float = 0.05,
+            baseline: BaselineArg = True,
+            src_baseline: BaselineArg = False,
+            disconnect_labels: bool = False,
+            surf: str | None = None,
+            views: str | tuple[str, ...] | None = None,
+            hemi: str | None = None,
+            time_dilation: float = 4.,
+            foreground=None,
+            background=None,
+            smoothing_steps: int | None = None,
+            dst: PathArg | None = None,
+            redo: bool = False,
+            **state,
+    ) -> None:
         """Make a t-test movie (requires PySurfer 0.6)
 
         Parameters
         ----------
-        subjects : str | 1 | -1
+        subjects
             Subject(s) for which to load data. Can be a single subject
             name or a group name such as ``'all'``. ``1`` to use the current
             subject; ``-1`` for the current group. Default is current subject
             (or group if ``group`` is specified).
-        model : None | str
-            Model on which the conditions c1 and c0 are defined. The default
-            (``''``) is the grand average.
-        c1 : None | str | tuple
+        model
+            Model on which the conditions ``c1`` and ``c0`` are defined.
+            The default (``''``) is to plot the grand average.
+        c1
             Test condition (cell in model). If None, the grand average is
             used and c0 has to be a scalar.
-        c0 : str | scalar
+        c0
             Control condition (cell on model) or scalar against which to
             compare c1.
-        p : 0.1 | 0.05 | 0.01 | .001
+        p
             Maximum p value to draw.
-        baseline : bool | tuple
+        baseline
             Apply baseline correction using this period in sensor space.
             True to use the epoch's baseline specification (default).
-        src_baseline : bool | tuple
+        src_baseline
             Apply baseline correction using this period in source space.
             True to use the epoch's baseline specification. The default is to
             not apply baseline correction.
-        disconnect_labels : bool
+        disconnect_labels
             Disconnect cluster adjacency across labels from the current
             ``parc`` state.
-        surf : str
+        surf
             Surface on which to plot data.
-        views : str | tuple of str
+        views
             View(s) of the brain to include in the movie.
         hemi : 'lh' | 'rh' | 'both' | 'split'
             Which hemispheres to plot.
-        time_dilation : scalar
+        time_dilation
             Factor by which to slow the passage of time. For example, with
             ``time_dilation=4`` (the default) a segment of data for 500 ms will
             last 2 s.
@@ -2540,16 +2569,16 @@ class Pipeline(StateModel):
             Figure foreground color (i.e., the text color).
         background : mayavi color
             Figure background color.
-        smoothing_steps : None | int
+        smoothing_steps
             Number of smoothing steps if data is spatially undersampled (pysurfer
             ``Brain.add_data()`` argument).
-        dst : str (optional)
+        dst
             Path to save the movie. The default is a file in the results
             folder with a name determined based on the input data. Plotting
             parameters (``view`` and all subsequent parameters) are not
             included in the filename. "~" is expanded to the user's home
             folder.
-        redo : bool
+        redo
             Make the movie even if the target file exists already.
         ...
             State parameters.
@@ -2570,21 +2599,17 @@ class Pipeline(StateModel):
             raise ValueError(f"p={p}")
 
         data = TestDims("source", morph=True)
-        brain_kwargs = self._surfer_plot_kwargs(surf, views, foreground, background,
-                                                smoothing_steps, hemi)
+        brain_kwargs = self._surfer_plot_kwargs(surf, views, foreground, background, smoothing_steps, hemi)
         surf = brain_kwargs['surf']
         if model:
             if not c1:
-                raise ValueError("If x is specified, c1 needs to be specified; "
-                                 "got c1=%s" % repr(c1))
+                raise ValueError(f"{c1=}: If x is specified, c1 needs to be specified")
             elif c0:
                 cat = (c1, c0)
             else:
                 cat = (c1,)
         elif c1 or c0:
-            raise ValueError("If x is not specified, c1 and c0 should not be "
-                             "specified either; got c1=%s, c0=%s"
-                             % (repr(c1), repr(c0)))
+            raise ValueError(f"{c1=}, {c0=}: If x is not specified, c1 and c0 should not be specified either")
         else:
             cat = None
 
@@ -2599,7 +2624,6 @@ class Pipeline(StateModel):
                 'dst': dst,
                 'data': data,
                 'single_subject': group is None,
-                'movie_kind': 'ttest',
                 'subject': subject,
                 'group': group,
                 'baseline': baseline,
@@ -2613,10 +2637,7 @@ class Pipeline(StateModel):
                 'time_dilation': time_dilation,
                 'cluster_state': state,
             }
-            handle_state = self._derivative_state()
-            if not redo and self._derivatives.resolve('movie', state=handle_state, options=options).is_valid():
-                return
-        self._load_derivative('movie', options=options, controls={ALLOW_PROTECTED_OVERWRITE})
+            self._load_derivative('movie-ttest', options=options, redo=redo, controls={ALLOW_PROTECTED_OVERWRITE})
 
     def export_mrat_evoked(self, **kwargs):
         """Export the sensor data FIF files needed for MRAT sensor analysis
@@ -2971,10 +2992,7 @@ class Pipeline(StateModel):
             'tstop': tstop,
             'include': include,
         }
-        handle_state = self._derivative_state()
-        if not redo and self._derivatives.resolve('source-report', state=handle_state, options=options).is_valid():
-            return
-        self._load_derivative('source-report', options=options, controls={ALLOW_PROTECTED_OVERWRITE})
+        self._load_derivative('source-report', options=options, redo=redo, controls={ALLOW_PROTECTED_OVERWRITE})
 
     def make_report_rois(self, test, pmin=None, tstart=None, tstop=None,
                          samples=10000, baseline=True, src_baseline=False,
@@ -3032,10 +3050,7 @@ class Pipeline(StateModel):
             'tstart': tstart,
             'tstop': tstop,
         }
-        handle_state = self._derivative_state()
-        if not redo and self._derivatives.resolve('roi-report', state=handle_state, options=options).is_valid():
-            return
-        self._load_derivative('roi-report', options=options, controls={ALLOW_PROTECTED_OVERWRITE})
+        self._load_derivative('roi-report', options=options, redo=redo, controls={ALLOW_PROTECTED_OVERWRITE})
 
     def make_report_coreg(self, file_name=None, **state):
         """Create HTML report with plots of the MEG/MRI coregistration
