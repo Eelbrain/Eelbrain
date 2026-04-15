@@ -13,7 +13,7 @@ from .._io.pickle import update_subjects_dir
 from .._utils.parse import find_variables
 from .derivative_cache import Dependency, Derivative, Request, UncachedDerivative
 from .pathing import mri_sdir
-from .results import RESULT_OPTION_DEFAULTS, ResultOutputDerivative, _epochs_stc_options, _evoked_stc_options, _subject_request_state
+from .results import RESULT_OPTION_DEFAULTS, ResultOutputDerivative, _epochs_stc_options, _evoked_stc_options
 from .source import ROIData, roi_data_from_subject_datasets
 from .test_def import ROITestResult, ResolvedTestNDSpec, Test
 from .variable_def import apply_vardef
@@ -144,27 +144,19 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         Optional source-space smoothing.
     """
     name = 'two-stage-data'
-    key_fields = (
-        'subject', 'epoch', 'raw', 'rej', 'model', 'equalize_evoked_count',
-        'test', 'cov', 'inv', 'src', 'mri', 'parc',
-    )
     OPTION_DEFAULTS = {
         **RESULT_OPTION_DEFAULTS,
     }
 
-    def __init__(self, tests: dict[str, Test], epochs: dict[str, Any]):
+    def __init__(self, tests: dict[str, Test], epochs: dict[str, Any], groups: dict[str, Any]):
         self.tests = tests
         self.epochs = epochs
-
-    def key(self, ctx: Request) -> dict[str, Any]:
-        key = {field: ctx.state[field] for field in self.key_fields}
-        key['options'] = ctx.registry.canonicalize(ctx.options)
-        return ctx.registry.canonicalize(key)
+        self.groups = groups
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return self.standard_fingerprint(
             ctx,
-            state_fields=self.key_fields,
+            state_fields=('subject', 'epoch', 'raw', 'rej', 'model', 'equalize_evoked_count', 'test', 'cov', 'inv', 'src', 'mri', 'parc'),
             definitions={
                 'test': self.tests[ctx.options['test']]._as_dict(),
                 'epoch': self.epochs[ctx.state['epoch']]._as_dict(),
@@ -175,32 +167,31 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
         samplingrate = ctx.options['samplingrate']
-        state = _subject_request_state(ctx, subject)
         if data.source is True:
             if test_obj.model is None or test_obj.vars:
                 return Dependency(
                     'epochs-stc',
                     label=subject,
-                    state=state,
+                    state={'subject': subject},
                     options=_epochs_stc_options(ctx, morph=data.morph, samplingrate=samplingrate),
                 )
             return Dependency(
                 'evoked-stc',
                 label=subject,
-                state={**state, 'model': test_obj.model},
+                state={'subject': subject, 'model': test_obj.model},
                 options=_evoked_stc_options(ctx, morph=data.morph, cat=None, samplingrate=samplingrate),
             )
         if test_obj.model is None or test_obj.vars:
             return Dependency(
                 'epochs-stc',
                 label=subject,
-                state=state,
+                state={'subject': subject},
                 options=_epochs_stc_options(ctx, morph=None, samplingrate=samplingrate),
             )
         return Dependency(
             'evoked-stc',
             label=subject,
-            state={**state, 'model': test_obj.model},
+            state={'subject': subject, 'model': test_obj.model},
             options=_evoked_stc_options(ctx, morph=False, cat=None, samplingrate=samplingrate),
         )
 
@@ -213,12 +204,11 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
     def _load_subject_data(self, ctx: Request, subject: str) -> Dataset:
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
-        state = _subject_request_state(ctx, subject)
         samplingrate = ctx.options['samplingrate']
 
         if data.source is True:
             if test_obj.model is None or test_obj.vars:
-                ds = ctx.load('epochs-stc', state=state, options=_epochs_stc_options(ctx, morph=data.morph, samplingrate=samplingrate))
+                ds = ctx.load('epochs-stc', state={'subject': subject}, options=_epochs_stc_options(ctx, morph=data.morph, samplingrate=samplingrate))
                 if test_obj.vars:
                     apply_vardef(ds, test_obj.vars, self.tests, self.groups)
                 if test_obj.model is not None:
@@ -230,7 +220,7 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
                         drop=('i_start', 't_edf', 'time', 'index', 'trigger'),
                     )
             else:
-                ds = ctx.load('evoked-stc', state={**state, 'model': test_obj.model}, options=_evoked_stc_options(ctx, morph=data.morph, cat=None, samplingrate=samplingrate))
+                ds = ctx.load('evoked-stc', state={'subject': subject, 'model': test_obj.model}, options=_evoked_stc_options(ctx, morph=data.morph, cat=None, samplingrate=samplingrate))
             if ctx.options['smooth']:
                 ds[data.y_name] = ds[data.y_name].smooth('source', ctx.options['smooth'], 'gaussian')
             return ds
@@ -238,13 +228,13 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         if ctx.options['smooth']:
             raise TypeError(f"smooth={ctx.options['smooth']!r} for ROI two-stage tests")
         if test_obj.model is None:
-            ds = ctx.load('epochs-stc', state=state, options=_epochs_stc_options(ctx, morph=None, samplingrate=samplingrate))
+            ds = ctx.load('epochs-stc', state={'subject': subject}, options=_epochs_stc_options(ctx, morph=None, samplingrate=samplingrate))
             if test_obj.vars:
                 apply_vardef(ds, test_obj.vars, self.tests, self.groups)
             return ds
         if not test_obj.vars:
-            return ctx.load('evoked-stc', state={**state, 'model': test_obj.model}, options=_evoked_stc_options(ctx, morph=False, cat=None, samplingrate=samplingrate))
-        ds = ctx.load('epochs-stc', state=state, options=_epochs_stc_options(ctx, morph=None, samplingrate=samplingrate))
+            return ctx.load('evoked-stc', state={'subject': subject, 'model': test_obj.model}, options=_evoked_stc_options(ctx, morph=False, cat=None, samplingrate=samplingrate))
+        ds = ctx.load('epochs-stc', state={'subject': subject}, options=_epochs_stc_options(ctx, morph=None, samplingrate=samplingrate))
         apply_vardef(ds, test_obj.vars, self.tests, self.groups)
         return ds.aggregate(
             test_obj.model,

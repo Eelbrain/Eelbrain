@@ -30,7 +30,6 @@ from .results import (
     RESULT_OPTION_DEFAULTS,
     TEST_DATA_OPTION_NAMES,
     ResultOutputDerivative,
-    _subject_request_state,
     _test_result_options,
 )
 from .source import _subject_state
@@ -413,7 +412,7 @@ class LMReportDerivative(BrainReportDerivative):
         test_obj = self.tests[ctx.options['test']]
         if not isinstance(test_obj, TwoStageTest):
             return ()
-        return (Dependency('two-stage-level-1', state=_subject_request_state(ctx, ctx.state['subject']), options=self._level_1_options(ctx)),)
+        return (Dependency('two-stage-level-1', options=self._level_1_options(ctx)),)
 
     def build(self, ctx: Request) -> Path:
         test_obj = self.tests[ctx.options['test']]
@@ -421,7 +420,7 @@ class LMReportDerivative(BrainReportDerivative):
             raise TypeError("LM report requires a TwoStageTest")
         dst = self.path(ctx)
         report = fmtxt.Report(_report_title(dst))
-        lm = ctx.load('two-stage-level-1', state=_subject_request_state(ctx, ctx.state['subject']), options=self._level_1_options(ctx))
+        lm = ctx.load('two-stage-level-1', options=self._level_1_options(ctx))
         report.append(_report.source_time_lm(lm, ctx.options['pmin'], _surfer_plot_kwargs(self, ctx.state)))
         return _save_report(report, dst, ('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'))
 

@@ -41,7 +41,6 @@ class FakePipeline:
     def __init__(self, root):
         self.root = Path(root)
         self.state = {'subject': 's1', 'mode': 'default'}
-        self.cache_policy_overrides = {}
 
     @property
     def _temporary_state(self):

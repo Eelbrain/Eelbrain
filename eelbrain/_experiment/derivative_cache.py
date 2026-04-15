@@ -291,10 +291,16 @@ class DependencyNode(Generic[T]):
 
         The fingerprint should contain all non-dependency request information
         that makes this node's result stale, usually request ``state`` /
-        ``options`` plus any serialized configuration definitions or external
-        file metadata that the node treats as part of its own validity. It
-        should not duplicate dependency manifests; those are tracked
-        separately through :meth:`dependencies`.
+        ``options`` plus any configuration definitions or external file
+        metadata that the node treats as part of its own validity.  All
+        fingerprint values are passed through
+        :meth:`~DerivativeRegistry.canonicalize` before storage, so
+        :class:`~eelbrain._experiment.configuration.Configuration` objects,
+        Eelbrain data types (:class:`~eelbrain.Var`, :class:`~eelbrain.Factor`,
+        …), and other types handled by :meth:`~DerivativeRegistry.canonicalize`
+        can be included directly without pre-serialization.  It should not
+        duplicate dependency manifests; those are tracked separately through
+        :meth:`dependencies`.
 
         For :class:`Derivative` subclasses, this is distinct from
         :meth:`Derivative.key`: the key chooses the cache slot/path for the
@@ -373,7 +379,11 @@ class Derivative(DependencyNode[T]):
     - ``VIEW_OPTION_DEFAULTS``: request options that only shape the returned
       value after the artifact has been built or loaded
     - ``key_fields``: ``ctx.state`` fields that define the default artifact
-      key and default cache label
+      key and default cache label when :meth:`key` is not overridden.
+      Subclasses that override :meth:`key` may also use ``key_fields`` as a
+      convenient base list of relevant state keys for their own
+      :meth:`fingerprint` logic, but that usage is a convention, not a
+      framework contract.
     - ``cache_policy``: default caching mode used by :meth:`should_cache`
     - ``cache_suffix``: file suffix for the default :meth:`path`
       implementation; leave ``None`` when overriding :meth:`path` directly
@@ -588,10 +598,14 @@ class Derivative(DependencyNode[T]):
             These keys are extracted directly from the request state and
             embedded under the ``"state"`` key after canonicalization.
         definitions
-            Optional serialized configuration definitions embedded under the
-            ``"definitions"`` key. Use this for stable snapshots such as epoch
-            definitions, test definitions, or pipe definitions that explain
-            what the derivative is building.
+            Optional configuration definitions embedded under the
+            ``"definitions"`` key.  Values are passed through
+            :meth:`~DerivativeRegistry.canonicalize`, so
+            :class:`~eelbrain._experiment.configuration.Configuration` objects
+            and other Eelbrain types can be passed directly without
+            pre-serialization.  Use this for stable snapshots such as epoch
+            definitions, test definitions, pipe definitions, or variable
+            collections that explain what the derivative is building.
         extra
             Optional additional fingerprint fields merged at the top level
             after canonicalization. Use this for small derivative-specific
@@ -659,13 +673,9 @@ class UncachedDerivative(Derivative[T]):
 
     :meth:`should_cache` unconditionally returns ``False``, so ``build`` is
     called on every request and no artifact is written to disk.
-    ``cache_suffix`` is set to a placeholder value so that the default
-    :meth:`path` implementation does not raise; in practice :meth:`path` is
-    never used, because the registry skips all file I/O when caching is off.
     """
 
     cache_log_level = None
-    cache_suffix = '.uncached'
 
     def should_cache(
             self,
@@ -673,6 +683,12 @@ class UncachedDerivative(Derivative[T]):
             cache: bool | None,
     ) -> bool:
         return False
+
+    def key(self, ctx: Request) -> dict[str, Any]:
+        raise NotImplementedError(f"{type(self).__name__} is uncached; key() must not be called")
+
+    def path(self, ctx: Request) -> Path:
+        raise NotImplementedError(f"{type(self).__name__} is uncached; path() must not be called")
 
 
 class Request(Generic[T]):

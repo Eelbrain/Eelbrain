@@ -41,7 +41,7 @@ from .epochs import (
     EvokedDerivative, EvokedGroupDatasetDerivative, PrimaryEpoch, RejectionInput,
     SecondaryEpoch, SuperEpoch, assemble_epochs, decim_param,
 )
-from .events import EventsDerivative, SELECTED_EVENTS, SelectedEventsDerivative
+from .events import EventsDerivative, LabeledEventsDerivative, SelectedEventsDerivative
 from .exceptions import FileMissingError
 from .state_model import StateModel
 from .groups import assemble_groups
@@ -117,12 +117,10 @@ class Pipeline(StateModel):
         Guide on using :ref:`experiment-class-guide`.
     """
     _repr_args = ('root',)
-    path_version: int = 2
     screen_log_level: str | int = logging.INFO
     cache_inv: bool = True  # Whether to cache inverse solution
     # moderate speed gain for loading source estimates (34 subjects: 20 vs 70 s)
     # hard drive space ~ 100 mb/file
-    cache_policy_overrides: dict[str, str | bool] = {}
 
     # datatype and extension are usually inferred from a BIDS dataset; override here if needed
     datatype: str = None
@@ -139,10 +137,13 @@ class Pipeline(StateModel):
     # merge adjacent events in the stimulus channel
     merge_triggers: int = None
     # add this value to all trigger times (in seconds); global shift, or {subject: shift, (subject, session): shift} dictionary
-    trigger_shift: float | dict[str | tuple, float] = 0
+    trigger_shift: float | dict[str | tuple[str, str], float] = 0
 
     # variables for automatic labeling {name: {trigger: label, triggers: label}}
     variables: dict[str, Any] = {}
+    # Cache the output of label_events(). Set to False if label_events() reads
+    # from external files whose changes should trigger cache invalidation.
+    cache_event_labels: bool = True
 
     # named epochs
     epochs: dict[str, EpochBase] = {}
@@ -505,7 +506,7 @@ class Pipeline(StateModel):
         )
         brain_report_args = (*result_args, self._mri_subjects, self.get('common_brain'), {**self._brain_plot_defaults, **self.brain_plot_defaults})
 
-        # Register inputs
+        # --- Inputs (externally managed files) ---
         for raw_name, pipe in self._raw.items():
             self._derivatives.register(RawBadChannelsInput(raw_name, pipe, self._raw))
             if isinstance(pipe, RawSource):
@@ -516,37 +517,57 @@ class Pipeline(StateModel):
         self._derivatives.register(BemInput())
         self._derivatives.register(RejectionInput(self.root, self._artifact_rejection, self._epochs))
 
-        # Register derivatives
+        # --- Raw preprocessing ---
         for raw_name, pipe in self._raw.items():
             if not isinstance(pipe, RawSource):
                 self._derivatives.register(RawDerivative(raw_name, pipe, self._raw))
+
+        # --- Sensor-space: events → epochs → evoked ---
         self._derivatives.register(EventsDerivative(
             self.trigger_shift,
             sequence_arg(f'{self.__class__.__name__}.stim_channel', self.stim_channel),
             self.merge_triggers,
-            self._variables,
-            self._groups,
             self.preload,
-            type(self).fix_events,
-            type(self).label_events,
+            type(self).fix_events,    # bound to the subclass at construction time
             self.__class__.__name__,
             len(self._tasks) > 1,
             len(self._sessions) > 1,
+        ))
+        self._derivatives.register(LabeledEventsDerivative(
+            type(self).label_events,
+            self.__class__.__name__,
+            self._variables,
+            self._groups,
+            type(self).cache_event_labels,
         ))
         self._derivatives.register(SelectedEventsDerivative(self._raw, self._epochs, self._artifact_rejection))
         self._derivatives.register(EpochsDerivative(self._raw, self._epochs))
         self._derivatives.register(EvokedDerivative(self._raw, self._epochs))
         self._derivatives.register(EvokedGroupDatasetDerivative(self._raw, self._groups))
-        self._derivatives.register(EvokedTestDataDerivative(self.tests, self._epochs, self._groups))
-        self._derivatives.register(TwoStageDataDerivative(self.tests, self._epochs))
-        self._derivatives.register(TwoStageLevel1Derivative(self.tests))
+
+        # --- Source-space infrastructure ---
+        for cov_name, cov in self._covs.items():
+            self._derivatives.register(CovDerivative(cov_name, cov))
+        self._derivatives.register(SrcDerivative())
+        self._derivatives.register(SourceMorphDerivative())
+        self._derivatives.register(FwdDerivative())
+        self._derivatives.register(InvDerivative())
         self._derivatives.register(AnnotDerivative(self._parcs, tuple(self.get_field_values('hemi'))))
+
+        # --- Source-space: epochs/evoked projected to source space ---
         self._derivatives.register(EpochsStcDerivative(self._raw, self._epochs))
         self._derivatives.register(EvokedStcDerivative(self._raw, self._epochs))
         self._derivatives.register(EpochsStcGroupDatasetDerivative(self._mri_subjects, self.get('common_brain'), self._groups))
         self._derivatives.register(EvokedStcGroupDatasetDerivative(self._mri_subjects, self.get('common_brain'), self._groups))
+
+        # --- Statistical tests ---
+        self._derivatives.register(EvokedTestDataDerivative(self.tests, self._epochs, self._groups))
+        self._derivatives.register(TwoStageDataDerivative(self.tests, self._epochs, self._groups))
+        self._derivatives.register(TwoStageLevel1Derivative(self.tests))
         self._derivatives.register(TestResultDerivative(*result_args))
         self._derivatives.register(TwoStageLevel2Derivative(*result_args))
+
+        # --- Reports and exports ---
         self._derivatives.register(SourceReportDerivative(*brain_report_args))
         self._derivatives.register(ROIReportDerivative(*brain_report_args))
         self._derivatives.register(EEGReportDerivative(*result_args))
@@ -554,12 +575,6 @@ class Pipeline(StateModel):
         self._derivatives.register(LMReportDerivative(*brain_report_args))
         self._derivatives.register(CoregReportDerivative(self._raw))
         self._derivatives.register(MovieDerivative(*result_args))
-        for cov_name, cov in self._covs.items():
-            self._derivatives.register(CovDerivative(cov_name, cov))
-        self._derivatives.register(SrcDerivative())
-        self._derivatives.register(SourceMorphDerivative())
-        self._derivatives.register(FwdDerivative())
-        self._derivatives.register(InvDerivative())
 
     def _load_derivative(
             self,
@@ -1961,7 +1976,7 @@ class Pipeline(StateModel):
             'data_raw': data_raw,
             'cat': cat,
         }
-        ds = self._load_derivative(SELECTED_EVENTS, options=options)
+        ds = self._load_derivative('selected-events', options=options)
         apply_vardef(ds, vardef, self.tests, self._groups)
         return ds
 

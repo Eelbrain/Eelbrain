@@ -73,6 +73,23 @@ class CovDerivative(Derivative[mne.Covariance]):
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw', 'epoch', 'cov', 'rej')
     cache_suffix = '-cov.fif'
 
+    # Fixed options used when loading epochs for covariance estimation.
+    # Declared on both the Dependency edge and the build() load call so that
+    # cache validation and the actual load request stay in sync.
+    _EPOCH_COV_OPTIONS = {
+        'baseline': True,
+        'add_bads': True,
+        'ndvar': False,
+        'data': 'sensor',
+        'data_raw': False,
+        'reject': False,
+        'samplingrate': None,
+        'decim': 1,
+        'pad': 0,
+        'trigger_shift': True,
+        'interpolate_bads': False,
+    }
+
     def __init__(
             self,
             cov_name: str,
@@ -95,19 +112,7 @@ class CovDerivative(Derivative[mne.Covariance]):
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if isinstance(self.cov, EpochCovariance):
-            return (Dependency('epochs', state={'epoch': self.cov.epoch}, options={
-                'baseline': True,
-                'add_bads': True,
-                'ndvar': False,
-                'data': 'sensor',
-                'data_raw': False,
-                'reject': False,
-                'samplingrate': None,
-                'decim': 1,
-                'pad': 0,
-                'trigger_shift': True,
-                'interpolate_bads': False,
-            }),)
+            return (Dependency('epochs', state={'epoch': self.cov.epoch}, options=self._EPOCH_COV_OPTIONS),)
         return (raw_data_dependency(ctx, noise=True),)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
@@ -123,19 +128,7 @@ class CovDerivative(Derivative[mne.Covariance]):
             cov_path = self.path(ctx)
             cov_path.parent.mkdir(parents=True, exist_ok=True)
             log_path = cov_path.with_suffix('.info.txt')
-            ds = ctx.load('epochs', state={'epoch': self.cov.epoch}, options={
-                'baseline': True,
-                'add_bads': True,
-                'ndvar': False,
-                'data': 'sensor',
-                'data_raw': False,
-                'reject': False,
-                'samplingrate': None,
-                'decim': 1,
-                'pad': 0,
-                'trigger_shift': True,
-                'interpolate_bads': False,
-            })
+            ds = ctx.load('epochs', state={'epoch': self.cov.epoch}, options=self._EPOCH_COV_OPTIONS)
             epochs = ds['epochs']
             return self.cov.make(epochs, log_path)
         raw = load_raw_dependency(ctx, ctx.state['raw'], noise=True)

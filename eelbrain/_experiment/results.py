@@ -64,14 +64,6 @@ TEST_DATA_OPTION_NAMES = (
 )
 
 
-def _group_request_state(ctx: Request, **state) -> dict[str, Any]:
-    return {**ctx.state, **state, 'subject': None}
-
-
-def _subject_request_state(ctx: Request, subject: str, **state) -> dict[str, Any]:
-    return {**ctx.state, **state, 'subject': subject}
-
-
 def _test_result_options(
         ctx: Request,
         *,
@@ -456,10 +448,6 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         Optional source-space smoothing.
     """
     name = 'evoked-test-data'
-    key_fields = (
-        'group', 'epoch', 'raw', 'rej', 'model', 'equalize_evoked_count',
-        'test', 'cov', 'inv', 'src', 'mri',
-    )
     OPTION_DEFAULTS = {
         'data': None,
         'test': None,
@@ -475,16 +463,10 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         self.groups = groups
 
     def _state_fields(self, ctx: Request) -> tuple[str, ...]:
-        fields = list(self.key_fields)
+        fields = ['group', 'epoch', 'raw', 'rej', 'model', 'equalize_evoked_count', 'test', 'cov', 'inv', 'src', 'mri']
         if ctx.options['data'].source:
             fields.append('parc')
         return tuple(fields)
-
-    def key(self, ctx: Request) -> dict[str, Any]:
-        key = {field: ctx.state[field] for field in self._state_fields(ctx)}
-        key['subjects'] = tuple(self.groups[ctx.state['group']])
-        key['options'] = ctx.registry.canonicalize(ctx.options)
-        return ctx.registry.canonicalize(key)
 
     def _sensor_evoked_options(self, ctx: Request, cat) -> dict[str, Any]:
         return ctx.options_for(
@@ -725,24 +707,22 @@ class MovieDerivative(ResultOutputDerivative[Path]):
             if ctx.options['single_subject']:
                 return (Dependency(
                     'evoked-stc',
-                    state=_subject_request_state(ctx, ctx.options['subject']),
+                    state={'subject': ctx.options['subject']},
                     options=_evoked_stc_options(ctx),
                 ),)
             return (Dependency(
                 'evoked-stc-group-dataset',
-                state=_group_request_state(ctx),
                 options=_evoked_stc_options(ctx, morph=True),
             ),)
         if kind == 'ttest':
             if ctx.options['single_subject']:
                 return (Dependency(
                     'epochs-stc',
-                    state=_subject_request_state(ctx, ctx.options['subject']),
+                    state={'subject': ctx.options['subject']},
                     options=_epochs_stc_options(ctx, cat=ctx.options['cat']),
                 ),)
             return (Dependency(
                 'evoked-stc-group-dataset',
-                state=_group_request_state(ctx),
                 options=_evoked_stc_options(ctx, morph=True, cat=ctx.options['cat']),
             ),)
         return ()
@@ -752,19 +732,19 @@ class MovieDerivative(ResultOutputDerivative[Path]):
         dst = self.path(ctx)
         if kind == 'ga-dspm':
             if ctx.options['single_subject']:
-                ds = ctx.load('evoked-stc', state=_subject_request_state(ctx, ctx.options['subject']), options=_evoked_stc_options(ctx))
+                ds = ctx.load('evoked-stc', state={'subject': ctx.options['subject']}, options=_evoked_stc_options(ctx))
                 y = ds['src']
             else:
-                ds = ctx.load('evoked-stc-group-dataset', state=_group_request_state(ctx), options=_evoked_stc_options(ctx, morph=True))
+                ds = ctx.load('evoked-stc-group-dataset', options=_evoked_stc_options(ctx, morph=True))
                 y = ds['srcm']
             brain = plot.brain.dspm(y, ctx.options['fmin'], ctx.options['fmin'] * 3, colorbar=False, **ctx.options['brain_kwargs'])
         elif kind == 'ttest':
             cluster_state = dict(ctx.options['cluster_state'] or {})
             if ctx.options['single_subject']:
-                ds = ctx.load('epochs-stc', state=_subject_request_state(ctx, ctx.options['subject']), options=_epochs_stc_options(ctx, cat=ctx.options['cat']))
+                ds = ctx.load('epochs-stc', state={'subject': ctx.options['subject']}, options=_epochs_stc_options(ctx, cat=ctx.options['cat']))
                 y = 'src'
             else:
-                ds = ctx.load('evoked-stc-group-dataset', state=_group_request_state(ctx), options=_evoked_stc_options(ctx, morph=True, cat=ctx.options['cat']))
+                ds = ctx.load('evoked-stc-group-dataset', options=_evoked_stc_options(ctx, morph=True, cat=ctx.options['cat']))
                 y = 'srcm'
             if cluster_state:
                 cluster_state.update(samples=0, pmin=ctx.options['p'])

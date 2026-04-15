@@ -1,8 +1,29 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-"""Event and selected-event derivatives."""
+"""Event and selected-event derivatives.
+
+The event pipeline is split into three nodes:
+
+:class:`EventsDerivative` (``'events'``)
+    Reads raw trigger data for one recording file and applies the experiment's
+    :meth:`~Pipeline.fix_events` hook to produce a corrected
+    :class:`~eelbrain.Dataset` of trial events.
+
+:class:`LabeledEventsDerivative` (``'labeled-events'``)
+    Applies built-in variable definitions and the experiment's
+    :meth:`~Pipeline.label_events` hook on top of the cached events.
+
+:class:`SelectedEventsDerivative` (``'selected-events'``)
+    Applies epoch-specific trial selection (``sel`` predicate, rejection,
+    bad-channel interpolation) on top of the labeled events.
+    Cache policy is :attr:`~CachePolicy.DISABLED_BY_DEFAULT`
+    because the result is a small dataset that is cheap to recompute and is
+    usually only needed as an intermediate for :class:`~epochs.EpochsDerivative`.
+"""
 
 from __future__ import annotations
 
+import hashlib
+import inspect
 from pathlib import Path
 from typing import Any
 from collections.abc import Sequence
@@ -17,13 +38,22 @@ from .._names import INTERPOLATE_CHANNELS
 from .derivative_cache import CachePolicy, Dependency, Derivative, Request
 from .epochs import EpochCollection, SecondaryEpoch, SuperEpoch
 from .exceptions import FileMissingError
-from .pathing import rej_file_path
+from .pathing import BIDS_ENTITY_KEYS, rej_file_path
 from .preprocessing import load_raw_dependency, raw_data_dependency
 from .variable_def import Variables
 
 
-BIDS_ENTITY_KEYS = ('subject', 'session', 'task', 'acquisition', 'run', 'split')
-SELECTED_EVENTS = 'selected-events'
+def function_fingerprint(function) -> str:
+    """SHA-256 digest of a function's source code, truncated to 16 hex chars.
+
+    Falls back to ``__qualname__`` when source is not accessible (compiled
+    extensions, interactive sessions).
+    """
+    try:
+        src = inspect.getsource(function)
+    except (OSError, TypeError):
+        return getattr(function, '__qualname__', repr(function))
+    return hashlib.sha256(src.encode()).hexdigest()[:16]
 
 
 def _check_ds(ds: Dataset, source: str, info: dict[str, Any]) -> Dataset:
@@ -45,14 +75,11 @@ class EventsDerivative(Derivative[Dataset]):
 
     def __init__(
             self,
-            trigger_shift: int | dict[str, int] | dict[tuple[str, str], int],
+            trigger_shift: float | dict[str | tuple[str, str], float],
             stim_channel: str | list[str],
             merge_triggers: Any,
-            variables: Variables,
-            groups: dict[str, Any],
             preload: bool,
             fix_events,
-            label_events,
             owner_name: str,
             multi_task: bool,
             multi_session: bool,
@@ -60,33 +87,33 @@ class EventsDerivative(Derivative[Dataset]):
         self.trigger_shift = trigger_shift
         self.stim_channel = stim_channel
         self.merge_triggers = merge_triggers
-        self._variables = variables
-        self._groups = groups
         self.preload = preload
         self.fix_events_impl = fix_events
-        self.label_events_impl = label_events
         self.owner_name = owner_name
         self.multi_task = multi_task
         self.multi_session = multi_session
-        self.variables_repr = repr(variables)
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (raw_data_dependency(ctx, add_bads=False),)
 
+    def _get_trigger_shift(self, subject: str, session: str):
+        if isinstance(self.trigger_shift, dict):
+            for key in ((subject, session), subject):
+                if key in self.trigger_shift:
+                    return self.trigger_shift[key]
+            return 0
+        return self.trigger_shift
+
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         subject = ctx.state['subject']
         session = ctx.state['session']
-        trigger_shift = self.trigger_shift
-        if isinstance(trigger_shift, dict):
-            trigger_shift = trigger_shift.get((subject, session), trigger_shift.get(subject, 0))
+        trigger_shift = self._get_trigger_shift(subject, session)
         return {
             'raw': ctx.state['raw'],
             'stim_channel': self.stim_channel,
             'merge_triggers': self.merge_triggers,
             'trigger_shift': trigger_shift,
-            'variables': self.variables_repr,
-            'fix_events': getattr(self.fix_events_impl, '__qualname__', repr(self.fix_events_impl)),
-            'label_events': getattr(self.label_events_impl, '__qualname__', repr(self.label_events_impl)),
+            'fix_events': function_fingerprint(self.fix_events_impl),
         }
 
     def build(self, ctx: Request) -> Dataset:
@@ -99,8 +126,11 @@ class EventsDerivative(Derivative[Dataset]):
         ds.info['sfreq'] = raw.info['sfreq']
         ds.info.update(entities)
 
-        info = ds.info
-        ds = _check_ds(self.fix_events_impl(self, ds), f'{self.owner_name}.fix_events()', info)
+        trigger_shift = self._get_trigger_shift(subject, session)
+        if trigger_shift:
+            ds['i_start'] += int(round(trigger_shift * ds.info['sfreq']))
+
+        ds = _check_ds(self.fix_events_impl(self, ds), f'{self.owner_name}.fix_events()', ds.info)
         ds['time'] = ds['i_start'] / ds.info['sfreq']
         ds['SOA'] = ds['time'].diff(0)
         ds['subject'] = Factor([subject], repeat=ds.n_cases, random=True)
@@ -108,16 +138,64 @@ class EventsDerivative(Derivative[Dataset]):
             ds[:, 'task'] = entities['task']
         if self.multi_session:
             ds[:, 'session'] = entities['session']
+        return ds
+
+    def load(self, ctx: Request, path: Path) -> Dataset:
+        ds = load.unpickle(path)
+        ds.info.update({k: ctx.state[k] for k in BIDS_ENTITY_KEYS})
+        return ds
+
+    def save(self, ctx: Request, path: Path, value: Dataset) -> None:
+        save.pickle(value, path)
+
+
+class LabeledEventsDerivative(Derivative[Dataset]):
+    """Labeled event dataset produced by applying :meth:`~Pipeline.label_events`.
+
+    Caching is controlled by :attr:`Pipeline.cache_event_labels`.  When
+    ``True`` (the default) the labeled events are cached, and the fingerprint
+    detects changes to ``label_events`` via source-code hashing.  When
+    ``False`` this node is always rebuilt from the cached unlabeled events —
+    the correct choice when ``label_events`` reads external files whose changes
+    cannot be detected without executing the hook.
+    """
+    name = 'labeled-events'
+    key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw')
+    cache_suffix = '.pickle'
+
+    def __init__(
+            self,
+            label_events,
+            owner_name: str,
+            variables: Variables,
+            groups: dict[str, Any],
+            cache: bool,
+    ):
+        self.label_events_impl = label_events
+        self.owner_name = owner_name
+        self._variables = variables
+        self._groups = groups
+        if not cache:
+            self.cache_policy = CachePolicy.DISABLED_BY_DEFAULT
+
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        return (Dependency('events'),)
+
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        return self.standard_fingerprint(
+            ctx,
+            state_fields=self.key_fields,
+            definitions={
+                'variables': self._variables,
+                'label_events': function_fingerprint(self.label_events_impl),
+            },
+        )
+
+    def build(self, ctx: Request) -> Dataset:
+        ds = ctx.load('events')
         self._variables._apply(ds, self._groups)
         info = ds.info
-        ds = _check_ds(self.label_events_impl(self, ds), f'{self.owner_name}.label_events()', info)
-
-        trigger_shift = self.trigger_shift
-        if isinstance(trigger_shift, dict):
-            trigger_shift = trigger_shift.get((subject, session), trigger_shift.get(subject, 0))
-        if trigger_shift:
-            ds['i_start'] += int(round(trigger_shift * ds.info['sfreq']))
-        return ds
+        return _check_ds(self.label_events_impl(self, ds), f'{self.owner_name}.label_events()', info)
 
     def load(self, ctx: Request, path: Path) -> Dataset:
         ds = load.unpickle(path)
@@ -144,7 +222,7 @@ class SelectedEventsDerivative(Derivative[Dataset]):
     cat
         Optional subset of model cells to keep.
     """
-    name = SELECTED_EVENTS
+    name = 'selected-events'
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'raw', 'epoch', 'rej')
     cache_suffix = '.pickle'
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
@@ -167,7 +245,7 @@ class SelectedEventsDerivative(Derivative[Dataset]):
         deps = [Dependency('rej-input', label='rej')]
         for task in tasks:
             task_state = {'task': task}
-            deps.append(Dependency('events', label=f'{task}:events', state=task_state))
+            deps.append(Dependency('labeled-events', label=f'{task}:labeled-events', state=task_state))
         return tuple(deps)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
@@ -257,7 +335,7 @@ class SelectedEventsDerivative(Derivative[Dataset]):
             else:
                 ds_sel = None
             state = {**ctx.state, 'task': epoch.task}
-            ds = ctx.load('events', state=state)
+            ds = ctx.load('labeled-events', state=state)
             if epoch.sel:
                 ds = ds.sub(epoch.sel)
             if index:
