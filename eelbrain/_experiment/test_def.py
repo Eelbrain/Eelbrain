@@ -31,6 +31,16 @@ def validate_tests(test_dict):
             raise TypeError(f"Invalid object for test definition {key}: {config!r}")
 
 
+def guess_y(ds: Dataset, default: str = None) -> str:
+    "Given a dataset, guess the dependent variable"
+    for y in ('srcm', 'src', 'meg', 'eeg'):
+        if y in ds:
+            return y
+    if default is not None:
+        return default
+    raise RuntimeError(f"Could not find data in {ds}")
+
+
 def tail_arg(tail):
     try:
         if tail == 0:

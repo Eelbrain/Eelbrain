@@ -67,10 +67,7 @@ from .source import (
     InvDerivative, ROIData, SourceMorphDerivative, SrcDerivative, TransInput,
     InverseSolution, MinimumNormInverseSolution, _drop_unknown_labels, _source_parc, eval_src,
 )
-from .test_def import (
-    Test,
-    TestDims, validate_tests,
-)
+from .test_def import Test, TestDims, guess_y, validate_tests
 from .two_stage import TwoStageDataDerivative, TwoStageLevel1Derivative, TwoStageLevel2Derivative, TwoStageTest
 from .variable_def import Variables, apply_vardef, label_groups as label_groups_var
 
@@ -83,16 +80,6 @@ BaselineArg = bool | tuple[float | None, float | None]
 DataArg = str | TestDims
 PMinArg = Literal['tfce'] | float | None
 SubjectArg = str | Literal[1, -1]
-
-
-def guess_y(ds, default=None):
-    "Given a dataset, guess the dependent variable"
-    for y in ('srcm', 'src', 'meg', 'eeg'):
-        if y in ds:
-            return y
-    if default is not None:
-        return default
-    raise RuntimeError(f"Could not find data in {ds}")
 
 
 class Pipeline(StateModel):

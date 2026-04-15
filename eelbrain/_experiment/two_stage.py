@@ -15,7 +15,7 @@ from .derivative_cache import Dependency, Derivative, Request, UncachedDerivativ
 from .pathing import mri_sdir
 from .results import RESULT_OPTION_DEFAULTS, ResultOutputDerivative, _epochs_stc_options, _evoked_stc_options
 from .source import ROIData, roi_data_from_subject_datasets
-from .test_def import ROITestResult, ResolvedTestNDSpec, Test
+from .test_def import ROITestResult, ResolvedTestNDSpec, Test, guess_y
 from .variable_def import apply_vardef
 
 
@@ -121,12 +121,6 @@ class SubjectROILMResult:
     n_trials_ds: Dataset
 
 
-def _two_stage_source_name(ds: Dataset) -> str:
-    for name in ('srcm', 'src', 'stcm', 'stc'):
-        if name in ds:
-            return name
-
-
 class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
     """Prepared source-space data for two-stage level-1 fits.
 
@@ -214,7 +208,7 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
                 if test_obj.model is not None:
                     ds = ds.aggregate(
                         test_obj.model,
-                        never_drop=(_two_stage_source_name(ds),),
+                        never_drop=(guess_y(ds),),
                         drop_bad=True,
                         equal_count=ctx.state['equalize_evoked_count'] == 'eq',
                         drop=('i_start', 't_edf', 'time', 'index', 'trigger'),
@@ -238,7 +232,7 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         apply_vardef(ds, test_obj.vars, self.tests, self.groups)
         return ds.aggregate(
             test_obj.model,
-            never_drop=(_two_stage_source_name(ds),),
+            never_drop=(guess_y(ds),),
             drop_bad=True,
             equal_count=ctx.state['equalize_evoked_count'] == 'eq',
             drop=('i_start', 't_edf', 'time', 'index', 'trigger'),
