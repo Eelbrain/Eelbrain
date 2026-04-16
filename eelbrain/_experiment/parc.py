@@ -665,14 +665,6 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("annot\n")
 
-    def validate(
-            self,
-            ctx: Request,
-            path: Path,
-            manifest,
-    ) -> bool:
-        return all(path.exists() for path in self.annot_file_paths(ctx.state))
-
 
 class VolumeParc(Parcellation):
     "Assume it exists"

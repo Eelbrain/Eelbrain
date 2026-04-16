@@ -1195,7 +1195,7 @@ class Pipeline(StateModel):
         state = dict(kwargs)
         if subject is not None:
             state['subject'] = subject
-        ds = self._load_derivative('events', state=state)
+        ds = self._load_derivative('labeled-events', state=state)
         if data_raw:
             ds.info['raw'] = self.load_raw(add_bads, preload=self.preload, **state)
         return ds

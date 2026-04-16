@@ -359,9 +359,3 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
 
     def save(self, ctx: Request, path: Path, value) -> None:
         save.pickle(value, path)
-
-    def validate(self, ctx: Request, path: Path, manifest) -> bool:
-        return manifest.provenance.get('samples') == ctx.options['samples']
-
-    def provenance(self, ctx: Request, value) -> dict[str, Any]:
-        return {'samples': value.samples}

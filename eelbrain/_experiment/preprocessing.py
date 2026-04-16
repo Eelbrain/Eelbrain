@@ -528,7 +528,6 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             dependencies=ctx.registry.dependency_fingerprints(self, ctx, None),
             cache_policy='external',
             software={'eelbrain_cache_schema': str(MANIFEST_SCHEMA_VERSION), 'mne': mne.__version__},
-            provenance=ctx.registry.canonicalize({'n_components': value.n_components_, 'exclude': list(value.exclude)}),
         )
 
     def is_valid(self, ctx: Request) -> bool:
@@ -631,15 +630,8 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         self.raw_name = raw_name
         self.pipe = pipe
         self.pipes = pipes
-
-    def should_cache(
-            self,
-            ctx: Request,
-            cache: bool | None,
-    ) -> bool:
-        if cache is not None:
-            return cache
-        return self.pipe._cache
+        if not pipe._cache:
+            self.cache_policy = CachePolicy.DISABLED_BY_DEFAULT
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         deps = [
@@ -971,7 +963,7 @@ class CachedRawPipe(RawPipe):
     _bad_chs_affect_cache: bool = False
     DICT_ATTRS = ('source',)
 
-    def __init__(self, source, cache=True):
+    def __init__(self, source: str, cache: bool = True):
         RawPipe.__init__(self)
         self.source = source
         self._cache = cache

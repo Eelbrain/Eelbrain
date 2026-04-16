@@ -395,11 +395,9 @@ def test_manifest_roundtrip_ignores_unknown_fields():
         'dependencies': {'source': {'kind': 'input'}},
         'cache_policy': 'required',
         'software': {'mne': '1.0'},
-        'provenance': {'a': 1},
-        'serializer': 'obsolete',
+        'serializer': 'obsolete',  # hypothetical future unknown field
     })
     assert manifest.derivative == 'value'
-    assert manifest.provenance == {'a': 1}
 
 
 def test_registry_load_caches_derivative_and_writes_manifest():

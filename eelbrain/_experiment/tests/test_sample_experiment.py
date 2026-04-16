@@ -147,8 +147,8 @@ def test_sample():
         },
         return_str=True,
     )
-    assert 'evoked-test-data [derivative]' in test_tree
-    assert 'evoked-group-dataset [derivative]' in test_tree
+    assert 'evoked-test-data [uncached]' in test_tree
+    assert 'evoked-group-dataset [uncached]' in test_tree
     movie_tree = e.show_dependencies(
         'movie-ttest',
         options={
@@ -167,7 +167,7 @@ def test_sample():
         },
         return_str=True,
     )
-    assert 'evoked-stc-group-dataset [derivative]' in movie_tree
+    assert 'evoked-stc-group-dataset [uncached]' in movie_tree
     sds = []
     for _ in e:
         e.make_epoch_selection(auto=2.5e-12)
@@ -1064,7 +1064,7 @@ def test_selected_events_manifest_uses_real_dependencies():
 
     assert 'dependencies' not in manifest['fingerprint']
     assert 'rej' in manifest['dependencies']
-    assert any(key.endswith(':events') for key in manifest['dependencies'])
+    assert any(key.endswith(':labeled-events') for key in manifest['dependencies'])
     assert not any(key.endswith(':raw') for key in manifest['dependencies'])
 
 

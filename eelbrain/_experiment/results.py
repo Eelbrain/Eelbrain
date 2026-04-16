@@ -282,6 +282,7 @@ class ResultOutputDerivative(Derivative[T]):
         data = ctx.options['data']
         return ctx.registry.canonicalize({
             'data': None if data is None else data.string,
+            'samples': ctx.options['samples'],
             'baseline': ctx.options['baseline'],
             'src_baseline': ctx.options['src_baseline'],
             'disconnect_labels': ctx.options.get('disconnect_labels', False),
@@ -415,13 +416,6 @@ class ResultOutputDerivative(Derivative[T]):
             value: T,
     ) -> None:
         return
-
-    def provenance(
-            self,
-            ctx: Request,
-            value: T,
-    ) -> dict[str, Any]:
-        return {'samples': ctx.options['samples'], 'single_subject': self.single_subject}
 
 
 def sampled_artifact_path(path: str | Path, samples: int | None) -> Path:
@@ -604,21 +598,6 @@ class TestResultDerivative(ResultOutputDerivative):
             value,
     ) -> None:
         save.pickle(value, path)
-
-    def validate(
-            self,
-            ctx: Request,
-            path: Path,
-            manifest,
-    ) -> bool:
-        return manifest.provenance.get('samples') == ctx.options['samples']
-
-    def provenance(
-            self,
-            ctx: Request,
-            value,
-    ) -> dict[str, Any]:
-        return {'samples': value.samples}
 
 
 _MOVIE_OPTION_DEFAULTS = {

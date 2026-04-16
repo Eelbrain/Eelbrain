@@ -80,11 +80,16 @@ class CachePolicy(str, Enum):
         Caching is opt-in: disabled unless the caller passes ``cache=True``
         explicitly. Use for derived values that are fast to compute or that
         should not accumulate on disk without explicit intent.
+    NEVER
+        Caching is permanently disabled and the derivative has no artifact
+        path or manifest. Used by :class:`UncachedDerivative` subclasses that
+        are always rebuilt on every request.
     """
 
     REQUIRED = 'required'
     OPTIONAL = 'optional'
     DISABLED_BY_DEFAULT = 'disabled_by_default'
+    NEVER = 'never'
 
 
 @dataclass(frozen=True)
@@ -112,7 +117,6 @@ class ArtifactManifest:
     dependencies: dict[str, Any]
     cache_policy: str
     software: dict[str, str]
-    provenance: dict[str, Any]
     artifact_metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -304,7 +308,7 @@ class DependencyNode(Generic[T]):
 
         For :class:`Derivative` subclasses, this is distinct from
         :meth:`Derivative.key`: the key chooses the cache slot/path for the
-        artifact, while the fingerprint records the richer validity/provenance
+        artifact, while the fingerprint records the richer validity
         information that must match for that slot to be considered current.
         """
         raise NotImplementedError
@@ -390,11 +394,10 @@ class Derivative(DependencyNode[T]):
     - ``cache_log_level``: log level for standard cache hit/build messages,
       or ``None`` to suppress them
     - ``version``: derivative-local schema/version number included in
-      manifests and available to :meth:`validate`
+      manifests and available for schema evolution checks
 
     More specialized subclasses may additionally override :meth:`key`,
-    :meth:`should_cache`, :meth:`validate`,
-    :meth:`provenance`.
+    :meth:`should_cache`.
     """
 
     # ``ctx.state`` fields that define the default artifact key. Override
@@ -488,15 +491,11 @@ class Derivative(DependencyNode[T]):
 
     def should_cache(
             self,
-            ctx: Request,
             cache: bool | None,
     ) -> bool:
-        """Decide whether this request should read/write a cached artifact.
-
-        Override this when cache behavior depends on the current request, not
-        just on :attr:`cache_policy`. The return value should be deterministic
-        for a given ``ctx`` and explicit ``cache`` override.
-        """
+        """Decide whether this request should read/write a cached artifact"""
+        if self.cache_policy == CachePolicy.NEVER:
+            return False
         if cache is not None:
             return cache
         return self.cache_policy != CachePolicy.DISABLED_BY_DEFAULT
@@ -549,8 +548,8 @@ class Derivative(DependencyNode[T]):
         """Return serializer metadata for this artifact.
 
         Override this when :meth:`load` or named views need small pieces of
-        metadata about the serialized artifact beyond the main fingerprint and
-        provenance, such as file lists or saved selection arrays.
+        metadata about the serialized artifact beyond the main fingerprint,
+        such as file lists or saved selection arrays.
         """
         return {}
 
@@ -638,51 +637,17 @@ class Derivative(DependencyNode[T]):
             out.update(ctx.registry.canonicalize(extra))
         return out
 
-    def validate(
-            self,
-            ctx: Request,
-            path: Path,
-            manifest: ArtifactManifest,
-    ) -> bool:
-        """Perform derivative-specific cache validation.
-
-        Override this when path-local checks are needed in addition to key,
-        fingerprint, and dependency validation, for example schema checks on
-        the saved file itself. Return ``True`` when the artifact is still
-        usable for the current request.
-        """
-        return True
-
-    def provenance(
-            self,
-            ctx: Request,
-            value: T,
-    ) -> dict[str, Any]:
-        """Record optional extra provenance for the saved artifact.
-
-        Override this to add human-readable or debugging metadata to the
-        manifest after a successful build, for example dimensions, sample
-        counts, or export destinations. The return value should be JSON-like
-        and deterministic for the saved artifact.
-        """
-        return {}
-
 
 class UncachedDerivative(Derivative[T]):
     """Base class for derived values that should never persist to the cache.
 
-    :meth:`should_cache` unconditionally returns ``False``, so ``build`` is
-    called on every request and no artifact is written to disk.
+    :attr:`cache_policy` is :attr:`CachePolicy.NEVER`, so no artifact path or
+    manifest is created and ``build`` is called on every request.
+    Subclasses must not declare ``key_fields`` or override :meth:`key`.
     """
 
+    cache_policy = CachePolicy.NEVER
     cache_log_level = None
-
-    def should_cache(
-            self,
-            ctx: Request,
-            cache: bool | None,
-    ) -> bool:
-        return False
 
     def key(self, ctx: Request) -> dict[str, Any]:
         raise NotImplementedError(f"{type(self).__name__} is uncached; key() must not be called")
@@ -744,7 +709,7 @@ class Request(Generic[T]):
         self._artifact_path: Path | None = None
         self._manifest_path: Path | None = None
         self._artifact_metadata: dict[str, Any] | None = None
-        if isinstance(node, Derivative):
+        if isinstance(node, Derivative) and node.cache_policy != CachePolicy.NEVER:
             self._key = node.key(self)
             self._base_artifact_path = Path(node.path(self))
             self._artifact_path = Path(self.registry.resolve_cache_artifact_path(self._base_artifact_path, self._key))
@@ -803,7 +768,7 @@ class Request(Generic[T]):
         }
         if view is not None:
             out['view'] = view
-        if isinstance(self.node, Derivative):
+        if isinstance(self.node, Derivative) and self.node.cache_policy != CachePolicy.NEVER:
             out['kind'] = 'derivative'
             out['key'] = self.key()
             out['manifest'] = str(self.manifest_path)
@@ -876,8 +841,6 @@ class Request(Generic[T]):
             return False
         if manifest.dependencies != self.dependency_fingerprints(cache):
             return False
-        if not derivative.validate(self, self.artifact_path, manifest):
-            return False
         return True
 
     def is_valid(self, cache: bool | None = None) -> bool:
@@ -891,7 +854,7 @@ class Request(Generic[T]):
     def load_artifact(self, cache: bool | None = None) -> T:
         """Load or build the underlying derivative artifact without view shaping."""
         derivative = self._require_derivative()
-        use_cache = derivative.should_cache(self, cache)
+        use_cache = derivative.should_cache(cache)
         if use_cache:
             manifest = self._manifest()
             if manifest and self.artifact_path.exists() and self._is_valid(manifest, cache):
@@ -923,7 +886,6 @@ class Request(Generic[T]):
                 'eelbrain_cache_schema': str(MANIFEST_SCHEMA_VERSION),
                 'mne': mne.__version__,
             },
-            provenance=self.registry.canonicalize(derivative.provenance(self, artifact)),
             artifact_metadata=artifact_metadata,
         )
         self.registry.write_manifest(self.manifest_path, manifest)
@@ -1237,10 +1199,13 @@ class DerivativeRegistry:
                 parts.append(f"{dep.label} -> ")
             parts.append(handle.node.name)
             if isinstance(handle.node, Derivative):
-                parts.append(' [derivative]')
-                key_text = self._tree_mapping_text(self.canonicalize(handle.key()))
-                if key_text:
-                    parts.append(f" {{{key_text}}}")
+                if handle.node.cache_policy == CachePolicy.NEVER:
+                    parts.append(' [uncached]')
+                else:
+                    parts.append(' [derivative]')
+                    key_text = self._tree_mapping_text(self.canonicalize(handle.key()))
+                    if key_text:
+                        parts.append(f" {{{key_text}}}")
             else:
                 parts.append(' [input]')
             if dep and dep.state:
