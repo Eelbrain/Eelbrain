@@ -434,7 +434,7 @@ class CoregReportDerivative(Derivative[Path]):
         Optional explicit output path.
     """
     name = 'coreg-report'
-    key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split', 'mri', 'mrisubject')
+    key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'mri', 'mrisubject')
     OPTION_DEFAULTS = {}
     VIEW_OPTION_DEFAULTS = {'dst': None}
 

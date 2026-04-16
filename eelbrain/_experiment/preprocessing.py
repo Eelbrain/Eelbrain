@@ -323,13 +323,14 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         noise = ctx.options['noise']
         state = {**ctx.state, 'raw': self.raw_name}
         path = bids_path(state, noise=noise)
+        actual_path = self.pipe._find_raw_path(path) or path.fpath
         return {
             'raw': self.raw_name,
             'noise': noise,
             'pipe': self.pipe._as_dict(),
             'source': file_fingerprint(
                 ctx.state['root'],
-                path.fpath,
+                actual_path,
                 'raw-source',
                 metadata={'raw': self.raw_name, 'noise': noise},
             ),
@@ -347,7 +348,7 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
 
 
 class ICAInput(Input[mne.preprocessing.ICA]):
-    key_fields = ('subject', 'session', 'acquisition', 'run', 'split')
+    key_fields = ('subject', 'session', 'acquisition', 'run')
     version = 1
 
     def __init__(
@@ -614,7 +615,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         Whether to resolve the corresponding empty-room recording instead of
         the subject recording.
     """
-    key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'split')
+    key_fields = ('subject', 'session', 'task', 'acquisition', 'run')
     cache_policy = CachePolicy.OPTIONAL
     cache_suffix = '-raw.fif'
     OPTION_DEFAULTS = {'noise': False}
@@ -788,10 +789,25 @@ class RawSource(RawPipe):
     def _can_resolve(self, pipes: dict[str, RawPipe]) -> bool:
         return True
 
-    def _raw_path(self, path: BIDSPath) -> Path:
-        "Get path to the raw file. Enforce existence."
+    def _find_raw_path(self, path: BIDSPath) -> Path | None:
+        """Return the raw file path, or None if it does not exist.
+
+        Checks the path as given first.  If the file is absent, falls back to
+        the BIDS first-split variant (``split-01``) so that split recordings
+        are located transparently — MNE then reads all subsequent parts.
+        """
         raw_path = Path(path.fpath)
-        if not raw_path.exists():
+        if raw_path.exists():
+            return raw_path
+        split_path = Path(path.copy().update(split='01').fpath)
+        if split_path.exists():
+            return split_path
+        return None
+
+    def _raw_path(self, path: BIDSPath) -> Path:
+        """Get path to the raw file. Enforce existence."""
+        raw_path = self._find_raw_path(path)
+        if raw_path is None:
             raise FileMissingError(f"Raw input file does not exist at expected location {path.fpath}")
         return raw_path
 
@@ -799,7 +815,6 @@ class RawSource(RawPipe):
         return Path(path.copy().update(
             suffix='channels',
             extension='.tsv',
-            split=None,
         ).fpath)
 
     def _load(
@@ -860,11 +875,8 @@ class RawSource(RawPipe):
         # Create a channels file if none exists
         LOG.info("No channels.tsv found for %s, creating an empty one.", path.fpath)
         bads_path.parent.mkdir(parents=True, exist_ok=True)
-        if exists(path.fpath):
-            raw = self._load(path, preload=False, log=log)
-            ch_names = raw.ch_names
-        else:
-            raise FileMissingError(f"Raw input file does not exist at expected location {path.fpath}")
+        raw = self._load(path, preload=False, log=log)
+        ch_names = raw.ch_names
         ch_status = ['bad' if ch in raw.info['bads'] else 'good' for ch in ch_names]
         channels_df = pd.DataFrame({
             'name': ch_names,
@@ -1283,7 +1295,6 @@ class RawICA(CachedRawPipe):
             'task': path.task,
             'acquisition': path.acquisition,
             'run': path.run,
-            'split': path.split,
             'datatype': path.datatype,
             'suffix': path.suffix,
             'extension': path.extension,

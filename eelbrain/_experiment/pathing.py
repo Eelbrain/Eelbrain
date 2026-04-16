@@ -8,14 +8,13 @@ from typing import Any
 from mne_bids import BIDSPath
 
 
-BIDS_ENTITY_KEYS = ('subject', 'session', 'task', 'acquisition', 'run', 'split')
+BIDS_ENTITY_KEYS = ('subject', 'session', 'task', 'acquisition', 'run')
 BIDS_ENTITY_PREFIX_MAP = {
     'subject': 'sub',
     'session': 'ses',
     'task': 'task',
     'acquisition': 'acq',
     'run': 'run',
-    'split': 'split',
 }
 BIDS_PATH_KEYS = ('datatype', 'suffix', 'extension', *BIDS_ENTITY_KEYS)
 
@@ -61,15 +60,15 @@ def subject_session_basename(state: dict[str, Any]) -> str:
 
 
 def raw_basename(state: dict[str, Any]) -> str:
-    return _bids_name(state, ('subject', 'session', 'acquisition', 'task', 'run', 'split'), suffix=state['suffix'])
+    return _bids_name(state, ('subject', 'session', 'acquisition', 'task', 'run'), suffix=state['suffix'])
 
 
 def epoch_basename(state: dict[str, Any]) -> str:
-    return _bids_name(state, ('subject', 'session', 'acquisition', 'run', 'split'), suffix=state['suffix'])
+    return _bids_name(state, ('subject', 'session', 'acquisition', 'run'), suffix=state['suffix'])
 
 
 def test_basename(state: dict[str, Any]) -> str:
-    return _bids_name(state, ('session', 'run', 'split'), suffix=state['suffix'])
+    return _bids_name(state, ('session', 'run'), suffix=state['suffix'])
 
 
 def deriv_dir(state: dict[str, Any]) -> Path:

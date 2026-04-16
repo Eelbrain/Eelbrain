@@ -256,7 +256,6 @@ class Pipeline(StateModel):
         self._tasks = tuple(get_entity_vals(root, 'task', **ignore_entities))
         self._acquisitions = tuple(get_entity_vals(root, 'acquisition', **ignore_entities))
         self._runs = tuple(get_entity_vals(root, 'run', **ignore_entities))
-        self._splits = tuple(get_entity_vals(root, 'split', **ignore_entities))
 
         if self.datatype is not None:
             if self.datatype not in ('meg', 'eeg'):
@@ -385,7 +384,6 @@ class Pipeline(StateModel):
         self._register_field('task', self._tasks, depends_on=('epoch',), slave_handler=self._update_task, repr=True)
         self._register_field('acquisition',  self._acquisitions or None, repr=True)
         self._register_field('run', self._runs or None, repr=True)
-        self._register_field('split', self._splits or None, repr=True)
         self._register_field('datatype', (self._datatype,), repr=True)
         self._register_field('suffix', (self._datatype,), repr=True)
         self._register_field('extension', extensions, repr=True)

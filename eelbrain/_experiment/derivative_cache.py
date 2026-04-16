@@ -1332,9 +1332,14 @@ class DerivativeRegistry:
         return repr(value)
 
 
-def file_fingerprint(root: str | Path, path: str | Path, kind: str, digest: bool = False, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+def file_fingerprint(
+        root: str | Path,
+        path: str | Path,
+        kind: str,
+        digest: bool = False,
+        metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Fingerprint one input path using a project-relative location when possible."""
-
     root = Path(root)
     path = Path(path)
     try:
