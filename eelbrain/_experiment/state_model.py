@@ -527,7 +527,7 @@ class StateModel:
             for handler in self._post_set_handlers[k]:
                 handler(k, v)
 
-    def show_fields(self, str_out: bool = False) -> fmtxt.Table | None:
+    def show_fields(self, str_out: bool = False) -> str | None:
         """A table for all iterable fields and their values.
 
         Parameters

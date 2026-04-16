@@ -98,7 +98,11 @@ Assuming a subject without explicit ``{session}`` is named "S001", the pipeline 
 - The FreeSurfer MRI-directory at ``~/Data/Experiment/derivatives/freesurfer/sub-S001``
 - The template brain MRI-directory at ``~/Data/Experiment/derivatives/freesurfer/fsaverage``
 
-The setup can be tested using :meth:`Pipeline.show_subjects`, which shows a list of the subjects and corresponding MRIs that were discovered::
+The scan can be tested using :meth:`Pipeline.show_fields`.
+This method shows all fields (subjects, tasks, sessions, etc.) that have been identified.
+
+More details on subjects can be shown using :meth:`Pipeline.show_subjects`.
+This method shows a list of the subjects and corresponding MRIs that were discovered::
 
     >>> e.show_subjects()
     #    subject   mri

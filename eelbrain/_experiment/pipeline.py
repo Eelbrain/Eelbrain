@@ -423,9 +423,6 @@ class Pipeline(StateModel):
         level = logging.DEBUG if any('dev' in v for v in (__version__, mne.__version__)) else logging.INFO
         log.log(level, "Using eelbrain %s, mne %s.", __version__, mne.__version__)
 
-        # register experimental features
-        self._subclass_init()
-
         # set initial values
         self.set(**state)
         self._store_state()
@@ -446,40 +443,12 @@ class Pipeline(StateModel):
                 pipe = self._raw[self.get('raw')]
                 self._raw_samplingrate[key] = pipe._load_info(self._bids_path, self._raw).get('sfreq')
 
-        # check for digitizer data differences
-        # ====================================
-        # Coordinate frames:
-        # MEG (markers)  ==raw-file==>  head shape  ==trans-file==>  MRI
-        #
-        #  - raw files with identical head shapes can share trans-file (head-mri)
-        #  - raw files with identical MEG markers (and head shape) can share
-        #    forward solutions
-        #  - SuperEpochs currently need to have a single forward solution,
-        #    hence marker positions need to be the same between sub-epochs
-            # if subjects_with_raw_changes:
-            #     log.info("Raw input files new or changed, checking digitizer data")
-            # for subject, session in subjects_with_raw_changes:
-            #     # find unique digitizer datasets
-            #     dev_head_t = None
-            #     for task, acquisition, run in self.iter(('task', 'acquisition', 'run'), subject=subject, session=session):
-            #         raw = self.load_raw(False)
-            #         _dev_head_t = raw.info['dev_head_t']
-            #         if _dev_head_t is None:
-            #             raise FileDeficientError(f"The raw file {self._bids_path.basename} is missing dev_head_t information")
-            #         if dev_head_t is None:
-            #             dev_head_t = _dev_head_t
-            #         if dev_head_t != _dev_head_t:
-            #             raise FileDeficientError(f"Raw file {self._bids_path.basename} has dev_head_t that is different from other files.")
-
     def _repr_args(self) -> tuple[str, ...]:
         return (str(self.root),)
 
     def _restore_state(self, state=-1, discard_tip=True):
         StateModel._restore_state(self, state=state, discard_tip=discard_tip)
         self._update_bids_path()
-
-    def _subclass_init(self):
-        "Allow subclass to register experimental features"
 
     def _init_derivative_registry(self):
         self._derivative_state_fields = tuple(self._terminal_fields)
@@ -745,7 +714,7 @@ class Pipeline(StateModel):
                 self.set(**{field: value})
                 yield value
 
-    def fix_events(self, ds):
+    def fix_events(self, ds: Dataset) -> Dataset:
         """Modify event order or timing
 
         Parameters
@@ -789,7 +758,7 @@ class Pipeline(StateModel):
         """
         return ds
 
-    def label_events(self, ds):
+    def label_events(self, ds: Dataset) -> Dataset:
         """Add event labels to events loaded from raw files
 
         Parameters
@@ -860,7 +829,7 @@ class Pipeline(StateModel):
         """
         return ds
 
-    def label_subjects(self, ds):
+    def label_subjects(self, ds: Dataset) -> None:
         """Label the subjects in ds
 
         Creates a boolean :class:`Var` in ``ds`` for each group marking group
@@ -1848,7 +1817,7 @@ class Pipeline(StateModel):
 
         return raw
 
-    def _current_source_parc(self, **state):
+    def _current_source_parc(self, **state) -> str:
         return _source_parc({
             'src': self.get('src', **state),
             'parc': self.get('parc', **state),
@@ -1864,14 +1833,15 @@ class Pipeline(StateModel):
             **kwargs,
     ) -> mne.SourceEstimate | mne.VectorSourceEstimate | mne.VolSourceEstimate | NDVar:
         """
-        Load a raw file as mne Raw object.
+        Apply the inverse solution to the raw signal and return source estimates.
 
         Parameters
         ----------
         morph
             Morph the source estimates to the common_brain (default False).
         ndvar
-            Load as NDVar instead of mne Raw object (default ``True``).
+            Return as :class:`NDVar` instead of an MNE source estimate object
+            (default ``True``).
         samplingrate
             Samplingrate in Hz for the analysis.
         tstart
@@ -2150,7 +2120,7 @@ class Pipeline(StateModel):
             res_data = res_data.label_data
         return res_data, res
 
-    def make_annot(self, **state):
+    def make_annot(self, **state) -> None:
         """Ensure that annot files for the current parcellation exist."""
         self._load_derivative('annot', state=state)
 
@@ -2395,10 +2365,9 @@ class Pipeline(StateModel):
         """
         raw_name = get_ica_pipe_name(self._raw, self.get('raw', **state))
         self._raw[raw_name]
-        handle = self._derivatives.resolve(ica_input_name(raw_name), state=self._derivative_state({**state, 'raw': raw_name}))
-        ctx = handle
+        ctx = self._derivatives.resolve(ica_input_name(raw_name), state=self._derivative_state({**state, 'raw': raw_name}))
         try:
-            handle.node.materialize(ctx)
+            ctx.node.materialize(ctx)
         except ProtectedArtifactError as error:
             command = ask(
                 f"ICA file {Path(error.path).name} is stale. How should it be handled?",
@@ -2410,9 +2379,9 @@ class Pipeline(StateModel):
                 help="This ICA file may contain manual component selections, so Eelbrain does not replace it automatically when the current data and settings no longer match.",
             )
             if command == 'overwrite':
-                handle.node.materialize(ctx, allow_protected_overwrite=True)
+                ctx.node.materialize(ctx, allow_protected_overwrite=True)
             elif command == 'incorporate':
-                handle.node.materialize(ctx, allow_protected_reindex=True)
+                ctx.node.materialize(ctx, allow_protected_reindex=True)
             elif command != 'abort':
                 raise RuntimeError(f"{command=}")
             else:
@@ -3071,7 +3040,7 @@ class Pipeline(StateModel):
             controls={ALLOW_PROTECTED_OVERWRITE},
         )
 
-    def make_src(self, **state):
+    def make_src(self, **state) -> None:
         """Make the source space
 
         Parameters
@@ -3583,7 +3552,7 @@ class Pipeline(StateModel):
             StateModel.set(self, match, subject=subject)
         self._update_bids_path()
 
-    def _post_set_group(self, _, group):
+    def _post_set_group(self, _: str, group: str) -> None:
         if group == '*' or group not in self._groups:
             return
         group_members = self._groups[group]
@@ -3700,11 +3669,11 @@ class Pipeline(StateModel):
     def _eval_inv(cls, inv):
         return InverseSolution._coerce(inv)._string()
 
-    def _eval_model(self, model):
+    def _eval_model(self, model: str) -> str:
         if model == '':
             return model
         elif len(model) > 1 and '*' in model:
-            raise ValueError("model=%r; To specify interactions, use '%' instead of '*'")
+            raise ValueError(f"{model=}; To specify interactions, use '%' instead of '*'")
 
         factors = [v.strip() for v in model.split('%')]
 
@@ -3724,7 +3693,7 @@ class Pipeline(StateModel):
             model.extend(unordered_factors)
         return '%'.join(model)
 
-    def _update_mrisubject(self, fields):
+    def _update_mrisubject(self, fields: dict) -> str:
         subject = fields['subject']
         mri = fields['mri']
         if subject == '*' or mri == '*':
@@ -3734,7 +3703,7 @@ class Pipeline(StateModel):
             return mrisubject
         return 'sub-' + mrisubject
 
-    def _update_task(self, fields):
+    def _update_task(self, fields: dict) -> str | None:
         epoch = fields['epoch']
         if epoch in self._epochs:
             epoch = self._epochs[epoch]
@@ -3743,7 +3712,7 @@ class Pipeline(StateModel):
             return  # don't force task
         return '*'  # if a named epoch is not in _epochs it might be a removed epoch
 
-    def _eval_parc(self, parc):
+    def _eval_parc(self, parc: str) -> str:
         if not parc:
             return ''
         if parc in self._parcs:
@@ -3761,19 +3730,14 @@ class Pipeline(StateModel):
         else:
             raise ValueError(f"{parc=}")
 
-    def _get_parc(self):
-        """Parc information
+    def _get_parc(self) -> tuple[str, Parcellation | None]:
+        """Return ``(parc_name, parc_definition)`` for the current parc state.
 
-        Returns
-        -------
-        parc : str
-            The current parc setting.
-        params : dict | None
-            The parc definition (``None`` for ``parc=''``).
+        ``parc_definition`` is ``None`` when ``parc=''``.
         """
         return _resolve_parc(self._parcs, self.get('parc'))
 
-    def _post_set_test(self, _, test):
+    def _post_set_test(self, _: str, test: str) -> None:
         if test != '*' and test in self.tests:  # with vmatch=False, test object might not be availale
             test_obj = self.tests[test]
             if test_obj.model is not None:
@@ -4151,7 +4115,15 @@ class Pipeline(StateModel):
         else:
             return ds.as_table(midrule=True, count=True)
 
-    def _surfer_plot_kwargs(self, surf=None, views=None, foreground=None, background=None, smoothing_steps=None, hemi=None):
+    def _surfer_plot_kwargs(
+            self,
+            surf: str | None = None,
+            views: str | tuple[str, ...] | None = None,
+            foreground=None,
+            background=None,
+            smoothing_steps: int | None = None,
+            hemi: str | None = None,
+    ) -> dict:
         out = self._brain_plot_defaults.copy()
         out.update(self.brain_plot_defaults)
         if views:
@@ -4173,7 +4145,7 @@ class Pipeline(StateModel):
             out['hemi'] = hemi
         return out
 
-    def _update_bids_path(self):
+    def _update_bids_path(self) -> None:
         keys = {
             k: v for k, v in self._fields.items()
             if (k in BIDS_PATH_KEYS) and v and ('*' not in v)
