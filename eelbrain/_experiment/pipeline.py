@@ -102,7 +102,6 @@ class Pipeline(StateModel):
     .. seealso::
         Guide on using :ref:`experiment-class-guide`.
     """
-    _repr_args = ('root',)
     screen_log_level: str | int = logging.INFO
     cache_inv: bool = True  # Whether to cache inverse solution
     # moderate speed gain for loading source estimates (34 subjects: 20 vs 70 s)
@@ -242,10 +241,10 @@ class Pipeline(StateModel):
         # Checks
         ########
         if root is None:
-            raise AttributeError("Pipeline subclasses must have root.")
-        self.root = root = Path(root).absolute().expanduser()
+            raise TypeError("Pipeline subclasses must have root.")
+        self.root = root = Path(root).expanduser().absolute()
+
         # BIDS entities
-        # ignore task `noise` by default
         ignore_entities = copy.deepcopy(self.ignore_entities)
         ignore_tasks = ignore_entities.get('ignore_tasks', [])
         if 'noise' not in ignore_tasks:
@@ -471,6 +470,9 @@ class Pipeline(StateModel):
             #             dev_head_t = _dev_head_t
             #         if dev_head_t != _dev_head_t:
             #             raise FileDeficientError(f"Raw file {self._bids_path.basename} has dev_head_t that is different from other files.")
+
+    def _repr_args(self) -> tuple[str, ...]:
+        return (str(self.root),)
 
     def _restore_state(self, state=-1, discard_tip=True):
         StateModel._restore_state(self, state=state, discard_tip=discard_tip)

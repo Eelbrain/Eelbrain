@@ -103,7 +103,6 @@ class StateModel:
     owner = None  # email address as string (for notification)
     _auto_debug = False  # in notification block
     defaults = {}
-    _repr_args = ()
 
     def __init__(self, **state):
         # scaffold for state
@@ -132,7 +131,7 @@ class StateModel:
             self.notification = NotNotifier()
 
     def __repr__(self):
-        args = [f'{self._fields[arg]!r}' for arg in self._repr_args]
+        args = [repr(arg) for arg in self._repr_args()]
         kwargs = [(arg, self._fields[arg]) for arg in self._repr_kwargs]
         no_initial_state = len(self._fields._states) == 0
         for k in self._repr_kwargs_optional:
@@ -141,6 +140,10 @@ class StateModel:
                 kwargs.append((k, v))
         args.extend(f'{k}={v!r}' for k, v in kwargs)
         return f"{self.__class__.__name__}({', '.join(args)})"
+
+    def _repr_args(self) -> tuple[str, ...]:
+        """Positional arguments to show in repr"""
+        return ()
 
     def _bind_eval(self, key, handler):
         self._eval_handlers[key].append(handler)
@@ -257,9 +260,7 @@ class StateModel:
             self._field_values[key] = values
 
         # repr
-        if key in self._repr_args:
-            pass
-        elif repr is True:
+        if repr is True:
             if values and len(values) > 1:
                 self._repr_kwargs.append(key)
         elif repr is None:
