@@ -25,7 +25,7 @@ from .._utils.mne_utils import is_fake_mri
 from .derivative_cache import Dependency, Derivative, Request, file_fingerprint
 from .parc import IndividualSeededParc, _resolve_parc
 from .pathing import MRI_SDIR, coreg_report_path, mri_dir, trans_file_path
-from .preprocessing import RawPipe, RawSource, raw_node_name
+from .preprocessing import RawPipe, raw_node_name
 from .results import (
     RESULT_OPTION_DEFAULTS,
     TEST_DATA_OPTION_NAMES,
@@ -450,11 +450,7 @@ class CoregReportDerivative(Derivative[Path]):
         )
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        raw_name = ctx.state['raw']
-        pipe = self.raw[raw_name]
-        while not isinstance(pipe, RawSource):
-            raw_name = pipe.source
-            pipe = self.raw[raw_name]
+        raw_name = self.raw[ctx.state['raw']]._find_input_pipe(self.raw).name
         return (
             Dependency(
                 raw_node_name(raw_name),
@@ -477,11 +473,7 @@ class CoregReportDerivative(Derivative[Path]):
         from mayavi import mlab
 
         dst = self.path(ctx)
-        raw_name = ctx.state['raw']
-        pipe = self.raw[raw_name]
-        while not isinstance(pipe, RawSource):
-            raw_name = pipe.source
-            pipe = self.raw[raw_name]
+        raw_name = self.raw[ctx.state['raw']]._find_input_pipe(self.raw).name
         subject = ctx.state['subject']
         mrisubject = ctx.state['mrisubject']
         title = f"Coregistration {subject}"
