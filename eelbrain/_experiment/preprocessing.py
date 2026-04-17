@@ -581,6 +581,31 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             allow_protected_overwrite: bool = False,
             allow_protected_reindex: bool = False,
     ) -> mne.preprocessing.ICA:
+        """Build and save the ICA, or load it if already up-to-date.
+
+        Unlike a standard :class:`Derivative`, ICA files may contain manual
+        component-rejection decisions and must not be silently overwritten when
+        they are stale. This method therefore raises
+        :exc:`ProtectedArtifactError` instead of rebuilding automatically.
+
+        The caller (``make_ica``) catches that error, prompts the user for a
+        choice, and calls this method again with the appropriate flag set:
+
+        - ``allow_protected_overwrite=True`` — recompute ICA and overwrite the
+          existing file.
+        - ``allow_protected_reindex=True`` — keep the existing file and rewrite
+          its manifest to match the current pipeline state (``incorporate``).
+
+        Parameters
+        ----------
+        ctx
+            Bound request for the current ICA input.
+        allow_protected_overwrite
+            If ``True``, recompute ICA even when an existing file is stale.
+        allow_protected_reindex
+            If ``True``, keep the existing ICA file but update its manifest so
+            it is no longer considered stale.
+        """
         path = self._path(ctx)
         previous = self._manifest(ctx)
         current = None

@@ -2879,35 +2879,44 @@ class Pipeline(StateModel):
         }
         self._load_derivative('source-report', options=options, redo=redo, controls={ALLOW_PROTECTED_OVERWRITE})
 
-    def make_report_rois(self, test, pmin=None, tstart=None, tstop=None,
-                         samples=10000, baseline=True, src_baseline=False,
-                         redo=False, **state):
+    def make_report_rois(
+            self,
+            test: str,
+            pmin: PMinArg = None,
+            tstart: float = None,
+            tstop: float = None,
+            samples: int = 10000,
+            baseline: BaselineArg = True,
+            src_baseline: BaselineArg = False,
+            redo: bool = False,
+            **state,
+    ):
         """Create an HTML report on ROI time courses
 
         Parameters
         ----------
-        test : str
+        test
             Test for which to create a report (entry in Pipeline.tests).
-        pmin : None | scalar, 1 > pmin > 0 | 'tfce'
+        pmin
             Equivalent p-value for cluster threshold, or 'tfce' for
             threshold-free cluster enhancement.
-        tstart : scalar
+        tstart
             Beginning of the time window for the test in seconds
             (default is the beginning of the epoch).
-        tstop : scalar
+        tstop
             End of the time window for the test in seconds
             (default is the end of the epoch).
-        samples : int > 0
+        samples
             Number of samples used to determine cluster p values for spatio-
             temporal clusters.
-        baseline : bool | tuple
+        baseline
             Apply baseline correction using this period in sensor space.
             True to use the epoch's baseline specification (default).
-        src_baseline : bool | tuple
+        src_baseline
             Apply baseline correction using this period in source space.
             True to use the epoch's baseline specification. The default is to
             not apply baseline correction.
-        redo : bool
+        redo
             If the target file already exists, delete and recreate it.
         ...
             State parameters.
