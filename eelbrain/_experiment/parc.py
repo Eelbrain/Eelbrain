@@ -46,7 +46,7 @@ from .._mne import combination_label, labels_from_mni_coords, rename_label, diss
 from ..mne_fixes import write_labels_to_annot
 from .._utils import subp
 from .._utils.mne_utils import fix_annot_names, is_fake_mri
-from .pathing import annot_file_path, annot_stamp_path, label_dir, mri_dir, mri_sdir
+from .pathing import MRI_SDIR, annot_file_path, annot_stamp_path, label_dir, mri_dir
 from .derivative_cache import Dependency, Derivative, Request, file_fingerprint
 from .configuration import Configuration, ConfigurationError, sequence_arg
 
@@ -235,7 +235,7 @@ class CombinationParc(Parcellation):
 
     def _make(self, ctx: Request, annot: AnnotDerivative, parc: str):
         base = {l.name: l for l in annot.load_annot(ctx, parc=self.base)}
-        subjects_dir = mri_sdir(ctx.state)
+        subjects_dir = ctx.registry.root / MRI_SDIR
         labels = []
         for name, exp in self.labels.items():
             labels += combination_label(name, exp, base, subjects_dir)
@@ -265,7 +265,7 @@ class EelbrainParc(Parcellation):
     def _make(self, ctx: Request, annot: AnnotDerivative, parc: str):
         assert parc == 'lobes'
         subject = ctx.state['mrisubject']
-        subjects_dir = mri_sdir(ctx.state)
+        subjects_dir = ctx.registry.root / MRI_SDIR
         if subject != 'fsaverage':
             raise RuntimeError(f"lobes parcellation can only be created for fsaverage, not for {subject}")
 
@@ -369,7 +369,7 @@ class LabelParc(Parcellation):
     def _make(self, ctx: Request, annot: AnnotDerivative, parc: str):
         labels = []
         hemis = ('lh.', 'rh.')
-        path = os.path.join(mri_dir(ctx.state), 'label', '%s.label')
+        path = os.path.join(ctx.registry.root / mri_dir(ctx.state), 'label', '%s.label')
         for label in self.labels:
             if label.startswith(hemis):
                 labels.append(mne.read_label(path % label))
@@ -437,7 +437,7 @@ class SeededParc(Parcellation):
         if self.mask:
             annot.ensure_annot(ctx, parc=self.mask)
         subject = ctx.state['mrisubject']
-        subjects_dir = mri_sdir(ctx.state)
+        subjects_dir = ctx.registry.root / MRI_SDIR
         seeds = self._seeds_for_subject(subject)
         name, extent = SEEDED_PARC_RE.match(parc).groups()
         return labels_from_mni_coords(seeds, float(extent), subject, self.surface, self.mask, subjects_dir, parc)
@@ -501,20 +501,20 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
     def annot_file_paths(self, state: dict[str, Any]) -> list[Path]:
         return [annot_file_path(state, hemi) for hemi in self.hemis]
 
-    def annot_file_fingerprints(self, state: dict[str, Any]) -> list[dict[str, Any]]:
+    def annot_file_fingerprints(self, ctx: Request) -> list[dict[str, Any]]:
         return [
             file_fingerprint(
-                state['root'],
-                annot_file_path(state, hemi),
+                ctx.registry.root,
+                ctx.registry.root / annot_file_path(ctx.state, hemi),
                 'annot-file',
-                metadata={'mrisubject': state['mrisubject'], 'parc': state['parc'], 'hemi': hemi},
+                metadata={'mrisubject': ctx.state['mrisubject'], 'parc': ctx.state['parc'], 'hemi': hemi},
             )
             for hemi in self.hemis
         ]
 
-    def label_file_fingerprints(self, state: dict[str, Any], parc_def: LabelParc) -> list[dict[str, Any]]:
+    def label_file_fingerprints(self, ctx: Request, parc_def: LabelParc) -> list[dict[str, Any]]:
         hemis = ('lh.', 'rh.')
-        pattern = os.path.join(label_dir(state), '%s.label')
+        pattern = os.path.join(str(ctx.registry.root / label_dir(ctx.state)), '%s.label')
         labels = []
         for label in parc_def.labels:
             if label.startswith(hemis):
@@ -523,16 +523,16 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
                 labels.extend(f'{hemi}{label}' for hemi in hemis)
         return [
             file_fingerprint(
-                state['root'],
+                ctx.registry.root,
                 pattern % label,
                 'label-file',
-                metadata={'label': label, 'parc': state['parc']},
+                metadata={'label': label, 'parc': ctx.state['parc']},
             )
             for label in labels
         ]
 
-    def annot_labels(self, state: dict[str, Any]) -> list[mne.Label]:
-        return mne.read_labels_from_annot(state['mrisubject'], state['parc'], 'both', subjects_dir=mri_sdir(state))
+    def annot_labels(self, ctx: Request) -> list[mne.Label]:
+        return mne.read_labels_from_annot(ctx.state['mrisubject'], ctx.state['parc'], 'both', subjects_dir=ctx.registry.root / MRI_SDIR)
 
     def managed_annot(self, state: dict[str, Any], parc_def: Parcellation) -> bool:
         if isinstance(parc_def, FreeSurferParc):
@@ -571,14 +571,14 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
             parc_def: Parcellation,
     ) -> list[mne.Label]:
         labels = parc_def._make(ctx, self, parc)
-        write_labels_to_annot(labels, ctx.state['mrisubject'], parc, True, mri_sdir(ctx.state))
+        write_labels_to_annot(labels, ctx.state['mrisubject'], parc, True, ctx.registry.root / MRI_SDIR)
         return labels
 
     def path(
             self,
             ctx: Request,
     ) -> Path:
-        return annot_stamp_path(ctx.state)
+        return ctx.registry.root / annot_stamp_path(ctx.state)
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         parc, parc_def = _resolve_parc(self.parcs, ctx.state['parc'])
@@ -595,7 +595,7 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
 
         mrisubject = ctx.state['mrisubject']
         common_brain = ctx.state['common_brain']
-        fake_mri = is_fake_mri(mri_dir(ctx.state))
+        fake_mri = is_fake_mri(ctx.registry.root / mri_dir(ctx.state))
         if mrisubject != common_brain and (parc_def.morph_from_fsaverage or fake_mri):
             deps.append(Dependency('annot', label='common-brain', state={'mrisubject': common_brain}))
         return tuple(deps)
@@ -610,9 +610,9 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
             'definition': ctx.registry.canonicalize(parc_def._as_dict()),
         }
         if not self.managed_annot(ctx.state, parc_def):
-            fingerprint['files'] = self.annot_file_fingerprints(ctx.state)
+            fingerprint['files'] = self.annot_file_fingerprints(ctx)
         elif isinstance(parc_def, LabelParc):
-            fingerprint['labels'] = self.label_file_fingerprints(ctx.state, parc_def)
+            fingerprint['labels'] = self.label_file_fingerprints(ctx, parc_def)
         return fingerprint
 
     def build(self, ctx: Request) -> list[mne.Label]:
@@ -620,21 +620,21 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
         if parc_def is None or isinstance(parc_def, VolumeParc):
             return []
         if not self.managed_annot(ctx.state, parc_def):
-            return self.annot_labels(ctx.state)
+            return self.annot_labels(ctx)
 
         mrisubject = ctx.state['mrisubject']
         common_brain = ctx.state['common_brain']
-        fake_mri = is_fake_mri(mri_dir(ctx.state))
+        fake_mri = is_fake_mri(ctx.registry.root / mri_dir(ctx.state))
         if mrisubject != common_brain and (parc_def.morph_from_fsaverage or fake_mri):
             if fake_mri:
                 for hemi in self.hemis:
-                    src = annot_file_path({**ctx.state, 'mrisubject': common_brain}, hemi)
-                    dst = annot_file_path(ctx.state, hemi)
+                    src = ctx.registry.root / annot_file_path({**ctx.state, 'mrisubject': common_brain}, hemi)
+                    dst = ctx.registry.root / annot_file_path(ctx.state, hemi)
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     dst.write_bytes(src.read_bytes())
             else:
-                Path(label_dir(ctx.state)).mkdir(parents=True, exist_ok=True)
-                subjects_dir = mri_sdir(ctx.state)
+                (ctx.registry.root / label_dir(ctx.state)).mkdir(parents=True, exist_ok=True)
+                subjects_dir = ctx.registry.root / MRI_SDIR
                 for hemi in ('lh', 'rh'):
                     cmd = [
                         "mri_surf2surf",
@@ -646,7 +646,7 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
                     ]
                     subp.run_freesurfer_command(cmd, subjects_dir)
                 fix_annot_names(mrisubject, parc, common_brain, subjects_dir=subjects_dir)
-            return self.annot_labels(ctx.state)
+            return self.annot_labels(ctx)
 
         return self.make_parcellation(ctx, parc, parc_def)
 
@@ -654,7 +654,7 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
             self,
             ctx: Request,
             path: Path) -> list[mne.Label]:
-        return self.annot_labels(ctx.state)
+        return self.annot_labels(ctx)
 
     def save(
             self,

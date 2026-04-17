@@ -59,7 +59,7 @@ from .derivative_cache import (
 )
 from .configuration import Configuration, sequence_arg, typed_arg
 from .exceptions import FileMissingError
-from .pathing import bids_path, ica_file_path, log_dir
+from .pathing import LOG_DIR, bids_path, ica_file_path
 
 MNE_VERBOSITY = 'WARNING'
 AddBadsArg = bool | Sequence[str]
@@ -69,7 +69,7 @@ REINDEX_ICA = 'reindex_ica'
 
 
 def _raw_reader_warnings_path(root: str | Path) -> Path:
-    return log_dir({'root': Path(root)}) / 'raw-reader-warnings.log'
+    return Path(root) / LOG_DIR / 'raw-reader-warnings.log'
 
 
 def _record_raw_reader_warnings(
@@ -280,7 +280,7 @@ class RawBadChannelsInput(Input[list[str]]):
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         noise = ctx.options['noise']
         state = {**ctx.state, 'raw': self.raw_name}
-        path = bids_path(state)
+        path = bids_path(ctx.registry.root, state)
         return {
             'raw': self.raw_name,
             'noise': noise,
@@ -290,7 +290,7 @@ class RawBadChannelsInput(Input[list[str]]):
 
     def load(self, ctx: Request) -> list[str]:
         state = {**ctx.state, 'raw': self.raw_name}
-        return self.pipe._load_bad_channels(bids_path(state), noise=ctx.options['noise'], pipes=self.pipes, log=ctx.registry.log)
+        return self.pipe._load_bad_channels(bids_path(ctx.registry.root, state), noise=ctx.options['noise'], pipes=self.pipes, log=ctx.registry.log)
 
 
 class RawSourceInput(Input[mne.io.BaseRaw]):
@@ -322,7 +322,7 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         noise = ctx.options['noise']
         state = {**ctx.state, 'raw': self.raw_name}
-        path = bids_path(state, noise=noise)
+        path = bids_path(ctx.registry.root, state, noise=noise)
         actual_path = self.pipe._find_raw_path(path) or path.fpath
         return {
             'raw': self.raw_name,
@@ -338,7 +338,7 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
 
     def load(self, ctx: Request) -> mne.io.BaseRaw:
         return self.pipe._load_with_bads(
-            bids_path({**ctx.state, 'raw': self.raw_name}),
+            bids_path(ctx.registry.root, {**ctx.state, 'raw': self.raw_name}),
             add_bads=ctx.view_options['add_bads'],
             preload=ctx.view_options['preload'],
             noise=ctx.options['noise'],
@@ -365,7 +365,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         self.runs = runs
 
     def _path(self, ctx: Request) -> Path:
-        return ica_file_path({**ctx.state, 'raw': self.raw_name}, raw=self.raw_name)
+        return ctx.registry.root / ica_file_path({**ctx.state, 'raw': self.raw_name}, raw=self.raw_name)
 
     def _key(self, ctx: Request) -> dict[str, Any]:
         return canonical_state_subset({**ctx.state, 'raw': self.raw_name}, self.key_fields)
@@ -375,7 +375,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
 
     def _load_value(self, ctx: Request) -> mne.preprocessing.ICA:
         state = {**ctx.state, 'raw': self.raw_name}
-        return self.pipe._load_ica(bids_path(state), raw_name=self.raw_name)
+        return self.pipe._load_ica(bids_path(ctx.registry.root, state), raw_name=self.raw_name)
 
     def _reindex_existing(self, ctx: Request) -> mne.preprocessing.ICA:
         value = self._load_value(ctx)
@@ -556,7 +556,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         fingerprint['ica_file'] = file_fingerprint(ctx.registry.root, path, 'ica-file')
         if exists(path):
             state = {**ctx.state, 'raw': self.raw_name}
-            fingerprint['exclude'] = self.pipe._load_ica(bids_path(state), raw_name=self.raw_name).exclude
+            fingerprint['exclude'] = self.pipe._load_ica(bids_path(ctx.registry.root, state), raw_name=self.raw_name).exclude
         else:
             fingerprint['exclude'] = []
         return fingerprint
@@ -679,7 +679,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
     def build(self, ctx: Request) -> mne.io.BaseRaw:
         noise = ctx.options['noise']
         state = {**ctx.state, 'raw': self.raw_name}
-        path = bids_path(state)
+        path = bids_path(ctx.registry.root, state)
 
         raw = load_raw_dependency(ctx, self.pipe.source, add_bads=True, preload=True, noise=noise)
         if not raw.preload:
@@ -707,7 +707,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
             raw.info['bads'] = list(add_bads)
         elif add_bads is True:
             state = {**ctx.state, 'raw': self.raw_name}
-            raw.info['bads'] = self.pipe._load_bad_channels(bids_path(state), noise=ctx.options['noise'], pipes=self.pipes, log=ctx.registry.log)
+            raw.info['bads'] = self.pipe._load_bad_channels(bids_path(ctx.registry.root, state), noise=ctx.options['noise'], pipes=self.pipes, log=ctx.registry.log)
         elif add_bads is False:
             raw.info['bads'] = []
         else:
@@ -1313,8 +1313,7 @@ class RawICA(CachedRawPipe):
             path: BIDSPath,
             raw_name: str,
     ) -> mne.preprocessing.ICA:
-        ica_path = ica_file_path(raw_state({
-            'root': path.root,
+        ica_path = path.root / ica_file_path(raw_state({
             'subject': path.subject,
             'session': path.session,
             'task': path.task,
@@ -1428,7 +1427,7 @@ class RawICA(CachedRawPipe):
             runs: tuple[str, ...] | None,
     ) -> mne.preprocessing.ICA:
         state = raw_state(ctx.state, raw_name)
-        path = bids_path(state)
+        path = bids_path(ctx.registry.root, state)
         bad_channels = self._load_bad_channels(path, pipes=pipes)
         path_list = []
         runs = runs or ()

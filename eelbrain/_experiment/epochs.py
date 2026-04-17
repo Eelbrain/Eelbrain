@@ -112,7 +112,7 @@ class RejectionInput(Input):
         return {
             'rej': ctx.state['rej'],
             'files': [
-                file_fingerprint(self.root, rej_file_path(ctx.state, epoch=e), 'rej-file')
+                file_fingerprint(self.root, self.root / rej_file_path(ctx.state, epoch=e), 'rej-file')
                 for e in epoch.rej_file_epochs
             ],
         }

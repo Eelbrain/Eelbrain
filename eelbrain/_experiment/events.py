@@ -327,7 +327,7 @@ class SelectedEventsDerivative(Derivative[Dataset]):
             rej_params = self.artifact_rejection[ctx.state['rej']]
             selection_state = {**ctx.state, 'epoch': epoch.name, 'task': epoch.task}
             if reject and rej_params['kind'] is not None:
-                rej_file = rej_file_path(selection_state)
+                rej_file = ctx.registry.root / rej_file_path(selection_state)
                 if rej_file.exists():
                     ds_sel = load.unpickle(rej_file)
                 else:

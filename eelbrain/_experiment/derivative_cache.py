@@ -52,6 +52,7 @@ import numpy as np
 
 from .._data_obj import Factor, Interaction, Var
 from .configuration import Configuration
+from .pathing import CACHE_DIR, DERIV_DIR
 
 T = TypeVar('T')
 MANIFEST_SUFFIX = '.manifest.json'
@@ -971,8 +972,8 @@ class DerivativeRegistry:
     def __init__(self, root: str | Path, log: logging.Logger):
         self.root = Path(root)
         self.log = log
-        self.deriv_dir = self.root / 'derivatives'
-        self.cache_dir = self.deriv_dir / 'eelbrain' / 'cache'
+        self.deriv_dir = self.root / DERIV_DIR
+        self.cache_dir = self.root / CACHE_DIR
         self._nodes: dict[str, DependencyNode[Any]] = {}
 
     def register(self, node: DependencyNode[Any]) -> None:

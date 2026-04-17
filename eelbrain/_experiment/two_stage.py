@@ -12,7 +12,7 @@ from .._data_obj import Dataset, combine
 from .._io.pickle import update_subjects_dir
 from .._utils.parse import find_variables
 from .derivative_cache import Dependency, Derivative, Request, UncachedDerivative
-from .pathing import mri_sdir
+from .pathing import MRI_SDIR
 from .results import RESULT_OPTION_DEFAULTS, ResultOutputDerivative, _epochs_stc_options, _evoked_stc_options
 from .source import ROIData, roi_data_from_subject_datasets
 from .test_def import ROITestResult, ResolvedTestNDSpec, Test, guess_y
@@ -300,7 +300,7 @@ class TwoStageLevel1Derivative(Derivative[Any]):
     def load(self, ctx: Request, path: Path):
         value = load.unpickle(path)
         if ctx.options['data'].source:
-            update_subjects_dir(value, mri_sdir(ctx.state), 2)
+            update_subjects_dir(value, ctx.registry.root / MRI_SDIR, 2)
         return value
 
     def save(self, ctx: Request, path: Path, value) -> None:
@@ -354,7 +354,7 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
     def load(self, ctx: Request, path: Path):
         res = load.unpickle(path)
         if ctx.options['data'].source:
-            update_subjects_dir(res, mri_sdir(ctx.state), 2)
+            update_subjects_dir(res, ctx.registry.root / MRI_SDIR, 2)
         return res
 
     def save(self, ctx: Request, path: Path, value) -> None:

@@ -24,7 +24,7 @@ from .._data_obj import Dataset, Factor, align1
 from .._utils.mne_utils import is_fake_mri
 from .derivative_cache import Dependency, Derivative, Request, file_fingerprint
 from .parc import IndividualSeededParc, _resolve_parc
-from .pathing import coreg_report_path, mri_dir, mri_sdir, trans_file_path
+from .pathing import MRI_SDIR, coreg_report_path, mri_dir, trans_file_path
 from .preprocessing import RawPipe, RawSource, raw_node_name
 from .results import (
     RESULT_OPTION_DEFAULTS,
@@ -81,19 +81,20 @@ def _surfer_plot_kwargs(node: BrainReportDerivative, state: dict[str, Any], surf
 
 def _plot_annot(
         node: BrainReportDerivative,
+        root: Path,
         state: dict[str, Any],
         axw: int | None = None,
 ):
     parc_name, parc = _resolve_parc(node.parcs, state['parc'])
     plot_on_scaled_common_brain = isinstance(parc, IndividualSeededParc)
-    if (not plot_on_scaled_common_brain) and is_fake_mri(mri_dir(state)):
+    if (not plot_on_scaled_common_brain) and is_fake_mri(root / mri_dir(state)):
         subject_name = state['common_brain']
     else:
         subject_name = state['mrisubject']
     kwa = _surfer_plot_kwargs(node, state)
     if axw is not None:
         kwa['axw'] = axw
-    return plot.brain.annot(parc_name, subject_name, subjects_dir=mri_sdir(state), **kwa)
+    return plot.brain.annot(parc_name, subject_name, subjects_dir=root / MRI_SDIR, **kwa)
 
 
 def _report_subject_info(state: dict[str, Any], subjects: tuple[str, ...], ds, model):
@@ -154,7 +155,7 @@ def _report_parc_image(
             if all(label.name.startswith('unknown-') for label in labels):
                 section.add_image_figure("No labels", subject)
                 continue
-            brain = _plot_annot(node, plot_state)
+            brain = _plot_annot(node, ctx.registry.root, plot_state)
             if legend is None:
                 legend_plot = brain.plot_legend(show=False)
                 legend = legend_plot.image('parc-legend')
@@ -163,7 +164,7 @@ def _report_parc_image(
             brain.close()
         return
 
-    brain = _plot_annot(node, {**state, 'mrisubject': state['common_brain']}, 500)
+    brain = _plot_annot(node, ctx.registry.root, {**state, 'mrisubject': state['common_brain']}, 500)
     legend = brain.plot_legend(show=False)
     section.add_image_figure([brain.image('parc'), legend.image('parc-legend')], caption)
     brain.close()
@@ -445,7 +446,7 @@ class CoregReportDerivative(Derivative[Path]):
         return self.standard_fingerprint(
             ctx,
             state_fields=self.key_fields,
-            extra={'mri': file_fingerprint(ctx.registry.root, mri_dir(ctx.state), 'mri-dir', metadata={'mrisubject': ctx.state['mrisubject']})},
+            extra={'mri': file_fingerprint(ctx.registry.root, ctx.registry.root / mri_dir(ctx.state), 'mri-dir', metadata={'mrisubject': ctx.state['mrisubject']})},
         )
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
@@ -469,7 +470,7 @@ class CoregReportDerivative(Derivative[Path]):
             ctx: Request,
     ) -> Path:
         dst = ctx.view_options['dst']
-        return Path(dst) if dst else coreg_report_path(ctx.state)
+        return Path(dst) if dst else ctx.registry.root / coreg_report_path(ctx.state)
 
     def build(self, ctx: Request) -> Path:
         from matplotlib import pyplot
@@ -489,7 +490,7 @@ class CoregReportDerivative(Derivative[Path]):
 
         report = fmtxt.Report(title)
         raw = ctx.load(raw_node_name(raw_name), state={**ctx.state, 'raw': raw_name}, options={'add_bads': False, 'noise': False})
-        fig = mne.viz.plot_alignment(raw.info, trans_file_path(ctx.state), mrisubject, mri_sdir(ctx.state), 'auto', meg=('helmet', 'sensors'), dig=True, interaction='terrain')
+        fig = mne.viz.plot_alignment(raw.info, ctx.registry.root / trans_file_path(ctx.state), mrisubject, ctx.registry.root / MRI_SDIR, 'auto', meg=('helmet', 'sensors'), dig=True, interaction='terrain')
         fig.plotter.enable_parallel_projection()
         fig.scene.camera.parallel_projection = True
         fig.scene.camera.parallel_scale = .175
@@ -501,10 +502,10 @@ class CoregReportDerivative(Derivative[Path]):
         im_left = fmtxt.Image.from_array(mlab.screenshot(figure=fig), 'left')
         mlab.close(fig)
 
-        if is_fake_mri(mri_dir(ctx.state)):
+        if is_fake_mri(ctx.registry.root / mri_dir(ctx.state)):
             bem_fig = None
         else:
-            bem_fig = mne.viz.plot_bem(mrisubject, mri_sdir(ctx.state), brain_surfaces='white', show=False)
+            bem_fig = mne.viz.plot_bem(mrisubject, ctx.registry.root / MRI_SDIR, brain_surfaces='white', show=False)
 
         if 'sub-' + subject == mrisubject:
             caption = f"Coregistration for subject {subject}."

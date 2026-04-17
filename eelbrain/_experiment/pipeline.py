@@ -46,9 +46,8 @@ from .exceptions import FileMissingError
 from .state_model import StateModel
 from .groups import assemble_groups
 from .pathing import (
-    BIDS_PATH_KEYS, ica_file_path, join_stem_parts, mri_dir,
-    mri_sdir, raw_basename, raw_dir, rej_file_path, results_dir, src_file_path,
-    trans_file_path,
+    BIDS_PATH_KEYS, MRI_SDIR, RESULTS_DIR, ica_file_path, join_stem_parts, mri_dir,
+    raw_basename, raw_dir, rej_file_path, src_file_path, trans_file_path,
 )
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, _resolve_parc
 from .preprocessing import (
@@ -282,7 +281,6 @@ class Pipeline(StateModel):
                 raise ConfigurationError(f"Can't infer datatype. No MEG or EEG data found in {root}.")
         self._bids_path = BIDSPath(root=root)
         StateModel.__init__(self)
-        self._fields['root'] = root
 
         ########################################################################
         # Logger
@@ -1521,7 +1519,7 @@ class Pipeline(StateModel):
                 parc = self._current_source_parc()
                 if parc:
                     self.make_annot()
-                fwd = load.mne.forward_operator(fwd_file, src, mri_sdir(self._fields), parc, adjacency=False)
+                fwd = load.mne.forward_operator(fwd_file, src, self.root / MRI_SDIR, parc, adjacency=False)
                 if parc:
                     fwd = _drop_unknown_labels(fwd)
                 return fwd
@@ -1598,7 +1596,7 @@ class Pipeline(StateModel):
 
             if ndvar:
                 parc = self._current_source_parc()
-                inv = load.mne.inverse_operator(inv, self.get('src'), mri_sdir(self._fields), parc)
+                inv = load.mne.inverse_operator(inv, self.get('src'), self.root / MRI_SDIR, parc)
                 if parc:
                     inv = _drop_unknown_labels(inv)
             return inv
@@ -1617,7 +1615,7 @@ class Pipeline(StateModel):
         inv = self.load_inv(fiff)
 
         # determine whether initial source-space can be restricted
-        subjects_dir = str(mri_sdir(self._fields))
+        subjects_dir = str(self.root / MRI_SDIR)
         mrisubject = self.get('mrisubject')
         is_scaled = find_source_subject(mrisubject, subjects_dir)
         if parc and (is_scaled or not morph):
@@ -1654,7 +1652,7 @@ class Pipeline(StateModel):
     def _load_labels(self, regexp=None, **kwargs):
         """Load labels from an annotation file."""
         self.make_annot(**kwargs)
-        subjects_dir = str(mri_sdir(self._fields))
+        subjects_dir = str(self.root / MRI_SDIR)
         labels = mne.read_labels_from_annot(self.get('mrisubject'), self.get('parc'), regexp=regexp, subjects_dir=subjects_dir)
         return {label.name: label for label in labels}
 
@@ -1958,14 +1956,14 @@ class Pipeline(StateModel):
         src_spaces = self._load_derivative('src')
         if ndvar:
             src = self.get('src')
-            subjects_dir = str(mri_sdir(self._fields))
+            subjects_dir = str(self.root / MRI_SDIR)
             mri_subject = self.get('mrisubject')
             if src.startswith('vol'):
                 return VolumeSourceSpace.from_file(subjects_dir, mri_subject, src)
             parc = self.get('parc')
             return SourceSpace.from_file(subjects_dir, mri_subject, src, parc)
         if add_geom:
-            return mne.read_source_spaces(src_file_path(self._fields), add_geom)
+            return mne.read_source_spaces(self.root / src_file_path(self._fields), add_geom)
         return src_spaces
 
     def load_test(
@@ -2373,7 +2371,7 @@ class Pipeline(StateModel):
                 raise RuntimeError(f"{command=}")
             else:
                 raise RuntimeError("User aborted ICA overwrite")
-        return str(ica_file_path(ctx.state, raw=raw_name))
+        return str(self.root / ica_file_path(ctx.state, raw=raw_name))
 
     def make_movie_dspm(
             self,
@@ -2610,7 +2608,7 @@ class Pipeline(StateModel):
         with self._temporary_state:
             if state:
                 self.set(**state)
-            if is_fake_mri(mri_dir(self._fields)):
+            if is_fake_mri(self.root / mri_dir(self._fields)):
                 self.set(mrisubject=self.get('common_brain'), match=False)
 
             export_state = self._fields
@@ -2619,7 +2617,7 @@ class Pipeline(StateModel):
                 f"mrisubject-{export_state['mrisubject']}",
                 f"surf-{surf}",
             )
-            dst = results_dir(export_state) / 'source-annot' / f'{stem}.png'
+            dst = self.root / RESULTS_DIR / 'source-annot' / f'{stem}.png'
             if not redo and dst.exists():
                 return
             dst.parent.mkdir(parents=True, exist_ok=True)
@@ -2635,7 +2633,7 @@ class Pipeline(StateModel):
         with self._temporary_state:
             if state:
                 self.set(**state)
-            if is_fake_mri(mri_dir(self._fields)):
+            if is_fake_mri(self.root / mri_dir(self._fields)):
                 self.set(mrisubject=self.get('common_brain'), match=False)
 
             dst = self._make_plot_label_dst(surf, label)
@@ -2649,7 +2647,7 @@ class Pipeline(StateModel):
     def make_plots_labels(self, surf='inflated', redo=False, **state):
         self.set(**state)
         with self._temporary_state:
-            if is_fake_mri(mri_dir(self._fields)):
+            if is_fake_mri(self.root / mri_dir(self._fields)):
                 self.set(mrisubject=self.get('common_brain'), match=False)
 
             labels = tuple(self._load_labels().values())
@@ -2665,7 +2663,7 @@ class Pipeline(StateModel):
 
     def _make_plot_label_dst(self, surf, label):
         state = self._fields
-        directory = results_dir(state) / 'source-labels' / join_stem_parts(
+        directory = self.root / RESULTS_DIR / 'source-labels' / join_stem_parts(
             f"parc-{state['parc']}",
             f"mrisubject-{state['mrisubject']}",
             f"surf-{surf}",
@@ -2741,7 +2739,7 @@ class Pipeline(StateModel):
 
         with self._temporary_state:
             self.set(task=epoch.task)
-            path = rej_file_path(self._fields)
+            path = self.root / rej_file_path(self._fields)
         path.parent.mkdir(parents=True, exist_ok=True)
 
         if auto is not None and overwrite is not True and exists(path):
@@ -3130,8 +3128,8 @@ class Pipeline(StateModel):
             plot_on_scaled_common_brain = False
 
         state_ = self._fields
-        subjects_dir = str(mri_sdir(state_))
-        if (not plot_on_scaled_common_brain) and is_fake_mri(mri_dir(state_)):
+        subjects_dir = str(self.root / MRI_SDIR)
+        if (not plot_on_scaled_common_brain) and is_fake_mri(self.root / mri_dir(state_)):
             subject = self.get('common_brain')
         else:
             subject = self.get('mrisubject')
@@ -3169,12 +3167,12 @@ class Pipeline(StateModel):
         brain_args = self._surfer_plot_kwargs()
         brain_args.update(brain_kwargs)
         state_ = self._fields
-        brain_args['subjects_dir'] = str(mri_sdir(state_))
+        brain_args['subjects_dir'] = str(self.root / MRI_SDIR)
         if 'hemi' not in brain_args:
             brain_args['hemi'] = self.get('hemi')
 
         # find subject
-        if common_brain and is_fake_mri(mri_dir(state_)):
+        if common_brain and is_fake_mri(self.root / mri_dir(state_)):
             mrisubject = self.get('common_brain')
             self.set(mrisubject=mrisubject, match=False)
         else:
@@ -3213,7 +3211,7 @@ class Pipeline(StateModel):
         with self._temporary_state:
             raw = self.load_raw(raw='raw')
         state_ = self._fields
-        fig = mne.viz.plot_alignment(raw.info, trans_file_path(state_), self.get('mrisubject'), mri_sdir(state_), surfaces, meg=meg, dig=dig, interaction='terrain')
+        fig = mne.viz.plot_alignment(raw.info, self.root / trans_file_path(state_), self.get('mrisubject'), self.root / MRI_SDIR, surfaces, meg=meg, dig=dig, interaction='terrain')
         if parallel:
             fig.plotter.enable_parallel_projection()
         return fig
@@ -3431,8 +3429,8 @@ class Pipeline(StateModel):
         SUBJECTS_DIR to current values
         """
         state_ = self._fields
-        subp.run_mne_analyze(str(raw_dir(state_)), self.get('mrisubject'),
-                             str(mri_sdir(state_)), modal)
+        subp.run_mne_analyze(str(self.root / raw_dir(state_)), self.get('mrisubject'),
+                             str(self.root / MRI_SDIR), modal)
 
     def run_mne_browse_raw(self, modal=False):
         """Run mne_analyze
@@ -3448,7 +3446,7 @@ class Pipeline(StateModel):
         SUBJECTS_DIR to current values
         """
         state_ = self._fields
-        subp.run_mne_browse_raw(str(raw_dir(state_)), self.get('mrisubject'), str(mri_sdir(state_)), modal)
+        subp.run_mne_browse_raw(str(self.root / raw_dir(state_)), self.get('mrisubject'), str(self.root / MRI_SDIR), modal)
 
     def set(self, subject=None, match=True, **state):
         """
@@ -3989,7 +3987,7 @@ class Pipeline(StateModel):
             state['mri'] = mri
             mri = True
         elif mri is None:
-            mri = exists(mri_sdir(self._fields))
+            mri = exists(self.root / MRI_SDIR)
         if state:
             self.set(**state)
 
@@ -4018,11 +4016,11 @@ class Pipeline(StateModel):
                 basenames = [match.basename for match in matches]
                 raw_list.append(', '.join(basenames))
             if mri:
-                subject_mri_dir = str(mri_dir(self._fields))
+                subject_mri_dir = str(self.root / mri_dir(self._fields))
                 if not exists(subject_mri_dir):
                     mri_list.append('*missing')
                 elif is_fake_mri(subject_mri_dir):
-                    subjects_dir = str(mri_sdir(self._fields))
+                    subjects_dir = str(self.root / MRI_SDIR)
                     info = mne.coreg.read_mri_cfg(mrisubject_, subjects_dir)
                     cell = f"{info['subject_from']} * {info['scale']!s}"
                     mri_list.append(cell)

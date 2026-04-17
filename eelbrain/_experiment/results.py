@@ -27,10 +27,10 @@ from .._stats.stats import ttest_t
 from .._stats.testnd import _MergedTemporalClusterDist
 from .derivative_cache import Dependency, Derivative, Request, UncachedDerivative
 from .pathing import (
+    MRI_SDIR,
     epoch_basename,
     join_stem_parts,
     movie_export_path,
-    mri_sdir,
     report_export_path,
     test_basename,
     time_window_str,
@@ -359,7 +359,7 @@ class ResultOutputDerivative(Derivative[T]):
 
     def _default_output_path(self, ctx: Request) -> Path:
         """Default user-facing export path used when ``dst`` is not set."""
-        return report_export_path(ctx.state, self.name, self._path_stem(ctx), self.single_subject)
+        return ctx.registry.root / report_export_path(ctx.state, self.name, self._path_stem(ctx), self.single_subject)
 
     def _fingerprint_definitions(self, ctx: Request) -> dict[str, Any]:
         """Configured definitions embedded in :meth:`fingerprint`."""
@@ -588,7 +588,7 @@ class TestResultDerivative(ResultOutputDerivative):
             path: Path):
         res = load.unpickle(path)
         if ctx.options['data'].source is True:
-            update_subjects_dir(res, mri_sdir(ctx.state), 2)
+            update_subjects_dir(res, ctx.registry.root / MRI_SDIR, 2)
         return res
 
     def save(
@@ -646,7 +646,7 @@ class DSPMMovieDerivative(ResultOutputDerivative[Path]):
         )
 
     def _default_output_path(self, ctx: Request) -> Path:
-        return movie_export_path(ctx.state, self._path_stem(ctx), ctx.options['single_subject'])
+        return ctx.registry.root / movie_export_path(ctx.state, self._path_stem(ctx), ctx.options['single_subject'])
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if ctx.options['single_subject']:
@@ -735,7 +735,7 @@ class TTestMovieDerivative(ResultOutputDerivative[Path]):
         )
 
     def _default_output_path(self, ctx: Request) -> Path:
-        return movie_export_path(ctx.state, self._path_stem(ctx), ctx.options['single_subject'])
+        return ctx.registry.root / movie_export_path(ctx.state, self._path_stem(ctx), ctx.options['single_subject'])
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if ctx.options['single_subject']:
