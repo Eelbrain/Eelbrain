@@ -46,9 +46,9 @@ from .exceptions import FileMissingError
 from .state_model import StateModel
 from .groups import assemble_groups
 from .pathing import (
-    BIDS_PATH_KEYS, deriv_dir, epoch_basename, ica_file_path,
-    join_stem_parts, mri_dir, mri_sdir, raw_basename, raw_dir, rej_file_path,
-    results_dir, src_file_path, trans_file_path,
+    BIDS_PATH_KEYS, ica_file_path, join_stem_parts, mri_dir,
+    mri_sdir, raw_basename, raw_dir, rej_file_path, results_dir, src_file_path,
+    trans_file_path,
 )
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, _resolve_parc
 from .preprocessing import (
@@ -282,6 +282,7 @@ class Pipeline(StateModel):
                 raise ConfigurationError(f"Can't infer datatype. No MEG or EEG data found in {root}.")
         self._bids_path = BIDSPath(root=root)
         StateModel.__init__(self)
+        self._fields['root'] = root
 
         ########################################################################
         # Logger
@@ -387,7 +388,7 @@ class Pipeline(StateModel):
         self._register_field('suffix', (self._datatype,), repr=True)
         self._register_field('extension', extensions, repr=True)
         self._register_field('equalize_evoked_count', ('', 'eq'), allow_empty=True)
-        self._register_constant('common_brain', 'fsaverage')
+        self._register_field('common_brain', ('fsaverage',))
         self._register_field('hemi', ('lh', 'rh'))
 
         self._register_field('mri', sorted(self._mri_subjects), allow_empty=True)
@@ -451,7 +452,6 @@ class Pipeline(StateModel):
         self._update_bids_path()
 
     def _init_derivative_registry(self):
-        self._derivative_state_fields = tuple(self._terminal_fields)
         self._derivatives = DerivativeRegistry(self.root, self._log)
         result_args = (
             self.tests,
@@ -536,33 +536,16 @@ class Pipeline(StateModel):
             self,
             name: str,  # Registered derivative name.
             cache: bool | None = None,  # Explicit cache override for this load.
-            state: dict[str, Any] | None = None,  # State overrides before resolving the derivative.
             options: dict[str, Any] | None = None,
             *,
             redo: bool = True,  # When False, skip the load if the artifact is already up to date.
             controls: frozenset[str] | set[str] | tuple[str, ...] = (),
     ):
-        state_ = self._derivative_state(state)
         options_ = {} if options is None else dict(options)
-        handle = self._derivatives.resolve(name, state=state_, options=options_, controls=controls)
+        handle = self._derivatives.resolve(name, state=self.state, options=options_, controls=controls)
         if not redo and handle.is_valid():
             return None
         return handle.load(cache=cache)
-
-    def _derivative_state(
-            self,
-            state: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        merged_state = dict(state) if state else {}
-        with self._temporary_state:
-            explicit_none = {key: value for key, value in merged_state.items() if value is None}
-            if merged_state:
-                self.set(**{key: value for key, value in merged_state.items() if value is not None})
-            out = {field: self.get(field) for field in self._derivative_state_fields}
-            out.update(explicit_none)
-            out['root'] = self.root
-            out['common_brain'] = self.get('common_brain')
-            return out
 
     def __iter__(self):
         "Iterate state through subjects and yield each subject name."
@@ -874,7 +857,9 @@ class Pipeline(StateModel):
         ...
             State parameters.
         """
-        return self._load_derivative('annot', state=state)
+        if state:
+            self.set(**state)
+        return self._load_derivative('annot')
 
     def load_bad_channels(self, noise: bool = False, **kwargs):
         """Load bad channels
@@ -892,7 +877,7 @@ class Pipeline(StateModel):
             Bad channels.
         """
         raw_name = self.get('raw', **kwargs)
-        return self._load_derivative(raw_bad_channels_input_name(raw_name), state={**kwargs, 'raw': raw_name}, options={'noise': noise})
+        return self._load_derivative(raw_bad_channels_input_name(raw_name), options={'noise': noise})
 
     def load_cov(self, **kwargs):
         """Load the covariance matrix
@@ -903,7 +888,7 @@ class Pipeline(StateModel):
             State parameters.
         """
         cov_name = self.get('cov', **kwargs)
-        return self._load_derivative(cov_node_name(cov_name), state={**kwargs, 'cov': cov_name})
+        return self._load_derivative(cov_node_name(cov_name))
 
     @suppress_mne_warning
     def load_epochs(
@@ -1022,8 +1007,8 @@ class Pipeline(StateModel):
         }
         if group is None:
             if subject is not None:
-                state['subject'] = subject
-            return self._load_derivative('epochs', state=state, options=options)
+                self.set(subject=subject)
+            return self._load_derivative('epochs', options=options)
 
         epoch_name = self.get('epoch')
         dss = [
@@ -1161,12 +1146,13 @@ class Pipeline(StateModel):
              - :ref:`state-epoch`: which events to use and time window
 
         """
-        state = dict(kwargs)
         if subject is not None:
-            state['subject'] = subject
-        ds = self._load_derivative('labeled-events', state=state)
+            kwargs['subject'] = subject
+        if kwargs:
+            self.set(**kwargs)
+        ds = self._load_derivative('labeled-events')
         if data_raw:
-            ds.info['raw'] = self.load_raw(add_bads, preload=self.preload, **state)
+            ds.info['raw'] = self.load_raw(add_bads, preload=self.preload)
         return ds
 
     def load_evoked(
@@ -1249,12 +1235,11 @@ class Pipeline(StateModel):
             'data': data,
         }
         if group is not None:
-            state['group'] = group
-            return self._load_derivative('evoked-group-dataset', state=state, options=options)
-        state['group'] = None
+            self.set(group=group)
+            return self._load_derivative('evoked-group-dataset', options=options)
         if subject is not None:
-            state['subject'] = subject
-        return self._load_derivative('evoked', state=state, options=options)
+            self.set(subject=subject)
+        return self._load_derivative('evoked', options=options)
 
     def load_epochs_stf(
             self,
@@ -1413,12 +1398,11 @@ class Pipeline(StateModel):
             'ndvar': ndvar,
         }
         if group is not None:
-            state['group'] = group
-            return self._load_derivative('evoked-stc-group-dataset', state=state, options=options)
-        state['group'] = None
+            self.set(group=group)
+            return self._load_derivative('evoked-stc-group-dataset', options=options)
         if subject is not None:
-            state['subject'] = subject
-        return self._load_derivative('evoked-stc', state=state, options=options)
+            self.set(subject=subject)
+        return self._load_derivative('evoked-stc', options=options)
 
     def load_induced_stc(
             self,
@@ -1530,15 +1514,14 @@ class Pipeline(StateModel):
         with self._temporary_state:
             if state:
                 self.set(**state)
-            state_ = self._derivative_state()
             fwd = self._load_derivative('fwd')
-            fwd_file = self._derivatives.resolve('fwd', state=state_).artifact_path
+            fwd_file = self._derivatives.resolve('fwd', state=self.state).artifact_path
             src = self.get('src')
             if ndvar:
                 parc = self._current_source_parc()
                 if parc:
                     self.make_annot()
-                fwd = load.mne.forward_operator(fwd_file, src, mri_sdir(state_), parc, adjacency=False)
+                fwd = load.mne.forward_operator(fwd_file, src, mri_sdir(self._fields), parc, adjacency=False)
                 if parc:
                     fwd = _drop_unknown_labels(fwd)
                 return fwd
@@ -1576,7 +1559,7 @@ class Pipeline(StateModel):
         raw_name = get_ica_pipe_name(self._raw, self.get('raw', **state))
         return self._derivatives.resolve(
             ica_input_name(raw_name),
-            state=self._derivative_state({**state, 'raw': raw_name}),
+            state=self.state,
             controls={REINDEX_ICA} if accept_stale else (),
         ).load()
 
@@ -1615,7 +1598,7 @@ class Pipeline(StateModel):
 
             if ndvar:
                 parc = self._current_source_parc()
-                inv = load.mne.inverse_operator(inv, self.get('src'), mri_sdir(self._derivative_state()), parc)
+                inv = load.mne.inverse_operator(inv, self.get('src'), mri_sdir(self._fields), parc)
                 if parc:
                     inv = _drop_unknown_labels(inv)
             return inv
@@ -1634,7 +1617,7 @@ class Pipeline(StateModel):
         inv = self.load_inv(fiff)
 
         # determine whether initial source-space can be restricted
-        subjects_dir = str(mri_sdir(self._derivative_state()))
+        subjects_dir = str(mri_sdir(self._fields))
         mrisubject = self.get('mrisubject')
         is_scaled = find_source_subject(mrisubject, subjects_dir)
         if parc and (is_scaled or not morph):
@@ -1671,7 +1654,7 @@ class Pipeline(StateModel):
     def _load_labels(self, regexp=None, **kwargs):
         """Load labels from an annotation file."""
         self.make_annot(**kwargs)
-        subjects_dir = str(mri_sdir(self._derivative_state()))
+        subjects_dir = str(mri_sdir(self._fields))
         labels = mne.read_labels_from_annot(self.get('mrisubject'), self.get('parc'), regexp=regexp, subjects_dir=subjects_dir)
         return {label.name: label for label in labels}
 
@@ -1691,7 +1674,9 @@ class Pipeline(StateModel):
         method still returns a trivial identity :class:`mne.SourceMorph` for
         compatibility with public STC-based workflows.
         """
-        return self._load_derivative('source-morph', state=state)
+        if state:
+            self.set(**state)
+        return self._load_derivative('source-morph')
 
     def load_neighbor_correlation(
             self,
@@ -1796,7 +1781,7 @@ class Pipeline(StateModel):
              - :ref:`state-raw`: preprocessing pipeline
         """
         raw_name = self.get('raw', **kwargs)
-        raw = self._load_derivative(raw_node_name(raw_name), state={**kwargs, 'raw': raw_name}, options={'add_bads': add_bads, 'preload': preload, 'noise': noise})
+        raw = self._load_derivative(raw_node_name(raw_name), options={'add_bads': add_bads, 'preload': preload, 'noise': noise})
         if decim and decim > 1:
             assert samplingrate is None, "samplingrate and decim can't both be specified"
             samplingrate = int(round(raw.info['sfreq'] / decim))
@@ -1968,18 +1953,19 @@ class Pipeline(StateModel):
             mlab.points3d(*src.coordinates.T)
             mlab.show()
         """
-        src_spaces = self._load_derivative('src', state=state)
+        if state:
+            self.set(**state)
+        src_spaces = self._load_derivative('src')
         if ndvar:
-            with self._temporary_state:
-                src = self.get('src', **state)
-                subjects_dir = str(mri_sdir(self._derivative_state()))
-                mri_subject = self.get('mrisubject')
-                if src.startswith('vol'):
-                    return VolumeSourceSpace.from_file(subjects_dir, mri_subject, src)
-                parc = self.get('parc')
-                return SourceSpace.from_file(subjects_dir, mri_subject, src, parc)
+            src = self.get('src')
+            subjects_dir = str(mri_sdir(self._fields))
+            mri_subject = self.get('mrisubject')
+            if src.startswith('vol'):
+                return VolumeSourceSpace.from_file(subjects_dir, mri_subject, src)
+            parc = self.get('parc')
+            return SourceSpace.from_file(subjects_dir, mri_subject, src, parc)
         if add_geom:
-            return mne.read_source_spaces(src_file_path(self._derivative_state(state)), add_geom)
+            return mne.read_source_spaces(src_file_path(self._fields), add_geom)
         return src_spaces
 
     def load_test(
@@ -2088,8 +2074,7 @@ class Pipeline(StateModel):
         test_obj = self.tests[test]
         result_node = 'two-stage-level-2' if isinstance(test_obj, TwoStageTest) else 'test-result'
         data_node = 'two-stage-data' if isinstance(test_obj, TwoStageTest) else 'evoked-test-data'
-        result_state = self._derivative_state()
-        handle = self._derivatives.resolve(result_node, state=result_state, options=options)
+        handle = self._derivatives.resolve(result_node, state=self.state, options=options)
         dst = handle.artifact_path
         desc = self._derivatives.describe_artifact_path(dst)
 
@@ -2114,15 +2099,16 @@ class Pipeline(StateModel):
                 return res
 
         data_options = {key: value for key, value in options.items() if key != 'disconnect_labels'}
-        data_state = self._derivative_state()
-        res_data = self._derivatives.resolve(data_node, state=data_state, options=data_options).load()
+        res_data = self._derivatives.resolve(data_node, state=self.state, options=data_options).load()
         if isinstance(res_data, ROIData):
             res_data = res_data.label_data
         return res_data, res
 
     def make_annot(self, **state) -> None:
         """Ensure that annot files for the current parcellation exist."""
-        self._load_derivative('annot', state=state)
+        if state:
+            self.set(**state)
+        self._load_derivative('annot')
 
     def make_bad_channels(
         self,
@@ -2364,8 +2350,9 @@ class Pipeline(StateModel):
 
         """
         raw_name = get_ica_pipe_name(self._raw, self.get('raw', **state))
-        self._raw[raw_name]
-        ctx = self._derivatives.resolve(ica_input_name(raw_name), state=self._derivative_state({**state, 'raw': raw_name}))
+        with self._temporary_state:
+            self.set(raw=raw_name)
+            ctx = self._derivatives.resolve(ica_input_name(raw_name), state=self.state)
         try:
             ctx.node.materialize(ctx)
         except ProtectedArtifactError as error:
@@ -2608,79 +2595,6 @@ class Pipeline(StateModel):
             }
             self._load_derivative('movie-ttest', options=options, redo=redo, controls={ALLOW_PROTECTED_OVERWRITE})
 
-    def export_mrat_evoked(self, **kwargs):
-        """Export the sensor data FIF files needed for MRAT sensor analysis
-
-        Parameters
-        ----------
-        ...
-            State parameters.
-
-        Examples
-        --------
-        To produce evoked files for all subjects in the experiment:
-
-        >>> experiment.set(model='factor1%factor2')
-        >>> for _ in experiment:
-        >>>     experiment.export_mrat_evoked()
-        ...
-        """
-        ds = self.load_evoked(ndvar=False, **kwargs)
-        state = self._derivatives.resolve('evoked', state=self._derivative_state(kwargs)).state
-        root = deriv_dir(state) / 'mrat' / state['raw'] / f"{epoch_basename(state)}_epoch-{state['epoch']}_rej-{state['rej']}_model-{state['model']}_count-{state['equalize_evoked_count']}"
-
-        # create fiffs
-        model = state['model']
-        factors = [f.strip() for f in model.split('%')]
-        for case in ds.itercases():
-            condition = '_'.join(case[f] for f in factors)
-            path = root / condition / f"{condition}_{state['subject']}-ave.fif"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            evoked = case['evoked']
-            evoked.save(path)
-
-    def export_mrat_stcs(self, **kwargs):
-        """Export the STC files needed for the MRAT analysis tool
-
-        Parameters
-        ----------
-        ...
-            State parameters.
-
-        Examples
-        --------
-        To produce stc files for all subjects in the experiment:
-
-        >>> experiment.set_inv('free')
-        >>> experiment.set(model='factor1%factor2')
-        >>> for _ in experiment:
-        >>>     experiment.export_mrat_stcs()
-        ...
-        """
-        ds = self.load_evoked_stc(morph=True, ndvar=False, **kwargs)
-        state = self._derivatives.resolve(
-            'evoked-stc',
-            state=self._derivative_state(kwargs),
-            options={'morph': True, 'ndvar': False},
-        ).state
-        kind = '_'.join((state['raw'], state['cov'], state['mri'], state['src'], state['inv']))
-        root = deriv_dir(state) / 'mrat' / kind / f"{epoch_basename(state)}_epoch-{state['epoch']}_rej-{state['rej']}_model-{state['model']}_count-{state['equalize_evoked_count']}"
-
-        # save condition info
-        info_file = deriv_dir(state) / 'mrat' / f"{state['subject']} info.txt"
-        info_file.parent.mkdir(parents=True, exist_ok=True)
-        ds.save_txt(info_file)
-
-        # create stcs
-        model = state['model']
-        factors = [f.strip() for f in model.split('%')]
-        for case in ds.itercases():
-            condition = '_'.join(case[f] for f in factors)
-            path = root / condition / f"{condition}_{state['subject']}"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            stc = case['stcm']
-            stc.save(path)
-
     def make_plot_annot(self, surf='inflated', redo=False, **state):
         """Create a figure for the contents of an annotation file
 
@@ -2696,10 +2610,10 @@ class Pipeline(StateModel):
         with self._temporary_state:
             if state:
                 self.set(**state)
-            if is_fake_mri(mri_dir(self._derivative_state())):
+            if is_fake_mri(mri_dir(self._fields)):
                 self.set(mrisubject=self.get('common_brain'), match=False)
 
-            export_state = self._derivative_state()
+            export_state = self._fields
             stem = join_stem_parts(
                 f"parc-{export_state['parc']}",
                 f"mrisubject-{export_state['mrisubject']}",
@@ -2721,7 +2635,7 @@ class Pipeline(StateModel):
         with self._temporary_state:
             if state:
                 self.set(**state)
-            if is_fake_mri(mri_dir(self._derivative_state())):
+            if is_fake_mri(mri_dir(self._fields)):
                 self.set(mrisubject=self.get('common_brain'), match=False)
 
             dst = self._make_plot_label_dst(surf, label)
@@ -2735,7 +2649,7 @@ class Pipeline(StateModel):
     def make_plots_labels(self, surf='inflated', redo=False, **state):
         self.set(**state)
         with self._temporary_state:
-            if is_fake_mri(mri_dir(self._derivative_state())):
+            if is_fake_mri(mri_dir(self._fields)):
                 self.set(mrisubject=self.get('common_brain'), match=False)
 
             labels = tuple(self._load_labels().values())
@@ -2750,7 +2664,7 @@ class Pipeline(StateModel):
             brain.remove_labels(hemi='lh')
 
     def _make_plot_label_dst(self, surf, label):
-        state = self._derivative_state()
+        state = self._fields
         directory = results_dir(state) / 'source-labels' / join_stem_parts(
             f"parc-{state['parc']}",
             f"mrisubject-{state['mrisubject']}",
@@ -2825,7 +2739,9 @@ class Pipeline(StateModel):
             else:
                 raise ValueError(f"The current epoch {epoch.name!r} is not a primary epoch and inherits selections from other epochs. Generate trial rejection for these epochs.")
 
-        path = rej_file_path(self._derivative_state({'task': epoch.task}))
+        with self._temporary_state:
+            self.set(task=epoch.task)
+            path = rej_file_path(self._fields)
         path.parent.mkdir(parents=True, exist_ok=True)
 
         if auto is not None and overwrite is not True and exists(path):
@@ -3048,7 +2964,9 @@ class Pipeline(StateModel):
         ...
             State parameters.
         """
-        self._load_derivative('src', state=state)
+        if state:
+            self.set(**state)
+        self._load_derivative('src')
 
     def merge_bad_channels(self):
         """Merge bad channel definitions for different tasks
@@ -3202,7 +3120,7 @@ class Pipeline(StateModel):
         else:
             plot_on_scaled_common_brain = False
 
-        state_ = self._derivative_state()
+        state_ = self._fields
         subjects_dir = str(mri_sdir(state_))
         if (not plot_on_scaled_common_brain) and is_fake_mri(mri_dir(state_)):
             subject = self.get('common_brain')
@@ -3241,7 +3159,7 @@ class Pipeline(StateModel):
 
         brain_args = self._surfer_plot_kwargs()
         brain_args.update(brain_kwargs)
-        state_ = self._derivative_state()
+        state_ = self._fields
         brain_args['subjects_dir'] = str(mri_sdir(state_))
         if 'hemi' not in brain_args:
             brain_args['hemi'] = self.get('hemi')
@@ -3285,7 +3203,7 @@ class Pipeline(StateModel):
         self.set(**state)
         with self._temporary_state:
             raw = self.load_raw(raw='raw')
-        state_ = self._derivative_state()
+        state_ = self._fields
         fig = mne.viz.plot_alignment(raw.info, trans_file_path(state_), self.get('mrisubject'), mri_sdir(state_), surfaces, meg=meg, dig=dig, interaction='terrain')
         if parallel:
             fig.plotter.enable_parallel_projection()
@@ -3342,7 +3260,7 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        subjects : str | 1 | -1
+        subjects
             Subject(s) for which to load data. Can be a single subject
             name or a group name such as ``'all'``. ``1`` to use the current
             subject; ``-1`` for the current group. Default is current subject
@@ -3478,7 +3396,7 @@ class Pipeline(StateModel):
             State parameters.
         """
         raw = self.load_raw(add_bads, ndvar=True, decim=decim, **state)
-        state_ = self._derivative_state(state)
+        state_ = self._fields
         name = join_stem_parts(raw_basename(state_), f'raw-{state_["raw"]}')
         if raw.info['meas'] == 'V':
             vmax = 1.5e-4
@@ -3503,7 +3421,7 @@ class Pipeline(StateModel):
         Sets the current directory to raw-dir, and sets the SUBJECT and
         SUBJECTS_DIR to current values
         """
-        state_ = self._derivative_state()
+        state_ = self._fields
         subp.run_mne_analyze(str(raw_dir(state_)), self.get('mrisubject'),
                              str(mri_sdir(state_)), modal)
 
@@ -3520,7 +3438,7 @@ class Pipeline(StateModel):
         Sets the current directory to raw-dir, and sets the SUBJECT and
         SUBJECTS_DIR to current values
         """
-        state_ = self._derivative_state()
+        state_ = self._fields
         subp.run_mne_browse_raw(str(raw_dir(state_)), self.get('mrisubject'), str(mri_sdir(state_)), modal)
 
     def set(self, subject=None, match=True, **state):
@@ -3665,9 +3583,9 @@ class Pipeline(StateModel):
         "Construct inv string from settings; see :meth:`.set_inv`"
         return MinimumNormInverseSolution(ori, snr, method, depth, pick_normal)._string()
 
-    @classmethod
-    def _eval_inv(cls, inv):
-        return InverseSolution._coerce(inv)._string()
+    @staticmethod
+    def _eval_inv(inv: str):
+        return MinimumNormInverseSolution._from_string(inv)._string()
 
     def _eval_model(self, model: str) -> str:
         if model == '':
@@ -3840,9 +3758,10 @@ class Pipeline(StateModel):
         ...
             State parameters for resolving the requested node.
         """
-        state_ = self._derivative_state(state)
+        if state:
+            self.set(**state)
         options_ = {} if options is None else dict(options)
-        tree = self._derivatives.dependency_tree(name, state=state_, options=options_, max_line_length=max_line_length)
+        tree = self._derivatives.dependency_tree(name, state=self.state, options=options_, max_line_length=max_line_length)
         if return_str:
             return tree
         print(tree)
@@ -3910,7 +3829,7 @@ class Pipeline(StateModel):
         subjects = []
         reg = []
         for subject in self:
-            handle = self._derivatives.resolve(cov_node_name(self.get('cov')), state=self._derivative_state())
+            handle = self._derivatives.resolve(cov_node_name(self.get('cov')), state=self.state)
             path = handle.artifact_path.with_suffix('.info.txt')
             if exists(path):
                 with open(path) as fid:
@@ -4061,7 +3980,7 @@ class Pipeline(StateModel):
             state['mri'] = mri
             mri = True
         elif mri is None:
-            mri = exists(mri_sdir(self._derivative_state()))
+            mri = exists(mri_sdir(self._fields))
         if state:
             self.set(**state)
 
@@ -4090,11 +4009,11 @@ class Pipeline(StateModel):
                 basenames = [match.basename for match in matches]
                 raw_list.append(', '.join(basenames))
             if mri:
-                subject_mri_dir = str(mri_dir(self._derivative_state()))
+                subject_mri_dir = str(mri_dir(self._fields))
                 if not exists(subject_mri_dir):
                     mri_list.append('*missing')
                 elif is_fake_mri(subject_mri_dir):
-                    subjects_dir = str(mri_sdir(self._derivative_state()))
+                    subjects_dir = str(mri_sdir(self._fields))
                     info = mne.coreg.read_mri_cfg(mrisubject_, subjects_dir)
                     cell = f"{info['subject_from']} * {info['scale']!s}"
                     mri_list.append(cell)

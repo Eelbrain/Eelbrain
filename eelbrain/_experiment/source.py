@@ -331,14 +331,14 @@ class TransInput(Input):
     name = 'trans-input'
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return file_fingerprint(ctx.state['root'], trans_file_path(ctx.state), 'trans-file')
+        return file_fingerprint(ctx.registry.root, trans_file_path(ctx.state), 'trans-file')
 
 
 class BemInput(Input):
     name = 'bem-input'
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return file_fingerprint(ctx.state['root'], bem_file_path(ctx.state), 'bem-file')
+        return file_fingerprint(ctx.registry.root, bem_file_path(ctx.state), 'bem-file')
 
 
 class SrcDerivative(Derivative[mne.SourceSpaces]):

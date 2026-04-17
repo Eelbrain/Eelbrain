@@ -130,6 +130,10 @@ class StateModel:
         else:
             self.notification = NotNotifier()
 
+    @property
+    def state(self):
+        return dict(self._fields)
+
     def __repr__(self):
         args = [repr(arg) for arg in self._repr_args()]
         kwargs = [(arg, self._fields[arg]) for arg in self._repr_kwargs]

@@ -331,7 +331,7 @@ class SelectedEventsDerivative(Derivative[Dataset]):
                 if rej_file.exists():
                     ds_sel = load.unpickle(rej_file)
                 else:
-                    raise FileMissingError(f"The rejection file at {rej_file.relative_to(Path(ctx.state['root']))} does not exist. Run .make_epoch_selection() first.")
+                    raise FileMissingError(f"The rejection file at {rej_file.relative_to(ctx.registry.root)} does not exist. Run .make_epoch_selection() first.")
             else:
                 ds_sel = None
             state = {**ctx.state, 'task': epoch.task}

@@ -226,7 +226,7 @@ def get_ica_pipe_name(pipes: dict[str, RawPipe], raw: str | RawPipe) -> str:
             if pipe is raw:
                 break
         else:
-            raise ValueError("raw pipe is not registered")
+            raise ValueError(f"{raw=} raw pipe is not registered")
     while not isinstance(pipe, RawICA):
         if isinstance(pipe, RawSource):
             raise ValueError(f"raw={pipe_name!r} does not involve ICA")
@@ -329,7 +329,7 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
             'noise': noise,
             'pipe': self.pipe._as_dict(),
             'source': file_fingerprint(
-                ctx.state['root'],
+                ctx.registry.root,
                 actual_path,
                 'raw-source',
                 metadata={'raw': self.raw_name, 'noise': noise},
@@ -546,14 +546,14 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             'raw': self.raw_name,
             'pipe': self.pipe._as_dict(),
             'runs': self.runs,
-            'ica_path': relpath(path, ctx.state['root']),
+            'ica_path': relpath(path, ctx.registry.root),
             'exists': exists(path),
         }
 
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
         fingerprint = dict(self.fingerprint(ctx))
         path = self._path(ctx)
-        fingerprint['ica_file'] = file_fingerprint(ctx.state['root'], path, 'ica-file')
+        fingerprint['ica_file'] = file_fingerprint(ctx.registry.root, path, 'ica-file')
         if exists(path):
             state = {**ctx.state, 'raw': self.raw_name}
             fingerprint['exclude'] = self.pipe._load_ica(bids_path(state), raw_name=self.raw_name).exclude

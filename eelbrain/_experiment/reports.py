@@ -445,7 +445,7 @@ class CoregReportDerivative(Derivative[Path]):
         return self.standard_fingerprint(
             ctx,
             state_fields=self.key_fields,
-            extra={'mri': file_fingerprint(ctx.state['root'], mri_dir(ctx.state), 'mri-dir', metadata={'mrisubject': ctx.state['mrisubject']})},
+            extra={'mri': file_fingerprint(ctx.registry.root, mri_dir(ctx.state), 'mri-dir', metadata={'mrisubject': ctx.state['mrisubject']})},
         )
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
