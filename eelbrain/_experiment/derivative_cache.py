@@ -219,7 +219,13 @@ class Dependency:
         Optional state updates for this dependency. The mapping is merged on
         top of the parent state before resolving the dependency.
     options
-        Override the target node's own option defaults.
+        Optional child request options passed to the target node when the
+        dependency is resolved. Keys must be declared by the target node and
+        can refer to either standard options from
+        ``target.OPTION_DEFAULTS`` or view-only options from
+        ``target.VIEW_OPTION_DEFAULTS``. The registry splits the mapping into
+        artifact-affecting ``Request.options`` and post-load
+        ``Request.view_options`` for the child request.
     view
         Optional dependency view name. Use this when the dependency should be
         validated through a reduced or specialized dependency fingerprint
@@ -324,6 +330,18 @@ class DependencyNode(Generic[T]):
         :meth:`fingerprint`.
         """
         return self.fingerprint(ctx)
+
+    def load_view(
+            self,
+            ctx: Request,
+            view: str,
+    ):
+        """Load one named dependency/user-facing view for this node.
+
+        Override this to expose data views that bypass the :meth:`load` method.
+        Views can be loaded through ``request.load(view=...)``.
+        """
+        raise ValueError(f"{self.name!r} does not define load view {view!r}")
 
 
 class Input(DependencyNode[T]):
@@ -567,23 +585,11 @@ class Derivative(DependencyNode[T]):
         """
         return value
 
-    def load_view(
-            self,
-            ctx: Request,
-            view: str,
-    ):
-        """Load one named dependency/user-facing view for this derivative.
-
-        Override this to expose data views that bypass the :meth:`load` method.
-        Views can be loaded through ``request.load(view=...)``.
-        """
-        raise ValueError(f"{self.name!r} does not define load view {view!r}")
-
     def standard_fingerprint(
             self,
             ctx: Request,
             *,
-            state_fields: tuple[str, ...],
+            state_fields: tuple[str, ...] | None = None,
             definitions: dict[str, Any] | None = None,
             extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -597,6 +603,7 @@ class Derivative(DependencyNode[T]):
             State keys from ``ctx.state`` that materially define the artifact.
             These keys are extracted directly from the request state and
             embedded under the ``"state"`` key after canonicalization.
+            Default: ``self.key_fields``.
         definitions
             Optional configuration definitions embedded under the
             ``"definitions"`` key.  Values are passed through
@@ -628,6 +635,8 @@ class Derivative(DependencyNode[T]):
         usually go into ``definitions`` or ``extra`` instead of being
         smuggled into ``state_fields`` through a custom mapping.
         """
+        if state_fields is None:
+            state_fields = self.key_fields
         out = {'state': canonical_state_subset(ctx.state, state_fields)}
         if definitions:
             out['definitions'] = ctx.registry.canonicalize(definitions)
@@ -701,6 +710,7 @@ class Request(Generic[T]):
     ):
         self.node = node
         self.registry = registry
+        self.root = registry.root
         self.state = state
         self.options = options
         self.view_options = view_options
@@ -926,7 +936,8 @@ class Request(Generic[T]):
             request.
         view
             Named view to load instead of the node's default return value.
-            Resolved through :meth:`Derivative.load_view` on the target node.
+            Resolved through :meth:`DependencyNode.load_view` on the target
+            node.
         controls
             Explicit execution controls forwarded to the nested load. Controls
             are never inherited implicitly; pass them only when the nested load
@@ -936,7 +947,7 @@ class Request(Generic[T]):
         -------
         value
             The loaded artifact after view-option shaping, or the result of
-            :meth:`Derivative.load_view` when ``view`` is given.
+            :meth:`DependencyNode.load_view` when ``view`` is given.
 
         Notes
         -----
@@ -954,14 +965,12 @@ class Request(Generic[T]):
 
         if state is not None or options is not None or controls:
             raise TypeError("Request.load() without a dependency name only accepts cache and view overrides")
+        if view is not None:
+            return self.node.load_view(self, view)
         if isinstance(self.node, Input):
-            if view is not None:
-                raise TypeError(f"Request for input {self.node.name!r} does not define view {view!r}")
             return self.node.load(self)
 
         derivative = self._require_derivative()
-        if view is not None:
-            return derivative.load_view(self, view)
         artifact = self.load_artifact(cache)
         return derivative.apply_view_options(self, artifact)
 

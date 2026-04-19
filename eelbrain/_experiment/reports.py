@@ -155,7 +155,7 @@ def _report_parc_image(
             if all(label.name.startswith('unknown-') for label in labels):
                 section.add_image_figure("No labels", subject)
                 continue
-            brain = _plot_annot(node, ctx.registry.root, plot_state)
+            brain = _plot_annot(node, ctx.root, plot_state)
             if legend is None:
                 legend_plot = brain.plot_legend(show=False)
                 legend = legend_plot.image('parc-legend')
@@ -164,7 +164,7 @@ def _report_parc_image(
             brain.close()
         return
 
-    brain = _plot_annot(node, ctx.registry.root, {**state, 'mrisubject': state['common_brain']}, 500)
+    brain = _plot_annot(node, ctx.root, {**state, 'mrisubject': state['common_brain']}, 500)
     legend = brain.plot_legend(show=False)
     section.add_image_figure([brain.image('parc'), legend.image('parc-legend')], caption)
     brain.close()
@@ -445,12 +445,11 @@ class CoregReportDerivative(Derivative[Path]):
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return self.standard_fingerprint(
             ctx,
-            state_fields=self.key_fields,
-            extra={'mri': file_fingerprint(ctx.registry.root, ctx.registry.root / mri_dir(ctx.state), 'mri-dir', metadata={'mrisubject': ctx.state['mrisubject']})},
+            extra={'mri': file_fingerprint(ctx.root, ctx.root / mri_dir(ctx.state), 'mri-dir', metadata={'mrisubject': ctx.state['mrisubject']})},
         )
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        raw_name = self.raw[ctx.state['raw']]._find_input_pipe(self.raw).name
+        raw_name = self.raw.root_source_name(ctx.state['raw'])
         return (
             Dependency(
                 raw_node_name(raw_name),
@@ -466,14 +465,14 @@ class CoregReportDerivative(Derivative[Path]):
             ctx: Request,
     ) -> Path:
         dst = ctx.view_options['dst']
-        return Path(dst) if dst else ctx.registry.root / coreg_report_path(ctx.state)
+        return Path(dst) if dst else ctx.root / coreg_report_path(ctx.state)
 
     def build(self, ctx: Request) -> Path:
         from matplotlib import pyplot
         from mayavi import mlab
 
         dst = self.path(ctx)
-        raw_name = self.raw[ctx.state['raw']]._find_input_pipe(self.raw).name
+        raw_name = self.raw.root_source_name(ctx.state['raw'])
         subject = ctx.state['subject']
         mrisubject = ctx.state['mrisubject']
         title = f"Coregistration {subject}"
@@ -482,7 +481,7 @@ class CoregReportDerivative(Derivative[Path]):
 
         report = fmtxt.Report(title)
         raw = ctx.load(raw_node_name(raw_name), state={**ctx.state, 'raw': raw_name}, options={'add_bads': False, 'noise': False})
-        fig = mne.viz.plot_alignment(raw.info, ctx.registry.root / trans_file_path(ctx.state), mrisubject, ctx.registry.root / MRI_SDIR, 'auto', meg=('helmet', 'sensors'), dig=True, interaction='terrain')
+        fig = mne.viz.plot_alignment(raw.info, ctx.root / trans_file_path(ctx.state), mrisubject, ctx.root / MRI_SDIR, 'auto', meg=('helmet', 'sensors'), dig=True, interaction='terrain')
         fig.plotter.enable_parallel_projection()
         fig.scene.camera.parallel_projection = True
         fig.scene.camera.parallel_scale = .175
@@ -494,10 +493,10 @@ class CoregReportDerivative(Derivative[Path]):
         im_left = fmtxt.Image.from_array(mlab.screenshot(figure=fig), 'left')
         mlab.close(fig)
 
-        if is_fake_mri(ctx.registry.root / mri_dir(ctx.state)):
+        if is_fake_mri(ctx.root / mri_dir(ctx.state)):
             bem_fig = None
         else:
-            bem_fig = mne.viz.plot_bem(mrisubject, ctx.registry.root / MRI_SDIR, brain_surfaces='white', show=False)
+            bem_fig = mne.viz.plot_bem(mrisubject, ctx.root / MRI_SDIR, brain_surfaces='white', show=False)
 
         if 'sub-' + subject == mrisubject:
             caption = f"Coregistration for subject {subject}."

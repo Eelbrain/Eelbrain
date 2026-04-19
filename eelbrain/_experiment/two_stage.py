@@ -272,7 +272,6 @@ class TwoStageLevel1Derivative(Derivative[Any]):
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return self.standard_fingerprint(
             ctx,
-            state_fields=self.key_fields,
             definitions={'test': self.tests[ctx.options['test']]._as_dict()},
         )
 
@@ -300,7 +299,7 @@ class TwoStageLevel1Derivative(Derivative[Any]):
     def load(self, ctx: Request, path: Path):
         value = load.unpickle(path)
         if ctx.options['data'].source:
-            update_subjects_dir(value, ctx.registry.root / MRI_SDIR, 2)
+            update_subjects_dir(value, ctx.root / MRI_SDIR, 2)
         return value
 
     def save(self, ctx: Request, path: Path, value) -> None:
@@ -354,7 +353,7 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
     def load(self, ctx: Request, path: Path):
         res = load.unpickle(path)
         if ctx.options['data'].source:
-            update_subjects_dir(res, ctx.registry.root / MRI_SDIR, 2)
+            update_subjects_dir(res, ctx.root / MRI_SDIR, 2)
         return res
 
     def save(self, ctx: Request, path: Path, value) -> None:

@@ -17,8 +17,8 @@ from eelbrain import *
 from eelbrain.pipeline import *
 from eelbrain._exceptions import ConfigurationError
 from eelbrain._experiment.derivative_cache import ProtectedArtifactError
-from eelbrain._experiment.pathing import ica_file_path, log_dir
-from eelbrain._experiment.preprocessing import raw_node_name
+from eelbrain._experiment.pathing import LOG_DIR, ica_file_path
+from eelbrain._experiment.preprocessing import RawFilterElliptic, raw_node_name
 from eelbrain._experiment.reports import _report_subject_info
 from eelbrain._experiment.test_def import TestDims as _TestDims
 from eelbrain._experiment.variable_def import LabelVar, Variables
@@ -85,9 +85,9 @@ def test_sample():
     with e._temporary_state:
         state = e.state
         state['subject'] = '*'
-        assert str(ica_file_path(state, raw='*')) == join(root, 'derivatives', 'ica', 'sub-*_meg_raw-*_ica.fif')
+        assert str(ica_file_path(state, '*')) == join('derivatives', 'ica', 'sub-*_meg_raw-*_ica.fif')
         state['subject'] = 'R0002'
-        assert str(ica_file_path(state, raw='*')) == join(root, 'derivatives', 'ica', 'sub-R0002_meg_raw-*_ica.fif')
+        assert str(ica_file_path(state, '*')) == join('derivatives', 'ica', 'sub-R0002_meg_raw-*_ica.fif')
 
     # events
     e.set('R0001', rej='')
@@ -593,10 +593,12 @@ def test_sample_tasks():
     pipe = e._raw[e.get('raw', raw='ica')]
     bids_path = e._bids_path
     handle = e._derivatives.resolve(raw_node_name('ica'), state=e.state)
+    assert 'root' not in e.state
+    assert handle.root == Path(root)
     assert handle.artifact_path.is_relative_to(Path(root) / 'derivatives' / 'eelbrain' / 'cache' / 'raw-ica')
     assert handle.artifact_path.suffix == '.fif'
     assert '_key-' in handle.artifact_path.name
-    assert str(ica_file_path(e.state, raw='ica')) == join(root, 'derivatives', 'ica', 'sub-R0000_meg_raw-ica_ica.fif')
+    assert str(ica_file_path(e.state, raw='ica')) == join('derivatives', 'ica', 'sub-R0000_meg_raw-ica_ica.fif')
     e.set(raw='raw')
 
     # automatically generate channels.tsv
@@ -695,6 +697,35 @@ def test_evoked_backed_test_vars_are_post_aggregation_only():
 
 
 @requires_mne_sample_data
+def test_raw_bad_channel_derivatives_follow_pipe_graph():
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, 1, 2, 1)
+
+    class Experiment(SampleExperiment):
+        raw = {
+            'ica': RawICA('raw', ('sample1', 'sample2'), 'fastica', max_iter=1),
+            'apply-ica': RawApplyICA('raw', 'ica'),
+            **SampleExperiment.raw,
+        }
+
+    root = join(tempdir, 'SampleExperiment')
+    e = Experiment(root)
+
+    e.set(subject='R0000', raw='raw', task='sample1')
+    e.make_bad_channels('MEG 0111', redo=True)
+    e.set(task='sample2')
+    e.make_bad_channels('MEG 0121', redo=True)
+
+    assert e.load_bad_channels(raw='raw', task='sample1') == ['MEG 0111']
+    assert e.load_bad_channels(raw='ica', task='sample1') == ['MEG 0111', 'MEG 0121']
+    assert e.load_bad_channels(raw='ica', task='sample2') == ['MEG 0111', 'MEG 0121']
+    assert e.load_bad_channels(raw='apply-ica', task='sample1') == ['MEG 0111', 'MEG 0121']
+
+
+@requires_mne_sample_data
 def test_raw_reader_warnings_are_summarized(monkeypatch):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
@@ -719,7 +750,7 @@ def test_raw_reader_warnings_are_summarized(monkeypatch):
         e.load_raw(raw='raw')
     assert not any('issued while reading raw data files' in str(w.message) for w in record)
 
-    details_path = Path(log_dir({'root': root})) / 'raw-reader-warnings.log'
+    details_path = e.root / LOG_DIR / 'raw-reader-warnings.log'
     assert details_path.exists()
     text = details_path.read_text()
     assert 'Synthetic raw reader warning 1' in text
@@ -1088,6 +1119,57 @@ def test_raw_cache_identity_ignores_view_options():
 
     assert handle_default.current_fingerprint() == handle_view.current_fingerprint()
     assert handle_default.current_fingerprint() != handle_noise.current_fingerprint()
+
+
+@requires_mne_sample_data
+def test_raw_info_view_matches_source_and_processed_raws():
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, n_subjects=1, n_segments=2, mris=False)
+    root = join(tempdir, 'SampleExperiment')
+
+    e = SampleExperiment(root)
+    e.set(subject='R0000')
+    e.make_bad_channels('MEG 0111', redo=True)
+
+    source_info = e._derivatives.resolve(raw_node_name('raw'), state=e.state, options={'noise': False, 'add_bads': True, 'preload': False}).load(view='info')
+    source_raw = e.load_raw(raw='raw')
+    assert source_info['sfreq'] == source_raw.info['sfreq']
+    assert source_info['bads'] == source_raw.info['bads'] == ['MEG 0111']
+
+    processed_info = e._derivatives.resolve(raw_node_name('1-40'), state=e.state, options={'noise': False, 'add_bads': True, 'preload': False}).load(view='info')
+    processed_raw = e.load_raw(raw='1-40')
+    assert processed_info['bads'] == processed_raw.info['bads'] == ['MEG 0111']
+    assert processed_info['highpass'] == pytest.approx(processed_raw.info['highpass'])
+    assert processed_info['lowpass'] == pytest.approx(processed_raw.info['lowpass'])
+
+
+@requires_mne_sample_data
+def test_raw_filter_elliptic_info_view_matches_artifact():
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, n_subjects=1, n_segments=2, mris=False)
+
+    class Experiment(SampleExperiment):
+        raw = {
+            **SampleExperiment.raw,
+            'ellip': RawFilterElliptic('raw', None, None, 40, 45, 1, 20),
+        }
+
+    root = join(tempdir, 'SampleExperiment')
+    e = Experiment(root)
+    e.set(subject='R0000')
+
+    info = e._derivatives.resolve(raw_node_name('ellip'), state=e.state, options={'noise': False, 'add_bads': True, 'preload': False}).load(view='info')
+    raw = e.load_raw(raw='ellip')
+
+    assert info['sfreq'] == raw.info['sfreq']
+    assert info['highpass'] == pytest.approx(raw.info['highpass'])
+    assert info['lowpass'] == pytest.approx(raw.info['lowpass'])
 
 
 @requires_mne_sample_data

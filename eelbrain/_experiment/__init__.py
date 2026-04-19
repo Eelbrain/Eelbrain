@@ -12,8 +12,8 @@ layers are independent/unaware of higher layers. The layers are:
 Higher layers may use lower layers, but lower layers must not reference higher
 layers.
 
-Cache kernel
-------------
+1. Cache kernel
+---------------
 The cache kernel lives in :mod:`eelbrain._experiment.derivative_cache`. It is
 fully generic and owns manifests, normalized keys, dependency traversal,
 protected artifacts, and cache policy. It does not know experiment-specific
@@ -24,8 +24,8 @@ using :class:`Input` and :class:`Derivative` subclasses.
 The :class:`DerivativeRegistry` exposes access to artifacts produced by this
 pipeline through :meth:`DerivativeRegistry.resolve`.
 
-Graph nodes and configuration
------------------------------
+2. Graph nodes and configuration
+--------------------------------
 Graph nodes implementing specific pipeline components live in modules such as
 :mod:`eelbrain._experiment.preprocessing`,
 :mod:`eelbrain._experiment.events`, and

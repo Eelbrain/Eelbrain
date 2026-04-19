@@ -184,7 +184,6 @@ class LabeledEventsDerivative(Derivative[Dataset]):
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return self.standard_fingerprint(
             ctx,
-            state_fields=self.key_fields,
             definitions={
                 'variables': self._variables,
                 'label_events': function_fingerprint(self.label_events_impl),
@@ -252,7 +251,6 @@ class SelectedEventsDerivative(Derivative[Dataset]):
         epoch = self.epochs[ctx.state['epoch']]
         return self.standard_fingerprint(
             ctx,
-            state_fields=self.key_fields,
             definitions={'epoch': epoch._as_dict()},
         )
 
@@ -327,11 +325,11 @@ class SelectedEventsDerivative(Derivative[Dataset]):
             rej_params = self.artifact_rejection[ctx.state['rej']]
             selection_state = {**ctx.state, 'epoch': epoch.name, 'task': epoch.task}
             if reject and rej_params['kind'] is not None:
-                rej_file = ctx.registry.root / rej_file_path(selection_state)
+                rej_file = ctx.root / rej_file_path(selection_state)
                 if rej_file.exists():
                     ds_sel = load.unpickle(rej_file)
                 else:
-                    raise FileMissingError(f"The rejection file at {rej_file.relative_to(ctx.registry.root)} does not exist. Run .make_epoch_selection() first.")
+                    raise FileMissingError(f"The rejection file at {rej_file.relative_to(ctx.root)} does not exist. Run .make_epoch_selection() first.")
             else:
                 ds_sel = None
             state = {**ctx.state, 'task': epoch.task}

@@ -46,14 +46,13 @@ from .exceptions import FileMissingError
 from .state_model import StateModel
 from .groups import assemble_groups
 from .pathing import (
-    BIDS_PATH_KEYS, MRI_SDIR, RESULTS_DIR, ica_file_path, join_stem_parts, mri_dir,
+    BIDS_PATH_KEYS, LOG_DIR, MRI_SDIR, RESULTS_DIR, ica_file_path, join_stem_parts, mri_dir,
     raw_basename, raw_dir, rej_file_path, src_file_path, trans_file_path,
 )
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, _resolve_parc
 from .preprocessing import (
     ICAInput, RawBadChannelsInput, RawDerivative, RawPipe, RawSource, RawSourceInput, RawICA,
-    REINDEX_ICA, assemble_raw_pipes, get_ica_pipe, get_ica_pipe_name,
-    ica_input_name, raw_bad_channels_input_name, raw_node_name,
+    REINDEX_ICA, assemble_raw_pipes, ica_input_name, raw_node_name,
 )
 from .reports import (
     CoregReportDerivative, EEGReportDerivative, EEGSensorsReportDerivative,
@@ -170,9 +169,6 @@ class Pipeline(StateModel):
     # or by exclusion: {'group': {'base': 'all', 'exclude': ('member1', 'member2')}}
     groups = {}
 
-    # MEG-system (used as ``sysname`` to infer adjacency; for usage search `get_sysname`).
-    meg_system = None
-
     # kwargs for regularization of the covariance matrix
     _covs = {
         'auto': EpochCovariance('cov', 'auto'),
@@ -287,7 +283,7 @@ class Pipeline(StateModel):
         ########
         # log-file
         self._log = log = logging.Logger(self.__class__.__name__, logging.DEBUG)
-        log_file = root / 'derivatives' / 'eelbrain' / f'{self.__class__.__name__}.log'
+        log_file = root / LOG_DIR / f'{self.__class__.__name__}.log'
         os.makedirs(log_file.parent, exist_ok=True)
         handler = logging.FileHandler(log_file)
         formatter = logging.Formatter("%(levelname)-8s %(asctime)s %(message)s", "%m-%d %H:%M")  # %(name)-12s
@@ -313,12 +309,6 @@ class Pipeline(StateModel):
 
         # preprocessing
         self._raw = assemble_raw_pipes({'raw': RawSource(), **self.raw}, self._tasks)
-        raw_pipe: RawSource = self._raw['raw']
-
-        # legacy adjacency determination
-        if raw_pipe.sysname is None:
-            if self.meg_system is not None:
-                raw_pipe.sysname = self.meg_system
 
         # variables
         self._variables = Variables(self.variables)
@@ -439,8 +429,8 @@ class Pipeline(StateModel):
                 if not raw_path.exists():
                     continue
 
-                pipe = self._raw[self.get('raw')]
-                self._raw_samplingrate[key] = pipe._load_info(self._bids_path, self._raw).get('sfreq')
+                raw_name = self.get('raw')
+                self._raw_samplingrate[key] = self._load_derivative(raw_node_name(raw_name), options={'add_bads': True, 'noise': False}, view='info').get('sfreq')
 
     def _repr_args(self) -> tuple[str, ...]:
         return (str(self.root),)
@@ -461,19 +451,18 @@ class Pipeline(StateModel):
 
         # --- Inputs (externally managed files) ---
         for raw_name, pipe in self._raw.items():
-            self._derivatives.register(RawBadChannelsInput(raw_name, pipe, self._raw))
             if isinstance(pipe, RawSource):
-                self._derivatives.register(RawSourceInput(raw_name, pipe, self._raw))
-            if isinstance(pipe, RawICA):
-                self._derivatives.register(ICAInput(raw_name, pipe, self._raw, self._runs))
+                self._derivatives.register(RawBadChannelsInput(raw_name, pipe))
+                self._derivatives.register(RawSourceInput(raw_name, pipe))
+            else:
+                # FIXME: run handling
+                # runs = self._runs if isinstance(pipe, RawICA) else None
+                self._derivatives.register(RawDerivative(raw_name, pipe, self._raw))
+                if isinstance(pipe, RawICA):
+                    self._derivatives.register(ICAInput(raw_name, pipe, self._raw))
         self._derivatives.register(TransInput())
         self._derivatives.register(BemInput())
         self._derivatives.register(RejectionInput(self.root, self._artifact_rejection, self._epochs))
-
-        # --- Raw preprocessing ---
-        for raw_name, pipe in self._raw.items():
-            if not isinstance(pipe, RawSource):
-                self._derivatives.register(RawDerivative(raw_name, pipe, self._raw))
 
         # --- Sensor-space: events → epochs → evoked ---
         self._derivatives.register(EventsDerivative(
@@ -535,6 +524,7 @@ class Pipeline(StateModel):
             name: str,  # Registered derivative name.
             cache: bool | None = None,  # Explicit cache override for this load.
             options: dict[str, Any] | None = None,
+            view: str | None = None,
             *,
             redo: bool = True,  # When False, skip the load if the artifact is already up to date.
             controls: frozenset[str] | set[str] | tuple[str, ...] = (),
@@ -543,7 +533,7 @@ class Pipeline(StateModel):
         handle = self._derivatives.resolve(name, state=self.state, options=options_, controls=controls)
         if not redo and handle.is_valid():
             return None
-        return handle.load(cache=cache)
+        return handle.load(cache=cache, view=view)
 
     def __iter__(self):
         "Iterate state through subjects and yield each subject name."
@@ -875,7 +865,7 @@ class Pipeline(StateModel):
             Bad channels.
         """
         raw_name = self.get('raw', **kwargs)
-        return self._load_derivative(raw_bad_channels_input_name(raw_name), options={'noise': noise})
+        return self._load_derivative(raw_node_name(raw_name), options={'noise': noise}, view='bads')
 
     def load_cov(self, **kwargs):
         """Load the covariance matrix
@@ -1554,10 +1544,11 @@ class Pipeline(StateModel):
         -------
         ICA object for the current :ref:`state-raw` setting.
         """
-        raw_name = get_ica_pipe_name(self._raw, self.get('raw', **state))
+        raw_name = self.get('raw', **state)
+        ica_raw_name = self._raw.ica_name(raw_name)
         return self._derivatives.resolve(
-            ica_input_name(raw_name),
-            state=self.state,
+            ica_input_name(ica_raw_name),
+            state={**self.state, 'raw': ica_raw_name},
             controls={REINDEX_ICA} if accept_stale else (),
         ).load()
 
@@ -1791,11 +1782,11 @@ class Pipeline(StateModel):
             raw.resample(samplingrate)
 
         if ndvar:
-            pipe = self._raw[raw_name]
+            source_pipe = self._raw.root_source_pipe(raw_name)
             data = TestDims('sensor')
             data_kind = data.data_to_ndvar(raw.info)[0]
-            sysname = pipe._get_sysname(raw.info, self.get('subject'), data_kind, self._raw)
-            adjacency = pipe._get_adjacency(data_kind, self._raw)
+            sysname = source_pipe._get_sysname(raw.info, self.get('subject'), data_kind)
+            adjacency = source_pipe._get_adjacency(data_kind)
             raw = load.mne.raw_ndvar(raw, sysname=sysname, adjacency=adjacency)
 
         return raw
@@ -2141,8 +2132,9 @@ class Pipeline(StateModel):
         merge_bad_channels : merge bad channel definitions for all tasks
         """
         pipe = self._raw[self.get('raw', **kwargs)]
+        source_pipe = self._raw.root_source_pipe(pipe.name)
         bids_path = self._bids_path
-        pipe._make_bad_channels(bids_path, bad_chs, redo=redo, noise=noise, pipes=self._raw)
+        source_pipe._write_bad_channels(bids_path, bad_chs, redo=redo, noise=noise)
 
     def make_bad_channels_auto(
         self,
@@ -2288,13 +2280,21 @@ class Pipeline(StateModel):
         path = self.make_ica(**state)
         # display data
         subject = self.get('subject')
-        pipe = get_ica_pipe(self._raw, self.get('raw', **state))
-        bads = pipe._load_bad_channels(self._bids_path, pipes=self._raw)
+        ica_name = self._raw.ica_name(self.get('raw', **state))
+        pipe = self._raw.ica_pipe(ica_name)
+        ctx = self._derivatives.resolve(ica_input_name(ica_name), state={**self.state, 'raw': ica_name})
+        bads = self._derivatives.resolve(
+            raw_node_name(ica_name),
+            state={**self.state, 'raw': ica_name},
+            options={'noise': False},
+        ).load(view='bads')
         with self._temporary_state:
             if epoch is None:
                 if task is None:
                     task = pipe.task
-                raw = pipe._load_concatenated_source_raw(self._bids_path, task, self._runs, self._raw)
+                else:
+                    task = sequence_arg('task', task)
+                raw = ctx.node.load_concatenated_source_raw(ctx, task)
                 decim = decim_param(samplingrate, decim, None, raw.info, minimal=True)
                 info = raw.info
                 display_data = raw
@@ -2312,8 +2312,9 @@ class Pipeline(StateModel):
                 display_data = ds
         data = TestDims('sensor')
         data_kind = data.data_to_ndvar(info)[0]
-        sysname = pipe._get_sysname(info, subject, data_kind, self._raw)
-        adjacency = pipe._get_adjacency(data_kind, self._raw)
+        source_pipe = self._raw.root_source_pipe(ica_name)
+        sysname = source_pipe._get_sysname(info, subject, data_kind)
+        adjacency = source_pipe._get_adjacency(data_kind)
         frame = gui.select_components(path, display_data, sysname, adjacency, decim, debug)
         if debug:
             return frame
@@ -2347,10 +2348,11 @@ class Pipeline(StateModel):
         and setting changed so you can decide whether to revert that change.
 
         """
-        raw_name = get_ica_pipe_name(self._raw, self.get('raw', **state))
+        raw_name = self.get('raw', **state)
+        ica_raw_name = self._raw.ica_name(raw_name)
         with self._temporary_state:
-            self.set(raw=raw_name)
-            ctx = self._derivatives.resolve(ica_input_name(raw_name), state=self.state)
+            self.set(raw=ica_raw_name)
+            ctx = self._derivatives.resolve(ica_input_name(ica_raw_name), state=self.state)
         try:
             ctx.node.materialize(ctx)
         except ProtectedArtifactError as error:
@@ -2371,7 +2373,7 @@ class Pipeline(StateModel):
                 raise RuntimeError(f"{command=}")
             else:
                 raise RuntimeError("User aborted ICA overwrite")
-        return str(self.root / ica_file_path(ctx.state, raw=raw_name))
+        return str(self.root / ica_file_path(ctx.state, ica_raw_name))
 
     def make_movie_dspm(
             self,
@@ -3782,11 +3784,8 @@ class Pipeline(StateModel):
         show_subjects : list presence of raw input file by subject
         """
         raw = self.get('raw', **state)
-        pipe = source_pipe = self._raw[raw]
-        pipeline = [pipe]
-        while not isinstance(source_pipe, RawSource):
-            source_pipe = self._raw[source_pipe.source]
-            pipeline.insert(0, source_pipe)
+        pipe = self._raw[raw]
+        pipeline = self._raw.lineage_pipes(raw)
         print(f"Preprocessing pipeline: {' --> '.join(p.name for p in pipeline)}")
 
         # pipe-specific

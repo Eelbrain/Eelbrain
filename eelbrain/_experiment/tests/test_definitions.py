@@ -98,16 +98,16 @@ def test_sequence_arg():
 
 def test_config_base():
     config = ExampleConfiguration('x', 1)
-    assert config._as_dict() == {'a': 'x', 'b': 1}
+    assert config._as_dict() == {'type': 'ExampleConfiguration', 'a': 'x', 'b': 1}
     assert config == ExampleConfiguration('x', 1)
     assert config != ExampleConfiguration('x', 2)
-    assert config == {'a': 'x', 'b': 1}
+    assert config == {'type': 'ExampleConfiguration', 'a': 'x', 'b': 1}
 
 
 def test_config_normalization():
     config = ExampleSequenceConfiguration('x')
     assert config.items == ['x']
-    assert config._as_dict() == {'items': ['x']}
+    assert config._as_dict() == {'type': 'ExampleSequenceConfiguration', 'items': ['x']}
     assert config == ExampleSequenceConfiguration(['x'])
 
 
@@ -117,11 +117,11 @@ def test_config_canonicalization_and_variables():
 
     variables = Variables({'x': EvalVar('a + b', task='task-a')})
     canonical = registry.canonicalize({'vars': variables})
-    assert canonical == {'vars': {'x': {'task': 'task-a', 'code': 'a + b'}}}
+    assert canonical == {'vars': {'x': {'type': 'EvalVar', 'task': 'task-a', 'code': 'a + b'}}}
 
     test = test_def.ANOVA('x*subject', vars={'x': EvalVar('a + b', task='task-a')})
     canonical_test = registry.canonicalize(test._as_dict())
-    assert canonical_test['vars'] == {'x': {'task': 'task-a', 'code': 'a + b'}}
+    assert canonical_test['vars'] == {'x': {'type': 'EvalVar', 'task': 'task-a', 'code': 'a + b'}}
 
 
 def test_canonicalize_data_objects():

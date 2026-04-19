@@ -37,7 +37,7 @@ import logging
 from os.path import exists, relpath
 from pathlib import Path
 from typing import Any
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import mne
 from scipy import signal
@@ -68,8 +68,8 @@ _RAW_READER_WARNING_STATE: dict[str, dict[str, Any]] = {}
 REINDEX_ICA = 'reindex_ica'
 
 
-def _raw_reader_warnings_path(root: str | Path) -> Path:
-    return Path(root) / LOG_DIR / 'raw-reader-warnings.log'
+def _raw_reader_warnings_path(root: Path) -> Path:
+    return root / LOG_DIR / 'raw-reader-warnings.log'
 
 
 def _record_raw_reader_warnings(
@@ -116,17 +116,11 @@ class RawPipe(Configuration):
     """Base class for raw-pipeline configurations."""
     DICT_ATTRS = ()
 
-    def _can_resolve(self, pipes: dict[str, RawPipe]) -> bool:
-        "Determine whether this pipe's dependencies are available in ``pipes``."
+    def _can_resolve(self, pipes: Mapping[str, RawPipe]) -> bool:
+        """Determine whether this pipe's dependencies are available in ``pipes``."""
         raise NotImplementedError
 
-    def _as_dict(self) -> dict:
-        return {'type': self.__class__.__name__, **Configuration._as_dict(self)}
-
-    def _find_input_pipe(self, raw_dict: dict[str, RawPipe]) -> RawSource:
-        raise NotImplementedError
-
-    def _get_adjacency(self, data: str, pipes: dict[str, RawPipe] = None) -> str | list[tuple[str, str]] | Path:
+    def _get_adjacency(self, data: str) -> str | list[tuple[str, str]] | None:
         raise NotImplementedError
 
     def _get_sysname(
@@ -134,31 +128,8 @@ class RawPipe(Configuration):
             info: mne.Info,
             subject: str,
             data: str,
-            pipes: dict[str, RawPipe] = None,
     ) -> str | None:
         raise NotImplementedError
-
-    def _load_with_bads(
-            self,
-            path: BIDSPath,
-            add_bads: AddBadsArg = True,
-            preload: bool = False,
-            noise: bool = False,
-            pipes: dict[str, RawPipe] = None,
-            log: logging.Logger | None = None,
-    ) -> mne.io.BaseRaw:
-        "Call _load() and add bad channels"
-        raw = self._load(path, preload, noise=noise, pipes=pipes, log=log)
-        # bad channels
-        if isinstance(add_bads, Sequence):
-            raw.info['bads'] = list(add_bads)
-        elif add_bads is True:
-            raw.info['bads'] = self._load_bad_channels(path, noise=noise, pipes=pipes, log=log)
-        elif add_bads is False:
-            raw.info['bads'] = []
-        else:
-            raise TypeError(f"{add_bads=}")
-        return raw
 
     def _load(
             self,
@@ -170,31 +141,13 @@ class RawPipe(Configuration):
     ) -> mne.io.BaseRaw:
         raise NotImplementedError
 
-    def _load_info(self, path: BIDSPath, pipes: dict[str, RawPipe] = None) -> mne.Info:
-        "Process the info without processing the raw data, return the processed info"
-        raise NotImplementedError
-
-    def _load_bad_channels(self, path: BIDSPath, noise: bool = False, pipes: dict[str, RawPipe] = None, log: logging.Logger | None = None) -> list[str]:
-        raise NotImplementedError
-
-    def _make_bad_channels(
+    def _collect_bads(
             self,
-            path: BIDSPath,
-            bad_chs: tuple[str] | str | int,
-            redo: bool,
+            ctx: Request,
+            *,
             noise: bool = False,
-            pipes: dict[str, RawPipe] = None,
-    ) -> None:
-        raise NotImplementedError
-
-    def _make_bad_channels_auto(
-            self,
-            path: BIDSPath,
-            flat: float,
-            redo: bool,
-            noise: bool = False,
-            pipes: dict[str, RawPipe] = None,
-    ) -> None:
+    ) -> list[str]:
+        """Assemble bad channels list from sources"""
         raise NotImplementedError
 
 
@@ -210,80 +163,29 @@ def ica_input_name(raw: str) -> str:
     return f'ica-input:{raw}'
 
 
-def get_ica_pipe_name(pipes: dict[str, RawPipe], raw: str | RawPipe) -> str:
-    if isinstance(raw, str):
-        pipe_name = raw
-        pipe = pipes[raw]
-    else:
-        for pipe_name, pipe in pipes.items():
-            if pipe is raw:
-                break
-        else:
-            raise ValueError(f"{raw=} raw pipe is not registered")
-    while not isinstance(pipe, RawICA):
-        if isinstance(pipe, RawSource):
-            raise ValueError(f"raw={pipe_name!r} does not involve ICA")
-        if isinstance(pipe, RawApplyICA):
-            pipe_name = pipe.ica_source
-        else:
-            pipe_name = pipe.source
-        pipe = pipes[pipe_name]
-    return pipe_name
-
-
-def get_ica_pipe(pipes: dict[str, RawPipe], raw: str | RawPipe) -> RawICA:
-    return pipes[get_ica_pipe_name(pipes, raw)]
-
-
-def raw_state(
-        state: dict[str, Any],
-        raw: str,
-) -> dict[str, Any]:
-    out = dict(state)
-    out['raw'] = raw
-    return out
-
-
 class RawBadChannelsInput(Input[list[str]]):
-    """Access to bad channel definitions from channels sidecar files
-
-    There is one instance for every :class:`RawPipe` in the graph.
-    The instance's load method delegates to the RawPipe's load method,
-    which in turn traverses the :class:`RawPipe` tree.
-
-    Effectively, bad channels come from the :class:`RawSource`,
-    but some :class:`RawPipe` like ICA may modify them along the way.
-
-    In additiom to the channels file, bad channels can also be embedded in the
-    raw FIFF file. :class:`RawBadChannelsInput` is not aware of those.
-    """
+    """Access to source bad channel definitions from ``channels.tsv`` files."""
     OPTION_DEFAULTS = {'noise': False}
 
     def __init__(
             self,
             raw_name: str,
-            pipe: RawPipe,
-            pipes: dict[str, RawPipe],
+            pipe: RawSource,
     ):
         self.name = raw_bad_channels_input_name(raw_name)
         self.raw_name = raw_name
         self.pipe = pipe
-        self.pipes = pipes
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        noise = ctx.options['noise']
-        state = {**ctx.state, 'raw': self.raw_name}
-        path = bids_path(ctx.registry.root, state)
         return {
             'raw': self.raw_name,
-            'noise': noise,
+            'noise': ctx.options['noise'],
             'pipeline': self.pipe._as_dict(),
-            'bad_channels': self.pipe._load_bad_channels(path, noise=noise, pipes=self.pipes, log=ctx.registry.log),
+            'bad_channels': self.load(ctx),
         }
 
     def load(self, ctx: Request) -> list[str]:
-        state = {**ctx.state, 'raw': self.raw_name}
-        return self.pipe._load_bad_channels(bids_path(ctx.registry.root, state), noise=ctx.options['noise'], pipes=self.pipes, log=ctx.registry.log)
+        return self.pipe._collect_bads(ctx, noise=ctx.options['noise'])
 
 
 class RawSourceInput(Input[mne.io.BaseRaw]):
@@ -294,20 +196,19 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
             self,
             raw_name: str,
             pipe: RawSource,
-            pipes: dict[str, RawPipe],
     ):
         self.name = raw_node_name(raw_name)
         self.raw_name = raw_name
         self.pipe = pipe
-        self.pipes = pipes
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if ctx.view_options['add_bads'] is True:
+            bad_channels_input_name = raw_bad_channels_input_name(self.raw_name)
             return (
                 Dependency(
-                    raw_bad_channels_input_name(self.raw_name),
+                    bad_channels_input_name,
                     state={'raw': self.raw_name},
-                    options=ctx.options_for(raw_bad_channels_input_name(self.raw_name), noise=ctx.options['noise']),
+                    options=ctx.options_for(bad_channels_input_name, 'noise'),
                 ),
             )
         return ()
@@ -315,29 +216,52 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         noise = ctx.options['noise']
         state = {**ctx.state, 'raw': self.raw_name}
-        path = bids_path(ctx.registry.root, state, noise=noise)
+        path = bids_path(ctx.root, state, noise=noise)
         actual_path = self.pipe._find_raw_path(path) or path.fpath
         return {
             'raw': self.raw_name,
             'noise': noise,
             'pipe': self.pipe._as_dict(),
-            'source': file_fingerprint(
-                ctx.registry.root,
-                actual_path,
-                'raw-source',
-                metadata={'raw': self.raw_name, 'noise': noise},
-            ),
+            'source': file_fingerprint(ctx.root, actual_path, 'raw-source'),
         }
 
     def load(self, ctx: Request) -> mne.io.BaseRaw:
-        return self.pipe._load_with_bads(
-            bids_path(ctx.registry.root, {**ctx.state, 'raw': self.raw_name}),
-            add_bads=ctx.view_options['add_bads'],
+        raw = self.pipe._load(
+            bids_path(ctx.root, {**ctx.state, 'raw': self.raw_name}),
             preload=ctx.view_options['preload'],
             noise=ctx.options['noise'],
-            pipes=self.pipes,
             log=ctx.registry.log,
         )
+        raw.info['bads'] = self._load_bad_channels(ctx, raw.info['bads'])
+        return raw
+
+    def load_view(self, ctx: Request, view: str):
+        state = {**ctx.state, 'raw': self.raw_name}
+        path = bids_path(ctx.root, state)
+        if view == 'bads':
+            info = self.load_view(ctx, 'info')
+            return info['bads']
+        if view != 'info':
+            return super().load_view(ctx, view)
+        raw = self.pipe._load(path, preload=False, noise=ctx.options['noise'], log=ctx.registry.log)
+        info = raw.info
+        with info._unlock():
+            info['bads'] = self._load_bad_channels(ctx, raw.info['bads'])
+        return info
+
+    def _load_bad_channels(self, ctx: Request, embedded_bads: list[str]) -> list[str]:
+        add_bads = ctx.view_options['add_bads']
+        match add_bads:
+            case True:
+                tsv_bads = ctx.load(raw_bad_channels_input_name(self.raw_name))
+                if embedded_bads:
+                    return sorted(set(tsv_bads) | set(embedded_bads))
+                return tsv_bads
+            case False:
+                return []
+            case Sequence():
+                return list(add_bads)
+        raise TypeError(f"{add_bads=}")
 
 
 class ICAInput(Input[mne.preprocessing.ICA]):
@@ -348,17 +272,25 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             self,
             raw_name: str,
             pipe: RawICA,
-            pipes: dict[str, RawPipe],
-            runs: tuple[str, ...] | None,
+            pipes: RawPipeGraph,
     ):
         self.name = ica_input_name(raw_name)
         self.raw_name = raw_name
         self.pipe = pipe
         self.pipes = pipes
-        self.runs = runs
+
+    def _source_states(
+            self,
+            tasks: tuple[str, ...] | None = None,
+    ) -> list[dict[str, Any]]:
+        out = []
+        for task in (tasks or self.pipe.task):
+            state = {'raw': self.pipe.source, 'task': task}
+            out.append(state)
+        return out
 
     def _path(self, ctx: Request) -> Path:
-        return ctx.registry.root / ica_file_path({**ctx.state, 'raw': self.raw_name}, raw=self.raw_name)
+        return ctx.root / ica_file_path(ctx.state, self.raw_name)
 
     def _key(self, ctx: Request) -> dict[str, Any]:
         return canonical_state_subset({**ctx.state, 'raw': self.raw_name}, self.key_fields)
@@ -367,8 +299,31 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         return ctx.registry.read_manifest(ctx.registry.manifest_path(self._path(ctx)))
 
     def _load_value(self, ctx: Request) -> mne.preprocessing.ICA:
-        state = {**ctx.state, 'raw': self.raw_name}
-        return self.pipe._load_ica(bids_path(ctx.registry.root, state), raw_name=self.raw_name)
+        return self.pipe._load_ica(ctx)
+
+    def _load_bad_channels(self, ctx: Request) -> list[str]:
+        bads = set()
+        source_raw = raw_node_name(self.pipe.source)
+        for task in self.pipe.task:
+            bads.update(ctx.load(source_raw, state={'task': task}, options={'noise': False}, view='bads'))
+        return sorted(bads)
+
+    def load_concatenated_source_raw(
+            self,
+            ctx: Request,
+            tasks: tuple[str, ...],
+    ) -> mne.io.BaseRaw:
+        bad_channels = self._load_bad_channels(ctx)
+        path_list = self._source_states(tasks)
+        first_state = dict(path_list[0])
+        first_state.pop('raw')
+        raw = load_raw_dependency(ctx, self.pipe.source, add_bads=bad_channels, preload=True, state=first_state)
+        for state in path_list[1:]:
+            state = dict(state)
+            state.pop('raw')
+            raw_ = load_raw_dependency(ctx, self.pipe.source, add_bads=bad_channels, preload=True, state=state)
+            raw.append(raw_)
+        return raw
 
     def _reindex_existing(self, ctx: Request) -> mne.preprocessing.ICA:
         value = self._load_value(ctx)
@@ -457,21 +412,16 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             dep = path[0]
             if dep.endswith(':raw'):
                 raw_name = self._dependency_raw_name(previous, current, dep)
-                field = self._format_pipe_setting(path[1:], ('fingerprint', 'pipeline'))
+                field = self._format_pipe_setting(path[1:], ('fingerprint', 'definitions', 'pipe'))
                 return f"This ICA was estimated using different settings for raw step {raw_name!r} ({field}: {old!r} -> {new!r})."
-            if dep.endswith(':bads'):
-                raw_name = self._dependency_raw_name(previous, current, dep)
-                if len(path) > 2 and path[1] == 'fingerprint' and path[2] == 'pipeline':
-                    field = self._format_pipe_setting(path[1:], ('fingerprint', 'pipeline'))
-                    return f"This ICA was estimated using different settings for raw step {raw_name!r} ({field}: {old!r} -> {new!r})."
-                field = self._format_difference_path(path[1:], ('fingerprint',))
-                return f"The bad-channel information used to estimate this ICA changed for raw step {raw_name!r} ({field}: {old!r} -> {new!r})."
             field = self._format_difference_path(path)
             return f"One of the recorded ICA inputs changed ({field}: {old!r} -> {new!r})."
 
         diff = self._first_difference(previous.fingerprint, current.fingerprint)
         if diff is not None:
             path, old, new = diff
+            if path == ('bads',):
+                return f"The set of bad channels used for ICA estimation changed ({old!r} -> {new!r})."
             field = self._format_difference_path(path)
             return f"The recorded ICA settings changed ({field}: {old!r} -> {new!r})."
 
@@ -485,7 +435,15 @@ class ICAInput(Input[mne.preprocessing.ICA]):
     ) -> str:
         current_dep = current.dependencies.get(dependency, {})
         previous_dep = {} if previous is None else previous.dependencies.get(dependency, {})
-        return current_dep.get('fingerprint', {}).get('raw') or previous_dep.get('fingerprint', {}).get('raw') or '?'
+        current_fingerprint = current_dep.get('fingerprint', {})
+        previous_fingerprint = previous_dep.get('fingerprint', {})
+        return (
+            current_fingerprint.get('raw')
+            or current_fingerprint.get('definitions', {}).get('raw')
+            or previous_fingerprint.get('raw')
+            or previous_fingerprint.get('definitions', {}).get('raw')
+            or '?'
+        )
 
     @staticmethod
     def _format_pipe_setting(
@@ -531,25 +489,35 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         return self._manifest_matches(self._manifest(ctx), self._current_value_manifest(ctx)[1])
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        return self.pipe._ica_dependencies(ctx, self.raw_name, self.runs)
+        deps = []
+        for i, state in enumerate(self._source_states()):
+            dep_state = dict(state)
+            dep_state.pop('raw')
+            deps.append(raw_data_dependency(
+                ctx,
+                raw=self.pipe.source,
+                label=f'source-{i}:raw',
+                add_bads=False,
+                state=dep_state,
+            ))
+        return tuple(deps)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         path = self._path(ctx)
         return {
             'raw': self.raw_name,
             'pipe': self.pipe._as_dict(),
-            'runs': self.runs,
-            'ica_path': relpath(path, ctx.registry.root),
+            'bads': self._load_bad_channels(ctx),
+            'ica_path': relpath(path, ctx.root),
             'exists': exists(path),
         }
 
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
-        fingerprint = dict(self.fingerprint(ctx))
+        fingerprint = self.fingerprint(ctx)
         path = self._path(ctx)
-        fingerprint['ica_file'] = file_fingerprint(ctx.registry.root, path, 'ica-file')
+        fingerprint['ica_file'] = file_fingerprint(ctx.root, path, 'ica-file')
         if exists(path):
-            state = {**ctx.state, 'raw': self.raw_name}
-            fingerprint['exclude'] = self.pipe._load_ica(bids_path(ctx.registry.root, state), raw_name=self.raw_name).exclude
+            fingerprint['exclude'] = self.pipe._load_ica(ctx).exclude
         else:
             fingerprint['exclude'] = []
         return fingerprint
@@ -567,6 +535,15 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             reason = self._stale_reason(previous, current)
             raise ProtectedArtifactError(self.name, path, message=f"Existing ICA file {path.name!r} no longer matches the current data and ICA settings.", instructions=f"{reason} To make this ICA match the current pipeline again, revert the raw pipeline change or recompute the ICA. To keep using this existing ICA anyway, call e.load_ica(raw={self.raw_name!r}, accept_stale=True) once or run e.make_ica(raw={self.raw_name!r}) and choose 'incorporate'. To recompute it from the current data, run e.make_ica(raw={self.raw_name!r}) and choose 'overwrite'.")
         return value
+
+    def load_view(
+            self,
+            ctx: Request,
+            view: str,
+    ) -> list[str]:
+        if view != 'bads':
+            return super().load_view(ctx, view)
+        return sorted(self.load(ctx).info['bads'])
 
     def materialize(
             self,
@@ -613,7 +590,8 @@ class ICAInput(Input[mne.preprocessing.ICA]):
                 return value
             reason = self._stale_reason(previous, current)
             raise ProtectedArtifactError(self.name, path, message=f"Existing ICA file {path.name!r} no longer matches the current data and ICA settings.", instructions=f"{reason} Use allow_protected_reindex=True to keep this ICA file and rewrite its manifest, or allow_protected_overwrite=True to recompute it.")
-        value = self.pipe._build_ica(ctx, self.pipes, self.raw_name, self.runs)
+        raw = self.load_concatenated_source_raw(ctx, self.pipe.task)
+        value = self.pipe._fit_ica(raw, ctx.state['subject'], self.raw_name)
         path.parent.mkdir(parents=True, exist_ok=True)
         value.save(path, overwrite=True)
         ctx.registry.write_manifest(ctx.registry.manifest_path(path), self._build_manifest(ctx, value))
@@ -643,7 +621,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
             self,
             raw_name: str,
             pipe: CachedRawPipe,
-            pipes: dict[str, RawPipe],
+            pipes: RawPipeGraph,
     ):
         self.name = raw_node_name(raw_name)
         self.raw_name = raw_name
@@ -653,44 +631,78 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
             self.cache_policy = CachePolicy.DISABLED_BY_DEFAULT
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        source_node_name = raw_node_name(self.pipe.source)
         deps = [
             Dependency(
-                raw_node_name(self.pipe.source),
+                source_node_name,
                 state={'raw': self.pipe.source},
-                options=ctx.options_for(raw_node_name(self.pipe.source), add_bads=True, preload=False, noise=ctx.options['noise']),
+                options=ctx.options_for(source_node_name, 'noise', add_bads=True, preload=False),
             ),
         ]
-        if isinstance(self.pipe, RawICA):
-            deps.append(Dependency(ica_input_name(self.raw_name), state={'raw': self.raw_name}))
-        elif isinstance(self.pipe, RawApplyICA):
-            deps.append(Dependency(ica_input_name(self.pipe.ica_source), state={'raw': self.pipe.ica_source}))
+        if isinstance(self.pipe, (RawICA, RawApplyICA)):
+            ica_name = self.pipes.ica_name(self.pipe.name)
+            deps.append(Dependency(ica_input_name(ica_name), state={'raw': ica_name}))
         return tuple(deps)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(ctx, state_fields=self.key_fields, definitions={'pipe': self.pipe._as_dict()})
+        return self.standard_fingerprint(ctx, definitions={'pipe': self.pipe._as_dict()}, extra={'raw': self.raw_name})
+
+    def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
+        if view == 'bads':
+            return {
+                'raw': self.raw_name,
+                'pipe': self.pipe._as_dict(),
+                'bads': self.pipe._collect_bads(ctx, noise=ctx.options['noise']),
+            }
+        return super().dependency_fingerprint(ctx, view)
 
     def build(self, ctx: Request) -> mne.io.BaseRaw:
         noise = ctx.options['noise']
         state = {**ctx.state, 'raw': self.raw_name}
-        path = bids_path(ctx.registry.root, state)
+        path = bids_path(ctx.root, state)
+        source_pipe = self.pipes.root_source_pipe(self.raw_name)
 
         raw = load_raw_dependency(ctx, self.pipe.source, add_bads=True, preload=True, noise=noise)
         if not raw.preload:
             raw.load_data()
-        if isinstance(self.pipe, RawICA):
-            ica = ctx.load(ica_input_name(self.raw_name), state={'raw': self.raw_name})
-            return self.pipe._apply_ica(path, raw, ica, self.raw_name, pipes=self.pipes, log=ctx.registry.log)
-        if isinstance(self.pipe, RawApplyICA):
-            ica = ctx.load(ica_input_name(self.pipe.ica_source), state={'raw': self.pipe.ica_source})
-            ica_pipe = get_ica_pipe(self.pipes, self.pipe.ica_source)
-            return ica_pipe._apply_ica(path, raw, ica, self.raw_name, pipes=self.pipes, log=ctx.registry.log)
-        return self.pipe._make(path, True, noise=noise, raw=raw, pipes=self.pipes, raw_name=self.raw_name, log=ctx.registry.log)
+        if isinstance(self.pipe, (RawICA, RawApplyICA)):
+            ica_name = self.pipes.ica_name(self.raw_name)
+            ica_pipe = self.pipes.ica_pipe(self.raw_name)
+            ica = ctx.load(ica_input_name(ica_name), state={'raw': ica_name})
+            bad_channels = self.pipe._collect_bads(ctx, noise=noise)
+            return ica_pipe._apply_ica(raw, ica, bad_channels, self.raw_name, log=ctx.registry.log)
+        return self.pipe._make(raw, path=path, noise=noise, raw_name=self.raw_name, log=ctx.registry.log, source_pipe=source_pipe)
 
     def load(self, ctx: Request, path: Path) -> mne.io.BaseRaw:
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', 'This filename', module='mne')
             raw = mne.io.read_raw_fif(path, preload=False, verbose=MNE_VERBOSITY)
         return raw
+
+    def load_view(self, ctx: Request, view: str):
+        if view == 'bads':
+            return self.pipe._collect_bads(ctx, noise=ctx.options['noise'])
+        if view != 'info':
+            return super().load_view(ctx, view)
+
+        state = {**ctx.state, 'raw': self.raw_name}
+        path = bids_path(ctx.root, state)
+        upstream_info = load_raw_info_dependency(ctx, self.pipe.source, add_bads=True, noise=ctx.options['noise']).copy()
+        info = self.pipe._make_info(upstream_info, path=path, noise=ctx.options['noise'], raw_name=self.raw_name, log=ctx.registry.log)
+        if info is None:
+            info = ctx.load_artifact().info
+
+        add_bads = ctx.view_options['add_bads']
+        if isinstance(add_bads, Sequence):
+            bads = list(add_bads)
+        elif add_bads is True:
+            bads = self.pipe._collect_bads(ctx, noise=ctx.options['noise'])
+        else:
+            bads = []
+
+        with info._unlock():
+            info['bads'] = bads
+        return info
 
     def apply_view_options(self, ctx: Request, raw: mne.io.BaseRaw) -> mne.io.BaseRaw:
         if ctx.view_options['preload'] and not raw.preload:
@@ -699,12 +711,9 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         if isinstance(add_bads, Sequence):
             raw.info['bads'] = list(add_bads)
         elif add_bads is True:
-            state = {**ctx.state, 'raw': self.raw_name}
-            raw.info['bads'] = self.pipe._load_bad_channels(bids_path(ctx.registry.root, state), noise=ctx.options['noise'], pipes=self.pipes, log=ctx.registry.log)
-        elif add_bads is False:
-            raw.info['bads'] = []
+            raw.info['bads'] = self.pipe._collect_bads(ctx, noise=ctx.options['noise'])
         else:
-            raise TypeError(f"{add_bads=}")
+            raw.info['bads'] = []
         return raw
 
     def save(
@@ -732,6 +741,21 @@ def load_raw_dependency(
     return ctx.load(raw_node_name(raw), state=merged_state, options={'add_bads': add_bads, 'preload': preload, 'noise': noise})
 
 
+def load_raw_info_dependency(
+        ctx: Request,
+        raw: str | None = None,
+        *,
+        add_bads: AddBadsArg = True,
+        noise: bool = False,
+        state: dict[str, Any] | None = None,
+) -> mne.Info:
+    merged_state = dict(state or ())
+    if raw is None:
+        raw = ctx.state['raw']
+    merged_state['raw'] = raw
+    return ctx.load(raw_node_name(raw), state=merged_state, options={'add_bads': add_bads, 'noise': noise}, view='info')
+
+
 def raw_data_dependency(
         ctx: Request,
         *,
@@ -739,13 +763,17 @@ def raw_data_dependency(
         label: str | None = None,
         noise: bool = False,
         add_bads: AddBadsArg = True,
+        state: dict[str, Any] | None = None,
 ) -> Dependency:
     if raw is None:
         raw = ctx.state['raw']
+    dep_state = {'raw': raw}
+    if state:
+        dep_state.update(state)
     return Dependency(
         raw_node_name(raw),
         label=label,
-        state={'raw': raw},
+        state=dep_state,
         options={'add_bads': add_bads, 'preload': False, 'noise': noise},
     )
 
@@ -806,9 +834,6 @@ class RawSource(RawPipe):
 
     def _can_resolve(self, pipes: dict[str, RawPipe]) -> bool:
         return True
-
-    def _find_input_pipe(self, raw_dict: dict[str, RawPipe]) -> RawSource:
-        return self
 
     def _find_raw_path(self, path: BIDSPath) -> Path | None:
         """Return the raw file path, or None if it does not exist.
@@ -879,10 +904,7 @@ class RawSource(RawPipe):
         #         raw.set_montage(mne.channels.DigMontage(dig=dig_raw.info['dig']))
         return raw
 
-    def _load_info(self, path: BIDSPath, pipes: dict[str, RawPipe] = None) -> mne.Info:
-        return self._load_with_bads(path, pipes=pipes).info
-
-    def _load_bad_channels(self, path: BIDSPath, noise: bool = False, pipes: dict[str, RawPipe] = None, log: logging.Logger | None = None) -> list[str]:
+    def _bads_from_file(self, path: BIDSPath, noise: bool = False, log: logging.Logger | None = None) -> list[str]:
         "Get channels.tsv content, create if it does not exist"
         path = path if not noise else path.find_empty_room()
         bads_path = self._bads_path(path)
@@ -906,7 +928,10 @@ class RawSource(RawPipe):
         channels_df.to_csv(bads_path, sep='\t', index=False)
         return channels_df.query('status == "bad"')['name'].tolist()
 
-    def _make_bad_channels(
+    def _collect_bads(self, ctx: Request, *, noise: bool = False) -> list[str]:
+        return self._bads_from_file(bids_path(ctx.root, ctx.state), noise=noise, log=ctx.registry.log)
+
+    def _write_bad_channels(
             self,
             path: BIDSPath,
             bad_chs: tuple[str] | str | int,
@@ -914,6 +939,7 @@ class RawSource(RawPipe):
             noise: bool = False,
             pipes: dict[str, RawPipe] = None,
     ) -> None:
+        """Write channel information to the channels sidecar file"""
         path = path if not noise else path.find_empty_room()
         # check input list
         if isinstance(bad_chs, (str, int)):
@@ -922,7 +948,7 @@ class RawSource(RawPipe):
         sensor = load.mne.sensor_dim(raw.info, adjacency=self.adjacency)
         new_bads = sensor._normalize_sensor_names(bad_chs)
         # merge with old bads
-        old_bads = self._load_bad_channels(path)
+        old_bads = self._bads_from_file(path)
         if old_bads is not None and not redo:
             new_bads = sorted(set(old_bads).union(new_bads))
         # print change
@@ -943,6 +969,7 @@ class RawSource(RawPipe):
             noise: bool = False,
             pipes: dict[str, RawPipe] = None,
     ) -> None:
+        """Automatically find and update bad channels"""
         if noise:
             path = path.find_empty_room()
         if flat is None:
@@ -959,7 +986,7 @@ class RawSource(RawPipe):
         sysname = self._get_sysname(raw.info, path.subject, path.datatype)
         raw = load.mne.raw_ndvar(raw, sysname=sysname, adjacency=self.adjacency)
         bad_chs.extend(raw.sensor.names[raw.std('time') < flat])
-        self._make_bad_channels(path, bad_chs, redo)
+        self._write_bad_channels(path, bad_chs, redo)
 
     def _as_dict(self) -> dict:
         out = RawPipe._as_dict(self)
@@ -967,7 +994,7 @@ class RawSource(RawPipe):
             out['montage'] = Sensor.from_montage(self.montage)
         return out
 
-    def _get_adjacency(self, data: str, pipes: dict[str, RawPipe] = None) -> str | list[tuple[str, str]] | Path | None:
+    def _get_adjacency(self, data: str) -> str | list[tuple[str, str]] | None:
         if data == 'eog':
             return None
         else:
@@ -978,7 +1005,6 @@ class RawSource(RawPipe):
             info: mne.Info,
             subject: str,
             data: str,
-            pipes: dict[str, RawPipe] = None,
     ) -> str | None:
         if data == 'eog':
             return None
@@ -1001,65 +1027,39 @@ class CachedRawPipe(RawPipe):
         self.source = source
         self._cache = cache
 
-    def _can_resolve(self, pipes: dict[str, RawPipe]) -> bool:
+    def _can_resolve(self, pipes: Mapping[str, RawPipe]) -> bool:
         return self.source in pipes
-
-    def _find_input_pipe(self, raw_dict: dict[str, RawPipe]) -> RawSource:
-        return raw_dict[self.source]._find_input_pipe()
-
-    def _load(
-            self,
-            path: BIDSPath,
-            preload: bool,
-            noise: bool = False,
-            pipes: dict[str, RawPipe] = None,
-            log: logging.Logger | None = None,
-    ) -> mne.io.BaseRaw:
-        return self._make(path, preload, noise=noise, pipes=pipes, log=log)
-
-    def _load_info(self, path: BIDSPath, pipes: dict[str, RawPipe] = None) -> mne.Info:
-        return pipes[self.source]._load_info(path, pipes)
-
-    def _load_bad_channels(self, path: BIDSPath, noise: bool = False, pipes: dict[str, RawPipe] = None, log: logging.Logger | None = None) -> list[str]:
-        return pipes[self.source]._load_bad_channels(path, noise=noise, pipes=pipes, log=log)
 
     def _make(
             self,
+            raw: mne.io.BaseRaw,
+            *,
             path: BIDSPath,
-            preload: bool,
             noise: bool = False,
-            raw: mne.io.BaseRaw = None,
-            pipes: dict[str, RawPipe] = None,
             raw_name: str = None,
             log: logging.Logger | None = None,
+            source_pipe: RawSource | None = None,
     ) -> mne.io.BaseRaw:
         raise NotImplementedError
 
-    def _make_bad_channels(
-            self,
-            path: BIDSPath,
-            bad_chs: tuple[str] | str | int,
-            redo: bool,
-            noise: bool = False,
-            pipes: dict[str, RawPipe] = None,
-    ) -> None:
-        pipes[self.source]._make_bad_channels(path, bad_chs, redo, noise=noise, pipes=pipes)
-
-    def _make_bad_channels_auto(self, *args, **kwargs) -> None:
-        pipes = kwargs.pop('pipes', None)
-        pipes[self.source]._make_bad_channels_auto(*args, pipes=pipes, **kwargs)
-
-    def _get_adjacency(self, data: str, pipes: dict[str, RawPipe] = None) -> str | list[tuple[str, str]] | Path:
-        return pipes[self.source]._get_adjacency(data, pipes)
-
-    def _get_sysname(
+    def _make_info(
             self,
             info: mne.Info,
-            subject: str,
-            data: str,
-            pipes: dict[str, RawPipe] = None,
-    ) -> str | None:
-        return pipes[self.source]._get_sysname(info, subject, data, pipes)
+            *,
+            path: BIDSPath,
+            noise: bool = False,
+            raw_name: str = None,
+            log: logging.Logger | None = None,
+    ) -> mne.Info | None:
+        return info
+
+    def _collect_bads(
+            self,
+            ctx: Request,
+            *,
+            noise: bool = False,
+    ) -> list[str]:
+        return ctx.load(raw_node_name(self.source), options={'noise': noise}, view='bads')
 
 
 class RawFilter(CachedRawPipe):
@@ -1107,23 +1107,28 @@ class RawFilter(CachedRawPipe):
 
     def _make(
             self,
+            raw: mne.io.BaseRaw,
+            *,
             path: BIDSPath,
-            preload: bool,
             noise: bool = False,
-            raw: mne.io.BaseRaw = None,
-            pipes: dict[str, RawPipe] = None,
             raw_name: str = None,
             log: logging.Logger | None = None,
+            source_pipe: RawSource | None = None,
     ) -> mne.io.BaseRaw:
-        if raw is None:
-            raw = pipes[self.source]._load_with_bads(path, preload=True, noise=noise, pipes=pipes, log=log)
         logger = log or LOG
         logger.info("Raw %s: filtering for %s...", raw_name, path.fpath if not noise else path.find_empty_room().fpath)
         raw.filter(self.l_freq, self.h_freq, **self.kwargs, n_jobs=self.n_jobs, verbose=MNE_VERBOSITY)
         return raw
 
-    def _load_info(self, path: BIDSPath, pipes: dict[str, RawPipe] = None) -> mne.Info:
-        info = super()._load_info(path, pipes)
+    def _make_info(
+            self,
+            info: mne.Info,
+            *,
+            path: BIDSPath,
+            noise: bool = False,
+            raw_name: str = None,
+            log: logging.Logger | None = None,
+    ) -> mne.Info | None:
         if self.l_freq and self.l_freq > (info['highpass'] or 0):
             with info._unlock():
                 info['highpass'] = float(self.l_freq)
@@ -1186,16 +1191,14 @@ class RawFilterElliptic(CachedRawPipe):
 
     def _make(
             self,
+            raw: mne.io.BaseRaw,
+            *,
             path: BIDSPath,
-            preload: bool,
             noise: bool = False,
-            raw: mne.io.BaseRaw = None,
-            pipes: dict[str, RawPipe] = None,
             raw_name: str = None,
             log: logging.Logger | None = None,
+            source_pipe: RawSource | None = None,
     ) -> mne.io.BaseRaw:
-        if raw is None:
-            raw = pipes[self.source]._load_with_bads(path, preload=True, noise=noise, pipes=pipes, log=log)
         logger = log or LOG
         logger.info("Raw %s: filtering for %s...", raw_name, path.fpath if not noise else path.find_empty_room().fpath)
         picks = mne.pick_types(raw.info, meg=True, eeg=True, ref_meg=True)
@@ -1203,11 +1206,30 @@ class RawFilterElliptic(CachedRawPipe):
         for i in picks:
             raw._data[i] = signal.sosfilt(sos, raw._data[i])
         low, high = self.low_pass, self.high_pass
-        if high and raw.info['lowpass'] > high:
-            raw.info['lowpass'] = float(high)
-        if low and raw.info['highpass'] < low:
-            raw.info['highpass'] = float(low)
+        with raw.info._unlock():
+            if high and raw.info['lowpass'] > high:
+                raw.info['lowpass'] = float(high)
+            if low and raw.info['highpass'] < low:
+                raw.info['highpass'] = float(low)
         return raw
+
+    def _make_info(
+            self,
+            info: mne.Info,
+            *,
+            path: BIDSPath,
+            noise: bool = False,
+            raw_name: str = None,
+            log: logging.Logger | None = None,
+    ) -> mne.Info | None:
+        low, high = self.low_pass, self.high_pass
+        if high and high < (info['lowpass'] or info['sfreq']):
+            with info._unlock():
+                info['lowpass'] = float(high)
+        if low and low > (info['highpass'] or 0):
+            with info._unlock():
+                info['highpass'] = float(low)
+        return info
 
 
 class RawICA(CachedRawPipe):
@@ -1292,87 +1314,14 @@ class RawICA(CachedRawPipe):
         self.kwargs = {'method': method, 'random_state': random_state, **kwargs}
         self.fit_kwargs = dict(fit_kwargs) if fit_kwargs else {}
 
-    def _load_bad_channels(self, path: BIDSPath, noise: bool = False, pipes: dict[str, RawPipe] = None, log: logging.Logger | None = None) -> list[str]:
-        source_pipe = pipes[self.source]
-        bad_chs = set()
-        for task in self.task:
-            path_ = path.copy().update(task=task)
-            bad_chs.update(source_pipe._load_bad_channels(path_, pipes=pipes, log=log))
-        if noise:
-            bad_chs.update(source_pipe._load_bad_channels(path, noise=noise, pipes=pipes, log=log))
-        return sorted(bad_chs)
-
-    def _load_info(self, path: BIDSPath, pipes: dict[str, RawPipe] = None) -> mne.Info:
-        info = super()._load_info(path, pipes)
-        info['bads'] = self._load_bad_channels(path, pipes=pipes)
-        return info
-
     def _load_ica(
             self,
-            path: BIDSPath,
-            raw_name: str,
+            ctx: Request,
     ) -> mne.preprocessing.ICA:
-        ica_path = path.root / ica_file_path(raw_state({
-            'subject': path.subject,
-            'session': path.session,
-            'task': path.task,
-            'acquisition': path.acquisition,
-            'run': path.run,
-            'datatype': path.datatype,
-            'suffix': path.suffix,
-            'extension': path.extension,
-        }, raw_name), raw=raw_name)
+        ica_path = ctx.root / ica_file_path(ctx.state, self.name)
         if not exists(ica_path):
-            raise FileMissingError(f"ICA file {ica_path.name} does not exist for raw={raw_name!r}. Run e.make_ica() to create it.")
+            raise FileMissingError(f"ICA file {ica_path.name} does not exist for raw={self.name!r}. Run e.make_ica() to create it.")
         return mne.preprocessing.read_ica(ica_path)
-
-    def _source_states(
-            self,
-            ctx: Request,
-            runs: tuple[str, ...] | None,
-    ) -> list[dict[str, Any]]:
-        out = []
-        for task in self.task:
-            for run in (runs or (None,)):
-                state = {'raw': self.source, 'task': task}
-                if run is not None:
-                    state['run'] = run
-                out.append(state)
-        return out
-
-    def _ica_dependencies(
-            self,
-            ctx: Request,
-            raw_name: str,
-            runs: tuple[str, ...] | None,
-    ) -> tuple[Dependency, ...]:
-        deps = []
-        for i, state in enumerate(self._source_states(ctx, runs)):
-            source_state = dict(state)
-            stem = f"source-{i}"
-            source_raw = source_state.pop('raw')
-            deps.append(
-                raw_data_dependency(
-                    ctx,
-                    raw=source_raw,
-                    label=f'{stem}:raw',
-                    add_bads=False,
-                )
-            )
-            deps[-1] = Dependency(
-                deps[-1].name,
-                label=deps[-1].label,
-                state=dict(state),
-                options=deps[-1].options,
-            )
-            deps.append(
-                Dependency(
-                    raw_bad_channels_input_name(source_raw),
-                    label=f'{stem}:bads',
-                    state=dict(state),
-                )
-            )
-        return tuple(deps)
 
     @staticmethod
     def _check_ica_channels(
@@ -1393,56 +1342,6 @@ class RawICA(CachedRawPipe):
         else:
             return raw_ch_names == ica.ch_names
 
-    def _load_concatenated_source_raw(
-            self,
-            path: BIDSPath,
-            tasks: tuple[str],
-            runs: tuple[str],
-            pipes: dict[str, RawPipe],
-    ) -> mne.io.BaseRaw:
-        "Concatenate raws from different tasks and runs."
-        # NOTE: this use bad channels in RawICA while loading tasks from user input.
-        source_pipe = pipes[self.source]
-        bad_channels = self._load_bad_channels(path, pipes=pipes)
-        path_list = []
-        for task in tasks:
-            path_ = path.copy().update(task=task)
-            if not runs:
-                path_list.append(path_)
-                continue
-            for run in runs:
-                path_list.append(path_.copy().update(run=run))
-        raw = source_pipe._load_with_bads(path_list[0], bad_channels, pipes=pipes)
-        for path_ in path_list[1:]:
-            raw_ = source_pipe._load_with_bads(path_, bad_channels, pipes=pipes)
-            raw.append(raw_)
-        return raw
-
-    def _build_ica(
-            self,
-            ctx: Request,
-            pipes: dict[str, RawPipe],
-            raw_name: str,
-            runs: tuple[str, ...] | None,
-    ) -> mne.preprocessing.ICA:
-        state = raw_state(ctx.state, raw_name)
-        path = bids_path(ctx.registry.root, state)
-        bad_channels = self._load_bad_channels(path, pipes=pipes)
-        path_list = []
-        runs = runs or ()
-        for task in self.task:
-            if not runs:
-                path_list.append({'task': task})
-                continue
-            for run in runs:
-                path_list.append({'task': task, 'run': run})
-
-        raw = load_raw_dependency(ctx, self.source, add_bads=bad_channels, preload=True, state=path_list[0])
-        for state in path_list[1:]:
-            raw_ = load_raw_dependency(ctx, self.source, add_bads=bad_channels, preload=True, state=state)
-            raw.append(raw_)
-        return self._fit_ica(raw, ctx.state['subject'], raw_name)
-
     def _fit_ica(
             self,
             raw: mne.io.BaseRaw,
@@ -1462,47 +1361,54 @@ class RawICA(CachedRawPipe):
             ica.fit(raw, **fit_kwargs)
         return ica
 
-    def _make(
-            self,
-            path: BIDSPath,
-            preload: bool,
-            noise: bool = False,
-            raw: mne.io.BaseRaw = None,
-            pipes: dict[str, RawPipe] = None,
-            raw_name: str = None,
-            log: logging.Logger | None = None,
-    ) -> mne.io.BaseRaw:
-        if raw is None:
-            raw = pipes[self.source]._load_with_bads(path, preload=True, noise=noise, pipes=pipes, log=log)
-        return self._apply(path, raw, raw_name, pipes=pipes, log=log)
-
     def _apply_ica(
             self,
-            path: BIDSPath,
             raw: mne.io.BaseRaw,
             ica: mne.preprocessing.ICA,
+            bad_channels: list[str],
             raw_name: str,
-            pipes: dict[str, RawPipe] = None,
             log: logging.Logger | None = None,
     ) -> mne.io.BaseRaw:
         logger = log or LOG
-        logger.debug("Raw %s: applying ICA for %s...", raw_name, path.fpath)
-        raw.info['bads'] = [ch for ch in self._load_bad_channels(path, pipes=pipes) if ch in raw.ch_names]
+        logger.debug("Raw %s: applying ICA...", raw_name)
+        raw.info['bads'] = [ch for ch in bad_channels if ch in raw.ch_names]
         missing = self._check_ica_channels(ica, raw.info, return_missing=True)
         if missing:
             raw.drop_channels(missing)
         ica.apply(raw)
         return raw
 
-    def _apply(
+    def _make_info(
             self,
+            info: mne.Info,
+            *,
             path: BIDSPath,
-            raw: mne.io.BaseRaw,
-            raw_name: str,
-            pipes: dict[str, RawPipe] = None,
+            noise: bool = False,
+            raw_name: str = None,
             log: logging.Logger | None = None,
-    ) -> mne.io.BaseRaw:
-        return self._apply_ica(path, raw, self._load_ica(path, raw_name), raw_name, pipes=pipes, log=log)
+    ) -> mne.Info | None:
+        return None
+
+    def _collect_bads(
+            self,
+            ctx: Request,
+            *,
+            noise: bool = False,
+    ) -> list[str]:
+        bads = set()
+        # Try to read bad channels on ICA
+        try:
+            bads.update(ctx.load(ica_input_name(self.name), view='bads'))
+        except FileMissingError:
+            # Merged task file bad channels
+            for task in self.task:
+                bads.update(ctx.load(raw_node_name(self.source), state={'task': task}, view='bads'))
+        # Task that has not been used for ICA fit
+        if noise:
+            bads.update(ctx.load(raw_node_name(self.source), options={'noise': True}, view='bads'))
+        elif ctx.state['task'] not in self.task:
+            bads.update(ctx.load(raw_node_name(self.source), view='bads'))
+        return sorted(bads)
 
 
 class RawApplyICA(CachedRawPipe):
@@ -1551,30 +1457,30 @@ class RawApplyICA(CachedRawPipe):
         CachedRawPipe.__init__(self, source, cache)
         self.ica_source = ica
 
-    def _can_resolve(self, pipes: dict[str, RawPipe]) -> bool:
+    def _can_resolve(self, pipes: Mapping[str, RawPipe]) -> bool:
         return CachedRawPipe._can_resolve(self, pipes) and self.ica_source in pipes
 
-    def _load_bad_channels(self, path: BIDSPath, noise: bool = False, pipes: dict[str, RawPipe] = None, log: logging.Logger | None = None) -> list[str]:
-        return pipes[self.ica_source]._load_bad_channels(path, noise=noise, pipes=pipes, log=log)
-
-    def _load_info(self, path: BIDSPath, pipes: dict[str, RawPipe] = None) -> mne.Info:
-        info = super()._load_info(path, pipes)
-        info['bads'] = self._load_bad_channels(path, pipes=pipes)
-        return info
-
-    def _make(
+    def _make_info(
             self,
+            info: mne.Info,
+            *,
             path: BIDSPath,
-            preload: bool,
             noise: bool = False,
-            raw: mne.io.BaseRaw = None,
-            pipes: dict[str, RawPipe] = None,
             raw_name: str = None,
             log: logging.Logger | None = None,
-    ) -> mne.io.BaseRaw:
-        if raw is None:
-            raw = pipes[self.source]._load_with_bads(path, preload=True, noise=noise, pipes=pipes, log=log)
-        return pipes[self.ica_source]._apply(path, raw, raw_name, pipes=pipes, log=log)
+    ) -> mne.Info | None:
+        return None
+
+    def _collect_bads(
+            self,
+            ctx: Request,
+            *,
+            noise: bool = False,
+    ) -> list[str]:
+        bads = set()
+        bads.update(ctx.load(raw_node_name(self.source), options={'noise': noise}, view='bads'))
+        bads.update(ctx.load(raw_node_name(self.ica_source), view='bads'))
+        return sorted(bads)
 
 
 class RawMaxwell(CachedRawPipe):
@@ -1623,18 +1529,17 @@ class RawMaxwell(CachedRawPipe):
 
     def _make(
             self,
+            raw: mne.io.BaseRaw,
+            *,
             path: BIDSPath,
-            preload: bool,
             noise: bool = False,
-            raw: mne.io.BaseRaw = None,
-            pipes: dict[str, RawPipe] = None,
             raw_name: str = None,
             log: logging.Logger | None = None,
+            source_pipe: RawSource | None = None,
     ) -> mne.io.BaseRaw:
-        if raw is None:
-            raw = pipes[self.source]._load_with_bads(path, noise=noise, pipes=pipes, log=log)
-        sysname = self._get_sysname(raw.info, path.subject, path.datatype, pipes)
-        adjacency = self._get_adjacency(path.datatype, pipes)
+        assert source_pipe is not None
+        sysname = source_pipe._get_sysname(raw.info, path.subject, path.datatype)
+        adjacency = source_pipe._get_adjacency(path.datatype)
         raw_ndvar = load.mne.raw_ndvar(raw, sysname=sysname, adjacency=adjacency)
         raw.info['bads'].extend(raw_ndvar.sensor.names[raw_ndvar.std('time') < self.flat])
         logger = log or LOG
@@ -1642,6 +1547,17 @@ class RawMaxwell(CachedRawPipe):
         with user_activity:
             coord_frame = 'meg' if noise else 'head'
             return mne.preprocessing.maxwell_filter(raw, bad_condition=self.bad_condition, coord_frame=coord_frame, verbose=MNE_VERBOSITY, **self.kwargs)
+
+    def _make_info(
+            self,
+            info: mne.Info,
+            *,
+            path: BIDSPath,
+            noise: bool = False,
+            raw_name: str = None,
+            log: logging.Logger | None = None,
+    ) -> mne.Info | None:
+        return None
 
 
 class RawOversampledTemporalProjection(CachedRawPipe):
@@ -1659,60 +1575,18 @@ class RawOversampledTemporalProjection(CachedRawPipe):
 
     def _make(
             self,
+            raw: mne.io.BaseRaw,
+            *,
             path: BIDSPath,
-            preload: bool,
             noise: bool = False,
-            raw: mne.io.BaseRaw = None,
-            pipes: dict[str, RawPipe] = None,
             raw_name: str = None,
             log: logging.Logger | None = None,
+            source_pipe: RawSource | None = None,
     ) -> mne.io.BaseRaw:
-        if raw is None:
-            raw = pipes[self.source]._load_with_bads(path, noise=noise, pipes=pipes, log=log)
         logger = log or LOG
         logger.info("Raw %s: computing oversampled temporal projection for %s", raw_name, path.fpath if not noise else path.find_empty_room().fpath)
         with user_activity:
             return mne.preprocessing.oversampled_temporal_projection(raw, self.duration)
-
-
-class RawUpdateBadChannels(CachedRawPipe):
-    DICT_ATTRS = CachedRawPipe.DICT_ATTRS + ('bad_channels',)
-
-    def __init__(
-            self,
-            source: str,
-            bad_channels: dict[str, Sequence[str]],
-    ):
-        CachedRawPipe.__init__(self, source, False)
-        self.bad_channels = bad_channels
-        self._pattern_keys = [key for key in bad_channels if ('*' in key or '?' in key)]
-
-    def _make(
-            self,
-            path: BIDSPath,
-            preload: bool,
-            noise: bool = False,
-            raw: mne.io.BaseRaw = None,
-            pipes: dict[str, RawPipe] = None,
-            raw_name: str = None,
-            log: logging.Logger | None = None,
-    ) -> mne.io.BaseRaw:
-        if raw is None:
-            raw = pipes[self.source]._load_with_bads(path, preload=preload, noise=noise, pipes=pipes, log=log)
-        return raw
-
-    def _load_bad_channels(self, path: BIDSPath, noise: bool = False, pipes: dict[str, RawPipe] = None, log: logging.Logger | None = None) -> list[str]:
-        bad_channels = pipes[self.source]._load_bad_channels(path, noise=noise, pipes=pipes, log=log)
-        subject = path.subject
-        if subject in self.bad_channels:
-            key = subject
-        else:
-            for key in self._pattern_keys:
-                if fnmatch.fnmatch(subject, key):
-                    break
-            else:
-                raise KeyError(subject)
-        return sorted(set(bad_channels).union(self.bad_channels[key]))
 
 
 class RawReReference(CachedRawPipe):
@@ -1756,16 +1630,14 @@ class RawReReference(CachedRawPipe):
 
     def _make(
             self,
+            raw: mne.io.BaseRaw,
+            *,
             path: BIDSPath,
-            preload: bool,
             noise: bool = False,
-            raw: mne.io.BaseRaw = None,
-            pipes: dict[str, RawPipe] = None,
             raw_name: str = None,
             log: logging.Logger | None = None,
+            source_pipe: RawSource | None = None,
     ) -> mne.io.BaseRaw:
-        if raw is None:
-            raw = pipes[self.source]._load_with_bads(path, preload=True, noise=noise, pipes=pipes, log=log)
         montage = raw.get_montage()
         if self.add:
             with warnings.catch_warnings():
@@ -1778,20 +1650,98 @@ class RawReReference(CachedRawPipe):
             raw = raw.drop_channels(self.drop)
         return raw
 
-    def _load_info(self, path: BIDSPath, pipes: dict[str, RawPipe] = None) -> mne.Info:
-        if self.add or self.drop:
-            return self._load_with_bads(path, pipes=pipes).info
-        else:
-            return super()._load_info(path, pipes)
+    def _make_info(
+            self,
+            info: mne.Info,
+            *,
+            path: BIDSPath,
+            noise: bool = False,
+            raw_name: str = None,
+            log: logging.Logger | None = None,
+    ) -> mne.Info | None:
+        return None
+
+
+class RawPipeGraph(Mapping[str, RawPipe]):
+    """Resolved raw-pipeline graph with convenience lineage lookups."""
+
+    def __init__(
+            self,
+            pipes: dict[str, RawPipe],
+            source_names: dict[str, str | None],
+            root_source_names: dict[str, str],
+            ica_names: dict[str, str | None],
+            lineages: dict[str, tuple[str, ...]],
+    ):
+        self._pipes = pipes
+        self._source_names = source_names
+        self._root_source_names = root_source_names
+        self._ica_names = ica_names
+        self._lineages = lineages
+
+    def __getitem__(self, item: str) -> RawPipe:
+        return self._pipes[item]
+
+    def __iter__(self):
+        return iter(self._pipes)
+
+    def __len__(self) -> int:
+        return len(self._pipes)
+
+    def source_name(self, raw_name: str) -> str | None:
+        """Return the immediate upstream raw name for ``raw_name``."""
+        return self._source_names[raw_name]
+
+    def source_pipe(self, raw_name: str) -> RawPipe | None:
+        """Return the immediate upstream raw pipe for ``raw_name``."""
+        source_name = self.source_name(raw_name)
+        if source_name is None:
+            return None
+        return self[source_name]
+
+    def root_source_name(self, raw_name: str) -> str:
+        """Return the source raw name at the root of ``raw_name``."""
+        return self._root_source_names[raw_name]
+
+    def root_source_pipe(self, raw_name: str) -> RawSource:
+        """Return the source raw pipe at the root of ``raw_name``."""
+        pipe = self[self.root_source_name(raw_name)]
+        assert isinstance(pipe, RawSource)
+        return pipe
+
+    def ica_name(self, raw_name: str) -> str:
+        """Return the ICA raw name associated with ``raw_name``."""
+        if raw_name in self._ica_names:
+            return self._ica_names[raw_name]
+        raise ValueError(f"{raw_name=} does not involve ICA")
+
+    def ica_pipe(self, raw_name: str) -> RawICA:
+        """Return the ICA raw pipe associated with ``raw_name``."""
+        ica_name = self.ica_name(raw_name)
+        pipe = self[ica_name]
+        assert isinstance(pipe, RawICA)
+        return pipe
+
+    def lineage_names(self, raw_name: str) -> tuple[str, ...]:
+        """Return the raw-step names from source to ``raw_name``."""
+        return self._lineages[raw_name]
+
+    def lineage_pipes(self, raw_name: str) -> tuple[RawPipe, ...]:
+        """Return the raw-step pipes from source to ``raw_name``."""
+        return tuple(self[name] for name in self.lineage_names(raw_name))
 
 
 def assemble_raw_pipes(
         raw: dict[str, RawPipe],
         tasks: tuple[str],
-) -> dict[str, RawPipe]:
+) -> RawPipeGraph:
     """Resolve raw-pipe dependencies and bind pipe names."""
     pending = dict(raw)
     resolved = {}
+    source_names = {}
+    root_source_names = {}
+    ica_names = {}
+    lineages = {}
     for name, pipe in pending.items():
         pipe._store_name(name)
     while pending:
@@ -1803,7 +1753,22 @@ def assemble_raw_pipes(
                     missing = set(pipe.task).difference(tasks)
                     if missing:
                         raise ConfigurationError(f"RawICA {key!r} lists one or more non-exising tasks: {', '.join(missing)}. Available tasks: {', '.join(tasks)}.")
+                if isinstance(pipe, RawSource):
+                    source_names[key] = None
+                    root_source_names[key] = key
+                    ica_names[key] = None
+                    lineages[key] = (key,)
+                else:
+                    source_names[key] = pipe.source
+                    root_source_names[key] = root_source_names[pipe.source]
+                    if isinstance(pipe, RawICA):
+                        ica_names[key] = key
+                    elif isinstance(pipe, RawApplyICA):
+                        ica_names[key] = pipe.ica_source
+                    else:
+                        ica_names[key] = ica_names[pipe.source]
+                    lineages[key] = (*lineages[pipe.source], key)
                 resolved[key] = pipe
         if len(pending) == n_pending:
             raise ConfigurationError(f"Unable to resolve source for raw {enumeration(pending)}, circular dependency?")
-    return raw
+    return RawPipeGraph(raw, source_names, root_source_names, ica_names, lineages)

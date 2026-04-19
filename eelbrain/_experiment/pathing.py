@@ -18,6 +18,13 @@ BIDS_ENTITY_PREFIX_MAP = {
 }
 BIDS_PATH_KEYS = ('datatype', 'suffix', 'extension', *BIDS_ENTITY_KEYS)
 
+DERIV_DIR = Path('derivatives')
+CACHE_DIR = DERIV_DIR / 'eelbrain' / 'cache'
+LOG_DIR = DERIV_DIR / 'eelbrain' / 'logs'
+RESULTS_DIR = DERIV_DIR / 'eelbrain' / 'results'
+METHODS_DIR = DERIV_DIR / 'eelbrain' / 'methods'
+MRI_SDIR = DERIV_DIR / 'freesurfer'
+
 
 def _state_value(state: dict[str, Any], key: str) -> str | None:
     value = state.get(key)
@@ -72,14 +79,6 @@ def test_basename(state: dict[str, Any]) -> str:
     return _bids_name(state, ('session', 'run'), suffix=state['suffix'])
 
 
-DERIV_DIR = Path('derivatives')
-CACHE_DIR = DERIV_DIR / 'eelbrain' / 'cache'
-LOG_DIR = DERIV_DIR / 'eelbrain' / 'logs'
-RESULTS_DIR = DERIV_DIR / 'eelbrain' / 'results'
-METHODS_DIR = DERIV_DIR / 'eelbrain' / 'methods'
-MRI_SDIR = DERIV_DIR / 'freesurfer'
-
-
 def raw_dir(state: dict[str, Any]) -> Path:
     path = Path(f"sub-{state['subject']}")
     if state.get('session'):
@@ -89,8 +88,7 @@ def raw_dir(state: dict[str, Any]) -> Path:
 
 def ica_file_path(
         state: dict[str, Any],
-        *,
-        raw: str = 'ica',
+        raw: str,
 ) -> Path:
     return DERIV_DIR / 'ica' / f"{epoch_basename(state)}_raw-{raw}_ica.fif"
 

@@ -331,14 +331,14 @@ class TransInput(Input):
     name = 'trans-input'
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return file_fingerprint(ctx.registry.root, ctx.registry.root / trans_file_path(ctx.state), 'trans-file')
+        return file_fingerprint(ctx.root, ctx.root / trans_file_path(ctx.state), 'trans-file')
 
 
 class BemInput(Input):
     name = 'bem-input'
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return file_fingerprint(ctx.registry.root, ctx.registry.root / bem_file_path(ctx.state), 'bem-file')
+        return file_fingerprint(ctx.root, ctx.root / bem_file_path(ctx.state), 'bem-file')
 
 
 class SrcDerivative(Derivative[mne.SourceSpaces]):
@@ -346,10 +346,10 @@ class SrcDerivative(Derivative[mne.SourceSpaces]):
     key_fields = ('mrisubject', 'src')
 
     def _is_scaled(self, ctx: Request) -> bool:
-        return ctx.state['mrisubject'] != ctx.state['common_brain'] and is_fake_mri(ctx.registry.root / mri_dir(ctx.state))
+        return ctx.state['mrisubject'] != ctx.state['common_brain'] and is_fake_mri(ctx.root / mri_dir(ctx.state))
 
     def path(self, ctx: Request) -> Path:
-        return ctx.registry.root / src_file_path(ctx.state)
+        return ctx.root / src_file_path(ctx.state)
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         deps = []
@@ -368,7 +368,7 @@ class SrcDerivative(Derivative[mne.SourceSpaces]):
             'mrisubject': ctx.state['mrisubject'],
             'src': ctx.state['src'],
             'common_brain': ctx.state['common_brain'],
-            'fake_mri': is_fake_mri(ctx.registry.root / mri_dir(ctx.state)),
+            'fake_mri': is_fake_mri(ctx.root / mri_dir(ctx.state)),
         }
 
     def build(self, ctx: Request) -> mne.SourceSpaces:
@@ -381,16 +381,16 @@ class SrcDerivative(Derivative[mne.SourceSpaces]):
         if self._is_scaled(ctx):
             ctx.load('src', state={'mrisubject': common_brain})
             ctx.registry.log.info("Scaling %s source space for %s...", src, subject)
-            mne.scale_source_space(subject, f'{{subject}}-{src}-src.fif', subjects_dir=ctx.registry.root / MRI_SDIR, n_jobs=1)
+            mne.scale_source_space(subject, f'{{subject}}-{src}-src.fif', subjects_dir=ctx.root / MRI_SDIR, n_jobs=1)
             return mne.read_source_spaces(dst)
 
-        subjects_dir = ctx.registry.root / MRI_SDIR
+        subjects_dir = ctx.root / MRI_SDIR
         kind, param, special = parse_src(src)
         grade = int(param)
         ctx.registry.log.info("Generating %s source space for %s...", src, subject)
         if kind == 'vol':
             if subject == 'fsaverage':
-                bem = ctx.registry.root / bem_file_path(ctx.state)
+                bem = ctx.root / bem_file_path(ctx.state)
             else:
                 raise NotImplementedError("Volume source space for subject other than fsaverage")
             if special == 'brainstem':
@@ -411,7 +411,7 @@ class SrcDerivative(Derivative[mne.SourceSpaces]):
             else:
                 raise RuntimeError(f'{src=}')
             voi.extend('%s-%s' % fmt for fmt in product(('Left', 'Right'), voi_lat))
-            mri_dir_ = ctx.registry.root / mri_dir(ctx.state)
+            mri_dir_ = ctx.root / mri_dir(ctx.state)
             mri_dir_.mkdir(parents=True, exist_ok=True)
             sss = mne.setup_volume_source_space(
                 subject,
@@ -464,15 +464,15 @@ class SourceMorphDerivative(Derivative[mne.SourceMorph]):
             'mrisubject': ctx.state['mrisubject'],
             'common_brain': ctx.state['common_brain'],
             'src': ctx.state['src'],
-            'fake_mri': is_fake_mri(ctx.registry.root / mri_dir(ctx.state)),
+            'fake_mri': is_fake_mri(ctx.root / mri_dir(ctx.state)),
         }
 
     def build(self, ctx: Request) -> mne.SourceMorph:
         subject_from = ctx.state['mrisubject']
         subject_to = ctx.state['common_brain']
-        subjects_dir = ctx.registry.root / MRI_SDIR
+        subjects_dir = ctx.root / MRI_SDIR
         src_to = ctx.load('src', state={'mrisubject': subject_to})
-        if is_fake_mri(ctx.registry.root / mri_dir(ctx.state)) and subject_from != subject_to:
+        if is_fake_mri(ctx.root / mri_dir(ctx.state)) and subject_from != subject_to:
             src_from = ctx.load('src')
             return _identity_source_morph(subject_from, subject_to, src_from, src_to)
         src_from = ctx.load('src')
@@ -532,9 +532,9 @@ class FwdDerivative(Derivative[mne.Forward]):
         src = ctx.load('src')
         dst = self.path(ctx)
         if ctx.state['mrisubject'] == 'fsaverage':
-            bemsol = ctx.registry.root / mri_dir(ctx.state) / 'bem' / 'fsaverage-5120-5120-5120-bem-sol.fif'
+            bemsol = ctx.root / mri_dir(ctx.state) / 'bem' / 'fsaverage-5120-5120-5120-bem-sol.fif'
         else:
-            bem = _load_bem(ctx.registry.root, ctx.state, ctx.registry.log)
+            bem = _load_bem(ctx.root, ctx.state, ctx.registry.log)
             bemsol = mne.make_bem_solution(bem)
         if 'kit_system_id' in raw.info:
             is_kit = raw.info['kit_system_id'] is not None
@@ -542,7 +542,7 @@ class FwdDerivative(Derivative[mne.Forward]):
             raise RuntimeError("Unclear how to set ignor_ref for legacy file without kit_system_id")
         fwd = mne.make_forward_solution(
             raw.info,
-            ctx.registry.root / trans_file_path(ctx.state),
+            ctx.root / trans_file_path(ctx.state),
             src,
             bemsol,
             ignore_ref=is_kit,
@@ -687,7 +687,7 @@ def _prepare_source_projection(
         morph: bool | None,
         solution: InverseSolution,
 ) -> SourceProjection:
-    subjects_dir = ctx.registry.root / MRI_SDIR
+    subjects_dir = ctx.root / MRI_SDIR
     mrisubject = ctx.state['mrisubject']
     source_subject = find_source_subject(mrisubject, subjects_dir) or mrisubject
     is_scaled = source_subject != mrisubject
@@ -713,7 +713,7 @@ def _prepare_source_projection(
         target_subject = ctx.state['common_brain']
         stc_key = 'stcm'
         src_key = 'srcm'
-        subject_from = ctx.state['common_brain'] if is_fake_mri(ctx.registry.root / mri_dir(ctx.state)) else mrisubject
+        subject_from = ctx.state['common_brain'] if is_fake_mri(ctx.root / mri_dir(ctx.state)) else mrisubject
         if subject_from == ctx.state['common_brain']:
             set_subject = ctx.state['common_brain']
         else:
@@ -747,14 +747,14 @@ def _source_dependencies(ctx: Request, sensor_dependency: Dependency) -> tuple[D
     deps = [sensor_dependency, Dependency('inv')]
     parc = _source_parc(ctx.state)
     if parc:
-        subjects_dir = ctx.registry.root / MRI_SDIR
+        subjects_dir = ctx.root / MRI_SDIR
         mrisubject = ctx.state['mrisubject']
         source_subject = find_source_subject(mrisubject, subjects_dir) or mrisubject
         target_subject = ctx.state['common_brain'] if ctx.options['morph'] else mrisubject
         deps.append(Dependency('annot', state={'mrisubject': target_subject, 'parc': parc}))
         if (source_subject != target_subject) and (source_subject != mrisubject or not ctx.options['morph']):
             deps.append(Dependency('annot', label='source', state={'mrisubject': source_subject, 'parc': parc}))
-    if ctx.options['morph'] and (ctx.state['common_brain'] if is_fake_mri(ctx.registry.root / mri_dir(ctx.state)) else ctx.state['mrisubject']) != ctx.state['common_brain']:
+    if ctx.options['morph'] and (ctx.state['common_brain'] if is_fake_mri(ctx.root / mri_dir(ctx.state)) else ctx.state['mrisubject']) != ctx.state['common_brain']:
         deps.append(Dependency('source-morph'))
     return tuple(deps)
 
@@ -861,10 +861,10 @@ class EpochsStcDerivative(Derivative[Dataset]):
             info = epochs_list[0].info
             sensor_types = TestDims.coerce('sensor').data_to_ndvar(info)
             ds.info['sensor_types'] = sensor_types
-            raw_pipe = self.raw[ctx.state['raw']]
+            raw_pipe = self.raw.root_source_pipe(ctx.state['raw'])
             for data_kind in sensor_types:
-                sysname = raw_pipe._get_sysname(info, ds.info['subject'], data_kind, self.raw)
-                adjacency = raw_pipe._get_adjacency(data_kind, self.raw)
+                sysname = raw_pipe._get_sysname(info, ds.info['subject'], data_kind)
+                adjacency = raw_pipe._get_adjacency(data_kind)
                 name = 'meg' if data_kind == 'mag' and 'grad' not in sensor_types else data_kind
                 if isinstance(epochs_value, Datalist):
                     ys = [load.mne.epochs_ndvar(value, data=data_kind, sysname=sysname, adjacency=adjacency, name=data_kind)[0] for value in epochs_value]
@@ -971,12 +971,12 @@ class EvokedStcDerivative(Derivative[Dataset]):
 
         if keep_evoked and ndvar:
             evoked = ds['evoked']
-            pipe = self.raw[ctx.state['raw']]
+            pipe = self.raw.root_source_pipe(ctx.state['raw'])
             info = evoked[0].info
             sensor_types = ds.info['sensor_types'] = TestDims.coerce('sensor').data_to_ndvar(info)
             for sensor_type in sensor_types:
-                sysname = pipe._get_sysname(info, ctx.state['subject'], sensor_type, self.raw)
-                adjacency = pipe._get_adjacency(sensor_type, self.raw)
+                sysname = pipe._get_sysname(info, ctx.state['subject'], sensor_type)
+                adjacency = pipe._get_adjacency(sensor_type)
                 name = 'meg' if sensor_type == 'mag' else sensor_type
                 ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
             del ds['evoked']

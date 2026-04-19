@@ -111,6 +111,11 @@ class SourceInput(Input):
             return value.upper()
         return value
 
+    def load_view(self, ctx: Request, view: str) -> str:
+        if view != 'echo':
+            return super().load_view(ctx, view)
+        return f"source:{self.load(ctx)}"
+
 
 class ValueDerivative(Derivative[str]):
     name = 'value'
@@ -297,7 +302,7 @@ class OptionDerivative(Derivative[str]):
         self.calls = []
 
     def fingerprint(self, ctx: Request) -> dict[str, object]:
-        return self.standard_fingerprint(ctx, state_fields=('subject',))
+        return self.standard_fingerprint(ctx)
 
     def build(self, ctx: Request) -> str:
         self.calls.append(('build', ctx.options['artifact'], ctx.view_options['view']))
@@ -681,3 +686,11 @@ def test_request_loads_named_view_and_exposes_artifact_metadata():
         ('load', 2, 7),
         ('named-view', 2, 7),
     ]
+
+
+def test_request_loads_named_view_from_input():
+    _, registry, _, _, _, _, _, _, _ = make_registry()
+
+    value = registry.resolve('source', state=DEFAULT_STATE, options={'upper': True}).load(view='echo')
+
+    assert value == 'source:ALPHA'

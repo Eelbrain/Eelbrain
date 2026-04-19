@@ -133,7 +133,9 @@ class Configuration:
         """
         if self.DICT_ATTRS is None:
             raise NotImplementedError(f"{self.__class__.__name__}.DICT_ATTRS")
-        return {k: getattr(self, k) for k in self.DICT_ATTRS}
+        out = {'type': self.__class__.__name__}
+        out.update({k: getattr(self, k) for k in self.DICT_ATTRS})
+        return out
 
     def _store_name(self, name: str) -> None:
         """Store the bound name for diagnostics and runtime convenience."""

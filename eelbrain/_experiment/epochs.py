@@ -771,7 +771,7 @@ class EpochsDerivative(Derivative[Any]):
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         epoch = self.epochs[ctx.state['epoch']]
-        return self.standard_fingerprint(ctx, state_fields=self.key_fields, definitions={'epoch': epoch._as_dict()})
+        return self.standard_fingerprint(ctx, definitions={'epoch': epoch._as_dict()})
 
     def build(self, ctx: Request):
         epoch_name = ctx.state['epoch']
@@ -958,10 +958,10 @@ class EpochsDerivative(Derivative[Any]):
             info = epochs_list[0].info
             sensor_types = data.data_to_ndvar(info)
             ds.info['sensor_types'] = sensor_types
-            pipe = self.raw[ctx.state['raw']]
+            source_pipe = self.raw.root_source_pipe(ctx.state['raw'])
             for data_kind in sensor_types:
-                sysname = pipe._get_sysname(info, ds.info['subject'], data_kind, self.raw)
-                adjacency = pipe._get_adjacency(data_kind, self.raw)
+                sysname = source_pipe._get_sysname(info, ds.info['subject'], data_kind)
+                adjacency = source_pipe._get_adjacency(data_kind)
                 name = 'meg' if data_kind == 'mag' and 'grad' not in sensor_types else data_kind
                 if variable_tmax:
                     ys = [load.mne.epochs_ndvar(e, data=data_kind, sysname=sysname, adjacency=adjacency, name=data_kind)[0] for e in epoch_value]
@@ -1033,7 +1033,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         return (Dependency('epochs', options=self._epochs_options(ctx), view='shell'),)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        fingerprint = self.standard_fingerprint(ctx, state_fields=self.key_fields)
+        fingerprint = self.standard_fingerprint(ctx)
         ds = ctx.load(view='shell')
         model = ctx.state['model']
         if model:
@@ -1138,10 +1138,10 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
                 del ds['evoked']
             info = evoked[0].info
             sensor_types = ds.info['sensor_types'] = data.data_to_ndvar(info)
-            pipe = self.raw[ctx.state['raw']]
+            source_pipe = self.raw.root_source_pipe(ctx.state['raw'])
             for sensor_type in sensor_types:
-                sysname = pipe._get_sysname(info, ctx.state['subject'], sensor_type, self.raw)
-                adjacency = pipe._get_adjacency(sensor_type, self.raw)
+                sysname = source_pipe._get_sysname(info, ctx.state['subject'], sensor_type)
+                adjacency = source_pipe._get_adjacency(sensor_type)
                 name = 'meg' if sensor_type == 'mag' else sensor_type
                 ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
                 if sensor_type != 'eog' and isinstance(data.sensor, str):
@@ -1228,11 +1228,11 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
             del ds['evoked']
             info = evoked[0].info
             sensor_types = ds.info['sensor_types'] = data.data_to_ndvar(info)
-            pipe = self.raw[ctx.state['raw']]
+            source_pipe = self.raw.root_source_pipe(ctx.state['raw'])
             subject = ds[0, 'subject']
             for sensor_type in sensor_types:
-                sysname = pipe._get_sysname(info, subject, sensor_type, self.raw)
-                adjacency = pipe._get_adjacency(sensor_type, self.raw)
+                sysname = source_pipe._get_sysname(info, subject, sensor_type)
+                adjacency = source_pipe._get_adjacency(sensor_type)
                 name = 'meg' if sensor_type == 'mag' else sensor_type
                 ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
                 if sensor_type != 'eog' and isinstance(data.sensor, str):
