@@ -51,7 +51,7 @@ from .pathing import (
 )
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, _resolve_parc
 from .preprocessing import (
-    ICAInput, RawBadChannelsInput, RawDerivative, RawPipe, RawSource, RawSourceInput, RawICA,
+    CachedRawPipe, ICAInput, RawBadChannelsInput, RawDerivative, RawPipe, RawSource, RawSourceInput, RawICA,
     REINDEX_ICA, assemble_raw_pipes, ica_input_name, raw_node_name,
 )
 from .reports import (
@@ -454,12 +454,14 @@ class Pipeline(StateModel):
             if isinstance(pipe, RawSource):
                 self._derivatives.register(RawBadChannelsInput(raw_name, pipe))
                 self._derivatives.register(RawSourceInput(raw_name, pipe))
-            else:
+            elif isinstance(pipe, CachedRawPipe):
                 # FIXME: run handling
                 # runs = self._runs if isinstance(pipe, RawICA) else None
                 self._derivatives.register(RawDerivative(raw_name, pipe, self._raw))
                 if isinstance(pipe, RawICA):
                     self._derivatives.register(ICAInput(raw_name, pipe, self._raw))
+            else:
+                raise TypeError(f"Unknown raw pipe {pipe}")
         self._derivatives.register(TransInput())
         self._derivatives.register(BemInput())
         self._derivatives.register(RejectionInput(self.root, self._artifact_rejection, self._epochs))
@@ -530,10 +532,10 @@ class Pipeline(StateModel):
             controls: frozenset[str] | set[str] | tuple[str, ...] = (),
     ):
         options_ = {} if options is None else dict(options)
-        handle = self._derivatives.resolve(name, state=self.state, options=options_, controls=controls)
-        if not redo and handle.is_valid():
+        ctx = self._derivatives.resolve(name, state=self.state, options=options_, controls=controls)
+        if not redo and ctx.is_valid():
             return None
-        return handle.load(cache=cache, view=view)
+        return ctx.load(cache=cache, view=view)
 
     def __iter__(self):
         "Iterate state through subjects and yield each subject name."
@@ -2277,39 +2279,35 @@ class Pipeline(StateModel):
         """
         debug = state.pop('debug', False)
         # ICA
-        path = self.make_ica(**state)
+        path = self.make_ica(**state)  # sets raw to ica-raw
         # display data
         subject = self.get('subject')
-        ica_name = self._raw.ica_name(self.get('raw', **state))
+        ica_name = self.get('raw')
         pipe = self._raw.ica_pipe(ica_name)
-        ctx = self._derivatives.resolve(ica_input_name(ica_name), state={**self.state, 'raw': ica_name})
-        bads = self._derivatives.resolve(
-            raw_node_name(ica_name),
-            state={**self.state, 'raw': ica_name},
-            options={'noise': False},
-        ).load(view='bads')
-        with self._temporary_state:
-            if epoch is None:
-                if task is None:
-                    task = pipe.task
-                else:
-                    task = sequence_arg('task', task)
-                raw = ctx.node.load_concatenated_source_raw(ctx, task)
-                decim = decim_param(samplingrate, decim, None, raw.info, minimal=True)
-                info = raw.info
-                display_data = raw
-            elif task is not None:
-                raise TypeError(f"{task=} with {epoch=}")
+        bads = self._load_derivative(raw_node_name(ica_name), options={'noise': False}, view='bads')
+        if epoch is None:
+            if task is None:
+                task = pipe.task
             else:
+                task = sequence_arg('task', task)
+            ctx = self._derivatives.resolve(ica_input_name(ica_name), state=self.state)
+            raw = ctx.node.load_concatenated_source_raw(ctx, task)
+            decim = decim_param(samplingrate, decim, None, raw.info, minimal=True)
+            info = raw.info
+            display_data = raw
+        elif task is not None:
+            raise TypeError(f"{task=} with {epoch=}")
+        else:
+            with self._temporary_state:
                 ds = self.load_epochs(ndvar=False, epoch=epoch, reject=False, raw=pipe.source, samplingrate=samplingrate, decim=decim, add_bads=bads)
-                if isinstance(ds['epochs'], Datalist):  # variable-length epoch
-                    data = np.concatenate([epoch.get_data()[0] for epoch in ds['epochs']], axis=1)  # n_epochs, n_channels, n_times
-                    raw = mne.io.RawArray(data, ds[0, 'epochs'].info)
-                    events = mne.make_fixed_length_events(raw)
-                    ds = Dataset({'epochs': mne.Epochs(raw, events, 1, 0, 1, baseline=None, proj=False, preload=True)})
-                info = ds['epochs'].info
-                decim = None
-                display_data = ds
+            if isinstance(ds['epochs'], Datalist):  # variable-length epoch
+                data = np.concatenate([epoch.get_data()[0] for epoch in ds['epochs']], axis=1)  # n_epochs, n_channels, n_times
+                raw = mne.io.RawArray(data, ds[0, 'epochs'].info)
+                events = mne.make_fixed_length_events(raw)
+                ds = Dataset({'epochs': mne.Epochs(raw, events, 1, 0, 1, baseline=None, proj=False, preload=True)})
+            info = ds['epochs'].info
+            decim = None
+            display_data = ds
         data = TestDims('sensor')
         data_kind = data.data_to_ndvar(info)[0]
         source_pipe = self._raw.root_source_pipe(ica_name)
@@ -2350,9 +2348,10 @@ class Pipeline(StateModel):
         """
         raw_name = self.get('raw', **state)
         ica_raw_name = self._raw.ica_name(raw_name)
-        with self._temporary_state:
+        if ica_raw_name != raw_name:
             self.set(raw=ica_raw_name)
-            ctx = self._derivatives.resolve(ica_input_name(ica_raw_name), state=self.state)
+            print(f"raw: {raw_name} -> {ica_raw_name}")
+        ctx = self._derivatives.resolve(ica_input_name(ica_raw_name), state=self.state)
         try:
             ctx.node.materialize(ctx)
         except ProtectedArtifactError as error:

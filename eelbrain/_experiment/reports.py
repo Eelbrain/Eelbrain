@@ -25,7 +25,7 @@ from .._utils.mne_utils import is_fake_mri
 from .derivative_cache import Dependency, Derivative, Request, file_fingerprint
 from .parc import IndividualSeededParc, _resolve_parc
 from .pathing import MRI_SDIR, coreg_report_path, mri_dir, trans_file_path
-from .preprocessing import RawPipe, raw_node_name
+from .preprocessing import RawPipeGraph, raw_node_name
 from .results import (
     RESULT_OPTION_DEFAULTS,
     TEST_DATA_OPTION_NAMES,
@@ -439,7 +439,7 @@ class CoregReportDerivative(Derivative[Path]):
     OPTION_DEFAULTS = {}
     VIEW_OPTION_DEFAULTS = {'dst': None}
 
-    def __init__(self, raw: dict[str, RawPipe]):
+    def __init__(self, raw: RawPipeGraph):
         self.raw = raw
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
