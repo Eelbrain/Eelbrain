@@ -39,7 +39,7 @@ from .derivative_cache import CachePolicy, Dependency, Derivative, Request
 from .epochs import EpochCollection, SecondaryEpoch, SuperEpoch
 from .exceptions import FileMissingError
 from .pathing import BIDS_ENTITY_KEYS, rej_file_path
-from .preprocessing import load_raw_dependency, raw_data_dependency
+from .preprocessing import load_raw_dependency, raw_data_dependency, raw_node_name
 from .variable_def import Variables
 
 
@@ -120,7 +120,9 @@ class EventsDerivative(Derivative[Dataset]):
         entities = {k: ctx.state[k] for k in BIDS_ENTITY_KEYS}
         subject = entities['subject']
         session = entities['session']
-        raw = load_raw_dependency(ctx, add_bads=False, preload=self.preload, noise=False)
+        raw = ctx.load(raw_node_name(ctx.state['raw']))
+        if self.preload and not raw.preload:
+            raw.load_data()
         ds = load.mne.events(raw, self.merge_triggers, stim_channel=self.stim_channel)
         del ds.info['raw']
         ds.info['sfreq'] = raw.info['sfreq']
@@ -259,7 +261,7 @@ class SelectedEventsDerivative(Derivative[Dataset]):
             return self.fingerprint(ctx)
         if view != 'epochs':
             raise ValueError(f"{self.name!r} does not define dependency view {view!r}")
-        ds = self.build(ctx)
+        ds = ctx.load()
         return {'i_start': ctx.registry.canonicalize(ds['i_start'])}
 
     def _build_selected_events(
@@ -332,8 +334,7 @@ class SelectedEventsDerivative(Derivative[Dataset]):
                     raise FileMissingError(f"The rejection file at {rej_file.relative_to(ctx.root)} does not exist. Run .make_epoch_selection() first.")
             else:
                 ds_sel = None
-            state = {**ctx.state, 'task': epoch.task}
-            ds = ctx.load('labeled-events', state=state)
+            ds = ctx.load(f'{epoch.task}:labeled-events')
             if epoch.sel:
                 ds = ds.sub(epoch.sel)
             if index:

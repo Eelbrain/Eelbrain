@@ -375,11 +375,10 @@ class SrcDerivative(Derivative[mne.SourceSpaces]):
         dst = self.path(ctx)
         dst.parent.mkdir(parents=True, exist_ok=True)
         subject = ctx.state['mrisubject']
-        common_brain = ctx.state['common_brain']
         src = ctx.state['src']
 
         if self._is_scaled(ctx):
-            ctx.load('src', state={'mrisubject': common_brain})
+            ctx.load('common-brain-src')
             ctx.registry.log.info("Scaling %s source space for %s...", src, subject)
             mne.scale_source_space(subject, f'{{subject}}-{src}-src.fif', subjects_dir=ctx.root / MRI_SDIR, n_jobs=1)
             return mne.read_source_spaces(dst)
@@ -452,11 +451,7 @@ class SourceMorphDerivative(Derivative[mne.SourceMorph]):
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (
             Dependency('src', label='src-from'),
-            Dependency(
-                'src',
-                label='src-to',
-                state={'mrisubject': ctx.state['common_brain']},
-            ),
+            Dependency('src', label='src-to', state={'mrisubject': ctx.state['common_brain']}),
         )
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
@@ -471,11 +466,11 @@ class SourceMorphDerivative(Derivative[mne.SourceMorph]):
         subject_from = ctx.state['mrisubject']
         subject_to = ctx.state['common_brain']
         subjects_dir = ctx.root / MRI_SDIR
-        src_to = ctx.load('src', state={'mrisubject': subject_to})
+        src_to = ctx.load('src-to')
         if is_fake_mri(ctx.root / mri_dir(ctx.state)) and subject_from != subject_to:
-            src_from = ctx.load('src')
+            src_from = ctx.load('src-from')
             return _identity_source_morph(subject_from, subject_to, src_from, src_to)
-        src_from = ctx.load('src')
+        src_from = ctx.load('src-from')
         return mne.compute_source_morph(
             src_from,
             subject_from,
@@ -528,7 +523,7 @@ class FwdDerivative(Derivative[mne.Forward]):
         }
 
     def build(self, ctx: Request) -> mne.Forward:
-        raw = load_raw_dependency(ctx, ctx.state['raw'], add_bads=False)
+        raw = ctx.load(raw_node_name('raw'))
         src = ctx.load('src')
         dst = self.path(ctx)
         if ctx.state['mrisubject'] == 'fsaverage':
@@ -578,10 +573,13 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
     )
     cache_policy = CachePolicy.OPTIONAL
     cache_suffix = '-inv.fif'
-    VIEW_OPTION_DEFAULTS = {'fiff': None}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        return (Dependency('fwd'), Dependency(cov_node_name(ctx.state['cov'])))
+        return (
+            Dependency(raw_node_name(ctx.state['raw']), options={'add_bads': False, 'preload': False, 'noise': False}),
+            Dependency('fwd'),
+            Dependency(cov_node_name(ctx.state['cov'])),
+        )
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {
@@ -596,10 +594,8 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
     def build(self, ctx: Request) -> mne.minimum_norm.InverseOperator:
         solution = InverseSolution._coerce(ctx.state['inv'])
         solution._validate_for_source_space(ctx.state['src'])
-        fiff = ctx.view_options['fiff']
-        if fiff is None:
-            fiff = load_raw_dependency(ctx, ctx.state['raw'])
-        return solution._build_operator(fiff.info, ctx.load('fwd'), ctx.load(cov_node_name(ctx.state['cov'])))
+        raw = ctx.load(raw_node_name(ctx.state['raw']))
+        return solution._build_operator(raw.info, ctx.load('fwd'), ctx.load(cov_node_name(ctx.state['cov'])))
 
     def load(
             self,
@@ -683,7 +679,6 @@ class SourceProjection:
 
 def _prepare_source_projection(
         ctx: Request,
-        fiff: Any,
         morph: bool | None,
         solution: InverseSolution,
 ) -> SourceProjection:
@@ -694,11 +689,11 @@ def _prepare_source_projection(
     target_subject = ctx.state['common_brain'] if morph else mrisubject
     parc = _source_parc(ctx.state)
     if parc:
-        ctx.load('annot', state={'mrisubject': target_subject, 'parc': parc})
+        ctx.load('annot')
         if (is_scaled or not morph) and source_subject != target_subject:
-            ctx.load('annot', state={'mrisubject': source_subject, 'parc': parc})
+            ctx.load('source')
 
-    operator = ctx.load('inv', options={'fiff': fiff})
+    operator = ctx.load('inv')
     if parc and (is_scaled or not morph):
         label = label_from_annot(operator['src'], source_subject, subjects_dir, parc)
     else:
@@ -717,7 +712,7 @@ def _prepare_source_projection(
         if subject_from == ctx.state['common_brain']:
             set_subject = ctx.state['common_brain']
         else:
-            source_morph = ctx.load('source-morph', state={'mrisubject': subject_from})
+            source_morph = ctx.load('source-morph')
         remove_unknown_after_ndvar = bool(parc and not is_scaled)
 
     return SourceProjection(
@@ -819,7 +814,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
     def build(self, ctx: Request) -> Dataset:
         epoch = self.epochs[ctx.state['epoch']]
         solution = InverseSolution._coerce(ctx.state['inv'])
-        ds = ctx.load('epochs', options=ctx.options_for('epochs', baseline=ctx.options['baseline'], ndvar=False, reject=ctx.options['reject'], cat=ctx.options['cat'], samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], pad=ctx.options['pad'], data_raw=False, data='sensor'))
+        ds = ctx.load('epochs')
 
         src_baseline = ctx.options['src_baseline']
         if not ctx.options['baseline'] and src_baseline and epoch.post_baseline_trigger_shift:
@@ -830,7 +825,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
         epochs_value = ds['epochs']
         epoch_list = epochs_value if isinstance(epochs_value, Datalist) else [epochs_value]
         variable_time = isinstance(epochs_value, Datalist)
-        projection = _prepare_source_projection(ctx, epoch_list[0], ctx.options['morph'], solution)
+        projection = _prepare_source_projection(ctx, ctx.options['morph'], solution)
         stc_value = [solution._apply_epochs(epoch_obj, projection.operator, label=projection.label) for epoch_obj in epoch_list]
         if variable_time:
             stc_value = [value[0] for value in stc_value]
@@ -943,7 +938,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
 
     def build(self, ctx: Request) -> Dataset:
         solution = InverseSolution._coerce(ctx.state['inv'])
-        ds = ctx.load('evoked', options=ctx.options_for('evoked', baseline=ctx.options['baseline'], ndvar=False, cat=ctx.options['cat'], samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], data_raw=False, data='sensor'))
+        ds = ctx.load('evoked')
 
         src_baseline = ctx.options['src_baseline']
         epoch = self.epochs[ctx.state['epoch']]
@@ -951,7 +946,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
             raise NotImplementedError(f"{src_baseline=}: post_baseline_trigger_shift is not implemented for baseline correction in source space")
         if src_baseline is True:
             src_baseline = epoch.baseline
-        projection = _prepare_source_projection(ctx, ds['evoked'][0], ctx.options['morph'], solution)
+        projection = _prepare_source_projection(ctx, ctx.options['morph'], solution)
         stc_value = [solution._apply_evoked(evoked, projection.operator) for evoked in ds['evoked']]
         _apply_source_baseline(stc_value, src_baseline)
         stc_value = projection.morph_stcs(stc_value)
@@ -1044,11 +1039,7 @@ class EpochsStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
         )
 
     def build(self, ctx: Request) -> Dataset:
-        options = self._group_options(ctx)
-        dss = [
-            ctx.load('epochs-stc', state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
-            for subject in self.groups[ctx.state['group']]
-        ]
+        dss = [ctx.load(subject) for subject in self.groups[ctx.state['group']]]
         return combine(dss)
 
 
@@ -1095,11 +1086,7 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
         )
 
     def build(self, ctx: Request) -> Dataset:
-        options = self._group_options(ctx)
-        dss = [
-            ctx.load('evoked-stc', state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
-            for subject in self.groups[ctx.state['group']]
-        ]
+        dss = [ctx.load(subject) for subject in self.groups[ctx.state['group']]]
         return combine(dss)
 
 

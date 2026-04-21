@@ -518,12 +518,11 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
             _validate_post_aggregation_test_vars(test_obj, data.string)
 
         if data.sensor:
-            ds = ctx.load('evoked-group-dataset', options=self._sensor_evoked_options(ctx, test_obj.cat))
+            ds = ctx.load('evoked-group-dataset')
             return _apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string)
 
-        samplingrate = ctx.options['samplingrate']
         if data.source is True:
-            ds = ctx.load('evoked-stc-group-dataset', options=_evoked_stc_options(ctx, morph=True, cat=test_obj.cat, samplingrate=samplingrate))
+            ds = ctx.load('evoked-stc-group-dataset')
             ds = _apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string)
             if smooth := ctx.options['smooth']:
                 ds[data.y_name] = ds[data.y_name].smooth('source', smooth, 'gaussian')
@@ -534,11 +533,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
 
         dss = []
         for subject in subjects:
-            ds = ctx.load(
-                'evoked-stc',
-                state={'subject': subject},
-                options=_evoked_stc_options(ctx, morph=False, cat=None, samplingrate=samplingrate),
-            )
+            ds = ctx.load(subject)
             dss.append(_apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string))
         return roi_data_from_subject_datasets(dss, data.source)
 
@@ -566,7 +561,7 @@ class TestResultDerivative(ResultOutputDerivative):
         test_obj = self.tests[ctx.options['test']]
         data = ctx.options['data']
         test_spec = ResolvedTestNDSpec.from_request(ctx, data)
-        data_value = ctx.load('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES))
+        data_value = ctx.load('evoked-test-data')
         if isinstance(data_value, ROIData):
             subjects = list(self.groups[ctx.state['group']])
             n_per_label = {label: len(ds['subject'].cells) for label, ds in data_value.label_data.items()}
@@ -656,10 +651,10 @@ class DSPMMovieDerivative(ResultOutputDerivative[Path]):
     def build(self, ctx: Request) -> Path:
         dst = self.path(ctx)
         if ctx.options['single_subject']:
-            ds = ctx.load('evoked-stc', state={'subject': ctx.options['subject']}, options=_evoked_stc_options(ctx))
+            ds = ctx.load('evoked-stc')
             y = ds['src']
         else:
-            ds = ctx.load('evoked-stc-group-dataset', options=_evoked_stc_options(ctx, morph=True))
+            ds = ctx.load('evoked-stc-group-dataset')
             y = ds['srcm']
         brain = plot.brain.dspm(y, ctx.options['fmin'], ctx.options['fmin'] * 3, colorbar=False, **ctx.options['brain_kwargs'])
         brain.save_movie(dst, ctx.options['time_dilation'])
@@ -746,10 +741,10 @@ class TTestMovieDerivative(ResultOutputDerivative[Path]):
         dst = self.path(ctx)
         cluster_state = dict(ctx.options['cluster_state'] or {})
         if ctx.options['single_subject']:
-            ds = ctx.load('epochs-stc', state={'subject': ctx.options['subject']}, options=_epochs_stc_options(ctx, cat=ctx.options['cat']))
+            ds = ctx.load('epochs-stc')
             y = 'src'
         else:
-            ds = ctx.load('evoked-stc-group-dataset', options=_evoked_stc_options(ctx, morph=True, cat=ctx.options['cat']))
+            ds = ctx.load('evoked-stc-group-dataset')
             y = 'srcm'
         if cluster_state:
             cluster_state.update(samples=0, pmin=ctx.options['p'])

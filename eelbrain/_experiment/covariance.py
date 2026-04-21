@@ -12,7 +12,7 @@ import mne
 import numpy
 
 from .derivative_cache import Dependency, Derivative, Request
-from .preprocessing import load_raw_dependency, raw_data_dependency
+from .preprocessing import raw_data_dependency, raw_node_name
 
 
 def cov_node_name(cov: str) -> str:
@@ -128,10 +128,10 @@ class CovDerivative(Derivative[mne.Covariance]):
             cov_path = self.path(ctx)
             cov_path.parent.mkdir(parents=True, exist_ok=True)
             log_path = cov_path.with_suffix('.info.txt')
-            ds = ctx.load('epochs', state={'epoch': self.cov.epoch}, options=self._EPOCH_COV_OPTIONS)
+            ds = ctx.load('epochs')
             epochs = ds['epochs']
             return self.cov.make(epochs, log_path)
-        raw = load_raw_dependency(ctx, ctx.state['raw'], noise=True)
+        raw = ctx.load(raw_node_name(ctx.state['raw']))
         return self.cov.make(raw)
 
     def load(

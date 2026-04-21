@@ -46,6 +46,7 @@ import logging
 from pathlib import Path
 import shutil
 from typing import Any, Generic, TypeVar
+from collections.abc import Callable
 
 import mne
 import numpy as np
@@ -263,11 +264,41 @@ class DependencyNode(Generic[T]):
 
     Most users should subclass :class:`Input` or :class:`Derivative` rather
     than subclassing :class:`DependencyNode` directly.
+    The following attributes are relevant for both subclasses:
+
+    Attributes
+    ----------
+    name
+        Stable registry name for this node. Must be unique across all
+        registered nodes and must not change once artifacts have been cached
+        under that name.
+    OPTION_DEFAULTS
+        Options that affect how this node's artifact is built, or its cache
+        identity. Keys declare the option names; values are their defaults.
+        Options are node-local: they apply to this node only and do not
+        propagate to dependencies unless the node explicitly forwards them
+        via :meth:`Request.options_for`.
+    VIEW_OPTION_DEFAULTS
+        Options that only shape the returned value after the artifact has
+        been built or loaded. They do not affect cache identity and are not
+        forwarded to dependencies.
+    fixed_state
+        State entries that this node always forces to specific values,
+        regardless of caller-provided state. Applied by the registry on top
+        of any incoming state when this node is resolved, so conflicting
+        caller state is overridden. Use this when the node name encodes a
+        specific state value — e.g. a raw-processing node that always
+        implies ``state['raw'] == raw_name`` — so that :class:`Dependency`
+        declarations targeting this node need not redundantly repeat a
+        ``state`` override. The counterpart to :attr:`Derivative.key_fields`:
+        where ``key_fields`` declares polymorphism over state keys,
+        ``fixed_state`` pins them.
     """
 
     name: str
     OPTION_DEFAULTS: dict[str, Any] = {}
     VIEW_OPTION_DEFAULTS: dict[str, Any] = {}
+    fixed_state: dict[str, Any] = {}
 
     @classmethod
     def declared_options(cls) -> set[str]:
@@ -285,9 +316,10 @@ class DependencyNode(Generic[T]):
         Implementations should:
 
         - return only direct dependencies needed by this node
-        - use ``state`` / ``options`` overrides on :class:`Dependency` when a
-          dependency should be resolved with different state or options than
-          the current request
+        - prefer :attr:`fixed_state` on the target node over ``state``
+          overrides on :class:`Dependency` for corrections that always apply
+        - use ``state`` / ``options`` overrides on :class:`Dependency` for
+          context-specific variations that the target node cannot anticipate
         - keep the result deterministic for a given ``ctx``, since dependency
           manifests are part of cache validation
 
@@ -373,50 +405,44 @@ class Derivative(DependencyNode[T]):
 
     - :meth:`path` to choose the artifact location
     - :meth:`fingerprint` to describe non-dependency request
-      state/options/definitions that determine staleness
+      state/options/definitions that determine staleness;
+      the helper method :meth:`standard_fingerprint` covers the common
+      fingerprint shape without open-coding option handling.
     - :meth:`build` to compute the artifact
     - :meth:`load` / :meth:`save` to serialize the artifact
 
     The standard subclass contract is:
 
-    - declare ``OPTION_DEFAULTS`` for options that affect cache
-      identity or artifact construction
-    - declare ``VIEW_OPTION_DEFAULTS`` for options that only shape the value
-      returned to the caller
+    - declare ``OPTION_DEFAULTS`` and ``VIEW_OPTION_DEFAULTS`` (inherited
+      from :class:`DependencyNode`) for options affecting artifact identity
+      or post-load shaping respectively
     - implement :meth:`build` to construct the artifact representation from
       state plus options
     - implement :meth:`load` / :meth:`save` for that artifact representation
     - optionally implement :meth:`apply_view_options` to transform the loaded
       artifact into the final return value
 
-    The helper method :meth:`standard_fingerprint` is provided so subclasses
-    can describe cache identity without repeatedly open-coding option
-    handling.
 
-    The main class attributes that subclasses may override are:
 
-    - ``name`` from :class:`DependencyNode`: stable registry name for this
-      derivative family
-    - ``OPTION_DEFAULTS``: request options that affect artifact identity,
-      build behavior, or both
-    - ``VIEW_OPTION_DEFAULTS``: request options that only shape the returned
-      value after the artifact has been built or loaded
-    - ``key_fields``: ``ctx.state`` fields that define the default artifact
-      key and default cache label when :meth:`key` is not overridden.
-      Subclasses that override :meth:`key` may also use ``key_fields`` as a
-      convenient base list of relevant state keys for their own
-      :meth:`fingerprint` logic, but that usage is a convention, not a
-      framework contract.
-    - ``cache_policy``: default caching mode used by :meth:`should_cache`
-    - ``cache_suffix``: file suffix for the default :meth:`path`
-      implementation; leave ``None`` when overriding :meth:`path` directly
-    - ``cache_log_level``: log level for standard cache hit/build messages,
-      or ``None`` to suppress them
-    - ``version``: derivative-local schema/version number included in
-      manifests and available for schema evolution checks
-
-    More specialized subclasses may additionally override :meth:`key`,
-    :meth:`should_cache`.
+    Attributes
+    ----------
+    key_fields
+        ``ctx.state`` fields that define the default artifact key and cache
+        label when :meth:`key` is not overridden. Subclasses that override
+        :meth:`key` may still use ``key_fields`` as a reference list of
+        relevant state keys in their :meth:`fingerprint` logic, but that
+        usage is a convention, not a framework contract.
+    cache_policy
+        Default caching mode used by :meth:`should_cache`.
+    cache_suffix
+        File suffix for the default :meth:`path` implementation. Leave
+        ``None`` when overriding :meth:`path` directly.
+    cache_log_level
+        Log level for standard cache hit/build messages. Set to ``None``
+        to suppress them.
+    version
+        Derivative-local schema version recorded in manifests. Increment
+        when the serialization format changes incompatibly.
     """
 
     # ``ctx.state`` fields that define the default artifact key. Override
@@ -720,6 +746,8 @@ class Request(Generic[T]):
         self._artifact_path: Path | None = None
         self._manifest_path: Path | None = None
         self._artifact_metadata: dict[str, Any] | None = None
+        # Populated during build() to enforce declared-dependency discipline.
+        self._build_deps: dict[str, Callable] | None = None
         if isinstance(node, Derivative) and node.cache_policy != CachePolicy.NEVER:
             self._key = node.key(self)
             self._base_artifact_path = Path(node.path(self))
@@ -877,7 +905,24 @@ class Request(Generic[T]):
 
         if use_cache:
             derivative.log_cache_build(self, self.artifact_path)
-        artifact = derivative.build(self)
+
+        def _make_dep_loader(dep: Dependency):
+            dep_state = {**self.state, **dep.state} if dep.state else self.state
+
+            def _load():
+                # dep.view is resolved here on the fresh request (not via the
+                # calling build()'s ctx), so it bypasses build-discipline
+                # enforcement and correctly loads named views such as 'bads'.
+                return self.registry.resolve(dep.name, state=dep_state, options=dep.options).load(cache=cache, view=dep.view)
+            return _load
+
+        self._build_deps = {
+            dep.label or dep.name: _make_dep_loader(dep) for dep in self.node.dependencies(self)
+        }
+        try:
+            artifact = derivative.build(self)
+        finally:
+            self._build_deps = None
         artifact_metadata = self.registry.canonicalize(derivative.artifact_metadata(self, artifact))
         self._artifact_metadata = artifact_metadata
         if not use_cache:
@@ -956,6 +1001,13 @@ class Request(Generic[T]):
         or ``controls`` raises :class:`TypeError`.
         """
         if isinstance(name, str):
+            if self._build_deps is not None:
+                if name not in self._build_deps:
+                    declared = sorted(self._build_deps)
+                    raise RuntimeError(f"{self.node.name!r}.build() called ctx.load({name!r}) which is not a declared dependency. Declared: {declared}")
+                if cache is not None or view is not None or state is not None or options is not None or controls:
+                    raise TypeError(f"{self.node.name!r}.build() passed overrides to ctx.load({name!r}); declare cache, view, state, and options on the Dependency instead")
+                return self._build_deps[name]()
             return self.registry.resolve(
                 name,
                 state={**self.state, **(state or {})},
@@ -966,7 +1018,15 @@ class Request(Generic[T]):
         if state is not None or options is not None or controls:
             raise TypeError("Request.load() without a dependency name only accepts cache and view overrides")
         if view is not None:
-            return self.node.load_view(self, view)
+            # Temporarily suspend build-discipline enforcement so that load_view
+            # implementations (which are part of the node contract, not raw build
+            # logic) are free to load dependencies with any options they need.
+            build_deps = self._build_deps
+            self._build_deps = None
+            try:
+                return self.node.load_view(self, view)
+            finally:
+                self._build_deps = build_deps
         if isinstance(self.node, Input):
             return self.node.load(self)
 
@@ -1021,7 +1081,7 @@ class DerivativeRegistry:
         return Request(
             node=node,
             registry=self,
-            state=dict(state) if state else {},
+            state={**(state or {}), **node.fixed_state},
             options=options,
             view_options=view_options,
             controls=controls,

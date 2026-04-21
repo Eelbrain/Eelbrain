@@ -15,7 +15,7 @@ from .derivative_cache import Dependency, Derivative, Request, UncachedDerivativ
 from .pathing import MRI_SDIR
 from .results import RESULT_OPTION_DEFAULTS, ResultOutputDerivative, _epochs_stc_options, _evoked_stc_options
 from .source import ROIData, roi_data_from_subject_datasets
-from .test_def import ROITestResult, ResolvedTestNDSpec, Test, guess_y
+from .test_def import ROITestResult, ResolvedTestNDSpec, Test
 from .variable_def import apply_vardef
 
 
@@ -157,95 +157,64 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
             },
         )
 
-    def _subject_dependency(self, ctx: Request, subject: str) -> Dependency:
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        subject = ctx.state['subject']
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
         samplingrate = ctx.options['samplingrate']
-        if data.source is True:
-            if test_obj.model is None or test_obj.vars:
-                return Dependency(
+        if not isinstance(test_obj, TwoStageTest):
+            raise RuntimeError(f"{self.name!r} requires a TwoStageTest")
+        if data.sensor:
+            raise NotImplementedError(f"Two-stage test with data={data.string!r}")
+        elif data.source is True:
+            if test_obj.model:
+                dependency = Dependency(
+                    'evoked-stc',
+                    label=subject,
+                    state={'subject': subject, 'model': test_obj.model},
+                    options=_evoked_stc_options(ctx, morph=data.morph, cat=None, samplingrate=samplingrate),
+                )
+            else:
+                dependency = Dependency(
                     'epochs-stc',
                     label=subject,
                     state={'subject': subject},
                     options=_epochs_stc_options(ctx, morph=data.morph, samplingrate=samplingrate),
                 )
-            return Dependency(
-                'evoked-stc',
-                label=subject,
-                state={'subject': subject, 'model': test_obj.model},
-                options=_evoked_stc_options(ctx, morph=data.morph, cat=None, samplingrate=samplingrate),
-            )
-        if test_obj.model is None or test_obj.vars:
-            return Dependency(
-                'epochs-stc',
-                label=subject,
-                state={'subject': subject},
-                options=_epochs_stc_options(ctx, morph=None, samplingrate=samplingrate),
-            )
-        return Dependency(
-            'evoked-stc',
-            label=subject,
-            state={'subject': subject, 'model': test_obj.model},
-            options=_evoked_stc_options(ctx, morph=False, cat=None, samplingrate=samplingrate),
-        )
+        else:
+            if ctx.options['smooth']:
+                raise TypeError(f"smooth={ctx.options['smooth']!r} for ROI two-stage tests")
+            if test_obj.model:
+                dependency = Dependency(
+                    'evoked-stc',
+                    label=subject,
+                    state={'subject': subject, 'model': test_obj.model},
+                    options=_evoked_stc_options(ctx, morph=False, cat=None, samplingrate=samplingrate),
+                )
+            else:
+                dependency = Dependency(
+                    'epochs-stc',
+                    label=subject,
+                    state={'subject': subject},
+                    options=_epochs_stc_options(ctx, morph=None, samplingrate=samplingrate),
+                )
+        return dependency,
 
-    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        data = ctx.options['data']
-        if data.sensor:
-            return ()
-        return (self._subject_dependency(ctx, ctx.state['subject']),)
-
-    def _load_subject_data(self, ctx: Request, subject: str) -> Dataset:
+    def build(self, ctx: Request) -> Dataset | ROIData:
+        subject = ctx.state['subject']
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
-        samplingrate = ctx.options['samplingrate']
+
+        ds = ctx.load(subject)
+        if test_obj.vars:
+            apply_vardef(ds, test_obj.vars, self.tests, self.groups)
 
         if data.source is True:
-            if test_obj.model is None or test_obj.vars:
-                ds = ctx.load('epochs-stc', state={'subject': subject}, options=_epochs_stc_options(ctx, morph=data.morph, samplingrate=samplingrate))
-                if test_obj.vars:
-                    apply_vardef(ds, test_obj.vars, self.tests, self.groups)
-                if test_obj.model is not None:
-                    ds = ds.aggregate(
-                        test_obj.model,
-                        never_drop=(guess_y(ds),),
-                        drop_bad=True,
-                        equal_count=ctx.state['equalize_evoked_count'] == 'eq',
-                        drop=('i_start', 't_edf', 'time', 'index', 'trigger'),
-                    )
-            else:
-                ds = ctx.load('evoked-stc', state={'subject': subject, 'model': test_obj.model}, options=_evoked_stc_options(ctx, morph=data.morph, cat=None, samplingrate=samplingrate))
             if ctx.options['smooth']:
                 ds[data.y_name] = ds[data.y_name].smooth('source', ctx.options['smooth'], 'gaussian')
             return ds
 
-        if ctx.options['smooth']:
-            raise TypeError(f"smooth={ctx.options['smooth']!r} for ROI two-stage tests")
-        if test_obj.model is None:
-            ds = ctx.load('epochs-stc', state={'subject': subject}, options=_epochs_stc_options(ctx, morph=None, samplingrate=samplingrate))
-            if test_obj.vars:
-                apply_vardef(ds, test_obj.vars, self.tests, self.groups)
-            return ds
-        if not test_obj.vars:
-            return ctx.load('evoked-stc', state={'subject': subject, 'model': test_obj.model}, options=_evoked_stc_options(ctx, morph=False, cat=None, samplingrate=samplingrate))
-        ds = ctx.load('epochs-stc', state={'subject': subject}, options=_epochs_stc_options(ctx, morph=None, samplingrate=samplingrate))
-        apply_vardef(ds, test_obj.vars, self.tests, self.groups)
-        return ds.aggregate(
-            test_obj.model,
-            never_drop=(guess_y(ds),),
-            drop_bad=True,
-            equal_count=ctx.state['equalize_evoked_count'] == 'eq',
-            drop=('i_start', 't_edf', 'time', 'index', 'trigger'),
-        )
-
-    def build(self, ctx: Request) -> Dataset | ROIData:
-        data = ctx.options['data']
-        test_obj = self.tests[ctx.options['test']]
-        if not isinstance(test_obj, TwoStageTest):
-            raise RuntimeError(f"{self.name!r} requires a TwoStageTest")
-        if data.sensor:
-            raise NotImplementedError(f"Two-stage test with data={data.string!r}")
-        return self._load_subject_data(ctx, ctx.state['subject'])
+        return ds
 
 
 class TwoStageLevel1Derivative(Derivative[Any]):
@@ -284,12 +253,11 @@ class TwoStageLevel1Derivative(Derivative[Any]):
             raise RuntimeError(f"{self.name!r} requires a TwoStageTest")
         data = ctx.options['data']
         subject = ctx.state['subject']
+        ds = ctx.load('two-stage-data')
         if data.source is True:
-            ds = ctx.load('two-stage-data', options=ctx.options_for('two-stage-data', *RESULT_OPTION_DEFAULTS))
             return test_obj.make_stage_1(data.y_name, ds, subject)
         if data.sensor:
             raise NotImplementedError(f"Two-stage test with data={data.string!r}")
-        ds = ctx.load('two-stage-data', options=ctx.options_for('two-stage-data', *RESULT_OPTION_DEFAULTS))
         roi_data = roi_data_from_subject_datasets([ds], data.source)
         return SubjectROILMResult(
             {label: test_obj.make_stage_1('label_tc', label_ds, subject) for label, label_ds in roi_data.label_data.items()},
@@ -334,7 +302,7 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
         subjects = self.groups[ctx.state['group']]
         if data.source is not True and not isinstance(data.source, str):
             raise NotImplementedError(f"Two-stage test with data={data.string!r}")
-        subject_results = [ctx.load('two-stage-level-1', state={'subject': subject}, options=ctx.options_for('two-stage-level-1', *RESULT_OPTION_DEFAULTS)) for subject in subjects]
+        subject_results = [ctx.load(subject) for subject in subjects]
         if data.source is True:
             return test_obj.make_stage_2(subject_results, test_spec.kwargs)
 

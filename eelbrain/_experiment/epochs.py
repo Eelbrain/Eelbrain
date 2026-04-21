@@ -752,6 +752,7 @@ class EpochsDerivative(Derivative[Any]):
             return tuple(
                 Dependency(
                     'epochs',
+                    label=sub_epoch,
                     state={'epoch': sub_epoch},
                     options=ctx.options_for('epochs', *self.OPTION_DEFAULTS, ndvar=False, data='sensor', data_raw=False),
                 )
@@ -779,11 +780,7 @@ class EpochsDerivative(Derivative[Any]):
         if isinstance(epoch, EpochCollection):
             epochs_list = []
             for sub_epoch in epoch.collect:
-                ds = ctx.load(
-                    'epochs',
-                    state={'epoch': sub_epoch},
-                    options=ctx.options_for('epochs', *self.OPTION_DEFAULTS, ndvar=False, data='sensor', data_raw=False),
-                )
+                ds = ctx.load(sub_epoch)
                 epoch_value = ds['epochs']
                 if isinstance(epoch_value, Datalist):
                     epochs_list.extend(epoch_value)
@@ -1030,7 +1027,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         }
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        return (Dependency('epochs', options=self._epochs_options(ctx), view='shell'),)
+        return (Dependency('epochs', options=self._epochs_options(ctx)),)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         fingerprint = self.standard_fingerprint(ctx)
@@ -1045,7 +1042,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
 
     def build(self, ctx: Request) -> list[mne.Evoked]:
         model = ctx.state['model']
-        data = ctx.load('epochs', options=self._epochs_options(ctx))
+        data = ctx.load('epochs')
         data = data.aggregate(
             model,
             never_drop=('epochs',),
@@ -1198,10 +1195,7 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
         )
 
     def build(self, ctx: Request) -> Dataset:
-        dss = [
-            ctx.load('evoked', state={'subject': subject}, options=self._subject_options(ctx))
-            for subject in self.groups[ctx.state['group']]
-        ]
+        dss = [ctx.load(subject) for subject in self.groups[ctx.state['group']]]
         data = TestDims.coerce(ctx.options['data'])
         ndvar = ctx.options['ndvar']
         individual_ndvar = isinstance(data.sensor, str)

@@ -146,7 +146,7 @@ class SubParc(Parcellation):
         self.labels = sequence_arg('labels', labels)
 
     def _make(self, ctx: Request, annot: AnnotDerivative, parc: str):
-        base = {l.name: l for l in annot.load_annot(ctx, parc=self.base)}
+        base = {l.name: l for l in ctx.load('base')}
         hemis = ('-lh', '-rh')
         labels = []
         for label in self.labels:
@@ -234,7 +234,7 @@ class CombinationParc(Parcellation):
         self.labels = labels
 
     def _make(self, ctx: Request, annot: AnnotDerivative, parc: str):
-        base = {l.name: l for l in annot.load_annot(ctx, parc=self.base)}
+        base = {l.name: l for l in ctx.load('base')}
         subjects_dir = ctx.root / MRI_SDIR
         labels = []
         for name, exp in self.labels.items():
@@ -253,6 +253,7 @@ class CombinationParc(Parcellation):
 class EelbrainParc(Parcellation):
     "Parcellation that has special make rule"
     kind = 'eelbrain_parc'
+    base = 'PALS_B12_Lobes'
 
     def __init__(
             self,
@@ -270,7 +271,7 @@ class EelbrainParc(Parcellation):
             raise RuntimeError(f"lobes parcellation can only be created for fsaverage, not for {subject}")
 
         # load source annot
-        labels = annot.load_annot(ctx, parc='PALS_B12_Lobes')
+        labels = ctx.load('base')
 
         # sort labels
         labels = [l for l in labels if l.name[:-3] != 'MEDIAL.WALL']
@@ -435,7 +436,7 @@ class SeededParc(Parcellation):
 
     def _make(self, ctx: Request, annot: AnnotDerivative, parc: str):
         if self.mask:
-            annot.ensure_annot(ctx, parc=self.mask)
+            ctx.load('mask')
         subject = ctx.state['mrisubject']
         subjects_dir = ctx.root / MRI_SDIR
         seeds = self._seeds_for_subject(subject)

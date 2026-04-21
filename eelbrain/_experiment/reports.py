@@ -151,7 +151,7 @@ def _report_parc_image(
         legend = None
         for subject in subjects:
             plot_state = _subject_state(state, subject, node.mri_subjects, node.common_brain)
-            labels = ctx.load('annot', state=plot_state)
+            labels = ctx.load(f'annot:{subject}')
             if all(label.name.startswith('unknown-') for label in labels):
                 section.add_image_figure("No labels", subject)
                 continue
@@ -196,6 +196,16 @@ class BrainReportDerivative(ResultOutputDerivative[Path]):
         self.common_brain = common_brain
         self.brain_plot_defaults = {} if brain_plot_defaults is None else brain_plot_defaults
 
+    def _annot_deps(self, ctx: Request) -> tuple[Dependency, ...]:
+        """Annot deps for IndividualSeededParc visualisation in build()."""
+        _, parc = _resolve_parc(self.parcs, ctx.state['parc'])
+        if not isinstance(parc, IndividualSeededParc):
+            return ()
+        return tuple(
+            Dependency('annot', label=f'annot:{subject}', state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain))
+            for subject in self.groups[ctx.state['group']]
+        )
+
 
 class SourceReportDerivative(BrainReportDerivative):
     """HTML report for source-space test results.
@@ -212,14 +222,16 @@ class SourceReportDerivative(BrainReportDerivative):
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if isinstance(self.tests[ctx.options['test']], TwoStageTest):
-            return (
+            base = (
                 Dependency('two-stage-level-2', options=ctx.options_for('two-stage-level-2', *RESULT_OPTION_DEFAULTS, disconnect_labels=ctx.options['disconnect_labels'])),
                 Dependency('two-stage-data', options=ctx.options_for('two-stage-data', *RESULT_OPTION_DEFAULTS)),
             )
-        return (
-            Dependency('test-result', options=_test_result_options(ctx)),
-            Dependency('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES)),
-        )
+        else:
+            base = (
+                Dependency('test-result', options=_test_result_options(ctx)),
+                Dependency('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES)),
+            )
+        return base + self._annot_deps(ctx)
 
     def build(self, ctx: Request) -> Path:
         dst = self.path(ctx)
@@ -229,8 +241,8 @@ class SourceReportDerivative(BrainReportDerivative):
         report.add_paragraph(fmtxt.List('Methods brief', path_items[-3:]))
         test_obj = self.tests[ctx.options['test']]
         if isinstance(test_obj, TwoStageTest):
-            data_value = ctx.load('two-stage-data', options=ctx.options_for('two-stage-data', *RESULT_OPTION_DEFAULTS))
-            rlm = ctx.load('two-stage-level-2', options=ctx.options_for('two-stage-level-2', *RESULT_OPTION_DEFAULTS, disconnect_labels=ctx.options['disconnect_labels']))
+            data_value = ctx.load('two-stage-data')
+            rlm = ctx.load('two-stage-level-2')
 
             info_section = report.add_section("Test Info")
             parc = ctx.state['parc']
@@ -246,9 +258,9 @@ class SourceReportDerivative(BrainReportDerivative):
                 report.append(_report.source_time_results(res, ds, None, ctx.options['include'], _surfer_plot_kwargs(self, ctx.state), term, y='coeff'))
             _report_test_info(self, ctx.state, subjects, info_section, data_value, test_obj, res, ctx.options['data'])
         else:
-            data_value = ctx.load('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES))
+            data_value = ctx.load('evoked-test-data')
             ds = data_value
-            res = ctx.load('test-result', options=_test_result_options(ctx))
+            res = ctx.load('test-result')
             _report_test_info(self, ctx.state, subjects, report.add_section("Test Info"), ds, ctx.options['test'], res, ctx.options['data'], ctx.options['include'])
             parc = ctx.state['parc']
             section_title = f"Disconnected Labels in {parc}" if ctx.options['disconnect_labels'] else f"Whole Brain Masked by {parc}"
@@ -275,14 +287,14 @@ class ROIReportDerivative(BrainReportDerivative):
         return (
             Dependency('test-result', options=_test_result_options(ctx)),
             Dependency('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES)),
-        )
+        ) + self._annot_deps(ctx)
 
     def build(self, ctx: Request) -> Path:
         if isinstance(self.tests[ctx.options['test']], TwoStageTest):
             raise NotImplementedError("ROI report not implemented for two-stage tests")
         dst = self.path(ctx)
-        roi_data = ctx.load('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES))
-        res = ctx.load('test-result', options=_test_result_options(ctx))
+        roi_data = ctx.load('evoked-test-data')
+        res = ctx.load('test-result')
         labels_lh = []
         labels_rh = []
         for label in res.res.keys():
@@ -340,8 +352,8 @@ class EEGReportDerivative(ResultOutputDerivative[Path]):
         if isinstance(self.tests[ctx.options['test']], TwoStageTest):
             raise NotImplementedError("EEG report not implemented for two-stage tests")
         dst = self.path(ctx)
-        ds = ctx.load('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES))
-        res = ctx.load('test-result', options=_test_result_options(ctx))
+        ds = ctx.load('evoked-test-data')
+        res = ctx.load('test-result')
         report = fmtxt.Report(_report_title(dst))
         info_section = report.add_section("Test Info")
         _report_test_info(self, ctx.state, self.groups[ctx.state['group']], info_section, ds, ctx.options['test'], res, ctx.options['data'], ctx.options['include'])
@@ -378,7 +390,7 @@ class EEGSensorsReportDerivative(ResultOutputDerivative[Path]):
             raise NotImplementedError("EEG sensor report not implemented for two-stage tests")
         dst = self.path(ctx)
         test_obj = self.tests[ctx.options['test']]
-        ds = ctx.load('evoked-test-data', options=ctx.options_for('evoked-test-data', *TEST_DATA_OPTION_NAMES))
+        ds = ctx.load('evoked-test-data')
         eeg = ds['eeg']
         sensors = ctx.options['sensors']
         missing = [sensor for sensor in sensors if sensor not in eeg.sensor.names]
@@ -421,7 +433,7 @@ class LMReportDerivative(BrainReportDerivative):
             raise TypeError("LM report requires a TwoStageTest")
         dst = self.path(ctx)
         report = fmtxt.Report(_report_title(dst))
-        lm = ctx.load('two-stage-level-1', options=self._level_1_options(ctx))
+        lm = ctx.load('two-stage-level-1')
         report.append(_report.source_time_lm(lm, ctx.options['pmin'], _surfer_plot_kwargs(self, ctx.state)))
         return _save_report(report, dst, ('eelbrain', 'mne', 'surfer', 'scipy', 'numpy'))
 
@@ -472,7 +484,6 @@ class CoregReportDerivative(Derivative[Path]):
         from mayavi import mlab
 
         dst = self.path(ctx)
-        raw_name = self.raw.root_source_name(ctx.state['raw'])
         subject = ctx.state['subject']
         mrisubject = ctx.state['mrisubject']
         title = f"Coregistration {subject}"
@@ -480,7 +491,7 @@ class CoregReportDerivative(Derivative[Path]):
             title += f" ({mrisubject})"
 
         report = fmtxt.Report(title)
-        raw = ctx.load(raw_node_name(raw_name), state={**ctx.state, 'raw': raw_name}, options={'add_bads': False, 'noise': False})
+        raw = ctx.load('raw')
         fig = mne.viz.plot_alignment(raw.info, ctx.root / trans_file_path(ctx.state), mrisubject, ctx.root / MRI_SDIR, 'auto', meg=('helmet', 'sensors'), dig=True, interaction='terrain')
         fig.plotter.enable_parallel_projection()
         fig.scene.camera.parallel_projection = True
