@@ -132,7 +132,7 @@ def _report_test_info(node: ResultOutputDerivative, state: dict[str, Any], subje
     info = res.info_list()
     section.append(info)
     section.append(_report_subject_info(state, subjects, ds, test_obj.model))
-    section.append(_show_state(state, ('hemi', 'subject', 'mrisubject')))
+    section.append(_show_state(state, ('subject', 'mrisubject')))
     return info
 
 

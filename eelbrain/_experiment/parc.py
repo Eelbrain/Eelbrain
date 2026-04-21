@@ -495,12 +495,11 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
     name = 'annot'
     key_fields = ('mrisubject', 'parc')
 
-    def __init__(self, parcs: dict[str, Parcellation], hemis: tuple[str, ...]):
+    def __init__(self, parcs: dict[str, Parcellation]):
         self.parcs = parcs
-        self.hemis = hemis
 
     def annot_file_paths(self, state: dict[str, Any]) -> list[Path]:
-        return [annot_file_path(state, hemi) for hemi in self.hemis]
+        return [annot_file_path(state, hemi) for hemi in ('lh', 'rh')]
 
     def annot_file_fingerprints(self, ctx: Request) -> list[dict[str, Any]]:
         return [
@@ -510,7 +509,7 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
                 'annot-file',
                 metadata={'mrisubject': ctx.state['mrisubject'], 'parc': ctx.state['parc'], 'hemi': hemi},
             )
-            for hemi in self.hemis
+            for hemi in ('lh', 'rh')
         ]
 
     def label_file_fingerprints(self, ctx: Request, parc_def: LabelParc) -> list[dict[str, Any]]:
@@ -628,7 +627,7 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
         fake_mri = is_fake_mri(ctx.root / mri_dir(ctx.state))
         if mrisubject != common_brain and (parc_def.morph_from_fsaverage or fake_mri):
             if fake_mri:
-                for hemi in self.hemis:
+                for hemi in ('lh', 'rh'):
                     src = ctx.root / annot_file_path({**ctx.state, 'mrisubject': common_brain}, hemi)
                     dst = ctx.root / annot_file_path(ctx.state, hemi)
                     dst.parent.mkdir(parents=True, exist_ok=True)

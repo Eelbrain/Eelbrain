@@ -360,7 +360,6 @@ class Pipeline(StateModel):
         self._register_field('extension', extensions, repr=True)
         self._register_field('equalize_evoked_count', ('', 'eq'), allow_empty=True)
         self._register_field('common_brain', ('fsaverage',))
-        self._register_field('hemi', ('lh', 'rh'))
 
         self._register_field('mri', sorted(self._mri_subjects), allow_empty=True)
         self._register_field('group', self._groups.keys(), 'all', post_set_handler=self._post_set_group)
@@ -462,7 +461,7 @@ class Pipeline(StateModel):
         self._derivatives.register(SourceMorphDerivative())
         self._derivatives.register(FwdDerivative())
         self._derivatives.register(InvDerivative())
-        self._derivatives.register(AnnotDerivative(self._parcs, tuple(self.get_field_values('hemi'))))
+        self._derivatives.register(AnnotDerivative(self._parcs))
 
         # --- Source-space: epochs/evoked projected to source space ---
         self._derivatives.register(EpochsStcDerivative(self._raw, self._epochs))
@@ -2540,7 +2539,7 @@ class Pipeline(StateModel):
         if not redo and all(exists(dst) for dst in dsts):
             return
 
-        brain = self.plot_brain(surf, None, 'split', ['lat', 'med'], w=1200)
+        brain = self.plot_brain(hemi='split', surf=surf, views=['lat', 'med'], w=1200)
         for label, dst in zip(labels, dsts):
             brain.add_label(label)
             brain.save_image(dst, 'rgba', True)
@@ -3036,25 +3035,30 @@ class Pipeline(StateModel):
 
         return brain
 
-    def plot_brain(self, common_brain=True, **brain_kwargs):
+    def plot_brain(
+            self,
+            common_brain: bool = True,
+            hemi: str = 'split',
+            **brain_kwargs,
+    ):
         """Plot the brain model
 
         Parameters
         ----------
-        common_brain : bool
+        common_brain
             If the current mrisubject is a scaled MRI, use the common_brain
             instead.
+        hemi
+            Which hemispheres to plot (one of ``'lh' | 'rh' | 'both' | 'split'``).
         ... :
             :class:`~plot._brain_object.Brain` options as keyword arguments.
         """
         from ..plot._brain_object import Brain
 
-        brain_args = self._surfer_plot_kwargs()
+        brain_args = self._surfer_plot_kwargs(hemi=hemi)
         brain_args.update(brain_kwargs)
         state_ = self._fields
         brain_args['subjects_dir'] = str(self.root / MRI_SDIR)
-        if 'hemi' not in brain_args:
-            brain_args['hemi'] = self.get('hemi')
 
         # find subject
         if common_brain and is_fake_mri(self.root / mri_dir(state_)):
@@ -3264,8 +3268,8 @@ class Pipeline(StateModel):
             label = self.load_label(label)
         title = label.name
         hemi = 'split' if isinstance(label, mne.BiHemiLabel) else label.hemi
-        kwargs = self._surfer_plot_kwargs(surf, views, hemi=hemi)
-        brain = self.plot_brain(title=title, w=w, **kwargs)
+        kwargs = self._surfer_plot_kwargs(surf, views)
+        brain = self.plot_brain(hemi=hemi, title=title, w=w, **kwargs)
         brain.add_label(label, alpha=0.75)
         return brain
 
