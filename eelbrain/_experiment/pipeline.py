@@ -230,6 +230,7 @@ class Pipeline(StateModel):
     def __init__(
             self,
             root: PathArg,
+            screen_log_level: str | int = None,
             **state,
     ):
         ########################################################################
@@ -293,7 +294,7 @@ class Pipeline(StateModel):
 
         # terminal log
         handler = ScreenHandler()
-        self._screen_log_level = log_level(self.screen_log_level)
+        self._screen_log_level = log_level(screen_log_level or self.screen_log_level)
         handler.setLevel(self._screen_log_level)
         log.addHandler(handler)
         self._screen_log_handler = handler

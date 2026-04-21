@@ -27,6 +27,19 @@ def test_load_pipeline_from_file(tmp_path):
     assert e.get('session') == 'test'
 
 
+def test_load_pipeline_overrides_screen_log_level(tmp_path):
+    path = tmp_path / 'experiment.py'
+    path.write_text(
+        f"root = {str(tmp_path)!r}\n\n"
+        + PIPELINE.format(name='Experiment', session='test')
+    )
+
+    e = eelbrain.load_pipeline(path, log_level='DEBUG')
+
+    assert e.screen_log_level == 'DEBUG'
+    assert e.__class__.__name__ == 'Experiment'
+
+
 def test_load_pipeline_uses_root_from_module(tmp_path):
     path = tmp_path / 'experiment.py'
     path.write_text(f"root = {str(tmp_path)!r}\n\n" + PIPELINE.format(name='Experiment', session='test'))

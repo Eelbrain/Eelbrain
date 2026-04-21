@@ -447,6 +447,8 @@ themselves.
 
 Determines the amount of information displayed on the screen while using
 an :class:`Pipeline` (see :mod:`logging`).
+This class attribute is used as the default for the ``screen_log_level``
+initialization parameter.
 
 .. py:attribute:: Pipeline.defaults
    :type: Dict[str, str]

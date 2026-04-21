@@ -84,7 +84,12 @@ def _find_root(module: ModuleType) -> PathArg | None:
     return None
 
 
-def load_pipeline(spec: PathArg | str | None = None, root: PathArg = None, **state) -> Pipeline:
+def load_pipeline(
+        spec: PathArg | str | None = None,
+        root: PathArg = None,
+        log_level: str | int = None,
+        **state,
+) -> Pipeline:
     """Load a :class:`Pipeline` subclass from a Python file.
 
     Parameters
@@ -99,6 +104,8 @@ def load_pipeline(spec: PathArg | str | None = None, root: PathArg = None, **sta
         :class:`Pipeline` subclass.
     root
         Root directory for the experiment.
+    log_level
+        Override :attr:`Pipeline.screen_log_level` for the loaded pipeline.
     **state
         Initial state parameters passed to the :class:`Pipeline` constructor.
 
@@ -141,4 +148,4 @@ def load_pipeline(spec: PathArg | str | None = None, root: PathArg = None, **sta
             f"'root' variable in the pipeline file."
         )
 
-    return pipeline_type(root, **state)
+    return pipeline_type(root, screen_log_level=log_level, **state)
