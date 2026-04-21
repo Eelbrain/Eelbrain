@@ -204,13 +204,7 @@ class Pipeline(StateModel):
     }
     parcs: dict[str, Parcellation] = {}
 
-    # Frequencies:  lowbound, highbound, step
-    _freqs = {'gamma': {'frequencies': np.arange(25, 50, 2),
-                        'n_cycles': 5}}
-    freqs = {}
-
-    # specify defaults for specific fields (e.g. specify the initial subject
-    # name)
+    # specify defaults for specific fields (e.g. specify the initial subject)
     defaults = {}
 
     # model order: list of factors in the order in which models should be built
@@ -340,18 +334,6 @@ class Pipeline(StateModel):
             parc._store_name(name)
         parc_values = [*self._parcs.keys(), '']
 
-        # frequency
-        freqs = {}
-        for name, f in chain(self._freqs.items(), self.freqs.items()):
-            if name in freqs:
-                raise ValueError(f"Frequency {name} defined twice")
-            elif 'frequencies' not in f:
-                raise KeyError(f"Frequency values missing for {name}")
-            elif 'n_cycles' not in f:
-                raise KeyError(f"Number of cycles not defined for {name}")
-            freqs[name] = f
-        self._freqs = freqs
-
         # tests
         validate_tests(self.tests)
 
@@ -394,7 +376,6 @@ class Pipeline(StateModel):
         self._register_field('model', eval_handler=self._eval_model)
         self._register_field('test', sorted(self.tests), post_set_handler=self._post_set_test, allow_empty=self._empty_test, repr=False)
         self._register_field('parc', parc_values, 'aparc', eval_handler=self._eval_parc, allow_empty=True)
-        self._register_field('freq', self._freqs.keys())
         self._register_field('src', default='ico-4', eval_handler=eval_src)
         self._register_field('adjacency', ('', 'link-midline'), allow_empty=True)
 
@@ -416,22 +397,6 @@ class Pipeline(StateModel):
         # set initial values
         self.set(**state)
         self._store_state()
-
-        ########################################################################
-        # Cached analysis defaults
-        ##########################
-        self._stim_channel = sequence_arg(f'{self.__class__.__name__}.stim_channel', self.stim_channel)
-        self._raw_samplingrate = {}  # {(subject, recording): samplingrate}
-        with self._temporary_state:
-            for subject, session, task, acquisition, run in self.iter(('subject', 'session', 'task', 'acquisition', 'run'), group='all', raw='raw'):
-                key = (subject, session, task, acquisition, run)
-                raw_path = self._bids_path.fpath
-
-                if not raw_path.exists():
-                    continue
-
-                raw_name = self.get('raw')
-                self._raw_samplingrate[key] = self._load_derivative(raw_node_name(raw_name), options={'add_bads': True, 'noise': False}, view='info').get('sfreq')
 
     def _repr_args(self) -> tuple[str, ...]:
         return (str(self.root),)
@@ -1231,88 +1196,6 @@ class Pipeline(StateModel):
         if subject is not None:
             self.set(subject=subject)
         return self._load_derivative('evoked', options=options)
-
-    def load_epochs_stf(
-            self,
-            subjects: str | int = None,
-            baseline: BaselineArg = True,
-            morph: bool = None,
-            keep_stc: bool = False,
-            **state):
-        """Load frequency space single trial data
-
-        Parameters
-        ----------
-        subjects : str | 1 | -1
-            Subject(s) for which to load data. Can be a single subject
-            name or a group name such as ``'all'``. ``1`` to use the current
-            subject; ``-1`` for the current group. Default is current subject
-            (or group if ``group`` is specified).
-        baseline
-            Apply baseline correction using this period in sensor space.
-            True to use the epoch's baseline specification. The default is True.
-        morph
-            Morph the source estimates to the common brain
-            (default ``False``, except when loading multiple subjects and ``ndvar=True``).
-        keep_stc
-            Keep the source timecourse data in the Dataset that is returned
-            (default False).
-        ...
-            State parameters.
-        """
-        ds = self.load_epochs_stc(subjects, baseline, ndvar=True, morph=morph, **state)
-        name = 'srcm' if 'srcm' in ds else 'src'
-
-        # apply morlet transformation
-        freq_params = self._freqs[self.get('freq')]
-        freq_range = freq_params['frequencies']
-        ds['stf'] = cwt_morlet(ds[name], freq_range, use_fft=True, n_cycles=freq_params['n_cycles'], output='complex')
-
-        if not keep_stc:
-            del ds[name]
-
-        return ds
-
-    def load_evoked_stf(
-            self,
-            subjects: str | int = None,
-            baseline: BaselineArg = True,
-            morph: bool = None,
-            keep_stc: bool = False,
-            **state):
-        """Load frequency space evoked data
-
-        Parameters
-        ----------
-        subjects : str | 1 | -1
-            Subject(s) for which to load data. Can be a single subject
-            name or a group name such as ``'all'``. ``1`` to use the current
-            subject; ``-1`` for the current group. Default is current subject
-            (or group if ``group`` is specified).
-        baseline
-            Apply baseline correction using this period in sensor space.
-            True to use the epoch's baseline specification. The default is True.
-        morph
-            Morph the source estimates to the common brain
-            (default ``False``, except when loading multiple subjects and ``ndvar=True``).
-        keep_stc
-            Keep the source timecourse data in the Dataset that is returned
-            (default False).
-        ...
-            State parameters.
-        """
-        ds = self.load_evoked_stc(subjects, baseline, morph=morph, **state)
-        name = 'srcm' if 'srcm' in ds else 'src'
-
-        # apply morlet transformation
-        freq_params = self._freqs[self.get('freq')]
-        freq_range = freq_params['frequencies']
-        ds['stf'] = cwt_morlet(ds[name], freq_range, use_fft=True, n_cycles=freq_params['n_cycles'], zero_mean=False, out='magnitude')
-
-        if not keep_stc:
-            del ds[name]
-
-        return ds
 
     def load_evoked_stc(
             self,
