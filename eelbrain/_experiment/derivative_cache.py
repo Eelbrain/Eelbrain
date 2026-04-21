@@ -360,8 +360,27 @@ class DependencyNode(Generic[T]):
         be used to expose multiple named dependency fingerprints for the same
         node. The default implementation ignores ``view`` and reuses
         :meth:`fingerprint`.
+
+        One use case is managed intermediate inputs, such as ICA files, where a
+        change in excluded components invalidates dependent nodes, but does not
+        signal an invalid ICA file artifact.
         """
         return self.fingerprint(ctx)
+
+    def dependency_fingerprint_quick(self, ctx: Request, view: str | None = None) -> dict[str, Any] | None:
+        """Cheap proxy for :meth:`dependency_fingerprint`, used as first-pass cache validity check.
+
+        If this equals the stored quick fingerprint, the full
+        :meth:`dependency_fingerprint` comparison is skipped and the dependency
+        is considered unchanged. Return ``None`` to always fall back to the full
+        comparison.
+
+        Required invariant (one-directional): if this returns equal dicts,
+        :meth:`dependency_fingerprint` must also be equal. The converse need
+        not hold — a quick-fingerprint change may be spurious, in which case
+        the full fingerprint will still match and the cache remains valid.
+        """
+        return None
 
     def load_view(
             self,
@@ -692,6 +711,27 @@ class UncachedDerivative(Derivative[T]):
         raise NotImplementedError(f"{type(self).__name__} is uncached; path() must not be called")
 
 
+def _dep_entry_matches(stored: dict[str, Any], current: dict[str, Any]) -> bool:
+    """Compare one describe_dependency entry with quick-fingerprint shortcut."""
+    for key in ('name', 'kind', 'view'):
+        if stored.get(key) != current.get(key):
+            return False
+    stored_quick = stored.get('quick_fingerprint')
+    current_quick = current.get('quick_fingerprint')
+    if stored_quick is not None and current_quick is not None and stored_quick == current_quick:
+        return True
+    if stored.get('fingerprint') != current.get('fingerprint'):
+        return False
+    return _dependencies_match(stored.get('dependencies', {}), current.get('dependencies', {}))
+
+
+def _dependencies_match(stored: dict[str, Any], current: dict[str, Any]) -> bool:
+    """Compare dependency manifests, using quick fingerprints as a first-pass shortcut."""
+    if stored.keys() != current.keys():
+        return False
+    return all(_dep_entry_matches(stored[k], current[k]) for k in stored)
+
+
 class Request(Generic[T]):
     """One bound request for data from the dependency graph.
 
@@ -794,6 +834,28 @@ class Request(Generic[T]):
         """Return the canonical dependency-facing fingerprint for this request."""
         return self.registry.canonicalize(self.node.dependency_fingerprint(self, view))
 
+    def current_dependency_fingerprint_quick(self, view: str | None = None) -> dict[str, Any] | None:
+        """Return the canonical quick proxy fingerprint, or ``None`` if not supported."""
+        result = self.node.dependency_fingerprint_quick(self, view)
+        if result is None:
+            return None
+        return self.registry.canonicalize(result)
+
+    def _resolve_quick_fingerprint(
+            self,
+            name: str,
+            *,
+            state: dict[str, Any] | None = None,
+            options: dict[str, Any] | None = None,
+            view: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Resolve a dependency node and return its canonicalized quick fingerprint."""
+        handle = self.registry.resolve(name, state={**self.state, **(state or {})}, options=options)
+        result = handle.node.dependency_fingerprint_quick(handle, view)
+        if result is None:
+            return None
+        return self.registry.canonicalize(result)
+
     def describe_dependency(
             self,
             cache: bool | None = None,
@@ -805,6 +867,9 @@ class Request(Generic[T]):
             'fingerprint': self.current_dependency_fingerprint(view),
             'dependencies': self.dependency_fingerprints(cache),
         }
+        quick = self.current_dependency_fingerprint_quick(view)
+        if quick is not None:
+            out['quick_fingerprint'] = quick
         if view is not None:
             out['view'] = view
         if isinstance(self.node, Derivative) and self.node.cache_policy != CachePolicy.NEVER:
@@ -878,7 +943,7 @@ class Request(Generic[T]):
             return False
         if manifest.fingerprint != self.current_fingerprint():
             return False
-        if manifest.dependencies != self.dependency_fingerprints(cache):
+        if not _dependencies_match(manifest.dependencies, self.dependency_fingerprints(cache)):
             return False
         return True
 

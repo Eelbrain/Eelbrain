@@ -150,6 +150,20 @@ class RawPipe(Configuration):
         """Assemble bad channels list from sources"""
         raise NotImplementedError
 
+    def _bads_quick_fingerprint(
+            self,
+            ctx: Request,
+            *,
+            noise: bool = False,
+    ) -> dict[str, Any] | None:
+        """Cheap proxy for _collect_bads used for first-pass cache validation.
+
+        Return a dict that changes whenever ``_collect_bads`` result would
+        change, but is cheap to compute (e.g. file stat instead of full read).
+        Return ``None`` to always fall back to the full comparison.
+        """
+        return None
+
 
 def raw_node_name(raw: str) -> str:
     return f'raw:{raw}'
@@ -187,6 +201,9 @@ class RawBadChannelsInput(Input[list[str]]):
 
     def load(self, ctx: Request) -> list[str]:
         return self.pipe._collect_bads(ctx, noise=ctx.options['noise'])
+
+    def dependency_fingerprint_quick(self, ctx: Request, view: str | None = None) -> dict[str, Any] | None:
+        return self.pipe._bads_quick_fingerprint(ctx, noise=ctx.options['noise'])
 
 
 class RawSourceInput(Input[mne.io.BaseRaw]):
@@ -524,6 +541,22 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             fingerprint['exclude'] = []
         return fingerprint
 
+    def dependency_fingerprint_quick(self, ctx: Request, view: str | None = None) -> dict[str, Any] | None:
+        # Quick proxy covering the two expensive fields in dependency_fingerprint:
+        # 'exclude' (requires loading ICA file) → covered by ICA file stat
+        # 'bads' (requires reading channels.tsv for each task) → covered by those file stats
+        ica_path = self._path(ctx)
+        source_raw_name = self.pipes.root_source_name(self.pipe.source)
+        source_pipe = self.pipes.root_source_pipe(self.pipe.source)
+        bads_files = []
+        for task in self.pipe.task:
+            state = {**ctx.state, 'raw': source_raw_name, 'task': task}
+            bads_files.append(file_fingerprint(ctx.root, source_pipe._bads_path(bids_path(ctx.root, state)), 'bads-file'))
+        return {
+            'ica_file': file_fingerprint(ctx.root, ica_path, 'ica-file'),
+            'bads_files': bads_files,
+        }
+
     def load(self, ctx: Request) -> mne.preprocessing.ICA:
         path = self._path(ctx)
         if not exists(path):
@@ -676,6 +709,11 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
                 'bads': self.pipe._collect_bads(ctx, noise=ctx.options['noise']),
             }
         return super().dependency_fingerprint(ctx, view)
+
+    def dependency_fingerprint_quick(self, ctx: Request, view: str | None = None) -> dict[str, Any] | None:
+        if view == 'bads':
+            return self.pipe._bads_quick_fingerprint(ctx, noise=ctx.options['noise'])
+        return None
 
     def build(self, ctx: Request) -> mne.io.BaseRaw:
         source_node = raw_node_name(self.pipe.source)
@@ -961,6 +999,12 @@ class RawSource(RawPipe):
     def _collect_bads(self, ctx: Request, *, noise: bool = False) -> list[str]:
         return self._bads_from_file(bids_path(ctx.root, ctx.state), noise=noise, log=ctx.registry.log)
 
+    def _bads_quick_fingerprint(self, ctx: Request, *, noise: bool = False) -> dict[str, Any] | None:
+        path = bids_path(ctx.root, ctx.state)
+        if noise:
+            path = path.find_empty_room()
+        return file_fingerprint(ctx.root, self._bads_path(path), 'bads-file')
+
     def _write_bad_channels(
             self,
             path: BIDSPath,
@@ -1090,6 +1134,9 @@ class CachedRawPipe(RawPipe):
             noise: bool = False,
     ) -> list[str]:
         return ctx.load(raw_node_name(self.source), options={'noise': noise}, view='bads')
+
+    def _bads_quick_fingerprint(self, ctx: Request, *, noise: bool = False) -> dict[str, Any] | None:
+        return ctx._resolve_quick_fingerprint(raw_node_name(self.source), options={'noise': noise}, view='bads')
 
 
 class RawFilter(CachedRawPipe):
@@ -1440,6 +1487,9 @@ class RawICA(CachedRawPipe):
             bads.update(ctx.load(raw_node_name(self.source), view='bads'))
         return sorted(bads)
 
+    def _bads_quick_fingerprint(self, ctx: Request, *, noise: bool = False) -> dict[str, Any] | None:
+        return None  # complex multi-source logic with conditional branching
+
 
 class RawApplyICA(CachedRawPipe):
     """Apply ICA estimated in a :class:`RawICA` pipe
@@ -1511,6 +1561,13 @@ class RawApplyICA(CachedRawPipe):
         bads.update(ctx.load(raw_node_name(self.source), options={'noise': noise}, view='bads'))
         bads.update(ctx.load(raw_node_name(self.ica_source), view='bads'))
         return sorted(bads)
+
+    def _bads_quick_fingerprint(self, ctx: Request, *, noise: bool = False) -> dict[str, Any] | None:
+        q_source = ctx._resolve_quick_fingerprint(raw_node_name(self.source), options={'noise': noise}, view='bads')
+        q_ica_source = ctx._resolve_quick_fingerprint(raw_node_name(self.ica_source), options={'noise': False}, view='bads')
+        if q_source is None or q_ica_source is None:
+            return None
+        return {'source': q_source, 'ica_source': q_ica_source}
 
 
 class RawMaxwell(CachedRawPipe):
