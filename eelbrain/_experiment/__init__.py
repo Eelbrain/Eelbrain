@@ -83,6 +83,7 @@ analysis behavior in an extensible way. They are supplied by the user as
 """
 
 from .state_model import StateModel
+from .load_pipeline import load_pipeline
 from .pipeline import Pipeline
 from .test_def import ROITestResult
 from .two_stage import ROI2StageResult, TwoStageTest

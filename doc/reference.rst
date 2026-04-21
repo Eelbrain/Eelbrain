@@ -671,11 +671,20 @@ Experiment Pipeline
 ^^^^^^^^^^^^^^^^^^^
 
 .. py:module:: pipeline
-.. currentmodule:: eelbrain.pipeline
 
-The :class:`Pipeline` class provides a template for analyzing EEG and MEG
+The :class:`~pipeline.Pipeline` class provides a template for analyzing EEG and MEG
 data. The objects for specifying the analysis are all in the
 :mod:`pipeline` submodule.
+:func:`load_pipeline` is a helper for loading a :class:`Pipeline` from a Python file:
+
+.. currentmodule:: eelbrain
+
+.. autosummary::
+   :toctree: generated
+
+   load_pipeline
+
+.. currentmodule:: eelbrain.pipeline
 
 .. seealso::
     For the guide on working with the :class:`Pipeline` class see

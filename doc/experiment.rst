@@ -126,23 +126,25 @@ The analysis scripts will consist of two components:
 2. Analysis scripts (or Jupyter notebooks) using this subclass.
 
 You will want to access the :class:`Pipeline` subclass (``MyExperiment``) from different locations (for instance, from a terminal to do artifact rejection, and from different Jupyter Notebooks to pursue different analyses).
-Thus, it makes sense to define the experiment subclass in a separate Python file (e.g., ``MyProject/my_experiment.py``), and ``run`` or ``import`` that file as needed.
-Thus, ``MyProject/my_experiment.py`` may look like this::
+Thus, it makes sense to define the experiment subclass in a separate Python file (e.g., ``MyProject/my_experiment.py``).
+The simplest way to use that file from different locations is :func:`eelbrain.load_pipeline`.
+By default, :func:`eelbrain.load_pipeline` looks for ``pipeline.py`` and then ``experiment.py``.
+Thus, ``MyProject/pipeline.py`` may look like this::
 
     from eelbrain.pipeline import *
+
+    root = "~/Data/Experiment"
 
     class MyExperiment(Pipeline):
 
         # Define experiment attributes here
 
-    e = MyExperiment("~/Data/Experiment")
-
-
 From a terminal, this could then be used as follows::
 
-    ~/Code/MyProject $ eelbrain  # eelbrain on macOS; iPython on Linux
-    In [1]: run my_experiment.py
-    In [2]: e.show_subjects()
+    $ eelbrain  # eelbrain on macOS; iPython on Linux
+    In [1]: import eelbrain
+    In [2]: e = eelbrain.load_pipeline("~/Code/MyProject")
+    In [3]: e.show_subjects()
     #    subject   mri
     -----------------------------------------
     0    R0026     R0026
@@ -151,7 +153,28 @@ From a terminal, this could then be used as follows::
     ...
 
 
-Similarly, you can ``run my_experiment.py`` in the first cell of a Jupyter Notebook that is saved in the same folder.
+Similarly, you can use :func:`eelbrain.load_pipeline` in the first cell of a Jupyter Notebook.
+If you are already working inside the project directory, you can omit ``spec`` and load ``pipeline.py`` or ``experiment.py`` from the current directory::
+
+    >>> import eelbrain
+    >>> e = eelbrain.load_pipeline()
+
+If the experiment file defines a module-level variable named ``root`` (case-insensitive), :func:`eelbrain.load_pipeline` will use it automatically.
+An explicit ``root=...`` argument always overrides the value from the file.
+
+When a file contains exactly one :class:`Pipeline` subclass, the class is detected automatically::
+
+    >>> import eelbrain
+    >>> e = eelbrain.load_pipeline("~/Code/MyProject/pipeline.py")
+
+If a file contains multiple :class:`Pipeline` subclasses, specify the class explicitly::
+
+    >>> e = eelbrain.load_pipeline("~/Code/MyProject/pipeline.py:MyExperiment")
+
+For advanced Python workflows, you can also import the class directly and instantiate it yourself::
+
+    >>> from my_experiment import MyExperiment
+    >>> e = MyExperiment("~/Data/Experiment")
 
 .. note::
     If your project contains Jupyter Notebooks, consider `Jupytext <https://jupytext.readthedocs.io/>`_ to efficiently track those notebooks in Git.
