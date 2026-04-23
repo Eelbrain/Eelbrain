@@ -16,8 +16,6 @@ BIDS_ENTITY_PREFIX_MAP = {
     'acquisition': 'acq',
     'run': 'run',
 }
-BIDS_PATH_KEYS = ('datatype', 'suffix', 'extension', *BIDS_ENTITY_KEYS)
-
 DERIV_DIR = Path('derivatives')
 CACHE_DIR = DERIV_DIR / 'eelbrain' / 'cache'
 LOG_DIR = DERIV_DIR / 'eelbrain' / 'logs'
@@ -34,8 +32,7 @@ def _state_value(state: dict[str, Any], key: str) -> str | None:
 def _bids_name(
         state: dict[str, Any],
         entity_keys: tuple[str, ...],
-        *,
-        suffix: str | None,
+        suffix: str | None = None,
 ) -> str:
     parts = []
     for key in BIDS_ENTITY_KEYS:
@@ -44,19 +41,16 @@ def _bids_name(
         value = _state_value(state, key)
         if value is not None:
             parts.append(f"{BIDS_ENTITY_PREFIX_MAP[key]}-{value}")
+    if suffix is None:
+        suffix = state['datatype']
     if suffix:
         parts.append(suffix)
     return '_'.join(parts)
 
 
-def bids_path(
-        root: Path,
-        state: dict[str, Any],
-        *,
-        noise: bool = False,
-) -> BIDSPath:
-    kwargs = {key: _state_value(state, key) for key in BIDS_PATH_KEYS}
-    path = BIDSPath(root=root, **kwargs)
+def bids_path(root: Path, state: dict[str, Any], extension: str, *, noise: bool = False) -> BIDSPath:
+    kwargs = {key: _state_value(state, key) for key in BIDS_ENTITY_KEYS}
+    path = BIDSPath(root=root, suffix=state['datatype'], extension=extension, datatype=state['datatype'], **kwargs)
     if noise:
         return path.find_empty_room()
     else:
@@ -64,19 +58,19 @@ def bids_path(
 
 
 def subject_session_basename(state: dict[str, Any]) -> str:
-    return _bids_name(state, ('subject', 'session'), suffix=state['suffix'])
+    return _bids_name(state, ('subject', 'session'))
 
 
 def raw_basename(state: dict[str, Any]) -> str:
-    return _bids_name(state, ('subject', 'session', 'acquisition', 'task', 'run'), suffix=state['suffix'])
+    return _bids_name(state, ('subject', 'session', 'acquisition', 'task', 'run'))
 
 
 def epoch_basename(state: dict[str, Any]) -> str:
-    return _bids_name(state, ('subject', 'session', 'acquisition', 'run'), suffix=state['suffix'])
+    return _bids_name(state, ('subject', 'session', 'acquisition', 'run'))
 
 
 def test_basename(state: dict[str, Any]) -> str:
-    return _bids_name(state, ('session', 'run'), suffix=state['suffix'])
+    return _bids_name(state, ('session', 'run'))
 
 
 def raw_dir(state: dict[str, Any]) -> Path:
@@ -86,10 +80,7 @@ def raw_dir(state: dict[str, Any]) -> Path:
     return path / state['datatype']
 
 
-def ica_file_path(
-        state: dict[str, Any],
-        raw: str,
-) -> Path:
+def ica_file_path(state: dict[str, Any], raw: str) -> Path:
     return DERIV_DIR / 'ica' / f"{epoch_basename(state)}_raw-{raw}_ica.fif"
 
 
@@ -97,12 +88,7 @@ def trans_file_path(state: dict[str, Any]) -> Path:
     return DERIV_DIR / 'trans' / f"{subject_session_basename(state)}_trans.fif"
 
 
-def rej_file_path(
-        state: dict[str, Any],
-        *,
-        epoch: str | None = None,
-        rej: str | None = None,
-) -> Path:
+def rej_file_path(state: dict[str, Any], epoch: str | None = None, rej: str | None = None) -> Path:
     epoch_name = state['epoch'] if epoch is None else epoch
     rej_name = state['rej'] if rej is None else rej
     return DERIV_DIR / 'eelbrain' / 'epoch selection' / f"{epoch_basename(state)}_raw-{state['raw']}_epoch-{epoch_name}_rej-{rej_name}_epoch.pickle"

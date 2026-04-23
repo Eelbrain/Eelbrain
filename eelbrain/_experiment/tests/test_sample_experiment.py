@@ -18,7 +18,7 @@ from eelbrain.pipeline import *
 from eelbrain._exceptions import ConfigurationError
 from eelbrain._experiment.derivative_cache import ProtectedArtifactError
 from eelbrain._experiment.pathing import LOG_DIR, ica_file_path
-from eelbrain._experiment.preprocessing import RawFilterElliptic, raw_node_name
+from eelbrain._experiment.preprocessing import RawFilterElliptic, ica_input_name, raw_node_name
 from eelbrain._experiment.reports import _report_subject_info
 from eelbrain._experiment.test_def import TestDims as _TestDims
 from eelbrain._experiment.variable_def import LabelVar, Variables
@@ -586,19 +586,15 @@ def test_sample_tasks():
     e = Experiment(root)
 
     # get paths
-    pipe = e._raw[e.get('raw', raw='raw')]
-    bids_path = e._bids_path
-    assert pipe._raw_path(bids_path) == Path(root) / 'sub-R0000' / 'meg' / 'sub-R0000_task-sample1_meg.fif'
-    assert pipe._bads_path(bids_path) == Path(root) / 'sub-R0000' / 'meg' / 'sub-R0000_task-sample1_channels.tsv'
-    pipe = e._raw[e.get('raw', raw='ica')]
-    bids_path = e._bids_path
     handle = e._derivatives.resolve(raw_node_name('ica'), state=e.state)
     assert 'root' not in e.state
     assert handle.root == Path(root)
     assert handle.artifact_path.is_relative_to(Path(root) / 'derivatives' / 'eelbrain' / 'cache' / 'raw-ica')
     assert handle.artifact_path.suffix == '.fif'
     assert '_key-' in handle.artifact_path.name
-    assert str(ica_file_path(e.state, raw='ica')) == join('derivatives', 'ica', 'sub-R0000_meg_raw-ica_ica.fif')
+    assert str(ica_file_path(e.state, 'ica')) == join('derivatives', 'ica', 'sub-R0000_meg_raw-ica_ica.fif')
+    ica_handle = e._resolve_derivative(ica_input_name('ica'))
+    assert ica_handle.load(view='status') == 'missing-ica'
     e.set(raw='raw')
 
     # automatically generate channels.tsv

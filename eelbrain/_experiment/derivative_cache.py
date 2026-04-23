@@ -415,6 +415,14 @@ class Input(DependencyNode[T]):
         """
         raise NotImplementedError
 
+    def path(self, ctx: Request) -> Path:
+        """Path to the input artifact."""
+        raise NotImplementedError
+
+    def exists(self, ctx: Request) -> bool:
+        """Return whether the input artifact for this request exists."""
+        return self.path(ctx).exists()
+
 
 class Derivative(DependencyNode[T]):
     """Base class for one cache-managed derived artifact.
@@ -797,6 +805,13 @@ class Request(Generic[T]):
     def has_control(self, control: str) -> bool:
         """Return whether this request includes one explicit execution control."""
         return control in self.controls
+
+    def exists(self) -> bool:
+        """Return whether the input artifact for this request exists."""
+        if isinstance(self.node, Input):
+            return self.node.exists(self)
+        else:
+            raise TypeError(f"{self.node=} does not support exists()")
 
     def options_for(self, name: str, *keys: str, **overrides) -> dict[str, Any]:
         """Build a valid option mapping for a dependency node.

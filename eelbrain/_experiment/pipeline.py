@@ -14,7 +14,7 @@ import numpy as np
 import mne
 from mne.minimum_norm import apply_inverse_raw
 import mne_bids
-from mne_bids import BIDSPath, get_entity_vals
+from mne_bids import get_entity_vals
 
 from .. import fmtxt
 from .. import gui
@@ -46,13 +46,13 @@ from .exceptions import FileMissingError
 from .state_model import StateModel
 from .groups import assemble_groups
 from .pathing import (
-    BIDS_PATH_KEYS, LOG_DIR, MRI_SDIR, RESULTS_DIR, ica_file_path, join_stem_parts, mri_dir,
-    raw_basename, raw_dir, rej_file_path, src_file_path, trans_file_path,
+    LOG_DIR, MRI_SDIR, RESULTS_DIR, bids_path, ica_file_path, join_stem_parts, mri_dir, raw_basename, raw_dir,
+    rej_file_path, src_file_path, trans_file_path,
 )
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, _resolve_parc
 from .preprocessing import (
-    CachedRawPipe, ICAInput, RawBadChannelsInput, RawDerivative, RawPipe, RawSource, RawSourceInput, RawICA,
-    REINDEX_ICA, assemble_raw_pipes, ica_input_name, raw_node_name,
+    CachedRawPipe, ICAInput, RawBadChannelsInput, RawDerivative, RawPipe, RawSource, RawSourceDerivative, RawSourceInput, RawICA,
+    REINDEX_ICA, assemble_raw_pipes, ica_input_name, raw_bad_channels_input_name, raw_node_name, raw_input_name,
 )
 from .reports import (
     CoregReportDerivative, EEGReportDerivative, EEGSensorsReportDerivative,
@@ -232,7 +232,8 @@ class Pipeline(StateModel):
         ########
         if root is None:
             raise TypeError("Pipeline subclasses must have root.")
-        self.root = root = Path(root).expanduser().absolute()
+        root = Path(root).expanduser().absolute()
+        self.root: Path = root
 
         # BIDS entities
         ignore_entities = copy.deepcopy(self.ignore_entities)
@@ -251,17 +252,17 @@ class Pipeline(StateModel):
                 raise ConfigurationError(f"`datatype` must be 'meg' or 'eeg', not {self.datatype!r}.")
             if not isinstance(self.extension, str):
                 raise TypeError(f"{self.__class__.__name__}.extension={self.extension!r} with {self.__class__.__name__}.datatype={self.datatype!r}; extension needs to be specified (e.g., '.fif').")
-            self._datatype = self.datatype
+            datatype = self.datatype
             extensions = (self.extension,)
         else:
             datatypes = tuple(mne_bids.get_datatypes(root))
             if 'meg' in datatypes and 'eeg' in datatypes:
                 raise ConfigurationError(f"Can't infer datatype. Both MEG and EEG data found in {root}.")
             elif 'meg' in datatypes:
-                self._datatype = 'meg'
+                datatype = 'meg'
                 extensions = ('.fif',)
             elif 'eeg' in datatypes:
-                self._datatype = 'eeg'
+                datatype = 'eeg'
                 data_extensions = {path.extension for path in mne_bids.find_matching_paths(root, datatypes='eeg', suffixes='eeg', extensions=['.edf', '.vhdr', '.set', '.bdf', '.fif'])}
                 if len(data_extensions) == 0:
                     raise FileMissingError(f"No EEG data files found in {root}.")
@@ -270,7 +271,7 @@ class Pipeline(StateModel):
                 extensions = tuple(data_extensions)
             else:
                 raise ConfigurationError(f"Can't infer datatype. No MEG or EEG data found in {root}.")
-        self._bids_path = BIDSPath(root=root)
+        self._raw_extension = extensions[0]
         StateModel.__init__(self)
 
         ########################################################################
@@ -349,15 +350,13 @@ class Pipeline(StateModel):
             default_epoch = None
         self._register_field('epoch', epoch_keys, default_epoch, repr=True)
 
-        # Register BIDS_PATH_KEYS
+        # Register BIDS entity fields
         self._register_field('subject', self._subjects, repr=True)
         self._register_field('session', self._sessions or None, repr=True)
         self._register_field('task', self._tasks, depends_on=('epoch',), slave_handler=self._update_task, repr=True)
         self._register_field('acquisition',  self._acquisitions or None, repr=True)
         self._register_field('run', self._runs or None, repr=True)
-        self._register_field('datatype', (self._datatype,), repr=True)
-        self._register_field('suffix', (self._datatype,), repr=True)
-        self._register_field('extension', extensions, repr=True)
+        self._register_field('datatype', (datatype,), repr=True)
         self._register_field('equalize_evoked_count', ('', 'eq'), allow_empty=True)
         self._register_field('common_brain', ('fsaverage',))
 
@@ -400,10 +399,6 @@ class Pipeline(StateModel):
     def _repr_args(self) -> tuple[str, ...]:
         return (str(self.root),)
 
-    def _restore_state(self, state=-1, discard_tip=True):
-        StateModel._restore_state(self, state=state, discard_tip=discard_tip)
-        self._update_bids_path()
-
     def _init_derivative_registry(self):
         self._derivatives = DerivativeRegistry(self.root, self._log)
         result_args = (
@@ -414,17 +409,18 @@ class Pipeline(StateModel):
         )
         brain_report_args = (*result_args, self._mri_subjects, self.get('common_brain'), {**self._brain_plot_defaults, **self.brain_plot_defaults})
 
-        # --- Inputs (externally managed files) ---
+        # --- Inputs (externally managed files) and preprocessing ---
         for raw_name, pipe in self._raw.items():
             if isinstance(pipe, RawSource):
-                self._derivatives.register(RawBadChannelsInput(raw_name, pipe))
-                self._derivatives.register(RawSourceInput(raw_name, pipe))
+                self._derivatives.register(RawBadChannelsInput(raw_name, pipe, self._raw_extension))
+                self._derivatives.register(RawSourceInput(raw_name, pipe, self._raw_extension))
+                self._derivatives.register(RawSourceDerivative(raw_name, pipe, self._raw_extension))
             elif isinstance(pipe, CachedRawPipe):
                 # FIXME: run handling
                 # runs = self._runs if isinstance(pipe, RawICA) else None
-                self._derivatives.register(RawDerivative(raw_name, pipe, self._raw))
+                self._derivatives.register(RawDerivative(raw_name, pipe, self._raw, self._raw_extension))
                 if isinstance(pipe, RawICA):
-                    self._derivatives.register(ICAInput(raw_name, pipe, self._raw))
+                    self._derivatives.register(ICAInput(raw_name, pipe, self._raw, self._raw_extension))
             else:
                 raise TypeError(f"Unknown raw pipe {pipe}")
         self._derivatives.register(TransInput())
@@ -486,6 +482,14 @@ class Pipeline(StateModel):
         self._derivatives.register(DSPMMovieDerivative(*result_args))
         self._derivatives.register(TTestMovieDerivative(*result_args))
 
+    def _resolve_derivative(
+            self,
+            name: str,
+            options: dict[str, Any] | None = None,
+            controls: frozenset[str] | set[str] | tuple[str, ...] = (),
+    ):
+        return self._derivatives.resolve(name, state=self.state, options=options, controls=controls)
+
     def _load_derivative(
             self,
             name: str,  # Registered derivative name.
@@ -496,8 +500,7 @@ class Pipeline(StateModel):
             redo: bool = True,  # When False, skip the load if the artifact is already up to date.
             controls: frozenset[str] | set[str] | tuple[str, ...] = (),
     ):
-        options_ = {} if options is None else dict(options)
-        ctx = self._derivatives.resolve(name, state=self.state, options=options_, controls=controls)
+        ctx = self._resolve_derivative(name, options=options, controls=controls)
         if not redo and ctx.is_valid():
             return None
         return ctx.load(cache=cache, view=view)
@@ -1388,7 +1391,7 @@ class Pipeline(StateModel):
             if state:
                 self.set(**state)
             fwd = self._load_derivative('fwd')
-            fwd_file = self._derivatives.resolve('fwd', state=self.state).artifact_path
+            fwd_file = self._resolve_derivative('fwd').artifact_path
             src = self.get('src')
             if ndvar:
                 parc = self._current_source_parc()
@@ -1948,7 +1951,7 @@ class Pipeline(StateModel):
         test_obj = self.tests[test]
         result_node = 'two-stage-level-2' if isinstance(test_obj, TwoStageTest) else 'test-result'
         data_node = 'two-stage-data' if isinstance(test_obj, TwoStageTest) else 'evoked-test-data'
-        handle = self._derivatives.resolve(result_node, state=self.state, options=options)
+        handle = self._resolve_derivative(result_node, options=options)
         dst = handle.artifact_path
         desc = self._derivatives.describe_artifact_path(dst)
 
@@ -1973,7 +1976,7 @@ class Pipeline(StateModel):
                 return res
 
         data_options = {key: value for key, value in options.items() if key != 'disconnect_labels'}
-        res_data = self._derivatives.resolve(data_node, state=self.state, options=data_options).load()
+        res_data = self._resolve_derivative(data_node, options=data_options).load()
         if isinstance(res_data, ROIData):
             res_data = res_data.label_data
         return res_data, res
@@ -2016,10 +2019,14 @@ class Pipeline(StateModel):
         load_bad_channels : load the current bad_channels file
         merge_bad_channels : merge bad channel definitions for all tasks
         """
-        pipe = self._raw[self.get('raw', **kwargs)]
-        source_pipe = self._raw.root_source_pipe(pipe.name)
-        bids_path = self._bids_path
-        source_pipe._write_bad_channels(bids_path, bad_chs, redo=redo, noise=noise)
+        raw_name = self.get('raw', **kwargs)
+        source_name = self._raw.root_source_name(raw_name)
+        if isinstance(bad_chs, (str, int)):
+            bad_chs = (bad_chs,)
+        raw = self._load_derivative(raw_input_name(source_name), options={'noise': noise})
+        bads_ctx = self._resolve_derivative(raw_bad_channels_input_name(source_name), options={'noise': noise})
+        bads_ctx.node._resolved_bids_path(bads_ctx, raw)
+        bads_ctx.node._write(bads_ctx, raw, bad_chs, redo)
 
     def make_bad_channels_auto(
         self,
@@ -2046,9 +2053,14 @@ class Pipeline(StateModel):
         """
         if state:
             self.set(**state)
-        pipe = self._raw['raw']
-        bids_path = self._bids_path
-        pipe._make_bad_channels_auto(bids_path, flat, redo=redo, noise=noise, pipes=self._raw)
+        source_name = self._raw.root_source_name('raw')
+        pipe = self._raw[source_name]
+        raw = self._load_derivative(raw_input_name(source_name), options={'noise': noise, 'preload': True})
+        bads_ctx = self._resolve_derivative(raw_bad_channels_input_name(source_name), options={'noise': noise})
+        bids_path = bads_ctx.node._resolved_bids_path(bads_ctx, raw)
+        detected = pipe._detect_flat_channels(bids_path, raw, flat)
+        if detected is not None:
+            bads_ctx.node._write(bads_ctx, raw, detected, redo)
 
     def make_bad_channels_neighbor_correlation(
             self,
@@ -2173,7 +2185,7 @@ class Pipeline(StateModel):
                 task = pipe.task
             else:
                 task = sequence_arg('task', task)
-            ctx = self._derivatives.resolve(ica_input_name(ica_name), state=self.state)
+            ctx = self._resolve_derivative(ica_input_name(ica_name))
             raw = ctx.node.load_concatenated_source_raw(ctx, task)
             decim = decim_param(samplingrate, decim, None, raw.info, minimal=True)
             info = raw.info
@@ -2234,7 +2246,7 @@ class Pipeline(StateModel):
         if ica_raw_name != raw_name:
             self.set(raw=ica_raw_name)
             print(f"raw: {raw_name} -> {ica_raw_name}")
-        ctx = self._derivatives.resolve(ica_input_name(ica_raw_name), state=self.state)
+        ctx = self._resolve_derivative(ica_input_name(ica_raw_name))
         try:
             ctx.node.materialize(ctx)
         except ProtectedArtifactError as error:
@@ -2877,9 +2889,11 @@ class Pipeline(StateModel):
             # ICARaw merges bad channels dynamically, so explicit merge needs to
             # be performed lower in the hierarchy
             self.set(raw='raw')
+            source_name = self._raw.root_source_name('raw')
             for task in self.iter('task'):
-                if exists(self._raw['raw']._raw_path(self._bids_path)):
-                    bads.update(self.load_bad_channels())
+                file_ctx = self._resolve_derivative(raw_input_name(source_name), options={'noise': False})
+                if file_ctx.exists():
+                    bads.update(self._load_derivative(raw_node_name(source_name), options={'noise': False}, view='bads'))
                     tasks.append(task)
                 else:
                     print("%%-%is: skipping, raw file missing" % n_chars % task)
@@ -3337,16 +3351,16 @@ class Pipeline(StateModel):
         state_ = self._fields
         subp.run_mne_browse_raw(str(self.root / raw_dir(state_)), self.get('mrisubject'), str(self.root / MRI_SDIR), modal)
 
-    def set(self, subject=None, match=True, **state):
+    def set(self, subject: str = None, match: bool = True, **state):
         """
         Set variable values.
 
         Parameters
         ----------
-        subject : str
+        subject
             Set the `subject` value. The corresponding `mrisubject` is
             automatically set to the corresponding mri subject.
-        match : bool
+        match
             For fields with pre-defined values, only allow valid values (default
             ``True``).
         ...
@@ -3364,7 +3378,6 @@ class Pipeline(StateModel):
         StateModel.set(self, match, **state)
         if subject is not None:
             StateModel.set(self, match, subject=subject)
-        self._update_bids_path()
 
     def _post_set_group(self, _: str, group: str) -> None:
         if group == '*' or group not in self._groups:
@@ -3382,14 +3395,17 @@ class Pipeline(StateModel):
             method: str = 'dSPM',
             depth: float = 0.8,
             pick_normal: bool = False,
-            **state):
+            **state,
+    ):
         """Set the type of inverse solution used for source estimation
 
         Parameters
         ----------
-        ori : 'free' | 'fixed' | 'vec' | float ]0, 1]
-            Orientation constraint (default ``'free'``; use a number between 0
-            and 1 to specify a loose constraint).
+        ori
+            Orientation constraint (one of
+            ``'free' | 'fixed' | 'vec' | float ]0, 1]``;
+            default ``'free'``;
+            use a number between 0 and 1 to specify a loose constraint).
 
             At each source point, ...
 
@@ -3679,15 +3695,17 @@ class Pipeline(StateModel):
         if isinstance(pipe, RawICA):
             rows = []
             for subject in self:
-                try:
-                    ica = self.load_ica()
+                ctx = self._resolve_derivative(ica_input_name(raw), options={'noise': False})
+                status = ctx.load(view='status')
+                if status == 'ok':
+                    ica = ctx.load()
                     rows.append((subject, ica.n_components_, len(ica.exclude)))
-                except FileMissingError:
-                    path = self._bids_path.copy()
-                    if all(path.copy().update(task=task).fpath.exists() for task in pipe.task):
-                        rows.append((subject, "No ICA-file", -1))
-                    else:
-                        rows.append((subject, "No data", -1))
+                elif status == 'missing-ica':
+                    rows.append((subject, "No ICA-file", -1))
+                elif status == 'missing-raw':
+                    rows.append((subject, "No data", -1))
+                else:
+                    raise RuntimeError(f"{status=}")
 
             n_selected = [row[-1] for row in rows]
             mark_unselected = any(n_selected) and not all(n_selected)
@@ -3722,7 +3740,7 @@ class Pipeline(StateModel):
         subjects = []
         reg = []
         for subject in self:
-            handle = self._derivatives.resolve(cov_node_name(self.get('cov')), state=self.state)
+            handle = self._resolve_derivative(cov_node_name(self.get('cov')))
             path = handle.artifact_path.with_suffix('.info.txt')
             if exists(path):
                 with open(path) as fid:
@@ -3849,7 +3867,7 @@ class Pipeline(StateModel):
             caption: str | bool = True,
             asds: bool = False,
             **state,
-    ):
+    ) -> Dataset | fmtxt.Table:
         """Create a Dataset with subject information
 
         Parameters
@@ -3862,10 +3880,9 @@ class Pipeline(StateModel):
         mrisubject
             Add a column showing the MRI subject corresponding to each subject.
         caption
-            Caption for the table (For True, use the default "Subject in group
-            {group}".
+            Caption for the table (default "Subject in group {group}").
         asds
-            Return the table as Dataset instead of an FMTxt Table.
+            Return the table as Dataset instead of an :class:`fmtxt.Table`.
         ...
             State parameters.
         """
@@ -3884,20 +3901,17 @@ class Pipeline(StateModel):
         subject_list = []
         mri_list = []
         mrisubject_list = []
-        raw_list = []
-        datatype = self.get('datatype')
-        suffix = self.get('suffix')
+        raw_list = []  # {task: [] for task in self.get_field_values('task')}
         for subject in self.iter():
             subject_list.append(subject)
             mrisubject_ = self.get('mrisubject')
             mrisubject_list.append(mrisubject_)
             if raw:
-                query = BIDSPath(
-                    subject=subject,
-                    datatype=datatype,
-                    suffix=suffix,
-                    root=self.root,
-                )
+                # for task in self.iter('task'):
+                #     pass
+                # FIXME: use ctx.node.exists()
+                fixed_state = {k: v for k, v in self._fields.items() if not (isinstance(v, str) and '*' in v)}
+                query = bids_path(self.root, fixed_state, self._raw_extension)
                 matches = query.match()
                 basenames = [match.basename for match in matches]
                 raw_list.append(', '.join(basenames))
@@ -3956,10 +3970,3 @@ class Pipeline(StateModel):
         if hemi:
             out['hemi'] = hemi
         return out
-
-    def _update_bids_path(self) -> None:
-        keys = {
-            k: v for k, v in self._fields.items()
-            if (k in BIDS_PATH_KEYS) and v and ('*' not in v)
-        }
-        self._bids_path.update(**keys)

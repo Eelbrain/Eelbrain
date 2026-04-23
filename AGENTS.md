@@ -3,6 +3,7 @@
 ## Code Structure
 
 - Prefer direct implementations with one obvious source of truth.
+- Keep code concise, linear, and avoid over-engineering. 
 - Avoid thin pass-through helpers that only rename or forward existing behavior.
 - Do not add one-off helpers unless they materially improve readability, reuse, or testability.
 
