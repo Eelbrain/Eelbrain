@@ -31,28 +31,31 @@ Graph nodes implementing specific pipeline components live in modules such as
 :mod:`eelbrain._experiment.events`, and
 :mod:`eelbrain._experiment.source`.
 
-Each node represents one managed file or artifact family and is initialized
-with the configuration it needs up front. Cache derivatives own their internal
-artifact paths directly from semantic state/options. End-product export
-derivatives may additionally define default public paths for reports, movies,
-and similar user-facing outputs.
+Each node represents one managed artifact family and owns its complete lifecycle
+(path, caching, fingerprinting, file I/O). :class:`Derivative` nodes represent
+artifacts built by the pipeline from their dependencies; :class:`Input` nodes
+represent external artifacts supplied from outside the pipeline (raw recordings,
+manually curated sidecar files, etc.). Cache derivatives derive their paths
+directly from semantic state and options; end-product export derivatives may
+additionally define default public paths for reports, movies, and similar
+user-facing outputs.
 
 Graph nodes often have corresponding :class:`Configuration` objects that expose
-user settings.
-Configuration objects may also serve as plugin-like extensions, with multiple different
-configuration objects corresponding to one type of :class:`Derivative`.
-For example, multiple :class:`RawPipe` subclasses define different preprocessing steps.
-Such configuration objects may also include substantial domain behavior, including
-implementation code for analysis steps, and are bound into graph nodes when
-:class:`Pipeline` is initialized. They specify processing behavior and
-node-specific configuration, but do not implement caching policy, manifests,
-dependency traversal, or protected-artifact handling themselves. For example,
-a :class:`RawPipe` subclass
-1) provides the actual processing implementation through one of its methods, and
-2) lets the user choose preprocessing options and parameters through
-initialization parameters.
+user settings. Configuration objects may also act as plugins: a node provides default
+implementations for each lifecycle step, invoking its configuration to customize
+specific steps. This allows new behaviors to be introduced by adding new
+configuration types without modifying the node.
 
-Some configuration objects may govern to multiple dependency nodes.
+For instance, :class:`RawDerivative` orchestrates a preprocessing pipeline,
+while different :class:`RawPipe` subclasses define implementations for specific
+preprocessing steps. A :class:`RawPipe` subclass:
+
+1) provides the actual processing implementation through one of its methods, and
+2) lets the user choose preprocessing options and parameters through initialization parameters.
+
+:class:`Configuration` objects are bound into graph nodes when :class:`Pipeline` is initialized.
+
+Some configuration objects may govern multiple dependency nodes.
 For example, each configured :class:`RawPipe` produces its own raw derivative
 node, and preprocessing with ICA requires an ICA :class:`Input`
 node in addition to the raw derivative node that applies it.
