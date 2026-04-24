@@ -72,7 +72,7 @@ class LabelVar(VarDef):
     Parameters
     ----------
     source
-        Variable supplying the values (e.g., ``"trigger"``).
+        Variable supplying the values (e.g., ``"value"``).
     codes
         Mapping values in ``source`` to values in the new variable. The type
         of the values determines whether the output is a :class:`Factor`
@@ -255,7 +255,7 @@ class Variables(Configuration):
                         default = vdef.pop('default')
                     else:
                         default = True
-                    vdef = LabelVar('trigger', vdef, default)
+                    vdef = LabelVar('value', vdef, default)
                 elif isinstance(vdef, tuple):
                     vdef = LabelVar(*vdef)
                 else:
@@ -271,7 +271,7 @@ class Variables(Configuration):
 
     def _check_trigger_vars(self):
         for key, var in self.vars.items():
-            if isinstance(var, LabelVar) and var.source == 'trigger':
+            if isinstance(var, LabelVar) and var.source == 'value':
                 if not all(isinstance(v, INT_TYPES) for v in var.labels):
                     raise ConfigurationError(f"Variable {key!r}: {var} codes must be integers")
 

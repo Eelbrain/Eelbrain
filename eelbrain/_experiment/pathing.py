@@ -48,9 +48,15 @@ def _bids_name(
     return '_'.join(parts)
 
 
-def bids_path(root: Path, state: dict[str, Any], extension: str, *, noise: bool = False) -> BIDSPath:
+def bids_path(root: Path, state: dict[str, Any], extension: str, *, suffix: str = None, noise: bool = False) -> BIDSPath:
     kwargs = {key: _state_value(state, key) for key in BIDS_ENTITY_KEYS}
-    path = BIDSPath(root=root, suffix=state['datatype'], extension=extension, datatype=state['datatype'], **kwargs)
+    path = BIDSPath(
+        root=root,
+        suffix=suffix or state['datatype'],
+        extension=extension,
+        datatype=state['datatype'],
+        **kwargs,
+    )
     if noise:
         return path.find_empty_room()
     else:

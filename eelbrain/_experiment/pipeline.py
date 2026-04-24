@@ -41,7 +41,7 @@ from .epochs import (
     EvokedDerivative, EvokedGroupDatasetDerivative, PrimaryEpoch, RejectionInput,
     SecondaryEpoch, SuperEpoch, assemble_epochs, decim_param,
 )
-from .events import EventsDerivative, LabeledEventsDerivative, SelectedEventsDerivative
+from .events import EventsDerivative, EventsInput, LabeledEventsDerivative, SelectedEventsDerivative
 from .exceptions import FileMissingError
 from .state_model import StateModel
 from .groups import assemble_groups
@@ -428,6 +428,7 @@ class Pipeline(StateModel):
         self._derivatives.register(RejectionInput(self.root, self._artifact_rejection, self._epochs))
 
         # --- Sensor-space: events → epochs → evoked ---
+        self._derivatives.register(EventsInput(self._raw_extension))
         self._derivatives.register(EventsDerivative(
             self.trigger_shift,
             sequence_arg(f'{self.__class__.__name__}.stim_channel', self.stim_channel),
@@ -435,12 +436,12 @@ class Pipeline(StateModel):
             self.preload,
             type(self).fix_events,    # bound to the subclass at construction time
             self.__class__.__name__,
-            len(self._tasks) > 1,
-            len(self._sessions) > 1,
         ))
         self._derivatives.register(LabeledEventsDerivative(
             type(self).label_events,
             self.__class__.__name__,
+            len(self._tasks) > 1,
+            len(self._sessions) > 1,
             self._variables,
             self._groups,
             type(self).cache_event_labels,
@@ -737,9 +738,9 @@ class Pipeline(StateModel):
                 def label_events(self, ds):
                     # assign 'no' to all events
                     ds[:, 'new'] = 'no'
-                    # assign 'yes' to events where trigger 2 follows trigger 1
+                    # assign 'yes' to events where value 2 follows value 1
                     for i in range(1, ds.n_cases):
-                        if ds[i, 'trigger'] == 2 and ds[i-1, 'trigger'] == 1:
+                        if ds[i, 'value'] == 2 and ds[i-1, 'value'] == 1:
                             ds[i, 'new'] = 'yes'
                     return ds
 
@@ -753,16 +754,16 @@ class Pipeline(StateModel):
                     samplingrate = ds.info['sfreq']
                     new_events = []
                     # loop through trials
-                    for i_start, trigger in ds.zip('i_start', 'trigger'):
-                        # load the event file, assuming that the trigger in the
-                        # data was used to indicate the trial ID
-                        trial_events = load.tsv(f'/files/trial_{trigger}.txt')
-                        # assuming trial_events has a column called 'time' (in
+                    for sample, value in ds.zip('sample', 'value'):
+                        # load the event file, assuming that the trigger value
+                        # in the data was used to indicate the trial ID
+                        trial_events = load.tsv(f'/files/trial_{value}.txt')
+                        # assuming trial_events has a column called 'onset' (in
                         # seconds), we infer the event's sample in the raw file
-                        trial_i_start = i_start + trial_events['time'] * samplingrate
-                        trial_events['i_start'] = Var(trial_i_start.astype(int))
-                        # events also need a trigger column
-                        trial_events[:, 'trigger'] = trigger
+                        trial_sample = sample + trial_events['onset'] * samplingrate
+                        trial_events['sample'] = Var(trial_sample.astype(int))
+                        # events also need a value column
+                        trial_events[:, 'value'] = value
                         # collect all trials
                         new_events.append(trial_events)
                     # combine the trials to a single dataset

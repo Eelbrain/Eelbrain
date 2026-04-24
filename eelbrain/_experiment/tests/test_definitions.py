@@ -137,10 +137,10 @@ def test_vardef_semantic_identity():
     assert EvalVar('a + b', task='task-a') != EvalVar('a + b', task='task-b')
     assert GroupVar(('g1', 'g2'), task='task-a') != GroupVar(('g1', 'g2'), task='task-b')
 
-    compact = LabelVar('trigger', {(1, 2): 'target'}, task='task-a')
-    expanded = LabelVar('trigger', {1: 'target', 2: 'target'}, task='task-a')
+    compact = LabelVar('value', {(1, 2): 'target'}, task='task-a')
+    expanded = LabelVar('value', {1: 'target', 2: 'target'}, task='task-a')
     assert compact == expanded
-    assert compact != LabelVar('trigger', {1: 'target', 2: 'target'}, task='task-b')
+    assert compact != LabelVar('value', {1: 'target', 2: 'target'}, task='task-b')
 
 
 def test_raw_pipe_semantic_dict():

@@ -26,8 +26,8 @@ def test_prepare_continuous_epoch_dataset():
     epoch = ContinuousEpoch('task', 'stim == 1', pad_start=0.1, pad_end=0.2, split=0.5, samplingrate=200)
     assert 'name' not in epoch._as_dict()
     ds = Dataset({
-        'time': Var([0.0, 0.1, 0.2, 1.0, 1.1]),
-        'i_start': Var([0, 100, 200, 1000, 1100]),
+        'onset': Var([0.0, 0.1, 0.2, 1.0, 1.1]),
+        'sample': Var([0, 100, 200, 1000, 1100]),
     })
     ds.info['sfreq'] = 1000
     ds.info['raw'] = SimpleNamespace(info={'sfreq': 1000})

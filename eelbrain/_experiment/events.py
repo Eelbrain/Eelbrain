@@ -3,14 +3,21 @@
 
 The event pipeline is split into three nodes:
 
+:class:`EventsInput` (``'events-input'``)
+    External input that reads events directly from a BIDS sidecar
+    ``*_events.tsv`` file when one is present alongside the raw recording.
+
 :class:`EventsDerivative` (``'events'``)
     Reads raw trigger data for one recording file and applies the experiment's
     :meth:`~Pipeline.fix_events` hook to produce a corrected
-    :class:`~eelbrain.Dataset` of trial events.
+    :class:`~eelbrain.Dataset` of trial events.  Used as a fallback when no
+    BIDS events sidecar is found.
 
 :class:`LabeledEventsDerivative` (``'labeled-events'``)
     Applies built-in variable definitions and the experiment's
     :meth:`~Pipeline.label_events` hook on top of the cached events.
+    Prefers :class:`EventsInput` over :class:`EventsDerivative` when a BIDS
+    sidecar file is present.
 
 :class:`SelectedEventsDerivative` (``'selected-events'``)
     Applies epoch-specific trial selection (``sel`` predicate, rejection,
@@ -24,21 +31,23 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import json
 from pathlib import Path
 from typing import Any
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
+import pandas as pd
 
 from .. import load, save
 from .._data_obj import Datalist, Dataset, Factor, Var, combine
 from .._exceptions import ConfigurationError
 from .._info import BAD_CHANNELS
 from .._names import INTERPOLATE_CHANNELS
-from .derivative_cache import CachePolicy, Dependency, Derivative, Request
+from .derivative_cache import CachePolicy, Dependency, Derivative, Input, Request, file_fingerprint
 from .epochs import EpochCollection, SecondaryEpoch, SuperEpoch
 from .exceptions import FileMissingError
-from .pathing import BIDS_ENTITY_KEYS, rej_file_path
+from .pathing import BIDS_ENTITY_KEYS, bids_path, rej_file_path
 from .preprocessing import load_raw_dependency, raw_data_dependency, raw_node_name
 from .variable_def import Variables
 
@@ -56,13 +65,56 @@ def function_fingerprint(function) -> str:
     return hashlib.sha256(src.encode()).hexdigest()[:16]
 
 
+class EventsInput(Input[Dataset]):
+    """Read events from a BIDS sidecar ``*_events.tsv`` file.
+
+    The file is expected to follow the BIDS specification with at least the
+    columns ``onset`` (seconds), ``sample`` (integer sample index), and
+    ``value`` (integer trigger code).  Additional columns are passed through
+    to the returned :class:`~eelbrain.Dataset` so that they are available in
+    :meth:`~Pipeline.label_events`.
+
+    The recording sampling frequency is read from the accompanying
+    ``*_<datatype>.json`` metadata sidecar (``SamplingFrequency`` field).
+    """
+    name = 'events-input'
+
+    def __init__(
+            self,
+            raw_extension: str,
+    ):
+        self.raw_extension = raw_extension
+
+    def path(self, ctx: Request) -> Path:
+        return bids_path(ctx.root, ctx.state, extension='.tsv', suffix='events').fpath
+
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        return file_fingerprint(ctx.root, self.path(ctx), 'events-tsv')
+
+    def load(self, ctx: Request) -> Dataset:
+        path = self.path(ctx)
+        df = pd.read_csv(path, sep='\t')
+        # Read SamplingFrequency from the accompanying JSON metadata sidecar
+        json_path = Path(bids_path(ctx.root, ctx.state, '.json').fpath)
+        if json_path.exists():
+            with open(json_path) as f:
+                sfreq = float(json.load(f).get('SamplingFrequency', 0.))
+        else:
+            sfreq = 0.
+        entities = {k: ctx.state[k] for k in BIDS_ENTITY_KEYS}
+        ds = Dataset.from_dataframe(df)
+        ds.info['sfreq'] = sfreq
+        ds.info.update(entities)
+        return ds
+
+
 def _check_ds(ds: Dataset, source: str, info: dict[str, Any]) -> Dataset:
     if not isinstance(ds, Dataset):
         raise ConfigurationError(f"{source} needs to return the events Dataset. Got {ds!r}.")
-    if 'i_start' not in ds:
-        raise ConfigurationError(f"The Dataset returned by {source} does not contain a variable called `i_start`. This variable is required to ascribe events to data samples.")
-    if 'trigger' not in ds:
-        raise ConfigurationError(f"The Dataset returned by {source} does not contain a variable called `trigger`. This variable is required to check rejection files.")
+    if 'sample' not in ds:
+        raise ConfigurationError(f"The Dataset returned by {source} does not contain a variable called `sample`. This variable is required to ascribe events to data samples.")
+    if 'value' not in ds:
+        raise ConfigurationError(f"The Dataset returned by {source} does not contain a variable called `value`. This variable is required to check rejection files.")
     if ds.info is not info:
         ds.info.update(info)
     return ds
@@ -81,8 +133,6 @@ class EventsDerivative(Derivative[Dataset]):
             preload: bool,
             fix_events,
             owner_name: str,
-            multi_task: bool,
-            multi_session: bool,
     ):
         self.trigger_shift = trigger_shift
         self.stim_channel = stim_channel
@@ -90,8 +140,6 @@ class EventsDerivative(Derivative[Dataset]):
         self.preload = preload
         self.fix_events_impl = fix_events
         self.owner_name = owner_name
-        self.multi_task = multi_task
-        self.multi_session = multi_session
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (raw_data_dependency(ctx, add_bads=False),)
@@ -125,21 +173,17 @@ class EventsDerivative(Derivative[Dataset]):
             raw.load_data()
         ds = load.mne.events(raw, self.merge_triggers, stim_channel=self.stim_channel)
         del ds.info['raw']
+        ds.rename('i_start', 'sample')
+        ds.rename('trigger', 'value')
         ds.info['sfreq'] = raw.info['sfreq']
         ds.info.update(entities)
 
         trigger_shift = self._get_trigger_shift(subject, session)
         if trigger_shift:
-            ds['i_start'] += int(round(trigger_shift * ds.info['sfreq']))
+            ds['sample'] += int(round(trigger_shift * ds.info['sfreq']))
 
         ds = _check_ds(self.fix_events_impl(self, ds), f'{self.owner_name}.fix_events()', ds.info)
-        ds['time'] = ds['i_start'] / ds.info['sfreq']
-        ds['SOA'] = ds['time'].diff(0)
-        ds['subject'] = Factor([subject], repeat=ds.n_cases, random=True)
-        if self.multi_task:
-            ds[:, 'task'] = entities['task']
-        if self.multi_session:
-            ds[:, 'session'] = entities['session']
+        ds['onset'] = ds['sample'] / ds.info['sfreq']
         return ds
 
     def load(self, ctx: Request, path: Path) -> Dataset:
@@ -167,20 +211,30 @@ class LabeledEventsDerivative(Derivative[Dataset]):
 
     def __init__(
             self,
-            label_events,
+            label_events: Callable[[Dataset], Dataset],
             owner_name: str,
+            multi_task: bool,
+            multi_session: bool,
             variables: Variables,
             groups: dict[str, Any],
             cache: bool,
     ):
         self.label_events_impl = label_events
         self.owner_name = owner_name
+        self.multi_task = multi_task
+        self.multi_session = multi_session
         self._variables = variables
         self._groups = groups
         if not cache:
             self.cache_policy = CachePolicy.DISABLED_BY_DEFAULT
 
+    def _has_sidecar(self, ctx: Request) -> bool:
+        """Return whether a BIDS events sidecar exists for the current state."""
+        return ctx.registry.resolve('events-input', state=ctx.state).exists()
+
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        if self._has_sidecar(ctx):
+            return (Dependency('events-input', label='events'),)
         return (Dependency('events'),)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
@@ -194,6 +248,11 @@ class LabeledEventsDerivative(Derivative[Dataset]):
 
     def build(self, ctx: Request) -> Dataset:
         ds = ctx.load('events')
+        ds['subject'] = Factor([ctx.state['subject']], repeat=ds.n_cases, random=True)
+        if self.multi_task:
+            ds[:, 'task'] = ctx.state['task']
+        if self.multi_session:
+            ds[:, 'session'] = ctx.state['session']
         self._variables._apply(ds, self._groups)
         info = ds.info
         return _check_ds(self.label_events_impl(self, ds), f'{self.owner_name}.label_events()', info)
@@ -262,7 +321,7 @@ class SelectedEventsDerivative(Derivative[Dataset]):
         if view != 'epochs':
             raise ValueError(f"{self.name!r} does not define dependency view {view!r}")
         ds = ctx.load()
-        return {'i_start': ctx.registry.canonicalize(ds['i_start'])}
+        return {'sample': ctx.registry.canonicalize(ds['sample'])}
 
     def _build_selected_events(
             self,
@@ -306,7 +365,7 @@ class SelectedEventsDerivative(Derivative[Dataset]):
                     if raw is None:
                         raw = raw_
                     else:
-                        ds['i_start'] += raw.last_samp + 1 - raw_.first_samp
+                        ds['sample'] += raw.last_samp + 1 - raw_.first_samp
                         raw.append(raw_)
             if add_bads is True:
                 bad_channels = sorted(set(bad_channels))
@@ -345,14 +404,16 @@ class SelectedEventsDerivative(Derivative[Dataset]):
                 test_passed = False
                 if ds_sel.info.get('epochs.selection') is not None:
                     ds = ds[ds_sel.info['epochs.selection']]
+                # Support both new ('value') and old ('trigger') rejection files
+                sel_col = 'value' if 'value' in ds_sel else 'trigger'
                 if ds_sel.n_cases != ds.n_cases:
-                    if np.all(ds[:ds_sel.n_cases, 'trigger'] == ds_sel['trigger']):
+                    if np.all(ds[:ds_sel.n_cases, 'value'] == ds_sel[sel_col]):
                         ds = ds[:ds_sel.n_cases]
                         test_passed = True
-                    elif np.all(ds[-ds_sel.n_cases:, 'trigger'] == ds_sel['trigger']):
+                    elif np.all(ds[-ds_sel.n_cases:, 'value'] == ds_sel[sel_col]):
                         ds = ds[-ds_sel.n_cases:]
                         test_passed = True
-                elif np.all(ds['trigger'] == ds_sel['trigger']):
+                elif np.all(ds['value'] == ds_sel[sel_col]):
                     test_passed = True
                 if not test_passed:
                     raise RuntimeError(f"The epoch selection file contains different events (trigger IDs) from the data loaded from the raw file. If the events included in the epoch were changed intentionally, redo epoch selection for {subject}/{epoch.name}")
@@ -390,9 +451,9 @@ class SelectedEventsDerivative(Derivative[Dataset]):
                 if np.isnan(shift).any():
                     raise RuntimeError(f"The epoch shift contains NaNs for {subject}/{epoch.name}\n{shift=}")
             if np.isscalar(shift):
-                ds['i_start'] += int(round(shift * ds.info['sfreq']))
+                ds['sample'] += int(round(shift * ds.info['sfreq']))
             else:
-                ds['i_start'] += np.round(shift * ds.info['sfreq']).astype(int)
+                ds['sample'] += np.round(shift * ds.info['sfreq']).astype(int)
 
         if cat:
             model = ds.eval(ctx.state['model'])
@@ -436,9 +497,9 @@ class SelectedEventsDerivative(Derivative[Dataset]):
                 else:
                     offset = raw_all.last_samp + 1 - raw.first_samp
                     if 'task' in ds:
-                        ds['i_start'].x[ds['task'] == task] += offset
+                        ds['sample'].x[ds['task'] == task] += offset
                     else:
-                        ds['i_start'] += offset
+                        ds['sample'] += offset
                     raw_all.append(raw)
             if bad_channels is None:
                 bad_channels = task_bads if i == 0 else sorted(set(bad_channels).union(task_bads))

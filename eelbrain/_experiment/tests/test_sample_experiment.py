@@ -246,7 +246,7 @@ def test_sample():
         variables = {
             **SampleExperiment.variables,
             'shift': LabelVar('side', {'left': 0, 'right': shift}),
-            'shift_t': LabelVar('trigger', {(1, 3): 0, (2, 4): shift})
+            'shift_t': LabelVar('value', {(1, 3): 0, (2, 4): shift})
         }
     e = Experiment(root)
     # test shift in events
@@ -463,7 +463,7 @@ def test_sample():
         def label_events(self, ds):
             ds = SampleExperiment.label_events(self, ds)
             ds = ds.sub("event == 'smiley'")
-            ds['new_var'] = Var([i + 1 for i in ds['i_start']])
+            ds['new_var'] = Var([i + 1 for i in ds['sample']])
             return ds
 
     e = Experiment(root)
@@ -641,7 +641,7 @@ def test_sample_tasks():
     assert_dataobj_equal(ds_super['meg'], combine((ds1['meg'], ds2['meg'])))
     # evoked
     dse_super = e.load_evoked(epoch='super', model='modality%side')
-    target = ds_super.aggregate('modality%side', drop=('i_start', 't_edf', 'time', 'index', 'trigger', 'task', 'interpolate_channels', 'epoch'))
+    target = ds_super.aggregate('modality%side', drop=('sample', 't_edf', 'onset', 'index', 'value', 'task', 'interpolate_channels', 'epoch'))
     assert_dataobj_equal(dse_super, target, 19)
 
     # conflicting task and epoch settings
@@ -998,7 +998,7 @@ def test_epochs_cache_uses_fif():
     assert manifest['artifact_metadata']['kind'] == 'single'
     assert manifest['artifact_metadata']['file'] == 'epochs-0000-epo.fif'
     assert manifest['dependencies']['selected-events']['view'] == 'epochs'
-    assert tuple(manifest['dependencies']['selected-events']['fingerprint']) == ('i_start',)
+    assert tuple(manifest['dependencies']['selected-events']['fingerprint']) == ('sample',)
 
     mtimes_1 = tuple(path.stat().st_mtime_ns for path in sorted(handle.artifact_path.iterdir()))
     ds_cached = handle.load(cache=True)
@@ -1319,8 +1319,8 @@ def test_selected_events_vardef_is_local():
         'data_raw': False,
         'cat': None,
     }
-    compact = Variables({'grouped': LabelVar('trigger', {(1, 2): 'target'}, task='sample')})
-    changed = Variables({'grouped': LabelVar('trigger', {1: 'target', 2: 'nontarget'}, task='sample')})
+    compact = Variables({'grouped': LabelVar('value', {(1, 2): 'target'}, task='sample')})
+    changed = Variables({'grouped': LabelVar('value', {1: 'target', 2: 'nontarget'}, task='sample')})
 
     handle = e._derivatives.resolve('selected-events', state=e.state, options=options)
     _ = handle.load(cache=True)

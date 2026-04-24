@@ -661,19 +661,19 @@ class ContinuousEpoch(EpochBase):
             raise RuntimeError(f"No events left for epoch={self.name!r}, subject={subject!r}")
 
         split_threshold = self.split + self.pad_start + self.pad_end
-        onsets = np.flatnonzero(ds['time'].diff(to_begin=split_threshold + 1) >= split_threshold)
+        onsets = np.flatnonzero(ds['onset'].diff(to_begin=split_threshold + 1) >= split_threshold)
         illegal = {'T_relative', 'events', 'tmax'}.intersection(ds)
         if illegal:
             raise RuntimeError(f"Events contain variables with reserved names: {', '.join(illegal)}")
         events = [ds[i1:i2] for i1, i2 in zip(onsets, [*onsets[1:], None])]
         raw_samplingrate = ds.info['raw'].info['sfreq']
         for events_i in events:
-            sample_i = events_i['i_start'] - events_i[0, 'i_start']
+            sample_i = events_i['sample'] - events_i[0, 'sample']
             events_i['T_relative'] = sample_i / raw_samplingrate
         ds = ds[onsets]
         ds.info['nested_events'] = 'events'
         ds['events'] = events
-        ds['tmax'] = Var([events_i[-1, 'time'] - events_i[0, 'time'] + self.pad_end for events_i in events])
+        ds['tmax'] = Var([events_i[-1, 'onset'] - events_i[0, 'onset'] + self.pad_end for events_i in events])
         return ds
 
     def _extraction_parameters(
@@ -791,11 +791,11 @@ class EpochsDerivative(Derivative[Any]):
         ds = ctx.load(view='shell')
         tmin, tmax, tstop, baseline, decim, variable_tmax = epoch._extraction_parameters(ds, ctx.options)
         if variable_tmax:
-            epoch_value = load.mne.variable_length_mne_epochs(ds, tmin, tmax, baseline, allow_truncation=True, decim=decim, reject_by_annotation=False)
+            epoch_value = load.mne.variable_length_mne_epochs(ds, tmin, tmax, baseline, allow_truncation=True, decim=decim, reject_by_annotation=False, i_start='sample', trigger='value')
             epochs_list = epoch_value
         else:
             n = ds.n_cases
-            ds = load.mne.add_mne_epochs(ds, tmin, tmax, baseline, decim=decim, drop_bad_chs=False, tstop=tstop, reject_by_annotation=False)
+            ds = load.mne.add_mne_epochs(ds, tmin, tmax, baseline, decim=decim, drop_bad_chs=False, tstop=tstop, reject_by_annotation=False, i_start='sample', trigger='value')
             if ds.n_cases != n:
                 ctx.registry.log.warning("%s missing for %s/%s", n_of(n - ds.n_cases, 'epoch'), ctx.state['subject'], epoch_name)
             if ctx.options['trigger_shift'] and epoch.post_baseline_trigger_shift:
@@ -1048,7 +1048,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
             never_drop=('epochs',),
             drop_bad=True,
             equal_count=ctx.state['equalize_evoked_count'] == 'eq',
-            drop=('i_start', 't_edf', 'time', 'index', 'trigger'),
+            drop=('sample', 't_edf', 'onset', 'index', 'value'),
         )
         data.rename('epochs', 'evoked')
         model_vars = model.split('%') if model else ()
@@ -1093,7 +1093,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
             ctx.state['model'],
             drop_bad=True,
             equal_count=ctx.state['equalize_evoked_count'] == 'eq',
-            drop=('i_start', 't_edf', 'time', 'index', 'trigger'),
+            drop=('sample', 't_edf', 'onset', 'index', 'value'),
         )
 
     def apply_view_options(self, ctx: Request, evoked: list[mne.Evoked]) -> Dataset:
