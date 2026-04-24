@@ -311,7 +311,7 @@ class Pipeline(StateModel):
         self._variables._check_trigger_vars()
 
         # epochs
-        self._epochs = assemble_epochs(self.epochs)
+        self._epochs = assemble_epochs(self.epochs, self._tasks)
 
         # epoch rejection
         artifact_rejection = {}

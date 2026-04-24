@@ -43,7 +43,7 @@ def _shared_sub_epoch_parameters(name: str, sub_epochs: Sequence[EpochBase], par
     return out
 
 
-def assemble_epochs(epoch_def: Mapping[str, EpochBase]) -> dict[str, EpochBase]:
+def assemble_epochs(epoch_def: Mapping[str, EpochBase], tasks: Sequence[str]) -> dict[str, EpochBase]:
     """Resolve epoch definitions and cache epoch-family dependent parameters.
 
     This binds each epoch object's ``name`` and lets the epoch classes cache
@@ -52,17 +52,12 @@ def assemble_epochs(epoch_def: Mapping[str, EpochBase]) -> dict[str, EpochBase]:
     """
     epochs = {}
     unresolved_epochs = {}
-    seen_epoch_ids = {}
     for name, epoch in epoch_def.items():
         if not isinstance(epoch, EpochBase):
             raise TypeError(f"Epoch {name}: {epoch!r}; need an epoch definition")
-        previous_name = seen_epoch_ids.setdefault(id(epoch), name)
-        if previous_name != name:
-            raise TypeError(f"Epoch {name}: reuses the same epoch object as {previous_name!r}; define a separate EpochBase instance for each name")
         epoch._store_name(name)
-
         if isinstance(epoch, (PrimaryEpoch, ContinuousEpoch)):
-            epoch._store_dependent_parameters()
+            epoch._store_dependent_parameters(tasks=tasks)
             epochs[name] = epoch
         elif isinstance(epoch, (SecondaryEpoch, SuperEpoch, EpochCollection)):
             unresolved_epochs[name] = epoch
@@ -84,10 +79,11 @@ def assemble_epochs(epoch_def: Mapping[str, EpochBase]) -> dict[str, EpochBase]:
             if not ready:
                 continue
             epoch = unresolved_epochs.pop(key)
-            epoch._store_dependent_parameters(epochs)
+            epoch._store_dependent_parameters(epochs, tasks)
             epochs[key] = epoch
         if len(unresolved_epochs) == n:
             raise ConfigurationError(f"Can't resolve epoch dependencies for {enumeration(unresolved_epochs)}")
+
     return epochs
 
 
@@ -150,6 +146,8 @@ class EpochBase(Configuration):
     post_baseline_trigger_shift = None
     decim = None
     _rej_file_epochs_from_name = False
+    _needs_task: bool = False
+    _tasks = None  # set if tasks is not (task,)
 
     def _prepare_selected_events(
             self,
@@ -221,9 +219,24 @@ class EpochBase(Configuration):
         args = ', '.join(self._repr_args())
         return f"{self.__class__.__name__}({args})"
 
-    def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase] = None) -> None:
+    def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase] = None, tasks: Sequence[str] = ()) -> None:
         if self._rej_file_epochs_from_name:
             self.rej_file_epochs = (self.name,)
+        if self._needs_task:
+            if self.task:
+                if self.task not in tasks:
+                    raise ConfigurationError(f"Unknown task for epoch {self.name!r}: {self.task!r}; should be one of {enumeration(tasks)}")
+            elif len(tasks) == 1:
+                self.task = tasks[0]
+            else:
+                raise ConfigurationError(f"Epoch {self.name!r} has no task specified, but multiple tasks exist: {enumeration(tasks)}")
+
+    @property
+    def tasks(self) -> tuple[str, ...]:
+        """Which tasks go into this epoch"""
+        if self._tasks:
+            return self._tasks
+        return (self.task,)
 
 
 class Epoch(EpochBase):
@@ -232,7 +245,6 @@ class Epoch(EpochBase):
 
     # to be set by subclass
     rej_file_epochs = None
-    tasks = None
 
     def _set_epoch_parameters(
             self,
@@ -359,7 +371,8 @@ class PrimaryEpoch(Epoch):
     Parameters
     ----------
     task
-        Task (raw file) from which to load data.
+        Task from which to load data.
+        Can be omitted if the experiment has only a single task.
     sel
         Expression which evaluates in the events Dataset to the index of the
         events included in this Epoch specification.
@@ -421,10 +434,11 @@ class PrimaryEpoch(Epoch):
     """
     DICT_ATTRS = Epoch.DICT_ATTRS + ('sel',)
     _rej_file_epochs_from_name = True
+    _needs_task = True
 
     def __init__(
             self,
-            task: str,
+            task: str = None,
             sel: str = None,
             tmin: float | str = -0.1,
             tmax: float | str = 0.6,
@@ -441,7 +455,6 @@ class PrimaryEpoch(Epoch):
         self.task = task
         self.sel = typed_arg(sel, str)
         self.n_cases = typed_arg(n_cases, int)
-        self.tasks = (task,)
 
     def _repr_args(self):
         args = [repr(self.task)]
@@ -499,7 +512,7 @@ class SecondaryEpoch(Epoch):
         args.extend([f'{key}={value!r}' for key, value in self._kwargs.items()])
         return args
 
-    def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase]) -> None:
+    def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase], tasks: Sequence[str] = ()) -> None:
         base = epochs[self.sel_epoch]
         if not isinstance(base, (PrimaryEpoch, SecondaryEpoch)):
             raise ConfigurationError(f"Epoch {self.name}, base={self.sel_epoch!r}: is {base.__class__.__name__}, needs to be PrimaryEpoch or SecondaryEpoch")
@@ -509,7 +522,6 @@ class SecondaryEpoch(Epoch):
         self._set_epoch_parameters(**params)
         self.rej_file_epochs = base.rej_file_epochs
         self.task = base.task
-        self.tasks = base.tasks
 
 
 class SuperEpoch(Epoch):
@@ -539,7 +551,7 @@ class SuperEpoch(Epoch):
     def _repr_args(self):
         return [repr(self.sub_epochs), *[f'{k}={v!r}' for k, v in self._kwargs.items()]]
 
-    def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase]) -> None:
+    def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase], tasks: Sequence[str] = ()) -> None:
         sub_epochs = [epochs[sub_epoch] for sub_epoch in self.sub_epochs]
         for sub_epoch in sub_epochs:
             if isinstance(sub_epoch, SuperEpoch):
@@ -552,7 +564,7 @@ class SuperEpoch(Epoch):
         for param, value in _shared_sub_epoch_parameters(self.name, sub_epochs, self.INHERITED_PARAMS).items():
             params.setdefault(param, value)
         self._set_epoch_parameters(**params)
-        self.tasks = list(dict.fromkeys(sub_epoch.task for sub_epoch in sub_epochs))
+        self._tasks = tuple(sorted({sub_epoch.task for sub_epoch in sub_epochs}))
         self.rej_file_epochs = [epoch_name for sub_epoch in sub_epochs for epoch_name in sub_epoch.rej_file_epochs]
 
 
@@ -588,11 +600,11 @@ class EpochCollection(EpochBase):
     def _repr_args(self):
         return [repr(self.collect)]
 
-    def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase]) -> None:
+    def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase], tasks: Sequence[str] = ()) -> None:
         sub_epochs = [epochs[sub_epoch] for sub_epoch in self.collect]
         for param, value in _shared_sub_epoch_parameters(self.name, sub_epochs, SuperEpoch.INHERITED_PARAMS).items():
             setattr(self, param, value)
-        self.tasks = sorted({task for sub_epoch in sub_epochs for task in sub_epoch.tasks})
+        self._tasks = tuple(sorted({task for sub_epoch in sub_epochs for task in sub_epoch.tasks}))
         self.rej_file_epochs = sorted({epoch_name for sub_epoch in sub_epochs for epoch_name in sub_epoch.rej_file_epochs})
 
 
@@ -613,7 +625,8 @@ class ContinuousEpoch(EpochBase):
     Parameters
     ----------
     task
-        Task (raw file) from which to load data.
+        Task from which to load data.
+        Can be omitted if the experiment has only a single task.
     sel
         Expression which evaluates in the events Dataset to the index of the
         events included in this Epoch specification (default is all events).
@@ -633,10 +646,11 @@ class ContinuousEpoch(EpochBase):
     """
     DICT_ATTRS = ('task', 'sel', 'pad_start', 'pad_end', 'split', 'samplingrate')
     _rej_file_epochs_from_name = True
+    _needs_task = True
 
     def __init__(
             self,
-            task: str,
+            task: str = None,
             sel: str = None,
             pad_start: float = 0.100,
             pad_end: float = 1.000,
@@ -650,7 +664,6 @@ class ContinuousEpoch(EpochBase):
         self.pad_end = typed_arg(pad_end, float)
         self.split = typed_arg(split, float)
         self.samplingrate = typed_arg(samplingrate, float, int)
-        self.tasks = (task,)
 
     def _prepare_selected_events(
             self,

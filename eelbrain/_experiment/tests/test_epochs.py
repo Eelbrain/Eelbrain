@@ -19,7 +19,7 @@ def test_epoch_repr():
     epoch_collection = EpochCollection(('e1', 'e2'))
     assert repr(epoch_collection) == "EpochCollection(('e1', 'e2'))"
     continuous_epoch = ContinuousEpoch('task', 'stim == 1')
-    assert repr(continuous_epoch) == "ContinuousEpoch('task', sel='stim == 1')"
+    assert repr(continuous_epoch) == "ContinuousEpoch(task='task', sel='stim == 1')"
 
 
 def test_prepare_continuous_epoch_dataset():
@@ -58,13 +58,7 @@ def test_prepare_continuous_epoch_dataset():
 
 def test_assemble_epochs_requires_epoch_objects():
     with pytest.raises(TypeError, match='need an epoch definition'):
-        assemble_epochs({'target': {'task': 'sample'}})
-
-
-def test_assemble_epochs_requires_distinct_epoch_objects():
-    epoch = PrimaryEpoch('task')
-    with pytest.raises(TypeError, match='reuses the same epoch object'):
-        assemble_epochs({'a': epoch, 'b': epoch})
+        assemble_epochs({'target': {'task': 'sample'}}, ('sample',))
 
 
 def test_assemble_epochs_stores_dependent_parameters():
@@ -75,10 +69,12 @@ def test_assemble_epochs_stores_dependent_parameters():
         'ab': SuperEpoch(('a', 'b')),
         'collection': EpochCollection(('a', 'b')),
         'cont': ContinuousEpoch('task-c'),
-    })
+    }, ('task-a', 'task-b', 'task-c'))
 
     primary = epochs['a']
     assert primary.name == 'a'
+    assert primary.task == 'task-a'
+    assert primary.tasks == ('task-a',)
     assert primary.rej_file_epochs == ('a',)
     assert 'name' not in primary._as_dict()
 
@@ -94,13 +90,13 @@ def test_assemble_epochs_stores_dependent_parameters():
 
     super_epoch = epochs['ab']
     assert super_epoch.name == 'ab'
-    assert super_epoch.tasks == ['task-a', 'task-b']
+    assert super_epoch.tasks == ('task-a', 'task-b')
     assert super_epoch.rej_file_epochs == ['a', 'b']
     assert 'name' not in super_epoch._as_dict()
 
     collection = epochs['collection']
     assert collection.name == 'collection'
-    assert collection.tasks == ['task-a', 'task-b']
+    assert collection.tasks == ('task-a', 'task-b')
     assert collection.rej_file_epochs == ['a', 'b']
     assert 'name' not in collection._as_dict()
 
@@ -112,4 +108,4 @@ def test_assemble_epochs_stores_dependent_parameters():
 
 def test_assemble_epochs_detects_cycles():
     with pytest.raises(ConfigurationError, match="Can't resolve epoch dependencies"):
-        assemble_epochs({'a': SecondaryEpoch('b'), 'b': SecondaryEpoch('a')})
+        assemble_epochs({'a': SecondaryEpoch('b'), 'b': SecondaryEpoch('a')}, ('a', 'b'))
