@@ -69,11 +69,11 @@ def test_find_test_vars():
     assert test.model == 'A'
     assert test._find_test_vars() == ({'A', 'GR'}, none)
     # two-stage
-    test = TwoStageTest("a + b + a*b", vars={'a': 'c * d', 'b': 'c * e'})
+    test = TwoStageTest("a + b + a*b", vars={'a': EvalVar('c * d'), 'b': EvalVar('c * e')})
     assert test._find_test_vars() == ({'c', 'd', 'e'}, none)
-    test = TwoStageTest("a + b + a*b", vars={'a': 'c * d', 'b': 'c * e', 'x': 'something * nonexistent'})
+    test = TwoStageTest("a + b + a*b", vars={'a': EvalVar('c * d'), 'b': EvalVar('c * e'), 'x': EvalVar('something * nonexistent')})
     assert test._find_test_vars() == ({'c', 'd', 'e'}, none)
-    test = TwoStageTest("a + b + a*b", vars={'a': ('c%d', {}), 'b': ('c%e', {})})
+    test = TwoStageTest("a + b + a*b", vars={'a': LabelVar('c%d', {1: 'x'}), 'b': LabelVar('c%e', {1: 'x'})})
     assert test._find_test_vars() == ({'c', 'd', 'e'}, none)
 
 

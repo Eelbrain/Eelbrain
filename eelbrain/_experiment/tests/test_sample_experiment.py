@@ -21,7 +21,7 @@ from eelbrain._experiment.pathing import LOG_DIR, ica_file_path
 from eelbrain._experiment.preprocessing import RawFilterElliptic, ica_input_name, raw_node_name
 from eelbrain._experiment.reports import _report_subject_info
 from eelbrain._experiment.test_def import TestDims as _TestDims
-from eelbrain._experiment.variable_def import LabelVar, Variables
+from eelbrain._experiment.variable_def import EvalVar, LabelVar, Variables
 from eelbrain.testing import TempDir, assert_dataobj_equal, requires_mne_sample_data
 
 
@@ -341,15 +341,15 @@ def test_sample():
     # changes
     class Changed(SampleExperiment):
         variables = {
-            'event': {(1, 2, 3, 4): 'target', 5: 'smiley', 32: 'button'},
-            'side': {(1, 3): 'left', (2, 4): 'right_changed'},
-            'modality': {(1, 2): 'auditory', (3, 4): 'visual'}
+            'event': LabelVar('value', {(1, 2, 3, 4): 'target', 5: 'smiley', 32: 'button'}),
+            'side': LabelVar('value', {(1, 3): 'left', (2, 4): 'right_changed'}),
+            'modality': LabelVar('value', {(1, 2): 'auditory', (3, 4): 'visual'}),
         }
         tests = {
             'twostage': TwoStageTest(
                 'side_left + modality_a',
-                {'side_left': "side == 'left'",
-                 'modality_a': "modality == 'auditory'"}),
+                {'side_left': EvalVar("side == 'left'"),
+                 'modality_a': EvalVar("modality == 'auditory'")}),
             'novars': TwoStageTest('side + modality'),
         }
     e = Changed(root)
@@ -357,16 +357,16 @@ def test_sample():
     # changed variable, while a test with model=None is not changed
     class Changed(Changed):
         variables = {
-            'side': {(1, 3): 'left', (2, 4): 'right_changed'},
-            'modality': {(1, 2): 'auditory', (3, 4): 'visual_changed'}
+            'side': LabelVar('value', {(1, 3): 'left', (2, 4): 'right_changed'}),
+            'modality': LabelVar('value', {(1, 2): 'auditory', (3, 4): 'visual_changed'}),
         }
     e = Changed(root)
 
     # changed variable, unchanged test with vardef=None
     class Changed(Changed):
         variables = {
-            'side': {(1, 3): 'left', (2, 4): 'right_changed'},
-            'modality': {(1, 2): 'auditory', (3, 4): 'visual_changed'}
+            'side': LabelVar('value', {(1, 3): 'left', (2, 4): 'right_changed'}),
+            'modality': LabelVar('value', {(1, 2): 'auditory', (3, 4): 'visual_changed'}),
         }
     e = Changed(root)
 
@@ -667,8 +667,8 @@ def test_evoked_backed_test_vars_are_post_aggregation_only():
     class Experiment(SampleExperiment):
         tests = {
             **SampleExperiment.tests,
-            'anova-ok': ANOVA('modality * modality_num * subject', model='modality', vars={'modality_num': ('modality', {'auditory': 0, 'visual': 1})}),
-            'anova-bad': ANOVA('modality_num * subject', vars={'modality_num': ('modality', {'auditory': 0, 'visual': 1})}),
+            'anova-ok': ANOVA('modality * modality_num * subject', model='modality', vars={'modality_num': LabelVar('modality', {'auditory': 0, 'visual': 1})}),
+            'anova-bad': ANOVA('modality_num * subject', vars={'modality_num': LabelVar('modality', {'auditory': 0, 'visual': 1})}),
         }
 
     tempdir = TempDir()
@@ -911,7 +911,7 @@ def test_evoked_cache_stales_on_model_change():
     class ChangedExperiment(SampleExperiment):
         variables = {
             **SampleExperiment.variables,
-            'modality': {(1, 2): 'auditory_changed', (3, 4): 'visual'},
+            'modality': LabelVar('value', {(1, 2): 'auditory_changed', (3, 4): 'visual'}),
         }
 
     e_changed = ChangedExperiment(root)
@@ -946,7 +946,7 @@ def test_epochs_dependency_views_distinguish_model_sensitivity():
     class ChangedExperiment(SampleExperiment):
         variables = {
             **SampleExperiment.variables,
-            'modality': {(1, 2): 'auditory_changed', (3, 4): 'visual'},
+            'modality': LabelVar('value', {(1, 2): 'auditory_changed', (3, 4): 'visual'}),
         }
 
     e_changed = ChangedExperiment(root)

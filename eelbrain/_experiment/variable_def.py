@@ -1,13 +1,4 @@
-"""Variables
-
-With multiple tasks, the same variable name might have multiple definitions::
-
-variables = {
-    'name': [Var(task='1'), Var(task='2')],
-    'name2': Var(task='2'),
-}
-
-"""
+"""Variables"""
 from typing import Any
 from fnmatch import fnmatch as fnmatch_func
 from collections.abc import Sequence
@@ -205,62 +196,22 @@ class GroupVar(VarDef):
         return ()
 
 
-def _parse_named_vardef(string):
-    if '=' not in string:
-        raise ConfigurationError(f"variable {string!r}: needs '='")
-    name, vdef = string.split('=', 1)
-    return name.strip(), _parse_vardef(vdef)
-
-
-def _parse_vardef(string):
-    string = string.strip()
-    if string.startswith('group:'):
-        return GroupVar._from_string(string[6:])
-    else:
-        return EvalVar(string)
-
-
 class Variables(Configuration):
     """Set of variable definitions
 
     Parameters
     ----------
-    arg : str | tuple | dict
-        The ``vars`` argument.
+    arg
+        Dictionary mapping variable names to :class:`VarDef` instances.
     """
 
-    def __init__(self, arg: dict):
-        if arg is None:
-            arg = ()
-        elif isinstance(arg, str):
-            arg = (arg,)
-        elif isinstance(arg, dict):
-            arg = arg.items()
-        elif not isinstance(arg, (tuple, list)):
-            raise TypeError(f"vars={arg!r}")
-
+    def __init__(self, arg: dict[str, VarDef] | None = None):
         self.vars = {}
-        for item in arg:
-            if isinstance(item, str):
-                name, vdef = _parse_named_vardef(item)
-            else:
-                name, vdef = item
-                if isinstance(vdef, str):
-                    vdef = _parse_vardef(vdef)
-                elif isinstance(vdef, VarDef):
-                    pass
-                elif isinstance(vdef, dict):
-                    if 'default' in vdef:
-                        vdef = vdef.copy()
-                        default = vdef.pop('default')
-                    else:
-                        default = True
-                    vdef = LabelVar('value', vdef, default)
-                elif isinstance(vdef, tuple):
-                    vdef = LabelVar(*vdef)
-                else:
-                    raise ConfigurationError(f"Variable {name!r}: {vdef!r}")
-
+        if not arg:
+            return
+        for name, vdef in arg.items():
+            if not isinstance(vdef, VarDef):
+                raise TypeError(f"Variable {name!r}: expected VarDef, got {vdef!r}")
             assert_is_legal_dataset_key(name)
             if name in RESERVED_VAR_KEYS:
                 raise ConfigurationError(f"Variable {name!r}: reserved name")

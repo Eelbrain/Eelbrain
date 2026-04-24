@@ -14,7 +14,7 @@ from .. import test
 from .._data_obj import CellArg, Dataset, NDVar, Var, combine
 from .._exceptions import ConfigurationError
 from .configuration import Configuration
-from .variable_def import Variables, GroupVar
+from .variable_def import Variables, VarDef, GroupVar
 
 if TYPE_CHECKING:
     from .derivative_cache import Request
@@ -62,7 +62,7 @@ class Test(Configuration):
             self,
             desc: str,
             model: str = None,  # within-subject model; None for single-trial analysis
-            vars: str | tuple | list | dict = None,  # dynamic variables
+            vars: dict[str, VarDef] | None = None,  # dynamic variables
             cat: tuple[CellArg, ...] = None,  # cells in model to load
             depend_on: Collection[str] = (),  # non-model variables
     ):
