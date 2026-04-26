@@ -23,8 +23,7 @@ from .. import plot
 from .. import save
 from .._data_obj import CellArg, Datalist, Dataset, Factor, Var, NDVar, SourceSpace, VolumeSourceSpace, assert_is_legal_dataset_key, combine
 from .._exceptions import ConfigurationError, OldVersionError
-from .._info import BAD_CHANNELS
-from .._names import INTERPOLATE_CHANNELS
+from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS
 from .._meeg import new_rejection_ds
 from .._mne import find_source_subject, label_from_annot
 from ..mne_fixes import suppress_mne_warning
@@ -34,7 +33,7 @@ from .._types import PathArg
 from .._utils import ask, subp, keydefaultdict, log_level, ScreenHandler
 from .._utils.mne_utils import is_fake_mri
 from .covariance import CovDerivative, EpochCovariance, RawCovariance, cov_node_name
-from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, DerivativeRegistry, ProtectedArtifactError
+from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, DerivativeRegistry, ProtectedArtifactError, Request
 from .configuration import sequence_arg
 from .epochs import (
     EpochBase, EpochsDerivative,
@@ -163,7 +162,6 @@ class Pipeline(StateModel):
         'man': {'kind': 'manual', 'interpolation': True},
     }
     artifact_rejection = {}
-    _artifact_rejection_default = 'man'
 
     # groups can be defined as subject lists: {'group': ('member1', 'member2', ...)}
     # or by exclusion: {'group': {'base': 'all', 'exclude': ('member1', 'member2')}}
@@ -318,8 +316,6 @@ class Pipeline(StateModel):
         for name, params in chain(self._artifact_rejection.items(), self.artifact_rejection.items()):
             if params['kind'] in ('manual', 'make', None):
                 artifact_rejection[name] = params.copy()
-            elif params['kind'] == 'ica':
-                raise ValueError(f"kind={params['kind']!r} in artifact_rejection {name!r}; The ICA option has been removed, use the RawICA raw pipe instead.")
             else:
                 raise ValueError(f"kind={params['kind']!r} in artifact_rejection {name!r}")
         self._artifact_rejection = artifact_rejection
@@ -366,7 +362,7 @@ class Pipeline(StateModel):
         # raw
         raw_default = sorted(self.raw)[0] if self.raw else None
         self._register_field('raw', sorted(self._raw), default=raw_default, repr=True)
-        self._register_field('rej', self._artifact_rejection.keys(), self._artifact_rejection_default, allow_empty=True)
+        self._register_field('rej', self._artifact_rejection.keys(), allow_empty=True)
 
         # cov
         self._register_field('cov', sorted(self._covs))
@@ -488,7 +484,7 @@ class Pipeline(StateModel):
             name: str,
             options: dict[str, Any] | None = None,
             controls: frozenset[str] | set[str] | tuple[str, ...] = (),
-    ):
+    ) -> Request:
         return self._derivatives.resolve(name, state=self.state, options=options, controls=controls)
 
     def _load_derivative(
@@ -500,7 +496,7 @@ class Pipeline(StateModel):
             *,
             redo: bool = True,  # When False, skip the load if the artifact is already up to date.
             controls: frozenset[str] | set[str] | tuple[str, ...] = (),
-    ):
+    ) -> Any:
         ctx = self._resolve_derivative(name, options=options, controls=controls)
         if not redo and ctx.is_valid():
             return None
@@ -855,13 +851,11 @@ class Pipeline(StateModel):
             subjects: SubjectArg = None,
             baseline: BaselineArg = False,
             ndvar: bool | Literal['both'] = True,
-            add_bads: bool | list = True,
             reject: bool | Literal['keep'] = True,
             cat: Sequence[CellArg] = None,
             samplingrate: int = None,
             decim: int = None,
             pad: float = 0,
-            data_raw: bool = False,
             data: str = 'sensor',
             trigger_shift: bool = True,
             tmin: float = None,
@@ -889,10 +883,6 @@ class Pipeline(StateModel):
             ``'eeg'`` for EEG data in the returned :class:`Dataset`).
             With ``ndvar=False``, include :class:`mne.Epochs` with key ``'epochs'``.
             Use ``'both'`` to include both NDVar and :class:`mne.Epochs`.
-        add_bads
-            Add bad channel information to the Raw. If True, bad channel
-            information is retrieved from the bad channels file. Alternatively,
-            a list of bad channels can be specified.
         reject
             Reject bad trials. If ``True`` (default), bad trials are removed
             from the Dataset. Set to ``False`` to ignore the trial rejection.
@@ -908,9 +898,6 @@ class Pipeline(StateModel):
         pad : scalar
             Pad the epochs with this much time (in seconds; e.g. for spectral
             analysis).
-        data_raw
-            Keep the :class:`mne.io.Raw` instance in ``ds.info['raw']``
-            (default False).
         data
             Data to load; 'sensor' to load all sensor data (default);
             'sensor.rms' to return RMS over sensors. Only applies to NDVar
@@ -950,13 +937,11 @@ class Pipeline(StateModel):
         options = {
             'baseline': baseline,
             'ndvar': ndvar,
-            'add_bads': add_bads,
             'reject': reject,
             'cat': cat,
             'samplingrate': samplingrate,
             'decim': decim,
             'pad': pad,
-            'data_raw': data_raw,
             'data': data,
             'trigger_shift': trigger_shift,
             'tmin': tmin,
@@ -984,7 +969,6 @@ class Pipeline(StateModel):
             cat: Sequence[CellArg] = None,
             keep_epochs: bool | str = False,
             morph: bool = None,
-            data_raw: bool = False,
             samplingrate: int = None,
             decim: int = None,
             pad: float = 0,
@@ -1019,9 +1003,6 @@ class Pipeline(StateModel):
         morph
             Morph the source estimates to the common brain
             (default ``False``, except when loading multiple subjects and ``ndvar=True``).
-        data_raw
-            Keep the :class:`mne.io.Raw` instance in ``ds.info['raw']``
-            (default False).
         samplingrate
             Samplingrate in Hz for the analysis (default is specified in epoch
             definition).
@@ -1061,7 +1042,6 @@ class Pipeline(StateModel):
             'cat': cat,
             'keep_epochs': keep_epochs,
             'morph': morph,
-            'data_raw': data_raw,
             'samplingrate': samplingrate,
             'decim': decim,
             'pad': pad,
@@ -1076,8 +1056,6 @@ class Pipeline(StateModel):
     def load_events(
             self,
             subject: str = None,
-            add_bads: bool | list[str] = True,
-            data_raw: bool = False,
             **kwargs,
     ) -> Dataset:
         """
@@ -1091,13 +1069,6 @@ class Pipeline(StateModel):
         subject
             Subject for which to load events (default is the current subject
             in the experiment's state).
-        add_bads
-            Add bad channel information to the Raw. If True, bad channel
-            information is retrieved from the bad channels file. Alternatively,
-            a list of bad channels can be specified.
-        data_raw
-            Keep the :class:`mne.io.Raw` instance in ``ds.info['raw']``
-            (default False).
         ...
             Applicable :ref:`state-parameters`:
 
@@ -1109,10 +1080,7 @@ class Pipeline(StateModel):
             kwargs['subject'] = subject
         if kwargs:
             self.set(**kwargs)
-        ds = self._load_derivative('labeled-events')
-        if data_raw:
-            ds.info['raw'] = self.load_raw(add_bads, preload=self.preload)
-        return ds
+        return self._load_derivative('labeled-events')
 
     def load_evoked(
             self,
@@ -1122,7 +1090,6 @@ class Pipeline(StateModel):
             cat: Sequence[CellArg] = None,
             samplingrate: int = None,
             decim: int = None,
-            data_raw: bool = False,
             data: DataArg = 'sensor',
             **state):
         """
@@ -1151,9 +1118,6 @@ class Pipeline(StateModel):
             definition).
         decim
             Data decimation factor (alternative to ``samplingrate``).
-        data_raw
-            Keep the :class:`mne.io.Raw` instance in ``ds.info['raw']``
-            (default False).
         data
             Data to load; 'sensor' to load all sensor data (default);
             'sensor.rms' to return RMS over sensors. Only applies to NDVar
@@ -1190,7 +1154,6 @@ class Pipeline(StateModel):
             'cat': cat,
             'samplingrate': samplingrate,
             'decim': decim,
-            'data_raw': data_raw,
             'data': data,
         }
         if group is not None:
@@ -1208,7 +1171,6 @@ class Pipeline(StateModel):
             cat: Sequence[CellArg] = None,
             keep_evoked: bool = False,
             morph: bool = None,
-            data_raw: bool = False,
             samplingrate: int = None,
             decim: int = None,
             ndvar: bool = True,
@@ -1237,9 +1199,6 @@ class Pipeline(StateModel):
         morph
             Morph the source estimates to the common brain
             (default ``False``, except when loading multiple subjects and ``ndvar=True``).
-        data_raw
-            Keep the :class:`mne.io.Raw` instance in ``ds.info['raw']``
-            (default False).
         samplingrate
             Samplingrate in Hz for the analysis (default is specified in epoch
             definition).
@@ -1269,7 +1228,6 @@ class Pipeline(StateModel):
             'cat': cat,
             'keep_evoked': keep_evoked,
             'morph': morph,
-            'data_raw': data_raw,
             'samplingrate': samplingrate,
             'decim': decim,
             'ndvar': ndvar,
@@ -1560,7 +1518,6 @@ class Pipeline(StateModel):
             self,
             subjects: SubjectArg = None,
             epoch: str = None,
-            add_bads: bool = True,
             return_data: bool = False,
             **state,
     ) -> NDVar | Dataset | tuple[NDVar, NDVar]:
@@ -1576,8 +1533,6 @@ class Pipeline(StateModel):
         epoch
             Epoch to use for computing neighbor-correlation (by default, the
             whole task is used).
-        add_bads
-            Reject bad channels first.
         return_data
             Return the data from which the correlation is calculated. Only
             possible when loading neighbor-correlation for a single subject.
@@ -1597,7 +1552,7 @@ class Pipeline(StateModel):
                 raise ValueError(f"{return_data=} when loading data for group")
             if state:
                 self.set(**state)
-            lines = [(subject, self.load_neighbor_correlation(1, epoch, add_bads)) for subject in self]
+            lines = [(subject, self.load_neighbor_correlation(1, epoch)) for subject in self]
             return Dataset.from_caselist(['subject', 'nc'], lines)
         if epoch:
             if epoch is True:
@@ -1605,11 +1560,11 @@ class Pipeline(StateModel):
             epoch_params = self._epochs[epoch]
             if len(epoch_params.tasks) != 1:
                 raise ValueError(f"{epoch=}: epoch has multiple tasks")
-            ds = self.load_epochs(add_bads=add_bads, epoch=epoch, reject=False, decim=1, **state)
+            ds = self.load_epochs(epoch=epoch, reject=False, decim=1, **state)
             key = ds.info['sensor_types'][0]
             data = concatenate(ds[key])
         else:
-            data = self.load_raw(ndvar=True, add_bads=add_bads, **state)
+            data = self.load_raw(ndvar=True, **state)
         n_corr = neighbor_correlation(data)
         if return_data:
             return data, n_corr
@@ -1618,7 +1573,6 @@ class Pipeline(StateModel):
 
     def load_raw(
             self,
-            add_bads: bool | Sequence[str] = True,
             preload: bool = False,
             ndvar: bool = False,
             samplingrate: int = None,
@@ -1633,9 +1587,6 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        add_bads
-            Add bad channel information to the bad channels text file (default
-            ``True``).
         preload
             Load raw data into memory (default ``False``; see
             :func:`mne.io.read_raw_fif` parameter).
@@ -1659,7 +1610,7 @@ class Pipeline(StateModel):
              - :ref:`state-raw`: preprocessing pipeline
         """
         raw_name = self.get('raw', **kwargs)
-        raw = self._load_derivative(raw_node_name(raw_name), options={'add_bads': add_bads, 'preload': preload, 'noise': noise})
+        raw = self._load_derivative(raw_node_name(raw_name), options={'preload': preload, 'noise': noise})
         if decim and decim > 1:
             assert samplingrate is None, "samplingrate and decim can't both be specified"
             samplingrate = int(round(raw.info['sfreq'] / decim))
@@ -1733,9 +1684,7 @@ class Pipeline(StateModel):
             self,
             subjects: SubjectArg = None,
             reject: bool | Literal['keep'] = True,
-            add_bads: bool | list[str] = True,
             index: bool | str = True,
-            data_raw: bool = False,
             vardef: str = None,
             cat: Sequence[CellArg] = None,
             **kwargs,
@@ -1755,15 +1704,8 @@ class Pipeline(StateModel):
             from the Dataset. Set to ``False`` to ignore the trial rejection.
             Set ``reject='keep'`` to load the rejection (added it to the events
             as ``'accept'`` variable), but keep bad trails.
-        add_bads
-            Add bad channel information to the Raw. If True, bad channel
-            information is retrieved from the bad channels file. Alternatively,
-            a list of bad channels can be specified.
         index
             Index the Dataset before rejection (provide index name as str).
-        data_raw
-            Keep the :class:`mne.io.Raw` instance in ``ds.info['raw']``
-            (default False).
         vardef
             Name of a test defining additional variables to add to the returned
             Dataset.
@@ -1787,17 +1729,13 @@ class Pipeline(StateModel):
         subject, group = self._process_subject_arg(subjects, state)
 
         if group is not None:
-            if data_raw:
-                raise ValueError(f"{data_raw=}: can't keep raw when combining subjects")
             return combine([self.load_selected_events(subjects=subject_, reject=reject, index=index, vardef=vardef, cat=cat, **state) for subject_ in self.iter(group=group)])
         elif subject is None:
             raise RuntimeError(f"{subject=}, {group=}")
 
         options = {
             'reject': reject,
-            'add_bads': add_bads,
             'index': index,
-            'data_raw': data_raw,
             'cat': cat,
         }
         ds = self._load_derivative('selected-events', options=options)
@@ -1990,7 +1928,7 @@ class Pipeline(StateModel):
 
     def make_bad_channels(
         self,
-        bad_chs: tuple[str] | str | int = (),
+        bad_chs: Sequence[str] | str | int = (),
         redo: bool = False,
         noise: bool = False,
         **kwargs: Any,
@@ -2067,7 +2005,6 @@ class Pipeline(StateModel):
             self,
             r: float,
             epoch: str = None,
-            add_bads: bool = True,
             save: bool = True,
             **state,
     ) -> (NDVar, list[str]):
@@ -2082,8 +2019,6 @@ class Pipeline(StateModel):
         epoch
             Epoch to use for computing neighbor-correlation (by default, the
             whole task is used).
-        add_bads
-            Reject bad channels first.
         save
             Save the bad channels to the bad channel specification file. Set
             ``save=False`` to examine the result without actually changing the
@@ -2114,7 +2049,7 @@ class Pipeline(StateModel):
             method with multiple subjects, it is important to set ``raw`` to the
             same value.
         """
-        data, full_nc = self.load_neighbor_correlation(1, epoch, add_bads, return_data=True, **state)
+        data, full_nc = self.load_neighbor_correlation(1, epoch, return_data=True, **state)
         bad_chs = []
         nc = full_nc
         while nc.min() < r:
@@ -2195,7 +2130,13 @@ class Pipeline(StateModel):
             raise TypeError(f"{task=} with {epoch=}")
         else:
             with self._temporary_state:
-                ds = self.load_epochs(ndvar=False, epoch=epoch, reject=False, raw=pipe.source, samplingrate=samplingrate, decim=decim, add_bads=bads)
+                ds = self.load_epochs(ndvar=False, epoch=epoch, reject=False, raw=pipe.source, samplingrate=samplingrate, decim=decim)
+                epochs = ds['epochs']
+                if isinstance(epochs, Datalist):
+                    for epoch_ in epochs:
+                        epoch_.info['bads'] = bads
+                else:
+                    epochs.info['bads'] = bads
             if isinstance(ds['epochs'], Datalist):  # variable-length epoch
                 data = np.concatenate([epoch.get_data()[0] for epoch in ds['epochs']], axis=1)  # n_epochs, n_channels, n_times
                 raw = mne.io.RawArray(data, ds[0, 'epochs'].info)
@@ -3288,7 +3229,7 @@ class Pipeline(StateModel):
         brain.add_label(label, alpha=0.75)
         return brain
 
-    def plot_raw(self, decim=10, xlim=5, add_bads=True, subtract_mean=False, **state):
+    def plot_raw(self, decim=10, xlim=5, subtract_mean=False, **state):
         """Plot raw sensor data
 
         Parameters
@@ -3297,16 +3238,13 @@ class Pipeline(StateModel):
             Decimate data for faster plotting (default 10).
         xlim : scalar
             Number of seconds to display (default 5 s).
-        add_bads : bool | list
-            Add bad channel information to the bad channels text file (default
-            True).
         subtract_mean : bool
             Subtract the mean from each channel (useful when plotting raw data
             recorded with DC offset).
         ...
             State parameters.
         """
-        raw = self.load_raw(add_bads, ndvar=True, decim=decim, **state)
+        raw = self.load_raw(ndvar=True, decim=decim, **state)
         state_ = self._fields
         name = join_stem_parts(raw_basename(state_), f'raw-{state_["raw"]}')
         if raw.info['meas'] == 'V':

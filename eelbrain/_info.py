@@ -44,6 +44,7 @@ import numpy as np
 
 # Key constants for info dictionaries
 BAD_CHANNELS = 'bad_channels'
+INTERPOLATE_CHANNELS = "interpolate_channels"
 # Parameters that should be reset if measurement type changes
 MAIN_ARGS = ('meas', 'unit', 'cmap', 'vmin', 'vmax', 'contours')
 

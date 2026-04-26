@@ -467,7 +467,7 @@ class CoregReportDerivative(Derivative[Path]):
                 raw_node_name(raw_name),
                 label='raw',
                 state={**ctx.state, 'raw': raw_name},
-                options={'add_bads': False, 'noise': False},
+                options={'noise': False},
             ),
             Dependency('trans-input', label='trans', state=ctx.state),
         )

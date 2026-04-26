@@ -37,8 +37,7 @@ from .. import _meeg as meeg
 from .. import _text
 from .. import load, save, plot, fmtxt
 from .._data_obj import Dataset, Factor, Var, Datalist, asndvar, combine
-from .._info import BAD_CHANNELS
-from .._names import INTERPOLATE_CHANNELS
+from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS
 from .._ndvar import neighbor_correlation
 from .._utils.parse import FLOAT_PATTERN, POS_FLOAT_PATTERN, INT_PATTERN
 from .._utils.numpy_utils import FULL_SLICE, INT_TYPES

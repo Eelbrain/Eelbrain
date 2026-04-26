@@ -1597,7 +1597,7 @@ def ndvar_stc(
 def _trim_ds(ds, epochs):
     """Trim a Dataset to account for rejected epochs.
 
-    If no epochs were rejected, the original ds is rturned.
+    If no epochs were rejected, the original ds is returned.
 
     Parameters
     ----------

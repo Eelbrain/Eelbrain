@@ -38,6 +38,7 @@ opt-in from the caller.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
 import hashlib
@@ -46,7 +47,6 @@ import logging
 from pathlib import Path
 import shutil
 from typing import Any, Generic, TypeVar
-from collections.abc import Callable
 
 import mne
 import numpy as np
@@ -228,14 +228,12 @@ class Dependency:
         artifact-affecting ``Request.options`` and post-load
         ``Request.view_options`` for the child request.
     view
-        Optional dependency view name. Use this when the dependency should be
-        validated through a reduced or specialized dependency fingerprint
-        rather than the dependency node's default dependency-facing
-        fingerprint. The named view is resolved through
-        :meth:`DependencyNode.dependency_fingerprint` with ``view`` forwarded
-        to the target node, which can expose multiple narrower fingerprint
-        projections of the same artifact. This affects cache validation only;
-        the dependency artifact itself is not loaded through this view.
+        Optional data view to load from the dependency. When this dependency
+        is requested through ``ctx.load(...)`` inside the dependent node, the
+        named view is loaded instead of the dependency's normal return value.
+        The view name is also forwarded to
+        :meth:`DependencyNode.dependency_fingerprint` so the manifest describes
+        the same data view.
 
     Notes
     -----
@@ -357,15 +355,32 @@ class DependencyNode(Generic[T]):
 
         Override this only when the dependency-facing fingerprint should be
         smaller or different from the full artifact fingerprint. ``view`` can
-        be used to expose multiple named dependency fingerprints for the same
-        node. The default implementation ignores ``view`` and reuses
-        :meth:`fingerprint`.
+        be used to describe data returned through :meth:`load_view`. The
+        default implementation ignores ``view`` and reuses :meth:`fingerprint`.
 
         One use case is managed intermediate inputs, such as ICA files, where a
         change in excluded components invalidates dependent nodes, but does not
         signal an invalid ICA file artifact.
         """
         return self.fingerprint(ctx)
+
+    def dependency_fingerprint_override(
+            self,
+            ctx: Request,
+            dep: Dependency,
+            dep_ctx: Request,
+    ) -> dict[str, Any] | None:
+        """Return a complete local fingerprint for one dependency edge.
+
+        ``ctx`` is the request for this node, whose artifact is being validated.
+        Loading through ``ctx.load(...)`` is restricted to declared
+        dependencies. ``dep`` is the declared edge from :meth:`dependencies`.
+        ``dep_ctx`` is the resolved request for the dependency node.
+
+        Override when this node depends on only part of a dependency. Return
+        ``None`` to use the dependency node's own manifest entry.
+        """
+        return None
 
     def dependency_fingerprint_quick(self, ctx: Request, view: str | None = None) -> dict[str, Any] | None:
         """Cheap proxy for :meth:`dependency_fingerprint`, used as first-pass cache validity check.
@@ -391,6 +406,15 @@ class DependencyNode(Generic[T]):
 
         Override this to expose data views that bypass the :meth:`load` method.
         Views can be loaded through ``request.load(view=...)``.
+
+        Use views sparingly, to keep the dependency graph explicit. A view is
+        appropriate for an alternate materialization of the same request, such
+        for cheap metadata lookup. Prefer introducing a separate :class:`Input`,
+        :class:`Derivative`, or :class:`UncachedDerivative` when the value has
+        its own dependencies, or is used as a build input by other derivatives.
+
+        Implementations acquire node data through ``ctx.load(...)`` just like
+        :meth:`build`.
         """
         raise ValueError(f"{self.name!r} does not define load view {view!r}")
 
@@ -634,7 +658,8 @@ class Derivative(DependencyNode[T]):
 
         Override this only when some options should affect the returned value
         without changing cache identity. The default implementation returns
-        ``value`` unchanged.
+        ``value`` unchanged. Any data loaded through ``ctx.load(...)`` must be
+        declared in :meth:`dependencies`, just as for :meth:`build`.
         """
         return value
 
@@ -794,8 +819,10 @@ class Request(Generic[T]):
         self._artifact_path: Path | None = None
         self._manifest_path: Path | None = None
         self._artifact_metadata: dict[str, Any] | None = None
-        # Populated during build() to enforce declared-dependency discipline.
-        self._build_deps: dict[str, Callable] | None = None
+        # Populated while derivative methods are constrained to declared dependencies.
+        self._build_deps: dict[str, Dependency] | None = None
+        self._build_deps_cache: bool | None = None
+        self._build_deps_depth = 0
         if isinstance(node, Derivative) and node.cache_policy != CachePolicy.NEVER:
             self._key = node.key(self)
             self._base_artifact_path = Path(node.path(self))
@@ -875,16 +902,19 @@ class Request(Generic[T]):
             self,
             cache: bool | None = None,
             view: str | None = None,
+            fingerprint_override: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Describe this request for inclusion in another node's manifest."""
-        out = {
-            'name': self.node.name,
-            'fingerprint': self.current_dependency_fingerprint(view),
-            'dependencies': self.dependency_fingerprints(cache),
-        }
-        quick = self.current_dependency_fingerprint_quick(view)
-        if quick is not None:
-            out['quick_fingerprint'] = quick
+        out: dict[str, Any] = {'name': self.node.name}
+        if fingerprint_override is None:
+            out['fingerprint'] = self.current_dependency_fingerprint(view)
+            out['dependencies'] = self.dependency_fingerprints(cache)
+            quick = self.current_dependency_fingerprint_quick(view)
+            if quick is not None:
+                out['quick_fingerprint'] = quick
+        else:
+            out['fingerprint'] = self.registry.canonicalize(fingerprint_override)
+
         if view is not None:
             out['view'] = view
         if isinstance(self.node, Derivative) and self.node.cache_policy != CachePolicy.NEVER:
@@ -970,6 +1000,23 @@ class Request(Generic[T]):
             return False
         return self._is_valid(manifest, cache)
 
+    def _dependency_map(self) -> dict[str, Dependency]:
+        return {dep.label or dep.name: dep for dep in self.node.dependencies(self)}
+
+    @contextmanager
+    def _build_deps_context(self, cache: bool | None):
+        if self._build_deps is None:
+            self._build_deps = self._dependency_map()
+            self._build_deps_cache = cache
+        self._build_deps_depth += 1
+        try:
+            yield
+        finally:
+            self._build_deps_depth -= 1
+            if self._build_deps_depth == 0:
+                self._build_deps = None
+                self._build_deps_cache = None
+
     def load_artifact(self, cache: bool | None = None) -> T:
         """Load or build the underlying derivative artifact without view shaping."""
         derivative = self._require_derivative()
@@ -982,27 +1029,10 @@ class Request(Generic[T]):
                 return derivative.load(self, self.artifact_path)
             if self.artifact_path.exists() and not self.registry.is_cache_artifact(self.artifact_path) and not self.has_control(ALLOW_PROTECTED_OVERWRITE):
                 raise ProtectedArtifactError(derivative.name, self.artifact_path)
-
-        if use_cache:
             derivative.log_cache_build(self, self.artifact_path)
 
-        def _make_dep_loader(dep: Dependency):
-            dep_state = {**self.state, **dep.state} if dep.state else self.state
-
-            def _load():
-                # dep.view is resolved here on the fresh request (not via the
-                # calling build()'s ctx), so it bypasses build-discipline
-                # enforcement and correctly loads named views such as 'bads'.
-                return self.registry.resolve(dep.name, state=dep_state, options=dep.options).load(cache=cache, view=dep.view)
-            return _load
-
-        self._build_deps = {
-            dep.label or dep.name: _make_dep_loader(dep) for dep in self.node.dependencies(self)
-        }
-        try:
+        with self._build_deps_context(cache):
             artifact = derivative.build(self)
-        finally:
-            self._build_deps = None
         artifact_metadata = self.registry.canonicalize(derivative.artifact_metadata(self, artifact))
         self._artifact_metadata = artifact_metadata
         if not use_cache:
@@ -1084,10 +1114,15 @@ class Request(Generic[T]):
             if self._build_deps is not None:
                 if name not in self._build_deps:
                     declared = sorted(self._build_deps)
-                    raise RuntimeError(f"{self.node.name!r}.build() called ctx.load({name!r}) which is not a declared dependency. Declared: {declared}")
+                    raise RuntimeError(f"{self.node.name!r} called ctx.load({name!r}) which is not a declared dependency. Declared: {declared}")
                 if cache is not None or view is not None or state is not None or options is not None or controls:
-                    raise TypeError(f"{self.node.name!r}.build() passed overrides to ctx.load({name!r}); declare cache, view, state, and options on the Dependency instead")
-                return self._build_deps[name]()
+                    raise TypeError(f"{self.node.name!r} passed overrides to ctx.load({name!r}); declare cache, view, state, and options on the Dependency instead, and do not override controls here")
+                dep = self._build_deps[name]
+                return self.registry.resolve(
+                    name=dep.name,
+                    state={**self.state, **dep.state} if dep.state else self.state,
+                    options=dep.options,
+                ).load(cache=self._build_deps_cache, view=dep.view)
             return self.registry.resolve(
                 name,
                 state={**self.state, **(state or {})},
@@ -1098,21 +1133,14 @@ class Request(Generic[T]):
         if state is not None or options is not None or controls:
             raise TypeError("Request.load() without a dependency name only accepts cache and view overrides")
         if view is not None:
-            # Temporarily suspend build-discipline enforcement so that load_view
-            # implementations (which are part of the node contract, not raw build
-            # logic) are free to load dependencies with any options they need.
-            build_deps = self._build_deps
-            self._build_deps = None
-            try:
-                return self.node.load_view(self, view)
-            finally:
-                self._build_deps = build_deps
+            return self.node.load_view(self, view)
         if isinstance(self.node, Input):
             return self.node.load(self)
 
         derivative = self._require_derivative()
-        artifact = self.load_artifact(cache)
-        return derivative.apply_view_options(self, artifact)
+        with self._build_deps_context(cache):
+            artifact = self.load_artifact(cache)
+            return derivative.apply_view_options(self, artifact)
 
 
 class DerivativeRegistry:
@@ -1237,12 +1265,12 @@ class DerivativeRegistry:
             if key in keys:
                 raise RuntimeError(f"Duplicate dependency label {key!r} for node {node.name!r}")
             keys.add(key)
-            handle = self.resolve(
+            request = self.resolve(
                 dep.name,
                 state={**ctx.state, **(dep.state or {})},
                 options=dep.options,
             )
-            out.append((dep, handle))
+            out.append((dep, request))
         return out
 
     @staticmethod
@@ -1423,9 +1451,11 @@ class DerivativeRegistry:
             cache: bool | None,  # Explicit cache override propagated to dependencies.
     ) -> dict[str, Any]:
         out = {}
-        for dep, handle in self._dependency_handles(node, ctx):
-            key = dep.label or dep.name
-            out[key] = handle.describe_dependency(cache, dep.view)
+        with ctx._build_deps_context(cache):
+            for dep, dep_ctx in self._dependency_handles(node, ctx):
+                key = dep.label or dep.name
+                fingerprint = node.dependency_fingerprint_override(ctx, dep, dep_ctx)
+                out[key] = dep_ctx.describe_dependency(cache, dep.view, fingerprint)
         return out
 
     def read_manifest(self, path: str | Path) -> ArtifactManifest | None:

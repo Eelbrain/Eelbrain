@@ -22,6 +22,7 @@ from eelbrain.testing import TempDir
 
 
 DEFAULT_STATE = {'subject': 's1', 'mode': 'default'}
+LOG = logging.getLogger('eelbrain.test.derivative_cache')
 
 
 class _TemporaryState:
@@ -335,6 +336,121 @@ class OptionDerivative(Derivative[str]):
         Path(path).write_text(value)
 
 
+class SelfViewDerivative(Derivative[str]):
+    name = 'self-view'
+    key_fields = ('subject',)
+    cache_suffix = '.txt'
+
+    def __init__(self, root: str | Path, declare_source: bool):
+        self.root = Path(root)
+        self.declare_source = declare_source
+
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        if self.declare_source:
+            return (Dependency('source'),)
+        return ()
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {'subject': ctx.state['subject']}
+
+    def build(self, ctx: Request) -> str:
+        return ctx.load(view='shell')
+
+    def load_view(self, ctx: Request, view: str) -> str:
+        if view != 'shell':
+            return super().load_view(ctx, view)
+        return f"shell:{ctx.load('source')}"
+
+    def load(
+            self,
+            ctx: Request,
+            path: str) -> str:
+        return Path(path).read_text()
+
+    def save(
+            self,
+            ctx: Request,
+            path: str,
+            value: str,
+    ) -> None:
+        Path(path).write_text(value)
+
+
+class ApplyViewDependencyDerivative(Derivative[str]):
+    name = 'apply-view-dependency'
+    key_fields = ('subject',)
+    cache_suffix = '.txt'
+
+    def __init__(self, root: str | Path, declare_source: bool):
+        self.root = Path(root)
+        self.declare_source = declare_source
+
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        if self.declare_source:
+            return (Dependency('source', options={'upper': True}),)
+        return ()
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {'subject': ctx.state['subject']}
+
+    def build(self, ctx: Request) -> str:
+        return 'artifact'
+
+    def apply_view_options(self, ctx: Request, value: str) -> str:
+        return f"{value}:{ctx.load('source')}"
+
+    def load(
+            self,
+            ctx: Request,
+            path: str) -> str:
+        return Path(path).read_text()
+
+    def save(
+            self,
+            ctx: Request,
+            path: str,
+            value: str,
+    ) -> None:
+        Path(path).write_text(value)
+
+
+class FingerprintOverrideDerivative(Derivative[str]):
+    name = 'fingerprint-override'
+    key_fields = ('subject',)
+    cache_suffix = '.txt'
+
+    def __init__(self, root: str | Path, dependencies: tuple[Dependency, ...], load_name: str):
+        self.root = Path(root)
+        self._dependencies = dependencies
+        self.load_name = load_name
+
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        return self._dependencies
+
+    def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, object] | None:
+        return {'value': ctx.load(self.load_name)}
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {'subject': ctx.state['subject']}
+
+    def build(self, ctx: Request) -> str:
+        return 'artifact'
+
+    def load(
+            self,
+            ctx: Request,
+            path: str) -> str:
+        return Path(path).read_text()
+
+    def save(
+            self,
+            ctx: Request,
+            path: str,
+            value: str,
+    ) -> None:
+        Path(path).write_text(value)
+
+
 class ProtectedDerivative(Derivative[str]):
     name = 'protected'
     key_fields = ('subject',)
@@ -369,19 +485,28 @@ class ProtectedDerivative(Derivative[str]):
         Path(path).write_text(value)
 
 
-def make_registry():
+def make_empty_registry():
     root = TempDir()
-    pipeline = FakePipeline(root)
-    pipeline.source_path('s1').write_text('alpha')
-    pipeline.source_path('s2').write_text('beta')
-    registry = DerivativeRegistry(pipeline.root, logging.getLogger('eelbrain.test.derivative_cache'))
+    return root, DerivativeRegistry(root, LOG)
+
+
+def make_source_registry():
+    root, registry = make_empty_registry()
     source = SourceInput(root)
+    source.source_path('s1').write_text('alpha')
+    source.source_path('s2').write_text('beta')
+    registry.register(source)
+    return root, registry, source
+
+
+def make_registry():
+    root, registry, source = make_source_registry()
+    pipeline = FakePipeline(root)
     value = ValueDerivative(root)
     summary = SummaryDerivative(root)
     comparison = ComparisonDerivative()
     ephemeral = EphemeralDerivative(root)
     protected = ProtectedDerivative(root)
-    registry.register(source)
     registry.register(value)
     registry.register(summary)
     registry.register(comparison)
@@ -479,8 +604,7 @@ def test_generic_cache_path_uses_node_name_and_key():
 
 
 def test_cache_collision_sidecar_disambiguates_artifact_paths():
-    root = TempDir()
-    registry = DerivativeRegistry(root, logging.getLogger('eelbrain.test.derivative_cache'))
+    root, registry = make_empty_registry()
     derivative = CollidingDerivative(root)
     registry.register(derivative)
 
@@ -623,8 +747,7 @@ def test_runtime_code_does_not_use_private_get_node():
 
 
 def test_request_splits_artifact_and_view_options():
-    root = TempDir()
-    registry = DerivativeRegistry(root, logging.getLogger('eelbrain.test.derivative_cache'))
+    root, registry = make_empty_registry()
     derivative = OptionDerivative(root)
     registry.register(derivative)
 
@@ -640,8 +763,7 @@ def test_request_splits_artifact_and_view_options():
 
 
 def test_registry_rejects_undeclared_options():
-    root = TempDir()
-    registry = DerivativeRegistry(root, logging.getLogger('eelbrain.test.derivative_cache'))
+    root, registry = make_empty_registry()
     derivative = OptionDerivative(root)
     registry.register(derivative)
 
@@ -650,8 +772,7 @@ def test_registry_rejects_undeclared_options():
 
 
 def test_request_applies_view_options_after_build_and_load():
-    root = TempDir()
-    registry = DerivativeRegistry(root, logging.getLogger('eelbrain.test.derivative_cache'))
+    root, registry = make_empty_registry()
     derivative = OptionDerivative(root)
     registry.register(derivative)
 
@@ -670,8 +791,7 @@ def test_request_applies_view_options_after_build_and_load():
 
 
 def test_request_loads_named_view_and_exposes_artifact_metadata():
-    root = TempDir()
-    registry = DerivativeRegistry(root, logging.getLogger('eelbrain.test.derivative_cache'))
+    root, registry = make_empty_registry()
     derivative = OptionDerivative(root)
     registry.register(derivative)
 
@@ -686,6 +806,63 @@ def test_request_loads_named_view_and_exposes_artifact_metadata():
         ('load', 2, 7),
         ('named-view', 2, 7),
     ]
+
+
+def test_load_view_obeys_declared_dependencies_during_build():
+    root, registry, _ = make_source_registry()
+    registry.register(SelfViewDerivative(root, True))
+
+    value = registry.resolve('self-view', state=DEFAULT_STATE).load()
+
+    assert value == 'shell:alpha'
+
+
+def test_load_view_rejects_undeclared_dependencies_during_build():
+    root, registry, _ = make_source_registry()
+    registry.register(SelfViewDerivative(root, False))
+
+    with pytest.raises(RuntimeError, match="not a declared dependency"):
+        registry.resolve('self-view', state=DEFAULT_STATE).load()
+
+
+def test_apply_view_options_obeys_declared_dependencies():
+    root, registry, _ = make_source_registry()
+    registry.register(ApplyViewDependencyDerivative(root, True))
+
+    first = registry.resolve('apply-view-dependency', state=DEFAULT_STATE).load()
+    second = registry.resolve('apply-view-dependency', state=DEFAULT_STATE).load()
+
+    assert first == 'artifact:ALPHA'
+    assert second == 'artifact:ALPHA'
+
+
+def test_apply_view_options_rejects_undeclared_dependencies():
+    root, registry, _ = make_source_registry()
+    registry.register(ApplyViewDependencyDerivative(root, False))
+
+    with pytest.raises(RuntimeError, match="not a declared dependency"):
+        registry.resolve('apply-view-dependency', state=DEFAULT_STATE).load()
+
+
+def test_dependency_fingerprint_override_obeys_declared_dependencies():
+    root, registry, _ = make_source_registry()
+    registry.register(FingerprintOverrideDerivative(root, (Dependency('source'),), 'source'))
+
+    handle = registry.resolve('fingerprint-override', state=DEFAULT_STATE)
+    value = handle.load()
+    manifest = json.loads(handle.manifest_path.read_text())
+
+    assert value == 'artifact'
+    assert manifest['dependencies']['source']['fingerprint'] == {'value': 'alpha'}
+
+
+def test_dependency_fingerprint_override_rejects_undeclared_dependencies():
+    pipeline, registry, *_ = make_registry()
+    root = pipeline.root
+    registry.register(FingerprintOverrideDerivative(root, (Dependency('value'),), 'source'))
+
+    with pytest.raises(RuntimeError, match="not a declared dependency"):
+        registry.resolve('fingerprint-override', state=DEFAULT_STATE).load()
 
 
 def test_request_loads_named_view_from_input():

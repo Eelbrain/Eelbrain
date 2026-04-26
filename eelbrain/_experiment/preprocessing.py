@@ -62,7 +62,6 @@ from .exceptions import FileMissingError
 from .pathing import LOG_DIR, bids_path, ica_file_path
 
 MNE_VERBOSITY = 'WARNING'
-AddBadsArg = bool | Sequence[str]
 LOG = logging.getLogger(__name__)
 _RAW_READER_WARNING_STATE: dict[str, dict[str, Any]] = {}
 REINDEX_ICA = 'reindex_ica'
@@ -346,7 +345,7 @@ class RawSourceDerivative(UncachedDerivative[mne.io.BaseRaw]):
     :class:`RawBadChannelsInput`.
     """
     OPTION_DEFAULTS = {'noise': False}
-    VIEW_OPTION_DEFAULTS = {'add_bads': True, 'preload': False}
+    VIEW_OPTION_DEFAULTS = {'preload': False}
 
     def __init__(
             self,
@@ -394,22 +393,13 @@ class RawSourceDerivative(UncachedDerivative[mne.io.BaseRaw]):
         return super().load_view(ctx, view)
 
     def _load_bad_channels(self, ctx: Request) -> list[str]:
-        add_bads = ctx.view_options['add_bads']
-        match add_bads:
-            case True:
-                tsv_bads = ctx.load(raw_bad_channels_input_name(self.raw_name))
-                raw_bads = ctx.load(raw_input_name(self.raw_name)).info['bads']
-                if tsv_bads and raw_bads:
-                    return sorted(set(tsv_bads) | set(raw_bads))
-                elif tsv_bads:
-                    return tsv_bads
-                else:
-                    return raw_bads
-            case False:
-                return []
-            case Sequence():
-                return list(add_bads)
-        raise TypeError(f"{add_bads=}")
+        tsv_bads = ctx.load(raw_bad_channels_input_name(self.raw_name))
+        raw_bads = ctx.load(raw_input_name(self.raw_name)).info['bads']
+        if tsv_bads and raw_bads:
+            return sorted(set(tsv_bads) | set(raw_bads))
+        if tsv_bads:
+            return tsv_bads
+        return raw_bads
 
 
 class ICAInput(Input[mne.preprocessing.ICA]):
@@ -468,11 +458,13 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         path_list = self._source_states(tasks)
         first_state = dict(path_list[0])
         first_state.pop('raw')
-        raw = load_raw_dependency(ctx, self.pipe.source, add_bads=bad_channels, preload=True, state=first_state)
+        raw = load_raw_dependency(ctx, self.pipe.source, preload=True, state=first_state)
+        raw.info['bads'] = bad_channels
         for state in path_list[1:]:
             state = dict(state)
             state.pop('raw')
-            raw_ = load_raw_dependency(ctx, self.pipe.source, add_bads=bad_channels, preload=True, state=state)
+            raw_ = load_raw_dependency(ctx, self.pipe.source, preload=True, state=state)
+            raw_.info['bads'] = bad_channels
             raw.append(raw_)
         return raw
 
@@ -648,7 +640,6 @@ class ICAInput(Input[mne.preprocessing.ICA]):
                 ctx,
                 raw=self.pipe.source,
                 label=f'source-{i}:raw',
-                add_bads=False,
                 state=dep_state,
             ))
         return tuple(deps)
@@ -780,8 +771,6 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
 
     Options
     -------
-    add_bads
-        Whether to apply bad channels to the loaded raw object.
     preload
         Whether to preload the returned raw object.
     noise
@@ -792,7 +781,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
     cache_policy = CachePolicy.OPTIONAL
     cache_suffix = '-raw.fif'
     OPTION_DEFAULTS = {'noise': False}
-    VIEW_OPTION_DEFAULTS = {'add_bads': True, 'preload': False}
+    VIEW_OPTION_DEFAULTS = {'preload': False}
 
     def __init__(
             self,
@@ -815,7 +804,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         deps = [
             Dependency(
                 source_node,
-                options=ctx.options_for(source_node, 'noise', add_bads=True, preload=True),
+                options=ctx.options_for(source_node, 'noise', preload=True),
             ),
         ]
         if isinstance(self.pipe, RawICA):
@@ -899,33 +888,18 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
 
         state = {**ctx.state, 'raw': self.raw_name}
         path = bids_path(ctx.root, state, self.extension)
-        upstream_info = load_raw_info_dependency(ctx, self.pipe.source, add_bads=True, noise=ctx.options['noise']).copy()
+        upstream_info = load_raw_info_dependency(ctx, self.pipe.source, noise=ctx.options['noise']).copy()
         info = self.pipe._make_info(upstream_info, path=path, noise=ctx.options['noise'], raw_name=self.raw_name, log=ctx.registry.log)
         if info is None:
             info = ctx.load_artifact().info
 
-        add_bads = ctx.view_options['add_bads']
-        if isinstance(add_bads, Sequence):
-            bads = list(add_bads)
-        elif add_bads is True:
-            bads = self.pipe._collect_bads(ctx, noise=ctx.options['noise'])
-        else:
-            bads = []
-
         with info._unlock():
-            info['bads'] = bads
+            info['bads'] = self.pipe._collect_bads(ctx, noise=ctx.options['noise'])
         return info
 
     def apply_view_options(self, ctx: Request, raw: mne.io.BaseRaw) -> mne.io.BaseRaw:
         if ctx.view_options['preload'] and not raw.preload:
             raw.load_data()
-        add_bads = ctx.view_options['add_bads']
-        if isinstance(add_bads, Sequence):
-            raw.info['bads'] = list(add_bads)
-        elif add_bads is True:
-            raw.info['bads'] = self.pipe._collect_bads(ctx, noise=ctx.options['noise'])
-        else:
-            raw.info['bads'] = []
         return raw
 
     def save(
@@ -941,7 +915,6 @@ def load_raw_dependency(
         ctx: Request,
         raw: str | None = None,
         *,
-        add_bads: AddBadsArg = True,
         preload: bool = False,
         noise: bool = False,
         state: dict[str, Any] | None = None,
@@ -950,14 +923,13 @@ def load_raw_dependency(
     if raw is None:
         raw = ctx.state['raw']
     merged_state['raw'] = raw
-    return ctx.load(raw_node_name(raw), state=merged_state, options={'add_bads': add_bads, 'preload': preload, 'noise': noise})
+    return ctx.load(raw_node_name(raw), state=merged_state, options={'preload': preload, 'noise': noise})
 
 
 def load_raw_info_dependency(
         ctx: Request,
         raw: str | None = None,
         *,
-        add_bads: AddBadsArg = True,
         noise: bool = False,
         state: dict[str, Any] | None = None,
 ) -> mne.Info:
@@ -965,7 +937,7 @@ def load_raw_info_dependency(
     if raw is None:
         raw = ctx.state['raw']
     merged_state['raw'] = raw
-    return ctx.load(raw_node_name(raw), state=merged_state, options={'add_bads': add_bads, 'noise': noise}, view='info')
+    return ctx.load(raw_node_name(raw), state=merged_state, options={'noise': noise}, view='info')
 
 
 def raw_data_dependency(
@@ -974,7 +946,6 @@ def raw_data_dependency(
         raw: str | None = None,
         label: str | None = None,
         noise: bool = False,
-        add_bads: AddBadsArg = True,
         state: dict[str, Any] | None = None,
 ) -> Dependency:
     if raw is None:
@@ -986,7 +957,7 @@ def raw_data_dependency(
         raw_node_name(raw),
         label=label,
         state=dep_state,
-        options={'add_bads': add_bads, 'preload': False, 'noise': noise},
+        options={'preload': False, 'noise': noise},
     )
 
 

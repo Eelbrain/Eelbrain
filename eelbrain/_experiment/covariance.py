@@ -78,10 +78,8 @@ class CovDerivative(Derivative[mne.Covariance]):
     # cache validation and the actual load request stay in sync.
     _EPOCH_COV_OPTIONS = {
         'baseline': True,
-        'add_bads': True,
         'ndvar': False,
         'data': 'sensor',
-        'data_raw': False,
         'reject': False,
         'samplingrate': None,
         'decim': 1,

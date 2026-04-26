@@ -33,7 +33,7 @@ from .derivative_cache import CachePolicy, Dependency, Derivative, Request, Inpu
 from .pathing import (
     MRI_SDIR, bem_dir, bem_file_path, mri_dir, src_file_path, trans_file_path,
 )
-from .preprocessing import load_raw_dependency, raw_node_name
+from .preprocessing import raw_node_name
 from .test_def import TestDims
 from .._text import enumeration, plural
 from .._utils import subp
@@ -508,7 +508,6 @@ class FwdDerivative(Derivative[mne.Forward]):
             Dependency(
                 raw_node_name('raw'),
                 state={'raw': 'raw'},
-                options={'add_bads': False},
             ),
             Dependency('trans-input'),
             Dependency('src'),
@@ -576,7 +575,7 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (
-            Dependency(raw_node_name(ctx.state['raw']), options={'add_bads': False, 'preload': False, 'noise': False}),
+            Dependency(raw_node_name(ctx.state['raw']), options={'preload': False, 'noise': False}),
             Dependency('fwd'),
             Dependency(cov_node_name(ctx.state['cov'])),
         )
@@ -769,8 +768,6 @@ class EpochsStcDerivative(Derivative[Dataset]):
         Whether to keep the sensor epochs alongside source output.
     morph
         Whether to morph source data to the common brain.
-    data_raw
-        Whether to keep raw objects in the dataset info.
     samplingrate
         Sampling rate override for the underlying epochs artifact.
     decim
@@ -799,14 +796,14 @@ class EpochsStcDerivative(Derivative[Dataset]):
         'pad': 0,
         'reject': True,
     }
-    VIEW_OPTION_DEFAULTS = {'ndvar': True, 'data_raw': False, 'keep_epochs': False}
+    VIEW_OPTION_DEFAULTS = {'ndvar': True, 'keep_epochs': False}
 
     def __init__(self, raw, epochs: dict[str, Any]):
         self.raw = raw
         self.epochs = epochs
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        return _source_dependencies(ctx, Dependency('epochs', options=ctx.options_for('epochs', baseline=ctx.options['baseline'], ndvar=False, reject=ctx.options['reject'], cat=ctx.options['cat'], samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], pad=ctx.options['pad'], data_raw=False, data='sensor')))
+        return _source_dependencies(ctx, Dependency('epochs', options=ctx.options_for('epochs', baseline=ctx.options['baseline'], ndvar=False, reject=ctx.options['reject'], cat=ctx.options['cat'], samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], pad=ctx.options['pad'], data='sensor')))
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return ctx.registry.canonicalize(ctx.options)
@@ -871,10 +868,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
         elif not keep_epochs:
             del ds['epochs']
 
-        if ctx.view_options['data_raw']:
-            ds.info['raw'] = load_raw_dependency(ctx, add_bads=True, preload=False, noise=False)
-        else:
-            ds.info.pop('raw', None)
+        ds.info.pop('raw', None)
         return ds
 
     def load(self, ctx: Request, path: Path) -> Dataset:
@@ -899,8 +893,6 @@ class EvokedStcDerivative(Derivative[Dataset]):
         Whether to keep the sensor evoked data alongside source output.
     morph
         Whether to morph source data to the common brain.
-    data_raw
-        Whether to keep raw objects in the dataset info.
     samplingrate
         Sampling rate override for the underlying evoked artifact.
     decim
@@ -924,14 +916,14 @@ class EvokedStcDerivative(Derivative[Dataset]):
         'samplingrate': None,
         'decim': None,
     }
-    VIEW_OPTION_DEFAULTS = {'ndvar': True, 'data_raw': False, 'keep_evoked': False}
+    VIEW_OPTION_DEFAULTS = {'ndvar': True, 'keep_evoked': False}
 
     def __init__(self, raw, epochs: dict[str, Any]):
         self.raw = raw
         self.epochs = epochs
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        return _source_dependencies(ctx, Dependency('evoked', options=ctx.options_for('evoked', baseline=ctx.options['baseline'], ndvar=False, cat=ctx.options['cat'], samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], data_raw=False, data='sensor')))
+        return _source_dependencies(ctx, Dependency('evoked', options=ctx.options_for('evoked', baseline=ctx.options['baseline'], ndvar=False, cat=ctx.options['cat'], samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], data='sensor')))
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return ctx.registry.canonicalize(ctx.options)
@@ -978,10 +970,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
         elif not keep_evoked:
             del ds['evoked']
 
-        if ctx.view_options['data_raw']:
-            ds.info['raw'] = load_raw_dependency(ctx, add_bads=True, preload=False, noise=False)
-        else:
-            ds.info.pop('raw', None)
+        ds.info.pop('raw', None)
         return ds
 
     def load(self, ctx: Request, path: Path) -> Dataset:
@@ -1000,8 +989,8 @@ class EpochsStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
 
     Notes
     -----
-    ``data_raw`` and ``keep_epochs`` must be falsey, and
-    ``morph`` defaults to ``True`` when omitted.
+    ``keep_epochs`` must be falsey, and ``morph`` defaults to ``True`` when
+    omitted.
     """
     name = 'epochs-stc-group-dataset'
     OPTION_DEFAULTS = {**EpochsStcDerivative.OPTION_DEFAULTS, **EpochsStcDerivative.VIEW_OPTION_DEFAULTS}
@@ -1018,9 +1007,6 @@ class EpochsStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
         return self.standard_fingerprint(ctx, state_fields=('parc',))
 
     def _group_options(self, ctx: Request) -> dict[str, Any]:
-        data_raw = ctx.options['data_raw']
-        if data_raw:
-            raise ValueError(f"data_raw={data_raw!r} with group: Can not combine raw data from multiple subjects.")
         keep_epochs = ctx.options['keep_epochs']
         if keep_epochs:
             raise ValueError(f"keep_epochs={keep_epochs!r} with group: Can not combine Epochs objects for different subjects. Set keep_epochs=False (default).")
