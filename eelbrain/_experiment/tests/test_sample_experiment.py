@@ -858,8 +858,7 @@ def test_evoked_cached_load_applies_cat_without_rebuilding_epochs(monkeypatch):
 
 
 @requires_mne_sample_data
-@pytest.mark.xfail
-def test_evoked_cache_ignores_irrelevant_selected_events_changes(monkeypatch):
+def test_evoked_cache_ignores_irrelevant_selected_events_changes():
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
 
@@ -933,12 +932,21 @@ def test_epochs_dependency_views_distinguish_model_sensitivity():
     e = SampleExperiment(root)
     e.set(subject='R0000', epoch='target', rej='', model='modality')
     evoked_handle = e._derivatives.resolve('evoked', state=e.state, options={})
+    epochs_dep = next(dep for dep in evoked_handle.node.dependencies(evoked_handle) if dep.name == 'epochs')
+    epochs_handle = e._derivatives.resolve('epochs', state=e.state, options=epochs_dep.options)
 
-    dataset_fingerprint = evoked_handle.dependency_fingerprints()['epochs']['fingerprint']
-    shell_fingerprint = evoked_handle.describe_dependency(view='shell')['fingerprint']
+    # Build the epochs cache explicitly. The current model labels should not
+    # matter for this artifact because epoch extraction only needs event timing
+    # and rejection-related event metadata.
+    epochs_handle.load(cache=True)
+    assert epochs_handle.is_valid()
 
-    assert 'model_signature' not in dataset_fingerprint
-    assert 'model_signature' in shell_fingerprint
+    # Build evoked once. Unlike epochs, evoked depends on the labels of the
+    # current model because it stores one averaged response per model cell.
+    assert not evoked_handle.is_valid()
+    ds = e.load_evoked(ndvar=False)
+    assert set(ds['modality'].cells) == {'auditory', 'visual'}
+    assert evoked_handle.is_valid()
 
     class ChangedExperiment(SampleExperiment):
         variables = {
@@ -949,9 +957,17 @@ def test_epochs_dependency_views_distinguish_model_sensitivity():
     e_changed = ChangedExperiment(root)
     e_changed.set(subject='R0000', epoch='target', rej='', model='modality')
     evoked_handle_changed = e_changed._derivatives.resolve('evoked', state=e_changed.state, options={})
+    epochs_handle_changed = e_changed._derivatives.resolve('epochs', state=e_changed.state, options=epochs_dep.options)
 
-    assert evoked_handle_changed.dependency_fingerprints()['epochs']['fingerprint'] == dataset_fingerprint
-    assert evoked_handle_changed.describe_dependency(view='shell')['fingerprint'] != shell_fingerprint
+    # Changing the labels for the current model still does not affect epoch
+    # extraction, so the cached epochs artifact should remain valid.
+    assert epochs_handle_changed.is_valid()
+    # The evoked artifact aggregates by model cells, so the same change should
+    # invalidate evoked and rebuild it with the current labels.
+    assert not evoked_handle_changed.is_valid()
+    ds_changed = e_changed.load_evoked(ndvar=False)
+    assert set(ds_changed['modality'].cells) == {'auditory_changed', 'visual'}
+    assert evoked_handle_changed.is_valid()
 
 
 @requires_mne_sample_data

@@ -995,15 +995,17 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         )
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        fingerprint = self.standard_fingerprint(ctx)
-        ds = ctx.load(view='shell')
+        return self.standard_fingerprint(ctx)
+
+    def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, Any] | None:
+        if dep.name != 'selected-events':
+            return None
         model = ctx.state['model']
         if model:
-            model_value = ds.eval(model)
-            fingerprint['model_signature'] = ctx.registry.canonicalize(model_value)
-        else:
-            fingerprint['model_signature'] = ds.n_cases
-        return fingerprint
+            ds = ctx.load(dep.label or dep.name)
+            ds = self._aggregate(ds, ctx)
+            return {'model': ds.eval(model)}
+        return {}
 
     def build(self, ctx: Request) -> list[mne.Evoked]:
         model = ctx.state['model']
@@ -1016,7 +1018,8 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
             evoked.comment = ' | '.join(cell)
         return data['evoked']
 
-    def _aggregate(self, data: Dataset, ctx: Request) -> Dataset:
+    @staticmethod
+    def _aggregate(data: Dataset, ctx: Request) -> Dataset:
         return data.aggregate(
             ctx.state['model'],
             never_drop=('epochs',),
@@ -1064,8 +1067,8 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         cat = ctx.view_options['cat']
         if cat:
             ds = ds.sub(ds.eval(ctx.state['model']).isin(cat))
-        # raw = ds.info.get('raw')
-        # bads = raw.info['bads'] if raw is not None else ds.info.get(BAD_CHANNELS, [])
+
+        # Unpack evoked objects and map them to the ds rows
         model = ctx.state['model']
         model_vars = model.split('%') if model else ()
         cells = [' | '.join(cell) or 'No comment' for cell in ds.zip(*model_vars)] if model_vars else ['No comment']
@@ -1076,11 +1079,9 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
             evoked = [evoked_by_cell[cell] for cell in cells]
         except KeyError:
             raise RuntimeError(f"Error reading cached evoked: available={tuple(evoked_by_cell)}, requested={tuple(cells)}") from None
-        # if any(evoked_i.info['bads'] != bads for evoked_i in evoked):
-        #     for evoked_i in evoked:
-        #         evoked_i.info['bads'] = bads
         ds['evoked'] = evoked
 
+        # Baseline
         epoch = self.epochs[ctx.state['epoch']]
         baseline = ctx.view_options['baseline']
         if baseline is True:
@@ -1089,6 +1090,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
             for evoked_i in ds['evoked']:
                 mne.baseline.rescale(evoked_i.data, evoked_i.times, baseline, 'mean', copy=False)
 
+        # NDVar
         data = TestDims.coerce(ctx.view_options['data'])
         ndvar = ctx.view_options['ndvar']
         if ndvar:
