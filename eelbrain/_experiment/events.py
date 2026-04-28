@@ -44,9 +44,9 @@ from .._data_obj import Datalist, Dataset, Factor, combine
 from .._exceptions import ConfigurationError
 from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS
 from .derivative_cache import CachePolicy, Dependency, Derivative, Input, Request, UncachedDerivative, file_fingerprint
-from .epochs import EpochCollection, SecondaryEpoch, SuperEpoch, PrimaryEpoch, ContinuousEpoch
+from .epochs import EPOCH_EXTRACT_OPTIONS, EpochCollection, SecondaryEpoch, SuperEpoch, PrimaryEpoch, ContinuousEpoch
 from .pathing import BIDS_ENTITY_KEYS, bids_path
-from .preprocessing import raw_data_dependency, raw_node_name
+from .preprocessing import raw_node_name
 from .variable_def import Variables
 
 
@@ -101,7 +101,7 @@ class EventsInput(Input[Dataset]):
             sfreq = 0.
         entities = {k: ctx.state[k] for k in BIDS_ENTITY_KEYS}
         ds = Dataset.from_dataframe(df)
-        ds.info['sfreq'] = sfreq
+        ds.info['raw.samplingrate'] = sfreq
         ds.info.update(entities)
         return ds
 
@@ -141,7 +141,8 @@ class EventsDerivative(Derivative[Dataset]):
         self.owner_name = owner_name
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        return (raw_data_dependency(ctx),)
+        raw_name = ctx.state['raw']
+        return (Dependency(raw_node_name(raw_name), state={'raw': raw_name}, options={'preload': False, 'noise': False}),)
 
     def _get_trigger_shift(self, subject: str, session: str):
         if isinstance(self.trigger_shift, dict):
@@ -174,15 +175,17 @@ class EventsDerivative(Derivative[Dataset]):
         del ds.info['raw']
         ds.rename('i_start', 'sample')
         ds.rename('trigger', 'value')
-        ds.info['sfreq'] = raw.info['sfreq']
+        ds.info['raw.samplingrate'] = raw.info['sfreq']
+        ds.info['raw.first_samp'] = raw.first_samp
+        ds.info['raw.last_samp'] = raw.last_samp
         ds.info.update(entities)
 
         trigger_shift = self._get_trigger_shift(subject, session)
         if trigger_shift:
-            ds['sample'] += int(round(trigger_shift * ds.info['sfreq']))
+            ds['sample'] += int(round(trigger_shift * ds.info['raw.samplingrate']))
 
         ds = _check_ds(self.fix_events_impl(self, ds), f'{self.owner_name}.fix_events()', ds.info)
-        ds['onset'] = ds['sample'] / ds.info['sfreq']
+        ds['onset'] = ds['sample'] / ds.info['raw.samplingrate']
         return ds
 
     def load(self, ctx: Request, path: Path) -> Dataset:
@@ -233,7 +236,10 @@ class LabeledEventsDerivative(Derivative[Dataset]):
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if self._has_sidecar(ctx):
-            return (Dependency('events-input', label='events'),)
+            return (
+                Dependency('events-input', label='events'),
+                Dependency(raw_node_name(ctx.state['raw']), label='raw'),
+            )
         return (Dependency('events'),)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
@@ -247,6 +253,11 @@ class LabeledEventsDerivative(Derivative[Dataset]):
 
     def build(self, ctx: Request) -> Dataset:
         ds = ctx.load('events')
+        if self._has_sidecar(ctx):
+            raw = ctx.load('raw')
+            ds.info['raw.samplingrate'] = raw.info['sfreq']
+            ds.info['raw.first_samp'] = raw.first_samp
+            ds.info['raw.last_samp'] = raw.last_samp
         ds['subject'] = Factor([ctx.state['subject']], repeat=ds.n_cases, random=True)
         if self.multi_task:
             ds[:, 'task'] = ctx.state['task']
@@ -282,7 +293,17 @@ class SelectedEventsDerivative(UncachedDerivative[Dataset]):
     # key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'raw', 'epoch', 'rej')
     # cache_suffix = '.pickle'
     # cache_policy = CachePolicy.DISABLED_BY_DEFAULT
-    OPTION_DEFAULTS = {'index': True, 'reject': True}
+    OPTION_DEFAULTS = {
+        'index': True,
+        'reject': True,
+        'baseline': False,
+        'samplingrate': None,
+        'decim': None,
+        'pad': 0,
+        'tmin': None,
+        'tmax': None,
+        'tstop': None,
+    }
     VIEW_OPTION_DEFAULTS = {'cat': None}
 
     def __init__(
@@ -303,17 +324,19 @@ class SelectedEventsDerivative(UncachedDerivative[Dataset]):
             reject = ctx.options['reject']
             if reject not in (True, False, 'keep'):
                 raise ValueError(f"{reject=}")
-            dep = Dependency('labeled-events')
+            state = {'task': epoch.task}
+            deps = [Dependency('labeled-events', state=state)]
             rejection_params = self.artifact_rejection[ctx.state['rej']]
             if rejection_params['kind'] and reject:
-                return dep, Dependency('rej-input')
-            return dep,
+                deps.append(Dependency('rej-input', state=state))
+            return tuple(deps)
         else:
-            options = ctx.options_for('selected-events', 'reject')
+            options = ctx.options_for('selected-events', 'reject', *EPOCH_EXTRACT_OPTIONS)
             if isinstance(epoch, SecondaryEpoch):
-                return Dependency('selected-events', options=options, state={'epoch': epoch.sel_epoch}),
+                state = {'epoch': epoch.sel_epoch, 'task': self.epochs[epoch.sel_epoch].task}
+                return (Dependency('selected-events', options=options, state=state),)
             elif isinstance(epoch, SuperEpoch):
-                return tuple(Dependency('selected-events', label=f'{sub_epoch}:events', options=options, state={'epoch': sub_epoch}) for sub_epoch in epoch.sub_epochs)
+                return tuple(Dependency('selected-events', label=f'{sub_epoch}:events', options=options, state={'epoch': sub_epoch, 'task': self.epochs[sub_epoch].task}) for sub_epoch in epoch.sub_epochs)
             else:
                 raise RuntimeError(f"{epoch=}")
 
@@ -384,7 +407,7 @@ class SelectedEventsDerivative(UncachedDerivative[Dataset]):
             ds.info[BAD_CHANNELS] = sorted(bad_channels)
         else:
             raise RuntimeError(f"{epoch=}")
-        return epoch._prepare_selected_events(ds, ctx.state['subject'])
+        return epoch._prepare_selected_events(ds, ctx.state['subject'], ctx.options)
 
     def apply_view_options(self, ctx: Request, ds: Dataset) -> Dataset:
         if ctx.view_options['cat']:

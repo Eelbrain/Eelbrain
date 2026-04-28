@@ -30,6 +30,7 @@ from .test_def import TestDims
 
 
 EpochBaselineArg = Literal[False] | tuple[float | None, float | None] | None
+EPOCH_EXTRACT_OPTIONS = ('baseline', 'samplingrate', 'decim', 'pad', 'tmin', 'tmax', 'tstop')
 
 
 def _shared_sub_epoch_parameters(name: str, sub_epochs: Sequence[EpochBase], parameters: Sequence[str]) -> dict[str, Any]:
@@ -123,15 +124,6 @@ def _evoked_comments(evoked: list[mne.Evoked]) -> list[str]:
     return [e.comment or 'No comment' for e in evoked]
 
 
-def _apply_epochs_selection(ds: Dataset, selection: np.ndarray | None) -> Dataset:
-    if selection is None or (len(selection) == ds.n_cases and np.array_equal(selection, np.arange(ds.n_cases))):
-        return ds
-    ds = ds[selection]
-    ds.info = ds.info.copy()
-    ds.info['epochs.selection'] = selection
-    return ds
-
-
 class EpochBase(Configuration):
     """Base class for epoch definitions."""
     baseline = None
@@ -148,6 +140,7 @@ class EpochBase(Configuration):
             self,
             ds: Dataset,
             subject: str,
+            options: dict[str, Any],
     ) -> Dataset:
         """Prepare the selected-events shell for this epoch.
 
@@ -158,6 +151,8 @@ class EpochBase(Configuration):
             selection and load options have been applied.
         subject
             Subject identifier used for error messages.
+        options
+            Selected-events load options that affect epoch extraction.
 
         Returns
         -------
@@ -177,11 +172,11 @@ class EpochBase(Configuration):
                 shift = shift.x
             # Apply
             if np.isscalar(shift):
-                ds['sample'] += int(round(shift * ds.info['sfreq']))
+                ds['sample'] += int(round(shift * ds.info['raw.samplingrate']))
             elif np.isnan(shift).any():
                 raise RuntimeError(f"The epoch trigger_shift contains NaNs for {subject}/{self.name}\n{shift=}")
             else:
-                ds['sample'] += np.round(shift * ds.info['sfreq']).astype(int)
+                ds['sample'] += np.round(shift * ds.info['raw.samplingrate']).astype(int)
         return ds
 
     def _eval_attrs(self) -> Iterator[str]:
@@ -262,6 +257,38 @@ class Epoch(EpochBase):
 
     # to be set by subclass
     rej_file_epochs = None
+
+    def _prepare_selected_events(
+            self,
+            ds: Dataset,
+            subject: str,
+            options: dict[str, Any],
+    ) -> Dataset:
+        ds = super()._prepare_selected_events(ds, subject, options)
+        tmin, tmax, tstop, _, decim, variable_tmax = self._extraction_parameters(ds, options)
+        if variable_tmax:
+            return ds
+        raw_sfreq = ds.info['raw.samplingrate']
+        if tmax is None:
+            if tstop is None:
+                tmax = 0.6
+            else:
+                sfreq = raw_sfreq / decim
+                start_index = int(round(tmin * sfreq))
+                stop_index = int(round(tstop * sfreq))
+                tmax = tmin + (stop_index - start_index - 1) / sfreq
+        elif tstop is not None:
+            raise TypeError(f"tmax and tstop can not both be specified at the same time, got tmax={tmax}, tstop={tstop}")
+        sample = ds['sample'].x
+        i_min = sample + math.floor(tmin * raw_sfreq)
+        i_max = sample + math.floor(tmax * raw_sfreq)
+        selection = np.flatnonzero((i_min >= ds.info['raw.first_samp']) & (i_max <= ds.info['raw.last_samp']))
+        if len(selection) == ds.n_cases and np.array_equal(selection, np.arange(ds.n_cases)):
+            return ds
+        ds = ds[selection]
+        ds.info = ds.info.copy()
+        ds.info['epochs.selection'] = selection
+        return ds
 
     def _set_epoch_parameters(
             self,
@@ -575,6 +602,14 @@ class SuperEpoch(Epoch):
         self._tasks = tuple(sorted({sub_epoch.task for sub_epoch in sub_epochs}))
         self.rej_file_epochs = [epoch_name for sub_epoch in sub_epochs for epoch_name in sub_epoch.rej_file_epochs]
 
+    def _prepare_selected_events(
+            self,
+            ds: Dataset,
+            subject: str,
+            options: dict[str, Any],
+    ) -> Dataset:
+        return EpochBase._prepare_selected_events(self, ds, subject, options)
+
 
 class EpochCollection(EpochBase):
     """A collection of epochs that are loaded separately.
@@ -677,8 +712,9 @@ class ContinuousEpoch(EpochBase):
             self,
             ds: Dataset,
             subject: str,
+            options: dict[str, Any],
     ) -> Dataset:
-        ds = super()._prepare_selected_events(ds, subject)
+        ds = super()._prepare_selected_events(ds, subject, options)
 
         split_threshold = self.split + self.pad_start + self.pad_end
         onsets = np.flatnonzero(ds['onset'].diff(to_begin=split_threshold + 1) >= split_threshold)
@@ -686,7 +722,7 @@ class ContinuousEpoch(EpochBase):
         if illegal:
             raise RuntimeError(f"Events contain variables with reserved names: {', '.join(illegal)}")
         events = [ds[i1:i2] for i1, i2 in zip(onsets, [*onsets[1:], None])]
-        raw_samplingrate = ds.info['raw'].info['sfreq']
+        raw_samplingrate = ds.info['raw.samplingrate']
         for events_i in events:
             sample_i = events_i['sample'] - events_i[0, 'sample']
             events_i['T_relative'] = sample_i / raw_samplingrate
@@ -768,18 +804,21 @@ class EpochsDerivative(Derivative[Any]):
         elif isinstance(epoch, SuperEpoch):
             options = ctx.options_for('epochs', *self.OPTION_DEFAULTS, ndvar=False, data='sensor')
             return tuple(
-                Dependency('epochs', label=sub_epoch, state={'epoch': sub_epoch}, options=options)
+                Dependency('epochs', label=sub_epoch, state={'epoch': sub_epoch, 'task': self.epochs[sub_epoch].task}, options=options)
                 for sub_epoch in epoch.sub_epochs
             )
+        state = {'task': epoch.task}
         return (
             Dependency(
                 raw_node_name(ctx.state['raw']),
                 label='raw',
+                state=state,
                 options=ctx.options_for(raw_node_name(ctx.state['raw']), preload=False, noise=False),
             ),
             Dependency(
                 'selected-events',
-                options=ctx.options_for('selected-events', 'reject', 'cat', index=False),
+                state=state,
+                options=ctx.options_for('selected-events', 'reject', 'cat', *EPOCH_EXTRACT_OPTIONS, index=False),
             ),
         )
 
@@ -930,12 +969,6 @@ class EpochsDerivative(Derivative[Any]):
                 sysname = source_pipe._get_sysname(info, ds.info['subject'], data_kind)
                 adjacency = source_pipe._get_adjacency(data_kind)
                 name = 'meg' if data_kind == 'mag' and 'grad' not in sensor_types else data_kind
-                # if isinstance(epoch_value, Datalist):
-                #     ys = [load.mne.epochs_ndvar(e, data=data_kind, sysname=sysname, adjacency=adjacency, name=data_kind)[0] for e in epoch_value]
-                #     if isinstance(data.sensor, str):
-                #         ys = [getattr(y, data.sensor)('sensor') for y in ys]
-                #     ys = combine(ys)
-                # else:
                 ys = load.mne.epochs_ndvar(ds['epochs'], data=data_kind, sysname=sysname, adjacency=adjacency)
                 if isinstance(data.sensor, str):
                     ys = getattr(ys, data.sensor)('sensor')
@@ -979,8 +1012,9 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         self.epochs = epochs
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        epoch = self.epochs[ctx.state['epoch']]
         options = {
-            'baseline': True if self.epochs[ctx.state['epoch']].post_baseline_trigger_shift else False,
+            'baseline': True if epoch.post_baseline_trigger_shift else False,
             'samplingrate': ctx.options['samplingrate'],
             'decim': ctx.options['decim'],
             'interpolate_bads': 'keep',
@@ -991,7 +1025,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         }
         return (
             Dependency('epochs', options=options),
-            Dependency('selected-events', options=ctx.options_for('selected-events', reject=True, cat=None)),
+            Dependency('selected-events', options=ctx.options_for('selected-events', 'samplingrate', 'decim', reject=True, cat=None)),
         )
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
@@ -1198,6 +1232,7 @@ def decim_param(
         info: dict,
         minimal: bool = False,  # try to infer minimally necessary samplingrate
 ) -> int:
+    raw_samplingrate = info['raw.samplingrate'] if 'raw.samplingrate' in info else info['sfreq']
     if samplingrate is not None:
         if decim is not None:
             raise TypeError(f"{samplingrate=}, {decim=}: can only specify one at a time")
@@ -1210,16 +1245,16 @@ def decim_param(
             samplingrate = epoch.samplingrate
 
     if samplingrate is not None:
-        decim_ratio = info['sfreq'] / samplingrate
+        decim_ratio = raw_samplingrate / samplingrate
         rounded_decim_ratio = round(decim_ratio)
         if not math.isclose(decim_ratio, rounded_decim_ratio, rel_tol=1e-3):
-            raise ValueError(f"{samplingrate=} with data at {info['sfreq']:g} Hz: needs to be integer ratio")
+            raise ValueError(f"{samplingrate=} with data at {raw_samplingrate:g} Hz: needs to be integer ratio")
         return rounded_decim_ratio
 
     if minimal:
         if h_freq := info.get('lowpass'):
-            return int(info['sfreq'] / (h_freq * 2.5))
+            return int(raw_samplingrate / (h_freq * 2.5))
         else:
-            return int(info['sfreq'] / 100)
+            return int(raw_samplingrate / 100)
 
     return 1

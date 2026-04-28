@@ -12,7 +12,7 @@ import mne
 import numpy
 
 from .derivative_cache import Dependency, Derivative, Request
-from .preprocessing import raw_data_dependency, raw_node_name
+from .preprocessing import raw_node_name
 
 
 def cov_node_name(cov: str) -> str:
@@ -111,7 +111,8 @@ class CovDerivative(Derivative[mne.Covariance]):
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if isinstance(self.cov, EpochCovariance):
             return (Dependency('epochs', state={'epoch': self.cov.epoch}, options=self._EPOCH_COV_OPTIONS),)
-        return (raw_data_dependency(ctx, noise=True),)
+        raw_name = ctx.state['raw']
+        return (Dependency(raw_node_name(raw_name), options={'noise': True}),)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {

@@ -747,7 +747,7 @@ class Pipeline(StateModel):
             class Experiment(Pipeline):
 
                 def label_events(self, ds):
-                    samplingrate = ds.info['sfreq']
+                    samplingrate = ds.info['raw.samplingrate']
                     new_events = []
                     # loop through trials
                     for sample, value in ds.zip('sample', 'value'):
@@ -1964,6 +1964,7 @@ class Pipeline(StateModel):
             bad_chs = (bad_chs,)
         raw = self._load_derivative(raw_input_name(source_name), options={'noise': noise})
         bads_ctx = self._resolve_derivative(raw_bad_channels_input_name(source_name), options={'noise': noise})
+        # FIXME: should be public
         bads_ctx.node._resolved_bids_path(bads_ctx, raw)
         bads_ctx.node._write(bads_ctx, raw, bad_chs, redo)
 

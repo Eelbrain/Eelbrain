@@ -1,6 +1,4 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-from types import SimpleNamespace
-
 import pytest
 
 from eelbrain._exceptions import ConfigurationError
@@ -29,21 +27,18 @@ def test_prepare_continuous_epoch_dataset():
         'onset': Var([0.0, 0.1, 0.2, 1.0, 1.1]),
         'sample': Var([0, 100, 200, 1000, 1100]),
     })
-    ds.info['sfreq'] = 1000
-    ds.info['raw'] = SimpleNamespace(info={'sfreq': 1000})
-    ds = epoch._prepare_selected_events(ds, 'R0001')
-    tmin, tmax, tstop, baseline, decim, variable_tmax = epoch._extraction_parameters(
-        ds,
-        {
-            'baseline': False,
-            'samplingrate': None,
-            'decim': None,
-            'tmin': None,
-            'tmax': None,
-            'tstop': None,
-            'pad': 0,
-        },
-    )
+    ds.info['raw.samplingrate'] = 1000
+    options = {
+        'baseline': False,
+        'samplingrate': None,
+        'decim': None,
+        'tmin': None,
+        'tmax': None,
+        'tstop': None,
+        'pad': 0,
+    }
+    ds = epoch._prepare_selected_events(ds, 'R0001', options)
+    tmin, tmax, tstop, baseline, decim, variable_tmax = epoch._extraction_parameters(ds, options)
 
     assert ds.n_cases == 2
     assert ds.info['nested_events'] == 'events'

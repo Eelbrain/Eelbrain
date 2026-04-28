@@ -420,16 +420,6 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         self.pipes = pipes
         self.extension = extension
 
-    def _source_states(
-            self,
-            tasks: tuple[str, ...] | None = None,
-    ) -> list[dict[str, Any]]:
-        out = []
-        for task in (tasks or self.pipe.task):
-            state = {'raw': self.pipe.source, 'task': task}
-            out.append(state)
-        return out
-
     def _path(self, ctx: Request) -> Path:
         return ctx.root / ica_file_path(ctx.state, self.raw_name)
 
@@ -455,15 +445,10 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             tasks: tuple[str, ...],
     ) -> mne.io.BaseRaw:
         bad_channels = self._load_bad_channels(ctx)
-        path_list = self._source_states(tasks)
-        first_state = dict(path_list[0])
-        first_state.pop('raw')
-        raw = load_raw_dependency(ctx, self.pipe.source, preload=True, state=first_state)
+        raw = load_raw_dependency(ctx, self.pipe.source, preload=True, state={'task': tasks[0]})
         raw.info['bads'] = bad_channels
-        for state in path_list[1:]:
-            state = dict(state)
-            state.pop('raw')
-            raw_ = load_raw_dependency(ctx, self.pipe.source, preload=True, state=state)
+        for task in tasks[1:]:
+            raw_ = load_raw_dependency(ctx, self.pipe.source, preload=True, state={'task': task})
             raw_.info['bads'] = bad_channels
             raw.append(raw_)
         return raw
@@ -633,14 +618,11 @@ class ICAInput(Input[mne.preprocessing.ICA]):
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         deps = []
-        for i, state in enumerate(self._source_states()):
-            dep_state = dict(state)
-            dep_state.pop('raw')
-            deps.append(raw_data_dependency(
-                ctx,
-                raw=self.pipe.source,
+        for i, task in enumerate(self.pipe.task):
+            deps.append(Dependency(
+                raw_node_name(self.pipe.source),
                 label=f'source-{i}:raw',
-                state=dep_state,
+                state={'task': task},
             ))
         return tuple(deps)
 
@@ -708,7 +690,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             if exists(self._path(ctx)):
                 return 'ok'
             source_node = raw_input_name(self.pipes.root_source_name(self.pipe.source))
-            if all(ctx.registry.resolve(source_node, state={**ctx.state, **state}, options={'noise': False}).exists() for state in self._source_states()):
+            if all(ctx.registry.resolve(source_node, state={**ctx.state, 'task': task}, options={'noise': False}).exists() for task in self.pipe.task):
                 return 'missing-ica'
             return 'missing-raw'
         return super().load_view(ctx, view)
@@ -938,27 +920,6 @@ def load_raw_info_dependency(
         raw = ctx.state['raw']
     merged_state['raw'] = raw
     return ctx.load(raw_node_name(raw), state=merged_state, options={'noise': noise}, view='info')
-
-
-def raw_data_dependency(
-        ctx: Request,
-        *,
-        raw: str | None = None,
-        label: str | None = None,
-        noise: bool = False,
-        state: dict[str, Any] | None = None,
-) -> Dependency:
-    if raw is None:
-        raw = ctx.state['raw']
-    dep_state = {'raw': raw}
-    if state:
-        dep_state.update(state)
-    return Dependency(
-        raw_node_name(raw),
-        label=label,
-        state=dep_state,
-        options={'preload': False, 'noise': noise},
-    )
 
 
 class RawSource(RawPipe):

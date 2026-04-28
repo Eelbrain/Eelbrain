@@ -567,7 +567,6 @@ def test_sample_source():
 
 
 @requires_mne_sample_data
-@pytest.mark.xfail
 def test_sample_tasks():
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
@@ -1093,9 +1092,41 @@ def test_selected_events_manifest_uses_real_dependencies():
         'cat': None,
     })
     dependencies = handle.dependency_fingerprints()
+    expected_labeled_events_dependencies = {'events', 'raw'} if e._derivatives.resolve('events-input', state=e.state).exists() else {'events'}
 
     assert 'dependencies' not in handle.current_fingerprint()
     assert set(dependencies) == {'labeled-events'}
+    assert set(dependencies['labeled-events']['dependencies']) == expected_labeled_events_dependencies
+
+
+@requires_mne_sample_data
+def test_labeled_events_sidecar_copies_raw_info_from_raw():
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, n_subjects=1, n_segments=2, mris=False)
+    root = join(tempdir, 'SampleExperiment')
+
+    e = SampleExperiment(root)
+    e.set(subject='R0000', epoch='target', rej='')
+    events_handle = e._derivatives.resolve('events', state=e.state)
+    raw_events = events_handle.load()
+    events_input_handle = e._derivatives.resolve('events-input', state=e.state)
+    raw_events.as_dataframe()[['onset', 'sample', 'value']].to_csv(events_input_handle.node.path(events_input_handle), sep='\t', index=False)
+
+    labeled_handle = e._derivatives.resolve('labeled-events', state=e.state)
+    dependencies = labeled_handle.dependency_fingerprints()
+    labeled_events = labeled_handle.load()
+    selected_events = e.load_selected_events()
+
+    assert set(dependencies) == {'events', 'raw'}
+    assert dependencies['events']['name'] == 'events-input'
+    assert dependencies['raw']['name'] == raw_node_name(e.get('raw'))
+    for key in ('raw.samplingrate', 'raw.first_samp', 'raw.last_samp'):
+        assert labeled_events.info[key] == raw_events.info[key]
+        assert selected_events.info[key] == raw_events.info[key]
+    assert selected_events.n_cases
 
 
 @requires_mne_sample_data
