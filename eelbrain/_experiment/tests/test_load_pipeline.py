@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 import pytest
@@ -36,7 +37,7 @@ def test_load_pipeline_overrides_screen_log_level(tmp_path):
 
     e = eelbrain.load_pipeline(path, log_level='DEBUG')
 
-    assert e.screen_log_level == 'DEBUG'
+    assert e._screen_log_level == logging.DEBUG
     assert e.__class__.__name__ == 'Experiment'
 
 
