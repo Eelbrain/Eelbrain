@@ -41,7 +41,7 @@ from collections.abc import Mapping, Sequence
 
 import mne
 from scipy import signal
-from mne_bids import BIDSPath, mark_channels
+from mne_bids import BIDSPath
 import pandas as pd
 
 from .. import load
@@ -139,20 +139,6 @@ class RawPipe(Configuration):
         """Assemble bad channels list from sources"""
         raise NotImplementedError
 
-    def _bads_quick_fingerprint(
-            self,
-            ctx: Request,
-            *,
-            noise: bool = False,
-    ) -> dict[str, Any] | None:
-        """Cheap proxy for _collect_bads used for first-pass cache validation.
-
-        Return a dict that changes whenever ``_collect_bads`` result would
-        change, but is cheap to compute (e.g. file stat instead of full read).
-        Return ``None`` to always fall back to the full comparison.
-        """
-        return None
-
 
 def raw_node_name(raw: str) -> str:
     return f'raw:{raw}'
@@ -186,30 +172,12 @@ class RawBadChannelsInput(Input[list[str]]):
         self.pipe = pipe
         self.extension = extension
 
-    def _resolved_bids_path(self, ctx: Request, raw: mne.io.BaseRaw | None = None) -> BIDSPath:
-        """Resolve the BIDSPath for this recording.
-
-        If ``raw`` is provided, create a channels.tsv from it if none exists yet.
-        """
+    def path(self, ctx: Request) -> Path:
+        """Path to the BIDS channels sidecar (.tsv) for this request."""
         bpath = bids_path(ctx.root, ctx.state, self.extension)
         if ctx.options['noise']:
             bpath = bpath.find_empty_room()
-        if raw is not None:
-            bads_path = self._bads_path(bpath)
-            if not bads_path.exists():
-                LOG.info("No channels.tsv found for %s, creating an empty one.", bpath.fpath)
-                bads_path.parent.mkdir(parents=True, exist_ok=True)
-                ch_status = ['bad' if ch in raw.info['bads'] else 'good' for ch in raw.ch_names]
-                pd.DataFrame({'name': raw.ch_names, 'status': ch_status}).to_csv(bads_path, sep='\t', index=False)
-        return bpath
-
-    @staticmethod
-    def _bads_path(path: BIDSPath) -> Path:
-        """Path to the BIDS channels sidecar (.tsv) for a given BIDSPath."""
-        return Path(path.copy().update(suffix='channels', extension='.tsv').fpath)
-
-    def path(self, ctx: Request) -> Path:
-        return self._bads_path(self._resolved_bids_path(ctx))
+        return Path(bpath.copy().update(suffix='channels', extension='.tsv').fpath)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {'bads': self.load(ctx)}
@@ -228,25 +196,73 @@ class RawBadChannelsInput(Input[list[str]]):
             raise RuntimeError(f"channels.tsv file at {path} is missing required column 'name'.")
         return channels_df.query('status == "bad"')['name'].tolist()
 
-    def _write(
+    def write(
             self,
             ctx: Request,
             raw: mne.io.BaseRaw,
             new_bads: list[str],
             redo: bool,
+            *,
+            create: bool = False,
     ) -> None:
+        """Write bad-channel status to the BIDS ``channels.tsv`` sidecar.
+
+        With ``create=True``, missing sidecar files are initialized from
+        ``raw`` before writing, so the resulting file contains one row for
+        every channel in the recording.
+        Channel names in ``new_bads`` are normalized against the raw file using
+        the associated :class:`RawSource`. By default, new bad channels are
+        added to any channels that are already marked bad. With ``redo=True``,
+        all channels are first reset to good and only ``new_bads`` are marked
+        bad.
+
+        Parameters
+        ----------
+        ctx
+            Request describing the recording and ``noise`` option.
+        raw
+            Raw file used to validate channel names and initialize a missing
+            ``channels.tsv`` file.
+        new_bads
+            Channels to mark bad.
+        redo
+            Replace existing bad-channel markings instead of adding to them.
+        create
+            Create a missing ``channels.tsv`` sidecar from ``raw`` before
+            writing.
+        """
+        path = self.path(ctx)
+        if path.exists():
+            channels_df = pd.read_csv(path, sep='\t')
+            if 'name' not in channels_df.columns:
+                raise RuntimeError(f"channels.tsv file at {path} is missing required column 'name'.")
+            if 'status' not in channels_df.columns:
+                channels_df['status'] = 'good'
+            created = False
+        elif create:
+            LOG.info("No channels.tsv found at %s, creating an empty one.", path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            ch_status = ['bad' if ch in raw.info['bads'] else 'good' for ch in raw.ch_names]
+            channels_df = pd.DataFrame({'name': raw.ch_names, 'status': ch_status})
+            created = True
+        else:
+            raise FileMissingError(f"Bad channels file does not exist at {path}")
+
+        old_bads = channels_df.query('status == "bad"')['name'].tolist()
         new_bads = self.pipe._normalize_channel_names(raw, new_bads)
-        bids = self._resolved_bids_path(ctx)
-        old_bads = self.load(ctx)
         if not redo:
             new_bads = sorted(set(old_bads).union(new_bads))
-        LOG.info("Bad channels: %s -> %s for %s", old_bads, new_bads, self._bads_path(bids))
-        if new_bads == old_bads:
+        LOG.info("Bad channels: %s -> %s for %s", old_bads, new_bads, path)
+        if new_bads == old_bads and not created:
             return
+
+        missing = [ch for ch in new_bads if ch not in set(channels_df['name'])]
+        if missing:
+            raise RuntimeError(f"channels.tsv file at {path} is missing bad channel names: {missing!r}.")
         if redo:
-            mark_channels(bids, ch_names='all', status='good', verbose=MNE_VERBOSITY)
-        if new_bads:
-            mark_channels(bids, ch_names=new_bads, status='bad', verbose=MNE_VERBOSITY)
+            channels_df['status'] = 'good'
+        channels_df.loc[channels_df['name'].isin(new_bads), 'status'] = 'bad'
+        channels_df.to_csv(path, sep='\t', index=False)
 
 
 class RawSourceInput(Input[mne.io.BaseRaw]):
@@ -280,6 +296,9 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
             raise FileMissingError(f"Raw input file does not exist at expected location {bids_path_.fpath}")
         return bids_path_
 
+    def path(self, ctx: Request) -> Path:
+        return self._resolve_bids_path(ctx).fpath
+
     @staticmethod
     def _read_raw(
             path: BIDSPath,
@@ -307,11 +326,10 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         return raw
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        path = self._resolve_bids_path(ctx)
         return {
             'raw': self.raw_name,
             'pipe': self.pipe._as_dict(),
-            'source': file_fingerprint(ctx.root, path.fpath, 'raw-source'),
+            'source': file_fingerprint(ctx.root, self.path(ctx), 'raw-source'),
         }
 
     def load(self, ctx: Request) -> mne.io.BaseRaw:
@@ -323,10 +341,6 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         if self.pipe.montage:
             raw.set_montage(self.pipe.montage)
         return raw
-
-    def exists(self, ctx: Request) -> bool:
-        path = self._resolve_bids_path(ctx)
-        return path.fpath.exists()
 
     def load_view(self, ctx: Request, view: str):
         if view != 'info':
@@ -646,25 +660,6 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             fingerprint['exclude'] = []
         return fingerprint
 
-    def dependency_fingerprint_quick(self, ctx: Request, view: str | None = None) -> dict[str, Any] | None:
-        # Quick proxy covering the two expensive fields in dependency_fingerprint:
-        # 'exclude' (requires loading ICA file) → covered by ICA file stat
-        # 'bads' (requires reading channels.tsv for each task) → covered by those file stats
-        ica_path = self._path(ctx)
-        source_raw_name = self.pipes.root_source_name(self.pipe.source)
-        bads_files = []
-        for task in self.pipe.task:
-            state = {**ctx.state, 'raw': source_raw_name, 'task': task}
-            bads_files.append(file_fingerprint(
-                ctx.root,
-                RawBadChannelsInput._bads_path(bids_path(ctx.root, state, self.extension)),
-                'bads-file',
-            ))
-        return {
-            'ica_file': file_fingerprint(ctx.root, ica_path, 'ica-file'),
-            'bads_files': bads_files,
-        }
-
     def load(self, ctx: Request) -> mne.preprocessing.ICA:
         path = self._path(ctx)
         if not exists(path):
@@ -824,11 +819,6 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
                 'bads': self.pipe._collect_bads(ctx, noise=ctx.options['noise']),
             }
         return super().dependency_fingerprint(ctx, view)
-
-    def dependency_fingerprint_quick(self, ctx: Request, view: str | None = None) -> dict[str, Any] | None:
-        if view == 'bads':
-            return self.pipe._bads_quick_fingerprint(ctx, noise=ctx.options['noise'])
-        return None
 
     def build(self, ctx: Request) -> mne.io.BaseRaw:
         source_node = raw_node_name(self.pipe.source)
@@ -1073,9 +1063,6 @@ class CachedRawPipe(RawPipe):
             noise: bool = False,
     ) -> list[str]:
         return ctx.load(raw_node_name(self.source), options={'noise': noise}, view='bads')
-
-    def _bads_quick_fingerprint(self, ctx: Request, *, noise: bool = False) -> dict[str, Any] | None:
-        return ctx._resolve_quick_fingerprint(raw_node_name(self.source), options={'noise': noise}, view='bads')
 
 
 class RawFilter(CachedRawPipe):
@@ -1426,9 +1413,6 @@ class RawICA(CachedRawPipe):
             bads.update(ctx.load(raw_node_name(self.source), view='bads'))
         return sorted(bads)
 
-    def _bads_quick_fingerprint(self, ctx: Request, *, noise: bool = False) -> dict[str, Any] | None:
-        return None  # complex multi-source logic with conditional branching
-
 
 class RawApplyICA(CachedRawPipe):
     """Apply ICA estimated in a :class:`RawICA` pipe
@@ -1500,13 +1484,6 @@ class RawApplyICA(CachedRawPipe):
         bads.update(ctx.load(raw_node_name(self.source), options={'noise': noise}, view='bads'))
         bads.update(ctx.load(raw_node_name(self.ica_source), view='bads'))
         return sorted(bads)
-
-    def _bads_quick_fingerprint(self, ctx: Request, *, noise: bool = False) -> dict[str, Any] | None:
-        q_source = ctx._resolve_quick_fingerprint(raw_node_name(self.source), options={'noise': noise}, view='bads')
-        q_ica_source = ctx._resolve_quick_fingerprint(raw_node_name(self.ica_source), options={'noise': False}, view='bads')
-        if q_source is None or q_ica_source is None:
-            return None
-        return {'source': q_source, 'ica_source': q_ica_source}
 
 
 class RawMaxwell(CachedRawPipe):

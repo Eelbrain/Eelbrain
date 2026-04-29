@@ -883,21 +883,6 @@ class Request(Generic[T]):
             return None
         return self.registry.canonicalize(result)
 
-    def _resolve_quick_fingerprint(
-            self,
-            name: str,
-            *,
-            state: dict[str, Any] | None = None,
-            options: dict[str, Any] | None = None,
-            view: str | None = None,
-    ) -> dict[str, Any] | None:
-        """Resolve a dependency node and return its canonicalized quick fingerprint."""
-        handle = self.registry.resolve(name, state={**self.state, **(state or {})}, options=options)
-        result = handle.node.dependency_fingerprint_quick(handle, view)
-        if result is None:
-            return None
-        return self.registry.canonicalize(result)
-
     def describe_dependency(
             self,
             cache: bool | None = None,

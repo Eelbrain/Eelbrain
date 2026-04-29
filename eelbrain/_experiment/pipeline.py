@@ -1964,9 +1964,7 @@ class Pipeline(StateModel):
             bad_chs = (bad_chs,)
         raw = self._load_derivative(raw_input_name(source_name), options={'noise': noise})
         bads_ctx = self._resolve_derivative(raw_bad_channels_input_name(source_name), options={'noise': noise})
-        # FIXME: should be public
-        bads_ctx.node._resolved_bids_path(bads_ctx, raw)
-        bads_ctx.node._write(bads_ctx, raw, bad_chs, redo)
+        bads_ctx.node.write(bads_ctx, raw, bad_chs, redo, create=True)
 
     def make_bad_channels_auto(
         self,
@@ -1995,12 +1993,13 @@ class Pipeline(StateModel):
             self.set(**state)
         source_name = self._raw.root_source_name('raw')
         pipe = self._raw[source_name]
-        raw = self._load_derivative(raw_input_name(source_name), options={'noise': noise, 'preload': True})
+        raw_ctx = self._resolve_derivative(raw_input_name(source_name), options={'noise': noise, 'preload': True})
+        raw = raw_ctx.load()
         bads_ctx = self._resolve_derivative(raw_bad_channels_input_name(source_name), options={'noise': noise})
-        bids_path = bads_ctx.node._resolved_bids_path(bads_ctx, raw)
+        bids_path = raw_ctx.node._resolve_bids_path(raw_ctx)
         detected = pipe._detect_flat_channels(bids_path, raw, flat)
         if detected is not None:
-            bads_ctx.node._write(bads_ctx, raw, detected, redo)
+            bads_ctx.node.write(bads_ctx, raw, detected, redo, create=True)
 
     def make_bad_channels_neighbor_correlation(
             self,
