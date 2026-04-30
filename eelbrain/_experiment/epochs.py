@@ -317,8 +317,6 @@ class Epoch(EpochBase):
         elif samplingrate is not None:
             if samplingrate <= 0:
                 raise ValueError(f"{samplingrate=}")
-        else:
-            samplingrate = 200
 
         if baseline is None:
             if tmin >= 0:
@@ -419,7 +417,8 @@ class PrimaryEpoch(Epoch):
         trial-specific ``tmax`` value in the events dataset (default 0.6).
     samplingrate
         Target samplingrate. Needs to divide data samplingrate evenly (e.g.
-        ``200`` for data sampled at 1000 Hz; default ``200``).
+        ``200`` for data sampled at 1000 Hz; by default, use the raw data
+        samplingrate).
     decim
         Alternative to ``samplingrate``. Decimate the data by this factor
         (i.e., only keep every ``decim``'th sample).
@@ -685,7 +684,8 @@ class ContinuousEpoch(EpochBase):
         for each block.
     samplingrate
         Target samplingrate. Needs to divide data samplingrate evenly (e.g.
-        ``200`` for data sampled at 1000 Hz; default ``200``).
+        ``200`` for data sampled at 1000 Hz; by default, use the raw data
+        samplingrate).
     """
     DICT_ATTRS = ('task', 'sel', 'pad_start', 'pad_end', 'split', 'samplingrate')
     _rej_file_epochs_from_name = True
@@ -698,7 +698,7 @@ class ContinuousEpoch(EpochBase):
             pad_start: float = 0.100,
             pad_end: float = 1.000,
             split: float = 10,
-            samplingrate: float = 200,
+            samplingrate: float = None,
     ):
         EpochBase.__init__(self)
         self.task = typed_arg(task, str)
