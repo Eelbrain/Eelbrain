@@ -135,6 +135,7 @@ def test_diff():
     assert_array_equal(diff.x.data, np.diff(y.x, 1, 1, y.x[:, :1]))
     assert_array_equal(diff.x.mask, target_mask)
 
+
 def test_repeat():
     ds = datasets.simulate_erp()
     y = ds['eeg']
@@ -144,6 +145,7 @@ def test_repeat():
     assert len(y_rep.get_dim('case')) == len(y.get_dim('case')) * repeat
     for dim in y_rep.dims[1:]:
         assert len(y_rep.get_dim(dim.name)) == len(y.get_dim(dim.name))
+
 
 def test_dot():
     ds = datasets.get_uts(True)
