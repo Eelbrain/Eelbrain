@@ -6512,10 +6512,17 @@ class Dataset(dict):
             if name in skip:
                 continue
             key = cls.as_key(name)
-            if isinstance(item, pandas.Series):
-                items[key] = Var(item, name=name)
-            elif isinstance(item, pandas.Categorical):
+            if isinstance(item.dtype, pandas.CategoricalDtype):
                 items[key] = Factor(item, name=name)
+            elif pandas.api.types.is_numeric_dtype(item.dtype) or pandas.api.types.is_bool_dtype(item.dtype):
+                items[key] = Var(item, name=name)
+            elif pandas.api.types.is_object_dtype(item.dtype):
+                kind = pandas.api.types.infer_dtype(item, skipna=True)
+                items[key] = Factor(item, name=name) if kind in ('string', 'unicode', 'bytes') else Datalist(item.to_list(), name=name)
+            elif pandas.api.types.is_string_dtype(item.dtype):
+                items[key] = Factor(item, name=name)
+            else:
+                items[key] = Datalist(item.to_list(), name=name)
 
         for key in random:
             item = items[key]

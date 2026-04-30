@@ -11,6 +11,7 @@ import tempfile
 
 import mne
 import numpy as np
+import pandas as pd
 from numpy import newaxis
 from numpy.testing import (
     assert_equal, assert_array_equal, assert_allclose,
@@ -427,6 +428,19 @@ def test_dataset():
     # Length 1
     ds0 = Dataset.from_caselist(names, cases[:1], random='z')
     assert_dataobj_equal(ds0, target[:1])
+
+    # from_dataframe
+    df = pd.DataFrame({
+        'onset': [0.1, 0.2],
+        'sample': [100, 200],
+        'trial_type': ['auditory', 'visual'],
+        'metadata': [{'condition': 'auditory'}, {'condition': 'visual'}],
+    })
+    ds = Dataset.from_dataframe(df)
+    assert_dataobj_equal(ds['onset'], Var([0.1, 0.2], 'onset'))
+    assert_dataobj_equal(ds['sample'], Var([100, 200], 'sample'))
+    assert_dataobj_equal(ds['trial_type'], Factor(['auditory', 'visual'], 'trial_type'))
+    assert_dataobj_equal(ds['metadata'], Datalist([{'condition': 'auditory'}, {'condition': 'visual'}], 'metadata'))
 
 
 def test_dataset_combining():
