@@ -290,7 +290,7 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
             return bids_path_
         split_path = bids_path_.copy()
         split_path.update(split='01')
-        if split_path.exists():
+        if split_path.fpath.exists():
             return split_path
         if require:
             raise FileMissingError(f"Raw input file does not exist at expected location {bids_path_.fpath}")
