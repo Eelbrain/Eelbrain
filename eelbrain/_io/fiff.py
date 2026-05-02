@@ -781,7 +781,7 @@ def sensor_dim(
         if adjacency == 'auto':
             adjacency = _adjacency_id(info, ch_type)
         if adjacency is None:
-            c_matrix, adj_ch_names = mne.channels.find_ch_adjacency(info, ch_type)
+            c_matrix, adj_ch_names = mne.channels.find_ch_adjacency(mne.pick_info(info, picks, copy=True), ch_type)
             if any(ch not in adj_ch_names for ch in ch_names):
                 raise NotImplementedError("Adjacency fot this data type")
         else:

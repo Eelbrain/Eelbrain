@@ -31,12 +31,15 @@ cache policy belong to the lower cache and graph layers, not to
 without editing the cache kernel or injecting facade behavior into nodes.
 """
 from __future__ import annotations
-import warnings
+from contextlib import contextmanager
 import fnmatch
+import json
 import logging
 from os.path import exists, relpath
 from pathlib import Path
+import tomllib
 from typing import Any
+import warnings
 from collections.abc import Mapping, Sequence
 
 import mne
@@ -63,52 +66,89 @@ from .pathing import LOG_DIR, bids_path, ica_file_path
 
 MNE_VERBOSITY = 'WARNING'
 LOG = logging.getLogger(__name__)
-_RAW_READER_WARNING_STATE: dict[str, dict[str, Any]] = {}
 REINDEX_ICA = 'reindex_ica'
 
 
-def _raw_reader_warnings_path(root: Path) -> Path:
-    return root / LOG_DIR / 'raw-reader-warnings.log'
+def _toml_string(value: str) -> str:
+    """Write a TOML basic string; JSON string escaping is compatible here."""
+    return json.dumps(value, ensure_ascii=False)
 
 
-def _record_raw_reader_warnings(
+def _read_warning_log(path: Path) -> list[dict[str, str]]:
+    if not path.exists():
+        return []
+    try:
+        data = tomllib.loads(path.read_text())
+    except tomllib.TOMLDecodeError:
+        return []
+    entries = data.get('warning', [])
+    warnings_ = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        item = entry.get('item')
+        category = entry.get('category')
+        message = entry.get('message')
+        if isinstance(item, str) and isinstance(category, str) and isinstance(message, str):
+            warnings_.append({'item': item, 'category': category, 'message': message})
+    return warnings_
+
+
+def _write_warning_log(path: Path, header: str, warnings_: list[dict[str, str]]) -> None:
+    lines = [
+        'version = 1',
+        f'header = {_toml_string(header.rstrip())}',
+        '',
+    ]
+    for warning in warnings_:
+        lines.extend((
+            '[[warning]]',
+            f'item = {_toml_string(warning["item"])}',
+            f'category = {_toml_string(warning["category"])}',
+            f'message = {_toml_string(warning["message"])}',
+            '',
+        ))
+    path.write_text('\n'.join(lines))
+
+
+@contextmanager
+def logged_warnings(
         root: str | Path,
-        raw_path: str | Path,
-        warning_list: list[warnings.WarningMessage],
-        log: logging.Logger | None = None,
-) -> None:
+        item: str | Path,
+        log_name: str,
+        header: str,
+        summary: str,
+        log: logging.Logger,
+):
+    """Capture warnings and write unique entries to an experiment log file."""
+    with warnings.catch_warnings(record=True) as warning_list:
+        warnings.simplefilter('always')
+        warnings.filterwarnings('ignore', r'unclosed file ', ResourceWarning)
+        yield
     if not warning_list:
         return
-    root_path = Path(root)
-    state = _RAW_READER_WARNING_STATE.get(str(root_path))
-    if state is None:
-        details_path = _raw_reader_warnings_path(root_path)
-        details_path.parent.mkdir(parents=True, exist_ok=True)
-        details_path.write_text("Warnings emitted while reading raw data files.\n")
-        state = {'count': 0, 'details_path': details_path, 'seen': set(), 'warned': False}
-        _RAW_READER_WARNING_STATE[str(root_path)] = state
-    raw_path = Path(raw_path)
+    details_path = Path(root) / LOG_DIR / f'{log_name}-warnings.toml'
+    details_path.parent.mkdir(parents=True, exist_ok=True)
+    entries = _read_warning_log(details_path)
+    seen = {(entry['item'], entry['category'], entry['message']) for entry in entries}
+    item = str(item)
     new_entries = []
     for message in warning_list:
         category = message.category.__name__
         text = str(message.message)
-        key = (raw_path, category, text)
-        if key in state['seen']:
+        key = (item, category, text)
+        if key in seen:
             continue
-        state['seen'].add(key)
-        state['count'] += 1
-        new_entries.append((category, text))
+        seen.add(key)
+        entry = {'item': item, 'category': category, 'message': text}
+        entries.append(entry)
+        new_entries.append(entry)
     if not new_entries:
         return
-    with state['details_path'].open('a') as fid:
-        fid.write(f"\n{raw_path}\n")
-        for category, text in new_entries:
-            fid.write(f"  {category}: {text}\n")
-    if not state['warned']:
-        count = state['count']
-        noun = 'warning was' if count == 1 else 'warnings were'
-        (log or LOG).warning("%s %s issued while reading raw data files. Full details were written to %s. Additional raw-reader warnings will be suppressed in the terminal for this experiment.", count, noun, state['details_path'])
-        state['warned'] = True
+    _write_warning_log(details_path, header, entries)
+    count = len(new_entries)
+    noun = 'warning was' if count == 1 else 'warnings were'
+    log.warning("%s new %s %s. Full details were written to %s. Previously recorded %s warnings will be suppressed in the terminal for this experiment.", count, noun, summary, details_path, log_name)
 
 
 class RawPipe(Configuration):
@@ -319,11 +359,15 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
                 reader = mne.io.read_raw_bdf
             case _:
                 raise RuntimeError(f"Unrecognized file format: {path.extension}")
-        with warnings.catch_warnings(record=True) as caught_warnings:
-            warnings.simplefilter('always')
-            raw = reader(path.fpath, preload=preload, verbose=MNE_VERBOSITY)
-        _record_raw_reader_warnings(path.root, path.fpath, caught_warnings, log)
-        return raw
+        with logged_warnings(
+                path.root,
+                path.fpath,
+                'raw-reader',
+                "Warnings emitted while reading raw data files.\n",
+                "issued while reading raw data files",
+                log,
+        ):
+            return reader(path.fpath, preload=preload, verbose=MNE_VERBOSITY)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {

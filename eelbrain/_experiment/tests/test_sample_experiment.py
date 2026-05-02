@@ -5,6 +5,7 @@ import logging
 from os.path import join, exists
 from os import remove
 from pathlib import Path
+import tomllib
 import pytest
 import warnings
 from warnings import catch_warnings, filterwarnings
@@ -747,16 +748,22 @@ def test_raw_reader_warnings_are_summarized(monkeypatch):
         e.load_raw(raw='raw')
     assert not any('issued while reading raw data files' in str(w.message) for w in record)
 
-    details_path = e.root / LOG_DIR / 'raw-reader-warnings.log'
+    details_path = e.root / LOG_DIR / 'raw-reader-warnings.toml'
     assert details_path.exists()
     text = details_path.read_text()
     assert 'Synthetic raw reader warning 1' in text
     assert 'Synthetic raw reader warning 2' in text
+    data = tomllib.loads(text)
+    assert len(data['warning']) == 2
 
     log_path = Path(next(handler.baseFilename for handler in e._log.handlers if isinstance(handler, logging.FileHandler)))
     log_text = log_path.read_text()
     assert str(details_path) in log_text
     assert log_text.count('issued while reading raw data files') == 1
+
+    e.load_raw(raw='raw')
+    assert details_path.read_text() == text
+    assert log_path.read_text().count('issued while reading raw data files') == 1
 
 
 @requires_mne_sample_data

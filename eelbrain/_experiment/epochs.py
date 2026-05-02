@@ -10,6 +10,7 @@ import inspect
 from collections.abc import Mapping, Sequence
 import math
 import shutil
+import warnings
 
 import mne
 import numpy as np
@@ -25,7 +26,7 @@ from ..mne_fixes import _interpolate_bads_eeg, _interpolate_bads_meg
 from .derivative_cache import CachePolicy, Dependency, Derivative, Request, Input, UncachedDerivative, file_fingerprint
 from .configuration import Configuration, typed_arg
 from .pathing import rej_file_path
-from .preprocessing import raw_node_name
+from .preprocessing import logged_warnings, raw_node_name
 from .test_def import TestDims
 
 
@@ -86,6 +87,29 @@ def assemble_epochs(epoch_def: Mapping[str, EpochBase], tasks: Sequence[str]) ->
             raise ConfigurationError(f"Can't resolve epoch dependencies for {enumeration(unresolved_epochs)}")
 
     return epochs
+
+
+def _drop_bad_eeg_channels_with_missing_locs(
+        epochs_list: Sequence[mne.Epochs],
+) -> None:
+    """Drop EEG bad channels that can not be interpolated due to missing locations."""
+    for epochs in epochs_list:
+        bad_channels = epochs.info['bads']
+        picks = mne.pick_types(epochs.info, meg=False, eeg=True, exclude=[])
+        missing = []
+        for pick in picks:
+            ch = epochs.info['chs'][pick]
+            if ch['ch_name'] not in bad_channels:
+                continue
+            loc = ch['loc'][:3]
+            if not np.isfinite(loc).all() or np.allclose(loc, 0):
+                missing.append(ch['ch_name'])
+        if missing:
+            warnings.warn(
+                f"Dropping EEG bad {n_of(len(missing), 'channel')} with missing sensor location before interpolation: {', '.join(missing)}",
+                RuntimeWarning,
+            )
+            epochs.drop_channels(missing)
 
 
 class RejectionInput(Input):
@@ -888,10 +912,25 @@ class EpochsDerivative(Derivative[Any]):
         if not interpolate_bads:
             return epoch_value
 
+        # Drop bad channels with missing location
+        item_key = self.key(ctx)
+        if 'options' in item_key:
+            item_key.update(item_key.pop('options'))
+        item = ', '.join(f'{key}={value}' for key, value in item_key.items())
+        with logged_warnings(
+                ctx.root,
+                item,
+                'epoch-interpolation',
+                "Warnings emitted while interpolating bad channels in epochs.\n",
+                "issued while interpolating bad channels in epochs",
+                ctx.registry.log,
+        ):
+            _drop_bad_eeg_channels_with_missing_locs(epochs_list)
+
         # Interpolate bad channels
-        info = epochs_list[0].info
-        bads_all = info['bads']
         if ds.info[INTERPOLATE_CHANNELS] and any(ds[INTERPOLATE_CHANNELS]):
+            info = epochs_list[0].info
+            bads_all = info['bads']
             bads_individual = [sorted(set(bads_all + bads_i)) for bads_i in ds[INTERPOLATE_CHANNELS]]
             data_types = TestDims.coerce('sensor').data_to_ndvar(info)
             if 'mag' in data_types:
