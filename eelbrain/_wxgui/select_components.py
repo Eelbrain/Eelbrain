@@ -34,7 +34,7 @@ from .._types import PathArg
 from .._utils.numpy_utils import INT_TYPES
 from .._utils.parse import FLOAT_PATTERN, POS_FLOAT_PATTERN
 from .._utils.system import IS_OSX
-from ..plot._base import DISPLAY_UNIT, UNIT_FORMAT, AxisData, DataLayer, PlotType
+from ..plot._base import AxisData, DataLayer, PlotType
 from ..plot._topo import AxTopomap
 from .frame import EelbrainDialog
 from .history import Action, FileDocument, FileModel, FileFrame, FileFrameChild
@@ -49,6 +49,20 @@ LINE_COLOR = {True: 'k', False: (1, 0, 0)}
 TOPO_ARGS = {
     'interpolation': 'linear',  # interpolation that does not assume continuity
     'clip': 'even',
+}
+# Per-type display info for FindNoisyEpochsDialog:
+# (display_unit, scale_from_display_to_SI, default_threshold_in_display_units)
+# Peak amplitudes from mne_epochs.get_data() are in SI: T for mag, T/m for grad, V for eeg.
+_CH_TYPE_THRESHOLD_INFO = {
+    'mag':  ('fT',   1e-15, 1000),
+    'grad': ('fT/m', 1e-15, 1000),
+    'eeg':  ('µV',   1e-6,  100),
+}
+# pick_types kwargs per channel type (used for peak computation and component creation)
+_CH_TYPE_PICK_KWARGS = {
+    'mag':  {'meg': 'mag'},
+    'grad': {'meg': 'grad'},
+    'eeg':  {'meg': False, 'eeg': True},
 }
 
 # For unit-tests
@@ -163,11 +177,7 @@ class Document(FileDocument):
         topo_picks = mne.pick_types(ica.info, meg=True, eeg=True, ref_meg=False, exclude='bads')
         ch_types_present = set(ica.info.get_channel_types(topo_picks, unique=True))
         components_by_type = []
-        for ch_type, pick_kwargs in [
-            ('mag',  {'meg': 'mag'}),
-            ('grad', {'meg': 'grad'}),
-            ('eeg',  {'meg': False, 'eeg': True}),
-        ]:
+        for ch_type, pick_kwargs in _CH_TYPE_PICK_KWARGS.items():
             if ch_type == 'grad':
                 if not ch_types_present & {'grad', 'planar1', 'planar2'}:
                     continue
@@ -329,22 +339,16 @@ class SharedToolsMenu:  # Frame mixin
         menu.AppendSubMenu(blmenu, "Baseline")
 
     def OnFindNoisyEpochs(self, event):
-        unit = self.doc.epochs_ndvar.info.get('unit', '<unknown unit>')
-        if unit in DISPLAY_UNIT:
-            display_unit = DISPLAY_UNIT[unit]
-            scale_factor = 1 / UNIT_FORMAT[display_unit]
-        else:
-            display_unit = unit
-            scale_factor = None
-        dlg = FindNoisyEpochsDialog(self, unit=display_unit)
+        ch_types = [ct for ct, _ in self.doc.components_by_type]
+        dlg = FindNoisyEpochsDialog(self, ch_types=ch_types)
         rcode = dlg.ShowModal()
         dlg.Destroy()
         if rcode != wx.ID_OK:
             return
-        threshold = float(dlg.threshold.GetValue())
-        threshold_desc = f'{threshold:g} {display_unit}'
-        if scale_factor:
-            threshold *= scale_factor
+        type_thresholds = dlg.get_thresholds()  # [(ch_type, threshold_si, display_str), ...]
+        if not type_thresholds:
+            wx.MessageBox("No channel types are enabled.", "No Thresholds", style=wx.ICON_WARNING)
+            return
         apply_rejection = dlg.apply_rejection.GetValue()
         sort_by_component = dlg.sort_by_component.GetValue()
         max_ch_ratio = dlg.max_ch_ratio.GetValue()
@@ -354,31 +358,39 @@ class SharedToolsMenu:  # Frame mixin
             max_ch_ratio = 0
         dlg.StoreConfig()
 
-        # compute and rank
-        if apply_rejection:
-            epochs = self.doc.as_ndvar(self.doc.apply(self.doc.epochs))
-        else:
-            epochs = self.doc.epochs_ndvar
-        peaks = epochs.extrema(('time', 'sensor')).abs().x
+        # compute peak amplitude per type per epoch (SI units from mne_epochs.get_data())
+        mne_epochs = self.doc.apply(self.doc.epochs) if apply_rejection else self.doc.epochs
+        type_peaks = {}
+        for ch_type, threshold_si, _ in type_thresholds:
+            picks = mne.pick_types(mne_epochs.info, ref_meg=False, exclude='bads',
+                                   **_CH_TYPE_PICK_KWARGS[ch_type])
+            type_peaks[ch_type] = np.abs(mne_epochs.get_data(picks=picks)).max(axis=(1, 2))
 
-        # collect output
-        res = [(i, peak) for i, peak in enumerate(peaks) if peak >= threshold]  # epoch, value
-        if len(res) == 0:
-            wx.MessageBox(f"No epochs with signals exceeding {threshold_desc} were found.", "No Noisy Epochs Found", style=wx.ICON_INFORMATION)
+        # collect output: epoch is noisy if any enabled type exceeds its threshold
+        res = []  # (epoch_i, peak_si, triggering_ch_type)
+        for i in range(len(mne_epochs)):
+            for ch_type, threshold_si, _ in type_thresholds:
+                if type_peaks[ch_type][i] >= threshold_si:
+                    res.append((i, type_peaks[ch_type][i], ch_type))
+                    break
+
+        if not res:
+            threshold_descs = ", ".join(d for _, _, d in type_thresholds)
+            wx.MessageBox(f"No epochs with signals exceeding {threshold_descs} were found.", "No Noisy Epochs Found", style=wx.ICON_INFORMATION)
             return
 
         if sort_by_component:
             res_by_component = defaultdict(list)
-            # Find contribution of each component
+            # Find contribution of each component (using primary channel type)
             component_magnitude = self.doc.components.abs().sum('sensor')
             if apply_rejection:
                 component_magnitude.x *= self.doc.accept
             magnitude = self.doc.sources.abs().sum('time') * component_magnitude
-            for i, peak in res:
+            for i, peak_si, ch_type in res:
                 magnitude_i = magnitude[i]
                 c_max = magnitude_i.argmax()
                 ratio = magnitude_i[c_max] / magnitude_i.sum()
-                res_by_component[c_max].append((i, peak, ratio))
+                res_by_component[c_max].append((i, peak_si, ratio))
             # Sort epochs by ratio
             for res_list in res_by_component.values():
                 res_list.sort(key=itemgetter(2), reverse=True)
@@ -390,36 +402,37 @@ class SharedToolsMenu:  # Frame mixin
             res_by_component = None
 
         # format output
+        n_types = len(self.doc.components_by_type)
+        threshold_descs = ", ".join(d for _, _, d in type_thresholds)
         doc = fmtxt.Section("Noisy epochs")
-        doc.add_paragraph(f"Epochs with signal exceeding {threshold_desc}")
+        doc.add_paragraph(f"Epochs with signal exceeding {threshold_descs}")
         if sort_by_component:
             doc.add_paragraph("Sorted by dominant component")
         doc.append(fmtxt.linebreak)
         if sort_by_component:
             for component, values in res_by_component.items():
-                # test whether this is a single noisy channel
+                # test whether this is a single noisy channel (primary type)
                 channel_values = np.sort(np.abs(self.doc.components[component].x))
                 max_channel_ratio = channel_values[-1] / channel_values[-2]
                 if max_ch_ratio and max_channel_ratio > max_ch_ratio:
                     continue
-                # plot component map
-                figure = matplotlib.figure.Figure(figsize=(1, 1))
+                # plot all channel-type topomaps side by side
+                figure = matplotlib.figure.Figure(figsize=(n_types, 1))
                 canvas = FigureCanvasAgg(figure)
-                axes = figure.add_subplot()
-                plot.Topomap(self.doc.components[component], axes=axes)
+                for j, (ch_type, comp_ndvar) in enumerate(self.doc.components_by_type):
+                    ax = figure.add_subplot(1, n_types, j + 1)
+                    plot.Topomap(comp_ndvar[component], axes=ax)
                 image = fmtxt.Image(f'#{component}', 'jpg')
                 canvas.print_jpeg(image)
                 # Component properties
-                # sec = doc.add_section(f"#{component}")
                 sec = doc
                 heading = fmtxt.FMTextElement(f"#{component}", 'h2')
                 table = fmtxt.Table('lll', rules=False)
                 table.cells(image, heading, f'{max_channel_ratio:.1f}')
                 sec.add_paragraph(table)
-                # sec.add_paragraph([image, f"Ch 1/2 ratio: {max_channel_ratio:.1f}", fmtxt.linebreak])
-                # add links to epochs
+                # add links to epochs grouped by component-loading ratio
                 by_ratio = defaultdict(list)
-                for i, peak, ratio in values:
+                for i, peak_si, ratio in values:
                     by_ratio[f'{ratio:.0%}'].append(i)
                 for ratio, epochs in by_ratio.items():
                     sec.append(f'{ratio}: ')
@@ -427,9 +440,11 @@ class SharedToolsMenu:  # Frame mixin
                         sec.append([fmtxt.Link(self.doc.epoch_labels[i], f'component:{component} epoch:{i}'), ', '])
                     sec.append(fmtxt.linebreak)
         else:
-            for i, peak in res:
+            for i, peak_si, ch_type in res:
+                display_unit, scale, _ = _CH_TYPE_THRESHOLD_INFO.get(ch_type, (ch_type, None, 1))
+                peak_display = peak_si / scale if scale is not None else peak_si
                 doc.append(fmtxt.Link(self.doc.epoch_labels[i], f'epoch:{i}'))
-                doc.append(f": {peak:g}")
+                doc.append(f": {peak_display:g} {display_unit}")
                 doc.append(fmtxt.linebreak)
         InfoFrame(self, "Noisy Epochs", doc, 300)
 
@@ -1490,29 +1505,34 @@ class SourceFrame(SharedToolsMenu, FileFrameChild):
 
 
 class FindNoisyEpochsDialog(EelbrainDialog):
-    _default_thresholds = {'µV': 100, 'fT': 1000}
 
-    def __init__(self, parent, unit, **kwargs):
-        self.unit = unit
+    def __init__(self, parent, ch_types: list, **kwargs):
         super().__init__(parent, wx.ID_ANY, "Find Bad Epochs", **kwargs)
         config = parent.config
-        threshold = config.ReadFloat(f"FindNoisyEpochsDialog/threshold_{unit}", self._default_threshold())
         apply_rejection = config.ReadBool("FindNoisyEpochsDialog/apply_rejection", True)
         sort_by_component = config.ReadBool("FindNoisyEpochsDialog/sort_by_component", True)
         max_ch_ratio = config.Read("FindNoisyEpochsDialog/max_ch_ratio", '')
 
         sizer = wx.BoxSizer(wx.VERTICAL)
 
-        # Threshold
-        h_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        h_sizer.Add(wx.StaticText(self, label="Threshold for bad epochs: "))
-        validator = REValidator(POS_FLOAT_PATTERN, "Invalid entry: {value}. Please specify a number > 0.", False)
-        self.threshold = ctrl = wx.TextCtrl(self, value=f'{threshold:g}', validator=validator, style=wx.TE_RIGHT)
-        ctrl.SetHelpText("Find epochs in which the signal exceeds this value at any sensor")
-        ctrl.SelectAll()
-        h_sizer.Add(ctrl)
-        h_sizer.Add(wx.StaticText(self, label=unit))
-        sizer.Add(h_sizer)
+        # One threshold row per channel type: [checkbox] [type] [value] [unit]
+        grid = wx.FlexGridSizer(rows=len(ch_types), cols=4, vgap=3, hgap=5)
+        self.type_rows = []  # list of (ch_type, enabled_ctrl, threshold_ctrl, display_unit, scale)
+        for ch_type in ch_types:
+            display_unit, scale, default = _CH_TYPE_THRESHOLD_INFO.get(ch_type, (ch_type, None, 1))
+            enabled = config.ReadBool(f"FindNoisyEpochsDialog/enabled_{ch_type}", True)
+            threshold = config.ReadFloat(f"FindNoisyEpochsDialog/threshold_{ch_type}", default)
+            enabled_ctrl = wx.CheckBox(self, label='')
+            enabled_ctrl.SetValue(enabled)
+            grid.Add(enabled_ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
+            grid.Add(wx.StaticText(self, label=ch_type), flag=wx.ALIGN_CENTER_VERTICAL)
+            validator = REValidator(POS_FLOAT_PATTERN, "Invalid entry: {value}. Please specify a number > 0.", False)
+            threshold_ctrl = wx.TextCtrl(self, value=f'{threshold:g}', validator=validator, style=wx.TE_RIGHT)
+            threshold_ctrl.SetHelpText(f"Find epochs where {ch_type} signal exceeds this value at any sensor")
+            grid.Add(threshold_ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
+            grid.Add(wx.StaticText(self, label=display_unit), flag=wx.ALIGN_CENTER_VERTICAL)
+            self.type_rows.append((ch_type, enabled_ctrl, threshold_ctrl, display_unit, scale))
+        sizer.Add(grid, flag=wx.ALL, border=5)
 
         # Apply rejection before finding noisy epochs
         self.apply_rejection = ctrl = wx.CheckBox(self, label="Apply ICA rejection")
@@ -1541,29 +1561,39 @@ class FindNoisyEpochsDialog(EelbrainDialog):
 
         # buttons
         button_sizer = wx.StdDialogButtonSizer()
-        # ok
         btn = wx.Button(self, wx.ID_OK)
         btn.SetDefault()
         button_sizer.AddButton(btn)
-        # cancel
         btn = wx.Button(self, wx.ID_CANCEL)
         button_sizer.AddButton(btn)
-        # finalize
         button_sizer.Realize()
         sizer.Add(button_sizer)
 
         self.SetSizer(sizer)
         sizer.Fit(self)
 
-    def _default_threshold(self):
-        return self._default_thresholds.get(self.unit, 1)
+    def get_thresholds(self):
+        """Return ``[(ch_type, threshold_si, display_str), ...]`` for all enabled types."""
+        result = []
+        for ch_type, enabled_ctrl, threshold_ctrl, display_unit, scale in self.type_rows:
+            if not enabled_ctrl.GetValue():
+                continue
+            threshold_display = float(threshold_ctrl.GetValue())
+            threshold_si = threshold_display * scale if scale is not None else threshold_display
+            result.append((ch_type, threshold_si, f'{threshold_display:g} {display_unit}'))
+        return result
 
     def OnSetDefault(self, event):
-        self.threshold.SetValue(f'{self._default_threshold()}')
+        for ch_type, enabled_ctrl, threshold_ctrl, display_unit, scale in self.type_rows:
+            _, _, default = _CH_TYPE_THRESHOLD_INFO.get(ch_type, (None, None, 1))
+            threshold_ctrl.SetValue(f'{default:g}')
+            enabled_ctrl.SetValue(True)
 
     def StoreConfig(self):
         config = self.Parent.config
-        config.WriteFloat(f"FindNoisyEpochsDialog/threshold_{self.unit}", float(self.threshold.GetValue()))
+        for ch_type, enabled_ctrl, threshold_ctrl, display_unit, scale in self.type_rows:
+            config.WriteBool(f"FindNoisyEpochsDialog/enabled_{ch_type}", enabled_ctrl.GetValue())
+            config.WriteFloat(f"FindNoisyEpochsDialog/threshold_{ch_type}", float(threshold_ctrl.GetValue()))
         config.WriteBool("FindNoisyEpochsDialog/apply_rejection", self.apply_rejection.GetValue())
         config.WriteBool("FindNoisyEpochsDialog/sort_by_component", self.sort_by_component.GetValue())
         config.Write("FindNoisyEpochsDialog/max_ch_ratio", self.max_ch_ratio.GetValue())
