@@ -817,6 +817,7 @@ class Frame(FileFrame):
             axes.append(self._mean_ax)
 
         self.canvas.redraw(axes)
+        self.canvas.store_canvas()
 
     def GoToEpoch(self, i):
         for page, epochs in enumerate(self._segs_by_page):
@@ -1345,6 +1346,7 @@ class Frame(FileFrame):
         for key in self._vlims:
             self._vlims[key] = vlim
         self.canvas.draw()
+        self.canvas.store_canvas()
 
     def _page_change(self, page):
         "Perform operations common to page change events"
@@ -1387,6 +1389,7 @@ class Frame(FileFrame):
             self._mean_plot.set_data(self._get_page_mean_seg())
 
         self.canvas.draw()
+        self.canvas.store_canvas()
 
     def ShowPage(self, page=None):
         "Dislay a specific page (start counting with 0)"

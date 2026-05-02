@@ -122,5 +122,9 @@ def test_select_epochs():
     frame = gui.select_epochs(ds, nplots=9)
     assert not frame.CanBackward()
     assert frame.CanForward()
+    background = frame.canvas._background
     frame.OnForward(None)
+    assert frame.canvas._background is not background
+    background = frame.canvas._background
     frame.SetVLim(1e-12)
+    assert frame.canvas._background is not background
