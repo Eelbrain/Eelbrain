@@ -28,7 +28,7 @@ from wx.lib.scrolledpanel import ScrolledPanel
 from .. import load, plot, fmtxt
 from .._colorspaces import UNAMBIGUOUS_COLORS
 from .._data_obj import Dataset, Factor, NDVar, Categorial, Scalar, combine
-from .._io.fiff import _picks
+from .._io.fiff import _picks, sensor_dim
 from .._ndvar import concatenate, neighbor_correlation
 from .._types import PathArg
 from .._utils.numpy_utils import INT_TYPES
@@ -154,13 +154,39 @@ class Document(FileDocument):
         self.epochs = epochs = ds['epochs']
         self.epochs_ndvar = epochs_ndvar
         self.ds = ds
-        # for 3d-data, pick magnetometers
+        # Build per-channel-type component maps from the ICA mixing matrix
+        mixing_data = np.dot(ica.mixing_matrix_.T, ica.pca_components_[:ica.n_components_])
+        ic_dim = Scalar('component', np.arange(len(mixing_data)))
+        comp_info = {'meas': 'component', 'cmap': 'xpolar'}
+        sysname = self._ndvar_args['sysname']
+        adjacency = self._ndvar_args['adjacency']
+        topo_picks = mne.pick_types(ica.info, meg=True, eeg=True, ref_meg=False, exclude='bads')
+        ch_types_present = set(ica.info.get_channel_types(topo_picks, unique=True))
+        components_by_type = []
+        for ch_type, pick_kwargs in [
+            ('mag',  {'meg': 'mag'}),
+            ('grad', {'meg': 'grad'}),
+            ('eeg',  {'meg': False, 'eeg': True}),
+        ]:
+            if ch_type == 'grad':
+                if not ch_types_present & {'grad', 'planar1', 'planar2'}:
+                    continue
+            elif ch_type not in ch_types_present:
+                continue
+            type_picks = mne.pick_types(ica.info, ref_meg=False, exclude='bads', **pick_kwargs)
+            if len(type_picks) == 0:
+                continue
+            sensor = sensor_dim(ica.info, type_picks, sysname, adjacency)
+            components_by_type.append((ch_type, NDVar(
+                mixing_data[:, type_picks], (ic_dim, sensor), 'components', comp_info,
+            )))
+        if not components_by_type:
+            raise RuntimeError("No topographic channel types found in ICA")
+        self.components_by_type = components_by_type
+        # primary type: used for analysis helpers (noisy epoch ranking, bad channels, etc.)
+        self.components = components_by_type[0][1]
+        # primary picks: must stay consistent with epochs_ndvar.sensor for global_mean
         picks = _picks(ica.info, None, 'bads')
-
-        # components
-        data = np.dot(ica.mixing_matrix_.T, ica.pca_components_[:ica.n_components_])
-        ic_dim = Scalar('component', np.arange(len(data)))
-        self.components = NDVar(data[:, picks], (ic_dim, self.epochs_ndvar.sensor), 'components', {'meas': 'component', 'cmap': 'xpolar'})
 
         # sources
         data = ica.get_sources(epochs).get_data(copy=False)
@@ -701,30 +727,41 @@ class Frame(SharedToolsMenu, FileFrame):
 
     def plot(self):
         n = self.doc.ica.n_components_
+        n_types = len(self.doc.components_by_type)
         fig = self.canvas.figure
         fig.clf()
 
         panel_w = self.panel.GetSize()[0]
-        n_h = max(2, panel_w // self.ax_size)
+        n_h = max(2, panel_w // (self.ax_size * n_types))
         n_v = int(ceil(n / n_h))
 
-        # adjust canvas size
-        size = (self.ax_size * n_h, self.ax_size * n_v)
+        # adjust canvas size: each component cell is n_types topos wide
+        size = (self.ax_size * n_types * n_h, self.ax_size * n_v)
         self.canvas_sizer.SetItemMinSize(self.canvas, size)
 
-        # plot
-        axes = tuple(fig.add_subplot(n_v, n_h, i) for i in range(1, n + 1))
-        # bgs = tuple(ax.patch)
-        for i, ax, c, accept in zip(range(n), axes, self.doc.components, self.doc.accept):
-            layers = AxisData([DataLayer(c, PlotType.IMAGE)])
-            AxTopomap(ax, layers, **TOPO_ARGS)
-            ax.text(0.5, 1, "# %i" % i, ha='center', va='top')
-            p = Rectangle((0, 0), 1, 1, color=COLOR[accept], zorder=-1)
-            ax.add_patch(p)
-            ax.i = i
-            ax.background = p
+        # plot: n_types axes per component, laid out on a n_v × (n_h*n_types) grid
+        total_cols = n_h * n_types
+        axes_per_comp = []
+        for i, accept in enumerate(self.doc.accept):
+            row = i // n_h
+            col = i % n_h
+            comp_axes = []
+            for j, (ch_type, comp_ndvar) in enumerate(self.doc.components_by_type):
+                x0 = (col * n_types + j) / total_cols
+                y0 = (n_v - 1 - row) / n_v
+                ax = fig.add_axes((x0, y0, 1 / total_cols, 1 / n_v))
+                layers = AxisData([DataLayer(comp_ndvar[i], PlotType.IMAGE)])
+                AxTopomap(ax, layers, **TOPO_ARGS)
+                p = Rectangle((0, 0), 1, 1, color=COLOR[accept], zorder=-1)
+                ax.add_patch(p)
+                ax.i = i
+                ax.background = p
+                if j == 0:
+                    ax.text(0.5, 1, "# %i" % i, ha='center', va='top')
+                comp_axes.append(ax)
+            axes_per_comp.append(comp_axes)
 
-        self.axes = axes
+        self.axes = axes_per_comp
         self.n_h = n_h
         self.canvas.store_canvas()
         self.Layout()
@@ -743,9 +780,9 @@ class Frame(SharedToolsMenu, FileFrame):
         # update epoch plots
         axes = []
         for idx in index:
-            ax = self.axes[idx]
-            ax.background.set_color(COLOR[self.doc.accept[idx]])
-            axes.append(ax)
+            for ax in self.axes[idx]:
+                ax.background.set_color(COLOR[self.doc.accept[idx]])
+                axes.append(ax)
 
         if IS_OSX:
             try:
@@ -821,7 +858,8 @@ class Frame(SharedToolsMenu, FileFrame):
 
     def OnPanelResize(self, event):
         w, h = event.GetSize()
-        n_h = w // self.ax_size
+        n_types = len(self.doc.components_by_type)
+        n_h = w // (self.ax_size * n_types)
         if n_h >= 2 and n_h != self.n_h:
             self.plot()
 
@@ -1073,28 +1111,33 @@ class SourceFrame(SharedToolsMenu, FileFrameChild):
         n_rows = n_comp + self.show_range
         axheight = 1 / (n_rows + 0.5)  # 0.5 = bottom space for epoch labels
 
-        # topomaps
+        # topomaps: n_types per row, each with height=axheight and square aspect
         ax_size_in = axheight * figheight
         axwidth = ax_size_in / self.figure.get_figwidth()
-        left = axwidth / 2
-        self.topo_plots = []
+        n_types = len(self.doc.components_by_type)
+        self.topo_plots = []   # list of lists: [row_i][type_j] → AxTopomap
         self.topo_labels = []
         for i in range(n_comp_actual):
             i_comp = self.i_first + i
-            ax = self.figure.add_axes((left, 1 - (i + 1) * axheight, axwidth, axheight))
-            layers = AxisData([DataLayer(self.doc.components[i_comp], PlotType.IMAGE)])
-            p = AxTopomap(ax, layers, **TOPO_ARGS)
-            text = ax.text(0, 0.5, "# %i" % i_comp, va='center', ha='right', color='k')
-            ax.i = i
-            ax.i_comp = i_comp
-            self.topo_plots.append(p)
+            row_topos = []
+            for j, (ch_type, comp_ndvar) in enumerate(self.doc.components_by_type):
+                ax_left = (j + 0.5) * axwidth
+                ax = self.figure.add_axes((ax_left, 1 - (i + 1) * axheight, axwidth, axheight))
+                layers = AxisData([DataLayer(comp_ndvar[i_comp], PlotType.IMAGE)])
+                p = AxTopomap(ax, layers, **TOPO_ARGS)
+                ax.i = i
+                ax.i_comp = i_comp
+                row_topos.append(p)
+            # component label to the left of the first topo
+            text = row_topos[0].ax.text(0, 0.5, "# %i" % i_comp, va='center', ha='right', color='k')
+            self.topo_plots.append(row_topos)
             self.topo_labels.append(text)
 
         # source time course data
         y, xtick_labels = self._get_source_data()
 
-        # axes
-        left = 1.5 * axwidth
+        # axes: time course starts after all topo columns + half-width label margin
+        left = (n_types + 0.5) * axwidth
         bottom = 1 - n_rows * axheight
         xticks = np.arange(elen / 2, elen * self.n_epochs, elen)
         ax = self.figure.add_axes((left, bottom, 1 - left, 1 - bottom), frameon=False, yticks=(), xticks=xticks, xticklabels=xtick_labels)
@@ -1377,20 +1420,22 @@ class SourceFrame(SharedToolsMenu, FileFrameChild):
 
         n_comp_actual = min(self.n_comp_in_ica - i_first, self.n_comp)
         for i in range(n_comp_actual):
-            p = self.topo_plots[i]
             i_comp = i_first + i
-            p.set_data([self.doc.components[i_comp]], True)
-            p.ax.i_comp = i_comp
+            for j, (ch_type, comp_ndvar) in enumerate(self.doc.components_by_type):
+                p = self.topo_plots[i][j]
+                p.set_data([comp_ndvar[i_comp]], True)
+                p.ax.i_comp = i_comp
             self.topo_labels[i].set_text("# %i" % i_comp)
             self.lines[i].set_color(LINE_COLOR[self.doc.accept[i_comp]])
 
         if n_comp_actual < self.n_comp:
-            empty_data = self.doc.components[0].copy()
-            empty_data.x.fill(0)
             for i in range(n_comp_actual, self.n_comp):
-                p = self.topo_plots[i]
-                p.set_data([empty_data])
-                p.ax.i_comp = -1
+                for j, (ch_type, comp_ndvar) in enumerate(self.doc.components_by_type):
+                    p = self.topo_plots[i][j]
+                    empty_data = comp_ndvar[0].copy()
+                    empty_data.x.fill(0)
+                    p.set_data([empty_data])
+                    p.ax.i_comp = -1
                 self.topo_labels[i].set_text("")
                 self.lines[i].set_color('white')
 
