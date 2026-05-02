@@ -5,7 +5,7 @@
 # ChangeAction:  modifies Document
 # Model:  creates ChangeActions and applies them to the History
 # Frame:
-#  - visualizaes Document
+#  - visualizes Document
 #  - listens to Document changes
 #  - issues commands to Model
 from collections import defaultdict
