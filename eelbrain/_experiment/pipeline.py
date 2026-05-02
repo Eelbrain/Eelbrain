@@ -2636,7 +2636,7 @@ class Pipeline(StateModel):
         bad_channels = self.load_bad_channels()
         eog_sns = [c for c in eog_sns if c not in bad_channels]
 
-        gui.select_epochs(ds, y_name, path=path, vlim=vlim, mark=eog_sns)
+        gui.select_epochs(ds, y_name, trigger='value', path=path, vlim=vlim, mark=eog_sns)
 
     def make_report(
             self,
