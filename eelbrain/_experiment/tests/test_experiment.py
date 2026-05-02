@@ -2,7 +2,6 @@
 from itertools import product
 
 from eelbrain._experiment import StateModel
-from eelbrain._experiment.preprocessing import RawApplyICA, RawFilter, RawICA, RawPipeGraph, RawSource, assemble_raw_pipes
 
 
 class State(StateModel):
@@ -99,22 +98,3 @@ def test_slave_tree():
     assert list(tree.iter(('b', 'a'))) == list(product(b_seq, a_seq))
     assert list(tree.iter(('a', 'b'), values={'b': ''})) == [(a, '') for a in a_seq]
     assert list(tree.iter(('a', 'b'), b='')) == [(a, '') for a in a_seq]
-
-
-def test_raw_pipe_graph_lineage():
-    raw = assemble_raw_pipes({
-        'raw': RawSource(),
-        '1-40': RawFilter('raw', 1, 40),
-        'ica': RawICA('1-40', 'sample'),
-        'ica1-40': RawFilter('ica', 1, 40),
-        'apply-ica': RawApplyICA('1-40', 'ica'),
-    }, ('sample',))
-
-    assert isinstance(raw, RawPipeGraph)
-    assert raw.source_name('raw') is None
-    assert raw.source_pipe('raw') is None
-    assert raw.root_source_name('ica1-40') == 'raw'
-    assert raw.root_source_pipe('apply-ica') is raw['raw']
-    assert raw.ica_name('ica1-40') == 'ica'
-    assert raw.ica_pipe('apply-ica') is raw['ica']
-    assert tuple(pipe.name for pipe in raw.lineage_pipes('ica1-40')) == ('raw', '1-40', 'ica', 'ica1-40')

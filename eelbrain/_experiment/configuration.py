@@ -303,7 +303,7 @@ def typed_arg(arg, type_, secondary_type=None):
 
 def sequence_arg(
         name: str,  # for error message
-        arg: Sequence,
+        arg: Sequence | None,
         item_type: type = str,
         allow_none: bool = True,
         sequence_type: type = tuple,

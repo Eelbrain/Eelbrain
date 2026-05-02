@@ -1287,7 +1287,8 @@ class RawICA(CachedRawPipe):
     source
         Name of the raw pipe to use for input data.
     task
-        Task(s) to use for estimating ICA components.
+        Task(s) to use for estimating ICA components. Can be omitted when the
+        experiment has exactly one task.
     method
         Method for ICA decomposition (default: ``'extended-infomax'``; see
         :class:`mne.preprocessing.ICA`).
@@ -1312,7 +1313,8 @@ class RawICA(CachedRawPipe):
     Notes
     -----
     This preprocessing step estimates one set of ICA components per subject,
-    using the data specified in the ``task`` parameter. The selected
+    using the data specified in the ``task`` parameter. If the experiment has
+    exactly one task, ``task`` can be omitted. The selected
     components are then removed from all data tasks during this preprocessing
     step, regardless of whether they were used to estimate the components or
     not.
@@ -1332,7 +1334,7 @@ class RawICA(CachedRawPipe):
             raw = {
                 '1-40': RawFilter('raw', 1, 40),
                 # Extended infomax with PCA preprocessing
-                'ica': RawICA('1-40', 'extended-infomax', n_components=0.99),
+                'ica': RawICA('1-40', n_components=0.99),
                 # Fast ICA
                 'fastica': RawICA('1-40', 'task', 'fastica', n_components=0.9),
                 # Change thresholds for data rejection using fit_kwargs
@@ -1349,7 +1351,7 @@ class RawICA(CachedRawPipe):
     def __init__(
             self,
             source: str,
-            task: str | Sequence[str],
+            task: str | Sequence[str] | None = None,
             method: str = 'extended-infomax',
             random_state: int = 0,
             fit_kwargs: dict[str, Any] = None,
@@ -1357,7 +1359,7 @@ class RawICA(CachedRawPipe):
             **kwargs,
     ):
         CachedRawPipe.__init__(self, source, cache)
-        self.task = sequence_arg('task', task, allow_none=False)
+        self.task = sequence_arg('task', task, allow_none=True)
         self.kwargs = {'method': method, 'random_state': random_state, **kwargs}
         self.fit_kwargs = dict(fit_kwargs) if fit_kwargs else {}
 
@@ -1797,6 +1799,11 @@ def assemble_raw_pipes(
             if pending[key]._can_resolve(resolved):
                 pipe = pending.pop(key)
                 if isinstance(pipe, RawICA):
+                    if pipe.task is None:
+                        if len(tasks) == 1:
+                            pipe.task = tasks
+                        else:
+                            raise ConfigurationError(f"RawICA {key!r} needs an explicit task when the experiment has {len(tasks)} tasks. Available tasks: {', '.join(tasks)}.")
                     missing = set(pipe.task).difference(tasks)
                     if missing:
                         raise ConfigurationError(f"RawICA {key!r} lists one or more non-exising tasks: {', '.join(missing)}. Available tasks: {', '.join(tasks)}.")

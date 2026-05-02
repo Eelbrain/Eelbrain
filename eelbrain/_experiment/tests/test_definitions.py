@@ -7,7 +7,7 @@ from eelbrain._data_obj import Factor, Interaction, Var
 from eelbrain._experiment import test_def
 from eelbrain._experiment.configuration import Configuration, ConfigurationError, find_dependent_epochs, find_epoch_vars, find_epochs_vars, sequence_arg
 from eelbrain._experiment.derivative_cache import DerivativeRegistry
-from eelbrain._experiment.preprocessing import RawFilter, RawICA, RawReReference
+from eelbrain._experiment.preprocessing import RawApplyICA, RawFilter, RawICA, RawPipeGraph, RawReReference, RawSource, assemble_raw_pipes
 from eelbrain._experiment.two_stage import TwoStageTest
 from eelbrain._experiment.variable_def import EvalVar, GroupVar, LabelVar, Variables
 from eelbrain.testing import TempDir
@@ -163,3 +163,31 @@ def test_raw_pipe_semantic_dict():
     assert reref.reference == ['A1', 'A2']
     assert reref.add == ['EXG1']
     assert reref.drop == ['EXG8']
+
+
+def test_raw_pipe_graph_lineage():
+    raw = assemble_raw_pipes({
+        'raw': RawSource(),
+        '1-40': RawFilter('raw', 1, 40),
+        'ica': RawICA('1-40'),
+        'ica1-40': RawFilter('ica', 1, 40),
+        'apply-ica': RawApplyICA('1-40', 'ica'),
+    }, ('sample',))
+
+    assert isinstance(raw, RawPipeGraph)
+    assert raw.source_name('raw') is None
+    assert raw.source_pipe('raw') is None
+    assert raw.root_source_name('ica1-40') == 'raw'
+    assert raw.root_source_pipe('apply-ica') is raw['raw']
+    assert raw.ica_name('ica1-40') == 'ica'
+    assert raw.ica_pipe('apply-ica') is raw['ica']
+    assert tuple(pipe.name for pipe in raw.lineage_pipes('ica1-40')) == ('raw', '1-40', 'ica', 'ica1-40')
+    assert raw['ica'].task == ('sample',)
+
+
+def test_raw_configurations():
+    with pytest.raises(ConfigurationError, match='explicit task'):
+        assemble_raw_pipes({
+            'raw': RawSource(),
+            'ica': RawICA('raw'),
+        }, ('sample1', 'sample2'))
