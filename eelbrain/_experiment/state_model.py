@@ -531,37 +531,32 @@ class StateModel:
             for handler in self._post_set_handlers[k]:
                 handler(k, v)
 
-    def show_fields(self, str_out: bool = False) -> str | None:
+    def show_fields(
+            self,
+            constants: bool = False,
+    ) -> fmtxt.Table:
         """A table for all iterable fields and their values.
+
+        'ø' is displayed for the empty string.
 
         Parameters
         ----------
-        str_out
-            Return the table as a string (instead of printing it).
+        constants
+            Include fields with only one valid value.
         """
-        lines = []
+        t = fmtxt.Table('lll')
+        t.cells('Field', 'Value', 'Options')
+        t.midrule()
         for key in self._field_values:
             values = list(self._field_values[key])
-            line = f'{key}:'
-            head_len = len(line) + 1
-            while values:
-                v = repr(values.pop(0))
-                if values:
-                    v += ','
-                if len(v) < 80 - head_len:
-                    line += ' ' + v
-                else:
-                    lines.append(line)
-                    line = ' ' * head_len + v
+            if not constants and len(values) <= 1:
+                continue
+            value = self.get(key)
+            t.cells(key, value or 'ø')
+            other_values = [str(v) or 'ø' for v in values if v != value]
+            t.cell(', '.join(other_values))
 
-                if not values:
-                    lines.append(line)
-
-        table = '\n'.join(lines)
-        if str_out:
-            return table
-        else:
-            print(table)
+        return t
 
     def show_state(self, temp=None, empty=False, hide=()):
         """List field values.
