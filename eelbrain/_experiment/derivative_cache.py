@@ -397,6 +397,10 @@ class DependencyNode(Generic[T]):
         """
         return None
 
+    def path(self, ctx: Request) -> Path:
+        """Path to the artifact."""
+        raise NotImplementedError
+
     def load_view(
             self,
             ctx: Request,
@@ -437,10 +441,6 @@ class Input(DependencyNode[T]):
         ``ctx``. They should not write manifests or perform cache management;
         the registry handles that around derivatives only.
         """
-        raise NotImplementedError
-
-    def path(self, ctx: Request) -> Path:
-        """Path to the input artifact."""
         raise NotImplementedError
 
     def exists(self, ctx: Request) -> bool:

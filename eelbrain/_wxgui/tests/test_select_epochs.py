@@ -21,7 +21,7 @@ def test_select_epochs():
     raw_path = join(data_path, 'MEG', 'sample', 'sample_audvis_trunc_raw.fif')
     raw = mne.io.Raw(raw_path, preload=True).pick_types('mag', stim=True)
     ds = load.mne.events(raw, stim_channel='STI 014')
-    ds['meg'] = load.mne.epochs(ds, tmax=0.1)
+    ds['meg'] = load.mne.mne_epochs(ds, tmax=0.1)
     # 25 cases
     arange = np.arange(25)
     def false_at(index): return np.isin(arange, index, invert=True)

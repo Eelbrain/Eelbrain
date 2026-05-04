@@ -46,7 +46,7 @@ from .state_model import StateModel
 from .groups import assemble_groups
 from .pathing import (
     LOG_DIR, MRI_SDIR, RESULTS_DIR, bids_path, ica_file_path, join_stem_parts, mri_dir, raw_basename, raw_dir,
-    rej_file_path, src_file_path, trans_file_path,
+    src_file_path, trans_file_path,
 )
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, _resolve_parc
 from .preprocessing import (
@@ -2511,7 +2511,6 @@ class Pipeline(StateModel):
     def make_epoch_selection(
             self,
             samplingrate: int = None,
-            data: str = 'sensor',
             auto: float | dict = None,
             overwrite: bool = None,
             decim: int = None,
@@ -2527,9 +2526,6 @@ class Pipeline(StateModel):
         samplingrate
             Samplingrate in Hz for the visualization (set to a lower value to
             improve GUI performance; the default is the epoch setting).
-        data
-            For data with multiple channel types, specify the channel type to
-            display (``mag``, ``planar1``, ``planar2``).
         auto : scalar (optional)
             Perform automatic rejection instead of showing the GUI by supplying
             a an absolute threshold (for example, ``1e-12`` to reject any epoch
@@ -2561,11 +2557,6 @@ class Pipeline(StateModel):
         if rej_args['kind'] != 'manual':
             raise ValueError(f"{rej=}; Epoch rejection is not manual")
 
-        if data == 'grad':
-            raise NotImplementedError(f"{data=} visualization of gradiometer vector data is not implemented; use data='planar1' and data='planar2'")
-        data = TestDims.coerce(data)
-        assert data.sensor is True
-
         epoch = self._epochs[self.get('epoch')]
         if not isinstance(epoch, PrimaryEpoch):
             if isinstance(epoch, SecondaryEpoch):
@@ -2575,12 +2566,11 @@ class Pipeline(StateModel):
             else:
                 raise ValueError(f"The current epoch {epoch.name!r} is not a primary epoch and inherits selections from other epochs. Generate trial rejection for these epochs.")
 
-        with self._temporary_state:
-            self.set(task=epoch.task)
-            path = self.root / rej_file_path(self._fields)
+        rej_ctx = self._resolve_derivative('rej-input')
+        path = rej_ctx.node.path(rej_ctx)
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        if auto is not None and overwrite is not True and exists(path):
+        if auto is not None and overwrite is not True and path.exists():
             if overwrite is False:
                 return
             elif overwrite is None:
@@ -2588,25 +2578,22 @@ class Pipeline(StateModel):
             else:
                 raise TypeError(f"{overwrite=}")
 
-        ds = self.load_epochs(ndvar=True, data=data, reject=False, trigger_shift=False, samplingrate=samplingrate, decim=decim)
-        if data._to_ndvar is None:
+        if auto is not None:
+            ds = self._load_derivative('epochs', options={'reject': False, 'ndvar': True})  # trigger_shift=False??
             ch_types = ['meg', 'mag', 'grad', 'planar1', 'planar2', 'eeg']
             ch_types = [t for t in ch_types if t in ds]
-            if len(ch_types) > 1 and not auto:
-                raise NotImplementedError(f"Found multiple channel types: {enumeration(ch_types)}. Rejection GUI for multiple channel types is not implemented. Use the `data` parameter to visualize one channel type at a time.")
-            elif not ch_types:
+            if not ch_types:
                 raise RuntimeError("No data found")
-            y_name = ch_types.pop()
-        else:
-            y_name = data.y_name
+            y_name = ch_types[0]
 
-        if auto is not None:
+            auto_dict: dict[str, float]
             if isinstance(auto, dict):
                 auto_dict = auto
-                missing = {key for key in auto_dict if key not in ds}
-                if missing:
-                    raise ValueError(f"{auto=}: channel types {enumeration(missing)} not in data")
-            else:
+                if missing := set(ch_types).difference(auto_dict):
+                    raise ValueError(f"{auto=}: channel types {enumeration(missing)} missing")
+                elif unknown := set(auto_dict).difference(missing):
+                    raise ValueError(f"{auto=}: channel types {enumeration(unknown)} not in data")
+            elif len(ch_types) == 1:
                 auto_dict = {y_name: auto}
             # create rejection
             rej_ds = new_rejection_ds(ds)
@@ -2630,13 +2617,12 @@ class Pipeline(StateModel):
             self._log.info(f"make_epoch_selection: {n_rej} of {rej_ds.n_cases} epochs rejected with threshold {auto} for {desc}")
             return
 
-        vlim = {'meg': 2e-12, 'mag': 2e-12, 'eeg': 1.5e-4, 'planar1': 5e-11, 'planar2': 5e-11}[y_name]
-        eog_sns = self._eog_sns.get(ds[y_name].sensor.sysname, ())
+        ds = self._load_derivative('epochs', options={'reject': False, 'ndvar': False})  # trigger_shift=False??
+        # eog_sns = self._eog_sns.get(ds[y_name].sensor.sysname, ())
         # don't mark eog sns if it is bad
-        bad_channels = self.load_bad_channels()
-        eog_sns = [c for c in eog_sns if c not in bad_channels]
-
-        gui.select_epochs(ds, y_name, trigger='value', path=path, vlim=vlim, mark=eog_sns)
+        # bad_channels = self.load_bad_channels()
+        # eog_sns = [c for c in eog_sns if c not in bad_channels]
+        gui.select_epochs(ds, 'epochs', trigger='value', path=path)
 
     def make_report(
             self,
