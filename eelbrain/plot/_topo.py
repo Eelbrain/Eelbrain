@@ -545,7 +545,6 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
         TimeSlicerEF.__init__(self, xdim, plot_data.time_dim, self.bfly_axes, False, initial_time=t)
         TopoMapKey.__init__(self, self._topo_data)
         self._t_label = None  # time label under lowest topo-map
-        self._frame .store_canvas()
 
         self._show(crosshair_axes=self.bfly_axes)
         self._init_controller()
@@ -1098,7 +1097,6 @@ class TopoArray(ColorMapMixin, TopoMapKey, XAxisMixin, EelFigure):
         XAxisMixin._init_with_data(self, plot_data.data, 'time', xlim, self._array_axes)
         self._selected_window = None
         self.canvas.mpl_connect('pick_event', self._pick_handler)
-        self._frame .store_canvas()
         self._show(crosshair_axes=self._array_axes)
 
     def _fill_toolbar(self, tb):
