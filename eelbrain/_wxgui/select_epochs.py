@@ -57,7 +57,6 @@ from . import ID
 
 
 # IDs
-MEAN_PLOT = -1
 TOPO_PLOT = -2
 OUT_OF_RANGE = -3
 
@@ -802,7 +801,7 @@ class Frame(FileFrame):
     _doc_name = 'epoch selection'
     _title = "Select Epochs"
 
-    def __init__(self, parent, model, nplots, topo, mean, vlim, color, lw, mark,
+    def __init__(self, parent, model, nplots, topo, vlim, color, lw, mark,
                  mcolor, mlw, antialiased, pos, size, allow_interpolation):
         """View object of the epoch selection GUI
 
@@ -912,7 +911,7 @@ class Frame(FileFrame):
                 _, scale, display_vlim = _CH_TYPE_VLIM_INFO[ch_type]
                 self._type_display_vlims[ch_type] = scale * display_vlim
 
-        self._SetLayout(nplots, topo, mean)
+        self._SetLayout(nplots, topo)
 
         # Bind Events ---
         self.canvas.mpl_connect('button_press_event', self.OnCanvasClick)
@@ -929,7 +928,6 @@ class Frame(FileFrame):
         self._topo_axes = []        # list of axes (one per channel type)
         self._topo_plots = []       # list of AxTopomap (one per channel type)
         self._topo_plot_info_str = None
-        self._mean_plot = None
         self._case_segs_by_type = None  # list of [(ch_type, NDVar)] per visible epoch
         self._bfly_vlim = None          # normalized vlim last applied (multi-type only)
 
@@ -969,11 +967,6 @@ class Frame(FileFrame):
                                                     if ch in ch_index])
 
                 axes.append(ax)
-
-        # update mean plot
-        if self._plot_mean:
-            self._mean_plot.set_data(self._get_page_mean_seg())
-            axes.append(self._mean_ax)
 
         self.canvas.redraw(axes)
         self.canvas.store_canvas()
@@ -1070,8 +1063,6 @@ class Frame(FileFrame):
             self.PlotButterfly(ax.ax_idx)
         elif event.key == 'c':
             self.PlotCorrelation(ax.ax_idx)
-        elif ax.ax_idx == MEAN_PLOT:
-            return
         elif event.key == 'i':
             self.ToggleChannelInterpolation(ax, event)
         elif event.key == 'I':
@@ -1177,7 +1168,7 @@ class Frame(FileFrame):
             return self.SetStatusText("")
         elif ax.ax_idx == TOPO_PLOT:
             return self.SetStatusText(self._topo_plot_info_str)
-        elif ax.ax_idx != MEAN_PLOT and ax.epoch_idx == OUT_OF_RANGE:
+        elif ax.epoch_idx == OUT_OF_RANGE:
             return self.SetStatusText("")
 
         # compose status text
@@ -1193,7 +1184,7 @@ class Frame(FileFrame):
             y = ' / '.join(y_parts)
         else:
             y = ax.yaxis.get_major_formatter().format_data(event.ydata)
-        desc = "Page average" if ax.ax_idx == MEAN_PLOT else "Epoch %i" % ax.epoch_idx
+        desc = "Epoch %i" % ax.epoch_idx
         status = f"{desc},  x = {x} ms,  y = {y}"
         if ax.ax_idx >= 0:  # single trial plot
             interp = self.doc.interpolate[ax.epoch_idx]
@@ -1272,9 +1263,9 @@ class Frame(FileFrame):
             self.model.set_interpolation(epoch, new)
 
     def OnSetLayout(self, event):
-        dlg = LayoutDialog(self, self._rows, self._columns, self._plot_topo, self._plot_mean)
+        dlg = LayoutDialog(self, self._rows, self._columns, self._plot_topo)
         if dlg.ShowModal() == wx.ID_OK:
-            self.SetLayout(dlg.layout, dlg.topo, dlg.mean)
+            self.SetLayout(dlg.layout, dlg.topo)
 
     def OnSetMarkedChannels(self, event):
         "Mark is represented in sensor names"
@@ -1379,13 +1370,9 @@ class Frame(FileFrame):
         event.Enable(True)
 
     def PlotCorrelation(self, ax_index):
-        if ax_index == MEAN_PLOT:
-            seg = self._mean_seg
-            name = 'Page Mean Neighbor Correlation'
-        else:
-            epoch_idx = self._epoch_idxs[ax_index]
-            seg = self._case_segs[ax_index]
-            name = 'Epoch %i Neighbor Correlation' % epoch_idx
+        epoch_idx = self._epoch_idxs[ax_index]
+        seg = self._case_segs[ax_index]
+        name = 'Epoch %i Neighbor Correlation' % epoch_idx
         plot.Topomap(neighbor_correlation(seg, name=name), sensorlabels='name')
 
     def PlotButterfly(self, ax_index):
@@ -1404,7 +1391,7 @@ class Frame(FileFrame):
         plot.Topomap(tseg, vmax=self._vlims, sensorlabels='name', w=8,
                      title=tseg.name)
 
-    def SetLayout(self, nplots=(6, 6), topo=True, mean=True):
+    def SetLayout(self, nplots=(6, 6), topo=True):
         """Determine the layout of the Epochs canvas
 
         Parameters
@@ -1415,37 +1402,27 @@ class Frame(FileFrame):
             tuple.
         topo : bool
             Show a topomap plot of the time point under the mouse cursor.
-        mean : bool
-            Show a plot of the page mean at the bottom right of the page.
         """
-        self._SetLayout(nplots, topo, mean)
+        self._SetLayout(nplots, topo)
         self.ShowPage(0)
 
-    def _SetLayout(self, nplots, topo, mean):
+    def _SetLayout(self, nplots, topo):
         if topo is None:
             topo = self.config.ReadBool('Layout/show_topo', True)
         else:
             topo = bool(topo)
             self.config.WriteBool('Layout/show_topo', topo)
 
-        if mean is None:
-            mean = self.config.ReadBool('Layout/show_mean', False)
-        else:
-            mean = bool(mean)
-            self.config.WriteBool('Layout/show_mean', mean)
-
         if nplots is None:
             nrow = self.config.ReadInt('Layout/n_rows', 6)
             ncol = self.config.ReadInt('Layout/n_cols', 6)
             nax = ncol * nrow
-            n_per_page = nax - bool(topo) - bool(mean)
+            n_per_page = nax - bool(topo)
         else:
             if isinstance(nplots, int):
-                if nplots == 1:
-                    mean = False
-                elif nplots < 1:
+                if nplots < 1:
                     raise ValueError(f"{nplots=}: needs to be >= 1")
-                nax = nplots + bool(mean) + bool(topo)
+                nax = nplots + bool(topo)
                 nrow = math.ceil(math.sqrt(nax))
                 ncol = int(math.ceil(nax / nrow))
                 nrow = int(nrow)
@@ -1454,18 +1431,14 @@ class Frame(FileFrame):
                 nrow, ncol = nplots
                 nax = ncol * nrow
                 if nax == 1:
-                    mean = False
                     topo = False
-                elif nax == 2:
-                    mean = False
                 elif nax < 1:
                     raise ValueError(f"{nplots=}: Need at least one plot.")
-                n_per_page = nax - bool(topo) - bool(mean)
+                n_per_page = nax - bool(topo)
             self.config.WriteInt('Layout/n_rows', nrow)
             self.config.WriteInt('Layout/n_cols', ncol)
         self.config.Flush()
 
-        self._plot_mean = mean
         self._plot_topo = topo
 
         # prepare segments
@@ -1537,8 +1510,6 @@ class Frame(FileFrame):
         """
         for p in self._case_plots:
             p.set_ylim(vlim)
-        if self._mean_plot:
-            self._mean_plot.set_ylim(vlim)
         for topo in self._topo_plots:
             topo.set_vlim(vlim)
 
@@ -1598,18 +1569,11 @@ class Frame(FileFrame):
                 self._case_plots[i].set_visible(False)
                 self._case_axes[i].epoch_idx = OUT_OF_RANGE
 
-        # update mean plot (primary type only)
-        if self._plot_mean:
-            self._mean_seg = self._get_page_mean_seg()
-            self._mean_plot.set_data(self._mean_seg)
-
         # Enforce consistent y-axis limits across all epoch plots (multi-type)
         if self._type_vlims and self._case_plots:
             self._bfly_vlim = self._get_bfly_vlim()
             for h in self._case_plots:
                 h.set_ylim(self._bfly_vlim)
-            if self._mean_plot:
-                self._mean_plot.set_ylim(self._bfly_vlim)
             if self._plot_topo and len(self._topo_plots) > 1:
                 for topo, ch_type in zip(self._topo_plots, self.doc.ch_type_names):
                     topo.set_vlim(self._bfly_vlim * self._type_display_vlims[ch_type])
@@ -1626,8 +1590,7 @@ class Frame(FileFrame):
         ±1 on the shared y-axis, then concatenates the sensor dimensions.  The returned NDVar is only used for drawing and
         is not stored on the Document.
 
-        Also accepts a plain NDVar (e.g. page mean of primary type) and returns
-        it unchanged.
+        Also accepts a plain NDVar and returns it unchanged.
         """
         if isinstance(case_by_type, NDVar):
             return case_by_type
@@ -1709,34 +1672,15 @@ class Frame(FileFrame):
             self._case_segs_by_type.append(case_by_type)
             self._axes_by_idx[epoch_idx] = ax
 
-        # mean plot
-        if self._plot_mean:
-            plot_i = nrow * ncol
-            self._mean_ax = ax = self.figure.add_subplot(nrow, ncol, plot_i)
-            ax.ax_idx = MEAN_PLOT
-            self._mean_seg = self._get_page_mean_seg()
-            display_mean = self._get_display_epoch(self._mean_seg)
-            ch_colors_mean = self.doc.get_channel_colors(display_mean)
-            self._mean_plot = AxButterflyEpoch(ax, display_mean, mark, 'Page Mean',
-                                               channel_colors=ch_colors_mean,
-                                               **bfly_kwargs)
-
-            # formatters
-            ax.xaxis.set_major_formatter(t_formatter)
-            if not self._type_vlims:
-                ax.yaxis.set_major_formatter(y_scale.formatter)
-
         # Enforce a consistent y-axis limit across all epoch plots (multi-type)
         if self._type_vlims and self._case_plots:
             self._bfly_vlim = self._get_bfly_vlim()
             for h in self._case_plots:
                 h.set_ylim(self._bfly_vlim)
-            if self._mean_plot:
-                self._mean_plot.set_ylim(self._bfly_vlim)
 
         # topomap
         if self._plot_topo:
-            plot_i = nrow * ncol - self._plot_mean
+            plot_i = nrow * ncol
             if self._mark:
                 mark_topo = [ch for ch in self._mark if ch not in self.doc.bad_channel_names]
             else:
@@ -1796,20 +1740,8 @@ class Frame(FileFrame):
         sensor_name = plt.epoch.sensor.names[sensor]
         self.model.toggle_interpolation(ax.epoch_idx, sensor_name)
 
-    def _get_page_mean_seg(self):
-        page_segments = self._segs_by_page[self._current_page_i]
-        page_index = np.zeros(self.doc.n_epochs, dtype=bool)
-        page_index[page_segments] = True
-        index = np.logical_and(page_index, self.doc.accept.x)
-        mseg = self.doc.get_epoch(index, "Page Average").mean('case')
-        return mseg
-
     def _get_ax_data(self, ax_index, time=None):
-        if ax_index == MEAN_PLOT:
-            seg = self._mean_seg
-            epoch_name = 'Page Average'
-            sensor_idx = None
-        elif ax_index >= 0:
+        if ax_index >= 0:
             epoch_idx = self._epoch_idxs[ax_index]
             epoch_name = 'Epoch %i' % epoch_idx
             seg = self._case_segs[ax_index]
@@ -1934,11 +1866,10 @@ class FindNoisyChannelsDialog(EelbrainDialog):
 
 class LayoutDialog(EelbrainDialog):
 
-    def __init__(self, parent, rows, columns, topo, mean):
+    def __init__(self, parent, rows, columns, topo):
         EelbrainDialog.__init__(self, parent, wx.ID_ANY, "Select-Epochs Layout")
         # result attributes
         self.topo = None
-        self.mean = None
         self.layout = None
 
         sizer = wx.BoxSizer(wx.VERTICAL)
@@ -1951,10 +1882,6 @@ class LayoutDialog(EelbrainDialog):
         self.topo_ctrl = wx.CheckBox(self, wx.ID_ANY, "Topographic map")
         self.topo_ctrl.SetValue(topo)
         sizer.Add(self.topo_ctrl)
-
-        self.mean_ctrl = wx.CheckBox(self, wx.ID_ANY, "Page mean plot")
-        self.mean_ctrl.SetValue(mean)
-        sizer.Add(self.mean_ctrl)
 
         # buttons
         button_sizer = wx.StdDialogButtonSizer()
@@ -1974,7 +1901,6 @@ class LayoutDialog(EelbrainDialog):
 
     def OnOk(self, event):
         self.topo = self.topo_ctrl.GetValue()
-        self.mean = self.mean_ctrl.GetValue()
         value = self.text.GetValue()
         m = re.match(r"(\d+)\s*(\d*)", value)
         if m:
@@ -1987,7 +1913,7 @@ class LayoutDialog(EelbrainDialog):
             else:
                 self.layout = n_plots = rows
 
-            if n_plots >= self.topo + self.mean + 1:
+            if n_plots >= self.topo + 1:
                 event.Skip()
                 return
             else:

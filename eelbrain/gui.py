@@ -91,7 +91,6 @@ def select_epochs(
         path: PathArg = None,
         nplots: int | tuple[int, int] = None,
         topo: bool = None,
-        mean: bool = None,
         vlim: float = None,
         color: ColorArg = 'k',
         lw: float = 0.5,
@@ -136,9 +135,6 @@ def select_epochs(
         tuple. The default is to use the settings from the last session.
     topo
         Show a topomap plot of the time point under the mouse cursor.
-        Default (None): use settings form last session.
-    mean
-        Show a plot of the page mean at the bottom right of the page.
         Default (None): use settings form last session.
     vlim
         Limit of the epoch plots on the y-axis. If None, a value is
@@ -203,7 +199,7 @@ def select_epochs(
     bad_chs = None
     doc = Document(ds, data, accept, blink, tag, trigger, path, bad_chs, allow_interpolation)
     model = Model(doc)
-    frame = Frame(None, model, nplots, topo, mean, vlim, color, lw, mark, mcolor, mlw, antialiased, pos, size, allow_interpolation)
+    frame = Frame(None, model, nplots, topo, vlim, color, lw, mark, mcolor, mlw, antialiased, pos, size, allow_interpolation)
     frame.Show()
     frame.Raise()
     if TEST_MODE:
