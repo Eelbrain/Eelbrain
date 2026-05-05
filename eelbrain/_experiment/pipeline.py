@@ -3604,7 +3604,7 @@ class Pipeline(StateModel):
         print(tree)
         return None
 
-    def show_raw_info(self, **state):
+    def show_raw_info(self, **state) -> fmtxt.Table | None:
         """Display the selected pipeline for raw processing
 
         See Also
@@ -3639,6 +3639,7 @@ class Pipeline(StateModel):
             table.cells('Subject', 'n components', 'reject')
             if mark_unselected:
                 table.cell('*')
+                table.caption("*: ICA with no rejected components")
             table.midrule()
             for subject, n, n_selected in rows:
                 table.cells(subject, n)
@@ -3647,8 +3648,8 @@ class Pipeline(StateModel):
                     if mark_unselected and n_selected == 0:
                         table.cell('*')
                 table.endline()
-            print()
-            print(table)
+
+            return table
 
     def show_reg_params(self, asds=False, **kwargs):
         """Show the covariance matrix regularization parameters
