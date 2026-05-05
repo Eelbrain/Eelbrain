@@ -3620,7 +3620,7 @@ class Pipeline(StateModel):
         if isinstance(pipe, RawICA):
             rows = []
             for subject in self:
-                ctx = self._resolve_derivative(ica_input_name(raw), options={'noise': False})
+                ctx = self._resolve_derivative(ica_input_name(raw))
                 status = ctx.load(view='status')
                 if status == 'ok':
                     ica = ctx.load()
