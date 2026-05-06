@@ -40,6 +40,45 @@ def show_text_dialog(parent, text, caption):
     return dlg
 
 
+class TracebackDialog(wx.Dialog):
+    """Modal dialog showing a full exception traceback with a copy button.
+
+    Intended for surfacing unexpected errors to the user with enough context
+    to file a bug report.
+    """
+
+    def __init__(self, parent, tb: str):
+        super().__init__(parent, title="Error", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        self._tb = tb
+
+        vbox = wx.BoxSizer(wx.VERTICAL)
+
+        text = wx.TextCtrl(
+            self, value=tb,
+            style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_DONTWRAP | wx.HSCROLL,
+        )
+        text.SetFont(wx.Font(wx.FontInfo(10).Family(wx.FONTFAMILY_TELETYPE)))
+        vbox.Add(text, proportion=1, flag=wx.EXPAND | wx.ALL, border=10)
+
+        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        copy_btn = wx.Button(self, label="Copy Traceback")
+        copy_btn.Bind(wx.EVT_BUTTON, self._on_copy)
+        btn_sizer.Add(copy_btn, flag=wx.RIGHT, border=8)
+        btn_sizer.AddStretchSpacer()
+        close_btn = wx.Button(self, label="Close")
+        close_btn.Bind(wx.EVT_BUTTON, lambda e: self.EndModal(0))
+        btn_sizer.Add(close_btn)
+        vbox.Add(btn_sizer, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
+
+        self.SetSizerAndFit(vbox)
+        self.SetSize((700, 400))
+
+    def _on_copy(self, event):
+        if wx.TheClipboard.Open():
+            wx.TheClipboard.SetData(wx.TextDataObject(self._tb))
+            wx.TheClipboard.Close()
+
+
 class FloatValidator(wx.Validator):
 
     def __init__(self, parent, attr):

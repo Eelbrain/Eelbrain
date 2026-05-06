@@ -1,4 +1,5 @@
 """Pipeline supervisor GUI launched by ``eelbrain-gui``."""
+import traceback
 import threading
 
 import wx
@@ -7,6 +8,7 @@ from .. import load
 from .._experiment.epochs import PrimaryEpoch
 from .._experiment.preprocessing import RawICA, ica_input_name
 from .frame import EelbrainFrame
+from .utils import TracebackDialog
 
 
 class PipelineFrame(EelbrainFrame):
@@ -266,10 +268,17 @@ class PipelineFrame(EelbrainFrame):
     def _refresh_thread(self, token, task_type, task_key, epoch_name, raw_name):
         try:
             rows = self._compute_rows(token, task_type, task_key, epoch_name, raw_name)
-        except Exception as exc:
-            wx.CallAfter(self.SetStatusText, f"Error: {exc}")
+        except Exception:
+            tb = traceback.format_exc()
+            wx.CallAfter(self._show_error, tb)
             return
         wx.CallAfter(self._populate_table, rows, token)
+
+    def _show_error(self, tb: str):
+        self.SetStatusText("Error")
+        dlg = TracebackDialog(self, tb)
+        dlg.ShowModal()
+        dlg.Destroy()
 
     def _compute_rows(self, token, task_type, task_key, epoch_name, raw_name):
         pipeline = self._pipeline
