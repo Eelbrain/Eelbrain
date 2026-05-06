@@ -125,9 +125,9 @@ class FactorPanel(wx.Panel):
     def __init__(self, parent, levels, idx, editable=True):
         super().__init__(parent)
         if editable:
-            self.factor_ctl = wx.TextCtrl(self, value="factor_%d" % idx)
+            self.factor_ctl = wx.TextCtrl(self, value=f"factor_{idx}")
         else:
-            self.factor_ctl = wx.StaticText(self, label="factor_%d" % idx)
+            self.factor_ctl = wx.StaticText(self, label=f"factor_{idx}")
             self.factor_ctl.SetFont(wx.Font.Bold(self.factor_ctl.GetFont()))
         level_names = ["- " + i for i in levels]
         level_ctl = wx.StaticText(self)
@@ -157,7 +157,7 @@ class MRIPanel(wx.Panel):
         # text control for MRI subject, default 'fsaverage'
         subj_ctl = wx.TextCtrl(self, value="fsaverage")
         # dropdown to choose source space sampling, default ico-4
-        srcs = ["ico-%d" % i for i in range(2, 7)] + ["oct-%d" % i for i in range(2, 7)] + ["all"]
+        srcs = [f"ico-{i}" for i in range(2, 7)] + [f"oct-{i}" for i in range(2, 7)] + ["all"]
         src_ctl = wx.ComboBox(self, choices=srcs, value="ico-4")
         # attach controls to panel for use in loader
         self.mri_dir = dir_ctl

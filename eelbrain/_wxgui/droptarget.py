@@ -8,22 +8,6 @@ def filename_repr(filenames):
         if isinstance(filenames, str):
             filenames = [filenames]
 
-#        if 'wxMSW' in wx.PlatformInfo:
-            # does windows require separate handling for to backslash?
-            # on os-x, if the path contains a backslash, it is inserted as '\\'
-#            conv = []
-#            for name in filenames:
-#                try:
-#                    conv.append('r%r' % str(name))
-#                except:
-#                    conv.append(repr(name))
-#
-#            if len(filenames) == 1:
-#                string = filenames[0]
-#            else:
-#                string = '[' + ', '.join(filenames) + ']'
-#
-#        else:
         try:
             filenames = tuple(map(str, filenames))
         except BaseException:
@@ -52,7 +36,7 @@ class FilenameDropTarget(wx.FileDropTarget):
     """
 
     def __init__(self, text_target):
-        wx.FileDropTarget.__init__(self)
+        super().__init__()
         self.text_target = text_target
 
     def OnDropFiles(self, x, y, filenames):
@@ -65,7 +49,7 @@ class FilenameDropTarget(wx.FileDropTarget):
 
 class TextDropTarget(wx.TextDropTarget):
     def __init__(self, text_target):
-        wx.TextDropTarget.__init__(self)
+        super().__init__()
         self.text_target = text_target
 
     def OnDropText(self, x, y, text):
@@ -84,22 +68,19 @@ class StringDropTarget(wx.DropTarget):
     """
 
     def __init__(self, target):
-        wx.DropTarget.__init__(self)
+        super().__init__()
         self.target = target
 
-        self.do = wx.DataObjectComposite()  # the dataobject that gets filled with the appropriate data
+        self.do = wx.DataObjectComposite()
         self.filedo = wx.FileDataObject()
         self.textdo = wx.TextDataObject()
-#        self.bmpdo = wx.BitmapDataObject()
         self.do.Add(self.filedo)
         self.do.Add(self.textdo)
-#        self.do.Add(self.bmpdo)
         self.SetDataObject(self.do)
 
     def OnData(self, x, y, d):
         if self.GetData():
             df = self.do.GetReceivedFormat().GetType()
-#            data = self.GetData()
 
             if df in [wx.DF_UNICODETEXT, wx.DF_TEXT]:
                 string = self.textdo.GetText()
