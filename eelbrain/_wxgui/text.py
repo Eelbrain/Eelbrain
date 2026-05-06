@@ -48,8 +48,12 @@ class HTML2Frame(EelbrainFrame):
 
     def OnNavigating(self, evt):
         url = urllib.parse.unquote(evt.GetURL())
-        if url != 'file:///start-url':
-            self.OpenURL(url)
+        # Ignore internal WebView lifecycle URLs (page-load base URL and blank-page events).
+        # The base URL passed to SetPage() may arrive as 'start-url' or 'file:///start-url'
+        # depending on the platform/wxpython version.
+        if url in ('about:blank', 'start-url', 'file:///start-url'):
+            return
+        self.OpenURL(url)
 
     def OpenURL(self, url):
         raise NotImplementedError(f"{url=}")

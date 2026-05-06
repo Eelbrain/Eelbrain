@@ -936,10 +936,10 @@ class Frame(FileFrame):
         self.UpdateTitle()
 
     def CanBackward(self):
-        return self._current_page_i > 0
+        return bool(self._current_page_i > 0)
 
     def CanForward(self):
-        return self._current_page_i < self._n_pages - 1
+        return bool(self._current_page_i < self._n_pages - 1)
 
     def CaseChanged(self, index):
         "Update the states of the segments on the current page"

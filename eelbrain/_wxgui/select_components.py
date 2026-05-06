@@ -1222,16 +1222,16 @@ class SourceFrame(SharedToolsMenu, FileFrameChild):
                 return i_epoch
 
     def CanBackward(self):
-        return self.i_first_epoch > 0
+        return bool(self.i_first_epoch > 0)
 
     def CanDown(self):
-        return self.i_first + self.n_comp < self.n_comp_in_ica
+        return bool(self.i_first + self.n_comp < self.n_comp_in_ica)
 
     def CanForward(self):
-        return self.i_first_epoch + self.n_epochs < self.n_epochs_in_data
+        return bool(self.i_first_epoch + self.n_epochs < self.n_epochs_in_data)
 
     def CanUp(self):
-        return self.i_first > 0
+        return bool(self.i_first > 0)
 
     def CaseChanged(self, index):
         "Update the states of the segments on the current page"
