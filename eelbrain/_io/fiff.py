@@ -741,6 +741,12 @@ def sensor_dim(
     ch_locs = [ch['loc'][:3] for ch in chs]
     ch_names = [ch['ch_name'] for ch in chs]
 
+    # Detect channels with NaN positions (they cause layout and adjacency computation to fail)
+    nan_mask = np.array([np.any(np.isnan(loc)) for loc in ch_locs])
+    if np.any(nan_mask):
+        nan_ch_names = [name for name, is_nan in zip(ch_names, nan_mask) if is_nan]
+        raise ValueError(f"Channels with NaN position in sensor layout: {', '.join(nan_ch_names)}")
+
     # use KIT system ID if available
     sysname = KIT_NEIGHBORS.get(info.get('kit_system_id'), sysname)
     if sysname and sysname.startswith('neuromag'):

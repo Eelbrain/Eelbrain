@@ -43,6 +43,7 @@ import warnings
 from collections.abc import Mapping, Sequence
 
 import mne
+import numpy
 from scipy import signal
 from mne_bids import BIDSPath
 import pandas as pd
@@ -452,12 +453,18 @@ class RawSourceDerivative(UncachedDerivative[mne.io.BaseRaw]):
 
     def _load_bad_channels(self, ctx: Request) -> list[str]:
         tsv_bads = ctx.load(raw_bad_channels_input_name(self.raw_name))
-        raw_bads = ctx.load(raw_input_name(self.raw_name)).info['bads']
-        if tsv_bads and raw_bads:
-            return sorted(set(tsv_bads) | set(raw_bads))
-        if tsv_bads:
-            return tsv_bads
-        return raw_bads
+        raw = ctx.load(raw_input_name(self.raw_name))
+        raw_bads = raw.info['bads']
+        all_bads = set(tsv_bads) | set(raw_bads)
+
+        # Detect channels whose positions contain NAN
+        nan_bads = {ch['ch_name'] for ch in raw.info['chs'] if numpy.any(numpy.isnan(ch['loc'][:3]))}
+        nan_bads.difference_update(all_bads)
+        if nan_bads:
+            warnings.warn(f"Channels with NaN position marked as bad: {', '.join(sorted(nan_bads))}", RuntimeWarning)
+            all_bads |= nan_bads
+
+        return sorted(all_bads)
 
 
 class ICAInput(Input[mne.preprocessing.ICA]):
