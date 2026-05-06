@@ -190,11 +190,14 @@ class PipelineFrame(EelbrainFrame):
     def _populate_table(self, rows, token):
         if token is not self._refresh_token:
             return
+        task_type, _ = self._current_task()
         self._list.DeleteAllItems()
         for row in rows:
             idx = self._list.InsertItem(self._list.GetItemCount(), row[0])
             for col, val in enumerate(row[1:], 1):
                 self._list.SetItem(idx, col, val)
+            if task_type == 'ica' and row[3] == '0':
+                self._list.SetItemTextColour(idx, wx.RED)
         self._refresh_status_bar()
 
     def _update_ica_row(self, subject, task_key, doc):
@@ -206,6 +209,8 @@ class PipelineFrame(EelbrainFrame):
                 self._list.SetItem(i, 1, 'selected')
                 self._list.SetItem(i, 2, str(n_comp))
                 self._list.SetItem(i, 3, str(n_excl))
+                colour = wx.RED if n_excl == 0 else wx.SystemSettings.GetColour(wx.SYS_COLOUR_LISTBOXTEXT)
+                self._list.SetItemTextColour(i, colour)
                 break
         self._refresh_status_bar()
 
