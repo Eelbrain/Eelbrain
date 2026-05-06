@@ -153,7 +153,7 @@ class FileDocument:
     def __init__(self, path):
         self.saved = False  # managed by the history
         self.path = path
-        self.callbacks = CallBackManager(('path_change',))
+        self.callbacks = CallBackManager(('path_change', 'saved'))
 
     def set_path(self, path):
         self.path = path
@@ -173,6 +173,7 @@ class FileModel:
     def save(self):
         self.doc.save()
         self.history.register_save()
+        self.doc.callbacks.callback('saved')
 
     def save_as(self, path):
         self.doc.set_path(path)

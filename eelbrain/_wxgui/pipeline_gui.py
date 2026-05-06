@@ -155,7 +155,13 @@ class PipelineFrame(EelbrainFrame):
         wx.BeginBusyCursor()
         try:
             if task_type == 'ica':
-                self._pipeline.make_ica_selection(subject=subject, raw=task_key)
+                frame = self._pipeline.make_ica_selection(subject=subject, raw=task_key)
+                if frame is not None:
+                    doc = frame.model.doc
+                    doc.callbacks.subscribe(
+                        'saved',
+                        lambda: wx.CallAfter(self._update_ica_row, subject, task_key, doc),
+                    )
             elif task_type == 'epoch_rej':
                 self._pipeline.make_epoch_selection(
                     subject=subject,
@@ -163,10 +169,11 @@ class PipelineFrame(EelbrainFrame):
                     epoch=self._epoch_choice.GetStringSelection(),
                     raw=self._raw_choice.GetStringSelection(),
                 )
+                # Epoch rejection has no in-memory object to read from,
+                # so do a targeted single-subject refresh instead.
+                self._start_refresh()
         finally:
             wx.EndBusyCursor()
-        # Refresh status after the user closes the sub-GUI
-        self._start_refresh()
 
     # ------------------------------------------------------------------
     # Table management
@@ -188,16 +195,41 @@ class PipelineFrame(EelbrainFrame):
             idx = self._list.InsertItem(self._list.GetItemCount(), row[0])
             for col, val in enumerate(row[1:], 1):
                 self._list.SetItem(idx, col, val)
+        self._refresh_status_bar()
+
+    def _update_ica_row(self, subject, task_key, doc):
+        """Update a single ICA row from the already-in-memory document (no disk I/O)."""
+        n_comp = doc.ica.n_components_
+        n_excl = len(doc.ica.exclude)
+        for i in range(self._list.GetItemCount()):
+            if self._list.GetItemText(i, 0) == subject:
+                self._list.SetItem(i, 1, 'selected')
+                self._list.SetItem(i, 2, str(n_comp))
+                self._list.SetItem(i, 3, str(n_excl))
+                break
+        self._refresh_status_bar()
+
+    def _refresh_status_bar(self):
+        """Recompute the status bar summary from the current table contents."""
         task_type, _ = self._current_task()
-        n = len(rows)
+        n = self._list.GetItemCount()
         if task_type == 'ica':
-            n_ok = sum(1 for r in rows if r[1] == 'selected')
-            n_missing = sum(1 for r in rows if r[1] == 'no ICA')
+            n_ok = sum(
+                1 for i in range(n)
+                if self._list.GetItemText(i, 1) == 'selected'
+            )
+            n_missing = sum(
+                1 for i in range(n)
+                if self._list.GetItemText(i, 1) == 'no ICA'
+            )
             msg = f"{n_ok} / {n} subjects · ICA selected"
             if n_missing:
                 msg += f"  ({n_missing} missing ICA file)"
         elif task_type == 'epoch_rej':
-            n_ok = sum(1 for r in rows if r[1] == 'done')
+            n_ok = sum(
+                1 for i in range(n)
+                if self._list.GetItemText(i, 1) == 'done'
+            )
             msg = f"{n_ok} / {n} subjects · epoch rejection done"
         else:
             msg = ""

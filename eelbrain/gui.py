@@ -77,8 +77,7 @@ def select_components(
     if TEST_MODE:
         return frame
     run()
-    if debug:
-        return frame
+    return frame
 
 
 def select_epochs(
@@ -204,8 +203,8 @@ def select_epochs(
     frame.Raise()
     if TEST_MODE:
         return frame
-    else:
-        run()
+    run()
+    return frame
 
 
 def load_stcs():

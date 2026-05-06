@@ -2151,8 +2151,7 @@ class Pipeline(StateModel):
         sysname = source_pipe._get_sysname(info, subject, data_kind)
         adjacency = source_pipe._get_adjacency(data_kind)
         frame = gui.select_components(path, display_data, sysname, adjacency, decim, debug)
-        if debug:
-            return frame
+        return frame
 
     def make_ica(self, **state):
         """Compute ICA decomposition for a :class:`pipeline.RawICA` preprocessing step
@@ -2622,7 +2621,7 @@ class Pipeline(StateModel):
         # don't mark eog sns if it is bad
         # bad_channels = self.load_bad_channels()
         # eog_sns = [c for c in eog_sns if c not in bad_channels]
-        gui.select_epochs(ds, 'epochs', trigger='value', path=path)
+        return gui.select_epochs(ds, 'epochs', trigger='value', path=path)
 
     def make_report(
             self,
