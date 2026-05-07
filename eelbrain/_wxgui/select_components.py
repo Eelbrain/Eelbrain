@@ -651,12 +651,9 @@ class SharedToolsMenu:  # Frame mixin
 
 
 class Frame(SharedToolsMenu, FileFrame):
-    """GIU for selecting ICA sensor-space components
+    """GUI for selecting ICA components
 
-    Component Selection
-    ===================
-
-    * Click on components topographies to select/deselect them.
+    * Click on component source time courses or topographies to select/deselect.
     * Right-click for a context-menu.
 
     *Keyboard shortcuts* in addition to the ones in the menu:
@@ -664,13 +661,16 @@ class Frame(SharedToolsMenu, FileFrame):
     =========== ============================================================
     Key         Effect
     =========== ============================================================
+    arrows      scroll through components/epochs
+    alt+arrows  scroll to beginning/end
     t           topomap plot of the component under the pointer
     a           array-plot of the source time course of the component
-    s           plot sources, starting with the component under the cursor
     f           plot the frequency spectrum for the component under the
                 pointer
-    b           butterfly plot of grand average (original and cleaned)
-    B           butterfly plot of condition averages
+    b           butterfly plot of the original and cleaned data (of the
+                epoch under the pointer, or of the grand average if the
+                pointer is over other elements)
+    B           Butterfly plot of condition averages
     =========== ============================================================
     """
     _doc_name = 'component selection'
@@ -686,333 +686,6 @@ class Frame(SharedToolsMenu, FileFrame):
     ):
         FileFrame.__init__(self, parent, pos, size, model)
         SharedToolsMenu.__init__(self)
-        self.source_frame = None
-
-        # setup layout
-        self.ax_size = 200
-        figsize = (10, 10)
-        self.SetMinSize((400, 400))
-
-        # setup scrolled panel
-        panel = ScrolledPanel(self)
-        self.panel = panel
-
-        # setup figure canvas
-        self.canvas = FigureCanvasPanel(panel, figsize=figsize)
-        self.canvas.figure.subplots_adjust(0, 0, 1, 1, 0, 0)
-        panel.SetupScrolling(False, scrollToTop=False, scrollIntoView=False)
-
-        # sizer
-        sizer = wx.BoxSizer(wx.VERTICAL)
-        sizer.Add(self.canvas, 0)
-        panel.SetSizer(sizer)
-        self.canvas_sizer = sizer
-
-        # Toolbar
-        tb = self.InitToolbar(can_open=False)
-        tb.AddSeparator()
-        # buttons
-        button = wx.Button(tb, ID.SHOW_SOURCES, "Sources")
-        button.Bind(wx.EVT_BUTTON, self.OnShowSources)
-        tb.AddControl(button)
-        SharedToolsMenu.AddToolbarButtons(self, tb)
-        # tail
-        tb.AddStretchableSpace()
-        self.InitToolbarTail(tb)
-        tb.Realize()
-
-        self.CreateStatusBar()
-
-        # Bind Events ---
-        self.doc.callbacks.subscribe('case_change', self.CaseChanged)
-        self.panel.Bind(wx.EVT_SIZE, self.OnPanelResize)
-        self.canvas.mpl_connect('axes_enter_event', self.OnPointerEntersAxes)
-        self.canvas.mpl_connect('axes_leave_event', self.OnPointerEntersAxes)
-        self.canvas.mpl_connect('button_press_event', self.OnCanvasClick)
-        self.canvas.mpl_connect('key_release_event', self.OnCanvasKey)
-        # re-Bind right click
-        self.canvas.Unbind(wx.EVT_RIGHT_DOWN)
-        self.canvas.Unbind(wx.EVT_RIGHT_UP)
-        self.canvas.Bind(wx.EVT_RIGHT_DOWN, self.OnRightDown)
-
-        # Finalize
-        self.plot()
-        self.UpdateTitle()
-        self.canvas.SetFocus()
-
-    def plot(self):
-        n = self.doc.ica.n_components_
-        n_types = len(self.doc.components_by_type)
-        fig = self.canvas.figure
-        fig.clf()
-
-        panel_w = self.panel.GetSize()[0]
-        n_h = max(2, panel_w // (self.ax_size * n_types))
-        n_v = int(ceil(n / n_h))
-
-        # adjust canvas size: each component cell is n_types topos wide
-        size = (self.ax_size * n_types * n_h, self.ax_size * n_v)
-        self.canvas_sizer.SetItemMinSize(self.canvas, size)
-
-        # plot: n_types axes per component, laid out on a n_v × (n_h*n_types) grid
-        total_cols = n_h * n_types
-        axes_per_comp = []
-        for i, accept in enumerate(self.doc.accept):
-            row = i // n_h
-            col = i % n_h
-            comp_axes = []
-            for j, (ch_type, comp_ndvar) in enumerate(self.doc.components_by_type):
-                x0 = (col * n_types + j) / total_cols
-                y0 = (n_v - 1 - row) / n_v
-                ax = fig.add_axes((x0, y0, 1 / total_cols, 1 / n_v))
-                layers = AxisData([DataLayer(comp_ndvar[i], PlotType.IMAGE)])
-                AxTopomap(ax, layers, **TOPO_ARGS)
-                p = Rectangle((0, 0), 1, 1, color=COLOR[accept], zorder=-1)
-                ax.add_patch(p)
-                ax.i = i
-                ax.background = p
-                if j == 0:
-                    ax.text(0.5, 1, "# %i" % i, ha='center', va='top')
-                comp_axes.append(ax)
-            axes_per_comp.append(comp_axes)
-
-        self.axes = axes_per_comp
-        self.n_h = n_h
-        self.canvas.store_canvas()
-        self.Layout()
-
-    def CaseChanged(self, index):
-        "Update the state of the segments on the current page"
-        if isinstance(index, INT_TYPES):
-            index = [index]
-        elif isinstance(index, slice):
-            start = index.start or 0
-            stop = index.stop or len(self.doc.components)
-            index = range(start, stop)
-        elif index.dtype.kind == 'b':
-            index = np.nonzero(index)[0]
-
-        # update epoch plots
-        axes = []
-        for idx in index:
-            for ax in self.axes[idx]:
-                ax.background.set_color(COLOR[self.doc.accept[idx]])
-                axes.append(ax)
-
-        if IS_OSX:
-            try:
-                self.canvas.redraw(axes)
-            except AttributeError:
-                self.canvas.draw()
-        else:
-            self.canvas.draw()  # FIXME: optimize on non-macOS systems
-
-    def FindTopComponent(self, i_epoch: int, only_accepted: bool = False):
-        components = self.doc.components
-        sources = self.doc.sources.sub(case=i_epoch)
-        if only_accepted:
-            components = components.sub(component=self.doc.accept)
-            sources = sources.sub(component=self.doc.accept)
-        comp_power = (components ** 2).sum('sensor')
-        source_power = (sources ** 2).sum('time')
-        epoch_comp_power = comp_power * source_power
-        top_component = epoch_comp_power.argmax()
-        self.GoToComponentEpoch(component=top_component)
-
-    def FindTopEpoch(self, i_comp: int):
-        source = self.doc.sources.sub(component=i_comp)
-        y = source - source.mean()
-        y **= 2
-        ss = y.sum('time')  # ndvar has epoch as index
-        self.GoToComponentEpoch(i_comp, ss.argmax())
-
-    def GoToComponentEpoch(self, component: int = None, epoch: int = None):
-        if not self.source_frame:
-            self.ShowSources(0)
-        self.source_frame.GoToComponentEpoch(component, epoch)
-
-    def MakeToolsMenu(self, menu):
-        app = wx.GetApp()
-        # show sources
-        item = menu.Append(wx.ID_ANY, "Source Viewer", "Open a source time course viewer window")
-        app.Bind(wx.EVT_MENU, self.OnShowSources, item)
-        # shared menu
-        menu.AppendSeparator()
-        SharedToolsMenu.MakeToolsMenu(self, menu)
-
-    def OnCanvasClick(self, event):
-        "Called by mouse clicks"
-        if event.button == 1:
-            if event.inaxes:
-                self.model.toggle(event.inaxes.i)
-
-    def OnCanvasKey(self, event):
-        if not event.inaxes:
-            return
-        if event.key == 't':
-            self.PlotCompTopomap(event.inaxes.i)
-        elif event.key == 'a':
-            self.PlotCompSourceArray(event.inaxes.i)
-        elif event.key == 's':
-            self.ShowSources(event.inaxes.i)
-        elif event.key == 'f':
-            self.PlotCompFFT(event.inaxes.i)
-        elif event.key == 'b':
-            self.PlotEpochButterfly()
-        elif event.key == 'B':
-            self.PlotConditionAverages(self)
-
-    def OnFindTopAcceptedComponent(self, event):
-        self.FindTopComponent(event.EventObject.i_epoch, only_accepted=True)
-
-    def OnFindTopComponent(self, event):
-        self.FindTopComponent(event.EventObject.i_epoch)
-
-    def OnFindTopEpoch(self, event):
-        self.FindTopEpoch(event.EventObject.i_comp)
-
-    def OnPanelResize(self, event):
-        w, h = event.GetSize()
-        n_types = len(self.doc.components_by_type)
-        n_h = w // (self.ax_size * n_types)
-        if n_h >= 2 and n_h != self.n_h:
-            self.plot()
-
-    def OnPlotCompFFT(self, event):
-        self.PlotCompFFT(event.EventObject.i_comp)
-
-    def OnPlotCompSourceArray(self, event):
-        self.PlotCompSourceArray(event.EventObject.i_comp)
-
-    def OnPlotCompTopomap(self, event):
-        self.PlotCompTopomap(event.EventObject.i_comp)
-
-    def OnPlotEpoch(self, event):
-        self.PlotEpochButterfly(event.EventObject.i_epoch)
-
-    def OnPointerEntersAxes(self, event):
-        try:
-            sb = self.GetStatusBar()
-        except RuntimeError:
-            return  # can be called after the window closes (Windows)
-        if event.inaxes:
-            sb.SetStatusText(f"#{event.inaxes.i} of {len(self.doc.components)} ICA Components")
-        else:
-            sb.SetStatusText(f"{len(self.doc.components)} ICA Components")
-
-    def OnRankEpochs(self, event):
-        i_comp = event.EventObject.i_comp
-        source = self.doc.sources.sub(component=i_comp)
-        y = source - source.mean()
-        y /= y.std()
-        y **= 2
-        ss = y.sum('time').x  # ndvar has epoch as index
-
-        # sort
-        sort = np.argsort(ss)[::-1]
-
-        # doc
-        lst = fmtxt.List(f"Epochs SS loading in descending order for component {i_comp}")
-        for i in sort:
-            link = fmtxt.Link(self.doc.epoch_labels[i], f'component:{i_comp} epoch:{i}')
-            lst.add_item(link + f': {ss[i]:.1f}')
-        doc = fmtxt.Section(f"#{i_comp} Ranked Epochs", lst)
-        InfoFrame(self, f"Component {i_comp} Epoch SS", doc, 200)
-
-    def _context_menu(self, i_comp: int = None, i_epoch: int = None):
-        menu = ContextMenu(i_comp, i_epoch)
-        if i_comp is not None:
-            item = menu.Append(wx.ID_ANY, "Top Epoch")
-            self.Bind(wx.EVT_MENU, self.OnFindTopEpoch, item)
-            item = menu.Append(wx.ID_ANY, "Rank Epochs")
-            self.Bind(wx.EVT_MENU, self.OnRankEpochs, item)
-            item = menu.Append(wx.ID_ANY, "Plot Topomap")
-            self.Bind(wx.EVT_MENU, self.OnPlotCompTopomap, item)
-            item = menu.Append(wx.ID_ANY, "Plot Source Array")
-            self.Bind(wx.EVT_MENU, self.OnPlotCompSourceArray, item)
-            item = menu.Append(wx.ID_ANY, "Plot Source FFT")
-            self.Bind(wx.EVT_MENU, self.OnPlotCompFFT, item)
-        if i_comp is not None and i_epoch is not None:
-            menu.AppendSeparator()
-        if i_epoch is not None:
-            item = menu.Append(wx.ID_ANY, "Top Component")
-            self.Bind(wx.EVT_MENU, self.OnFindTopComponent, item)
-            item = menu.Append(wx.ID_ANY, "Top Accepted Component")
-            self.Bind(wx.EVT_MENU, self.OnFindTopAcceptedComponent, item)
-            item = menu.Append(wx.ID_ANY, "Plot Epoch")
-            self.Bind(wx.EVT_MENU, self.OnPlotEpoch, item)
-        return menu
-
-    def OnRightDown(self, event):
-        mpl_event = self.canvas._to_matplotlib_event(event)
-        if not mpl_event.inaxes:
-            return
-        menu = self._context_menu(mpl_event.inaxes.i)
-        pos = self.panel.CalcScrolledPosition(event.Position)
-        self.PopupMenu(menu, pos)
-        menu.Destroy()
-
-    def OnShowSources(self, event):
-        self.ShowSources(0)
-
-    def OnUpdateUIOpen(self, event):
-        event.Enable(False)
-
-    def PlotCompFFT(self, i_comp):
-        plot.UTSStat(self.doc.sources.sub(component=i_comp).fft(), error=np.std, w=8, title=f"# {i_comp} Spectrum (±1 STD)", legend=False)
-
-    def PlotCompSourceArray(self, i_comp):
-        x = self.doc.sources.sub(component=i_comp)
-        dim = Categorial('epoch', self.doc.epoch_labels)
-        x = NDVar(x.x, (dim,) + x.dims[1:], x.info, x.name)
-        plot.Array(x, w=10, h=10,
-                   title='# %i' % i_comp, axtitle=False, interpolation='none')
-
-    def PlotCompTopomap(self, i_comp):
-        plot.Topomap(self.doc.components[i_comp], sensorlabels='name', axw=9, title=f'# {i_comp}')
-
-    def ShowSources(self, i_first):
-        if self.source_frame:
-            self.source_frame.Raise()
-        else:
-            self.source_frame = SourceFrame(self, i_first)
-
-
-class SourceFrame(SharedToolsMenu, FileFrameChild):
-    """Component source time course display for selecting ICA components.
-
-    * Click on components topographies to select/deselect them.
-    * Right-click for a context-menu.
-
-    *Keyboard shortcuts* in addition to the ones in the menu:
-
-    =========== ============================================================
-    Key         Effect
-    =========== ============================================================
-    arrows      scroll through components/epochs
-    alt+arrows  scroll to beginning/end
-    t           topomap plot of the component under the pointer
-    a           array-plot of the source time course of the component under
-                the pointer
-    f           plot the frequency spectrum for the component under the
-                pointer
-    b           butterfly plot of the original and cleaned data (of the
-                epoch under the pointer, or of the grand average if the
-                pointer is over other elements)
-    B           Butterfly plot of condition averages
-    =========== ============================================================
-    """
-    _doc_name = 'component selection'
-    _title = 'ICA Source Time Course'
-    _wildcard = "ICA fiff file (*-ica.fif)|*.fif"
-
-    def __init__(
-            self,
-            parent: Frame,
-            i_first: int,
-    ):
-        FileFrameChild.__init__(self, parent, None, None, parent.model)
-        SharedToolsMenu.__init__(self)
 
         # prepare canvas
         self.canvas = FigureCanvasPanel(self)
@@ -1021,22 +694,20 @@ class SourceFrame(SharedToolsMenu, FileFrameChild):
         self.figure.set_facecolor('white')
 
         # attributes
-        self.parent = parent
-        self.model = parent.model
-        self.doc = parent.model.doc
+        self.topo_frame = None
         self.n_comp_actual = self.n_comp = self.config.ReadInt('layout_n_comp', 10)
         self.n_comp_in_ica = len(self.doc.components)
-        self.i_first = i_first
+        self.i_first = 0
         self.n_epochs = self.config.ReadInt('layout_n_epochs', 20)
         self.i_first_epoch = 0
-        self.pad_time = 0  # need to pad x-axis when showing fewer epochs than fit on axis)
+        self.pad_time = 0
         self.n_epochs_in_data = len(self.doc.sources)
-        self.y_scale = self.config.ReadFloat('y_scale', 10)  # scale factor for y axis
+        self.y_scale = self.config.ReadFloat('y_scale', 10)
         self._marked_component_i = None
         self._marked_component_h = None
         self._marked_epoch_i = None
         self._marked_epoch_h = None
-        self.show_range = True  # show axis with pre/post ICA data range
+        self.show_range = True
 
         # Toolbar
         tb = self.InitToolbar(can_open=False)
@@ -1046,6 +717,9 @@ class SourceFrame(SharedToolsMenu, FileFrameChild):
         self.back_button = tb.AddTool(wx.ID_BACKWARD, "Back", Icon("tango/actions/go-previous"))
         self.next_button = tb.AddTool(wx.ID_FORWARD, "Next", Icon("tango/actions/go-next"))
         tb.AddSeparator()
+        button = wx.Button(tb, wx.ID_ANY, "Topographies")
+        button.Bind(wx.EVT_BUTTON, self.OnShowTopos)
+        tb.AddControl(button)
         SharedToolsMenu.AddToolbarButtons(self, tb)
         tb.AddStretchableSpace()
         self.InitToolbarTail(tb)
@@ -1066,7 +740,6 @@ class SourceFrame(SharedToolsMenu, FileFrameChild):
 
         self._plot()
         self.UpdateTitle()
-        self.Show()
 
     def _get_source_data(self):
         "Return ``(source_data, epoch-labels)`` tuple for current page"
@@ -1244,15 +917,34 @@ class SourceFrame(SharedToolsMenu, FileFrameChild):
         elif index.dtype.kind == 'b':
             index = np.nonzero(index)[0]
 
-        # filter to visible epochs
+        # filter to visible components
         i_last = self.i_first + self.n_comp_actual
         index = [i_comp for i_comp in index if self.i_first <= i_comp <= i_last]
-        # update epoch plots
+        # update line colors
         if index:
             for i_comp in index:
                 self.lines[i_comp - self.i_first].set_color(LINE_COLOR[self.doc.accept[i_comp]])
             self._plot_update_clean_range()
             self.canvas.draw()
+
+    def FindTopComponent(self, i_epoch: int, only_accepted: bool = False):
+        components = self.doc.components
+        sources = self.doc.sources.sub(case=i_epoch)
+        if only_accepted:
+            components = components.sub(component=self.doc.accept)
+            sources = sources.sub(component=self.doc.accept)
+        comp_power = (components ** 2).sum('sensor')
+        source_power = (sources ** 2).sum('time')
+        epoch_comp_power = comp_power * source_power
+        top_component = epoch_comp_power.argmax()
+        self.GoToComponentEpoch(component=top_component)
+
+    def FindTopEpoch(self, i_comp: int):
+        source = self.doc.sources.sub(component=i_comp)
+        y = source - source.mean()
+        y **= 2
+        ss = y.sum('time')  # ndvar has epoch as index
+        self.GoToComponentEpoch(i_comp, ss.argmax())
 
     def GoToComponentEpoch(self, component: int = None, epoch: int = None):
         if component is not None:
@@ -1262,6 +954,13 @@ class SourceFrame(SharedToolsMenu, FileFrameChild):
             self._marked_epoch_i = epoch
             self.SetFirstEpoch(epoch // self.n_epochs * self.n_epochs)
         self.Raise()
+
+    def MakeToolsMenu(self, menu):
+        app = wx.GetApp()
+        item = menu.Append(wx.ID_ANY, "Component Topographies", "Open component topography view")
+        app.Bind(wx.EVT_MENU, self.OnShowTopos, item)
+        menu.AppendSeparator()
+        SharedToolsMenu.MakeToolsMenu(self, menu)
 
     def OnBackward(self, event):
         "Turn the page backward"
@@ -1291,7 +990,7 @@ class SourceFrame(SharedToolsMenu, FileFrameChild):
             if self.CanBackward():
                 self.OnBackward(None)
         elif event.key == 'B':
-            self.parent.PlotConditionAverages(self)
+            self.PlotConditionAverages(self)
         elif event.key == 'b':
             self.PlotEpochButterfly(self._event_i_epoch(event))
         elif not event.inaxes:
@@ -1301,11 +1000,11 @@ class SourceFrame(SharedToolsMenu, FileFrameChild):
         if i_comp is None:  # source time course axes
             return
         elif event.key in 'tT':
-            self.parent.PlotCompTopomap(i_comp)
+            self.PlotCompTopomap(i_comp)
         elif event.key == 'a':
-            self.parent.PlotCompSourceArray(i_comp)
+            self.PlotCompSourceArray(i_comp)
         elif event.key == 'f':
-            self.parent.PlotCompFFT(i_comp)
+            self.PlotCompFFT(i_comp)
 
     def OnClose(self, event):
         if super().OnClose(event):
@@ -1316,8 +1015,17 @@ class SourceFrame(SharedToolsMenu, FileFrameChild):
             self.config.Flush()
 
     def OnDown(self, event):
-        "Turn the page backward"
+        "Turn the page forward in components"
         self.SetFirstComponent(self.i_first + self.n_comp)
+
+    def OnFindTopAcceptedComponent(self, event):
+        self.FindTopComponent(event.EventObject.i_epoch, only_accepted=True)
+
+    def OnFindTopComponent(self, event):
+        self.FindTopComponent(event.EventObject.i_epoch)
+
+    def OnFindTopEpoch(self, event):
+        self.FindTopEpoch(event.EventObject.i_comp)
 
     def OnForward(self, event):
         "Turn the page forward"
@@ -1331,13 +1039,44 @@ class SourceFrame(SharedToolsMenu, FileFrameChild):
             return
         self.model.toggle(i_comp)
 
+    def OnPlotCompFFT(self, event):
+        self.PlotCompFFT(event.EventObject.i_comp)
+
+    def OnPlotCompSourceArray(self, event):
+        self.PlotCompSourceArray(event.EventObject.i_comp)
+
+    def OnPlotCompTopomap(self, event):
+        self.PlotCompTopomap(event.EventObject.i_comp)
+
+    def OnPlotEpoch(self, event):
+        self.PlotEpochButterfly(event.EventObject.i_epoch)
+
+    def OnRankEpochs(self, event):
+        i_comp = event.EventObject.i_comp
+        source = self.doc.sources.sub(component=i_comp)
+        y = source - source.mean()
+        y /= y.std()
+        y **= 2
+        ss = y.sum('time').x  # ndvar has epoch as index
+
+        # sort
+        sort = np.argsort(ss)[::-1]
+
+        # doc
+        lst = fmtxt.List(f"Epochs SS loading in descending order for component {i_comp}")
+        for i in sort:
+            link = fmtxt.Link(self.doc.epoch_labels[i], f'component:{i_comp} epoch:{i}')
+            lst.add_item(link + f': {ss[i]:.1f}')
+        doc = fmtxt.Section(f"#{i_comp} Ranked Epochs", lst)
+        InfoFrame(self, f"Component {i_comp} Epoch SS", doc, 200)
+
     def OnRightDown(self, event):
         mpl_event = self.canvas._to_matplotlib_event(event)
         i_comp = self._event_i_comp(mpl_event)
         i_epoch = self._event_i_epoch(mpl_event)
         if i_comp is None and i_epoch is None:
             return
-        menu = self.parent._context_menu(i_comp, i_epoch)
+        menu = self._context_menu(i_comp, i_epoch)
         self.PopupMenu(menu, event.Position)
         menu.Destroy()
 
@@ -1393,8 +1132,11 @@ class SourceFrame(SharedToolsMenu, FileFrameChild):
             # redraw
             self.SetFirstEpoch(self.i_first_epoch)
 
+    def OnShowTopos(self, event):
+        self.ShowTopos()
+
     def OnUp(self, event):
-        "Turn the page backward"
+        "Turn the page backward in components"
         self.SetFirstComponent(self.i_first - self.n_comp)
 
     def OnUpdateUIBackward(self, event):
@@ -1406,6 +1148,9 @@ class SourceFrame(SharedToolsMenu, FileFrameChild):
     def OnUpdateUIForward(self, event):
         event.Enable(self.CanForward())
 
+    def OnUpdateUIOpen(self, event):
+        event.Enable(False)
+
     def OnUpdateUISetLayout(self, event):
         event.Enable(True)
 
@@ -1414,6 +1159,19 @@ class SourceFrame(SharedToolsMenu, FileFrameChild):
 
     def OnUpdateUIUp(self, event):
         event.Enable(self.CanUp())
+
+    def PlotCompFFT(self, i_comp):
+        plot.UTSStat(self.doc.sources.sub(component=i_comp).fft(), error=np.std, w=8, title=f"# {i_comp} Spectrum (±1 STD)", legend=False)
+
+    def PlotCompSourceArray(self, i_comp):
+        x = self.doc.sources.sub(component=i_comp)
+        dim = Categorial('epoch', self.doc.epoch_labels)
+        x = NDVar(x.x, (dim,) + x.dims[1:], x.info, x.name)
+        plot.Array(x, w=10, h=10,
+                   title='# %i' % i_comp, axtitle=False, interpolation='none')
+
+    def PlotCompTopomap(self, i_comp):
+        plot.Topomap(self.doc.components[i_comp], sensorlabels='name', axw=9, title=f'# {i_comp}')
 
     def SetFirstComponent(self, i_first):
         if i_first < 0:
@@ -1502,6 +1260,290 @@ class SourceFrame(SharedToolsMenu, FileFrameChild):
         self.ax_tc.set_xticklabels(tick_labels)
         self.ax_tc.set_ylim(self.ax_tc_ylim)
         self.canvas.draw()
+
+    def ShowTopos(self):
+        if self.topo_frame:
+            self.topo_frame.Raise()
+        else:
+            self.topo_frame = TopoFrame(self)
+
+    def _context_menu(self, i_comp: int = None, i_epoch: int = None):
+        menu = ContextMenu(i_comp, i_epoch)
+        if i_comp is not None:
+            item = menu.Append(wx.ID_ANY, "Top Epoch")
+            self.Bind(wx.EVT_MENU, self.OnFindTopEpoch, item)
+            item = menu.Append(wx.ID_ANY, "Rank Epochs")
+            self.Bind(wx.EVT_MENU, self.OnRankEpochs, item)
+            item = menu.Append(wx.ID_ANY, "Plot Topomap")
+            self.Bind(wx.EVT_MENU, self.OnPlotCompTopomap, item)
+            item = menu.Append(wx.ID_ANY, "Plot Source Array")
+            self.Bind(wx.EVT_MENU, self.OnPlotCompSourceArray, item)
+            item = menu.Append(wx.ID_ANY, "Plot Source FFT")
+            self.Bind(wx.EVT_MENU, self.OnPlotCompFFT, item)
+        if i_comp is not None and i_epoch is not None:
+            menu.AppendSeparator()
+        if i_epoch is not None:
+            item = menu.Append(wx.ID_ANY, "Top Component")
+            self.Bind(wx.EVT_MENU, self.OnFindTopComponent, item)
+            item = menu.Append(wx.ID_ANY, "Top Accepted Component")
+            self.Bind(wx.EVT_MENU, self.OnFindTopAcceptedComponent, item)
+            item = menu.Append(wx.ID_ANY, "Plot Epoch")
+            self.Bind(wx.EVT_MENU, self.OnPlotEpoch, item)
+        return menu
+
+
+class TopoFrame(SharedToolsMenu, FileFrameChild):
+    """Component topography view for selecting ICA components.
+
+    * Click on component topographies to select/deselect them.
+    * Right-click for a context-menu.
+
+    *Keyboard shortcuts* in addition to the ones in the menu:
+
+    =========== ============================================================
+    Key         Effect
+    =========== ============================================================
+    t           topomap plot of the component under the pointer
+    a           array-plot of the source time course of the component
+    s           go to the component under the cursor in the source viewer
+    f           plot the frequency spectrum for the component under the
+                pointer
+    b           butterfly plot of grand average (original and cleaned)
+    B           butterfly plot of condition averages
+    =========== ============================================================
+    """
+    _doc_name = 'component selection'
+    _title = 'Component Topographies'
+    _wildcard = "ICA fiff file (*-ica.fif)|*.fif"
+
+    def __init__(self, parent: Frame):
+        FileFrameChild.__init__(self, parent, None, None, parent.model)
+        SharedToolsMenu.__init__(self)
+        self.parent = parent
+
+        # setup layout
+        self.ax_size = 200
+        figsize = (10, 10)
+        self.SetMinSize((400, 400))
+
+        # setup scrolled panel
+        panel = ScrolledPanel(self)
+        self.panel = panel
+
+        # setup figure canvas
+        self.canvas = FigureCanvasPanel(panel, figsize=figsize)
+        self.canvas.figure.subplots_adjust(0, 0, 1, 1, 0, 0)
+        panel.SetupScrolling(False, scrollToTop=False, scrollIntoView=False)
+
+        # sizer
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(self.canvas, 0)
+        panel.SetSizer(sizer)
+        self.canvas_sizer = sizer
+
+        # Toolbar
+        tb = self.InitToolbar(can_open=False)
+        tb.AddSeparator()
+        SharedToolsMenu.AddToolbarButtons(self, tb)
+        tb.AddStretchableSpace()
+        self.InitToolbarTail(tb)
+        tb.Realize()
+
+        self.CreateStatusBar()
+
+        # Bind Events ---
+        self.doc.callbacks.subscribe('case_change', self.CaseChanged)
+        self.panel.Bind(wx.EVT_SIZE, self.OnPanelResize)
+        self.canvas.mpl_connect('axes_enter_event', self.OnPointerEntersAxes)
+        self.canvas.mpl_connect('axes_leave_event', self.OnPointerEntersAxes)
+        self.canvas.mpl_connect('button_press_event', self.OnCanvasClick)
+        self.canvas.mpl_connect('key_release_event', self.OnCanvasKey)
+        # re-Bind right click
+        self.canvas.Unbind(wx.EVT_RIGHT_DOWN)
+        self.canvas.Unbind(wx.EVT_RIGHT_UP)
+        self.canvas.Bind(wx.EVT_RIGHT_DOWN, self.OnRightDown)
+
+        # Finalize
+        self.plot()
+        self.UpdateTitle()
+        self.canvas.SetFocus()
+        self.Show()
+
+    def plot(self):
+        n = self.doc.ica.n_components_
+        n_types = len(self.doc.components_by_type)
+        fig = self.canvas.figure
+        fig.clf()
+
+        panel_w = self.panel.GetSize()[0]
+        n_h = max(2, panel_w // (self.ax_size * n_types))
+        n_v = int(ceil(n / n_h))
+
+        # adjust canvas size: each component cell is n_types topos wide
+        size = (self.ax_size * n_types * n_h, self.ax_size * n_v)
+        self.canvas_sizer.SetItemMinSize(self.canvas, size)
+
+        # plot: n_types axes per component, laid out on a n_v × (n_h*n_types) grid
+        total_cols = n_h * n_types
+        axes_per_comp = []
+        for i, accept in enumerate(self.doc.accept):
+            row = i // n_h
+            col = i % n_h
+            comp_axes = []
+            for j, (ch_type, comp_ndvar) in enumerate(self.doc.components_by_type):
+                x0 = (col * n_types + j) / total_cols
+                y0 = (n_v - 1 - row) / n_v
+                ax = fig.add_axes((x0, y0, 1 / total_cols, 1 / n_v))
+                layers = AxisData([DataLayer(comp_ndvar[i], PlotType.IMAGE)])
+                AxTopomap(ax, layers, **TOPO_ARGS)
+                p = Rectangle((0, 0), 1, 1, color=COLOR[accept], zorder=-1)
+                ax.add_patch(p)
+                ax.i = i
+                ax.background = p
+                if j == 0:
+                    ax.text(0.5, 1, "# %i" % i, ha='center', va='top')
+                comp_axes.append(ax)
+            axes_per_comp.append(comp_axes)
+
+        self.axes = axes_per_comp
+        self.n_h = n_h
+        self.canvas.store_canvas()
+        self.Layout()
+
+    def CaseChanged(self, index):
+        "Update the state of the segments on the current page"
+        if isinstance(index, INT_TYPES):
+            index = [index]
+        elif isinstance(index, slice):
+            start = index.start or 0
+            stop = index.stop or len(self.doc.components)
+            index = range(start, stop)
+        elif index.dtype.kind == 'b':
+            index = np.nonzero(index)[0]
+
+        # update topo backgrounds
+        axes = []
+        for idx in index:
+            for ax in self.axes[idx]:
+                ax.background.set_color(COLOR[self.doc.accept[idx]])
+                axes.append(ax)
+
+        if IS_OSX:
+            try:
+                self.canvas.redraw(axes)
+            except AttributeError:
+                self.canvas.draw()
+        else:
+            self.canvas.draw()  # FIXME: optimize on non-macOS systems
+
+    def GoToComponentEpoch(self, component: int = None, epoch: int = None):
+        self.parent.GoToComponentEpoch(component, epoch)
+
+    def MakeToolsMenu(self, menu):
+        SharedToolsMenu.MakeToolsMenu(self, menu)
+
+    def OnCanvasClick(self, event):
+        "Called by mouse clicks"
+        if event.button == 1:
+            if event.inaxes:
+                self.model.toggle(event.inaxes.i)
+
+    def OnCanvasKey(self, event):
+        if not event.inaxes:
+            return
+        if event.key == 't':
+            self.parent.PlotCompTopomap(event.inaxes.i)
+        elif event.key == 'a':
+            self.parent.PlotCompSourceArray(event.inaxes.i)
+        elif event.key == 's':
+            self.parent.GoToComponentEpoch(component=event.inaxes.i)
+            self.parent.Raise()
+        elif event.key == 'f':
+            self.parent.PlotCompFFT(event.inaxes.i)
+        elif event.key == 'b':
+            self.parent.PlotEpochButterfly()
+        elif event.key == 'B':
+            self.parent.PlotConditionAverages(self)
+
+    def OnClose(self, event):
+        if super().OnClose(event):
+            self.doc.callbacks.remove('case_change', self.CaseChanged)
+            self.parent.topo_frame = None
+
+    def OnFindTopEpoch(self, event):
+        self.parent.FindTopEpoch(event.EventObject.i_comp)
+
+    def OnPanelResize(self, event):
+        w, h = event.GetSize()
+        n_types = len(self.doc.components_by_type)
+        n_h = w // (self.ax_size * n_types)
+        if n_h >= 2 and n_h != self.n_h:
+            self.plot()
+
+    def OnPlotCompFFT(self, event):
+        self.parent.PlotCompFFT(event.EventObject.i_comp)
+
+    def OnPlotCompSourceArray(self, event):
+        self.parent.PlotCompSourceArray(event.EventObject.i_comp)
+
+    def OnPlotCompTopomap(self, event):
+        self.parent.PlotCompTopomap(event.EventObject.i_comp)
+
+    def OnPointerEntersAxes(self, event):
+        try:
+            sb = self.GetStatusBar()
+        except RuntimeError:
+            return  # can be called after the window closes (Windows)
+        if event.inaxes:
+            sb.SetStatusText(f"#{event.inaxes.i} of {len(self.doc.components)} ICA Components")
+        else:
+            sb.SetStatusText(f"{len(self.doc.components)} ICA Components")
+
+    def OnRankEpochs(self, event):
+        i_comp = event.EventObject.i_comp
+        source = self.doc.sources.sub(component=i_comp)
+        y = source - source.mean()
+        y /= y.std()
+        y **= 2
+        ss = y.sum('time').x  # ndvar has epoch as index
+
+        # sort
+        sort = np.argsort(ss)[::-1]
+
+        # doc
+        lst = fmtxt.List(f"Epochs SS loading in descending order for component {i_comp}")
+        for i in sort:
+            link = fmtxt.Link(self.doc.epoch_labels[i], f'component:{i_comp} epoch:{i}')
+            lst.add_item(link + f': {ss[i]:.1f}')
+        doc = fmtxt.Section(f"#{i_comp} Ranked Epochs", lst)
+        InfoFrame(self, f"Component {i_comp} Epoch SS", doc, 200)
+
+    def OnRightDown(self, event):
+        mpl_event = self.canvas._to_matplotlib_event(event)
+        if not mpl_event.inaxes:
+            return
+        i_comp = mpl_event.inaxes.i
+        menu = self._context_menu(i_comp)
+        pos = self.panel.CalcScrolledPosition(event.Position)
+        self.PopupMenu(menu, pos)
+        menu.Destroy()
+
+    def OnUpdateUIOpen(self, event):
+        event.Enable(False)
+
+    def _context_menu(self, i_comp: int):
+        menu = ContextMenu(i_comp)
+        item = menu.Append(wx.ID_ANY, "Top Epoch")
+        self.Bind(wx.EVT_MENU, self.OnFindTopEpoch, item)
+        item = menu.Append(wx.ID_ANY, "Rank Epochs")
+        self.Bind(wx.EVT_MENU, self.OnRankEpochs, item)
+        item = menu.Append(wx.ID_ANY, "Plot Topomap")
+        self.Bind(wx.EVT_MENU, self.OnPlotCompTopomap, item)
+        item = menu.Append(wx.ID_ANY, "Plot Source Array")
+        self.Bind(wx.EVT_MENU, self.OnPlotCompSourceArray, item)
+        item = menu.Append(wx.ID_ANY, "Plot Source FFT")
+        self.Bind(wx.EVT_MENU, self.OnPlotCompFFT, item)
+        return menu
 
 
 class FindNoisyEpochsDialog(EelbrainDialog):
