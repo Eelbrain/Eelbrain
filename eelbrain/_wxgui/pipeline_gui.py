@@ -1,14 +1,21 @@
 """Pipeline supervisor GUI launched by ``eelbrain-gui``."""
 import traceback
 import threading
+from pathlib import Path
 
+import mne
 import wx
 
 from .. import load
+from .._experiment.derivative_cache import ProtectedArtifactError
 from .._experiment.epochs import PrimaryEpoch
 from .._experiment.preprocessing import RawICA, ica_input_name
 from .frame import EelbrainFrame
-from .utils import TracebackDialog
+from .utils import StaleICADialog, TracebackDialog
+
+
+class _AbortRequested(Exception):
+    """Raised in the refresh thread when the user clicks Abort."""
 
 
 class PipelineFrame(EelbrainFrame):
@@ -198,7 +205,7 @@ class PipelineFrame(EelbrainFrame):
             idx = self._list.InsertItem(self._list.GetItemCount(), row[0])
             for col, val in enumerate(row[1:], 1):
                 self._list.SetItem(idx, col, val)
-            if task_type == 'ica' and row[3] == '0':
+            if task_type == 'ica' and row[1] == 'selected' and row[3] == '0':
                 self._list.SetItemTextColour(idx, wx.RED)
         self._refresh_status_bar()
 
@@ -268,6 +275,8 @@ class PipelineFrame(EelbrainFrame):
     def _refresh_thread(self, token, task_type, task_key, epoch_name, raw_name):
         try:
             rows = self._compute_rows(token, task_type, task_key, epoch_name, raw_name)
+        except _AbortRequested:
+            return  # app exit already scheduled
         except Exception:
             tb = traceback.format_exc()
             wx.CallAfter(self._show_error, tb)
@@ -280,6 +289,44 @@ class PipelineFrame(EelbrainFrame):
         dlg.ShowModal()
         dlg.Destroy()
 
+    def _handle_stale_ica(self, subject: str, error: ProtectedArtifactError, pipeline) -> tuple:
+        """Show StaleICADialog on the main thread; block until the user decides.
+
+        Returns a table row tuple for the subject.
+        """
+        result = [None]
+        ready = threading.Event()
+
+        def show():
+            dlg = StaleICADialog(
+                self, subject,
+                error.message or str(error),
+                error.instructions or '',
+            )
+            dlg.ShowModal()
+            result[0] = dlg.choice
+            dlg.Destroy()
+            ready.set()
+
+        wx.CallAfter(show)
+        ready.wait()
+        choice = result[0]
+
+        if choice == StaleICADialog.ABORT:
+            wx.CallAfter(wx.GetApp().ExitMainLoop)
+            raise _AbortRequested()
+        elif choice == StaleICADialog.DELETE:
+            Path(error.path).unlink()
+            return (subject, 'no ICA', '—', '—')
+        elif choice == StaleICADialog.INCORPORATE:
+            ica = pipeline.load_ica(accept_stale=True)
+            return (subject, 'selected', str(ica.n_components_), str(len(ica.exclude)))
+        elif choice == StaleICADialog.IGNORE:
+            ica = mne.preprocessing.read_ica(error.path)
+            return (subject, 'stale', str(ica.n_components_), str(len(ica.exclude)))
+        else:  # dialog dismissed without a choice
+            return (subject, 'stale', '—', '—')
+
     def _compute_rows(self, token, task_type, task_key, epoch_name, raw_name):
         pipeline = self._pipeline
         rows = []
@@ -291,9 +338,13 @@ class PipelineFrame(EelbrainFrame):
                 ctx = pipeline._resolve_derivative(ica_input_name(task_key))
                 status = ctx.load(view='status')
                 if status == 'ok':
-                    ica = ctx.load()
-                    rows.append((subject, 'selected',
-                                 str(ica.n_components_), str(len(ica.exclude))))
+                    try:
+                        ica = ctx.load()
+                        rows.append((subject, 'selected',
+                                     str(ica.n_components_), str(len(ica.exclude))))
+                    except ProtectedArtifactError as error:
+                        row = self._handle_stale_ica(subject, error, pipeline)
+                        rows.append(row)
                 elif status == 'missing-ica':
                     rows.append((subject, 'no ICA', '—', '—'))
                 else:

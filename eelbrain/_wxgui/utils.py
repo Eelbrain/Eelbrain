@@ -79,6 +79,73 @@ class TracebackDialog(wx.Dialog):
             wx.TheClipboard.Close()
 
 
+class StaleICADialog(wx.Dialog):
+    """Ask the user how to handle a stale ICA file.
+
+    After :meth:`ShowModal` returns, read :attr:`choice` for the user's
+    decision: one of the :attr:`DELETE`, :attr:`INCORPORATE`, or :attr:`IGNORE`
+    class constants, or ``None`` if the dialog was dismissed.
+    """
+
+    ABORT = 'abort'
+    DELETE = 'delete'
+    INCORPORATE = 'incorporate'
+    IGNORE = 'ignore'
+
+    def __init__(self, parent, subject: str, message: str, instructions: str = ''):
+        super().__init__(
+            parent, title=f"Stale ICA: {subject}",
+            style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
+        )
+        self.choice = None
+
+        vbox = wx.BoxSizer(wx.VERTICAL)
+
+        msg_label = wx.StaticText(self, label=message)
+        msg_label.Wrap(540)
+        vbox.Add(msg_label, flag=wx.ALL, border=12)
+
+        if instructions:
+            instr = wx.TextCtrl(self, value=instructions, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_WORDWRAP)
+            instr.SetMinSize((-1, 100))
+            vbox.Add(instr, proportion=1, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=12)
+
+        vbox.Add(wx.StaticLine(self), flag=wx.EXPAND)
+
+        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+
+        del_btn = wx.Button(self, label="Delete")
+        del_btn.SetToolTip("Delete the stale ICA file. The ICA will need to be recomputed.")
+        del_btn.Bind(wx.EVT_BUTTON, lambda e: self._choose(self.DELETE))
+        btn_sizer.Add(del_btn, flag=wx.RIGHT, border=8)
+
+        inc_btn = wx.Button(self, label="Incorporate")
+        inc_btn.SetToolTip("Accept the existing ICA and update its record to match the current pipeline state.")
+        inc_btn.Bind(wx.EVT_BUTTON, lambda e: self._choose(self.INCORPORATE))
+        btn_sizer.Add(inc_btn, flag=wx.RIGHT, border=8)
+
+        ign_btn = wx.Button(self, label="Ignore")
+        ign_btn.SetToolTip("Load the ICA for display only, without modifying its record on disk.")
+        ign_btn.Bind(wx.EVT_BUTTON, lambda e: self._choose(self.IGNORE))
+        btn_sizer.Add(ign_btn, flag=wx.RIGHT, border=8)
+
+        btn_sizer.AddStretchSpacer()
+
+        abort_btn = wx.Button(self, label="Abort")
+        abort_btn.SetToolTip("Quit the application immediately.")
+        abort_btn.Bind(wx.EVT_BUTTON, lambda e: self._choose(self.ABORT))
+        btn_sizer.Add(abort_btn, border=8)
+
+        vbox.Add(btn_sizer, flag=wx.ALL, border=12)
+
+        self.SetSizerAndFit(vbox)
+        self.SetMinSize((420, -1))
+
+    def _choose(self, choice: str):
+        self.choice = choice
+        self.EndModal(0)
+
+
 class FloatValidator(wx.Validator):
 
     def __init__(self, parent, attr):

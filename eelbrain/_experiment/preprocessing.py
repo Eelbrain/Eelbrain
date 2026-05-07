@@ -570,6 +570,43 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         return None
 
     @staticmethod
+    def _coarsen_diff(
+            path: tuple[str, ...],
+            old_val: Any,
+            new_val: Any,
+            old_root: Any,
+            new_root: Any,
+    ) -> tuple[tuple[str, ...], Any, Any]:
+        """When a diff path ends in list indices, return the parent list instead.
+
+        E.g. ``('bads', '[5]'), 'FT9', 'FT10'`` becomes ``('bads',), ['FT9', ...], ['FT10', ...]``.
+        """
+        trimmed = path
+        while trimmed and trimmed[-1].startswith('['):
+            trimmed = trimmed[:-1]
+        if trimmed == path:
+            return path, old_val, new_val
+
+        def nav(data: Any, p: tuple[str, ...]) -> Any:
+            for key in p:
+                if data is None:
+                    return None
+                if key.startswith('['):
+                    idx = int(key[1:-1])
+                    data = data[idx] if isinstance(data, list) and idx < len(data) else None
+                elif isinstance(data, dict):
+                    data = data.get(key)
+                else:
+                    return None
+            return data
+
+        old_parent = nav(old_root, trimmed)
+        new_parent = nav(new_root, trimmed)
+        if old_parent is None and new_parent is None:
+            return path, old_val, new_val
+        return trimmed, old_parent, new_parent
+
+    @staticmethod
     def _format_difference_path(path: tuple[str, ...], strip_prefix: tuple[str, ...] = ()) -> str:
         parts = list(path)
         if strip_prefix and tuple(parts[:len(strip_prefix)]) == strip_prefix:
@@ -601,7 +638,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
 
         diff = self._first_difference(previous.dependencies, current.dependencies)
         if diff is not None:
-            path, old, new = diff
+            path, old, new = self._coarsen_diff(*diff, previous.dependencies, current.dependencies)
             dep = path[0]
             if dep.endswith(':raw'):
                 raw_name = self._dependency_raw_name(previous, current, dep)
@@ -612,9 +649,21 @@ class ICAInput(Input[mne.preprocessing.ICA]):
 
         diff = self._first_difference(previous.fingerprint, current.fingerprint)
         if diff is not None:
-            path, old, new = diff
+            path, old, new = self._coarsen_diff(*diff, previous.fingerprint, current.fingerprint)
             if path == ('bads',):
-                return f"The set of bad channels used for ICA estimation changed ({old!r} -> {new!r})."
+                old_set = set(old or [])
+                new_set = set(new or [])
+                removed = sorted(old_set - new_set)
+                added = sorted(new_set - old_set)
+                shared = sorted(old_set & new_set)
+                lines = ["The set of bad channels used for ICA estimation changed."]
+                if shared:
+                    lines.append(f"  shared: {', '.join(shared)}")
+                if added:
+                    lines.append(f"  added: {', '.join(added)}")
+                if removed:
+                    lines.append(f"  removed: {', '.join(removed)}")
+                return '\n'.join(lines)
             field = self._format_difference_path(path)
             return f"The recorded ICA settings changed ({field}: {old!r} -> {new!r})."
 
@@ -722,7 +771,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
                 ctx.registry.write_manifest(ctx.registry.manifest_path(path), current)
                 return value
             reason = self._stale_reason(previous, current)
-            raise ProtectedArtifactError(self.name, path, message=f"Existing ICA file {path.name!r} no longer matches the current data and ICA settings.", instructions=f"{reason} To make this ICA match the current pipeline again, revert the raw pipeline change or recompute the ICA. To keep using this existing ICA anyway, call e.load_ica(raw={self.raw_name!r}, accept_stale=True) once or run e.make_ica(raw={self.raw_name!r}) and choose 'incorporate'. To recompute it from the current data, run e.make_ica(raw={self.raw_name!r}) and choose 'overwrite'.")
+            raise ProtectedArtifactError(self.name, path, message=f"Existing ICA file {path.name!r} no longer matches the current data and ICA settings.", instructions=f"{reason}\nTo make this ICA match the current pipeline again, revert the raw pipeline change or recompute the ICA. To keep using this existing ICA anyway, call e.load_ica(raw={self.raw_name!r}, accept_stale=True) once or run e.make_ica(raw={self.raw_name!r}) and choose 'incorporate'. To recompute it from the current data, run e.make_ica(raw={self.raw_name!r}) and choose 'overwrite'.")
         return value
 
     def load_view(
@@ -785,7 +834,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
                 ctx.registry.write_manifest(ctx.registry.manifest_path(path), current)
                 return value
             reason = self._stale_reason(previous, current)
-            raise ProtectedArtifactError(self.name, path, message=f"Existing ICA file {path.name!r} no longer matches the current data and ICA settings.", instructions=f"{reason} Use allow_protected_reindex=True to keep this ICA file and rewrite its manifest, or allow_protected_overwrite=True to recompute it.")
+            raise ProtectedArtifactError(self.name, path, message=f"Existing ICA file {path.name!r} no longer matches the current data and ICA settings.", instructions=f"{reason}\nUse allow_protected_reindex=True to keep this ICA file and rewrite its manifest, or allow_protected_overwrite=True to recompute it.")
         raw = self.load_concatenated_source_raw(ctx, self.pipe.task)
         value = self.pipe._fit_ica(raw, ctx.state['subject'], self.raw_name)
         path.parent.mkdir(parents=True, exist_ok=True)
