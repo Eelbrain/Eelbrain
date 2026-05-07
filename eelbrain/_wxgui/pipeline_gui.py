@@ -29,6 +29,7 @@ class PipelineFrame(EelbrainFrame):
         super().__init__(parent=None, title=f"Pipeline: {pipeline.root}")
         self._pipeline = pipeline
         self._refresh_token = None  # replaced each refresh; threads compare identity
+        self._compute_token = None  # replaced each make-ICA run; threads compare identity
         self._tasks = []  # list of (task_type, task_key)
 
         self._init_ui()
@@ -39,6 +40,7 @@ class PipelineFrame(EelbrainFrame):
 
         self.SetSize((600, 440))
         self.Centre()
+        self.Bind(wx.EVT_CLOSE, self._on_close)
 
     # ------------------------------------------------------------------
     # UI construction
@@ -78,10 +80,24 @@ class PipelineFrame(EelbrainFrame):
             toolbar.Add(widget, flag=wx.ALIGN_CENTER_VERTICAL | wx.LEFT, border=border)
 
         toolbar.AddStretchSpacer()
-        refresh_btn = wx.Button(self._panel, label="↺", style=wx.BU_EXACTFIT)
-        refresh_btn.SetToolTip("Refresh status")
-        refresh_btn.Bind(wx.EVT_BUTTON, self._on_refresh)
-        toolbar.Add(refresh_btn, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=8)
+
+        # Make ICA button + progress (ICA tasks only)
+        self._make_ica_btn = wx.Button(self._panel, label="Make ICA", style=wx.BU_EXACTFIT)
+        self._make_ica_btn.SetToolTip("Compute ICA for all subjects with missing files")
+        self._make_ica_btn.Bind(wx.EVT_BUTTON, self._on_make_ica)
+        toolbar.Add(self._make_ica_btn, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=6)
+
+        self._progress_gauge = wx.Gauge(self._panel, style=wx.GA_HORIZONTAL | wx.GA_SMOOTH)
+        self._progress_gauge.SetMinSize((100, -1))
+        toolbar.Add(self._progress_gauge, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=4)
+
+        self._progress_label = wx.StaticText(self._panel, label="")
+        toolbar.Add(self._progress_label, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=8)
+
+        self._refresh_btn = wx.Button(self._panel, label="↺", style=wx.BU_EXACTFIT)
+        self._refresh_btn.SetToolTip("Refresh status")
+        self._refresh_btn.Bind(wx.EVT_BUTTON, self._on_refresh)
+        toolbar.Add(self._refresh_btn, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=8)
 
         vbox.Add(toolbar, flag=wx.EXPAND | wx.TOP | wx.BOTTOM, border=6)
         vbox.Add(wx.StaticLine(self._panel), flag=wx.EXPAND)
@@ -98,7 +114,8 @@ class PipelineFrame(EelbrainFrame):
         self.CreateStatusBar()
 
         for w in (self._epoch_label, self._epoch_choice,
-                  self._raw_label, self._raw_choice):
+                  self._raw_label, self._raw_choice,
+                  self._make_ica_btn, self._progress_gauge, self._progress_label):
             w.Hide()
 
     # ------------------------------------------------------------------
@@ -140,12 +157,14 @@ class PipelineFrame(EelbrainFrame):
 
     def _on_task_changed(self, event):
         task_type, _ = self._current_task()
+        self._stop_make_ica()
         show_extra = task_type == 'epoch_rej'
         for w in (self._epoch_label, self._epoch_choice,
                   self._raw_label, self._raw_choice):
             w.Show(show_extra)
         if show_extra:
             self._populate_epoch_raw_choices()
+        self._make_ica_btn.Show(task_type == 'ica')
         self._panel.Layout()
         self._setup_columns(task_type)
         self._start_refresh()
@@ -288,6 +307,162 @@ class PipelineFrame(EelbrainFrame):
         dlg = TracebackDialog(self, tb)
         dlg.ShowModal()
         dlg.Destroy()
+
+    def _on_close(self, event):
+        if self._compute_token is not None:
+            dlg = wx.MessageDialog(
+                self,
+                "ICA computation is in progress. "
+                "Closing this window will cancel it and the current subject's "
+                "progress will be lost.\n\nClose anyway?",
+                "Cancel ICA computation?",
+                wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING,
+            )
+            confirmed = dlg.ShowModal() == wx.ID_YES
+            dlg.Destroy()
+            if not confirmed:
+                event.Veto()
+                return
+            self._compute_token = None  # let the thread wind down
+        event.Skip()  # proceed with normal close
+
+    # ------------------------------------------------------------------
+    # Make-ICA background computation
+
+    def _on_make_ica(self, event):
+        if self._compute_token is not None:
+            self._stop_make_ica()
+            return
+
+        task_type, task_key = self._current_task()
+        if task_type != 'ica':
+            return
+
+        subjects = [
+            self._list.GetItemText(i, 0)
+            for i in range(self._list.GetItemCount())
+            if self._list.GetItemText(i, 1) == 'no ICA'
+        ]
+        if not subjects:
+            return
+
+        # Invalidate any running refresh so both threads don't touch the
+        # pipeline concurrently.
+        self._refresh_token = object()
+
+        token = object()
+        self._compute_token = token
+        n_total = len(subjects)
+
+        self._make_ica_btn.SetLabel("Stop")
+        self._progress_gauge.SetRange(n_total)
+        self._progress_gauge.SetValue(0)
+        self._progress_gauge.Show()
+        self._progress_label.SetLabel(f"0 / {n_total}")
+        self._progress_label.Show()
+        self._refresh_btn.Disable()
+        self._task_choice.Disable()
+        self._panel.Layout()
+
+        threading.Thread(
+            target=self._make_ica_thread,
+            args=(token, task_key, subjects),
+            daemon=True,
+        ).start()
+
+    def _finish_make_ica_ui(self):
+        """Restore toolbar controls after computation ends or is cancelled."""
+        self._make_ica_btn.SetLabel("Make ICA")
+        self._progress_gauge.Hide()
+        self._progress_label.Hide()
+        self._refresh_btn.Enable()
+        self._task_choice.Enable()
+        self._panel.Layout()
+
+    def _stop_make_ica(self):
+        """Cancel the make-ICA thread and immediately restore the UI."""
+        if self._compute_token is None:
+            return
+        self._compute_token = None
+        for i in range(self._list.GetItemCount()):
+            if self._list.GetItemText(i, 1) == '⟳':
+                self._list.SetItem(i, 1, 'no ICA')
+        self._finish_make_ica_ui()
+
+    def _make_ica_thread(self, token, task_key, subjects):
+        pipeline = self._pipeline
+        n_done = 0
+        n_total = len(subjects)
+        for subject in subjects:
+            if token is not self._compute_token:
+                break
+            wx.CallAfter(self._on_subject_computing, token, subject)
+            try:
+                # make_ica computes and saves the ICA file; it also leaves the
+                # pipeline context set to this subject so ctx.load() works below.
+                pipeline.make_ica(subject=subject, raw=task_key)
+                ctx = pipeline._resolve_derivative(ica_input_name(task_key))
+                ica = ctx.load()
+                n_done += 1
+                wx.CallAfter(
+                    self._on_subject_computed, token, subject,
+                    str(ica.n_components_), str(len(ica.exclude)),
+                    n_done, n_total,
+                )
+            except Exception:
+                tb = traceback.format_exc()
+                n_done += 1
+                wx.CallAfter(self._on_subject_error, token, subject, tb, n_done, n_total)
+        wx.CallAfter(self._on_make_ica_done, token)
+
+    def _on_subject_computing(self, token, subject):
+        """Mark a subject's row with ⟳ while its ICA is being computed."""
+        if token is not self._compute_token:
+            return
+        for i in range(self._list.GetItemCount()):
+            if self._list.GetItemText(i, 0) == subject:
+                self._list.SetItem(i, 1, '⟳')
+                break
+
+    def _on_subject_computed(self, token, subject, n_comp, n_excl, n_done, n_total):
+        """Update a row after successful ICA computation."""
+        if token is not self._compute_token:
+            return
+        for i in range(self._list.GetItemCount()):
+            if self._list.GetItemText(i, 0) == subject:
+                self._list.SetItem(i, 1, 'selected')
+                self._list.SetItem(i, 2, n_comp)
+                self._list.SetItem(i, 3, n_excl)
+                colour = (wx.RED if n_excl == '0'
+                          else wx.SystemSettings.GetColour(wx.SYS_COLOUR_LISTBOXTEXT))
+                self._list.SetItemTextColour(i, colour)
+                break
+        self._progress_gauge.SetValue(n_done)
+        self._progress_label.SetLabel(f"{n_done} / {n_total}")
+        self._refresh_status_bar()
+
+    def _on_subject_error(self, token, subject, tb, n_done, n_total):
+        """Mark a row as errored after a failed ICA computation."""
+        if token is not self._compute_token:
+            return
+        for i in range(self._list.GetItemCount()):
+            if self._list.GetItemText(i, 0) == subject:
+                self._list.SetItem(i, 1, 'error')
+                break
+        self._progress_gauge.SetValue(n_done)
+        self._progress_label.SetLabel(f"{n_done} / {n_total}")
+        # Show the traceback so the user knows what went wrong, then continue.
+        dlg = TracebackDialog(self, tb)
+        dlg.ShowModal()
+        dlg.Destroy()
+
+    def _on_make_ica_done(self, token):
+        """Called when the make-ICA thread exits (finished or cancelled)."""
+        if token is not self._compute_token:
+            return  # _stop_make_ica already cleaned up
+        self._compute_token = None
+        self._finish_make_ica_ui()
+        self._refresh_status_bar()
 
     def _handle_stale_ica(self, subject: str, error: ProtectedArtifactError, pipeline) -> tuple:
         """Show StaleICADialog on the main thread; block until the user decides.
