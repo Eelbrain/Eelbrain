@@ -1,6 +1,9 @@
 """Pipeline supervisor GUI launched by ``eelbrain-gui``."""
-import traceback
+import subprocess
+import sys
 import threading
+import traceback
+from collections.abc import Callable
 from pathlib import Path
 
 import mne
@@ -9,9 +12,30 @@ import wx
 from .. import load
 from .._experiment.derivative_cache import ProtectedArtifactError
 from .._experiment.epochs import PrimaryEpoch
-from .._experiment.preprocessing import RawICA, ica_input_name
+from .._experiment.pathing import MRI_SDIR
+from .._experiment.preprocessing import RawICA, ica_input_name, raw_input_name
+from .._utils.mne_utils import is_fake_mri
 from .frame import EelbrainFrame
 from .utils import StaleICADialog, TracebackDialog
+
+
+def _launch_coreg_subprocess(
+        mrisubject: str,
+        subjects_dir: str,
+        inst: str,
+        trans: str | None = None,
+        on_close: Callable | None = None,
+):
+    """Launch mne.gui.coregistration in a subprocess to avoid Qt/wx event loop conflict."""
+    kwargs = f'subject={mrisubject!r}, {subjects_dir=}, {inst=}, block=True'
+    if trans is not None:
+        kwargs += f', {trans=}'
+    proc = subprocess.Popen([
+        sys.executable, '-c',
+        f'import mne; mne.gui.coregistration({kwargs})',
+    ])
+    if on_close is not None:
+        threading.Thread(target=lambda: (proc.wait(), on_close()), daemon=True).start()
 
 
 class _AbortRequested(Exception):
@@ -137,6 +161,11 @@ class PipelineFrame(EelbrainFrame):
                 self._tasks.append(('epoch_rej', name))
                 self._task_choice.Append(f"Epoch rejection: {name}")
 
+        self._tasks.append(('mri', 'mri'))
+        self._task_choice.Append("MRI")
+        self._tasks.append(('coreg', 'coreg'))
+        self._task_choice.Append("Coregistration")
+
     def _current_task(self):
         idx = self._task_choice.GetSelection()
         if idx == wx.NOT_FOUND or idx >= len(self._tasks):
@@ -181,7 +210,9 @@ class PipelineFrame(EelbrainFrame):
         self._start_refresh()
 
     def _on_item_activated(self, event):
-        subject = self._list.GetItemText(event.GetIndex(), 0)
+        """Row double-click"""
+        idx = event.GetIndex()
+        subject = self._list.GetItemText(idx, 0)
         task_type, task_key = self._current_task()
         if task_type is None:
             return
@@ -205,8 +236,73 @@ class PipelineFrame(EelbrainFrame):
                 # Epoch rejection has no in-memory object to read from,
                 # so do a targeted single-subject refresh instead.
                 self._start_refresh()
+            elif task_type == 'mri':
+                self._on_mri_activated(idx, subject)
+            elif task_type == 'coreg':
+                self._on_coreg_activated(idx)
         finally:
             wx.EndBusyCursor()
+
+    def _on_mri_activated(self, row_idx: int, subject: str):
+        """Handle double-click on an MRI row."""
+        mrisubject = self._list.GetItemText(row_idx, 1)
+        status = self._list.GetItemText(row_idx, 2)
+        subjects_dir = str(self._pipeline.root / MRI_SDIR)
+        common_brain = self._pipeline.get('common_brain')
+
+        if subject == '(common brain)':
+            if status == 'missing':
+                if mrisubject == 'fsaverage':
+                    dlg = wx.MessageDialog(
+                        self,
+                        f"fsaverage is not yet present in {subjects_dir}.\n\n"
+                        "Download it now from the MNE dataset repository?",
+                        "Download fsaverage?",
+                        wx.YES_NO | wx.ICON_QUESTION,
+                    )
+                    if dlg.ShowModal() == wx.ID_YES:
+                        self._fetch_fsaverage()
+                    dlg.Destroy()
+                else:
+                    wx.MessageBox(
+                        f"Common brain '{mrisubject}' has no FreeSurfer reconstruction "
+                        "in the FreeSurfer subjects directory.",
+                        "MRI not found", wx.OK | wx.ICON_INFORMATION, self,
+                    )
+        elif status == 'no MRI':
+            dlg = wx.MessageDialog(
+                self,
+                f"To create a scaled template brain from {common_brain}, switch to the Coregistration task.",
+                f"No FreeSurfer reconstruction found for {mrisubject}",
+                wx.OK | wx.ICON_INFORMATION,
+            )
+            dlg.ShowModal()
+            dlg.Destroy()
+
+    def _on_coreg_activated(self, row_idx: int):
+        """Handle double-click on a Coregistration row."""
+        subject = self._list.GetItemText(row_idx, 0)
+        session = self._list.GetItemText(row_idx, 1)
+        mrisubject = self._list.GetItemText(row_idx, 2)
+        subjects_dir_path = self._pipeline.root / MRI_SDIR
+        subjects_dir = str(subjects_dir_path)
+        pipeline = self._pipeline
+        # If the subject has no FreeSurfer reconstruction, fall back to the
+        # template brain so the coreg GUI can open and the user can use its
+        # "Scale MRI" feature to create a subject-specific brain.
+        if not (subjects_dir_path / mrisubject / 'surf' / 'lh.pial').exists():
+            mrisubject = pipeline.get('common_brain')
+        with pipeline._temporary_state:
+            kw = dict(subject=subject, raw='raw')
+            if session:
+                kw['session'] = session
+            pipeline.set(**kw)
+            raw_ctx = pipeline._resolve_derivative(raw_input_name('raw'))
+            inst = str(raw_ctx.node.path(raw_ctx))
+            trans_ctx = pipeline._resolve_derivative('trans-input')
+            trans = str(trans_ctx.node.path(trans_ctx)) if trans_ctx.node.exists(trans_ctx) else None
+        _launch_coreg_subprocess(mrisubject, subjects_dir, inst, trans,
+                                 on_close=lambda: wx.CallAfter(self._start_refresh))
 
     # ------------------------------------------------------------------
     # Table management
@@ -215,6 +311,10 @@ class PipelineFrame(EelbrainFrame):
         self._list.ClearAll()
         if task_type == 'ica':
             cols = [('Subject', 180), ('Status', 110), ('Components', 110), ('Rejected', 90)]
+        elif task_type == 'mri':
+            cols = [('Subject', 180), ('MRI subject', 170), ('Status', 130)]
+        elif task_type == 'coreg':
+            cols = [('Subject', 140), ('Session', 80), ('MRI subject', 140), ('Status', 110)]
         else:
             cols = [('Subject', 180), ('Status', 110), ('N total', 90), ('N rejected', 90)]
         for i, (label, width) in enumerate(cols):
@@ -225,12 +325,22 @@ class PipelineFrame(EelbrainFrame):
             return
         task_type, _ = self._current_task()
         self._list.DeleteAllItems()
+        grey = wx.Colour(150, 150, 150)
         for row in rows:
             idx = self._list.InsertItem(self._list.GetItemCount(), row[0])
             for col, val in enumerate(row[1:], 1):
                 self._list.SetItem(idx, col, val)
-            if task_type == 'ica' and row[1] == 'selected' and row[3] == '0':
-                self._list.SetItemTextColour(idx, wx.RED)
+            if task_type == 'ica':
+                if row[1] == 'selected' and row[3] == '0':
+                    self._list.SetItemTextColour(idx, wx.RED)
+            elif task_type == 'mri':
+                if row[2] == 'no MRI':
+                    self._list.SetItemTextColour(idx, wx.RED)
+                elif row[0] == '(common brain)':
+                    self._list.SetItemTextColour(idx, grey)
+            elif task_type == 'coreg':
+                if row[3] == 'missing':
+                    self._list.SetItemTextColour(idx, wx.RED)
         self._refresh_status_bar()
 
     def _update_ica_row(self, subject, task_key, doc):
@@ -252,23 +362,29 @@ class PipelineFrame(EelbrainFrame):
         task_type, _ = self._current_task()
         n = self._list.GetItemCount()
         if task_type == 'ica':
-            n_ok = sum(
-                1 for i in range(n)
-                if self._list.GetItemText(i, 1) == 'selected'
-            )
-            n_missing = sum(
-                1 for i in range(n)
-                if self._list.GetItemText(i, 1) == 'no ICA'
-            )
+            n_ok = sum(1 for i in range(n) if self._list.GetItemText(i, 1) == 'selected')
+            n_missing = sum(1 for i in range(n) if self._list.GetItemText(i, 1) == 'no ICA')
             msg = f"{n_ok} / {n} subjects · ICA selected"
             if n_missing:
                 msg += f"  ({n_missing} missing ICA file)"
         elif task_type == 'epoch_rej':
-            n_ok = sum(
-                1 for i in range(n)
-                if self._list.GetItemText(i, 1) == 'done'
-            )
+            n_ok = sum(1 for i in range(n) if self._list.GetItemText(i, 1) == 'done')
             msg = f"{n_ok} / {n} subjects · epoch rejection done"
+        elif task_type == 'mri':
+            # exclude the common brain row from subject counts
+            subject_rows = [i for i in range(n) if self._list.GetItemText(i, 0) != '(common brain)']
+            n_sub = len(subject_rows)
+            n_ok = sum(1 for i in subject_rows if self._list.GetItemText(i, 2) in ('ok', 'template'))
+            n_missing = sum(1 for i in subject_rows if self._list.GetItemText(i, 2) == 'no MRI')
+            msg = f"{n_ok} / {n_sub} subjects · MRI available"
+            if n_missing:
+                msg += f"  ({n_missing} missing)"
+        elif task_type == 'coreg':
+            n_ok = sum(1 for i in range(n) if self._list.GetItemText(i, 3) == 'ok')
+            n_missing = sum(1 for i in range(n) if self._list.GetItemText(i, 3) == 'missing')
+            msg = f"{n_ok} / {n} sessions · coregistration done"
+            if n_missing:
+                msg += f"  ({n_missing} missing)"
         else:
             msg = ""
         self.SetStatusText(msg)
@@ -507,6 +623,45 @@ class PipelineFrame(EelbrainFrame):
         else:  # dialog dismissed without a choice
             return (subject, 'stale', '—', '—')
 
+    def _fetch_fsaverage(self):
+        """Download fsaverage to the experiment's FreeSurfer subjects directory in a thread."""
+        subjects_dir = self._pipeline.root / MRI_SDIR
+        self._progress_gauge.SetRange(1)  # non-zero range required for Pulse() to animate
+        self._progress_gauge.Show()
+        self._progress_label.SetLabel("Downloading fsaverage…")
+        self._progress_label.Show()
+        self._refresh_btn.Disable()
+        self._task_choice.Disable()
+        self._panel.Layout()
+        self.SetStatusText("Downloading fsaverage…")
+        self._download_timer = wx.Timer(self)
+        self.Bind(wx.EVT_TIMER, self._on_download_timer, self._download_timer)
+        self._download_timer.Start(100)
+
+        def run():
+            try:
+                mne.datasets.fetch_fsaverage(subjects_dir=subjects_dir)
+                wx.CallAfter(self._finish_fsaverage_download, None)
+            except Exception:
+                wx.CallAfter(self._finish_fsaverage_download, traceback.format_exc())
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _on_download_timer(self, event):
+        self._progress_gauge.Pulse()
+
+    def _finish_fsaverage_download(self, error_tb):
+        self._download_timer.Stop()
+        self._progress_gauge.Hide()
+        self._progress_label.Hide()
+        self._refresh_btn.Enable()
+        self._task_choice.Enable()
+        self._panel.Layout()
+        if error_tb:
+            self._show_error(error_tb)
+        else:
+            self._start_refresh()
+
     def _compute_rows(self, token, task_type, task_key, epoch_name, raw_name):
         pipeline = self._pipeline
         rows = []
@@ -544,5 +699,36 @@ class PipelineFrame(EelbrainFrame):
                                  str(ds.n_cases), str(n_rej)))
                 else:
                     rows.append((subject, 'missing', '—', '—'))
+
+        elif task_type == 'mri':
+            subjects_dir = pipeline.root / MRI_SDIR
+            for subject in pipeline:
+                if token is not self._refresh_token:
+                    break
+                mrisubject = pipeline.get('mrisubject')
+                has_recon = (subjects_dir / mrisubject / 'surf' / 'lh.pial').exists()
+                if has_recon:
+                    status = 'template' if is_fake_mri(subjects_dir / mrisubject) else 'ok'
+                else:
+                    status = 'no MRI'
+                rows.append((subject, mrisubject, status))
+            # Common brain row at the bottom
+            common_brain = pipeline.get('common_brain')
+            if common_brain:
+                has_cb = (subjects_dir / common_brain / 'surf' / 'lh.pial').exists()
+                rows.append(('(common brain)', common_brain, 'ok' if has_cb else 'missing'))
+
+        elif task_type == 'coreg':
+            raw_input = raw_input_name('raw')
+            for subject, session in pipeline.iter(('subject', 'session'), raw='raw'):
+                if token is not self._refresh_token:
+                    break
+                raw_ctx = pipeline._resolve_derivative(raw_input)
+                if not raw_ctx.node.exists(raw_ctx):
+                    continue
+                mrisubject = pipeline.get('mrisubject')
+                trans_ctx = pipeline._resolve_derivative('trans-input')
+                has_trans = trans_ctx.node.exists(trans_ctx)
+                rows.append((subject, session, mrisubject, 'ok' if has_trans else 'missing'))
 
         return rows
