@@ -992,6 +992,7 @@ class AxisData:
     """Represent one axis (multiple layers)"""
     layers: list[Layer]
     title: str = None
+    multimodal: bool = False  # True when layers represent separate sensor modalities (not overlays)
 
     def __iter__(self):
         return iter(self.layers)
@@ -1167,7 +1168,10 @@ class PlotData:
             ys = (ys,)
 
         ax_names = None
+        multimodal = False
         if xax is None:
+            # Detect explicit multi-modality: y = list[list[NDVar]]
+            multimodal = isinstance(ys, (list, tuple)) and ys and all(isinstance(ax, (list, tuple)) for ax in ys if ax is not None)
             # y=[[y1], y2], xax=None
             axes = []
             for ax in ys:
@@ -1224,7 +1228,7 @@ class PlotData:
                     layers.append([aggregate(layer.sub(**{dimname: i}), agg) for i in indexes])
                 x_name = xax
             else:
-                # y=[y1, y2], xax=categorial
+                # y=[y1, y2], xax=categorial → modalities are in y, rows from xax
                 xax = ascategorial(xax, sub, data)
                 xax_indexes = [xax == cell for cell in xax.cells]
                 for layer in ys:
@@ -1232,6 +1236,7 @@ class PlotData:
                     layers.append([aggregate(layer.sub(index), agg) for index in xax_indexes])
                 x_name = xax.name
                 ax_names = [cellname(cell) for cell in xax.cells]
+                multimodal = len(ys) > 1
             axes = list(zip(*layers))
         else:
             raise TypeError(f"{y=}, {xax=}: y can't be nested list if xax is specified, use single list")
@@ -1244,7 +1249,7 @@ class PlotData:
             y_name = ', '.join(y_names)
 
         use_axes = [ax is not None for ax in axes]
-        axes = [AxisData([DataLayer(l) for l in ax]) for ax in axes if ax]
+        axes = [AxisData([DataLayer(l) for l in ax], multimodal=multimodal) for ax in axes if ax]
         title = frame_title(y_name, x_name)
         return cls(axes, dims, title, ax_names, use_axes)
 

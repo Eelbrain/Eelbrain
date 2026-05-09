@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from dataclasses import replace
 from itertools import repeat
 from math import floor, sqrt
 from typing import Any, Literal
@@ -17,7 +18,7 @@ from scipy import interpolate, linalg
 from scipy.spatial import ConvexHull
 
 from .._colorspaces import UNAMBIGUOUS_COLORS
-from .._data_obj import NDVarArg, CategorialArg, IndexArg, Dataset
+from .._data_obj import NDVar, NDVarArg, CategorialArg, IndexArg, Dataset, Sensor
 from .._text import ms
 from .._utils import deprecate_ds_arg
 from ._base import (
@@ -25,6 +26,7 @@ from ._base import (
     PlotType, EelFigure, PlotData, AxisData, DataLayer,
     Layout, ImLayout, VariableAspectLayout,
     ColorMapMixin, TimeSlicerEF, TopoMapKey, XAxisMixin, YLimMixin,
+    find_fig_cmaps, find_fig_vlims,
 )
 from ._utsnd import AxButterfly, AxImArray, PltIm
 from ._sensors import SENSORMAP_FRAME, SensorMapMixin, PltMap2d
@@ -348,8 +350,19 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
 
     Parameters
     ----------
-    y : (list of) NDVar
-        Data to plot.
+    y
+        Data to plot. A plain ``NDVar`` or list of ``NDVar`` produces the
+        standard single-topomap layout. A **list of lists** enables a
+        multi-modality layout: each inner list represents one plot row and
+        contains one ``NDVar`` per sensor modality (e.g. ``[[mag_original,
+        eeg_original], [mag_cleaned, eeg_cleaned]]``). In this case the
+        butterfly traces for each row are formed by concatenating all modalities
+        after normalizing each one to its data range (determined via
+        ``vmax``/``vmin`` or derived automatically from the data), so that
+        channels with very different physical units are visible on a common
+        axis. One topomap column is added to the right for each modality, each
+        with its own color scale. Scaling is shared per modality column across
+        rows, so relative amplitudes between rows are preserved.
     xax
         Create a separate plot for each cell in this model.
     data
@@ -461,7 +474,7 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
     @deprecate_ds_arg
     def __init__(
             self,
-            y: NDVarArg | Sequence[NDVarArg],
+            y: NDVarArg | Sequence[NDVarArg] | Sequence[Sequence[NDVarArg]],
             xax: CategorialArg = None,
             data: Dataset = None,
             sub: IndexArg = None,
@@ -496,23 +509,60 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
             xlim: float | tuple[float, float] = None,
             **kwargs,
     ):
+        # topo_data[row][col] holds the original NDVar for each row and topomap column.
+        # For a single sensor type, each row has exactly one column.
+        # For multi-modality (AxisData.multimodal=True), the layers already carry one NDVar
+        # per modality column; the butterfly traces are rebuilt as a normalised combination.
         plot_data = PlotData.from_args(y, ('sensor', None), xax, data, sub)
+        topo_data = [[layer.y for layer in ax.layers] for ax in plot_data.plot_data]
+        n_topo_cols = len(topo_data[0])
+        multimodal = plot_data.plot_data[0].multimodal
+
+        if multimodal:
+            # Route vlim/cmap determination through the standard helpers so user-supplied
+            # vmax/vmin/cmap arguments are honoured and symmetric cmaps are handled correctly.
+            topo_cmaps = find_fig_cmaps(topo_data, cmap)
+            topo_vlims = find_fig_vlims(topo_data, vmax, vmin, topo_cmaps)
+            col_vmaxes = [abs(topo_vlims[topo_data[0][j].info.get('meas')][1]) for j in range(n_topo_cols)]
+            # Build one combined normalised NDVar per row for the butterfly traces.
+            butterfly_axes = []
+            for row_ndvars in topo_data:
+                arrays = [ndv.x / col_vmaxes[j] for j, ndv in enumerate(row_ndvars)]
+                names = [n for ndv in row_ndvars for n in ndv.sensor.names]
+                locs = np.vstack([ndv.sensor.locs for ndv in row_ndvars])
+                combined_sensor = Sensor(locs, names, adjacency='none')
+                combined_ndv = NDVar(np.concatenate(arrays, axis=0), (combined_sensor, row_ndvars[0].time))
+                butterfly_axes.append(AxisData([DataLayer(combined_ndv)]))
+            plot_data = replace(plot_data, plot_data=butterfly_axes, plot_type=PlotType.GENERAL)
+
         plot_data._cannot_skip_axes(self)
         xdim = plot_data.dims[1]
-        self._topomap_data = plot_data.for_plot(PlotType.IMAGE)
+
+        # Determine column layout: one butterfly column + one or more topomap columns
+        aspect = (None,) + (1,) * n_topo_cols
+        ax_frames_arg = (frame,) + (False,) * n_topo_cols
+        n_cols = 1 + n_topo_cols
 
         # create figure
         row_titles = self._set_axtitle(axtitle, plot_data, plot_data.n_plots)
-        layout = VariableAspectLayout(plot_data.n_plots, 3, 10, aspect=(None, 1), ax_frames=(frame, False), row_titles=row_titles, **kwargs)
+        layout = VariableAspectLayout(plot_data.n_plots, 3, 10, aspect=aspect, ax_frames=ax_frames_arg, row_titles=row_titles, **kwargs)
         EelFigure.__init__(self, plot_data.frame_title, layout)
 
-        self.bfly_axes = self.axes[0::2]
-        self.topo_axes = self.axes[1::2]
+        self._n_cols = n_cols
+        self.bfly_axes = self.axes[0::n_cols]
+        self.topo_axes = [ax for i, ax in enumerate(self.axes) if i % n_cols != 0]
+        # Hide topo axes immediately so the background captured by _show() is already clean
+        # (lazy AxTopomap creation via _init_controller would otherwise leave format_axes
+        # ticks visible in the blitted background, showing through the topomap clip region)
+        for ax in self.topo_axes:
+            ax.set_axis_off()
         self.bfly_plots = []
         self.topo_plots = []
         self.t_markers = []  # vertical lines on butterfly plots
 
-        ColorMapMixin.__init__(self, plot_data.data, cmap, vmax, vmin, contours, self.topo_plots)
+        # Always initialise ColorMapMixin from the original per-type NDVars so that
+        # self._cmaps and self._vlims are keyed by each topomap column's meas.
+        ColorMapMixin.__init__(self, topo_data, cmap, vmax, vmin, contours, self.topo_plots)
 
         self._topo_kwargs = {
             'clip': clip,
@@ -530,9 +580,15 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
             'mcolor': mcolor,
         }
 
+        self._topo_data_per_row = topo_data
+
         # plot epochs (x/y are in figure coordinates)
+        # For multi-modal, the combined butterfly NDVar has no meas, so self._vlims (keyed by
+        # each modality's meas) would miss it and leave the Y axis at matplotlib's [0, 1]
+        # default.  Supply {None: (-1, 1)} directly since the data is normalised to that range.
+        bfly_vlims = {None: (-1.0, 1.0)} if multimodal else self._vlims
         for ax, layers in zip(self.bfly_axes, plot_data.for_plot(PlotType.LINE)):
-            h = AxButterfly(ax, layers, 'time', 'sensor', mark, color, linewidth, self._vlims, clip)
+            h = AxButterfly(ax, layers, 'time', 'sensor', mark, color, linewidth, bfly_vlims, clip)
             self.bfly_plots.append(h)
 
         # decorate axes
@@ -553,21 +609,26 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
         ColorMapMixin._fill_toolbar(self, tb)
 
     def _update_topo(self, t):
+        n_topo_cols = len(self._topo_data_per_row[0])
         if not self.topo_plots:
-            data = self._topomap_data.sub_time(t)
-            for ax, layers in zip(self.topo_axes, data):
-                p = AxTopomap(ax, layers, cmaps=self._cmaps, vlims=self._vlims, **self._topo_kwargs)
-                self.topo_plots.append(p)
+            for row, row_data in enumerate(self._topo_data_per_row):
+                for j, ndv in enumerate(row_data):
+                    ax = self.topo_axes[row * n_topo_cols + j]
+                    y_t = ndv.sub(time=t)
+                    layers = AxisData([DataLayer(y_t, PlotType.IMAGE)])
+                    p = AxTopomap(ax, layers, vlims=self._vlims, cmaps=self._cmaps, **self._topo_kwargs)
+                    self.topo_plots.append(p)
         else:
-            data = self._topomap_data.sub_time(t, data_only=True)
-            for p, layers in zip(self.topo_plots, data):
-                p.set_data(layers)
+            for row, row_data in enumerate(self._topo_data_per_row):
+                for j, ndv in enumerate(row_data):
+                    y_t = ndv.sub(time=t)
+                    self.topo_plots[row * n_topo_cols + j].set_data([y_t])
 
     def _topo_data(self, event):
         ax = event.inaxes
         if ax is None:
             return
-        p = self.bfly_plots[ax.id // 2]
+        p = self.bfly_plots[ax.id // self._n_cols]
         if ax in self.bfly_axes:
             t = event.xdata
         elif ax in self.topo_axes:

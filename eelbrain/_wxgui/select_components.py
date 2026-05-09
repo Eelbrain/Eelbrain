@@ -46,6 +46,7 @@ from . import ID
 
 COLOR = {True: (.5, 1, .5), False: (1, .3, .3)}
 LINE_COLOR = {True: 'k', False: (1, 0, 0)}
+_CH_TYPE_COLORS = {'mag': 'steelblue', 'grad': 'forestgreen', 'eeg': 'firebrick'}
 TOPO_ARGS = {
     'interpolation': 'linear',  # interpolation that does not assume continuity
     'clip': 'even',
@@ -619,6 +620,10 @@ class SharedToolsMenu:  # Frame mixin
             self._PlotButterfly(self.doc.epochs[i_epoch], name)
 
     def _PlotButterfly(self, epoch, title):
+        n_types = len(self.doc.components_by_type)
+        if n_types > 1:
+            self._PlotButterflyMultiType(epoch, title)
+            return
         original = self.doc.as_ndvar(epoch)
         clean = self.doc.as_ndvar(self.doc.apply(epoch))
         if self.butterfly_baseline == ID.BASELINE_CUSTOM:
@@ -639,6 +644,46 @@ class SharedToolsMenu:  # Frame mixin
                 plot.TopoButterfly(data, vmax=vmax, title=title_, axtitle=("Original", "Cleaned"))
         else:
             plot.TopoButterfly([original, clean], title=title, axtitle=("Original", "Cleaned"))
+
+    def _PlotButterflyMultiType(self, epoch, title):
+        """Multi-channel-type butterfly: normalized overlay + per-type side-by-side topomaps."""
+        # Extract per-type NDVars from original and cleaned epochs
+        cleaned_epoch = self.doc.apply(epoch)
+        orig_by_type = []
+        clean_by_type = []
+        for ch_type, _ in self.doc.components_by_type:
+            ndvar_kw = {'data': ch_type, **self.doc._ndvar_args}
+            if isinstance(epoch, mne.BaseEpochs):
+                o = load.mne.epochs_ndvar(epoch, **ndvar_kw)
+                c = load.mne.epochs_ndvar(cleaned_epoch, **ndvar_kw)
+            else:
+                o = load.mne.evoked_ndvar(epoch, **ndvar_kw)
+                c = load.mne.evoked_ndvar(cleaned_epoch, **ndvar_kw)
+            orig_by_type.append((ch_type, o))
+            clean_by_type.append((ch_type, c))
+        # Apply baseline correction
+        if self.butterfly_baseline == ID.BASELINE_CUSTOM:
+            if orig_by_type[0][1].time.tmin >= 0:
+                wx.MessageBox(f"The data displayed does not have a baseline period (tmin={orig_by_type[0][1].time.tmin}). Change the baseline through the Tools menu.", "No Baseline Period", style=wx.ICON_ERROR)
+                return
+            orig_by_type = [(ct, o - o.mean(time=(None, 0))) for ct, o in orig_by_type]
+            clean_by_type = [(ct, c - c.mean(time=(None, 0))) for ct, c in clean_by_type]
+        # Build color dict: {sensor_name: type_color}
+        color = {name: _CH_TYPE_COLORS.get(ch_type, 'k') for ch_type, o in orig_by_type for name in o.sensor.names}
+
+        has_case = orig_by_type[0][1].has_case
+        if has_case:
+            n_cases = orig_by_type[0][1].x.shape[0]
+            if isinstance(title, str):
+                title_iter = repeat(title, n_cases)
+            else:
+                title_iter = title
+            for i, title_ in zip(range(n_cases), title_iter):
+                y = [[o.sub(case=i) for _, o in orig_by_type], [c.sub(case=i) for _, c in clean_by_type]]
+                plot.TopoButterfly(y, color=color, interpolation='linear', title=title_, axtitle=("Original", "Cleaned"))
+        else:
+            y = [[o for _, o in orig_by_type], [c for _, c in clean_by_type]]
+            plot.TopoButterfly(y, color=color, interpolation='linear', title=title, axtitle=("Original", "Cleaned"))
 
     def PlotPSD(self):
         ds_original = Dataset({'psd': self.doc.as_ndvar(self.doc.epochs).fft().mean('sensor')})
