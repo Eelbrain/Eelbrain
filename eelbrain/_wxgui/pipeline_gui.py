@@ -38,7 +38,12 @@ class PipelineFrame(EelbrainFrame):
             self._task_choice.SetSelection(0)
             self._on_task_changed(None)
 
-        self.SetSize((600, 440))
+        # Width: fit the widest column set (ICA: 490 px) plus scrollbar + frame chrome.
+        # Height: fill the usable display (wx.Fit() doesn't help here because the
+        # ListCtrl uses proportion=1 and its content is populated asynchronously).
+        col_total = 180 + 110 + 110 + 90  # ICA columns are the wider of the two task types
+        display = wx.GetClientDisplayRect()
+        self.SetSize((col_total + 40, display.height - 80))
         self.Centre()
         self.Bind(wx.EVT_CLOSE, self._on_close)
 
