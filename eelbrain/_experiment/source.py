@@ -330,15 +330,21 @@ def _load_bem(root: Path, state: dict[str, Any], log: logging.Logger) -> mne.Con
 class TransInput(Input):
     name = 'trans-input'
 
+    def path(self, ctx: Request) -> Path:
+        return ctx.root / trans_file_path(ctx.state)
+
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return file_fingerprint(ctx.root, ctx.root / trans_file_path(ctx.state), 'trans-file')
+        return file_fingerprint(ctx.root, self.path(ctx), 'trans-file')
 
 
 class BemInput(Input):
     name = 'bem-input'
 
+    def path(self, ctx: Request) -> Path:
+        return ctx.root / bem_file_path(ctx.state)
+
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return file_fingerprint(ctx.root, ctx.root / bem_file_path(ctx.state), 'bem-file')
+        return file_fingerprint(ctx.root, self.path(ctx), 'bem-file')
 
 
 class SrcDerivative(Derivative[mne.SourceSpaces]):

@@ -31,13 +31,10 @@ cache policy belong to the lower cache and graph layers, not to
 without editing the cache kernel or injecting facade behavior into nodes.
 """
 from __future__ import annotations
-from contextlib import contextmanager
 import fnmatch
-import json
 import logging
 from os.path import exists, relpath
 from pathlib import Path
-import tomllib
 from typing import Any
 import warnings
 from collections.abc import Mapping, Sequence
@@ -63,93 +60,11 @@ from .derivative_cache import (
 )
 from .configuration import Configuration, sequence_arg, typed_arg
 from .exceptions import FileMissingError
-from .pathing import LOG_DIR, bids_path, ica_file_path
+from .pathing import bids_path, ica_file_path
 
 MNE_VERBOSITY = 'WARNING'
 LOG = logging.getLogger(__name__)
 REINDEX_ICA = 'reindex_ica'
-
-
-def _toml_string(value: str) -> str:
-    """Write a TOML basic string; JSON string escaping is compatible here."""
-    return json.dumps(value, ensure_ascii=False)
-
-
-def _read_warning_log(path: Path) -> list[dict[str, str]]:
-    if not path.exists():
-        return []
-    try:
-        data = tomllib.loads(path.read_text())
-    except tomllib.TOMLDecodeError:
-        return []
-    entries = data.get('warning', [])
-    warnings_ = []
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        item = entry.get('item')
-        category = entry.get('category')
-        message = entry.get('message')
-        if isinstance(item, str) and isinstance(category, str) and isinstance(message, str):
-            warnings_.append({'item': item, 'category': category, 'message': message})
-    return warnings_
-
-
-def _write_warning_log(path: Path, header: str, warnings_: list[dict[str, str]]) -> None:
-    lines = [
-        'version = 1',
-        f'header = {_toml_string(header.rstrip())}',
-        '',
-    ]
-    for warning in warnings_:
-        lines.extend((
-            '[[warning]]',
-            f'item = {_toml_string(warning["item"])}',
-            f'category = {_toml_string(warning["category"])}',
-            f'message = {_toml_string(warning["message"])}',
-            '',
-        ))
-    path.write_text('\n'.join(lines))
-
-
-@contextmanager
-def logged_warnings(
-        root: str | Path,
-        item: str | Path,
-        log_name: str,
-        header: str,
-        summary: str,
-        log: logging.Logger,
-):
-    """Capture warnings and write unique entries to an experiment log file."""
-    with warnings.catch_warnings(record=True) as warning_list:
-        warnings.simplefilter('always')
-        warnings.filterwarnings('ignore', r'unclosed file ', ResourceWarning)
-        yield
-    if not warning_list:
-        return
-    details_path = Path(root) / LOG_DIR / f'{log_name}-warnings.toml'
-    details_path.parent.mkdir(parents=True, exist_ok=True)
-    entries = _read_warning_log(details_path)
-    seen = {(entry['item'], entry['category'], entry['message']) for entry in entries}
-    item = str(item)
-    new_entries = []
-    for message in warning_list:
-        category = message.category.__name__
-        text = str(message.message)
-        key = (item, category, text)
-        if key in seen:
-            continue
-        seen.add(key)
-        entry = {'item': item, 'category': category, 'message': text}
-        entries.append(entry)
-        new_entries.append(entry)
-    if not new_entries:
-        return
-    _write_warning_log(details_path, header, entries)
-    count = len(new_entries)
-    noun = 'warning was' if count == 1 else 'warnings were'
-    log.warning("%s new %s %s. Full details were written to %s. Previously recorded %s warnings will be suppressed in the terminal for this experiment.", count, noun, summary, details_path, log_name)
 
 
 class RawPipe(Configuration):
@@ -341,11 +256,7 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         return self._resolve_bids_path(ctx).fpath
 
     @staticmethod
-    def _read_raw(
-            path: BIDSPath,
-            preload: bool,
-            log: logging.Logger | None = None,
-    ) -> mne.io.BaseRaw:
+    def _read_raw(path: BIDSPath, preload: bool) -> mne.io.BaseRaw:
         """Read a raw file using the MNE reader appropriate for its BIDS extension."""
         match path.extension:
             case '.fif':
@@ -360,15 +271,7 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
                 reader = mne.io.read_raw_bdf
             case _:
                 raise RuntimeError(f"Unrecognized file format: {path.extension}")
-        with logged_warnings(
-                path.root,
-                path.fpath,
-                'raw-reader',
-                "Warnings emitted while reading raw data files.\n",
-                "issued while reading raw data files",
-                log,
-        ):
-            return reader(path.fpath, preload=preload, verbose=MNE_VERBOSITY)
+        return reader(path.fpath, preload=preload, verbose=MNE_VERBOSITY)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {
@@ -379,7 +282,7 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
 
     def load(self, ctx: Request) -> mne.io.BaseRaw:
         path = self._resolve_bids_path(ctx, require=True)
-        raw = self._read_raw(path, preload=ctx.view_options['preload'], log=ctx.registry.log)
+        raw = self._read_raw(path, preload=ctx.view_options['preload'])
         if self.pipe.rename_channels:
             if rename := {k: v for k, v in self.pipe.rename_channels.items() if k in raw.ch_names}:
                 raw.rename_channels(rename)
@@ -391,7 +294,7 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         if view != 'info':
             return super().load_view(ctx, view)
         path = self._resolve_bids_path(ctx, require=True)
-        raw = self._read_raw(path, preload=False, log=ctx.registry.log)
+        raw = self._read_raw(path, preload=False)
         return raw.info
 
 
@@ -485,14 +388,14 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         self.pipes = pipes
         self.extension = extension
 
-    def _path(self, ctx: Request) -> Path:
+    def path(self, ctx: Request) -> Path:
         return ctx.root / ica_file_path(ctx.state, self.raw_name)
 
     def _key(self, ctx: Request) -> dict[str, Any]:
         return canonical_state_subset({**ctx.state, 'raw': self.raw_name}, self.key_fields)
 
     def _manifest(self, ctx: Request) -> ArtifactManifest | None:
-        return ctx.registry.read_manifest(ctx.registry.manifest_path(self._path(ctx)))
+        return ctx.registry.read_manifest(ctx.registry.manifest_path(self.path(ctx)))
 
     def _load_value(self, ctx: Request) -> mne.preprocessing.ICA:
         return self.pipe._load_ica(ctx)
@@ -520,7 +423,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
 
     def _reindex_existing(self, ctx: Request) -> mne.preprocessing.ICA:
         value = self._load_value(ctx)
-        ctx.registry.write_manifest(ctx.registry.manifest_path(self._path(ctx)), self._build_manifest(ctx, value))
+        ctx.registry.write_manifest(ctx.registry.manifest_path(self.path(ctx)), self._build_manifest(ctx, value))
         return value
 
     @staticmethod
@@ -725,7 +628,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         )
 
     def is_valid(self, ctx: Request) -> bool:
-        path = self._path(ctx)
+        path = self.path(ctx)
         if not path.exists():
             return False
         return self._manifest_matches(self._manifest(ctx), self._current_value_manifest(ctx)[1])
@@ -741,7 +644,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         return tuple(deps)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        path = self._path(ctx)
+        path = self.path(ctx)
         return {
             'raw': self.raw_name,
             'pipe': self.pipe._as_dict(),
@@ -752,7 +655,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
 
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
         fingerprint = self.fingerprint(ctx)
-        path = self._path(ctx)
+        path = self.path(ctx)
         fingerprint['ica_file'] = file_fingerprint(ctx.root, path, 'ica-file')
         if exists(path):
             fingerprint['exclude'] = self.pipe._load_ica(ctx).exclude
@@ -761,7 +664,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         return fingerprint
 
     def load(self, ctx: Request) -> mne.preprocessing.ICA:
-        path = self._path(ctx)
+        path = self.path(ctx)
         if not exists(path):
             raise FileMissingError(f"ICA file {path.name} does not exist. Run e.make_ica() to create it.")
         value, current = self._current_value_manifest(ctx)
@@ -782,7 +685,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         if view == 'bads':
             return sorted(self.load(ctx).info['bads'])
         if view == 'status':
-            if exists(self._path(ctx)):
+            if exists(self.path(ctx)):
                 return 'ok'
             source_node = raw_input_name(self.pipes.root_source_name(self.pipe.source))
             if all(ctx.registry.resolve(source_node, state={**ctx.state, 'task': task}, options={'noise': False}).exists() for task in self.pipe.task):
@@ -821,7 +724,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             If ``True``, keep the existing ICA file but update its manifest so
             it is no longer considered stale.
         """
-        path = self._path(ctx)
+        path = self.path(ctx)
         previous = self._manifest(ctx)
         current = None
         if exists(path):

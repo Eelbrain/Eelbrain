@@ -46,14 +46,16 @@ import json
 import logging
 from pathlib import Path
 import shutil
+import tomllib
 from typing import Any, Generic, TypeVar
+import warnings
 
 import mne
 import numpy as np
 
 from .._data_obj import Factor, Interaction, Var
 from .configuration import Configuration
-from .pathing import CACHE_DIR, DERIV_DIR
+from .pathing import CACHE_DIR, DERIV_DIR, LOG_DIR
 
 T = TypeVar('T')
 MANIFEST_SUFFIX = '.manifest.json'
@@ -66,6 +68,88 @@ MAX_CACHE_LABEL_LEN = 96
 CACHE_KEY_HASH_LEN = 12
 CACHE_DISAMBIGUATION_SUFFIX = '.disambiguation.json'
 ALLOW_PROTECTED_OVERWRITE = 'allow_protected_overwrite'
+
+
+def _toml_string(value: str) -> str:
+    """Write a TOML basic string; JSON string escaping is compatible here."""
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _read_warning_log(path: Path) -> list[dict[str, str]]:
+    if not path.exists():
+        return []
+    try:
+        data = tomllib.loads(path.read_text())
+    except tomllib.TOMLDecodeError:
+        return []
+    entries = data.get('warning', [])
+    warnings_ = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        item = entry.get('item')
+        category = entry.get('category')
+        message = entry.get('message')
+        if isinstance(item, str) and isinstance(category, str) and isinstance(message, str):
+            warnings_.append({'item': item, 'category': category, 'message': message})
+    return warnings_
+
+
+def _write_warning_log(path: Path, header: str, warnings_: list[dict[str, str]]) -> None:
+    lines = [
+        'version = 1',
+        f'header = {_toml_string(header.rstrip())}',
+        '',
+    ]
+    for warning in warnings_:
+        lines.extend((
+            '[[warning]]',
+            f'item = {_toml_string(warning["item"])}',
+            f'category = {_toml_string(warning["category"])}',
+            f'message = {_toml_string(warning["message"])}',
+            '',
+        ))
+    path.write_text('\n'.join(lines))
+
+
+@contextmanager
+def logged_warnings(
+        root: str | Path,
+        item: str | Path,
+        log_name: str,
+        header: str,
+        summary: str,
+        log: logging.Logger,
+):
+    """Capture warnings and write unique entries to an experiment log file."""
+    with warnings.catch_warnings(record=True) as warning_list:
+        warnings.simplefilter('always')
+        warnings.filterwarnings('ignore', r'unclosed file ', ResourceWarning)
+        yield
+    if not warning_list:
+        return
+    details_path = Path(root) / LOG_DIR / f'{log_name}-warnings.toml'
+    details_path.parent.mkdir(parents=True, exist_ok=True)
+    entries = _read_warning_log(details_path)
+    seen = {(entry['item'], entry['category'], entry['message']) for entry in entries}
+    item = str(item)
+    new_entries = []
+    for message in warning_list:
+        category = message.category.__name__
+        text = str(message.message)
+        key = (item, category, text)
+        if key in seen:
+            continue
+        seen.add(key)
+        entry = {'item': item, 'category': category, 'message': text}
+        entries.append(entry)
+        new_entries.append(entry)
+    if not new_entries:
+        return
+    _write_warning_log(details_path, header, entries)
+    count = len(new_entries)
+    noun = 'warning was' if count == 1 else 'warnings were'
+    log.warning("%s new %s %s. Full details were written to %s. Previously recorded %s warnings will be suppressed in the terminal for this experiment.", count, noun, summary, details_path, log_name)
 
 
 class CachePolicy(str, Enum):
@@ -1016,7 +1100,7 @@ class Request(Generic[T]):
                 raise ProtectedArtifactError(derivative.name, self.artifact_path)
             derivative.log_cache_build(self, self.artifact_path)
 
-        with self._build_deps_context(cache):
+        with self._build_deps_context(cache), self.registry._node_warning_context(self):
             artifact = derivative.build(self)
         artifact_metadata = self.registry.canonicalize(derivative.artifact_metadata(self, artifact))
         self._artifact_metadata = artifact_metadata
@@ -1118,9 +1202,11 @@ class Request(Generic[T]):
         if state is not None or options is not None or controls:
             raise TypeError("Request.load() without a dependency name only accepts cache and view overrides")
         if view is not None:
-            return self.node.load_view(self, view)
+            with self.registry._node_warning_context(self):
+                return self.node.load_view(self, view)
         if isinstance(self.node, Input):
-            return self.node.load(self)
+            with self.registry._node_warning_context(self):
+                return self.node.load(self)
 
         derivative = self._require_derivative()
         with self._build_deps_context(cache):
@@ -1179,6 +1265,22 @@ class DerivativeRegistry:
             view_options=view_options,
             controls=controls,
         )
+
+    @contextmanager
+    def _node_warning_context(self, ctx: Request):
+        """Capture warnings during one input load or derivative build, logging new ones once."""
+        node = ctx.node
+        item = str(node.path(ctx)) if isinstance(node, Input) else node.name
+        log_slug = _slug_cache_path_part(node.name)
+        with logged_warnings(
+            self.root,
+            item,
+            log_slug,
+            f"Warnings emitted during {node.name}.\n",
+            f"issued during {node.name}",
+            self.log,
+        ):
+            yield
 
     def describe_artifact_path(self, path: str | Path) -> str:
         artifact_path = Path(path)

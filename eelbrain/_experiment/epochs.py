@@ -26,7 +26,7 @@ from ..mne_fixes import _interpolate_bads_eeg, _interpolate_bads_meg
 from .derivative_cache import CachePolicy, Dependency, Derivative, Request, Input, UncachedDerivative, file_fingerprint
 from .configuration import Configuration, typed_arg
 from .pathing import rej_file_path
-from .preprocessing import logged_warnings, raw_node_name
+from .preprocessing import raw_node_name
 from .test_def import TestDims
 
 
@@ -913,19 +913,7 @@ class EpochsDerivative(Derivative[Any]):
             return epoch_value
 
         # Drop bad channels with missing location
-        item_key = self.key(ctx)
-        if 'options' in item_key:
-            item_key.update(item_key.pop('options'))
-        item = ', '.join(f'{key}={value}' for key, value in item_key.items())
-        with logged_warnings(
-                ctx.root,
-                item,
-                'epoch-interpolation',
-                "Warnings emitted while interpolating bad channels in epochs.\n",
-                "issued while interpolating bad channels in epochs",
-                ctx.registry.log,
-        ):
-            _drop_bad_eeg_channels_with_missing_locs(epochs_list)
+        _drop_bad_eeg_channels_with_missing_locs(epochs_list)
 
         # Interpolate bad channels
         if ds.info[INTERPOLATE_CHANNELS] and any(ds[INTERPOLATE_CHANNELS]):

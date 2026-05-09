@@ -102,6 +102,9 @@ class SourceInput(Input):
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
+    def path(self, ctx: Request) -> Path:
+        return self.source_path(ctx.state['subject'])
+
     def fingerprint(self, ctx: Request) -> dict[str, object]:
         path = self.source_path(ctx.state['subject'])
         return file_fingerprint(str(self.root), path, 'source-file', digest=True)
