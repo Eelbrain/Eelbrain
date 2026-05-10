@@ -1,10 +1,13 @@
 '''Some WxPython utilities'''
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+import platform
 import re
 
+import mne
 import wx
 from wx.lib.dialogs import ScrolledMessageDialog
 
+import eelbrain
 from eelbrain._wxgui import icons
 
 # store icons once loaded for repeated access
@@ -50,33 +53,70 @@ class TracebackDialog(wx.Dialog):
     def __init__(self, parent, tb: str):
         super().__init__(parent, title="Error", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self._tb = tb
+        self._version_info = (
+            f"OS:          {platform.platform()}\n"
+            f"Eelbrain:    {eelbrain.__version__}\n"
+            f"MNE-Python:  {mne.__version__}"
+        )
 
         vbox = wx.BoxSizer(wx.VERTICAL)
 
-        text = wx.TextCtrl(
+        header = wx.StaticText(self, label=(
+            "An unexpected error occurred. Make sure you are using the latest version of "
+            "Eelbrain and MNE-Python. Check whether a corresponding issue exists, and if not, "
+            "submit a new issue including the information below, at "
+            "https://github.com/Eelbrain/Eelbrain/issues"
+        ))
+        header.Wrap(660)
+        vbox.Add(header, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, border=10)
+
+        mono = wx.Font(wx.FontInfo(10).Family(wx.FONTFAMILY_TELETYPE))
+
+        # Version/platform section
+        version_text = wx.TextCtrl(
+            self, value=self._version_info,
+            style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_DONTWRAP,
+        )
+        version_text.SetFont(mono)
+        vbox.Add(version_text, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, border=10)
+
+        version_btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        copy_version_btn = wx.Button(self, label="Copy Version Info")
+        copy_version_btn.Bind(wx.EVT_BUTTON, self._on_copy_version)
+        version_btn_sizer.Add(copy_version_btn)
+        vbox.Add(version_btn_sizer, flag=wx.LEFT | wx.RIGHT | wx.TOP, border=10)
+
+        # Traceback section
+        tb_text = wx.TextCtrl(
             self, value=tb,
             style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_DONTWRAP | wx.HSCROLL,
         )
-        text.SetFont(wx.Font(wx.FontInfo(10).Family(wx.FONTFAMILY_TELETYPE)))
-        vbox.Add(text, proportion=1, flag=wx.EXPAND | wx.ALL, border=10)
+        tb_text.SetFont(mono)
+        vbox.Add(tb_text, proportion=1, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, border=10)
 
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        copy_btn = wx.Button(self, label="Copy Traceback")
-        copy_btn.Bind(wx.EVT_BUTTON, self._on_copy)
-        btn_sizer.Add(copy_btn, flag=wx.RIGHT, border=8)
+        copy_tb_btn = wx.Button(self, label="Copy Traceback")
+        copy_tb_btn.Bind(wx.EVT_BUTTON, self._on_copy_tb)
+        btn_sizer.Add(copy_tb_btn, flag=wx.RIGHT, border=8)
         btn_sizer.AddStretchSpacer()
         close_btn = wx.Button(self, label="Close")
         close_btn.Bind(wx.EVT_BUTTON, lambda e: self.EndModal(0))
         btn_sizer.Add(close_btn)
-        vbox.Add(btn_sizer, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
+        vbox.Add(btn_sizer, flag=wx.EXPAND | wx.ALL, border=10)
 
         self.SetSizerAndFit(vbox)
-        self.SetSize((700, 400))
+        self.SetSize((700, 500))
 
-    def _on_copy(self, event):
+    def _copy(self, text):
         if wx.TheClipboard.Open():
-            wx.TheClipboard.SetData(wx.TextDataObject(self._tb))
+            wx.TheClipboard.SetData(wx.TextDataObject(text))
             wx.TheClipboard.Close()
+
+    def _on_copy_version(self, event):
+        self._copy(self._version_info)
+
+    def _on_copy_tb(self, event):
+        self._copy(self._tb)
 
 
 class StaleICADialog(wx.Dialog):
