@@ -53,6 +53,7 @@ from ..plot._utsnd import AxButterflyEpoch
 from .app import get_app
 from .frame import EelbrainDialog
 from .mpl_canvas import FigureCanvasPanel
+from .frame import NavigableFrame
 from .history import Action, FileDocument, FileModel, FileFrame
 from .text import HTMLFrame
 from .utils import Icon, REValidator
@@ -788,7 +789,7 @@ class Model(FileModel):
         self.history.do(action)
 
 
-class Frame(FileFrame):
+class Frame(NavigableFrame, FileFrame):
     """Epoch rejection GUI
 
     Exclude bad epochs and interpolate or remove bad channels.
@@ -876,10 +877,7 @@ class Frame(FileFrame):
         tb.Bind(wx.EVT_CHOICE, self.OnPageChoice)
 
         # --> forward / backward
-        self.back_button = tb.AddTool(wx.ID_BACKWARD, "Back", Icon("tango/actions/go-previous"))
-        self.Bind(wx.EVT_TOOL, self.OnBackward, id=wx.ID_BACKWARD)
-        self.next_button = tb.AddTool(wx.ID_FORWARD, "Next", Icon("tango/actions/go-next"))
-        self.Bind(wx.EVT_TOOL, self.OnForward, id=wx.ID_FORWARD)
+        self.AddNavigationButtons(tb)
         tb.AddSeparator()
 
         # --> Bad Channels
@@ -1392,19 +1390,7 @@ class Frame(FileFrame):
             dlg.StoreConfig()
         dlg.Destroy()
 
-    def OnUpdateUIBackward(self, event):
-        event.Enable(self.CanBackward())
-
-    def OnUpdateUIForward(self, event):
-        event.Enable(self.CanForward())
-
-    def OnUpdateUISetLayout(self, event):
-        event.Enable(True)
-
-    def OnUpdateUISetMarkedChannels(self, event):
-        event.Enable(True)
-
-    def OnUpdateUISetVLim(self, event):
+    def OnUpdateUISetMarkedChannels(self, event: wx.UpdateUIEvent) -> None:
         event.Enable(True)
 
     def PlotCorrelation(self, ax_index):

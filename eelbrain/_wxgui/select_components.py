@@ -37,10 +37,11 @@ from .._utils.system import IS_OSX
 from ..plot._base import AxisData, DataLayer, PlotType
 from ..plot._topo import AxTopomap
 from .frame import EelbrainDialog
+from .frame import NavigableFrame
 from .history import Action, FileDocument, FileModel, FileFrame, FileFrameChild
 from .mpl_canvas import FigureCanvasPanel
 from .text import HTML2Frame as HTMLFrame
-from .utils import Icon, REValidator
+from .utils import REValidator
 from . import ID
 
 
@@ -702,7 +703,7 @@ class SharedToolsMenu:  # Frame mixin
         plot.UTSStat('psd', 'data', data=ds, error=np.std, w=8, title="Spectrum (±1 STD)", colors=colors)
 
 
-class Frame(SharedToolsMenu, FileFrame):
+class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
     """GUI for selecting ICA components
 
     * Click on component source time courses or topographies to select/deselect.
@@ -764,10 +765,7 @@ class Frame(SharedToolsMenu, FileFrame):
         # Toolbar
         tb = self.InitToolbar(can_open=False)
         tb.AddSeparator()
-        self.up_button = tb.AddTool(wx.ID_UP, "Up", Icon("tango/actions/go-up"))
-        self.down_button = tb.AddTool(wx.ID_DOWN, "Down", Icon("tango/actions/go-down"))
-        self.back_button = tb.AddTool(wx.ID_BACKWARD, "Back", Icon("tango/actions/go-previous"))
-        self.next_button = tb.AddTool(wx.ID_FORWARD, "Next", Icon("tango/actions/go-next"))
+        self.AddNavigationButtons(tb, up_down=True)
         tb.AddSeparator()
         button = wx.Button(tb, wx.ID_ANY, "Topographies")
         button.Bind(wx.EVT_BUTTON, self.OnShowTopos)
@@ -779,10 +777,6 @@ class Frame(SharedToolsMenu, FileFrame):
 
         # event bindings
         self.doc.callbacks.subscribe('case_change', self.CaseChanged)
-        self.Bind(wx.EVT_TOOL, self.OnUp, id=wx.ID_UP)
-        self.Bind(wx.EVT_TOOL, self.OnDown, id=wx.ID_DOWN)
-        self.Bind(wx.EVT_TOOL, self.OnBackward, id=wx.ID_BACKWARD)
-        self.Bind(wx.EVT_TOOL, self.OnForward, id=wx.ID_FORWARD)
         self.canvas.mpl_connect('key_release_event', self.OnCanvasKey)
         # re-Bind mouse click
         self.canvas.Unbind(wx.EVT_LEFT_DOWN)
@@ -1191,26 +1185,8 @@ class Frame(SharedToolsMenu, FileFrame):
         "Turn the page backward in components"
         self.SetFirstComponent(self.i_first - self.n_comp)
 
-    def OnUpdateUIBackward(self, event):
-        event.Enable(self.CanBackward())
-
-    def OnUpdateUIDown(self, event):
-        event.Enable(self.CanDown())
-
-    def OnUpdateUIForward(self, event):
-        event.Enable(self.CanForward())
-
-    def OnUpdateUIOpen(self, event):
+    def OnUpdateUIOpen(self, event: wx.UpdateUIEvent) -> None:
         event.Enable(False)
-
-    def OnUpdateUISetLayout(self, event):
-        event.Enable(True)
-
-    def OnUpdateUISetVLim(self, event):
-        event.Enable(True)
-
-    def OnUpdateUIUp(self, event):
-        event.Enable(self.CanUp())
 
     def PlotCompFFT(self, i_comp):
         plot.UTSStat(self.doc.sources.sub(component=i_comp).fft(), error=np.std, w=8, title=f"# {i_comp} Spectrum (±1 STD)", legend=False)

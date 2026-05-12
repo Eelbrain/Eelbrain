@@ -2,6 +2,7 @@ import wx
 
 from .._utils import IS_OSX
 from . import ID
+from .utils import Icon
 
 FOCUS_UI_UPDATE_FUNC_NAMES = {
     wx.ID_COPY: 'CanCopy',
@@ -82,6 +83,62 @@ class EelbrainWindow:
 
     def OnUpdateUIUp(self, event: wx.UpdateUIEvent) -> None:
         event.Enable(False)
+
+
+class NavigableFrame:
+    """Mixin for frames with backward/forward (and optionally up/down) navigation.
+
+    Subclasses must implement ``CanBackward`` and ``CanForward``, and
+    ``CanUp``/``CanDown`` if ``AddNavigationButtons`` is called with
+    ``up_down=True``.  The mixin overrides the ``OnUpdateUI*`` stubs from
+    ``EelbrainWindow`` and provides ``AddNavigationButtons`` to wire up toolbar
+    buttons in one call instead of duplicating four lines per frame.
+    """
+
+    def CanBackward(self) -> bool:
+        raise NotImplementedError
+
+    def CanForward(self) -> bool:
+        raise NotImplementedError
+
+    def CanUp(self) -> bool:
+        raise NotImplementedError
+
+    def CanDown(self) -> bool:
+        raise NotImplementedError
+
+    def AddNavigationButtons(self, tb: wx.ToolBar, *, up_down: bool = False) -> None:
+        """Add backward/forward (and optionally up/down) buttons to *tb*.
+
+        Also binds the corresponding ``EVT_TOOL`` events to ``self.On*``.
+        """
+        if up_down:
+            tb.AddTool(wx.ID_UP, "Up", Icon("tango/actions/go-up"))
+            tb.AddTool(wx.ID_DOWN, "Down", Icon("tango/actions/go-down"))
+            self.Bind(wx.EVT_TOOL, self.OnUp, id=wx.ID_UP)
+            self.Bind(wx.EVT_TOOL, self.OnDown, id=wx.ID_DOWN)
+        tb.AddTool(wx.ID_BACKWARD, "Back", Icon("tango/actions/go-previous"))
+        tb.AddTool(wx.ID_FORWARD, "Next", Icon("tango/actions/go-next"))
+        self.Bind(wx.EVT_TOOL, self.OnBackward, id=wx.ID_BACKWARD)
+        self.Bind(wx.EVT_TOOL, self.OnForward, id=wx.ID_FORWARD)
+
+    def OnUpdateUIBackward(self, event: wx.UpdateUIEvent) -> None:
+        event.Enable(self.CanBackward())
+
+    def OnUpdateUIDown(self, event: wx.UpdateUIEvent) -> None:
+        event.Enable(self.CanDown())
+
+    def OnUpdateUIForward(self, event: wx.UpdateUIEvent) -> None:
+        event.Enable(self.CanForward())
+
+    def OnUpdateUISetLayout(self, event: wx.UpdateUIEvent) -> None:
+        event.Enable(True)
+
+    def OnUpdateUISetVLim(self, event: wx.UpdateUIEvent) -> None:
+        event.Enable(True)
+
+    def OnUpdateUIUp(self, event: wx.UpdateUIEvent) -> None:
+        event.Enable(self.CanUp())
 
 
 class EelbrainFrame(wx.Frame, EelbrainWindow):
