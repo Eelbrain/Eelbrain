@@ -10,6 +10,7 @@ import mne
 import wx
 
 from .. import load
+from .._exceptions import ConfigurationError, DataError
 from .._experiment.derivative_cache import ProtectedArtifactError
 from .._experiment.epochs import PrimaryEpoch
 from .._experiment.pathing import MRI_SDIR
@@ -240,6 +241,10 @@ class PipelineFrame(EelbrainFrame):
                 self._on_mri_activated(idx, subject)
             elif task_type == 'coreg':
                 self._on_coreg_activated(idx)
+        except DataError as error:
+            wx.MessageBox(str(error), "Data error", wx.OK | wx.ICON_ERROR, self)
+        except ConfigurationError as error:
+            wx.MessageBox(str(error), "Configuration error", wx.OK | wx.ICON_ERROR, self)
         finally:
             wx.EndBusyCursor()
 

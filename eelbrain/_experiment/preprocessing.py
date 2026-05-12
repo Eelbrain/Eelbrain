@@ -47,7 +47,7 @@ import pandas as pd
 
 from .. import load
 from .._data_obj import NDVar, Sensor
-from .._exceptions import ConfigurationError
+from .._exceptions import ConfigurationError, DataError
 from .._io.fiff import KIT_NEIGHBORS
 from .._io.txt import read_adjacency
 from .._ndvar import filter_data
@@ -360,10 +360,14 @@ class RawSourceDerivative(UncachedDerivative[mne.io.BaseRaw]):
         raw_bads = raw.info['bads']
         all_bads = set(tsv_bads) | set(raw_bads)
 
-        # Detect channels whose positions contain NAN
+        # Detect channels whose positions contain NaN
         nan_bads = {ch['ch_name'] for ch in raw.info['chs'] if numpy.any(numpy.isnan(ch['loc'][:3]))}
         nan_bads.difference_update(all_bads)
         if nan_bads:
+            eeg_picks = mne.pick_types(raw.info, meg=False, eeg=True, exclude=())
+            eeg_names = {raw.info['chs'][i]['ch_name'] for i in eeg_picks}
+            if eeg_names and eeg_names.issubset(nan_bads):
+                raise DataError("All EEG channel positions are NaN. This usually means that the raw file does not contain electrode positions and a montage needs to be applied. Set the montage parameter in RawSource to supply channel positions.")
             warnings.warn(f"Channels with NaN position marked as bad: {', '.join(sorted(nan_bads))}", RuntimeWarning)
             all_bads |= nan_bads
 

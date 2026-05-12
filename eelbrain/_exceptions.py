@@ -16,6 +16,10 @@ class KeysMissing(KeyError):
         return f"{plural('Key', n)} {enumeration(map(repr, keys))} missing from {from_name}={from_dict!r}"
 
 
+class DataError(Exception):
+    "Problem with the Pipeline input data (e.g. missing channel positions)"
+
+
 class ConfigurationError(Exception):
     "Pipeline configuration error"
 
