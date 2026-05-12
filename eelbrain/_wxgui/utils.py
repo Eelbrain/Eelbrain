@@ -11,11 +11,11 @@ import eelbrain
 from eelbrain._wxgui import icons
 
 # store icons once loaded for repeated access
-_cache = {}
-_iconcache = {}
+_cache: dict[str, wx.Bitmap] = {}
+_iconcache: dict[str, wx.Icon] = {}
 
 
-def Icon(path, asicon=False):
+def Icon(path: str, asicon: bool = False) -> wx.Bitmap | wx.Icon:
     if asicon:
         if path not in _iconcache:
             _iconcache[path] = icons.catalog[path].GetIcon()
@@ -26,7 +26,7 @@ def Icon(path, asicon=False):
         return _cache[path]
 
 
-def show_text_dialog(parent, text, caption):
+def show_text_dialog(parent: wx.Window, text: str, caption: str) -> ScrolledMessageDialog:
     "Create and show a ScrolledMessageDialog"
     style = wx.CAPTION | wx.CLOSE_BOX | wx.RESIZE_BORDER | wx.SYSTEM_MENU
     dlg = ScrolledMessageDialog(parent, text, caption, style=style)
@@ -50,7 +50,7 @@ class TracebackDialog(wx.Dialog):
     to file a bug report.
     """
 
-    def __init__(self, parent, tb: str):
+    def __init__(self, parent: wx.Window, tb: str) -> None:
         super().__init__(parent, title="Error", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self._tb = tb
         self._version_info = (
@@ -107,15 +107,15 @@ class TracebackDialog(wx.Dialog):
         self.SetSizerAndFit(vbox)
         self.SetSize((700, 500))
 
-    def _copy(self, text):
+    def _copy(self, text: str) -> None:
         if wx.TheClipboard.Open():
             wx.TheClipboard.SetData(wx.TextDataObject(text))
             wx.TheClipboard.Close()
 
-    def _on_copy_version(self, event):
+    def _on_copy_version(self, event: wx.CommandEvent) -> None:
         self._copy(self._version_info)
 
-    def _on_copy_tb(self, event):
+    def _on_copy_tb(self, event: wx.CommandEvent) -> None:
         self._copy(self._tb)
 
 
@@ -132,12 +132,18 @@ class StaleICADialog(wx.Dialog):
     INCORPORATE = 'incorporate'
     IGNORE = 'ignore'
 
-    def __init__(self, parent, subject: str, message: str, instructions: str = ''):
+    def __init__(
+            self,
+            parent: wx.Window,
+            subject: str,
+            message: str,
+            instructions: str = '',
+    ) -> None:
         super().__init__(
             parent, title=f"Stale ICA: {subject}",
             style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
         )
-        self.choice = None
+        self.choice: str | None = None
 
         vbox = wx.BoxSizer(wx.VERTICAL)
 
@@ -181,23 +187,23 @@ class StaleICADialog(wx.Dialog):
         self.SetSizerAndFit(vbox)
         self.SetMinSize((420, -1))
 
-    def _choose(self, choice: str):
+    def _choose(self, choice: str) -> None:
         self.choice = choice
         self.EndModal(0)
 
 
 class FloatValidator(wx.Validator):
 
-    def __init__(self, parent, attr):
+    def __init__(self, parent: wx.Window, attr: str) -> None:
         wx.Validator.__init__(self)
         self.parent = parent
         self.attr = attr
-        self.value = None
+        self.value: float | None = None
 
-    def Clone(self):
+    def Clone(self) -> 'FloatValidator':
         return FloatValidator(self.parent, self.attr)
 
-    def Validate(self, parent):
+    def Validate(self, parent: wx.Window) -> bool:
         ctrl = self.GetWindow()
         value = ctrl.GetValue()
         try:
@@ -210,13 +216,13 @@ class FloatValidator(wx.Validator):
         else:
             return True
 
-    def TransferToWindow(self):
+    def TransferToWindow(self) -> bool:
         ctrl = self.GetWindow()
         ctrl.SetValue(str(getattr(self.parent, self.attr)))
         ctrl.SelectAll()
         return True
 
-    def TransferFromWindow(self):
+    def TransferFromWindow(self) -> bool:
         if self.value is None:
             return False
         else:
@@ -227,16 +233,16 @@ class FloatValidator(wx.Validator):
 class REValidator(wx.Validator):
     "Ensure that the value of a text field matches a regular expression"
 
-    def __init__(self, pattern, message, can_be_empty=False):
+    def __init__(self, pattern: str, message: str, can_be_empty: bool = False) -> None:
         wx.Validator.__init__(self)
         self.pattern = re.compile(pattern)
         self.message = message
         self.can_be_empty = bool(can_be_empty)
 
-    def Clone(self):
+    def Clone(self) -> 'REValidator':
         return REValidator(self.pattern, self.message, self.can_be_empty)
 
-    def Validate(self, win):
+    def Validate(self, win: wx.Window) -> bool:
         ctrl = self.GetWindow()
         text = ctrl.GetValue()
 
@@ -251,14 +257,9 @@ class REValidator(wx.Validator):
         ctrl.SetFocus()
         ctrl.Refresh()
         return False
-#         else:
-#             ctrl.SetBackgroundColour(
-#                 wx.SystemSettings_GetColour(wx.SYS_COLOUR_WINDOW))
-#             ctrl.Refresh()
-#             return True
 
-    def TransferToWindow(self):
+    def TransferToWindow(self) -> bool:
         return True
 
-    def TransferFromWindow(self):
+    def TransferFromWindow(self) -> bool:
         return True

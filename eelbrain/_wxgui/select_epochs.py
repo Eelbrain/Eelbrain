@@ -23,6 +23,9 @@ Required variables:
 #  - visualizaes Document
 #  - listens to Document changes
 #  - issues commands to Model
+from __future__ import annotations
+
+from collections.abc import Sequence
 from logging import getLogger
 import math
 import os
@@ -142,10 +145,21 @@ class ChangeAction(Action):
         list of (i, name, old, new) tuples
     """
 
-    def __init__(self, desc, index=None, old_accept=None, new_accept=None,
-                 old_tag=None, new_tag=None, old_path=None, new_path=None,
-                 old_bad_chs=None, new_bad_chs=None, old_interpolate=None,
-                 new_interpolate=None):
+    def __init__(
+            self,
+            desc: str,
+            index: int | slice | np.ndarray | None = None,
+            old_accept: bool | Var | np.ndarray | None = None,
+            new_accept: bool | Var | np.ndarray | None = None,
+            old_tag: str | Factor | None = None,
+            new_tag: str | Factor | None = None,
+            old_path: str | None = None,
+            new_path: str | None = None,
+            old_bad_chs: list | None = None,
+            new_bad_chs: list | None = None,
+            old_interpolate: list[str] | Datalist | None = None,
+            new_interpolate: list[str] | Datalist | None = None,
+    ) -> None:
         self.desc = desc
         self.index = index
         self.old_path = old_path
@@ -206,9 +220,18 @@ class Document(FileDocument):
         Case eye tracker artifact data.
     """
 
-    def __init__(self, ds, data='meg', accept='accept', blink='blink',
-                 tag='rej_tag', trigger='trigger', path=None, bad_chs=None,
-                 allow_interpolation=True):
+    def __init__(
+            self,
+            ds: Dataset | mne.BaseEpochs,
+            data: str = 'meg',
+            accept: str = 'accept',
+            blink: str = 'blink',
+            tag: str = 'rej_tag',
+            trigger: str = 'trigger',
+            path: str | None = None,
+            bad_chs: list | None = None,
+            allow_interpolation: bool = True,
+    ) -> None:
         FileDocument.__init__(self, path)
         if isinstance(ds, MNE_EPOCHS):
             mne_epochs = ds
@@ -801,8 +824,23 @@ class Frame(FileFrame):
     _doc_name = 'epoch selection'
     _title = "Select Epochs"
 
-    def __init__(self, parent, model, nplots, topo, vlim, color, lw, mark,
-                 mcolor, mlw, antialiased, pos, size, allow_interpolation):
+    def __init__(
+            self,
+            parent: wx.Frame | None,
+            model: Model,
+            nplots: int | tuple[int, int] | None,
+            topo: bool | None,
+            vlim: float | None,
+            color,
+            lw: float,
+            mark: Sequence | None,
+            mcolor,
+            mlw: float,
+            antialiased: bool,
+            pos: tuple[int, int] | None,
+            size: tuple[int, int] | None,
+            allow_interpolation: bool,
+    ) -> None:
         """View object of the epoch selection GUI
 
         Parameters

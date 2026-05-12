@@ -6,11 +6,18 @@ http://matplotlib.sourceforge.net/examples/user_interfaces/index.html
 
 
 '''
+from __future__ import annotations
+
 from logging import getLogger
 import math
 import tempfile
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..plot._base import EelFigure
 
 import numpy as np
+from matplotlib.axes import Axes
 from matplotlib.backends.backend_wx import NavigationToolbar2Wx
 from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg
 from matplotlib.backend_bases import MouseEvent, KeyEvent
@@ -33,7 +40,7 @@ class FigureCanvasPanel(FigureCanvasWxAgg):
     as copying the contents to the clipboard).
     """
 
-    def __init__(self, parent, *args, **kwargs):
+    def __init__(self, parent: wx.Window, *args, **kwargs) -> None:
         """wx.Panel with a matplotlib figure
 
         Parameters
@@ -74,7 +81,7 @@ class FigureCanvasPanel(FigureCanvasWxAgg):
         # Override to avoid system chime
         KeyEvent("key_release_event", self, self._get_key(event), *self._mpl_coords(), guiEvent=event)._process()
 
-    def SizeToFigure(self):
+    def SizeToFigure(self) -> None:
         "Adjust the Panel size to the size implied when the figure was created"
         w, h = self.original_size_inches
         dpi = self.figure.dpi / self.hidpi
@@ -82,17 +89,17 @@ class FigureCanvasPanel(FigureCanvasWxAgg):
         h = math.ceil(h * dpi)
         self.SetSize((w, h))
 
-    def CanCopy(self):
+    def CanCopy(self) -> bool:
         return True
 
-    def bufferHasChanged(self):
+    def bufferHasChanged(self) -> bool:
         return True
 
-    def ChangeCursor(self, event):
+    def ChangeCursor(self, event: wx.MouseEvent) -> None:
         "http://matplotlib.sourceforge.net/examples/user_interfaces/wxcursor_demo.html"
         self.SetCursor(wx.Cursor(wx.CURSOR_CROSS))
 
-    def Copy(self):
+    def Copy(self) -> None:
         # By default, copy PDF
         if not wx.TheClipboard.Open():
             getLogger('eelbrain').debug("Failed to open clipboard")
@@ -109,10 +116,10 @@ class FigureCanvasPanel(FigureCanvasWxAgg):
             wx.TheClipboard.Flush()
 
     @staticmethod
-    def CanCopyPNG():
+    def CanCopyPNG() -> bool:
         return True
 
-    def CopyAsPNG(self):
+    def CopyAsPNG(self) -> None:
         self.Copy_to_Clipboard()
 
     def _to_matplotlib_event(self, event: wx.MouseEvent):
@@ -125,7 +132,7 @@ class FigureCanvasPanel(FigureCanvasWxAgg):
         y = (self.GetSize().GetHeight() - event.GetY()) * self.hidpi
         return MouseEvent('wx-event', self.figure.canvas, x, y, guiEvent=event)
 
-    def redraw(self, axes=()):
+    def redraw(self, axes: tuple[Axes, ...] = ()) -> None:
         # https://matplotlib.org/stable/users/explain/animations/blitting.html
         if not axes:
             return
@@ -137,7 +144,7 @@ class FigureCanvasPanel(FigureCanvasWxAgg):
             ax.draw_artist(ax)
         self.blit(self.figure.bbox)
 
-    def store_canvas(self):
+    def store_canvas(self) -> None:
         self._background = self.copy_from_bbox(self.figure.bbox)
 
 
@@ -147,7 +154,17 @@ class CanvasFrame(EelbrainFrame):
     _plot_name = "CanvasFrame"
     _allow_user_set_title = True
 
-    def __init__(self, parent=None, title="Matplotlib Frame", pos=wx.DefaultPosition, eelfigure=None, statusbar=True, toolbar=True, mpl_toolbar=False, **kwargs):
+    def __init__(
+            self,
+            parent: wx.Window | None = None,
+            title: str = "Matplotlib Frame",
+            pos: wx.Point | tuple[int, int] = wx.DefaultPosition,
+            eelfigure: EelFigure | None = None,
+            statusbar: bool = True,
+            toolbar: bool = True,
+            mpl_toolbar: bool = False,
+            **kwargs,
+    ) -> None:
         EelbrainFrame.__init__(self, parent, -1, title, pos)
         self._pos_arg = pos
 
@@ -175,10 +192,10 @@ class CanvasFrame(EelbrainFrame):
         self._eelfigure = eelfigure
         self.Bind(wx.EVT_CLOSE, self.OnClose)
 
-    def store_canvas(self):
+    def store_canvas(self) -> None:
         self.canvas.store_canvas()
 
-    def FillToolBar(self, tb, eelfigure):
+    def FillToolBar(self, tb: wx.ToolBar, eelfigure: EelFigure | None) -> None:
         "Subclass should call this after adding their own items"
         if hasattr(self.Parent, 'attach'):
             tb.AddTool(ID.ATTACH, "Attach", Icon("actions/attach"))
@@ -204,10 +221,10 @@ class CanvasFrame(EelbrainFrame):
             tb.AddTool(wx.ID_HELP, 'Help', Icon("tango/apps/help-browser"))
             self.Bind(wx.EVT_TOOL, self.OnHelp, id=wx.ID_HELP)
 
-    def _fill_toolbar(self, tb):
+    def _fill_toolbar(self, tb: wx.ToolBar) -> None:
         pass
 
-    def Show(self, show=True):
+    def Show(self, show: bool = True) -> None:
         if self._pos_arg == wx.DefaultPosition:
             rect = self.GetRect()
             display_w, display_h = wx.DisplaySize()
@@ -339,14 +356,14 @@ class LimitsValidator(wx.Validator):
         ``offset``: ``[v, v + old_range]``
     """
 
-    def __init__(self, parent, attr, single='symmetric'):
+    def __init__(self, parent: wx.Window, attr: str, single: str = 'symmetric') -> None:
         wx.Validator.__init__(self)
         self.parent = parent
         self.attr = attr
-        self.value = None
+        self.value: tuple[float, float] | None = None
         self.single = single
 
-    def Clone(self):
+    def Clone(self) -> LimitsValidator:
         return LimitsValidator(self.parent, self.attr, self.single)
 
     def Validate(self, parent):
@@ -420,7 +437,15 @@ class AxisLimitsDialog(EelbrainDialog):
         Wx-Python Dialog parameters.
     """
 
-    def __init__(self, vlim, ylim, xlim, parent, *args, **kwargs):
+    def __init__(
+            self,
+            vlim: tuple[float, float] | None,
+            ylim: tuple[float, float] | None,
+            xlim: tuple[float, float] | None,
+            parent: wx.Window,
+            *args,
+            **kwargs,
+    ) -> None:
         EelbrainDialog.__init__(self, parent, wx.ID_ANY, "Set Axis Limits", *args, **kwargs)
         self.vlim = vlim
         self.ylim = ylim
@@ -477,9 +502,9 @@ class AxisLimitsDialog(EelbrainDialog):
 
 class SetTimeDialog(EelbrainDialog):
 
-    def __init__(self, parent, current_time):
+    def __init__(self, parent: wx.Window, current_time: float) -> None:
         EelbrainDialog.__init__(self, parent, title="Set Time")
-        self.time = current_time
+        self.time: float = current_time
 
         sizer = wx.BoxSizer(wx.HORIZONTAL)
         sizer.Add(wx.StaticText(self, label="New time:"))

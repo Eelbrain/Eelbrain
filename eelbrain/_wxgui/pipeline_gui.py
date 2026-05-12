@@ -26,7 +26,7 @@ def _launch_coreg_subprocess(
         inst: str,
         trans: str | None = None,
         on_close: Callable | None = None,
-):
+) -> None:
     """Launch mne.gui.coregistration in a subprocess to avoid Qt/wx event loop conflict."""
     kwargs = f'subject={mrisubject!r}, {subjects_dir=}, {inst=}, block=True'
     if trans is not None:
@@ -50,7 +50,7 @@ class PipelineFrame(EelbrainFrame):
     the corresponding sub-GUI on double-click.
     """
 
-    def __init__(self, pipeline):
+    def __init__(self, pipeline) -> None:
         super().__init__(parent=None, title=f"Pipeline: {pipeline.root}")
         self._pipeline = pipeline
         self._refresh_token = None  # replaced each refresh; threads compare identity
@@ -167,7 +167,7 @@ class PipelineFrame(EelbrainFrame):
         self._tasks.append(('coreg', 'coreg'))
         self._task_choice.Append("Coregistration")
 
-    def _current_task(self):
+    def _current_task(self) -> tuple[str | None, str | None]:
         idx = self._task_choice.GetSelection()
         if idx == wx.NOT_FOUND or idx >= len(self._tasks):
             return None, None
@@ -325,7 +325,7 @@ class PipelineFrame(EelbrainFrame):
         for i, (label, width) in enumerate(cols):
             self._list.InsertColumn(i, label, width=width)
 
-    def _populate_table(self, rows, token):
+    def _populate_table(self, rows: list[tuple[str, ...]], token: object) -> None:
         if token is not self._refresh_token:
             return
         task_type, _ = self._current_task()
@@ -348,7 +348,7 @@ class PipelineFrame(EelbrainFrame):
                     self._list.SetItemTextColour(idx, wx.RED)
         self._refresh_status_bar()
 
-    def _update_ica_row(self, subject, task_key, doc):
+    def _update_ica_row(self, subject: str, task_key: str, doc) -> None:
         """Update a single ICA row from the already-in-memory document (no disk I/O)."""
         n_comp = doc.ica.n_components_
         n_excl = len(doc.ica.exclude)
@@ -397,7 +397,7 @@ class PipelineFrame(EelbrainFrame):
     # ------------------------------------------------------------------
     # Background status refresh
 
-    def _start_refresh(self):
+    def _start_refresh(self) -> None:
         task_type, task_key = self._current_task()
         if task_type is None:
             return
@@ -421,7 +421,14 @@ class PipelineFrame(EelbrainFrame):
             daemon=True,
         ).start()
 
-    def _refresh_thread(self, token, task_type, task_key, epoch_name, raw_name):
+    def _refresh_thread(
+            self,
+            token: object,
+            task_type: str,
+            task_key: str,
+            epoch_name: str | None,
+            raw_name: str | None,
+    ) -> None:
         try:
             rows = self._compute_rows(token, task_type, task_key, epoch_name, raw_name)
         except _AbortRequested:
@@ -671,7 +678,14 @@ class PipelineFrame(EelbrainFrame):
         else:
             self._start_refresh()
 
-    def _compute_rows(self, token, task_type, task_key, epoch_name, raw_name):
+    def _compute_rows(
+            self,
+            token: object,
+            task_type: str,
+            task_key: str,
+            epoch_name: str | None,
+            raw_name: str | None,
+    ) -> list[tuple[str, ...]]:
         pipeline = self._pipeline
         rows = []
 

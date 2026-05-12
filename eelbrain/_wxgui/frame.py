@@ -14,32 +14,32 @@ FOCUS_UI_UPDATE_FUNC_NAMES = {
 class EelbrainWindow:
     # Frame subclass to support UI Update
 
-    def OnWindowIconize(self, event):
+    def OnWindowIconize(self, event: wx.CommandEvent) -> None:
         self.Iconize()
 
-    def OnWindowZoom(self, event):
+    def OnWindowZoom(self, event: wx.CommandEvent) -> None:
         self.Maximize()
 
-    def OnUpdateUIBackward(self, event):
+    def OnUpdateUIBackward(self, event: wx.UpdateUIEvent) -> None:
         event.Enable(False)
 
-    def OnUpdateUIClear(self, event):
+    def OnUpdateUIClear(self, event: wx.UpdateUIEvent) -> None:
         event.Enable(False)
 
-    def OnUpdateUIClose(self, event):
+    def OnUpdateUIClose(self, event: wx.UpdateUIEvent) -> None:
         event.Enable(True)
 
-    def OnUpdateUIDown(self, event):
+    def OnUpdateUIDown(self, event: wx.UpdateUIEvent) -> None:
         event.Enable(True)
 
-    def OnUpdateUIDrawCrosshairs(self, event):
+    def OnUpdateUIDrawCrosshairs(self, event: wx.UpdateUIEvent) -> None:
         event.Enable(False)
         event.Check(False)
 
-    def OnUpdateUIForward(self, event):
+    def OnUpdateUIForward(self, event: wx.UpdateUIEvent) -> None:
         event.Enable(False)
 
-    def OnUpdateUIFocus(self, event):
+    def OnUpdateUIFocus(self, event: wx.UpdateUIEvent) -> None:
         func_name = FOCUS_UI_UPDATE_FUNC_NAMES[event.GetId()]
         win = self.FindFocus()
         func = getattr(win, func_name, None)
@@ -50,54 +50,62 @@ class EelbrainWindow:
                 return
         event.Enable(func())
 
-    def OnUpdateUIOpen(self, event):
+    def OnUpdateUIOpen(self, event: wx.UpdateUIEvent) -> None:
         event.Enable(False)
 
-    def OnUpdateUIRedo(self, event):
+    def OnUpdateUIRedo(self, event: wx.UpdateUIEvent) -> None:
         event.Enable(False)
 
-    def OnUpdateUISave(self, event):
+    def OnUpdateUISave(self, event: wx.UpdateUIEvent) -> None:
         event.Enable(False)
 
-    def OnUpdateUISaveAs(self, event):
+    def OnUpdateUISaveAs(self, event: wx.UpdateUIEvent) -> None:
         event.Enable(False)
 
-    def OnUpdateUISetLayout(self, event):
+    def OnUpdateUISetLayout(self, event: wx.UpdateUIEvent) -> None:
         event.Enable(False)
 
-    def OnUpdateUISetMarkedChannels(self, event):
+    def OnUpdateUISetMarkedChannels(self, event: wx.UpdateUIEvent) -> None:
         event.Enable(False)
 
-    def OnUpdateUISetVLim(self, event):
+    def OnUpdateUISetVLim(self, event: wx.UpdateUIEvent) -> None:
         event.Enable(False)
 
-    def OnUpdateUISetTime(self, event):
+    def OnUpdateUISetTime(self, event: wx.UpdateUIEvent) -> None:
         event.Enable(False)
 
-    def OnUpdateUITools(self, event):
+    def OnUpdateUITools(self, event: wx.UpdateUIEvent) -> None:
         event.Enable(hasattr(self, 'MakeToolsMenu'))
 
-    def OnUpdateUIUndo(self, event):
+    def OnUpdateUIUndo(self, event: wx.UpdateUIEvent) -> None:
         event.Enable(False)
 
-    def OnUpdateUIUp(self, event):
+    def OnUpdateUIUp(self, event: wx.UpdateUIEvent) -> None:
         event.Enable(False)
 
 
 class EelbrainFrame(wx.Frame, EelbrainWindow):
     _allow_user_set_title = False
 
-    def __init__(self, parent=None, id=wx.ID_ANY, title="", pos=wx.DefaultPosition, *args, **kwargs):
+    def __init__(
+            self,
+            parent: wx.Window | None = None,
+            id: int = wx.ID_ANY,
+            title: str = "",
+            pos: wx.Point | tuple[int, int] = wx.DefaultPosition,
+            *args,
+            **kwargs,
+    ) -> None:
         wx.Frame.__init__(self, parent, id, title, pos, *args, **kwargs)
         if not IS_OSX:
             from .app import get_app
             self.SetMenuBar(get_app().CreateMenu(self))
         self._title = self.GetTitle()
 
-    def OnClear(self, event):
+    def OnClear(self, event: wx.CommandEvent) -> None:
         raise RuntimeError(str(self))
 
-    def OnCopy(self, event):
+    def OnCopy(self, event: wx.CommandEvent) -> None:
         win = wx.Window.FindFocus()
         if hasattr(win, 'CanCopy'):
             return win.Copy()
@@ -106,47 +114,47 @@ class EelbrainFrame(wx.Frame, EelbrainWindow):
         else:
             event.Skip()
 
-    def OnDrawCrosshairs(self, event):
+    def OnDrawCrosshairs(self, event: wx.CommandEvent) -> None:
         raise RuntimeError(str(self))
 
-    def OnOpen(self, event):
+    def OnOpen(self, event: wx.CommandEvent) -> None:
         raise RuntimeError(str(self))
 
-    def OnRedo(self, event):
+    def OnRedo(self, event: wx.CommandEvent) -> None:
         raise RuntimeError(str(self))
 
-    def OnSave(self, event):
+    def OnSave(self, event: wx.CommandEvent) -> None:
         raise RuntimeError(str(self))
 
-    def OnSaveAs(self, event):
+    def OnSaveAs(self, event: wx.CommandEvent) -> None:
         raise RuntimeError(str(self))
 
-    def OnSetVLim(self, event):
+    def OnSetVLim(self, event: wx.CommandEvent) -> None:
         raise RuntimeError(str(self))
 
-    def OnSetLayout(self, event):
+    def OnSetLayout(self, event: wx.CommandEvent) -> None:
         raise RuntimeError(str(self))
 
-    def OnSetMarkedChannels(self, event):
+    def OnSetMarkedChannels(self, event: wx.CommandEvent) -> None:
         raise RuntimeError(str(self))
 
-    def OnSetTime(self, event):
+    def OnSetTime(self, event: wx.CommandEvent) -> None:
         raise RuntimeError(str(self))
 
-    def OnSetWindowTitle(self, event):
+    def OnSetWindowTitle(self, event: wx.CommandEvent) -> None:
         dlg = wx.TextEntryDialog(self, f"New title for '{self._title}':", "Set Window Title", value=self._title)
         if dlg.ShowModal() == wx.ID_OK:
             self._title = dlg.GetValue()
             self.SetTitle(self._title)
         dlg.Destroy()
 
-    def OnUndo(self, event):
+    def OnUndo(self, event: wx.CommandEvent) -> None:
         raise RuntimeError(str(self))
 
-    def OnWindowClose(self, event):
+    def OnWindowClose(self, event: wx.CommandEvent) -> None:
         self.Close()
 
-    def SetTitleSuffix(self, suffix):
+    def SetTitleSuffix(self, suffix: str) -> None:
         self.SetTitle(self._title + suffix)
 
 

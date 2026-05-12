@@ -80,8 +80,15 @@ class ChangeAction(Action):
         list of (i, name, old, new) tuples
     """
 
-    def __init__(self, desc, index=None, old_accept=None, new_accept=None,
-                 old_path=None, new_path=None):
+    def __init__(
+            self,
+            desc: str,
+            index: int | slice | np.ndarray | None = None,
+            old_accept: bool | np.ndarray | None = None,
+            new_accept: bool | np.ndarray | None = None,
+            old_path: str | None = None,
+            new_path: str | None = None,
+    ) -> None:
         self.desc = desc
         self.index = index
         self.old_path = old_path

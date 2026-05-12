@@ -3,7 +3,7 @@ import logging
 import wx
 
 
-def filename_repr(filenames):
+def filename_repr(filenames: list[str] | str | None) -> str:
     if filenames:
         if isinstance(filenames, str):
             filenames = [filenames]
@@ -35,11 +35,11 @@ class FilenameDropTarget(wx.FileDropTarget):
 
     """
 
-    def __init__(self, text_target):
+    def __init__(self, text_target: wx.TextCtrl) -> None:
         super().__init__()
         self.text_target = text_target
 
-    def OnDropFiles(self, x, y, filenames):
+    def OnDropFiles(self, x: int, y: int, filenames: list[str]) -> None:
         msg = f"DROP! {filenames!r}"
         logging.info(msg)
         if len(filenames) == 1:
@@ -48,11 +48,11 @@ class FilenameDropTarget(wx.FileDropTarget):
 
 
 class TextDropTarget(wx.TextDropTarget):
-    def __init__(self, text_target):
+    def __init__(self, text_target: wx.TextCtrl) -> None:
         super().__init__()
         self.text_target = text_target
 
-    def OnDropText(self, x, y, text):
+    def OnDropText(self, x: int, y: int, text: str) -> None:
         msg = f"DROP! {text!r}"
         logging.info(msg)
         self.text_target.ReplaceSelection(text)
@@ -67,7 +67,7 @@ class StringDropTarget(wx.DropTarget):
 
     """
 
-    def __init__(self, target):
+    def __init__(self, target: wx.TextCtrl) -> None:
         super().__init__()
         self.target = target
 
@@ -78,7 +78,7 @@ class StringDropTarget(wx.DropTarget):
         self.do.Add(self.textdo)
         self.SetDataObject(self.do)
 
-    def OnData(self, x, y, d):
+    def OnData(self, x: int, y: int, d: wx.DragResult) -> wx.DragResult:
         if self.GetData():
             df = self.do.GetReceivedFormat().GetType()
 
@@ -94,6 +94,6 @@ class StringDropTarget(wx.DropTarget):
         return d
 
 
-def set_for_strings(window):
+def set_for_strings(window: wx.Window) -> None:
     drop_target = StringDropTarget(window)
     window.SetDropTarget(drop_target)

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from logging import getLogger
 import packaging.version
 import select
@@ -21,7 +23,7 @@ APP = None  # hold the App instance
 JUMPSTART_TIME = 250  # ms
 
 
-def wildcard(filetypes):
+def wildcard(filetypes: list[list[str]]) -> str:
     if filetypes:
         return '|'.join(map('|'.join, filetypes))
     else:
@@ -77,7 +79,7 @@ class App(wx.App):
 
         return True
 
-    def CreateMenu(self, t):
+    def CreateMenu(self, t: App | EelbrainFrame) -> wx.MenuBar:
         """Create Menubar
 
         Parameters
@@ -283,11 +285,15 @@ class App(wx.App):
             self._result = result
             self.ExitMainLoop()
 
-    def ask_for_dir(self, title="Select Folder", message="Please Pick a Folder",
-                    must_exist=True):
+    def ask_for_dir(
+            self,
+            title: str = "Select Folder",
+            message: str = "Please Pick a Folder",
+            must_exist: bool = True,
+    ) -> str | bool:
         return self._bash_ui(self._ask_for_dir, title, message, must_exist)
 
-    def _ask_for_dir(self, title, message, must_exist):
+    def _ask_for_dir(self, title: str, message: str, must_exist: bool) -> str | bool:
         style = wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT
         if must_exist:
             style = style | wx.DD_DIR_MUST_EXIST
@@ -302,10 +308,24 @@ class App(wx.App):
         dialog.Destroy()
         return self._bash_ui_finalize(result)
 
-    def ask_for_file(self, title, message, filetypes, directory, mult):
+    def ask_for_file(
+            self,
+            title: str,
+            message: str,
+            filetypes: list,
+            directory: str,
+            mult: bool,
+    ) -> list[str] | str | bool:
         return self._bash_ui(self._ask_for_file, title, message, filetypes, directory, mult)
 
-    def _ask_for_file(self, title, message, filetypes, directory, mult):
+    def _ask_for_file(
+            self,
+            title: str,
+            message: str,
+            filetypes: list,
+            directory: str,
+            mult: bool,
+    ) -> list[str] | str | bool:
         """Return path(s) or False.
 
         Parameters
@@ -334,10 +354,22 @@ class App(wx.App):
         dialog.Destroy()
         return self._bash_ui_finalize(result)
 
-    def ask_for_string(self, title, message, default='', parent=None):
+    def ask_for_string(
+            self,
+            title: str,
+            message: str,
+            default: str = '',
+            parent: wx.Window | None = None,
+    ) -> str | bool:
         return self._bash_ui(self._ask_for_string, title, message, default, parent)
 
-    def _ask_for_string(self, title, message, default, parent):
+    def _ask_for_string(
+            self,
+            title: str,
+            message: str,
+            default: str,
+            parent: wx.Window | None,
+    ) -> str | bool:
         dialog = wx.TextEntryDialog(parent, message, title, default)
         if dialog.ShowModal() == wx.ID_OK:
             result = dialog.GetValue()
@@ -346,10 +378,24 @@ class App(wx.App):
         dialog.Destroy()
         return self._bash_ui_finalize(result)
 
-    def ask_saveas(self, title, message, filetypes, defaultDir, defaultFile):
+    def ask_saveas(
+            self,
+            title: str,
+            message: str,
+            filetypes: list,
+            defaultDir: str,
+            defaultFile: str,
+    ) -> str | bool:
         return self._bash_ui(self._ask_saveas, title, message, filetypes, defaultDir, defaultFile)
 
-    def _ask_saveas(self, title, message, filetypes, defaultDir, defaultFile):
+    def _ask_saveas(
+            self,
+            title: str,
+            message: str,
+            filetypes: list,
+            defaultDir: str,
+            defaultFile: str,
+    ) -> str | bool:
         # setup file-dialog
         dialog = wx.FileDialog(None, message, wildcard=wildcard(filetypes), style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT)
         dialog.SetTitle(title)
@@ -365,10 +411,22 @@ class App(wx.App):
         dialog.Destroy()
         return self._bash_ui_finalize(result)
 
-    def message_box(self, message, caption, style, parent=None):
+    def message_box(
+            self,
+            message: str,
+            caption: str,
+            style: int,
+            parent: wx.Window | None = None,
+    ) -> int:
         return self._bash_ui(self._message_box, message, caption, style, parent)
 
-    def _message_box(self, message, caption, style, parent):
+    def _message_box(
+            self,
+            message: str,
+            caption: str,
+            style: int,
+            parent: wx.Window | None,
+    ) -> int:
         dialog = wx.MessageDialog(parent, message, caption, style)
         result = dialog.ShowModal()
         dialog.Destroy()
@@ -380,7 +438,13 @@ class App(wx.App):
             # interpreter
             wx.App.ExitMainLoop(self)
 
-    def Attach(self, obj, desc, default_name, parent):
+    def Attach(
+            self,
+            obj: object,
+            desc: str,
+            default_name: str,
+            parent: wx.Window,
+    ) -> None:
         if self._ipython is None:
             self.message_box("Attach Unavailable", "The attach command requires running from within IPython 5 or later", wx.ICON_ERROR | wx.OK, parent)
             return
@@ -689,7 +753,7 @@ class App(wx.App):
         self.ExitMainLoop()
 
 
-def get_app(jumpstart=False):
+def get_app(jumpstart: bool = False) -> App:
     global APP
     if APP is None:
         try:
@@ -717,11 +781,11 @@ def get_app(jumpstart=False):
     return APP
 
 
-def needs_jumpstart():
+def needs_jumpstart() -> bool:
     return APP is None and IS_OSX
 
 
-def run(block=False):
+def run(block: bool = False) -> None:
     """Hand over command to the GUI (quit the GUI to return to the terminal)
 
     Parameters
@@ -745,7 +809,7 @@ def run(block=False):
 
 class DockIcon(TaskBarIcon):
     # http://stackoverflow.com/a/38249390/166700
-    def __init__(self, app):
+    def __init__(self, app: App) -> None:
         TaskBarIcon.__init__(self, iconType=TBI_DOCK)
         self.app = app
 
@@ -753,7 +817,7 @@ class DockIcon(TaskBarIcon):
         self.SetIcon(Icon('eelbrain256', True), "Eelbrain")
         self.imgidx = 1
 
-    def CreatePopupMenu(self):
+    def CreatePopupMenu(self) -> wx.Menu | None:
         if not self.app.using_prompt_toolkit:
             menu = wx.Menu()
             menu.Append(ID.YIELD_TO_TERMINAL, '&Yield to Terminal')
