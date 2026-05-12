@@ -411,6 +411,10 @@ class PipelineFrame(EelbrainFrame):
         raw_name = (self._raw_choice.GetStringSelection()
                     if task_type == 'epoch_rej' else None)
 
+        if task_type == 'epoch_rej' and not epoch_name:
+            self.SetStatusText("No epochs defined")
+            return
+
         threading.Thread(
             target=self._refresh_thread,
             args=(token, task_type, task_key, epoch_name, raw_name),
