@@ -1719,9 +1719,10 @@ class RawPipeGraph(Mapping[str, RawPipe]):
 
     def ica_name(self, raw_name: str) -> str:
         """Return the ICA raw name associated with ``raw_name``."""
-        if raw_name in self._ica_names:
-            return self._ica_names[raw_name]
-        raise ValueError(f"{raw_name=} does not involve ICA")
+        ica_name = self._ica_names[raw_name]
+        if ica_name is None:
+            raise ValueError(f"{raw_name=} does not involve ICA")
+        return ica_name
 
     def ica_pipe(self, raw_name: str) -> RawICA:
         """Return the ICA raw pipe associated with ``raw_name``."""
