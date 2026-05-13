@@ -9,7 +9,7 @@ import scipy.stats
 from eelbrain import datasets, Model, Var
 from eelbrain._stats import stats
 from eelbrain._stats.permutation import permute_order, rand_rotation_matrices
-from eelbrain._utils.r_bridge import r
+from eelbrain.testing.r_bridge import r
 
 
 def test_corr():

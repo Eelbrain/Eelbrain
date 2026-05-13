@@ -1,10 +1,14 @@
 """Use r (rpy2) for testing"""
 import warnings
-from rpy2.robjects import r
 
 try:
-    from rpy2.rinterface import RRuntimeWarning
-except ImportError:  # rpy2 < 2.8
+    from rpy2.robjects import r
+    try:
+        from rpy2.rinterface import RRuntimeWarning
+    except ImportError:  # rpy2 < 2.8
+        RRuntimeWarning = UserWarning
+except ImportError:
+    r = None
     RRuntimeWarning = UserWarning
 
 

@@ -16,6 +16,7 @@ from numpy.testing import (
     assert_equal, assert_array_equal, assert_allclose,
     assert_array_almost_equal)
 import pytest
+import statsmodels.api as sm
 
 from eelbrain import (
     datasets, load, Var, Factor, NDVar, Datalist, Dataset, Celltable,
@@ -1584,11 +1585,8 @@ def test_nested_effects():
     assert_has_no_empty_cells(ds.eval('A * B + nrm(B) + A % nrm(B)'))
 
 
-@skip_on_windows  # uses R
 def test_ols():
     "Test NDVar.ols() method"
-    from rpy2.robjects import r
-
     # data-type
     assert_array_equal(NDVar([1, 2, 3], Case).ols(Var([1, 2, 3])).x, [1.])
 
@@ -1612,27 +1610,21 @@ def test_ols():
     b2 = utsc.ols(m2)
     res2 = utsc.residuals(m2)
     t2 = utsc.ols_t(m2)
-    # compare with R
+    # compare with statsmodels
+    X1 = sm.add_constant(ds_['x'].x)
+    X2 = sm.add_constant(np.column_stack([ds_['x'].x, ds_['x2'].x]))
     for i in range(n_times):
-        ds_['y'] = Var(utsc.x[:, i])
-        ds_.to_r('ds')
+        y = utsc.x[:, i]
         # 1 predictor
-        r('lm1 <- lm(y ~ x, ds)')
-        beta = r('coef(lm1)')[1]
-        assert b1.x[0, i] == pytest.approx(beta)
-        res = r('residuals(lm1)')
-        assert_array_almost_equal(res1.x[:, i], res)
-        t = r('coef(summary(lm1))')[5]
-        assert t1.x[0, i] == pytest.approx(t)
+        sm1 = sm.OLS(y, X1).fit()
+        assert b1.x[0, i] == pytest.approx(sm1.params[1])
+        assert_array_almost_equal(res1.x[:, i], sm1.resid)
+        assert t1.x[0, i] == pytest.approx(sm1.tvalues[1])
         # 2 predictors
-        r('lm2 <- lm(y ~ x + x2, ds)')
-        beta = r('coef(lm2)')[1:]
-        assert_array_almost_equal(b2.x[:, i], beta)
-        res = r('residuals(lm2)')
-        assert_array_almost_equal(res2.x[:, i], res)
-        lm2_coefs = r('coef(summary(lm2))')
-        t = [lm2_coefs[7], lm2_coefs[8]]
-        assert_array_almost_equal(t2.x[:, i], t)
+        sm2 = sm.OLS(y, X2).fit()
+        assert_array_almost_equal(b2.x[:, i], sm2.params[1:])
+        assert_array_almost_equal(res2.x[:, i], sm2.resid)
+        assert_array_almost_equal(t2.x[:, i], sm2.tvalues[1:])
 
     # 3d
     utsnd = ds['utsnd']
@@ -1641,16 +1633,11 @@ def test_ols():
     res1 = ds_.eval("utsnd.residuals(x)")
     t1 = ds_.eval("utsnd.ols_t(x)")
     for i in range(len(b1.time)):
-        ds_['y'] = Var(utsnd.x[:, 1, i])
-        ds_.to_r('ds')
-        # 1 predictor
-        r('lm1 <- lm(y ~ x, ds)')
-        beta = r('coef(lm1)')[1]
-        assert b1.x[0, 1, i] == pytest.approx(beta)
-        res = r('residuals(lm1)')
-        assert_array_almost_equal(res1.x[:, 1, i], res)
-        t = r('coef(summary(lm1))')[5]
-        assert t1.x[0, 1, i] == pytest.approx(t)
+        y = utsnd.x[:, 1, i]
+        sm1 = sm.OLS(y, X1).fit()
+        assert b1.x[0, 1, i] == pytest.approx(sm1.params[1])
+        assert_array_almost_equal(res1.x[:, 1, i], sm1.resid)
+        assert t1.x[0, 1, i] == pytest.approx(sm1.tvalues[1])
 
 
 def test_parametrization():
@@ -1707,9 +1694,10 @@ def test_io_txt():
     assert_dataset_equal(ds, ds2, decimal=6)
 
 
-@skip_on_windows  # uses R
+@skip_on_windows
 def test_r():
     "Test interaction with R through rpy2"
+    pytest.importorskip('rpy2')
     from rpy2.robjects import r
 
     r("data(sleep)")
