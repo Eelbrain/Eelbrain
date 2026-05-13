@@ -10,6 +10,7 @@ jobs:
   build-posix:
     name: build-${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       max-parallel: 5
@@ -71,6 +72,7 @@ jobs:
       run: |
         python -c "import mne; mne.datasets.sample.data_path(verbose=False); mne.datasets.testing.data_path(verbose=False); mne.datasets.fetch_fsaverage(verbose=False)"
     - name: Test with GUIs and code-cov
+      timeout-minutes: 20
       run: |
         pytest eelbrain --cov --cov-branch --cov-report=xml
     - if: matrix.os == 'macos-latest'
