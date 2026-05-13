@@ -26,7 +26,7 @@ jobs:
       uses: mamba-org/setup-micromamba@v2
       with:
         environment-file: env-test.yml
-        environment-name: eeldev
+        environment-name: eeltest
         init-shell: bash
         cache-environment: true
         post-cleanup: 'all'
