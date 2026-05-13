@@ -1,0 +1,48 @@
+# Environment for CI testing (subset of env-dev.yml)
+# usage: $ mamba env create --file=env-test.yml
+name: eeldev
+channels:
+- conda-forge
+dependencies:
+- python >= 3.11
+# packaging
+- pip
+- packaging
+# Scientific Python base
+- libcblas
+- libclang
+- numpy >= 1.20
+- scipy >= 1.5
+- matplotlib-base >= 3.8
+- seaborn
+- pymatreader
+- pillow
+# OS integration
+- appnope
+- psutil
+# mne-python
+- mne >= 1
+- h5py
+- pandas
+- scikit-learn
+- statsmodels
+- joblib
+# Eelbrain additions
+- ipython
+- colormath >= 2.1
+- tqdm >= 4.40
+- keyring >= 5
+- wxpython >= 4.0.3, != 4.1.0  # double install of libraries
+# building
+- setuptools >= 17
+- cython >= 3
+# testing
+- pre-commit
+- pytest
+- pytest-cov
+- pytest-faulthandler
+- pingouin >= 0.6.0  # breaking API used in tests
+# neuroimaging
+- nibabel >= 2.5
+- nilearn >=0.10.4
+- mne-bids >= 0.17

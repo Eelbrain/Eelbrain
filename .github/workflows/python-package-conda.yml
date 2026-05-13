@@ -25,7 +25,7 @@ jobs:
     - name: Use Mamba to create env
       uses: mamba-org/setup-micromamba@v2
       with:
-        environment-file: env-dev.yml
+        environment-file: env-test.yml
         environment-name: eeldev
         init-shell: bash
         cache-environment: true
@@ -40,7 +40,7 @@ jobs:
         DISPLAY: :99
       run: |
         Xvfb :99 -screen 0 1024x768x16 &
-        pytest eelbrain --no-gui
+        pytest eelbrain --no-gui --no-mayavi
     - if: matrix.os == 'macos-latest'
       name: Test with GUIs and code-cov
       shell: bash -el {0}
