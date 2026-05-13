@@ -23,14 +23,19 @@ Development takes place on the ``main`` branch, while release versions are maint
 branches called ``r/0.40`` etc. For further information on working with
 GitHub see `GitHub's instructions <https://help.github.com/articles/fork-a-repo/>`_.
 
-The repository contains a mamba environment that contains everything needed to use Eelbrain except Eelbrain itself.
+The repository contains mamba environments that include everything needed to use Eelbrain except Eelbrain itself.
 To install the development version:
 First, clone the repository (or your `fork <https://help.github.com/articles/fork-a-repo>`_), and change into the repository directory::
 
     $ git clone https://github.com/Eelbrain/Eelbrain.git
     $ cd Eelbrain
 
-Generate the ``eeldev`` environment::
+Two environment files are available:
+
+- ``env-dev.yml``: the full development environment (``eeldev``), including tools for building documentation, optional neuroimaging packages, and GUI support.
+- ``env-test.yml``: a leaner environment (``eeltest``) used for CI, suitable when you only need to run tests and don't require the full documentation or dev tooling.
+
+Generate the ``eeldev`` environment (or substitute ``env-test.yml`` / ``eeltest`` for the lighter alternative)::
 
     $ mamba env create --file=env-dev.yml
 
@@ -86,7 +91,7 @@ The steps below outline the recommended workflow.
 1. **Create a Fork** of `Eelbrain <https://github.com/Eelbrain/Eelbrain>`_.
 2. **Create a Branch**: Create a new branch from ``main`` for each feature or fix.
 3. **Commit Changes**: Make your changes and commit them. Individual commit messages are squashed together during merge, therefore it is useful to have good descriptions in the commit messages that apply to the PR as a whole. Less useful commit messages (eg. "fix CI" when CI is not broken before PR) will be removed during merge. 
-4. **Dependency changes**: Any changes to the dependencies should be updated in the ``env-dev.yml``, ``pyproject.toml`` and ``env-readthedocs.yml`` file. 
+4. **Dependency changes**: Any changes to the dependencies should be updated in ``pyproject.toml``, ``env-dev.yml``, ``env-test.yml``, and ``env-readthedocs.yml`` as appropriate.
 5. **Test Locally**:
    Add tests for new features and bug fixes to ensure code quality and prevent regressions.
    Run existing tests to make sure nothing breaks (see :ref:`dev-testing`).
