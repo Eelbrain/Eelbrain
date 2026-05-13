@@ -37,9 +37,9 @@ jobs:
         init-shell: bash
         cache-environment: true
         post-cleanup: 'all'
-        # Speed up env creation (TODO: 3.12 because of rpy2 pin at least)
+        # Speed up env creation by pinning a couple of packages
         create-args: |
-          mayavi=4.8.3 vtk=9.4.2 python=3.12 -v
+          mayavi=4.8.3 vtk=9.4.2 python=3.13 -v
     # Get MNE testing data
     - uses: actions/checkout@v4
       with:
@@ -70,14 +70,9 @@ jobs:
     - name: Download MNE datasets
       run: |
         python -c "import mne; mne.datasets.sample.data_path(verbose=False); mne.datasets.testing.data_path(verbose=False); mne.datasets.fetch_fsaverage(verbose=False)"
-    - if: matrix.os == 'ubuntu-latest'
-      name: Test without GUI
+    - name: Test with GUIs and code-cov
       run: |
-        pytest eelbrain --cov --cov-branch --cov-report=xml --no-gui --no-mayavi
-    - if: matrix.os == 'macos-latest'
-      name: Test with GUIs and code-cov
-      run: |
-        pytest eelbrain --cov --cov-branch --cov-report=xml --no-mayavi
+        pytest eelbrain --cov --cov-branch --cov-report=xml
     - if: matrix.os == 'macos-latest'
       name: Upload coverage to Codecov
       uses: codecov/codecov-action@v5
