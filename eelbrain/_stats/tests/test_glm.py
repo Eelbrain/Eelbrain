@@ -440,16 +440,22 @@ def _adler_dataset():
 def test_anova_r_adler():
     """Test ANOVA accuracy by comparing with R (Adler dataset of car package)
 
-    An unbalanced 3 by 2 independent measures design.
-
-    R code used to generate reference values::
+    R code used to generate balanced reference values::
 
         library(car)
-        AdlerB <- Adler  # already balanced (18 per cell)
-        a.aov <- aov(rating ~ instruction * expectation, AdlerB)
+        # Adler is balanced (18 per cell); aov() suffices
+        a.aov <- aov(rating ~ instruction * expectation, Adler)
         summary(a.aov)
-        Anova(lm(rating ~ instruction * expectation, Adler, type=2))
         Anova(lm(rating ~ instruction, Adler, type=2))
+
+    Unbalanced reference values computed with statsmodels (Type II SS matches
+    car::Anova); 5 rows dropped to create cell imbalance (good/high: 15,
+    scientific/low: 16, all other cells: 18)::
+
+        import statsmodels.formula.api as smf
+        from statsmodels.stats.anova import anova_lm
+        # drop rows 0, 5, 11 (good/high) and 54, 70 (scientific/low)
+        result = anova_lm(smf.ols('rating ~ C(instruction) * C(expectation)', df_unbal).fit(), typ=2)
     """
     ds = _adler_dataset()
 
@@ -465,18 +471,22 @@ def test_anova_r_adler():
     ]
     assert_f_tests_equal(aov.f_tests, r_refs_balanced, fs, fnds)
 
-    # with unbalanced data; Type II SS via car::Anova()
-    aov = test.ANOVA('rating', 'instruction * expectation', data=ds)
-    fs = run_on_lm_fitter('rating', 'instruction * expectation', ds)
-    fnds = run_as_ndanova('rating', 'instruction * expectation', ds)
+    # with unbalanced data: Type II SS (drop rows to create cell imbalance)
+    # good/high rows 0-17, scientific/low rows 54-71
+    mask = np.ones(ds.n_cases, bool)
+    mask[[0, 5, 11, 54, 70]] = False  # good/high: 15, scientific/low: 16
+    ds_unbal = ds[mask]
+    aov = test.ANOVA('rating', 'instruction * expectation', data=ds_unbal)
+    fs = run_on_lm_fitter('rating', 'instruction * expectation', ds_unbal)
+    fnds = run_as_ndanova('rating', 'instruction * expectation', ds_unbal)
     r_refs_unbalanced = [
-        {'df': 2, 'SS': 336.1296296296, 'F': 1.1512448280, 'p': 3.203172565412022e-01},
-        {'df': 1, 'SS': 222.4537037037, 'F': 1.5238089908, 'p': 2.198803728924900e-01},
-        {'df': 2, 'SS': 5329.6851851852, 'F': 18.2541851815, 'p': 1.672367667128656e-07},
+        {'df': 2, 'SS': 3.0777116212338643e+02, 'F': 1.0990986392945572e+00, 'p': 3.3728403936964951e-01},
+        {'df': 1, 'SS': 1.9975162283913960e+02, 'F': 1.4266881623650038e+00, 'p': 2.3521827401794049e-01},
+        {'df': 2, 'SS': 5.3180089535126153e+03, 'F': 1.8991436248399069e+01, 'p': 1.0962606269684811e-07},
     ]
     assert_f_tests_equal(aov.f_tests, r_refs_unbalanced, fs, fnds)
 
-    # single predictor
+    # single predictor (balanced)
     aov = test.ANOVA('rating', 'instruction', data=ds)
     fs = run_on_lm_fitter('rating', 'instruction', ds)
     fnds = run_as_ndanova('rating', 'instruction', ds)
