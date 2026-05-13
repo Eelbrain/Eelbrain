@@ -1,11 +1,10 @@
 # Environment for development
-# usage: $ conda env create --file=env-dev.yml
-# to run stats test, install r-ez with $ conda install -c ncil r-ez --no-deps
+# usage: $ mamba env create --file=env-dev.yml
 name: eeldev
 channels:
 - conda-forge
 dependencies:
-- python >= 3.8
+- python >= 3.10
 # packaging
 - pip
 - packaging
@@ -46,17 +45,17 @@ dependencies:
 - sphinxcontrib-bibtex
 - pydocstyle
 # testing
-- flake8
+- pre-commit
 - pytest
 - pytest-cov
 - pytest-faulthandler
-- pingouin
+- pingouin >= 0.6.0  # breaking API used in tests
 #- pytest-sugar  # errors on Linux
 # testing of R integration
 # TODO: This forces Python<3.13 because 3.6+ are first ones to support 3.13 on CF
 - rpy2 < 3.6.1
 - r-car
-# - r-ez  # requires ncil channel
+- r-ez
 # plotting brains
 - nibabel >= 2.5
 - mayavi >= 4.6.2  # conda-forge pinning faulty
@@ -64,3 +63,4 @@ dependencies:
 - pysurfer >= 0.11.2
 - nilearn >=0.10.4
 - pyface != 7.2.0  # 7.2.0 causes RuntimeError: No traitsui.toolkits plugin could be loaded for wx
+- mne-bids >= 0.17

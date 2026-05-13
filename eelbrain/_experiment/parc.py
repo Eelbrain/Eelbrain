@@ -1,12 +1,12 @@
 from copy import deepcopy
 import os
 import re
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import mne
 
 from .._mne import combination_label, labels_from_mni_coords, rename_label, dissolve_label
-from .definitions import DefinitionError, Definition, tuple_arg
+from .definitions import DefinitionError, Definition, sequence_arg
 
 
 SEEDED_PARC_RE = re.compile(r'^(.+)-(\d+)$')
@@ -19,7 +19,7 @@ class Parcellation(Definition):
 
     def __init__(
             self,
-            views: Union[str, Sequence[str]] = None,
+            views: str | Sequence[str] = None,
     ):
         self.views = views
 
@@ -30,7 +30,7 @@ class Parcellation(Definition):
 
     def _make(
             self,
-            e,  # the MneExperiment instance
+            e,  # the Pipeline instance
             parc: str,  # the name (contains radius for seeded parcellations)
     ) -> list:
         raise RuntimeError(f"Trying to make {self.__class__.__name__}")
@@ -56,7 +56,7 @@ class SubParc(Parcellation):
 
     See Also
     --------
-    MneExperiment.parcs
+    Pipeline.parcs
 
     Examples
     --------
@@ -86,11 +86,11 @@ class SubParc(Parcellation):
             self,
             base: str,
             labels: Sequence[str],
-            views: Union[str, Sequence[str]] = None,
+            views: str | Sequence[str] = None,
     ):
         Parcellation.__init__(self, views)
         self.base = base
-        self.labels = tuple_arg('labels', labels)
+        self.labels = sequence_arg('labels', labels)
 
     def _make(self, e, parc):
         with e._temporary_state:
@@ -128,7 +128,7 @@ class CombinationParc(Parcellation):
 
     See Also
     --------
-    MneExperiment.parcs
+    Pipeline.parcs
 
     Examples
     --------
@@ -175,7 +175,7 @@ class CombinationParc(Parcellation):
             self,
             base: str,
             labels: dict,
-            views: Union[str, Sequence[str]] = None,
+            views: str | Sequence[str] = None,
     ):
         Parcellation.__init__(self, views)
         self.base = base
@@ -206,7 +206,7 @@ class EelbrainParc(Parcellation):
     def __init__(
             self,
             morph_from_fsaverage: bool,
-            views: Union[str, Sequence[str]] = None,
+            views: str | Sequence[str] = None,
     ):
         Parcellation.__init__(self, views)
         self.morph_from_fsaverage = morph_from_fsaverage
@@ -253,7 +253,7 @@ class FreeSurferParc(Parcellation):
 
     See Also
     --------
-    MneExperiment.parcs
+    Pipeline.parcs
 
     Examples
     --------
@@ -279,7 +279,7 @@ class FSAverageParc(Parcellation):
 
     See Also
     --------
-    MneExperiment.parcs
+    Pipeline.parcs
 
     Examples
     --------
@@ -311,10 +311,10 @@ class LabelParc(Parcellation):
     def __init__(
             self,
             labels: Sequence[str],
-            views: Union[str, Sequence[str]] = None,
+            views: str | Sequence[str] = None,
     ):
         Parcellation.__init__(self, views)
-        self.labels = tuple_arg('labels', labels)
+        self.labels = sequence_arg('labels', labels)
 
     def _make(self, e, parc):
         labels = []
@@ -342,7 +342,7 @@ class SeededParc(Parcellation):
 
     See Also
     --------
-    MneExperiment.parcs
+    Pipeline.parcs
 
     Parameters
     ----------
@@ -402,7 +402,7 @@ class IndividualSeededParc(SeededParc):
 
     See Also
     --------
-    MneExperiment.parcs
+    Pipeline.parcs
 
     Examples
     --------

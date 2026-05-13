@@ -9,7 +9,6 @@ import numpy
 
 @dataclass
 class RawCovariance:
-    session: str = None
     method: str = 'empirical'
     key: str = field(init=False, default=None)
 

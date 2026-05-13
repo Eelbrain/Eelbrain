@@ -1,6 +1,6 @@
 from fnmatch import fnmatchcase
 from itertools import combinations
-from typing import Callable, Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 
@@ -86,6 +86,7 @@ class Celltable:
         A slice of the match argument describing the group members for each
         cell.
     """
+
     def __init__(
             self,
             y: NumericArg,

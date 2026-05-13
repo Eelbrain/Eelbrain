@@ -1,26 +1,41 @@
 .. _development:
+.. _contributing:
 
 ***********
 Development
 ***********
 
-Eelbrain is hosted on `GitHub <https://github.com/Eelbrain/Eelbrain>`_.
+Welcome to the Eelbrain Contributor's Guide! This page is a gentle introduction to contributing:
+it explains how to get involved, report issues, and propose changes,
+and how we handle testing, style, and documentation.
+This guide is meant to be useful for all contributors—if you spot gaps or have suggestions, please let us know through the issue tracker.
+
+.. contents:: Table of Contents
+   :depth: 2
+   :local:
 
 
 The Development Version
 -----------------------
 
+Eelbrain is hosted on `GitHub <https://github.com/Eelbrain/Eelbrain>`_.
 Development takes place on the ``main`` branch, while release versions are maintained on
-branches called ``r/0.26`` etc. For further information on working with
+branches called ``r/0.40`` etc. For further information on working with
 GitHub see `GitHub's instructions <https://help.github.com/articles/fork-a-repo/>`_.
 
-The repository contains a conda environment that contains everything needed to use Eelbrain except Eelbrain itself.
+The repository contains mamba environments that include everything needed to use Eelbrain except Eelbrain itself.
+To install the development version:
 First, clone the repository (or your `fork <https://help.github.com/articles/fork-a-repo>`_), and change into the repository directory::
 
     $ git clone https://github.com/Eelbrain/Eelbrain.git
     $ cd Eelbrain
 
-To generate the ``eeldev`` environment, use::
+Two environment files are available:
+
+- ``env-dev.yml``: the full development environment (``eeldev``), including tools for building documentation, optional neuroimaging packages, and GUI support.
+- ``env-test.yml``: a leaner environment (``eeltest``) used for CI, suitable when you only need to run tests and don't require the full documentation or dev tooling.
+
+Generate the ``eeldev`` environment (or substitute ``env-test.yml`` / ``eeltest`` for the lighter alternative)::
 
     $ mamba env create --file=env-dev.yml
 
@@ -36,35 +51,148 @@ build is not installed properly by ``pip``; in order to fix this, run::
 
 In Python, you can make sure that you are working with the development version::
 
+    $ python
     >>> import eelbrain
-    >>> eelbrain.__version__
-    'dev'
+    >>> eelbrain
+    <module 'eelbrain' from '/Users/me/Code/Eelbrain/eelbrain/__init__.py'>
 
 
-Contributing
-------------
+Opening Issues
+--------------
 
-Contributions to code and documentation are welcome as pull requests into the ``main`` branch.
+Bug reports and feature requests are welcome on the GitHub `Issue Tracker <https://github.com/Eelbrain/Eelbrain/issues>`_.
+If you're unsure whether something is a bug or an enhancement, feel free to ask in an issue.
+For other questions, consider using GitHub `Discussions <https://github.com/Eelbrain/Eelbrain/discussions>`_.
 
-Style guides:
+**Reporting Bugs**
+    Please open a bug-report `Issue <https://github.com/Eelbrain/Eelbrain/issues>`_ and include as much information as possible.
+    Effective bug reports help us fix issues faster.
 
-- Python code style follows `PEP8 <https://www.python.org/dev/peps/pep-0008>`_ (mostly)
-- The documentation is written in `ReStructured Text <https://www.sphinx-doc.org/en/master/usage/restructuredtext>`_
-- Docstrings follow the `numpydoc style  <https://numpydoc.readthedocs.io/en/latest/format.html#docstring-standard>`_
+**Bug fixes**
+    If you notice a bug and are able to fix it, we welcome a pull request.
+    Ideally, include a test to preempt future regressions (see :ref:`dev-testing`).
+
+**Feature Requests**
+    If you are thinking about implementing a new feature, please open an issue first to discuss the design.
+    This keeps efforts aligned with the roadmap and reduces the chance of duplicate work.
 
 
-Useful tools:
+Pull Request Workflow
+---------------------
 
-- Graphical frontend for git: `SourceTree <https://www.sourcetreeapp.com>`_
-- Python IDE: `PyCharm <https://www.jetbrains.com/pycharm>`_
+We follow a standard GitHub `workflow for Pull Requests <https://docs.github.com/en/pull-requests>`_ (PRs).
+
+.. IMPORTANT::
+   **Keep PRs small and focused**: Each PR should address a single issue or feature.
+   This allows for faster turnaround, which makes reviewing easier and minimizes the chance for code drift between your PR and the ``main`` branch.
+
+The steps below outline the recommended workflow.
+
+1. **Create a Fork** of `Eelbrain <https://github.com/Eelbrain/Eelbrain>`_.
+2. **Create a Branch**: Create a new branch from ``main`` for each feature or fix.
+3. **Commit Changes**: Make your changes and commit them. Individual commit messages are squashed together during merge, therefore it is useful to have good descriptions in the commit messages that apply to the PR as a whole. Less useful commit messages (eg. "fix CI" when CI is not broken before PR) will be removed during merge. 
+4. **Dependency changes**: Any changes to the dependencies should be updated in ``pyproject.toml``, ``env-dev.yml``, ``env-test.yml``, and ``env-readthedocs.yml`` as appropriate.
+5. **Test Locally**:
+   Add tests for new features and bug fixes to ensure code quality and prevent regressions.
+   Run existing tests to make sure nothing breaks (see :ref:`dev-testing`).
+   Run the ``pre-commit`` tools to ensure compliance with our coding standards (see :ref:`code-style` below).
+6. **Push to Your Fork**: Push your branch to your fork on GitHub.
+7. **Open a Pull Request (PR)**:
+
+   - **Use Draft Mode**: `Draft mode <https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/about-pull-requests#draft-pull-requests>`_
+     allows you to make sure all checks pass before inviting feedback.
+   - Give the PR a descriptive title and describe the intended change.
+     `Link to relevant issues <https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue>`_ and discussions in the PR description.
+   - Monitor the checks, including:
+
+       - Tests: in case of failures, you can inspect the errors that occurred.
+       - Codecov: tells you whether tests cover your changes sufficiently.
+       - Docs: if you modified the documentation, ensure it builds as intended.
+
+   - **Ready for Review**: Switch the PR status to "Ready for Review" when the implementation is complete and all checks pass.
+     Invite reviews from specific contributors (only if they are specifically relevant or have previously agreed to review this PR).
+
+8. **Code Review**: The code review process is a collaborative effort to improve code quality.
+
+   - Apply feedback globally; if a reviewer notes an issue in one file, check if it exists elsewhere in your changes.
+   - When you have addressed all reviewer comments and checks are passing, signal that the PR is ready for another review by
+     leaving a comment (e.g., "All comments addressed, ready for re-review") or
+     re-requesting a review from the contributors whose comments you addressed, via the GitHub UI.
+     This explicitly notifies the maintainers that the code is ready for the next round.
+   - Try to address reviews promptly.
+     Re-review is easier when changes are fresh in mind.
+     in addition, the longer you wait, the more likely your changes will drift from the current codebase.
 
 
-Testing
--------
+.. _dev-testing:
 
+Testing and Validation
+----------------------
+
+Tests are embedded throughout the codebase in ``test`` folders.
 Tests for individual modules are included in folders called ``tests``, usually
 on the same level as the module.
-To run all tests, run ``$ make test`` from the Eelbrain project directory.
-On macOS, tests needs to run with the framework build of Python;
+
+Running tests locally (from the project root)::
+
+    $ make test                               # runs all tests
+    $ make test-no-gui                        # runs tests that do not invoke GUIs
+    $ make test-only-gui                      # runs only the tests that invoke GUIs
+    $ pytest path/to/test_file.py             # runs all tests in a specific file
+    $ pytest path/to/test_file.py::test_func  # runs test_func() in path/to/test_file.py
+
+For more options, see the `pytest docs <https://docs.pytest.org/en/stable/how-to/usage.html>`_.
+
+An additional test for the :class:`Pipeline` takes longer to run and can be run separately as needed::
+
+    $ pytest --runslow eelbrain/_experiment/tests/test_sample_experiment.py::test_sample_source
+
+All pull requests trigger a Continuous Integration (CI) workflow that automatically runs the full test suite.
+
+On macOS, tests involving GUIs need to run with the framework build of Python;
 if you get a corresponding error, run ``$ ./fix-bin pytest`` from the
 ``Eelbrain`` repository root.
+
+
+.. _code-style
+
+Coding Style and Documentation
+------------------------------
+
+**PEP 8 Style and Formatting**
+    To facilitate maintenance and consistent reviews, we follow the `PEP 8 style guide <https://peps.python.org/pep-0008/>`_.
+    We recommend using tools to ensure compliance:
+
+    - IDEs like PyCharm and VSCode can fix and alert you to style issues as you code.
+    - `pre-commit <https://pre-commit.com/>`_ can run tools that automatically detect, and often fix, common code style issues.
+      Use ``$ pre-commit run --all-files`` from the project root to run these tools locally.
+      The tools can also be run automatically upon committing changes (see `pre-commit instructions <https://pre-commit.com/#3-install-the-git-hook-scripts>`_).
+      For the specific tools, see ``.pre-commit-config.yaml`` in the project root.
+
+**Consistent Naming and API Consistency**
+    To make the library intuitive, we strive for consistency across the API:
+
+    - **Naming**: Parameter names should be consistent with existing functions (e.g., use ``cmap`` for colormaps, not ``colorscale``).
+    - **Avoid abbreviations**: For new parameters, we generally prefer avoiding abbreviations, as they can be harder to remember.
+
+**Type Hints**
+    We use type hints in all function signatures (see :mod:`typing`; e.g., ``def my_function(y: NDVar) -> Figure:``).
+
+**Docstrings**
+    - We follow the `numpydoc style <https://numpydoc.readthedocs.io/en/latest/format.html#docstring-standard>`_ for docstrings.
+    - There's no need to duplicate type information in docstrings if it is already present in the signature; the signature is the source of truth.
+
+**Documentation Format**
+    - The documentation is written with :mod:`sphinx` in `ReStructured Text <https://www.sphinx-doc.org/en/master/usage/restructuredtext>`_.
+
+
+Recommended Tools
+-----------------
+
+For more on Git we recommend the free `Pro Git book <https://git-scm.com/book>`_.
+
+The following tools are used by the maintainers and can streamline development:
+
+- **SourceTree**: A graphical frontend for git (`link <https://www.sourcetreeapp.com>`_).
+- **PyCharm**: A powerful Python IDE that can handle formatting and testing (`link <https://www.jetbrains.com/pycharm>`_).
+- **VS Code**: A lightweight, extensible editor with rich Python tooling support (`link <https://code.visualstudio.com>`_).

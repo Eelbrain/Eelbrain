@@ -106,7 +106,7 @@ The default PYPI installation omits optional dependencies required for using the
 
 
 .. SEEALSO::
-    For more installing options, including pre-releases, see the `wiki <https://github.com/christianbrodbeck/Eelbrain/wiki/Installing>`_.
+    For more installing options, including pre-releases, see the `wiki <https://github.com/Eelbrain/Eelbrain/wiki/Installing>`_.
 
 
 Making your analysis future-proof

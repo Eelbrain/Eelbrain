@@ -1,11 +1,12 @@
 """Exceptions used throughout Eelbrain"""
-from typing import Collection
+from collections.abc import Collection
 
 from ._text import enumeration, plural
 
 
 class KeysMissing(KeyError):
     "A styling dictionary is missing a key (more information than KeyError)"
+
     def __init__(self, keys: Collection, from_name: str, from_dict: dict):
         KeyError.__init__(self, keys, from_name, from_dict)
 
@@ -16,11 +17,12 @@ class KeysMissing(KeyError):
 
 
 class DefinitionError(Exception):
-    "MneExperiment definition error"
+    "Pipeline definition error"
 
 
 class EvalError(Exception):
     "Error while evaluating expression"
+
     def __init__(self, expression, exception, context):
         Exception.__init__(self, f"Error evaluating {expression!r} in {context}: {exception}")
 

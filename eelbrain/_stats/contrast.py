@@ -142,16 +142,13 @@ def parse_spm(streamer, process_op=True):
         args = parse_args(streamer)
         if kind == 'ufunc':
             if len(args) != 1:
-                streamer.error("%s function needs exactly 1 argument" %
-                               func.__name__)
+                streamer.error(f"{func.__name__} function needs exactly 1 argument")
             args = args[0]
         elif kind == 'bfunc':
             if len(args) != 2:
-                streamer.error("%s function needs exactly 2 arguments" %
-                               func.__name__)
+                streamer.error(f"{func.__name__} function needs exactly 2 arguments")
         elif len(args) < 2:
-            streamer.error("%s function needs at least 2 arguments" %
-                           func.__name__)
+            streamer.error(f"{func.__name__} function needs at least 2 arguments")
         return kind, func, args
     elif lookahead == '(':
         next(streamer)

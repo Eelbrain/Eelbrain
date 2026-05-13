@@ -2,7 +2,6 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 from logging import getLogger
 import os
-from typing import Optional, Tuple
 
 import wx
 
@@ -150,6 +149,7 @@ class History:
 
 class FileDocument:
     """Represent a file"""
+
     def __init__(self, path):
         self.saved = False  # managed by the history
         self.path = path
@@ -189,8 +189,8 @@ class FileFrame(EelbrainFrame):
     def __init__(
             self,
             parent: wx.Frame,
-            pos: Optional[Tuple[int, int]],
-            size: Optional[Tuple[int, int]],
+            pos: tuple[int, int] | None,
+            size: tuple[int, int] | None,
             model: FileModel,
     ):
         """View object of the epoch selection GUI
@@ -213,7 +213,7 @@ class FileFrame(EelbrainFrame):
             size = (config.ReadInt("size_width", 800),
                     config.ReadInt("size_height", 600))
 
-        super(FileFrame, self).__init__(parent, -1, self._title, pos, size)
+        super().__init__(parent, -1, self._title, pos, size)
         self.config = config
         self.model = model
         self.doc = model.doc
@@ -268,7 +268,7 @@ class FileFrame(EelbrainFrame):
             self.Raise()
             msg = ("The current document has unsaved changes. Would you like "
                    "to save them?")
-            cap = "%s: Save Unsaved Changes?" % self._title
+            cap = f"{self._title}: Save Unsaved Changes?"
             style = wx.YES | wx.NO | wx.CANCEL | wx.YES_DEFAULT
             cmd = wx.MessageBox(msg, cap, style)
             if cmd == wx.YES:
@@ -279,7 +279,7 @@ class FileFrame(EelbrainFrame):
                 event.Veto()
                 return
             elif cmd != wx.NO:
-                raise RuntimeError("Unknown answer: %r" % cmd)
+                raise RuntimeError(f"Unknown answer: {cmd!r}")
 
         logger = getLogger(__name__)
         logger.debug("%s.OnClose()", self.__class__.__name__)
@@ -302,7 +302,7 @@ class FileFrame(EelbrainFrame):
         show_help_txt(self.__doc__, self, self._title)
 
     def OnOpen(self, event):
-        msg = ("Load the %s from a file." % self._doc_name)
+        msg = f"Load the {self._doc_name} from a file."
         if self.doc.path:
             default_dir, default_name = os.path.split(self.doc.path)
         else:
@@ -321,7 +321,7 @@ class FileFrame(EelbrainFrame):
             self.model.load(path)
         except Exception as ex:
             msg = str(ex)
-            title = "Error Loading %s" % self._doc_name.capitalize()
+            title = f"Error Loading {self._doc_name.capitalize()}"
             wx.MessageBox(msg, title, wx.ICON_ERROR)
             raise
 
@@ -336,7 +336,7 @@ class FileFrame(EelbrainFrame):
             return self.OnSaveAs(event)
 
     def OnSaveAs(self, event):
-        msg = ("Save the %s to a file." % self._doc_name)
+        msg = f"Save the {self._doc_name} to a file."
         if self.doc.path:
             default_dir, default_name = os.path.split(self.doc.path)
         else:

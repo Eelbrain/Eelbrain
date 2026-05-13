@@ -11,11 +11,14 @@ jobs:
     name: build-${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       max-parallel: 5
       matrix:
-        os: [ubuntu-latest, macos-latest, macos-15-intel]
-      fail-fast: false
-    timeout-minutes: 30
+        include:
+          - os: ubuntu-latest
+            python: "3.10"  # Lowest version supported on conda-forge
+          - os: macos-latest
+            python: "3.12"
     defaults:
       run:
         shell: bash -el {0}
@@ -29,8 +32,8 @@ jobs:
     - name: Use Mamba to create env
       uses: mamba-org/setup-micromamba@v2
       with:
-        environment-file: env-dev.yml
-        environment-name: eeldev
+        environment-file: env-test.yml
+        environment-name: eeltest
         init-shell: bash
         cache-environment: true
         post-cleanup: 'all'
@@ -59,9 +62,24 @@ jobs:
         qt: true
         pyvista: false
         wm: false
-    - name: Test with GUIs
-      run: pytest eelbrain --cov --cov-branch --cov-report=xml -v --durations=10
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
+    - name: Cache MNE datasets
+      uses: actions/cache@v4
+      with:
+        path: ~/mne_data
+        key: mne-data-${{ matrix.os }}-${{ hashFiles('env-test.yml') }}
+    - name: Download MNE datasets
+      run: |
+        python -c "import mne; mne.datasets.sample.data_path(verbose=False); mne.datasets.testing.data_path(verbose=False); mne.datasets.fetch_fsaverage(verbose=False)"
+    - if: matrix.os == 'ubuntu-latest'
+      name: Test without GUI
+      run: |
+        pytest eelbrain --cov --cov-branch --cov-report=xml --no-gui --no-mayavi
+    - if: matrix.os == 'macos-latest'
+      name: Test with GUIs and code-cov
+      run: |
+        pytest eelbrain --cov --cov-branch --cov-report=xml --no-mayavi
+    - if: matrix.os == 'macos-latest'
+      name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v5
       with:
         token: ${{ secrets.CODECOV_TOKEN }}

@@ -1,5 +1,4 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-from typing import List
 from warnings import catch_warnings, filterwarnings
 
 import numpy as np
@@ -23,7 +22,7 @@ class Evaluator:
     def __init__(
             self,
             data: DeconvolutionData,
-            segments: List[np.ndarray] = None,  # evaluations for different test-segments
+            segments: list[np.ndarray] = None,  # evaluations for different test-segments
     ):
         n = len(data.y)
         if self.vector:
@@ -279,10 +278,10 @@ EVALUATORS = {
 
 
 def get_evaluators(
-        keys: List[str],
+        keys: list[str],
         data: DeconvolutionData,
-        segments: List[np.ndarray] = None,  # evaluations for different test-segments
-) -> (List[Evaluator], List[Evaluator], List[Evaluator]):
+        segments: list[np.ndarray] = None,  # evaluations for different test-segments
+) -> (list[Evaluator], list[Evaluator], list[Evaluator]):
     evaluators = [EVALUATORS[key](data, segments) for key in keys]
     # split into scalar and vector evaluators
     evaluators_s = [e for e in evaluators if not e.vector]

@@ -23,7 +23,7 @@ from eelbrain import *
 # Simulated data
 # --------------
 # Each function call to :func:`datasets.simulate_erp` generates a dataset
-# equivalent to an N400 experiment for one subject. 
+# equivalent to an N400 experiment for one subject.
 # The ``seed`` argument determines the random noise that is added to the data.
 ds = datasets.simulate_erp(seed=0)
 print(ds.summary())
@@ -41,8 +41,8 @@ print(ds.aggregate('predictability'))
 ###############################################################################
 # Group level data
 # ----------------
-# This loop simulates a multi-subject experiment. 
-# It generates data and collects condition averages for 10 virtual subjects. 
+# This loop simulates a multi-subject experiment.
+# It generates data and collects condition averages for 10 virtual subjects.
 # For group level analysis, the collected data are combined in a :class:`Dataset`:
 dss = []
 for subject in range(10):
@@ -66,10 +66,10 @@ ds['eeg'] -= ds['eeg'].mean(sensor=['M1', 'M2'])
 ###############################################################################
 # Spatio-temporal cluster based test
 # ----------------------------------
-# Cluster-based tests are based on identifying clusters of meaningful effects, i.e., 
+# Cluster-based tests are based on identifying clusters of meaningful effects, i.e.,
 # groups of adjacent sensors that show the same effect (see :mod:`testnd` for references).
-# In order to find clusters, the algorithm needs to know which channels are 
-# neighbors. This information is refered to as the sensor adjacency (i.e., which sensors 
+# In order to find clusters, the algorithm needs to know which channels are
+# neighbors. This information is refered to as the sensor adjacency (i.e., which sensors
 # are connected). The adjacency graph can be visualized to confirm that it is set correctly.
 p = plot.SensorMap(ds['eeg'], adjacency=True)
 
@@ -109,8 +109,8 @@ p_cb = p.plot_colorbar(right_of=p.axes[3])
 # Using a cluster as functional ROI
 # ---------------------------------
 # Often it is desirable to summarize values in a cluster. This is especially useful
-# in more complex designs. For example, after finding a signficant interaction effect 
-# in an ANOVA, one might want to follow up with a pairwise test of the value in the 
+# in more complex designs. For example, after finding a signficant interaction effect
+# in an ANOVA, one might want to follow up with a pairwise test of the value in the
 # cluster. This can often be achieved using binary masks based on the cluster. Using
 # the cluster identified above, generate a binary mask:
 mask = cluster != 0
@@ -119,14 +119,14 @@ p = plot.TopoArray(mask, cmap='Wistia', t=[0.350, 0.400, 0.450])
 ###############################################################################
 # Such a spatio-temporal boolean mask can be used
 # to extract the value in the cluster for each condition/participant.
-# Since ``mask`` contains both time and sensor dimensions, using it with 
-# the :meth:`NDVar.mean` method collapses across these dimensions and 
+# Since ``mask`` contains both time and sensor dimensions, using it with
+# the :meth:`NDVar.mean` method collapses across these dimensions and
 # returns a scalar for each case (i.e., for each condition/subject).
 ds['cluster_mean'] = ds['eeg'].mean(mask)
 p = plot.Barplot('cluster_mean', 'predictability', match='subject', data=ds, test=False)
 
 ###############################################################################
-# Similarly, a mask consisting of a cluster of sensors can be used to 
+# Similarly, a mask consisting of a cluster of sensors can be used to
 # visualize the time course in that region of interest. A straight forward
 # choice is to use all sensors that were part of the cluster (``mask``)
 # at any point in time:

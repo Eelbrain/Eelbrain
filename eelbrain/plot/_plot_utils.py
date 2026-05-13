@@ -1,7 +1,6 @@
 #  Utilities working with (and needing to import) plots
 from itertools import chain
 import os
-from typing import Dict, List, Tuple, Union
 
 import numpy
 from tqdm import tqdm
@@ -12,7 +11,7 @@ from ._base import TimeSlicer
 
 
 def save_movie(
-        figures: Union[List[List[TimeSlicer]], Dict[Tuple[int, int], TimeSlicer]],
+        figures: list[list[TimeSlicer]] | dict[tuple[int, int], TimeSlicer],
         filename: PathArg = None,
         time_dilation: float = 4,
         tstart: float = None,

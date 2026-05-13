@@ -35,8 +35,7 @@ def get_channel_positions(self, picks=None):
     pos = np.array([chs[k]['loc'][:3] for k in picks])
     n_zero = np.sum(np.sum(np.abs(pos), axis=1) == 0)
     if n_zero > 1:  # XXX some systems have origin (0, 0, 0)
-        raise ValueError('Could not extract channel positions for '
-                         '{} channels'.format(n_zero))
+        raise ValueError(f'Could not extract channel positions for {n_zero} channels')
     return pos
 
 
@@ -75,8 +74,7 @@ def _make_interpolator(inst, bad_channels):
         logger.warning('Your spherical fit is poor, interpolation results are '
                        'likely to be inaccurate.')
 
-    logger.info('Computing interpolation matrix from {0} sensor '
-                'positions'.format(len(pos_good)))
+    logger.info(f'Computing interpolation matrix from {len(pos_good)} sensor positions')
 
     interpolation = _make_interpolation_matrix(pos_good, pos_bad)
 
@@ -179,13 +177,13 @@ def _interpolate_bads_meg(epochs, bad_channels_by_epoch, interp_cache):
         epochs._data[i, picks_bad, :] = interpolation.dot(epochs._data[i, picks_good, :])
     t2 = time.time()
 
-    logger.debug("Interpolation took %s/%s seconds" % (t1 - t0, t2 - t1))
+    logger.debug(f"Interpolation took {t1 - t0}/{t2 - t1} seconds")
 
 
 def make_interpolators(interp_cache, keys, bads, epochs):
     make = [k for k in keys if (bads, k) not in interp_cache]
     logger = logging.getLogger(__name__)
-    logger.debug("Making %i of %i interpolators" % (len(make), len(keys)))
+    logger.debug(f"Making {len(make)} of {len(keys)} interpolators")
     for key in make:
         picks_good = mne.pick_types(epochs.info, meg=True, ref_meg=False, exclude=key)
         picks_bad = mne.pick_channels(epochs.ch_names, key)

@@ -76,7 +76,7 @@ def convert(tex_source, input_format, output_format, max_runs=5):
                     '-no-shell-escape',
                     tex_filename,
                  ],
-                stdin=open(os.devnull, 'r'),
+                stdin=open(os.devnull),
                 stdout=open(os.devnull, 'w'),
                 stderr=subprocess.STDOUT,
                 close_fds=True,

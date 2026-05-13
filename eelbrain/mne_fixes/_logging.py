@@ -44,6 +44,7 @@ class CaptureLog:
     name : str
         Name of the logger from which to capture (default 'mne').
     """
+
     def __init__(self, filename, mode='w', logger='mne', level='debug'):
         self.logger = logger
         self.level = log_level(level)

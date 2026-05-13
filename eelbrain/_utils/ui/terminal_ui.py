@@ -3,7 +3,7 @@ import os
 
 
 def ask_saveas(title, messagefiletypes, defaultDir, defaultFile):
-    msg = "%s (%s): " % (title, message)
+    msg = f"{title} ({message}): "
     path = input(msg)
     path = os.path.expanduser(path)
 
@@ -27,7 +27,7 @@ def ask_saveas(title, messagefiletypes, defaultDir, defaultFile):
 
 def ask_dir(title="Select Folder", message="Please Pick a Folder",
             must_exist=True):
-    msg = "%s (%s): " % (title, message)
+    msg = f"{title} ({message}): "
     path = input(msg)
     path = os.path.expanduser(path)
     if os.path.exists(path) and os.path.isdir(path):
@@ -37,7 +37,7 @@ def ask_dir(title="Select Folder", message="Please Pick a Folder",
 
 
 def ask_file(title, message, filetypes, directory, mult):
-    msg = "%s (%s): " % (title, message)
+    msg = f"{title} ({message}): "
     path = input(msg)
     path = os.path.expanduser(path)
     if os.path.exists(path):
@@ -69,7 +69,7 @@ def ask_color(parent=None, default=None):
 
 def message(title, message=None, icon='i'):
     if icon:
-        title = "%s: %s" % (icon, title)
+        title = f"{icon}: {title}"
     print(title)
     if message:
         print(message)

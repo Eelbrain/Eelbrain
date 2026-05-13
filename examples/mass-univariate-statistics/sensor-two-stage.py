@@ -26,9 +26,9 @@ from eelbrain import *
 # Stage 1
 # -------
 # Generate simulated data: each function call to :func:`datasets.simulate_erp`
-# generates a dataset for one subject (in a real experiment this would be 
-# replaced with a function that loads data for this subject). 
-# For each subject, a multiple regression model is fit using n characters and 
+# generates a dataset for one subject (in a real experiment this would be
+# replaced with a function that loads data for this subject).
+# For each subject, a multiple regression model is fit using n characters and
 # cloze probability as continuous predictor variables.
 lms = []
 for subject in range(10):
@@ -43,7 +43,7 @@ for subject in range(10):
 ###############################################################################
 # Stage 2
 # -------
-# Prepare a :class:`Dataset` with the first level statistic of interest. 
+# Prepare a :class:`Dataset` with the first level statistic of interest.
 
 rows = []
 for lm in lms:
@@ -75,7 +75,7 @@ p = plot.TopoArray(masked_c, t=[0.120, 0.155, None], title=result, head_radius=0
 p_cb = p.plot_colorbar(right_of=p.axes[0], label='µV', unit=1e-6)
 
 ###############################################################################
-# Of course, other tests could be applied at stage 2, for example 
+# Of course, other tests could be applied at stage 2, for example
 #  * *T*-tests to compare coefficients for two different regressor, or two
 #    differen subject groups
 #  * ANOVA for multiple regressors and/or subject groups

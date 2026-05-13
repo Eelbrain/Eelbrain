@@ -46,9 +46,10 @@ class DatasetSTCLoader:
     --------
     eelbrain.gui.load_stcs : a GUI to load source estimates into a Dataset
     """
+
     def __init__(self, data_dir):
         if not os.path.exists(data_dir):
-            raise ValueError("Directory '%s' not found." % data_dir)
+            raise ValueError(f"Directory '{data_dir}' not found.")
         self.data_dir = data_dir
         self.subjects = None
         self.levels = None
@@ -68,7 +69,7 @@ class DatasetSTCLoader:
     def _find_subjects(self):
         pattern = re.compile(r"[AR]\d{4}")
         stcs = self._all_stc_filenames()
-        subjects = set(pattern.search(s).group() for s in stcs)
+        subjects = {pattern.search(s).group() for s in stcs}
         self.subjects = tuple(subjects)
 
     def _find_level_names(self):
@@ -76,7 +77,7 @@ class DatasetSTCLoader:
         if not stcs:
             raise ValueError("No .stc files in sub-directories")
         # condition names should be lowest level folder
-        cond_dirs = list(set(s.split(os.sep)[-2] for s in stcs))
+        cond_dirs = list({s.split(os.sep)[-2] for s in stcs})
         # set number of factors based on first full condition name
         self._n_factors = len(cond_dirs[0].split("_"))
         splits = (c.split("_") for c in cond_dirs)
@@ -111,7 +112,7 @@ class DatasetSTCLoader:
             return None
         des = " x ".join(map(str, self._level_lens))
         if len(des) == 1:
-            des = "1 x {}".format(des)
+            des = f"1 x {des}"
         return des
 
     def make_dataset(self, load_stcs=True, subject="fsaverage",
@@ -149,8 +150,7 @@ class DatasetSTCLoader:
         stc_fnames = []
         for c in data.itercases():
             folder = "_".join(c[i] for i in self.factors)
-            exp = "{}/{}/{}*-lh.stc".format(
-                self.data_dir, folder, c["subject"])
+            exp = f"{self.data_dir}/{folder}/{c['subject']}*-lh.stc"
             fnames = glob.glob(exp)
             assert len(fnames) == 1
             stc_fnames.append(fnames[0])

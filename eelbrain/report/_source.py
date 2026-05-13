@@ -177,7 +177,7 @@ def source_time_lm(lm, pmin, surfer_kwargs):
     elif pmin == 0.001:
         ps = (0.001, 0.00001, 0.0001)
     else:
-        raise ValueError("pmin=%s" % pmin)
+        raise ValueError(f"{pmin=}")
     out = Section("SPMs")
     ts = [ttest_t(p, lm.df) for p in ps]
     for term in lm.column_names:
@@ -211,7 +211,7 @@ def source_time_clusters(section, clusters, y, ds, model, include, title,
         clusters.as_table(midrule=True, count=True, caption="All clusters."))
 
     # plot individual clusters
-    clusters = clusters.sub("p < %s" % include)
+    clusters = clusters.sub(f"p < {include}")
     # in non-threshold based tests, clusters don't have unique IDs
     add_cluster_im = 'cluster' not in clusters
     is_multi_effect_result = 'effect' in clusters
@@ -235,7 +235,7 @@ def source_time_cluster(section, cluster, y, model, ds, title, colors, match,
     # section/title
     if title is not None:
         title_ = title.format(tstart=tstart_ms, tstop=tstop_ms,
-                              p='%.3f' % cluster['p'], effect=effect,
+                              p=f"{cluster['p']:.3f}", effect=effect,
                               location=cluster.get('location', ''),
                               mark=cluster['sig']).strip()
         while '  ' in title_:
@@ -245,7 +245,7 @@ def source_time_cluster(section, cluster, y, model, ds, title, colors, match,
     # description
     txt = section.add_paragraph("Id %i" % cluster['id'])
     if 'v' in cluster:
-        txt.append(", v=%s" % cluster['v'])
+        txt.append(f", v={cluster['v']}")
     if 'p_parc' in cluster:
         txt.append(", corrected across all ROIs: ")
         txt.append(fmtxt.eq('p', cluster['p_parc'], 'mcc', '%s', drop0=True))

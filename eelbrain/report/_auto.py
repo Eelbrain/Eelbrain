@@ -29,5 +29,5 @@ def result_report(res, ds, title=None, colors=None):
     elif dims == {'time', 'source'}:
         sec.append(source_time_results(res, ds, colors))
     else:
-        raise NotImplementedError("dims=%r" % dims)
+        raise NotImplementedError(f"{dims=}")
     return sec

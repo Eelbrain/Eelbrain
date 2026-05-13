@@ -13,7 +13,7 @@ from itertools import repeat
 from math import ceil
 from operator import itemgetter
 import re
-from typing import Sequence, Tuple, Union
+from collections.abc import Sequence
 
 import mne
 import matplotlib.figure
@@ -65,6 +65,7 @@ class ChangeAction(Action):
         Description of the action
         list of (i, name, old, new) tuples
     """
+
     def __init__(self, desc, index=None, old_accept=None, new_accept=None,
                  old_path=None, new_path=None):
         self.desc = desc
@@ -101,12 +102,13 @@ class Document(FileDocument):
         epochs) and variables describing cases in epochs, used to plot
         condition averages.
     """
+
     def __init__(
             self,
             path: PathArg,
-            data: Union[Dataset, mne.BaseEpochs],
+            data: Dataset | mne.BaseEpochs,
             sysname: str,
-            adjacency: Union[str, Sequence] = None,
+            adjacency: str | Sequence = None,
             drop_epochs_std: float = None,  # drop epochs with high signal (e.g. 10)
             decim: int = None,
     ):
@@ -250,6 +252,7 @@ class Model(FileModel):
 
 class ContextMenu(wx.Menu):
     "Helper class for Menu to store component ID"
+
     def __init__(self, i_comp: int = None, i_epoch: int = None):
         wx.Menu.__init__(self)
         self.i_comp = i_comp
@@ -446,7 +449,7 @@ class SharedToolsMenu:  # Frame mixin
         for c, ft, epochs in res:
             doc.append(hash_char[self.doc.accept[c]])
             doc.append(f"{c} ({ft:.1f}):  ")
-            doc.append(fmtxt.delim_list((fmtxt.Link(self.doc.epoch_labels[e], f'component:{c} epoch:{e}') for e in epochs)))
+            doc.append(fmtxt.delim_list(fmtxt.Link(self.doc.epoch_labels[e], f'component:{c} epoch:{e}') for e in epochs))
             doc.append(fmtxt.linebreak)
         InfoFrame(self, "Rare Events", doc, 500)
 
@@ -545,7 +548,7 @@ class SharedToolsMenu:  # Frame mixin
             default = factors[0]
         else:
             default = self.last_model or factors[0]
-        msg = "Specify the model (available factors: %s)" % ', '.join(factors)
+        msg = f"Specify the model (available factors: {', '.join(factors)})"
 
         plot_model = None
         dlg = wx.TextEntryDialog(parent, msg, "Plot by Condition", default)
@@ -641,8 +644,8 @@ class Frame(SharedToolsMenu, FileFrame):
             self,
             model: Model,
             parent: wx.Frame = None,
-            pos: Tuple[int, int] = None,
-            size: Tuple[int, int] = None,
+            pos: tuple[int, int] = None,
+            size: tuple[int, int] = None,
     ):
         FileFrame.__init__(self, parent, pos, size, model)
         SharedToolsMenu.__init__(self)
@@ -1251,7 +1254,7 @@ class SourceFrame(SharedToolsMenu, FileFrameChild):
             self.parent.PlotCompFFT(i_comp)
 
     def OnClose(self, event):
-        if super(SourceFrame, self).OnClose(event):
+        if super().OnClose(event):
             self.doc.callbacks.remove('case_change', self.CaseChanged)
             self.config.WriteInt('layout_n_comp', self.n_comp)
             self.config.WriteInt('layout_n_epochs', self.n_epochs)
@@ -1311,7 +1314,7 @@ class SourceFrame(SharedToolsMenu, FileFrameChild):
 
     def OnSetVLim(self, event):
         dlg = wx.TextEntryDialog(self, "Y-axis scale:", "Y-Axis Scale",
-                                 "%g" % (10. / self.y_scale,))
+                                 f"{10. / self.y_scale:g}")
         value = None
         while True:
             if dlg.ShowModal() != wx.ID_OK:
@@ -1450,7 +1453,7 @@ class FindNoisyEpochsDialog(EelbrainDialog):
 
     def __init__(self, parent, unit, **kwargs):
         self.unit = unit
-        super(FindNoisyEpochsDialog, self).__init__(parent, wx.ID_ANY, "Find Bad Epochs", **kwargs)
+        super().__init__(parent, wx.ID_ANY, "Find Bad Epochs", **kwargs)
         config = parent.config
         threshold = config.ReadFloat(f"FindNoisyEpochsDialog/threshold_{unit}", self._default_threshold())
         apply_rejection = config.ReadBool("FindNoisyEpochsDialog/apply_rejection", True)
@@ -1528,7 +1531,7 @@ class FindNoisyEpochsDialog(EelbrainDialog):
 
 class FindRareEventsDialog(EelbrainDialog):
     def __init__(self, parent, *args, **kwargs):
-        super(FindRareEventsDialog, self).__init__(parent, wx.ID_ANY, "Find Rare Events", *args, **kwargs)
+        super().__init__(parent, wx.ID_ANY, "Find Rare Events", *args, **kwargs)
         config = parent.config
         threshold = config.ReadFloat("FindRareEvents/threshold", 2.)
 
@@ -1577,7 +1580,7 @@ class InfoFrame(HTMLFrame):
 
     def __init__(
             self,
-            parent: Union[wx.Window, SharedToolsMenu],
+            parent: wx.Window | SharedToolsMenu,
             title: str,
             doc: fmtxt.FMTextElement,
             w: int,
@@ -1607,5 +1610,5 @@ class InfoFrame(HTMLFrame):
             if m:
                 component = int(m.group(1))
                 continue
-            raise ValueError(f"url={url!r}")
+            raise ValueError(f"{url=}")
         self.Parent.GoToComponentEpoch(component, epoch)

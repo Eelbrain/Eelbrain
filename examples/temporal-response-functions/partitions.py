@@ -28,7 +28,7 @@ p = plot.preview_partitions(partitions=5)
 p = plot.preview_partitions(partitions=7)
 
 ###############################################################################
-# For data with multiple trials (data with a :class:`Case` dimension), the function attempts to use trials evenly across time: 
+# For data with multiple trials (data with a :class:`Case` dimension), the function attempts to use trials evenly across time:
 
 p = plot.preview_partitions(20, partitions=5)
 p = plot.preview_partitions(20, partitions=2)

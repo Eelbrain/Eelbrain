@@ -112,7 +112,7 @@ result
 # Here, we put all the dimensions together to simulate the EEG signal. On the first
 # line, turn cloze into :class:`Var` to make clear that cloze represents a
 # :class:`Case` dimension, i.e. different trials:
-signal = Var(1 - cloze) * n400_timecourse * n400_topo  
+signal = Var(1 - cloze) * n400_timecourse * n400_topo
 
 # Add noise
 noise = powerlaw_noise(signal, 1)

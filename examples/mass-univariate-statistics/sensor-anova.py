@@ -46,8 +46,8 @@ data.head()
 data['eeg'] -= data['eeg'].mean(sensor=['M1', 'M2'])
 
 ###############################################################################
-# Plot the data by condition to illustrate the effect. 
-# Note 2 effects in the simulation: 
+# Plot the data by condition to illustrate the effect.
+# Note 2 effects in the simulation:
 # an early ~130 ms peak determined by word `length`, simulating increased visual processing for longer words;
 # and a later "N400" `predictability` peak, simulated to be larger for more surprising (less predictable) words.
 
@@ -61,7 +61,7 @@ p = plot.TopoButterfly('eeg', 'predictability % length', t=.400, data=data, axh=
 # Here, ``'predictability * length * subject'`` is a repeated measures ANOVA because we defined ``data['subject']`` as random effect above.
 # Changing the model to ``'predictability * length'`` would perform a fixed effects ANOVA.
 result = testnd.ANOVA(
-    'eeg', 
+    'eeg',
     'predictability * length * subject',
     data=data,
     pmin=0.05,  # Use uncorrected p = 0.05 as threshold for forming clusters

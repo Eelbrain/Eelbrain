@@ -62,7 +62,7 @@ def message(title, message="", icon='i'):
     elif icon == 'error':
         tkinter.messagebox.showerror(title, message)
     else:
-        raise ValueError("Invalid icon argument: %r" % icon)
+        raise ValueError(f"Invalid icon argument: {icon!r}")
 
 
 def show_help(obj):

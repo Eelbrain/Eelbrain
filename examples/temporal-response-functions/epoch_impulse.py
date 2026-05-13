@@ -77,4 +77,3 @@ p = plot.UTS([n_chars, surprisal, any_word], '.case', stem=True)
 
 fit = boosting('eeg', [any_word, n_chars, surprisal], 0, 0.5, basis=0.050, model='predictability', data=ds, partitions=2, delta=0.01)
 p = plot.TopoButterfly(fit.h, xlim=(-0.100, 0.600), t=0.400)
-

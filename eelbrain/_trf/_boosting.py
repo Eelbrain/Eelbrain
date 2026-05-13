@@ -25,7 +25,8 @@ from operator import mul
 import platform
 import sys
 import time
-from typing import Callable, Dict, List, Literal, Optional, Union, Tuple, Sequence
+from typing import Literal
+from collections.abc import Callable, Sequence
 import warnings
 
 import mne
@@ -43,7 +44,7 @@ from ._fit_metrics import get_evaluators
 from . import _boosting_opt as opt
 
 
-def to_array(ndvar: Union[NDVar, Tuple[NDVar, ...], float]) -> np.ndarray:
+def to_array(ndvar: NDVar | tuple[NDVar, ...] | float) -> np.ndarray:
     if isinstance(ndvar, NDVar):
         return ndvar.x.ravel()
     elif isinstance(ndvar, tuple):
@@ -52,7 +53,7 @@ def to_array(ndvar: Union[NDVar, Tuple[NDVar, ...], float]) -> np.ndarray:
         return np.array([ndvar])
 
 
-def to_index(ndvar: Sequence[Union[NDVar, float]]) -> List[Union[int, slice]]:
+def to_index(ndvar: Sequence[NDVar | float]) -> list[int | slice]:
     out = []
     i0 = 0
     for x in ndvar:
@@ -184,10 +185,10 @@ class BoostingResult(PickleableDataClass):
 
     """
     # basic parameters
-    y: Optional[str]
-    x: Union[Optional[str], Tuple[Optional[str]]]
-    tstart: Union[float, Tuple[float, ...]]
-    tstop: Union[float, Tuple[float, ...]]
+    y: str | None
+    x: str | None | tuple[str | None]
+    tstart: float | tuple[float, ...]
+    tstop: float | tuple[float, ...]
     scale_data: bool
     delta: float
     mindelta: float
@@ -196,10 +197,10 @@ class BoostingResult(PickleableDataClass):
     # data properties
     y_mean: NDVar
     y_scale: NDVar
-    x_mean: Union[NDVar, Tuple[NDVar, ...]]
-    x_scale: Union[NDVar, Tuple[NDVar, ...]]
+    x_mean: NDVar | tuple[NDVar, ...]
+    x_scale: NDVar | tuple[NDVar, ...]
     # results
-    _h: Union[NDVar, Tuple[NDVar, ...]]
+    _h: NDVar | tuple[NDVar, ...]
     _isnan: np.ndarray
     t_run: float
     # advanced parameters
@@ -209,21 +210,21 @@ class BoostingResult(PickleableDataClass):
     # advanced data properties
     n_samples: int = None
     _y_info: dict = field(default_factory=dict)
-    _y_dims: Tuple[Dimension, ...] = None
+    _y_dims: tuple[Dimension, ...] = None
     # fit metrics
     i_test: int = None  # test partition for fit metrics
-    l1_residual: Union[float, NDVar] = None
-    l2_residual: Union[float, NDVar] = None
-    l1_total: Union[float, NDVar] = None
-    l2_total: Union[float, NDVar] = None
-    r: Union[float, NDVar] = None
-    r_rank: Union[float, NDVar] = None
+    l1_residual: float | NDVar = None
+    l2_residual: float | NDVar = None
+    l1_total: float | NDVar = None
+    l2_total: float | NDVar = None
+    r: float | NDVar = None
+    r_rank: float | NDVar = None
     r_l1: NDVar = None
-    partition_results: List[BoostingResult] = None
+    partition_results: list[BoostingResult] = None
     # store the version of the boosting algorithm with which model was fit
     version: int = 15  # file format (updates when re-saving)
     algorithm_version: int = -1  # do not change when re-saving
-    execution_context: Dict[str, Union[str, Tuple[str, ...]]] = None  # do not change when re-saving
+    execution_context: dict[str, str | tuple[str, ...]] = None  # do not change when re-saving
     # debug parameters
     y_pred: NDVar = None
     fit: Boosting = None
@@ -244,7 +245,7 @@ class BoostingResult(PickleableDataClass):
             if version < 9:
                 state['residual'] = state.pop('fit_error')
                 if state.pop('prefit', None):
-                    raise IOError('Boosting result used the prefit functionality that has been removed. Use an older version of eelbrain to open this result.')
+                    raise OSError('Boosting result used the prefit functionality that has been removed. Use an older version of eelbrain to open this result.')
             if version < 11:
                 for key in ['partitions_arg', 'h', 'isnan', 'y_info']:
                     state[f'_{key}'] = state.pop(key, None)
@@ -262,7 +263,7 @@ class BoostingResult(PickleableDataClass):
                 state['execution_context'] = {'eelbrain_version': state.pop('eelbrain_version')}
             if version < 15:
                 if state.pop('prefit', None):
-                    raise IOError('Boosting result used the prefit functionality that has been removed. Use an older version of eelbrain to open this result.')
+                    raise OSError('Boosting result used the prefit functionality that has been removed. Use an older version of eelbrain to open this result.')
         PickleableDataClass.__setstate__(self, state)
 
     def __repr__(self):
@@ -361,7 +362,7 @@ class BoostingResult(PickleableDataClass):
     @deprecate_ds_arg
     def cross_predict(
             self,
-            x: Union[NDVarArg, Sequence[NDVarArg]] = None,
+            x: NDVarArg | Sequence[NDVarArg] = None,
             data: Dataset = None,
             scale: Literal['original', 'normalized'] = 'original',
             name: str = None,
@@ -684,8 +685,8 @@ class Boosting:
 
     def fit(
             self,
-            tstart: Union[float, Sequence[float]],
-            tstop: Union[float, Sequence[float]],
+            tstart: float | Sequence[float],
+            tstop: float | Sequence[float],
             selective_stopping: int = 1,
             error: str = 'l1',
             delta: float = 0.005,  # coordinate search step
@@ -970,10 +971,10 @@ class Boosting:
 @deprecate_ds_arg
 def boosting(
         y: NDVarArg,
-        x: Union[NDVarArg, Sequence[NDVarArg]],
-        tstart: Union[float, Sequence[float]],
-        tstop: Union[float, Sequence[float]],
-        scale_data: Union[bool, str] = True,  # normalize y and x; can be 'inplace'
+        x: NDVarArg | Sequence[NDVarArg],
+        tstart: float | Sequence[float],
+        tstop: float | Sequence[float],
+        scale_data: bool | str = True,  # normalize y and x; can be 'inplace'
         delta: float = 0.005,  # coordinate search step
         mindelta: float = None,  # narrow search by reducing delta until reaching mindelta
         error: Literal['l1', 'l2'] = 'l2',

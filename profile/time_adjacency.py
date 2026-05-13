@@ -45,5 +45,5 @@ stats.testnd._label_clusters(y, out, bin_buff, int_buff, threshold, tail, struct
 timer = timeit.Timer(stmt, setup)
 times = timer.repeat(100, 1)
 print(times)
-print("min = %s" % min(times))
-print("avg of 10 lowest = %s" % (sum(sorted(times)[:10]) / 10))
+print(f"min = {min(times)}")
+print(f"avg of 10 lowest = {sum(sorted(times)[:10]) / 10}")

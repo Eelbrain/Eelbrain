@@ -64,6 +64,7 @@ class LineStack(LegendMixin, XAxisMixin, EelFigure):
      - ``f``: x-axis zoom in (reduce x axis range)
      - ``d``: x-axis zoom out (increase x axis range)
     """
+
     def __init__(self, y, x=None, sub=None, ds=None, offset='y.max() - y.min()',
                  ylim=None, xlim=None, xlabel=True, xticklabels=True,
                  ylabel=True, order=None, colors=None, ylabels=True, xdim=None,
@@ -78,10 +79,9 @@ class LineStack(LegendMixin, XAxisMixin, EelFigure):
                 raise TypeError("The order parameter only applies if y is a "
                                 "single NDVar")
             ys = tuple(asndvar(y_, sub, ds) for y_ in y)
-            xdims = set(y_.get_dimnames((None,))[0] for y_ in ys)
+            xdims = {y_.get_dimnames((None,))[0] for y_ in ys}
             if len(xdims) > 1:
-                raise ValueError("NDVars must have same dimension, got %s" %
-                                 (tuple(xdims),))
+                raise ValueError(f"NDVars must have same dimension, got {tuple(xdims)}")
             xdim = xdims.pop()
             ydata = tuple(y_.get_data(xdim) for y_ in ys)
             ny = len(ydata)

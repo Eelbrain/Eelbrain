@@ -1,7 +1,8 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 from copy import deepcopy
 import inspect
-from typing import Optional
+from collections.abc import Sequence
+import math
 
 from .._exceptions import DefinitionError
 from .._text import enumeration
@@ -87,27 +88,36 @@ class Epoch(EpochBase):
 
     # to be set by subclass
     rej_file_epochs = None
-    sessions = None
+    tasks = None
 
-    def __init__(self, tmin=-0.1, tmax=0.6, samplingrate=None, decim=None, baseline=None,
-                 vars=None, trigger_shift=0., post_baseline_trigger_shift=None,
-                 post_baseline_trigger_shift_min=None,
-                 post_baseline_trigger_shift_max=None):
+    def __init__(
+            self,
+            tmin: float | str = -0.1,
+            tmax: float | str = 0.6,
+            samplingrate: float = None,
+            decim: int = None,
+            baseline: tuple[float | None, float | None] = None,
+            vars: dict = None,
+            trigger_shift: float | str = 0.,
+            post_baseline_trigger_shift: str = None,
+            post_baseline_trigger_shift_min: float = None,
+            post_baseline_trigger_shift_max: float = None,
+    ):
         if post_baseline_trigger_shift is not None:
             if post_baseline_trigger_shift_min is None or post_baseline_trigger_shift_max is None:
-                raise DefinitionError(f"post_baseline_trigger_shift={post_baseline_trigger_shift} but missing post_baseline_trigger_shift_min and/or post_baseline_trigger_shift_max")
+                raise DefinitionError(f"{post_baseline_trigger_shift=} but missing post_baseline_trigger_shift_min and/or post_baseline_trigger_shift_max")
             cut_time = post_baseline_trigger_shift_max - post_baseline_trigger_shift_min
             if not isinstance(tmax, str) and cut_time >= tmax - tmin:
                 raise DefinitionError("No data remaining after trigger shift")
 
         if decim is not None:
             if decim < 1:
-                raise ValueError(f"decim={decim!r}")
+                raise ValueError(f"{decim=}")
             elif samplingrate is not None:
-                raise TypeError(f"deimc={decim} with samplingrate={samplingrate}: only one of these parameters can be specified at a time")
+                raise TypeError(f"{decim=} with {samplingrate=}: only one of these parameters can be specified at a time")
         elif samplingrate is not None:
             if samplingrate <= 0:
-                raise ValueError(f"samplingrate={samplingrate!r}")
+                raise ValueError(f"{samplingrate=}")
         else:
             samplingrate = 200
 
@@ -121,12 +131,12 @@ class Epoch(EpochBase):
         elif baseline is False:
             pass
         elif len(baseline) != 2:
-            raise ValueError(f"baseline={baseline!r}: needs to be length 2 tuple")
+            raise ValueError(f"{baseline=}: needs to be length 2 tuple")
         else:
             baseline = (typed_arg(baseline[0], float), typed_arg(baseline[1], float))
 
         if not isinstance(trigger_shift, (float, str)):
-            raise TypeError(f"trigger_shift={trigger_shift!r}: needs to be float or str")
+            raise TypeError(f"{trigger_shift=}: needs to be float or str")
 
         self.tmin = typed_arg(tmin, float)
         self.tmax = typed_arg(tmax, float, str)
@@ -156,35 +166,42 @@ class PrimaryEpoch(Epoch):
 
     Parameters
     ----------
-    session : str
-        Session (raw file) from which to load data.
-    sel : str
+    task
+        Task (raw file) from which to load data.
+    sel
         Expression which evaluates in the events Dataset to the index of the
         events included in this Epoch specification.
-    tmin : float
-        Start of the epoch (default -0.1).
-    tmax : float
-        End of the epoch (default 0.6).
-    samplingrate : scalar
+    tmin
+        Start of the epoch, or an expression that evaluates to a
+        trial-specific ``tmin`` value in the events dataset (default -0.1).
+    tmax
+        End of the epoch, or an expression that evaluates to a
+        trial-specific ``tmax`` value in the events dataset (default 0.6).
+    samplingrate
         Target samplingrate. Needs to divide data samplingrate evenly (e.g.
         ``200`` for data sampled at 1000 Hz; default ``200``).
-    decim : int
+    decim
         Alternative to ``samplingrate``. Decimate the data by this factor
         (i.e., only keep every ``decim``'th sample).
     baseline : tuple
         The baseline of the epoch (default ``(None, 0)``; if ``tmin > 0``: no
         baseline; if ``tmax < 0``: the whole interval).
-    n_cases : int
-        Expected number of epochs. If n_cases is defined, a RuntimeError error
-        will be raised whenever the actual number of matching events is different.
-    trigger_shift : float | str
+    vars
+        Add new variables only for this epoch.
+        Each entry specifies a variable with the following schema:
+        ``{name: definition}``. ``definition`` can be either a string that is
+        evaluated in the events-Dataset`, or a
+        ``(source_name, {value: code})``-tuple.
+        ``source_name`` can also be an interaction, in which case cells are joined
+        with spaces (``"f1_cell f2_cell"``).
+    trigger_shift
         Shift event triggers before extracting the data [in seconds]. Can be a
         float to shift all triggers by the same value, or a str indicating an event
         variable that specifies the trigger shift for each trigger separately.
         The ``trigger_shift`` applied after loading selected events.
         For secondary epochs the ``trigger_shift`` is applied additively with the
         ``trigger_shift`` of their base epoch.
-    post_baseline_trigger_shift : str
+    post_baseline_trigger_shift
         Shift the trigger (i.e., where epoch time = 0) after baseline correction.
         The value of this entry has to be the name of an event variable providing
         for each epoch the actual amount of time shift (in seconds). If the
@@ -194,46 +211,55 @@ class PrimaryEpoch(Epoch):
         are used to crop the resulting epochs appropriately, to the region from
         ``new_tmin = epoch['tmin'] - post_baseline_trigger_shift_min`` to
         ``new_tmax = epoch['tmax'] - post_baseline_trigger_shift_max``.
-    vars : dict
-        Add new variables only for this epoch.
-        Each entry specifies a variable with the following schema:
-        ``{name: definition}``. ``definition`` can be either a string that is
-        evaluated in the events-Dataset`, or a
-        ``(source_name, {value: code})``-tuple.
-        ``source_name`` can also be an interaction, in which case cells are joined
-        with spaces (``"f1_cell f2_cell"``).
+    n_cases
+        Expected number of epochs. If n_cases is defined, a ``RuntimeError``
+        will be raised whenever the actual number of matching events is different.
 
     See Also
     --------
-    MneExperiment.epochs
+    Pipeline.epochs
 
     Examples
     --------
     Selecting events based on a categorial label::
 
-        PrimaryEpoch('session', "variable == 'label'")
+        PrimaryEpoch('task', "variable == 'label'")
 
     Based on multiple categorial labels::
 
-        PrimaryEpoch('session', "variable.isin(['label1', 'label2'])")
+        PrimaryEpoch('task', "variable.isin(['label1', 'label2'])")
 
     Based on multiple categorial variables::
 
-        PrimaryEpoch('session', "(variable == 'label') & (other_variable == 'other_label)")
+        PrimaryEpoch('task', "(variable == 'label') & (other_variable == 'other_label)")
 
     """
     DICT_ATTRS = Epoch.DICT_ATTRS + ('sel',)
 
-    def __init__(self, session, sel=None, **kwargs):
-        n_cases = kwargs.pop('n_cases', None)
-        Epoch.__init__(self, **kwargs)
-        self.session = session
+    def __init__(
+            self,
+            task: str,
+            sel: str = None,
+            tmin: float | str = -0.1,
+            tmax: float | str = 0.6,
+            samplingrate: float = None,
+            decim: int = None,
+            baseline: tuple[float | None, float | None] = None,
+            vars: dict = None,
+            trigger_shift: float | str = 0.,
+            post_baseline_trigger_shift: str = None,
+            post_baseline_trigger_shift_min: float = None,
+            post_baseline_trigger_shift_max: float = None,
+            n_cases: int = None,
+    ):
+        Epoch.__init__(self, tmin, tmax, samplingrate, decim, baseline, vars, trigger_shift, post_baseline_trigger_shift, post_baseline_trigger_shift_min, post_baseline_trigger_shift_max)
+        self.task = task
         self.sel = typed_arg(sel, str)
         self.n_cases = typed_arg(n_cases, int)
-        self.sessions = (session,)
+        self.tasks = (task,)
 
     def _repr_args(self):
-        args = [repr(self.session)]
+        args = [repr(self.task)]
         if self.sel is not None:
             args.append(repr(self.sel))
         for name, param in inspect.signature(Epoch).parameters.items():
@@ -254,26 +280,34 @@ class SecondaryEpoch(Epoch):
     Secondary epochs inherits events and corresponding trial rejection from
     another epoch (the ``base``). They also inherit all other parameters unless
     they are explicitly overridden. For example ``sel`` can be used to select
-    a subset of the events in the base epoch.
+    a subset of the events in the ``base`` epoch.
 
     Parameters
     ----------
-    base : str
+    base
         Name of the epoch whose parameters provide defaults for all parameters.
         Additional parameters override parameters of the ``base`` epoch, with the
-        exception of ``trigger_shift``, which is applied additively to the
+        except for ``trigger_shift``, which is applied additively to the
         ``trigger_shift`` of the ``base`` epoch.
+    sel
+        Apply additional event selection `after` applying ``sel`` of the
+        ``base`` epoch.
     ...
         Override base-epoch parameters (see :class:`PrimaryEpoch`).
 
     See Also
     --------
-    MneExperiment.epochs
+    Pipeline.epochs
     """
     DICT_ATTRS = Epoch.DICT_ATTRS + ('sel_epoch', 'sel')
     INHERITED_PARAMS = ('tmin', 'tmax', 'decim', 'samplingrate', 'baseline', 'post_baseline_trigger_shift', 'post_baseline_trigger_shift_min', 'post_baseline_trigger_shift_max')
 
-    def __init__(self, base, sel=None, **kwargs):
+    def __init__(
+            self,
+            base: str,
+            sel: str = None,
+            **kwargs,
+    ):
         self.sel_epoch = base
         self.sel = typed_arg(sel, str)
         self._kwargs = kwargs
@@ -299,8 +333,8 @@ class SecondaryEpoch(Epoch):
         out = Epoch._link(self, name, epochs)
         Epoch.__init__(out, **kwargs)
         out.rej_file_epochs = base.rej_file_epochs
-        out.session = base.session
-        out.sessions = base.sessions
+        out.task = base.task
+        out.tasks = base.tasks
         return out
 
 
@@ -319,7 +353,7 @@ class SuperEpoch(Epoch):
 
     See Also
     --------
-    MneExperiment.epochs
+    Pipeline.epochs
     """
     DICT_ATTRS = Epoch.DICT_ATTRS + ('sub_epochs',)
     INHERITED_PARAMS = ('tmin', 'tmax', 'decim', 'samplingrate', 'baseline')
@@ -356,12 +390,12 @@ class SuperEpoch(Epoch):
             kwargs[param] = values.pop()
         out = Epoch._link(self, name, epochs)
         Epoch.__init__(out, **kwargs)
-        # sessions, with preserved order
-        out.sessions = []
+        # tasks, with preserved order
+        out.tasks = []
         out.rej_file_epochs = []
         for e in sub_epochs:
-            if e.session not in out.sessions:
-                out.sessions.append(e.session)
+            if e.task not in out.tasks:
+                out.tasks.append(e.task)
             out.rej_file_epochs.extend(e.rej_file_epochs)
         return out
 
@@ -370,17 +404,17 @@ class EpochCollection(EpochBase):
     """A collection of epochs that are loaded separately.
 
     For TRFs, a separate TRF will be estimated for each collected epoch (as
-    opposed to a SuperEpoch, for which sub-epochs will be merged before estimating
-    a single TRF).
+    opposed to a :class:`SuperEpoch`, for which sub-epochs will be merged
+    before estimating a single TRF).
 
     Parameters
     ----------
-    collect : Sequence of str
+    collect
         Epochs to collect.
 
     See Also
     --------
-    MneExperiment.epochs
+    Pipeline.epochs
     """
     # IMPLEMENTATION ALTERNATIVE?
     # ---------------------------
@@ -391,7 +425,7 @@ class EpochCollection(EpochBase):
     #    first, and later fit cell 2, without redundant refitting.
     DICT_ATTRS = ('collect',)
 
-    def __init__(self, collect):
+    def __init__(self, collect: Sequence[str]):
         self.collect = collect
         EpochBase.__init__(self)
 
@@ -412,12 +446,12 @@ class EpochCollection(EpochBase):
                 raise DefinitionError(f"Epoch {name}: All sub-epochs must have the same setting for {param}, got {param_repr}")
             setattr(out, param, values.pop())
         # dependencies
-        sessions = set()
+        tasks = set()
         rej_file_epochs = set()
         for e in sub_epochs:
-            sessions.update(e.sessions)
+            tasks.update(e.tasks)
             rej_file_epochs.update(e.rej_file_epochs)
-        out.sessions = sorted(sessions)
+        out.tasks = sorted(tasks)
         out.rej_file_epochs = sorted(rej_file_epochs)
         return out
 
@@ -433,13 +467,13 @@ class ContinuousEpoch(EpochBase):
     data into multuple segments when there are long pauses between successive
     events.
 
-    When using :meth:`MneExperiment.load_epochs`, each row of the returned
+    When using :meth:`Pipeline.load_epochs`, each row of the returned
     :class:`Dataset` will contain the events in the epoch alongside the data.
 
     Parameters
     ----------
-    session
-        Session (raw file) from which to load data.
+    task
+        Task (raw file) from which to load data.
     sel
         Expression which evaluates in the events Dataset to the index of the
         events included in this Epoch specification (default is all events).
@@ -465,11 +499,11 @@ class ContinuousEpoch(EpochBase):
         ``source_name`` can also be an interaction, in which case cells are joined
         with spaces (``"f1_cell f2_cell"``).
     """
-    DICT_ATTRS = ('name', 'session', 'sel', 'pad_start', 'pad_end', 'split', 'samplingrate', 'vars')
+    DICT_ATTRS = ('name', 'task', 'sel', 'pad_start', 'pad_end', 'split', 'samplingrate', 'vars')
 
     def __init__(
             self,
-            session: str,
+            task: str,
             sel: str = None,
             pad_start: float = 0.100,
             pad_end: float = 1.000,
@@ -478,20 +512,20 @@ class ContinuousEpoch(EpochBase):
             vars: dict = None,
     ):
         EpochBase.__init__(self)
-        self.session = typed_arg(session, str)
+        self.task = typed_arg(task, str)
         self.sel = typed_arg(sel, str)
         self.pad_start = typed_arg(pad_start, float)
         self.pad_end = typed_arg(pad_end, float)
         self.split = typed_arg(split, float)
         self.samplingrate = typed_arg(samplingrate, float, int)
         self.vars = vars
-        self.sessions = (session,)
+        self.tasks = (task,)
 
 
 def decim_param(
         samplingrate: int,
         decim: int,
-        epoch: Optional[Epoch],
+        epoch: Epoch | None,
         info: dict,
         minimal: bool = False,  # try to infer minimally necessary samplingrate
 ) -> int:
@@ -508,9 +542,10 @@ def decim_param(
 
     if samplingrate is not None:
         decim_ratio = info['sfreq'] / samplingrate
-        if decim_ratio % 1:
+        rounded_decim_ratio = round(decim_ratio)
+        if not math.isclose(decim_ratio, rounded_decim_ratio, rel_tol=1e-3):
             raise ValueError(f"{samplingrate=} with data at {info['sfreq']:g} Hz: needs to be integer ratio")
-        return int(decim_ratio)
+        return rounded_decim_ratio
 
     if minimal:
         if h_freq := info.get('lowpass'):

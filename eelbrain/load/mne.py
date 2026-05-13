@@ -1,3 +1,4 @@
+# autoflake: skip_file
 """Tools for importing data through mne.
 
 .. autosummary::

@@ -80,6 +80,7 @@ class FloatValidator(wx.Validator):
 
 class REValidator(wx.Validator):
     "Ensure that the value of a text field matches a regular expression"
+
     def __init__(self, pattern, message, can_be_empty=False):
         wx.Validator.__init__(self)
         self.pattern = re.compile(pattern)

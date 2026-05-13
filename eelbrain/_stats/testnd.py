@@ -32,7 +32,7 @@ import re
 import socket
 from threading import Thread
 from time import time as current_time
-from typing import Iterable, List, Union
+from collections.abc import Iterable
 
 import numpy as np
 import scipy.stats
@@ -544,7 +544,7 @@ class TContrastRelated(NDTest):
             samples: int = 10000,
             pmin: float = None,
             tmin: float = None,
-            tfce: Union[float, bool] = False,
+            tfce: float | bool = False,
             tstart: float = None,
             tstop: float = None,
             parc: str = None,
@@ -602,9 +602,9 @@ class TContrastRelated(NDTest):
 
     def _name(self):
         if self.y:
-            return "T-Contrast:  %s ~ %s" % (self.y, self.contrast)
+            return f"T-Contrast:  {self.y} ~ {self.contrast}"
         else:
-            return "T-Contrast:  %s" % self.contrast
+            return f"T-Contrast:  {self.contrast}"
 
     def _plot_model(self):
         return self.x
@@ -612,9 +612,9 @@ class TContrastRelated(NDTest):
     def _repr_test_args(self):
         args = [repr(self.y), repr(self.x), repr(self.contrast)]
         if self.tail:
-            args.append("tail=%r" % self.tail)
+            args.append(f"tail={self.tail!r}")
         if self.match:
-            args.append('match=%r' % self.match)
+            args.append(f'match={self.match!r}')
         return args
 
 
@@ -697,7 +697,7 @@ class Correlation(NDTest):
             samples: int = 10000,
             pmin: float = None,
             rmin: float = None,
-            tfce: Union[float, bool] = False,
+            tfce: float | bool = False,
             tstart: float = None,
             tstop: float = None,
             match: CategorialArg = None,
@@ -785,14 +785,14 @@ class Correlation(NDTest):
 
     def _name(self):
         if self.y and self.x:
-            return "Correlation:  %s ~ %s" % (self.y, self.x)
+            return f"Correlation:  {self.y} ~ {self.x}"
         else:
             return "Correlation"
 
     def _repr_test_args(self):
         args = [repr(self.y), repr(self.x)]
         if self.norm:
-            args.append('norm=%r' % self.norm)
+            args.append(f'norm={self.norm!r}')
         return args
 
     def _default_plot_obj(self):
@@ -950,7 +950,7 @@ class TTestOneSample(NDDifferenceTest):
             samples: int = 10000,
             pmin: float = None,
             tmin: float = None,
-            tfce: Union[float, bool] = False,
+            tfce: float | bool = False,
             tstart: float = None,
             tstop: float = None,
             parc: str = None,
@@ -1031,7 +1031,7 @@ class TTestOneSample(NDDifferenceTest):
 
     def _name(self):
         if self.y:
-            return "One-Sample T-Test:  %s" % self.y
+            return f"One-Sample T-Test:  {self.y}"
         else:
             return "One-Sample T-Test"
 
@@ -1040,7 +1040,7 @@ class TTestOneSample(NDDifferenceTest):
         if self.popmean:
             args.append(repr(self.popmean))
         if self.match:
-            args.append('match=%r' % self.match)
+            args.append(f'match={self.match!r}')
         if self.tail:
             args.append("tail=%i" % self.tail)
         return args
@@ -1153,7 +1153,7 @@ class TTestIndependent(NDDifferenceTest):
     def __init__(
             self,
             y: NDVarArg,
-            x: Union[CategorialArg, NDVarArg],
+            x: CategorialArg | NDVarArg,
             c1: CellArg = None,
             c0: CellArg = None,
             match: CategorialArg = None,
@@ -1163,7 +1163,7 @@ class TTestIndependent(NDDifferenceTest):
             samples: int = 10000,
             pmin: float = None,
             tmin: float = None,
-            tfce: Union[float, bool] = False,
+            tfce: float | bool = False,
             tstart: float = None,
             tstop: float = None,
             parc: str = None,
@@ -1252,7 +1252,7 @@ class TTestIndependent(NDDifferenceTest):
         return self.x
 
     def _plot_sub(self):
-        return "(%s).isin(%s)" % (self.x, (self.c1, self.c0))
+        return f"({self.x}).isin({(self.c1, self.c0)})"
 
     def _repr_test_args(self):
         if self.c1 is None:
@@ -1385,7 +1385,7 @@ class TTestRelated(NDMaskedC1Mixin, NDDifferenceTest):
     def __init__(
             self,
             y: NDVarArg,
-            x: Union[CategorialArg, NDVarArg],
+            x: CategorialArg | NDVarArg,
             c1: CellArg = None,
             c0: CellArg = None,
             match: CategorialArg = None,
@@ -1395,7 +1395,7 @@ class TTestRelated(NDMaskedC1Mixin, NDDifferenceTest):
             samples: int = 10000,
             pmin: float = None,
             tmin: float = None,
-            tfce: Union[float, bool] = False,
+            tfce: float | bool = False,
             tstart: float = None,
             tstop: float = None,
             parc: str = None,
@@ -1477,22 +1477,22 @@ class TTestRelated(NDMaskedC1Mixin, NDDifferenceTest):
 
     def _name(self):
         if self.tail == 0:
-            comp = "%s == %s" % (self.c1, self.c0)
+            comp = f"{self.c1} == {self.c0}"
         elif self.tail > 0:
-            comp = "%s > %s" % (self.c1, self.c0)
+            comp = f"{self.c1} > {self.c0}"
         else:
-            comp = "%s < %s" % (self.c1, self.c0)
+            comp = f"{self.c1} < {self.c0}"
 
         if self.y:
-            return "Related-Samples T-Test:  %s ~ %s" % (self.y, comp)
+            return f"Related-Samples T-Test:  {self.y} ~ {comp}"
         else:
-            return "Related-Samples T-Test:  %s" % comp
+            return f"Related-Samples T-Test:  {comp}"
 
     def _plot_model(self):
         return self.x
 
     def _plot_sub(self):
-        return "(%s).isin(%s)" % (self.x, (self.c1, self.c0))
+        return f"({self.x}).isin({(self.c1, self.c0)})"
 
     def _repr_test_args(self):
         args = [repr(self.y), repr(self.x)]
@@ -1563,7 +1563,7 @@ class MultiEffectNDTest(NDTest):
             self.p = [cdist.probability_map for cdist in cdists]
             self._kind = cdists[0].kind
 
-    def _effect_index(self, effect: Union[int, str]):
+    def _effect_index(self, effect: int | str):
         if isinstance(effect, str):
             return self.effects.index(effect)
         else:
@@ -1587,7 +1587,7 @@ class MultiEffectNDTest(NDTest):
 
     def _max_statistic(
             self,
-            effect: Union[str, int],
+            effect: str | int,
             mask: NDVar = None,
             return_time: bool = False,
             return_p: bool = False,
@@ -1643,7 +1643,7 @@ class MultiEffectNDTest(NDTest):
 
     def masked_parameter_map(
             self,
-            effect: Union[str, int] = 0,
+            effect: str | int = 0,
             pmin: float = 0.05,
             **sub,
     ) -> NDVar:
@@ -1671,7 +1671,7 @@ class MultiEffectNDTest(NDTest):
             self,
             pmin: float = None,
             maps: bool = False,
-            effect: Union[int, str] = None,
+            effect: int | str = None,
             **sub,
     ) -> Dataset:
         """Find significant regions or clusters
@@ -1817,10 +1817,10 @@ class ANOVA(MultiEffectNDTest):
             samples: int = 10000,
             pmin: float = None,
             fmin: float = None,
-            tfce: Union[float, bool] = False,
+            tfce: float | bool = False,
             tstart: float = None,
             tstop: float = None,
-            match: Union[CategorialArg, bool] = None,
+            match: CategorialArg | bool = None,
             parc: str = None,
             force_permutation: bool = False,
             **criteria):
@@ -1933,15 +1933,15 @@ class ANOVA(MultiEffectNDTest):
 
     def _name(self):
         if self.y:
-            return "ANOVA:  %s ~ %s" % (self.y, self.x)
+            return f"ANOVA:  {self.y} ~ {self.x}"
         else:
-            return "ANOVA:  %s" % self.x
+            return f"ANOVA:  {self.x}"
 
     def _plot_model(self):
         return '%'.join(e.name for e in self._effects if isinstance(e, Factor) or (isinstance(e, NestedEffect) and isinstance(e.effect, Factor)))
 
     def _plot_sub(self):
-        return super(ANOVA, self)._plot_sub()
+        return super()._plot_sub()
 
     def _default_plot_obj(self):
         if self.samples:
@@ -2106,7 +2106,7 @@ class Vector(NDDifferenceTest):
             data: Dataset = None,
             samples: int = 10000,
             tmin: float = None,
-            tfce: Union[float, bool] = False,
+            tfce: float | bool = False,
             tstart: float = None,
             tstop: float = None,
             parc: str = None,
@@ -2280,7 +2280,7 @@ class VectorDifferenceIndependent(Vector):
     def __init__(
             self,
             y: NDVarArg,
-            x: Union[CategorialArg, NDVarArg],
+            x: CategorialArg | NDVarArg,
             c1: str = None,
             c0: str = None,
             match: CategorialArg = None,
@@ -2443,7 +2443,7 @@ class VectorDifferenceRelated(NDMaskedC1Mixin, Vector):
     def __init__(
             self,
             y: NDVarArg,
-            x: Union[CategorialArg, NDVarArg],
+            x: CategorialArg | NDVarArg,
             c1: str = None,
             c0: str = None,
             match: CategorialArg = None,
@@ -2844,7 +2844,7 @@ def get_map_processor(kind, *args):
     elif kind == 'raw':
         return StatMapProcessor(*args)
     else:
-        raise ValueError("kind=%s" % repr(kind))
+        raise ValueError(f"{kind=}")
 
 
 class NDPermutationDistribution:
@@ -2995,21 +2995,21 @@ class NDPermutationDistribution:
                 if parc_dim.name == parc:
                     break
             else:
-                raise ValueError("parc=%r (no dimension named %r)" % (parc, parc))
+                raise ValueError(f"{parc=} (no dimension named {parc!r})")
 
             if parc_dim._adjacency_type == 'none':
                 parc_indexes = np.arange(len(parc_dim))
             elif kind == 'tfce':
                 raise NotImplementedError(
-                    f"TFCE for parc={parc!r} ({parc_dim.__class__.__name__} dimension)")
+                    f"TFCE for {parc=} ({parc_dim.__class__.__name__} dimension)")
             elif parc_dim._adjacency_type == 'custom':
                 if not hasattr(parc_dim, 'parc'):
-                    raise NotImplementedError(f"parc={parc!r}: dimension has no parcellation")
+                    raise NotImplementedError(f"{parc=}: dimension has no parcellation")
                 parc_indexes = tuple(np.flatnonzero(parc_dim.parc == cell) for
                                      cell in parc_dim.parc.cells)
                 parc_dim = Categorial(parc, parc_dim.parc.cells)
             else:
-                raise NotImplementedError(f"parc={parc!r}")
+                raise NotImplementedError(f"{parc=}")
             dist_shape = (samples, len(parc_dim))
             dist_dims = ('case', parc_dim)
             max_axes = tuple(chain(range(parc_ax), range(parc_ax + 1, ndim)))
@@ -3248,7 +3248,7 @@ class NDPermutationDistribution:
         "Argument representation for TestResult repr"
         args = [f'samples={self.samples}']
         if pmin is not None:
-            args.append(f"pmin={pmin!r}")
+            args.append(f"{pmin=}")
         elif self.kind == 'tfce':
             arg = f"tfce={self.tfce!r}"
             if self.tfce_warning:
@@ -3715,13 +3715,13 @@ class NDPermutationDistribution:
     def info_list(self, title="Computation Info"):
         "List with information on computation"
         l = fmtxt.List(title)
-        l.add_item("Eelbrain version:  %s" % self._version)
-        l.add_item("Host Computer:  %s" % self._host)
+        l.add_item(f"Eelbrain version:  {self._version}")
+        l.add_item(f"Host Computer:  {self._host}")
         if self._init_time is not None:
             l.add_item("Created:  %s" % datetime.fromtimestamp(self._init_time)
                        .strftime('%y-%m-%d %H:%M'))
-        l.add_item("Original time:  %s" % timedelta(seconds=round(self.dt_original)))
-        l.add_item("Permutation time:  %s" % timedelta(seconds=round(self.dt_perm)))
+        l.add_item(f"Original time:  {timedelta(seconds=round(self.dt_original))}")
+        l.add_item(f"Permutation time:  {timedelta(seconds=round(self.dt_perm))}")
         return l
 
 
@@ -3862,7 +3862,7 @@ def setup_workers(test_func, dist, func_args):
 
 def run_permutation_me(
         test: MPTestMapper,
-        dists: List[NDPermutationDistribution],
+        dists: list[NDPermutationDistribution],
         iterator: Iterable[np.ndarray],
 ):
     dist = dists[0]

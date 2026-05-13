@@ -20,12 +20,10 @@ from eelbrain.pipeline import *
 ROOT = "~/Data/SampleExperimentSessions"
 
 
-class SampleExperiment(MneExperiment):
+class SampleExperiment(Pipeline):
 
     meg_system = 'neuromag306mag'
     stim_channel = 'STI 014'
-
-    sessions = ('sample1', 'sample2')
 
     raw = {
         '0-40': RawFilter('raw', None, 40, method='iir'),

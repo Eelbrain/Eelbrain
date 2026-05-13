@@ -1,7 +1,8 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Statistical Parametric Mapping"""
 from itertools import repeat
-from typing import Dict, Literal, Sequence, Union
+from typing import Literal
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -119,7 +120,7 @@ class LM(MultiEffectNDTest):
             samples: int = 10000,
             pmin: float = None,
             tmin: float = None,
-            tfce: Union[float, bool] = False,
+            tfce: float | bool = False,
             tstart: float = None,
             tstop: float = None,
             force_permutation: bool = False,
@@ -239,7 +240,7 @@ class LM(MultiEffectNDTest):
 
     def predict(
             self,
-            values: Union[Sequence[float], Dict[str, float]],
+            values: Sequence[float] | dict[str, float],
             name: str = None,
     ) -> NDVar:
         """Predict ``y`` based on given values of ``x``
@@ -330,6 +331,7 @@ class LMGroup:
     --------
     See :ref:`exa-two-stage` example.
     """
+
     def __init__(self, lms):
         # check lms
         lm0 = lms[0]
@@ -511,7 +513,7 @@ class LMGroup:
                 if lm_subject == subject:
                     break
             else:
-                raise ValueError(f"subject={subject!r}")
+                raise ValueError(f"{subject=}")
 
         table = lm.model.as_table(lm.coding)
         table.caption(f"Design matrix for {subject}")

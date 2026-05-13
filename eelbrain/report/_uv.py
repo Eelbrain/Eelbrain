@@ -1,5 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-from typing import Sequence, Tuple
+from collections.abc import Sequence
 
 from .._data_obj import Dataset, IndexArg, VarArg
 from .. import fmtxt, plot
@@ -10,7 +10,7 @@ def scatter_table(
         color: VarArg = None,
         sub: IndexArg = None,
         data: Dataset = None,
-        diagonal: Tuple[float, float] = None,
+        diagonal: tuple[float, float] = None,
         rasterize: bool = None,
         markers: str = '.',
         alpha: float = 0.5,
@@ -41,7 +41,7 @@ def scatter_table(
     # row: start at 0; column: start at 1
     n_xs = len(xs)
     if n_xs < 2:
-        raise ValueError(f"xs={xs!r}: need at least 2 items")
+        raise ValueError(f"{xs=}: need at least 2 items")
     # color-bar placement
     cbar_row = n_xs - 2
     cbar_column = 1 if n_xs > 2 else 2

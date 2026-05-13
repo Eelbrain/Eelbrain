@@ -1,6 +1,7 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Plot multidimensional uniform time series."""
-from typing import Any, Union, Sequence, Tuple
+from typing import Any
+from collections.abc import Sequence
 
 import matplotlib.axes
 import numpy as np
@@ -248,22 +249,22 @@ class Array(TimeSlicerEF, ColorMapMixin, XAxisMixin, EelFigure):
     @deprecate_ds_arg
     def __init__(
             self,
-            y: Union[NDVarArg, Sequence[NDVarArg]],
+            y: NDVarArg | Sequence[NDVarArg],
             xax: CategorialArg = None,
-            xlabel: Union[bool, str] = True,
-            ylabel: Union[bool, str] = True,
-            xticklabels: Union[str, int, Sequence[int]] = 'bottom',
-            yticklabels: Union[str, int, Sequence[int]] = 'left',
+            xlabel: bool | str = True,
+            ylabel: bool | str = True,
+            xticklabels: str | int | Sequence[int] = 'bottom',
+            yticklabels: str | int | Sequence[int] = 'left',
             sub: IndexArg = None,
             data: Dataset = None,
             x: str = 'time',
             vmax: float = None,
             vmin: float = None,
             cmap: CMapArg = None,
-            contours: Union[int, Sequence, dict] = None,
-            axtitle: Union[bool, Sequence[str]] = True,
+            contours: int | Sequence | dict = None,
+            axtitle: bool | Sequence[str] = True,
             interpolation: str = None,
-            xlim: Union[float, Tuple[float, float]] = None,
+            xlim: float | tuple[float, float] = None,
             **kwargs):
         plot_data = PlotData.from_args(y, (x, None), xax, data, sub).for_plot(PlotType.IMAGE)
         xdim, ydim = plot_data.dims
@@ -296,7 +297,7 @@ class PltUTSND:
             layer: DataLayer,
             xdim: str,
             line_dim: str,
-            sensors: Union[Sequence, bool] = None,
+            sensors: Sequence | bool = None,
             **kwargs,
     ):
         epoch = layer.y
@@ -471,14 +472,14 @@ class Butterfly(TimeSlicerEF, LegendMixin, TopoMapKey, YLimMixin, XAxisMixin, Ee
     @deprecate_ds_arg
     def __init__(
             self,
-            y: Union[NDVarArg, Sequence, NDTest],
+            y: NDVarArg | Sequence | NDTest,
             xax: CategorialArg = None,
             sensors: Sequence = None,
-            axtitle: Union[bool, Sequence[str]] = True,
-            xlabel: Union[bool, str] = True,
-            ylabel: Union[bool, str] = True,
-            xticklabels: Union[str, int, Sequence[int]] = 'bottom',
-            yticklabels: Union[str, int, Sequence[int]] = 'left',
+            axtitle: bool | Sequence[str] = True,
+            xlabel: bool | str = True,
+            ylabel: bool | str = True,
+            xticklabels: str | int | Sequence[int] = 'bottom',
+            yticklabels: str | int | Sequence[int] = 'left',
             color: Any = None,
             linewidth: float = None,
             data: Dataset = None,
@@ -486,7 +487,7 @@ class Butterfly(TimeSlicerEF, LegendMixin, TopoMapKey, YLimMixin, XAxisMixin, Ee
             x: str = 'time',
             vmax: float = None,
             vmin: float = None,
-            xlim: Union[float, Tuple[float, float]] = None,
+            xlim: float | tuple[float, float] = None,
             clip: bool = None,
             **kwargs,
     ):

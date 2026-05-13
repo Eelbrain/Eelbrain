@@ -1,5 +1,5 @@
 """Eelbrain GUIs"""
-from typing import Sequence, Tuple, Union
+from collections.abc import Sequence
 
 import mne
 
@@ -25,9 +25,9 @@ def run(block=False):
 
 def select_components(
         path: PathArg,
-        data: Union[Dataset, mne.io.BaseRaw],
+        data: Dataset | mne.io.BaseRaw,
         sysname: str = None,
-        adjacency: Union[str, Sequence] = None,
+        adjacency: str | Sequence = None,
         decim: int = None,
         debug: bool = False,
 ):
@@ -82,14 +82,14 @@ def select_components(
 
 
 def select_epochs(
-        ds: Union[Dataset, mne.BaseEpochs],
+        ds: Dataset | mne.BaseEpochs,
         data: str = 'meg',
         accept: str = 'accept',
         blink: str = 'blink',
         tag: str = 'rej_tag',
         trigger: str = 'trigger',
         path: PathArg = None,
-        nplots: Union[int, Tuple[int, int]] = None,
+        nplots: int | tuple[int, int] = None,
         topo: bool = None,
         mean: bool = None,
         vlim: float = None,
@@ -99,8 +99,8 @@ def select_epochs(
         mcolor: ColorArg = 'r',
         mlw: float = 0.8,
         antialiased: bool = True,
-        pos: Tuple[int, int] = None,
-        size: Tuple[int, int] = None,
+        pos: tuple[int, int] = None,
+        size: tuple[int, int] = None,
         allow_interpolation: bool = True,
 ):
     """GUI for rejecting trials of MEG/EEG data

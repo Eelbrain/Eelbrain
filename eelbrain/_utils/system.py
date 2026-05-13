@@ -17,3 +17,27 @@ def restore_main_spec():
         main_module = sys.modules['__main__']
         if not hasattr(main_module, '__spec__'):
             main_module.__spec__ = None
+
+
+def system_info():
+    """Print system information for debugging"""
+    import platform
+    import eelbrain
+
+    print(f'Platform: {platform.platform()}')
+    print(f'Python: {platform.python_version()}')
+    print(f'Eelbrain: {eelbrain.__version__}\n')
+
+    modules = [
+        'numpy',
+        'scipy',
+        'matplotlib',
+        'mne',
+    ]
+    for name in modules:
+        try:
+            mod = __import__(name)
+            version = mod.__version__
+        except ImportError as exc:
+            version = f'not installed ({exc})'
+        print(f'{name}: {version}')

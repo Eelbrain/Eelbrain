@@ -36,6 +36,7 @@ dependencies = [
   'pymatreader',
   'scipy >= 1.5',
   'seaborn',
+  'mne-bids',
 ]
 description='MEG/EEG analysis tools'
 keywords = [
@@ -86,7 +87,8 @@ test = [
   'pytest-cov',
   'pytest >=8.0, < 8.1.1',
   'pytest-faulthandler',
-  'pingouin'
+  'pingouin',
+  'statsmodels',
 ]
 
 [tool.tomlsort]

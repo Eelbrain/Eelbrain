@@ -8,7 +8,8 @@ from functools import reduce
 from itertools import chain, product
 from math import ceil
 import operator
-from typing import Any, Dict, Optional, Sequence, Tuple, Union
+from typing import Any
+from collections.abc import Sequence
 
 import numpy as np
 import matplotlib as mpl
@@ -64,10 +65,10 @@ class Style:
     linestyle: str = None
     linewidth: float = None
     zorder: float = 0  # z-order shift (relative to plot element default)
-    masked: Union[Any, Dict[str, Any]] = None  # Any should be Style, but autodoc does not support foward reference under decorator yet https://github.com/agronholm/sphinx-autodoc-typehints/issues/76
+    masked: Any | dict[str, Any] = None  # Any should be Style, but autodoc does not support foward reference under decorator yet https://github.com/agronholm/sphinx-autodoc-typehints/issues/76
     edgecolor: Any = None
     edgewidth: float = 0,
-    linemarker: Union[bool, str] = False
+    linemarker: bool | str = False
     alias: CellArg = None  # This style should not appear in legends
 
     @cached_property
@@ -126,7 +127,7 @@ class Style:
             return cls(arg)
 
 
-def to_styles_dict(colors: Dict[CellArg, Any]) -> StylesDict:
+def to_styles_dict(colors: dict[CellArg, Any]) -> StylesDict:
     return {cell: Style._coerce(spec) for cell, spec in colors.items()}
 
 
@@ -240,14 +241,14 @@ def colors_for_categorial(x, hue_start=0.2, cmap=None):
 
 def colors_for_oneway(
         cells,
-        hue_start: Union[float, Sequence[float]] = 0.2,
-        light_range: Union[float, Tuple[float, float]] = 0.5,
+        hue_start: float | Sequence[float] = 0.2,
+        light_range: float | tuple[float, float] = 0.5,
         cmap: str = None,
         light_cycle: int = None,
         always_cycle_hue: bool = False,
         locations: Sequence[float] = None,
-        unambiguous: Union[bool, Sequence[int]] = None,
-) -> Dict:
+        unambiguous: bool | Sequence[int] = None,
+) -> dict:
     """Define colors for a single factor design
 
     Parameters
@@ -310,8 +311,8 @@ def colors_for_twoway(
         hue_start: float = 0.2,
         hue_shift: float = 0.,
         hues: Sequence[float] = None,
-        lightness: Union[float, Sequence[float]] = None,
-) -> Dict[Tuple[str, str], Tuple[float, float, float]]:
+        lightness: float | Sequence[float] = None,
+) -> dict[tuple[str, str], tuple[float, float, float]]:
     """Define cell colors for a two-way design
 
     Parameters
@@ -351,7 +352,7 @@ def colors_for_twoway(
 def colors_for_nway(
         cell_lists: Sequence[CellArg],
         hue_start: float = 0.2,
-) -> Dict[CellArg, Tuple]:
+) -> dict[CellArg, tuple]:
     """Define cell colors for a two-way design
 
     Parameters
@@ -397,9 +398,9 @@ def colors_for_nway(
 def styles_for_twoway(
         x1_cells: Sequence[str],
         x2_cells: Sequence[str],
-        colors: Dict[CellArg, Any] = None,
+        colors: dict[CellArg, Any] = None,
         linestyles: Sequence[Any] = ('-', '--', ':', '-.'),
-) -> Dict[Tuple[str, str], Style]:
+) -> dict[tuple[str, str], Style]:
     """Cross color with linestyle
 
     Parameters
@@ -504,6 +505,6 @@ def soft_threshold_colormap(
     return out
 
 
-ColorArg = Union[str, Sequence[float]]
-ColorsArg = Union[ColorArg, Dict[CellArg, ColorArg], Sequence[ColorArg]]
-StylesDict = Dict[Optional[CellArg], Style]
+ColorArg = str | Sequence[float]
+ColorsArg = ColorArg | dict[CellArg, ColorArg] | Sequence[ColorArg]
+StylesDict = dict[CellArg | None, Style]

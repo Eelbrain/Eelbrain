@@ -672,18 +672,18 @@ Experiment Pipeline
 .. py:module:: pipeline
 .. currentmodule:: eelbrain.pipeline
 
-The :class:`MneExperiment` class provides a template for analyzing EEG and MEG
+The :class:`Pipeline` class provides a template for analyzing EEG and MEG
 data. The objects for specifying the analysis are all in the
 :mod:`pipeline` submodule.
 
 .. seealso::
-    For the guide on working with the :class:`MneExperiment` class see
+    For the guide on working with the :class:`Pipeline` class see
     :ref:`experiment-class-guide`.
 
 .. autosummary::
    :toctree: generated
 
-   MneExperiment
+   Pipeline
 
 Result containers:
 

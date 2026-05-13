@@ -10,7 +10,7 @@ dependencies:
 - keyring >=5
 - matplotlib-base >=3.8
 - seaborn
-- mne-base >=1.0
+- mne-base >=1.6
 - nibabel >2.3.0  # read_annot bug
 - nilearn >=0.10.4
 - numpy >=1.11, <2

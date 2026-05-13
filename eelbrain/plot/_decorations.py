@@ -1,5 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-from typing import Any, Literal, Union
+from typing import Any, Literal
 
 import matplotlib.axes
 import matplotlib.patches
@@ -25,10 +25,10 @@ def mark_difference(
         x1: float,
         x2: float,
         y: float,
-        mark: Union[float, str] = None,
+        mark: float | str = None,
         dy: float = 0,
         color: Any = None,
-        nudge: Union[bool, float] = None,
+        nudge: bool | float = None,
         location: Literal['top', 'bottom', 'left', 'right'] = 'top',
         ax: matplotlib.axes.Axes = None,
         line_args: dict = None,

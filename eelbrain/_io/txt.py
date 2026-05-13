@@ -4,7 +4,7 @@ import gzip
 from pathlib import Path
 import re
 from numbers import Number
-from typing import Sequence, Tuple, Union
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -25,14 +25,14 @@ def to_num(v: str):
 
 def tsv(
         path: PathArg = None,
-        names: Union[Sequence[str], bool] = True,
-        types: Union[str, dict] = None,
+        names: Sequence[str] | bool = True,
+        types: str | dict = None,
         delimiter: str = 'auto',
         skiprows: int = 0,
         start_tag: str = None,
         ignore_missing: bool = False,
-        empty: Union[str, float] = None,
-        random: Union[str, Sequence[str]] = None,
+        empty: str | float = None,
+        random: str | Sequence[str] = None,
         strip: bool = False,
         encoding: str = None,
         comment: str = '^#',
@@ -143,7 +143,7 @@ def tsv(
         reader = csv.reader(lines, delimiter=delimiter, **fmtparams)
         lines = list(reader)
     if lines[0][0].startswith('\ufeff'):
-        raise IOError(f"First word invalid: {lines[0][0]!r}; file might be encoded with byte order mark, try opening with encoding='utf-8-sig' (see https://stackoverflow.com/a/17912811/166700)")
+        raise OSError(f"First word invalid: {lines[0][0]!r}; file might be encoded with byte order mark, try opening with encoding='utf-8-sig' (see https://stackoverflow.com/a/17912811/166700)")
 
     # find start position
     if start_tag:
@@ -165,9 +165,9 @@ def tsv(
         column_names = []
 
     # determine number of columns
-    row_lens = set(len(row) for row in lines)
+    row_lens = {len(row) for row in lines}
     if not ignore_missing and len(row_lens) > 1:
-        raise IOError("Not all rows have same number of entries. Set ignore_missing to True in order to ignore this error.")
+        raise OSError("Not all rows have same number of entries. Set ignore_missing to True in order to ignore this error.")
     n_columns = max(row_lens)
 
     # check/adjust column names
@@ -179,7 +179,7 @@ def tsv(
             column_names.insert(0, name)
     elif names:
         if len(column_names) > n_columns:
-            raise IOError(f"{names=}: More names than columns ({len(names)=}, {n_columns=})")
+            raise OSError(f"{names=}: More names than columns ({len(names)=}, {n_columns=})")
     # fill in missing column names
     for column in range(len(column_names), n_columns):
         key = f'v{column}'
@@ -203,7 +203,7 @@ def tsv(
         # backwards compatibility
         types_ = ['afv'[v] for v in types]
     else:
-        raise TypeError(f'types={types!r}')
+        raise TypeError(f'{types=}')
 
     # check types values
     if len(types_) != n_columns:
@@ -324,7 +324,7 @@ def var(path: PathArg = None, name: str = None):
 
 
 def write_adjacency(
-        adjacency: Union[Sequence[Tuple[str, str]], Sequence[Tuple[int, int]]],
+        adjacency: Sequence[tuple[str, str]] | Sequence[tuple[int, int]],
         filename: PathArg = None,
 ):
     """Save adjacency graph as text file"""

@@ -1,5 +1,6 @@
-"""Plot source space NDVars with mayavi/pysurfer."""
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+# autoflake: skip_file
+"""Plot source space NDVars with mayavi/pysurfer."""
 
 from ._brain import (
     SequencePlotter,

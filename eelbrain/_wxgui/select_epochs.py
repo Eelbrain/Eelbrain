@@ -90,7 +90,7 @@ def format_epoch_list(l, head="Epochs by channel:"):
         return "None."
     out = fmtxt.List(head)
     for ch in sorted(d, key=lambda x: -len(d[x])):
-        item = fmtxt.FMText("%s (%i): " % (ch, len(d[ch])))
+        item = fmtxt.FMText(f"{ch} ({len(d[ch])}): ")
         item += fmtxt.delim_list(_epoch_list_to_ranges(d[ch]))
         out.add_item(item)
     return out
@@ -115,6 +115,7 @@ class ChangeAction(Action):
         Description of the action
         list of (i, name, old, new) tuples
     """
+
     def __init__(self, desc, index=None, old_accept=None, new_accept=None,
                  old_tag=None, new_tag=None, old_path=None, new_path=None,
                  old_bad_chs=None, new_bad_chs=None, old_interpolate=None,
@@ -391,7 +392,7 @@ class Document(FileDocument):
             needed.append(INTERPOLATE_CHANNELS)
         missing = set(needed).difference(ds)
         if missing:
-            raise IOError(f"{path} is not a valid epoch rejection file. It is missing the following keys: {', '.join(missing)}")
+            raise OSError(f"{path} is not a valid epoch rejection file. It is missing the following keys: {', '.join(missing)}")
 
         # check file
         if ds.n_cases > self.n_epochs:
@@ -399,7 +400,7 @@ class Document(FileDocument):
             if cmd == wx.ID_OK:
                 ds = ds[:self.n_epochs]
             else:
-                raise IOError("Unequal number of cases")
+                raise OSError("Unequal number of cases")
         elif ds.n_cases < self.n_epochs:
             cmd = _ask("Load partial file?", f"The rejection file contains fewer epochs than the data (file: {ds.n_cases}, data: {self.n_epochs}). Load anyways (epochs missing from the file will be accepted)?", wx.OK | wx.CANCEL | wx.CANCEL_DEFAULT | wx.ICON_WARNING, answer)
             if cmd == wx.ID_OK:
@@ -412,14 +413,14 @@ class Document(FileDocument):
                     tail[INTERPOLATE_CHANNELS] = Datalist([[]] * n_missing)
                 ds = combine((ds[needed], tail))
             else:
-                raise IOError("Unequal number of cases")
+                raise OSError("Unequal number of cases")
 
         if not np.all(ds[self.trigger.name] == self.trigger):
             cmd = _ask("Ignore trigger mismatch?", "The file contains different triggers from the data. Ignore mismatch and proceed?", wx.OK | wx.CANCEL | wx.CANCEL_DEFAULT, answer)
             if cmd == wx.ID_OK:
                 ds[self.trigger.name] = self.trigger
             else:
-                raise IOError("Trigger mismatch")
+                raise OSError("Trigger mismatch")
 
         accept = ds['accept']
         if 'rej_tag' in ds:
@@ -459,7 +460,7 @@ class Document(FileDocument):
         elif ext == '.txt':
             ds.save_txt(self.path)
         else:
-            raise ValueError("Unsupported extension: %r" % ext)
+            raise ValueError(f"Unsupported extension: {ext!r}")
 
 
 class Model(FileModel):
@@ -514,7 +515,7 @@ class Model(FileModel):
         self.history.do(action)
 
     def set_interpolation(self, case, ch_names):
-        action = ChangeAction("Epoch %s interpolate %r" % (case, ', '.join(ch_names)),
+        action = ChangeAction(f"Epoch {case} interpolate {', '.join(ch_names)!r}",
                               case, old_interpolate=self.doc.interpolate[case],
                               new_interpolate=ch_names)
         self.history.do(action)
@@ -555,7 +556,7 @@ class Model(FileModel):
         """
         args = ', '.join(map(str, (threshold, method)))
         logger = getLogger(__name__)
-        logger.info("Auto-reject trials: %s" % args)
+        logger.info(f"Auto-reject trials: {args}")
 
         if method == 'abs':
             x = [x.abs().max(('time', 'sensor')) for x in
@@ -564,7 +565,7 @@ class Model(FileModel):
             x = [(x.max('time') - x.min('time')).max('sensor') for x in
                  self.doc.iter_good_epochs()]
         else:
-            raise ValueError("Invalid method: %r" % method)
+            raise ValueError(f"Invalid method: {method!r}")
         return np.array(x) < threshold
 
     def toggle_interpolation(self, case, ch_name):
@@ -675,7 +676,7 @@ class Frame(FileFrame):
         others :
             See TerminalInterface constructor.
         """
-        super(Frame, self).__init__(parent, pos, size, model)
+        super().__init__(parent, pos, size, model)
         self.allow_interpolation = allow_interpolation
 
         # bind events
@@ -823,7 +824,7 @@ class Frame(FileFrame):
             if i in epochs:
                 break
         else:
-            raise ValueError("Epoch not found: %r" % i)
+            raise ValueError(f"Epoch not found: {i!r}")
         if page != self._current_page_i:
             self.SetPage(page)
 
@@ -983,8 +984,7 @@ class Frame(FileFrame):
         rejected = np.invert(self.doc.accept.x)
         sec = doc.add_section(_text.n_of(rejected.sum(), 'epoch') + ' rejected')
         if np.any(rejected):
-            para = fmtxt.delim_list((fmtxt.Link(epoch, f"epoch:{epoch}") for
-                                     epoch in np.flatnonzero(rejected)))
+            para = fmtxt.delim_list(fmtxt.Link(epoch, f"epoch:{epoch}") for epoch in np.flatnonzero(rejected))
             sec.add_paragraph(para)
 
         # bad channels
@@ -1024,11 +1024,11 @@ class Frame(FileFrame):
         x = ax.xaxis.get_major_formatter().format_data(event.xdata)
         y = ax.yaxis.get_major_formatter().format_data(event.ydata)
         desc = "Page average" if ax.ax_idx == MEAN_PLOT else "Epoch %i" % ax.epoch_idx
-        status = "%s,  x = %s ms,  y = %s" % (desc, x, y)
+        status = f"{desc},  x = {x} ms,  y = {y}"
         if ax.ax_idx >= 0:  # single trial plot
             interp = self.doc.interpolate[ax.epoch_idx]
             if interp:
-                status += ",  interpolate %s" % ', '.join(interp)
+                status += f",  interpolate {', '.join(interp)}"
         self.SetStatusText(status)
 
         # update topomap
@@ -1150,8 +1150,8 @@ class Frame(FileFrame):
             mark_above = dlg.GetMarkAbove()
             if mark_below or mark_above:
                 self.model.update_rejection(sub_threshold, mark_below,
-                                            mark_above, "Threshold-%s" % method,
-                                            "%s_%s" % (method, threshold))
+                                            mark_above, f"Threshold-{method}",
+                                            f"{method}_{threshold}")
             if dlg.do_report.GetValue():
                 rejected = np.invert(sub_threshold)
 
@@ -1159,8 +1159,7 @@ class Frame(FileFrame):
                 doc.append("%s at %s:  reject %i of %i epochs:" %
                            (method, threshold, rejected.sum(), len(rejected)))
                 if np.any(rejected):
-                    para = fmtxt.delim_list((fmtxt.Link(epoch, "epoch:%i" % epoch) for
-                                             epoch in np.flatnonzero(rejected)))
+                    para = fmtxt.delim_list(fmtxt.Link(epoch, "epoch:%i" % epoch) for epoch in np.flatnonzero(rejected))
                     doc.add_paragraph(para)
                 InfoFrame(self, "Rejection Info", doc.get_html())
             dlg.StoreConfig()
@@ -1318,9 +1317,7 @@ class Frame(FileFrame):
         "See .SetPlotStyle()"
         for key, value in kwargs.items():
             if key == 'vlims':
-                err = ("%r is an invalid keyword argument for this function"
-                       % key)
-                raise TypeError(err)
+                raise TypeError(f"{key!r} is an invalid keyword argument for this function")
             elif key == 'mark':
                 self._mark = value
             elif key in self._bf_kwargs:
@@ -1511,7 +1508,7 @@ class Frame(FileFrame):
             seg = self._case_segs[ax_index]
             sensor_idx = self.doc.good_sensor_index(epoch_idx)
         else:
-            raise ValueError("Invalid ax_index: %s" % ax_index)
+            raise ValueError(f"Invalid ax_index: {ax_index}")
 
         if time is not None:
             if time is True:
@@ -1687,11 +1684,9 @@ class LayoutDialog(EelbrainDialog):
                 event.Skip()
                 return
             else:
-                wx.MessageBox("Layout does not have enough plots",
-                              "Invalid Layout", wx.OK | wx.ICON_ERROR, self)
+                wx.MessageBox("Layout does not have enough plots", "Invalid Layout", wx.OK | wx.ICON_ERROR, self)
         else:
-            wx.MessageBox("Invalid layout string: %s" % value,
-                          "Invalid Layout", wx.OK | wx.ICON_ERROR, self)
+            wx.MessageBox(f"Invalid layout string: {value}", "Invalid Layout", wx.OK | wx.ICON_ERROR, self)
         self.text.SetFocus()
         self.text.SelectAll()
 
@@ -1870,6 +1865,6 @@ class InfoFrame(HTMLFrame):
             if kind == 'epoch':
                 self.Parent.GoToEpoch(int(address))
             else:
-                raise NotImplementedError("%s URL" % kind)
+                raise NotImplementedError(f"{kind} URL")
         else:
-            raise ValueError("Invalid link URL: %r" % url)
+            raise ValueError(f"Invalid link URL: {url!r}")

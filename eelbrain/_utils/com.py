@@ -65,6 +65,7 @@ class Notifier:
     ...
 
     """
+
     def __init__(self, to, name='job', crash_info_func=None, debug=True):
         # get the password
         path = Path.home() / '.eelbrain_notifier_key'

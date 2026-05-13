@@ -2,7 +2,8 @@
 """Plot sensor maps."""
 from math import sin, cos, asin
 import os
-from typing import Any, Literal, Optional, Sequence, Union
+from typing import Any, Literal
+from collections.abc import Sequence
 
 import numpy as np
 import matplotlib as mpl
@@ -25,8 +26,8 @@ kwargs_mono = dict(mc='k',
 
 
 def _head_outlines(
-        head_radius: Union[float, Sequence[float]] = None,
-        head_pos: Union[float, Sequence[float]] = 0,
+        head_radius: float | Sequence[float] = None,
+        head_pos: float | Sequence[float] = 0,
 ):
     # generate outlines for center 0, radius 1
     nose_alpha = 0.2
@@ -102,9 +103,9 @@ class AxMap2d:
             marker: str,
             size: float,
             color: ColorArg,
-            mark: Union[Sequence[str], str, Sequence[int], int] = None,
-            head_radius: Union[float, Sequence[float]] = None,
-            head_pos: Union[float, Sequence[float]] = 0,
+            mark: Sequence[str] | str | Sequence[int] | int = None,
+            head_radius: float | Sequence[float] = None,
+            head_pos: float | Sequence[float] = 0,
             head_linewidth: float = None,
             labels: Literal['none', 'index', 'name', 'fullname'] = 'none',
     ):
@@ -131,7 +132,7 @@ class AxMap2d:
 def sensor_labels(
         sensors: Sensor,
         labels: Literal['none', 'index', 'name', 'fullname'] = 'none',
-) -> Optional[Sequence[str]]:
+) -> Sequence[str] | None:
     if labels == 'none':
         return
     elif labels == 'index':
@@ -157,17 +158,17 @@ class PltMap2d:
             sensors: Sensor,
             proj: str,
             extent: float,
-            marker: Union[str, matplotlib.markers.MarkerStyle],
+            marker: str | matplotlib.markers.MarkerStyle,
             size: float,
             color: ColorArg,
-            mark: Union[Sequence[str], str, Sequence[int], int],
-            mcolor: Union[ColorArg, Sequence[ColorArg]] = None,
-            msize: Union[float, Sequence[float]] = 20,
-            mmarker: Union[str, matplotlib.markers.MarkerStyle] = 'o',
+            mark: Sequence[str] | str | Sequence[int] | int,
+            mcolor: ColorArg | Sequence[ColorArg] = None,
+            msize: float | Sequence[float] = 20,
+            mmarker: str | matplotlib.markers.MarkerStyle = 'o',
             labels: Literal['', 'none', 'index', 'name', 'fullname'] = 'none',
             invisible: bool = False,
-            head_radius: Union[float, Sequence[float]] = None,
-            head_pos: Union[float, Sequence[float]] = 0,
+            head_radius: float | Sequence[float] = None,
+            head_pos: float | Sequence[float] = 0,
             head_linewidth: float = None,
     ):
         self.ax = ax
@@ -373,9 +374,9 @@ class SensorMapMixin:
         try:
             self.mark_sensors(chs)
         except Exception as exc:
-            msg = '%s: %s' % (type(exc).__name__, exc)
+            msg = f'{type(exc).__name__}: {exc}'
             sty = wx.OK | wx.ICON_ERROR
-            wx.MessageBox(msg, "Mark Sensors Failed for %r" % chs, style=sty)
+            wx.MessageBox(msg, f"Mark Sensors Failed for {chs!r}", style=sty)
 
     def __OnSensorLabelChoice(self, event):  # noqa
         sel = event.GetSelection()
@@ -492,6 +493,7 @@ class SensorMaps(EelFigure):
      - The 'Clear' button (or :meth:`clear`) clears the selection.
 
     """
+
     def __init__(self, sensors, select=[], proj='default', size=1,
                  color='k', marker='.', frame=0.05, **kwargs):
         sensors = as_sensor(sensors)
@@ -719,6 +721,7 @@ class SensorMap(SensorMapMixin, EelFigure):
     ...
         Also accepts :ref:`general-layout-parameters`.
     """
+
     def __init__(
             self,
             sensors: Any,
@@ -728,8 +731,8 @@ class SensorMap(SensorMapMixin, EelFigure):
             color: ColorArg = 'k',
             marker: str = '.',
             mark: Sequence = None,
-            head_radius: Union[float, Sequence[float]] = None,
-            head_pos: Union[float, Sequence[float]] = 0,
+            head_radius: float | Sequence[float] = None,
+            head_pos: float | Sequence[float] = 0,
             adjacency: bool = False,
             **kwargs):
         sensors = as_sensor(sensors)

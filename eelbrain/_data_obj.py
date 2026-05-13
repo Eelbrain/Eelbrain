@@ -110,7 +110,8 @@ import operator
 import os
 import re
 import string
-from typing import Any, Callable, Collection, Dict, Iterable, Iterator, List, Literal, Optional, Type, Union, Sequence, Tuple
+from typing import Any, Literal
+from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
 from warnings import warn
 
 import numpy
@@ -168,12 +169,10 @@ _tsv_wildcard = ("Plain Text Tab Separated Values (*.txt)", '*.txt')
 _txt_wildcard = ("Plain Text (*.txt)", '*.txt')
 EVAL_CONTEXT = {'numpy': numpy}  # updated at end of file
 
-AxisArg = Union[None, str, Sequence[str], 'NDVar']
-DimsArg = Union[str, Sequence[str]]
-
 
 class IndexFormatter(Formatter):
     "Matplotlib tick-label formatter for categories"
+
     def __init__(self, labels):
         self.labels = labels
         self.n = len(labels)
@@ -209,7 +208,7 @@ def _effect_interaction(a, b):
     return np.hstack(out)
 
 
-def combine_cells(cell_1: 'CellArg', cell_2: 'CellArg') -> Tuple[str, ...]:
+def combine_cells(cell_1: CellArg, cell_2: CellArg) -> tuple[str, ...]:
     if cell_1 is None:
         return cell_2
     elif cell_2 is None:
@@ -266,7 +265,7 @@ def op_name(
         other: object = None,  # Var, NDVar, scalar; None for unary operations
         info: dict = None,
         name: str = None,  # name parameter, if specified
-) -> (Union[str, None], dict):
+) -> (str | None, dict):
     """name, info for Var/NDVar operation
 
     Notes
@@ -310,8 +309,8 @@ def op_name(
 
 
 def nice_label(
-        x: Union[Factor, Var, NDVar],
-        labels: Dict[CellArg, str] = None,
+        x: Factor | Var | NDVar,
+        labels: dict[CellArg, str] = None,
 ):
     if labels is not None and x.name in labels:
         return labels[x.name]
@@ -380,7 +379,7 @@ def isdataobject(x: Any) -> bool:
     return isinstance(x, (Datalist, Model, NDVar, Var, _Effect, NonbasicEffect))
 
 
-def isdatalist(x: Any, contains: Type = None, test_all: bool = True) -> bool:
+def isdatalist(x: Any, contains: type = None, test_all: bool = True) -> bool:
     """Test whether x is a Datalist instance
 
     Parameters
@@ -511,7 +510,7 @@ def hasrandom(x):
 
 
 def as_case_identifier(
-        x: Union[str, Var, Factor, Interaction],
+        x: str | Var | Factor | Interaction,
         data: Dataset = None,
         allow_nonunique: bool = False,
 ):
@@ -991,7 +990,7 @@ def align1(d, to, by='index', out='data'):
     elif out == 'index':
         return align_idx
     else:
-        raise ValueError(f"out={out!r}")
+        raise ValueError(f"{out=}")
 
 
 def choose(choice, sources, name=None):
@@ -1230,7 +1229,7 @@ def combine(
     elif stype is Datalist:
         return Datalist(sum(items, []), name, items[0]._fmt)
     else:
-        raise RuntimeError("combine with stype = %r" % stype)
+        raise RuntimeError(f"combine with stype = {stype!r}")
 
 
 def find_factors(obj):
@@ -1251,12 +1250,12 @@ def find_factors(obj):
         try:
             return EffectList(obj.factors)
         except BaseException:
-            raise TypeError("%r has no factors" % obj)
+            raise TypeError(f"{obj!r} has no factors")
 
 
 class EffectList(list):
     def __repr__(self):
-        return 'EffectList((%s))' % ', '.join(self.names())
+        return f"EffectList(({', '.join(self.names())}))"
 
     def __contains__(self, item):
         for f in self:
@@ -1268,7 +1267,7 @@ class EffectList(list):
         for i, f in enumerate(self):
             if (len(f) == len(item)) and np.all(item == f):
                 return i
-        raise ValueError("Factor %r not in EffectList" % item.name)
+        raise ValueError(f"Factor {item.name!r} not in EffectList")
 
     def names(self):
         names = [e.name if isuv(e) else repr(e) for e in self]
@@ -1280,7 +1279,7 @@ class Named:
     def __init__(
             self,
             name: str = None,
-            info: Dict = None,
+            info: dict = None,
     ):
         self.info = {} if info is None else dict(info)
         self._name = name
@@ -1337,7 +1336,7 @@ class Var(Named):
             x: ArrayLike,
             name: str = None,
             info: dict = None,
-            repeat: Union[ArrayLike, int] = 1,
+            repeat: ArrayLike | int = 1,
             tile: int = 1,
     ):
         if isinstance(x, str):
@@ -1394,16 +1393,16 @@ class Var(Named):
             x = [fmt % v for v in self.x]
         else:
             x = [fmt % v for v in self.x[:n_cases]]
-            x.append('... (N=%s)' % len(self.x))
+            x.append(f'... (N={len(self.x)})')
 
-        args = ['[%s]' % ', '.join(x)]
+        args = [f"[{', '.join(x)}]"]
         if self.name is not None:
-            args.append('name=%r' % self.name)
+            args.append(f'name={self.name!r}')
 
         if self.info:
-            args.append('info=%r' % self.info)
+            args.append(f'info={self.info!r}')
 
-        return "Var(%s)" % ', '.join(args)
+        return f"Var({', '.join(args)})"
 
     def __str__(self):
         return self.__repr__(True)
@@ -1574,7 +1573,7 @@ class Var(Named):
             means = codes.sum(0) / dummy_factor.sum(0)
             codes -= dummy_factor * means
             # create effect
-            name = '%s per %s' % (self.name, other.name)
+            name = f'{self.name} per {other.name}'
             return NonbasicEffect(codes, [self, other], name, beta_labels=other.dummy_complete_labels)
         args = op_name(self, '/', other)
         if isinstance(other, NDVar):
@@ -2056,7 +2055,7 @@ class Var(Named):
     def split(
             self,
             n: int = 2,
-            labels: Dict[int, str] = None,
+            labels: dict[int, str] = None,
             name: str = None,
     ):
         """
@@ -2159,7 +2158,7 @@ class _Effect:
 
     def __mod__(self, other):
         if isinstance(other, Model):
-            return Model((self % e for e in other.effects))
+            return Model(self % e for e in other.effects)
         return Interaction((self, other))
 
     def __len__(self):
@@ -2167,7 +2166,7 @@ class _Effect:
 
     def as_var(
             self,
-            labels: Dict[CellArg, float],
+            labels: dict[CellArg, float],
             default: float = None,
             name: str = None,
     ) -> Var:
@@ -2190,7 +2189,7 @@ class _Effect:
             x = [labels.get(v, default) for v in self]
         return Var(x, name or self.name)
 
-    def count(self, value: Tuple[str, ...] = None, start: int = -1) -> Var:
+    def count(self, value: tuple[str, ...] = None, start: int = -1) -> Var:
         """Cumulative count of the occurrences of ``value``
 
         Parameters
@@ -2324,7 +2323,7 @@ class _Effect:
 
         if descending:
             if not isinstance(descending, bool):
-                raise TypeError("descending=%s, need bool" % repr(descending))
+                raise TypeError(f"{descending=}, need bool")
             sort_idx = sort_idx[::-1]
 
         return sort_idx
@@ -2391,14 +2390,15 @@ class Factor(_Effect):
         >>> Factor('iiiooo')
         Factor(['i', 'i', 'i', 'o', 'o', 'o'])
     """
+
     def __init__(
             self,
             x: Iterable[Any],
             name: str = None,
             random: bool = False,
-            repeat: Union[int, Sequence[int]] = 1,
-            tile: Union[int, Sequence[int]] = 1,
-            labels: Dict[Any, str] = None,
+            repeat: int | Sequence[int] = 1,
+            tile: int | Sequence[int] = 1,
+            labels: dict[Any, str] = None,
             default: str = None,
     ):
         if isinstance(x, Iterator):
@@ -2517,21 +2517,21 @@ class Factor(_Effect):
             x = repr(values)
         else:
             x = [repr(v) for v in values[:n_cases]]
-            x.append('<... N=%s>' % len(self.x))
+            x.append(f'<... N={len(self.x)}>')
             x = '[' + ', '.join(x) + ']'
 
         args = [x]
 
         if self.name is not None:
-            args.append('name=%r' % self.name)
+            args.append(f'name={self.name!r}')
 
         if self.random:
             args.append('random=True')
 
         if not use_labels:
-            args.append('labels=%s' % self._labels)
+            args.append(f'labels={self._labels}')
 
-        return 'Factor(%s)' % ', '.join(args)
+        return f"Factor({', '.join(args)})"
 
     def __str__(self):
         return self.__repr__(True)
@@ -2635,9 +2635,9 @@ class Factor(_Effect):
 
     def _coefficient_names(self, method):
         if method == 'dummy':
-            return ["%s:%s" % (self.name, cell) for cell in self.cells[:-1]]
+            return [f"{self.name}:{cell}" for cell in self.cells[:-1]]
         contrast_cell = self.cells[-1]
-        return ["%s:%s-%s" % (self.name, cell, contrast_cell)
+        return [f"{self.name}:{cell}-{contrast_cell}"
                 for cell in self.cells[:-1]]
 
     def as_labels(self):
@@ -2646,7 +2646,7 @@ class Factor(_Effect):
 
     def as_var(
             self,
-            labels: Dict[str, float] = None,
+            labels: dict[str, float] = None,
             default: float = None,
             name: str = None,
     ) -> Var:
@@ -2867,7 +2867,7 @@ class Factor(_Effect):
         Factor(['a', 'a', 'a', 'a', 'a', 'a', 'b', 'b'])
         """
         if isinstance(regions, str) and regions not in ('previous',):
-            raise ValueError("demarcation=%r" % (regions,))
+            raise ValueError(f"demarcation={regions!r}")
 
         out = self.copy(None)
         if empty not in self._codes:
@@ -2883,7 +2883,7 @@ class Factor(_Effect):
                 for i in is_empty:
                     x[i] = x[i - 1]
             else:
-                raise RuntimeError("demarcation=%r" % (regions,))
+                raise RuntimeError(f"demarcation={regions!r}")
         else:
             assert len(regions) == self._n_cases
             i_region_start = 0
@@ -2932,7 +2932,7 @@ class Factor(_Effect):
             if len(where) == 1:
                 index.append(where[0])
             else:
-                msg = "%r contains several cases of %r" % (self, v)
+                msg = f"{self!r} contains several cases of {v!r}"
                 raise ValueError(msg)
         return np.array(index)
 
@@ -3106,11 +3106,11 @@ class Factor(_Effect):
         if new != old:
             invalid = new.difference(old)
             if invalid:
-                raise ValueError("Factor does not have cells: %s" % ', '.join(invalid))
+                raise ValueError(f"Factor does not have cells: {', '.join(invalid)}")
             missing = old.difference(new)
             if missing:
-                raise ValueError("Factor has cennls not in order: %s" % ', '.join(missing))
-            raise RuntimeError("Factor.sort_cells comparing %s and %s" % (old, new))
+                raise ValueError(f"Factor has cennls not in order: {', '.join(missing)}")
+            raise RuntimeError(f"Factor.sort_cells comparing {old} and {new}")
         self._labels = {self._codes[cell]: cell for cell in new_order}
 
     def lower(self, name: str = None) -> Factor:
@@ -3259,10 +3259,11 @@ class NDVar(Named):
     - Work with :class:`NDVar`: :ref:`exa-cluster-based-mu`
     - Convert :class:`NDVar` to univariate :class:`Var`: :ref:`exa-compare-topographies`
     """
+
     def __init__(
             self,
             x: ArrayLike,
-            dims: Union[Dimension, Sequence[Dimension]],
+            dims: Dimension | Sequence[Dimension],
             name: str = None,
             info: dict = None,
     ):
@@ -3696,7 +3697,7 @@ class NDVar(Named):
         """
         return NDVar(np.abs(self.x), self.dims, *op_name(self, 'abs(', name=name))
 
-    def all(self, axis: AxisArg = None, **regions) -> Union[NDVar, Var, bool]:
+    def all(self, axis: AxisArg = None, **regions) -> NDVar | Var | bool:
         """Whether all values are nonzero over given dimensions
 
         Parameters
@@ -3747,7 +3748,7 @@ class NDVar(Named):
         """
         return self._aggregate_over_dims(axis, regions, np.all)
 
-    def any(self, axis: AxisArg = None, **regions) -> Union[NDVar, Var, bool]:
+    def any(self, axis: AxisArg = None, **regions) -> NDVar | Var | bool:
         """Compute presence of any value other than zero over given dimensions
 
         Parameters
@@ -3777,9 +3778,9 @@ class NDVar(Named):
 
     def argmax(
             self,
-            axis: Union[str, int] = None,
+            axis: str | int = None,
             name: str = None,
-    ) -> Union[float, str, tuple, NDVar, Var]:
+    ) -> float | str | tuple | NDVar | Var:
         """Find the index of the largest value
 
         ``ndvar[ndvar.argmax()]`` is equivalent to ``ndvar.max()``.
@@ -3813,9 +3814,9 @@ class NDVar(Named):
 
     def argmin(
             self,
-            axis: Union[str, int] = None,
+            axis: str | int = None,
             name: str = None,
-    ) -> Union[float, str, tuple, NDVar, Var]:
+    ) -> float | str | tuple | NDVar | Var:
         """Find the index of the smallest value
 
         ``ndvar[ndvar.argmin()]`` is equivalent to ``ndvar.min()``.
@@ -4001,7 +4002,7 @@ class NDVar(Named):
             step: float = None,
             start: float = None,
             stop: float = None,
-            func: Union[Callable, str] = None,
+            func: Callable | str = None,
             dim: str = None,
             name: str = None,
             nbins: int = None,
@@ -4212,9 +4213,9 @@ class NDVar(Named):
     def dot(
             self,
             ndvar: NDVar,
-            dims: Union[str, Sequence[str]] = None,
+            dims: str | Sequence[str] = None,
             name: str = None,
-    ) -> Union[NDVar, Var, float]:
+    ) -> NDVar | Var | float:
         """Dot product
 
         Parameters
@@ -4315,7 +4316,7 @@ class NDVar(Named):
             x = x[aslice(axis, stop=n)]
         return NDVar(x, self.dims, name or self.name, self.info)
 
-    def extrema(self, axis: AxisArg = None, **regions) -> Union[NDVar, Var, float]:
+    def extrema(self, axis: AxisArg = None, **regions) -> NDVar | Var | float:
         """Extrema (value farthest away from 0) over given dimensions
 
         For each data point,
@@ -4406,7 +4407,7 @@ class NDVar(Named):
         else:
             raise DimensionMismatchError(f"{self} has no dimension named {name!r}")
 
-    def _get_axes(self, dims: Union[str, Sequence[str]]) -> Sequence[int]:
+    def _get_axes(self, dims: str | Sequence[str]) -> Sequence[int]:
         if isinstance(dims, str):
             return self.get_axis(dims),
         else:
@@ -4461,10 +4462,10 @@ class NDVar(Named):
 
     def get_dimnames(
             self,
-            names: Sequence[Optional[str]] = None,
-            first: Union[str, Sequence[Optional[str]]] = None,
-            last: Union[str, Sequence[Optional[str]]] = None,
-    ) -> Tuple[str, ...]:
+            names: Sequence[str | None] = None,
+            first: str | Sequence[str | None] = None,
+            last: str | Sequence[str | None] = None,
+    ) -> tuple[str, ...]:
         """Fill in a partially specified tuple of Dimension names
 
         Parameters
@@ -4490,7 +4491,7 @@ class NDVar(Named):
             tail = () if last is None else (last,) if isinstance(last, str) else last
             n_mid = len(self.dims) - len(head) - len(tail)
             if n_mid < 0:
-                raise ValueError(f"first={first!r}, last={last!r}: more arguments than dimensions ({', '.join(self.dimnames)})")
+                raise ValueError(f"{first=}, {last=}: more arguments than dimensions ({', '.join(self.dimnames)})")
             out = [*head, *repeat(None, n_mid), *tail]
         elif len(names) != len(self.dims):
             raise ValueError(f"{names!r}: wrong number of dimensions for {self}")
@@ -4504,16 +4505,16 @@ class NDVar(Named):
             elif out[i] not in self.dimnames:
                 raise ValueError(f"NDVar has no {out[i]} dimension")
         if len(set(out)) != len(out):
-            arg_repr = f'{names!r}' if names else f"first={first!r}, last={last!r}"
+            arg_repr = f'{names!r}' if names else f"{first=}, {last=}"
             raise ValueError(f"{arg_repr}: duplicate name")
         return tuple(out)
 
     def get_dims(
             self,
-            names: Sequence[Optional[str]] = None,
-            first: Union[str, Sequence[Optional[str]]] = None,
-            last: Union[str, Sequence[Optional[str]]] = None,
-    ) -> Tuple[Dimension]:
+            names: Sequence[str | None] = None,
+            first: str | Sequence[str | None] = None,
+            last: str | Sequence[str | None] = None,
+    ) -> tuple[Dimension]:
         """Return a tuple with the requested Dimension objects
 
         Parameters
@@ -4688,7 +4689,7 @@ class NDVar(Named):
 
     def unmask(
             self,
-            fill_value: Union[float, str] = None,
+            fill_value: float | str = None,
             name: str = None,
     ):
         """Remove mask from a masked ``NDVar``
@@ -4720,7 +4721,7 @@ class NDVar(Named):
         assert isinstance(self.x, np.ma.masked_array), "NDVar is not masked"
         return NDVar(self.x.mask, self.dims, name or self.name, self.info)
 
-    def max(self, axis: AxisArg = None, **regions) -> Union[NDVar, Var, float]:
+    def max(self, axis: AxisArg = None, **regions) -> NDVar | Var | float:
         """Compute the maximum over given dimensions
 
         Parameters
@@ -4752,7 +4753,7 @@ class NDVar(Named):
         """
         return self._aggregate_over_dims(axis, regions, np.max)
 
-    def mean(self, axis: AxisArg = None, **regions) -> Union[NDVar, Var, float]:
+    def mean(self, axis: AxisArg = None, **regions) -> NDVar | Var | float:
         """Compute the mean over given dimensions
 
         Parameters
@@ -4779,7 +4780,7 @@ class NDVar(Named):
         """
         return self._aggregate_over_dims(axis, regions, np.mean)
 
-    def min(self, axis: AxisArg = None, **regions) -> Union[NDVar, Var, float]:
+    def min(self, axis: AxisArg = None, **regions) -> NDVar | Var | float:
         """Compute the minimum over given dimensions
 
         Parameters
@@ -4959,7 +4960,7 @@ class NDVar(Named):
         else:
             return NDVar(x, dims, *args)
 
-    def quantile(self, q=0.5, axis: AxisArg = None, interpolation='linear', **regions) -> Union[NDVar, Var, float]:
+    def quantile(self, q=0.5, axis: AxisArg = None, interpolation='linear', **regions) -> NDVar | Var | float:
         """The value such that q of the NDVar's values are lower
 
         (See func:`numpy.quantile`)
@@ -5057,7 +5058,7 @@ class NDVar(Named):
         res = stats.residuals(self.x, x)
         return NDVar(res, self.dims, name or self.name, self.info)
 
-    def rms(self, axis: AxisArg = None, **regions) -> Union[NDVar, Var, float]:
+    def rms(self, axis: AxisArg = None, **regions) -> NDVar | Var | float:
         """Compute the root mean square over given dimensions
 
         Parameters
@@ -5233,7 +5234,7 @@ class NDVar(Named):
             axis: AxisArg = None,
             ddof: float = 0,
             **regions,
-    ) -> Union[NDVar, Var, float]:
+    ) -> NDVar | Var | float:
         """Compute the standard deviation over given dimensions
 
         Parameters
@@ -5452,7 +5453,7 @@ class NDVar(Named):
         dims = [dim for dim in dims if dim is not None]
         return self._package_aggregated_output(x, dims, name)
 
-    def sum(self, axis: AxisArg = None, **regions) -> Union[NDVar, Var, float]:
+    def sum(self, axis: AxisArg = None, **regions) -> NDVar | Var | float:
         """Compute the sum over given dimensions
 
         Parameters
@@ -5503,7 +5504,7 @@ class NDVar(Named):
         elif tail == -1:
             idx = self.x <= v
         else:
-            raise ValueError("Invalid value tail=%r; need -1, 0 or 1" % (tail,))
+            raise ValueError(f"Invalid value {tail=}; need -1, 0 or 1")
         return NDVar(np.where(idx, self.x, 0), self.dims, name or self.name, self.info)
 
     def var(
@@ -5511,7 +5512,7 @@ class NDVar(Named):
             axis: AxisArg = None,
             ddof: float = 0,
             **regions,
-    ) -> Union[NDVar, Var, float]:
+    ) -> NDVar | Var | float:
         """Compute the variance over given dimensions
 
         Parameters
@@ -5550,7 +5551,7 @@ class NDVar(Named):
     @classmethod
     def zeros(
             cls,
-            dims: Union[NDVar, Dimension, Sequence[Dimension]],
+            dims: NDVar | Dimension | Sequence[Dimension],
             name: str = None,
             info: dict = None,
             dtype: DTypeLike = None,
@@ -5629,23 +5630,23 @@ class Datalist(list):
         self.name = name
         self._fmt = fmt
         if items:
-            super(Datalist, self).__init__(items)
+            super().__init__(items)
         else:
-            super(Datalist, self).__init__()
+            super().__init__()
 
     def __deepcopy__(self, memo):
         return Datalist((deepcopy(item, memo) for item in self), self.name, self._fmt)
 
     def __repr__(self):
-        args = super(Datalist, self).__repr__()
+        args = super().__repr__()
         if self.name is not None:
-            args += ', %s' % repr(self.name)
+            args += f', {self.name!r}'
         if self._fmt != 'repr':
-            args += ', fmt=%s' % repr(self._fmt)
-        return "Datalist(%s)" % args
+            args += f', fmt={self._fmt!r}'
+        return f"Datalist({args})"
 
     def __str__(self):
-        return "[%s]" % ', '.join(self._item_repr(i) for i in self)
+        return f"[{', '.join(self._item_repr(i) for i in self)}]"
 
     def _item_repr(self, item):
         if self._fmt == 'str':
@@ -5657,9 +5658,9 @@ class Datalist(list):
             else:
                 return out
         elif self._fmt == 'strlist':
-            return "[%s]" % ', '.join(item)
+            return f"[{', '.join(item)}]"
         else:
-            raise RuntimeError("Datalist._fmt=%s" % repr(self._fmt))
+            raise RuntimeError(f"Datalist._fmt={self._fmt!r}")
 
     def _summary(self, width=80):
         types = sorted({type(v) for v in self})
@@ -5711,10 +5712,10 @@ class Datalist(list):
                 for k in key:
                     list.__setitem__(self, k, value)
         else:
-            raise NotImplementedError("Datalist indexing with %s" % type(key))
+            raise NotImplementedError(f"Datalist indexing with {type(key)}")
 
     def __add__(self, other):
-        return Datalist(super(Datalist, self).__add__(other), fmt=self._fmt)
+        return Datalist(super().__add__(other), fmt=self._fmt)
 
     def __sub__(self, other):
         assert len(other) == len(self)
@@ -5723,7 +5724,7 @@ class Datalist(list):
     def aggregate(
             self,
             x: CategorialArg,
-            func: Union[Callable, str] = 'mean',
+            func: Callable | str = 'mean',
     ) -> Datalist:
         """
         Summarize cases for each cell in x
@@ -5798,7 +5799,7 @@ def assert_is_legal_dataset_key(key):
 def as_legal_dataset_key(key):
     "Convert str to a legal dataset key"
     if iskeyword(key):
-        return "%s_" % key
+        return f"{key}_"
     elif key.isidentifier():
         return key
     else:
@@ -5811,7 +5812,7 @@ def as_legal_dataset_key(key):
         if key == '':
             key = '_'
         elif key[0].isdigit():
-            key = "_%s" % key
+            key = f"_{key}"
 
         if key.isidentifier():
             return key
@@ -6011,18 +6012,18 @@ class Dataset(dict):
         if isinstance(index, slice):
             return self.sub(index)
         elif isinstance(index, str):
-            return super(Dataset, self).__getitem__(index)
+            return super().__getitem__(index)
         elif isinstance(index, Integral):
             return self.get_case(index)
         elif not np.iterable(index):
-            raise KeyError("Invalid index for Dataset: %r" % index)
+            raise KeyError(f"Invalid index for Dataset: {index!r}")
         elif len(index) == 0:
             return self.sub(index)
         elif all(isinstance(item, str) for item in index):
             return self.sub(keys=index)
         elif isinstance(index, tuple):
             if len(index) != 2:
-                raise KeyError("Invalid index for Dataset: %s" % repr(index))
+                raise KeyError(f"Invalid index for Dataset: {index!r}")
 
             i0, i1 = index
             if isinstance(i0, str):
@@ -6046,12 +6047,12 @@ class Dataset(dict):
         if self.n_cases is None:
             items = []
             if self.name:
-                items.append('name=%r' % self.name)
+                items.append(f'name={self.name!r}')
             if self.info:
                 info = repr(self.info)
                 if len(info) > 60:
                     info = '<...>'
-                items.append('info=%s' % info)
+                items.append(f'info={info}')
             item_repr = ', '.join(items)
             return f'{self.__class__.__name__}({item_repr})'
 
@@ -6115,7 +6116,7 @@ class Dataset(dict):
             elif self.n_cases != n:
                 raise ValueError(f"Can not assign item to Dataset[{index!r}]. The item`s length {n} is different from the number of cases in the Dataset {self.n_cases}.")
 
-            super(Dataset, self).__setitem__(index, item)
+            super().__setitem__(index, item)
         elif isinstance(index, tuple):
             if len(index) != 2:
                 raise IndexError(f"{index}: Dataset indexes can have at most two components; direct access to NDVars is not implemented")
@@ -6180,7 +6181,7 @@ class Dataset(dict):
                 f"different length ({self.n_cases})")
 
     @staticmethod
-    def as_key(name: Optional[str], default: str = None):
+    def as_key(name: str | None, default: str = None):
         """Convert a string ``name`` to a legal dataset key
 
         This is a shortcut to simplify storing varaibles with non-compliant
@@ -6212,12 +6213,12 @@ class Dataset(dict):
 
         """
         if not isdataobject(item):
-            raise ValueError("Not a valid data-object: %r" % item)
+            raise ValueError(f"Not a valid data-object: {item!r}")
         elif item.name is None:
             raise ValueError("Dataset.add(obj) can only take named objects "
                              "(obj.name can not be None)")
         elif (item.name in self) and not replace:
-            raise KeyError("Dataset already contains variable named %r" % item.name)
+            raise KeyError(f"Dataset already contains variable named {item.name!r}")
         else:
             self[item.name] = item
 
@@ -6264,9 +6265,9 @@ class Dataset(dict):
 
     def as_table(
             self,
-            cases: Union[int, Iterable[int]] = 0,
+            cases: int | Iterable[int] = 0,
             fmt: str = '%.6g',
-            sfmt: Optional[str] = '%s',
+            sfmt: str | None = '%s',
             sort: bool = False,
             header: bool = True,
             midrule: bool = False,
@@ -6403,7 +6404,7 @@ class Dataset(dict):
             name: str = None,
             caption: str = None,
             info: dict = None,
-            random: Union[str, Collection[str]] = None,
+            random: str | Collection[str] = None,
             check_dims: bool = True,
             dim_intersection: bool = False,
             to_list: bool = False,
@@ -6478,8 +6479,8 @@ class Dataset(dict):
     def from_dataframe(
             cls,
             df,
-            random: Union[str, Collection[str]] = None,
-            skip: Union[str, Collection[str]] = None,
+            random: str | Collection[str] = None,
+            skip: str | Collection[str] = None,
     ) -> Dataset:
         """Create a dataset from a :class:`pandas.DataFrame`
 
@@ -6613,7 +6614,7 @@ class Dataset(dict):
             x: CategorialArg = None,
             drop_empty: bool = True,
             name: str = None,
-            count: Union[bool, str] = 'n',
+            count: bool | str = 'n',
             drop_bad: bool = False,
             drop: Sequence[str] = (),
             equal_count: bool = False,
@@ -6775,7 +6776,7 @@ class Dataset(dict):
             Number at which to start the index.
         """
         if not isinstance(name, str):
-            raise TypeError("name=%r" % (name,))
+            raise TypeError(f"{name=}")
         self[name] = Var(np.arange(start, self.n_cases + start))
 
     def itercases(self, start=None, stop=None):
@@ -6793,7 +6794,7 @@ class Dataset(dict):
 
     @property
     def n_items(self):
-        return super(Dataset, self).__len__()
+        return super().__len__()
 
     def rename(self, old, new):
         """Shortcut to rename a data-object in the Dataset.
@@ -6814,7 +6815,7 @@ class Dataset(dict):
 
     def repeat(
             self,
-            repeats: Union[int, Sequence[[int]]],
+            repeats: int | Sequence[[int]],
             name: str = None,
     ):
         """
@@ -6905,7 +6906,7 @@ class Dataset(dict):
         """
         title = "Save Dataset"
         if self.name:
-            title += ' %s' % self.name
+            title += f' {self.name}'
         msg = ""
         filetypes = [_pickled_ds_wildcard, _tsv_wildcard, _tex_wildcard]
         path = ui.ask_saveas(title, msg, filetypes, defaultFile=self.name)
@@ -6951,7 +6952,7 @@ class Dataset(dict):
         if not isinstance(path, str):
             title = "Save Dataset"
             if self.name:
-                title += ' %s' % self.name
+                title += f' {self.name}'
             title += " as TeX Table"
             msg = ""
             path = ui.ask_saveas(title, msg, [_tex_wildcard],
@@ -7009,7 +7010,7 @@ class Dataset(dict):
         if not isinstance(path, str):
             title = "Pickle Dataset"
             if self.name:
-                title += ' %s' % self.name
+                title += f' {self.name}'
             msg = ""
             path = ui.ask_saveas(title, msg, [_pickled_ds_wildcard],
                                  defaultFile=self.name)
@@ -7275,6 +7276,7 @@ class Interaction(_Effect):
     base : list
         All effects.
     """
+
     def __init__(self, base):
         base_ = EffectList()
         n_vars = 0
@@ -7328,7 +7330,7 @@ class Interaction(_Effect):
         if preferences['short_repr']:
             return ' % '.join(names)
         else:
-            return "Interaction({n})".format(n=', '.join(names))
+            return f"Interaction({', '.join(names)})"
 
     @cached_property
     def _value_set(self):
@@ -7599,6 +7601,7 @@ class Model:
         Effects included in the model (:class:`Var`, :class:`Factor`, etc.
         objects)
     """
+
     def __init__(self, x):
         effects = EffectList()
 
@@ -7662,12 +7665,12 @@ class Model:
             return ' + '.join(names)
         else:
             x = ', '.join(names)
-            return "Model((%s))" % x
+            return f"Model(({x}))"
 
     def __str__(self):
         return str(self.as_table())
 
-    def array(self, coding: Literal['effect', 'dummy']) -> (numpy.ndarray, List[str]):
+    def array(self, coding: Literal['effect', 'dummy']) -> (numpy.ndarray, list[str]):
         "Model matrix as numpy array and column names"
         p = Parametrization(self, coding)
         return p.x, p.column_names
@@ -7697,7 +7700,7 @@ class Model:
         elif isinstance(sub, INT_TYPES):
             return tuple(e[sub] for e in self.effects)
         else:
-            return Model((x[sub] for x in self.effects))
+            return Model(x[sub] for x in self.effects)
 
     def __contains__(self, effect):
         return id(effect) in map(id, self.effects)
@@ -7806,7 +7809,7 @@ class Model:
         # data
         for case in itre_cases:
             for i in p.x[case]:
-                table.cell('%g' % i)
+                table.cell(f'{i:g}')
 
         return table
 
@@ -7891,6 +7894,7 @@ class Parametrization:
     A :class:`Model` is a list of effects. A :class:`Parametrization` contains
     a realization of those effects in a model matrix with named columns.
     """
+
     def __init__(
             self,
             model: Model,
@@ -8169,7 +8173,7 @@ class Dimension:
     def _axis_format(
             self,
             scalar: bool,
-            label: Union[bool, str],
+            label: bool | str,
     ):
         """Find axis decoration parameters for this dimension
 
@@ -8197,7 +8201,7 @@ class Dimension:
     def _axis_label(self, label):
         if label is True:
             if self._axis_unit:
-                return "%s [%s]" % (self.name.capitalize(), self._axis_unit)
+                return f"{self.name.capitalize()} [{self._axis_unit}]"
             else:
                 return self.name.capitalize()
         return label
@@ -8380,7 +8384,7 @@ class Dimension:
         return self._adjacency
 
     def _generate_adjacency(self):
-        raise NotImplementedError("Adjacency for %s dimension." % self.name)
+        raise NotImplementedError(f"Adjacency for {self.name} dimension.")
 
     def _melt_vars(self) -> dict:
         "Variables to add when melting the dimension"
@@ -8485,7 +8489,7 @@ class Case(Dimension):
     def _axis_format(
             self,
             scalar: bool,
-            label: Union[bool, str],
+            label: bool | str,
     ):
         if scalar:
             locator = None
@@ -8572,7 +8576,7 @@ class Space(Dimension):
         self._directions = state['directions']
 
     def __repr__(self):
-        return "Space(%r)" % self._directions
+        return f"Space({self._directions!r})"
 
     def __len__(self):
         return len(self._directions)
@@ -8591,7 +8595,7 @@ class Space(Dimension):
     def _axis_format(
             self,
             scalar: bool,
-            label: Union[bool, str],
+            label: bool | str,
     ):
         # like Categorial
         locator = FixedLocator(np.arange(len(self._directions)))
@@ -8716,7 +8720,7 @@ class Categorial(Dimension):
 
     def __repr__(self):
         args = (repr(self.name), str(self.values))
-        return "%s(%s)" % (self.__class__.__name__, ', '.join(args))
+        return f"{self.__class__.__name__}({', '.join(args)})"
 
     def __len__(self):
         return len(self.values)
@@ -8736,7 +8740,7 @@ class Categorial(Dimension):
     def _axis_format(
             self,
             scalar: bool,
-            label: Union[bool, str],
+            label: bool | str,
     ):
         locator = FixedLocator(np.arange(len(self)))
         formatter = IndexFormatter(self.values)
@@ -8751,7 +8755,7 @@ class Categorial(Dimension):
         elif isinstance(arg, self.__class__):
             return [self._array_index(v) for v in arg.values]
         else:
-            return super(Categorial, self)._array_index(arg)
+            return super()._array_index(arg)
 
     @classmethod
     def _concatenate(cls, dims: Sequence[Categorial]):
@@ -8899,7 +8903,7 @@ class Scalar(Dimension):
     def _axis_format(
             self,
             scalar: bool,
-            label: Union[bool, str],
+            label: bool | str,
     ):
         if scalar:
             if self.tick_format:
@@ -8938,7 +8942,7 @@ class Scalar(Dimension):
             step: int = None,  # -> step in dim space
             nbins: int = None,  # -> equally divide in array space
             label: str = 'center',
-    ) -> (list, 'Scalar'):
+    ) -> (list, Scalar):
         islice = self._array_index_for_slice(start, stop, step)
         istart = 0 if islice.start is None else islice.start
         istop = None if islice.stop is None else islice.stop
@@ -8949,7 +8953,7 @@ class Scalar(Dimension):
                 istop = len(self)
             n_source_steps = istop - istart
             if n_source_steps % nbins != 0:
-                raise ValueError(f"nbins={nbins!r}: length {n_source_steps} {self.name} can not be divided equally")
+                raise ValueError(f"{nbins=}: length {n_source_steps} {self.name} can not be divided equally")
             istep = int(n_source_steps / nbins)
             edges = list(self.values[istart:istop:istep])
             edges.append(stop)
@@ -9151,7 +9155,7 @@ class Sensor(Dimension):
             names: Sequence[str] = None,
             sysname: str = None,
             proj2d: str = 'z root',
-            adjacency: Union[str, Sequence] = 'none',
+            adjacency: str | Sequence = 'none',
     ):
         # 'z root' transformation fails with 32-bit floats
         self.locations = locations = np.asarray(locations, dtype=np.float64)
@@ -9215,7 +9219,7 @@ class Sensor(Dimension):
         self._init_secondary()
 
     def __repr__(self):
-        return "<Sensor n=%i, name=%r>" % (len(self), self.sysname)
+        return f"<Sensor n={len(self)}, name={self.sysname!r}>"
 
     def __len__(self):
         return len(self.locations)
@@ -9236,7 +9240,7 @@ class Sensor(Dimension):
     def _axis_format(
             self,
             scalar: bool,
-            label: Union[bool, str],
+            label: bool | str,
     ):
         locator = FixedLocator(np.arange(len(self)), 10)
         formatter = IndexFormatter(self.names)
@@ -9270,7 +9274,7 @@ class Sensor(Dimension):
         elif isinstance(arg, Integral) or (isinstance(arg, np.ndarray) and arg.dtype.kind == 'i'):
             return arg
         else:
-            return super(Sensor, self)._array_index(arg)
+            return super()._array_index(arg)
 
     def _array_index_to(self, other):
         "Int index to access data from self in an order consistent with other"
@@ -9546,7 +9550,7 @@ class Sensor(Dimension):
                     if sign == '-':
                         locs2d[:, 1] *= -1
             else:
-                raise ValueError("invalid proj kwarg: %r" % proj)
+                raise ValueError(f"invalid proj kwarg: {proj!r}")
 
         # correct extent
         if extent:
@@ -9622,8 +9626,8 @@ class Sensor(Dimension):
 
     def index(
             self,
-            include: Union[str, Sequence[str, int]] = None,
-            exclude: Union[str, Sequence[str, int]] = None,
+            include: str | Sequence[str, int] = None,
+            exclude: str | Sequence[str, int] = None,
     ) -> NDVar:
         """Construct an index for specified sensors
 
@@ -9722,7 +9726,7 @@ class Sensor(Dimension):
                 raise DimensionMismatchError("Sensor locations don't match between dimension objects")
         return self[index]
 
-    def neighbors(self, connect_dist: float) -> Dict[int, np.ndarray]:
+    def neighbors(self, connect_dist: float) -> dict[int, np.ndarray]:
         """Find neighboring sensors.
 
         Parameters
@@ -9892,11 +9896,11 @@ class SourceSpaceBase(Dimension):
     @deprecate_kwarg('connectivity', 'adjacency', '0.41', '0.42')
     def __init__(
             self,
-            vertices: List[ArrayLike],
+            vertices: list[ArrayLike],
             subject: str,
             src: str,
             subjects_dir: PathArg,
-            parc: Union[Factor, str],
+            parc: Factor | str,
             adjacency: AdjacencyArg,
             name: str,
             filename: str,
@@ -9999,7 +10003,7 @@ class SourceSpaceBase(Dimension):
             return mne.utils.get_subjects_dir(self._subjects_dir, True)
 
     @subjects_dir.setter
-    def subjects_dir(self, value: Optional[PathArg]):
+    def subjects_dir(self, value: PathArg | None):
         self._subjects_dir = value
 
     def _sss_path(self, subjects_dir=None):
@@ -10030,11 +10034,11 @@ class SourceSpaceBase(Dimension):
         if self.name != 'source':
             out += ' ' + self.name
         vert_repr = ', '.join(str(len(v)) for v in self.vertices)
-        out += " [%s], %r" % (vert_repr, self.subject)
+        out += f" [{vert_repr}], {self.subject!r}"
         if self.src is not None:
-            out += ', %r' % self.src
+            out += f', {self.src!r}'
         if self.parc is not None:
-            out += ', parc=%s' % self.parc.name
+            out += f', parc={self.parc.name}'
         return out + '>'
 
     def __len__(self):
@@ -10062,7 +10066,7 @@ class SourceSpaceBase(Dimension):
     def _axis_format(
             self,
             scalar: bool,
-            label: Union[bool, str],
+            label: bool | str,
     ):
         formatter = FormatStrFormatter('%i')
         locator = FixedLocator(np.arange(len(self)), 10)
@@ -10178,7 +10182,7 @@ class SourceSpaceBase(Dimension):
         return adjacency
 
     def _compute_adjacency(self):
-        raise NotImplementedError("Adjacency for %r source space" % self.kind)
+        raise NotImplementedError(f"Adjacency for {self.kind!r} source space")
 
     def circular_index(self, seeds, extent=0.05, name="globe"):
         """Return an index into all vertices closer than ``extent`` of a seed
@@ -10412,11 +10416,11 @@ class SourceSpace(SourceSpaceBase):
     @deprecate_kwarg('connectivity', 'adjacency', '0.41', '0.42')
     def __init__(
             self,
-            vertices: List[ArrayLike],
+            vertices: list[ArrayLike],
             subject: str = None,
             src: str = None,
             subjects_dir: PathArg = None,
-            parc: Union[Factor, str] = 'aparc',
+            parc: Factor | str = 'aparc',
             adjacency: AdjacencyArg = 'custom',
             name: str = 'source',
             filename: str = '{subject}-{src}-src.fif',
@@ -10684,7 +10688,7 @@ class SourceSpace(SourceSpaceBase):
         path = Path(f'{self.subjects_dir}/{self.subject}/surf/{hemi}.{surf}')
         return read_geometry(path)
 
-    def index_for_label(self, label: Union[str, Sequence[str], mne.Label, mne.BiHemiLabel]) -> NDVar:
+    def index_for_label(self, label: str | Sequence[str] | mne.Label | mne.BiHemiLabel) -> NDVar:
         """Return the index for a label
 
         Parameters
@@ -11003,7 +11007,7 @@ class UTS(Dimension):
     def _axis_format(
             self,
             scalar: bool,
-            label: Union[bool, str],
+            label: bool | str,
     ):
         # display s -> ms
         s_to_ms = False
@@ -11205,7 +11209,7 @@ class UTS(Dimension):
         elif isinstance(arg, np.ndarray) and arg.dtype.kind in 'fi':
             return np.array([self._array_index(i) for i in arg])
         else:
-            return super(UTS, self)._array_index(arg)
+            return super()._array_index(arg)
 
     def _array_index_for_slice(self, start: float, stop: float = None, step: float = None):
         """Create a slice into the time axis
@@ -11347,17 +11351,19 @@ def intersect_dims(dims1, dims2, check_dims: bool = True):
 
 EVAL_CONTEXT.update(Var=Var, Factor=Factor, extrema=extrema)
 
-NDVarArg = Union[NDVar, str]
-VarArg = Union[Var, str]
-NumericArg = Union[Var, NDVar, str]
-CategorialVariable = Union[Factor, Interaction, NestedEffect]
-CategorialArg = Union[CategorialVariable, str]
-AdjacencyArg = Union[Literal['grid', 'none', 'vector', 'custom'], ArrayLike]
-FactorArg = Union[Factor, str]
-CellArg = Union[str, Tuple[str, ...]]
-IndexArg = Union[Var, np.ndarray, str]
-ModelArg = Union[Model, Var, CategorialArg]
-UVArg = Union[VarArg, CategorialArg]
+NDVarArg = NDVar | str
+AxisArg = None | str | Sequence[str] | NDVar
+DimsArg = str | Sequence[str]
+VarArg = Var | str
+NumericArg = Var | NDVar | str
+CategorialVariable = Factor | Interaction | NestedEffect
+CategorialArg = CategorialVariable | str
+AdjacencyArg = Literal['grid', 'none', 'vector', 'custom'] | ArrayLike
+FactorArg = Factor | str
+CellArg = str | tuple[str, ...]
+IndexArg = Var | np.ndarray | str
+ModelArg = Model | Var | CategorialArg
+UVArg = VarArg | CategorialArg
 
 # Types that can be coerced to NDVar with asndvar(); lists of those can be too
 NDVarTypes = (NDVar, str, MNE_RAW, MNE_EPOCHS, MNE_EVOKED)

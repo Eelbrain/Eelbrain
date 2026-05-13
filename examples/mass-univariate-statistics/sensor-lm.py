@@ -64,14 +64,14 @@ EFFECTS = [
     ('n_chars', (0.110, 0.150)),
     ('cloze', (0.380, 0.420)),
 ]
-    
+
 t_maps = []
 for effect, time in EFFECTS:
     # t-maps are retrieved by effect name
     t = lm.t(effect).mean(time=time)
     # p-maps are stored in a list, so we need to know the index of te effect
     index = lm.effects.index(effect)
-    # We are interested in the maximal spatial cluster extent, i.e., any sensor that is part of the cluster at any time 
+    # We are interested in the maximal spatial cluster extent, i.e., any sensor that is part of the cluster at any time
     p = lm.p[index].min(time=time)
     # Create a masked average t map
     t_av = t.mask(p > 0.05)

@@ -3,7 +3,8 @@
 import inspect
 from itertools import chain
 import logging
-from typing import Any, Callable, Dict, Literal, Optional, Sequence, Union
+from typing import Any, Literal
+from collections.abc import Callable, Sequence
 
 import numpy as np
 import scipy.linalg
@@ -38,7 +39,7 @@ def _mark_plot_pairwise(  # Mark pairwise significance
         corr: test.MCCArg,
         trend: str,
         markers: bool,  # Plot markers indicating significance level (stars)
-        levels: Union[dict, bool] = True,
+        levels: dict | bool = True,
         pwcolors: Sequence = None,
         top: float = None,  # Impose a fixed top end of the y-axis
 ) -> float:  # The top most value on the y axis
@@ -106,7 +107,7 @@ def _mark_plot_1sample(  # Mark significance for one-sample test
         popmean: float,
         corr: test.MCCArg,
         trend: str,
-        levels: Union[dict, bool] = True,
+        levels: dict | bool = True,
         pwcolors: Sequence = None,
         tail: int = 0,
 ) -> float:  # Top of space used on y axis
@@ -145,6 +146,7 @@ class PairwiseLegend(EelFigure):
     ...
         Also accepts :ref:`general-layout-parameters`.
     """
+
     def __init__(self, size: float = .3, trend: bool = False, **kwargs):
         i_start = 1 - bool(trend)
         levels = [.1, .05, .01, .001][i_start:]
@@ -168,7 +170,7 @@ class PairwiseLegend(EelFigure):
             y1 = y_unit * (i * 5 + 2)
             y2 = y1 + y_unit
             ax.plot(x, (y1, y2, y2, y1), color=color)
-            label = "p<%s" % (str(level)[1:])
+            label = f"p<{str(level)[1:]}"
             ax.text(x_text, y1 + y_unit / 2, label, ha='left', va='center')
 
         ax.set_ylim(0, self._layout.h)
@@ -260,20 +262,20 @@ class Boxplot(CategorialAxisMixin, YLimMixin, _SimpleFigure):
             match: CategorialArg = None,
             sub: IndexArg = None,
             cells: Sequence[CellArg] = None,
-            test: Union[bool, float] = True,
+            test: bool | float = True,
             tail: Literal[-1, 0, 1] = 0,
             par: bool = True,
             corr: test.MCCArg = 'Hochberg',
-            trend: Union[bool, str] = False,
+            trend: bool | str = False,
             test_markers: bool = True,
             bottom: float = None,
             top: float = None,
-            xlabel: Union[bool, str] = True,
-            ylabel: Union[bool, str] = True,
-            labels: Dict[CellArg, str] = None,
-            xticks: Union[bool, Dict[CellArg, str], Sequence[str]] = True,
+            xlabel: bool | str = True,
+            ylabel: bool | str = True,
+            labels: dict[CellArg, str] = None,
+            xticks: bool | dict[CellArg, str] | Sequence[str] = True,
             xtick_delim: str = '\n',
-            xtick_rotation: Union[float, str] = None,
+            xtick_rotation: float | str = None,
             colors: ColorsArg = False,
             data: Dataset = None,
             label_fliers: bool = False,
@@ -286,7 +288,7 @@ class Boxplot(CategorialAxisMixin, YLimMixin, _SimpleFigure):
         else:
             styles = find_cell_styles(ct.cells, colors)
         if label_fliers and ct.match is None:
-            raise TypeError(f"label_fliers={label_fliers!r} without specifying the match parameter: match is needed to determine labels")
+            raise TypeError(f"{label_fliers=} without specifying the match parameter: match is needed to determine labels")
         if ct.x is None and test is True:
             test = 0.
 
@@ -397,24 +399,24 @@ class Barplot(CategorialAxisMixin, YLimMixin, _SimpleFigure):
             error: str = 'sem',
             within_subject_error: bool = None,
             ec: Any = 'k',
-            test: Union[bool, float] = True,
+            test: bool | float = True,
             tail: Literal[-1, 0, 1] = 0,
             par: bool = True,
             corr: test.MCCArg = 'Hochberg',
-            trend: Union[bool, str] = False,
+            trend: bool | str = False,
             test_markers: bool = True,
             bottom: float = None,
             top: float = None,
             origin: float = None,
-            xlabel: Union[bool, str] = True,
-            ylabel: Union[bool, str] = True,
-            labels: Dict[CellArg, str] = None,
-            xticks: Union[bool, Dict[CellArg, str], Sequence[str]] = True,
+            xlabel: bool | str = True,
+            ylabel: bool | str = True,
+            labels: dict[CellArg, str] = None,
+            xticks: bool | dict[CellArg, str] | Sequence[str] = True,
             xtick_delim: str = '\n',
-            xtick_rotation: Union[float, str] = None,
+            xtick_rotation: float | str = None,
             colors: ColorsArg = False,
             pos: Sequence[float] = None,
-            width: Union[float, Sequence[float]] = 0.5,
+            width: float | Sequence[float] = 0.5,
             color: Any = '#0099FF',
             edgec: Any = None,
             data: Dataset = None,
@@ -533,24 +535,24 @@ class BarplotHorizontal(XAxisMixin, CategorialAxisMixin, _SimpleFigure):
             error: str = 'sem',
             within_subject_error: bool = None,
             ec: Any = 'k',
-            test: Union[bool, float] = True,
+            test: bool | float = True,
             tail: Literal[-1, 0, 1] = 0,
             par: bool = True,
             corr: test.MCCArg = 'Hochberg',
-            trend: Union[bool, str] = False,
+            trend: bool | str = False,
             test_markers: bool = True,
             bottom: float = 0,
             top: float = None,
             origin: float = None,
-            xlabel: Union[bool, str] = True,
-            ylabel: Union[bool, str] = True,
-            labels: Dict[CellArg, str] = None,
-            xticks: Union[bool, Dict[CellArg, str], Sequence[str]] = True,
+            xlabel: bool | str = True,
+            ylabel: bool | str = True,
+            labels: dict[CellArg, str] = None,
+            xticks: bool | dict[CellArg, str] | Sequence[str] = True,
             xtick_delim: str = ' ',
-            xtick_rotation: Union[float, str] = None,
+            xtick_rotation: float | str = None,
             colors: ColorsArg = False,
             pos: Sequence[float] = None,
-            width: Union[float, Sequence[float]] = 0.5,
+            width: float | Sequence[float] = 0.5,
             c: Any = '#0099FF',
             edgec: Any = None,
             data: Dataset = None,
@@ -585,13 +587,13 @@ class PltUvBase:
             self,
             ax: matplotlib.axes.Axes,
             ct: Celltable,
-            origin: Optional[float],
+            origin: float | None,
             pos: Sequence[float],
             width: Sequence[float],
             bottom: float,
             plot_max: float,
             top: float,
-            test: Union[float, bool, None],
+            test: float | bool | None,
             tail: int,
             corr: test.MCCArg,
             par: bool,
@@ -702,6 +704,7 @@ class PltBoxplot(PltUvBase):
 
 class PltBarplot(PltUvBase):
     "Barplot from Celltable ``ct``"
+
     def __init__(
             self,
             ax: mpl.axes.Axes,
@@ -713,14 +716,14 @@ class PltBarplot(PltUvBase):
             top: float = None,
             origin: float = None,
             pos: Sequence[float] = None,  # position of the bars
-            width: Union[float, Sequence[float]] = .5,  # width of the bars
+            width: float | Sequence[float] = .5,  # width of the bars
             c='#0099FF',
             edgec=None,
             ec='k',
             test: bool = True,
             tail: int = 0,
             par=True,
-            trend: Union[bool, str] = False,
+            trend: bool | str = False,
             corr='Hochberg',
             test_markers=True,
             horizontal: bool = False,
@@ -855,11 +858,11 @@ class Timeplot(LegendMixin, YLimMixin, EelFigure):
             bottom: float = None,
             top: float = None,
             # labelling
-            xlabel: Union[bool, str] = True,
-            ylabel: Union[bool, str] = True,
-            timelabels: Union[Sequence, Dict, str] = None,
+            xlabel: bool | str = True,
+            ylabel: bool | str = True,
+            timelabels: Sequence | dict | str = None,
             legend: LegendArg = None,
-            labels: Dict = None,
+            labels: dict = None,
             colors: ColorsArg = None,
             **kwargs,
     ):
@@ -993,7 +996,7 @@ class AxTimeplot:
                     locations = time_points
                     labels = None
                 else:
-                    raise ValueError("timelabels=%r" % (timelabels,))
+                    raise ValueError(f"{timelabels=}")
             elif not isinstance(timelabels, Sequence) or not len(timelabels) == len(time_points):
                 raise TypeError(f"{timelabels=}; needs to be a sequence whose length equals the number of time points ({len(time_points)})")
             else:
@@ -1082,20 +1085,20 @@ class Scatter(EelFigure, LegendMixin, ColorBarMixin):
             self,
             y: VarArg,
             x: VarArg,
-            color: Union[CategorialArg, Var] = None,
-            size: Union[VarArg, float] = None,
+            color: CategorialArg | Var = None,
+            size: VarArg | float = None,
             sub: IndexArg = None,
             data: Dataset = None,
-            colors: Union[dict, str] = None,
+            colors: dict | str = None,
             vmin: str = None,
             vmax: str = None,
             markers: str = None,
             legend: LegendArg = None,
             labels: dict = None,
             alpha: float = 1.,
-            xlabel: Union[bool, str] = True,
-            ylabel: Union[bool, str] = True,
-            aspect: Union[float, Literal['auto', 'equal']] = 'auto',
+            xlabel: bool | str = True,
+            ylabel: bool | str = True,
+            aspect: float | Literal['auto', 'equal'] = 'auto',
             **kwargs):
         sub, n = assub(sub, data, return_n=True)
         y, n = asvar(y, sub, data, n, return_n=True)
@@ -1212,8 +1215,8 @@ class Regression(EelFigure, LegendMixin):
             match: CategorialArg = None,
             sub: IndexArg = None,
             data: Dataset = None,
-            xlabel: Union[bool, str] = True,
-            ylabel: Union[bool, str] = True,
+            xlabel: bool | str = True,
+            ylabel: bool | str = True,
             alpha: float = .2,
             legend: LegendArg = None,
             labels: dict = None,
@@ -1306,7 +1309,7 @@ def _ax_histogram(ax, data, density, test_normality, **kwargs):
                     horizontalalignment='right',
                     verticalalignment='top',
                     transform=ax.transAxes,)
-        logging.debug(" Anderson: %s, %s, %s" % (a2, thresh, sig))
+        logging.debug(f" Anderson: {a2}, {thresh}, {sig}")
         # test Lilliefors
         n_test = test.lilliefors(data)
         ax.set_xlabel(r"$D=%.3f$, $p_{est}=%.2f$" % n_test)  # \chi ^{2}
@@ -1356,7 +1359,7 @@ class Histogram(EelFigure):
     @deprecate_ds_arg
     def __init__(
             self,
-            y: Union[VarArg, Sequence[float]],
+            y: VarArg | Sequence[float],
             x: CategorialArg = None,
             match: CategorialArg = None,
             sub: IndexArg = None,
@@ -1366,9 +1369,9 @@ class Histogram(EelFigure):
             test: bool = False,
             tight: bool = True,
             title: str = None,
-            xlabel: Union[bool, str] = True,
-            ylabel: Union[bool, str] = None,
-            bins: Union[str, int, np.ndarray] = None,
+            xlabel: bool | str = True,
+            ylabel: bool | str = None,
+            bins: str | int | np.ndarray = None,
             **kwargs):
         ct = Celltable(y, x, match=match, sub=sub, data=data, coercion=asvar)
 

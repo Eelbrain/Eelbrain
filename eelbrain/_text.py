@@ -1,5 +1,5 @@
 """Text generation helpers"""
-from typing import Iterable
+from collections.abc import Iterable
 
 
 def enumeration(items: Iterable[object], link: str = 'and'):
@@ -10,7 +10,7 @@ def enumeration(items: Iterable[object], link: str = 'and'):
     elif len(items) == 1:
         return items[0]
     else:
-        raise ValueError(f"items={items!r}")
+        raise ValueError(f"{items=}")
 
 
 def ms(t_s):
@@ -25,11 +25,11 @@ def ms_window(t0, t1):
 def named_list(items, name='item'):
     "named_list([1, 2, 3], 'number') -> 'numbers (1, 2, 3)"
     if len(items) == 1:
-        return "%s (%r)" % (name, items[0])
+        return f"{name} ({items[0]!r})"
     else:
         if name.endswith('y'):
             name = name[:-1] + 'ie'
-        return "%ss (%s)" % (name, ', '.join(map(repr, items)))
+        return f"{name}s ({', '.join(map(repr, items))})"
 
 
 def n_of(

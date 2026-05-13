@@ -29,9 +29,9 @@ cmap_list = [
 ]
 
 nrows = len(cmap_list)
-figh = 0.35 + 0.15 + (nrows + (nrows-1)*0.1)*0.22
+figh = 0.35 + 0.15 + (nrows + (nrows - 1) * 0.1) * 0.22
 fig, axs = plt.subplots(nrows=nrows, figsize=(6.4, figh))
-fig.subplots_adjust(top=1-.35/figh, bottom=.15/figh, left=0.2, right=0.99)
+fig.subplots_adjust(top=1 - .35 / figh, bottom=.15 / figh, left=0.2, right=0.99)
 
 axs[0].set_title('Eelbrain colormaps', fontsize=14)
 
