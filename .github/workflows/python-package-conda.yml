@@ -33,6 +33,15 @@ jobs:
     - name: Build eelbrain
       run: pip install --no-deps -e .
       shell: bash -el {0}
+    - name: Cache MNE datasets
+      uses: actions/cache@v4
+      with:
+        path: ~/mne_data
+        key: mne-data-${{ matrix.os }}-${{ hashFiles('env-test.yml') }}
+    - name: Download MNE datasets
+      shell: bash -el {0}
+      run: |
+        python -c "import mne; mne.datasets.sample.data_path(verbose=False); mne.datasets.testing.data_path(verbose=False); mne.datasets.fetch_fsaverage(verbose=False)"
     - if: matrix.os == 'ubuntu-latest'
       name: Test without GUI
       shell: bash -el {0}

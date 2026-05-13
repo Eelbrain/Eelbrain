@@ -10,6 +10,7 @@ dependencies:
 - packaging
 # Scientific Python base
 - libcblas
+- libclang
 - numpy >= 1.20
 - scipy >= 1.5
 - matplotlib-base >= 3.8
@@ -43,4 +44,5 @@ dependencies:
 - pingouin >= 0.6.0  # breaking API used in tests
 # neuroimaging
 - nibabel >= 2.5
+- nilearn >= 0.10.4
 - mne-bids >= 0.17
