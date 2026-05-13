@@ -39,8 +39,9 @@ jobs:
         cache-environment: true
         post-cleanup: 'all'
         # Speed up env creation by pinning a couple of packages
+        # Limit to NumPy 2.2.6 to avoid in1d -> isin removal
         create-args: |
-          mayavi=4.8.3 vtk=9.4.2 python=3.13 noqt5 pyside6=6.9.2 pysurfer=0.11.2 -v
+          mayavi=4.8.3 vtk=9.4.2 python=3.13 noqt5 pyside6=6.9.2 pysurfer=0.11.2 numpy=2.2.6 -v
     # Get MNE testing data
     - uses: actions/checkout@v4
       with:
