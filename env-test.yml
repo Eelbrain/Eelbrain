@@ -44,5 +44,6 @@ dependencies:
 - pingouin >= 0.6.0  # breaking API used in tests
 # neuroimaging
 - nibabel >= 2.5
+- dipy
 - nilearn >= 0.10.4
 - mne-bids >= 0.17
