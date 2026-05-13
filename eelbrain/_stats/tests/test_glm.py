@@ -11,7 +11,6 @@ from eelbrain._data_obj import UTS
 from eelbrain._exceptions import IncompleteModelError
 from eelbrain._stats import glm
 from eelbrain._stats.permutation import permute_order
-from eelbrain.testing.r_bridge import r, r_require, r_warning_filter
 from eelbrain.testing import assert_fmtxt_str_equals, file_path
 
 
@@ -93,12 +92,18 @@ def run_as_ndanova(y, x, ds):
 
 
 def test_anova():
-    "Test ANOVA"
-    pytest.importorskip('rpy2')
-    r_require('car')
+    """Test ANOVA
 
+    R code used to generate reference values::
+
+        library(car)
+        ds <- eelbrain_uv_nrm  # datasets.get_uv(nrm=True) sent via to_r()
+        # fixed effects
+        Anova(lm(fltvar ~ A * B, ds, type=2))
+        # repeated measures
+        summary(aov(fltvar ~ A * B + Error(rm / (A * B)), ds))
+    """
     ds = datasets.get_uv(nrm=True)
-    ds.to_r('ds')
 
     # fixed effects
     aov = test.ANOVA('fltvar', 'A*B', data=ds)
@@ -114,10 +119,15 @@ def test_anova():
     """)
     fs = run_on_lm_fitter('fltvar', 'A*B', ds)
     fnds = run_as_ndanova('fltvar', 'A*B', ds)
-    r_res = r("Anova(lm(fltvar ~ A * B, ds, type=2))")
-    assert_f_tests_equal(aov.f_tests, r_res, fs, fnds, 'Anova')
+    # R: Anova(lm(fltvar ~ A * B, ds, type=2))
+    r_refs_fixed = [
+        {'df': 1, 'SS': 28.686396320201169, 'F': 25.694894882211081, 'p': 2.736585081301957e-06},
+        {'df': 1, 'SS':  0.037355647163309, 'F':  0.033460090852969, 'p': 8.553471041292888e-01},
+        {'df': 1, 'SS':  1.163904701968079, 'F':  1.042529310275222, 'p': 3.104731911107091e-01},
+    ]
+    assert_f_tests_equal(aov.f_tests, r_refs_fixed, fs, fnds)
 
-    # random effect
+    # repeated measures
     aov = test.ANOVA('fltvar', 'A*B*rm', data=ds)
     assert_fmtxt_str_equals(aov, """
                 SS   df      MS   MS(denom)   df(denom)          F        p
@@ -130,10 +140,13 @@ def test_anova():
     """)
     fs = run_on_lm_fitter('fltvar', 'A*B*rm', ds)
     fnds = run_as_ndanova('fltvar', 'A*B*rm', ds)
-    r('test.aov <- aov(fltvar ~ A * B + Error(rm / (A * B)), ds)')
-    print(r('test.summary <- summary(test.aov)'))
-    r_res = r['test.summary'][1:]
-    assert_f_tests_equal(aov.f_tests, r_res, fs, fnds, 'rmaov')
+    # R: summary(aov(fltvar ~ A * B + Error(rm / (A * B)), ds))
+    r_refs_rm = [
+        {'df': 1, 'SS': 28.686396320201165, 'MS': 28.686396320201165, 'F': 23.674512763792528, 'p': 1.073970908515380e-04},
+        {'df': 1, 'SS':  0.037355647163310, 'MS':  0.037355647163310, 'F':  0.032425514879153, 'p': 8.590035960333314e-01},
+        {'df': 1, 'SS':  1.163904701968082, 'MS':  1.163904701968082, 'F':  1.150425146303279, 'p': 2.968950381252080e-01},
+    ]
+    assert_f_tests_equal(aov.f_tests, r_refs_rm, fs, fnds)
 
     # Factor.name = None
     with pytest.raises(ValueError):
@@ -141,12 +154,19 @@ def test_anova():
 
 
 def test_anova_eq():
-    "Test ANOVA against r-ez"
-    pytest.importorskip('rpy2')
-    r_require('ez')
+    """Test ANOVA against R ezANOVA (nested random effects)
 
+    R code used to generate reference values::
+
+        library(ez)
+        # balanced
+        ezANOVA(ds, fltvar, nrm, A, between=B)
+        # unequal 1-way (A=='a1', drop s037-s039)
+        ezANOVA(sds, fltvar, nrm, between=B)
+        # unequal 2-way (drop s037-s039)
+        ezANOVA(sds, fltvar, nrm, A, between=B)
+    """
     ds = datasets.get_uv(nrm=True)
-    ds.to_r('ds')
 
     # nested random effect
     aov_explicit = test.ANOVA('fltvar', 'A + B + A%B + nrm(B) + A%nrm(B)', data=ds)
@@ -155,8 +175,13 @@ def test_anova_eq():
     print(aov)
     fs = run_on_lm_fitter('fltvar', 'A * B * nrm(B)', ds)
     fnds = run_as_ndanova('fltvar', 'A * B * nrm(B)', ds)
-    r_res = r('ezANOVA(ds, fltvar, nrm, A, between=B)')
-    assert_f_tests_equal(aov.f_tests, r_res, fs, fnds, 'ez')
+    # R: ezANOVA(ds, fltvar, nrm, A, between=B) — effect order: A, B, A x B
+    r_refs_balanced = [
+        {'df': 1, 'F': 25.803888278140018, 'p': 1.034611263743461e-05},
+        {'df': 1, 'F':  0.033319352783927, 'p': 8.561325485765410e-01},
+        {'df': 1, 'F':  1.046951543189707, 'p': 3.126802123199187e-01},
+    ]
+    assert_f_tests_equal(aov.f_tests, r_refs_balanced, fs, fnds)
 
     # sub parameter
     r1 = test.ANOVA('fltvar', 'B * rm', data=ds.sub('A == "a1"'))
@@ -169,25 +194,26 @@ def test_anova_eq():
 
     # unequal group size, 1-way
     sds = ds.sub("A == 'a1'").sub("nrm.isnotin(('s037', 's038', 's039'))")
-    sds.to_r('sds')
     aov = test.ANOVA('fltvar', 'B * nrm(B)', data=sds)
     print(aov)
     fs = run_on_lm_fitter('fltvar', 'B * nrm(B)', sds)
     fnds = run_as_ndanova('fltvar', 'B * nrm(B)', sds)
-    with r_warning_filter:  # type argument to ezANOVA
-        r_res = r('ezANOVA(sds, fltvar, nrm, between=B)')
-    assert_f_tests_equal(aov.f_tests, r_res, fs, fnds, 'ez')
+    # R: ezANOVA(sds, fltvar, nrm, between=B)
+    assert_f_tests_equal(aov.f_tests, [{'df': 1, 'F': 0.212486173754646, 'p': 6.476774365256572e-01}], fs, fnds)
 
     # unequal group size, 2-way
     sds = ds.sub("nrm.isnotin(('s037', 's038', 's039'))")
-    sds.to_r('sds')
     aov = test.ANOVA('fltvar', 'A * B * nrm(B)', data=sds)
     print(aov)
     fs = run_on_lm_fitter('fltvar', 'A * B * nrm(B)', sds)
     fnds = run_as_ndanova('fltvar', 'A * B * nrm(B)', sds)
-    with r_warning_filter:  # type argument to ezANOVA
-        r_res = r('ezANOVA(sds, fltvar, nrm, A, between=B)')
-    assert_f_tests_equal(aov.f_tests, r_res, fs, fnds, 'ez')
+    # R: ezANOVA(sds, fltvar, nrm, A, between=B) — effect order: A, B, A x B
+    r_refs_unequal = [
+        {'df': 1, 'F': 21.493914775430952, 'p': 4.790321928154985e-05},
+        {'df': 1, 'F':  0.080067093871714, 'p': 7.788733718817515e-01},
+        {'df': 1, 'F':  0.866049227490990, 'p': 3.584262465643671e-01},
+    ]
+    assert_f_tests_equal(aov.f_tests, r_refs_unequal, fs, fnds)
 
     # empty cells
     dss = ds.sub("A%B != ('a2', 'b2')")
