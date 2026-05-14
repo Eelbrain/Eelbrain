@@ -56,12 +56,8 @@ jobs:
         path: ~/mne_data
         key: mne-data
     - name: Download MNE datasets
-      shell: bash -el {0}
       run: |
-        set -x
-        python -c "import mne; mne.datasets.sample.data_path(verbose=False)"
-        python -c "import mne; mne.datasets.testing.data_path(verbose=False)"
-        python -c "import mne; mne.datasets.fetch_fsaverage(verbose=False)"
+        python -c "import mne; mne.datasets.sample.data_path(); mne.datasets.testing.data_path(); mne.datasets.fetch_fsaverage()"
     - name: Install extra test dependency that is not on conda-forge
       run: |
         pip install pytest-error-for-skips
