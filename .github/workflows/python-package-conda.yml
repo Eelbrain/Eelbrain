@@ -39,9 +39,15 @@ jobs:
         cache-environment: true
         post-cleanup: 'all'
         # Speed up env creation by pinning a couple of packages
-        # Limit to NumPy 2.2.6 to avoid in1d -> isin removal
+        # Limit to NumPy 2.2.6 to avoid in1d -> isin removal not fixed in PySurfer
         create-args: |
           mayavi=4.8.3 vtk=9.4.2 python=${{ matrix.python }} noqt5 pyside6=6.9.2 pysurfer=0.11.2 numpy=2.2.6 -v
+    - name: Set up OpenGL and headless displays
+      uses: pyvista/setup-headless-display-action@v4
+      with:
+        qt: true
+        pyvista: false
+        wm: false
     # Get MNE testing data
     - uses: actions/checkout@v4
       with:
@@ -52,26 +58,14 @@ jobs:
       working-directory: ./mne-python
     - uses: actions/cache@v4
       with:
-        key: ${{ env.TESTING_VERSION }}
+        key: mne-data-${{ env.TESTING_VERSION }}
         path: ~/mne_data
     - run: ./tools/github_actions_download.sh
       working-directory: ./mne-python
-    # Continue testing
+    # Install
     - name: Build eelbrain
       run: pip install --no-deps -e .
-    - uses: pyvista/setup-headless-display-action@v4
-      with:
-        qt: true
-        pyvista: false
-        wm: false
-    - name: Cache MNE datasets
-      uses: actions/cache@v4
-      with:
-        path: ~/mne_data
-        key: mne-data-${{ matrix.os }}-${{ hashFiles('env-test.yml') }}
-    - name: Download MNE datasets
-      run: |
-        python -c "import mne; mne.datasets.sample.data_path(verbose=False); mne.datasets.testing.data_path(verbose=False); mne.datasets.fetch_fsaverage(verbose=False)"
+    # Test
     - name: Test with GUIs and code-cov
       timeout-minutes: 20
       run: |

@@ -1,7 +1,6 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 from numpy.testing import assert_array_equal
 import numpy as np
-import pingouin
 import pytest
 import scipy.stats
 
@@ -9,6 +8,8 @@ from eelbrain import datasets, test
 from eelbrain._stats import test as _test
 from eelbrain.fmtxt import asfmtext
 from eelbrain.testing import assert_fmtxt_str_equals
+
+pingouin = pytest.importorskip('pingouin', minversion="0.6.0")
 
 
 def test_correlations():
