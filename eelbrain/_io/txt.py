@@ -142,14 +142,14 @@ def tsv(
             lines = (line for line in lines if not comment_pattern.match(line))
         reader = csv.reader(lines, delimiter=delimiter, **fmtparams)
         lines = list(reader)
-    if lines[0][0].startswith('\ufeff'):
+    if lines[0] and lines[0][0].startswith('\ufeff'):
         raise OSError(f"First word invalid: {lines[0][0]!r}; file might be encoded with byte order mark, try opening with encoding='utf-8-sig' (see https://stackoverflow.com/a/17912811/166700)")
 
     # find start position
     if start_tag:
         start = 0
         for i, line in enumerate(lines, 1):
-            if line[0].startswith(start_tag):
+            if line and line[0].startswith(start_tag):
                 start = i
         if start:
             lines = lines[start:]
