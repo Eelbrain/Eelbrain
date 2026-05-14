@@ -14,12 +14,16 @@ from numpy.testing import assert_array_equal
 import pytest
 
 try:
-    from eelbrain._wxgui import select_epochs, select_components, history, load_stcs
+    import eelbrain._wxgui
 except ImportError:
     _GUITestContextModules = ()
 else:
-    _GUITestContextModules = (select_epochs, select_components, history, load_stcs)
-    del select_epochs, select_components, history, load_stcs
+    _GUITestContextModules = (
+        eelbrain._wxgui.select_epochs,
+        eelbrain._wxgui.select_components,
+        eelbrain._wxgui.history,
+        eelbrain._wxgui.load_stcs,
+    )
 from .._config import CONFIG
 from .._data_obj import Dataset, NDVar, Var, Factor, isdatalist, isuv
 
