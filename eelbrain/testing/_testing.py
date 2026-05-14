@@ -24,6 +24,7 @@ else:
         eelbrain._wxgui.history,
         eelbrain._wxgui.load_stcs,
     )
+    del eelbrain._wxgui
 from .._config import CONFIG
 from .._data_obj import Dataset, NDVar, Var, Factor, isdatalist, isuv
 
