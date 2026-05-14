@@ -32,6 +32,7 @@ dependencies:
 - colormath >= 2.1
 - tqdm >= 4.40
 - keyring >= 5
+- pyside6
 # building
 - setuptools >= 17
 - cython >= 3
