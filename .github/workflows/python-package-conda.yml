@@ -65,7 +65,7 @@ jobs:
     - name: Test
       timeout-minutes: 20
       run: |
-        pytest eelbrain --cov --cov-branch --cov-report=xml -v --durations=15
+        pytest eelbrain --cov --cov-branch --cov-report=xml -v -rfEXs --durations=15
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v5
       with:
