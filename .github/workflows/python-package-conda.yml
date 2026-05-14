@@ -55,16 +55,17 @@ jobs:
       with:
         path: ~/mne_data
         key: mne-data
-    - name: Download MNE datasets
+    - name: Get system info and download MNE datasets
       run: |
-        python -c "import mne; mne.datasets.sample.data_path(); mne.datasets.testing.data_path(); mne.datasets.fetch_fsaverage()"
-    - name: Install extra test dependency that is not on conda-forge
-      run: |
-        pip install pytest-error-for-skips
+        set -x
+        mne sys_info -d
+        python -c "import mne; print(f'{mne.datasets.sample.data_path(verbose=False)=}')"
+        python -c "import mne; print(f'{mne.datasets.testing.data_path(verbose=False)=}')"
+        python -c "import mne; print(f'{mne.datasets.fetch_fsaverage(verbose=False)=}')"
     - name: Test
       timeout-minutes: 20
       run: |
-        pytest eelbrain --cov --cov-branch --cov-report=xml -v --error-for-skips
+        pytest eelbrain --cov --cov-branch --cov-report=xml -v --durations=15
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v5
       with:
