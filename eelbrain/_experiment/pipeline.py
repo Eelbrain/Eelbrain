@@ -2590,7 +2590,7 @@ class Pipeline(StateModel):
                 auto_dict = auto
                 if missing := set(ch_types).difference(auto_dict):
                     raise ValueError(f"{auto=}: channel types {enumeration(missing)} missing")
-                elif unknown := set(auto_dict).difference(missing):
+                elif unknown := set(auto_dict).difference(ch_types):
                     raise ValueError(f"{auto=}: channel types {enumeration(unknown)} not in data")
             elif len(ch_types) == 1:
                 auto_dict = {y_name: auto}
