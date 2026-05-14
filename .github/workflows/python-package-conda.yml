@@ -62,7 +62,7 @@ jobs:
         python -c "import mne; print(f'{mne.datasets.sample.data_path(verbose=False)=}')"
         python -c "import mne; print(f'{mne.datasets.testing.data_path(verbose=False)=}')"
         python -c "import mne; print(f'{mne.datasets.fetch_fsaverage(verbose=False)=}')"
-    - name: Test
+    - name: Run tests
       timeout-minutes: 20
       run: |
         pytest eelbrain --cov --cov-branch --cov-report=xml -v -rfEXs --durations=15

@@ -13,7 +13,13 @@ import numpy as np
 from numpy.testing import assert_array_equal
 import pytest
 
-import eelbrain._wxgui
+try:
+    from eelbrain._wxgui import select_epochs, select_components, history, load_stcs
+except ImportError:
+    _GUITestContextModules = ()
+else:
+    _GUITestContextModules = (select_epochs, select_components, history, load_stcs)
+    del select_epochs, select_components, history, load_stcs
 from .._config import CONFIG
 from .._data_obj import Dataset, NDVar, Var, Factor, isdatalist, isuv
 
@@ -117,12 +123,7 @@ def assert_source_space_equal(src1, src2):
 
 
 class GUITestContext(ContextDecorator):
-    modules = (
-        eelbrain._wxgui.select_epochs,
-        eelbrain._wxgui.select_components,
-        eelbrain._wxgui.history,
-        eelbrain._wxgui.load_stcs,
-    )
+    modules = _GUITestContextModules
 
     def __init__(self):
         self._i = 0
