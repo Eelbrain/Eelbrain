@@ -59,9 +59,9 @@ jobs:
       run: |
         set -x
         mne sys_info -d
-        python -c "import mne; print(f'{mne.datasets.sample.data_path(verbose=False)=}')"
-        python -c "import mne; print(f'{mne.datasets.testing.data_path(verbose=False)=}')"
-        python -c "import mne; print(f'{mne.datasets.fetch_fsaverage(verbose=False)=}')"
+        time python -c "import mne; print(f'{mne.datasets.sample.data_path(verbose=False)=}')"
+        time python -c "import mne; print(f'{mne.datasets.testing.data_path(verbose=False)=}')"
+        time python -c "import mne; print(f'{mne.datasets.fetch_fsaverage(verbose=False)=}')"
     - name: Run tests
       timeout-minutes: 20
       run: |
