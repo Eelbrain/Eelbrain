@@ -42,7 +42,7 @@ dependencies:
 - pytest-cov
 - pingouin >= 0.6.0  # breaking API used in tests
 # neuroimaging
-- dipy >= 0.10.1
 - nibabel >= 2.5
+- dipy >= 0.10.1
 - nilearn >= 0.10.4
 - mne-bids >= 0.17
