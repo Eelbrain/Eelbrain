@@ -26,8 +26,7 @@ The :class:`Pipeline` manages the following analysis steps:
 #. Optional source localization
 #. Mass univariate group-level statistics
 
-The input to the pipeline are the raw M/EEG data files and, optionally, MRI files for source localization.
-The first three steps are based on :mod:`mne` functions; statistics are based on Eelbrain functions.
+The input to the pipeline is a BIDS dataset containing raw M/EEG data files and, optionally, MRI files for source localization.
 The pipeline automatizes the complete analysis, and provides an interface for preprocessing steps that require user intervention like ICA.
 It allows access to the data at any intermediate stage, to allow for customizing the analysis.
 It caches intermediate results to make access to these data fast and efficient.
@@ -46,6 +45,39 @@ An instance of this pipeline then provides access to different analysis stages t
 
 For example, :meth:`Pipeline.load_test` can be used to directly load a mass-univariate test result, without a need to explicitly load data at any intermediate stage.
 On the other hand, :meth:`Pipeline.load_epochs` can be used to load the corresponding data epochs, for example to perform a different analysis that may not be implemented in the pipeline.
+
+
+Two kinds of workflow
+---------------------
+
+Working with a pipeline involves two distinct phases that call for different tools:
+
+**Data preparation**
+    Steps that require visual inspection and human decisions, like ICA component selection, trial rejection, and MRI coregistration.
+    The preferred tool for all of these is the pipeline GUI, launched from the command line::
+
+        $ cd  ~/Code/MyProject
+        $ eelbrain-gui
+
+    The GUI shows the preparation status for every subject in a single table and opens the relevant sub-GUI (ICA component browser, epoch rejection viewer, MNE coregistration tool) on double-click.
+    It also lets you compute ICA decompositions for all missing subjects in one click.
+
+    The same steps can alternatively be performed programmatically from an interactive Python session (iPython, a Jupyter notebook, or a terminal), which is useful for scripting or automation::
+
+        >>> e = eelbrain.load_pipeline("~/Code/MyProject")
+        >>> e.make_ica_selection()   # opens ICA GUI for current subject
+        >>> e.next()                 # advance to next subject
+        >>> e.make_epoch_selection() # opens epoch rejection GUI
+
+**Analysis**
+    Once data preparation is complete, statistical analysis and visualization are best done in Jupyter notebooks or analysis scripts that can be re-run as needed::
+
+        >>> import eelbrain
+        >>> e = eelbrain.load_pipeline()
+        >>> result = e.load_test('my_test', tstart=0.1, tstop=0.3)
+        >>> eelbrain.plot.brain.cluster(result.clusters[0], ...)
+
+    Notebooks and scripts typically live in the project code directory alongside ``pipeline.py`` and can be version-controlled together with the pipeline definition.
 
 
 Step by Step
@@ -116,68 +148,83 @@ This method shows a list of the subjects and corresponding MRIs that were discov
 Setting up the analysis code
 ----------------------------
 
-It is recommended to organize analysis scripts in a dedicated folder.
-For example, we will assume that all analysis scripts will be saved in a directory called ``~/Code/MyProject``.
-This makes it easy to keep track of the history of this folder, for example using `Git <https://git-scm.com>`_.
+It is recommended to organize analysis scripts in a dedicated folder, for example ``~/Code/MyProject``.
+Version-controlling this folder with `Git <https://git-scm.com>`_ makes it easy to track the history of your analysis.
 
-The analysis scripts will consist of two components:
+The project folder typically contains:
 
-1. A :class:`Pipeline` subclass which describes the general experiment structure (``MyExperiment`` below).
-2. Analysis scripts (or Jupyter notebooks) using this subclass.
+1. A :class:`Pipeline` subclass that describes the experiment structure — by convention in ``pipeline.py``.
+2. Analysis scripts or Jupyter notebooks that import the pipeline.
 
-You will want to access the :class:`Pipeline` subclass (``MyExperiment``) from different locations (for instance, from a terminal to do artifact rejection, and from different Jupyter Notebooks to pursue different analyses).
-Thus, it makes sense to define the experiment subclass in a separate Python file (e.g., ``MyProject/my_experiment.py``).
-The simplest way to use that file from different locations is :func:`eelbrain.load_pipeline`.
-By default, :func:`eelbrain.load_pipeline` looks for ``pipeline.py`` and then ``experiment.py``.
-Thus, ``MyProject/pipeline.py`` may look like this::
+A minimal ``MyProject/pipeline.py`` looks like this::
 
     from eelbrain.pipeline import *
 
-    root = "~/Data/Experiment"
+    ROOT = "~/Data/MyExperiment"
 
     class MyExperiment(Pipeline):
 
         # Define experiment attributes here
 
-From a terminal, this could then be used as follows::
+.. note::
+    If your project contains Jupyter Notebooks, consider `Jupytext <https://jupytext.readthedocs.io/>`_ to efficiently track those notebooks in Git.
 
-    $ eelbrain  # eelbrain on macOS; iPython on Linux
-    In [1]: import eelbrain
-    In [2]: e = eelbrain.load_pipeline("~/Code/MyProject")
-    In [3]: e.show_subjects()
-    #    subject   mri
-    -----------------------------------------
-    0    R0026     R0026
-    1    R0040     fsaverage * 0.92
-    2    R0176     fsaverage * 0.954746600461
-    ...
+.. _pipeline-load-pipeline:
 
+Loading the pipeline: :func:`eelbrain.load_pipeline`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Similarly, you can use :func:`eelbrain.load_pipeline` in the first cell of a Jupyter Notebook.
-If you are already working inside the project directory, you can omit ``spec`` and load ``pipeline.py`` or ``experiment.py`` from the current directory::
+:func:`eelbrain.load_pipeline` is the recommended way to instantiate a pipeline from any location — the command line, a Jupyter notebook, or an interactive Python session.
+It searches for ``pipeline.py`` (and then ``experiment.py``) when given a directory, and reads the ``root`` variable and the :class:`Pipeline` subclass automatically::
 
     >>> import eelbrain
+    >>> e = eelbrain.load_pipeline("~/Code/MyProject")
+
+If you are already working inside the project directory, omit the path entirely::
+
     >>> e = eelbrain.load_pipeline()
 
-If the experiment file defines a module-level variable named ``root`` (case-insensitive), :func:`eelbrain.load_pipeline` will use it automatically.
-An explicit ``root=...`` argument always overrides the value from the file.
-
-When a file contains exactly one :class:`Pipeline` subclass, the class is detected automatically::
-
-    >>> import eelbrain
-    >>> e = eelbrain.load_pipeline("~/Code/MyProject/pipeline.py")
-
-If a file contains multiple :class:`Pipeline` subclasses, specify the class explicitly::
-
-    >>> e = eelbrain.load_pipeline("~/Code/MyProject/pipeline.py:MyExperiment")
-
-For advanced Python workflows, you can also import the class directly and instantiate it yourself::
+For advanced Python workflows, you can also import the class directly::
 
     >>> from my_experiment import MyExperiment
     >>> e = MyExperiment("~/Data/Experiment")
 
-.. note::
-    If your project contains Jupyter Notebooks, consider `Jupytext <https://jupytext.readthedocs.io/>`_ to efficiently track those notebooks in Git.
+
+.. _pipeline-gui:
+
+The pipeline GUI: ``eelbrain-gui``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The pipeline GUI is the recommended tool for all data-preparation steps.
+Launch it from the command line by pointing it at the project directory (or any path accepted by :func:`eelbrain.load_pipeline`)::
+
+    $ eelbrain-gui ~/Code/MyProject
+
+With no argument it uses the current working directory::
+
+    $ cd ~/Code/MyProject
+    $ eelbrain-gui
+
+The GUI opens a window with a **Task** dropdown that gives access to:
+
+ICA
+    Shows the ICA status (missing / selected / number of components rejected) for every subject.
+    Double-clicking a row opens the ICA component selection browser for that subject.
+    If the ICA decomposition is missing, it is computed first, which can take some time.
+    The **Make ICA** button computes ICA decompositions for all subjects that are still missing one.
+
+Epoch rejection
+    Shows the trial-rejection status (done / missing) for the selected epoch and raw pipeline combination.
+    Double-clicking opens the epoch rejection GUI for that subject.
+
+MRI
+    Shows whether each subject has a FreeSurfer reconstruction (full recon, scaled template, or missing) and whether the common brain (fsaverage) is present.
+    Double-clicking the common-brain row when it is missing offers to download fsaverage automatically.
+
+Coregistration
+    Shows the coregistration status (OK / missing) for each subject–session combination.
+    Double-clicking opens the MNE coregistration GUI pre-loaded with the subject's raw file and, if one already exists, the current transformation.
+    For subjects without a FreeSurfer reconstruction the GUI opens against the template brain so the user can use MNE's "Scale MRI" feature to create a scaled copy.
 
 
 .. _Pipeline-preprocessing:
@@ -287,26 +334,29 @@ neighbor-correlation can be automated using the
 ICA
 ---
 
-If preprocessing includes ICA, select which ICA components should be removed.
-To open the ICA selection GUI, The experiment :ref:`state-raw` state needs to be
-set to the ICA stage of the pipeline::
+If preprocessing includes ICA, each subject's ICA decomposition must be computed and unwanted components must be selected for removal.
+
+The preferred workflow is the :ref:`pipeline-gui`.
+Open it, select the ICA task from the **Task** dropdown, then:
+
+* Click **Make ICA** to compute decompositions for all subjects that are still missing one (runs in the background).
+* Double-click a subject row to open the ICA component browser and mark components for removal.
+
+Alternatively, the same steps can be performed programmatically.
+The :ref:`state-raw` state must be set to the ICA stage before calling :meth:`Pipeline.make_ica_selection`::
 
     >>> e.set(raw='ica')
     >>> e.make_ica_selection()
 
-See :meth:`Pipeline.make_ica_selection` for more information on display
-options and on how to precompute ICA decomposition for all subjects.
-
-When selecting ICA components for multiple subject, a simple way to cycle
-through subjects is :meth:`Pipeline.next`, like::
+To cycle through subjects::
 
     >>> e.make_ica_selection(epoch='epoch', decim=10)
     >>> e.next()
     subject: 'R1801' -> 'R2079'
     >>> e.make_ica_selection(epoch='epoch', decim=10)
-    >>> e.next()
-    subject: 'R2079' -> 'R2085'
     ...
+
+See :meth:`Pipeline.make_ica_selection` for display options.
 
 
 Trial selection
@@ -314,7 +364,12 @@ Trial selection
 
 For each primary epoch that is defined, bad trials can be rejected using
 :meth:`Pipeline.make_epoch_selection`. Rejections are specific to a given ``raw``
-state::
+state.
+
+The preferred workflow is the :ref:`pipeline-gui`.
+Select the **Epoch rejection** task, choose the epoch and raw pipeline from the dropdowns, and double-click a subject row to open the rejection GUI for that subject.
+
+Alternatively, cycle through subjects programmatically::
 
     >>> e.set(raw='ica1-40', epoch='word')
     >>> e.make_epoch_selection()
@@ -323,7 +378,7 @@ state::
     >>> e.make_epoch_selection()
     ...
 
-To reject trials based on a pre-determined threshold, a loop can be used::
+To reject trials based on a pre-determined amplitude threshold::
 
     >>> for subject in e:
     ...     e.make_epoch_selection(auto=1e-12)
