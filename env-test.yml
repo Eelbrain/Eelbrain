@@ -32,11 +32,12 @@ dependencies:
 - colormath >= 2.1
 - tqdm >= 4.40
 - keyring >= 5
-- pyside6
+- wxpython >= 4.0.3, != 4.1.0  # double install of libraries
 # building
 - setuptools >= 17
 - cython >= 3
 # testing
+- pre-commit
 - pytest
 - pytest-cov
 - pingouin >= 0.6.0  # breaking API used in tests
