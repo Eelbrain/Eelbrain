@@ -27,9 +27,10 @@ def get_alice_path(
         registry=registry,
         retry_if_failed=4,
     )
+    downloader = pooch.HTTPDownloader(headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'})
     for fname in registry.keys():
         if (path / fname.split('.')[0]).exists():   # Won't work for multiple eeg.x.zip download
             continue
-        fetcher.fetch(fname, processor=pooch.Unzip(extract_dir='.'))
+        fetcher.fetch(fname, processor=pooch.Unzip(extract_dir='.'), downloader=downloader)
         (path / fname).unlink()
     return path
