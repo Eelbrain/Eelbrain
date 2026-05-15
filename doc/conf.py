@@ -10,7 +10,6 @@
 # serve to show the default.
 
 from datetime import datetime
-from itertools import chain
 import os
 from pathlib import Path
 import sys
@@ -19,6 +18,11 @@ import sys
 # import eelbrain.plot._brain_object  # make sure that Brain is available
 import eelbrain
 from sphinx_gallery.sorting import _SortKey
+import eelbrain.datasets._alice
+import mne
+import sphinx.util.logging
+
+logger = sphinx.util.logging.getLogger("eelbrain")
 
 need_path = str(Path(__file__).parent)
 if need_path not in sys.path:
@@ -118,10 +122,10 @@ example_order = {
 class NameOrder(_SortKey):
     """Specify sphinx-gallery example order as file tree"""
 
-    items = list(chain.from_iterable(example_order.values()))
+    items = sum(example_order.values(), [])
 
     def __call__(self, item):
-        print(f"NameOrder: {item}")
+        logger.info(f"NameOrder: {item}")
         return self.items.index(item)
 
 
@@ -392,3 +396,11 @@ latex_documents = [
 man_pages = [
     ('index', 'eelbrain', 'Eelbrain Documentation', ['Christian Brodbeck'], 1),
 ]
+
+
+def setup(app):
+    """Set up the Sphinx app."""
+    # ensure we have the data necessary to build examples
+    logger.info("Ensuring example data is available")
+    mne.datasets.sample.data_path(verbose=True)
+    eelbrain.datasets._alice.get_alice_path(progressbar=True)

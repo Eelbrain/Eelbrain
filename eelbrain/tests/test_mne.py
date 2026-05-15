@@ -304,6 +304,7 @@ def test_morphing_volume():
 
 
 @requires_mne_sample_data
+@requires_mne_testing_data
 def test_xhemi():
     y = datasets.get_mne_stc(ndvar=True)
     data_dir = mne.datasets.sample.data_path()

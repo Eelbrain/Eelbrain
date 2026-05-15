@@ -113,9 +113,9 @@ def get_loftus_masson_1994():
     return ds
 
 
-def get_mne_epochs():
+def get_mne_epochs(*, download=False):
     """MNE-Python Epochs"""
-    data_path = Path(mne.datasets.sample.data_path())
+    data_path = Path(mne.datasets.sample.data_path(download=download))
     raw_path = data_path / 'MEG' / 'sample' / 'sample_audvis_raw.fif'
     events_path = data_path / 'MEG' / 'sample' / 'sample_audvis_raw-eve.fif'
     raw = mne.io.Raw(raw_path)
@@ -124,15 +124,17 @@ def get_mne_epochs():
     return epochs
 
 
-def get_mne_evoked(ndvar=False):
+def get_mne_evoked(ndvar=False, *, download=False):
     """MNE-Python Evoked
 
     Parameters
     ----------
     ndvar : bool
         Convert to NDVar (default False).
+    download : bool
+        If True, download the dataset if needed.
     """
-    data_path = Path(mne.datasets.sample.data_path())
+    data_path = Path(mne.datasets.sample.data_path(download=download))
     evoked_path = data_path / 'MEG' / 'sample' / 'sample_audvis-ave.fif'
     evoked = mne.Evoked(evoked_path, "Left Auditory")
     if ndvar:
@@ -141,7 +143,7 @@ def get_mne_evoked(ndvar=False):
         return evoked
 
 
-def get_mne_stc(ndvar=False, src='ico-5', subject='sample'):
+def get_mne_stc(ndvar=False, src='ico-5', subject='sample', *, download=False):
     """MNE-Python SourceEstimate
 
     Parameters
@@ -151,12 +153,14 @@ def get_mne_stc(ndvar=False, src='ico-5', subject='sample'):
         long as the source space is not accessed).
     src : 'ico-5' | 'vol-7' | 'oct-4
         Source space to use.
+    download : bool
+        If True, download the dataset if needed.
 
     Notes
     -----
     Source space only available for ``oct-4``, ``sample``.
     """
-    data_path = mne.datasets.testing.data_path()
+    data_path = mne.datasets.testing.data_path(download=download)
     meg_sdir = data_path / 'MEG' / 'sample'
     subjects_dir = data_path / 'subjects'
     # scaled subject
@@ -242,6 +246,8 @@ def get_mne_sample(
         hpf: float = 0,
         proj: bool = True,
         fsaverage: bool = False,
+        *,
+        download: bool = False,
 ):
     """Load events and epochs from the MNE sample data
 
@@ -278,6 +284,8 @@ def get_mne_sample(
         Add projectors.
     fsaverage
         Morph data to FSAverage template brain.
+    download
+        Download the dataset if needed.
 
     Returns
     -------
@@ -299,7 +307,7 @@ def get_mne_sample(
     else:
         raise ValueError(f"{ori=}")
 
-    data_dir = Path(mne.datasets.sample.data_path())
+    data_dir = Path(mne.datasets.sample.data_path(download=download))
     meg_dir = data_dir / 'MEG' / 'sample'
     raw_file = meg_dir / 'sample_audvis_filt-0-40_raw.fif'
     event_file = meg_dir / 'sample_audvis_filt-0-40-eve.fif'
@@ -551,6 +559,8 @@ def setup_samples_experiment(
         mris: bool = False,
         name: str = 'SampleExperiment',
         pick: str = 'mag',
+        *,
+        download: bool = False,
 ):
     """Setup up file structure for the ``SampleExperiment`` class
 
@@ -574,9 +584,12 @@ def setup_samples_experiment(
         ``'SampleExperiment'``).
     pick
         Pick a certain channel type (``''`` to copy all channels).
+    download
+        If True, download the dataset if needed.
     """
+    # find data source
     # input paths
-    data_path = mne.datasets.sample.data_path()
+    data_path = mne.datasets.sample.data_path(download=download)
     fsaverage_path = mne.datasets.fetch_fsaverage()
     raw_fname = join(data_path, "MEG", "sample", "sample_audvis_raw.fif")
     emptyroom_fname = join(data_path, "MEG", "sample", "ernoise_raw.fif")
@@ -645,6 +658,10 @@ def setup_samples_experiment(
         for task in tasks:
             start, stop = segs.pop()
             raw_ = raw.copy().crop(start, stop)
+            these_events = events[
+                (events[:, 0] >= raw_.first_samp)
+                & (events[:, 0] < raw_.first_samp + len(raw_))
+            ]
             raw_.load_data()
             if pick == 'eeg':
                 raw_.pick_types(eeg=True, stim=True, exclude=[])
@@ -655,6 +672,7 @@ def setup_samples_experiment(
                 raw=raw_,
                 bids_path=bids_path,
                 event_id=event_id,
+                events=these_events,
                 overwrite=True,
                 allow_preload=True,
                 format=format,
@@ -667,6 +685,7 @@ def setup_samples_experiment(
                 overwrite=True,
                 allow_preload=True,
                 format=format,
+                verbose="error",  # ignore warning about events
             )
 
     if datatype == 'eeg':

@@ -51,10 +51,6 @@ dependencies:
 - pytest-faulthandler
 - pingouin >= 0.6.0  # breaking API used in tests
 #- pytest-sugar  # errors on Linux
-# testing of R integration
-- rpy2 < 3.6.1
-- r-car
-- r-ez
 # plotting brains
 - nibabel >= 2.5
 - mayavi >= 4.6.2  # conda-forge pinning faulty

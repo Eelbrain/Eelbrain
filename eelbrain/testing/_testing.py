@@ -13,7 +13,18 @@ import numpy as np
 from numpy.testing import assert_array_equal
 import pytest
 
-import eelbrain._wxgui
+try:
+    import eelbrain._wxgui
+except ImportError:
+    _GUITestContextModules = ()
+else:
+    _GUITestContextModules = (
+        eelbrain._wxgui.select_epochs,
+        eelbrain._wxgui.select_components,
+        eelbrain._wxgui.history,
+        eelbrain._wxgui.load_stcs,
+    )
+    del eelbrain._wxgui
 from .._config import CONFIG
 from .._data_obj import Dataset, NDVar, Var, Factor, isdatalist, isuv
 
@@ -117,12 +128,7 @@ def assert_source_space_equal(src1, src2):
 
 
 class GUITestContext(ContextDecorator):
-    modules = (
-        eelbrain._wxgui.select_epochs,
-        eelbrain._wxgui.select_components,
-        eelbrain._wxgui.history,
-        eelbrain._wxgui.load_stcs,
-    )
+    modules = _GUITestContextModules
 
     def __init__(self):
         self._i = 0
@@ -197,14 +203,14 @@ def requires_framework_build(function):
 
 
 def requires_mne_sample_data(function):
-    if mne.datasets.sample.data_path(download=False):
+    if mne.datasets.has_dataset("sample"):
         return function
     else:
         return pytest.mark.skip('mne sample data unavailable')(function)
 
 
 def requires_mne_testing_data(function):
-    if mne.datasets.testing.data_path(download=False):
+    if mne.datasets.has_dataset("testing"):
         return function
     else:
         return pytest.mark.skip('mne testing data unavailable')(function)

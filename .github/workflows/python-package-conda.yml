@@ -2,61 +2,71 @@ name: Tests
 
 on: [push, pull_request]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-posix:
     name: build-${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       max-parallel: 5
       matrix:
         include:
           - os: ubuntu-latest
-            python: "3.10"  # Lowest version supported on conda-forge
+            python: "3.11"  # Lowest version supported on conda-forge w/dipy
           - os: macos-latest
-            python: "3.12"
+            python: "3.13"
+    defaults:
+      run:
+        shell: bash -el {0}
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - if: matrix.os == 'ubuntu-latest'
       name: Install dependencies
       run: |
         sudo apt-get update
     - name: Use Mamba to create env
-      uses: mamba-org/setup-micromamba@v2
+      uses: mamba-org/setup-micromamba@v3
       with:
         environment-file: env-test.yml
         environment-name: eeltest
         init-shell: bash
         cache-environment: true
         post-cleanup: 'all'
+        # Speed up env creation by pinning a couple of packages
+        # Limit to NumPy 2.2.6 to avoid in1d -> isin removal not fixed in PySurfer
+        create-args: |
+          python=${{ matrix.python }} vtk=9.4.2 mayavi=4.8.3=pyside6_* qt6-main=6.9.2 noqt5 pysurfer=0.11.2 numpy=2.2.6 -v
+    - name: Set up OpenGL and headless displays
+      uses: pyvista/setup-headless-display-action@v4
+      with:
+        qt: true
+        pyvista: false
+        wm: false
     - name: Build eelbrain
       run: pip install --no-deps -e .
-      shell: bash -el {0}
     - name: Cache MNE datasets
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ~/mne_data
-        key: mne-data-${{ matrix.os }}-${{ hashFiles('env-test.yml') }}
-    - name: Download MNE datasets
-      shell: bash -el {0}
+        key: mne-data
+    - name: Get system info and download MNE datasets
       run: |
-        python -c "import mne; mne.datasets.sample.data_path(verbose=False); mne.datasets.testing.data_path(verbose=False); mne.datasets.fetch_fsaverage(verbose=False)"
-    - if: matrix.os == 'ubuntu-latest'
-      name: Test without GUI
-      shell: bash -el {0}
-      env:
-        DISPLAY: :99
+        set -x
+        mne sys_info -d
+        time python -c "import mne; print(f'{mne.datasets.sample.data_path(verbose=False)=}')"
+        time python -c "import mne; print(f'{mne.datasets.testing.data_path(verbose=False)=}')"
+        time python -c "import mne; print(f'{mne.datasets.fetch_fsaverage(verbose=False)=}')"
+    - name: Run tests
+      timeout-minutes: 20
       run: |
-        Xvfb :99 -screen 0 1024x768x16 &
-        pytest eelbrain --no-gui --no-mayavi
-    - if: matrix.os == 'macos-latest'
-      name: Test with GUIs and code-cov
-      shell: bash -el {0}
-      run: |
-        pytest eelbrain --cov --cov-branch --cov-report=xml --no-mayavi
-    - if: matrix.os == 'macos-latest'
-      name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v5
+        pytest eelbrain --cov --cov-branch --cov-report=xml -v -rfEXs --durations=15
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v6
       with:
         token: ${{ secrets.CODECOV_TOKEN }}

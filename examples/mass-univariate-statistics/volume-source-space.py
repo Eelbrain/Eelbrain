@@ -18,6 +18,8 @@ Data contains multiple trials for a single subject, with
 tones presented to the left or right ear:
 """
 # sphinx_gallery_thumbnail_number = 2
+# dataset: mne_sample
+
 from pathlib import Path
 
 from eelbrain import *

@@ -8,6 +8,8 @@ from .._types import PathArg
 
 def get_alice_path(
         path: PathArg = Path("~/Data/Alice"),
+        *,
+        progressbar: bool = False,
 ):
     path = Path(path).expanduser().resolve()
     path.mkdir(exist_ok=True, parents=True)
@@ -23,9 +25,12 @@ def get_alice_path(
         registry=registry,
         retry_if_failed=4,
     )
-    for fname in registry.keys():
+    # Avoid 403 errors from the server by setting a user agent
+    # adapted from https://github.com/scipy/scipy/pull/22076
+    downloader = pooch.HTTPDownloader(progressbar=progressbar, headers={"User-Agent": "Eelbrain"})
+    for fname in registry:
         if (path / fname.split('.')[0]).exists():   # Won't work for multiple eeg.x.zip download
             continue
-        fetcher.fetch(fname, processor=pooch.Unzip(extract_dir='.'))
+        fetcher.fetch(fname, processor=pooch.Unzip(extract_dir='.'), downloader=downloader)
         (path / fname).unlink()
     return path
