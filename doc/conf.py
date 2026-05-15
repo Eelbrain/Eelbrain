@@ -19,6 +19,9 @@ import eelbrain
 import eelbrain.datasets._alice
 import mne
 from sphinx_gallery.sorting import ExplicitOrder, _SortKey
+import sphinx.utils.logging
+
+logger = sphinx.util.logging.getLogger("eelbrain")
 
 
 # If extensions (or modules to document with autodoc) are in another directory,
@@ -390,5 +393,6 @@ man_pages = [
 def setup(app):
     """Set up the Sphinx app."""
     # ensure we have the data necessary to build examples
-    mne.datasets.sample.data_path(verbose=True)
-    eelbrain.datasets._alice.get_alice_path()
+    logger.info("Ensuring example data is available:")
+    logger.info(f"  {mne.datasets.sample.data_path(verbose=True)=}")
+    logger.info(f"  {eelbrain.datasets._alice.get_alice_path()=}")
