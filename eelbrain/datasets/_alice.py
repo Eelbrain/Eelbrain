@@ -12,14 +12,18 @@ def get_alice_path(
     path = Path(path).expanduser().resolve()
     path.mkdir(exist_ok=True, parents=True)
 
-    baseurl = 'https://drum.lib.umd.edu/bitstream/handle/1903/27591/'
     registry = {
         'stimuli.zip': '92317dbfc81d6aef14fc334abd75d1165cf57501f0c11f8db1a47c76c3d90ac6',
         'eeg.1.zip': 'a645e4bf30ec8de10c92f82e9f842dd8172a4871f8eb23244e7e78b7dff157aa'
     }
+    urls = {
+        'stimuli.zip': 'https://drum.lib.umd.edu/bitstreams/df241468-26ee-42df-b27f-3f438cfc5a3f/download',
+        'eeg.1.zip': 'https://drum.lib.umd.edu/bitstreams/bef532d8-cf74-4b9d-9b4c-5c1f81610ce9/download',
+    }
     fetcher = pooch.Pooch(
         path=path,
-        base_url=baseurl,
+        base_url='',
+        urls=urls,
         registry=registry,
         retry_if_failed=4,
     )
