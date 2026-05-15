@@ -112,7 +112,8 @@ repair-wheel-command = [
 [[tool.cibuildwheel.overrides]]
 select = "*-musllinux*"
 test-requires = [
-    "pytest",  # no pingouin because it requires sklearn, which does not have binary wheels
+    "pytest",
+    "statsmodels",  # no pingouin because it requires sklearn, which does not have binary wheels
 ]
 
 [tool.cibuildwheel.macos]
