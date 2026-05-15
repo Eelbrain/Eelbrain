@@ -25,13 +25,13 @@ jobs:
         shell: bash -el {0}
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - if: matrix.os == 'ubuntu-latest'
       name: Install dependencies
       run: |
         sudo apt-get update
     - name: Use Mamba to create env
-      uses: mamba-org/setup-micromamba@v2
+      uses: mamba-org/setup-micromamba@v3
       with:
         environment-file: env-test.yml
         environment-name: eeltest
@@ -51,7 +51,7 @@ jobs:
     - name: Build eelbrain
       run: pip install --no-deps -e .
     - name: Cache MNE datasets
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ~/mne_data
         key: mne-data
@@ -67,6 +67,6 @@ jobs:
       run: |
         pytest eelbrain --cov --cov-branch --cov-report=xml -v -rfEXs --durations=15
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v5
+      uses: codecov/codecov-action@v6
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
