@@ -393,6 +393,6 @@ man_pages = [
 def setup(app):
     """Set up the Sphinx app."""
     # ensure we have the data necessary to build examples
-    logger.info("Ensuring example data is available:")
+    logger.info("Ensuring example data is available")
     mne.datasets.sample.data_path(verbose=True)
     eelbrain.datasets._alice.get_alice_path()
