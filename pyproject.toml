@@ -109,6 +109,11 @@ repair-wheel-command = [
   "abi3audit --strict --report --verbose {wheel}",
 ]
 
+[tool.cibuildwheel.linux.musllinux]
+test-requires = [
+    "pytest",  # no pingouin because it requires sklearn, which does not have binary wheels
+]
+
 [tool.cibuildwheel.macos]
 archs = ["native"]
 environment = { MACOSX_DEPLOYMENT_TARGET="11", SKIP_N_WORKERS_TESTS="1" }
