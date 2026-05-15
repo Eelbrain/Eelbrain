@@ -25,7 +25,6 @@ dependencies:
 - mne >= 1
 - h5py
 - pandas
-- scikit-learn
 - statsmodels
 - joblib
 # Eelbrain additions

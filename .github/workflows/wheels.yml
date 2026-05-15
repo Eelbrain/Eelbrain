@@ -38,8 +38,7 @@ jobs:
       fail-fast: false
       matrix:
         buildplat:
-          # No native wheels for scikit-learn, so skip musllinux
-          # - [ubuntu-latest, musllinux_x86_64]
+          - [ubuntu-latest, musllinux_x86_64]
           - [ubuntu-latest, manylinux_x86_64]
           - [ubuntu-24.04-arm, manylinux_aarch64]
           - [macos-latest, macosx_arm64]
