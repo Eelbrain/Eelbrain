@@ -123,7 +123,7 @@ class NameOrder:
         self.src_dir = src_dir
 
     def __call__(self, item):
-        key = str(Path(self.src_dir).relative_to(Path(__file__).parent))
+        key = str(Path(self.src_dir).relative_to(Path(__file__).parent).as_posix())
         idx = example_order[key].index(item)
         logger.info(f"NameOrder {key} = {idx}: {item}")
         return idx
