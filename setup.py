@@ -4,7 +4,6 @@ import os
 import platform
 import sys
 from setuptools import setup, find_packages, Extension
-from wheel.bdist_wheel import bdist_wheel
 
 import numpy as np
 
@@ -16,17 +15,6 @@ except ImportError:
     cythonize = False
 
 
-# https://github.com/joerick/python-abi3-package-sample/blob/main/setup.py
-class bdist_wheel_abi3(bdist_wheel):  # noqa: D101
-    def get_tag(self):  # noqa: D102
-        python, abi, plat = super().get_tag()
-
-        if python.startswith("cp"):
-            return "cp311", "abi3", plat
-
-        return python, abi, plat
-
-
 IS_WINDOWS = os.name == 'nt'
 IS_MACOS = sys.platform == 'darwin'
 IS_AMD64 = platform.machine().lower() in ('x86_64', 'amd64')
@@ -35,11 +23,13 @@ IS_AMD64 = platform.machine().lower() in ('x86_64', 'amd64')
 base_args = {'define_macros': [("NPY_NO_DEPRECATED_API", "NPY_1_11_API_VERSION")]}
 ext_kwargs = {}
 setup_kwargs = {}
+# Adapt ab3 from (Apache)
+# https://github.com/joerick/python-abi3-package-sample
 if sys.version_info.minor >= 11 and platform.python_implementation() == "CPython":
     # Can create an abi3 wheel (typed memoryviews first available in 3.11)!
     base_args["define_macros"].append(("Py_LIMITED_API", "0x030B0000"))
     ext_kwargs["py_limited_api"] = True
-    setup_kwargs["cmdclass"] = {"bdist_wheel": bdist_wheel_abi3}
+    setup_kwargs["options"] = {"bdist_wheel": {"py_limited_api": "cp311"}}
 UNIX_COMPILE_ARGS = ['-Wno-unreachable-code', '-O3']
 if IS_WINDOWS:
     open_mp_args = {
