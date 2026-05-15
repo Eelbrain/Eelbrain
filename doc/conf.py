@@ -19,7 +19,7 @@ import eelbrain
 import eelbrain.datasets._alice
 import mne
 from sphinx_gallery.sorting import ExplicitOrder, _SortKey
-import sphinx.utils.logging
+import sphinx.util.logging
 
 logger = sphinx.util.logging.getLogger("eelbrain")
 
