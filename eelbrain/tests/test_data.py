@@ -28,7 +28,7 @@ from eelbrain._data_obj import (
     assert_has_no_empty_cells)
 from eelbrain._exceptions import DimensionMismatchError
 from eelbrain._stats.stats import rms
-from eelbrain.testing import assert_dataobj_equal, assert_dataset_equal, assert_fmtxt_str_equals, assert_source_space_equal, requires_mne_sample_data, skip_on_windows
+from eelbrain.testing import assert_dataobj_equal, assert_dataset_equal, assert_fmtxt_str_equals, assert_source_space_equal, requires_mne_sample_data, skip_on_windows, requires_mne_testing_data
 
 
 OPERATORS = {
@@ -1310,6 +1310,11 @@ def test_ndvar_indexing():
     ndvar_index(x, 'cat', slice('8', '13'), slice(0, 2))
     ndvar_index(x, 'cat', slice('8', None, 2), slice(0, None, 2))
 
+
+@requires_mne_testing_data
+def test_ndvar_indexing_source():
+    ds = datasets.get_uts(utsnd=True)
+    x = ds['utsnd']
     # SourceSpace
     x = datasets.get_mne_stc(True, subject='fsaverage')
     with pytest.raises(TypeError):

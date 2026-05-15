@@ -302,6 +302,7 @@ def test_anova_crawley():
     """)
 
 
+@pytest.mark.file_test
 def test_anova_fox():
     data_path = file_path('fox-prestige')
     ds = load.txt.tsv(data_path, delimiter=' ', skipinitialspace=True)
