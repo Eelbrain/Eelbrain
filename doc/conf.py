@@ -10,12 +10,11 @@
 # serve to show the default.
 
 from datetime import datetime
-import os
 from pathlib import Path
+import os
 import sys
 
 import eelbrain
-from sphinx_gallery.sorting import _SortKey
 import eelbrain.datasets._alice
 import mne
 import sphinx.util.logging
@@ -117,10 +116,13 @@ example_order = {
 }
 
 
-class NameOrder(_SortKey):
+class NameOrder:
     """Specify sphinx-gallery example order as file tree"""
 
     items = sum(example_order.values(), [])
+
+    def __init__(self, src_dir: str) -> None:
+        self.src_dir = src_dir
 
     def __call__(self, item):
         logger.info(f"NameOrder: {item}")
