@@ -211,6 +211,6 @@ For more on Git we recommend the free `Pro Git book <https://git-scm.com/book>`_
 
 The following tools are used by the maintainers and can streamline development:
 
-- **SourceTree**: A graphical frontend for git (`link <https://www.sourcetreeapp.com>`_).
-- **PyCharm**: A powerful Python IDE that can handle formatting and testing (`link <https://www.jetbrains.com/pycharm>`_).
-- **VS Code**: A lightweight, extensible editor with rich Python tooling support (`link <https://code.visualstudio.com>`_).
+- **SourceTree**: A graphical frontend for git (`link <https://www.sourcetreeapp.com>`__).
+- **PyCharm**: A powerful Python IDE that can handle formatting and testing (`link <https://www.jetbrains.com/pycharm>`__).
+- **VS Code**: A lightweight, extensible editor with rich Python tooling support (`link <https://code.visualstudio.com>`__).
