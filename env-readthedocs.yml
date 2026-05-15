@@ -11,6 +11,8 @@ dependencies:
 - matplotlib-base >=3.8
 - seaborn
 - mne-base >=1.6
+- mne-bids >= 0.17
+- libclang
 - nibabel >2.3.0  # read_annot bug
 - nilearn >=0.10.4
 - numpy >=1.11, <2
