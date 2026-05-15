@@ -52,7 +52,7 @@ jobs:
           fetch-depth: 0
 
       - name: Build wheel(s)
-        uses: pypa/cibuildwheel@v3.2.1
+        uses: pypa/cibuildwheel@v3.4.1
         env:
           CIBW_BUILD: "cp311-${{ matrix.buildplat[1] }} "
 
