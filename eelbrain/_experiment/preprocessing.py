@@ -32,6 +32,7 @@ without editing the cache kernel or injecting facade behavior into nodes.
 """
 from __future__ import annotations
 import fnmatch
+import json
 import logging
 from os.path import exists, relpath
 from pathlib import Path
@@ -40,10 +41,11 @@ import warnings
 from collections.abc import Mapping, Sequence
 
 import mne
-import numpy
-from scipy import signal
+import mne_bids
 from mne_bids import BIDSPath
+import numpy
 import pandas as pd
+from scipy import signal
 
 from .. import load
 from .._data_obj import NDVar, Sensor
@@ -65,6 +67,8 @@ from .pathing import bids_path, ica_file_path
 MNE_VERBOSITY = 'WARNING'
 LOG = logging.getLogger(__name__)
 REINDEX_ICA = 'reindex_ica'
+# Scaling factors from BIDS coordinate units to metres
+COORD_SCALE = {'mm': 1e-3, 'cm': 1e-2, 'm': 1.0}
 
 
 class RawPipe(Configuration):
@@ -274,11 +278,19 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         return reader(path.fpath, preload=preload, verbose=MNE_VERBOSITY)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {
+        path = self._resolve_bids_path(ctx)
+        fp = {
             'raw': self.raw_name,
             'pipe': self.pipe._as_dict(),
-            'source': file_fingerprint(ctx.root, self.path(ctx), 'raw-source'),
+            'source': file_fingerprint(ctx.root, path.fpath, 'raw-source'),
         }
+        if path.datatype == 'eeg':
+            elec_pair = self._find_bids_electrodes(path)
+            if elec_pair is not None:
+                elec_path, coord_path = elec_pair
+                fp['electrodes'] = file_fingerprint(ctx.root, elec_path, 'electrodes')
+                fp['coordsystem'] = file_fingerprint(ctx.root, coord_path, 'coordsystem')
+        return fp
 
     def load(self, ctx: Request) -> mne.io.BaseRaw:
         path = self._resolve_bids_path(ctx, require=True)
@@ -288,6 +300,8 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
                 raw.rename_channels(rename)
         if self.pipe.montage:
             raw.set_montage(self.pipe.montage)
+        elif path.datatype == 'eeg':
+            self._apply_bids_electrodes(path, raw)
         return raw
 
     def load_view(self, ctx: Request, view: str):
@@ -295,7 +309,69 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
             return super().load_view(ctx, view)
         path = self._resolve_bids_path(ctx, require=True)
         raw = self._read_raw(path, preload=False)
+        if self.pipe.montage:
+            raw.set_montage(self.pipe.montage)
+        elif path.datatype == 'eeg':
+            self._apply_bids_electrodes(path, raw)
         return raw.info
+
+    @staticmethod
+    def _find_bids_electrodes(path: BIDSPath) -> tuple[Path, Path] | None:
+        """Find the BIDS electrode sidecar pair for an EEG recording.
+
+        Looks first for space-entity files (``sub-X_space-*_electrodes.tsv``),
+        which is the pattern written by mne-bids. Falls back to a task-matched
+        file if no space files are found. Returns
+        ``(electrodes_path, coordsystem_path)`` or ``None``. Returned paths
+        are not guaranteed to exist.
+        """
+        data_dir = path.fpath.parent
+        sub_prefix = f"sub-{path.subject}"
+        if path.session:
+            sub_prefix += f"_ses-{path.session}"
+        space_candidates = sorted(data_dir.glob(f"{sub_prefix}_space-*_electrodes.tsv"))
+        if space_candidates:
+            if len(space_candidates) > 1:
+                warnings.warn(f"Multiple electrodes.tsv files found in {data_dir}; using {space_candidates[0].name}")
+            elec_path = space_candidates[0]
+        else:
+            elec_path = path.copy().update(suffix='electrodes', extension='.tsv').fpath
+            if not elec_path.exists():
+                return None
+        coord_path = elec_path.with_name(elec_path.name.replace('_electrodes.tsv', '_coordsystem.json'))
+        return elec_path, coord_path
+
+    @staticmethod
+    def _apply_bids_electrodes(path: BIDSPath, raw: mne.io.BaseRaw) -> None:
+        """Apply electrode positions from BIDS electrodes.tsv sidecar if present."""
+        elec_pair = RawSourceInput._find_bids_electrodes(path)
+        if elec_pair is None:
+            return
+        elec_path, coord_path = elec_pair
+        if not coord_path.exists():
+            warnings.warn(f"No matching coordsystem.json found for {elec_path.name}; electrode positions not applied.")
+            return
+        with open(coord_path, encoding='utf-8-sig') as f:
+            coordsystem = json.load(f)
+        coord_frame_bids = coordsystem.get('EEGCoordinateSystem', '')
+        coord_unit = coordsystem.get('EEGCoordinateUnits', 'm')
+        coord_frame = mne_bids.config.BIDS_TO_MNE_FRAMES.get(coord_frame_bids)
+        if coord_frame is None:
+            warnings.warn(f"Unrecognized EEG coordinate system {coord_frame_bids!r} in {coord_path.name}; electrode positions not applied.")
+            return
+        scale = COORD_SCALE.get(coord_unit)
+        if scale is None:
+            warnings.warn(f"Unrecognized EEG coordinate unit {coord_unit!r} in {coord_path.name}; electrode positions not applied.")
+            return
+        elec_df = pd.read_csv(elec_path, sep='\t')
+        numeric = elec_df[['x', 'y', 'z']].apply(pd.to_numeric, errors='coerce')
+        valid = numeric.notna().all(axis=1)
+        ch_pos = {
+            name: numpy.array([x, y, z]) * scale
+            for name, x, y, z in zip(elec_df.loc[valid, 'name'], numeric.loc[valid, 'x'], numeric.loc[valid, 'y'], numeric.loc[valid, 'z'])
+        }
+        montage = mne.channels.make_dig_montage(ch_pos=ch_pos, coord_frame=coord_frame)
+        raw.set_montage(montage, on_missing='warn')
 
 
 class RawSourceDerivative(UncachedDerivative[mne.io.BaseRaw]):
