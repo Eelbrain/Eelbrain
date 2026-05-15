@@ -5,13 +5,11 @@ import numpy as np
 from numpy.testing import assert_allclose, assert_equal
 import pytest
 import scipy.stats
+import statsmodels.api as sm
 
-pytest.importorskip("rpy2")
-
-from eelbrain import datasets, Model, Var  # noqa: E402
-from eelbrain._stats import stats  # noqa: E402
-from eelbrain._stats.permutation import permute_order, rand_rotation_matrices  # noqa: E402,E501
-from eelbrain._utils.r_bridge import r  # noqa: E402
+from eelbrain import datasets, Model, Var
+from eelbrain._stats import stats
+from eelbrain._stats.permutation import permute_order, rand_rotation_matrices
 
 
 def test_corr():
@@ -66,33 +64,32 @@ def test_lm():
 
 
 def test_lm_r():
-    "Test linear model agains R"
+    "Test linear model against statsmodels OLS (same as R lm())"
     ds = datasets.get_uv()
     ds['A2'] = Var(ds['A'] == 'a2').astype(float)
     ds['B2'] = Var(ds['B'] == 'b2').astype(float)
-    ds.to_r('ds')
     y = ds['fltvar'].x[:, None]
 
     p = Model([ds['A2']])._parametrize('dummy')
     b, se, t = stats.lm_t(y, p)
-    r_res = r("summary(lm(fltvar ~ A2, ds, type=2))")
-    assert_allclose(b[:, 0], r_res[3][0:2])
-    assert_allclose(se[:, 0], r_res[3][2:4])
-    assert_allclose(t[:, 0], r_res[3][4:6])
+    sm_res = sm.OLS(ds['fltvar'].x, sm.add_constant(ds['A2'].x)).fit()
+    assert_allclose(b[:, 0], sm_res.params)
+    assert_allclose(se[:, 0], sm_res.bse)
+    assert_allclose(t[:, 0], sm_res.tvalues)
 
     p = ds.eval("A2 + B2")._parametrize('dummy')
     b, se, t = stats.lm_t(y, p)
-    r_res = r("summary(lm(fltvar ~ A2 + B2, ds, type=2))")
-    assert_allclose(b[:, 0], r_res[3][0:3])
-    assert_allclose(se[:, 0], r_res[3][3:6])
-    assert_allclose(t[:, 0], r_res[3][6:9])
+    sm_res = sm.OLS(ds['fltvar'].x, sm.add_constant(np.column_stack([ds['A2'].x, ds['B2'].x]))).fit()
+    assert_allclose(b[:, 0], sm_res.params)
+    assert_allclose(se[:, 0], sm_res.bse)
+    assert_allclose(t[:, 0], sm_res.tvalues)
 
     p = ds.eval("A2 + B2 + intvar")._parametrize('dummy')
     b, se, t = stats.lm_t(y, p)
-    r_res = r("summary(lm(fltvar ~ A2 + B2 + intvar, ds, type=2))")
-    assert_allclose(b[:, 0], r_res[3][0:4])
-    assert_allclose(se[:, 0], r_res[3][4:8])
-    assert_allclose(t[:, 0], r_res[3][8:12])
+    sm_res = sm.OLS(ds['fltvar'].x, sm.add_constant(np.column_stack([ds['A2'].x, ds['B2'].x, ds['intvar'].x]))).fit()
+    assert_allclose(b[:, 0], sm_res.params)
+    assert_allclose(se[:, 0], sm_res.bse)
+    assert_allclose(t[:, 0], sm_res.tvalues)
 
 
 def test_dispersion():

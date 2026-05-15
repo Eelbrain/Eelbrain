@@ -23,8 +23,7 @@ def rename_mri(subject_from, subject_to, subjects_dir, preview=False):
     """
     sdir = os.path.join(subjects_dir, subject_from)
     if not os.path.exists(sdir):
-        raise IOError("Directory for %s does not exist at %s" %
-                      (subject_from, subjects_dir))
+        raise OSError(f"Directory for {subject_from} does not exist at {subjects_dir}")
 
     n_sdir = len(subjects_dir) + 1
     n_from = len(subject_from)
@@ -40,7 +39,7 @@ def rename_mri(subject_from, subject_to, subjects_dir, preview=False):
 
     if preview:
         for old, new in pairs:
-            print("  %s\n->%s" % (old[n_sdir:], new[n_sdir:]))
+            print(f"  {old[n_sdir:]}\n->{new[n_sdir:]}")
     else:
         for old, new in pairs:
             os.rename(old, new)

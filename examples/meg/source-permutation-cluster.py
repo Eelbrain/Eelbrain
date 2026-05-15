@@ -77,7 +77,7 @@ for i in range(clusters.n_cases):
     # add to report (plot.brain plots can be captured using Brain.image())
     image = brain.image("cluster 0 extent")
     brain.close()
-    subsection.add_figure("Extent the cluster, p=%s" % p, image)
+    subsection.add_figure(f"Extent the cluster, p={p}", image)
 
     # extract and analyze the value in the cluster in each trial
     index = c_i != 0

@@ -1,6 +1,7 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Plot uniform time-series of one variable."""
-from typing import Any, Callable, Dict, Sequence, Tuple, Union
+from typing import Any
+from collections.abc import Callable, Sequence
 
 import matplotlib.axes
 import matplotlib.colors
@@ -149,32 +150,32 @@ class UTSStat(LegendMixin, XAxisMixin, YLimMixin, EelFigure):
     @deprecate_ds_arg
     def __init__(
             self,
-            y: Union[NDVarArg, Sequence[NDVarArg]],
+            y: NDVarArg | Sequence[NDVarArg],
             x: CategorialArg = None,
             xax: CategorialArg = None,
             match: CategorialArg = None,
             sub: IndexArg = None,
             data: Dataset = None,
             main: Callable = np.mean,
-            error: Union[str, Callable] = 'sem',
+            error: str | Callable = 'sem',
             within_subject_error: bool = None,
             legend: LegendArg = None,
-            labels: Dict[CellArg, str] = None,
-            axtitle: Union[bool, Sequence[str]] = True,
-            xlabel: Union[bool, str] = True,
-            ylabel: Union[bool, str] = True,
-            xticklabels: Union[str, int, Sequence[int]] = 'bottom',
-            yticklabels: Union[str, int, Sequence[int]] = 'left',
+            labels: dict[CellArg, str] = None,
+            axtitle: bool | Sequence[str] = True,
+            xlabel: bool | str = True,
+            ylabel: bool | str = True,
+            xticklabels: str | int | Sequence[int] = 'bottom',
+            yticklabels: str | int | Sequence[int] = 'left',
             invy: bool = False,
             bottom: float = None,
             top: float = None,
             case: str = None,
             xdim: str = None,
-            xlim: Union[float, Tuple[float, float]] = None,
+            xlim: float | tuple[float, float] = None,
             clip: bool = None,
-            colors: Dict[CellArg, Any] = None,
+            colors: dict[CellArg, Any] = None,
             error_alpha: float = 0.3,
-            mask: Union[NDVar, Dict[CellArg, NDVar]] = None,
+            mask: NDVar | dict[CellArg, NDVar] = None,
             clusters: Dataset = None,
             pmax: float = 0.05,
             ptrend: float = 0.1,
@@ -279,12 +280,12 @@ class UTSStat(LegendMixin, XAxisMixin, YLimMixin, EelFigure):
 
     def set_clusters(
             self,
-            clusters: Union[Dataset, None],
+            clusters: Dataset | None,
             pmax: float = 0.05,
             ptrend: float = None,
             color: Any = '.7',
             ax: int = None,
-            y: Union[float, Dict] = None,
+            y: float | dict = None,
             dy: float = None,
             **kwargs,
     ):
@@ -412,22 +413,22 @@ class UTS(TimeSlicerEF, LegendMixin, YLimMixin, XAxisMixin, EelFigure):
     @deprecate_ds_arg
     def __init__(
             self,
-            y: Union[NDVarArg, Sequence, NDTest],
+            y: NDVarArg | Sequence | NDTest,
             xax: CategorialArg = None,
-            axtitle: Union[bool, Sequence[str]] = True,
+            axtitle: bool | Sequence[str] = True,
             data: Dataset = None,
             sub: IndexArg = None,
-            xlabel: Union[bool, str] = True,
-            ylabel: Union[bool, str] = True,
-            xticklabels: Union[str, int, Sequence[int]] = 'bottom',
-            yticklabels: Union[str, int, Sequence[int]] = 'left',
+            xlabel: bool | str = True,
+            ylabel: bool | str = True,
+            xticklabels: str | int | Sequence[int] = 'bottom',
+            yticklabels: str | int | Sequence[int] = 'left',
             bottom: float = None,
             top: float = None,
             legend: LegendArg = None,
-            labels: Dict[CellArg, str] = None,
-            xlim: Union[float, Tuple[float, float]] = None,
+            labels: dict[CellArg, str] = None,
+            xlim: float | tuple[float, float] = None,
             clip: bool = None,
-            colors: Union[Any, dict] = None,
+            colors: Any | dict = None,
             color: Any = None,
             stem: bool = False,
             **kwargs):
@@ -480,7 +481,7 @@ class AxUTSStat:
             data: AxisData,
             xdim: str,
             main: Callable,
-            error: Union[str, Callable],
+            error: str | Callable,
             within_subject_error: bool,
             clusters,
             pmax,
@@ -524,7 +525,7 @@ class AxUTS:
             axis_data: AxisData,
             xdim: str,
             vlims,
-            styles: Union[Sequence, Dict],
+            styles: Sequence | dict,
             stem: bool,
             clip: bool = True,
     ):
@@ -581,6 +582,7 @@ class PltUTS:
 
 class PltUTSClusters:
     """UTS cluster plot"""
+
     def __init__(
             self,
             ax: matplotlib.axes.Axes,
@@ -678,7 +680,7 @@ class PltUTSStat:
             layer: StatLayer,
             xdim: str,
             main: Callable,
-            error: Union[str, Callable],
+            error: str | Callable,
             within_subject_error: bool,
             clip: bool,
             error_alpha: float,

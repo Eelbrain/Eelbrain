@@ -28,7 +28,7 @@ class AboutFrame(EelbrainFrame):
         text.SetFont(font)
         sizer.Add(text, 0, wx.LEFT | wx.RIGHT | wx.ALIGN_CENTER_HORIZONTAL, 10)
 
-        txt = "Version %s" % __version__
+        txt = f"Version {__version__}"
         text = wx.StaticText(self, -1, txt)
         font = text.GetFont()
         font.SetFaceName(".LucidaGrandeUI")

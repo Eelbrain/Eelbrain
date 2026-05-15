@@ -1,7 +1,8 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 from itertools import chain
 import logging
-from typing import Any, Dict, Optional, Sequence, Type
+from typing import Any
+from collections.abc import Sequence
 
 from .._exceptions import DefinitionError
 from .._text import enumeration, plural
@@ -133,14 +134,14 @@ def compound(items):
                 out += '*'
         elif item:
             if out and not out.endswith('*'):
-                out += ' '
+                out += '_'
             out += item
     return out
 
 
 def dict_change(
-        old: Dict[str, Any],
-        new: Dict[str, Any],
+        old: dict[str, Any],
+        new: dict[str, Any],
 ):
     "Readable representation of dict change"
     lines = []
@@ -148,11 +149,11 @@ def dict_change(
     keys.update(old)
     for key in sorted(keys):
         if key not in new:
-            lines.append("%s: %r -> key removed" % (key, old[key]))
+            lines.append(f"{key}: {old[key]!r} -> key removed")
         elif key not in old:
-            lines.append("%s: new key -> %r" % (key, new[key]))
+            lines.append(f"{key}: new key -> {new[key]!r}")
         elif new[key] != old[key]:
-            lines.append("%s: %r -> %r" % (key, old[key], new[key]))
+            lines.append(f"{key}: {old[key]!r} -> {new[key]!r}")
     return lines
 
 
@@ -160,8 +161,8 @@ def log_dict_change(
         log: logging.Logger,
         kind: str,
         name: str,
-        old: Optional[Dict[str, Any]],
-        new: Optional[Dict[str, Any]],
+        old: dict[str, Any] | None,
+        new: dict[str, Any] | None,
 ):
     if new is None:
         log.warning("  %s %s removed", kind, name)
@@ -261,23 +262,20 @@ def typed_arg(arg, type_, secondary_type=None):
         return type_(arg)
 
 
-def tuple_arg(
+def sequence_arg(
         name: str,  # for error message
         arg: Sequence,
-        item_type: Type = str,
+        item_type: type = str,
         allow_none: bool = True,
+        sequence_type: type = tuple,
 ):
     if arg is None:
         if allow_none:
             return None
-        else:
-            raise TypeError(f"{name}={arg!r}")
     elif isinstance(arg, item_type):
-        return arg,
-    elif isinstance(arg, tuple):
-        out = arg
-    else:
-        out = tuple(arg)
-    if not all(isinstance(item, item_type) for item in out):
-        raise TypeError(f"{name}={arg!r}: sequence of {item_type.__name__} required")
-    return out
+        return sequence_type((arg,))
+    elif isinstance(arg, Sequence):
+        out = sequence_type(arg)
+        if all(isinstance(item, item_type) for item in out):
+            return out
+    raise TypeError(f"{name}={arg!r}: expected sequence of {item_type.__name__}")

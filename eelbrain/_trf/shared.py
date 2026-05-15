@@ -3,7 +3,7 @@ from dataclasses import dataclass, fields
 from functools import cached_property, reduce
 from itertools import product, zip_longest
 from operator import mul
-from typing import List, Sequence, Union
+from collections.abc import Sequence
 
 import numpy as np
 from numpy import newaxis
@@ -49,7 +49,7 @@ class Split(PickleableDataClass, EQMixIn):
 
 def merge_segments(
         segments: np.ndarray,
-        soft_splits: Union[bool, np.ndarray] = None,
+        soft_splits: bool | np.ndarray = None,
 ):
     """Take a selection of input segments and remove soft boundaries"""
     # return out_segments
@@ -67,8 +67,8 @@ def merge_segments(
 
 @dataclass(eq=False)
 class Splits(PickleableDataClass, EQMixIn):
-    splits: List[Split]
-    partitions_arg: Union[int, None]
+    splits: list[Split]
+    partitions_arg: int | None
     n_partitions: int
     n_validate: int
     n_test: int
@@ -216,7 +216,7 @@ class PredictorData:
 
     def __init__(
             self,
-            x: Union[NDVarArg, Sequence[NDVarArg]],
+            x: NDVarArg | Sequence[NDVarArg],
             data: Dataset = None,
             copy: bool = False,
     ):
@@ -372,7 +372,7 @@ class DeconvolutionData:
     def __init__(
             self,
             y: NDVarArg,
-            x: Union[NDVarArg, Sequence[NDVarArg]],
+            x: NDVarArg | Sequence[NDVarArg],
             data: Dataset = None,
             in_place: bool = False,
     ):
@@ -489,7 +489,7 @@ class DeconvolutionData:
         n = int(round(basis / self.time.tstep))
         w = scipy.signal.get_window(basis_window, n, False)
         if len(w) <= 1:
-            raise ValueError(f"basis={basis!r}: Window is {len(w)} samples long")
+            raise ValueError(f"{basis=}: Window is {len(w)} samples long")
         w /= w.sum()
         for xi in self.x:
             xi[:] = scipy.signal.convolve(xi, w, 'same')

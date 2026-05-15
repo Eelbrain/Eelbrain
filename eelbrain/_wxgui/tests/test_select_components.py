@@ -4,17 +4,18 @@ from warnings import catch_warnings, filterwarnings
 
 import mne
 from eelbrain import gui, load
-from eelbrain.testing import gui_test, TempDir
+from eelbrain.testing import gui_test, TempDir, requires_mne_testing_data
 from eelbrain._wxgui import ID
 
 
 @gui_test
+@requires_mne_testing_data
 def test_select_components():
     "Test Select-Epochs GUI Document"
     tempdir = TempDir()
     path = join(tempdir, 'test-ica.fif')
 
-    data_path = mne.datasets.testing.data_path()
+    data_path = mne.datasets.testing.data_path(download=False)
     raw_path = join(data_path, 'MEG', 'sample', 'sample_audvis_trunc_raw.fif')
     raw = mne.io.Raw(raw_path, preload=True)
     ds = load.mne.events(raw, stim_channel='STI 014')

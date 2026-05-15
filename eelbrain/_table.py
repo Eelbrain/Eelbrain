@@ -3,7 +3,7 @@
 from itertools import zip_longest
 from operator import itemgetter
 import re
-from typing import Callable, Sequence, Union
+from collections.abc import Callable, Sequence
 
 import numpy as np
 
@@ -20,7 +20,7 @@ from ._utils import deprecate_ds_arg
 
 @deprecate_ds_arg
 def difference(
-        y: Union[NDVar, VarArg, Sequence[Union[NDVar, VarArg]]],
+        y: NDVar | VarArg | Sequence[NDVar | VarArg],
         x: CategorialArg,
         c1: CellArg,
         c0: CellArg,
@@ -191,7 +191,7 @@ def frequencies(
         elif isinstance(y, Var):
             out[y.name or 'y'] = Var(cells)
         else:
-            raise RuntimeError("y=%r" % (y,))
+            raise RuntimeError(f"{y=}")
         n = np.fromiter((np.sum(y == cell) for cell in cells), int, len(cells))
         n_underline = 0
         while (key := 'n' + '_' * n_underline) in out:
@@ -227,7 +227,7 @@ def melt(
         cells: CellArg,
         cell_var_name: str,
         data: Dataset,
-        labels: Union[dict, Sequence[str]] = None,
+        labels: dict | Sequence[str] = None,
 ) -> Dataset:
     """
     Restructure a Dataset such that a measured variable is in a single column
@@ -311,7 +311,7 @@ def melt(
                     cells.append(key)
                     cell_values.append(int(m.group(1)))
         else:
-            raise ValueError(f"cells={cells!r}; If specified as string, it needs to contain '%i' as a place-holder for an integer that identifies columns")
+            raise ValueError(f"{cells=}; If specified as string, it needs to contain '%i' as a place-holder for an integer that identifies columns")
     else:
         cell_values = cells
 
@@ -320,7 +320,7 @@ def melt(
     elif isinstance(labels, dict):
         cell_labels = [labels[v] for v in cell_values]
     elif len(labels) != len(cells):
-        raise ValueError(f"labels={labels!r}: needs as many entries as there are cells ({len(cells)})")
+        raise ValueError(f"{labels=}: needs as many entries as there are cells ({len(cells)})")
     else:
         cell_labels = labels
 
@@ -341,7 +341,7 @@ def melt_ndvar(
         cells: Sequence = None,
         ds: Dataset = None,
         varname: str = None,
-        labels: Union[dict, Callable] = None,
+        labels: dict | Callable = None,
 ) -> Dataset:
     """
     Transform data to long format by converting an NDVar dimension into a variable
@@ -405,7 +405,7 @@ def melt_ndvar(
     elif labels is None:
         def label(x): return x
     else:
-        raise TypeError(f"labels={labels!r}")
+        raise TypeError(f"{labels=}")
 
     if varname is None:
         if ndvar.name is None:
@@ -436,8 +436,8 @@ def melt_ndvar(
 
 @deprecate_ds_arg
 def cast_to_ndvar(
-        y: Union[VarArg, Sequence[VarArg]],
-        dim_values: Union[VarArg, Factor],
+        y: VarArg | Sequence[VarArg],
+        dim_values: VarArg | Factor,
         match: CategorialArg,
         sub: IndexArg = None,
         data: Dataset = None,
@@ -471,7 +471,7 @@ def cast_to_ndvar(
     -------
     short_ds
         Copy of ``ds``, aggregated over ``dim_values``, and with an
-        :class:`NDVar` containing the values form ``data`` and a new dimension
+        :class:`NDVar` containing the values from ``data`` and a new dimension
         reflecting ``dim_values``. If ``dim_values`` is a Factor, the new
         dimension is :class:`Categorial`; if ``dim_values`` is a :class:`Var`,
         it is :class:`Scalar`. The new dimension's name is ``dim``. The only
@@ -495,7 +495,7 @@ def cast_to_ndvar(
         if name is None:
             names = [None for _ in range(len(data_vars))]
         elif isinstance(name, str):
-            raise TypeError(f"name={name!r}: single name for multiple variables")
+            raise TypeError(f"{name=}: single name for multiple variables")
         else:
             names = name
     dim_values, n = asuv(dim_values, sub, data, n, return_n=True)
@@ -526,16 +526,18 @@ def cast_to_ndvar(
     case_indexes = [match == case for case in match.cells]
     samples_indexes = [dim_values == v for v in unique_dim_values]
     xs = [np.empty((n_cases, n_samples)) for _ in data_vars]
-    index = None
+    index = np.empty(dim_values.x.shape, dtype=bool)
     for i, case_index in enumerate(case_indexes):
-        try:
-            for j, sample_index in enumerate(samples_indexes):
-                index = np.logical_and(case_index, sample_index, out=index)
-                for x, data_var in zip(xs, data_vars):
-                    x[i, j] = data_var.x[index]
-        except ValueError:
-            if not np.any(index):
+        for j, sample_index in enumerate(samples_indexes):
+            np.logical_and(case_index, sample_index, out=index)
+            n_values = np.count_nonzero(index)
+            if n_values == 0:
                 raise ValueError(f"Case {match.cells[i]!r} is missing some values")
+            elif n_values > 1:
+                raise ValueError(f"Case {match.cells[i]!r} contains multiple values for {unique_dim_values[j]!r}")
+            value_index = index.argmax()
+            for x, data_var in zip(xs, data_vars):
+                x[i, j] = data_var.x[value_index]
 
     # package output dataset
     if data is None:
@@ -556,12 +558,12 @@ def stats(
         match: CategorialArg = None,
         sub: IndexArg = None,
         fmt: str = '%.4g',
-        funcs: Sequence[Union[str, Callable]] = ('mean',),
+        funcs: Sequence[str | Callable] = ('mean',),
         data: Dataset = None,
         title: fmtxt.FMTextArg = None,
         caption: fmtxt.FMTextArg = None,
         format: bool = True,
-) -> Union[Dataset, fmtxt.Table]:
+) -> Dataset | fmtxt.Table:
     """Make a table with statistics
 
     Parameters
@@ -705,7 +707,7 @@ def stats(
                 if fmt_once:
                     txt = fmt % values
                 else:
-                    txt = ', '.join((fmt % v for v in values))
+                    txt = ', '.join(fmt % v for v in values)
 
                 table.cell(txt)
 
@@ -713,7 +715,7 @@ def stats(
 
 
 def repmeas(
-        y: Union[NDVarArg, ModelArg],
+        y: NDVarArg | ModelArg,
         x: CategorialArg,
         match: CategorialArg,
         sub: IndexArg = None,

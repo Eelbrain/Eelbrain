@@ -1,6 +1,6 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Write text files"""
-from typing import Iterable
+from collections.abc import Iterable
 
 from .._types import PathArg
 from .._utils import ui
@@ -22,7 +22,7 @@ def txt(iterator: Iterable, fmt: str = '%s', delim: str = '\n', dest: PathArg = 
     """
     if dest is None:
         name = repr(iterator)[:20]
-        msg = "Save %s..." % name
+        msg = f"Save {name}..."
         dest = ui.ask_saveas(msg, msg, [("Plain Text File", '*.txt')])
 
     if dest:

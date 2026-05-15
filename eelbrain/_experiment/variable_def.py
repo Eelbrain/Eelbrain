@@ -1,15 +1,15 @@
 """Variables
 
-With multiple sessions, the same variable name might have multiple definitions::
+With multiple tasks, the same variable name might have multiple definitions::
 
 variables = {
-    'name': [Var(session='1'), Var(session='2')],
-    'name2': Var(session='2'),
+    'name': [Var(task='1'), Var(task='2')],
+    'name2': Var(task='2'),
 }
 
 """
 from fnmatch import fnmatch as fnmatch_func
-from typing import Dict, Sequence, Tuple, Union
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -20,7 +20,7 @@ from .definitions import DefinitionError
 
 
 # Some event columns are reserved for Eelbrain
-RESERVED_VAR_KEYS = ('subject', 'session', 'visit')
+RESERVED_VAR_KEYS = ('subject', 'task', 'visit')
 
 
 def as_vardef_var(v):
@@ -33,10 +33,10 @@ def as_vardef_var(v):
 
 
 class VarDef:
-    _pickle_args = ('session',)
+    _pickle_args = ('task',)
 
-    def __init__(self, session):
-        self.session = session
+    def __init__(self, task):
+        self.task = task
 
     def __getstate__(self):
         return {k: getattr(self, k) for k in self._pickle_args}
@@ -66,22 +66,22 @@ class EvalVar(VarDef):
     ----------
     code
         Statement to evaluate.
-    session
-        Only apply the variable to events from this session.
+    task
+        Only apply the variable to events from this task.
 
     See Also
     --------
-    MneExperiment.variables
+    Pipeline.variables
     """
-    _pickle_args = ('session', 'code')
+    _pickle_args = ('task', 'code')
 
-    def __init__(self, code: str, session: str = None):
-        super(EvalVar, self).__init__(session)
+    def __init__(self, code: str, task: str = None):
+        super().__init__(task)
         assert isinstance(code, str)
         self.code = code
 
     def __repr__(self):
-        return "EvalVar(%r)" % self.code
+        return f"EvalVar({self.code!r})"
 
     @property
     def _eq_args(self):
@@ -109,26 +109,26 @@ class LabelVar(VarDef):
         Label for values not in ``codes``. By default, this is ``''`` for
         categorial and 0 for numerical output. Set to ``False`` to pass through
         unlabeled input values.
-    session
-        Only apply the variable to events from this session.
+    task
+        Only apply the variable to events from this task.
     fnmatch
         Treat keys in ``codes`` as :mod:`fnmatch` patterns.
 
     See Also
     --------
-    MneExperiment.variables
+    Pipeline.variables
     """
-    _pickle_args = ('session', 'source', 'codes', 'labels', 'is_factor', 'default', 'fnmatch')
+    _pickle_args = ('task', 'source', 'codes', 'labels', 'is_factor', 'default', 'fnmatch')
 
     def __init__(
             self,
             source: str,
-            codes: Dict[Union[str, float, Tuple[str, ...], Tuple[float, ...]], Union[str, float]],
-            default: Union[bool, str, float] = True,
-            session: str = None,
+            codes: dict[str | float | tuple[str, ...] | tuple[float, ...], str | float],
+            default: bool | str | float = True,
+            task: str = None,
             fnmatch: bool = False,
     ):
-        super(LabelVar, self).__init__(session)
+        super().__init__(task)
         self.source = source
         self.codes = codes
         self.labels = {}
@@ -189,12 +189,12 @@ class GroupVar(VarDef):
         the group it belongs to (subjects can't be members of more than one
         group). Alternatively, a ``{group: label}`` dictionary can be used to
         assign a different label based on group membership.
-    session
-        Only apply the variable to events from this session.
+    task
+        Only apply the variable to events from this task.
 
     See Also
     --------
-    MneExperiment.variables
+    Pipeline.variables
 
     Examples
     --------
@@ -204,14 +204,14 @@ class GroupVar(VarDef):
         GroupVar(['patient', 'control'])
 
     """
-    _pickle_args = ('session', 'groups')
+    _pickle_args = ('task', 'groups')
 
     def __init__(
             self,
-            groups: Union[Sequence[str], Dict[str, str]],
-            session: str = None,
+            groups: Sequence[str] | dict[str, str],
+            task: str = None,
     ):
-        super(GroupVar, self).__init__(session)
+        super().__init__(task)
         self.groups = groups
 
     def __repr__(self):
@@ -264,6 +264,7 @@ class Variables:
     arg : str | tuple | dict
         The ``vars`` argument.
     """
+
     def __init__(self, arg: dict):
         if arg is None:
             arg = ()
@@ -320,9 +321,9 @@ class Variables:
         return isinstance(other, Variables) and other.vars == self.vars
 
     def apply(self, ds, e, group_only=False):
-        session = ds.info.get('session', None)
+        task = ds.info.get('task', None)
         for name, vdef in self.vars.items():
             if group_only and not isinstance(vdef, GroupVar):
                 continue
-            elif vdef.session is None or vdef.session == session:
+            elif vdef.task is None or vdef.task == task:
                 ds[name] = vdef.apply(ds, e)

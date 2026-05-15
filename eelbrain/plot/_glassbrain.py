@@ -35,10 +35,9 @@ DAMAGE.
 
 """
 import os
-from typing import Literal, Union
+from typing import Literal
 import warnings
 import numbers
-from typing import Tuple
 
 import nibabel
 import numpy as np
@@ -141,7 +140,7 @@ def _get_colorbar_and_data_ranges(
         stat_map_data,
         vmin: float = None,
         vmax: float = None,
-        symmetric_cbar: Union[bool, str] = True,
+        symmetric_cbar: bool | str = True,
 ):
     """Set colormap and colorbar limits.
 
@@ -302,14 +301,14 @@ class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
             mni305: bool = None,
             black_bg: bool = False,
             display_mode: str = None,
-            threshold: Union[float, Literal['auto']] = None,
+            threshold: float | Literal['auto'] = None,
             colorbar: bool = False,
             draw_cross: bool = True,
             annotate: bool = True,
             alpha: float = 0.7,
             plot_abs: bool = False,
             draw_arrows: bool = True,
-            symmetric_cbar: Union[bool, Literal['auto']] = 'auto',
+            symmetric_cbar: bool | Literal['auto'] = 'auto',
             interpolation: str = 'nearest',
             show_time: bool = False,
             data: Dataset = None,
@@ -600,16 +599,16 @@ class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
             mni305: bool = None,
             black_bg: bool = False,
             display_mode: str = None,
-            threshold: Union[float, Literal['auto']] = None,
+            threshold: float | Literal['auto'] = None,
             colorbar: bool = False,
             alpha: float = 0.7,
             plot_abs: bool = False,
             draw_arrows: bool = True,
-            symmetric_cbar: Union[bool, Literal['auto']] = 'auto',
+            symmetric_cbar: bool | Literal['auto'] = 'auto',
             interpolation: str = 'nearest',
             w: float = 5,
             h: float = 2.5,
-            xlim: Union[float, Tuple[float, float]] = None,
+            xlim: float | tuple[float, float] = None,
             name: str = None,
             **kwargs,
     ) -> (Butterfly, 'GlassBrain'):
@@ -819,7 +818,7 @@ def _stc_to_volume(ndvar, src, dest='mri', mri_resolution=False, mni305=False):
     elif dest == 'surf':
         affine = affine.astype(float)
     else:
-        raise ValueError(f"dest={dest!r}")
+        raise ValueError(f"{dest=}")
 
     affine[:3] *= 1e3
     if mni305:

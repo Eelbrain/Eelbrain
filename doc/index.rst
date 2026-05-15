@@ -1,5 +1,5 @@
 .. image:: https://img.shields.io/conda/vn/conda-forge/eelbrain.svg
-   :target: https://github.com/christianbrodbeck/Eelbrain/wiki/Installing
+   :target: https://github.com/Eelbrain/Eelbrain/wiki/Installing
 
 .. image:: https://img.shields.io/conda/pn/conda-forge/eelbrain.svg
    :target: https://anaconda.org/conda-forge/eelbrain
@@ -11,7 +11,7 @@
 
 Eelbrain |version|
 ==================
-`Open-source <https://github.com/christianbrodbeck/Eelbrain>`_ `Python <https://www.python.org>`_ toolkit for MEG and EEG data analysis, including:
+`Open-source <https://github.com/Eelbrain/Eelbrain>`_ `Python <https://www.python.org>`_ toolkit for MEG and EEG data analysis, including:
 
 * Mass-univariate :ref:`permutation tests<examples>`
 * `Temporal Response Function <https://doi.org/10.7554/eLife.85012>`_ estimator for fitting single-trial time series models
@@ -41,7 +41,7 @@ Manual
 
 
 .. seealso::
-   - `GitHub <http://github.com/christianbrodbeck/Eelbrain>`_: `Wiki <https://github.com/christianbrodbeck/Eelbrain/wiki>`_, `Discussions <https://github.com/christianbrodbeck/Eelbrain/discussions>`_ and `Issues <https://github.com/christianbrodbeck/Eelbrain/issues>`_
+   - `GitHub <http://github.com/Eelbrain/Eelbrain>`_: `Wiki <https://github.com/Eelbrain/Eelbrain/wiki>`_, `Discussions <https://github.com/Eelbrain/Eelbrain/discussions>`_ and `Issues <https://github.com/Eelbrain/Eelbrain/issues>`_
    - `Mailing list <https://groups.google.com/forum/#!forum/eelbrain>`_ for announcements
    - Eelbrain on the `Python Package Index <https://pypi.python.org/pypi/eelbrain>`_
 

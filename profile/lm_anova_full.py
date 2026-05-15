@@ -1,7 +1,6 @@
 import numpy as np
 from eelbrain import *
 import eelbrain
-from eelbrain._stats import opt
 
 ds = datasets.get_uts(True)
 y = ds['utsnd'].x

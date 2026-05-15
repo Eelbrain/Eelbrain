@@ -6,7 +6,6 @@ import functools
 import inspect
 import logging
 import re
-from typing import Dict
 from warnings import warn
 
 from .notebooks import tqdm
@@ -36,7 +35,7 @@ def as_sequence(items, item_type=str):
 
 def ask(
         message: str,
-        options: Dict[str, str],
+        options: dict[str, str],
         allow_empty: bool = False,
         help: str = None,
         default: str = '',
@@ -140,7 +139,7 @@ def _deprecated_alias(alias, for_, version):
 
 def deprecated_attribute(version, class_name, replacement):
     if not isinstance(replacement, str):
-        raise TypeError("replacement=%r" % (replacement,))
+        raise TypeError(f"{replacement=}")
 
     class Dec:
 
@@ -238,7 +237,7 @@ def log_level(arg):
             raise ValueError("Invalid log level: %s. mus be one of %s" %
                              (arg, ', '.join(LOG_LEVELS)))
     else:
-        raise TypeError("Invalid log level: %s. need int or str." % repr(arg))
+        raise TypeError(f"Invalid log level: {arg!r}. need int or str.")
 
 
 def set_log_level(level, logger_name='eelbrain'):
@@ -326,6 +325,7 @@ def n_decimals(number):
 
 class keydefaultdict(defaultdict):  # noqa
     "http://stackoverflow.com/a/2912455/166700"
+
     def __missing__(self, key):
         if self.default_factory is None:
             raise KeyError(key)

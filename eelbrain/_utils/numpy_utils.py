@@ -1,6 +1,6 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 from math import floor
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -41,11 +41,11 @@ def digitize_index(index: float, values: np.ndarray, tol: float = None):
         elif diff <= abs(values[1] - values[0]) * tol:
             return i
         else:
-            raise IndexError("Index %r outside of tolerance" % (index,))
+            raise IndexError(f"Index {index!r} outside of tolerance")
     elif diff <= abs(values[i] - values[i - 1]) * tol:
         return i
     else:
-        raise IndexError("Index %r outside of tolerance" % (index,))
+        raise IndexError(f"Index {index!r} outside of tolerance")
 
 
 def digitize_slice_endpoint(index, values):
@@ -106,7 +106,7 @@ def index_length(index, n):
     elif index.dtype.kind in 'iu':
         return len(index)
     else:
-        raise TypeError("index %r" % (index,))
+        raise TypeError(f"index {index!r}")
 
 
 def apply_numpy_index(data, index):
@@ -121,13 +121,13 @@ def apply_numpy_index(data, index):
         else:
             return (data[i] for i in index)
     array = np.asarray(index)
-    assert array.ndim == 1, "Index must be 1 dimensional, got %r" % (index,)
+    assert array.ndim == 1, f"Index must be 1 dimensional, got {index!r}"
     if array.dtype.kind == 'i':
         return (data[i] for i in array)
     elif array.dtype.kind == 'b':
         assert len(array) == len(data), "Index must have same length as data"
         return (d for d, i in zip(data, array) if i)
-    raise TypeError("Invalid numpy-like index: %r" % (index,))
+    raise TypeError(f"Invalid numpy-like index: {index!r}")
 
 
 def optimize_index(indexes: Sequence[int]):

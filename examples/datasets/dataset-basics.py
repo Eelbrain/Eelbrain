@@ -34,7 +34,7 @@ data.head()
 data.summary()
 
 ###############################################################################
-# Individual rows and columns can be retrieved with common indexing: 
+# Individual rows and columns can be retrieved with common indexing:
 
 data[10:15]
 

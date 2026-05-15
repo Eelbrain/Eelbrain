@@ -1,7 +1,7 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 from inspect import getfullargspec
 import re
-from typing import Collection, List, Tuple, Union
+from collections.abc import Collection
 
 import mne
 
@@ -47,7 +47,7 @@ def tail_arg(tail):
         else:
             return -1
     except Exception:
-        raise TypeError("tail=%r; needs to be 0, -1 or 1" % (tail,))
+        raise TypeError(f"{tail=}; needs to be 0, -1 or 1")
 
 
 class Test(Definition):
@@ -59,8 +59,8 @@ class Test(Definition):
             self,
             desc: str,
             model: str = None,  # within-subject model; None for single-trial analysis
-            vars: Union[str, tuple, list, dict] = None,  # dynamic variables
-            cat: Tuple[CellArg, ...] = None,  # cells in model to load
+            vars: str | tuple | list | dict = None,  # dynamic variables
+            cat: tuple[CellArg, ...] = None,  # cells in model to load
             depend_on: Collection[str] = (),  # non-model variables
     ):
         self.desc = desc
@@ -110,7 +110,7 @@ class TTestOneSample(Test):
 
     See Also
     --------
-    MneExperiment.tests
+    Pipeline.tests
     """
     kind = 'ttest_1samp'
     DICT_ATTRS = Test.DICT_ATTRS + ('tail',)
@@ -151,7 +151,7 @@ class TTestIndependent(Test):
 
     See Also
     --------
-    MneExperiment.tests
+    Pipeline.tests
 
     Examples
     --------
@@ -174,11 +174,11 @@ class TTestIndependent(Test):
             vars_ = {'group': GroupVar((c1, c0))}
         elif '%' in model:
             # assume 'group' is between, others are within
-            raise NotImplementedError(f"model={model!r}: model with % for {self.__class__.__name__}")
+            raise NotImplementedError(f"{model=}: model with % for {self.__class__.__name__}")
         else:
             vars_ = None
         tail = tail_arg(tail)
-        desc = '%s %s %s' % (c1, TAIL_REPR[tail], c0)
+        desc = f'{c1} {TAIL_REPR[tail]} {c0}'
         Test.__init__(self, desc, '', vars=vars_, depend_on=[model])
         self.between_model = model
         self.c1 = c1
@@ -217,7 +217,7 @@ class TTestRelated(Test):
 
     See Also
     --------
-    MneExperiment.tests
+    Pipeline.tests
 
     Examples
     --------
@@ -273,7 +273,7 @@ class TContrastRelated(Test):
 
     See Also
     --------
-    MneExperiment.tests
+    Pipeline.tests
 
     Examples
     --------
@@ -315,7 +315,7 @@ class ANOVA(Test):
 
     See Also
     --------
-    MneExperiment.tests
+    Pipeline.tests
 
     Examples
     --------
@@ -387,7 +387,7 @@ class TwoStageTest(Test):
 
     See Also
     --------
-    MneExperiment.tests
+    Pipeline.tests
 
     Examples
     --------
@@ -526,7 +526,7 @@ class TestDims:
             return False
         return self.string == other.string and self.time == other.time
 
-    def data_to_ndvar(self, info: mne.Info) -> List[str]:
+    def data_to_ndvar(self, info: mne.Info) -> list[str]:
         assert self.sensor
         if self._to_ndvar is None:
             return info.get_channel_types(unique=True, only_data_chs=True)

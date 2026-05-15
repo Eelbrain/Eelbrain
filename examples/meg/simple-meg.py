@@ -30,11 +30,11 @@ print(table.frequencies('trigger', data=ds))
 # retrieve the trigger variable form the dataset for easier access
 trigger = ds['trigger']
 # use the trigger variable to add more meaningful labels to the dataset
-condition_labels = {1:'LA', 2:'RA', 3:'LV', 4:'RV', 5:'smiley', 32:'button'}
+condition_labels = {1: 'LA', 2: 'RA', 3: 'LV', 4: 'RV', 5: 'smiley', 32: 'button'}
 ds['condition'] = Factor(trigger, labels=condition_labels)
-side_labels = {1: 'L', 2:'R', 3:'L', 4:'R', 5:'None', 32:'None'}
+side_labels = {1: 'L', 2: 'R', 3: 'L', 4: 'R', 5: 'None', 32: 'None'}
 ds['side'] = Factor(trigger, labels=side_labels)
-modality_labels = {1: 'A', 2:'A', 3:'V', 4:'V', 5:'None', 32:'None'}
+modality_labels = {1: 'A', 2: 'A', 3: 'V', 4: 'V', 5: 'None', 32: 'None'}
 ds['modality'] = Factor(trigger, labels=modality_labels)
 
 # print the first 10 events with the new labels
@@ -55,7 +55,7 @@ ds_sub = ds.sub("modality != 'None'")
 # epoch to the trigger i.e., t=0). Reject trials with peak to peak values larger
 # than 3 pico tesla.
 ds_sub = load.mne.add_epochs(ds_sub, -0.1, 0.6, baseline=(None, 0),
-                              reject=3e-12, sysname='neuromag306mag')
+                             reject=3e-12, sysname='neuromag306mag')
 # check how many events are left
 print(table.frequencies('modality', data=ds_sub))
 

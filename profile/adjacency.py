@@ -1,7 +1,6 @@
 import numpy as np
 from scipy import ndimage
 import mne
-from eelbrain._stats import testnd as tnd
 from eelbrain import *
 
 mne.set_log_level('warning')

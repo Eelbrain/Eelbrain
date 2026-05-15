@@ -83,19 +83,19 @@ def time_results(
     colors_ = colors
     if pairwise_pmax is not None:
         plots = []
-        clusters_ = clusters.sub("p <= %s" % pairwise_pmax)
+        clusters_ = clusters.sub(f"p <= {pairwise_pmax}")
         clusters_.sort("tstart")
         for cluster in clusters_.itercases():
             cid = cluster['id']
             c_tstart = cluster['tstart']
             c_tstop = cluster['tstop']
-            tw_str = "%s - %s ms" % (ms(c_tstart), ms(c_tstop))
+            tw_str = f"{ms(c_tstart)} - {ms(c_tstop)} ms"
             if 'effect' in cluster:
-                title = "%s %s%s: %s" % (cluster['effect'], cid, cluster['sig'], tw_str)
+                title = f"{cluster['effect']} {cid}{cluster['sig']}: {tw_str}"
                 model_ = cluster['effect'].replace(' x ', '%')
                 colors_ = colors if model_ == model else None
             else:
-                title = "Cluster %s%s: %s" % (cid, cluster['sig'], tw_str)
+                title = f"Cluster {cid}{cluster['sig']}: {tw_str}"
             y_ = data[res.y].summary(time=(c_tstart, c_tstop))
             p = plot.Barplot(y_, model_, res.match, sub, data=data, corr=None, show=False, colors=colors_, title=title)
             plots.append(p.image())

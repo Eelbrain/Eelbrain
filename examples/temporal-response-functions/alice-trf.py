@@ -48,7 +48,7 @@ raw = mne.io.read_raw(EEG_DIR / SUBJECT / f'{SUBJECT}_alice-raw.fif', preload=Tr
 raw.filter(LOW_FREQUENCY, HIGH_FREQUENCY, n_jobs=1)
 
 # Interpolate bad channels
-# This is not structly necessary for a single subject. 
+# This is not structly necessary for a single subject.
 # However, when processing multiple subjects, it will allow comparing results across all sensors.
 raw.interpolate_bads()
 
@@ -63,7 +63,7 @@ events
 
 t0 = events[0, 'i_start'] / raw.info['sfreq']
 xlim = [t0, t0 + 5]
-p = eelbrain.plot.TopoButterfly(raw, t=t0+1, xlim=xlim, vmax=1e-4, h=3, w=10, clip='circle')
+p = eelbrain.plot.TopoButterfly(raw, t=t0 + 1, xlim=xlim, vmax=1e-4, h=3, w=10, clip='circle')
 
 ###############################################################################
 # Create a predictor
@@ -155,7 +155,7 @@ p = eelbrain.plot.TopoArray(trf.h, t=[0.050, 0.120, 0.150], w=6, h=4, clip='circ
 # Predictive power
 # ----------------
 # In order to derive an unbiased estimate of predictive power,
-# we can use cross-validation. 
+# we can use cross-validation.
 # That means part of the data is never used while estimating the TRF,
 # and can be used in the end to calculate how well the TRF can predict neural data.
 # The :func:`boosting` function uses *K*-fold cross-validation.
@@ -190,7 +190,7 @@ decoder = eelbrain.boosting('envelope', 'eeg', -0.500, 0, data=events[:11], part
 # handled automatically because the kernel, ``decoder.h``, includes a time axis
 # (``decoder.h.time``) with relative delays between input and output.
 
-# Normalize the EEG 
+# Normalize the EEG
 eeg_11 = events[11, 'eeg'] / decoder.x_scale
 
 # Predict the envelope by convolving the decoder with the EEG

@@ -5,7 +5,8 @@ import os
 import sys
 import packaging.version
 from tempfile import mkdtemp
-from typing import Any, Callable, Literal, Sequence, Union
+from typing import Any, Literal
+from collections.abc import Callable, Sequence
 from time import time, sleep
 from warnings import warn
 
@@ -356,9 +357,9 @@ class Brain(TimeSlicer, surfer.Brain):
             vmax: float = None,
             smoothing_steps: int = None,
             colorbar: bool = False,
-            time_label: Union[str, Callable] = 'ms',
+            time_label: str | Callable = 'ms',
             lighting: bool = False,
-            contours: Union[bool, Sequence[float]] = None,
+            contours: bool | Sequence[float] = None,
             alpha: float = 1,
             remove_existing: bool = False,
     ):
@@ -420,7 +421,7 @@ class Brain(TimeSlicer, surfer.Brain):
             times = ndvar.time.times
             data_dims = (source.name, 'time')
             if time_label == 'ms':
-                def time_label(x): return '%s ms' % int(round(x * 1000))
+                def time_label(x): return f'{x * 1000:.0f} ms'
             elif time_label == 's':
                 time_label = '%.3f s'
             elif time_label is False:
@@ -547,7 +548,7 @@ class Brain(TimeSlicer, surfer.Brain):
         source = self._check_source_space(ndvar)
         x = ndvar.get_data(source.name)
         if x.dtype.kind not in 'iu':
-            raise TypeError("Need NDVar of integer type, not %r" % (x.dtype,))
+            raise TypeError(f"Need NDVar of integer type, not {x.dtype!r}")
         # determine colors
         label_values = np.unique(x)
         if colors is None or isinstance(colors, str):
@@ -646,7 +647,7 @@ class Brain(TimeSlicer, surfer.Brain):
         source = self._check_source_space(ndvar)
         x = ndvar.get_data(source.name)
         if x.dtype.kind != 'b':
-            raise ValueError("Require NDVar of type bool, got %r" % (x.dtype,))
+            raise ValueError(f"Require NDVar of type bool, got {x.dtype!r}")
         if name is None:
             name = str(ndvar.name)
         color = to_rgba(color, alpha)
@@ -692,7 +693,7 @@ class Brain(TimeSlicer, surfer.Brain):
             if isinstance(p_map, MultiEffectNDTest):
                 raise NotImplementedError(f"plot.brain.p_map for {p_map.__class__.__name__}")
             elif param_map is not None:
-                raise TypeError(f"param_map={param_map!r} when p_map is NDTest result")
+                raise TypeError(f"{param_map=} when p_map is NDTest result")
             res = p_map
             p_map = res.p
             param_map = res._statistic_map
@@ -950,10 +951,8 @@ class Brain(TimeSlicer, surfer.Brain):
             raise RuntimeError("Can only plot legend for brain displaying "
                                "parcellation")
         elif isinstance(self.__annot, str):
-            lh = os.path.join(self.subjects_dir, self.subject_id, 'label',
-                              'lh.%s.annot' % self.__annot)
-            rh = os.path.join(self.subjects_dir, self.subject_id, 'label',
-                              'rh.%s.annot' % self.__annot)
+            lh = os.path.join(self.subjects_dir, self.subject_id, 'label', f'lh.{self.__annot}.annot')
+            rh = os.path.join(self.subjects_dir, self.subject_id, 'label', f'rh.{self.__annot}.annot')
             return annot_legend(lh, rh, *args, **kwargs)
         else:
             return ColorList(self.__annot, sorted(self.__annot), *args, **kwargs)
@@ -985,7 +984,7 @@ class Brain(TimeSlicer, surfer.Brain):
         else:
             labels = list(labels)
             if not all(isinstance(l, str) for l in labels):
-                raise TypeError("labels=%r" % (labels,))
+                raise TypeError(f"{labels=}")
         surfer_labels = set(labels).intersection(self._label_dicts)
         surfer.Brain.remove_labels(self, surfer_labels)
         for label in labels:

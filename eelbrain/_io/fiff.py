@@ -10,7 +10,8 @@ import operator
 import os
 from pathlib import Path
 import re
-from typing import Any, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Any, Literal
+from collections.abc import Sequence
 import warnings
 
 import mne
@@ -44,8 +45,8 @@ except ImportError:
         KIT.SYSTEM_UMD_2014_12: 'KIT-UMD-3',
     }
 
-BaselineArg = Optional[Tuple[Optional[float], Optional[float]]]
-AdjacencyArg = Union[str, Sequence[Tuple[str, str]], np.ndarray]
+BaselineArg = tuple[float | None, float | None] | None
+AdjacencyArg = str | Sequence[tuple[str, str]] | np.ndarray
 DataArg = Literal['eeg', 'mag', 'grad']
 PicksArg = Any
 
@@ -60,7 +61,7 @@ def mne_neighbor_files():
 
 def mne_raw(
         path: PathArg = None,
-        proj: Union[bool, str] = False,
+        proj: bool | str = False,
         **kwargs,
 ) -> mne.io.BaseRaw:
     """Load a :class:`mne.io.Raw` object
@@ -104,7 +105,7 @@ def mne_raw(
         # MNE Raw supports list of file-names
         raw = mne.io.read_raw_fif(path, **kwargs)
     else:
-        raise TypeError("path=%r" % (path,))
+        raise TypeError(f"{path=}")
 
     if proj:
         if proj is True:
@@ -136,12 +137,12 @@ def mne_raw(
 
 
 def events(
-        raw: Union[PathArg, mne.io.BaseRaw] = None,
+        raw: PathArg | mne.io.BaseRaw = None,
         merge: int = None,
-        proj: Union[bool, str] = False,
+        proj: bool | str = False,
         name: str = None,
-        bads: List = None,
-        stim_channel: Union[str, Sequence[str]] = None,
+        bads: list = None,
+        stim_channel: str | Sequence[str] = None,
         events: str = None,
         annotations: bool = None,
         feature: Literal['onset', 'offset', 'step'] = 'onset',
@@ -356,7 +357,7 @@ def epochs(
         proj: bool = False,
         data: DataArg = None,
         reject: float = None,
-        exclude: Union[str, Sequence[str]] = 'bads',
+        exclude: str | Sequence[str] = 'bads',
         info: dict = None,
         name: str = None,
         raw: mne.io.BaseRaw = None,
@@ -743,7 +744,7 @@ def sensor_dim(
     if sysname and sysname.startswith('neuromag'):
         ch_unit = {ch['unit'] for ch in chs}
         if len(ch_unit) > 1:
-            raise RuntimeError(f"More than one channel kind for sysname={sysname!r}: {tuple(ch_unit)}")
+            raise RuntimeError(f"More than one channel kind for {sysname=}: {tuple(ch_unit)}")
         ch_unit = ch_unit.pop()
         if ch_unit == FIFF.FIFF_UNIT_T_M:
             sysname = 'neuromag306planar'
@@ -817,18 +818,18 @@ def sensor_dim(
 @deprecate_kwarg('connectivity', 'adjacency', '0.41', '0.42')
 def variable_length_epochs(
         events: Dataset,
-        tmin: Union[float, Sequence[float]],
-        tmax: Union[float, Sequence[float]] = None,
+        tmin: float | Sequence[float],
+        tmax: float | Sequence[float] = None,
         baseline: BaselineArg = None,
         allow_truncation: bool = False,
         data: DataArg = None,
-        exclude: Union[str, Sequence[str]] = 'bads',
+        exclude: str | Sequence[str] = 'bads',
         sysname: str = None,
         adjacency: AdjacencyArg = None,
-        tstop: Union[float, Sequence[float]] = None,
+        tstop: float | Sequence[float] = None,
         name: str = None,
         **kwargs,
-) -> List[NDVar]:
+) -> list[NDVar]:
     """Load data epochs where each epoch has a different length
 
     Parameters
@@ -896,15 +897,15 @@ def variable_length_epochs(
 
 def variable_length_mne_epochs(
         events: Dataset,
-        tmin: Union[float, Sequence[float], str],
-        tmax: Union[float, Sequence[float], str] = None,
+        tmin: float | Sequence[float] | str,
+        tmax: float | Sequence[float] | str = None,
         baseline: BaselineArg = None,
         allow_truncation: bool = False,
-        tstop: Union[float, Sequence[float]] = None,
+        tstop: float | Sequence[float] = None,
         picks: PicksArg = None,
         decim: int = 1,
         **kwargs,
-) -> List[mne.Epochs]:
+) -> list[mne.Epochs]:
     """Load mne Epochs where each epoch has a different length
 
     Parameters
@@ -988,16 +989,16 @@ def variable_length_mne_epochs(
 
 @deprecate_kwarg('connectivity', 'adjacency', '0.41', '0.42')
 def raw_ndvar(
-        raw: Union[mne.io.BaseRaw, PathArg],
-        i_start: Union[int, Sequence[int]] = None,
-        i_stop: Union[int, Sequence[int]] = None,
+        raw: mne.io.BaseRaw | PathArg,
+        i_start: int | Sequence[int] = None,
+        i_stop: int | Sequence[int] = None,
         decim: int = 1,
         reset_tmin: bool = False,
         data: str = None,
-        exclude: Union[str, Sequence[str]] = 'bads',
+        exclude: str | Sequence[str] = 'bads',
         sysname: str = None,
         adjacency: AdjacencyArg = None,
-) -> Union[NDVar, List[NDVar]]:
+) -> NDVar | list[NDVar]:
     """Raw data as NDVar
 
     Parameters
@@ -1016,7 +1017,7 @@ def raw_ndvar(
         Set the time axis of each :class:`NDVar` in the output to begin at 0.
         By default, the NDVars wll retain time information from the raw data.
     data
-        The kind of data to include (e.g., ``"'meg"``; see :func:`mne.pick_types`).
+        The kind of data to include (e.g., ``"meg"``; see :func:`mne.pick_types`).
         By default, guess based on the data in ``raw``.
     exclude
         Channels to exclude (:func:`mne.pick_types` kwarg).
@@ -1102,10 +1103,10 @@ def raw_ndvar(
 
 @deprecate_kwarg('connectivity', 'adjacency', '0.41', '0.42')
 def epochs_ndvar(
-        epochs: Union[mne.BaseEpochs, PathArg],
+        epochs: mne.BaseEpochs | PathArg,
         name: str = None,
         data: DataArg = None,
-        exclude: Union[str, Sequence[str]] = 'bads',
+        exclude: str | Sequence[str] = 'bads',
         mult: float = 1,
         info: dict = None,
         sensors: Sensor = None,
@@ -1229,7 +1230,7 @@ def evoked_ndvar(evoked, name=None, data=None, exclude='bads', vmax=None,
     elif isinstance(evoked, (tuple, list)):
         case_out = True
     else:
-        raise TypeError("evoked=%s" % repr(evoked))
+        raise TypeError(f"{evoked=}")
 
     # data type to load
     if data is None:
@@ -1296,7 +1297,7 @@ def evoked_ndvar(evoked, name=None, data=None, exclude='bads', vmax=None,
 
 @deprecate_kwarg('connectivity', 'adjacency', '0.41', '0.42')
 def forward_operator(
-        fwd: Union[str, mne.Forward],
+        fwd: str | mne.Forward,
         src: str,
         subjects_dir: PathArg = None,
         parc: str = 'aparc',
@@ -1407,7 +1408,7 @@ def inverse_operator(inv, src, subjects_dir=None, parc='aparc', name=None):
 
 @deprecate_kwarg('connectivity', 'adjacency', '0.41', '0.42')
 def stc_ndvar(
-        stc: Union[_BaseSourceEstimate, Sequence[_BaseSourceEstimate], PathArg],
+        stc: _BaseSourceEstimate | Sequence[_BaseSourceEstimate] | PathArg,
         subject: str,
         src: str,
         subjects_dir: PathArg = None,
@@ -1415,7 +1416,7 @@ def stc_ndvar(
         fixed: bool = None,
         name: str = None,
         check: bool = True,
-        parc: Optional[str] = '',
+        parc: str | None = '',
         adjacency: str = None,
         sss_filename: str = '{subject}-{src}-src.fif',
 ):
@@ -1533,8 +1534,8 @@ def ndvar_stc(
         ndvar: NDVar,
 ) -> (
     mne.source_estimate._BaseSourceEstimate,
-    Tuple[int, ...],  # target shape
-    List[Dimension],  # Dimensions
+    tuple[int, ...],  # target shape
+    list[Dimension],  # Dimensions
 ):
     """Convert an NDVar with source space data to an :mod:`mne` object
 

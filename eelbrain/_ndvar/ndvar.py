@@ -12,7 +12,8 @@ from itertools import groupby, repeat, zip_longest
 from math import floor
 from numbers import Real
 import operator
-from typing import Any, Callable, Literal, Sequence, Union
+from typing import Any, Literal
+from collections.abc import Callable, Sequence
 
 import mne
 import numpy as np
@@ -34,7 +35,7 @@ from .._utils.numpy_utils import aslice
 from ._convolve import convolve_2d
 
 
-NDNumeric = Union[NDVar, Var, np.ndarray, float]
+NDNumeric = NDVar | Var | np.ndarray | float
 SequenceOfNDNumeric = Sequence[NDNumeric]
 
 
@@ -51,7 +52,7 @@ class Alignement:
         elif last is None:
             pass
         else:
-            raise TypeError(f'last={last!r}')
+            raise TypeError(f'{last=}')
 
         # determine dimensions
         n_shared = len(shared_dims)
@@ -67,10 +68,10 @@ class Alignement:
 
 
 def concatenate(
-        ndvars: Union[NDVar, Sequence[NDVar]],
-        dim: Union[str, Dimension] = 'time',
+        ndvars: NDVar | Sequence[NDVar],
+        dim: str | Dimension = 'time',
         name: str = None,
-        tmin: Union[float, str] = 0,
+        tmin: float | str = 0,
         info: dict = None,
         ravel: str = None,
 ):
@@ -110,10 +111,10 @@ def concatenate(
         elif ndvars.has_case:
             ravel = 'case'
         else:
-            raise ValueError(f"ndvars={ndvars!r}: parameters are ambiguous since more than one dimension could be raveled for concatenation; specify ravel parameter")
+            raise ValueError(f"{ndvars=}: parameters are ambiguous since more than one dimension could be raveled for concatenation; specify ravel parameter")
         ndvars = [ndvars.sub(**{ravel: v}) for v in ndvars.get_dim(ravel)]
     elif ravel is not None:
-        raise TypeError(f'ravel={ravel!r}: parameter ony applies when ndvars is an NDVar')
+        raise TypeError(f'{ravel=}: parameter ony applies when ndvars is an NDVar')
     else:
         ndvars = list(ndvars)
     ndvar = ndvars[0]
@@ -149,7 +150,7 @@ def concatenate(
             if isinstance(out_dim, UTS):
                 if isinstance(tmin, str):
                     if tmin != 'first':
-                        raise ValueError(f"tmin={tmin!r}")
+                        raise ValueError(f"{tmin=}")
                 else:
                     out_dim = set_tmin(out_dim, tmin)
             x = np.concatenate([v.get_data(dim_names) for v in ndvars], axis)
@@ -314,7 +315,7 @@ def correlation_coefficient(x, y, dim=None, name=None):
     if dim is None:
         shared = set(x.dimnames).intersection(y.dimnames)
         if not shared:
-            raise ValueError("%r and %r have no shared dimensions" % (x, y))
+            raise ValueError(f"{x!r} and {y!r} have no shared dimensions")
         dims = list(shared)
     elif isinstance(dim, str):
         dims = [dim]
@@ -397,9 +398,9 @@ def cross_correlation(in1, in2, name=None):
 
 def cwt_morlet(
         y: NDVar,
-        frequencies: Union[Sequence[float], float],
+        frequencies: Sequence[float] | float,
         use_fft: bool = True,
-        n_cycles: Union[float, Sequence[float]] = 3.0,
+        n_cycles: float | Sequence[float] = 3.0,
         zero_mean: bool = True,
         output: Literal['complex', 'power', 'phase', 'magnitude'] = 'magnitude',
         decim: int = 1,
@@ -536,7 +537,7 @@ def filter_data(
         high: float = None,
         *,
         name: str = None,
-        n_jobs: Union[str, int, None] = 1,  # overhead not worth it; tested for 5 min KIT MEG @ 1000 Hz
+        n_jobs: str | int | None = 1,  # overhead not worth it; tested for 5 min KIT MEG @ 1000 Hz
         **filter_kwargs,
 ) -> NDVar:
     """Apply :func:`mne.filter.filter_data` to an NDVar
@@ -762,7 +763,7 @@ def label_operator(labels, operation='mean', exclude=None, weights=None,
         Label operator, ``m.dot(data)`` extracts label mean/sum.
     """
     if operation not in ('mean', 'sum'):
-        raise ValueError("operation=%r" % (operation,))
+        raise ValueError(f"{operation=}")
     dimname = labels.get_dimnames((None,))[0]
     dim = labels.get_dim(dimname)
     if weights is not None:
@@ -966,9 +967,9 @@ def normalize_in_cells(
 
 
 def powerlaw_noise(
-        dims: Union[NDVar, Dimension, Sequence[Dimension]],
+        dims: NDVar | Dimension | Sequence[Dimension],
         exponent: float,
-        seed: Union[int, np.random.RandomState] = None,
+        seed: int | np.random.RandomState = None,
 ):
     """Gaussian :math:`(1/f)^{exponent}` noise.
 
@@ -1006,7 +1007,7 @@ def powerlaw_noise(
         if isinstance(dim, UTS):
             break
     else:
-        raise ValueError(f"dims={dims!r}: No time dimension")
+        raise ValueError(f"{dims=}: No time dimension")
     if time_ax < len(shape) - 1:
         shape.append(shape.pop(time_ax))
     x = powerlaw_psd_gaussian(exponent, shape, rng)
@@ -1094,11 +1095,11 @@ def rename_dim(ndvar, old_name, new_name):
 def resample(
         ndvar: NDVar,
         sfreq: float,
-        npad: Union[int, Literal['auto']] = 'auto',
-        window: Union[str, tuple] = None,
+        npad: int | Literal['auto'] = 'auto',
+        window: str | tuple = None,
         pad: str = 'edge',
         name: str = None,
-        n_jobs: Union[str, int] = 1,
+        n_jobs: str | int = 1,
 ) -> NDVar:
     """Resample an NDVar along the time dimension
 
@@ -1167,6 +1168,7 @@ def resample(
 
 class Filter:
     "Filter and downsample"
+
     def __init__(self, sfreq=None):
         self.sfreq = sfreq
 
@@ -1174,7 +1176,7 @@ class Filter:
         args = self._repr_args()
         if self.sfreq:
             args += ', sfreq=%i' % self.sfreq
-        return '%s(%s)' % (self.__class__.__name__, args)
+        return f'{self.__class__.__name__}({args})'
 
     def _repr_args(self):
         raise NotImplementedError
@@ -1228,6 +1230,7 @@ class Butterworth(Filter):
     -----
     Uses :func:`scipy.signal.butter`.
     """
+
     def __init__(self, low, high, order, sfreq=None):
         if not low and not high:
             raise ValueError("Neither low nor high set")
@@ -1297,9 +1300,9 @@ def segment(
 
 
 def set_adjacency(
-        data: Union[NDVar, Dimension],
+        data: NDVar | Dimension,
         dim: str = None,
-        adjacency: Union[str, Sequence] = 'none',
+        adjacency: str | Sequence = 'none',
         name: str = None,
 ):
     """Change the adjacency of an NDVar or a Dimension
@@ -1344,12 +1347,12 @@ def set_adjacency(
 
 
 def set_parc(
-        data: Union[NDVar, SourceSpace],
-        parc: Union[str, Factor],
+        data: NDVar | SourceSpace,
+        parc: str | Factor,
         dim: str = 'source',
         mask: bool = False,
         name: str = None,
-) -> Union[NDVar, SourceSpace]:
+) -> NDVar | SourceSpace:
     """Change the parcellation of an :class:`NDVar` or :class:`SourceSpace` dimension
 
     Parameters
@@ -1397,10 +1400,10 @@ def set_parc(
 
 
 def set_tmin(
-        data: Union[NDVar, UTS],
+        data: NDVar | UTS,
         tmin: float = 0.,
         name: str = None,
-) -> Union[NDVar, UTS]:
+) -> NDVar | UTS:
     """Shift the time axis of an :class:`NDVar` relative to its data
 
     Parameters
@@ -1436,7 +1439,7 @@ def set_tmin(
 
 def set_time(
         ndvar: NDVar,
-        time: Union[NDVar, UTS],
+        time: NDVar | UTS,
         mode: str = 'constant',
         name: str = None,
         **kwargs,

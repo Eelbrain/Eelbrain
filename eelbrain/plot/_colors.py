@@ -3,7 +3,8 @@
 from collections.abc import Iterator
 import colorsys
 from itertools import chain
-from typing import Any, Dict, Literal, Sequence, Tuple, Union
+from typing import Any, Literal
+from collections.abc import Sequence
 
 import numpy as np
 import matplotlib
@@ -58,11 +59,12 @@ class ColorGrid(EelFigure):
     row_labels : list of :class:`matplotlib.text.Text`
         Row labels.
     """
+
     def __init__(
             self,
             row_cells: Sequence[str],
             column_cells: Sequence[str],
-            colors: Dict[CellArg, Any],
+            colors: dict[CellArg, Any],
             size: float = None,
             column_label_position: str = 'top',
             row_first: bool = None,
@@ -130,7 +132,7 @@ class ColorGrid(EelFigure):
                     y = row + 0.5
                     ax.plot([col, col + 1], [y, y], **styles[cell].line_args)
                 else:
-                    raise ValueError(f"shape={shape!r}")
+                    raise ValueError(f"{shape=}")
 
         # column labels
         self.column_labels = []
@@ -152,7 +154,7 @@ class ColorGrid(EelFigure):
                 ymax = n_rows
                 ymin = n_rows - self._layout.h / size
             else:
-                raise ValueError(f"column_label_position={column_label_position!r}")
+                raise ValueError(f"{column_label_position=}")
 
             ha = 'left' if tilt_labels else 'center'
             x_offset = 0 if tilt_labels else 0.5
@@ -254,11 +256,12 @@ class ColorList(EelFigure):
     labels : list of :class:`matplotlib.text.Text`
         Color labels.
     """
+
     def __init__(
             self,
-            colors: Dict[CellArg, Any],
+            colors: dict[CellArg, Any],
             cells: Sequence[CellArg] = None,
-            labels: Dict[CellArg, str] = None,
+            labels: dict[CellArg, str] = None,
             size: float = None,
             h: float = None,
             shape: Literal['box', 'line', 'marker'] = 'box',
@@ -407,21 +410,22 @@ class ColorBar(EelFigure):
     offset
         Additional offset when using ``right_of``/``left_of``/``below``.
     """
+
     def __init__(
             self,
             cmap: CMapArg,
             vmin: float = None,
             vmax: float = None,
-            label: Union[bool, str] = True,
+            label: bool | str = True,
             label_position: Literal['left', 'right', 'top', 'bottom'] = None,
             label_rotation: float = None,
             clipmin: float = None,
             clipmax: float = None,
             orientation: Literal['horizontal', 'vertical'] = 'horizontal',
-            unit: Union[str, float] = None,
+            unit: str | float = None,
             contours: Sequence[float] = (),
             width: float = None,
-            ticks: Union[int, Dict[float, str], Sequence[float]] = None,
+            ticks: int | dict[float, str] | Sequence[float] = None,
             threshold: float = None,
             ticklocation: Literal['auto', 'top', 'bottom', 'left', 'right'] = 'auto',
             background: ColorArg = None,
@@ -603,7 +607,7 @@ class ColorBar(EelFigure):
                 w, h = self.figure.get_size_inches()
                 w -= (x0 / self._layout.dpi)
                 self.figure.set_size_inches(w, h, forward=True)
-        super(ColorBar, self)._tight()
+        super()._tight()
 
     def __update_bar_tickness(self):
         # Override to keep bar thickness
@@ -632,7 +636,7 @@ def adjust_hls(
         hue: float = 0,
         lightness: float = 0,
         saturation: float = 0,
-) -> Tuple[float, float, float, float]:
+) -> tuple[float, float, float, float]:
     *rgb, alpha = matplotlib.colors.to_rgba(color)
     h, l, s = colorsys.rgb_to_hls(*rgb)
     if hue:

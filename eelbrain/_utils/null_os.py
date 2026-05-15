@@ -3,6 +3,7 @@ from contextlib import ContextDecorator
 
 class NullContext(ContextDecorator):
     """Context disabling idle sleep and App Nap on macOS"""
+
     def __init__(self):
         pass
 

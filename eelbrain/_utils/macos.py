@@ -5,6 +5,7 @@ from appnope import NSActivityUserInitiated, beginActivityWithOptions, endActivi
 
 class ActivityContext(ContextDecorator):
     """Context disabling idle sleep and App Nap on macOS"""
+
     def __init__(self, options, message):
         self.n_processes = 0
         self.options = options

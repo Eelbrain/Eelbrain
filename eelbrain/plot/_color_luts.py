@@ -114,7 +114,7 @@ def p_lut(pmap, tmap=None, p0=0.05, p1=0.01, p0alpha=0.5, n=256):
         lut[:middle, 3] = 255
         lut[p0p:, 3] = 255
     elif not 0 <= p0alpha <= 1:
-        raise ValueError("p0alpha=%r" % (p0alpha,))
+        raise ValueError(f"{p0alpha=}")
     else:
         p0_alpha = int(round(p0alpha * 255))
         lut[:p1n, 3] = 255

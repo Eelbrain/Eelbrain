@@ -5,7 +5,8 @@ from __future__ import annotations
 import dataclasses
 from itertools import repeat
 from math import floor, sqrt
-from typing import Any, Dict, Literal, Sequence, Tuple, Union
+from typing import Any, Literal
+from collections.abc import Sequence
 
 import matplotlib
 import matplotlib.axes
@@ -118,34 +119,34 @@ class Topomap(SensorMapMixin, ColorMapMixin, TopoMapKey, EelFigure):
     @deprecate_ds_arg
     def __init__(
             self,
-            y: Union[NDVarArg, Sequence[NDVarArg]],
+            y: NDVarArg | Sequence[NDVarArg],
             xax: CategorialArg = None,
             data: Dataset = None,
             sub: IndexArg = None,
             vmax: float = None,
             vmin: float = None,
             cmap: CMapArg = None,
-            contours: Union[int, Sequence, Dict] = None,
+            contours: int | Sequence | dict = None,
             # topomap args
             proj: str = 'default',
             res: int = None,
             interpolation: InterpolationArg = None,
-            clip: Union[bool, str] = 'even',
+            clip: bool | str = 'even',
             clip_distance: float = 0.05,
-            head_radius: Union[float, Tuple[float, float]] = None,
-            head_pos: Union[float, Sequence[float]] = 0,
+            head_radius: float | tuple[float, float] = None,
+            head_pos: float | Sequence[float] = 0,
             im_interpolation: str = None,
             # sensor-map args
-            sensors: Union[str, matplotlib.markers.MarkerStyle] = '.',
+            sensors: str | matplotlib.markers.MarkerStyle = '.',
             sensorlabels: SensorLabelsArg = None,
             mark: IndexArg = None,
-            mcolor: Union[ColorArg, Sequence[ColorArg]] = None,
-            msize: Union[float, Sequence[float]] = 20,
-            marker: Union[str, matplotlib.markers.MarkerStyle] = 'o',
+            mcolor: ColorArg | Sequence[ColorArg] = None,
+            msize: float | Sequence[float] = 20,
+            marker: str | matplotlib.markers.MarkerStyle = 'o',
             # layout
-            axtitle: Union[bool, Sequence[str]] = True,
-            xlabel: Union[bool, str] = None,
-            margins: Dict[str, float] = None,
+            axtitle: bool | Sequence[str] = True,
+            xlabel: bool | str = None,
+            margins: dict[str, float] = None,
             **kwargs,
     ):
         plot_data = PlotData.from_args(y, ('sensor',), xax, data, sub)
@@ -154,9 +155,9 @@ class Topomap(SensorMapMixin, ColorMapMixin, TopoMapKey, EelFigure):
         if isinstance(proj, str):
             proj = repeat(proj, plot_data.n_plots)
         elif not isinstance(proj, Sequence):
-            raise TypeError(f"proj={proj!r}")
+            raise TypeError(f"{proj=}")
         elif len(proj) != plot_data.n_plots:
-            raise ValueError(f"proj={proj!r}: need as many proj as axes ({plot_data.n_plots})")
+            raise ValueError(f"{proj=}: need as many proj as axes ({plot_data.n_plots})")
 
         layout = ImLayout(plot_data.plot_used, 1.1, 2, margins, axtitle=axtitle, **kwargs)
         EelFigure.__init__(self, plot_data.frame_title, layout)
@@ -268,7 +269,7 @@ class TopomapBins(SensorMapMixin, ColorMapMixin, TopoMapKey, EelFigure):
     @deprecate_ds_arg
     def __init__(
             self,
-            y: Union[NDVarArg, Sequence[NDVarArg]],
+            y: NDVarArg | Sequence[NDVarArg],
             xax: CategorialArg = None,
             data: Dataset = None,
             sub: IndexArg = None,
@@ -278,25 +279,25 @@ class TopomapBins(SensorMapMixin, ColorMapMixin, TopoMapKey, EelFigure):
             vmax: float = None,
             vmin: float = None,
             cmap: CMapArg = None,
-            contours: Union[int, Sequence, Dict] = None,
+            contours: int | Sequence | dict = None,
             # topomap args
             proj: str = 'default',
             res: int = None,
             interpolation: InterpolationArg = None,
-            clip: Union[bool, str] = 'even',
+            clip: bool | str = 'even',
             clip_distance: float = 0.05,
-            head_radius: Union[float, Tuple[float, float]] = None,
-            head_pos: Union[float, Sequence[float]] = 0,
+            head_radius: float | tuple[float, float] = None,
+            head_pos: float | Sequence[float] = 0,
             im_interpolation: str = None,
             # sensor-map args
-            sensors: Union[str, matplotlib.markers.MarkerStyle] = '.',
+            sensors: str | matplotlib.markers.MarkerStyle = '.',
             sensorlabels: SensorLabelsArg = None,
             mark: IndexArg = None,
-            mcolor: Union[ColorArg, Sequence[ColorArg]] = None,
-            msize: Union[float, Sequence[float]] = 20,
-            marker: Union[str, matplotlib.markers.MarkerStyle] = 'o',
+            mcolor: ColorArg | Sequence[ColorArg] = None,
+            msize: float | Sequence[float] = 20,
+            marker: str | matplotlib.markers.MarkerStyle = 'o',
             # layout
-            axtitle: Union[bool, Sequence[str]] = True,
+            axtitle: bool | Sequence[str] = True,
             **kwargs,
     ):
         plot_data = PlotData.from_args(y, ('sensor', 'time'), xax, data, sub)
@@ -460,14 +461,14 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
     @deprecate_ds_arg
     def __init__(
             self,
-            y: Union[NDVarArg, Sequence[NDVarArg]],
+            y: NDVarArg | Sequence[NDVarArg],
             xax: CategorialArg = None,
             data: Dataset = None,
             sub: IndexArg = None,
             vmax: float = None,
             vmin: float = None,
             cmap: CMapArg = None,
-            contours: Union[int, Sequence, Dict] = None,
+            contours: int | Sequence | dict = None,
             color: Any = None,
             linewidth: float = None,
             # topomap args
@@ -475,24 +476,24 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
             proj: str = 'default',
             res: int = None,
             interpolation: InterpolationArg = None,
-            clip: Union[bool, str] = 'even',
+            clip: bool | str = 'even',
             clip_distance: float = 0.05,
-            head_radius: Union[float, Tuple[float, float]] = None,
-            head_pos: Union[float, Sequence[float]] = 0,
+            head_radius: float | tuple[float, float] = None,
+            head_pos: float | Sequence[float] = 0,
             im_interpolation: str = None,
             # sensor-map args
-            sensors: Union[str, matplotlib.markers.MarkerStyle] = '.',
+            sensors: str | matplotlib.markers.MarkerStyle = '.',
             sensorlabels: SensorLabelsArg = None,
             mark: IndexArg = None,
             mcolor: ColorArg = None,
             # layout
-            xlabel: Union[bool, str] = True,
-            ylabel: Union[bool, str] = True,
-            xticklabels: Union[str, int, Sequence[int]] = 'bottom',
-            yticklabels: Union[str, int, Sequence[int]] = 'left',
-            axtitle: Union[bool, Sequence[str]] = True,
+            xlabel: bool | str = True,
+            ylabel: bool | str = True,
+            xticklabels: str | int | Sequence[int] = 'bottom',
+            yticklabels: str | int | Sequence[int] = 'left',
+            axtitle: bool | Sequence[str] = True,
             frame: bool = True,
-            xlim: Union[float, Tuple[float, float]] = None,
+            xlim: float | tuple[float, float] = None,
             **kwargs,
     ):
         plot_data = PlotData.from_args(y, ('sensor', None), xax, data, sub)
@@ -578,7 +579,7 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
         return seg, f"{ms(t)} ms", self._topo_kwargs['proj']
 
     def _on_leave_axes_status_text(self, event):
-        return "Topomap: t = %.3f" % self._current_time
+        return f"Topomap: t = {self._current_time:.3f}"
 
     def _update_time(self, t, fixate):
         TimeSlicerEF._update_time(self, t, fixate)
@@ -646,7 +647,7 @@ class PltTopomap(PltIm):
                 mask = matplotlib.patches.Circle((0.5, 0.5), clip_radius, transform=ax.transData)
                 default_head_radius = clip_radius
             else:
-                raise ValueError('clip=%r' % (clip,))
+                raise ValueError(f'{clip=}')
         else:
             mask = None
             default_head_radius = None
@@ -724,28 +725,29 @@ class AxTopomap(AxImArray):
     mark : list of IDs
         highlight a subset of the sensors
     """
+
     def __init__(
             self,
             ax: matplotlib.axes.Axes,
             layers: AxisData,
             clip: str = 'even',  # even or circle (only applies if interpolation is None)
             clip_distance: float = 0.05,  # distance from outermost sensor for clip=='even'
-            sensors: Union[str, matplotlib.markers.MarkerStyle] = '.',
+            sensors: str | matplotlib.markers.MarkerStyle = '.',
             sensorlabels: SensorLabelsArg = None,
             mark: IndexArg = None,
-            mcolor: Union[ColorArg, Sequence[ColorArg]] = None,
-            msize: Union[float, Sequence[float]] = 20,
-            mmarker: Union[str, matplotlib.markers.MarkerStyle] = 'o',
+            mcolor: ColorArg | Sequence[ColorArg] = None,
+            msize: float | Sequence[float] = 20,
+            mmarker: str | matplotlib.markers.MarkerStyle = 'o',
             proj: str = 'default',  # topomap projection method
             res: int = None,  # topomap image resolution
             im_interpolation: str = None,  # matplotlib imshow interpolation method
-            xlabel: Union[bool, str] = None,
+            xlabel: bool | str = None,
             vlims: dict = {},
             cmaps: dict = {},
             contours: dict = {},
             interpolation: InterpolationArg = None,  # topomap interpolation method
-            head_radius: Union[float, Sequence[float]] = None,
-            head_pos: Union[float, Tuple[float, float]] = 0.,
+            head_radius: float | Sequence[float] = None,
+            head_pos: float | tuple[float, float] = 0.,
             head_linewidth: float = None,
     ):
         self.ax = ax
@@ -794,7 +796,7 @@ class TopoWindow:
     connectionstyle: str = "angle3,angleA=90,angleB=0"
     label_position: Literal['above', 'below', 'none'] = 'above'
     color: ColorArg = UNAMBIGUOUS_COLORS['bluish green']
-    annotation_xy: Tuple[float, float] = (0.5, 1.05)
+    annotation_xy: tuple[float, float] = (0.5, 1.05)
     # internal plot handles
     t_line = None
     pointer = None
@@ -970,37 +972,37 @@ class TopoArray(ColorMapMixin, TopoMapKey, XAxisMixin, EelFigure):
     @deprecate_ds_arg
     def __init__(
             self,
-            y: Union[NDVarArg, Sequence[NDVarArg]],
+            y: NDVarArg | Sequence[NDVarArg],
             xax: CategorialArg = None,
             data: Dataset = None,
             sub: IndexArg = None,
             vmax: float = None,
             vmin: float = None,
             cmap: CMapArg = None,
-            contours: Union[int, Sequence, Dict] = None,
+            contours: int | Sequence | dict = None,
             ntopo: int = None,
             t: Sequence[float] = (),
-            xlim: Union[float, Tuple[float, float]] = None,
+            xlim: float | tuple[float, float] = None,
             # topomap args
             proj: str = 'default',
             res: int = None,
             interpolation: InterpolationArg = None,
-            clip: Union[bool, str] = 'even',
+            clip: bool | str = 'even',
             clip_distance: float = 0.05,
-            head_radius: Union[float, Tuple[float, float]] = None,
-            head_pos: Union[float, Sequence[float]] = 0,
+            head_radius: float | tuple[float, float] = None,
+            head_pos: float | Sequence[float] = 0,
             im_interpolation: str = None,
             # sensor-map args
-            sensors: Union[str, matplotlib.markers.MarkerStyle] = '.',
+            sensors: str | matplotlib.markers.MarkerStyle = '.',
             sensorlabels: SensorLabelsArg = None,
             mark: IndexArg = None,
             mcolor: ColorArg = None,
             # layout
-            axtitle: Union[bool, Sequence[str]] = True,
-            xlabel: Union[bool, str] = True,
-            ylabel: Union[bool, str] = True,
-            xticklabels: Union[str, int, Sequence[int]] = 'bottom',
-            yticklabels: Union[str, int, Sequence[int]] = 'left',
+            axtitle: bool | Sequence[str] = True,
+            xlabel: bool | str = True,
+            ylabel: bool | str = True,
+            xticklabels: str | int | Sequence[int] = 'bottom',
+            yticklabels: str | int | Sequence[int] = 'left',
             connectionstyle: str = "angle3,angleA=90,angleB=0",
             connection_color: ColorArg = UNAMBIGUOUS_COLORS['bluish green'],
             topo_labels: Literal['above', 'below', 'none'] = 'above',

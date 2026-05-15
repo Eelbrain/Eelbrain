@@ -25,8 +25,8 @@ Getting help
 
 To get help, you may want to check (and contribute to):
 
-* The Eelbrian `wiki <https://github.com/christianbrodbeck/Eelbrain/wiki>`_.
-* GitHub `Dicussions <https://github.com/christianbrodbeck/Eelbrain/discussions>`_.
+* The Eelbrian `wiki <https://github.com/Eelbrain/Eelbrain/wiki>`_.
+* GitHub `Dicussions <https://github.com/Eelbrain/Eelbrain/discussions>`_.
 
 
 Plots and GUIs

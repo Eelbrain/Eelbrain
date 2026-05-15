@@ -2,7 +2,8 @@
 """Statistical tests for univariate variables"""
 from functools import cached_property
 import math
-from typing import Dict, Literal, Sequence, Union
+from typing import Literal
+from collections.abc import Sequence
 
 import numpy as np
 import scipy.stats
@@ -23,12 +24,12 @@ __test__ = False
 DEFAULT_LEVELS = {.05: '*', .01: '**', .001: '***'}
 DEFAULT_LEVELS_TREND = {.05: '*', .01: '**', .001: '***', .1: '`'}
 
-MCCArg = Union[bool, Literal['hochberg', 'bonferroni', 'holm']]
+MCCArg = bool | Literal['hochberg', 'bonferroni', 'holm']
 
 
 def get_levels(
-        levels: Union[bool, dict],
-        trend: Union[bool, str] = False,
+        levels: bool | dict,
+        trend: bool | str = False,
 ):
     if levels is True:
         if trend is True:
@@ -295,10 +296,10 @@ def _n_stars(p: float, levels: Sequence[float] = (0.05, 0.01, 0.001)):
 
 
 def star(
-        p_list: Union[float, Sequence[float]],
+        p_list: float | Sequence[float],
         out: type = str,
-        levels: Union[bool, dict] = True,
-        trend: Union[bool, str] = False,
+        levels: bool | dict = True,
+        trend: bool | str = False,
         eq_strlen: bool = False,
 ):
     """Determine number of stars for p-value
@@ -329,7 +330,7 @@ def star(
     elif out is str:
         int_out = False
     else:
-        raise TypeError("out=%r" % (out,))
+        raise TypeError(f"{out=}")
 
     # allow input (p_list) to contain single p-value
     if not np.iterable(p_list):
@@ -449,7 +450,7 @@ def _related_measures_args(y, x, c1, c0, match, data, sub, nd_data=False):
 def ttest(
         y: VarArg,
         x: CategorialArg = None,
-        against: Union[float, CellArg] = 0,
+        against: float | CellArg = 0,
         match: CategorialArg = None,
         sub: IndexArg = None,
         corr: MCCArg = 'Hochberg',
@@ -836,7 +837,7 @@ class MannWhitneyU:
     def __init__(
             self,
             y: VarArg,
-            x: Union[CategorialArg, VarArg],
+            x: CategorialArg | VarArg,
             c1: CellArg = None,
             c0: CellArg = None,
             match: CategorialArg = None,
@@ -947,7 +948,7 @@ class TTestRelated(TTest):
     def __init__(
             self,
             y: VarArg,
-            x: Union[CategorialArg, VarArg],
+            x: CategorialArg | VarArg,
             c1: CellArg = None,
             c0: CellArg = None,
             match: CategorialArg = None,
@@ -1061,7 +1062,7 @@ class WilcoxonSignedRank:
     def __init__(
             self,
             y: VarArg,
-            x: Union[CategorialArg, VarArg],
+            x: CategorialArg | VarArg,
             c1: CellArg = None,
             c0: CellArg = None,
             match: CategorialArg = None,
@@ -1079,7 +1080,7 @@ class WilcoxonSignedRank:
         elif tail == -1:
             alternative = 'less'
         else:
-            raise ValueError(f"tail={tail!r}")
+            raise ValueError(f"{tail=}")
         self.w, self.p = scipy.stats.wilcoxon(y1.x, y0.x, zero_method, correction, alternative)
         self._y = dataobj_repr(y1)
         self._x = x_name
@@ -1119,10 +1120,10 @@ def pairwise(
         data: Dataset = None,
         par: bool = True,
         corr: MCCArg = 'Hochberg',
-        trend: Union[bool, str] = False,
-        title: Union[bool, str] = True,
+        trend: bool | str = False,
+        title: bool | str = True,
         mirror: bool = False,
-        labels: Dict[CellArg, str] = None,
+        labels: dict[CellArg, str] = None,
 ):
     """Pairwise comparison table
 
@@ -1214,8 +1215,8 @@ def _pairwise(
         ct: Celltable,  # list of groups/treatments
         parametric: bool,
         corr: MCCArg,
-        trend: Union[bool, str] = False,
-        levels: Union[bool, dict] = True,
+        trend: bool | str = False,
+        levels: bool | dict = True,
 ):
     """Pairwise tests
 
@@ -1287,10 +1288,10 @@ def _pairwise(
 
 @deprecate_ds_arg
 def pairwise_correlations(
-        xs: Sequence[Union[str, Var, NDVar]],
+        xs: Sequence[str | Var | NDVar],
         sub: IndexArg = None,
         data: Dataset = None,
-        labels: Dict[CellArg, str] = None,
+        labels: dict[CellArg, str] = None,
 ):
     """Pairwise correlation table
 
@@ -1415,7 +1416,7 @@ def correlations(y, x, cat=None, sub=None, ds=None, asds=False):
         return ds
 
     table = fmtxt.Table('l' * (4 + print_x_name + len(cat_names)),
-                        title="Correlations with %s" % dataobj_repr(y))
+                        title=f"Correlations with {dataobj_repr(y)}")
     if print_x_name:
         table.cell('x')
     table.cells(*cat_names)

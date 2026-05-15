@@ -1,0 +1,69 @@
+name: "Bug report"
+description: "Report a reproducible issue with Eelbrain"
+title: "[Bug]: "
+labels:
+  - bug
+body:
+
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to report a bug. 
+        Please include a minimal reproducible example and key details so we can triage quickly.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: "What went wrong? Briefly describe the issue."
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproducible example
+      description: |
+        Please provide a code snippet or minimal working example
+        ([MWE](https://en.wikipedia.org/wiki/Minimal_Working_Example))
+        to replicate your problem.
+      placeholder: |
+        ```python
+        import eelbrain
+        # minimal code that triggers the issue
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: "What did you expect to happen?"
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: "What actually happened? Include full error messages or tracebacks."
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Environment details
+      description: |
+        Please list the output of `import eelbrain; eelbrain.system_info()`
+        and any other relevant information on your setup not included there.
+      placeholder: "Platform: ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Additional context
+      description: "Logs, screenshots, or anything else that might help."

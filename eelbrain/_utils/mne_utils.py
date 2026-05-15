@@ -34,14 +34,11 @@ def fix_annot_names(subject, parc, clean_subject=None, clean_parc=None,
             continue
 
         if len(clean_names) != len(names):
-            err = ("Different names in %s annot files: %s vs. "
-                   "%s" % (hemi, str(names), str(clean_names)))
-            raise ValueError(err)
+            raise ValueError(f"Different names in {hemi} annot files: {names} vs. {clean_names}")
 
         for clean_name, name in zip(clean_names, names):
             if not name.startswith(clean_name):
-                err = "%s does not start with %s" % (str(name), clean_name)
-                raise ValueError(err)
+                raise ValueError(f"{name} does not start with {clean_name}")
 
         write_annot(fpath, labels, ctab, clean_names)
 

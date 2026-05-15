@@ -23,7 +23,7 @@ def test_anova():
 
     testnd.ANOVA('utsnd', 'A*B', data=ds)
     for samples in (0, 2):
-        logging.info("TEST:  samples=%r" % samples)
+        logging.info(f"TEST:  {samples=}")
         testnd.ANOVA('utsnd', 'A*B', data=ds, samples=samples)
         testnd.ANOVA('utsnd', 'A*B', data=ds, samples=samples, pmin=0.05)
         res = testnd.ANOVA('utsnd', 'A*B', data=ds, samples=samples, tfce=True)
@@ -113,7 +113,7 @@ def test_anova():
     res1 = testnd.ANOVA('utsnd', 'A*B*rm', data=ds, pmin=0.05, samples=samples)
     clusters = res1.find_clusters()
     for dist, effect in zip(res1._cdist, res1.effects):
-        effect_idx = clusters.eval("effect == %r" % effect)
+        effect_idx = clusters.eval(f"effect == {effect!r}")
         vmax = clusters[effect_idx, 'v'].abs().max()
         assert len(dist.dist) == samples
         assert_array_equal(dist.dist, vmax)
@@ -313,8 +313,8 @@ def test_clusterdist():
                    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]])
     tgt = np.equal(x, 7)
     peaks = find_peaks(x, cdist._adjacency)
-    logging.debug(' detected: \n%s' % (peaks.astype(int)))
-    logging.debug(' target: \n%s' % (tgt.astype(int)))
+    logging.debug(f' detected: \n{peaks.astype(int)}')
+    logging.debug(f' target: \n{tgt.astype(int)}')
     assert_array_equal(peaks, tgt)
     # testnd permutation result
     res = testnd.TTestOneSample(y, tfce=True, samples=3)

@@ -63,9 +63,9 @@ def repr_1line(obj, w=70):
     r = repr(obj)
     if len(r) > w:
         if isinstance(obj, np.ndarray):
-            r = "<array, shape = %s>" % repr(obj.shape)
+            r = f"<array, shape = {obj.shape!r}>"
         elif isinstance(obj, (list, tuple)):
-            suffix = '...' + r[-1] + ', len=%i' % len(obj)
+            suffix = '...' + r[-1] + f', len={len(obj)}'
             parts = r.split(',')
             maxlen = w - len(suffix)
             if len(parts[0]) > maxlen:

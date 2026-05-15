@@ -1,4 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+import os
 import sys
 
 import numpy as np
@@ -6,6 +7,13 @@ import pytest
 
 from eelbrain import datasets, plot, _info, NDVar
 from eelbrain.testing import hide_plots, requires_mne_testing_data
+
+
+pytestmark = pytest.mark.skipif(
+    os.getenv("GITHUB_ACTIONS") == "true"
+    and sys.platform == "darwin",
+    reason="TODO: Segfaults on macOS GitHub Actions",
+)
 
 
 @hide_plots

@@ -1,6 +1,4 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-from typing import Tuple, Union
-
 import numpy as np
 
 from .. import fmtxt, plot
@@ -20,14 +18,14 @@ def sensor_results(res, ds, color):
 
         report.add_figure("All clusters.", res.clusters)
     else:
-        raise NotImplementedError("Result kind %r" % res._kind)
+        raise NotImplementedError(f"Result kind {res._kind!r}")
     return report
 
 
 def sensor_time_frequency_results(
-        res: Union[TTestIndependent, TTestRelated],
+        res: TTestIndependent | TTestRelated,
         p: float = 0.05,
-        xlim: Tuple[float, float] = None,
+        xlim: tuple[float, float] = None,
         vmax: float = None,
 ) -> fmtxt.FMText:
     if res.p.min() > p:
@@ -78,7 +76,7 @@ def sensor_time_results(res, ds, colors, include=1):
             sensor_time_cluster(report, cluster, y, res._plot_model(), ds,
                                 colors, res.match)
     else:
-        raise NotImplementedError("Result kind %r" % res._kind)
+        raise NotImplementedError(f"Result kind {res._kind!r}")
     return report
 
 
@@ -92,13 +90,13 @@ def sensor_bin_table(section, res, pmin=1):
         ndvar = cdist.masked_parameter_map(pmin)
         if not ndvar.any():
             if effect:
-                text = '%s: nothing\n' % effect
+                text = f'{effect}: nothing\n'
             else:
                 text = 'Nothing\n'
             section.add_paragraph(text)
             continue
         elif effect:
-            caption_ = "%s: %s" % (effect, caption)
+            caption_ = f"{effect}: {caption}"
         else:
             caption_ = caption
         p = plot.TopomapBins(ndvar, show=False)
@@ -120,7 +118,7 @@ def sensor_time_cluster(section, cluster, y, model, ds, colors, match='subject')
     # description
     paragraph = section.add_paragraph("Id %i" % cluster['id'])
     if 'v' in cluster:
-        paragraph.append(", v=%s" % cluster['v'])
+        paragraph.append(f", v={cluster['v']}")
 
     # add cluster image to report
     topo = y.summary(time=(cluster['tstart'], cluster['tstop']))

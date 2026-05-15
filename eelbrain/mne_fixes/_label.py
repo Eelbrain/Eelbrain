@@ -107,11 +107,11 @@ def write_labels_to_annot(labels, subject=None, parc=None, overwrite=False,
                     logger.warning(msg)
 
                 if any(i > 255 for i in color):
-                    msg = ("%s: %s (%s)" % (color, ', '.join(names), hemi))
+                    msg = f"{color}: {', '.join(names)} ({hemi})"
                     invalid_colors.append(msg)
 
                 if len(names) > 1:
-                    msg = "%s: %s (%s)" % (color, ', '.join(names), hemi)
+                    msg = f"{color}: {', '.join(names)} ({hemi})"
                     duplicate_colors.append(msg)
 
             # replace None values (labels with unspecified color)
@@ -131,7 +131,7 @@ def write_labels_to_annot(labels, subject=None, parc=None, overwrite=False,
 
         # find number of vertices in surface
         if subject is not None and subjects_dir is not None:
-            fpath = op.join(subjects_dir, subject, 'surf', '%s.white' % hemi)
+            fpath = op.join(subjects_dir, subject, 'surf', f'{hemi}.white')
             points, _ = read_surface(fpath)
             n_vertices = len(points)
         else:
@@ -159,7 +159,7 @@ def write_labels_to_annot(labels, subject=None, parc=None, overwrite=False,
                 other_indices = (annot_ids.index(i) for i in other_ids)
                 other_names = (hemi_labels[i].name for i in other_indices)
                 other_repr = ', '.join(other_names)
-                msg = "%s: %s overlaps %s" % (hemi, label.name, other_repr)
+                msg = f"{hemi}: {label.name} overlaps {other_repr}"
                 overlap.append(msg)
 
             annot[label.vertices] = annot_id
@@ -225,7 +225,7 @@ def write_labels_to_annot(labels, subject=None, parc=None, overwrite=False,
 
     # write it
     for fname, annot, ctab, hemi_names in to_save:
-        logger.info('   writing %d labels to %s' % (len(hemi_names), fname))
+        logger.info(f'   writing {len(hemi_names)} labels to {fname}')
         _write_annot(fname, annot, ctab, hemi_names)
 
     logger.info('[done]')

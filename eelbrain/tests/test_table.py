@@ -22,6 +22,10 @@ def test_cast_to_ndvar():
     ds = table.cast_to_ndvar('fltvar', 'A', 'B%rm', data=long_ds, name='new')
     assert ds.n_cases == long_ds.n_cases / 2
     assert ds['new'].A == Categorial('A', ('a1', 'a2'))
+    a1_index = long_ds['A'] == 'a1'
+    a2_index = long_ds['A'] == 'a2'
+    assert_array_equal(ds['new'].x[:, 0], long_ds[a1_index, 'fltvar'].x)
+    assert_array_equal(ds['new'].x[:, 1], long_ds[a2_index, 'fltvar'].x)
 
     # scalar
     ds2 = table.cast_to_ndvar('fltvar', 'scalar', 'B%rm', data=long_ds, dim='newdim', name='new')

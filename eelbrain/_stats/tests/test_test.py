@@ -1,7 +1,6 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 from numpy.testing import assert_array_equal
 import numpy as np
-import pingouin
 import pytest
 import scipy.stats
 
@@ -9,6 +8,8 @@ from eelbrain import datasets, test
 from eelbrain._stats import test as _test
 from eelbrain.fmtxt import asfmtext
 from eelbrain.testing import assert_fmtxt_str_equals
+
+pingouin = pytest.importorskip('pingouin', minversion="0.6.0")
 
 
 def test_correlations():
@@ -116,12 +117,12 @@ def test_ttest():
     t, p = scipy.stats.ttest_1samp(ds['fltvar'], 0)
     assert res.t == pytest.approx(t, 10)
     assert res.p == pytest.approx(p, 10)
-    assert res.d == pytest.approx(standard['cohen-d'].item(), 10)
+    assert res.d == pytest.approx(standard.at['T_test', 'cohen_d'], 10)
     assert str(res.full) == 'M = 0.40, SD = 1.20, t(79) = 2.96, p = .004'
     res = test.TTestOneSample('fltvar', data=ds, tail=1)
     assert res.t == pytest.approx(t, 10)
     assert res.p == pytest.approx(p / 2., 10)
-    assert res.d == pytest.approx(standard['cohen-d'].item(), 10)
+    assert res.d == pytest.approx(standard.at['T_test', 'cohen_d'], 10)
     assert str(res.full) == 'M = 0.40, SD = 1.20, t(79) = 2.96, p = .002'
 
     # TTestIndependent
@@ -143,7 +144,7 @@ def test_ttest():
     assert res.tail == 0
     assert res.t == pytest.approx(t)
     assert res.p == pytest.approx(p)
-    assert res.d == pytest.approx(standard['cohen-d'].item(), 10)
+    assert res.d == pytest.approx(standard.at['T_test', 'cohen_d'], 10)
     print(res)
     print(asfmtext(res))
     assert str(res.full) == 'a1: M = 0.90; a2: M = -0.06; difference: M = 0.96, SD = 1.65, t(19) = 2.53, p = .021'

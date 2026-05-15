@@ -1,5 +1,4 @@
 import numpy as np
-from eelbrain._stats import opt, stats
 
 np.random.seed(0)
 

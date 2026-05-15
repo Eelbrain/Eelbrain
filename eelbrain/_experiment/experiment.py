@@ -10,7 +10,7 @@ import re
 import shutil
 import subprocess
 from time import localtime, strftime
-from typing import Callable, List, Sequence
+from collections.abc import Callable, Sequence
 import traceback
 
 import numpy as np
@@ -50,6 +50,7 @@ def _etree_node_repr(node, name, indent=0):
 
 class LayeredDict(dict):
     """Dictionary which can store and restore states"""
+
     def __init__(self):
         self._states = []
         dict.__init__(self)
@@ -95,8 +96,7 @@ class LayeredDict(dict):
             elif index != -1:  # -1 + 1 = 0
                 del self._states[index + 1:]
         elif not isinstance(state, dict):
-            raise TypeError("state needs to be either int or dict, got %r" %
-                            (state,))
+            raise TypeError(f"state needs to be either int or dict, got {state!r}")
 
         self.clear()
         self.update(state)
@@ -191,7 +191,7 @@ class TreeModel:
 
     def _bind_set(self, key, handler):
         if key in self._set_handlers:
-            raise KeyError("set-handler for %r already set" % key)
+            raise KeyError(f"set-handler for {key!r} already set")
         self._set_handlers[key] = handler
 
     def _crash_report(self):
@@ -304,7 +304,7 @@ class TreeModel:
             (as long as there are at least 2 ``values``).
         """
         if key in self._fields:
-            raise KeyError("Field already exists: %r" % key)
+            raise KeyError(f"Field already exists: {key!r}")
 
         if depends_on is not None:
             if set_handler is not None or eval_handler is not None or post_set_handler is not None:
@@ -342,7 +342,7 @@ class TreeModel:
             if values and len(values) > 1:
                 self._repr_kwargs_optional.append(key)
         elif repr is not False:
-            raise TypeError(f"repr={repr!r}")
+            raise TypeError(f"{repr=}")
 
         self._terminal_fields.append(key)
         self._fields[key] = ''
@@ -528,7 +528,7 @@ class TreeModel:
         iter_fields = []
         for field in fields:
             for terminal_field in self.find_keys(field):
-                if terminal_field in constants or terminal_field in iter_fields:
+                if (terminal_field in constants) or (terminal_field in iter_fields) or (terminal_field not in self._field_values):
                     continue
                 iter_fields.append(terminal_field)
 
@@ -588,7 +588,7 @@ class TreeModel:
         Parameters
         ----------
         temp : str
-            Name of a template in the MneExperiment.templates dictionary, or
+            Name of a template in the Pipeline.templates dictionary, or
             a path template with variables indicated as in ``'{var_name}'``
         """
         # if the name is an existing template, retrieve it
@@ -641,7 +641,7 @@ class TreeModel:
     def reset(self):
         """Reset all field values to the state at initialization
 
-        This function can be used in cases where the same MneExperiment instance
+        This function can be used in cases where the same Pipeline instance
         is used to perform multiple independent operations, where parameters set
         during one operation should not affect the next operation.
         """
@@ -965,9 +965,9 @@ class FileTree(TreeModel):
             if len(paths) == 1:
                 path = paths[0]
             elif len(paths) > 1:
-                raise IOError(f"More than one files match {path!r}: {paths}")
+                raise OSError(f"More than one files match {path!r}: {paths}")
             else:
-                raise IOError(f"No file found for {path!r}")
+                raise OSError(f"No file found for {path!r}")
 
         # create the directory
         if mkdir:
@@ -978,11 +978,11 @@ class FileTree(TreeModel):
             if not os.path.exists(dirname):
                 root = self.get('root')
                 if root == '':
-                    raise IOError("Prevented from creating directories because root is not set")
+                    raise OSError("Prevented from creating directories because root is not set")
                 elif os.path.exists(root):
                     os.makedirs(dirname)
                 else:
-                    raise IOError(f"Prevented from creating directories because root does not exist: {root!r}")
+                    raise OSError(f"Prevented from creating directories because root does not exist: {root!r}")
 
         # make the file
         if make:
@@ -999,7 +999,7 @@ class FileTree(TreeModel):
 
         return path
 
-    def glob(self, temp, inclusive=False, **state) -> List[str]:
+    def glob(self, temp, inclusive=False, **state) -> list[str]:
         """Find all files matching a certain pattern
 
         Parameters
@@ -1041,7 +1041,7 @@ class FileTree(TreeModel):
                 raise TypeError("Need to specify at least one of root and dst_root")
             dst_root = self.get('root')
         if not os.path.exists(dst_root):
-            raise IOError(f'Destination does not exist: {dst_root}')
+            raise OSError(f'Destination does not exist: {dst_root}')
         src_filenames = self.glob(temp, inclusive, **state)
         n = len(src_filenames)
         if n == 0:
@@ -1067,7 +1067,7 @@ class FileTree(TreeModel):
                     for src in exist:
                         src_filenames.remove(src)
                 else:
-                    raise TypeError(f"overwrite={overwrite!r}")
+                    raise TypeError(f"{overwrite=}")
 
         if not confirm:
             print(f"{action} {self.get('root')} -> {dst_root}:")
@@ -1322,7 +1322,7 @@ class FileTree(TreeModel):
                 if len(matches) == 1:
                     old_name = matches[0]
                 elif len(matches) > 1:
-                    err = ("Several files fit the pattern %r" % old_name)
+                    err = f"Several files fit the pattern {old_name!r}"
                     raise ValueError(err)
 
             if os.path.exists(old_name):
@@ -1330,7 +1330,7 @@ class FileTree(TreeModel):
                 files.append((old_name, new_name))
 
         if not files:
-            print("No files found for %r" % old)
+            print(f"No files found for {old!r}")
             return
 
         old_pf = os.path.commonprefix([pair[0] for pair in files])
@@ -1341,13 +1341,13 @@ class FileTree(TreeModel):
         table = fmtxt.Table('lll')
         table.cells('Old', '', 'New')
         table.midrule()
-        table.caption("%s -> %s" % (old_pf, new_pf))
+        table.caption(f"{old_pf} -> {new_pf}")
         for old, new in files:
             table.cells(old[n_pf_old:], '->', new[n_pf_new:])
 
         print(table)
 
-        msg = "Rename %s files (confirm with 'yes')? " % len(files)
+        msg = f"Rename {len(files)} files (confirm with 'yes')? "
         if input(msg) == 'yes':
             for old, new in files:
                 dirname = os.path.dirname(new)
@@ -1397,7 +1397,7 @@ class FileTree(TreeModel):
             lines = [src_prefix, '->' + dst_prefix, '']
 
         for tag, src, dst in items:
-            lines.append('%s %s -> %s' % (tag, src[src_crop:], dst[dst_crop:]))
+            lines.append(f'{tag} {src[src_crop:]} -> {dst[dst_crop:]}')
         lines.append('')
         msg = 'Legend  m: source is missing;  o: will overwite a file'
         lines.append(msg)
@@ -1406,7 +1406,7 @@ class FileTree(TreeModel):
         if not rename:
             return
 
-        msg = "Rename %i files (confirm with 'yes')? " % len(rename)
+        msg = f"Rename {len(rename)} files (confirm with 'yes')? "
         if input(msg) != 'yes':
             return
 
@@ -1471,12 +1471,12 @@ class FileTree(TreeModel):
                     if command == 'yes':
                         confirm = True
                     elif command == 'show':
-                        print("root: %s\n" % self.get('root'))
+                        print(f"root: {self.get('root')}\n")
                         print('\n'.join(self._remove_root(files)))
                     elif command in ('no', ''):
                         return
                     else:
-                        raise RuntimeError(f"command={command!r}")
+                        raise RuntimeError(f"{command=}")
 
             print('deleting...')
             dirs = (p for p, isdir in zip(files, is_dir) if isdir)
@@ -1486,7 +1486,7 @@ class FileTree(TreeModel):
             for path in chain(files, secondary_files):
                 os.remove(path)
         else:
-            print("No files found for %r" % temp)
+            print(f"No files found for {temp!r}")
 
     def _remove_root(self, paths):
         root = self.get('root')

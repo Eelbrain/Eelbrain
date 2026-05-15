@@ -7,16 +7,17 @@ import numpy as np
 import pytest
 
 from eelbrain import gui, load, save, set_log_level
-from eelbrain.testing import TempDir, gui_test
+from eelbrain.testing import TempDir, gui_test, requires_mne_testing_data
 from eelbrain._wxgui.select_epochs import Document, Model
 
 
 @gui_test
+@requires_mne_testing_data
 def test_select_epochs():
     "Test Select-Epochs GUI Document"
     set_log_level('warning', 'mne')
 
-    data_path = mne.datasets.testing.data_path()
+    data_path = mne.datasets.testing.data_path(download=False)
     raw_path = join(data_path, 'MEG', 'sample', 'sample_audvis_trunc_raw.fif')
     raw = mne.io.Raw(raw_path, preload=True).pick_types('mag', stim=True)
     ds = load.mne.events(raw, stim_channel='STI 014')

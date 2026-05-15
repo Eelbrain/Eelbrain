@@ -2,7 +2,7 @@
 """Continuous neural data (CND) format used for mTRF-Toolbox"""
 import logging
 from pathlib import Path
-from typing import Optional, Sequence, Union
+from collections.abc import Sequence
 
 import mne
 import numpy
@@ -20,8 +20,8 @@ FILETYPES = [("CND files", "*.mat")]
 @deprecate_kwarg('connectivity', 'adjacency', '0.41', '0.42')
 def read_cnd(
         filename: PathArg = None,
-        adjacency: Union[str, Sequence, float] = None,
-) -> Optional[Dataset]:
+        adjacency: str | Sequence | float = None,
+) -> Dataset | None:
     """Load continuous neural data (CND) file used in the mTRF-Toolbox
 
     Parameters
@@ -133,4 +133,4 @@ def read_cnd(
             labels = dict(enumerate(data['stim']['condNames'], 1))
             ds['condition'] = Factor(data['stim']['condIdxs'], labels=labels)
         return ds
-    raise IOError("File contains neither 'eeg' or 'stim' entry")
+    raise OSError("File contains neither 'eeg' or 'stim' entry")

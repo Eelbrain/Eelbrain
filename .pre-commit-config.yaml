@@ -1,0 +1,24 @@
+repos:
+- repo: https://github.com/PyCQA/flake8
+  rev: 7.3.0
+  hooks:
+    - id: flake8
+      files: 'eelbrain/'
+- repo: https://github.com/asottile/pyupgrade
+  rev: v3.19.1
+  hooks:
+    - id: pyupgrade
+      args: [--py310-plus]
+- repo: https://github.com/PyCQA/autoflake
+  rev: v2.3.3
+  hooks:
+    - id: autoflake
+      args:
+        - --remove-all-unused-imports
+        - --in-place
+        - --remove-unused-variables
+        - --ignore-init-module-imports
+- repo: https://github.com/ikamensh/flynt/
+  rev: 1.0.6
+  hooks:
+    - id: flynt

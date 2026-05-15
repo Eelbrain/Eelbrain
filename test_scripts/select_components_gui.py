@@ -14,8 +14,8 @@ data.pick_types(eeg=True)
 # data.pick_types('mag')
 data.filter(1, 40)
 if os.path.exists(PATH):
-    # ica = mne.preprocessing.read_ica(PATH)
-# else:
+    ica = mne.preprocessing.read_ica(PATH)
+else:
     ica = mne.preprocessing.ICA()
     # ica = mne.preprocessing.ICA(0.95)
     # ica = mne.preprocessing.ICA(0.99)

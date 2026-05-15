@@ -13,6 +13,18 @@ import numpy as np
 from numpy.testing import assert_array_equal
 import pytest
 
+try:
+    import eelbrain._wxgui
+except ImportError:
+    _GUITestContextModules = ()
+else:
+    _GUITestContextModules = (
+        eelbrain._wxgui.select_epochs,
+        eelbrain._wxgui.select_components,
+        eelbrain._wxgui.history,
+        eelbrain._wxgui.load_stcs,
+    )
+    del eelbrain._wxgui
 from .._config import CONFIG
 from .._data_obj import Dataset, NDVar, Var, Factor, isdatalist, isuv
 
@@ -115,36 +127,26 @@ def assert_source_space_equal(src1, src2):
     assert src1.subjects_dir == src2.subjects_dir
 
 
-try:
-    import eelbrain._wxgui
-except ImportError:
-    def gui_test_context(f):
-        return f
-else:
-    class GUITestContext(ContextDecorator):
-        modules = (
-            eelbrain._wxgui.select_epochs,
-            eelbrain._wxgui.select_components,
-            eelbrain._wxgui.history,
-            eelbrain._wxgui.load_stcs,
-        )
+class GUITestContext(ContextDecorator):
+    modules = _GUITestContextModules
 
-        def __init__(self):
-            self._i = 0
+    def __init__(self):
+        self._i = 0
 
-        def __enter__(self):
-            self._i += 1
-            if self._i == 1:
-                for mod in self.modules:
-                    mod.TEST_MODE = True
+    def __enter__(self):
+        self._i += 1
+        if self._i == 1:
+            for mod in self.modules:
+                mod.TEST_MODE = True
 
-        def __exit__(self, exc_type, exc_val, exc_tb):
-            self._i -= 1
-            if self._i == 0:
-                for mod in self.modules:
-                    mod.TEST_MODE = False
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._i -= 1
+        if self._i == 0:
+            for mod in self.modules:
+                mod.TEST_MODE = False
 
-    gui_test_context = GUITestContext()
+
+gui_test_context = GUITestContext()
 
 
 def gui_test(function):
@@ -201,29 +203,17 @@ def requires_framework_build(function):
 
 
 def requires_mne_sample_data(function):
-    if mne.datasets.sample.data_path(download=False) != Path("."):
+    if mne.datasets.has_dataset("sample"):
         return function
     else:
         return pytest.mark.skip('mne sample data unavailable')(function)
 
 
 def requires_mne_testing_data(function):
-    if mne.datasets.testing.data_path(download=False) != Path("."):
+    if mne.datasets.has_dataset("testing"):
         return function
     else:
         return pytest.mark.skip('mne testing data unavailable')(function)
-
-
-def requires_r_ez(function):
-    from .._utils.r_bridge import r, r_warning_filter
-
-    with r_warning_filter:
-        success = r('require(ez)')[0]
-
-    if success:
-        return function
-    else:
-        return pytest.mark.skip('r-ez unavailable')(function)
 
 
 def skip_on_windows(function):
@@ -244,7 +234,7 @@ def file_path(name):
     if path.exists():
         return path
     else:
-        raise IOError("Testing file does not exist. Test can only be executed from source repository.")
+        raise OSError("Testing file does not exist. Test can only be executed from source repository.")
 
 
 def path(string):

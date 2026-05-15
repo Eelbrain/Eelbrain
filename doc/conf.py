@@ -10,13 +10,17 @@
 # serve to show the default.
 
 from datetime import datetime
-from itertools import chain
 import os
 from pathlib import Path
 
 import eelbrain.plot._brain_object  # make sure that Brain is available
 import eelbrain
+import eelbrain.datasets._alice
+import mne
 from sphinx_gallery.sorting import ExplicitOrder, _SortKey
+import sphinx.util.logging
+
+logger = sphinx.util.logging.getLogger("eelbrain")
 
 
 # If extensions (or modules to document with autodoc) are in another directory,
@@ -113,10 +117,10 @@ example_order = {
 class NameOrder(_SortKey):
     """Specify sphinx-gallery example order as file tree"""
 
-    items = list(chain.from_iterable(example_order.values()))
+    items = sum(example_order.values(), [])
 
     def __call__(self, item):
-        print(f"NameOrder: {item}")
+        logger.info(f"NameOrder: {item}")
         return self.items.index(item)
 
 
@@ -144,7 +148,7 @@ os.environ['MNE_TQDM'] = 'off'
 import pybtex.plugin
 from pybtex.style.formatting.unsrt import Style
 from pybtex.style.sorting.author_year_title import SortingStyle
-from pybtex.style.template import field, href, words
+from pybtex.style.template import field, href
 
 
 class MySortingStyle(SortingStyle):
@@ -183,8 +187,8 @@ source_suffix = '.rst'
 master_doc = 'index'
 
 # General information about the project.
-project = u'Eelbrain'
-copyright = u'%i, Christian Brodbeck' % datetime.now().year
+project = 'Eelbrain'
+copyright = '%i, Christian Brodbeck' % datetime.now().year
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -244,8 +248,9 @@ intersphinx_mapping = {
     'nilearn': ('https://nilearn.github.io/stable', None),
     'numpy': ('https://numpy.org/doc/stable', None),
     'pandas': ('https://pandas.pydata.org/docs', None),
-    'rpy2': ('https://rpy2.github.io/doc', None),
+    'rpy2': ('https://rpy2.github.io/doc/latest/html', None),
     'scipy': ('https://docs.scipy.org/doc/scipy', None),
+    'sphinx': ('https://www.sphinx-doc.org/en/master/', None),
     'surfer': ('https://pysurfer.github.io', None),
 }
 # http://sphinx.pocoo.org/ext/intersphinx.html
@@ -348,8 +353,7 @@ htmlhelp_basename = 'Eelbraindoc'
 # Grouping the document tree into LaTeX files. List of tuples
 # (source start file, target name, title, author, documentclass [howto/manual]).
 latex_documents = [
-    ('index', 'Eelbrain.tex', u'Eelbrain Documentation',
-     u'Christian Brodbeck', 'manual'),
+    ('index', 'Eelbrain.tex', 'Eelbrain Documentation', 'Christian Brodbeck', 'manual'),
 ]
 
 # The name of an image file (relative to this directory) to place at the top of
@@ -381,6 +385,13 @@ latex_documents = [
 # One entry per manual page. List of tuples
 # (source start file, name, description, authors, manual section).
 man_pages = [
-    ('index', 'eelbrain', u'Eelbrain Documentation',
-     [u'Christian Brodbeck'], 1)
+    ('index', 'eelbrain', 'Eelbrain Documentation', ['Christian Brodbeck'], 1),
 ]
+
+
+def setup(app):
+    """Set up the Sphinx app."""
+    # ensure we have the data necessary to build examples
+    logger.info("Ensuring example data is available")
+    mne.datasets.sample.data_path(verbose=True)
+    eelbrain.datasets._alice.get_alice_path(progressbar=True)

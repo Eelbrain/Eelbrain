@@ -44,4 +44,4 @@ for ax, coding in zip(axes, ['dummy', 'effect']):
     array, names = m.array(coding)
     ax.imshow(array, cmap='coolwarm', vmin=-1, vmax=1)
     ax.set_title(coding)
-    ax.set_xticks([i-0.5 for i in range(len(names))], names, rotation=-60, ha='left')
+    ax.set_xticks([i - 0.5 for i in range(len(names))], names, rotation=-60, ha='left')

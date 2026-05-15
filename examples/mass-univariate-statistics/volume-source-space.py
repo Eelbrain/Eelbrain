@@ -18,6 +18,8 @@ Data contains multiple trials for a single subject, with
 tones presented to the left or right ear:
 """
 # sphinx_gallery_thumbnail_number = 2
+# dataset: mne_sample
+
 from pathlib import Path
 
 from eelbrain import *
@@ -90,7 +92,7 @@ for t in times:
 # are:
 
 for t in times:
-    p = plot.GlassBrain(y.sub(time=t), title=f"{t*1000:.0f} ms", vmax=4)
+    p = plot.GlassBrain(y.sub(time=t), title=f"{t * 1000:.0f} ms", vmax=4)
 
 ###############################################################################
 # In a notebook, `LiveNeuron <https://github.com/liang-bo96/LiveNeuron>`_
