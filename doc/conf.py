@@ -19,9 +19,7 @@ import sys
 # import eelbrain.plot._brain_object  # make sure that Brain is available
 import eelbrain
 from sphinx_gallery.sorting import _SortKey
-import sphinx.util.logging
 
-logger = sphinx.util.logging.getLogger("eelbrain")
 need_path = str(Path(__file__).parent)
 if need_path not in sys.path:
     sys.path.append(need_path)  # for conf.NameOrder and conf.use_pyplot
@@ -68,6 +66,7 @@ bibtex_bibfiles = ['publications.bib']
 qualname_overrides = {
     "eelbrain._data_obj.NDVar": "eelbrain.NDVar",
 }
+
 
 ################################################################################
 # Sphinx-Gallery
