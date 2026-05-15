@@ -16,6 +16,7 @@ from pathlib import Path
 
 import eelbrain.plot._brain_object  # make sure that Brain is available
 import eelbrain
+import eelbrain.datasets._alice
 import mne
 from sphinx_gallery.sorting import ExplicitOrder, _SortKey
 
@@ -390,3 +391,4 @@ def setup(app):
     """Set up the Sphinx app."""
     # ensure we have the data necessary to build examples
     mne.datasets.sample.data_path(verbose=True)
+    eelbrain.datasets._alice.get_alice_path()

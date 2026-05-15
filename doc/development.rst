@@ -27,7 +27,7 @@ The repository contains mamba environments that include everything needed to use
 To install the development version:
 First, clone the repository (or your `fork <https://help.github.com/articles/fork-a-repo>`_), and change into the repository directory:
 
-.. code-block:: console:
+.. code-block:: console
 
     $ git clone https://github.com/Eelbrain/Eelbrain.git
     $ cd Eelbrain
