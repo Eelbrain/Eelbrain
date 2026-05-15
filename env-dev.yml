@@ -51,11 +51,6 @@ dependencies:
 - pytest-faulthandler
 - pingouin >= 0.6.0  # breaking API used in tests
 #- pytest-sugar  # errors on Linux
-# testing of R integration
-# TODO: This forces Python<3.13 because 3.6+ are first ones to support 3.13 on CF
-- rpy2 < 3.6.1
-- r-car
-- r-ez
 # plotting brains
 - nibabel >= 2.5
 - mayavi >= 4.6.2  # conda-forge pinning faulty

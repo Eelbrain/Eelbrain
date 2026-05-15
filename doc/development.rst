@@ -25,7 +25,9 @@ GitHub see `GitHub's instructions <https://help.github.com/articles/fork-a-repo/
 
 The repository contains mamba environments that include everything needed to use Eelbrain except Eelbrain itself.
 To install the development version:
-First, clone the repository (or your `fork <https://help.github.com/articles/fork-a-repo>`_), and change into the repository directory::
+First, clone the repository (or your `fork <https://help.github.com/articles/fork-a-repo>`_), and change into the repository directory:
+
+.. code-block:: console:
 
     $ git clone https://github.com/Eelbrain/Eelbrain.git
     $ cd Eelbrain
@@ -35,21 +37,27 @@ Two environment files are available:
 - ``env-dev.yml``: the full development environment (``eeldev``), including tools for building documentation, optional neuroimaging packages, and GUI support.
 - ``env-test.yml``: a leaner environment (``eeltest``) used for CI, suitable when you only need to run tests and don't require the full documentation or dev tooling.
 
-Generate the ``eeldev`` environment (or substitute ``env-test.yml`` / ``eeltest`` for the lighter alternative)::
+Generate the ``eeldev`` environment (or substitute ``env-test.yml`` / ``eeltest`` for the lighter alternative):
+
+.. code-block:: console
 
     $ mamba env create --file=env-dev.yml
 
-The development version of Eelbrain can then be installed with ``pip``::
+The development version of Eelbrain can then be installed with ``pip``:
+
+.. code-block:: console
 
     $ mamba activate eeldev
     $ pip install -e .
 
 On macOS, the ``$ eelbrain`` shell script to run ``iPython`` with the framework
-build is not installed properly by ``pip``; in order to fix this, run::
+build is not installed properly by ``pip``; in order to fix this, run:
+
+.. code-block:: console
 
     $ ./fix-bin
 
-In Python, you can make sure that you are working with the development version::
+In Python, you can make sure that you are working with the development version:
 
     $ python
     >>> import eelbrain
@@ -90,7 +98,7 @@ The steps below outline the recommended workflow.
 
 1. **Create a Fork** of `Eelbrain <https://github.com/Eelbrain/Eelbrain>`_.
 2. **Create a Branch**: Create a new branch from ``main`` for each feature or fix.
-3. **Commit Changes**: Make your changes and commit them. Individual commit messages are squashed together during merge, therefore it is useful to have good descriptions in the commit messages that apply to the PR as a whole. Less useful commit messages (eg. "fix CI" when CI is not broken before PR) will be removed during merge. 
+3. **Commit Changes**: Make your changes and commit them. Individual commit messages are squashed together during merge, therefore it is useful to have good descriptions in the commit messages that apply to the PR as a whole. Less useful commit messages (eg. "fix CI" when CI is not broken before PR) will be removed during merge.
 4. **Dependency changes**: Any changes to the dependencies should be updated in ``pyproject.toml``, ``env-dev.yml``, ``env-test.yml``, and ``env-readthedocs.yml`` as appropriate.
 5. **Test Locally**:
    Add tests for new features and bug fixes to ensure code quality and prevent regressions.
@@ -133,7 +141,15 @@ Tests are embedded throughout the codebase in ``test`` folders.
 Tests for individual modules are included in folders called ``tests``, usually
 on the same level as the module.
 
-Running tests locally (from the project root)::
+Some tests make use of MNE-Python datasets, which you can download using:
+
+    >>> mne.datasets.sample.data_path(verbose=True)
+    >>> mne.datasets.testing.data_path(verbose=True)
+    >>> mne.datasets.fetch_fsaverage(verbose=True)
+
+Running tests locally (from the project root):
+
+.. code-block:: console
 
     $ make test                               # runs all tests
     $ make test-no-gui                        # runs tests that do not invoke GUIs
@@ -143,7 +159,9 @@ Running tests locally (from the project root)::
 
 For more options, see the `pytest docs <https://docs.pytest.org/en/stable/how-to/usage.html>`_.
 
-An additional test for the :class:`Pipeline` takes longer to run and can be run separately as needed::
+An additional test for the :class:`Pipeline` takes longer to run and can be run separately as needed:
+
+.. code-block:: console
 
     $ pytest --runslow eelbrain/_experiment/tests/test_sample_experiment.py::test_sample_source
 
