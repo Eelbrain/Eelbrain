@@ -172,7 +172,7 @@ if you get a corresponding error, run ``$ ./fix-bin pytest`` from the
 ``Eelbrain`` repository root.
 
 
-.. _code-style
+.. _code-style:
 
 Coding Style and Documentation
 ------------------------------
