@@ -90,7 +90,7 @@ The steps below outline the recommended workflow.
 
 1. **Create a Fork** of `Eelbrain <https://github.com/Eelbrain/Eelbrain>`_.
 2. **Create a Branch**: Create a new branch from ``main`` for each feature or fix.
-3. **Commit Changes**: Make your changes and commit them. Individual commit messages are squashed together during merge, therefore it is useful to have good descriptions in the commit messages that apply to the PR as a whole. Less useful commit messages (eg. "fix CI" when CI is not broken before PR) will be removed during merge.
+3. **Commit Changes**: Make your changes and commit them. Individual commit messages are squashed together during merge, therefore it is useful to have good descriptions in the commit messages that apply to the PR as a whole. Less useful commit messages (eg. "fix CI" when CI is not broken before PR) will be removed during merge. 
 4. **Dependency changes**: Any changes to the dependencies should be updated in ``pyproject.toml``, ``env-dev.yml``, ``env-test.yml``, and ``env-readthedocs.yml`` as appropriate.
 5. **Test Locally**:
    Add tests for new features and bug fixes to ensure code quality and prevent regressions.
