@@ -394,5 +394,5 @@ def setup(app):
     """Set up the Sphinx app."""
     # ensure we have the data necessary to build examples
     logger.info("Ensuring example data is available:")
-    logger.info(f"  {mne.datasets.sample.data_path(verbose=True)=}")
-    logger.info(f"  {eelbrain.datasets._alice.get_alice_path()=}")
+    mne.datasets.sample.data_path(verbose=True)
+    eelbrain.datasets._alice.get_alice_path()
