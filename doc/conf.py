@@ -10,7 +10,6 @@
 # serve to show the default.
 
 from datetime import datetime
-from itertools import chain
 import os
 from pathlib import Path
 
@@ -118,10 +117,10 @@ example_order = {
 class NameOrder(_SortKey):
     """Specify sphinx-gallery example order as file tree"""
 
-    items = list(chain.from_iterable(example_order.values()))
+    items = sum(example_order.values(), [])
 
     def __call__(self, item):
-        print(f"NameOrder: {item}")
+        logger.info(f"NameOrder: {item}")
         return self.items.index(item)
 
 
