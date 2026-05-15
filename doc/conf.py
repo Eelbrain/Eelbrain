@@ -78,19 +78,19 @@ def use_pyplot(gallery_conf, fname):
 
 
 example_order = {
-    'datasets': [
+    '../examples/datasets': [
         'intro.py',
         'dataset-basics.py',
         'align.py',
         'ndvar-creating.py',
         'group-level-analysis.py',
     ],
-    'statistics': [
+    '../examples/statistics': [
         'models.py',
         'RMANOVA.py',
         'ANCOVA.py',
     ],
-    'mass-univariate-statistics': [
+    '../examples/mass-univariate-statistics': [
         'permutation-statistics.py',
         'sensor-ttest.py',
         'sensor-anova.py',
@@ -99,14 +99,14 @@ example_order = {
         'compare-topographies.py',
         'volume-source-space.py',
     ],
-    'plots': [
+    '../examples/plots': [
         'boxplot.py',
         'utsstat.py',
         'colors.py',
         'colormaps.py',
         'customizing.py',
     ],
-    'temporal-response-functions': [
+    '../examples/temporal-response-functions': [
         'trf_intro.py',
         'alice-trf.py',
         'mtrf.py',
@@ -119,19 +119,19 @@ example_order = {
 class NameOrder:
     """Specify sphinx-gallery example order as file tree"""
 
-    items = sum(example_order.values(), [])
-
     def __init__(self, src_dir: str) -> None:
         self.src_dir = src_dir
 
     def __call__(self, item):
-        logger.info(f"NameOrder: {item}")
-        return self.items.index(item)
+        key = str(Path(self.src_dir).relative_to(Path(__file__).parent))
+        idx = example_order[key].index(item)
+        logger.info(f"NameOrder {key} = {idx}: {item}")
+        return idx
 
 
 sphinx_gallery_conf = {
     'examples_dirs': '../examples',   # path to example scripts
-    'subsection_order': [f'../examples/{name}' for name in example_order],
+    'subsection_order': list(example_order),
     'within_subsection_order': "conf.NameOrder",
     'gallery_dirs': 'auto_examples',  # path where to save gallery generated examples
     'filename_pattern': rf'{os.sep}\w',
