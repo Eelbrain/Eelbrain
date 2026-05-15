@@ -4341,10 +4341,8 @@ class Pipeline(FileTree):
             bem = self._load_bem()
             bemsol = mne.make_bem_solution(bem)
         # ignore_ref should be True for KIT
-        if 'kit_system_id' in raw.info and raw.info['kit_system_id'] is not None:
-            is_kit = True
-        elif raw.info['chs'][0]['coil_type'].__str__() == '6001 (FIFFV_COIL_KIT_GRAD)':
-            is_kit = True
+        if 'kit_system_id' in raw.info:
+            is_kit = (raw.info['kit_system_id'] is not None) or (raw.info['chs'][0]['coil_type'].__str__() == '6001 (FIFFV_COIL_KIT_GRAD)')
         else:
             raise RuntimeError("Unclear how to set ignor_ref for legacy file without kit_system_id")
 
