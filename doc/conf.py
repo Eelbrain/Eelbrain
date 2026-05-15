@@ -14,8 +14,6 @@ import os
 from pathlib import Path
 import sys
 
-# TODO: This just warns, so doesn't actually make sure Brain is available:
-# import eelbrain.plot._brain_object  # make sure that Brain is available
 import eelbrain
 from sphinx_gallery.sorting import _SortKey
 import eelbrain.datasets._alice
