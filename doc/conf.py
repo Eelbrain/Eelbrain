@@ -13,11 +13,18 @@ from datetime import datetime
 from itertools import chain
 import os
 from pathlib import Path
+import sys
 
-import eelbrain.plot._brain_object  # make sure that Brain is available
+# TODO: This just warns, so doesn't actually make sure Brain is available:
+# import eelbrain.plot._brain_object  # make sure that Brain is available
 import eelbrain
-from sphinx_gallery.sorting import ExplicitOrder, _SortKey
+from sphinx_gallery.sorting import _SortKey
+import sphinx.util.logging
 
+logger = sphinx.util.logging.getLogger("eelbrain")
+need_path = str(Path(__file__).parent)
+if need_path not in sys.path:
+    sys.path.append(need_path)  # for conf.NameOrder and conf.use_pyplot
 
 # If extensions (or modules to document with autodoc) are in another directory,
 # add these directories to sys.path here. If the directory is relative to the
@@ -61,7 +68,6 @@ bibtex_bibfiles = ['publications.bib']
 qualname_overrides = {
     "eelbrain._data_obj.NDVar": "eelbrain.NDVar",
 }
-
 
 ################################################################################
 # Sphinx-Gallery
@@ -122,15 +128,16 @@ class NameOrder(_SortKey):
 
 sphinx_gallery_conf = {
     'examples_dirs': '../examples',   # path to example scripts
-    'subsection_order': ExplicitOrder([f'../examples/{name}' for name in example_order]),
-    'within_subsection_order': NameOrder,
+    'subsection_order': [f'../examples/{name}' for name in example_order],
+    'within_subsection_order': "conf.NameOrder",
     'gallery_dirs': 'auto_examples',  # path where to save gallery generated examples
     'filename_pattern': rf'{os.sep}\w',
     'default_thumb_file': Path(__file__).parent / 'images' / 'eelbrain.png',
     'min_reported_time': 4,
     'download_all_examples': False,
-    'reset_modules': ('matplotlib', use_pyplot),
+    'reset_modules': ('matplotlib', "conf.use_pyplot"),
     'reference_url': {'eelbrain': None},
+    "backreferences_dir": "generated",
 }
 
 # Disable tqdm (to avoid progress bar output in example gallery)
@@ -230,8 +237,11 @@ pygments_style = 'sphinx'
 # A list of ignored prefixes for module index sorting.
 modindex_common_prefix = ['eelbrain.']
 
-# Supress warnings for badges
-suppress_warnings = ['image.nonlocal_uri']
+# Supress warnings
+suppress_warnings = [
+    'image.nonlocal_uri',  # badges
+    "bibtex.missing_field",  # missing year in some entries
+]
 
 
 # -- Custom Options -----------------------------------------------------------
@@ -265,8 +275,8 @@ html_theme_options = {
     'logo_only': True,
     'includehidden': False,
     'navigation_depth': 2,  # otherwise RTD includes all autosummary sub-headings
-    'html_baseurl': 'https://eelbrain.readthedocs.io/en/stable/',
 }
+html_baseurl = 'https://eelbrain.readthedocs.io/en/stable/'
 
 # Add any paths that contain custom themes here, relative to this directory.
 # html_theme_path = []
