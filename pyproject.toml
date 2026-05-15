@@ -109,7 +109,8 @@ repair-wheel-command = [
   "abi3audit --strict --report --verbose {wheel}",
 ]
 
-[tool.cibuildwheel.linux.musllinux]
+[[tool.cibuildwheel.overrides]]
+select = "*-musllinux*"
 test-requires = [
     "pytest",  # no pingouin because it requires sklearn, which does not have binary wheels
 ]
