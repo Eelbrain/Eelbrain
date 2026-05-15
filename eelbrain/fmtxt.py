@@ -1985,6 +1985,7 @@ class Image(FMTextElement, BytesIO):
         """
         return super().seek(pos, whence)
 
+
 class Figure(FMText):
     "Represent a figure with figure caption"
 
