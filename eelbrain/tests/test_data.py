@@ -1314,7 +1314,6 @@ def test_ndvar_indexing():
 @requires_mne_testing_data
 def test_ndvar_indexing_source():
     ds = datasets.get_uts(utsnd=True)
-    x = ds['utsnd']
     # SourceSpace
     x = datasets.get_mne_stc(True, subject='fsaverage')
     with pytest.raises(TypeError):
