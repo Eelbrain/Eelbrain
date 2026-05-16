@@ -16,7 +16,6 @@ classifiers = [
   'Operating System :: Microsoft :: Windows',
   'Operating System :: Unix',
   'Programming Language :: Python :: 3 :: Only',
-  'Programming Language :: Python :: 3.10',
   'Programming Language :: Python :: 3.11',
   'Programming Language :: Python :: 3.12',
   'Programming Language :: Python :: 3.13',
@@ -52,7 +51,7 @@ maintainers = [
 ]
 name = 'eelbrain'
 readme = 'README.md'
-requires-python = '>=3.10'
+requires-python = '>=3.11'
 dynamic = ["version"]
 
 [project.optional-dependencies]
@@ -91,8 +90,7 @@ test = [
 ]
 
 [tool.cibuildwheel]
-# 3.11 is abi3 -- could build 3.9 3.10 etc. but let's keep it simple (SPEC0 is 3.12
-# as of 2025/11 anyway, but building for 3.11+ is good enough) and skip pypy as well
+# a single build for abi3
 build = "cp311-*"
 archs = ["native"]
 before-build = "pip install abi3audit"
