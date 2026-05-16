@@ -1969,7 +1969,7 @@ class Image(FMTextElement, BytesIO):
         with open(dst, 'wb') as fid:
             fid.write(buf)
 
-    # Add this to work around a rendering issue
+    # Add this to work around a sphinx rendering issue with the inherited docstring
     def seek(self, pos: int, whence: int = 0, /) -> int:
         """Seek to a position in the buffer.
 
