@@ -96,6 +96,8 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     environment: "Package deployment"
+    permissions:
+      id-token: write  # for trusted publishing
     needs: [pre-publish]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     steps:
