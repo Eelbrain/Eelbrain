@@ -5004,7 +5004,7 @@ class NDVar(Named):
         """
         if self.has_case:
             x = self.x.repeat(repeats, axis=0)
-            dims = self.dims
+            dims = ['case', *self.dims[1:]]
         else:
             x = self.x[newaxis].repeat(repeats, axis=0)
             dims = (Case(repeats),) + self.dims
