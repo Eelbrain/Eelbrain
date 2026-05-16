@@ -152,21 +152,21 @@ class Topomap(SensorMapMixin, ColorMapMixin, TopoMapKey, EelFigure):
             **kwargs,
     ):
         plot_data = PlotData.from_args(y, ('sensor',), xax, data, sub)
+        axes_data = plot_data.for_plot(PlotType.IMAGE)
         self.plots = []
         ColorMapMixin.__init__(self, plot_data.data, cmap, vmax, vmin, contours, self.plots)
         if isinstance(proj, str):
-            proj = repeat(proj, plot_data.n_plots)
+            proj = repeat(proj, axes_data.n_plots)
         elif not isinstance(proj, Sequence):
             raise TypeError(f"{proj=}")
-        elif len(proj) != plot_data.n_plots:
-            raise ValueError(f"{proj=}: need as many proj as axes ({plot_data.n_plots})")
+        elif len(proj) != axes_data.n_plots:
+            raise ValueError(f"{proj=}: need as many proj as axes ({axes_data.n_plots})")
 
-        layout = ImLayout(plot_data.plot_used, 1.1, 2, margins, axtitle=axtitle, **kwargs)
+        layout = ImLayout(axes_data.plot_used, 1.1, 2, margins, axtitle=axtitle, **kwargs)
         EelFigure.__init__(self, plot_data.frame_title, layout)
-        self._set_axtitle(axtitle, plot_data, verticalalignment='top', pad=-1)
+        self._set_axtitle(axtitle, axes_data, verticalalignment='top', pad=-1)
 
         # plots
-        axes_data = plot_data.for_plot(PlotType.IMAGE)
         for ax, layers, proj_ in zip(self.axes, axes_data, proj):
             h = AxTopomap(ax, layers, clip, clip_distance, sensors, sensorlabels, mark, mcolor, msize, marker, proj_, res, im_interpolation, xlabel, self._vlims, self._cmaps, self._contours, interpolation, head_radius, head_pos)
             self.plots.append(h)
@@ -516,6 +516,7 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
         plot_data = PlotData.from_args(y, ('sensor', None), xax, data, sub)
         topo_data = [[layer.y for layer in ax.layers] for ax in plot_data.plot_data]
         n_topo_cols = len(topo_data[0])
+        topomap_data = plot_data.for_plot(PlotType.IMAGE)
         multimodal = plot_data.plot_data[0].multimodal
 
         if multimodal:
@@ -580,7 +581,7 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
             'mcolor': mcolor,
         }
 
-        self._topo_data_per_row = topo_data
+        self._topomap_data = topomap_data.plot_data
 
         # plot epochs (x/y are in figure coordinates)
         # For multi-modal, the combined butterfly NDVar has no meas, so self._vlims (keyed by
@@ -609,20 +610,13 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
         ColorMapMixin._fill_toolbar(self, tb)
 
     def _update_topo(self, t):
-        n_topo_cols = len(self._topo_data_per_row[0])
         if not self.topo_plots:
-            for row, row_data in enumerate(self._topo_data_per_row):
-                for j, ndv in enumerate(row_data):
-                    ax = self.topo_axes[row * n_topo_cols + j]
-                    y_t = ndv.sub(time=t)
-                    layers = AxisData([DataLayer(y_t, PlotType.IMAGE)])
-                    p = AxTopomap(ax, layers, vlims=self._vlims, cmaps=self._cmaps, **self._topo_kwargs)
-                    self.topo_plots.append(p)
+            for ax, layers in zip(self.topo_axes, self._topomap_data):
+                p = AxTopomap(ax, layers.sub_time(t), vlims=self._vlims, cmaps=self._cmaps, **self._topo_kwargs)
+                self.topo_plots.append(p)
         else:
-            for row, row_data in enumerate(self._topo_data_per_row):
-                for j, ndv in enumerate(row_data):
-                    y_t = ndv.sub(time=t)
-                    self.topo_plots[row * n_topo_cols + j].set_data([y_t])
+            for p, layers in zip(self.topo_plots, self._topomap_data):
+                p.set_data(layers.sub_time(t, True))
 
     def _topo_data(self, event):
         ax = event.inaxes

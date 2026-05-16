@@ -1116,7 +1116,7 @@ class PlotData:
     @classmethod
     def from_args(
             cls,
-            y: NDVarArg | Sequence[NDVarArg],
+            y: NDVarArg | Sequence[NDVarArg] | Sequence[Sequence[NDVarArg]],
             dims: int | tuple[str | None, ...],
             xax: CategorialArg = None,
             data: Dataset = None,
@@ -1416,7 +1416,16 @@ class PlotData:
     def for_plot(self, plot_type: PlotType) -> PlotData:
         if self.plot_type == plot_type:
             return self
-        plot_data = [ax.for_plot(plot_type) for ax in self.plot_data]
+        plot_data = []
+        expanded = False
+        for ax in self.plot_data:
+            if plot_type == PlotType.IMAGE and ax.multimodal:
+                plot_data.extend(replace(ax, layers=list(layer.for_plot(plot_type)), multimodal=False) for layer in ax.layers)
+                expanded = True
+            else:
+                plot_data.append(ax.for_plot(plot_type))
+        if expanded:
+            return replace(self, plot_data=plot_data, plot_names=None, plot_used=None, plot_type=plot_type)
         return replace(self, plot_data=plot_data, plot_type=plot_type)
 
     def bin(self, bin_length, tstart, tstop):
