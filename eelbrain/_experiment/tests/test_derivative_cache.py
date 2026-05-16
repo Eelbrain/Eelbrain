@@ -515,7 +515,7 @@ def make_registry():
     registry.register(comparison)
     registry.register(ephemeral)
     registry.register(protected)
-    return pipeline, registry, source, value, summary, comparison, ephemeral, protected, None
+    return pipeline, registry, source, value, summary, comparison, ephemeral, protected, root
 
 
 def test_manifest_roundtrip_ignores_unknown_fields():
@@ -534,7 +534,7 @@ def test_manifest_roundtrip_ignores_unknown_fields():
 
 
 def test_registry_load_caches_derivative_and_writes_manifest():
-    pipeline, registry, _, value, _, _, _, _, _ = make_registry()
+    pipeline, registry, _, value, _, _, _, _, _root = make_registry()
 
     first = registry.resolve('value', state=DEFAULT_STATE).load()
     second = registry.resolve('value', state=DEFAULT_STATE).load()
@@ -544,7 +544,7 @@ def test_registry_load_caches_derivative_and_writes_manifest():
 
 
 def test_registry_logs_cache_events(caplog):
-    _, registry, _, value, _, _, _, _, _ = make_registry()
+    _, registry, _, value, _, _, _, _, _root = make_registry()
 
     with caplog.at_level(logging.DEBUG, logger='eelbrain.test.derivative_cache'):
         registry.resolve('value', state=DEFAULT_STATE).load()
@@ -572,7 +572,7 @@ def test_registry_logs_cache_events(caplog):
 
 
 def test_dependency_change_invalidates_downstream_derivatives():
-    pipeline, registry, _, value, summary, _, _, _, _ = make_registry()
+    pipeline, registry, _, value, summary, _, _, _, _root = make_registry()
 
     assert registry.resolve('summary', state=DEFAULT_STATE).load() == 'summary:alpha'
     assert value.build_calls == 1
@@ -586,7 +586,7 @@ def test_dependency_change_invalidates_downstream_derivatives():
 
 
 def test_non_key_state_does_not_invalidate_cache():
-    _, registry, _, value, _, _, _, _, _ = make_registry()
+    _, registry, _, value, _, _, _, _, _root = make_registry()
 
     assert registry.resolve('value', state={'subject': 's1', 'mode': 'a'}).load() == 'alpha'
     assert registry.resolve('value', state={'subject': 's1', 'mode': 'b'}).load() == 'alpha'
@@ -594,7 +594,7 @@ def test_non_key_state_does_not_invalidate_cache():
 
 
 def test_generic_cache_path_uses_node_name_and_key():
-    _, registry, _, _, _, _, _, _, _ = make_registry()
+    _, registry, _, _, _, _, _, _, _root = make_registry()
 
     a = registry.resolve('value', state={'subject': 's1', 'mode': 'a'}).artifact_path
     b = registry.resolve('value', state={'subject': 's1', 'mode': 'b'}).artifact_path
@@ -635,7 +635,7 @@ def test_cache_collision_sidecar_disambiguates_artifact_paths():
 
 
 def test_unique_cache_paths_do_not_create_disambiguation_sidecar():
-    _, registry, _, value, _, _, _, _, _ = make_registry()
+    _, registry, _, value, _, _, _, _, _root = make_registry()
 
     assert registry.resolve('value', state=DEFAULT_STATE).load() == 'alpha'
     handle = registry.resolve('value', state=DEFAULT_STATE)
@@ -645,7 +645,7 @@ def test_unique_cache_paths_do_not_create_disambiguation_sidecar():
 
 
 def test_dependency_tree_formats_ascii_dependencies():
-    _, registry, _, _, _, _, _, _, _ = make_registry()
+    _, registry, _, _, _, _, _, _, _root = make_registry()
 
     tree = registry.dependency_tree('comparison', state=DEFAULT_STATE)
 
@@ -658,7 +658,7 @@ def test_dependency_tree_formats_ascii_dependencies():
 
 
 def test_dependency_tree_respects_max_line_length():
-    _, registry, _, _, _, _, _, _, _ = make_registry()
+    _, registry, _, _, _, _, _, _, _root = make_registry()
 
     tree = registry.dependency_tree('comparison', state=DEFAULT_STATE, max_line_length=44)
     lines = tree.splitlines()
@@ -670,7 +670,7 @@ def test_dependency_tree_respects_max_line_length():
 
 
 def test_disabled_by_default_derivative_skips_cache_by_default():
-    _, registry, _, _, _, _, ephemeral, _, _ = make_registry()
+    _, registry, _, _, _, _, ephemeral, _, _root = make_registry()
 
     first = registry.resolve('ephemeral', state=DEFAULT_STATE).load()
     second = registry.resolve('ephemeral', state=DEFAULT_STATE).load()
@@ -684,7 +684,7 @@ def test_disabled_by_default_derivative_skips_cache_by_default():
 
 
 def test_registry_resolve_returns_request_for_input_and_derivative():
-    _, registry, _, _, _, _, _, _, _ = make_registry()
+    _, registry, _, _, _, _, _, _, _root = make_registry()
 
     handle = registry.resolve('source', state=DEFAULT_STATE)
     assert isinstance(handle, Request)
@@ -704,7 +704,7 @@ def test_registry_resolve_returns_request_for_input_and_derivative():
 
 
 def test_stale_external_artifact_is_protected():
-    pipeline, registry, _, _, _, _, _, _, _ = make_registry()
+    pipeline, registry, _, _, _, _, _, _, _root = make_registry()
 
     assert registry.resolve('protected', state=DEFAULT_STATE).load() == 'alpha'
     protected_path = Path(pipeline.get('protected-file'))
@@ -729,7 +729,7 @@ def test_stale_external_artifact_is_protected():
 
 
 def test_protected_artifact_requires_derivative_owned_reindexing():
-    pipeline, registry, _, _, _, _, _, _, _ = make_registry()
+    pipeline, registry, _, _, _, _, _, _, _root = make_registry()
 
     assert registry.resolve('protected', state=DEFAULT_STATE).load() == 'alpha'
     pipeline.source_path().write_text('changed')
@@ -860,7 +860,7 @@ def test_dependency_fingerprint_override_obeys_declared_dependencies():
 
 
 def test_dependency_fingerprint_override_rejects_undeclared_dependencies():
-    pipeline, registry, *_ = make_registry()
+    pipeline, registry, *_, _root = make_registry()
     root = pipeline.root
     registry.register(FingerprintOverrideDerivative(root, (Dependency('value'),), 'source'))
 
@@ -869,7 +869,7 @@ def test_dependency_fingerprint_override_rejects_undeclared_dependencies():
 
 
 def test_request_loads_named_view_from_input():
-    _, registry, _, _, _, _, _, _, _ = make_registry()
+    _, registry, _, _, _, _, _, _, _root = make_registry()
 
     value = registry.resolve('source', state=DEFAULT_STATE, options={'upper': True}).load(view='echo')
 
