@@ -658,10 +658,6 @@ def setup_samples_experiment(
         for task in tasks:
             start, stop = segs.pop()
             raw_ = raw.copy().crop(start, stop)
-            these_events = events[
-                (events[:, 0] >= raw_.first_samp)
-                & (events[:, 0] < raw_.first_samp + len(raw_))
-            ]
             raw_.load_data()
             if pick == 'eeg':
                 raw_.pick_types(eeg=True, stim=True, exclude=[])
@@ -672,7 +668,7 @@ def setup_samples_experiment(
                 raw=raw_,
                 bids_path=bids_path,
                 event_id=event_id,
-                events=these_events,
+                events=mne.find_events(raw_),
                 overwrite=True,
                 allow_preload=True,
                 format=format,
