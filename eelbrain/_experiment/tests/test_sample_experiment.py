@@ -423,8 +423,16 @@ def test_sample_neuromag():
 
     root = join(tempdir, 'SampleExperiment')
     e = Experiment(root)
-    assert e.get('raw') == '1-40'
+    e.set(raw='1-40', epoch='target', rej='')
 
+    # Check original events
+    ds = e.load_events()
+    assert ds.n_cases == 80
+    ds = e.load_selected_events()
+    assert ds.n_cases == 73
+
+    # Check auto-rejection
+    e.set(rej='man')
     e.make_epoch_selection(auto={'mag': 2e-12, 'grad': 5e-11, 'eeg': 1.5e-4})
     ds = e.load_selected_events(reject='keep')
     assert ds['accept'].sum() == 69
