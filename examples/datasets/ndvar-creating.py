@@ -68,7 +68,7 @@ p = plot.UTS(n400_timecourse)
 
 ###############################################################################
 # Combining NDVars
-# ---------------
+# ----------------
 # More complex NDVars can often be created by combining simpler NDVars.
 # As example data, we generate random values for an independent variable
 # (consistent with simulating an N400 response, we call it "cloze probability")

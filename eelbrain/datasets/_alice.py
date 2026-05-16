@@ -1,7 +1,9 @@
 # Helper to download data for Alice example
 from pathlib import Path
+import sys
 
 import pooch
+from tqdm import tqdm
 
 from .._types import PathArg
 
@@ -25,12 +27,29 @@ def get_alice_path(
         registry=registry,
         retry_if_failed=4,
     )
-    # Avoid 403 errors from the server by setting a user agent
-    # adapted from https://github.com/scipy/scipy/pull/22076
-    downloader = pooch.HTTPDownloader(progressbar=progressbar, headers={"User-Agent": "Eelbrain"})
     for fname in registry:
         if (path / fname.split('.')[0]).exists():   # Won't work for multiple eeg.x.zip download
             continue
+        # Avoid 403 errors from the server by setting a user agent
+        # adapted from https://github.com/scipy/scipy/pull/22076
+        progress = SlowTqdm() if progressbar else None
+        downloader = pooch.HTTPDownloader(progressbar=progress, headers={"User-Agent": "Eelbrain"})
         fetcher.fetch(fname, processor=pooch.Unzip(extract_dir='.'), downloader=downloader)
         (path / fname).unlink()
     return path
+
+
+# Adapt base progressbar code:
+# https://github.com/fatiando/pooch/blob/main/pooch/downloaders.py#L238
+# To update more slowly
+class SlowTqdm(tqdm):
+    def __init__(self):
+        use_ascii = bool(sys.platform == "win32")
+        super().__init__(
+            total=1,  # just to make bool() happy
+            mininterval=1.0,  # slower than default 0.1
+            ascii=use_ascii,
+            unit="B",
+            unit_scale=True,
+            leave=True,
+        )

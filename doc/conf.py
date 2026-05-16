@@ -10,18 +10,20 @@
 # serve to show the default.
 
 from datetime import datetime
-import os
 from pathlib import Path
+import os
+import sys
 
-import eelbrain.plot._brain_object  # make sure that Brain is available
 import eelbrain
 import eelbrain.datasets._alice
 import mne
-from sphinx_gallery.sorting import ExplicitOrder, _SortKey
 import sphinx.util.logging
 
 logger = sphinx.util.logging.getLogger("eelbrain")
 
+need_path = str(Path(__file__).parent)
+if need_path not in sys.path:
+    sys.path.append(need_path)  # for conf.NameOrder and conf.use_pyplot
 
 # If extensions (or modules to document with autodoc) are in another directory,
 # add these directories to sys.path here. If the directory is relative to the
@@ -76,19 +78,19 @@ def use_pyplot(gallery_conf, fname):
 
 
 example_order = {
-    'datasets': [
+    '../examples/datasets': [
         'intro.py',
         'dataset-basics.py',
         'align.py',
         'ndvar-creating.py',
         'group-level-analysis.py',
     ],
-    'statistics': [
+    '../examples/statistics': [
         'models.py',
         'RMANOVA.py',
         'ANCOVA.py',
     ],
-    'mass-univariate-statistics': [
+    '../examples/mass-univariate-statistics': [
         'permutation-statistics.py',
         'sensor-ttest.py',
         'sensor-anova.py',
@@ -97,14 +99,14 @@ example_order = {
         'compare-topographies.py',
         'volume-source-space.py',
     ],
-    'plots': [
+    '../examples/plots': [
         'boxplot.py',
         'utsstat.py',
         'colors.py',
         'colormaps.py',
         'customizing.py',
     ],
-    'temporal-response-functions': [
+    '../examples/temporal-response-functions': [
         'trf_intro.py',
         'alice-trf.py',
         'mtrf.py',
@@ -114,27 +116,31 @@ example_order = {
 }
 
 
-class NameOrder(_SortKey):
+class NameOrder:
     """Specify sphinx-gallery example order as file tree"""
 
-    items = sum(example_order.values(), [])
+    def __init__(self, src_dir: str) -> None:
+        self.src_dir = src_dir
 
     def __call__(self, item):
-        logger.info(f"NameOrder: {item}")
-        return self.items.index(item)
+        key = str(Path(self.src_dir).relative_to(Path(__file__).parent).as_posix())
+        idx = example_order[key].index(item)
+        logger.info(f"NameOrder {key} = {idx}: {item}")
+        return idx
 
 
 sphinx_gallery_conf = {
     'examples_dirs': '../examples',   # path to example scripts
-    'subsection_order': ExplicitOrder([f'../examples/{name}' for name in example_order]),
-    'within_subsection_order': NameOrder,
+    'subsection_order': list(example_order),
+    'within_subsection_order': "conf.NameOrder",
     'gallery_dirs': 'auto_examples',  # path where to save gallery generated examples
     'filename_pattern': rf'{os.sep}\w',
     'default_thumb_file': Path(__file__).parent / 'images' / 'eelbrain.png',
     'min_reported_time': 4,
     'download_all_examples': False,
-    'reset_modules': ('matplotlib', use_pyplot),
+    'reset_modules': ('matplotlib', "conf.use_pyplot"),
     'reference_url': {'eelbrain': None},
+    "backreferences_dir": "generated",
 }
 
 # Disable tqdm (to avoid progress bar output in example gallery)
@@ -234,8 +240,11 @@ pygments_style = 'sphinx'
 # A list of ignored prefixes for module index sorting.
 modindex_common_prefix = ['eelbrain.']
 
-# Supress warnings for badges
-suppress_warnings = ['image.nonlocal_uri']
+# Supress warnings
+suppress_warnings = [
+    'image.nonlocal_uri',  # badges
+    "bibtex.missing_field",  # missing year in some entries
+]
 
 
 # -- Custom Options -----------------------------------------------------------
@@ -269,8 +278,8 @@ html_theme_options = {
     'logo_only': True,
     'includehidden': False,
     'navigation_depth': 2,  # otherwise RTD includes all autosummary sub-headings
-    'html_baseurl': 'https://eelbrain.readthedocs.io/en/stable/',
 }
+html_baseurl = 'https://eelbrain.readthedocs.io/en/stable/'
 
 # Add any paths that contain custom themes here, relative to this directory.
 # html_theme_path = []

@@ -1,5 +1,5 @@
 """
-.. _exa-lm:
+.. _exa-vol:
 
 Volume source space
 ===================

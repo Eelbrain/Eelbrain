@@ -1969,6 +1969,22 @@ class Image(FMTextElement, BytesIO):
         with open(dst, 'wb') as fid:
             fid.write(buf)
 
+    # Add this to work around a sphinx rendering issue with the inherited docstring
+    def seek(self, pos: int, whence: int = 0, /) -> int:
+        """Seek to a position in the buffer.
+
+        pos
+            Position to seek to.
+        whence
+            Optional argument that specifies the reference point for pos.
+
+        Returns
+        -------
+        int
+            The new absolute position.
+        """
+        return super().seek(pos, whence)
+
 
 class Figure(FMText):
     "Represent a figure with figure caption"

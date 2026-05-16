@@ -13,7 +13,7 @@ Check for open issues, or report new ones on `GitHub <https://github.com/Eelbrai
 
 
 Issues on prior versions
------------
+------------------------
 
 * Fixed in **0.38.3**, Windows only (`#52 <https://github.com/Eelbrain/Eelbrain/issues/52>`_): due to unexpected data loss in :class:`multiprocessing.sharedctypes.RawArray` for large arrays, permutation tests on large datasets using multiprocessing could return spurious results in which *p*-values for *all* clusters were reported as exactly 0.
 
@@ -27,12 +27,12 @@ New in 0.41
 * API:
 
   - To align with MNE-Python, **adjacency** has replaced **connectivity** in the names of:
-  
+
     - Arguments to functions, such as :func:`eelbrain.load.cnd`
     - Function name: ``eelbrain.set_connectivity()`` → :func:`eelbrain.set_adjacency`
     - Method names for all NDVar dimension classes, such as ``eelbrain.Case.connectivity()`` →  :meth:`eelbrain.Case.adjacency`
     - Method names for :class:`Sensor`:
-    
+
       - ``eelbrain.Sensor.get_connectivity()`` →  :meth:`eelbrain.Sensor.get_adjacency`
       - ``eelbrain.Sensor.set_connectivity()`` →  :meth:`eelbrain.Sensor.set_adjacency`
 
@@ -169,7 +169,7 @@ New in 0.32
 * :class:`~pipeline.MneExperiment` pipeline:
 
   - Methods with ``decim`` parameter now also have ``samplingrate`` parameter
-  - More control over :ref:`MneExperiment-events`
+  - More control over :ref:`Pipeline-events`
 
 
 New in 0.31
@@ -363,7 +363,7 @@ New in 0.25
 
   - A new :attr:`pipeline.MneExperiment.sessions` attribute replaces
     ``defaults['experiment']``, with support for multiple sessions in one
-    experiment (see :ref:`MneExperiment-filestructure`).
+    experiment (see :ref:`Pipeline-filestructure`).
   - The :attr:`pipeline.MneExperiment.epochs` parameter ``sel_epoch`` has been removed,
     use ``base`` instead.
   - The setting ``raw='clm'`` has been renamed to ``raw='raw'``.
@@ -389,7 +389,7 @@ New in 0.24
 
 * New test: :class:`test.TTestRelated`.
 * :meth:`pipeline.MneExperiment.make_report_rois` includes corrected p-values in reports
-  for tests in more than one ROI    
+  for tests in more than one ROI
 * :meth:`pipeline.MneExperiment.make_rej` now has a ``decim`` parameter to improve
   display performance.
 * :class:`pipeline.MneExperiment`: BEM-solution files are now created dynamically with
@@ -464,7 +464,7 @@ New in 0.19
 -----------
 
 * Two-stage tests (see :attr:`pipeline.MneExperiment.tests`).
-* Safer cache-handling. See note at :ref:`MneExperiment-intro-analysis`.
+* Safer cache-handling. See note at :ref:`Pipeline-intro-analysis`.
 * :meth:`Dataset.head` and :meth:`Dataset.tail` methods for more efficiently
   inspecting partial Datasets.
 * The default format for plots in reports is now SVG since they are displayed
