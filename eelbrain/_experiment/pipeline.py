@@ -50,7 +50,7 @@ from .pathing import (
 )
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, _resolve_parc
 from .preprocessing import (
-    CachedRawPipe, ICAInput, RawBadChannelsInput, RawDerivative, RawPipe, RawSource, RawSourceDerivative, RawSourceInput, RawICA,
+    CachedRawPipe, ICAInput, MaxwellCalibrationInput, MaxwellCrosstalkInput, RawBadChannelsInput, RawDerivative, RawPipe, RawSource, RawSourceDerivative, RawSourceInput, RawICA, RawMaxwell,
     REINDEX_ICA, assemble_raw_pipes, ica_input_name, raw_bad_channels_input_name, raw_node_name, raw_input_name,
 )
 from .reports import (
@@ -419,6 +419,9 @@ class Pipeline(StateModel):
                 raise TypeError(f"Unknown raw pipe {pipe}")
         self._derivatives.register(TransInput())
         self._derivatives.register(BemInput())
+        if any(isinstance(p, RawMaxwell) for p in self._raw.values()):
+            self._derivatives.register(MaxwellCalibrationInput())
+            self._derivatives.register(MaxwellCrosstalkInput())
         self._derivatives.register(RejectionInput(self.root, self._artifact_rejection, self._epochs))
 
         # --- Sensor-space: events → epochs → evoked ---

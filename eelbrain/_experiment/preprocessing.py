@@ -889,6 +889,9 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
                 label=f'{source_node}:bads',
             ))
             deps.append(Dependency(raw_node_name(self.pipe.ica_source), view='bads'))
+        elif isinstance(self.pipe, RawMaxwell):
+            deps.append(Dependency('maxwell-calibration'))
+            deps.append(Dependency('maxwell-crosstalk'))
         return tuple(deps)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
@@ -927,6 +930,10 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
                     set(ctx.load(f'{source_node}:bads')) | set(ctx.load(raw_node_name(self.pipe.ica_source)))
                 )
             return ica_pipe._apply_ica(raw, ica, bad_channels, self.raw_name, log=ctx.registry.log)
+        if isinstance(self.pipe, RawMaxwell):
+            calibration = ctx.load('maxwell-calibration')
+            cross_talk = ctx.load('maxwell-crosstalk')
+            return self.pipe._make(raw, path=path, noise=ctx.options['noise'], raw_name=self.raw_name, log=ctx.registry.log, source_pipe=source_pipe, calibration=calibration, cross_talk=cross_talk)
         return self.pipe._make(raw, path=path, noise=ctx.options['noise'], raw_name=self.raw_name, log=ctx.registry.log, source_pipe=source_pipe)
 
     def load(self, ctx: Request, path: Path) -> mne.io.BaseRaw:
@@ -964,6 +971,70 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
             value: mne.io.BaseRaw,
     ) -> None:
         value.save(path, overwrite=True, verbose='ERROR')
+
+
+class MaxwellCalibrationInput(Input[Path]):
+    """Input node for the fine-calibration file (acq-calibration_meg.dat/.fif)."""
+    name = 'maxwell-calibration'
+
+    def path(self, ctx: Request) -> Path:
+        for ext in ('.dat', '.fif'):
+            p = BIDSPath(
+                root=ctx.root,
+                subject=ctx.state.get('subject') or None,
+                session=ctx.state.get('session') or None,
+                acquisition='calibration',
+                suffix='meg',
+                extension=ext,
+                datatype='meg',
+            ).fpath
+            if p.exists():
+                return p
+        return BIDSPath(
+            root=ctx.root,
+            subject=ctx.state.get('subject') or None,
+            session=ctx.state.get('session') or None,
+            acquisition='calibration',
+            suffix='meg',
+            extension='.dat',
+            datatype='meg',
+        ).fpath
+
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        path = self.path(ctx)
+        if path.exists():
+            return file_fingerprint(ctx.root, path, 'maxwell-calibration')
+        return {'maxwell-calibration': None}
+
+    def load(self, ctx: Request) -> Path | None:
+        path = self.path(ctx)
+        return path if path.exists() else None
+
+
+class MaxwellCrosstalkInput(Input[Path]):
+    """Input node for the cross-talk compensation file (acq-crosstalk_meg.fif)."""
+    name = 'maxwell-crosstalk'
+
+    def path(self, ctx: Request) -> Path:
+        return BIDSPath(
+            root=ctx.root,
+            subject=ctx.state.get('subject') or None,
+            session=ctx.state.get('session') or None,
+            acquisition='crosstalk',
+            suffix='meg',
+            extension='.fif',
+            datatype='meg',
+        ).fpath
+
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        path = self.path(ctx)
+        if path.exists():
+            return file_fingerprint(ctx.root, path, 'maxwell-crosstalk')
+        return {'maxwell-crosstalk': None}
+
+    def load(self, ctx: Request) -> Path | None:
+        path = self.path(ctx)
+        return path if path.exists() else None
 
 
 def load_raw_dependency(
@@ -1624,6 +1695,8 @@ class RawMaxwell(CachedRawPipe):
             raw_name: str = None,
             log: logging.Logger | None = None,
             source_pipe: RawSource | None = None,
+            calibration: Path | None = None,
+            cross_talk: Path | None = None,
     ) -> mne.io.BaseRaw:
         assert source_pipe is not None
         sysname = source_pipe._get_sysname(raw.info, path.subject, path.datatype)
@@ -1634,7 +1707,7 @@ class RawMaxwell(CachedRawPipe):
         logger.info("Raw %s: computing Maxwell filter for %s", raw_name, path.fpath if not noise else path.find_empty_room().fpath)
         with user_activity:
             coord_frame = 'meg' if noise else 'head'
-            return mne.preprocessing.maxwell_filter(raw, bad_condition=self.bad_condition, coord_frame=coord_frame, verbose=MNE_VERBOSITY, **self.kwargs)
+            return mne.preprocessing.maxwell_filter(raw, calibration=calibration, cross_talk=cross_talk, bad_condition=self.bad_condition, coord_frame=coord_frame, verbose=MNE_VERBOSITY, **self.kwargs)
 
     def _make_info(
             self,
