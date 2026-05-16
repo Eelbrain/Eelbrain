@@ -122,9 +122,9 @@ def test_sample():
     # evoked cache invalidated by change in bads
     e.set('R0001', rej='', epoch='target')
     e.load_events()
-    assert exists(e._derivatives.resolve('events', state=e.state).manifest_path)
+    assert exists(e._resolve_derivative('events').manifest_path)
     ds = e.load_evoked(ndvar=False)
-    assert exists(e._derivatives.resolve('evoked', state=e.state).manifest_path)
+    assert exists(e._resolve_derivative('evoked').manifest_path)
     assert ds[0, 'evoked'].info['bads'] == []
     e.make_bad_channels(['MEG 0331'])
     ds = e.load_evoked(ndvar=False)
@@ -329,9 +329,9 @@ def test_sample():
         'samplingrate': None,
     }
     e.set(group='ab', rej='man', model='modality')
-    handle_ab = e._derivatives.resolve('test-result', state=e.state, options=result_options)
+    handle_ab = e._resolve_derivative('test-result', options=result_options)
     e.set(group='alias')
-    handle_alias = e._derivatives.resolve('test-result', state=e.state, options=result_options)
+    handle_alias = e._resolve_derivative('test-result', options=result_options)
     assert handle_ab.artifact_path == handle_alias.artifact_path
 
     class BadExperiment(SampleExperiment):
@@ -475,7 +475,7 @@ def test_sample():
     # ----
     labels = e.load_annot(parc='ac', mrisubject='fsaverage')
     assert len(labels) == 4
-    annot_handle = e._derivatives.resolve('annot', state=e.state)
+    annot_handle = e._resolve_derivative('annot')
     assert exists(annot_handle.manifest_path)
     # change parc definition
 
@@ -503,12 +503,12 @@ def test_sample_source():
     e.set(src='ico-4', rej='', epoch='auditory', parc='ac')
     morph = e.load_source_morph(subject='R0000')
     assert isinstance(morph, mne.SourceMorph)
-    assert exists(e._derivatives.resolve('source-morph', state=e.state).manifest_path)
+    assert exists(e._resolve_derivative('source-morph').manifest_path)
     res = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, make=True)
     res_labels = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, disconnect_labels=True, make=True)
-    assert exists(e._derivatives.resolve('src', state=e.state).manifest_path)
-    assert exists(e._derivatives.resolve('fwd', state=e.state).manifest_path)
-    assert exists(e._derivatives.resolve('inv', state=e.state).manifest_path)
+    assert exists(e._resolve_derivative('src').manifest_path)
+    assert exists(e._resolve_derivative('fwd').manifest_path)
+    assert exists(e._resolve_derivative('inv').manifest_path)
     with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=100, data='source')) as fid:
         source_manifest_data = json.load(fid)
     with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=100, data='source', disconnect_labels=True)) as fid:
@@ -588,7 +588,7 @@ def test_sample_tasks():
     e = Experiment(root)
 
     # get paths
-    handle = e._derivatives.resolve(raw_node_name('ica'), state=e.state)
+    handle = e._resolve_derivative(raw_node_name('ica'))
     assert 'root' not in e.state
     assert handle.root == Path(root)
     assert handle.artifact_path.is_relative_to(Path(root) / 'derivatives' / 'eelbrain' / 'cache' / 'raw-ica')
@@ -686,12 +686,12 @@ def test_evoked_backed_test_vars_are_post_aggregation_only():
         'smooth': None,
         'samplingrate': None,
     }
-    ds = e._derivatives.resolve('evoked-test-data', state=e.state, options=options).load()
+    ds = e._resolve_derivative('evoked-test-data', options=options).load()
     assert 'modality_num' in ds
 
     e.set(test='anova-bad')
     with pytest.raises(ConfigurationError, match='post-aggregation dataset'):
-        e._derivatives.resolve('evoked-test-data', state=e.state, options={**options, 'test': 'anova-bad'}).load()
+        e._resolve_derivative('evoked-test-data', options={**options, 'test': 'anova-bad'}).load()
 
 
 @requires_mne_sample_data
@@ -778,7 +778,7 @@ def test_evoked_cache_reuse():
     e.set(subject='R0000', epoch='target1', rej='')
 
     _ = e.load_evoked(ndvar=False)
-    handle = e._derivatives.resolve('evoked', state=e.state)
+    handle = e._resolve_derivative('evoked')
     evoked_path = handle.artifact_path
     manifest_path = handle.manifest_path
     assert manifest_path.exists()
@@ -919,7 +919,7 @@ def test_evoked_cache_stales_on_model_change():
 
     e_changed = ChangedExperiment(root)
     e_changed.set(subject='R0000', epoch='target', rej='', model='modality')
-    handle = e_changed._derivatives.resolve('evoked', state=e_changed.state)
+    handle = e_changed._resolve_derivative('evoked')
 
     assert not handle.is_valid()
     ds = e_changed.load_evoked(ndvar=False)
@@ -937,9 +937,9 @@ def test_epochs_dependency_views_distinguish_model_sensitivity():
 
     e = SampleExperiment(root)
     e.set(subject='R0000', epoch='target', rej='', model='modality')
-    evoked_handle = e._derivatives.resolve('evoked', state=e.state, options={})
+    evoked_handle = e._resolve_derivative('evoked', options={})
     epochs_dep = next(dep for dep in evoked_handle.node.dependencies(evoked_handle) if dep.name == 'epochs')
-    epochs_handle = e._derivatives.resolve('epochs', state=e.state, options=epochs_dep.options)
+    epochs_handle = e._resolve_derivative('epochs', options=epochs_dep.options)
 
     # Build the epochs cache explicitly. The current model labels should not
     # matter for this artifact because epoch extraction only needs event timing
@@ -962,8 +962,8 @@ def test_epochs_dependency_views_distinguish_model_sensitivity():
 
     e_changed = ChangedExperiment(root)
     e_changed.set(subject='R0000', epoch='target', rej='', model='modality')
-    evoked_handle_changed = e_changed._derivatives.resolve('evoked', state=e_changed.state, options={})
-    epochs_handle_changed = e_changed._derivatives.resolve('epochs', state=e_changed.state, options=epochs_dep.options)
+    evoked_handle_changed = e_changed._resolve_derivative('evoked')
+    epochs_handle_changed = e_changed._resolve_derivative('epochs', options=epochs_dep.options)
 
     # Changing the labels for the current model still does not affect epoch
     # extraction, so the cached epochs artifact should remain valid.
@@ -1002,7 +1002,7 @@ def test_epochs_cache_uses_fif():
         'ndvar': False,
         'data': 'sensor',
     }
-    handle = e._derivatives.resolve('epochs', state=e.state, options=options)
+    handle = e._resolve_derivative('epochs', options=options)
     ds = handle.load(cache=True)
     epochs = handle.node.load(handle, handle.artifact_path)
 
@@ -1052,7 +1052,7 @@ def test_epochs_cached_load_uses_current_selected_events():
         'ndvar': False,
         'data': 'sensor',
     }
-    handle = e._derivatives.resolve('epochs', state=e.state, options=options)
+    handle = e._resolve_derivative('epochs', options=options)
 
     # Compute epochs once to create the cached FIF artifact.
     ds = handle.load(cache=True)
@@ -1072,7 +1072,7 @@ def test_epochs_cached_load_uses_current_selected_events():
     # current selected-events shell to the returned Dataset.
     e_changed = ChangedExperiment(root)
     e_changed.set(subject='R0000', epoch='target1', rej='')
-    handle_changed = e_changed._derivatives.resolve('epochs', state=e_changed.state, options=options)
+    handle_changed = e_changed._resolve_derivative('epochs', options=options)
     assert handle_changed.artifact_path == handle.artifact_path
     ds_cached = handle_changed.load(cache=True)
     mtimes_2 = tuple(path.stat().st_mtime_ns for path in sorted(handle.artifact_path.iterdir()))
@@ -1093,13 +1093,13 @@ def test_selected_events_manifest_uses_real_dependencies():
 
     e = SampleExperiment(root)
     e.set(subject='R0000', epoch='target', rej='')
-    handle = e._derivatives.resolve('selected-events', state=e.state, options={
+    handle = e._resolve_derivative('selected-events', options={
         'reject': True,
         'index': True,
         'cat': None,
     })
     dependencies = handle.dependency_fingerprints()
-    expected_labeled_events_dependencies = {'events', 'raw'} if e._derivatives.resolve('events-input', state=e.state).exists() else {'events'}
+    expected_labeled_events_dependencies = {'events', 'raw'} if e._resolve_derivative('events-input').exists() else {'events'}
 
     assert 'dependencies' not in handle.current_fingerprint()
     assert set(dependencies) == {'labeled-events'}
@@ -1117,12 +1117,12 @@ def test_labeled_events_sidecar_copies_raw_info_from_raw():
 
     e = SampleExperiment(root)
     e.set(subject='R0000', epoch='target', rej='')
-    events_handle = e._derivatives.resolve('events', state=e.state)
+    events_handle = e._resolve_derivative('events')
     raw_events = events_handle.load()
-    events_input_handle = e._derivatives.resolve('events-input', state=e.state)
+    events_input_handle = e._resolve_derivative('events-input')
     raw_events.as_dataframe()[['onset', 'sample', 'value']].to_csv(events_input_handle.node.path(events_input_handle), sep='\t', index=False)
 
-    labeled_handle = e._derivatives.resolve('labeled-events', state=e.state)
+    labeled_handle = e._resolve_derivative('labeled-events')
     dependencies = labeled_handle.dependency_fingerprints()
     labeled_events = labeled_handle.load()
     selected_events = e.load_selected_events()
@@ -1148,11 +1148,10 @@ def test_raw_cache_identity_ignores_view_options():
     e = SampleExperiment(root)
     e.set(subject='R0000')
     node_name = raw_node_name('1-40')
-    base_state = e.state
 
-    handle_default = e._derivatives.resolve(node_name, state=base_state, options={'noise': False, 'preload': False})
-    handle_view = e._derivatives.resolve(node_name, state=base_state, options={'noise': False, 'preload': True})
-    handle_noise = e._derivatives.resolve(node_name, state=base_state, options={'noise': True, 'preload': False})
+    handle_default = e._resolve_derivative(node_name, options={'noise': False, 'preload': False})
+    handle_view = e._resolve_derivative(node_name, options={'noise': False, 'preload': True})
+    handle_noise = e._resolve_derivative(node_name, options={'noise': True, 'preload': False})
 
     assert handle_default.current_fingerprint() == handle_view.current_fingerprint()
     assert handle_default.current_fingerprint() != handle_noise.current_fingerprint()
@@ -1171,12 +1170,12 @@ def test_raw_info_view_matches_source_and_processed_raws():
     e.set(subject='R0000')
     e.make_bad_channels('MEG 0111', redo=True)
 
-    source_info = e._derivatives.resolve(raw_node_name('raw'), state=e.state, options={'noise': False, 'preload': False}).load(view='info')
+    source_info = e._resolve_derivative(raw_node_name('raw'), options={'noise': False, 'preload': False}).load(view='info')
     source_raw = e.load_raw(raw='raw')
     assert source_info['sfreq'] == source_raw.info['sfreq']
     assert source_info['bads'] == source_raw.info['bads'] == ['MEG 0111']
 
-    processed_info = e._derivatives.resolve(raw_node_name('1-40'), state=e.state, options={'noise': False, 'preload': False}).load(view='info')
+    processed_info = e._resolve_derivative(raw_node_name('1-40'), options={'noise': False, 'preload': False}).load(view='info')
     processed_raw = e.load_raw(raw='1-40')
     assert processed_info['bads'] == processed_raw.info['bads'] == ['MEG 0111']
     assert processed_info['highpass'] == pytest.approx(processed_raw.info['highpass'])
@@ -1201,7 +1200,7 @@ def test_raw_filter_elliptic_info_view_matches_artifact():
     e = Experiment(root)
     e.set(subject='R0000')
 
-    info = e._derivatives.resolve(raw_node_name('ellip'), state=e.state, options={'noise': False, 'preload': False}).load(view='info')
+    info = e._resolve_derivative(raw_node_name('ellip'), options={'noise': False, 'preload': False}).load(view='info')
     raw = e.load_raw(raw='ellip')
 
     assert info['sfreq'] == raw.info['sfreq']
@@ -1220,19 +1219,18 @@ def test_selected_events_cache_identity_ignores_view_options():
 
     e = SampleExperiment(root)
     e.set(subject='R0000', epoch='target', rej='', model='modality')
-    base_state = e.state
 
-    handle_default = e._derivatives.resolve('selected-events', state=base_state, options={
+    handle_default = e._resolve_derivative('selected-events', options={
         'reject': True,
         'index': True,
         'cat': None,
     })
-    handle_view = e._derivatives.resolve('selected-events', state=base_state, options={
+    handle_view = e._resolve_derivative('selected-events', options={
         'reject': True,
         'index': True,
         'cat': ('auditory',),
     })
-    handle_reject = e._derivatives.resolve('selected-events', state=base_state, options={
+    handle_reject = e._resolve_derivative('selected-events', options={
         'reject': False,
         'index': True,
         'cat': None,
@@ -1253,9 +1251,8 @@ def test_source_cache_identity_ignores_view_options():
 
     e = SampleExperiment(root)
     e.set(subject='R0000', epoch='target', rej='', src='ico-4')
-    base_state = e.state
 
-    epochs_stc_default = e._derivatives.resolve('epochs-stc', state=base_state, options={
+    epochs_stc_default = e._resolve_derivative('epochs-stc', options={
         'baseline': False,
         'src_baseline': False,
         'cat': None,
@@ -1267,7 +1264,7 @@ def test_source_cache_identity_ignores_view_options():
         'ndvar': True,
         'keep_epochs': False,
     })
-    epochs_stc_view = e._derivatives.resolve('epochs-stc', state=base_state, options={
+    epochs_stc_view = e._resolve_derivative('epochs-stc', options={
         'baseline': False,
         'src_baseline': False,
         'cat': None,
@@ -1279,7 +1276,7 @@ def test_source_cache_identity_ignores_view_options():
         'ndvar': False,
         'keep_epochs': 'both',
     })
-    epochs_stc_artifact = e._derivatives.resolve('epochs-stc', state=base_state, options={
+    epochs_stc_artifact = e._resolve_derivative('epochs-stc', options={
         'baseline': (-0.1, 0),
         'src_baseline': False,
         'cat': None,
@@ -1295,7 +1292,7 @@ def test_source_cache_identity_ignores_view_options():
     assert epochs_stc_default.current_fingerprint() == epochs_stc_view.current_fingerprint()
     assert epochs_stc_default.current_fingerprint() != epochs_stc_artifact.current_fingerprint()
 
-    evoked_stc_default = e._derivatives.resolve('evoked-stc', state=base_state, options={
+    evoked_stc_default = e._resolve_derivative('evoked-stc', options={
         'baseline': False,
         'src_baseline': False,
         'cat': None,
@@ -1305,7 +1302,7 @@ def test_source_cache_identity_ignores_view_options():
         'ndvar': True,
         'keep_evoked': False,
     })
-    evoked_stc_view = e._derivatives.resolve('evoked-stc', state=base_state, options={
+    evoked_stc_view = e._resolve_derivative('evoked-stc', options={
         'baseline': False,
         'src_baseline': False,
         'cat': None,
@@ -1315,7 +1312,7 @@ def test_source_cache_identity_ignores_view_options():
         'ndvar': False,
         'keep_evoked': True,
     })
-    evoked_stc_artifact = e._derivatives.resolve('evoked-stc', state=base_state, options={
+    evoked_stc_artifact = e._resolve_derivative('evoked-stc', options={
         'baseline': (-0.1, 0),
         'src_baseline': False,
         'cat': None,
@@ -1349,12 +1346,12 @@ def test_selected_events_vardef_is_local():
     compact = Variables({'grouped': LabelVar('value', {(1, 2): 'target'}, task='sample')})
     changed = Variables({'grouped': LabelVar('value', {1: 'target', 2: 'nontarget'}, task='sample')})
 
-    handle = e._derivatives.resolve('selected-events', state=e.state, options=options)
+    handle = e._resolve_derivative('selected-events', options=options)
     _ = handle.load(cache=True)
 
     assert 'vardef' not in handle.current_fingerprint()
     with pytest.raises(TypeError, match="undeclared option"):
-        e._derivatives.resolve('selected-events', state=e.state, options={**options, 'vardef': compact})
+        e._resolve_derivative('selected-events', options={**options, 'vardef': compact})
 
     ds_compact = e.load_selected_events(vardef=compact)
     ds_changed = e.load_selected_events(vardef=changed)
@@ -1372,7 +1369,7 @@ def test_coreg_report_dependencies_are_explicit():
     root = join(tempdir, 'SampleExperiment')
 
     e = SampleExperiment(root)
-    handle = e._derivatives.resolve('coreg-report', state=e.state, options={'dst': None})
+    handle = e._resolve_derivative('coreg-report', options={'dst': None})
 
     assert 'dependencies' not in handle.current_fingerprint()
     dependencies = handle.dependency_fingerprints()
