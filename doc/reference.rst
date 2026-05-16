@@ -529,7 +529,7 @@ More specific control over the plots can be achieved through the
    plot.brain.SequencePlotter
    plot.GlassBrain
 
-See also :meth:`plot.GlassBrain.butterfly`.
+See also :meth:`plot.GlassBrain.butterfly` for a butterfly-plot with a time-linked :class:`~plot.GlassBrain` plot.
 
 In order to make custom plots, a :class:`~plot._brain_object.Brain` figure
 without any data added can be created with
