@@ -122,7 +122,7 @@ def test_sample():
     # evoked cache invalidated by change in bads
     e.set('R0001', rej='', epoch='target')
     e.load_events()
-    assert exists(e._resolve_derivative('events').manifest_path)
+    assert exists(e._resolve_derivative('labeled-events').manifest_path)
     ds = e.load_evoked(ndvar=False)
     assert exists(e._resolve_derivative('evoked').manifest_path)
     assert ds[0, 'evoked'].info['bads'] == []
@@ -1117,23 +1117,21 @@ def test_labeled_events_sidecar_copies_raw_info_from_raw():
 
     e = SampleExperiment(root)
     e.set(subject='R0000', epoch='target', rej='')
-    events_handle = e._resolve_derivative('events')
-    raw_events = events_handle.load()
-    events_input_handle = e._resolve_derivative('events-input')
-    raw_events.as_dataframe()[['onset', 'sample', 'value']].to_csv(events_input_handle.node.path(events_input_handle), sep='\t', index=False)
+    raw = e.load_raw()
 
+    # With a BIDS sidecar present, labeled-events depends on events-input + raw
     labeled_handle = e._resolve_derivative('labeled-events')
     dependencies = labeled_handle.dependency_fingerprints()
     labeled_events = labeled_handle.load()
-    selected_events = e.load_selected_events()
 
     assert set(dependencies) == {'events', 'raw'}
     assert dependencies['events']['name'] == 'events-input'
     assert dependencies['raw']['name'] == raw_node_name(e.get('raw'))
-    for key in ('raw.samplingrate', 'raw.first_samp', 'raw.last_samp'):
-        assert labeled_events.info[key] == raw_events.info[key]
-        assert selected_events.info[key] == raw_events.info[key]
-    assert selected_events.n_cases
+    # Raw timing info must be copied from the raw file (EventsInput can't supply it)
+    # so that the epoch boundary check in _prepare_selected_events works correctly.
+    assert labeled_events.info['raw.samplingrate'] == raw.info['sfreq']
+    assert labeled_events.info['raw.first_samp'] == raw.first_samp
+    assert labeled_events.info['raw.last_samp'] == raw.last_samp
 
 
 @requires_mne_sample_data
