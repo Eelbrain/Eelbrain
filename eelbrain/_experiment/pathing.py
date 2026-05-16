@@ -8,12 +8,11 @@ from typing import Any
 from mne_bids import BIDSPath
 
 
-BIDS_ENTITY_KEYS = ('subject', 'session', 'task', 'acquisition', 'run')
+BIDS_ENTITY_KEYS = ('subject', 'session', 'task', 'run')
 BIDS_ENTITY_PREFIX_MAP = {
     'subject': 'sub',
     'session': 'ses',
     'task': 'task',
-    'acquisition': 'acq',
     'run': 'run',
 }
 DERIV_DIR = Path('derivatives')
@@ -68,11 +67,11 @@ def subject_session_basename(state: dict[str, Any]) -> str:
 
 
 def raw_basename(state: dict[str, Any]) -> str:
-    return _bids_name(state, ('subject', 'session', 'acquisition', 'task', 'run'))
+    return _bids_name(state, ('subject', 'session', 'task', 'run'))
 
 
 def epoch_basename(state: dict[str, Any]) -> str:
-    return _bids_name(state, ('subject', 'session', 'acquisition', 'run'))
+    return _bids_name(state, ('subject', 'session', 'run'))
 
 
 def test_basename(state: dict[str, Any]) -> str:

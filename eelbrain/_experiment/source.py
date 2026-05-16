@@ -504,7 +504,7 @@ class SourceMorphDerivative(Derivative[mne.SourceMorph]):
 class FwdDerivative(Derivative[mne.Forward]):
     name = 'fwd'
     key_fields = (
-        'subject', 'session', 'task', 'acquisition', 'run', 'raw',
+        'subject', 'session', 'task', 'run', 'raw',
         'epoch', 'mrisubject', 'src',
     )
     cache_suffix = '-fwd.fif'
@@ -573,7 +573,7 @@ class FwdDerivative(Derivative[mne.Forward]):
 class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
     name = 'inv'
     key_fields = (
-        'subject', 'session', 'task', 'acquisition', 'run', 'raw',
+        'subject', 'session', 'task', 'run', 'raw',
         'epoch', 'rej', 'cov', 'mrisubject', 'src', 'inv',
     )
     cache_policy = CachePolicy.OPTIONAL
@@ -787,7 +787,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
     """
     name = 'epochs-stc'
     key_fields = (
-        'subject', 'session', 'task', 'acquisition', 'run', 'raw',
+        'subject', 'session', 'task', 'run', 'raw',
         'epoch', 'rej', 'cov', 'mrisubject', 'src', 'inv', 'parc',
     )
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
@@ -908,7 +908,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
     """
     name = 'evoked-stc'
     key_fields = (
-        'subject', 'session', 'task', 'acquisition', 'run', 'raw',
+        'subject', 'session', 'task', 'run', 'raw',
         'epoch', 'rej', 'model', 'equalize_evoked_count', 'cov', 'mrisubject',
         'src', 'inv', 'parc',
     )

@@ -121,7 +121,7 @@ def _check_ds(ds: Dataset, source: str, info: dict[str, Any]) -> Dataset:
 class EventsDerivative(Derivative[Dataset]):
     """Extract events form M/EEG data files"""
     name = 'events'
-    key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'raw')
+    key_fields = ('subject', 'session', 'task', 'run', 'raw')
     cache_suffix = '.pickle'
 
     def __init__(
@@ -208,7 +208,7 @@ class LabeledEventsDerivative(Derivative[Dataset]):
     cannot be detected without executing the hook.
     """
     name = 'labeled-events'
-    key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'raw')
+    key_fields = ('subject', 'session', 'task', 'run', 'raw')
     cache_suffix = '.pickle'
 
     def __init__(
@@ -294,7 +294,7 @@ class SelectedEventsDerivative(UncachedDerivative[Dataset]):
         Optional subset of model cells to keep.
     """
     name = 'selected-events'
-    # key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'raw', 'epoch', 'rej')
+    # key_fields = ('subject', 'session', 'task', 'run', 'raw', 'epoch', 'rej')
     # cache_suffix = '.pickle'
     # cache_policy = CachePolicy.DISABLED_BY_DEFAULT
     OPTION_DEFAULTS = {

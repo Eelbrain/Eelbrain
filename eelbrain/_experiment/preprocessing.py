@@ -451,7 +451,7 @@ class RawSourceDerivative(UncachedDerivative[mne.io.BaseRaw]):
 
 
 class ICAInput(Input[mne.preprocessing.ICA]):
-    key_fields = ('subject', 'session', 'acquisition', 'run')
+    key_fields = ('subject', 'session', 'run')
     version = 1
 
     def __init__(
@@ -837,7 +837,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         Whether to resolve the corresponding empty-room recording instead of
         the subject recording.
     """
-    key_fields = ('subject', 'session', 'task', 'acquisition', 'run')
+    key_fields = ('subject', 'session', 'task', 'run')
     cache_policy = CachePolicy.OPTIONAL
     cache_suffix = '-raw.fif'
     OPTION_DEFAULTS = {'noise': False}

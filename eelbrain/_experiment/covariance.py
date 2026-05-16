@@ -70,7 +70,7 @@ class EpochCovariance:
 
 
 class CovDerivative(Derivative[mne.Covariance]):
-    key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'raw', 'epoch', 'cov', 'rej')
+    key_fields = ('subject', 'session', 'task', 'run', 'raw', 'epoch', 'cov', 'rej')
     cache_suffix = '-cov.fif'
 
     # Fixed options used when loading epochs for covariance estimation.

@@ -795,7 +795,7 @@ class EpochsDerivative(Derivative[Any]):
         Optional subset of model cells to keep before epoch creation.
     """
     name = 'epochs'
-    key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'raw', 'epoch', 'rej')
+    key_fields = ('subject', 'session', 'task', 'run', 'raw', 'epoch', 'rej')
     cache_suffix = '.epochs'
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
     OPTION_DEFAULTS = {
@@ -1026,7 +1026,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
     """
     name = 'evoked'
     key_fields = (
-        'subject', 'session', 'task', 'acquisition', 'run', 'raw',
+        'subject', 'session', 'task', 'run', 'raw',
         'epoch', 'rej', 'model', 'equalize_evoked_count',
     )
     cache_policy = CachePolicy.OPTIONAL
