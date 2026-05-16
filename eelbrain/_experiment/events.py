@@ -258,6 +258,10 @@ class LabeledEventsDerivative(Derivative[Dataset]):
             ds.info['raw.samplingrate'] = raw.info['sfreq']
             ds.info['raw.first_samp'] = raw.first_samp
             ds.info['raw.last_samp'] = raw.last_samp
+            # BIDS TSV 'sample' is 0-indexed from file start (MNE-BIDS subtracts
+            # raw.first_samp on write); adjust to raw's absolute sample frame.
+            if raw.first_samp:
+                ds['sample'] = ds['sample'] + raw.first_samp
         ds['subject'] = Factor([ctx.state['subject']], repeat=ds.n_cases, random=True)
         if self.multi_task:
             ds[:, 'task'] = ctx.state['task']
