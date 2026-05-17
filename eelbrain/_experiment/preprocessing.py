@@ -248,10 +248,19 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
             bids_path_ = bids_path_.find_empty_room()
         if bids_path_.fpath.exists():
             return bids_path_
-        split_path = bids_path_.copy()
-        split_path.update(split='01')
-        if split_path.fpath.exists():
-            return split_path
+        # Alternative paths: split files and omitted run
+        alternative_path = bids_path_.copy()
+        alternative_path.update(split='01')
+        if alternative_path.fpath.exists():
+            return alternative_path
+        # run-01 may be stored without the run entity (single-run subject/task).
+        if bids_path_.run == '01':
+            alternative_path.update(run=None)
+            if alternative_path.fpath.exists():
+                return alternative_path
+            alternative_path.update(split=None)
+            if alternative_path.fpath.exists():
+                return alternative_path
         if require:
             raise FileMissingError(f"Raw input file does not exist at expected location {bids_path_.fpath}")
         return bids_path_
