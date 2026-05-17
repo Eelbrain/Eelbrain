@@ -1,5 +1,7 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Pipeline class to manage data from an experiment"""
+from collections import Counter
+from collections.abc import Sequence
 import copy
 from datetime import datetime
 from itertools import chain, product
@@ -8,7 +10,6 @@ import os
 from os.path import exists
 from pathlib import Path
 from typing import Any, Literal
-from collections.abc import Sequence
 
 import numpy as np
 import mne
@@ -3608,6 +3609,224 @@ class Pipeline(StateModel):
             return tree
         print(tree)
         return None
+
+    def show_head_position_overview(
+            self,
+            tolerance: float = 1e-3,
+            asds: bool = False,
+            **state,
+    ) -> 'fmtxt.Table | fmtxt.Section | Dataset':
+        """Overview of head position (dev_head_t) across tasks, subjects and sessions.
+
+        Examines the device-to-head transformation matrix for all source
+        recordings and groups tasks with similar head position.
+        Useful for deciding whether separate coregistration/forward solutions
+        are needed, or whether ICA should be performed on combined or separate data.
+
+        Labels are assigned per subject, starting from A for the first task
+        encountered. Tasks with the same label share the same head position
+        within ``tolerance``; labels are not comparable across subjects.
+
+        Parameters
+        ----------
+        tolerance
+            Maximum element-wise absolute difference in the ``dev_head_t``
+            transformation matrix for two recordings to be considered as having
+            the same head position. Default ``1e-3`` corresponds to approximately
+            1 mm for translation (and roughly 0.06° for rotation), which is
+            conservative enough to justify sharing a forward solution.
+        asds
+            Return a :class:`Dataset` instead of formatted output.
+        ...
+            State parameters.
+
+        Returns
+        -------
+        fmtxt.Table | fmtxt.Section
+            Table with tasks as rows and subjects as columns. Each cell contains
+            a cluster label (A, B, C, ...) indicating the head position group;
+            cells with the same label share the same head position within
+            ``tolerance``. Missing recordings are shown as "—". When the
+            experiment has multiple sessions with differing head positions, a
+            :class:`fmtxt.Section` with one table per session is returned.
+        Dataset
+            (when ``asds=True``) Long-format Dataset with columns ``subject``,
+            ``task`` (and ``session`` when multiple sessions exist), and
+            ``label``.
+        """
+        if state:
+            self.set(**state)
+
+        tasks = self._tasks
+        subjects = list(self.get_field_values('subject'))
+        has_sessions = bool(self._sessions)
+        has_runs = bool(self._runs)
+        MISSING_MARK = '—'
+        CHL_MARK = '†'
+
+        # Collect dev_head_t for every (subject, session, task, run).
+        # Iterating over these four fields always yields 4-tuples; session is ''
+        # when the dataset has no BIDS sessions, run is '' when no runs exist.
+        source_name = self._raw.root_source_name('raw')
+        node_name = raw_input_name(source_name)
+        # Inner dicts are keyed by (task, run) pairs.
+        data: dict[str, dict[str, dict[tuple, np.ndarray | None]]] = {}
+        chl: dict[str, dict[str, dict[tuple, bool]]] = {}
+
+        for subject, session, task, run in self.iter(('subject', 'session', 'task', 'run'), raw='raw'):
+            key = (task, run)
+            ctx = self._resolve_derivative(node_name, options={'noise': False})
+            if ctx.exists():
+                data.setdefault(session, {}).setdefault(subject, {})[key] = None
+                chl.setdefault(session, {}).setdefault(subject, {})[key] = False
+                info = self._load_derivative(node_name, view='info', options={'noise': False})
+                head_t = info.get('dev_head_t')
+                if head_t is not None:
+                    data[session][subject][key] = head_t['trans'].copy()
+                chl[session][subject][key] = bool(info.get('hpi_meas'))
+
+        sessions = sorted(data.keys())
+        task_order = {t: i for i, t in enumerate(tasks)}
+
+        def _row_keys(session: str) -> list[tuple[str, str]]:
+            """Ordered (task, run) pairs that appear in any subject for this session."""
+            found = {key for subj_data in data[session].values() for key in subj_data}
+            return sorted(found, key=lambda tr: (task_order.get(tr[0], 999), tr[1]))
+
+        # Assign per-subject cluster labels within each session.
+        # For each subject, compare transforms greedily: the first (task, run)
+        # encountered gets 'A', subsequent ones close to an existing group get
+        # that group's label, otherwise a new label is assigned.
+        any_missing = False
+        any_chl = False
+        labels: dict[str, dict[str, dict[tuple, str]]] = {}
+        for session in sessions:
+            labels[session] = {}
+            row_keys = _row_keys(session)
+            for subject in subjects:
+                subject_data = data[session].get(subject, {})
+                representatives: list[tuple[str, np.ndarray]] = []
+                next_char = ord('A')
+                subject_labels: dict[tuple, str] = {}
+                for key in row_keys:
+                    if chl[session].get(subject, {}).get(key, False):
+                        any_chl = True
+                    if key not in subject_data:
+                        subject_labels[key] = ''
+                        continue
+                    trans = subject_data[key]
+                    if trans is None:
+                        subject_labels[key] = MISSING_MARK
+                        any_missing = True
+                        continue
+                    for rep_label, rep_trans in representatives:
+                        if np.allclose(trans, rep_trans, atol=tolerance, rtol=0):
+                            subject_labels[key] = rep_label
+                            break
+                    else:
+                        label = chr(next_char)
+                        next_char += 1
+                        representatives.append((label, trans))
+                        subject_labels[key] = label
+                labels[session][subject] = subject_labels
+
+        def _cell(session: str, subject: str, key: tuple) -> str:
+            label = labels[session][subject].get(key, '')
+            if chl[session].get(subject, {}).get(key, False):
+                return label + CHL_MARK
+            return label
+
+        if asds:
+            rows_subj, rows_ses, rows_task, rows_run, rows_label = [], [], [], [], []
+            for session in sessions:
+                row_keys = _row_keys(session)
+                for subject in subjects:
+                    for task, run in row_keys:
+                        rows_subj.append(subject)
+                        rows_ses.append(session)
+                        rows_task.append(task)
+                        rows_run.append(run)
+                        rows_label.append(_cell(session, subject, (task, run)))
+            ds = Dataset()
+            ds['subject'] = Factor(rows_subj)
+            if has_sessions:
+                ds['session'] = Factor(rows_ses)
+            ds['task'] = Factor(rows_task)
+            if has_runs:
+                ds['run'] = Factor(rows_run)
+            ds['label'] = Factor(rows_label)
+            return ds
+
+        def _make_caption(session: str) -> str:
+            parts = []
+            row_keys = _row_keys(session)
+            if len(row_keys) > 1:
+                session_labels = labels[session]
+                patterns = [
+                    tuple(session_labels[s].get(key, MISSING_MARK) for key in row_keys)
+                    for s in subjects
+                ]
+                counts = Counter(patterns)
+                majority_pat, majority_n = counts.most_common(1)[0]
+                pat_str = '–'.join(majority_pat)
+                if majority_n == len(subjects):
+                    if set(majority_pat) == {'A'}:
+                        return "All subjects have the same head position for all tasks."
+                    return f"All subjects: {pat_str}."
+                exceptions = [
+                    f"{s} ({'–'.join(p)})"
+                    for s, p in zip(subjects, patterns)
+                    if p != majority_pat
+                ]
+                pattern = f"Majority ({majority_n}/{len(subjects)} subjects): {pat_str}. Exceptions: {', '.join(exceptions)}."
+                parts.append(pattern)
+            if any_missing:
+                parts.append(f"{MISSING_MARK}: no initial head position (dev_head_t).")
+            if any_chl:
+                parts.append(f"{CHL_MARK}: continuous head localization.")
+            return ' '.join(parts)
+
+        def _make_table(session: str, title: str = None) -> fmtxt.Table:
+            row_keys = _row_keys(session)
+            col_spec = 'l' + ('r' if has_runs else '') + 'c' * len(subjects)
+            t = fmtxt.Table(col_spec, title=title, caption=_make_caption(session))
+            t.cell('Task')
+            if has_runs:
+                t.cell('Run')
+            for subject in subjects:
+                t.cell(subject)
+            t.midrule()
+            prev_task = None
+            for task, run in row_keys:
+                t.cell(task if task != prev_task else '')
+                prev_task = task
+                if has_runs:
+                    t.cell(run or '(no run)')
+                for subject in subjects:
+                    t.cell(_cell(session, subject, (task, run)))
+            return t
+
+        if not has_sessions or len(sessions) == 1:
+            title = "Head position"
+            if has_sessions and sessions[0]:
+                title += f" (session: {sessions[0]})"
+            return _make_table(sessions[0], title=title)
+
+        # Multiple sessions: check whether patterns are identical across all sessions
+        def _session_sig(session: str) -> dict[str, tuple]:
+            sl = labels[session]
+            row_keys = _row_keys(session)
+            return {s: tuple(sl[s].get(key, MISSING_MARK) for key in row_keys) for s in subjects}
+
+        sig0 = _session_sig(sessions[0])
+        if all(_session_sig(ses) == sig0 for ses in sessions[1:]):
+            return _make_table(sessions[0], title="Head position (identical across all sessions)")
+
+        section = fmtxt.Section("Head position across tasks")
+        for session in sessions:
+            sub = section.add_section(f"Session: {session}")
+            sub.append(_make_table(session))
+        return section
 
     def show_raw_info(self, **state) -> fmtxt.Table | None:
         """Display the selected pipeline for raw processing
