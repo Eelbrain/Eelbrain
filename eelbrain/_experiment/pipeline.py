@@ -408,9 +408,12 @@ class Pipeline(StateModel):
         maxwell_registered = False
         for raw_name, pipe in self._raw.items():
             if isinstance(pipe, RawSource):
+                raw_input = RawSourceInput(raw_name, pipe, self._raw_extension)
+                self._derivatives.register(raw_input)
                 self._derivatives.register(RawBadChannelsInput(raw_name, pipe, self._raw_extension))
-                self._derivatives.register(RawSourceInput(raw_name, pipe, self._raw_extension))
                 self._derivatives.register(RawSourceDerivative(raw_name, pipe, self._raw_extension))
+                self._derivatives.register(RawHeadPositionDerivative(raw_input.name))
+                self._derivatives.register(MedianHeadPositionDerivative(raw_input.name, self._tasks, self._runs))
             elif isinstance(pipe, CachedRawPipe):
                 # FIXME: run handling
                 # runs = self._runs if isinstance(pipe, RawICA) else None
@@ -420,9 +423,6 @@ class Pipeline(StateModel):
                 elif isinstance(pipe, RawMaxwell) and not maxwell_registered:
                     self._derivatives.register(MaxwellCalibrationInput())
                     self._derivatives.register(MaxwellCrosstalkInput())
-                    raw_inp = raw_input_name(self._raw.root_source_name(raw_name))
-                    self._derivatives.register(RawHeadPositionDerivative(raw_inp))
-                    self._derivatives.register(MedianHeadPositionDerivative(raw_inp, self._tasks, self._runs))
                     maxwell_registered = True
             else:
                 raise TypeError(f"Unknown raw pipe {pipe}")

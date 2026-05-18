@@ -412,8 +412,6 @@ class DependencyNode(Generic[T]):
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         """Information that uniquely identifies an artifact as valid.
 
-        Subclasses must override this method.
-
         The fingerprint should contain all non-dependency request information
         that makes this node's result stale, usually request ``state`` /
         ``options`` plus any configuration definitions or external file
@@ -431,8 +429,11 @@ class DependencyNode(Generic[T]):
         :meth:`Derivative.key`: the key chooses the cache slot/path for the
         artifact, while the fingerprint records the richer validity
         information that must match for that slot to be considered current.
+
+        Subclasses whose validity is fully determined by their key and
+        dependency timestamps need not override this method.
         """
-        raise NotImplementedError
+        return {}
 
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
         """Describe how this node should appear when used as a dependency.

@@ -503,32 +503,25 @@ class SourceMorphDerivative(Derivative[mne.SourceMorph]):
 
 class FwdDerivative(Derivative[mne.Forward]):
     name = 'fwd'
-    key_fields = (
-        'subject', 'session', 'task', 'run', 'raw',
-        'epoch', 'mrisubject', 'src',
-    )
+    key_fields = ('subject', 'session', 'mrisubject', 'src')
     cache_suffix = '-fwd.fif'
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (
-            Dependency(
-                raw_node_name('raw'),
-                state={'raw': 'raw'},
-            ),
+            Dependency(raw_node_name('raw')),
             Dependency('trans-input'),
             Dependency('src'),
+            Dependency('median-head-position'),
         )
-
-    def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {
-            'raw': ctx.state['raw'],
-            'epoch': ctx.state['epoch'],
-            'mrisubject': ctx.state['mrisubject'],
-            'src': ctx.state['src'],
-        }
 
     def build(self, ctx: Request) -> mne.Forward:
         raw = ctx.load(raw_node_name('raw'))
+        median_head_pos = ctx.load('median-head-position')
+        info = raw.info
+        if median_head_pos is not None:
+            info = info.copy()
+            with info._unlock():
+                info['dev_head_t'] = median_head_pos
         src = ctx.load('src')
         dst = self.path(ctx)
         if ctx.state['mrisubject'] == 'fsaverage':
@@ -536,23 +529,14 @@ class FwdDerivative(Derivative[mne.Forward]):
         else:
             bem = _load_bem(ctx.root, ctx.state, ctx.registry.log)
             bemsol = mne.make_bem_solution(bem)
-        if 'kit_system_id' in raw.info:
-            is_kit = raw.info['kit_system_id'] is not None
+        if 'kit_system_id' in info:
+            is_kit = info['kit_system_id'] is not None
         else:
             raise RuntimeError("Unclear how to set ignor_ref for legacy file without kit_system_id")
-        fwd = mne.make_forward_solution(
-            raw.info,
-            ctx.root / trans_file_path(ctx.state),
-            src,
-            bemsol,
-            ignore_ref=is_kit,
-        )
+        fwd = mne.make_forward_solution(info, ctx.load('trans-input'), src, bemsol, ignore_ref=is_kit)
         for src_part, src_ref in zip(fwd['src'], src):
             if src_part['nuse'] != src_ref['nuse']:
-                raise RuntimeError(
-                    f"The forward solution {dst.name} contains fewer sources than the source space. "
-                    "This could be due to a corrupted bem file with sources outside of the inner skull surface."
-                )
+                raise RuntimeError(f"The forward solution {dst.name} contains fewer sources than the source space. This could be due to a corrupted bem file with sources outside of the inner skull surface.")
         return fwd
 
     def load(
@@ -743,8 +727,16 @@ def _apply_source_baseline(stc_value, baseline) -> None:
         mne.baseline.rescale(stc._data, stc.times, baseline, 'mean', copy=False)
 
 
+def _check_head_position_alignment(ctx: Request, info: mne.Info) -> None:
+    """Raise if the data's head position doesn't match the canonical session position."""
+    median_head_pos = ctx.load('median-head-position')
+    if median_head_pos is not None:
+        if not np.allclose(info['dev_head_t']['trans'], median_head_pos['trans']):
+            raise RuntimeError("The data head position does not match the canonical session head position. Apply Maxwell filtering before computing source estimates.")
+
+
 def _source_dependencies(ctx: Request, sensor_dependency: Dependency) -> tuple[Dependency, ...]:
-    deps = [sensor_dependency, Dependency('inv')]
+    deps = [sensor_dependency, Dependency('inv'), Dependency('median-head-position')]
     parc = _source_parc(ctx.state)
     if parc:
         subjects_dir = ctx.root / MRI_SDIR
@@ -818,16 +810,16 @@ class EpochsStcDerivative(Derivative[Dataset]):
         epoch = self.epochs[ctx.state['epoch']]
         solution = InverseSolution._coerce(ctx.state['inv'])
         ds = ctx.load('epochs')
+        epochs_value = ds['epochs']
+        epoch_list = epochs_value if isinstance(epochs_value, Datalist) else [epochs_value]
+        variable_time = isinstance(epochs_value, Datalist)
+        _check_head_position_alignment(ctx, epoch_list[0].info)
 
         src_baseline = ctx.options['src_baseline']
         if not ctx.options['baseline'] and src_baseline and epoch.post_baseline_trigger_shift:
             raise NotImplementedError("src_baseline with post_baseline_trigger_shift")
         if src_baseline is True:
             src_baseline = epoch.baseline
-
-        epochs_value = ds['epochs']
-        epoch_list = epochs_value if isinstance(epochs_value, Datalist) else [epochs_value]
-        variable_time = isinstance(epochs_value, Datalist)
         projection = _prepare_source_projection(ctx, ctx.options['morph'], solution)
         stc_value = [solution._apply_epochs(epoch_obj, projection.operator, label=projection.label) for epoch_obj in epoch_list]
         if variable_time:
@@ -937,6 +929,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
     def build(self, ctx: Request) -> Dataset:
         solution = InverseSolution._coerce(ctx.state['inv'])
         ds = ctx.load('evoked')
+        _check_head_position_alignment(ctx, ds['evoked'][0].info)
 
         src_baseline = ctx.options['src_baseline']
         epoch = self.epochs[ctx.state['epoch']]
