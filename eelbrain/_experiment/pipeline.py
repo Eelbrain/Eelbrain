@@ -50,7 +50,7 @@ from .pathing import (
 )
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, _resolve_parc
 from .preprocessing import (
-    CachedRawPipe, ICAInput, MaxwellCalibrationInput, MaxwellCrosstalkInput, RawBadChannelsInput, RawDerivative, RawPipe, RawSource, RawSourceDerivative, RawSourceInput, RawICA, RawMaxwell,
+    CachedRawPipe, ICAInput, MaxwellCalibrationInput, MaxwellCrosstalkInput, MedianHeadPositionDerivative, RawBadChannelsInput, RawDerivative, RawHeadPositionDerivative, RawPipe, RawSource, RawSourceDerivative, RawSourceInput, RawICA, RawMaxwell,
     REINDEX_ICA, assemble_raw_pipes, ica_input_name, raw_bad_channels_input_name, raw_node_name, raw_input_name,
 )
 from .reports import (
@@ -404,6 +404,7 @@ class Pipeline(StateModel):
         brain_report_args = (*result_args, self._mri_subjects, self.get('common_brain'), {**self._brain_plot_defaults, **self.brain_plot_defaults})
 
         # --- Inputs (externally managed files) and preprocessing ---
+        maxwell_registered = False
         for raw_name, pipe in self._raw.items():
             if isinstance(pipe, RawSource):
                 self._derivatives.register(RawBadChannelsInput(raw_name, pipe, self._raw_extension))
@@ -415,13 +416,17 @@ class Pipeline(StateModel):
                 self._derivatives.register(RawDerivative(raw_name, pipe, self._raw, self._raw_extension))
                 if isinstance(pipe, RawICA):
                     self._derivatives.register(ICAInput(raw_name, pipe, self._raw, self._raw_extension))
+                elif isinstance(pipe, RawMaxwell) and not maxwell_registered:
+                    self._derivatives.register(MaxwellCalibrationInput())
+                    self._derivatives.register(MaxwellCrosstalkInput())
+                    raw_inp = raw_input_name(self._raw.root_source_name(raw_name))
+                    self._derivatives.register(RawHeadPositionDerivative(raw_inp))
+                    self._derivatives.register(MedianHeadPositionDerivative(raw_inp, self._tasks, self._runs))
+                    maxwell_registered = True
             else:
                 raise TypeError(f"Unknown raw pipe {pipe}")
         self._derivatives.register(TransInput())
         self._derivatives.register(BemInput())
-        if any(isinstance(p, RawMaxwell) for p in self._raw.values()):
-            self._derivatives.register(MaxwellCalibrationInput())
-            self._derivatives.register(MaxwellCrosstalkInput())
         self._derivatives.register(RejectionInput(self.root, self._artifact_rejection, self._epochs))
 
         # --- Sensor-space: events → epochs → evoked ---

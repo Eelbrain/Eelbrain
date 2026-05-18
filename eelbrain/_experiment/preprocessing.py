@@ -32,6 +32,7 @@ without editing the cache kernel or injecting facade behavior into nodes.
 """
 from __future__ import annotations
 import fnmatch
+import itertools
 import json
 import logging
 from os.path import exists, relpath
@@ -46,6 +47,7 @@ from mne_bids import BIDSPath
 import numpy
 import pandas as pd
 from scipy import signal
+from scipy.spatial.transform import Rotation
 
 from .. import load
 from .._data_obj import NDVar, Sensor
@@ -901,6 +903,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         elif isinstance(self.pipe, RawMaxwell):
             deps.append(Dependency('maxwell-calibration'))
             deps.append(Dependency('maxwell-crosstalk'))
+            deps.append(Dependency('median-head-position'))
         return tuple(deps)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
@@ -942,7 +945,8 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         if isinstance(self.pipe, RawMaxwell):
             calibration = ctx.load('maxwell-calibration')
             cross_talk = ctx.load('maxwell-crosstalk')
-            return self.pipe._make(raw, path=path, noise=ctx.options['noise'], raw_name=self.raw_name, log=ctx.registry.log, source_pipe=source_pipe, calibration=calibration, cross_talk=cross_talk)
+            destination = ctx.load('median-head-position')
+            return self.pipe._make(raw, path=path, noise=ctx.options['noise'], raw_name=self.raw_name, log=ctx.registry.log, source_pipe=source_pipe, calibration=calibration, cross_talk=cross_talk, destination=destination)
         return self.pipe._make(raw, path=path, noise=ctx.options['noise'], raw_name=self.raw_name, log=ctx.registry.log, source_pipe=source_pipe)
 
     def load(self, ctx: Request, path: Path) -> mne.io.BaseRaw:
@@ -1044,6 +1048,128 @@ class MaxwellCrosstalkInput(Input[Path]):
     def load(self, ctx: Request) -> Path | None:
         path = self.path(ctx)
         return path if path.exists() else None
+
+
+class RawHeadPositionDerivative(UncachedDerivative[numpy.ndarray]):
+    """Head position samples extracted from one raw recording.
+
+    For recordings with cHPI active the full tracked position time-series is
+    returned; otherwise the static ``dev_head_t`` transform is returned as a
+    single sample.
+
+    Returns an ``(n, 6)`` float array with columns
+    ``[q1, q2, q3, tx, ty, tz]`` using MNE's compact quaternion convention.
+    An empty ``(0, 6)`` array is returned when no head position information is
+    available in the file.
+    """
+
+    name = 'raw-head-position'
+
+    def __init__(self, raw_input_name: str):
+        self._raw_input_name = raw_input_name
+
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        return (Dependency(self._raw_input_name),)
+
+    def build(self, ctx: Request) -> numpy.ndarray | None:
+        raw = ctx.load(self._raw_input_name)
+        info = raw.info
+        hpi_freqs, _, _ = mne.chpi.get_chpi_info(info, on_missing='ignore')
+        if len(hpi_freqs):
+            chpi_amplitudes = mne.chpi.compute_chpi_amplitudes(raw)
+            chpi_locs = mne.chpi.compute_chpi_locs(info, chpi_amplitudes)
+            head_pos = mne.chpi.compute_head_pos(info, chpi_locs)
+            # head_pos columns: [t, q1, q2, q3, tx, ty, tz, gof, err, v]
+            return head_pos[:, 1:7]
+        dev_head_t = info.get('dev_head_t')
+        if dev_head_t is None:
+            return None
+        trans = dev_head_t['trans']
+        quat = mne.transforms.rot_to_quat(trans[:3, :3])
+        return numpy.array([[*quat, *trans[:3, 3]]])
+
+
+class MedianHeadPositionDerivative(Derivative):
+    """Canonical head position for Maxwell filtering across tasks and runs.
+
+    Computes a single representative head-to-device transform for a given
+    subject and session, suitable as the ``destination`` parameter of
+    :func:`mne.preprocessing.maxwell_filter`.
+
+    The rotation is the Fréchet mean on SO(3) computed via
+    :meth:`scipy.spatial.transform.Rotation.mean` (eigenvector method).
+    The translation is the arithmetic mean.  For recordings with cHPI all
+    tracked position samples contribute, not just the starting position.
+
+    Returns ``None`` when only one position sample exists across all
+    tasks/runs, in which case each file's own ``dev_head_t`` is used directly
+    by Maxwell filtering to avoid round-trip conversion noise.
+
+    Parameters
+    ----------
+    raw_input_name
+        Registry name of the :class:`RawSourceInput` node used for per-file
+        existence checks in :meth:`dependencies`.
+    tasks
+        All task names defined in the experiment.
+    runs
+        All run values defined in the experiment, or an empty sequence when the
+        experiment has no run entity (in which case run ``''`` is used).
+    """
+
+    name = 'median-head-position'
+    key_fields = ('subject', 'session')
+    cache_suffix = '.fif'
+
+    def __init__(self, raw_input_name: str, tasks: Sequence[str], runs: Sequence[str]):
+        self._raw_input_name = raw_input_name
+        self._tasks = tasks
+        self._runs = runs or ['']
+
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        deps = []
+        for task, run in itertools.product(self._tasks, self._runs):
+            raw_ctx = ctx.registry.resolve(
+                self._raw_input_name,
+                state={**ctx.state, 'task': task, 'run': run},
+            )
+            if raw_ctx.exists():
+                deps.append(Dependency(
+                    name='raw-head-position',
+                    label=f'task-{task}_run-{run}' if run else f'task-{task}',
+                    state={'task': task, 'run': run},
+                ))
+        return tuple(deps)
+
+    def build(self, ctx: Request) -> mne.transforms.Transform | None:
+        all_positions = []
+        for label in ctx.declared_dependencies:
+            positions = ctx.load(label)  # (n, 6): [q1, q2, q3, tx, ty, tz], or None
+            if positions is not None:
+                all_positions.append(positions)
+        if len(all_positions) <= 1:
+            return None
+        all_pos = numpy.vstack(all_positions)  # (N, 6): [q1, q2, q3, tx, ty, tz]
+        if numpy.allclose(all_pos[1:], all_pos[0]):
+            return None
+        # MNE compact quaternions [q1, q2, q3] → scipy [x, y, z, w] (scalar last)
+        q = all_pos[:, :3]
+        q0 = numpy.sqrt(numpy.maximum(1.0 - numpy.sum(q ** 2, axis=1), 0.0))
+        trans = numpy.eye(4)
+        trans[:3, :3] = Rotation.from_quat(numpy.column_stack([q, q0])).mean().as_matrix()
+        trans[:3, 3] = numpy.mean(all_pos[:, 3:], axis=0)
+        return mne.transforms.Transform(fro='head', to='meg', trans=trans)
+
+    def save(self, ctx: Request, path: Path, value: mne.transforms.Transform | None) -> None:
+        if value is None:
+            path.touch()
+        else:
+            mne.write_trans(path, value)
+
+    def load(self, ctx: Request, path: Path) -> mne.transforms.Transform | None:
+        if path.stat().st_size == 0:
+            return None
+        return mne.read_trans(path)
 
 
 def load_raw_dependency(
@@ -1706,6 +1832,7 @@ class RawMaxwell(CachedRawPipe):
             source_pipe: RawSource | None = None,
             calibration: Path | None = None,
             cross_talk: Path | None = None,
+            destination: mne.transforms.Transform | None = None,
     ) -> mne.io.BaseRaw:
         assert source_pipe is not None
         sysname = source_pipe._get_sysname(raw.info, path.subject, path.datatype)
@@ -1716,7 +1843,8 @@ class RawMaxwell(CachedRawPipe):
         logger.info("Raw %s: computing Maxwell filter for %s", raw_name, path.fpath if not noise else path.find_empty_room().fpath)
         with user_activity:
             coord_frame = 'meg' if noise else 'head'
-            return mne.preprocessing.maxwell_filter(raw, calibration=calibration, cross_talk=cross_talk, bad_condition=self.bad_condition, coord_frame=coord_frame, verbose=MNE_VERBOSITY, **self.kwargs)
+            # destination is not meaningful for noise (empty-room) recordings
+            return mne.preprocessing.maxwell_filter(raw, calibration=calibration, cross_talk=cross_talk, destination=None if noise else destination, bad_condition=self.bad_condition, coord_frame=coord_frame, verbose=MNE_VERBOSITY, **self.kwargs)
 
     def _make_info(
             self,

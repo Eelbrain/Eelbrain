@@ -1038,6 +1038,17 @@ class Request(Generic[T]):
             return {}
         return manifest.artifact_metadata
 
+    @property
+    def declared_dependencies(self) -> dict[str, Dependency]:
+        """Declared dependencies for the current build, keyed by label.
+
+        Only available during :meth:`Derivative.build`; raises
+        :class:`RuntimeError` if called outside a build context.
+        """
+        if self._build_deps is None:
+            raise RuntimeError("declared_dependencies is only available during build()")
+        return self._build_deps
+
     def _manifest(self) -> ArtifactManifest | None:
         return self.registry.read_manifest(self.manifest_path)
 
