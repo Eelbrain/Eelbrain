@@ -28,7 +28,6 @@ from scipy import sparse
 from .. import load, save
 from .._data_obj import Dataset, Datalist, NDVar, combine
 from .configuration import Configuration
-from .covariance import cov_node_name
 from .derivative_cache import CachePolicy, Dependency, Derivative, Request, Input, UncachedDerivative, file_fingerprint
 from .pathing import (
     MRI_SDIR, bem_dir, bem_file_path, mri_dir, src_file_path, trans_file_path,
@@ -556,35 +555,21 @@ class FwdDerivative(Derivative[mne.Forward]):
 
 class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
     name = 'inv'
-    key_fields = (
-        'subject', 'session', 'task', 'run', 'raw',
-        'epoch', 'rej', 'cov', 'mrisubject', 'src', 'inv',
-    )
+    key_fields = ('subject', 'session', 'raw', 'epoch', 'rej', 'cov', 'mrisubject', 'src', 'inv')
     cache_policy = CachePolicy.OPTIONAL
     cache_suffix = '-inv.fif'
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (
-            Dependency(raw_node_name(ctx.state['raw']), options={'preload': False, 'noise': False}),
             Dependency('fwd'),
-            Dependency(cov_node_name(ctx.state['cov'])),
+            Dependency('cov'),
         )
-
-    def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {
-            'raw': ctx.state['raw'],
-            'epoch': ctx.state['epoch'],
-            'rej': ctx.state['rej'],
-            'cov': ctx.state['cov'],
-            'src': ctx.state['src'],
-            'inv': ctx.state['inv'],
-        }
 
     def build(self, ctx: Request) -> mne.minimum_norm.InverseOperator:
         solution = InverseSolution._coerce(ctx.state['inv'])
         solution._validate_for_source_space(ctx.state['src'])
-        raw = ctx.load(raw_node_name(ctx.state['raw']))
-        return solution._build_operator(raw.info, ctx.load('fwd'), ctx.load(cov_node_name(ctx.state['cov'])))
+        fwd = ctx.load('fwd')
+        return solution._build_operator(fwd['info'], fwd, ctx.load('cov'))
 
     def load(
             self,

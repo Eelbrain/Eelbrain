@@ -4,55 +4,46 @@
 These nodes depend on lower-level epoch/raw derivatives through
 ``ctx.load(...)``. They must not receive injected ``Pipeline.load_*`` methods.
 """
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import mne
 import numpy
 
+from .configuration import Configuration
 from .derivative_cache import Dependency, Derivative, Request
 from .preprocessing import raw_node_name
 
 
-def cov_node_name(cov: str) -> str:
-    return f'cov:{cov}'
+class RawCovariance(Configuration):
+    DICT_ATTRS = ('method',)
 
+    def __init__(self, method: str = 'empirical'):
+        self.method = method
 
-@dataclass
-class RawCovariance:
-    method: str = 'empirical'
-    key: str = field(init=False, default=None)
-
-    def make(
-            self,
-            raw: mne.io.BaseRaw,
-    ) -> mne.Covariance:
+    def make(self, raw: mne.io.BaseRaw) -> mne.Covariance:
         if self.method == 'ad_hoc':
             return mne.cov.make_ad_hoc_cov(raw.info)
         return mne.compute_raw_covariance(raw, method=self.method)
 
 
-@dataclass
-class EpochCovariance:
-    epoch: str
-    method: str = 'empirical'
-    keep_sample_mean: bool = True
-    key: str = field(init=False, default=None)
+class EpochCovariance(Configuration):
+    DICT_ATTRS = ('epoch', 'method', 'keep_sample_mean')
 
-    def make(
-            self,
-            epochs: mne.Epochs,
-            log_path: Path,
-    ) -> mne.Covariance:
+    def __init__(self, epoch: str, method: str = 'empirical', keep_sample_mean: bool = True):
+        self.epoch = epoch
+        self.method = method
+        self.keep_sample_mean = keep_sample_mean
+
+    def make(self, epochs: mne.Epochs, log_path: Path) -> mne.Covariance:
         method = 'empirical' if self.method == 'best' else self.method
         cov = mne.compute_covariance(epochs, self.keep_sample_mean, method=method)
 
         if self.method == 'best':
             if mne.pick_types(epochs.info, meg='grad', eeg=True, ref_meg=False).size:
-                raise NotImplementedError(f"cov={self.key!r}: 'best' regularization is not implemented for EEG or gradiometer sensors; use a different setting for cov.")
+                raise NotImplementedError(f"cov={self.name!r}: 'best' regularization is not implemented for EEG or gradiometer sensors; use a different setting for cov.")
             elif epochs is None:
-                raise NotImplementedError(f"cov={self.key!r}: 'best' regularization is not implemented for covariance based on raw data; use a different setting for cov.")
+                raise NotImplementedError(f"cov={self.name!r}: 'best' regularization is not implemented for covariance based on raw data; use a different setting for cov.")
             reg_vs = numpy.arange(0, 0.21, 0.01)
             covs = [mne.cov.regularize(cov, epochs.info, mag=v, rank=None) for v in reg_vs]
 
@@ -70,7 +61,8 @@ class EpochCovariance:
 
 
 class CovDerivative(Derivative[mne.Covariance]):
-    key_fields = ('subject', 'session', 'task', 'run', 'raw', 'epoch', 'cov', 'rej')
+    name = 'cov'
+    key_fields = ('subject', 'session', 'raw', 'cov')
     cache_suffix = '-cov.fif'
 
     # Fixed options used when loading epochs for covariance estimation.
@@ -88,64 +80,39 @@ class CovDerivative(Derivative[mne.Covariance]):
         'interpolate_bads': False,
     }
 
-    def __init__(
-            self,
-            cov_name: str,
-            cov: RawCovariance | EpochCovariance,
-    ):
-        self.cov_name = cov_name
-        self.cov = cov
-        self.name = cov_node_name(cov_name)
-        self.cov.key = cov_name
-
-    def _events_state(self, ctx: Request) -> dict[str, Any]:
-        if isinstance(self.cov, EpochCovariance):
-            return {}
-        return {'raw': ctx.state['raw']}
-
-    def _rej_state(self, ctx: Request) -> dict[str, Any]:
-        if isinstance(self.cov, EpochCovariance):
-            return {'epoch': self.cov.epoch}
-        return {}
+    def __init__(self, covs: dict[str, RawCovariance | EpochCovariance]):
+        self._covs = covs
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        if isinstance(self.cov, EpochCovariance):
-            return (Dependency('epochs', state={'epoch': self.cov.epoch}, options=self._EPOCH_COV_OPTIONS),)
-        raw_name = ctx.state['raw']
-        return (Dependency(raw_node_name(raw_name), options={'noise': True}),)
+        cov = self._covs[ctx.state['cov']]
+        if isinstance(cov, EpochCovariance):
+            return (Dependency('epochs', state={'epoch': cov.epoch}, options=self._EPOCH_COV_OPTIONS),)
+        elif isinstance(cov, RawCovariance):
+            return (Dependency(raw_node_name(ctx.state['raw']), options={'noise': True}, label='raw'),)
+        raise NotImplementedError(f"{cov=}")
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {
-            'raw': ctx.state['raw'],
-            'cov': vars(self.cov).copy(),
-            'rej': ctx.state['rej'],
-            'epoch': ctx.state['epoch'],
-        }
+        cov = self._covs[ctx.state['cov']]
+        return cov._as_dict()
 
     def build(self, ctx: Request) -> mne.Covariance:
-        if isinstance(self.cov, EpochCovariance):
+        cov = self._covs[ctx.state['cov']]
+        if isinstance(cov, EpochCovariance):
             cov_path = self.path(ctx)
             cov_path.parent.mkdir(parents=True, exist_ok=True)
             log_path = cov_path.with_suffix('.info.txt')
             ds = ctx.load('epochs')
-            epochs = ds['epochs']
-            return self.cov.make(epochs, log_path)
-        raw = ctx.load(raw_node_name(ctx.state['raw']))
-        return self.cov.make(raw)
+            return cov.make(ds['epochs'], log_path)
+        elif isinstance(cov, RawCovariance):
+            raw = ctx.load('raw')
+            return cov.make(raw)
+        raise NotImplementedError(f"{cov=}")
 
-    def load(
-            self,
-            ctx: Request,
-            path: Path) -> mne.Covariance:
+    def load(self, ctx: Request, path: Path) -> mne.Covariance:
         cov = mne.read_cov(path)
         if cov.data.dtype != 'float64':
             cov['data'] = cov['data'].astype(float)
         return cov
 
-    def save(
-            self,
-            ctx: Request,
-            path: Path,
-            value: mne.Covariance,
-    ) -> None:
+    def save(self, ctx: Request, path: Path, value: mne.Covariance) -> None:
         value.save(path, overwrite=True)

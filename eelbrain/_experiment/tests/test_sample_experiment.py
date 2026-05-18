@@ -110,12 +110,12 @@ def test_sample():
         e.set(cov='emptyroom', raw='tsss')
         cov = e.load_cov()
         assert isinstance(cov, mne.Covariance)
-        assert exists(e._derivatives.resolve('cov:emptyroom', state=e.state).manifest_path)
+        assert exists(e._derivatives.resolve('cov', state=e.state).manifest_path)
         assert e.load_bad_channels(noise=True) == []
         e.set(cov='emptyroom', raw='1-40')
         cov = e.load_cov()
         assert isinstance(cov, mne.Covariance)
-        assert exists(e._derivatives.resolve('cov:emptyroom', state=e.state).manifest_path)
+        assert exists(e._derivatives.resolve('cov', state=e.state).manifest_path)
         assert e.load_bad_channels(noise=True) == []
         e.load_cov()
 

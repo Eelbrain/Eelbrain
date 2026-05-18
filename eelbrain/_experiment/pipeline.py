@@ -33,7 +33,7 @@ from .._text import enumeration
 from .._types import PathArg
 from .._utils import ask, subp, keydefaultdict, log_level, ScreenHandler
 from .._utils.mne_utils import is_fake_mri
-from .covariance import CovDerivative, EpochCovariance, RawCovariance, cov_node_name
+from .covariance import CovDerivative, EpochCovariance, RawCovariance
 from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, DerivativeRegistry, ProtectedArtifactError, Request
 from .configuration import sequence_arg
 from .epochs import (
@@ -456,7 +456,8 @@ class Pipeline(StateModel):
 
         # --- Source-space infrastructure ---
         for cov_name, cov in self._covs.items():
-            self._derivatives.register(CovDerivative(cov_name, cov))
+            cov._store_name(cov_name)
+        self._derivatives.register(CovDerivative(self._covs))
         self._derivatives.register(SrcDerivative())
         self._derivatives.register(SourceMorphDerivative())
         self._derivatives.register(FwdDerivative())
@@ -849,8 +850,7 @@ class Pipeline(StateModel):
         ...
             State parameters.
         """
-        cov_name = self.get('cov', **kwargs)
-        return self._load_derivative(cov_node_name(cov_name))
+        return self._load_derivative('cov', **kwargs)
 
     @suppress_mne_warning
     def load_epochs(
@@ -3890,7 +3890,7 @@ class Pipeline(StateModel):
         subjects = []
         reg = []
         for subject in self:
-            handle = self._resolve_derivative(cov_node_name(self.get('cov')))
+            handle = self._resolve_derivative('cov')
             path = handle.artifact_path.with_suffix('.info.txt')
             if exists(path):
                 with open(path) as fid:
