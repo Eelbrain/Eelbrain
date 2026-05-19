@@ -992,6 +992,7 @@ class AxisData:
     """Represent one axis (multiple layers)"""
     layers: list[Layer]
     title: str = None
+    multimodal: bool = False  # True when layers represent separate sensor modalities (not overlays)
 
     def __iter__(self):
         return iter(self.layers)
@@ -1115,7 +1116,7 @@ class PlotData:
     @classmethod
     def from_args(
             cls,
-            y: NDVarArg | Sequence[NDVarArg],
+            y: NDVarArg | Sequence[NDVarArg] | Sequence[Sequence[NDVarArg]],
             dims: int | tuple[str | None, ...],
             xax: CategorialArg = None,
             data: Dataset = None,
@@ -1167,7 +1168,10 @@ class PlotData:
             ys = (ys,)
 
         ax_names = None
+        multimodal = False
         if xax is None:
+            # Detect explicit multi-modality: y = list[list[NDVar]]
+            multimodal = isinstance(ys, (list, tuple)) and ys and all(isinstance(ax, (list, tuple)) for ax in ys if ax is not None)
             # y=[[y1], y2], xax=None
             axes = []
             for ax in ys:
@@ -1224,7 +1228,7 @@ class PlotData:
                     layers.append([aggregate(layer.sub(**{dimname: i}), agg) for i in indexes])
                 x_name = xax
             else:
-                # y=[y1, y2], xax=categorial
+                # y=[y1, y2], xax=categorial → modalities are in y, rows from xax
                 xax = ascategorial(xax, sub, data)
                 xax_indexes = [xax == cell for cell in xax.cells]
                 for layer in ys:
@@ -1232,6 +1236,7 @@ class PlotData:
                     layers.append([aggregate(layer.sub(index), agg) for index in xax_indexes])
                 x_name = xax.name
                 ax_names = [cellname(cell) for cell in xax.cells]
+                multimodal = len(ys) > 1
             axes = list(zip(*layers))
         else:
             raise TypeError(f"{y=}, {xax=}: y can't be nested list if xax is specified, use single list")
@@ -1244,7 +1249,7 @@ class PlotData:
             y_name = ', '.join(y_names)
 
         use_axes = [ax is not None for ax in axes]
-        axes = [AxisData([DataLayer(l) for l in ax]) for ax in axes if ax]
+        axes = [AxisData([DataLayer(l) for l in ax], multimodal=multimodal) for ax in axes if ax]
         title = frame_title(y_name, x_name)
         return cls(axes, dims, title, ax_names, use_axes)
 
@@ -1411,7 +1416,16 @@ class PlotData:
     def for_plot(self, plot_type: PlotType) -> PlotData:
         if self.plot_type == plot_type:
             return self
-        plot_data = [ax.for_plot(plot_type) for ax in self.plot_data]
+        plot_data = []
+        expanded = False
+        for ax in self.plot_data:
+            if plot_type == PlotType.IMAGE and ax.multimodal:
+                plot_data.extend(replace(ax, layers=list(layer.for_plot(plot_type)), multimodal=False) for layer in ax.layers)
+                expanded = True
+            else:
+                plot_data.append(ax.for_plot(plot_type))
+        if expanded:
+            return replace(self, plot_data=plot_data, plot_names=None, plot_used=None, plot_type=plot_type)
         return replace(self, plot_data=plot_data, plot_type=plot_type)
 
     def bin(self, bin_length, tstart, tstop):
@@ -1730,14 +1744,14 @@ class EelFigure(MatplotlibFigure):
         if need_redraw:
             self.draw()
 
+        if self._has_frame and not self.canvas._background:
+            self._frame.store_canvas()
+
         if CONFIG['show'] and self._layout.show:
             self._frame.Show()
             if self._has_frame and do_autorun(self._layout.run):
                 from .._wxgui import run
                 run()
-
-        if self._has_frame and not self.canvas._background:
-            self._frame.store_canvas()
 
     def _tight(self):
         "Default implementation based on matplotlib"

@@ -234,8 +234,7 @@ def log_level(arg):
         try:
             return LOG_LEVELS[arg.upper()]
         except KeyError:
-            raise ValueError("Invalid log level: %s. mus be one of %s" %
-                             (arg, ', '.join(LOG_LEVELS)))
+            raise ValueError(f"Invalid log level: {arg!r}; must be one of {', '.join(LOG_LEVELS)}")
     else:
         raise TypeError(f"Invalid log level: {arg!r}. need int or str.")
 

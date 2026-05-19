@@ -26,13 +26,12 @@ class SampleExperiment(Pipeline):
 
     defaults = {
         'epoch': 'target',
-        'select_clusters': 'all',
     }
 
     variables = {
-        'event': {(1, 2, 3, 4): 'target', 5: 'smiley', 32: 'button'},
-        'side': {(1, 3): 'left', (2, 4): 'right'},
-        'modality': {(1, 2): 'auditory', (3, 4): 'visual'}
+        'event': LabelVar('value', {(1, 2, 3, 4): 'target', 5: 'smiley', 32: 'button'}),
+        'side': LabelVar('value', {(1, 3): 'left', (2, 4): 'right'}),
+        'modality': LabelVar('value', {(1, 2): 'auditory', (3, 4): 'visual'}),
     }
 
     raw = {
@@ -64,8 +63,8 @@ class SampleExperiment(Pipeline):
         'twostage': TwoStageTest(
             stage_1='side_left + modality_a',
             model='side % modality',
-            vars={'side_left': "side == 'left'",
-                  'modality_a': "modality == 'auditory'"}),
+            vars={'side_left': EvalVar("side == 'left'"),
+                  'modality_a': EvalVar("modality == 'auditory'")}),
     }
 
     parcs = {

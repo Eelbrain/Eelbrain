@@ -23,12 +23,16 @@ Required variables:
 #  - visualizaes Document
 #  - listens to Document changes
 #  - issues commands to Model
+from __future__ import annotations
+
+from collections.abc import Sequence
 from logging import getLogger
 import math
 import os
 import re
 import time
 
+import mne
 import numpy as np
 from scipy.spatial.distance import cdist
 import wx
@@ -36,9 +40,8 @@ import wx
 from .. import _meeg as meeg
 from .. import _text
 from .. import load, save, plot, fmtxt
-from .._data_obj import Dataset, Factor, Var, Datalist, asndvar, combine
-from .._info import BAD_CHANNELS
-from .._names import INTERPOLATE_CHANNELS
+from .._data_obj import Dataset, Factor, NDVar, Var, Datalist, combine
+from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS
 from .._ndvar import neighbor_correlation
 from .._utils.parse import FLOAT_PATTERN, POS_FLOAT_PATTERN, INT_PATTERN
 from .._utils.numpy_utils import FULL_SLICE, INT_TYPES
@@ -50,6 +53,7 @@ from ..plot._utsnd import AxButterflyEpoch
 from .app import get_app
 from .frame import EelbrainDialog
 from .mpl_canvas import FigureCanvasPanel
+from .frame import NavigableFrame
 from .history import Action, FileDocument, FileModel, FileFrame
 from .text import HTMLFrame
 from .utils import Icon, REValidator
@@ -57,12 +61,38 @@ from . import ID
 
 
 # IDs
-MEAN_PLOT = -1
 TOPO_PLOT = -2
 OUT_OF_RANGE = -3
 
 # For unit-tests
 TEST_MODE = False
+
+# Per-type display info: (display_unit, scale_from_display_to_SI, default_threshold_in_display_units)
+# Peak amplitudes from mne_epochs.get_data() are in SI: T for mag, T/m for grad, V for eeg.
+_CH_TYPE_THRESHOLD_INFO = {
+    'mag':  ('fT',   1e-15, 2000),
+    'grad': ('fT/m', 1e-15, 2000),
+    'eeg':  ('µV',   1e-6,  150),
+}
+# Per-type display info for y-axis limits: (display_unit, scale_from_display_to_SI, default_vlim)
+# Defaults are conservative single-trial visualization ranges.
+_CH_TYPE_VLIM_INFO = {
+    'mag':  ('fT',   1e-15, 2000),   # 2000 fT
+    'grad': ('pT/m', 1e-12, 30),    # 30 pT/m ≈ 300 fT/cm
+    'eeg':  ('µV',   1e-6,  50),    # 50 µV
+}
+# pick_types kwargs per channel type
+_CH_TYPE_PICK_KWARGS = {
+    'mag':  {'meg': 'mag'},
+    'grad': {'meg': 'grad'},
+    'eeg':  {'meg': False, 'eeg': True},
+}
+# Colors for each channel type in butterfly plots
+_CH_TYPE_COLORS = {
+    'mag':  'steelblue',
+    'grad': 'forestgreen',
+    'eeg':  'firebrick',
+}
 
 
 def _epoch_list_to_ranges(elist):
@@ -116,10 +146,21 @@ class ChangeAction(Action):
         list of (i, name, old, new) tuples
     """
 
-    def __init__(self, desc, index=None, old_accept=None, new_accept=None,
-                 old_tag=None, new_tag=None, old_path=None, new_path=None,
-                 old_bad_chs=None, new_bad_chs=None, old_interpolate=None,
-                 new_interpolate=None):
+    def __init__(
+            self,
+            desc: str,
+            index: int | slice | np.ndarray | None = None,
+            old_accept: bool | Var | np.ndarray | None = None,
+            new_accept: bool | Var | np.ndarray | None = None,
+            old_tag: str | Factor | None = None,
+            new_tag: str | Factor | None = None,
+            old_path: str | None = None,
+            new_path: str | None = None,
+            old_bad_chs: list | None = None,
+            new_bad_chs: list | None = None,
+            old_interpolate: list[str] | Datalist | None = None,
+            new_interpolate: list[str] | Datalist | None = None,
+    ) -> None:
         self.desc = desc
         self.index = index
         self.old_path = old_path
@@ -180,18 +221,41 @@ class Document(FileDocument):
         Case eye tracker artifact data.
     """
 
-    def __init__(self, ds, data='meg', accept='accept', blink='blink',
-                 tag='rej_tag', trigger='trigger', path=None, bad_chs=None,
-                 allow_interpolation=True):
+    def __init__(
+            self,
+            ds: Dataset | mne.BaseEpochs,
+            data: str = 'meg',
+            accept: str = 'accept',
+            blink: str = 'blink',
+            tag: str = 'rej_tag',
+            trigger: str = 'trigger',
+            path: str | None = None,
+            bad_chs: list | None = None,
+            allow_interpolation: bool = True,
+    ) -> None:
         FileDocument.__init__(self, path)
         if isinstance(ds, MNE_EPOCHS):
-            epochs = ds
+            mne_epochs = ds
             ds = Dataset()
-            epochs.load_data()
-            ds[data] = epochs
-            ds['trigger'] = Var(epochs.events[:, 2])
+            mne_epochs.load_data()
+            ds[data] = mne_epochs
+            ds[trigger] = Var(mne_epochs.events[:, 2])
+        elif not isinstance(data, str):
+            raise TypeError(f"{data=}; must be a string key into ds")
+        else:
+            mne_epochs = ds.get(data)
+            if not isinstance(mne_epochs, MNE_EPOCHS):
+                raise TypeError(f"{ds[data]=}; must be an mne.BaseEpochs instance")
 
-        data = asndvar(data, data=ds)
+        epochs_by_type = []
+        for ch_type, pick_kwargs in _CH_TYPE_PICK_KWARGS.items():
+            type_picks = mne.pick_types(mne_epochs.info, ref_meg=False, exclude='bads', **pick_kwargs)
+            if len(type_picks):
+                epochs_by_type.append((ch_type, load.mne.epochs_ndvar(mne_epochs, data=ch_type)))
+        if not epochs_by_type:
+            raise RuntimeError("No data channels found in MNE Epochs")
+        self.epochs_by_type = epochs_by_type
+        data = epochs_by_type[0][1]  # primary NDVar (backward compat: bad channels, time axis)
         self.n_epochs = n = len(data)
 
         if not isinstance(accept, str):
@@ -211,6 +275,7 @@ class Document(FileDocument):
 
         if not isinstance(trigger, str):
             raise TypeError("trigger needs to be a string")
+        self._trigger_key = trigger
         if trigger in ds:
             trigger = ds[trigger]
         else:
@@ -254,6 +319,14 @@ class Document(FileDocument):
         self.good_channels = None
         self.epochs_selection = ds.info.get('epochs.selection')
 
+        # Channel-type metadata (derived directly from epochs_by_type)
+        self.ch_type_names = [ct for ct, _ in epochs_by_type]
+        self._ch_name_to_type = {
+            name: ct
+            for ct, ndvar in epochs_by_type
+            for name in ndvar.sensor.names
+        }
+
         # cache
         self._good_sensor_indices = {}
 
@@ -276,6 +349,21 @@ class Document(FileDocument):
     @property
     def bad_channel_names(self):
         return [self.epochs.sensor.names[i] for i in self.bad_channels]
+
+    def get_channel_colors(self, epoch):
+        """Return per-channel color dict {sensor_index: color} for ``epoch``.
+
+        Used to color channels by type in butterfly plots. Returns ``None``
+        when fewer than two channel types are present.
+        """
+        if len(self.ch_type_names) < 2:
+            return None
+        colors = {}
+        for i, name in enumerate(epoch.sensor.names):
+            ch_type = self._ch_name_to_type.get(name)
+            if ch_type is not None:
+                colors[i] = _CH_TYPE_COLORS[ch_type]
+        return colors or None
 
     def iter_good_epochs(self):
         "All cases, only good channels"
@@ -316,10 +404,42 @@ class Document(FileDocument):
         else:
             return self.epochs.sub(case=case, name=name)
 
+    def get_epoch_by_type(self, case, name):
+        """Return ``[(ch_type, NDVar)]`` for one epoch across all channel types.
+
+        Bad channels (by name) are excluded from each type's NDVar.
+        """
+        bad_names = set(self.bad_channel_names)
+        result = []
+        for ch_type, ndvar in self.epochs_by_type:
+            if bad_names:
+                good = [i for i, n in enumerate(ndvar.sensor.names) if n not in bad_names]
+                if len(good) < len(ndvar.sensor):
+                    sub = ndvar.sub(case=case, sensor=good, name=name)
+                else:
+                    sub = ndvar.sub(case=case, name=name)
+            else:
+                sub = ndvar.sub(case=case, name=name)
+            result.append((ch_type, sub))
+        return result
+
     def get_grand_average(self):
         "Grand average of all accepted epochs"
         return self.epochs.sub(case=self.accept.x, sensor=self.good_channels,
                                name="Grand Average").mean('case')
+
+    def get_grand_averages_by_type(self):
+        "Grand average per channel type, excluding bad channels"
+        accept = self.accept.x
+        bad_names = set(self.bad_channel_names)
+        result = []
+        for ch_type, ndvar in self.epochs_by_type:
+            if bad_names:
+                good = [i for i, n in enumerate(ndvar.sensor.names) if n not in bad_names]
+                if len(good) < len(ndvar.sensor):
+                    ndvar = ndvar.sub(sensor=good)
+            result.append((ch_type, ndvar.sub(case=accept, name="Grand Average").mean('case')))
+        return result
 
     def set_bad_channels(self, indexes):
         """Set the channels to treat as bad (i.e., exclude)
@@ -387,7 +507,7 @@ class Document(FileDocument):
             ds['rej_tag'] = ds.pop('tag')
 
         # check file contents
-        needed = ['trigger', 'accept', 'rej_tag']
+        needed = [self._trigger_key, 'accept', 'rej_tag']
         if INTERPOLATE_CHANNELS in ds:
             needed.append(INTERPOLATE_CHANNELS)
         missing = set(needed).difference(ds)
@@ -406,7 +526,7 @@ class Document(FileDocument):
             if cmd == wx.ID_OK:
                 n_missing = self.n_epochs - ds.n_cases
                 tail = Dataset(info=ds.info)
-                tail['trigger'] = Var(self.trigger[-n_missing:])
+                tail[self._trigger_key] = Var(self.trigger[-n_missing:])
                 tail['accept'] = Var([True], repeat=n_missing)
                 tail['rej_tag'] = Factor([''], repeat=n_missing)
                 if INTERPOLATE_CHANNELS in ds:
@@ -415,10 +535,10 @@ class Document(FileDocument):
             else:
                 raise OSError("Unequal number of cases")
 
-        if not np.all(ds[self.trigger.name] == self.trigger):
+        if not np.all(ds[self._trigger_key] == self.trigger):
             cmd = _ask("Ignore trigger mismatch?", "The file contains different triggers from the data. Ignore mismatch and proceed?", wx.OK | wx.CANCEL | wx.CANCEL_DEFAULT, answer)
             if cmd == wx.ID_OK:
-                ds[self.trigger.name] = self.trigger
+                ds[self._trigger_key] = self.trigger
             else:
                 raise OSError("Trigger mismatch")
 
@@ -568,6 +688,46 @@ class Model(FileModel):
             raise ValueError(f"Invalid method: {method!r}")
         return np.array(x) < threshold
 
+    def threshold_multi(self, type_thresholds, method='abs'):
+        """Find epochs based on per-channel-type threshold criteria.
+
+        Parameters
+        ----------
+        type_thresholds : list of (ch_type, threshold_si, display_str)
+            As returned by ``ThresholdDialog.GetThresholds()``.
+        method : 'abs' | 'p2p'
+
+        Returns
+        -------
+        sub_threshold : array of bool
+            True for epochs where no channel type exceeds its threshold.
+        """
+        logger = getLogger(__name__)
+        logger.info("Auto-reject trials (multi-type): %s", type_thresholds)
+        type_thresh_dict = {ct: thresh for ct, thresh, _ in type_thresholds}
+        bad_names = set(self.doc.bad_channel_names)
+        n = self.doc.n_epochs
+        above = np.zeros(n, bool)
+        for ct, ndvar in self.doc.epochs_by_type:
+            if ct not in type_thresh_dict:
+                continue
+            thresh = type_thresh_dict[ct]
+            # Remove globally bad channels
+            if bad_names:
+                good = [i for i, nm in enumerate(ndvar.sensor.names) if nm not in bad_names]
+                if len(good) < len(ndvar.sensor):
+                    ndvar = ndvar.sub(sensor=good)
+            # ndvar.x shape: (n_cases, n_sensors, n_times)
+            x = ndvar.x
+            if method == 'abs':
+                peaks = np.abs(x).max(axis=(1, 2))
+            elif method == 'p2p':
+                peaks = (x.max(axis=2) - x.min(axis=2)).max(axis=1)
+            else:
+                raise ValueError(f"Invalid method: {method!r}")
+            above |= peaks >= thresh
+        return ~above
+
     def toggle_interpolation(self, case, ch_name):
         old_interpolate = self.doc.interpolate[case]
         new_interpolate = old_interpolate[:]
@@ -629,7 +789,7 @@ class Model(FileModel):
         self.history.do(action)
 
 
-class Frame(FileFrame):
+class Frame(NavigableFrame, FileFrame):
     """Epoch rejection GUI
 
     Exclude bad epochs and interpolate or remove bad channels.
@@ -665,8 +825,23 @@ class Frame(FileFrame):
     _doc_name = 'epoch selection'
     _title = "Select Epochs"
 
-    def __init__(self, parent, model, nplots, topo, mean, vlim, color, lw, mark,
-                 mcolor, mlw, antialiased, pos, size, allow_interpolation):
+    def __init__(
+            self,
+            parent: wx.Frame | None,
+            model: Model,
+            nplots: int | tuple[int, int] | None,
+            topo: bool | None,
+            vlim: float | None,
+            color,
+            lw: float,
+            mark: Sequence | None,
+            mcolor,
+            mlw: float,
+            antialiased: bool,
+            pos: tuple[int, int] | None,
+            size: tuple[int, int] | None,
+            allow_interpolation: bool,
+    ) -> None:
         """View object of the epoch selection GUI
 
         Parameters
@@ -702,10 +877,7 @@ class Frame(FileFrame):
         tb.Bind(wx.EVT_CHOICE, self.OnPageChoice)
 
         # --> forward / backward
-        self.back_button = tb.AddTool(wx.ID_BACKWARD, "Back", Icon("tango/actions/go-previous"))
-        self.Bind(wx.EVT_TOOL, self.OnBackward, id=wx.ID_BACKWARD)
-        self.next_button = tb.AddTool(wx.ID_FORWARD, "Next", Icon("tango/actions/go-next"))
-        self.Bind(wx.EVT_TOOL, self.OnForward, id=wx.ID_FORWARD)
+        self.AddNavigationButtons(tb)
         tb.AddSeparator()
 
         # --> Bad Channels
@@ -756,7 +928,26 @@ class Frame(FileFrame):
                              'antialiased': antialiased, 'vlims': self._vlims,
                              'mcolor': mcolor}
         self._topo_kwargs = {'vlims': self._vlims, 'mcolor': 'red', 'mmarker': 'x'}
-        self._SetLayout(nplots, topo, mean)
+
+        # Per-channel-type vlims for normalized butterfly display (multi-type only)
+        self._type_vlims = {}  # {ch_type: vmax_si} for normalising each type to ~[-1, 1]
+        if len(self.doc.epochs_by_type) > 1:
+            for ch_type, ndvar in self.doc.epochs_by_type:
+                vmax = np.percentile(np.abs(ndvar.x), 99.5)
+                self._type_vlims[ch_type] = vmax if vmax > 0 else 1.0
+        # Per-type display vlims (in SI); fall back to data-derived 99.5th-percentile
+        # values for any type not yet stored in the config.
+        self._auto_vlim = self.config.ReadBool('VLim/auto', False)
+        self._type_display_vlims = {}
+        for ch_type in self.doc.ch_type_names:
+            saved = self.config.ReadFloat(f'VLim/vlim_{ch_type}', -1.0)
+            if saved > 0:
+                self._type_display_vlims[ch_type] = saved
+            else:
+                _, scale, display_vlim = _CH_TYPE_VLIM_INFO[ch_type]
+                self._type_display_vlims[ch_type] = scale * display_vlim
+
+        self._SetLayout(nplots, topo)
 
         # Bind Events ---
         self.canvas.mpl_connect('button_press_event', self.OnCanvasClick)
@@ -770,20 +961,21 @@ class Frame(FileFrame):
         self._case_axes = None
         self._case_segs = None
         self._axes_by_idx = None
-        self._topo_ax = None
+        self._topo_axes = []        # list of axes (one per channel type)
+        self._topo_plots = []       # list of AxTopomap (one per channel type)
         self._topo_plot_info_str = None
-        self._topo_plot = None
-        self._mean_plot = None
+        self._case_segs_by_type = None  # list of [(ch_type, NDVar)] per visible epoch
+        self._bfly_vlim = None          # normalized vlim last applied (multi-type only)
 
         # Finalize
         self.ShowPage(0)
         self.UpdateTitle()
 
     def CanBackward(self):
-        return self._current_page_i > 0
+        return bool(self._current_page_i > 0)
 
     def CanForward(self):
-        return self._current_page_i < self._n_pages - 1
+        return bool(self._current_page_i < self._n_pages - 1)
 
     def CaseChanged(self, index):
         "Update the states of the segments on the current page"
@@ -812,12 +1004,8 @@ class Frame(FileFrame):
 
                 axes.append(ax)
 
-        # update mean plot
-        if self._plot_mean:
-            self._mean_plot.set_data(self._get_page_mean_seg())
-            axes.append(self._mean_ax)
-
         self.canvas.redraw(axes)
+        self.canvas.store_canvas()
 
     def GoToEpoch(self, i):
         for page, epochs in enumerate(self._segs_by_page):
@@ -868,9 +1056,10 @@ class Frame(FileFrame):
                 desc = "Epoch %i %s" % (idx, state)
                 self.model.set_case(idx, state, tag, desc)
             elif ax.ax_idx == TOPO_PLOT:
-                ch_locs = self._topo_plot.sensors.locations
+                topo = self._topo_plots[getattr(ax, 'topo_idx', 0)]
+                ch_locs = topo.sensors.locations
                 sensor_i = np.argmin(cdist(ch_locs, [[event.xdata, event.ydata]]))
-                sensor = self._topo_plot.sensors.sensors.names[sensor_i]
+                sensor = topo.sensors.sensors.names[sensor_i]
                 if sensor in self._mark:
                     self._mark.remove(sensor)
                 else:
@@ -910,8 +1099,6 @@ class Frame(FileFrame):
             self.PlotButterfly(ax.ax_idx)
         elif event.key == 'c':
             self.PlotCorrelation(ax.ax_idx)
-        elif ax.ax_idx == MEAN_PLOT:
-            return
         elif event.key == 'i':
             self.ToggleChannelInterpolation(ax, event)
         elif event.key == 'I':
@@ -1017,13 +1204,23 @@ class Frame(FileFrame):
             return self.SetStatusText("")
         elif ax.ax_idx == TOPO_PLOT:
             return self.SetStatusText(self._topo_plot_info_str)
-        elif ax.ax_idx != MEAN_PLOT and ax.epoch_idx == OUT_OF_RANGE:
+        elif ax.epoch_idx == OUT_OF_RANGE:
             return self.SetStatusText("")
 
         # compose status text
         x = ax.xaxis.get_major_formatter().format_data(event.xdata)
-        y = ax.yaxis.get_major_formatter().format_data(event.ydata)
-        desc = "Page average" if ax.ax_idx == MEAN_PLOT else "Epoch %i" % ax.epoch_idx
+        if self._type_vlims:
+            y_parts = []
+            for ch_type in self.doc.ch_type_names:
+                if ch_type not in self._type_display_vlims:
+                    continue
+                y_si = event.ydata * self._type_display_vlims[ch_type]
+                display_unit, scale, _ = _CH_TYPE_VLIM_INFO.get(ch_type, (ch_type, 1.0, 1.0))
+                y_parts.append(f'{y_si / scale:.4g} {display_unit}')
+            y = ' / '.join(y_parts)
+        else:
+            y = ax.yaxis.get_major_formatter().format_data(event.ydata)
+        desc = "Epoch %i" % ax.epoch_idx
         status = f"{desc},  x = {x} ms,  y = {y}"
         if ax.ax_idx >= 0:  # single trial plot
             interp = self.doc.interpolate[ax.epoch_idx]
@@ -1033,9 +1230,16 @@ class Frame(FileFrame):
 
         # update topomap
         if self._plot_topo:
-            tseg = self._get_ax_data(ax.ax_idx, event.xdata)
-            self._topo_plot.set_data([tseg])
-            self.canvas.redraw([self._topo_ax])
+            if len(self._topo_plots) > 1:
+                # Multi-type: get per-type data at the pointer time
+                if ax.ax_idx >= 0:
+                    case_by_type = self._case_segs_by_type[ax.ax_idx]
+                    for topo, (ch_type, case_ndvar) in zip(self._topo_plots, case_by_type):
+                        topo.set_data([case_ndvar.sub(time=event.xdata)])
+            else:
+                tseg = self._get_ax_data(ax.ax_idx, event.xdata)
+                self._topo_plots[0].set_data([tseg])
+            self.canvas.redraw(self._topo_axes)
             marked = ', '.join(self._mark)
             self._topo_plot_info_str = (f"Topomap: {desc},  t = {x} ms,  marked: {marked}")
 
@@ -1095,9 +1299,9 @@ class Frame(FileFrame):
             self.model.set_interpolation(epoch, new)
 
     def OnSetLayout(self, event):
-        dlg = LayoutDialog(self, self._rows, self._columns, self._plot_topo, self._plot_mean)
+        dlg = LayoutDialog(self, self._rows, self._columns, self._plot_topo)
         if dlg.ShowModal() == wx.ID_OK:
-            self.SetLayout(dlg.layout, dlg.topo, dlg.mean)
+            self.SetLayout(dlg.layout, dlg.topo)
 
     def OnSetMarkedChannels(self, event):
         "Mark is represented in sensor names"
@@ -1122,42 +1326,63 @@ class Frame(FileFrame):
         self.SetPlotStyle(mark=names)
 
     def OnSetVLim(self, event):
-        default = str(tuple(self._vlims.values())[0][1])
-        dlg = wx.TextEntryDialog(self, "New Y-axis limit:", "Set Y-Axis Limit",
-                                 default)
-
-        if dlg.ShowModal() == wx.ID_OK:
-            value = dlg.GetValue()
-            try:
-                vlim = abs(float(value))
-            except Exception as exception:
-                msg = wx.MessageDialog(self, str(exception), "Invalid Entry",
-                                       wx.OK | wx.ICON_ERROR)
-                msg.ShowModal()
-                msg.Destroy()
-                raise
-            self.SetVLim(vlim)
-        dlg.Destroy()
+        if self._type_vlims:
+            # Multi-type: per-channel-type dialog
+            dlg = VLimDialog(self, self.doc.ch_type_names, self._type_display_vlims, self._auto_vlim)
+            if dlg.ShowModal() == wx.ID_OK:
+                self._auto_vlim = dlg.GetAuto()
+                self._type_display_vlims = dlg.GetVLims()
+                self.config.WriteBool('VLim/auto', self._auto_vlim)
+                for ch_type, vlim_si in self._type_display_vlims.items():
+                    self.config.WriteFloat(f'VLim/vlim_{ch_type}', vlim_si)
+                self.config.Flush()
+                self.ShowPage()
+            dlg.Destroy()
+        else:
+            # Single-type: simple text entry
+            default = str(tuple(self._vlims.values())[0][1])
+            dlg = wx.TextEntryDialog(self, "New Y-axis limit:", "Set Y-Axis Limit",
+                                     default)
+            if dlg.ShowModal() == wx.ID_OK:
+                value = dlg.GetValue()
+                try:
+                    vlim = abs(float(value))
+                except Exception as exception:
+                    msg = wx.MessageDialog(self, str(exception), "Invalid Entry",
+                                           wx.OK | wx.ICON_ERROR)
+                    msg.ShowModal()
+                    msg.Destroy()
+                    raise
+                self.SetVLim(vlim)
+            dlg.Destroy()
 
     def OnThreshold(self, event):
-        dlg = ThresholdDialog(self)
+        dlg = ThresholdDialog(self, ch_types=self.doc.ch_type_names)
         if dlg.ShowModal() == wx.ID_OK:
-            threshold = dlg.GetThreshold()
             method = dlg.GetMethod()
-
-            sub_threshold = self.model.threshold(threshold, method)
+            if dlg.type_rows:
+                # Multi-type: per-channel-type thresholds
+                type_thresholds = dlg.GetThresholds()
+                if not type_thresholds:
+                    dlg.Destroy()
+                    return
+                sub_threshold = self.model.threshold_multi(type_thresholds, method)
+                threshold_desc = ', '.join(f'{s} ({ct})' for ct, _, s in type_thresholds)
+            else:
+                threshold = dlg.GetThreshold()
+                sub_threshold = self.model.threshold(threshold, method)
+                threshold_desc = str(threshold)
             mark_below = dlg.GetMarkBelow()
             mark_above = dlg.GetMarkAbove()
             if mark_below or mark_above:
                 self.model.update_rejection(sub_threshold, mark_below,
                                             mark_above, f"Threshold-{method}",
-                                            f"{method}_{threshold}")
+                                            f"{method}_{threshold_desc}")
             if dlg.do_report.GetValue():
                 rejected = np.invert(sub_threshold)
-
                 doc = fmtxt.Section("Threshold")
                 doc.append("%s at %s:  reject %i of %i epochs:" %
-                           (method, threshold, rejected.sum(), len(rejected)))
+                           (method, threshold_desc, rejected.sum(), len(rejected)))
                 if np.any(rejected):
                     para = fmtxt.delim_list(fmtxt.Link(epoch, "epoch:%i" % epoch) for epoch in np.flatnonzero(rejected))
                     doc.add_paragraph(para)
@@ -1165,29 +1390,13 @@ class Frame(FileFrame):
             dlg.StoreConfig()
         dlg.Destroy()
 
-    def OnUpdateUIBackward(self, event):
-        event.Enable(self.CanBackward())
-
-    def OnUpdateUIForward(self, event):
-        event.Enable(self.CanForward())
-
-    def OnUpdateUISetLayout(self, event):
-        event.Enable(True)
-
-    def OnUpdateUISetMarkedChannels(self, event):
-        event.Enable(True)
-
-    def OnUpdateUISetVLim(self, event):
+    def OnUpdateUISetMarkedChannels(self, event: wx.UpdateUIEvent) -> None:
         event.Enable(True)
 
     def PlotCorrelation(self, ax_index):
-        if ax_index == MEAN_PLOT:
-            seg = self._mean_seg
-            name = 'Page Mean Neighbor Correlation'
-        else:
-            epoch_idx = self._epoch_idxs[ax_index]
-            seg = self._case_segs[ax_index]
-            name = 'Epoch %i Neighbor Correlation' % epoch_idx
+        epoch_idx = self._epoch_idxs[ax_index]
+        seg = self._case_segs[ax_index]
+        name = 'Epoch %i Neighbor Correlation' % epoch_idx
         plot.Topomap(neighbor_correlation(seg, name=name), sensorlabels='name')
 
     def PlotButterfly(self, ax_index):
@@ -1195,15 +1404,18 @@ class Frame(FileFrame):
         plot.TopoButterfly(epoch, vmax=self._vlims)
 
     def PlotGrandAverage(self):
-        epoch = self.doc.get_grand_average()
-        plot.TopoButterfly(epoch)
+        if len(self.doc.epochs_by_type) > 1:
+            for ch_type, epoch in self.doc.get_grand_averages_by_type():
+                plot.TopoButterfly(epoch, title=f"Grand Average – {ch_type}")
+        else:
+            plot.TopoButterfly(self.doc.get_grand_average())
 
     def PlotTopomap(self, ax_index, time):
         tseg = self._get_ax_data(ax_index, time)
         plot.Topomap(tseg, vmax=self._vlims, sensorlabels='name', w=8,
                      title=tseg.name)
 
-    def SetLayout(self, nplots=(6, 6), topo=True, mean=True):
+    def SetLayout(self, nplots=(6, 6), topo=True):
         """Determine the layout of the Epochs canvas
 
         Parameters
@@ -1214,37 +1426,27 @@ class Frame(FileFrame):
             tuple.
         topo : bool
             Show a topomap plot of the time point under the mouse cursor.
-        mean : bool
-            Show a plot of the page mean at the bottom right of the page.
         """
-        self._SetLayout(nplots, topo, mean)
+        self._SetLayout(nplots, topo)
         self.ShowPage(0)
 
-    def _SetLayout(self, nplots, topo, mean):
+    def _SetLayout(self, nplots, topo):
         if topo is None:
             topo = self.config.ReadBool('Layout/show_topo', True)
         else:
             topo = bool(topo)
             self.config.WriteBool('Layout/show_topo', topo)
 
-        if mean is None:
-            mean = self.config.ReadBool('Layout/show_mean', False)
-        else:
-            mean = bool(mean)
-            self.config.WriteBool('Layout/show_mean', mean)
-
         if nplots is None:
             nrow = self.config.ReadInt('Layout/n_rows', 6)
             ncol = self.config.ReadInt('Layout/n_cols', 6)
             nax = ncol * nrow
-            n_per_page = nax - bool(topo) - bool(mean)
+            n_per_page = nax - bool(topo)
         else:
             if isinstance(nplots, int):
-                if nplots == 1:
-                    mean = False
-                elif nplots < 1:
+                if nplots < 1:
                     raise ValueError(f"{nplots=}: needs to be >= 1")
-                nax = nplots + bool(mean) + bool(topo)
+                nax = nplots + bool(topo)
                 nrow = math.ceil(math.sqrt(nax))
                 ncol = int(math.ceil(nax / nrow))
                 nrow = int(nrow)
@@ -1253,18 +1455,14 @@ class Frame(FileFrame):
                 nrow, ncol = nplots
                 nax = ncol * nrow
                 if nax == 1:
-                    mean = False
                     topo = False
-                elif nax == 2:
-                    mean = False
                 elif nax < 1:
                     raise ValueError(f"{nplots=}: Need at least one plot.")
-                n_per_page = nax - bool(topo) - bool(mean)
+                n_per_page = nax - bool(topo)
             self.config.WriteInt('Layout/n_rows', nrow)
             self.config.WriteInt('Layout/n_cols', ncol)
         self.config.Flush()
 
-        self._plot_mean = mean
         self._plot_topo = topo
 
         # prepare segments
@@ -1336,16 +1534,15 @@ class Frame(FileFrame):
         """
         for p in self._case_plots:
             p.set_ylim(vlim)
-        if self._mean_plot:
-            self._mean_plot.set_ylim(vlim)
-        if self._topo_plot:
-            self._topo_plot.set_vlim(vlim)
+        for topo in self._topo_plots:
+            topo.set_vlim(vlim)
 
         if np.isscalar(vlim):
             vlim = (-vlim, vlim)
         for key in self._vlims:
             self._vlims[key] = vlim
         self.canvas.draw()
+        self.canvas.store_canvas()
 
     def _page_change(self, page):
         "Perform operations common to page change events"
@@ -1353,28 +1550,41 @@ class Frame(FileFrame):
         self.page_choice.Select(page)
         self._epoch_idxs = self._segs_by_page[page]
 
+    def _get_bfly_vlim(self):
+        """Normalized butterfly y-axis limit for the combined multi-type display.
+
+        In auto mode: fitted to the largest value visible on the current page.
+        In fixed mode: derived from ``_type_display_vlims`` (per-type SI limits).
+        """
+        if self._auto_vlim:
+            return max(1.0, max(float(np.abs(h.epoch.x).max()) for h in self._case_plots))
+        return 1.0
+
     def SetPage(self, page):
         "Change the page that is displayed without redrawing"
         self._page_change(page)
 
         self._case_segs = []
+        self._case_segs_by_type = []
         self._axes_by_idx = {}
 
         for i, epoch_idx in enumerate(self._epoch_idxs):
             ax = self._case_axes[i]
             h = self._case_plots[i]
-            case = self.doc.get_epoch(epoch_idx, 'Epoch %i' % epoch_idx)
-            h.set_data(case, epoch_idx)
+            case_by_type = self.doc.get_epoch_by_type(epoch_idx, 'Epoch %i' % epoch_idx)
+            display_case = self._get_display_epoch(case_by_type)
+            h.set_data(display_case, epoch_idx)
             h.set_state(self.doc.accept[epoch_idx])
-            chs = [case.sensor.channel_idx[ch]
+            chs = [display_case.sensor.channel_idx[ch]
                    for ch in self.doc.interpolate[epoch_idx]
-                   if ch in case.sensor.channel_idx]
+                   if ch in display_case.sensor.channel_idx]
             h.set_marked(INTERPOLATE_CHANNELS, chs)
             h.set_visible()
 
             # store objects
             ax.epoch_idx = epoch_idx
-            self._case_segs.append(case)
+            self._case_segs.append(case_by_type[0][1])   # primary type for _get_ax_data
+            self._case_segs_by_type.append(case_by_type)
             self._axes_by_idx[epoch_idx] = ax
 
         # hide lines axes without data
@@ -1383,11 +1593,43 @@ class Frame(FileFrame):
                 self._case_plots[i].set_visible(False)
                 self._case_axes[i].epoch_idx = OUT_OF_RANGE
 
-        # update mean plot
-        if self._plot_mean:
-            self._mean_plot.set_data(self._get_page_mean_seg())
+        # Enforce consistent y-axis limits across all epoch plots (multi-type)
+        if self._type_vlims and self._case_plots:
+            self._bfly_vlim = self._get_bfly_vlim()
+            for h in self._case_plots:
+                h.set_ylim(self._bfly_vlim)
+            if self._plot_topo and len(self._topo_plots) > 1:
+                for topo, ch_type in zip(self._topo_plots, self.doc.ch_type_names):
+                    topo.set_vlim(self._bfly_vlim * self._type_display_vlims[ch_type])
 
         self.canvas.draw()
+        self.canvas.store_canvas()
+
+    def _get_display_epoch(self, case_by_type):
+        """Build a combined ``sensor × time`` NDVar for butterfly display.
+
+        For single channel type: returns the case NDVar unchanged.
+        For multiple types: normalises each type by its display vlim
+        (``_type_display_vlims``) so that the user-specified amplitude maps to
+        ±1 on the shared y-axis, then concatenates the sensor dimensions.  The returned NDVar is only used for drawing and
+        is not stored on the Document.
+
+        Also accepts a plain NDVar and returns it unchanged.
+        """
+        if isinstance(case_by_type, NDVar):
+            return case_by_type
+        if len(case_by_type) == 1:
+            return case_by_type[0][1]
+        from .._data_obj import Sensor as SensorDim
+        arrays, names, locs = [], [], []
+        for ch_type, case_ndvar in case_by_type:
+            vmax = self._type_display_vlims.get(ch_type, 1.0)
+            arrays.append(case_ndvar.x / vmax)
+            names.extend(case_ndvar.sensor.names)
+            locs.append(case_ndvar.sensor.locs)
+        combined_sensor = SensorDim(np.vstack(locs), names, adjacency='none')
+        combined_x = np.concatenate(arrays, axis=0)  # sensor is dim 0 for single-case
+        return NDVar(combined_x, (combined_sensor, case_by_type[0][1].time))
 
     def ShowPage(self, page=None):
         "Dislay a specific page (start counting with 0)"
@@ -1405,25 +1647,34 @@ class Frame(FileFrame):
         t_formatter, t_locator, t_label = self.doc.epochs.time._axis_format(True, True)
         y_scale = AxisScale(self.doc.epochs, True)
 
+        # butterfly kwargs: for multi-type normalized data autoscale the y-axis
+        bfly_kwargs = dict(self._bfly_kwargs)
+        if self._type_vlims:
+            bfly_kwargs['vlims'] = {}
+
         # segment plots
         self._case_plots = []
         self._case_axes = []
         self._case_segs = []
+        self._case_segs_by_type = []
         self._axes_by_idx = {}
         mark = None
         for i, epoch_idx in enumerate(self._epoch_idxs):
-            case = self.doc.get_epoch(epoch_idx, 'Epoch %i' % epoch_idx)
+            case_by_type = self.doc.get_epoch_by_type(epoch_idx, 'Epoch %i' % epoch_idx)
+            display_case = self._get_display_epoch(case_by_type)
             if mark is None:
-                mark = [case.sensor.channel_idx[ch] for ch in self._mark
-                        if ch in case.sensor.channel_idx]
+                mark = [display_case.sensor.channel_idx[ch] for ch in self._mark
+                        if ch in display_case.sensor.channel_idx]
             state = self.doc.accept[epoch_idx]
             ax = self.figure.add_subplot(nrow, ncol, i + 1, xticks=[0], yticks=[])
-            h = AxButterflyEpoch(ax, case, mark, state, epoch_idx, **self._bfly_kwargs)
+            channel_colors = self.doc.get_channel_colors(display_case)
+            h = AxButterflyEpoch(ax, display_case, mark, state, epoch_idx,
+                                 channel_colors=channel_colors, **bfly_kwargs)
             # mark interpolated channels
             if self.doc.interpolate[epoch_idx]:
-                chs = [case.sensor.channel_idx[ch]
+                chs = [display_case.sensor.channel_idx[ch]
                        for ch in self.doc.interpolate[epoch_idx]
-                       if ch in case.sensor.channel_idx]
+                       if ch in display_case.sensor.channel_idx]
                 h.set_marked(INTERPOLATE_CHANNELS, chs)
             # mark eye tracker artifacts
             if self.doc.blink is not None:
@@ -1433,42 +1684,66 @@ class Frame(FileFrame):
             if t_locator is not None:
                 ax.xaxis.set_major_locator(t_locator)
             ax.xaxis.set_major_formatter(t_formatter)
-            ax.yaxis.set_major_formatter(y_scale.formatter)
+            if not self._type_vlims:
+                ax.yaxis.set_major_formatter(y_scale.formatter)
 
             # store objects
             ax.ax_idx = i
             ax.epoch_idx = epoch_idx
             self._case_plots.append(h)
             self._case_axes.append(ax)
-            self._case_segs.append(case)
+            self._case_segs.append(case_by_type[0][1])   # primary type for _get_ax_data
+            self._case_segs_by_type.append(case_by_type)
             self._axes_by_idx[epoch_idx] = ax
 
-        # mean plot
-        if self._plot_mean:
-            plot_i = nrow * ncol
-            self._mean_ax = ax = self.figure.add_subplot(nrow, ncol, plot_i)
-            ax.ax_idx = MEAN_PLOT
-            self._mean_seg = self._get_page_mean_seg()
-            self._mean_plot = AxButterflyEpoch(ax, self._mean_seg, mark, 'Page Mean',
-                                               **self._bfly_kwargs)
-
-            # formatters
-            ax.xaxis.set_major_formatter(t_formatter)
-            ax.yaxis.set_major_formatter(y_scale.formatter)
+        # Enforce a consistent y-axis limit across all epoch plots (multi-type)
+        if self._type_vlims and self._case_plots:
+            self._bfly_vlim = self._get_bfly_vlim()
+            for h in self._case_plots:
+                h.set_ylim(self._bfly_vlim)
 
         # topomap
         if self._plot_topo:
-            plot_i = nrow * ncol - self._plot_mean
-            self._topo_ax = self.figure.add_subplot(nrow, ncol, plot_i)
-            self._topo_ax.ax_idx = TOPO_PLOT
-            self._topo_ax.set_axis_off()
-            tseg = self._get_ax_data(0, True)
+            plot_i = nrow * ncol
             if self._mark:
-                mark = [ch for ch in self._mark if ch not in self.doc.bad_channel_names]
+                mark_topo = [ch for ch in self._mark if ch not in self.doc.bad_channel_names]
             else:
-                mark = None
-            layers = AxisData([DataLayer(tseg, PlotType.IMAGE)])
-            self._topo_plot = AxTopomap(self._topo_ax, layers, mark=mark, **self._topo_kwargs)
+                mark_topo = None
+            n_types = len(self.doc.ch_type_names)
+            if n_types > 1:
+                # Split the single subplot slot into N side-by-side topo axes;
+                # use the first visible epoch's per-type data at a default time
+                first_cbt = self._case_segs_by_type[0]
+                t_init = min(max(0.1, first_cbt[0][1].time.tmin), first_cbt[0][1].time.tmax)
+                placeholder = self.figure.add_subplot(nrow, ncol, plot_i)
+                bbox = placeholder.get_position()
+                self.figure.delaxes(placeholder)
+                topo_kwargs = dict(self._topo_kwargs, vlims={})
+                self._topo_axes = []
+                self._topo_plots = []
+                for j, (ch_type, case_ndvar) in enumerate(first_cbt):
+                    x0 = bbox.x0 + j * bbox.width / n_types
+                    ax = self.figure.add_axes([x0, bbox.y0, bbox.width / n_types, bbox.height])
+                    ax.ax_idx = TOPO_PLOT
+                    ax.topo_idx = j
+                    ax.set_axis_off()
+                    type_tseg = case_ndvar.sub(time=t_init)
+                    layers = AxisData([DataLayer(type_tseg, PlotType.IMAGE)])
+                    topo = AxTopomap(ax, layers, mark=mark_topo, **topo_kwargs)
+                    if self._bfly_vlim is not None and ch_type in self._type_display_vlims:
+                        topo.set_vlim(self._bfly_vlim * self._type_display_vlims[ch_type])
+                    self._topo_axes.append(ax)
+                    self._topo_plots.append(topo)
+            else:
+                tseg = self._get_ax_data(0, True)
+                ax = self.figure.add_subplot(nrow, ncol, plot_i)
+                ax.ax_idx = TOPO_PLOT
+                ax.topo_idx = 0
+                ax.set_axis_off()
+                layers = AxisData([DataLayer(tseg, PlotType.IMAGE)])
+                topo = AxTopomap(ax, layers, mark=mark_topo, **self._topo_kwargs)
+                self._topo_axes = [ax]
+                self._topo_plots = [topo]
             self._topo_plot_info_str = ""
 
         self.canvas.draw()
@@ -1489,20 +1764,8 @@ class Frame(FileFrame):
         sensor_name = plt.epoch.sensor.names[sensor]
         self.model.toggle_interpolation(ax.epoch_idx, sensor_name)
 
-    def _get_page_mean_seg(self):
-        page_segments = self._segs_by_page[self._current_page_i]
-        page_index = np.zeros(self.doc.n_epochs, dtype=bool)
-        page_index[page_segments] = True
-        index = np.logical_and(page_index, self.doc.accept.x)
-        mseg = self.doc.get_epoch(index, "Page Average").mean('case')
-        return mseg
-
     def _get_ax_data(self, ax_index, time=None):
-        if ax_index == MEAN_PLOT:
-            seg = self._mean_seg
-            epoch_name = 'Page Average'
-            sensor_idx = None
-        elif ax_index >= 0:
+        if ax_index >= 0:
             epoch_idx = self._epoch_idxs[ax_index]
             epoch_name = 'Epoch %i' % epoch_idx
             seg = self._case_segs[ax_index]
@@ -1627,11 +1890,10 @@ class FindNoisyChannelsDialog(EelbrainDialog):
 
 class LayoutDialog(EelbrainDialog):
 
-    def __init__(self, parent, rows, columns, topo, mean):
+    def __init__(self, parent, rows, columns, topo):
         EelbrainDialog.__init__(self, parent, wx.ID_ANY, "Select-Epochs Layout")
         # result attributes
         self.topo = None
-        self.mean = None
         self.layout = None
 
         sizer = wx.BoxSizer(wx.VERTICAL)
@@ -1644,10 +1906,6 @@ class LayoutDialog(EelbrainDialog):
         self.topo_ctrl = wx.CheckBox(self, wx.ID_ANY, "Topographic map")
         self.topo_ctrl.SetValue(topo)
         sizer.Add(self.topo_ctrl)
-
-        self.mean_ctrl = wx.CheckBox(self, wx.ID_ANY, "Page mean plot")
-        self.mean_ctrl.SetValue(mean)
-        sizer.Add(self.mean_ctrl)
 
         # buttons
         button_sizer = wx.StdDialogButtonSizer()
@@ -1667,7 +1925,6 @@ class LayoutDialog(EelbrainDialog):
 
     def OnOk(self, event):
         self.topo = self.topo_ctrl.GetValue()
-        self.mean = self.mean_ctrl.GetValue()
         value = self.text.GetValue()
         m = re.match(r"(\d+)\s*(\d*)", value)
         if m:
@@ -1680,7 +1937,7 @@ class LayoutDialog(EelbrainDialog):
             else:
                 self.layout = n_plots = rows
 
-            if n_plots >= self.topo + self.mean + 1:
+            if n_plots >= self.topo + 1:
                 event.Skip()
                 return
             else:
@@ -1747,77 +2004,92 @@ class RejectRangeDialog(EelbrainDialog):
 
 
 class ThresholdDialog(EelbrainDialog):
+    """Threshold-criterion rejection dialog.
+
+    When ``ch_types`` contains more than one entry the dialog shows one row per
+    channel type (checkbox + type label + value field + unit label), mirroring
+    ``select_components.FindNoisyEpochsDialog``.  When ``ch_types`` is empty
+    the legacy single-threshold layout is used.
+    """
 
     _methods = (('absolute', 'abs'),
                 ('peak-to-peak', 'p2p'))
 
-    def __init__(self, parent):
+    def __init__(self, parent, ch_types=()):
         title = "Threshold Criterion Rejection"
         wx.Dialog.__init__(self, parent, wx.ID_ANY, title)
         choices = tuple(m[0] for m in self._methods)
         method_tags = tuple(m[1] for m in self._methods)
 
-        # load config
         config = parent.config
         method = config.Read("Threshold/method", "p2p")
         if method not in method_tags:
             method = "p2p"
         mark_above = config.ReadBool("Threshold/mark_above", True)
         mark_below = config.ReadBool("Threshold/mark_below", False)
-        threshold = config.ReadFloat("Threshold/threshold", 2e-12)
         do_report = config.ReadBool("Threshold/do_report", True)
 
-        # construct layout
         sizer = wx.BoxSizer(wx.VERTICAL)
-
-        txt = "Mark epochs based on a threshold criterion"
-        ctrl = wx.StaticText(self, wx.ID_ANY, txt)
-        sizer.Add(ctrl)
+        sizer.Add(wx.StaticText(self, wx.ID_ANY, "Mark epochs based on a threshold criterion"))
 
         ctrl = wx.RadioBox(self, wx.ID_ANY, "Method", choices=choices)
         ctrl.SetSelection(method_tags.index(method))
         sizer.Add(ctrl)
         self.method_ctrl = ctrl
 
-        msg = ("Invalid entry for threshold: {value}. Need a floating\n"
-               "point number.")
-        validator = REValidator(FLOAT_PATTERN, msg, False)
-        ctrl = wx.TextCtrl(self, wx.ID_ANY, str(threshold),
-                           validator=validator)
-        ctrl.SetHelpText("Threshold value (positive scalar)")
-        ctrl.SelectAll()
-        sizer.Add(ctrl)
-        self.threshold_ctrl = ctrl
+        # --- threshold input ---
+        self._ch_types = list(ch_types)
+        self.type_rows = []  # (ch_type, enabled_ctrl, threshold_ctrl, display_unit, scale)
+        if self._ch_types:
+            # Multi-type: one row per channel type
+            grid = wx.FlexGridSizer(rows=len(self._ch_types), cols=4, vgap=3, hgap=5)
+            for ch_type in self._ch_types:
+                display_unit, scale, default = _CH_TYPE_THRESHOLD_INFO.get(ch_type, (ch_type, None, 1))
+                enabled = config.ReadBool(f"Threshold/enabled_{ch_type}", True)
+                threshold = config.ReadFloat(f"Threshold/threshold_{ch_type}", default)
+                enabled_ctrl = wx.CheckBox(self, label='')
+                enabled_ctrl.SetValue(enabled)
+                grid.Add(enabled_ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
+                grid.Add(wx.StaticText(self, label=ch_type), flag=wx.ALIGN_CENTER_VERTICAL)
+                validator = REValidator(POS_FLOAT_PATTERN, "Invalid entry: {value}. Please specify a number > 0.", False)
+                threshold_ctrl = wx.TextCtrl(self, value=f'{threshold:g}', validator=validator, style=wx.TE_RIGHT)
+                threshold_ctrl.SetHelpText(f"Reject epochs where {ch_type} signal exceeds this value at any sensor")
+                grid.Add(threshold_ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
+                grid.Add(wx.StaticText(self, label=display_unit), flag=wx.ALIGN_CENTER_VERTICAL)
+                self.type_rows.append((ch_type, enabled_ctrl, threshold_ctrl, display_unit, scale))
+            sizer.Add(grid, flag=wx.ALL, border=5)
+            self.threshold_ctrl = None  # legacy attribute unused in multi-type mode
+        else:
+            # Legacy single-threshold field (no MNE channel-type info available)
+            threshold = config.ReadFloat("Threshold/threshold", 2e-12)
+            msg = "Invalid entry for threshold: {value}. Need a floating point number."
+            validator = REValidator(FLOAT_PATTERN, msg, False)
+            ctrl = wx.TextCtrl(self, wx.ID_ANY, str(threshold), validator=validator)
+            ctrl.SetHelpText("Threshold value (positive scalar)")
+            ctrl.SelectAll()
+            sizer.Add(ctrl)
+            self.threshold_ctrl = ctrl
 
         # output
         sizer.AddSpacer(4)
         sizer.Add(wx.StaticText(self, label="Output"))
-        # mark above
-        self.mark_above = wx.CheckBox(self, wx.ID_ANY,
-                                      "Reject epochs exceeding the threshold")
+        self.mark_above = wx.CheckBox(self, wx.ID_ANY, "Reject epochs exceeding the threshold")
         self.mark_above.SetValue(mark_above)
         sizer.Add(self.mark_above)
-        # mark below
-        self.mark_below = wx.CheckBox(self, wx.ID_ANY,
-                                      "Accept epochs below the threshold")
+        self.mark_below = wx.CheckBox(self, wx.ID_ANY, "Accept epochs below the threshold")
         self.mark_below.SetValue(mark_below)
         sizer.Add(self.mark_below)
-        # report
         self.do_report = wx.CheckBox(self, wx.ID_ANY, "Show Report")
         self.do_report.SetValue(do_report)
         sizer.Add(self.do_report)
 
-        # buttons
         button_sizer = wx.StdDialogButtonSizer()
-        # ok
         btn = wx.Button(self, wx.ID_OK)
         btn.SetDefault()
         btn.Bind(wx.EVT_BUTTON, self.OnOK)
         button_sizer.AddButton(btn)
-        # cancel
         btn = wx.Button(self, wx.ID_CANCEL)
         button_sizer.AddButton(btn)
-        # finalize
         button_sizer.Realize()
         sizer.Add(button_sizer)
 
@@ -1832,17 +2104,27 @@ class ThresholdDialog(EelbrainDialog):
 
     def GetMethod(self):
         index = self.method_ctrl.GetSelection()
-        value = self._methods[index][1]
-        return value
+        return self._methods[index][1]
 
     def GetThreshold(self):
-        text = self.threshold_ctrl.GetValue()
-        value = float(text)
-        return value
+        """Return threshold as float (legacy single-type mode only)."""
+        return float(self.threshold_ctrl.GetValue())
+
+    def GetThresholds(self):
+        """Return ``[(ch_type, threshold_si, display_str), ...]`` for enabled types."""
+        result = []
+        for ch_type, enabled_ctrl, threshold_ctrl, display_unit, scale in self.type_rows:
+            if not enabled_ctrl.GetValue():
+                continue
+            threshold_display = float(threshold_ctrl.GetValue())
+            threshold_si = threshold_display * scale if scale is not None else threshold_display
+            result.append((ch_type, threshold_si, f'{threshold_display:g} {display_unit}'))
+        return result
 
     def OnOK(self, event):
         if not (self.mark_above.GetValue() or self.mark_below.GetValue() or self.do_report.GetValue()):
-            wx.MessageBox("Specify at least one action (create report or reject or accept epochs)", "No Command Selected", wx.ICON_EXCLAMATION)
+            wx.MessageBox("Specify at least one action (create report or reject or accept epochs)",
+                          "No Command Selected", wx.ICON_EXCLAMATION)
         else:
             event.Skip()
 
@@ -1851,9 +2133,85 @@ class ThresholdDialog(EelbrainDialog):
         config.Write("Threshold/method", self.GetMethod())
         config.WriteBool("Threshold/mark_above", self.GetMarkAbove())
         config.WriteBool("Threshold/mark_below", self.GetMarkBelow())
-        config.WriteFloat("Threshold/threshold", self.GetThreshold())
         config.WriteBool("Threshold/do_report", self.do_report.GetValue())
+        if self.type_rows:
+            for ch_type, enabled_ctrl, threshold_ctrl, _, _ in self.type_rows:
+                config.WriteBool(f"Threshold/enabled_{ch_type}", enabled_ctrl.GetValue())
+                config.WriteFloat(f"Threshold/threshold_{ch_type}", float(threshold_ctrl.GetValue()))
+        else:
+            config.WriteFloat("Threshold/threshold", self.GetThreshold())
         config.Flush()
+
+
+class VLimDialog(EelbrainDialog):
+    """Y-axis limit dialog for multi-channel-type butterfly plots.
+
+    Shows one row per channel type (type label | value field | unit) plus an
+    "Automatic" checkbox that disables the fields and lets the frame fit the
+    limit to each page's data instead.
+    """
+
+    def __init__(self, parent, ch_types, type_vlims_si, auto):
+        wx.Dialog.__init__(self, parent, wx.ID_ANY, "Set Y-Axis Limits")
+        sizer = wx.BoxSizer(wx.VERTICAL)
+
+        # Auto checkbox
+        self.auto_ctrl = wx.CheckBox(self, label="Automatic (fit to current page)")
+        self.auto_ctrl.SetValue(auto)
+        sizer.Add(self.auto_ctrl, flag=wx.ALL, border=5)
+
+        # Per-type grid: [type] [value] [unit]
+        grid = wx.FlexGridSizer(rows=len(ch_types), cols=3, vgap=3, hgap=6)
+        self._rows = []  # (ch_type, text_ctrl, scale)
+        for ch_type in ch_types:
+            display_unit, scale, default = _CH_TYPE_VLIM_INFO.get(ch_type, (ch_type, 1.0, 1.0))
+            current_si = type_vlims_si.get(ch_type, default * scale)
+            current_display = current_si / scale
+            grid.Add(wx.StaticText(self, label=ch_type), flag=wx.ALIGN_CENTER_VERTICAL)
+            validator = REValidator(POS_FLOAT_PATTERN, "Invalid value: {value}. Need a number > 0.", False)
+            ctrl = wx.TextCtrl(self, value=f'{current_display:g}', validator=validator,
+                               style=wx.TE_RIGHT)
+            ctrl.Enable(not auto)
+            grid.Add(ctrl, flag=wx.ALIGN_CENTER_VERTICAL | wx.EXPAND)
+            grid.Add(wx.StaticText(self, label=display_unit), flag=wx.ALIGN_CENTER_VERTICAL)
+            self._rows.append((ch_type, ctrl, scale))
+        grid.AddGrowableCol(1)
+        sizer.Add(grid, flag=wx.LEFT | wx.RIGHT | wx.BOTTOM, border=8)
+
+        self.auto_ctrl.Bind(wx.EVT_CHECKBOX, self._on_auto)
+
+        btn = wx.Button(self, wx.ID_DEFAULT, "Defaults")
+        btn.Bind(wx.EVT_BUTTON, self._on_defaults)
+        sizer.Add(btn, flag=wx.LEFT | wx.RIGHT | wx.BOTTOM, border=8)
+
+        button_sizer = wx.StdDialogButtonSizer()
+        btn = wx.Button(self, wx.ID_OK)
+        btn.SetDefault()
+        button_sizer.AddButton(btn)
+        button_sizer.AddButton(wx.Button(self, wx.ID_CANCEL))
+        button_sizer.Realize()
+        sizer.Add(button_sizer, flag=wx.ALL, border=5)
+
+        self.SetSizer(sizer)
+        sizer.Fit(self)
+
+    def _on_auto(self, event):
+        enable = not self.auto_ctrl.GetValue()
+        for _, ctrl, _ in self._rows:
+            ctrl.Enable(enable)
+
+    def _on_defaults(self, event):
+        for ch_type, ctrl, scale in self._rows:
+            _, _, default = _CH_TYPE_VLIM_INFO.get(ch_type, (None, scale, scale))
+            ctrl.SetValue(f'{default:g}')
+
+    def GetAuto(self):
+        return self.auto_ctrl.GetValue()
+
+    def GetVLims(self):
+        """Return ``{ch_type: vlim_si}`` from the current field values."""
+        return {ch_type: float(ctrl.GetValue()) * scale
+                for ch_type, ctrl, scale in self._rows}
 
 
 class InfoFrame(HTMLFrame):

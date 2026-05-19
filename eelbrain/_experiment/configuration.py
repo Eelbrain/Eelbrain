@@ -4,7 +4,7 @@ import logging
 from typing import Any
 from collections.abc import Sequence
 
-from .._exceptions import DefinitionError
+from .._exceptions import ConfigurationError
 from .._text import enumeration, plural
 from .._utils.parse import find_variables
 
@@ -96,16 +96,55 @@ class CodeError(Exception):
         Exception.__init__(self, error_str)
 
 
-class Definition:
+class Configuration:
     DICT_ATTRS = None
+    name = None
 
-    def _as_dict(self):
-        return {k: getattr(self, k) for k in self.DICT_ATTRS}
+    def _as_dict(self) -> dict[str, Any]:
+        """Return the serialized semantic definition of this configuration.
+
+        This method is the base ``Configuration`` contract for turning a
+        configuration object into plain Python data. In the experiment graph,
+        the returned mapping is used as the stable definition for:
+
+        - configuration equality (:meth:`Configuration.__eq__`)
+        - cache fingerprints and manifests via
+          :meth:`eelbrain._experiment.derivative_cache.DerivativeRegistry.canonicalize`
+        - explicit derivative ``definitions`` payloads, i.e. serialized
+          configuration definitions for epoch, test, parcellation, raw-pipe,
+          and inverse-solution fingerprints
+
+        New subclasses should usually implement this by declaring
+        :attr:`DICT_ATTRS`, a tuple of attribute names that fully describes the
+        configuration's semantic definition. The base implementation then
+        returns ``{name: getattr(self, name) for name in self.DICT_ATTRS}``.
+
+        Include in :attr:`DICT_ATTRS` only deterministic definition fields that
+        should affect equality and cache identity. Do not include runtime or
+        graph-dependent fields that are cached later, such as bound names or
+        other dependent parameters populated by configuration-family-specific
+        resolution hooks.
+
+        Returns
+        -------
+        dict
+            Plain Python mapping describing the configuration's semantic
+            definition.
+        """
+        if self.DICT_ATTRS is None:
+            raise NotImplementedError(f"{self.__class__.__name__}.DICT_ATTRS")
+        out = {'type': self.__class__.__name__}
+        out.update({k: getattr(self, k) for k in self.DICT_ATTRS})
+        return out
+
+    def _store_name(self, name: str) -> None:
+        """Store the bound name for diagnostics and runtime convenience."""
+        self.name = name
 
     def __eq__(self, other):
         if isinstance(other, dict):
             return self._as_dict() == other
-        elif isinstance(other, Definition):
+        elif self.__class__ is other.__class__:
             return self._as_dict() == other._as_dict()
         else:
             return False
@@ -123,7 +162,7 @@ def name_ok(key: str, allow_empty: bool) -> bool:
 def check_names(keys, attribute, allow_empty: bool):
     invalid = [key for key in keys if not name_ok(key, allow_empty)]
     if invalid:
-        raise DefinitionError(f"Invalid {plural('name', len(invalid))} for {attribute}: {enumeration(invalid)}")
+        raise ConfigurationError(f"Invalid {plural('name', len(invalid))} for {attribute}: {enumeration(invalid)}")
 
 
 def compound(items):
@@ -264,7 +303,7 @@ def typed_arg(arg, type_, secondary_type=None):
 
 def sequence_arg(
         name: str,  # for error message
-        arg: Sequence,
+        arg: Sequence | None,
         item_type: type = str,
         allow_none: bool = True,
         sequence_type: type = tuple,

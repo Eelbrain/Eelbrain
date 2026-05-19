@@ -20,7 +20,7 @@ class STCLoaderFrame(EelbrainFrame):
 
     add_params = dict(proportion=0, flag=wx.EXPAND | wx.ALL, border=10)
 
-    def __init__(self, parent):
+    def __init__(self, parent: wx.Window | None) -> None:
         super().__init__(parent, wx.ID_ANY, "Find and Load STCs")
         self.loader = None
         self.factor_name_ctrls = []
@@ -122,12 +122,18 @@ class STCLoaderFrame(EelbrainFrame):
 class FactorPanel(wx.Panel):
     """Panel to display a factor and its level names"""
 
-    def __init__(self, parent, levels, idx, editable=True):
+    def __init__(
+            self,
+            parent: wx.Window,
+            levels: list[str],
+            idx: int,
+            editable: bool = True,
+    ) -> None:
         super().__init__(parent)
         if editable:
-            self.factor_ctl = wx.TextCtrl(self, value="factor_%d" % idx)
+            self.factor_ctl = wx.TextCtrl(self, value=f"factor_{idx}")
         else:
-            self.factor_ctl = wx.StaticText(self, label="factor_%d" % idx)
+            self.factor_ctl = wx.StaticText(self, label=f"factor_{idx}")
             self.factor_ctl.SetFont(wx.Font.Bold(self.factor_ctl.GetFont()))
         level_names = ["- " + i for i in levels]
         level_ctl = wx.StaticText(self)
@@ -142,7 +148,7 @@ class FactorPanel(wx.Panel):
 class MRIPanel(wx.Panel):
     """Panel containing MRI input fields (dir, subject, src)"""
 
-    def __init__(self, parent):
+    def __init__(self, parent: wx.Window) -> None:
         super().__init__(parent)
         sizer = wx.StaticBoxSizer(wx.VERTICAL, self, "")
         # check for subjects dir in environment
@@ -157,7 +163,7 @@ class MRIPanel(wx.Panel):
         # text control for MRI subject, default 'fsaverage'
         subj_ctl = wx.TextCtrl(self, value="fsaverage")
         # dropdown to choose source space sampling, default ico-4
-        srcs = ["ico-%d" % i for i in range(2, 7)] + ["oct-%d" % i for i in range(2, 7)] + ["all"]
+        srcs = [f"ico-{i}" for i in range(2, 7)] + [f"oct-{i}" for i in range(2, 7)] + ["all"]
         src_ctl = wx.ComboBox(self, choices=srcs, value="ico-4")
         # attach controls to panel for use in loader
         self.mri_dir = dir_ctl
@@ -178,7 +184,7 @@ class MRIPanel(wx.Panel):
 
 
 class TitleSizer(wx.BoxSizer):
-    def __init__(self, parent, title):
+    def __init__(self, parent: wx.Window, title: str) -> None:
         super().__init__(wx.HORIZONTAL)
         self.ctl = wx.StaticText(parent, label=title)
         font = wx.Font(14, wx.DEFAULT, wx.NORMAL, wx.BOLD)

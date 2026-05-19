@@ -1,9 +1,9 @@
 from collections.abc import Collection
 
-from .definitions import Definition, DefinitionError
+from .configuration import Configuration, ConfigurationError
 
 
-class GroupBase(Definition):
+class GroupBase(Configuration):
 
     pass
 
@@ -27,16 +27,10 @@ class Group(GroupBase):
         else:
             self.subjects = set(subjects)
             if len(self.subjects) != len(subjects):
-                raise DefinitionError(f"At least one duplicate subject in {subjects}")
-
-    def _link(self, key: str, all_subjects: set[str]):
-        missing = self.subjects - all_subjects
-        if missing:
-            raise DefinitionError(f"Group {key} contains non-existing subjects: {missing}")
-        return tuple(sorted(self.subjects))
+                raise ConfigurationError(f"At least one duplicate subject in {subjects}")
 
     @staticmethod
-    def coerce(obj):
+    def _coerce(obj):
         if isinstance(obj, GroupBase):
             return obj
         elif isinstance(obj, dict):
@@ -67,23 +61,22 @@ class SubGroup(GroupBase):
         self.base = base
         self.exclude = {exclude} if isinstance(exclude, str) else set(exclude)
 
-    def _link(self, key: str, all_subjects: set[str]):
-        invalid = self.exclude - all_subjects
-        if invalid:
-            raise DefinitionError(f"Group {key} trying to exclude subjects not contained in its base {self.base}: {invalid}")
-        return tuple(sorted(all_subjects - self.exclude))
-
 
 def assemble_groups(groups: dict, subjects: set[str]) -> dict:
     if 'all' in groups:  # Pipeline needs access to all subjects
-        raise DefinitionError("The group name 'all' is reserved and can't be used for a user-defined group")
-    all_groups = {k: Group.coerce(v) for k, v in groups.items()}
+        raise ConfigurationError("The group name 'all' is reserved and can't be used for a user-defined group")
+    all_groups = {k: Group._coerce(v) for k, v in groups.items()}
     all_groups['all'] = Group(subjects)
     base_groups = {k: g for k, g in all_groups.items() if isinstance(g, Group)}
     sub_groups = {k: g for k, g in all_groups.items() if isinstance(g, SubGroup)}
     assert len(base_groups) + len(sub_groups) == len(all_groups)
     # check base-groups
-    groups = {key: group._link(key, subjects) for key, group in base_groups.items()}
+    groups = {}
+    for key, group in base_groups.items():
+        missing = group.subjects - subjects
+        if missing:
+            raise ConfigurationError(f"Group {key} contains non-existing subjects: {missing}")
+        groups[key] = tuple(sorted(group.subjects))
     # assign subgroups
     while sub_groups:
         for key, group in sub_groups.items():
@@ -92,5 +85,9 @@ def assemble_groups(groups: dict, subjects: set[str]) -> dict:
         else:
             raise ValueError("Groups contain unresolvable definition")
         group = sub_groups.pop(key)
-        groups[key] = group._link(key, set(groups[group.base]))
+        base_subjects = set(groups[group.base])
+        invalid = group.exclude - base_subjects
+        if invalid:
+            raise ConfigurationError(f"Group {key} trying to exclude subjects not contained in its base {group.base}: {invalid}")
+        groups[key] = tuple(sorted(base_subjects - group.exclude))
     return groups

@@ -1,13 +1,15 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Help Viewer"""
+from __future__ import annotations
+
 import wx
 
 from ..fmtxt import make_html_doc, Section, Code
 from .text import HTMLFrame
 
 
-def show_help_txt(text, parent, title=""):
-    "Show help frame with text in mono-spaced font"
+def show_help_txt(text: str, parent: wx.Window, title: str = "") -> HelpFrame:
+    """Show help frame with text in monospaced font"""
     s = Section(title, Code(text))
     html = make_html_doc(s, None)
     return HelpFrame(parent, title, html)
@@ -15,7 +17,7 @@ def show_help_txt(text, parent, title=""):
 
 class HelpFrame(HTMLFrame):
 
-    def __init__(self, parent, title, html, **kwargs):
+    def __init__(self, parent: wx.Window, title: str, html: str, **kwargs) -> None:
         display_w, display_h = wx.DisplaySize()
         x = 0
         y = 25

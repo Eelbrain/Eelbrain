@@ -38,9 +38,12 @@ p = plot.TopoButterfly('eeg', 'n_chars', data=data, t=.130, axh=2, w=6)
 ###############################################################################
 # Multiple regression
 # -------------------
-# Fit a multiple regression model. Estimate $p$-values using a cluster-based permuatation test, using a cluster-forming threshold of uncorrected $p$=.05 and 10,000 permutations (the default).
+# Fit a multiple regression model.
+# Estimate $p$-values using a cluster-based permuatation test, using a cluster-forming threshold of uncorrected $p$=.05.
+# For this example, only 500 permutations are used.
+# When accuracy counts, it is recommended to use 10,000 permutations (the default).
 
-lm = testnd.LM('eeg', 'n_chars + cloze', data=data, tstart=0.050, tstop=0.500, pmin=0.05)
+lm = testnd.LM('eeg', 'n_chars + cloze', data=data, tstart=0.050, tstop=0.500, pmin=0.05, samples=500)
 
 ###############################################################################
 # A quick plot suggests an early effect related to `n_chars` around 130 ms, and a later effect of `cloze` around 400 ms:

@@ -10,12 +10,6 @@ clean-py:
 doc:
 	sphinx-build -b html doc doc-build
 
-style-check:
-	pydocstyle eelbrain
-
-flake:
-	flake8 --count eelbrain examples scripts
-
 test: style-check
 	pytest eelbrain
 

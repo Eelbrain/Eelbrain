@@ -1,8 +1,31 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+import logging
+
 import pytest
 
+from eelbrain._data_obj import Factor, Interaction, Var
 from eelbrain._experiment import test_def
-from eelbrain._experiment.definitions import DefinitionError, find_dependent_epochs, find_epoch_vars, find_epochs_vars, sequence_arg
+from eelbrain._experiment.configuration import Configuration, ConfigurationError, find_dependent_epochs, find_epoch_vars, find_epochs_vars, sequence_arg
+from eelbrain._experiment.derivative_cache import DerivativeRegistry
+from eelbrain._experiment.preprocessing import RawApplyICA, RawFilter, RawICA, RawPipeGraph, RawReReference, RawSource, assemble_raw_pipes
+from eelbrain._experiment.two_stage import TwoStageTest
+from eelbrain._experiment.variable_def import EvalVar, GroupVar, LabelVar, Variables
+from eelbrain.testing import TempDir
+
+
+class ExampleConfiguration(Configuration):
+    DICT_ATTRS = ('a', 'b')
+
+    def __init__(self, a, b):
+        self.a = a
+        self.b = b
+
+
+class ExampleSequenceConfiguration(Configuration):
+    DICT_ATTRS = ('items',)
+
+    def __init__(self, items):
+        self.items = sequence_arg('items', items, str, sequence_type=list)
 
 
 def test_find_epoch_vars():
@@ -36,7 +59,7 @@ def test_find_test_vars():
     assert test.model == 'a%b'
     assert test._find_test_vars() == ({'a', 'b'}, none)
     # between ANOVA
-    with pytest.raises(DefinitionError):
+    with pytest.raises(ConfigurationError):
         test_def.ANOVA('a*b*c')
     test = test_def.ANOVA('a*b*c', model='')
     assert test.model == ''
@@ -46,11 +69,11 @@ def test_find_test_vars():
     assert test.model == 'A'
     assert test._find_test_vars() == ({'A', 'GR'}, none)
     # two-stage
-    test = test_def.TwoStageTest("a + b + a*b", vars={'a': 'c * d', 'b': 'c * e'})
+    test = TwoStageTest("a + b + a*b", vars={'a': EvalVar('c * d'), 'b': EvalVar('c * e')})
     assert test._find_test_vars() == ({'c', 'd', 'e'}, none)
-    test = test_def.TwoStageTest("a + b + a*b", vars={'a': 'c * d', 'b': 'c * e', 'x': 'something * nonexistent'})
+    test = TwoStageTest("a + b + a*b", vars={'a': EvalVar('c * d'), 'b': EvalVar('c * e'), 'x': EvalVar('something * nonexistent')})
     assert test._find_test_vars() == ({'c', 'd', 'e'}, none)
-    test = test_def.TwoStageTest("a + b + a*b", vars={'a': ('c%d', {}), 'b': ('c%e', {})})
+    test = TwoStageTest("a + b + a*b", vars={'a': LabelVar('c%d', {1: 'x'}), 'b': LabelVar('c%e', {1: 'x'})})
     assert test._find_test_vars() == ({'c', 'd', 'e'}, none)
 
 
@@ -71,3 +94,100 @@ def test_sequence_arg():
         sequence_arg('sequence', ['a', 2], str)
     with pytest.raises(TypeError):
         sequence_arg('sequence', (1, 'b'), int)
+
+
+def test_config_base():
+    config = ExampleConfiguration('x', 1)
+    assert config._as_dict() == {'type': 'ExampleConfiguration', 'a': 'x', 'b': 1}
+    assert config == ExampleConfiguration('x', 1)
+    assert config != ExampleConfiguration('x', 2)
+    assert config == {'type': 'ExampleConfiguration', 'a': 'x', 'b': 1}
+
+
+def test_config_normalization():
+    config = ExampleSequenceConfiguration('x')
+    assert config.items == ['x']
+    assert config._as_dict() == {'type': 'ExampleSequenceConfiguration', 'items': ['x']}
+    assert config == ExampleSequenceConfiguration(['x'])
+
+
+def test_config_canonicalization_and_variables():
+    root = TempDir()
+    registry = DerivativeRegistry(root, logging.getLogger('eelbrain.test.config'))
+
+    variables = Variables({'x': EvalVar('a + b', task='task-a')})
+    canonical = registry.canonicalize({'vars': variables})
+    assert canonical == {'vars': {'x': {'type': 'EvalVar', 'task': 'task-a', 'code': 'a + b'}}}
+
+    test = test_def.ANOVA('x*subject', vars={'x': EvalVar('a + b', task='task-a')})
+    canonical_test = registry.canonicalize(test._as_dict())
+    assert canonical_test['vars'] == {'x': {'type': 'EvalVar', 'task': 'task-a', 'code': 'a + b'}}
+
+
+def test_canonicalize_data_objects():
+    root = TempDir()
+    registry = DerivativeRegistry(root, logging.getLogger('eelbrain.test.config'))
+
+    assert registry.canonicalize(Var([1, 2])) == [1, 2]
+    assert registry.canonicalize(Factor(['a', 'b'], random=True)) == ['a', 'b']
+    assert registry.canonicalize(Interaction([Factor(['a', 'b']), Factor(['x', 'y'])])) == [['a', 'x'], ['b', 'y']]
+
+
+def test_vardef_semantic_identity():
+    assert EvalVar('a + b', task='task-a') != EvalVar('a + b', task='task-b')
+    assert GroupVar(('g1', 'g2'), task='task-a') != GroupVar(('g1', 'g2'), task='task-b')
+
+    compact = LabelVar('value', {(1, 2): 'target'}, task='task-a')
+    expanded = LabelVar('value', {1: 'target', 2: 'target'}, task='task-a')
+    assert compact == expanded
+    assert compact != LabelVar('value', {1: 'target', 2: 'target'}, task='task-b')
+
+
+def test_raw_pipe_semantic_dict():
+    pipe = RawFilter('raw', 1, 40, n_jobs=2, method='iir')
+    assert pipe._as_dict() == {
+        'type': 'RawFilter',
+        'source': 'raw',
+        'l_freq': 1,
+        'h_freq': 40,
+        'n_jobs': 2,
+        'kwargs': {'method': 'iir'},
+    }
+    assert 'name' not in pipe._as_dict()
+
+    ica = RawICA('raw', 'task-a')
+    assert ica.task == ('task-a',)
+    assert ica._as_dict()['task'] == ('task-a',)
+
+    reref = RawReReference('raw', ['A1', 'A2'], add='EXG1', drop='EXG8')
+    assert reref.reference == ['A1', 'A2']
+    assert reref.add == ['EXG1']
+    assert reref.drop == ['EXG8']
+
+
+def test_raw_pipe_graph_lineage():
+    raw = assemble_raw_pipes({
+        'raw': RawSource(),
+        '1-40': RawFilter('raw', 1, 40),
+        'ica': RawICA('1-40'),
+        'ica1-40': RawFilter('ica', 1, 40),
+        'apply-ica': RawApplyICA('1-40', 'ica'),
+    }, ('sample',))
+
+    assert isinstance(raw, RawPipeGraph)
+    assert raw.source_name('raw') is None
+    assert raw.source_pipe('raw') is None
+    assert raw.root_source_name('ica1-40') == 'raw'
+    assert raw.root_source_pipe('apply-ica') is raw['raw']
+    assert raw.ica_name('ica1-40') == 'ica'
+    assert raw.ica_pipe('apply-ica') is raw['ica']
+    assert tuple(pipe.name for pipe in raw.lineage_pipes('ica1-40')) == ('raw', '1-40', 'ica', 'ica1-40')
+    assert raw['ica'].task == ('sample',)
+
+
+def test_raw_configurations():
+    with pytest.raises(ConfigurationError, match='explicit task'):
+        assemble_raw_pipes({
+            'raw': RawSource(),
+            'ica': RawICA('raw'),
+        }, ('sample1', 'sample2'))

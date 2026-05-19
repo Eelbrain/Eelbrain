@@ -8,7 +8,7 @@ import numpy as np
 
 from .._data_obj import NDVarArg, CategorialArg, IndexArg, Datalist, Dataset
 from .._stats.testnd import NDTest
-from .._names import INTERPOLATE_CHANNELS
+from .._info import INTERPOLATE_CHANNELS
 from .._utils import deprecate_ds_arg
 from . import _base
 from ._base import (
@@ -571,7 +571,8 @@ class Butterfly(TimeSlicerEF, LegendMixin, TopoMapKey, YLimMixin, XAxisMixin, Ee
 class AxButterflyEpoch:
 
     def __init__(self, ax, epoch, mark=None, state=True, label=None, color='k',
-                 lw=0.2, mcolor='r', mlw=0.8, antialiased=True, vlims={}):
+                 lw=0.2, mcolor='r', mlw=0.8, antialiased=True, vlims={},
+                 channel_colors=None):
         """Specific plot for showing a single sensor by time epoch
 
         Parameters
@@ -588,6 +589,9 @@ class AxButterflyEpoch:
             Sensor trace plot Line width (default 0.5).
         mlw : scalar
             Marked sensor plot line width (default 1).
+        channel_colors : dict {int: color}, optional
+            Per-channel default colors, overriding ``color`` for specific
+            channels (index → color). Used for channel-type coloring.
         """
         self.lines = PltUTSND(ax, DataLayer(epoch, PlotType.LINE), 'time', 'sensor',
                               color=color, lw=lw, antialiased=antialiased)
@@ -598,13 +602,18 @@ class AxButterflyEpoch:
         self._state_h = []
         self._visible = True
         self.set_ylim(_base.find_uts_ax_vlim([epoch], vlims))
-        self._styles = {None: {'color': color, 'lw': lw, 'ls': '-',
-                               'zorder': 2},
+        self._default_color = color
+        self._channel_colors = channel_colors  # {sensor_index: color} or None
+        self._styles = {None: {'lw': lw, 'ls': '-', 'zorder': 2},
                         'mark': {'color': mcolor, 'lw': mlw, 'ls': '-',
                                  'zorder': 10},
                         INTERPOLATE_CHANNELS: {'color': 'b', 'lw': 1.2,
                                                'ls': ':', 'zorder': 6}}
         self._marked = {'mark': set(), INTERPOLATE_CHANNELS: set()}
+        # Apply per-channel-type colors
+        if channel_colors:
+            for i, ch_color in channel_colors.items():
+                self.lines.lines[i].set_color(ch_color)
         if mark:
             self.set_marked('mark', mark)
 
@@ -652,7 +661,12 @@ class AxButterflyEpoch:
             if i in self._marked[other_kind]:
                 self.lines.lines[i].update(self._styles[other_kind])
             else:
-                self.lines.lines[i].update(self._styles[None])
+                style = dict(self._styles[None])
+                if self._channel_colors and i in self._channel_colors:
+                    style['color'] = self._channel_colors[i]
+                else:
+                    style['color'] = self._default_color
+                self.lines.lines[i].update(style)
 
     def set_state(self, state):
         "Set the state (True=accept / False=reject)"

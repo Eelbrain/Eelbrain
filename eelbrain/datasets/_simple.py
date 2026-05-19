@@ -684,11 +684,9 @@ def setup_samples_experiment(
                 verbose="error",  # ignore warning about events
             )
 
-    if datatype == 'eeg':
-        return
-
     if not mris:
         return
+
     # freesurfer
     mri_sdir = root / 'derivatives' / 'freesurfer'
     mri_sdir.mkdir(parents=True)
@@ -718,10 +716,11 @@ def setup_samples_experiment(
     shutil.copy(src_src, src_dst)
 
     # trans
-    trans = mne.Transform(4, 5, [[ 0.9998371,  -0.00766024,  0.01634169,  0.00289569],
-                                 [ 0.00933457,  0.99443108, -0.10497498, -0.0205526 ],
-                                 [-0.01544655,  0.10511042,  0.9943406,  -0.04443745],
-                                 [ 0.,          0.,          0.,          1.        ]])
+    m = [[ 0.9998371,  -0.00766024,  0.01634169,  0.00289569],
+         [ 0.00933457,  0.99443108, -0.10497498, -0.0205526 ],
+         [-0.01544655,  0.10511042,  0.9943406,  -0.04443745],
+         [ 0.,          0.,          0.,          1.        ]]
+    trans = mne.Transform(4, 5, m)
     for subject in subjects:
         mne.scale_mri('fsaverage', f'sub-{subject}', 1., subjects_dir=mri_sdir, skip_fiducials=True, labels=False)
         trans_dir = root / 'derivatives' / 'trans'

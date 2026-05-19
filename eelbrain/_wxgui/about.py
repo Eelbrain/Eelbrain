@@ -7,7 +7,7 @@ from .utils import Icon
 
 
 class AboutFrame(EelbrainFrame):
-    def __init__(self, parent):
+    def __init__(self, parent: wx.Window | None) -> None:
         from .. import __version__
 
         EelbrainFrame.__init__(self, parent, -1, "", style=wx.CLOSE_BOX)

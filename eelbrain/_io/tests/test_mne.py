@@ -102,6 +102,21 @@ def test_load_fiff_sensor():
     assert sensor.sysname == 'KIT-UMD-3'
 
 
+def test_epochs_ndvar_ignores_bad_channels_for_auto_adjacency():
+    ch_names = ['Fz', 'Cz', 'Pz', 'FT9', 'TP9', 'IO']
+    info = mne.create_info(ch_names, 100, 'eeg')
+    info.set_montage('standard_1020', on_missing='ignore')
+    for ch_name in ('FT9', 'TP9', 'IO'):
+        info['chs'][info.ch_names.index(ch_name)]['loc'][:3] = np.nan
+    info['bads'] = ['FT9', 'TP9', 'IO']
+    data = np.random.randn(2, len(ch_names), 10)
+    epochs = mne.EpochsArray(data, info, verbose=False)
+
+    ndvar = load.mne.epochs_ndvar(epochs, data='eeg')
+
+    assert tuple(ndvar.sensor.names) == ('Fz', 'Cz', 'Pz')
+
+
 @requires_mne_sample_data
 @pytest.mark.filterwarnings("ignore:The measurement information")
 def test_load_fiff_from_raw():

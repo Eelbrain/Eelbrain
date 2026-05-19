@@ -608,7 +608,7 @@ def _mne_events(ds=None, i_start='i_start', trigger='trigger'):
 
 def mne_epochs(ds, tmin=-0.1, tmax=None, baseline=None, i_start='i_start',
                raw=None, drop_bad_chs=True, picks=None, reject=None, tstop=None,
-               decim=1, **kwargs):
+               decim=1, trigger='trigger', **kwargs):
     """Load epochs as :class:`mne.Epochs`.
 
     Parameters
@@ -626,7 +626,9 @@ def mne_epochs(ds, tmin=-0.1, tmax=None, baseline=None, i_start='i_start',
         the data from the beginning of the epoch up to ``t = 0``). Set to
         ``None`` for no baseline correction (default).
     i_start : str
-        name of the variable containing the index of the events.
+        Name of the variable containing the sample index of each event.
+    trigger : str
+        Name of the variable containing the integer event ID (trigger code).
     raw : None | mne Raw
         If None, ds.info['raw'] is used.
     drop_bad_chs : bool
@@ -662,7 +664,7 @@ def mne_epochs(ds, tmin=-0.1, tmax=None, baseline=None, i_start='i_start',
     if drop_bad_chs and picks is None and raw.info['bads']:
         picks = mne.pick_types(raw.info, meg=True, eeg=True, eog=True, ref_meg=False)
 
-    events = _mne_events(ds=ds, i_start=i_start)
+    events = _mne_events(ds=ds, i_start=i_start, trigger=trigger)
     with warnings.catch_warnings():
         warnings.filterwarnings('ignore', 'The events passed to the Epochs constructor', RuntimeWarning)
         epochs = mne.Epochs(raw, events, None, tmin, tmax, baseline, picks, preload=True, reject=reject, decim=decim, **kwargs)
@@ -739,6 +741,12 @@ def sensor_dim(
     ch_locs = [ch['loc'][:3] for ch in chs]
     ch_names = [ch['ch_name'] for ch in chs]
 
+    # Detect channels with NaN positions (they cause layout and adjacency computation to fail)
+    nan_mask = np.array([np.any(np.isnan(loc)) for loc in ch_locs])
+    if np.any(nan_mask):
+        nan_ch_names = [name for name, is_nan in zip(ch_names, nan_mask) if is_nan]
+        raise ValueError(f"Channels with NaN position in sensor layout: {', '.join(nan_ch_names)}")
+
     # use KIT system ID if available
     sysname = KIT_NEIGHBORS.get(info.get('kit_system_id'), sysname)
     if sysname and sysname.startswith('neuromag'):
@@ -779,7 +787,7 @@ def sensor_dim(
         if adjacency == 'auto':
             adjacency = _adjacency_id(info, ch_type)
         if adjacency is None:
-            c_matrix, adj_ch_names = mne.channels.find_ch_adjacency(info, ch_type)
+            c_matrix, adj_ch_names = mne.channels.find_ch_adjacency(mne.pick_info(info, picks, copy=True), ch_type)
             if any(ch not in adj_ch_names for ch in ch_names):
                 raise NotImplementedError("Adjacency fot this data type")
         else:
@@ -904,6 +912,8 @@ def variable_length_mne_epochs(
         tstop: float | Sequence[float] = None,
         picks: PicksArg = None,
         decim: int = 1,
+        i_start: str = 'i_start',
+        trigger: str = 'trigger',
         **kwargs,
 ) -> list[mne.Epochs]:
     """Load mne Epochs where each epoch has a different length
@@ -928,6 +938,10 @@ def variable_length_mne_epochs(
         If a ``tmin`` or ``tmax`` value falls outside the data available in
         ``raw``, automatically truncate the epoch (by default this raises a
         ``ValueError``).
+    i_start
+        Name of the variable containing the sample index of each event.
+    trigger
+        Name of the variable containing the integer event ID (trigger code).
     tstop
         Alternative to ``tmax``. While ``tmax`` specifies the last samples to
         include, ``tstop`` specifies the sample before which to stop (standard
@@ -964,7 +978,7 @@ def variable_length_mne_epochs(
         tmax = np.repeat(tmax, n)
     if picks is None and raw.info['bads']:
         picks = mne.pick_types(raw.info, meg=True, eeg=True, eog=True, ref_meg=False, exclude=[])
-    events_array = _mne_events(events)
+    events_array = _mne_events(events, i_start=i_start, trigger=trigger)
     # Load epochs
     out = []
     for i, (tmin_i, tmax_i) in enumerate(zip(tmin, tmax)):
@@ -1589,7 +1603,7 @@ def ndvar_stc(
 def _trim_ds(ds, epochs):
     """Trim a Dataset to account for rejected epochs.
 
-    If no epochs were rejected, the original ds is rturned.
+    If no epochs were rejected, the original ds is returned.
 
     Parameters
     ----------

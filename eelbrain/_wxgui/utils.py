@@ -1,18 +1,21 @@
 '''Some WxPython utilities'''
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+import platform
 import re
 
+import mne
 import wx
 from wx.lib.dialogs import ScrolledMessageDialog
 
+import eelbrain
 from eelbrain._wxgui import icons
 
 # store icons once loaded for repeated access
-_cache = {}
-_iconcache = {}
+_cache: dict[str, wx.Bitmap] = {}
+_iconcache: dict[str, wx.Icon] = {}
 
 
-def Icon(path, asicon=False):
+def Icon(path: str, asicon: bool = False) -> wx.Bitmap | wx.Icon:
     if asicon:
         if path not in _iconcache:
             _iconcache[path] = icons.catalog[path].GetIcon()
@@ -23,7 +26,7 @@ def Icon(path, asicon=False):
         return _cache[path]
 
 
-def show_text_dialog(parent, text, caption):
+def show_text_dialog(parent: wx.Window, text: str, caption: str) -> ScrolledMessageDialog:
     "Create and show a ScrolledMessageDialog"
     style = wx.CAPTION | wx.CLOSE_BOX | wx.RESIZE_BORDER | wx.SYSTEM_MENU
     dlg = ScrolledMessageDialog(parent, text, caption, style=style)
@@ -40,18 +43,167 @@ def show_text_dialog(parent, text, caption):
     return dlg
 
 
+class TracebackDialog(wx.Dialog):
+    """Modal dialog showing a full exception traceback with a copy button.
+
+    Intended for surfacing unexpected errors to the user with enough context
+    to file a bug report.
+    """
+
+    def __init__(self, parent: wx.Window, tb: str) -> None:
+        super().__init__(parent, title="Error", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        self._tb = tb
+        self._version_info = (
+            f"OS:          {platform.platform()}\n"
+            f"Eelbrain:    {eelbrain.__version__}\n"
+            f"MNE-Python:  {mne.__version__}"
+        )
+
+        vbox = wx.BoxSizer(wx.VERTICAL)
+
+        header = wx.StaticText(self, label=(
+            "An unexpected error occurred. Make sure you are using the latest version of "
+            "Eelbrain and MNE-Python. Check whether a corresponding issue exists, and if not, "
+            "submit a new issue including the information below, at "
+            "https://github.com/Eelbrain/Eelbrain/issues"
+        ))
+        header.Wrap(660)
+        vbox.Add(header, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, border=10)
+
+        mono = wx.Font(wx.FontInfo(10).Family(wx.FONTFAMILY_TELETYPE))
+
+        # Version/platform section
+        version_text = wx.TextCtrl(
+            self, value=self._version_info,
+            style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_DONTWRAP,
+        )
+        version_text.SetFont(mono)
+        vbox.Add(version_text, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, border=10)
+
+        version_btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        copy_version_btn = wx.Button(self, label="Copy Version Info")
+        copy_version_btn.Bind(wx.EVT_BUTTON, self._on_copy_version)
+        version_btn_sizer.Add(copy_version_btn)
+        vbox.Add(version_btn_sizer, flag=wx.LEFT | wx.RIGHT | wx.TOP, border=10)
+
+        # Traceback section
+        tb_text = wx.TextCtrl(
+            self, value=tb,
+            style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_DONTWRAP | wx.HSCROLL,
+        )
+        tb_text.SetFont(mono)
+        vbox.Add(tb_text, proportion=1, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, border=10)
+
+        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        copy_tb_btn = wx.Button(self, label="Copy Traceback")
+        copy_tb_btn.Bind(wx.EVT_BUTTON, self._on_copy_tb)
+        btn_sizer.Add(copy_tb_btn, flag=wx.RIGHT, border=8)
+        btn_sizer.AddStretchSpacer()
+        close_btn = wx.Button(self, label="Close")
+        close_btn.Bind(wx.EVT_BUTTON, lambda e: self.EndModal(0))
+        btn_sizer.Add(close_btn)
+        vbox.Add(btn_sizer, flag=wx.EXPAND | wx.ALL, border=10)
+
+        self.SetSizerAndFit(vbox)
+        self.SetSize((700, 500))
+
+    def _copy(self, text: str) -> None:
+        if wx.TheClipboard.Open():
+            wx.TheClipboard.SetData(wx.TextDataObject(text))
+            wx.TheClipboard.Close()
+
+    def _on_copy_version(self, event: wx.CommandEvent) -> None:
+        self._copy(self._version_info)
+
+    def _on_copy_tb(self, event: wx.CommandEvent) -> None:
+        self._copy(self._tb)
+
+
+class StaleICADialog(wx.Dialog):
+    """Ask the user how to handle a stale ICA file.
+
+    After :meth:`ShowModal` returns, read :attr:`choice` for the user's
+    decision: one of the :attr:`DELETE`, :attr:`INCORPORATE`, or :attr:`IGNORE`
+    class constants, or ``None`` if the dialog was dismissed.
+    """
+
+    ABORT = 'abort'
+    DELETE = 'delete'
+    INCORPORATE = 'incorporate'
+    IGNORE = 'ignore'
+
+    def __init__(
+            self,
+            parent: wx.Window,
+            subject: str,
+            message: str,
+            instructions: str = '',
+    ) -> None:
+        super().__init__(
+            parent, title=f"Stale ICA: {subject}",
+            style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
+        )
+        self.choice: str | None = None
+
+        vbox = wx.BoxSizer(wx.VERTICAL)
+
+        msg_label = wx.StaticText(self, label=message)
+        msg_label.Wrap(540)
+        vbox.Add(msg_label, flag=wx.ALL, border=12)
+
+        if instructions:
+            instr = wx.TextCtrl(self, value=instructions, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_WORDWRAP)
+            instr.SetMinSize((-1, 100))
+            vbox.Add(instr, proportion=1, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=12)
+
+        vbox.Add(wx.StaticLine(self), flag=wx.EXPAND)
+
+        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+
+        del_btn = wx.Button(self, label="Delete")
+        del_btn.SetToolTip("Delete the stale ICA file. The ICA will need to be recomputed.")
+        del_btn.Bind(wx.EVT_BUTTON, lambda e: self._choose(self.DELETE))
+        btn_sizer.Add(del_btn, flag=wx.RIGHT, border=8)
+
+        inc_btn = wx.Button(self, label="Incorporate")
+        inc_btn.SetToolTip("Accept the existing ICA and update its record to match the current pipeline state.")
+        inc_btn.Bind(wx.EVT_BUTTON, lambda e: self._choose(self.INCORPORATE))
+        btn_sizer.Add(inc_btn, flag=wx.RIGHT, border=8)
+
+        ign_btn = wx.Button(self, label="Ignore")
+        ign_btn.SetToolTip("Load the ICA for display only, without modifying its record on disk.")
+        ign_btn.Bind(wx.EVT_BUTTON, lambda e: self._choose(self.IGNORE))
+        btn_sizer.Add(ign_btn, flag=wx.RIGHT, border=8)
+
+        btn_sizer.AddStretchSpacer()
+
+        abort_btn = wx.Button(self, label="Abort")
+        abort_btn.SetToolTip("Quit the application immediately.")
+        abort_btn.Bind(wx.EVT_BUTTON, lambda e: self._choose(self.ABORT))
+        btn_sizer.Add(abort_btn, border=8)
+
+        vbox.Add(btn_sizer, flag=wx.ALL, border=12)
+
+        self.SetSizerAndFit(vbox)
+        self.SetMinSize((420, -1))
+
+    def _choose(self, choice: str) -> None:
+        self.choice = choice
+        self.EndModal(0)
+
+
 class FloatValidator(wx.Validator):
 
-    def __init__(self, parent, attr):
+    def __init__(self, parent: wx.Window, attr: str) -> None:
         wx.Validator.__init__(self)
         self.parent = parent
         self.attr = attr
-        self.value = None
+        self.value: float | None = None
 
-    def Clone(self):
+    def Clone(self) -> 'FloatValidator':
         return FloatValidator(self.parent, self.attr)
 
-    def Validate(self, parent):
+    def Validate(self, parent: wx.Window) -> bool:
         ctrl = self.GetWindow()
         value = ctrl.GetValue()
         try:
@@ -64,13 +216,13 @@ class FloatValidator(wx.Validator):
         else:
             return True
 
-    def TransferToWindow(self):
+    def TransferToWindow(self) -> bool:
         ctrl = self.GetWindow()
         ctrl.SetValue(str(getattr(self.parent, self.attr)))
         ctrl.SelectAll()
         return True
 
-    def TransferFromWindow(self):
+    def TransferFromWindow(self) -> bool:
         if self.value is None:
             return False
         else:
@@ -81,16 +233,16 @@ class FloatValidator(wx.Validator):
 class REValidator(wx.Validator):
     "Ensure that the value of a text field matches a regular expression"
 
-    def __init__(self, pattern, message, can_be_empty=False):
+    def __init__(self, pattern: str, message: str, can_be_empty: bool = False) -> None:
         wx.Validator.__init__(self)
         self.pattern = re.compile(pattern)
         self.message = message
         self.can_be_empty = bool(can_be_empty)
 
-    def Clone(self):
+    def Clone(self) -> 'REValidator':
         return REValidator(self.pattern, self.message, self.can_be_empty)
 
-    def Validate(self, win):
+    def Validate(self, win: wx.Window) -> bool:
         ctrl = self.GetWindow()
         text = ctrl.GetValue()
 
@@ -105,14 +257,9 @@ class REValidator(wx.Validator):
         ctrl.SetFocus()
         ctrl.Refresh()
         return False
-#         else:
-#             ctrl.SetBackgroundColour(
-#                 wx.SystemSettings_GetColour(wx.SYS_COLOUR_WINDOW))
-#             ctrl.Refresh()
-#             return True
 
-    def TransferToWindow(self):
+    def TransferToWindow(self) -> bool:
         return True
 
-    def TransferFromWindow(self):
+    def TransferFromWindow(self) -> bool:
         return True

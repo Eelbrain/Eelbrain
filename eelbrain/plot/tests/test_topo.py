@@ -5,6 +5,7 @@ import pytest
 
 from eelbrain import datasets, plot, testnd
 from eelbrain._utils import IS_WINDOWS
+from eelbrain.plot._base import PlotData, PlotType
 from eelbrain.testing import requires_mne_sample_data, hide_plots
 from eelbrain.testing.matplotlib import assert_titles_visible
 
@@ -98,6 +99,20 @@ def test_plot_topo_butterfly():
     p.set_ylim(-1, 1)
     assert p.get_ylim() == (-1.0, 1.0)
     p.close()
+
+    # Make sure we don't get masked arrays for topomap interpolation
+    y = ds['utsnd'].mean('case')
+    mask = np.zeros(y.x.shape, bool)
+    mask[:2, 3:6] = True
+    y = y.mask(mask)
+
+    # Multimodal topomaps split into axes, while masked data splits into image and contour layers.
+    topomap_data = PlotData.from_args([[y, y]], ('sensor', None)).for_plot(PlotType.IMAGE)
+    assert topomap_data.n_plots == 2
+
+    layers = topomap_data.plot_data[0].sub_time(0.2)
+    assert [layer.plot_type for layer in layers] == [PlotType.IMAGE, PlotType.CONTOUR]
+    assert not any(np.ma.isMaskedArray(layer.y.x) for layer in layers)
 
 
 @hide_plots
