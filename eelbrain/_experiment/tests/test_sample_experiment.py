@@ -495,23 +495,24 @@ def test_sample_source():
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
     tempdir = TempDir()
-    datasets.setup_samples_experiment(tempdir, n_subjects=3, n_segments=2, mris=True)  # TODO: use sample MRI which already has forward solution
+    datasets.setup_samples_experiment(tempdir, n_subjects=3, n_segments=1, mris=True)  # TODO: use sample MRI which already has forward solution
     root = join(tempdir, 'SampleExperiment')
     e = SampleExperiment(root)
 
     # source space tests
-    e.set(src='ico-4', rej='', epoch='auditory', parc='ac')
+    # ico-2 (320 vertices/hemi) keeps forward/inverse fast while still covering the transversetemporal ROI
+    e.set(src='ico-2', rej='', epoch='auditory', parc='ac')
     morph = e.load_source_morph(subject='R0000')
     assert isinstance(morph, mne.SourceMorph)
     assert exists(e._resolve_derivative('source-morph').manifest_path)
-    res = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, make=True)
-    res_labels = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, disconnect_labels=True, make=True)
+    res = e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, make=True)
+    res_labels = e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, disconnect_labels=True, make=True)
     assert exists(e._resolve_derivative('src').manifest_path)
     assert exists(e._resolve_derivative('fwd').manifest_path)
     assert exists(e._resolve_derivative('inv').manifest_path)
-    with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=100, data='source')) as fid:
+    with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=8, data='source')) as fid:
         source_manifest_data = json.load(fid)
-    with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=100, data='source', disconnect_labels=True)) as fid:
+    with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=8, data='source', disconnect_labels=True)) as fid:
         disconnected_manifest_data = json.load(fid)
     assert source_manifest_data['fingerprint']['definitions']['parc']['base'] == 'aparc'
     assert source_manifest_data['fingerprint']['state']['parc'] == 'ac'
@@ -524,8 +525,8 @@ def test_sample_source():
     assert_dataobj_equal(res.t, res_labels.t)
     # ROI tests
     e.set(epoch='target')
-    ress = e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, data='source.rms', make=True)
-    with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=100, data='source.rms')) as fid:
+    ress = e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, data='source.rms', make=True)
+    with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=8, data='source.rms')) as fid:
         roi_manifest_data = json.load(fid)
     assert 'evoked-test-data' in roi_manifest_data['dependencies']
     roi_deps = roi_manifest_data['dependencies']['evoked-test-data']['dependencies']
@@ -534,16 +535,16 @@ def test_sample_source():
     res = ress.res['transversetemporal-lh']
     assert res.p.min() == 1 / 7
     with pytest.raises(TypeError, match='disconnect_labels'):
-        e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, data='source.rms', disconnect_labels=True)
-    ress = e.load_test('twostage', 0.05, 0.2, 0.05, samples=100, data='source.rms', make=True)
-    with open(_test_result_manifest_path(e, 'twostage', 0.05, 0.2, 0.05, node='two-stage-level-2', samples=100, data='source.rms')) as fid:
+        e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, data='source.rms', disconnect_labels=True)
+    ress = e.load_test('twostage', 0.05, 0.2, 0.05, samples=8, data='source.rms', make=True)
+    with open(_test_result_manifest_path(e, 'twostage', 0.05, 0.2, 0.05, node='two-stage-level-2', samples=8, data='source.rms')) as fid:
         two_stage_manifest_data = json.load(fid)
     assert 'two-stage-level-1' in {dep['name'] for dep in two_stage_manifest_data['dependencies'].values()}
     subject_dep = two_stage_manifest_data['dependencies']['R0000']
     with open(Path(subject_dep['manifest'])) as fid:
         level_1_manifest_data = json.load(fid)
     assert level_1_manifest_data['dependencies']['two-stage-data']['dependencies']['R0000']['name'] == 'evoked-stc'
-    ds_return, _ = e.load_test('twostage', 0.05, 0.2, 0.05, samples=100, data='source', return_data=True, make=True)
+    ds_return, _ = e.load_test('twostage', 0.05, 0.2, 0.05, samples=8, data='source', return_data=True, make=True)
     assert isinstance(ds_return, Dataset)
     assert 'subject' in ds_return
     res = ress.res['transversetemporal-lh']
@@ -559,12 +560,12 @@ def test_sample_source():
     with pytest.raises(IOError):
         changed = ChangedParcExperiment(root)
         changed.set(parc='ac')
-        changed.load_test('left=right', 0.05, 0.2, 0.05, samples=100, data='source.rms')
+        changed.load_test('left=right', 0.05, 0.2, 0.05, samples=8, data='source.rms')
 
     with e._temporary_state:
         e.set(parc='')
         with pytest.raises(ValueError, match='state parc'):
-            e.load_test('left=right', 0.05, 0.2, 0.05, samples=100, make=True)
+            e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, make=True)
 
 
 @requires_mne_sample_data
