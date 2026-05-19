@@ -3324,7 +3324,7 @@ class Pipeline(StateModel):
             ori: str = 'free',
             snr: float = 3,
             method: str = 'dSPM',
-            depth: float = 0.8,
+            depth: float = 0,
             pick_normal: bool = False,
             **state,
     ):

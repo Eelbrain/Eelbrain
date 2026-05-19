@@ -983,17 +983,17 @@ What inverse solution to use for source localization.
 ``inv`` can be set with :meth:`Pipeline.set_inv`,
 which has a detailed description of the options.
 ``inv`` can also be set directly using the appropriate string,
-e.g., ``e.set(inv='fixed-6-MNE-0')``.
+e.g., ``e.set(inv='fixed-6-MNE')``.
 To determine the string corresponding to a given set of parameters,
 use :meth:`Pipeline.inv_str`. For example::
 
-    >>> Pipeline.inv_str('fixed', snr=6, method='MNE', depth=0)
-    'fixed-6-MNE-0'
+    >>> Pipeline.inv_str('fixed', snr=6, method='MNE')
+    'fixed-6-MNE'
 
 Consequently, the following two are equivalent for setting ``inv``::
 
-    >>> Pipeline.set_inv('fixed', snr=6, method='MNE', depth=0)
-    >>> Pipeline.set(inv='fixed-6-MNE-0')
+    >>> Pipeline.set_inv('fixed', snr=6, method='MNE')
+    >>> Pipeline.set(inv='fixed-6-MNE')
 
 
 .. _state-parc:

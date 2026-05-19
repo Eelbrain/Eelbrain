@@ -155,7 +155,7 @@ class MinimumNormInverseSolution(InverseSolution):
             snr = float(snr)
 
         if depth is None:
-            depth = 0.8
+            depth = 0
         else:
             depth = float(depth)
 
