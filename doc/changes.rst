@@ -35,6 +35,10 @@ New in 0.41
 
       - ``eelbrain.Sensor.get_connectivity()`` →  :meth:`eelbrain.Sensor.get_adjacency`
       - ``eelbrain.Sensor.set_connectivity()`` →  :meth:`eelbrain.Sensor.set_adjacency`
+  
+  * Permutation tests:
+    - Now ``testnd.Vector()`` supports 2D vector fields (e.g., complex valued phase amplitude data) in addition to 3D vector fields (e.g., 3D source space data). The test will automatically determine the appropriate randomization scheme based on the dimensionality of the input data.
+    - Due to a bug fix in stats computation, the permutation distribution for vector-based tests may be slightly different.
 
 New in 0.40
 -----------
