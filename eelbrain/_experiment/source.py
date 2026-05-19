@@ -11,7 +11,6 @@ methods.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import logging
 from itertools import product
 import os
 from pathlib import Path
@@ -298,34 +297,6 @@ def _identity_source_morph(
     )
 
 
-def _load_bem(root: Path, state: dict[str, Any], log: logging.Logger) -> mne.ConductorModel:
-    subject = state['mrisubject']
-    if subject == 'fsaverage' or is_fake_mri(root / mri_dir(state)):
-        return mne.read_bem_surfaces(root / bem_file_path(state))
-
-    bem_dir_ = root / bem_dir(state)
-    surfs = ('brain', 'inner_skull', 'outer_skull', 'outer_skin')
-    paths = {surf: bem_dir_ / f'{surf}.surf' for surf in surfs}
-    missing = [surf for surf in surfs if not paths[surf].exists()]
-    if missing:
-        for surf in missing[:]:
-            path = paths[surf]
-            if path.is_symlink():
-                new_target = Path('watershed') / f'{subject}_{surf}_surface'
-                if (bem_dir_ / new_target).exists():
-                    log.info("Fixing broken symlink for %s %s surface file", subject, surf)
-                    path.unlink()
-                    path.symlink_to(new_target)
-                    missing.remove(surf)
-                else:
-                    log.error("%s missing for %s", new_target, subject)
-        if missing:
-            log.info("%s %s missing for %s. Running mne.make_watershed_bem()...", enumeration(missing).capitalize(), plural('surface', len(missing)), subject)
-            os.environ['FREESURFER_HOME'] = subp.get_fs_home()
-            mne.bem.make_watershed_bem(subject, root / MRI_SDIR, overwrite=True)
-    return mne.make_bem_model(subject, conductivity=(0.3,), subjects_dir=root / MRI_SDIR)
-
-
 class TransInput(Input):
     name = 'trans-input'
 
@@ -334,6 +305,9 @@ class TransInput(Input):
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return file_fingerprint(ctx.root, self.path(ctx), 'trans-file')
+
+    def load(self, ctx: Request) -> mne.transforms.Transform:
+        return mne.read_trans(self.path(ctx))
 
 
 class BemInput(Input):
@@ -344,6 +318,32 @@ class BemInput(Input):
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return file_fingerprint(ctx.root, self.path(ctx), 'bem-file')
+
+    def load(self, ctx: Request) -> mne.ConductorModel:
+        subject = ctx.state['mrisubject']
+        if subject == 'fsaverage' or is_fake_mri(ctx.root / mri_dir(ctx.state)):
+            return mne.read_bem_surfaces(self.path(ctx))
+        bem_dir_ = ctx.root / bem_dir(ctx.state)
+        surfs = ('brain', 'inner_skull', 'outer_skull', 'outer_skin')
+        paths = {surf: bem_dir_ / f'{surf}.surf' for surf in surfs}
+        missing = [surf for surf in surfs if not paths[surf].exists()]
+        if missing:
+            for surf in missing[:]:
+                path = paths[surf]
+                if path.is_symlink():
+                    new_target = Path('watershed') / f'{subject}_{surf}_surface'
+                    if (bem_dir_ / new_target).exists():
+                        ctx.registry.log.info("Fixing broken symlink for %s %s surface file", subject, surf)
+                        path.unlink()
+                        path.symlink_to(new_target)
+                        missing.remove(surf)
+                    else:
+                        ctx.registry.log.error("%s missing for %s", new_target, subject)
+            if missing:
+                ctx.registry.log.info("%s %s missing for %s. Running mne.make_watershed_bem()...", enumeration(missing).capitalize(), plural('surface', len(missing)), subject)
+                os.environ['FREESURFER_HOME'] = subp.get_fs_home()
+                mne.bem.make_watershed_bem(subject, ctx.root / MRI_SDIR, overwrite=True)
+        return mne.make_bem_model(subject, conductivity=(0.3,), subjects_dir=ctx.root / MRI_SDIR)
 
 
 class SrcDerivative(Derivative[mne.SourceSpaces]):
@@ -509,6 +509,7 @@ class FwdDerivative(Derivative[mne.Forward]):
         return (
             Dependency(raw_node_name('raw')),
             Dependency('trans-input'),
+            Dependency('bem-input'),
             Dependency('src'),
             Dependency('median-head-position'),
         )
@@ -526,8 +527,7 @@ class FwdDerivative(Derivative[mne.Forward]):
         if ctx.state['mrisubject'] == 'fsaverage':
             bemsol = ctx.root / mri_dir(ctx.state) / 'bem' / 'fsaverage-5120-5120-5120-bem-sol.fif'
         else:
-            bem = _load_bem(ctx.root, ctx.state, ctx.registry.log)
-            bemsol = mne.make_bem_solution(bem)
+            bemsol = mne.make_bem_solution(ctx.load('bem-input'))
         if 'kit_system_id' in info:
             is_kit = info['kit_system_id'] is not None
         else:
@@ -561,6 +561,7 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (
+            Dependency(raw_node_name(ctx.state['raw']), label='raw'),
             Dependency('fwd'),
             Dependency('cov'),
         )
@@ -568,8 +569,9 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
     def build(self, ctx: Request) -> mne.minimum_norm.InverseOperator:
         solution = InverseSolution._coerce(ctx.state['inv'])
         solution._validate_for_source_space(ctx.state['src'])
+        raw = ctx.load('raw')
         fwd = ctx.load('fwd')
-        return solution._build_operator(fwd['info'], fwd, ctx.load('cov'))
+        return solution._build_operator(raw.info, fwd, ctx.load('cov'))
 
     def load(
             self,
