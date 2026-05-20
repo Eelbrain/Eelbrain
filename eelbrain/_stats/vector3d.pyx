@@ -1,4 +1,4 @@
-# Author: Proloy Das <proloy@umd.edu>
+# Author: Proloy Das <proloyd94@gmail.com>
 # cython: boundscheck=False, wraparound=False, language_level=3
 # distutils: language = c++
 # setuptools: include_dirs = dsyevh3C/
@@ -130,11 +130,12 @@ def t2_stat(
             for v in range(n_dims):
                 temp = y[case, v, i]
                 mean[v] += temp
-                for u in range(n_dims):
+                for u in range(v + 1):
                     sigma[u][v] += temp * y[case, u, i]
         for v in range(n_dims):
-            for u in range(n_dims):
+            for u in range(v + 1):
                 sigma[u][v] -= mean[u] * mean[v] / n_cases
+                sigma[u][v] /= (n_cases-1)
         # check non-zero variance
         for v in range(n_dims):
             if sigma[v][v] != 0:
@@ -156,7 +157,7 @@ def t2_stat(
                     norm += temp ** 2 / eig[v]
                 else:
                     norm += temp ** 2 / TOL
-        out[i] = norm ** 0.5
+        out[i] = norm / n_cases
     return out
 
 
@@ -200,6 +201,7 @@ def t2_stat_rotated(
         for u in range(n_dims):
             for v in range(u + 1):      # Only upper triangular part need to be meaningful (See dsyevh.c)
                 sigma[v][u] -= mean[u] * mean[v] / n_cases
+                sigma[v][u] /= (n_cases - 1)
         # check non-zero variance
         for v in range(n_dims):
             if sigma[v][v] != 0:
@@ -221,7 +223,7 @@ def t2_stat_rotated(
                     norm += temp ** 2 / eig[v]
                 else:
                     norm += temp ** 2 / TOL
-        out[i] = norm ** 0.5
+        out[i] = norm / n_cases
     return out
 
 

@@ -7,7 +7,7 @@ import numpy as np
 
 from .._data_obj import NDVar, Var, NestedEffect
 from .._utils import intervals
-from . import vector
+from . import vector3d
 
 
 _YIELD_ORIGINAL = 0
@@ -258,7 +258,18 @@ def _sample_xi_by_rejection(n: int, rng: np.random.RandomState):
     return samples
 
 
-def rand_rotation_matrices(n: int, seed: int):
+def rand_rotation_matrices(n: int, seed: int, dim: int):
+    if dim > 3:
+        raise NotImplementedError(f"dim={dim} is not supported!")
+    elif dim == 3:
+        return rand_rotation_matrices_3d(n, seed)
+    elif dim == 2:
+        return rand_rotation_matrices_2d(n, seed)
+    else:
+        raise ValueError(f"dim={dim} does not have rotation.")
+
+
+def rand_rotation_matrices_3d(n: int, seed: int):
     """Function to create random rotation matrices in 3D
 
     Parameters
@@ -277,4 +288,29 @@ def rand_rotation_matrices(n: int, seed: int):
     phi = np.arccos(rng.uniform(-1, 1, n))
     theta = rng.uniform(0, 2 * pi, n)
     xi = _sample_xi_by_rejection(n, rng)
-    return vector.rotation_matrices(phi, theta, xi, np.empty((n, 3, 3)))
+    return vector3d.rotation_matrices(phi, theta, xi, np.empty((n, 3, 3)))
+
+
+def rand_rotation_matrices_2d(n: int, seed: int):
+    """Function to create random rotation matrices in 3D
+
+    Parameters
+    ----------
+    n : int
+        Number of rotation matrices to return.
+    seed : int
+        Seed the random state.
+
+    Returns
+    -------
+    rotation : array (n, 2, 2)
+        Sampled rotation matrices.
+    """
+    rng = np.random.RandomState(seed)
+    thetas = rng.uniform(0, 2 * pi, n)
+    rot_mat = np.empty((n, 2, 2))
+    np.cos(thetas, out=rot_mat[:, 0, 0])
+    np.sin(thetas, out=rot_mat[:, 0, 1])
+    rot_mat[:, 1, 0] = - rot_mat[:, 0, 1]
+    rot_mat[:, 1, 1] = rot_mat[:, 0, 0]
+    return rot_mat

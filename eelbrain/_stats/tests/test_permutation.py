@@ -2,10 +2,11 @@
 import sys
 
 import numpy as np
+import pytest
 
 from eelbrain import Factor, Var
 from eelbrain._stats.permutation import (
-    resample, permute_order, permute_sign_flip)
+    resample, permute_order, permute_sign_flip, rand_rotation_matrices)
 
 
 def test_permutation():
@@ -57,3 +58,14 @@ def test_permutation_sign_flip():
     else:
         target = [(-1, 1, -1, -1), (-1, -1, 1, -1), (1, -1, -1, 1)]
     assert list(map(tuple, permute_sign_flip(4, 3))) == target
+
+
+def test_rand_rotation_matrices():
+    seed = 12345
+    with pytest.raises(NotImplementedError):
+        rand_rotation_matrices(10, seed, 4)
+    with pytest.raises(ValueError):
+        rand_rotation_matrices(10, seed, 1)
+    for n in (2, 3):
+        rot_mat = rand_rotation_matrices(10, seed, 2)
+        np.testing.assert_allclose(np.linalg.det(rot_mat), 1)

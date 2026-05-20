@@ -2172,12 +2172,11 @@ class Vector(NDDifferenceTest):
     @staticmethod
     def _vector_perm(y, out, seed, use_norm):
         n_cases, n_dims, n_tests = y.shape
-        assert n_dims == 3
-        rotation = rand_rotation_matrices(n_cases, seed)
+        rotation = rand_rotation_matrices(n_cases, seed, n_dims)
         if use_norm:
-            return vector.mean_norm_rotated(y, rotation, out)
+            return vector.mean_norm_rotated(y, rotation, out, n_dims)
         else:
-            return vector.t2_stat_rotated(y, rotation, out)
+            return vector.t2_stat_rotated(y, rotation, out,  n_dims)
 
     @staticmethod
     def _vector_t2_map(y):
@@ -2333,9 +2332,8 @@ class VectorDifferenceIndependent(Vector):
     def _vector_perm(y, n1, out, seed, use_norm):
         assert use_norm
         n_cases, n_dims, n_tests = y.shape
-        assert n_dims == 3
         # randomize directions
-        rotation = rand_rotation_matrices(n_cases, seed)
+        rotation = rand_rotation_matrices(n_cases, seed, n_dims)
         # randomize groups
         cases = np.arange(n_cases)
         np.random.shuffle(cases)
