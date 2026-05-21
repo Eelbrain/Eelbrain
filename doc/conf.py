@@ -94,7 +94,7 @@ def linkcode_resolve(domain, info):
         return None
     end = start + len(source) - 1
     tag = f'v{eelbrain.__version__}'
-    return f'https://github.com/christianbrodbeck/Eelbrain/blob/{tag}/{rel.as_posix()}#L{start}-L{end}'
+    return f'https://github.com/Eelbrain/Eelbrain/blob/{tag}/{rel.as_posix()}#L{start}-L{end}'
 
 
 ################################################################################
