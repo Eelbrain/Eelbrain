@@ -93,8 +93,8 @@ def linkcode_resolve(domain, info):
     except ValueError:
         return None
     end = start + len(source) - 1
-    tag = f'v{eelbrain.__version__}'
-    return f'https://github.com/Eelbrain/Eelbrain/blob/{tag}/{rel.as_posix()}#L{start}-L{end}'
+    ref = 'main' if eelbrain.__version__.endswith('.dev') else f'v{eelbrain.__version__}'
+    return f'https://github.com/Eelbrain/Eelbrain/blob/{ref}/{rel.as_posix()}#L{start}-L{end}'
 
 
 ################################################################################
