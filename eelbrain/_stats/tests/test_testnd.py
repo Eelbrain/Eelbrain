@@ -9,7 +9,7 @@ import numpy as np
 from numpy.testing import assert_array_equal, assert_allclose
 
 import eelbrain
-from eelbrain import Dataset, NDVar, Categorial, Scalar, UTS, Sensor, configure, datasets, test, testnd, set_log_level, cwt_morlet
+from eelbrain import Dataset, NDVar, Categorial, Scalar, UTS, Sensor, Space, configure, datasets, test, testnd, set_log_level, cwt_morlet
 from eelbrain._exceptions import WrongDimensionError, ZeroVarianceError
 from eelbrain._stats.testnd import Adjacency, NDPermutationDistribution, label_clusters, _MergedTemporalClusterDist, find_peaks, VectorDifferenceIndependent
 from eelbrain._utils.system import IS_WINDOWS
@@ -725,6 +725,36 @@ def test_vector():
     assert 'WARNING' in repr(res)
     res = testnd.Vector(v_small, tfce=0.1, samples=10)
     assert res.p.min() == 0.0
+
+    # 2D case
+    v3d = ds['v3d']
+    space = Space('RA')
+    v2d = NDVar(np.stack((v3d.x[:, 0, :], v3d.x[:, 1, :]), axis=1),
+                (v3d.dims[0], space, v3d.dims[-1]))
+    ds['v2d'] = v2d
+    v1 = ds[30:, 'v3d']
+    v2 = ds[:30, 'v3d']
+    vd = v1 - v2
+    res = testnd.Vector(vd, samples=10)
+    assert res.p.min() == 0
+    difference = res.masked_difference(0.5)
+    # diff related
+    resd = testnd.VectorDifferenceRelated(v1, v2, samples=10)
+    assert_dataobj_equal(resd.p, res.p, name=False)
+    assert_dataobj_equal(resd.t2, res.t2, name=False)
+    # diff independent
+    res = VectorDifferenceIndependent(v1, v2, samples=10, norm=True)
+    assert_dataobj_equal(res.difference, v1.mean('case') - v2.mean('case'), name=False)
+    assert res.p.max() == 1
+    assert res.p.min() == 0
+    # with mp
+    res = testnd.Vector(v1, samples=10)
+    assert res.p.min() == 0.1
+    # without mp
+    configure(n_workers=0)
+    res0 = testnd.Vector(v1, samples=10)
+    assert_array_equal(np.sort(res0._cdist.dist), np.sort(res._cdist.dist))
+    configure(n_workers=True)
 
 
 def test_cwt():

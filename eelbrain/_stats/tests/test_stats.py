@@ -10,6 +10,7 @@ import statsmodels.api as sm
 from eelbrain import datasets, Model, Var
 from eelbrain._stats import stats
 from eelbrain._stats.permutation import permute_order, rand_rotation_matrices
+from eelbrain._exceptions import WrongDimensionError
 
 
 def test_corr():
@@ -175,7 +176,44 @@ def test_t_ind():
 
 
 def test_vector():
-    rotation = rand_rotation_matrices(4, 0)
-    zeros = np.zeros((4, 3))
-    assert stats.t2_1samp(zeros) == 0
-    assert stats.t2_1samp(zeros, rotation) == 0
+    ds = datasets.get_uts()
+    # space test should raise error on non-space data
+    with pytest.raises(WrongDimensionError):
+        stats.t2_1samp(ds.eval("uts.x[:,:1]"))
+
+    # 3D
+    y = ds.eval("uts.x[:,:3]")
+    n_cases = len(y)
+    mean = y.mean(axis=0)
+    sigma = y.T.dot(y) - np.outer(mean, mean) * n_cases
+    sigma /= (n_cases - 1)
+    t2_stat = np.linalg.multi_dot((mean, np.linalg.pinv(sigma), mean))
+    t2_stat *= n_cases
+    np.testing.assert_allclose(stats.t2_1samp(y), t2_stat, atol=1e-7)
+    # rotation
+    rotation = rand_rotation_matrices(n_cases, 0, 3)
+    rotated_y = (rotation * y[:, None, :]).sum(axis=-1)
+    mean = rotated_y.mean(axis=0)
+    sigma = rotated_y.T.dot(rotated_y) - np.outer(mean, mean) * n_cases
+    sigma /= (n_cases - 1)
+    t2_stat = np.linalg.multi_dot((mean, np.linalg.pinv(sigma), mean))
+    t2_stat *= n_cases
+    np.testing.assert_allclose(stats.t2_1samp(y, rotation), t2_stat, atol=1e-7)
+    # 2D
+    y = ds.eval("uts.x[:,:2]")
+    n_cases = len(y)
+    mean = y.mean(axis=0)
+    sigma = y.T.dot(y) - np.outer(mean, mean) * n_cases
+    sigma /= (n_cases - 1)
+    t2_stat = np.linalg.multi_dot((mean, np.linalg.pinv(sigma), mean))
+    t2_stat *= n_cases
+    np.testing.assert_allclose(stats.t2_1samp(y), t2_stat, atol=1e-7)
+    # rotation
+    rotation = rand_rotation_matrices(n_cases, 0, 2)
+    rotated_y = (rotation * y[:, None, :]).sum(axis=-1)
+    mean = rotated_y.mean(axis=0)
+    sigma = rotated_y.T.dot(rotated_y) - np.outer(mean, mean) * n_cases
+    sigma /= (n_cases - 1)
+    t2_stat = np.linalg.multi_dot((mean, np.linalg.pinv(sigma), mean))
+    t2_stat *= n_cases
+    np.testing.assert_allclose(stats.t2_1samp(y, rotation), t2_stat, atol=1e-7)
