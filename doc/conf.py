@@ -86,12 +86,17 @@ def linkcode_resolve(domain, info):
         source, start = inspect.getsourcelines(obj)
     except Exception:
         return None
-    # Make path relative to the repo root
+    # Make path relative to the repo root (works for editable installs);
+    # fall back to site-packages-relative path (e.g. on ReadTheDocs)
     repo_root = Path(__file__).parent.parent
     try:
         rel = Path(fname).relative_to(repo_root)
     except ValueError:
-        return None
+        pkg_root = Path(eelbrain.__file__).parent.parent
+        try:
+            rel = Path(fname).relative_to(pkg_root)
+        except ValueError:
+            return None
     end = start + len(source) - 1
     ref = 'main' if eelbrain.__version__.endswith('.dev') else f'v{eelbrain.__version__}'
     return f'https://github.com/Eelbrain/Eelbrain/blob/{ref}/{rel.as_posix()}#L{start}-L{end}'
