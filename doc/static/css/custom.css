@@ -116,3 +116,9 @@ div.sphx-glr-script-out div.highlight pre {
     font-size: 13px;
     color: #555555;
 }
+
+/* Source link ([source] button from sphinx.ext.linkcode) */
+.rst-content .viewcode-link {
+    color: #e74c3c;  /* same red as code literals */
+    font-size: 1em;  /* same as signature */
+}
