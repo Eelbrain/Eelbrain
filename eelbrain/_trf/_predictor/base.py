@@ -1,12 +1,12 @@
-"""Predictors for continuous data"""
-# Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-from itertools import repeat
+"""Low-level helpers for constructing TRF predictors."""
+
 from collections.abc import Sequence
+from itertools import repeat
 
 import numpy as np
 
-from .._data_obj import NDVarArg, NDVar, Case, Dataset, UTS, asndvar, asarray
-from .._utils import deprecate_ds_arg
+from ..._data_obj import Case, Dataset, NDVar, NDVarArg, UTS, asarray, asndvar
+from ..._utils import deprecate_ds_arg
 
 
 @deprecate_ds_arg
@@ -17,33 +17,7 @@ def epoch_impulse_predictor(
         name: str = None,
         data: Dataset = None,
 ) -> NDVar:
-    """Time series with one impulse for each of ``n`` epochs
-
-    Parameters
-    ----------
-    shape
-        Shape of the output. Can be specified as the :class:`NDVar` with the
-        data to predict, or an ``(n_cases, time_dimension)`` tuple.
-    value
-        Scalar or length ``n`` sequence of scalars specifying the value of each
-        impulse (default 1).
-    latency
-        Scalar or length ``n`` sequence of scalars specifying the latency of
-        each impulse (default 0).
-    name
-        Name for the output :class:`NDVar`.
-    data
-        If specified, input items (``shape``, ``value`` and ``latency``) can be
-        strings to be evaluated in ``data``.
-
-    See Also
-    --------
-    event_impulse_predictor : for continuous time series
-
-    Examples
-    --------
-    See :ref:`exa-impulse` example.
-    """
+    """Time series with one impulse for each of ``n`` epochs."""
     if isinstance(shape, str):
         shape = asndvar(shape, data=data)
     if isinstance(value, str):
@@ -79,29 +53,7 @@ def event_impulse_predictor(
         name: str = None,
         data: Dataset = None,
 ) -> NDVar:
-    """Time series with multiple impulses
-
-    Parameters
-    ----------
-    shape
-        Shape of the output. Can be specified as the :class:`NDVar` with the
-        data to predict, or an ``(n_cases, time_dimension)`` tuple.
-    time
-        Time points at which impulses occur.
-    value
-        Magnitude of each impulse (default 1).
-    latency
-        Latency of each impulse relative to ``time`` (default 0).
-    name
-        Name for the output :class:`NDVar`.
-    data
-        If specified, input items (``time``, ``value`` and ``latency``) can be
-        strings to be evaluated in ``data``.
-
-    See Also
-    --------
-    epoch_impulse_predictor : for epoched data (with :class:`Case` dimension and a single impulse per epoch)
-    """
+    """Time series with multiple impulses."""
     if isinstance(shape, NDVar):
         uts = shape.get_dim('time')
     elif isinstance(shape, UTS):
@@ -133,3 +85,4 @@ def event_impulse_predictor(
         if uts.tmin <= t_ <= uts.tmax:
             out[t_] = v
     return out
+
