@@ -54,9 +54,11 @@ import pickle
 from typing import Dict, Callable, List, Tuple, Sequence, Union
 
 import numpy as np
-from eelbrain import Dataset, fmtxt
-from eelbrain._experiment.mne_experiment import DefinitionError
 from pyparsing import ParseException, Literal, Optional, Word, alphas, alphanums, delimitedList, nums, oneOf
+
+from .. import fmtxt
+from .._data_obj import Dataset
+from .._experiment.mne_experiment import DefinitionError
 
 
 COMP = {1: '>', 0: '=', -1: '<'}

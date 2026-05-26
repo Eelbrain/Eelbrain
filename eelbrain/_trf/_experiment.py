@@ -18,35 +18,34 @@ from typing import Any, Callable, Dict, Iterator, List, Literal, Optional, Seque
 import sys
 import warnings
 
-import eelbrain
-from eelbrain import (
-    fmtxt, load, save, table, plot,
-    MultiEffectNDTest, BoostingResult,
-    Pipeline, Dataset, Datalist, Factor, NDVar, UTS,
-    morph_source_space, rename_dim, boosting, combine, concatenate,
-)
-from eelbrain.pipeline import TTestOneSample, TTestRelated, TwoStageTest, RawFilter, RawSource
-from eelbrain._experiment.definitions import FieldCode
-from eelbrain._experiment.epochs import EpochCollection
-from eelbrain._experiment.mne_experiment import DataArg, PMinArg, DefinitionError, FileMissingError, TestDims, Variables, guess_y, cache_valid
-from eelbrain._experiment.parc import CombinationParc, SubParc
-from eelbrain._data_obj import NDVarArg, isuv
-from eelbrain._io.pickle import update_subjects_dir
-from eelbrain._text import ms, n_of
-from eelbrain._types import PathArg
-from eelbrain._utils.mne_utils import is_fake_mri
-from eelbrain._utils.notebooks import tqdm
-from eelbrain._utils import ask
 from filelock import FileLock
 import numpy as np
 from numpy import newaxis
-from trftools.pipeline.estimator import Estimator
 
-from .._ndvar import pad
-from .._numpy_funcs import arctanh
+from .. import fmtxt, load, plot, save, table
+from .._data_obj import Datalist, Dataset, Factor, NDVar, NDVarArg, UTS, combine, isuv
+from .._experiment.definitions import FieldCode
+from .._experiment.epochs import EpochCollection
+from .._experiment.mne_experiment import DataArg, DefinitionError, FileMissingError, PMinArg, Pipeline, TestDims, Variables, cache_valid, guess_y
+from .._experiment.parc import CombinationParc, SubParc
+from .._experiment.preprocessing import RawFilter, RawSource
+from .._experiment.test_def import TTestOneSample, TTestRelated, TwoStageTest
+from .._io.pickle import update_subjects_dir
+from .._mne import morph_source_space, xhemi
+from .._ndvar.ndvar import concatenate, rename_dim
+from .._ndvar.uts import pad
+from .._stats.testnd import MultiEffectNDTest
+from .._text import ms, n_of
+from .._types import PathArg
+from .._utils import ask
+from .._utils.mne_utils import is_fake_mri
+from .._utils.notebooks import tqdm
+from ._boosting import BoostingResult, boosting
 from ._code import Code
+from ._estimator import Estimator
 from ._jobs import TRFsJob
 from ._model import Comparison, Model, ModelExpression, StructuredModel, load_models, model_comparison_table, model_name_parser, save_models
+from ._numpy_funcs import arctanh
 from ._predictor import EventPredictor, FilePredictor, FilePredictorBase, MakePredictor, SessionPredictor
 from ._results import DependentType, ResultCollection
 from . import _trf_report as trf_report
@@ -1932,13 +1931,13 @@ class TRFExperiment(Pipeline):
                     y = trf_ds[key].abs()
                     if xhemi_smooth:
                         y = y.smooth('source', xhemi_smooth, 'gaussian')
-                    lh, rh = eelbrain.xhemi(y, parc=parc)
+                    lh, rh = xhemi(y, parc=parc)
                     if test is True:
                         y = combine((lh, rh))
                     else:
                         y = lh - rh
                     # mask
-                    mask_lh, mask_rh = eelbrain.xhemi(trf_res[key].p <= 0.05, parc=parc)
+                    mask_lh, mask_rh = xhemi(trf_res[key].p <= 0.05, parc=parc)
                     np.maximum(mask_lh.x, mask_rh.x, mask_lh.x)
                     mask = mask_lh > .5
                     y *= mask
@@ -2508,7 +2507,7 @@ class TRFExperiment(Pipeline):
             if xhemi:
                 if ds0 is not None:
                     ds1[y] -= ds0[y]
-                lh, rh = eelbrain.xhemi(ds1[y], parc=self._xhemi_parc())
+                lh, rh = xhemi(ds1[y], parc=self._xhemi_parc())
                 if test is None:
                     ds[y] = combine((lh, rh))
                     ds['hemi'] = Factor(('lh', 'rh'), repeat=ds1.n_cases)
@@ -2522,7 +2521,7 @@ class TRFExperiment(Pipeline):
                         base_res = self.load_model_test(comparison, tstart, tstop, basis, error, partitions, samplingrate, mask, delta, mindelta, filter_x, selective_stopping, cv, data, backward, permutations, metric, smooth, test, pmin=pmin, make=make, partition_results=partition_results)
                     if isinstance(base_res, MultiEffectNDTest):
                         raise NotImplementedError("xhemi_mask for multi-effect tests")
-                    mask_lh, mask_rh = eelbrain.xhemi(base_res.p <= 0.05, parc=parc)
+                    mask_lh, mask_rh = xhemi(base_res.p <= 0.05, parc=parc)
                     np.maximum(mask_lh.x, mask_rh.x, mask_lh.x)
                     ds[y] *= mask_lh > .5
             elif ds0 is None:

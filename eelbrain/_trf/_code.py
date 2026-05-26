@@ -2,11 +2,11 @@ from functools import cached_property
 import re
 from typing import List
 
-from eelbrain import Dataset
-from eelbrain._experiment.definitions import CodeBase, CodeError
 import numpy as np
 
-from .._ndvar import SHUFFLE_METHODS as NDVAR_SHUFFLE_METHODS
+from .._data_obj import Dataset
+from .._experiment.definitions import CodeBase, CodeError
+from ._ndvar import SHUFFLE_METHODS as NDVAR_SHUFFLE_METHODS
 
 
 VALUE_SHUFFLE_METHODS = ('permute', 'remask', 'relocate')

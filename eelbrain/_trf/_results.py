@@ -1,10 +1,9 @@
 import enum
 
-from eelbrain import fmtxt
-from eelbrain.fmtxt import FMTextArg
-from eelbrain._text import ms
-from eelbrain import test as test_, testnd
-from eelbrain._stats.test import star
+from .. import fmtxt, test as test_, testnd
+from ..fmtxt import FMTextArg
+from .._stats.test import star
+from .._text import ms
 
 
 class TestType(enum.Enum):
