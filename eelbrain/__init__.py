@@ -26,7 +26,7 @@ from ._ndvar.gammatone import gammatone_bank
 from ._ndvar.uts import pad
 from ._stats.testnd import NDTest, MultiEffectNDTest
 from ._trf._boosting import boosting, BoostingResult
-from ._trf._predictors import epoch_impulse_predictor, event_impulse_predictor
+from ._trf._predictor import epoch_impulse_predictor, event_impulse_predictor
 from ._utils import set_log_level
 from ._utils.system import system_info
 

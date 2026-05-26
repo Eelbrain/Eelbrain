@@ -14,7 +14,7 @@ from ..._ndvar.ndvar import resample, set_tmin
 from ..._ndvar.uts import pad
 from .._code import Code, NDVAR_SHUFFLE_METHODS
 from .._ndvar import shuffle
-from .basic import epoch_impulse_predictor, event_impulse_predictor
+from .base import epoch_impulse_predictor, event_impulse_predictor
 
 
 def t_stop_ds(ds: Dataset, t: float):
@@ -365,4 +365,3 @@ class MakePredictor:
     """Predictor calls ``experiment.make_predictor()``."""
 
     pass
-
