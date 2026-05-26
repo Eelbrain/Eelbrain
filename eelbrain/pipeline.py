@@ -7,3 +7,4 @@ from ._experiment.groups import Group, SubGroup
 from ._experiment.parc import SubParc, CombinationParc, FreeSurferParc, FSAverageParc, SeededParc, IndividualSeededParc
 from ._experiment.test_def import ANOVA, TTestOneSample, TTestIndependent, TTestRelated, TContrastRelated, TwoStageTest, ROITestResult, ROI2StageResult
 from ._experiment.variable_def import EvalVar, GroupVar, LabelVar
+from ._trf import TRFExperiment, Code, Term, EventPredictor, FilePredictor, MakePredictor, SessionPredictor, ResultCollection, Estimator, BoostingEstimator, NCRFEstimator
