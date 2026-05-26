@@ -45,10 +45,10 @@ from ._code import Code
 from ._estimator import Estimator
 from ._jobs import TRFsJob
 from ._model import Comparison, Model, ModelExpression, StructuredModel, load_models, model_comparison_table, model_name_parser, save_models
-from ._numpy_funcs import arctanh
 from ._predictor import EventPredictor, FilePredictor, FilePredictorBase, MakePredictor, SessionPredictor
 from ._results import DependentType, ResultCollection
 from . import _trf_report as trf_report
+from .tools.numpy_funcs import arctanh
 
 
 DATA_DEFAULT = 'source'

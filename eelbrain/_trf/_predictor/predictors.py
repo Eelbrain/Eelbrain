@@ -13,7 +13,7 @@ from ..._experiment.definitions import typed_arg
 from ..._ndvar.ndvar import resample, set_tmin
 from ..._ndvar.uts import pad
 from .._code import Code, NDVAR_SHUFFLE_METHODS
-from .._ndvar import shuffle
+from ..tools.ndvar import shuffle
 from .base import epoch_impulse_predictor, event_impulse_predictor
 
 

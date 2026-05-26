@@ -6,7 +6,7 @@ from typing import Sequence, Union
 
 import numpy as np
 
-from .._data_obj import NDVar
+from ..._data_obj import NDVar
 
 
 MUV = Union[NDVar, np.ndarray, Sequence, Number]
