@@ -43,6 +43,7 @@ extensions = [
     'sphinx.ext.autodoc', 'sphinx.ext.autosummary',  # default
     'sphinx.ext.todo', 'sphinx.ext.imgmath',  # default
     'sphinx.ext.intersphinx',  # http://sphinx.pocoo.org/ext/intersphinx.html
+    'sphinx.ext.linkcode',  # source links to GitHub
     'sphinx.ext.napoleon',  # https://www.sphinx-doc.org/en/master/usage/extensions/napoleon.html
     'sphinxcontrib.bibtex',  # https://sphinxcontrib-bibtex.readthedocs.io
     'sphinx_gallery.gen_gallery',  # https://sphinx-gallery.github.io
@@ -67,6 +68,38 @@ bibtex_bibfiles = ['publications.bib']
 qualname_overrides = {
     "eelbrain._data_obj.NDVar": "eelbrain.NDVar",
 }
+
+
+def linkcode_resolve(domain, info):
+    """Resolve source code links to GitHub."""
+    import importlib
+    import inspect
+    if domain != 'py' or not info['module']:
+        return None
+    try:
+        mod = importlib.import_module(info['module'])
+        obj = mod
+        for part in info['fullname'].split('.'):
+            obj = getattr(obj, part)
+        obj = inspect.unwrap(obj)
+        fname = inspect.getfile(obj)
+        source, start = inspect.getsourcelines(obj)
+    except Exception:
+        return None
+    # Make path relative to the repo root (works for editable installs);
+    # fall back to site-packages-relative path (e.g. on ReadTheDocs)
+    repo_root = Path(__file__).parent.parent
+    try:
+        rel = Path(fname).relative_to(repo_root)
+    except ValueError:
+        pkg_root = Path(eelbrain.__file__).parent.parent
+        try:
+            rel = Path(fname).relative_to(pkg_root)
+        except ValueError:
+            return None
+    end = start + len(source) - 1
+    ref = 'main' if eelbrain.__version__.endswith('.dev') else f'v{eelbrain.__version__}'
+    return f'https://github.com/Eelbrain/Eelbrain/blob/{ref}/{rel.as_posix()}#L{start}-L{end}'
 
 
 ################################################################################
