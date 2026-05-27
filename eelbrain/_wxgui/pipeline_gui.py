@@ -601,7 +601,7 @@ class PipelineFrame(EelbrainFrame):
         self._finish_make_ica_ui()
         self._refresh_status_bar()
 
-    def _handle_stale_ica(self, subject: str, error: ProtectedArtifactError, pipeline) -> tuple:
+    def _handle_stale_ica(self, subject: str, error: ProtectedArtifactError, pipeline, raw_name: str) -> tuple:
         """Show StaleICADialog on the main thread; block until the user decides.
 
         Returns a table row tuple for the subject.
@@ -631,7 +631,7 @@ class PipelineFrame(EelbrainFrame):
             Path(error.path).unlink()
             return (subject, 'no ICA', '—', '—')
         elif choice == StaleICADialog.INCORPORATE:
-            ica = pipeline.load_ica(accept_stale=True)
+            ica = pipeline.load_ica(raw=raw_name, accept_stale=True)
             return (subject, 'selected', str(ica.n_components_), str(len(ica.exclude)))
         elif choice == StaleICADialog.IGNORE:
             ica = mne.preprocessing.read_ica(error.path)
@@ -701,7 +701,7 @@ class PipelineFrame(EelbrainFrame):
                         rows.append((subject, 'selected',
                                      str(ica.n_components_), str(len(ica.exclude))))
                     except ProtectedArtifactError as error:
-                        row = self._handle_stale_ica(subject, error, pipeline)
+                        row = self._handle_stale_ica(subject, error, pipeline, task_key)
                         rows.append(row)
                 elif status == 'missing-ica':
                     rows.append((subject, 'no ICA', '—', '—'))
