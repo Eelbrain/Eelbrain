@@ -840,10 +840,10 @@ def _dep_entry_matches(stored: dict[str, Any], current: dict[str, Any]) -> bool:
         return True
     if stored.get('fingerprint') != current.get('fingerprint'):
         return False
-    return _dependencies_match(stored.get('dependencies', {}), current.get('dependencies', {}))
+    return dependencies_match(stored.get('dependencies', {}), current.get('dependencies', {}))
 
 
-def _dependencies_match(stored: dict[str, Any], current: dict[str, Any]) -> bool:
+def dependencies_match(stored: dict[str, Any], current: dict[str, Any]) -> bool:
     """Compare dependency manifests, using quick fingerprints as a first-pass shortcut."""
     if stored.keys() != current.keys():
         return False
@@ -1069,7 +1069,7 @@ class Request(Generic[T]):
             return False
         if manifest.fingerprint != self.current_fingerprint():
             return False
-        if not _dependencies_match(manifest.dependencies, self.dependency_fingerprints(cache)):
+        if not dependencies_match(manifest.dependencies, self.dependency_fingerprints(cache)):
             return False
         return True
 
