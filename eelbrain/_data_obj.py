@@ -8019,13 +8019,15 @@ def adjacency_from_name_pairs(neighbors, items, allow_missing=False):
 
 
 class Dimension:
-    """Base class for dimensions.
+    """Base class for :class:`NDVar` dimensions.
+
+    This class is typically not instantiated, but can be used for instance checks.
 
     Parameters
     ----------
-    name : str
+    name
         Dimension name.
-    adjacency : 'grid' | 'none' | array of int, (n_edges, 2)
+    adjacency
         Adjacency between elements. Set to ``"none"`` for no connections or
         ``"grid"`` to use adjacency in the sequence of elements as connection.
         Set to :class:`numpy.ndarray` to specify custom adjacency. The array
