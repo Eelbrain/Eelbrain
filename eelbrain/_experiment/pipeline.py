@@ -2152,6 +2152,48 @@ class Pipeline(StateModel):
         frame = gui.select_components(path, display_data, sysname, adjacency, decim, debug)
         return frame
 
+    def make_bad_channels_selection(
+            self,
+            raw: str = None,
+            **state,
+    ):
+        """GUI for selecting bad channels in continuous M/EEG recordings
+
+        Opens :func:`eelbrain.gui.select_channels` for the current subject.
+        The document is the BIDS ``*_channels.tsv`` file at the root source
+        of the selected raw pipeline stage. Events come from labeled-events.
+
+        Parameters
+        ----------
+        raw
+            Which raw pipeline stage to display.  Defaults to the source raw.
+        ...
+            State parameters (e.g. ``subject``).
+        """
+        if raw is not None:
+            state['raw'] = raw
+        if state:
+            self.set(**state)
+        raw_name = self.get('raw')
+        source_name = self._raw.root_source_name(raw_name)
+        subject = self.get('subject')
+        # Load raw at the requested pipeline stage (unprocessed input if source)
+        raw_data = self._load_derivative(raw_node_name(raw_name), options={'preload': False, 'noise': False})
+        # Channels.tsv is always from the root source
+        bads_ctx = self._resolve_derivative(raw_bad_channels_input_name(source_name))
+        channels_path = bads_ctx.node.path(bads_ctx)
+        # Labeled events are optional — not all experiments define them
+        try:
+            events = self._load_derivative('labeled-events')
+        except Exception:
+            events = None
+        # Sensor system info
+        source_pipe = self._raw.root_source_pipe(raw_name)
+        data_kind = TestDims('sensor').data_to_ndvar(raw_data.info)[0]
+        sysname = source_pipe._get_sysname(raw_data.info, subject, data_kind)
+        adjacency = source_pipe._get_adjacency(data_kind)
+        return gui.select_channels(raw_data, channels_path, events=events, sysname=sysname, adjacency=adjacency)
+
     def make_ica(self, **state):
         """Compute ICA decomposition for a :class:`pipeline.RawICA` preprocessing step
 
