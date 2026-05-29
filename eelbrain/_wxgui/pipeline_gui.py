@@ -56,6 +56,7 @@ class PipelineFrame(EelbrainFrame):
         self._refresh_token = None  # replaced each refresh; threads compare identity
         self._compute_token = None  # replaced each make-ICA run; threads compare identity
         self._tasks = []  # list of (task_type, task_key)
+        self._bad_chs_iter_fields: list[str] = []  # session/task/run columns for bad_chs
 
         self._init_ui()
         self._populate_tasks()
@@ -197,8 +198,18 @@ class PipelineFrame(EelbrainFrame):
     # Event handlers
 
     def _on_task_changed(self, event):
-        task_type, _ = self._current_task()
+        task_type, task_key = self._current_task()
         self._stop_make_ica()
+        if task_type == 'bad_chs':
+            p = self._pipeline
+            extra = []
+            if len(p._sessions) > 1:
+                extra.append('session')
+            if len(p._tasks) > 1:
+                extra.append('task')
+            if len(p._runs) > 1:
+                extra.append('run')
+            self._bad_chs_iter_fields = extra
         show_epoch = task_type == 'epoch_rej'
         show_raw = task_type in ('epoch_rej', 'bad_chs')
         self._epoch_label.Show(show_epoch)
@@ -229,9 +240,10 @@ class PipelineFrame(EelbrainFrame):
         try:
             if task_type == 'bad_chs':
                 raw_name = self._raw_choice.GetStringSelection() or task_key
-                frame = self._pipeline.make_bad_channels_selection(
-                    subject=subject, raw=raw_name,
-                )
+                state = {'subject': subject}
+                for col, field in enumerate(self._bad_chs_iter_fields, start=1):
+                    state[field] = self._list.GetItemText(idx, col)
+                frame = self._pipeline.make_bad_channels_selection(raw=raw_name, **state)
                 if frame is not None:
                     doc = frame.model.doc
                     doc.callbacks.subscribe(
@@ -334,7 +346,10 @@ class PipelineFrame(EelbrainFrame):
     def _setup_columns(self, task_type):
         self._list.ClearAll()
         if task_type == 'bad_chs':
-            cols = [('Subject', 180), ('Status', 110), ('N bad', 90)]
+            cols = [('Subject', 180)]
+            for f in self._bad_chs_iter_fields:
+                cols.append((f.title(), 90))
+            cols += [('Status', 110), ('N bad', 90)]
         elif task_type == 'ica':
             cols = [('Subject', 180), ('Status', 110), ('Components', 110), ('Rejected', 90)]
         elif task_type == 'mri':
@@ -356,7 +371,11 @@ class PipelineFrame(EelbrainFrame):
             idx = self._list.InsertItem(self._list.GetItemCount(), row[0])
             for col, val in enumerate(row[1:], 1):
                 self._list.SetItem(idx, col, val)
-            if task_type == 'ica':
+            if task_type == 'bad_chs':
+                status = row[-2]  # status is always second-to-last
+                if status in ('no data', 'no file'):
+                    self._list.SetItemTextColour(idx, grey)
+            elif task_type == 'ica':
                 if row[1] == 'selected' and row[3] == '0':
                     self._list.SetItemTextColour(idx, wx.RED)
             elif task_type == 'mri':
@@ -720,20 +739,25 @@ class PipelineFrame(EelbrainFrame):
 
         if task_type == 'bad_chs':
             source_name = pipeline._raw.root_source_name(task_key)
-            for subject in pipeline.iter(raw=source_name):
+            extra = self._bad_chs_iter_fields
+            iter_fields = ('subject',) + tuple(extra)
+            iter_arg = iter_fields[0] if len(iter_fields) == 1 else list(iter_fields)
+            for combo in pipeline.iter(iter_arg):
                 if token is not self._refresh_token:
                     break
+                if isinstance(combo, str):
+                    combo = (combo,)
                 raw_ctx = pipeline._resolve_derivative(raw_input_name(source_name))
                 if not raw_ctx.node.exists(raw_ctx):
-                    rows.append((subject, 'no data', '—'))
+                    rows.append(combo + ('no data', '—'))
                     continue
                 bads_ctx = pipeline._resolve_derivative(raw_bad_channels_input_name(source_name))
                 tsv_path = bads_ctx.node.path(bads_ctx)
                 if not tsv_path.exists():
-                    rows.append((subject, 'no file', '—'))
+                    rows.append(combo + ('no file', '—'))
                 else:
                     bads = bads_ctx.load()
-                    rows.append((subject, 'done', str(len(bads))))
+                    rows.append(combo + ('done', str(len(bads))))
 
         elif task_type == 'ica':
             for subject in pipeline:
