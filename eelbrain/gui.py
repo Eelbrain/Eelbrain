@@ -30,6 +30,7 @@ def select_components(
         adjacency: str | Sequence = None,
         decim: int = None,
         debug: bool = False,
+        events: Dataset = None,
 ):
     """GUI for selecting ICA-components
 
@@ -53,6 +54,12 @@ def select_components(
     decim
         Decimate the data for display (only applies when data is a ``Raw``
         object; default is to approximate 100 Hz samplingrate).
+    events
+        Optional :class:`Dataset` with events to show on the timeline (only
+        used when ``data`` is a ``Raw`` object). Must contain a ``'time'``
+        column (seconds from recording start); an optional ``'duration'``
+        column draws filled bands, and any :class:`Factor` can be selected in
+        the toolbar to color-code events.
 
     Notes
     -----
@@ -69,7 +76,7 @@ def select_components(
     from ._wxgui.select_components import TEST_MODE, Document, Frame, Model
 
     get_app()  # make sure app is created
-    doc = Document(path, data, sysname, adjacency, decim=decim)
+    doc = Document(path, data, sysname, adjacency, decim=decim, events=events)
     model = Model(doc)
     frame = Frame(model)
     frame.Show()

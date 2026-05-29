@@ -2115,6 +2115,7 @@ class Pipeline(StateModel):
         ica_name = self.get('raw')
         pipe = self._raw.ica_pipe(ica_name)
         bads = self._load_derivative(raw_node_name(ica_name), options={'noise': False}, view='bads')
+        labeled_events = None
         if epoch is None:
             if task is None:
                 task = pipe.task
@@ -2125,6 +2126,19 @@ class Pipeline(StateModel):
             decim = decim_param(samplingrate, decim, None, raw.info, minimal=True)
             info = raw.info
             display_data = raw
+            # labeled events for the timeline; concatenate across tasks and shift
+            # each task's onsets by the same offset used to append the raws
+            if task:
+                event_dss = []
+                offset = 0.0  # seconds into the concatenated recording
+                with self._temporary_state:
+                    self.set(raw=pipe.source)
+                    for task_ in task:
+                        ds_t = self.load_events(task=task_).copy()
+                        ds_t['onset'] = ds_t['onset'] + offset
+                        event_dss.append(ds_t)
+                        offset += (ds_t.info['raw.last_samp'] - ds_t.info['raw.first_samp'] + 1) / ds_t.info['raw.samplingrate']
+                labeled_events = combine(event_dss, incomplete='fill in')
         elif task is not None:
             raise TypeError(f"{task=} with {epoch=}")
         else:
@@ -2139,8 +2153,8 @@ class Pipeline(StateModel):
             if isinstance(ds['epochs'], Datalist):  # variable-length epoch
                 data = np.concatenate([epoch.get_data()[0] for epoch in ds['epochs']], axis=1)  # n_epochs, n_channels, n_times
                 raw = mne.io.RawArray(data, ds[0, 'epochs'].info)
-                events = mne.make_fixed_length_events(raw)
-                ds = Dataset({'epochs': mne.Epochs(raw, events, 1, 0, 1, baseline=None, proj=False, preload=True)})
+                mne_events = mne.make_fixed_length_events(raw)
+                ds = Dataset({'epochs': mne.Epochs(raw, mne_events, 1, 0, 1, baseline=None, proj=False, preload=True)})
             info = ds['epochs'].info
             decim = None
             display_data = ds
@@ -2149,7 +2163,7 @@ class Pipeline(StateModel):
         source_pipe = self._raw.root_source_pipe(ica_name)
         sysname = source_pipe._get_sysname(info, subject, data_kind)
         adjacency = source_pipe._get_adjacency(data_kind)
-        frame = gui.select_components(path, display_data, sysname, adjacency, decim, debug)
+        frame = gui.select_components(path, display_data, sysname, adjacency, decim, debug, events=labeled_events)
         return frame
 
     def make_bad_channels_selection(
@@ -2182,11 +2196,8 @@ class Pipeline(StateModel):
         # Channels.tsv is always from the root source
         bads_ctx = self._resolve_derivative(raw_bad_channels_input_name(source_name))
         channels_path = bads_ctx.node.path(bads_ctx)
-        # Labeled events are optional — not all experiments define them
-        try:
-            events = self._load_derivative('labeled-events')
-        except Exception:
-            events = None
+        # Labeled events for the timeline
+        events = self._load_derivative('labeled-events')
         # Sensor system info
         source_pipe = self._raw.root_source_pipe(raw_name)
         data_kind = TestDims('sensor').data_to_ndvar(raw_data.info)[0]

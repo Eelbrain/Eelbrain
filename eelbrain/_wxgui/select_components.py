@@ -48,6 +48,7 @@ from . import ID
 COLOR = {True: (.5, 1, .5), False: (1, .3, .3)}
 LINE_COLOR = {True: 'k', False: (1, 0, 0)}
 _CH_TYPE_COLORS = {'mag': 'steelblue', 'grad': 'forestgreen', 'eeg': 'firebrick'}
+_EVENT_COLORS = list(UNAMBIGUOUS_COLORS.values())
 TOPO_ARGS = {
     'interpolation': 'linear',  # interpolation that does not assume continuity
     'clip': 'even',
@@ -122,7 +123,14 @@ class Document(FileDocument):
     data
         Dataset containing 'epochs' (mne Epochs), 'index' (Var describing
         epochs) and variables describing cases in epochs, used to plot
-        condition averages.
+        condition averages. When a :class:`mne.io.Raw` object is passed, the
+        data is treated as continuous (split into 1 s windows for display) and
+        ``events`` can be shown on the timeline.
+    events
+        Optional :class:`Dataset` with events to show on the timeline (only
+        used with continuous data). Must contain a ``'time'`` column (seconds
+        from recording start); an optional ``'duration'`` column draws filled
+        bands, and any :class:`Factor` can be selected to color-code events.
     """
 
     def __init__(
@@ -133,23 +141,27 @@ class Document(FileDocument):
             adjacency: str | Sequence = None,
             drop_epochs_std: float = None,  # drop epochs with high signal (e.g. 10)
             decim: int = None,
+            events: Dataset = None,
     ):
         FileDocument.__init__(self, path)
         self._ndvar_args = dict(sysname=sysname, adjacency=adjacency)
         self.saved = True
         self._explained_variance = {}
 
-        if isinstance(data, mne.io.BaseRaw):
-            events = mne.make_fixed_length_events(data)
+        self.continuous = isinstance(data, mne.io.BaseRaw)
+        if self.continuous:
+            mne_events = mne.make_fixed_length_events(data)
             if decim is None:
                 decim = int(round(data.info['sfreq'] / 100))
-            ds = Dataset({'epochs': mne.Epochs(data, events, 1, 0, 1, baseline=None, proj=False, decim=decim, preload=True)})
+            ds = Dataset({'epochs': mne.Epochs(data, mne_events, 1, 0, 1, baseline=None, proj=False, decim=decim, preload=True)})
         elif isinstance(data, mne.BaseEpochs):
             ds = Dataset({'epochs': data})
         elif isinstance(data, Dataset):
             ds = data
         else:
             raise TypeError(f'{data=}')
+        # events only apply to the continuous representation
+        self.events = events if self.continuous else None
 
         # Exclude extreme epochs
         epochs_ndvar = self.as_ndvar(ds['epochs'])
@@ -746,8 +758,23 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
         self.figure.subplots_adjust(0, 0, 1, 1, 0, 0)
         self.figure.set_facecolor('white')
 
+        # scrollbars: horizontal = epochs, vertical = components
+        self.scrollbar_h = wx.ScrollBar(self, style=wx.SB_HORIZONTAL)
+        self.scrollbar_h.Bind(wx.EVT_SCROLL, self.OnScrollH)
+        self.scrollbar_v = wx.ScrollBar(self, style=wx.SB_VERTICAL)
+        self.scrollbar_v.Bind(wx.EVT_SCROLL, self.OnScrollV)
+        sizer = wx.FlexGridSizer(2, 2, 0, 0)
+        sizer.AddGrowableCol(0)
+        sizer.AddGrowableRow(0)
+        sizer.Add(self.canvas, 0, wx.EXPAND)
+        sizer.Add(self.scrollbar_v, 0, wx.EXPAND)
+        sizer.Add(self.scrollbar_h, 0, wx.EXPAND)
+        sizer.Add((0, 0))
+        self.SetSizer(sizer)
+
         # attributes
         self.topo_frame = None
+        self._event_artists = []  # handles for current event markers
         self.n_comp_actual = self.n_comp = self.config.ReadInt('layout_n_comp', 10)
         self.n_comp_in_ica = len(self.doc.components)
         self.i_first = 0
@@ -771,6 +798,25 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
         button.Bind(wx.EVT_BUTTON, self.OnShowTopos)
         tb.AddControl(button)
         SharedToolsMenu.AddToolbarButtons(self, tb)
+
+        # events color-by dropdown (continuous data only)
+        self._events_colorby = None
+        self._t_column = None
+        if self.doc.continuous and self.doc.events is not None:
+            events = self.doc.events
+            self._t_column = 'onset' if 'onset' in events else 'time' if 'time' in events else None
+            if self._t_column is None:
+                raise ValueError("events Dataset has no time column; expected an 'onset' or 'time' column to place events on the timeline")
+            factor_cols = [k for k, v in events.items() if isinstance(v, Factor)]
+            if factor_cols:
+                self._events_colorby = factor_cols[0]
+                tb.AddSeparator()
+                tb.AddControl(wx.StaticText(tb, label="Color events by:"))
+                choice = wx.Choice(tb, choices=factor_cols)
+                choice.SetSelection(0)
+                choice.Bind(wx.EVT_CHOICE, self.OnColorByChoice)
+                tb.AddControl(choice)
+
         tb.AddStretchableSpace()
         self.InitToolbarTail(tb)
         tb.Realize()
@@ -868,16 +914,18 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
             self.topo_labels.append(text)
 
         # source time course data
-        y, xtick_labels = self._get_source_data()
+        y, _ = self._get_source_data()
 
         # axes: time course starts after all topo columns + half-width label margin
         left = (n_types + 0.5) * axwidth
         bottom = 1 - n_rows * axheight
-        xticks = np.arange(elen / 2, elen * self.n_epochs, elen)
+        xticks, xtick_labels = self._xticks_labels()
         ax = self.figure.add_axes((left, bottom, 1 - left, 1 - bottom), frameon=False, yticks=(), xticks=xticks, xticklabels=xtick_labels)
         ax.tick_params(bottom=False)
         ax.i = -1
         ax.i_comp = None
+        if self.doc.continuous:
+            ax.set_xlabel("Time (s)")
 
         # store canvas before plotting lines
         self.canvas.draw()
@@ -905,12 +953,18 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
         self.ax_tc_ylim = (-0.5 * self.y_scale, (n_rows - 0.5) * self.y_scale)
         ax.set_ylim(self.ax_tc_ylim)
         ax.set_xlim((0, y.shape[1]))
-        # epoch demarcation
+        # epoch / second demarcation
+        if self.doc.continuous:
+            demarc = dict(ls='-', c=(0.85, 0.85, 0.85), lw=0.5)
+        else:
+            demarc = dict(ls='--', c='k')
         for x in range(elen, elen * self.n_epochs, elen):
-            ax.axvline(x, ls='--', c='k')
+            ax.axvline(x, **demarc)
 
         self.ax_tc = ax
+        self._draw_events()
         self.canvas.draw()
+        self._update_scrollbars()
 
     def _plot_update_raw_range(self):
         y_min, y_max = self._get_raw_range()
@@ -921,6 +975,68 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
         y_min, y_max = self._get_clean_range()
         for line, data in zip(self.y_range_post_lines, (y_min, y_max)):
             line.set_ydata(data)
+
+    def _xticks_labels(self):
+        "Return ``(xticks, labels)`` for the source time-course axes by mode"
+        elen = len(self.doc.sources.time)
+        if self.doc.continuous:
+            # one tick per 1-s window boundary, labeled with absolute seconds
+            step = max(1, int(ceil(self.n_epochs / 12)))  # cap visible ticks
+            ks = range(0, self.n_epochs + 1, step)
+            xticks = [k * elen for k in ks]
+            labels = [str(self.i_first_epoch + k) for k in ks]
+        else:
+            labels = list(self.doc.epoch_labels[self.i_first_epoch:self.i_first_epoch + self.n_epochs])
+            if len(labels) < self.n_epochs:
+                labels += [''] * (self.n_epochs - len(labels))
+            xticks = np.arange(elen / 2, elen * self.n_epochs, elen)
+        return xticks, labels
+
+    def _draw_events(self):
+        "Draw event markers on the bottom amplitude row (continuous data only)"
+        for h in self._event_artists:
+            try:
+                h.remove()
+            except ValueError:
+                pass
+        self._event_artists = []
+        events = self.doc.events
+        if not self.doc.continuous or events is None:
+            return
+
+        elen = len(self.doc.sources.time)
+        x_max = self.n_epochs * elen
+        # confine markers to the bottom range row
+        y0 = -0.5 * self.y_scale
+        height = self.y_scale
+        times = events[self._t_column].x
+        has_duration = 'duration' in events
+        colorby = self._events_colorby
+        cell_color = {}
+        if colorby and colorby in events and isinstance(events[colorby], Factor):
+            factor = events[colorby]
+            for k, cell in enumerate(factor.cells):
+                cell_color[cell] = _EVENT_COLORS[k % len(_EVENT_COLORS)]
+
+        # each 1-s window is elen samples wide, so time t maps to x = (t - i_first_epoch) * elen
+        for i in range(events.n_cases):
+            t = float(times[i])
+            x = (t - self.i_first_epoch) * elen
+            dur = float(events['duration'].x[i]) if has_duration else 0.0
+            x_end = x + dur * elen
+            if x_end < 0 or x > x_max:
+                continue
+            color = cell_color.get(events[colorby][i], (0.5, 0.5, 0.5)) if cell_color else (0.5, 0.5, 0.5)
+            if dur > 0:
+                h = Rectangle((x, y0), x_end - x, height, color=color, alpha=0.4, lw=0)
+                self.ax_tc.add_patch(h)
+            else:
+                (h,) = self.ax_tc.plot([x, x], [y0, y0 + height], color=color, alpha=0.8, lw=0.8)
+            self._event_artists.append(h)
+
+    def _update_scrollbars(self):
+        self.scrollbar_h.SetScrollbar(self.i_first_epoch, self.n_epochs, self.n_epochs_in_data, self.n_epochs)
+        self.scrollbar_v.SetScrollbar(self.i_first, self.n_comp, self.n_comp_in_ica, self.n_comp)
 
     def _event_i_comp(self, event):
         if event.inaxes:
@@ -1011,6 +1127,22 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
     def OnBackward(self, event):
         "Turn the page backward"
         self.SetFirstEpoch(self.i_first_epoch - self.n_epochs)
+
+    def OnColorByChoice(self, event):
+        factor_cols = [k for k, v in self.doc.events.items() if isinstance(v, Factor)]
+        self._events_colorby = factor_cols[event.GetEventObject().GetSelection()]
+        self._draw_events()
+        self.canvas.draw()
+
+    def OnScrollH(self, event):
+        pos = min(self.scrollbar_h.GetThumbPosition(), max(0, self.n_epochs_in_data - 1))
+        if pos != self.i_first_epoch:
+            self.SetFirstEpoch(pos)
+
+    def OnScrollV(self, event):
+        pos = self.scrollbar_v.GetThumbPosition()
+        if pos != self.i_first:
+            self.SetFirstComponent(pos)
 
     def OnCanvasKey(self, event):
         if event.key is None:
@@ -1128,7 +1260,10 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
 
     def OnSetLayout(self, event):
         caption = "Set ICA Source Layout"
-        msg = "Number of components and epochs (e.g., '10 20')"
+        if self.doc.continuous:
+            msg = "Number of components and seconds per page (e.g., '10 20')"
+        else:
+            msg = "Number of components and epochs (e.g., '10 20')"
         default = '%i %i' % (self.n_comp, self.n_epochs)
         dlg = wx.TextEntryDialog(self, msg, caption, default)
         while True:
@@ -1261,7 +1396,7 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
                 self.ax_tc.add_patch(self._marked_epoch_h)
 
         # update data
-        y, tick_labels = self._get_source_data()
+        y, _ = self._get_source_data()
         if i_first_epoch + self.n_epochs > self.n_epochs_in_data:
             elen = len(self.doc.sources.time)
             n_missing = self.i_first_epoch + self.n_epochs - self.n_epochs_in_data
@@ -1285,8 +1420,12 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
             self._plot_update_raw_range()
             self._plot_update_clean_range()
 
+        xticks, tick_labels = self._xticks_labels()
+        self.ax_tc.set_xticks(xticks)
         self.ax_tc.set_xticklabels(tick_labels)
         self.ax_tc.set_ylim(self.ax_tc_ylim)
+        self._draw_events()
+        self._update_scrollbars()
         self.canvas.draw()
 
     def ShowTopos(self):
