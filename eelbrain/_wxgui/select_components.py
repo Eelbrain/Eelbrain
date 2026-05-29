@@ -1365,7 +1365,7 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
             self.lines[i].set_color(LINE_COLOR[self.doc.accept[i_comp]])
 
         if n_comp_actual < self.n_comp:
-            for i in range(n_comp_actual, self.n_comp):
+            for i in range(n_comp_actual, len(self.topo_plots)):
                 for j, (ch_type, comp_ndvar) in enumerate(self.doc.components_by_type):
                     p = self.topo_plots[i][j]
                     empty_data = comp_ndvar[0].copy()
