@@ -639,6 +639,8 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             dep = path[0]
             if dep.endswith(':raw'):
                 raw_name = self._dependency_raw_name(previous, current, dep)
+                if path[-1] == 'bads':
+                    return f"This ICA was estimated using different bad channels: {old!r} -> {new!r}."
                 if any(a == 'fingerprint' and b == 'source' for a, b in zip(path, path[1:])):
                     def _fmt_mtime(v: Any) -> str:
                         t = v if isinstance(v, (int, float)) else (v.get('mtime') if isinstance(v, dict) else None)
@@ -773,7 +775,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
                 ctx.registry.write_manifest(ctx.registry.manifest_path(path), current)
                 return value
             reason = self._stale_reason(previous, current)
-            raise ProtectedArtifactError(self.name, path, message=f"Existing ICA file {path.name!r} no longer matches the current data and ICA settings.", instructions=f"{reason}\nTo make this ICA match the current pipeline again, revert the raw pipeline change or recompute the ICA. To keep using this existing ICA anyway, call e.load_ica(raw={self.raw_name!r}, accept_stale=True) once or run e.make_ica(raw={self.raw_name!r}) and choose 'incorporate'. To recompute it from the current data, run e.make_ica(raw={self.raw_name!r}) and choose 'overwrite'.")
+            raise ProtectedArtifactError(self.name, path, message=f"Existing ICA file {path.name!r} no longer matches the current data and ICA settings.", reason=reason, instructions=f"{reason}\nTo make this ICA match the current pipeline again, revert the raw pipeline change or recompute the ICA. To keep using this existing ICA anyway, call e.load_ica(raw={self.raw_name!r}, accept_stale=True) once or run e.make_ica(raw={self.raw_name!r}) and choose 'incorporate'. To recompute it from the current data, run e.make_ica(raw={self.raw_name!r}) and choose 'overwrite'.")
         return value
 
     def load_view(

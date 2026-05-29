@@ -642,7 +642,7 @@ class PipelineFrame(EelbrainFrame):
             dlg = StaleICADialog(
                 self, subject,
                 error.message or str(error),
-                error.instructions or '',
+                error.reason or '',
             )
             dlg.ShowModal()
             result[0] = dlg.choice

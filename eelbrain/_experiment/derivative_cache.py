@@ -227,11 +227,13 @@ class ProtectedArtifactError(RuntimeError):
             path: Path,
             message: str | None = None,
             instructions: str | None = None,
+            reason: str | None = None,
     ):
         self.derivative = derivative
         self.path = str(path)
         self.message = message
         self.instructions = instructions
+        self.reason = reason
         text = message or (
             f"Existing artifact for derivative {derivative!r} at {self.path!r} does not match "
             "the current settings and was not replaced automatically."

@@ -156,6 +156,17 @@ class StaleICADialog(wx.Dialog):
             instr.SetMinSize((-1, 100))
             vbox.Add(instr, proportion=1, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=12)
 
+        help_text = (
+            "Choose how to proceed:\n"
+            "• Delete: remove the stale ICA file; it will need to be recomputed.\n"
+            "• Incorporate: keep the existing ICA and update its record to match the current pipeline.\n"
+            "• Ignore: load the existing ICA for display only, without changing its record on disk.\n"
+            "• Abort: quit the application without making any changes."
+        )
+        help_label = wx.StaticText(self, label=help_text)
+        help_label.Wrap(540)
+        vbox.Add(help_label, flag=wx.LEFT | wx.RIGHT | wx.BOTTOM, border=12)
+
         vbox.Add(wx.StaticLine(self), flag=wx.EXPAND)
 
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
