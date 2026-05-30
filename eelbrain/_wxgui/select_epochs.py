@@ -50,6 +50,7 @@ from ..plot._base import AxisData, DataLayer, PlotType, AxisScale, find_fig_vlim
 from ..plot._nuts import PltBinNuts
 from ..plot._topo import AxTopomap
 from ..plot._utsnd import AxButterflyEpoch
+from ._ch_types import CH_TYPE_PICK_KWARGS, CH_TYPE_COLORS, CH_TYPE_DEFAULT_VLIM_SI, ch_type_scale
 from .app import get_app
 from .frame import EelbrainDialog
 from .mpl_canvas import FigureCanvasPanel
@@ -67,31 +68,12 @@ OUT_OF_RANGE = -3
 # For unit-tests
 TEST_MODE = False
 
-# Per-type display info: (display_unit, scale_from_display_to_SI, default_threshold_in_display_units)
+# Default peak-to-peak / absolute rejection thresholds, in SI units.
 # Peak amplitudes from mne_epochs.get_data() are in SI: T for mag, T/m for grad, V for eeg.
-_CH_TYPE_THRESHOLD_INFO = {
-    'mag':  ('fT',   1e-15, 2000),
-    'grad': ('fT/m', 1e-15, 2000),
-    'eeg':  ('µV',   1e-6,  150),
-}
-# Per-type display info for y-axis limits: (display_unit, scale_from_display_to_SI, default_vlim)
-# Defaults are conservative single-trial visualization ranges.
-_CH_TYPE_VLIM_INFO = {
-    'mag':  ('fT',   1e-15, 2000),   # 2000 fT
-    'grad': ('pT/m', 1e-12, 30),    # 30 pT/m ≈ 300 fT/cm
-    'eeg':  ('µV',   1e-6,  50),    # 50 µV
-}
-# pick_types kwargs per channel type
-_CH_TYPE_PICK_KWARGS = {
-    'mag':  {'meg': 'mag'},
-    'grad': {'meg': 'grad'},
-    'eeg':  {'meg': False, 'eeg': True},
-}
-# Colors for each channel type in butterfly plots
-_CH_TYPE_COLORS = {
-    'mag':  'steelblue',
-    'grad': 'forestgreen',
-    'eeg':  'firebrick',
+_THRESHOLD_DEFAULT_SI = {
+    'mag':  2000e-15,   # 2000 fT
+    'grad': 2000e-15,   # 20 fT/cm
+    'eeg':  150e-6,     # 150 µV
 }
 
 
@@ -248,7 +230,7 @@ class Document(FileDocument):
                 raise TypeError(f"{ds[data]=}; must be an mne.BaseEpochs instance")
 
         epochs_by_type = []
-        for ch_type, pick_kwargs in _CH_TYPE_PICK_KWARGS.items():
+        for ch_type, pick_kwargs in CH_TYPE_PICK_KWARGS.items():
             type_picks = mne.pick_types(mne_epochs.info, ref_meg=False, exclude='bads', **pick_kwargs)
             if len(type_picks):
                 epochs_by_type.append((ch_type, load.mne.epochs_ndvar(mne_epochs, data=ch_type)))
@@ -362,7 +344,7 @@ class Document(FileDocument):
         for i, name in enumerate(epoch.sensor.names):
             ch_type = self._ch_name_to_type.get(name)
             if ch_type is not None:
-                colors[i] = _CH_TYPE_COLORS[ch_type]
+                colors[i] = CH_TYPE_COLORS[ch_type]
         return colors or None
 
     def iter_good_epochs(self):
@@ -944,8 +926,7 @@ class Frame(NavigableFrame, FileFrame):
             if saved > 0:
                 self._type_display_vlims[ch_type] = saved
             else:
-                _, scale, display_vlim = _CH_TYPE_VLIM_INFO[ch_type]
-                self._type_display_vlims[ch_type] = scale * display_vlim
+                self._type_display_vlims[ch_type] = CH_TYPE_DEFAULT_VLIM_SI[ch_type]
 
         self._SetLayout(nplots, topo)
 
@@ -1215,8 +1196,8 @@ class Frame(NavigableFrame, FileFrame):
                 if ch_type not in self._type_display_vlims:
                     continue
                 y_si = event.ydata * self._type_display_vlims[ch_type]
-                display_unit, scale, _ = _CH_TYPE_VLIM_INFO.get(ch_type, (ch_type, 1.0, 1.0))
-                y_parts.append(f'{y_si / scale:.4g} {display_unit}')
+                display_unit, scale = ch_type_scale(ch_type)
+                y_parts.append(f'{y_si * scale:.4g} {display_unit}')
             y = ' / '.join(y_parts)
         else:
             y = ax.yaxis.get_major_formatter().format_data(event.ydata)
@@ -1328,7 +1309,8 @@ class Frame(NavigableFrame, FileFrame):
     def OnSetVLim(self, event):
         if self._type_vlims:
             # Multi-type: per-channel-type dialog
-            dlg = VLimDialog(self, self.doc.ch_type_names, self._type_display_vlims, self._auto_vlim)
+            type_scales = {ct: ch_type_scale(ct) for ct in self.doc.ch_type_names}
+            dlg = VLimDialog(self, type_scales, self._type_display_vlims, self._auto_vlim, CH_TYPE_DEFAULT_VLIM_SI)
             if dlg.ShowModal() == wx.ID_OK:
                 self._auto_vlim = dlg.GetAuto()
                 self._type_display_vlims = dlg.GetVLims()
@@ -1339,14 +1321,15 @@ class Frame(NavigableFrame, FileFrame):
                 self.ShowPage()
             dlg.Destroy()
         else:
-            # Single-type: simple text entry
-            default = str(tuple(self._vlims.values())[0][1])
-            dlg = wx.TextEntryDialog(self, "New Y-axis limit:", "Set Y-Axis Limit",
-                                     default)
+            # Single-type: text entry in the data's display unit
+            display_unit, scale = ch_type_scale(self.doc.ch_type_names[0])
+            vlim_si = tuple(self._vlims.values())[0][1]
+            prompt = f"New Y-axis limit ({display_unit}):" if display_unit else "New Y-axis limit:"
+            dlg = wx.TextEntryDialog(self, prompt, "Set Y-Axis Limit", f'{vlim_si * scale:g}')
             if dlg.ShowModal() == wx.ID_OK:
                 value = dlg.GetValue()
                 try:
-                    vlim = abs(float(value))
+                    vlim = abs(float(value)) / scale
                 except Exception as exception:
                     msg = wx.MessageDialog(self, str(exception), "Invalid Entry",
                                            wx.OK | wx.ICON_ERROR)
@@ -1357,7 +1340,8 @@ class Frame(NavigableFrame, FileFrame):
             dlg.Destroy()
 
     def OnThreshold(self, event):
-        dlg = ThresholdDialog(self, ch_types=self.doc.ch_type_names)
+        type_scales = {ct: ch_type_scale(ct) for ct in self.doc.ch_type_names}
+        dlg = ThresholdDialog(self, type_scales, _THRESHOLD_DEFAULT_SI)
         if dlg.ShowModal() == wx.ID_OK:
             method = dlg.GetMethod()
             if dlg.type_rows:
@@ -2006,16 +1990,24 @@ class RejectRangeDialog(EelbrainDialog):
 class ThresholdDialog(EelbrainDialog):
     """Threshold-criterion rejection dialog.
 
-    When ``ch_types`` contains more than one entry the dialog shows one row per
-    channel type (checkbox + type label + value field + unit label), mirroring
-    ``select_components.FindNoisyEpochsDialog``.  When ``ch_types`` is empty
-    the legacy single-threshold layout is used.
+    When ``type_scales`` is non-empty the dialog shows one row per channel type
+    (checkbox + type label + value field + unit label), mirroring
+    ``select_components.FindNoisyEpochsDialog``.  Otherwise the legacy
+    single-threshold layout is used.
+
+    Parameters
+    ----------
+    type_scales : {ch_type: (display_unit, scale)}
+        Display unit and display-per-SI scale for each channel type (from
+        :func:`._ch_types.ch_type_scale`).
+    default_thresholds_si : {ch_type: float}
+        Default threshold for each channel type, in SI units.
     """
 
     _methods = (('absolute', 'abs'),
                 ('peak-to-peak', 'p2p'))
 
-    def __init__(self, parent, ch_types=()):
+    def __init__(self, parent, type_scales=None, default_thresholds_si=None):
         title = "Threshold Criterion Rejection"
         wx.Dialog.__init__(self, parent, wx.ID_ANY, title)
         choices = tuple(m[0] for m in self._methods)
@@ -2038,15 +2030,16 @@ class ThresholdDialog(EelbrainDialog):
         self.method_ctrl = ctrl
 
         # --- threshold input ---
-        self._ch_types = list(ch_types)
+        type_scales = type_scales or {}
+        default_thresholds_si = default_thresholds_si or {}
         self.type_rows = []  # (ch_type, enabled_ctrl, threshold_ctrl, display_unit, scale)
-        if self._ch_types:
+        if type_scales:
             # Multi-type: one row per channel type
-            grid = wx.FlexGridSizer(rows=len(self._ch_types), cols=4, vgap=3, hgap=5)
-            for ch_type in self._ch_types:
-                display_unit, scale, default = _CH_TYPE_THRESHOLD_INFO.get(ch_type, (ch_type, None, 1))
+            grid = wx.FlexGridSizer(rows=len(type_scales), cols=4, vgap=3, hgap=5)
+            for ch_type, (display_unit, scale) in type_scales.items():
+                threshold_si = config.ReadFloat(f"Threshold/threshold_si_{ch_type}", default_thresholds_si.get(ch_type, 0))
+                threshold = threshold_si * scale
                 enabled = config.ReadBool(f"Threshold/enabled_{ch_type}", True)
-                threshold = config.ReadFloat(f"Threshold/threshold_{ch_type}", default)
                 enabled_ctrl = wx.CheckBox(self, label='')
                 enabled_ctrl.SetValue(enabled)
                 grid.Add(enabled_ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
@@ -2117,7 +2110,7 @@ class ThresholdDialog(EelbrainDialog):
             if not enabled_ctrl.GetValue():
                 continue
             threshold_display = float(threshold_ctrl.GetValue())
-            threshold_si = threshold_display * scale if scale is not None else threshold_display
+            threshold_si = threshold_display / scale
             result.append((ch_type, threshold_si, f'{threshold_display:g} {display_unit}'))
         return result
 
@@ -2135,9 +2128,9 @@ class ThresholdDialog(EelbrainDialog):
         config.WriteBool("Threshold/mark_below", self.GetMarkBelow())
         config.WriteBool("Threshold/do_report", self.do_report.GetValue())
         if self.type_rows:
-            for ch_type, enabled_ctrl, threshold_ctrl, _, _ in self.type_rows:
+            for ch_type, enabled_ctrl, threshold_ctrl, _, scale in self.type_rows:
                 config.WriteBool(f"Threshold/enabled_{ch_type}", enabled_ctrl.GetValue())
-                config.WriteFloat(f"Threshold/threshold_{ch_type}", float(threshold_ctrl.GetValue()))
+                config.WriteFloat(f"Threshold/threshold_si_{ch_type}", float(threshold_ctrl.GetValue()) / scale)
         else:
             config.WriteFloat("Threshold/threshold", self.GetThreshold())
         config.Flush()
@@ -2151,7 +2144,7 @@ class VLimDialog(EelbrainDialog):
     limit to each page's data instead.
     """
 
-    def __init__(self, parent, ch_types, type_vlims_si, auto):
+    def __init__(self, parent, type_scales, type_vlims_si, auto, default_vlims_si):
         wx.Dialog.__init__(self, parent, wx.ID_ANY, "Set Y-Axis Limits")
         sizer = wx.BoxSizer(wx.VERTICAL)
 
@@ -2161,20 +2154,19 @@ class VLimDialog(EelbrainDialog):
         sizer.Add(self.auto_ctrl, flag=wx.ALL, border=5)
 
         # Per-type grid: [type] [value] [unit]
-        grid = wx.FlexGridSizer(rows=len(ch_types), cols=3, vgap=3, hgap=6)
-        self._rows = []  # (ch_type, text_ctrl, scale)
-        for ch_type in ch_types:
-            display_unit, scale, default = _CH_TYPE_VLIM_INFO.get(ch_type, (ch_type, 1.0, 1.0))
-            current_si = type_vlims_si.get(ch_type, default * scale)
-            current_display = current_si / scale
+        grid = wx.FlexGridSizer(rows=len(type_scales), cols=3, vgap=3, hgap=6)
+        self._rows = []  # (ch_type, text_ctrl, scale, default_si)
+        for ch_type, (display_unit, scale) in type_scales.items():
+            default_si = default_vlims_si.get(ch_type, 1.0)
+            current_si = type_vlims_si.get(ch_type, default_si)
             grid.Add(wx.StaticText(self, label=ch_type), flag=wx.ALIGN_CENTER_VERTICAL)
             validator = REValidator(POS_FLOAT_PATTERN, "Invalid value: {value}. Need a number > 0.", False)
-            ctrl = wx.TextCtrl(self, value=f'{current_display:g}', validator=validator,
+            ctrl = wx.TextCtrl(self, value=f'{current_si * scale:g}', validator=validator,
                                style=wx.TE_RIGHT)
             ctrl.Enable(not auto)
             grid.Add(ctrl, flag=wx.ALIGN_CENTER_VERTICAL | wx.EXPAND)
             grid.Add(wx.StaticText(self, label=display_unit), flag=wx.ALIGN_CENTER_VERTICAL)
-            self._rows.append((ch_type, ctrl, scale))
+            self._rows.append((ch_type, ctrl, scale, default_si))
         grid.AddGrowableCol(1)
         sizer.Add(grid, flag=wx.LEFT | wx.RIGHT | wx.BOTTOM, border=8)
 
@@ -2197,21 +2189,20 @@ class VLimDialog(EelbrainDialog):
 
     def _on_auto(self, event):
         enable = not self.auto_ctrl.GetValue()
-        for _, ctrl, _ in self._rows:
+        for _, ctrl, _, _ in self._rows:
             ctrl.Enable(enable)
 
     def _on_defaults(self, event):
-        for ch_type, ctrl, scale in self._rows:
-            _, _, default = _CH_TYPE_VLIM_INFO.get(ch_type, (None, scale, scale))
-            ctrl.SetValue(f'{default:g}')
+        for ch_type, ctrl, scale, default_si in self._rows:
+            ctrl.SetValue(f'{default_si * scale:g}')
 
     def GetAuto(self):
         return self.auto_ctrl.GetValue()
 
     def GetVLims(self):
         """Return ``{ch_type: vlim_si}`` from the current field values."""
-        return {ch_type: float(ctrl.GetValue()) * scale
-                for ch_type, ctrl, scale in self._rows}
+        return {ch_type: float(ctrl.GetValue()) / scale
+                for ch_type, ctrl, scale, default_si in self._rows}
 
 
 class InfoFrame(HTMLFrame):

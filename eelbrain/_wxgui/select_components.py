@@ -36,6 +36,7 @@ from .._utils.parse import FLOAT_PATTERN, POS_FLOAT_PATTERN
 from .._utils.system import IS_OSX
 from ..plot._base import AxisData, DataLayer, PlotType
 from ..plot._topo import AxTopomap
+from ._ch_types import CH_TYPE_PICK_KWARGS, CH_TYPE_COLORS, ch_type_scale
 from .frame import EelbrainDialog
 from .frame import NavigableFrame
 from .history import Action, FileDocument, FileModel, FileFrame, FileFrameChild
@@ -47,25 +48,17 @@ from . import ID
 
 COLOR = {True: (.5, 1, .5), False: (1, .3, .3)}
 LINE_COLOR = {True: 'k', False: (1, 0, 0)}
-_CH_TYPE_COLORS = {'mag': 'steelblue', 'grad': 'forestgreen', 'eeg': 'firebrick'}
 _EVENT_COLORS = list(UNAMBIGUOUS_COLORS.values())
 TOPO_ARGS = {
     'interpolation': 'linear',  # interpolation that does not assume continuity
     'clip': 'even',
 }
-# Per-type display info for FindNoisyEpochsDialog:
-# (display_unit, scale_from_display_to_SI, default_threshold_in_display_units)
+# Default peak amplitude thresholds for FindNoisyEpochsDialog, in SI units.
 # Peak amplitudes from mne_epochs.get_data() are in SI: T for mag, T/m for grad, V for eeg.
-_CH_TYPE_THRESHOLD_INFO = {
-    'mag':  ('fT',   1e-15, 1000),
-    'grad': ('fT/m', 1e-15, 1000),
-    'eeg':  ('µV',   1e-6,  100),
-}
-# pick_types kwargs per channel type (used for peak computation and component creation)
-_CH_TYPE_PICK_KWARGS = {
-    'mag':  {'meg': 'mag'},
-    'grad': {'meg': 'grad'},
-    'eeg':  {'meg': False, 'eeg': True},
+_THRESHOLD_DEFAULT_SI = {
+    'mag':  1000e-15,   # 1000 fT
+    'grad': 1000e-15,   # 10 fT/cm
+    'eeg':  100e-6,     # 100 µV
 }
 
 # For unit-tests
@@ -198,7 +191,7 @@ class Document(FileDocument):
         topo_picks = mne.pick_types(ica.info, meg=True, eeg=True, ref_meg=False, exclude='bads')
         ch_types_present = set(ica.info.get_channel_types(topo_picks, unique=True))
         components_by_type = []
-        for ch_type, pick_kwargs in _CH_TYPE_PICK_KWARGS.items():
+        for ch_type, pick_kwargs in CH_TYPE_PICK_KWARGS.items():
             if ch_type == 'grad':
                 if not ch_types_present & {'grad', 'planar1', 'planar2'}:
                     continue
@@ -360,8 +353,8 @@ class SharedToolsMenu:  # Frame mixin
         menu.AppendSubMenu(blmenu, "Baseline")
 
     def OnFindNoisyEpochs(self, event):
-        ch_types = [ct for ct, _ in self.doc.components_by_type]
-        dlg = FindNoisyEpochsDialog(self, ch_types=ch_types)
+        type_scales = {ct: ch_type_scale(ct) for ct, _ in self.doc.components_by_type}
+        dlg = FindNoisyEpochsDialog(self, type_scales, _THRESHOLD_DEFAULT_SI)
         rcode = dlg.ShowModal()
         dlg.Destroy()
         if rcode != wx.ID_OK:
@@ -384,7 +377,7 @@ class SharedToolsMenu:  # Frame mixin
         type_peaks = {}
         for ch_type, threshold_si, _ in type_thresholds:
             picks = mne.pick_types(mne_epochs.info, ref_meg=False, exclude='bads',
-                                   **_CH_TYPE_PICK_KWARGS[ch_type])
+                                   **CH_TYPE_PICK_KWARGS[ch_type])
             type_peaks[ch_type] = np.abs(mne_epochs.get_data(picks=picks)).max(axis=(1, 2))
 
         # collect output: epoch is noisy if any enabled type exceeds its threshold
@@ -462,10 +455,9 @@ class SharedToolsMenu:  # Frame mixin
                     sec.append(fmtxt.linebreak)
         else:
             for i, peak_si, ch_type in res:
-                display_unit, scale, _ = _CH_TYPE_THRESHOLD_INFO.get(ch_type, (ch_type, None, 1))
-                peak_display = peak_si / scale if scale is not None else peak_si
+                display_unit, scale = ch_type_scale(ch_type)
                 doc.append(fmtxt.Link(self.doc.epoch_labels[i], f'epoch:{i}'))
-                doc.append(f": {peak_display:g} {display_unit}")
+                doc.append(f": {peak_si * scale:g} {display_unit}")
                 doc.append(fmtxt.linebreak)
         InfoFrame(self, "Noisy Epochs", doc, 300)
 
@@ -689,7 +681,7 @@ class SharedToolsMenu:  # Frame mixin
             orig_by_type = [(ct, o - o.mean(time=(None, 0))) for ct, o in orig_by_type]
             clean_by_type = [(ct, c - c.mean(time=(None, 0))) for ct, c in clean_by_type]
         # Build color dict: {sensor_name: type_color}
-        color = {name: _CH_TYPE_COLORS.get(ch_type, 'k') for ch_type, o in orig_by_type for name in o.sensor.names}
+        color = {name: CH_TYPE_COLORS.get(ch_type, 'k') for ch_type, o in orig_by_type for name in o.sensor.names}
 
         has_case = orig_by_type[0][1].has_case
         if has_case:
@@ -1715,7 +1707,7 @@ class TopoFrame(SharedToolsMenu, FileFrameChild):
 
 class FindNoisyEpochsDialog(EelbrainDialog):
 
-    def __init__(self, parent, ch_types: list, **kwargs):
+    def __init__(self, parent, type_scales: dict, default_thresholds_si: dict, **kwargs):
         super().__init__(parent, wx.ID_ANY, "Find Bad Epochs", **kwargs)
         config = parent.config
         apply_rejection = config.ReadBool("FindNoisyEpochsDialog/apply_rejection", True)
@@ -1725,12 +1717,13 @@ class FindNoisyEpochsDialog(EelbrainDialog):
         sizer = wx.BoxSizer(wx.VERTICAL)
 
         # One threshold row per channel type: [checkbox] [type] [value] [unit]
-        grid = wx.FlexGridSizer(rows=len(ch_types), cols=4, vgap=3, hgap=5)
+        self._default_thresholds_si = default_thresholds_si
+        grid = wx.FlexGridSizer(rows=len(type_scales), cols=4, vgap=3, hgap=5)
         self.type_rows = []  # list of (ch_type, enabled_ctrl, threshold_ctrl, display_unit, scale)
-        for ch_type in ch_types:
-            display_unit, scale, default = _CH_TYPE_THRESHOLD_INFO.get(ch_type, (ch_type, None, 1))
+        for ch_type, (display_unit, scale) in type_scales.items():
+            threshold_si = config.ReadFloat(f"FindNoisyEpochsDialog/threshold_si_{ch_type}", default_thresholds_si.get(ch_type, 0))
+            threshold = threshold_si * scale
             enabled = config.ReadBool(f"FindNoisyEpochsDialog/enabled_{ch_type}", True)
-            threshold = config.ReadFloat(f"FindNoisyEpochsDialog/threshold_{ch_type}", default)
             enabled_ctrl = wx.CheckBox(self, label='')
             enabled_ctrl.SetValue(enabled)
             grid.Add(enabled_ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
@@ -1788,13 +1781,13 @@ class FindNoisyEpochsDialog(EelbrainDialog):
             if not enabled_ctrl.GetValue():
                 continue
             threshold_display = float(threshold_ctrl.GetValue())
-            threshold_si = threshold_display * scale if scale is not None else threshold_display
+            threshold_si = threshold_display / scale
             result.append((ch_type, threshold_si, f'{threshold_display:g} {display_unit}'))
         return result
 
     def OnSetDefault(self, event):
         for ch_type, enabled_ctrl, threshold_ctrl, display_unit, scale in self.type_rows:
-            _, _, default = _CH_TYPE_THRESHOLD_INFO.get(ch_type, (None, None, 1))
+            default = self._default_thresholds_si.get(ch_type, 0) * scale
             threshold_ctrl.SetValue(f'{default:g}')
             enabled_ctrl.SetValue(True)
 
@@ -1802,7 +1795,7 @@ class FindNoisyEpochsDialog(EelbrainDialog):
         config = self.Parent.config
         for ch_type, enabled_ctrl, threshold_ctrl, display_unit, scale in self.type_rows:
             config.WriteBool(f"FindNoisyEpochsDialog/enabled_{ch_type}", enabled_ctrl.GetValue())
-            config.WriteFloat(f"FindNoisyEpochsDialog/threshold_{ch_type}", float(threshold_ctrl.GetValue()))
+            config.WriteFloat(f"FindNoisyEpochsDialog/threshold_si_{ch_type}", float(threshold_ctrl.GetValue()) / scale)
         config.WriteBool("FindNoisyEpochsDialog/apply_rejection", self.apply_rejection.GetValue())
         config.WriteBool("FindNoisyEpochsDialog/sort_by_component", self.sort_by_component.GetValue())
         config.Write("FindNoisyEpochsDialog/max_ch_ratio", self.max_ch_ratio.GetValue())

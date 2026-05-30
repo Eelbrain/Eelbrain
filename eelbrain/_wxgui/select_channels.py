@@ -24,25 +24,9 @@ from ..plot._topo import AxTopomap
 from .frame import NavigableFrame
 from .history import Action, FileDocument, FileModel, FileFrame
 from .mpl_canvas import FigureCanvasPanel
-from .select_epochs import _CH_TYPE_VLIM_INFO, VLimDialog
+from ._ch_types import CH_TYPE_COLORS, CH_TYPE_DEFAULT_VLIM_SI, ch_type_scale
+from .select_epochs import VLimDialog
 
-
-_CH_TYPE_COLORS = {
-    'mag': 'steelblue',
-    'grad': 'forestgreen',
-    'eeg': 'firebrick',
-}
-# Display scale factors (SI → display units).  Keep consistent with _CH_TYPE_VLIM_INFO.
-_CH_TYPE_SCALE = {
-    'mag':  1e15,   # T   → fT
-    'grad': 1e12,   # T/m → pT/m
-    'eeg':  1e6,    # V   → µV
-}
-_CH_TYPE_UNIT = {
-    'mag':  'fT',
-    'grad': 'pT/m',
-    'eeg':  'µV',
-}
 
 TOPO_ARGS = {'interpolation': 'linear', 'clip': 'even'}
 DEFAULT_WINDOW = 30.0  # seconds
@@ -294,9 +278,8 @@ class Frame(NavigableFrame, FileFrame):
         self._auto_vlim = self.config.ReadBool('VLim/auto', True)
         self._type_vlims_si: dict[str, float] = {}
         for ch_type, _, _ in self.doc.ndvars_by_type:
-            _, scale_to_si, default_display = _CH_TYPE_VLIM_INFO[ch_type]
             self._type_vlims_si[ch_type] = self.config.ReadFloat(
-                f'VLim/vlim_{ch_type}', default_display * scale_to_si
+                f'VLim/vlim_{ch_type}', CH_TYPE_DEFAULT_VLIM_SI[ch_type]
             )
         self._max_t_start = max(0.0, (raw.n_times - self._window_samples) / sfreq)
 
@@ -446,8 +429,9 @@ class Frame(NavigableFrame, FileFrame):
                 (0.05, bottom, 0.95, bf_per_type - 0.005),
                 frameon=True,
             )
+            display_unit, scale = ch_type_scale(ch_type)
             ax.set_xlim(self.t_start, t_end)
-            ax.set_ylabel(f"{_CH_TYPE_UNIT.get(ch_type, ch_type)}", fontsize=8)
+            ax.set_ylabel(f"{display_unit or ch_type}", fontsize=8)
             show_xticks = (i_type == n_types - 1)
             ax.tick_params(labelbottom=show_xticks, labelsize=7)
             ax.ch_type = ch_type
@@ -455,7 +439,6 @@ class Frame(NavigableFrame, FileFrame):
 
             # Fetch and scale raw window data
             raw_data = raw[picks, start:stop][0]  # (n_ch, n_times)
-            scale = _CH_TYPE_SCALE.get(ch_type, 1.0)
             display_data = raw_data * scale
 
             # Determine y-axis limits
@@ -463,8 +446,7 @@ class Frame(NavigableFrame, FileFrame):
                 abs_max = float(np.percentile(np.abs(display_data), 99))
                 vlim_display = abs_max if abs_max > 0 else 1.0
             else:
-                _, scale_to_si, _ = _CH_TYPE_VLIM_INFO[ch_type]
-                vlim_display = self._type_vlims_si[ch_type] / scale_to_si
+                vlim_display = self._type_vlims_si[ch_type] * scale
             ax.set_ylim(-vlim_display, vlim_display)
 
             ch_names = ndvar.sensor.names
@@ -472,7 +454,7 @@ class Frame(NavigableFrame, FileFrame):
             lines = []
             for j, ch_name in enumerate(ch_names):
                 is_bad = ch_name in bad
-                color = 'red' if is_bad else _CH_TYPE_COLORS.get(ch_type, 'k')
+                color = 'red' if is_bad else CH_TYPE_COLORS.get(ch_type, 'k')
                 ls = ':' if is_bad else '-'
                 (line,) = ax.plot(times, display_data[j], color=color, ls=ls, lw=0.4)
                 line.ch_name = ch_name
@@ -579,7 +561,7 @@ class Frame(NavigableFrame, FileFrame):
         for i_type, (ch_type, ndvar, picks) in enumerate(self.doc.ndvars_by_type):
             ax = self._butterfly_axes[i_type]
             ax.set_xlim(t_start, t_end)
-            scale = _CH_TYPE_SCALE.get(ch_type, 1.0)
+            _, scale = ch_type_scale(ch_type)
             raw_data = raw[picks, start:stop][0]
             display_data = raw_data * scale
             for j, line in enumerate(self._butterfly_lines[ch_type]):
@@ -647,7 +629,7 @@ class Frame(NavigableFrame, FileFrame):
 
         # Update butterfly line colors and styles
         for ch_type, ndvar, picks in self.doc.ndvars_by_type:
-            type_color = _CH_TYPE_COLORS.get(ch_type, 'k')
+            type_color = CH_TYPE_COLORS.get(ch_type, 'k')
             for line in self._butterfly_lines.get(ch_type, []):
                 is_bad = line.ch_name in bad
                 line.set_color('red' if is_bad else type_color)
@@ -697,16 +679,16 @@ class Frame(NavigableFrame, FileFrame):
         for i_type, (ch_type, _, _) in enumerate(self.doc.ndvars_by_type):
             if ch_type not in vlim_si_dict:
                 continue
-            _, scale_to_si, _ = _CH_TYPE_VLIM_INFO[ch_type]
-            vlim_display = vlim_si_dict[ch_type] / scale_to_si
+            _, scale = ch_type_scale(ch_type)
+            vlim_display = vlim_si_dict[ch_type] * scale
             self._butterfly_axes[i_type].set_ylim(-vlim_display, vlim_display)
         self.canvas.draw()
 
     # --- Event handlers ---
 
     def OnSetVLim(self, event):
-        ch_types = [ch_type for ch_type, _, _ in self.doc.ndvars_by_type]
-        dlg = VLimDialog(self, ch_types, self._type_vlims_si, self._auto_vlim)
+        type_scales = {ch_type: ch_type_scale(ch_type) for ch_type, _, _ in self.doc.ndvars_by_type}
+        dlg = VLimDialog(self, type_scales, self._type_vlims_si, self._auto_vlim, CH_TYPE_DEFAULT_VLIM_SI)
         if dlg.ShowModal() == wx.ID_OK:
             self._auto_vlim = dlg.GetAuto()
             self.config.WriteBool('VLim/auto', self._auto_vlim)
@@ -754,7 +736,7 @@ class Frame(NavigableFrame, FileFrame):
                 raw = self.doc.raw
                 t_idx = int(np.clip(int(event.xdata * self._sfreq), 0, raw.n_times - 1))
                 d = raw[picks, t_idx:t_idx + 1][0][:, 0]
-                scale = _CH_TYPE_SCALE.get(ch_type, 1.0)
+                _, scale = ch_type_scale(ch_type)
                 d_display = d * scale
                 i_nearest = int(np.argmin(np.abs(d_display - event.ydata)))
                 ch_name = ndvar.sensor.names[i_nearest]
@@ -782,7 +764,7 @@ class Frame(NavigableFrame, FileFrame):
             t = event.xdata
             if t is not None and self.t_start <= t <= self.t_start + self.window_size:
                 self._update_cursor_topo(t)
-            unit = _CH_TYPE_UNIT.get(ax.ch_type, '')
+            unit = ch_type_scale(ax.ch_type)[0] or ''
             self.SetStatusText(f"t = {t:.3f} s,  y = {event.ydata:.2f} {unit}")
         elif hasattr(ax, 'topo_group'):
             self.SetStatusText("Click a sensor to toggle bad")

@@ -168,6 +168,7 @@ DISPLAY_UNIT = {
     's': 'ms',
     'V': 'µV',
     'T': 'fT',
+    'T/m': 'fT/cm',  # planar gradiometers: data in T/m, shown in the conventional fT/cm
     'sensor': int,
 }
 UNIT_FORMAT = {
@@ -179,6 +180,7 @@ UNIT_FORMAT = {
     'µV': 1e6,
     'pT': 1e12,
     'fT': 1e15,
+    'fT/cm': 1e13,  # relative to the T/m gradient base: 1 T/m = 1e13 fT/cm
     'dSPM': 1,
     'p': 1,
     'T': 1,
@@ -186,6 +188,27 @@ UNIT_FORMAT = {
     'normalized': 1,
     int: int,
 }
+
+
+def scaled_unit(data_unit: str | None) -> tuple:
+    """Map a data unit to ``(display_unit, scale)`` such that ``display = scale * data``
+
+    Single source of truth for converting between a stored (SI) data unit and
+    the unit used for display, based on :data:`DISPLAY_UNIT` and
+    :data:`UNIT_FORMAT`. Returns ``(data_unit, 1)`` for units without a
+    registered display scaling.
+    """
+    if data_unit in DISPLAY_UNIT:
+        unit = DISPLAY_UNIT[data_unit]
+        scale = UNIT_FORMAT[unit]
+        if data_unit in UNIT_FORMAT:
+            scale /= UNIT_FORMAT[data_unit]
+    else:
+        unit = data_unit
+        scale = 1
+    return unit, scale
+
+
 DEFAULT_CMAPS = {
     'B': 'xpolar',
     'V': 'xpolar',
@@ -233,16 +256,10 @@ class AxisScale:
             else:
                 raise TypeError(f"unit={v!r}")
 
-            if data_unit in DISPLAY_UNIT:
-                unit = DISPLAY_UNIT[data_unit]
-                scale = UNIT_FORMAT[unit]
-                if data_unit in UNIT_FORMAT:
-                    scale /= UNIT_FORMAT[data_unit]
-            else:
-                scale = 1
-                unit = data_unit
+            unit, scale = scaled_unit(data_unit)
         self.data_unit = data_unit  # None | str
         self.display_unit = unit
+        self.scale = scale  # display = scale * data
         if scale == 1:
             self.formatter = None
         elif scale is int:
