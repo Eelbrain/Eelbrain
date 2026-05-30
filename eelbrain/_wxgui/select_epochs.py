@@ -901,24 +901,14 @@ class Frame(NavigableFrame, FileFrame):
         else:
             mark = []
 
-        # setup plot parameters
-        plot_list = ((self.doc.epochs,),)
-        cmaps = find_fig_cmaps(plot_list)
-        self._vlims = find_fig_vlims(plot_list, vlim, None, cmaps)
-        self._mark = mark
-        self._bfly_kwargs = {'color': color, 'lw': lw, 'mlw': mlw,
-                             'antialiased': antialiased, 'vlims': self._vlims,
-                             'mcolor': mcolor}
-        self._topo_kwargs = {'vlims': self._vlims, 'mcolor': 'red', 'mmarker': 'x'}
-
         # Per-channel-type vlims for normalized butterfly display (multi-type only)
         self._type_vlims = {}  # {ch_type: vmax_si} for normalising each type to ~[-1, 1]
         if len(self.doc.epochs_by_type) > 1:
             for ch_type, ndvar in self.doc.epochs_by_type:
                 vmax = np.percentile(np.abs(ndvar.x), 99.5)
                 self._type_vlims[ch_type] = vmax if vmax > 0 else 1.0
-        # Per-type display vlims (in SI); fall back to data-derived 99.5th-percentile
-        # values for any type not yet stored in the config.
+        # Persisted per-type display vlims (in SI), falling back to defaults; these
+        # give a stable y-axis limit across sessions rather than scaling to the data.
         self._auto_vlim = self.config.ReadBool('VLim/auto', False)
         self._type_display_vlims = {}
         for ch_type in self.doc.ch_type_names:
@@ -927,6 +917,19 @@ class Frame(NavigableFrame, FileFrame):
                 self._type_display_vlims[ch_type] = saved
             else:
                 self._type_display_vlims[ch_type] = CH_TYPE_DEFAULT_VLIM_SI[ch_type]
+
+        # setup plot parameters
+        plot_list = ((self.doc.epochs,),)
+        cmaps = find_fig_cmaps(plot_list)
+        # Single-type: start from the persisted / default limit rather than the data
+        if vlim is None and not self._type_vlims:
+            vlim = self._type_display_vlims[self.doc.ch_type_names[0]]
+        self._vlims = find_fig_vlims(plot_list, vlim, None, cmaps)
+        self._mark = mark
+        self._bfly_kwargs = {'color': color, 'lw': lw, 'mlw': mlw,
+                             'antialiased': antialiased, 'vlims': self._vlims,
+                             'mcolor': mcolor}
+        self._topo_kwargs = {'vlims': self._vlims, 'mcolor': 'red', 'mmarker': 'x'}
 
         self._SetLayout(nplots, topo)
 
@@ -1322,7 +1325,8 @@ class Frame(NavigableFrame, FileFrame):
             dlg.Destroy()
         else:
             # Single-type: text entry in the data's display unit
-            display_unit, scale = ch_type_scale(self.doc.ch_type_names[0])
+            ch_type = self.doc.ch_type_names[0]
+            display_unit, scale = ch_type_scale(ch_type)
             vlim_si = tuple(self._vlims.values())[0][1]
             prompt = f"New Y-axis limit ({display_unit}):" if display_unit else "New Y-axis limit:"
             dlg = wx.TextEntryDialog(self, prompt, "Set Y-Axis Limit", f'{vlim_si * scale:g}')
@@ -1337,6 +1341,10 @@ class Frame(NavigableFrame, FileFrame):
                     msg.Destroy()
                     raise
                 self.SetVLim(vlim)
+                # Persist so the limit is stable across sessions
+                self._type_display_vlims[ch_type] = vlim
+                self.config.WriteFloat(f'VLim/vlim_{ch_type}', vlim)
+                self.config.Flush()
             dlg.Destroy()
 
     def OnThreshold(self, event):
