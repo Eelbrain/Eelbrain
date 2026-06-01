@@ -3,9 +3,9 @@ from collections import defaultdict
 
 import numpy as np
 
-from ._data_obj import Datalist, Dataset
-from ._ndvar import neighbor_correlation
-from ._info import BAD_CHANNELS
+from .._data_obj import Datalist, Dataset
+from .._ndvar import neighbor_correlation
+from .._info import BAD_CHANNELS
 
 
 def _out(out, epochs):
