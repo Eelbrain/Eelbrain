@@ -1,4 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+from ._channel_model import ChannelModel
 from .base import (
     channel_listlist_to_dict,
     find_flat_epochs,
