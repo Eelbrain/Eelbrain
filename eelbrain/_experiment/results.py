@@ -261,22 +261,6 @@ class ResultOutputDerivative(Derivative[T]):
             state['subjects'] = tuple(self.groups[ctx.state['group']])
         return ctx.registry.canonicalize(state)
 
-    def _fingerprint_state_fields(
-            self,
-            ctx: Request,
-            single_subject: bool,
-    ) -> tuple[str, ...]:
-        """State keys forwarded to :meth:`Derivative.standard_fingerprint`."""
-        data = ctx.options['data']
-        fields = ['epoch', 'raw', 'rej', 'model', 'equalize_evoked_count', 'test']
-        if data and data.source:
-            fields.extend(['cov', 'inv', 'src', 'mri', 'parc'])
-        else:
-            fields.append('reference')
-        if single_subject:
-            fields.append('subject')
-        return tuple(fields)
-
     def _key_analysis_options(self, ctx: Request) -> dict[str, Any]:
         """Canonical analysis options used by :meth:`key`."""
         data = ctx.options['data']
@@ -361,16 +345,6 @@ class ResultOutputDerivative(Derivative[T]):
         """Default user-facing export path used when ``dst`` is not set."""
         return ctx.root / report_export_path(ctx.state, self.name, self._path_stem(ctx), self.single_subject)
 
-    def _fingerprint_definitions(self, ctx: Request) -> dict[str, Any]:
-        """Configured definitions embedded in :meth:`fingerprint`."""
-        definitions = {
-            'test': self.tests[ctx.options['test']]._as_dict(),
-            'epoch': self.epochs[ctx.state['epoch']]._as_dict(),
-        }
-        if ctx.options['data'].source and ctx.state['parc'] in self.parcs:
-            definitions['parc'] = self.parcs[ctx.state['parc']]._as_dict()
-        return ctx.registry.canonicalize(definitions)
-
     def _identity_extra(self, ctx: Request) -> dict[str, Any]:
         """Extra identity fields shared by :meth:`key` and :meth:`fingerprint`."""
         return {}
@@ -382,16 +356,17 @@ class ResultOutputDerivative(Derivative[T]):
         })
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(
-            ctx,
-            state_fields=self._fingerprint_state_fields(ctx, self.single_subject),
-            definitions=self._fingerprint_definitions(ctx),
-            extra={
-                'single_subject': self.single_subject,
-                'subjects': None if self.single_subject else tuple(self.groups[ctx.state['group']]),
-                **self._identity_extra(ctx),
-            },
-        )
+        out = {
+            'test': self.tests[ctx.options['test']],
+            'epoch': self.epochs[ctx.state['epoch']],
+            'single_subject': self.single_subject,
+            **self._identity_extra(ctx),
+        }
+        if not self.single_subject:
+            out['subjects'] = self.groups[ctx.state['group']]
+        if ctx.options['data'].source and ctx.state['parc'] in self.parcs:
+            out['parc'] = self.parcs[ctx.state['parc']]
+        return out
 
     def path(
             self,
@@ -456,14 +431,6 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         self.epochs = epochs
         self.groups = groups
 
-    def _state_fields(self, ctx: Request) -> tuple[str, ...]:
-        fields = ['group', 'epoch', 'raw', 'rej', 'model', 'equalize_evoked_count', 'test', 'cov', 'inv', 'src', 'mri']
-        if ctx.options['data'].source:
-            fields.append('parc')
-        else:
-            fields.append('reference')
-        return tuple(fields)
-
     def _sensor_evoked_options(self, ctx: Request, cat) -> dict[str, Any]:
         return ctx.options_for(
             'evoked',
@@ -476,15 +443,11 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         )
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(
-            ctx,
-            state_fields=self._state_fields(ctx),
-            definitions={
-                'test': self.tests[ctx.options['test']]._as_dict(),
-                'epoch': self.epochs[ctx.state['epoch']]._as_dict(),
-            },
-            extra={'subjects': tuple(self.groups[ctx.state['group']])},
-        )
+        return {
+            'test': self.tests[ctx.options['test']],
+            'epoch': self.epochs[ctx.state['epoch']],
+            'subjects': tuple(self.groups[ctx.state['group']]),
+        }
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         data = ctx.options['data']

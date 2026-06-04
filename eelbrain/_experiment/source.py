@@ -348,7 +348,7 @@ class BemInput(Input):
 
 class SrcDerivative(Derivative[mne.SourceSpaces]):
     name = 'src'
-    key_fields = ('mrisubject', 'src')
+    key_fields = ('mrisubject', 'src', 'common_brain')
 
     def _is_scaled(self, ctx: Request) -> bool:
         return ctx.state['mrisubject'] != ctx.state['common_brain'] and is_fake_mri(ctx.root / mri_dir(ctx.state))
@@ -369,12 +369,7 @@ class SrcDerivative(Derivative[mne.SourceSpaces]):
         return tuple(deps)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {
-            'mrisubject': ctx.state['mrisubject'],
-            'src': ctx.state['src'],
-            'common_brain': ctx.state['common_brain'],
-            'fake_mri': is_fake_mri(ctx.root / mri_dir(ctx.state)),
-        }
+        return {'fake_mri': is_fake_mri(ctx.root / mri_dir(ctx.state))}
 
     def build(self, ctx: Request) -> mne.SourceSpaces:
         dst = self.path(ctx)
@@ -460,12 +455,7 @@ class SourceMorphDerivative(Derivative[mne.SourceMorph]):
         )
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {
-            'mrisubject': ctx.state['mrisubject'],
-            'common_brain': ctx.state['common_brain'],
-            'src': ctx.state['src'],
-            'fake_mri': is_fake_mri(ctx.root / mri_dir(ctx.state)),
-        }
+        return {'fake_mri': is_fake_mri(ctx.root / mri_dir(ctx.state))}
 
     def build(self, ctx: Request) -> mne.SourceMorph:
         subject_from = ctx.state['mrisubject']
@@ -797,7 +787,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
     name = 'epochs-stc'
     key_fields = (
         'subject', 'session', 'task', 'run', 'raw',
-        'epoch', 'rej', 'cov', 'mrisubject', 'src', 'inv', 'parc',
+        'epoch', 'rej', 'cov', 'mrisubject', 'src', 'inv', 'parc', 'common_brain', 'adjacency',
     )
     # source localization handles EEG referencing internally
     fixed_state = {'reference': ''}
@@ -824,7 +814,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
         return _source_dependencies(ctx, Dependency('epochs', options=ctx.options_for('epochs', baseline=ctx.options['baseline'], ndvar=False, reject=ctx.options['reject'], cat=ctx.options['cat'], samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], pad=ctx.options['pad'], data='sensor')))
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {**ctx.options, 'source_reference_add': self._references['average'].add}
+        return {'source_reference_add': self._references['average'].add}
 
     def build(self, ctx: Request) -> Dataset:
         epoch = self.epochs[ctx.state['epoch']]
@@ -926,7 +916,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
     key_fields = (
         'subject', 'session', 'task', 'run', 'raw',
         'epoch', 'rej', 'model', 'equalize_evoked_count', 'cov', 'mrisubject',
-        'src', 'inv', 'parc',
+        'src', 'inv', 'parc', 'common_brain', 'adjacency',
     )
     # source localization handles EEG referencing internally
     fixed_state = {'reference': ''}
@@ -951,7 +941,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
         return _source_dependencies(ctx, Dependency('evoked', options=ctx.options_for('evoked', baseline=ctx.options['baseline'], ndvar=False, cat=ctx.options['cat'], samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], data='sensor')))
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {**ctx.options, 'source_reference_add': self._references['average'].add}
+        return {'source_reference_add': self._references['average'].add}
 
     def build(self, ctx: Request) -> Dataset:
         solution = InverseSolution._coerce(ctx.state['inv'])
@@ -1034,7 +1024,7 @@ class EpochsStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
         return ctx.registry.canonicalize({'parc': ctx.state['parc'], 'subjects': self.groups[ctx.state['group']], 'options': ctx.registry.canonicalize(ctx.options)})
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(ctx, state_fields=('parc',))
+        return {'subjects': tuple(self.groups[ctx.state['group']])}
 
     def _group_options(self, ctx: Request) -> dict[str, Any]:
         keep_epochs = ctx.options['keep_epochs']
@@ -1083,7 +1073,7 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
         return ctx.registry.canonicalize({'parc': ctx.state['parc'], 'subjects': self.groups[ctx.state['group']], 'options': ctx.registry.canonicalize(ctx.options)})
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(ctx, state_fields=('parc',))
+        return {'subjects': tuple(self.groups[ctx.state['group']])}
 
     def _group_options(self, ctx: Request) -> dict[str, Any]:
         morph = ctx.options['morph']

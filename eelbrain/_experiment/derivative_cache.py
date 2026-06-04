@@ -542,10 +542,8 @@ class Derivative(DependencyNode[T]):
     saved, and validated. Subclasses normally override:
 
     - :meth:`path` to choose the artifact location
-    - :meth:`fingerprint` to describe non-dependency request
-      state/options/definitions that determine staleness;
-      the helper method :meth:`standard_fingerprint` covers the common
-      fingerprint shape without open-coding option handling.
+    - :meth:`fingerprint` to describe configuration definitions that can
+      change without the key changing (e.g. epoch parameters, pipe settings).
     - :meth:`build` to compute the artifact
     - :meth:`load` / :meth:`save` to serialize the artifact
 
@@ -750,68 +748,6 @@ class Derivative(DependencyNode[T]):
         """
         return value
 
-    def standard_fingerprint(
-            self,
-            ctx: Request,
-            *,
-            state_fields: tuple[str, ...] | None = None,
-            definitions: dict[str, Any] | None = None,
-            extra: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Assemble the common ``state`` / ``definitions`` / ``options`` shape.
-
-        Parameters
-        ----------
-        ctx
-            Bound request for the current derivative load.
-        state_fields
-            State keys from ``ctx.state`` that materially define the artifact.
-            These keys are extracted directly from the request state and
-            embedded under the ``"state"`` key after canonicalization.
-            Default: ``self.key_fields``.
-        definitions
-            Optional configuration definitions embedded under the
-            ``"definitions"`` key.  Values are passed through
-            :meth:`~DerivativeRegistry.canonicalize`, so
-            :class:`~eelbrain._experiment.configuration.Configuration` objects
-            and other Eelbrain types can be passed directly without
-            pre-serialization.  Use this for stable snapshots such as epoch
-            definitions, test definitions, pipe definitions, or variable
-            collections that explain what the derivative is building.
-        extra
-            Optional additional fingerprint fields merged at the top level
-            after canonicalization. Use this for small derivative-specific
-            values that do not fit naturally under ``state`` or
-            ``definitions``.
-
-        Returns
-        -------
-        fingerprint
-            Canonicalized fingerprint mapping containing the selected
-            ``state`` snapshot, any ``definitions`` snapshot, the current request
-            ``options`` when non-empty, and any extra top-level fields.
-
-        Notes
-        -----
-        This is the default helper for derivatives whose fingerprints mostly
-        consist of semantic state, serialized configuration definitions,
-        request options, and a few derivative-specific scalar values. If a
-        relevant value is not a direct entry in ``ctx.state``, it should
-        usually go into ``definitions`` or ``extra`` instead of being
-        smuggled into ``state_fields`` through a custom mapping.
-        """
-        if state_fields is None:
-            state_fields = self.key_fields
-        out = {'state': canonical_state_subset(ctx.state, state_fields)}
-        if definitions:
-            out['definitions'] = ctx.registry.canonicalize(definitions)
-        options = ctx.registry.canonicalize(ctx.options)
-        if options:
-            out['options'] = options
-        if extra:
-            out.update(ctx.registry.canonicalize(extra))
-        return out
-
 
 class UncachedDerivative(Derivative[T]):
     """Base class for derived values that should never persist to the cache.
@@ -829,6 +765,29 @@ class UncachedDerivative(Derivative[T]):
 
     def path(self, ctx: Request) -> Path:
         raise NotImplementedError(f"{type(self).__name__} is uncached; path() must not be called")
+
+
+class _RestrictedStateView(dict):
+    """State view that enforces access only to declared key fields.
+
+    Used during :meth:`Derivative.build`, :meth:`~DependencyNode.fingerprint`,
+    :meth:`~DependencyNode.dependency_fingerprint`, and
+    :meth:`~DependencyNode.dependencies` to ensure every state field that
+    affects the artifact is declared in :attr:`Derivative.key_fields` or
+    :attr:`~DependencyNode.fixed_state`.
+    """
+
+    def __init__(self, state: dict[str, Any], allowed: frozenset[str]):
+        super().__init__(state)
+        self._allowed = allowed
+
+    def __getitem__(self, key: str) -> Any:
+        if key not in self._allowed:
+            raise RuntimeError(
+                f"State field {key!r} is not declared in this node's key_fields or "
+                f"fixed_state. If it affects the cached artifact, add it to key_fields."
+            )
+        return super().__getitem__(key)
 
 
 def _dep_entry_matches(stored: dict[str, Any], current: dict[str, Any]) -> bool:
@@ -897,6 +856,7 @@ class Request(Generic[T]):
         self.node = node
         self.registry = registry
         self.root = registry.root
+        self._state = state
         self.state = state
         self.options = options
         self.view_options = view_options
@@ -910,6 +870,15 @@ class Request(Generic[T]):
         self._build_deps: dict[str, Dependency] | None = None
         self._build_deps_cache: bool | None = None
         self._build_deps_depth = 0
+        # Restricted view for enforcement; None when there is nothing to enforce.
+        # Skipped for Input and UncachedDerivative (no key_fields contract), and
+        # for nodes that override key() with an empty key_fields (they manage
+        # their own cache identity and are not covered by the standard scheme).
+        if isinstance(node, Derivative) and not isinstance(node, UncachedDerivative):
+            allowed = frozenset(node.key_fields) | frozenset(node.fixed_state)
+            self._restricted_state: _RestrictedStateView | None = _RestrictedStateView(state, allowed) if allowed else None
+        else:
+            self._restricted_state = None
         if isinstance(node, Derivative) and node.cache_policy != CachePolicy.NEVER:
             self._key = node.key(self)
             self._base_artifact_path = Path(node.path(self))
@@ -919,6 +888,28 @@ class Request(Generic[T]):
     def has_control(self, control: str) -> bool:
         """Return whether this request includes one explicit execution control."""
         return control in self.controls
+
+    @contextmanager
+    def _state_check_context(self):
+        """Restrict ``ctx.state`` to declared key_fields during cache-affecting calls.
+
+        When active, any access to a state field not listed in
+        :attr:`~Derivative.key_fields` or :attr:`~DependencyNode.fixed_state`
+        raises :class:`RuntimeError`.  Safe to nest: the restriction is
+        activated by the outermost call and deactivated only on its exit.
+        A no-op for :class:`Input` and :class:`UncachedDerivative` nodes.
+        """
+        if self._restricted_state is None:
+            yield
+            return
+        already_active = self.state is self._restricted_state
+        if not already_active:
+            self.state = self._restricted_state
+        try:
+            yield
+        finally:
+            if not already_active:
+                self.state = self._state
 
     def exists(self) -> bool:
         """Return whether the input artifact for this request exists."""
@@ -957,11 +948,13 @@ class Request(Generic[T]):
 
     def current_fingerprint(self) -> dict[str, Any]:
         """Return the canonical current fingerprint for this node request."""
-        return self.registry.canonicalize(self.node.fingerprint(self))
+        with self._state_check_context():
+            return self.registry.canonicalize(self.node.fingerprint(self))
 
     def current_dependency_fingerprint(self, view: str | None = None) -> dict[str, Any]:
         """Return the canonical dependency-facing fingerprint for this request."""
-        return self.registry.canonicalize(self.node.dependency_fingerprint(self, view))
+        with self._state_check_context():
+            return self.registry.canonicalize(self.node.dependency_fingerprint(self, view))
 
     def current_dependency_fingerprint_quick(self, view: str | None = None) -> dict[str, Any] | None:
         """Return the canonical quick proxy fingerprint, or ``None`` if not supported."""
@@ -1114,7 +1107,7 @@ class Request(Generic[T]):
                 raise ProtectedArtifactError(derivative.name, self.artifact_path)
             derivative.log_cache_build(self, self.artifact_path)
 
-        with self._build_deps_context(cache), self.registry._node_warning_context(self):
+        with self._build_deps_context(cache), self.registry._node_warning_context(self), self._state_check_context():
             artifact = derivative.build(self)
         artifact_metadata = self.registry.canonicalize(derivative.artifact_metadata(self, artifact))
         self._artifact_metadata = artifact_metadata
@@ -1552,7 +1545,7 @@ class DerivativeRegistry:
             cache: bool | None,  # Explicit cache override propagated to dependencies.
     ) -> dict[str, Any]:
         out = {}
-        with ctx._build_deps_context(cache):
+        with ctx._build_deps_context(cache), ctx._state_check_context():
             for dep, dep_ctx in self._dependency_handles(node, ctx):
                 key = dep.label or dep.name
                 fingerprint = node.dependency_fingerprint_override(ctx, dep, dep_ctx)

@@ -263,13 +263,10 @@ class LabeledEventsDerivative(Derivative[Dataset]):
         )
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(
-            ctx,
-            definitions={
-                'variables': self._variables,
-                'label_events': function_fingerprint(self.label_events_impl),
-            },
-        )
+        return {
+            'variables': self._variables,
+            'label_events': function_fingerprint(self.label_events_impl),
+        }
 
     def build(self, ctx: Request) -> Dataset:
         sidecar = ctx.load('events-input')
@@ -362,8 +359,7 @@ class SelectedEventsDerivative(UncachedDerivative[Dataset]):
             raise RuntimeError(f"{epoch=}")
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        epoch = self.epochs[ctx.state['epoch']]
-        return self.standard_fingerprint(ctx, definitions={'epoch': epoch})
+        return {'epoch': self.epochs[ctx.state['epoch']]}
 
     def build(self, ctx: Request) -> Dataset:
         epoch = self.epochs[ctx.state['epoch']]
@@ -494,8 +490,7 @@ class EpochEventsDerivative(UncachedDerivative[Dataset]):
                 raise RuntimeError(f"{epoch=}")
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        epoch = self.epochs[ctx.state['epoch']]
-        return self.standard_fingerprint(ctx, definitions={'epoch': epoch})
+        return {'epoch': self.epochs[ctx.state['epoch']]}
 
     def build(self, ctx: Request) -> Dataset:
         epoch = self.epochs[ctx.state['epoch']]

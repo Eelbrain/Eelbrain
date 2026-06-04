@@ -493,7 +493,7 @@ class IndividualSeededParc(SeededParc):
 
 class AnnotDerivative(Derivative[list[mne.Label]]):
     name = 'annot'
-    key_fields = ('mrisubject', 'parc')
+    key_fields = ('mrisubject', 'parc', 'common_brain')
 
     def __init__(self, parcs: dict[str, Parcellation]):
         self.parcs = parcs
@@ -607,7 +607,7 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
 
         fingerprint = {
             'parc': parc,
-            'definition': ctx.registry.canonicalize(parc_def._as_dict()),
+            'definition': parc_def,
         }
         if not self.managed_annot(ctx.state, parc_def):
             fingerprint['files'] = self.annot_file_fingerprints(ctx)

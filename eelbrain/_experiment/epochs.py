@@ -851,11 +851,10 @@ class RecordingEpochsDerivative(Derivative[Any]):
         return out
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        definitions = {
+        return {
             'epoch': self.epochs[ctx.state['epoch']],
             'reference': self.references[ctx.state['reference']],
         }
-        return self.standard_fingerprint(ctx, definitions=definitions)
 
     def build(self, ctx: Request):
         epoch = self.epochs[ctx.state['epoch']]
@@ -1014,8 +1013,7 @@ class EpochsDerivative(Derivative[Any]):
         return out
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        epoch = self.epochs[ctx.state['epoch']]
-        return self.standard_fingerprint(ctx, definitions={'epoch': epoch})
+        return {'epoch': self.epochs[ctx.state['epoch']]}
 
     def build(self, ctx: Request):
         epoch = self.epochs[ctx.state['epoch']]
@@ -1149,7 +1147,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         )
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(ctx)
+        return {}
 
     def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, Any] | None:
         if dep.name != 'epoch-events':
@@ -1300,7 +1298,7 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
         return ctx.registry.canonicalize({'subjects': tuple(self.groups[ctx.state['group']]), 'options': ctx.registry.canonicalize(ctx.options)})
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.key(ctx)
+        return {'subjects': tuple(self.groups[ctx.state['group']])}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         options = ctx.options_for('evoked', 'baseline', 'samplingrate', 'decim', 'data')

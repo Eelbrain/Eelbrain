@@ -447,7 +447,7 @@ class CoregReportDerivative(Derivative[Path]):
         Optional explicit output path.
     """
     name = 'coreg-report'
-    key_fields = ('subject', 'session', 'task', 'run', 'mri', 'mrisubject')
+    key_fields = ('subject', 'session', 'task', 'run', 'raw', 'mri', 'mrisubject')
     OPTION_DEFAULTS = {}
     VIEW_OPTION_DEFAULTS = {'dst': None}
 
@@ -455,10 +455,7 @@ class CoregReportDerivative(Derivative[Path]):
         self.raw = raw
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(
-            ctx,
-            extra={'mri': file_fingerprint(ctx.root, ctx.root / mri_dir(ctx.state), 'mri-dir', metadata={'mrisubject': ctx.state['mrisubject']})},
-        )
+        return {'mri': file_fingerprint(ctx.root, ctx.root / mri_dir(ctx.state), 'mri-dir', metadata={'mrisubject': ctx.state['mrisubject']})}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         raw_name = self.raw.root_source_name(ctx.state['raw'])

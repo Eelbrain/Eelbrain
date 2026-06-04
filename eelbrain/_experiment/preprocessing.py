@@ -284,7 +284,7 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         path = self._resolve_bids_path(ctx)
         fp = {
             'raw': self.raw_name,
-            'pipe': self.pipe._as_dict(),
+            'pipe': self.pipe,
             'source': file_fingerprint(ctx.root, path.fpath, 'raw-source'),
         }
         if path.datatype == 'eeg':
@@ -409,7 +409,7 @@ class RawSourceDerivative(UncachedDerivative[mne.io.BaseRaw]):
         )
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {'pipe': self.pipe._as_dict()}
+        return {'pipe': self.pipe}
 
     def build(self, ctx: Request) -> mne.io.BaseRaw:
         source_name = raw_input_name(self.raw_name)
@@ -646,7 +646,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
                         t = v if isinstance(v, (int, float)) else (v.get('mtime') if isinstance(v, dict) else None)
                         return datetime.fromtimestamp(t).strftime('%Y-%m-%d %H:%M:%S') if t is not None else '?'
                     return f"The source data for raw step {raw_name!r} was modified ({_fmt_mtime(old)} -> {_fmt_mtime(new)})."
-                field = self._format_pipe_setting(path[1:], ('fingerprint', 'definitions', 'pipe'))
+                field = self._format_pipe_setting(path[1:], ('fingerprint', 'pipe'))
                 return f"This ICA was estimated using different settings for raw step {raw_name!r} ({field}: {old!r} -> {new!r})."
             field = self._format_difference_path(path)
             return f"One of the recorded ICA inputs changed ({field}: {old!r} -> {new!r})."
@@ -748,7 +748,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         path = self.path(ctx)
         return {
             'raw': self.raw_name,
-            'pipe': self.pipe._as_dict(),
+            'pipe': self.pipe,
             'bads': self._load_bad_channels(ctx),
             'ica_path': relpath(path, ctx.root),
             'exists': exists(path),
@@ -858,7 +858,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         Whether to resolve the corresponding empty-room recording instead of
         the subject recording.
     """
-    key_fields = ('subject', 'session', 'task', 'run')
+    key_fields = ('subject', 'session', 'task', 'run', 'datatype')
     cache_policy = CachePolicy.OPTIONAL
     cache_suffix = '-raw.fif'
     OPTION_DEFAULTS = {'noise': False}
@@ -917,13 +917,13 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         return tuple(deps)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(ctx, definitions={'pipe': self.pipe._as_dict()}, extra={'raw': self.raw_name})
+        return {'pipe': self.pipe, 'raw': self.raw_name}
 
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
         if view == 'bads':
             return {
                 'raw': self.raw_name,
-                'pipe': self.pipe._as_dict(),
+                'pipe': self.pipe,
                 'bads': self.pipe._collect_bads(ctx, noise=ctx.options['noise']),
             }
         return super().dependency_fingerprint(ctx, view)

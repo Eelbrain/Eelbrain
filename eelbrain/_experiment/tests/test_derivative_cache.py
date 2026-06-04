@@ -306,7 +306,7 @@ class OptionDerivative(Derivative[str]):
         self.calls = []
 
     def fingerprint(self, ctx: Request) -> dict[str, object]:
-        return self.standard_fingerprint(ctx)
+        return {}
 
     def build(self, ctx: Request) -> str:
         self.calls.append(('build', ctx.options['artifact'], ctx.view_options['view']))
@@ -758,7 +758,9 @@ def test_request_splits_artifact_and_view_options():
 
     assert handle.options == {'artifact': 1}
     assert handle.view_options == {'view': 2}
-    assert handle.current_fingerprint()['options'] == {'artifact': 1}
+    # Artifact options are captured by the key, not the fingerprint.
+    assert handle.key()['options'] == {'artifact': 1}
+    assert 'options' not in handle.current_fingerprint()
     assert handle.options_for('optioned', artifact=4) == {'artifact': 4}
     assert handle.options_for('optioned', 'view', artifact=4) == {'view': 2, 'artifact': 4}
     with pytest.raises(TypeError, match="does not declare option"):

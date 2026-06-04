@@ -148,14 +148,10 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         self.groups = groups
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(
-            ctx,
-            state_fields=('subject', 'epoch', 'raw', 'rej', 'model', 'equalize_evoked_count', 'test', 'cov', 'inv', 'src', 'mri', 'parc'),
-            definitions={
-                'test': self.tests[ctx.options['test']]._as_dict(),
-                'epoch': self.epochs[ctx.state['epoch']]._as_dict(),
-            },
-        )
+        return {
+            'test': self.tests[ctx.options['test']],
+            'epoch': self.epochs[ctx.state['epoch']],
+        }
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         subject = ctx.state['subject']
@@ -239,10 +235,7 @@ class TwoStageLevel1Derivative(Derivative[Any]):
         return super().key(ctx)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(
-            ctx,
-            definitions={'test': self.tests[ctx.options['test']]._as_dict()},
-        )
+        return {'test': self.tests[ctx.options['test']]}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (Dependency('two-stage-data', options=ctx.options_for('two-stage-data', *RESULT_OPTION_DEFAULTS)),)

@@ -185,8 +185,8 @@ def test_sample():
     assert exists(test_manifest)
     with open(test_manifest) as fid:
         test_manifest_data = json.load(fid)
-    assert test_manifest_data['fingerprint']['definitions']['test']['tail'] == 1
-    assert test_manifest_data['fingerprint']['definitions']['epoch']['tmax'] == 0.3
+    assert test_manifest_data['fingerprint']['test']['tail'] == 1
+    assert test_manifest_data['fingerprint']['epoch']['tmax'] == 0.3
     assert 'dependencies' not in test_manifest_data['fingerprint']
     assert 'evoked-test-data' in test_manifest_data['dependencies']
     assert 'evoked-group-dataset' in test_manifest_data['dependencies']['evoked-test-data']['dependencies']
@@ -513,7 +513,7 @@ def test_sample_source():
         source_manifest_data = json.load(fid)
     with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=8, data='source', disconnect_labels=True)) as fid:
         disconnected_manifest_data = json.load(fid)
-    assert source_manifest_data['fingerprint']['definitions']['parc']['base'] == 'aparc'
+    assert source_manifest_data['fingerprint']['parc']['base'] == 'aparc'
     assert source_manifest_data['fingerprint']['state']['parc'] == 'ac'
     assert 'dependencies' not in source_manifest_data['fingerprint']
     assert 'evoked-test-data' in source_manifest_data['dependencies']
@@ -1209,8 +1209,9 @@ def test_raw_cache_identity_ignores_view_options():
     handle_view = e._resolve_derivative(node_name, options={'noise': False, 'preload': True})
     handle_noise = e._resolve_derivative(node_name, options={'noise': True, 'preload': False})
 
-    assert handle_default.current_fingerprint() == handle_view.current_fingerprint()
-    assert handle_default.current_fingerprint() != handle_noise.current_fingerprint()
+    # View options (preload) must not affect cache identity; artifact options (noise) must.
+    assert handle_default.key() == handle_view.key()
+    assert handle_default.key() != handle_noise.key()
 
 
 @requires_mne_sample_data
@@ -1265,26 +1266,6 @@ def test_raw_filter_elliptic_info_view_matches_artifact():
 
 
 @requires_mne_sample_data
-def test_selected_events_cache_identity_ignores_view_options():
-    set_log_level('warning', 'mne')
-    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
-
-    tempdir = TempDir()
-    datasets.setup_samples_experiment(tempdir, n_subjects=1, n_segments=2, mris=False)
-    root = join(tempdir, 'SampleExperiment')
-
-    e = SampleExperiment(root)
-    e.set(subject='R0000', epoch='target', rej='', model='modality')
-
-    handle_default = e._resolve_derivative('epoch-events', options={'reject': True})
-    handle_view = e._resolve_derivative('epoch-events', options={'reject': True})
-    handle_reject = e._resolve_derivative('epoch-events', options={'reject': False})
-
-    assert handle_default.current_fingerprint() == handle_view.current_fingerprint()
-    assert handle_default.current_fingerprint() != handle_reject.current_fingerprint()
-
-
-@requires_mne_sample_data
 def test_source_cache_identity_ignores_view_options():
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
@@ -1333,8 +1314,9 @@ def test_source_cache_identity_ignores_view_options():
         'keep_epochs': False,
     })
 
-    assert epochs_stc_default.current_fingerprint() == epochs_stc_view.current_fingerprint()
-    assert epochs_stc_default.current_fingerprint() != epochs_stc_artifact.current_fingerprint()
+    # View options (ndvar, keep_epochs) must not affect cache identity; artifact options must.
+    assert epochs_stc_default.key() == epochs_stc_view.key()
+    assert epochs_stc_default.key() != epochs_stc_artifact.key()
 
     evoked_stc_default = e._resolve_derivative('evoked-stc', options={
         'baseline': False,
@@ -1367,8 +1349,9 @@ def test_source_cache_identity_ignores_view_options():
         'keep_evoked': False,
     })
 
-    assert evoked_stc_default.current_fingerprint() == evoked_stc_view.current_fingerprint()
-    assert evoked_stc_default.current_fingerprint() != evoked_stc_artifact.current_fingerprint()
+    # View options (ndvar, keep_evoked) must not affect cache identity; artifact options must.
+    assert evoked_stc_default.key() == evoked_stc_view.key()
+    assert evoked_stc_default.key() != evoked_stc_artifact.key()
 
 
 @requires_mne_sample_data

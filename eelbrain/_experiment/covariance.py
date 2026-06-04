@@ -96,10 +96,10 @@ class CovDerivative(Derivative[mne.Covariance]):
         raise NotImplementedError(f"{cov=}")
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(ctx, definitions={
+        return {
             'cov': self._covs[ctx.state['cov']],
             'source_reference_add': self._references['average'].add,
-        })
+        }
 
     def build(self, ctx: Request) -> mne.Covariance:
         cov = self._covs[ctx.state['cov']]
