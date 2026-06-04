@@ -51,7 +51,7 @@ from .pathing import (
 )
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, _resolve_parc
 from .preprocessing import (
-    CachedRawPipe, ICAInput, MaxwellCalibrationInput, MaxwellCrosstalkInput, MedianHeadPositionDerivative, RawBadChannelsInput, RawDerivative, RawHeadPositionDerivative, RawPipe, RawSource, RawSourceDerivative, RawSourceInput, RawICA, RawMaxwell,
+    CachedRawPipe, ICAInput, MaxwellCalibrationInput, MaxwellCrosstalkInput, MedianHeadPositionDerivative, RawBadChannelsInput, RawDerivative, RawHeadPositionDerivative, RawPipe, RawSource, RawSourceDerivative, RawSourceInput, RawICA, RawMaxwell, Reference,
     REINDEX_ICA, assemble_raw_pipes, ica_input_name, raw_bad_channels_input_name, raw_node_name, raw_input_name,
 )
 from .reports import (
@@ -163,6 +163,13 @@ class Pipeline(StateModel):
         'man': {'kind': 'manual', 'interpolation': True},
     }
     artifact_rejection = {}
+
+    # references: named Reference configurations, selected through the
+    # 'reference' state. Applied to epochs after channel interpolation (EEG only).
+    # A built-in 'average' entry (Reference('average')) is always available and
+    # can be overridden here (e.g. to reconstruct an implicit reference channel
+    # with Reference('average', add='Cz')).
+    references = {}
 
     # groups can be defined as subject lists: {'group': ('member1', 'member2', ...)}
     # or by exclusion: {'group': {'base': 'all', 'exclude': ('member1', 'member2')}}
@@ -328,6 +335,23 @@ class Pipeline(StateModel):
                 raise ValueError(f"kind={params['kind']!r} in artifact_rejection {name!r}")
         self._artifact_rejection = artifact_rejection
 
+        # epoch re-referencing; 'average' is always available and user-overridable
+        references = {'': None, 'average': Reference('average')}
+        for name, reference in self.references.items():
+            if not isinstance(name, str):
+                raise TypeError(f"references[{name!r}]: name must be a string")
+            elif not name:
+                raise ValueError(f"references[{name!r}]: name can't be empty")
+            elif not isinstance(reference, Reference) or isinstance(reference, RawPipe):
+                raise TypeError(f"references[{name!r}]={reference!r}: need Reference")
+            elif name == 'average':
+                if reference.reference != 'average':
+                    raise ConfigurationError(f"references[{name!r}]={reference!r}: the standard average reference must be an average reference")
+                elif reference.drop:
+                    raise ConfigurationError(f"references[{name!r}]={reference!r}: the standard average reference can not drop channels")
+            references[name] = reference
+        self._references = references
+
         # parcellations
         # make : can be made if non-existent
         # morph_from_fraverage : can be morphed from fsaverage to other subjects
@@ -370,6 +394,7 @@ class Pipeline(StateModel):
         raw_default = sorted(self.raw)[0] if self.raw else None
         self._register_field('raw', sorted(self._raw), default=raw_default, repr=True)
         self._register_field('rej', self._artifact_rejection.keys(), allow_empty=True)
+        self._register_field('reference', self._references.keys(), allow_empty=True)
 
         # cov
         self._register_field('cov', sorted(self._covs))
@@ -459,7 +484,7 @@ class Pipeline(StateModel):
         ))
         self._derivatives.register(SelectedEventsDerivative(self._epochs, self._artifact_rejection))
         self._derivatives.register(EpochEventsDerivative(self._epochs, self._runs_for))
-        self._derivatives.register(RecordingEpochsDerivative(self._raw, self._epochs))
+        self._derivatives.register(RecordingEpochsDerivative(self._raw, self._epochs, self._references))
         self._derivatives.register(EpochsDerivative(self._raw, self._epochs, self._runs_for))
         self._derivatives.register(EvokedDerivative(self._raw, self._epochs))
         self._derivatives.register(EvokedGroupDatasetDerivative(self._raw, self._groups))
@@ -467,16 +492,16 @@ class Pipeline(StateModel):
         # --- Source-space infrastructure ---
         for cov_name, cov in self._covs.items():
             cov._store_name(cov_name)
-        self._derivatives.register(CovDerivative(self._covs))
+        self._derivatives.register(CovDerivative(self._covs, self._raw, self._references))
         self._derivatives.register(SrcDerivative())
         self._derivatives.register(SourceMorphDerivative())
-        self._derivatives.register(FwdDerivative())
-        self._derivatives.register(InvDerivative())
+        self._derivatives.register(FwdDerivative(self._raw, self._references))
+        self._derivatives.register(InvDerivative(self._raw, self._references))
         self._derivatives.register(AnnotDerivative(self._parcs))
 
         # --- Source-space: epochs/evoked projected to source space ---
-        self._derivatives.register(EpochsStcDerivative(self._raw, self._epochs))
-        self._derivatives.register(EvokedStcDerivative(self._raw, self._epochs))
+        self._derivatives.register(EpochsStcDerivative(self._raw, self._epochs, self._references))
+        self._derivatives.register(EvokedStcDerivative(self._raw, self._epochs, self._references))
         self._derivatives.register(EpochsStcGroupDatasetDerivative(self._mri_subjects, self.get('common_brain'), self._groups))
         self._derivatives.register(EvokedStcGroupDatasetDerivative(self._mri_subjects, self.get('common_brain'), self._groups))
 

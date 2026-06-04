@@ -252,6 +252,8 @@ class ResultOutputDerivative(Derivative[T]):
         fields = ['epoch', 'raw', 'rej', 'model', 'equalize_evoked_count', 'test']
         if data and data.source:
             fields.extend(['cov', 'inv', 'src', 'mri', 'parc'])
+        else:
+            fields.append('reference')
         state = {field: ctx.state[field] for field in fields}
         if single_subject:
             state['subject'] = ctx.state['subject']
@@ -269,6 +271,8 @@ class ResultOutputDerivative(Derivative[T]):
         fields = ['epoch', 'raw', 'rej', 'model', 'equalize_evoked_count', 'test']
         if data and data.source:
             fields.extend(['cov', 'inv', 'src', 'mri', 'parc'])
+        else:
+            fields.append('reference')
         if single_subject:
             fields.append('subject')
         return tuple(fields)
@@ -456,6 +460,8 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         fields = ['group', 'epoch', 'raw', 'rej', 'model', 'equalize_evoked_count', 'test', 'cov', 'inv', 'src', 'mri']
         if ctx.options['data'].source:
             fields.append('parc')
+        else:
+            fields.append('reference')
         return tuple(fields)
 
     def _sensor_evoked_options(self, ctx: Request, cat) -> dict[str, Any]:

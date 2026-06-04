@@ -45,7 +45,7 @@ from ..mne_fixes import _interpolate_bads_eeg, _interpolate_bads_meg
 from .derivative_cache import CachePolicy, Dependency, Derivative, Request, Input, UncachedDerivative, file_fingerprint
 from .configuration import Configuration, typed_arg
 from .pathing import rej_file_path
-from .preprocessing import raw_node_name
+from .preprocessing import RawPipeGraph, Reference, raw_node_name
 from .test_def import TestDims
 
 
@@ -805,7 +805,7 @@ class RecordingEpochsDerivative(Derivative[Any]):
         Whether to apply per-epoch rejection state.
     """
     name = 'recording-epochs'
-    key_fields = ('subject', 'session', 'task', 'run', 'raw', 'epoch', 'rej')
+    key_fields = ('subject', 'session', 'task', 'run', 'raw', 'epoch', 'rej', 'reference')
     cache_suffix = '.epochs'
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
     OPTION_DEFAULTS = {
@@ -821,9 +821,10 @@ class RecordingEpochsDerivative(Derivative[Any]):
         'reject': True,
     }
 
-    def __init__(self, raw, epochs: dict[str, Any]):
+    def __init__(self, raw: RawPipeGraph, epochs: dict[str, EpochBase], references: dict[str, Reference | None]):
         self.raw = raw
         self.epochs = epochs
+        self.references = references
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         epoch = self.epochs[ctx.state['epoch']]
@@ -850,8 +851,11 @@ class RecordingEpochsDerivative(Derivative[Any]):
         return out
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        epoch = self.epochs[ctx.state['epoch']]
-        return self.standard_fingerprint(ctx, definitions={'epoch': epoch})
+        definitions = {
+            'epoch': self.epochs[ctx.state['epoch']],
+            'reference': self.references[ctx.state['reference']],
+        }
+        return self.standard_fingerprint(ctx, definitions=definitions)
 
     def build(self, ctx: Request):
         epoch = self.epochs[ctx.state['epoch']]
@@ -876,24 +880,31 @@ class RecordingEpochsDerivative(Derivative[Any]):
             epoch_value = ds['epochs']
             epochs_list = [epoch_value]
 
-        interpolate_bads = ctx.options['interpolate_bads']
-        if not interpolate_bads:
-            return epoch_value
+        if ctx.options['interpolate_bads']:
+            _drop_bad_eeg_channels_with_missing_locs(epochs_list)
+            if ds.info[INTERPOLATE_CHANNELS] and any(ds[INTERPOLATE_CHANNELS]):
+                info = epochs_list[0].info
+                bads_all = info['bads']
+                bads_individual = [sorted(set(bads_all + bads_i)) for bads_i in ds[INTERPOLATE_CHANNELS]]
+                data_types = TestDims.coerce('sensor').data_to_ndvar(info)
+                if 'mag' in data_types:
+                    interp_cache = {}
+                    _interpolate_bads_meg(epoch_value, bads_individual, interp_cache)
+                if 'eeg' in data_types:
+                    _interpolate_bads_eeg(epoch_value, bads_individual)
+            else:
+                for epochs in epochs_list:
+                    epochs.interpolate_bads(reset_bads=False)
 
-        _drop_bad_eeg_channels_with_missing_locs(epochs_list)
-        if ds.info[INTERPOLATE_CHANNELS] and any(ds[INTERPOLATE_CHANNELS]):
-            info = epochs_list[0].info
-            bads_all = info['bads']
-            bads_individual = [sorted(set(bads_all + bads_i)) for bads_i in ds[INTERPOLATE_CHANNELS]]
-            data_types = TestDims.coerce('sensor').data_to_ndvar(info)
-            if 'mag' in data_types:
-                interp_cache = {}
-                _interpolate_bads_meg(epoch_value, bads_individual, interp_cache)
-            if 'eeg' in data_types:
-                _interpolate_bads_eeg(epoch_value, bads_individual)
-        else:
-            for epochs in epochs_list:
-                epochs.interpolate_bads(reset_bads=False)
+        # EEG re-referencing, after channel interpolation
+        reference = self.references[ctx.state['reference']]
+        if reference is not None:
+            if 'eeg' not in TestDims.coerce('sensor').data_to_ndvar(epochs_list[0].info):
+                raise ConfigurationError(f"reference={ctx.state['reference']!r}: {ctx.state['subject']}/{epoch.name} has no EEG channels to re-reference; set reference='' for data without EEG.")
+            montage = self.raw.root_source_pipe(ctx.state['raw']).montage
+            epochs_list = [reference._apply_reference(epochs, montage=montage) for epochs in epochs_list]
+            epoch_value = Datalist(epochs_list, 'epochs') if variable_tmax else epochs_list[0]
+
         return epoch_value
 
     def load(self, ctx: Request, path: Path):
@@ -924,7 +935,7 @@ class EpochsDerivative(Derivative[Any]):
     (remaining options forwarded to :class:`RecordingEpochsDerivative`)
     """
     name = 'epochs'
-    key_fields = ('subject', 'session', 'raw', 'epoch', 'rej')
+    key_fields = ('subject', 'session', 'raw', 'epoch', 'rej', 'reference')
     cache_suffix = '.epochs'
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
     OPTION_DEFAULTS = {
@@ -1101,7 +1112,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
     name = 'evoked'
     key_fields = (
         'subject', 'session', 'task', 'run', 'raw',
-        'epoch', 'rej', 'model', 'equalize_evoked_count',
+        'epoch', 'rej', 'reference', 'model', 'equalize_evoked_count',
     )
     cache_policy = CachePolicy.OPTIONAL
     cache_suffix = '-ave.fif'

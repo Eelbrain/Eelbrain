@@ -31,7 +31,7 @@ from .derivative_cache import CachePolicy, Dependency, Derivative, Request, Inpu
 from .pathing import (
     MRI_SDIR, bem_dir, bem_file_path, mri_dir, src_file_path, trans_file_path,
 )
-from .preprocessing import raw_node_name
+from .preprocessing import Reference, raw_node_name
 from .test_def import TestDims
 from .._text import enumeration, plural
 from .._utils import subp
@@ -500,10 +500,19 @@ class SourceMorphDerivative(Derivative[mne.SourceMorph]):
         value.save(path, overwrite=True)
 
 
+def _eeg_channel_names(info: mne.Info) -> set[str]:
+    names = info['ch_names']
+    return {names[i] for i in mne.pick_types(info, meg=False, eeg=True, exclude=[])}
+
+
 class FwdDerivative(Derivative[mne.Forward]):
     name = 'fwd'
     key_fields = ('subject', 'session', 'mrisubject', 'src')
     cache_suffix = '-fwd.fif'
+
+    def __init__(self, raw, references: dict[str, Reference | None]):
+        self.raw = raw
+        self._references = references
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (
@@ -514,8 +523,15 @@ class FwdDerivative(Derivative[mne.Forward]):
             Dependency('median-head-position'),
         )
 
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        return {'source_reference_add': self._references['average'].add}
+
     def build(self, ctx: Request) -> mne.Forward:
         raw = ctx.load(raw_node_name('raw'))
+        reference = self._references['average']
+        if reference.add:
+            raw.crop(tmax=0).load_data()
+            reference._prepare_source_data(raw, self.raw.root_source_pipe('raw').montage)
         median_head_pos = ctx.load('median-head-position')
         info = raw.info
         if median_head_pos is not None:
@@ -559,6 +575,10 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
     cache_policy = CachePolicy.OPTIONAL
     cache_suffix = '-inv.fif'
 
+    def __init__(self, raw, references: dict[str, Reference | None]):
+        self.raw = raw
+        self._references = references
+
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (
             Dependency(raw_node_name(ctx.state['raw']), label='raw'),
@@ -566,11 +586,21 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
             Dependency('cov'),
         )
 
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        return {'source_reference_add': self._references['average'].add}
+
     def build(self, ctx: Request) -> mne.minimum_norm.InverseOperator:
         solution = InverseSolution._coerce(ctx.state['inv'])
         solution._validate_for_source_space(ctx.state['src'])
         raw = ctx.load('raw')
         fwd = ctx.load('fwd')
+        reference = self._references['average']
+        if reference.add:
+            # only raw.info is needed for the inverse operator, so crop to a single sample
+            raw.crop(tmax=0).load_data()
+        reference._prepare_source_data(raw, self.raw.root_source_pipe(ctx.state['raw']).montage)
+        if reference.add and _eeg_channel_names(fwd['info']) != _eeg_channel_names(raw.info):
+            raise NotImplementedError(f"EEG channels differ between the forward solution and the {ctx.state['raw']!r} raw used for the inverse operator; source localization with a reconstructed reference channel ({reference.add}) requires the inverse raw to keep the same EEG channels as the root 'raw' source used for the forward solution.")
         return solution._build_operator(raw.info, fwd, ctx.load('cov'))
 
     def load(
@@ -769,6 +799,8 @@ class EpochsStcDerivative(Derivative[Dataset]):
         'subject', 'session', 'task', 'run', 'raw',
         'epoch', 'rej', 'cov', 'mrisubject', 'src', 'inv', 'parc',
     )
+    # source localization handles EEG referencing internally
+    fixed_state = {'reference': ''}
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
     cache_suffix = '.pickle'
     OPTION_DEFAULTS = {
@@ -783,15 +815,16 @@ class EpochsStcDerivative(Derivative[Dataset]):
     }
     VIEW_OPTION_DEFAULTS = {'ndvar': True, 'keep_epochs': False}
 
-    def __init__(self, raw, epochs: dict[str, Any]):
+    def __init__(self, raw, epochs: dict[str, Any], references: dict[str, Reference | None]):
         self.raw = raw
         self.epochs = epochs
+        self._references = references
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return _source_dependencies(ctx, Dependency('epochs', options=ctx.options_for('epochs', baseline=ctx.options['baseline'], ndvar=False, reject=ctx.options['reject'], cat=ctx.options['cat'], samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], pad=ctx.options['pad'], data='sensor')))
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return ctx.registry.canonicalize(ctx.options)
+        return {**ctx.options, 'source_reference_add': self._references['average'].add}
 
     def build(self, ctx: Request) -> Dataset:
         epoch = self.epochs[ctx.state['epoch']]
@@ -800,6 +833,10 @@ class EpochsStcDerivative(Derivative[Dataset]):
         epochs_value = ds['epochs']
         epoch_list = epochs_value if isinstance(epochs_value, Datalist) else [epochs_value]
         variable_time = isinstance(epochs_value, Datalist)
+        reference = self._references['average']
+        montage = self.raw.root_source_pipe(ctx.state['raw']).montage
+        for epoch_obj in epoch_list:
+            reference._prepare_source_data(epoch_obj, montage)
         _check_head_position_alignment(ctx, epoch_list[0].info)
 
         src_baseline = ctx.options['src_baseline']
@@ -891,6 +928,8 @@ class EvokedStcDerivative(Derivative[Dataset]):
         'epoch', 'rej', 'model', 'equalize_evoked_count', 'cov', 'mrisubject',
         'src', 'inv', 'parc',
     )
+    # source localization handles EEG referencing internally
+    fixed_state = {'reference': ''}
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
     cache_suffix = '.pickle'
     OPTION_DEFAULTS = {
@@ -903,19 +942,24 @@ class EvokedStcDerivative(Derivative[Dataset]):
     }
     VIEW_OPTION_DEFAULTS = {'ndvar': True, 'keep_evoked': False}
 
-    def __init__(self, raw, epochs: dict[str, Any]):
+    def __init__(self, raw, epochs: dict[str, Any], references: dict[str, Reference | None]):
         self.raw = raw
         self.epochs = epochs
+        self._references = references
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return _source_dependencies(ctx, Dependency('evoked', options=ctx.options_for('evoked', baseline=ctx.options['baseline'], ndvar=False, cat=ctx.options['cat'], samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], data='sensor')))
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return ctx.registry.canonicalize(ctx.options)
+        return {**ctx.options, 'source_reference_add': self._references['average'].add}
 
     def build(self, ctx: Request) -> Dataset:
         solution = InverseSolution._coerce(ctx.state['inv'])
         ds = ctx.load('evoked')
+        reference = self._references['average']
+        montage = self.raw.root_source_pipe(ctx.state['raw']).montage
+        for evoked in ds['evoked']:
+            reference._prepare_source_data(evoked, montage)
         _check_head_position_alignment(ctx, ds['evoked'][0].info)
 
         src_baseline = ctx.options['src_baseline']

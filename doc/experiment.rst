@@ -714,6 +714,47 @@ Examples::
     }
 
 
+References (re-referencing)
+---------------------------
+
+.. py:attribute:: Pipeline.references
+
+EEG re-referencing applied to epochs *after* channel interpolation (so that bad
+channels do not contaminate the reference). References are defined as a
+``{name: reference_definition}`` dictionary and selected through the
+:ref:`state-reference` state:
+
+.. autosummary::
+   :toctree: generated
+   :template: class_nomethods.rst
+
+   Reference
+
+An ``'average'`` reference (``Reference('average')``) is always available. It can
+be overridden, for example to reconstruct an implicit recording reference channel
+(a channel such as ``Cz`` that was the recording reference is absent from the data
+but can be reconstructed as zeros before averaging)::
+
+    references = {
+        # override the built-in 'average' to reconstruct the implicit Cz reference:
+        'average': Reference('average', add='Cz'),
+        # mastoid reference:
+        'mastoid': Reference(['M1', 'M2']),
+    }
+
+This differs from :class:`RawReReference`, which re-references the continuous raw
+data *before* epoching and interpolation. ``references`` is orthogonal to
+``raw``, ``epoch`` and ``rej``, so different references can be compared with
+``e.set(reference=...)`` without duplicating epoch definitions.
+
+.. note::
+    The reference is only applied to EEG channels. Loading data that contains no
+    EEG channels with a non-empty ``reference`` raises an error; use
+    ``reference=''`` for such data. Source localization handles EEG referencing
+    internally (via MNE's average-reference projector) and always uses
+    ``reference=''`` regardless of the current state.
+
+
 Tests
 -----
 
@@ -902,6 +943,19 @@ the analysis should be conducted.
 Trial rejection can be turned off ``e.set(rej='')``, meaning that no trials are
 rejected, and back on, meaning that the corresponding rejection files are used
 ``e.set(rej='man')``.
+
+
+.. _state-reference:
+
+``reference`` (EEG re-referencing)
+----------------------------------
+
+Selects an EEG re-reference defined in :attr:`Pipeline.references`, applied to
+epochs after channel interpolation. ``e.set(reference='')`` (the default) applies
+no epoch-stage re-referencing; ``e.set(reference='avg')`` applies the
+corresponding :class:`Reference`. Has no effect on data without EEG channels
+(loading such data with a non-empty ``reference`` raises an error) and on source
+localization (which handles referencing internally).
 
 
 .. _state-model:

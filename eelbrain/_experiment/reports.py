@@ -114,7 +114,7 @@ def _report_test_info(node: ResultOutputDerivative, state: dict[str, Any], subje
     test_obj = node.tests[test] if isinstance(test, str) else test
     info = fmtxt.List("Analysis:")
     epoch = _format_text(state, 'epoch = {epoch}')
-    evoked_kind = '_'.join(part for part in (state.get('rej'), state.get('equalize_evoked_count')) if part not in (None, '')) or None
+    evoked_kind = '_'.join(part for part in (state.get('rej'), state.get('reference'), state.get('equalize_evoked_count')) if part not in (None, '')) or None
     if evoked_kind:
         epoch += f' {evoked_kind}'
     if model is True:

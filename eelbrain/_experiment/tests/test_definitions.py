@@ -165,6 +165,45 @@ def test_raw_pipe_semantic_dict():
     assert reref.drop == ['EXG8']
 
 
+def test_reference_prepare_source_data():
+    "Reference.prepare_source_data prepares EEG data for source localization"
+    import numpy as np
+    import mne
+    from mne.minimum_norm.inverse import _check_reference
+    from eelbrain._experiment.preprocessing import Reference
+    mne.set_log_level('ERROR')
+
+    montage = mne.channels.make_standard_montage('standard_1020')
+    info = mne.create_info(['Fz', 'Pz', 'C3', 'C4'], 200., 'eeg')  # Cz absent
+    raw = mne.io.RawArray(np.zeros((4, 200)), info)
+    raw.set_montage(montage)
+
+    # no add: adds an average-reference projection, accepted by MNE inverse modeling
+    x = raw.copy()
+    Reference('average')._prepare_source_data(x, montage)
+    assert x.info['custom_ref_applied'] == 0
+    _check_reference(x)  # must not raise
+
+    # add: reconstruct the implicit channel as zeros + projection
+    x = raw.copy()
+    Reference('average', add='Cz')._prepare_source_data(x, montage)
+    assert 'Cz' in x.ch_names
+    assert np.allclose(x.get_data(picks=['Cz']), 0)
+    assert x.info['custom_ref_applied'] == 0
+    _check_reference(x)  # must not raise
+
+    # MEG-only data: no-op (no EEG channels)
+    meg = mne.io.RawArray(np.zeros((2, 200)), mne.create_info(['MEG 001', 'MEG 002'], 200., 'mag'))
+    Reference('average')._prepare_source_data(meg)
+    assert len(meg.info['projs']) == 0
+
+    # only an average reference (optionally with add) is supported for source localization
+    with pytest.raises(NotImplementedError):
+        Reference(['M1', 'M2'])._prepare_source_data(raw.copy(), montage)
+    with pytest.raises(NotImplementedError):
+        Reference('average', drop='Fz')._prepare_source_data(raw.copy(), montage)
+
+
 def test_raw_pipe_graph_lineage():
     raw = assemble_raw_pipes({
         'raw': RawSource(),

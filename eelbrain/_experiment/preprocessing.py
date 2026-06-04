@@ -1897,7 +1897,97 @@ class RawOversampledTemporalProjection(CachedRawPipe):
             return mne.preprocessing.oversampled_temporal_projection(raw, self.duration)
 
 
-class RawReReference(CachedRawPipe):
+class Reference(Configuration):
+    """Re-reference EEG data after epoching and channel interpolation
+
+    Used as a value in :attr:`Pipeline.references` and selected through the
+    ``reference`` state. Also the base class for :class:`RawReReference`, which
+    applies the same operation to continuous raw data.
+
+    Parameters
+    ----------
+    reference
+        New reference: ``'average'`` (default) or one or several electrode
+        names.
+    add
+        Reconstruct reference channels with given names and set them to 0.
+    drop
+        Drop these channels after applying the reference.
+
+    See Also
+    --------
+    Pipeline.references
+    """
+    DICT_ATTRS = ('reference', 'add', 'drop')
+
+    def __init__(
+            self,
+            reference: str | Sequence[str] = 'average',
+            add: str | Sequence[str] = None,
+            drop: str | Sequence[str] = None,
+    ):
+        if isinstance(reference, str):
+            self.reference = reference
+        else:
+            self.reference = sequence_arg('reference', reference, allow_none=False, sequence_type=list)
+        self.add = sequence_arg('add', add, sequence_type=list)
+        self.drop = sequence_arg('drop', drop, sequence_type=list)
+
+    def _apply_reference(
+            self,
+            inst: mne.io.BaseRaw | mne.BaseEpochs,
+            montage: str | mne.channels.DigMontage | None = None,
+    ) -> mne.io.BaseRaw | mne.BaseEpochs:
+        """Apply the reference to a :class:`~mne.io.BaseRaw` or :class:`~mne.Epochs`."""
+        if self.add:
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore', 'The locations of multiple reference channels are ignored', module='mne')
+                inst = mne.add_reference_channels(inst, self.add, copy=False)
+            if montage:
+                inst.set_montage(montage)
+        inst.set_eeg_reference(self.reference)
+        if self.drop:
+            inst = inst.drop_channels(self.drop)
+        return inst
+
+    def _prepare_source_data(
+            self,
+            inst: mne.io.BaseRaw | mne.BaseEpochs | mne.Evoked,
+            montage: str | mne.channels.DigMontage | None = None,
+    ) -> None:
+        """Prepare an EEG instance for source localization in-place.
+
+        Reconstructs implicit reference channels (:attr:`add`) as zeros and adds
+        an average-reference *projection*. Unlike :meth:`_apply_reference`, this
+        never applies a direct reference, because MNE requires the average
+        reference as a projection (``custom_ref_applied`` must be ``False``) for
+        inverse modeling. A no-op for data without EEG channels and for data
+        that already carries an average-reference projection.
+        """
+        if self.reference != 'average' or self.drop:
+            raise NotImplementedError(f"{self} for source localization; only an average reference (optionally with add=...) is supported.")
+        if self.add:
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore', 'The locations of multiple reference channels are ignored', module='mne')
+                mne.add_reference_channels(inst, self.add, copy=False)
+            if montage:
+                inst.set_montage(montage)
+            # add_reference_channels marks a custom reference; adding the
+            # average-reference projection resets that flag, which is required
+            # for inverse modeling (custom_ref_applied must be False).
+            inst.set_eeg_reference('average', projection=True)
+        elif not inst.info['custom_ref_applied'] and mne.pick_types(inst.info, meg=False, eeg=True, ref_meg=False, exclude=[]).size:
+            # Ensure an average-reference projection is present (required by MNE
+            # for inverse modeling). set_eeg_reference(projection=True) is
+            # idempotent: it adds the projection if missing and otherwise leaves
+            # the data untouched (warning suppressed). Skipped when a custom
+            # reference is applied, so custom-referenced data still raises in MNE.
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore', 'An average reference projection was already added', module='mne')
+                inst.set_eeg_reference('average', projection=True)
+
+
+class RawReReference(Reference, CachedRawPipe):
     """Re-reference EEG data
 
     Parameters
@@ -1918,7 +2008,7 @@ class RawReReference(CachedRawPipe):
     --------
     Pipeline.raw
     """
-    DICT_ATTRS = CachedRawPipe.DICT_ATTRS + ('reference', 'add', 'drop')
+    DICT_ATTRS = CachedRawPipe.DICT_ATTRS + Reference.DICT_ATTRS
 
     def __init__(
             self,
@@ -1929,12 +2019,7 @@ class RawReReference(CachedRawPipe):
             cache: bool = False,
     ):
         CachedRawPipe.__init__(self, source, cache)
-        if isinstance(reference, str):
-            self.reference = reference
-        else:
-            self.reference = sequence_arg('reference', reference, allow_none=False, sequence_type=list)
-        self.add = sequence_arg('add', add, sequence_type=list)
-        self.drop = sequence_arg('drop', drop, sequence_type=list)
+        Reference.__init__(self, reference, add, drop)
 
     def _make(
             self,
@@ -1946,16 +2031,7 @@ class RawReReference(CachedRawPipe):
             log: logging.Logger | None = None,
             source_pipe: RawSource | None = None,
     ) -> mne.io.BaseRaw:
-        if self.add:
-            with warnings.catch_warnings():
-                warnings.filterwarnings('ignore', 'The locations of multiple reference channels are ignored', module='mne')
-                raw = mne.add_reference_channels(raw, self.add, copy=False)
-            if source_pipe.montage:
-                raw.set_montage(source_pipe.montage)
-        raw.set_eeg_reference(self.reference)
-        if self.drop:
-            raw = raw.drop_channels(self.drop)
-        return raw
+        return self._apply_reference(raw, montage=source_pipe.montage if source_pipe else None)
 
     def _make_info(
             self,

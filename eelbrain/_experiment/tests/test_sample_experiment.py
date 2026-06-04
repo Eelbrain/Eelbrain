@@ -668,6 +668,56 @@ def test_sample_tasks():
 
 
 @requires_mne_sample_data
+def test_epoch_reference():
+    "EEG re-referencing after channel interpolation (the 'reference' state)"
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, 1, 1, pick='')  # keep EEG channels
+    root = join(tempdir, 'SampleExperiment')
+
+    class Experiment(SampleExperiment):
+        references = {'avg': Reference('average')}
+
+    e = Experiment(root)
+    e.set(subject='R0000', epoch='target', rej='', raw='raw')
+
+    # default reference='' leaves EEG unreferenced
+    ds0 = e.load_epochs(reference='', interpolate_bads=False)
+    assert float(ds0['eeg'].mean('sensor').abs().max()) > 1e-6
+
+    # reference='avg' drives the EEG sensor-mean to ~0, with and without
+    # interpolation (the reference is applied after interpolation either way)
+    for interpolate_bads in (False, True):
+        ds = e.load_epochs(reference='avg', interpolate_bads=interpolate_bads)
+        assert float(ds['eeg'].mean('sensor').abs().max()) < 1e-15
+        # MEG is untouched by EEG re-referencing
+        ds_ref0 = e.load_epochs(reference='', interpolate_bads=interpolate_bads)
+        assert_dataobj_equal(ds['mag'], ds_ref0['mag'], decimal=20)
+
+    # changing the Reference config invalidates the cache (same name)
+    e.set(reference='avg', model='modality')
+    e.load_evoked(ndvar=False)
+
+    class ChangedExperiment(Experiment):
+        references = {'avg': Reference(['EEG 001'])}
+
+    e_changed = ChangedExperiment(root)
+    e_changed.set(subject='R0000', epoch='target', rej='', raw='raw', reference='avg', model='modality')
+    assert not e_changed._resolve_derivative('evoked').is_valid()
+
+    # MEG-only data: a reference with no EEG to apply raises (rather than
+    # silently producing a duplicate cache entry); reference='' works
+    datasets.setup_samples_experiment(tempdir, 1, 1, pick='mag', name='MegOnly')
+    e_meg = Experiment(join(tempdir, 'MegOnly'))
+    e_meg.set(subject='R0000', epoch='target', rej='', raw='raw')
+    with pytest.raises(ConfigurationError):
+        e_meg.load_epochs(reference='avg')
+    e_meg.load_epochs(reference='')
+
+
+@requires_mne_sample_data
 def test_evoked_backed_test_vars_are_post_aggregation_only():
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
