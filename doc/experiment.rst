@@ -713,6 +713,19 @@ Examples::
         'all_stimuli': SuperEpoch(('picture', 'word')),
     }
 
+.. py:attribute:: Pipeline.epoch_rejection
+
+Epoch-level artifact rejection is controlled through the
+:ref:`state-epoch_rejection` state.
+Automatic rejection procedures can be implemented through :attr:`Pipeline.epoch_rejection`,
+a ``{name: EpochRejection}`` dictionary of trial-rejection settings.
+
+.. autosummary::
+   :toctree: generated
+   :template: class_nomethods.rst
+
+   ManualRejection
+
 
 References (re-referencing)
 ---------------------------
@@ -935,14 +948,15 @@ Any epoch defined in :attr:`Pipeline.epochs`. Specify the epoch on which
 the analysis should be conducted.
 
 
-.. _state-rej:
+.. _state-epoch_rejection:
 
-``rej`` (trial rejection)
--------------------------
+``epoch_rejection``
+-------------------
 
-Trial rejection can be turned off ``e.set(rej='')``, meaning that no trials are
-rejected, and back on, meaning that the corresponding rejection files are used
-``e.set(rej='man')``.
+Selects an entry from :attr:`Pipeline.epoch_rejection`. Default options are
+``e.set(epoch_rejection='')``, rejecting no epoch level data, and
+``e.set(epoch_rejection='manual')`` for manually creating rejections
+(using :meth:`Pipeline.make_epoch_rejection`).
 
 
 .. _state-reference:

@@ -217,7 +217,7 @@ class TwoStageLevel1Derivative(Derivative[Any]):
     """Cached first-stage LM fit for one subject."""
     name = 'two-stage-level-1'
     key_fields = (
-        'subject', 'epoch', 'raw', 'rej', 'model', 'equalize_evoked_count',
+        'subject', 'epoch', 'raw', 'epoch_rejection', 'model', 'equalize_evoked_count',
         'test', 'cov', 'inv', 'src', 'mri', 'parc',
     )
     cache_suffix = '.pickle'

@@ -93,9 +93,9 @@ def trans_file_path(state: dict[str, Any]) -> Path:
     return DERIV_DIR / 'trans' / f"{subject_session_basename(state)}_trans.fif"
 
 
-def rej_file_path(state: dict[str, Any], epoch: str | None = None, rej: str | None = None) -> Path:
+def rej_file_path(state: dict[str, Any], epoch: str | None = None, epoch_rejection: str | None = None) -> Path:
     epoch_name = state['epoch'] if epoch is None else epoch
-    rej_name = state['rej'] if rej is None else rej
+    rej_name = state['epoch_rejection'] if epoch_rejection is None else epoch_rejection
     return DERIV_DIR / 'eelbrain' / 'epoch selection' / f"{epoch_basename(state)}_raw-{state['raw']}_epoch-{epoch_name}_rej-{rej_name}_epoch.pickle"
 
 

@@ -165,6 +165,15 @@ def test_raw_pipe_semantic_dict():
     assert reref.drop == ['EXG8']
 
 
+def test_epoch_rejection_semantic_dict():
+    from eelbrain._experiment.epoch_rejection import EpochRejection, ManualRejection
+    rej = ManualRejection(interpolation=False)
+    assert isinstance(rej, EpochRejection)
+    assert rej.interpolation is False
+    assert rej._as_dict() == {'type': 'ManualRejection', 'interpolation': False}
+    assert ManualRejection().interpolation is True
+
+
 def test_reference_prepare_source_data():
     "Reference.prepare_source_data prepares EEG data for source localization"
     import numpy as np

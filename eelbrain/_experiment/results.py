@@ -249,7 +249,7 @@ class ResultOutputDerivative(Derivative[T]):
     ) -> dict[str, Any]:
         """Canonical state subset used by :meth:`key`."""
         data = ctx.options['data']
-        fields = ['epoch', 'raw', 'rej', 'model', 'equalize_evoked_count', 'test']
+        fields = ['epoch', 'raw', 'epoch_rejection', 'model', 'equalize_evoked_count', 'test']
         if data and data.source:
             fields.extend(['cov', 'inv', 'src', 'mri', 'parc'])
         else:
@@ -290,7 +290,7 @@ class ResultOutputDerivative(Derivative[T]):
     def _path_context_parts(self, ctx: Request) -> list[str]:
         """Path-stem parts derived from analysis context/state."""
         data = ctx.options['data']
-        parts = [f'data-{data.string}', f'raw-{ctx.state["raw"]}', f'rej-{ctx.state["rej"]}']
+        parts = [f'data-{data.string}', f'raw-{ctx.state["raw"]}', f'rej-{ctx.state["epoch_rejection"]}']
         if ctx.state['model']:
             parts.append(f'model-{ctx.state["model"]}')
         if ctx.state['equalize_evoked_count']:

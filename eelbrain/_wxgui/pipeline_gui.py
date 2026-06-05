@@ -12,6 +12,7 @@ import wx
 from .. import load
 from .._exceptions import ConfigurationError, DataError
 from .._experiment.derivative_cache import ProtectedArtifactError
+from .._experiment.epoch_rejection import ManualRejection
 from .._experiment.epochs import PrimaryEpoch
 from .._experiment.pathing import MRI_SDIR
 from .._experiment.preprocessing import RawICA, RawSource, ica_input_name, raw_bad_channels_input_name, raw_input_name
@@ -163,8 +164,8 @@ class PipelineFrame(EelbrainFrame):
                 self._tasks.append(('ica', name))
                 self._task_choice.Append(f"ICA: {name}")
 
-        for name, rej in self._pipeline._artifact_rejection.items():
-            if rej.get('kind') == 'manual':
+        for name, rej in self._pipeline._epoch_rejection.items():
+            if isinstance(rej, ManualRejection):
                 self._tasks.append(('epoch_rej', name))
                 self._task_choice.Append(f"Epoch rejection: {name}")
 
@@ -259,9 +260,9 @@ class PipelineFrame(EelbrainFrame):
                         lambda: wx.CallAfter(self._update_ica_row, subject, task_key, doc),
                     )
             elif task_type == 'epoch_rej':
-                self._pipeline.make_epoch_selection(
+                self._pipeline.make_epoch_rejection(
                     subject=subject,
-                    rej=task_key,
+                    epoch_rejection=task_key,
                     epoch=self._epoch_choice.GetStringSelection(),
                     raw=self._raw_choice.GetStringSelection(),
                 )
@@ -780,10 +781,10 @@ class PipelineFrame(EelbrainFrame):
 
         elif task_type == 'epoch_rej':
             for subject in pipeline.iter(
-                    raw=raw_name, epoch=epoch_name, rej=task_key):
+                    raw=raw_name, epoch=epoch_name, epoch_rejection=task_key):
                 if token is not self._refresh_token:
                     break
-                rej_ctx = pipeline._resolve_derivative('rej-input')
+                rej_ctx = pipeline._resolve_derivative('epoch-rejection-input')
                 path = rej_ctx.node.path(rej_ctx)
                 if path.exists():
                     ds = load.unpickle(path)

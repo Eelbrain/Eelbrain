@@ -91,7 +91,7 @@ def test_sample():
         assert str(ica_file_path(state, '*')) == join('derivatives', 'ica', 'sub-R0002_meg_raw-*_ica.fif')
 
     # events
-    e.set('R0001', rej='')
+    e.set('R0001', epoch_rejection='')
     ds = e.load_selected_events(epoch='target')
     assert ds.n_cases == 39
     ds = e.load_selected_events(epoch='auditory')
@@ -120,7 +120,7 @@ def test_sample():
         e.load_cov()
 
     # evoked cache invalidated by change in bads
-    e.set('R0001', rej='', epoch='target')
+    e.set('R0001', epoch_rejection='', epoch='target')
     e.load_events()
     assert exists(e._resolve_derivative('labeled-events').manifest_path)
     ds = e.load_evoked(ndvar=False)
@@ -130,7 +130,7 @@ def test_sample():
     ds = e.load_evoked(ndvar=False)
     assert ds[0, 'evoked'].info['bads'] == ['MEG 0331']
 
-    e.set(rej='man', model='modality')
+    e.set(epoch_rejection='manual', model='modality')
     test_tree = e.show_dependencies(
         'test-result',
         options={
@@ -170,7 +170,7 @@ def test_sample():
     assert 'evoked-stc-group-dataset [uncached]' in movie_tree
     sds = []
     for _ in e:
-        e.make_epoch_selection(auto=2.5e-12)
+        e.make_epoch_rejection(auto=2.5e-12)
         sds.append(e.load_evoked())
     ds_ind = combine(sds, dim_intersection=True)
 
@@ -254,8 +254,8 @@ def test_sample():
     ds = e.load_events()
     assert_dataobj_equal(ds['shift_t'], ds['shift'], name=False)
     # compare against epochs (baseline correction on epoch level rather than evoked for smaller numerical error)
-    ep = e.load_epochs(baseline=True, epoch='visual', rej='').aggregate('side')
-    evs = e.load_evoked(baseline=True, epoch='visual-s', rej='', model='side')
+    ep = e.load_epochs(baseline=True, epoch='visual', epoch_rejection='').aggregate('side')
+    evs = e.load_evoked(baseline=True, epoch='visual-s', epoch_rejection='', model='side')
     tstart = ep['meg'].time.tmin - shift
     assert_dataobj_equal(evs[0, 'meg'], ep[0, 'meg'].sub(time=(tstart, None)), decimal=19)
     tstop = ep['meg'].time.tstop + shift
@@ -328,7 +328,7 @@ def test_sample():
         'smooth': None,
         'samplingrate': None,
     }
-    e.set(group='ab', rej='man', model='modality')
+    e.set(group='ab', epoch_rejection='manual', model='modality')
     handle_ab = e._resolve_derivative('test-result', options=result_options)
     e.set(group='alias')
     handle_alias = e._resolve_derivative('test-result', options=result_options)
@@ -410,8 +410,8 @@ def test_sample():
     ica = e.load_ica(raw='ica', accept_stale=True)
     assert isinstance(ica, mne.preprocessing.ICA)
     assert isinstance(e.load_ica(raw='ica'), mne.preprocessing.ICA)
-    e.set(raw='ica1-40', model='', rej='man')
-    e.make_epoch_selection(auto=2e-12, overwrite=True)
+    e.set(raw='ica1-40', model='', epoch_rejection='manual')
+    e.make_epoch_rejection(auto=2e-12, overwrite=True)
     ds1 = e.load_evoked(raw='ica1-40')
     ica = e.load_ica(raw='ica')
     ica.exclude = [0, 1, 2]
@@ -421,8 +421,8 @@ def test_sample():
     # apply-ICA
     with catch_warnings():
         filterwarnings('ignore', "The measurement information indicates a low-pass frequency", RuntimeWarning)
-        ds1 = e.load_evoked(raw='ica', rej='')
-        ds2 = e.load_evoked(raw='apply-ica', rej='')
+        ds1 = e.load_evoked(raw='ica', epoch_rejection='')
+        ds2 = e.load_evoked(raw='apply-ica', epoch_rejection='')
     assert_dataobj_equal(ds2, ds1)
     # Source-space forward/inverse coverage lives in test_sample_source(), so
     # this fast test stays comparable to main.
@@ -500,7 +500,7 @@ def test_sample_source():
 
     # source space tests
     # ico-2 (320 vertices/hemi) keeps forward/inverse fast while still covering the transversetemporal ROI
-    e.set(src='ico-2', rej='', epoch='auditory', parc='ac')
+    e.set(src='ico-2', epoch_rejection='', epoch='auditory', parc='ac')
     morph = e.load_source_morph(subject='R0000')
     assert isinstance(morph, mne.SourceMorph)
     assert exists(e._resolve_derivative('source-morph').manifest_path)
@@ -576,7 +576,7 @@ def test_sample_tasks():
     datasets.setup_samples_experiment(tempdir, 2, 2, 1)
 
     class Experiment(SampleExperiment):
-        defaults = {**SampleExperiment.defaults, 'rej': 'man'}
+        defaults = {**SampleExperiment.defaults, 'epoch_rejection': 'manual'}
 
         raw = {
             'ica': RawICA('raw', ('sample1', 'sample2'), 'fastica', max_iter=1),
@@ -629,7 +629,7 @@ def test_sample_tasks():
     for _ in e:
         for epoch in ('target1', 'target2'):
             e.set(epoch=epoch)
-            e.make_epoch_selection(auto=2e-12)
+            e.make_epoch_rejection(auto=2e-12)
 
     ds = e.load_evoked('R0000', epoch='target2')
     e.set(task='sample1')
@@ -653,11 +653,11 @@ def test_sample_tasks():
     assert_dataobj_equal(dse_super, target, 19)
 
     # conflicting task and epoch settings
-    rej_path = join(root, 'derivatives', 'eelbrain', 'epoch selection', 'sub-R0000_meg_raw-1-40_epoch-target2_rej-man_epoch.pickle')
+    rej_path = join(root, 'derivatives', 'eelbrain', 'epoch selection', 'sub-R0000_meg_raw-1-40_epoch-target2_rej-manual_epoch.pickle')
     e.set(epoch='target2', raw='1-40')
     assert not exists(rej_path)
     e.set(task='sample1')
-    e.make_epoch_selection(auto=2e-12)
+    e.make_epoch_rejection(auto=2e-12)
     assert exists(rej_path)
 
     # ica
@@ -681,7 +681,7 @@ def test_epoch_reference():
         references = {'avg': Reference('average')}
 
     e = Experiment(root)
-    e.set(subject='R0000', epoch='target', rej='', raw='raw')
+    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='raw')
 
     # default reference='' leaves EEG unreferenced
     ds0 = e.load_epochs(reference='', interpolate_bads=False)
@@ -704,14 +704,14 @@ def test_epoch_reference():
         references = {'avg': Reference(['EEG 001'])}
 
     e_changed = ChangedExperiment(root)
-    e_changed.set(subject='R0000', epoch='target', rej='', raw='raw', reference='avg', model='modality')
+    e_changed.set(subject='R0000', epoch='target', epoch_rejection='', raw='raw', reference='avg', model='modality')
     assert not e_changed._resolve_derivative('evoked').is_valid()
 
     # MEG-only data: a reference with no EEG to apply raises (rather than
     # silently producing a duplicate cache entry); reference='' works
     datasets.setup_samples_experiment(tempdir, 1, 1, pick='mag', name='MegOnly')
     e_meg = Experiment(join(tempdir, 'MegOnly'))
-    e_meg.set(subject='R0000', epoch='target', rej='', raw='raw')
+    e_meg.set(subject='R0000', epoch='target', epoch_rejection='', raw='raw')
     with pytest.raises(ConfigurationError):
         e_meg.load_epochs(reference='avg')
     e_meg.load_epochs(reference='')
@@ -732,7 +732,7 @@ def test_evoked_backed_test_vars_are_post_aggregation_only():
     tempdir = TempDir()
     datasets.setup_samples_experiment(tempdir, n_subjects=3, n_segments=2, mris=False)
     root = join(tempdir, 'SampleExperiment')
-    e = Experiment(root, rej='', test='anova-ok')
+    e = Experiment(root, epoch_rejection='', test='anova-ok')
 
     options = {
         'data': _TestDims.coerce('sensor.mean', morph=True),
@@ -831,7 +831,7 @@ def test_evoked_cache_reuse():
     datasets.setup_samples_experiment(tempdir, 2, 2, 1)
     root = join(tempdir, 'SampleExperiment')
     e = SampleExperiment(root)
-    e.set(subject='R0000', epoch='target1', rej='')
+    e.set(subject='R0000', epoch='target1', epoch_rejection='')
 
     _ = e.load_evoked(ndvar=False)
     handle = e._resolve_derivative('evoked')
@@ -857,7 +857,7 @@ def test_evoked_cached_load_bypasses_epochs(monkeypatch):
     datasets.setup_samples_experiment(tempdir, 2, 2, 1)
     root = join(tempdir, 'SampleExperiment')
     e = SampleExperiment(root)
-    e.set(subject='R0000', epoch='target1', rej='')
+    e.set(subject='R0000', epoch='target1', epoch_rejection='')
 
     target = e.load_evoked(ndvar=False)
     epochs_node = e._derivatives._get_node('epochs')
@@ -892,7 +892,7 @@ def test_evoked_cached_load_applies_cat_without_rebuilding_epochs(monkeypatch):
     datasets.setup_samples_experiment(tempdir, 2, 2, 1)
     root = join(tempdir, 'SampleExperiment')
     e = SampleExperiment(root)
-    e.set(subject='R0000', epoch='target1', rej='', model='modality')
+    e.set(subject='R0000', epoch='target1', epoch_rejection='', model='modality')
 
     target = e.load_evoked(ndvar=False, cat='auditory')
     epochs_node = e._derivatives._get_node('epochs')
@@ -929,7 +929,7 @@ def test_evoked_cache_ignores_irrelevant_selected_events_changes():
     root = join(tempdir, 'SampleExperiment')
     e = SampleExperiment(root)
 
-    e.set(subject='R0000', epoch='target1', rej='', model='modality')
+    e.set(subject='R0000', epoch='target1', epoch_rejection='', model='modality')
     assert not e._resolve_derivative('evoked').is_valid()
     e.load_evoked(ndvar=False)
     assert e._resolve_derivative('evoked').is_valid()
@@ -947,7 +947,7 @@ def test_evoked_cache_ignores_irrelevant_selected_events_changes():
         }
 
     e = SampleExperimentModified(root)
-    e.set(subject='R0000', epoch='target1', rej='', model='modality')
+    e.set(subject='R0000', epoch='target1', epoch_rejection='', model='modality')
     assert e._resolve_derivative('evoked').is_valid()
 
     e.set(model='side')
@@ -964,7 +964,7 @@ def test_evoked_cache_stales_on_model_change():
     root = join(tempdir, 'SampleExperiment')
 
     e = SampleExperiment(root)
-    e.set(subject='R0000', epoch='target', rej='', model='modality')
+    e.set(subject='R0000', epoch='target', epoch_rejection='', model='modality')
     _ = e.load_evoked(ndvar=False)
 
     class ChangedExperiment(SampleExperiment):
@@ -974,7 +974,7 @@ def test_evoked_cache_stales_on_model_change():
         }
 
     e_changed = ChangedExperiment(root)
-    e_changed.set(subject='R0000', epoch='target', rej='', model='modality')
+    e_changed.set(subject='R0000', epoch='target', epoch_rejection='', model='modality')
     handle = e_changed._resolve_derivative('evoked')
 
     assert not handle.is_valid()
@@ -992,7 +992,7 @@ def test_epochs_dependency_views_distinguish_model_sensitivity():
     root = join(tempdir, 'SampleExperiment')
 
     e = SampleExperiment(root)
-    e.set(subject='R0000', epoch='target', rej='', model='modality')
+    e.set(subject='R0000', epoch='target', epoch_rejection='', model='modality')
     evoked_handle = e._resolve_derivative('evoked', options={})
     epochs_dep = next(dep for dep in evoked_handle.node.dependencies(evoked_handle) if dep.name == 'epochs')
     epochs_handle = e._resolve_derivative('epochs', options=epochs_dep.options)
@@ -1017,7 +1017,7 @@ def test_epochs_dependency_views_distinguish_model_sensitivity():
         }
 
     e_changed = ChangedExperiment(root)
-    e_changed.set(subject='R0000', epoch='target', rej='', model='modality')
+    e_changed.set(subject='R0000', epoch='target', epoch_rejection='', model='modality')
     evoked_handle_changed = e_changed._resolve_derivative('evoked')
     epochs_handle_changed = e_changed._resolve_derivative('epochs', options=epochs_dep.options)
 
@@ -1041,7 +1041,7 @@ def test_epochs_cache_uses_fif():
     datasets.setup_samples_experiment(tempdir, 1, 2, 1)
     root = join(tempdir, 'SampleExperiment')
     e = SampleExperiment(root)
-    e.set(subject='R0000', epoch='target1', rej='')
+    e.set(subject='R0000', epoch='target1', epoch_rejection='')
 
     options = {
         'baseline': False,
@@ -1090,7 +1090,7 @@ def test_epochs_cached_load_uses_current_selected_events():
     datasets.setup_samples_experiment(tempdir, 1, 2, 1)
     root = join(tempdir, 'SampleExperiment')
     e = SampleExperiment(root)
-    e.set(subject='R0000', epoch='target1', rej='')
+    e.set(subject='R0000', epoch='target1', epoch_rejection='')
 
     options = {
         'baseline': False,
@@ -1125,7 +1125,7 @@ def test_epochs_cached_load_uses_current_selected_events():
     # Loading epochs should reuse the cached FIF artifact while applying the
     # current selected-events shell to the returned Dataset.
     e_changed = ChangedExperiment(root)
-    e_changed.set(subject='R0000', epoch='target1', rej='')
+    e_changed.set(subject='R0000', epoch='target1', epoch_rejection='')
     handle_changed = e_changed._resolve_derivative('epochs', options=options)
     assert handle_changed.artifact_path == handle.artifact_path
     ds_cached = handle_changed.load(cache=True)
@@ -1146,7 +1146,7 @@ def test_selected_events_manifest_uses_real_dependencies():
     root = join(tempdir, 'SampleExperiment')
 
     e = SampleExperiment(root)
-    e.set(subject='R0000', epoch='target', rej='')
+    e.set(subject='R0000', epoch='target', epoch_rejection='')
     handle = e._resolve_derivative('epoch-events', options={
         'reject': True,
     })
@@ -1176,7 +1176,7 @@ def test_labeled_events_sidecar_copies_raw_info_from_raw():
     root = join(tempdir, 'SampleExperiment')
 
     e = SampleExperiment(root)
-    e.set(subject='R0000', epoch='target', rej='')
+    e.set(subject='R0000', epoch='target', epoch_rejection='')
     raw = e.load_raw()
 
     # labeled-events always depends on both events-input and events (trigger-based)
@@ -1275,7 +1275,7 @@ def test_source_cache_identity_ignores_view_options():
     root = join(tempdir, 'SampleExperiment')
 
     e = SampleExperiment(root)
-    e.set(subject='R0000', epoch='target', rej='', src='ico-4')
+    e.set(subject='R0000', epoch='target', epoch_rejection='', src='ico-4')
 
     epochs_stc_default = e._resolve_derivative('epochs-stc', options={
         'baseline': False,
@@ -1364,7 +1364,7 @@ def test_selected_events_vardef_is_local():
     root = join(tempdir, 'SampleExperiment')
 
     e = SampleExperiment(root)
-    e.set(subject='R0000', epoch='target', rej='')
+    e.set(subject='R0000', epoch='target', epoch_rejection='')
     options = {
         'reject': True,
     }
@@ -1410,11 +1410,11 @@ def test_sample_neuromag():
     datasets.setup_samples_experiment(tempdir, n_subjects=1, pick='')
 
     class Experiment(SampleExperiment):
-        defaults = {'raw': '1-40', 'rej': 'man'}
+        defaults = {'raw': '1-40', 'epoch_rejection': 'manual'}
 
     root = join(tempdir, 'SampleExperiment')
     e = Experiment(root)
-    e.set(raw='1-40', epoch='target', rej='')
+    e.set(raw='1-40', epoch='target', epoch_rejection='')
 
     # Check original events
     ds = e.load_events()
@@ -1423,8 +1423,8 @@ def test_sample_neuromag():
     assert ds.n_cases == 73
 
     # Check auto-rejection
-    e.set(rej='man')
-    e.make_epoch_selection(auto={'mag': 2e-12, 'grad': 5e-11, 'eeg': 1.5e-4})
+    e.set(epoch_rejection='manual')
+    e.make_epoch_rejection(auto={'mag': 2e-12, 'grad': 5e-11, 'eeg': 1.5e-4})
     ds = e.load_selected_events(reject='keep')
     assert ds['accept'].sum() == 69
 
@@ -1460,15 +1460,15 @@ def test_primary_epoch_run():
     assert e.get('run') == '1', "explicit-run epoch should set run='1' in state"
 
     # Combine-all: events from both runs combined; explicit-run loads only that run
-    e.set(epoch='target', rej='')
+    e.set(epoch='target', epoch_rejection='')
     ds_all = e.load_selected_events()
     assert ds_all.n_cases > 0
 
-    e.set(epoch='target-r1', rej='')
+    e.set(epoch='target-r1', epoch_rejection='')
     ds_r1 = e.load_selected_events()
     assert ds_r1.n_cases > 0
 
-    e.set(epoch='target-r2', rej='')
+    e.set(epoch='target-r2', epoch_rejection='')
     ds_r2 = e.load_selected_events()
     assert ds_r2.n_cases > 0
 
@@ -1483,7 +1483,7 @@ def test_primary_epoch_run():
 
     # A secondary epoch based on a combine-all primary should load epochs from
     # every run, not just the current run.
-    e.set(epoch='target-copy', rej='')
+    e.set(epoch='target-copy', epoch_rejection='')
     ds_secondary = e.load_selected_events()
     assert ds_secondary.n_cases == ds_all.n_cases
     ds_secondary_epochs = e.load_epochs()

@@ -42,9 +42,8 @@ from .._mne import shift_mne_epoch_trigger
 from .._text import enumeration
 from .._text import n_of
 from ..mne_fixes import _interpolate_bads_eeg, _interpolate_bads_meg
-from .derivative_cache import CachePolicy, Dependency, Derivative, Request, Input, UncachedDerivative, file_fingerprint
+from .derivative_cache import CachePolicy, Dependency, Derivative, Request, UncachedDerivative
 from .configuration import Configuration, typed_arg
-from .pathing import rej_file_path
 from .preprocessing import RawPipeGraph, Reference, raw_node_name
 from .test_def import TestDims
 
@@ -129,38 +128,6 @@ def _drop_bad_eeg_channels_with_missing_locs(
                 RuntimeWarning,
             )
             epochs.drop_channels(missing)
-
-
-class RejectionInput(Input):
-    name = 'rej-input'
-
-    def __init__(
-            self,
-            root: str | Path,
-            artifact_rejection: dict[str, dict[str, Any]],
-            epochs: dict[str, Any],
-    ):
-        self.root = Path(root)
-        self.artifact_rejection = artifact_rejection
-        self.epochs = epochs
-
-    def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        rej = self.artifact_rejection[ctx.state['rej']]
-        if rej['kind'] is None:
-            return {'kind': 'none'}
-        return {
-            'rej': rej,
-            'file': file_fingerprint(ctx.root, self.path(ctx), 'rej-file'),
-        }
-
-    def path(self, ctx: Request) -> Path:
-        epoch = self.epochs[ctx.state['epoch']]
-        if not isinstance(epoch, PrimaryEpoch):
-            raise RuntimeError(f"{epoch=}")
-        return ctx.root / rej_file_path(ctx.state, epoch=epoch.name)
-
-    def load(self, ctx: Request) -> Dataset:
-        return load.unpickle(self.path(ctx))
 
 
 def _evoked_comments(evoked: list[mne.Evoked]) -> list[str]:
@@ -805,7 +772,7 @@ class RecordingEpochsDerivative(Derivative[Any]):
         Whether to apply per-epoch rejection state.
     """
     name = 'recording-epochs'
-    key_fields = ('subject', 'session', 'task', 'run', 'raw', 'epoch', 'rej', 'reference')
+    key_fields = ('subject', 'session', 'task', 'run', 'raw', 'epoch', 'epoch_rejection', 'reference')
     cache_suffix = '.epochs'
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
     OPTION_DEFAULTS = {
@@ -934,7 +901,7 @@ class EpochsDerivative(Derivative[Any]):
     (remaining options forwarded to :class:`RecordingEpochsDerivative`)
     """
     name = 'epochs'
-    key_fields = ('subject', 'session', 'raw', 'epoch', 'rej', 'reference')
+    key_fields = ('subject', 'session', 'raw', 'epoch', 'epoch_rejection', 'reference')
     cache_suffix = '.epochs'
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
     OPTION_DEFAULTS = {
@@ -1110,7 +1077,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
     name = 'evoked'
     key_fields = (
         'subject', 'session', 'task', 'run', 'raw',
-        'epoch', 'rej', 'reference', 'model', 'equalize_evoked_count',
+        'epoch', 'epoch_rejection', 'reference', 'model', 'equalize_evoked_count',
     )
     cache_policy = CachePolicy.OPTIONAL
     cache_suffix = '-ave.fif'

@@ -4,7 +4,7 @@ from collections import Counter, defaultdict
 from collections.abc import Sequence
 import copy
 from datetime import datetime
-from itertools import chain, product
+from itertools import product
 import logging
 import os
 from os.path import exists
@@ -38,9 +38,10 @@ from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, DerivativeRegistry, Pro
 from .configuration import sequence_arg
 from .epochs import (
     EpochBase, EpochsDerivative, RecordingEpochsDerivative,
-    EvokedDerivative, EvokedGroupDatasetDerivative, PrimaryEpoch, RejectionInput,
+    EvokedDerivative, EvokedGroupDatasetDerivative, PrimaryEpoch,
     SecondaryEpoch, SuperEpoch, assemble_epochs, decim_param,
 )
+from .epoch_rejection import EpochRejection, ManualRejection, RejectionInput
 from .events import EpochEventsDerivative, EventsDerivative, EventsInput, LabeledEventsDerivative, SelectedEventsDerivative
 from .exceptions import FileMissingError
 from .state_model import StateModel
@@ -145,24 +146,10 @@ class Pipeline(StateModel):
         'KIT-BRAINVISION': ('HEOGL', 'HEOGR', 'VEOGb'),
         'neuromag306mag': ('MEG 0121', 'MEG 1411'),
     }
-    #
-    # artifact_rejection dict:
-    #
-    # kind : 'manual' | 'make'
-    #     How the rejection is derived:
-    #     'manual': manually create a rejection file (use the selection GUI
-    #     through .make_epoch_selection())
-    #     'make' a rejection file is created by the user
-    # interpolation : bool
-    #     enable by-epoch channel interpolation
-    #
-    # For manual rejection
-    # ^^^^^^^^^^^^^^^^^^^^
-    _artifact_rejection = {
-        '': {'kind': None},
-        'man': {'kind': 'manual', 'interpolation': True},
-    }
-    artifact_rejection = {}
+    # epoch_rejection: named EpochRejection configurations, selected through the
+    # 'epoch_rejection' state. A built-in 'manual' entry (ManualRejection()) is
+    # always available; '' selects no rejection.
+    epoch_rejection = {}
 
     # references: named Reference configurations, selected through the
     # 'reference' state. Applied to epochs after channel interpolation (EEG only).
@@ -326,14 +313,17 @@ class Pipeline(StateModel):
         # epochs
         self._epochs = assemble_epochs(self.epochs, self._tasks)
 
-        # epoch rejection
-        artifact_rejection = {}
-        for name, params in chain(self._artifact_rejection.items(), self.artifact_rejection.items()):
-            if params['kind'] in ('manual', 'make', None):
-                artifact_rejection[name] = params.copy()
-            else:
-                raise ValueError(f"kind={params['kind']!r} in artifact_rejection {name!r}")
-        self._artifact_rejection = artifact_rejection
+        # epoch rejection; 'manual' is always available, '' selects no rejection
+        epoch_rejection: dict[str, EpochRejection | None] = {'': None, 'manual': ManualRejection()}
+        for name, rejection in self.epoch_rejection.items():
+            if not isinstance(name, str):
+                raise TypeError(f"epoch_rejection[{name!r}]: name must be a string")
+            elif not name:
+                raise ValueError(f"epoch_rejection[{name!r}]: name can't be empty")
+            elif not isinstance(rejection, EpochRejection):
+                raise TypeError(f"epoch_rejection[{name!r}]={rejection!r}: need EpochRejection")
+            epoch_rejection[name] = rejection
+        self._epoch_rejection = epoch_rejection
 
         # epoch re-referencing; 'average' is always available and user-overridable
         references = {'': None, 'average': Reference('average')}
@@ -393,7 +383,7 @@ class Pipeline(StateModel):
         # raw
         raw_default = sorted(self.raw)[0] if self.raw else None
         self._register_field('raw', sorted(self._raw), default=raw_default, repr=True)
-        self._register_field('rej', self._artifact_rejection.keys(), allow_empty=True)
+        self._register_field('epoch_rejection', self._epoch_rejection.keys(), allow_empty=True)
         self._register_field('reference', self._references.keys(), allow_empty=True)
 
         # cov
@@ -461,7 +451,7 @@ class Pipeline(StateModel):
                 raise TypeError(f"Unknown raw pipe {pipe}")
         self._derivatives.register(TransInput())
         self._derivatives.register(BemInput())
-        self._derivatives.register(RejectionInput(self.root, self._artifact_rejection, self._epochs))
+        self._derivatives.register(RejectionInput(self.root, self._epoch_rejection, self._epochs))
 
         # --- Sensor-space: events → epochs → evoked ---
         self._derivatives.register(EventsInput(self._raw_extension))
@@ -482,7 +472,7 @@ class Pipeline(StateModel):
             self._groups,
             self.cache_event_labels,
         ))
-        self._derivatives.register(SelectedEventsDerivative(self._epochs, self._artifact_rejection))
+        self._derivatives.register(SelectedEventsDerivative(self._epochs, self._epoch_rejection))
         self._derivatives.register(EpochEventsDerivative(self._epochs, self._runs_for))
         self._derivatives.register(RecordingEpochsDerivative(self._raw, self._epochs, self._references))
         self._derivatives.register(EpochsDerivative(self._raw, self._epochs, self._runs_for))
@@ -958,7 +948,7 @@ class Pipeline(StateModel):
 
              - :ref:`state-raw`: preprocessing pipeline
              - :ref:`state-epoch`: which events to use and time window
-             - :ref:`state-rej`: which trials to use
+             - :ref:`state-epoch_rejection`: which trials to use
 
         """
         data = TestDims.coerce(data)
@@ -1062,7 +1052,7 @@ class Pipeline(StateModel):
 
              - :ref:`state-raw`: preprocessing pipeline
              - :ref:`state-epoch`: which events to use and time window
-             - :ref:`state-rej`: which trials to use
+             - :ref:`state-epoch_rejection`: which trials to use
              - :ref:`state-cov`: covariance matrix for inverse solution
              - :ref:`state-src`: source space
              - :ref:`state-inv`: inverse solution
@@ -1165,7 +1155,7 @@ class Pipeline(StateModel):
 
              - :ref:`state-raw`: preprocessing pipeline
              - :ref:`state-epoch`: which events to use and time window
-             - :ref:`state-rej`: which trials to use
+             - :ref:`state-epoch_rejection`: which trials to use
              - :ref:`state-model`: how to group trials into conditions
              - :ref:`state-equalize_evoked_count`: control number of trials per cell
 
@@ -1250,7 +1240,7 @@ class Pipeline(StateModel):
 
              - :ref:`state-raw`: preprocessing pipeline
              - :ref:`state-epoch`: which events to use and time window
-             - :ref:`state-rej`: which trials to use
+             - :ref:`state-epoch_rejection`: which trials to use
              - :ref:`state-model`: how to group trials into conditions
              - :ref:`state-equalize_evoked_count`: control number of trials per cell
              - :ref:`state-cov`: covariance matrix for inverse solution
@@ -1320,7 +1310,7 @@ class Pipeline(StateModel):
 
              - :ref:`state-raw`: preprocessing pipeline
              - :ref:`state-epoch`: which events to use and time window
-             - :ref:`state-rej`: which trials to use
+             - :ref:`state-epoch_rejection`: which trials to use
              - :ref:`state-model`: how to group trials into conditions
              - :ref:`state-equalize_evoked_count`: control number of trials per cell
              - :ref:`state-cov`: covariance matrix for inverse solution
@@ -1459,7 +1449,7 @@ class Pipeline(StateModel):
             Applicable :ref:`state-parameters`:
 
              - :ref:`state-raw`: preprocessing pipeline
-             - :ref:`state-rej`: which trials to use
+             - :ref:`state-epoch_rejection`: which trials to use
              - :ref:`state-cov`: covariance matrix for inverse solution
              - :ref:`state-src`: source space
              - :ref:`state-inv`: inverse solution
@@ -2584,7 +2574,7 @@ class Pipeline(StateModel):
         )
         return directory / f'{join_stem_parts(label)}.png'
 
-    def make_epoch_selection(
+    def make_epoch_rejection(
             self,
             samplingrate: int = None,
             auto: float | dict = None,
@@ -2628,21 +2618,21 @@ class Pipeline(StateModel):
         selection, create the corresponding selection file for each target
         preprocessing setting.
         """
-        rej = self.get('rej', **state)
-        rej_args = self._artifact_rejection[rej]
-        if rej_args['kind'] != 'manual':
-            raise ValueError(f"{rej=}; Epoch rejection is not manual")
+        rej = self.get('epoch_rejection', **state)
+        rej_args = self._epoch_rejection[rej]
+        if not isinstance(rej_args, ManualRejection):
+            raise ValueError(f"epoch_rejection={rej!r}; not a manual rejection")
 
         epoch = self._epochs[self.get('epoch')]
         if not isinstance(epoch, PrimaryEpoch):
             if isinstance(epoch, SecondaryEpoch):
-                raise ValueError(f"The current epoch {epoch.name!r} inherits selections from {epoch.sel_epoch!r}. To access a rejection file for this epoch, call `e.set(epoch={epoch.sel_epoch!r})` and then call `e.make_epoch_selection()` again.")
+                raise ValueError(f"The current epoch {epoch.name!r} inherits selections from {epoch.sel_epoch!r}. To access a rejection file for this epoch, call `e.set(epoch={epoch.sel_epoch!r})` and then call `e.make_epoch_rejection()` again.")
             elif isinstance(epoch, SuperEpoch):
-                raise ValueError(f"The current epoch {epoch.name!r} inherits selections from these other epochs: {epoch.sub_epochs!r}. To access selections for these epochs, call `e.make_epoch_selection(epoch=epoch)` for each.")
+                raise ValueError(f"The current epoch {epoch.name!r} inherits selections from these other epochs: {epoch.sub_epochs!r}. To access selections for these epochs, call `e.make_epoch_rejection(epoch=epoch)` for each.")
             else:
                 raise ValueError(f"The current epoch {epoch.name!r} is not a primary epoch and inherits selections from other epochs. Generate trial rejection for these epochs.")
 
-        rej_ctx = self._resolve_derivative('rej-input')
+        rej_ctx = self._resolve_derivative('epoch-rejection-input')
         path = rej_ctx.node.path(rej_ctx)
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -2684,13 +2674,13 @@ class Pipeline(StateModel):
                 args.append(f"{samplingrate=}")
             if decim is not None:
                 args.append(f"{decim=}")
-            rej_ds.info['desc'] = f"Created with {self.__class__.__name__}.make_epoch_selection({', '.join(args)})"
+            rej_ds.info['desc'] = f"Created with {self.__class__.__name__}.make_epoch_rejection({', '.join(args)})"
             # save
             save.pickle(rej_ds, path)
             # print info
             n_rej = rej_ds.eval("sum(accept == False)")
             desc = self.format("{subject}, epoch {epoch}")
-            self._log.info(f"make_epoch_selection: {n_rej} of {rej_ds.n_cases} epochs rejected with threshold {auto} for {desc}")
+            self._log.info(f"make_epoch_rejection: {n_rej} of {rej_ds.n_cases} epochs rejected with threshold {auto} for {desc}")
             return
 
         ds = self._load_derivative('epochs', options={'reject': False, 'ndvar': False})  # trigger_shift=False??
@@ -4023,10 +4013,10 @@ class Pipeline(StateModel):
             self.set(**state)
         raw_name = self.get('raw')
         epoch_name = self.get('epoch')
-        rej_name = self.get('rej')
-        rej = self._artifact_rejection[rej_name]
-        has_epoch_rejection = rej['kind'] is not None
-        has_interp = rej.get('interpolation')
+        rej_name = self.get('epoch_rejection')
+        rej = self._epoch_rejection[rej_name]
+        has_epoch_rejection = rej is not None
+        has_interp = rej is not None and rej.interpolation
 
         # format bad channels
         if bads:
@@ -4076,7 +4066,7 @@ class Pipeline(StateModel):
         caption = f"Rejection info for raw={raw_name}, epoch={epoch_name}, rej={rej_name}. Percent is rounded to one decimal."
 
         if bads_in_rej:
-            caption += " Bad channels: defined in bad_channels file and in rej-file."
+            caption += " Bad channels: defined in bad_channels file and in epoch-rejection file."
             bad_chs = [f'{bads_raw} + {bads_rej}' for bads_raw, bads_rej in bad_chs]
         else:
             bad_chs = [f'{bads_raw}' for bads_raw, bads_rej in bad_chs]

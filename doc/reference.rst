@@ -743,6 +743,13 @@ Epochs:
    SuperEpoch
    Reference
 
+Epoch rejection methods:
+
+.. autosummary::
+   :toctree: generated
+
+   ManualRejection
+
 Tests:
 
 .. autosummary::

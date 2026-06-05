@@ -561,7 +561,7 @@ class FwdDerivative(Derivative[mne.Forward]):
 
 class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
     name = 'inv'
-    key_fields = ('subject', 'session', 'raw', 'epoch', 'rej', 'cov', 'mrisubject', 'src', 'inv')
+    key_fields = ('subject', 'session', 'raw', 'epoch', 'epoch_rejection', 'cov', 'mrisubject', 'src', 'inv')
     cache_policy = CachePolicy.OPTIONAL
     cache_suffix = '-inv.fif'
 
@@ -787,7 +787,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
     name = 'epochs-stc'
     key_fields = (
         'subject', 'session', 'task', 'run', 'raw',
-        'epoch', 'rej', 'cov', 'mrisubject', 'src', 'inv', 'parc', 'common_brain', 'adjacency',
+        'epoch', 'epoch_rejection', 'cov', 'mrisubject', 'src', 'inv', 'parc', 'common_brain', 'adjacency',
     )
     # source localization handles EEG referencing internally
     fixed_state = {'reference': ''}
@@ -915,7 +915,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
     name = 'evoked-stc'
     key_fields = (
         'subject', 'session', 'task', 'run', 'raw',
-        'epoch', 'rej', 'model', 'equalize_evoked_count', 'cov', 'mrisubject',
+        'epoch', 'epoch_rejection', 'model', 'equalize_evoked_count', 'cov', 'mrisubject',
         'src', 'inv', 'parc', 'common_brain', 'adjacency',
     )
     # source localization handles EEG referencing internally
