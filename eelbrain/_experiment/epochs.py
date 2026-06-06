@@ -772,7 +772,7 @@ class RecordingEpochsDerivative(Derivative[Any]):
         Whether to apply per-epoch rejection state.
     """
     name = 'recording-epochs'
-    key_fields = ('subject', 'session', 'task', 'run', 'raw', 'epoch', 'epoch_rejection', 'reference')
+    key_fields = ('subject', 'session', 'run', 'raw', 'epoch', 'epoch_rejection', 'reference')
     cache_suffix = '.epochs'
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
     OPTION_DEFAULTS = {
