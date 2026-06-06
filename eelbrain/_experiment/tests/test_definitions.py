@@ -166,12 +166,20 @@ def test_raw_pipe_semantic_dict():
 
 
 def test_epoch_rejection_semantic_dict():
-    from eelbrain._experiment.epoch_rejection import EpochRejection, ManualRejection
+    from eelbrain._experiment.epoch_rejection import ChannelModelRejection, EpochRejection, ManualRejection
     rej = ManualRejection(interpolation=False)
     assert isinstance(rej, EpochRejection)
     assert rej.interpolation is False
     assert rej._as_dict() == {'type': 'ManualRejection', 'interpolation': False}
     assert ManualRejection().interpolation is True
+
+    auto = ChannelModelRejection(max_interpolate=3, score_threshold=1e-4, raw='1-40')
+    assert isinstance(auto, EpochRejection)
+    assert auto._as_dict() == {
+        'type': 'ChannelModelRejection', 'interpolation': True, 'fit_threshold': 50e-6,
+        'score_threshold': 1e-4, 'max_interpolate': 3, 'raw': '1-40', 'model': 'huber',
+        'alpha': 1e-4, 'epsilon': 1.35,
+    }
 
 
 def test_reference_prepare_source_data():

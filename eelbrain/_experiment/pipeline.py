@@ -41,7 +41,7 @@ from .epochs import (
     EvokedDerivative, EvokedGroupDatasetDerivative, PrimaryEpoch,
     SecondaryEpoch, SuperEpoch, assemble_epochs, decim_param,
 )
-from .epoch_rejection import EpochRejection, ManualRejection, RejectionInput
+from .epoch_rejection import ChannelModelRejection, ChannelModelRejectionDerivative, EpochRejection, ManualRejection, RejectionInput
 from .events import EpochEventsDerivative, EventsDerivative, EventsInput, LabeledEventsDerivative, SelectedEventsDerivative
 from .exceptions import FileMissingError
 from .state_model import StateModel
@@ -452,6 +452,7 @@ class Pipeline(StateModel):
         self._derivatives.register(TransInput())
         self._derivatives.register(BemInput())
         self._derivatives.register(RejectionInput(self.root, self._epoch_rejection, self._epochs))
+        self._derivatives.register(ChannelModelRejectionDerivative(self._epochs, self._epoch_rejection))
 
         # --- Sensor-space: events → epochs → evoked ---
         self._derivatives.register(EventsInput(self._raw_extension))
@@ -2581,11 +2582,13 @@ class Pipeline(StateModel):
             overwrite: bool = None,
             decim: int = None,
             **state):
-        """Open :func:`gui.select_epochs` for manual epoch selection
+        """Open :func:`gui.select_epochs` for the current epoch rejection
 
-        The GUI is opened with the correct file name; if the corresponding
-        file exists, it is loaded, and upon saving the correct path is
-        the default.
+        For a :class:`ManualRejection` the GUI is opened for editing (with the
+        correct file name; an existing file is loaded and is the default save
+        path). For an automatically generated rejection (e.g.
+        :class:`ChannelModelRejection`) the rejection is computed/cached and the
+        GUI is opened **read-only** for inspection.
 
         Parameters
         ----------
@@ -2620,8 +2623,8 @@ class Pipeline(StateModel):
         """
         rej = self.get('epoch_rejection', **state)
         rej_args = self._epoch_rejection[rej]
-        if not isinstance(rej_args, ManualRejection):
-            raise ValueError(f"epoch_rejection={rej!r}; not a manual rejection")
+        if rej_args is None:
+            raise ValueError(f"epoch_rejection={rej!r}; no epoch rejection configured")
 
         epoch = self._epochs[self.get('epoch')]
         if not isinstance(epoch, PrimaryEpoch):
@@ -2631,6 +2634,16 @@ class Pipeline(StateModel):
                 raise ValueError(f"The current epoch {epoch.name!r} inherits selections from these other epochs: {epoch.sub_epochs!r}. To access selections for these epochs, call `e.make_epoch_rejection(epoch=epoch)` for each.")
             else:
                 raise ValueError(f"The current epoch {epoch.name!r} is not a primary epoch and inherits selections from other epochs. Generate trial rejection for these epochs.")
+
+        if isinstance(rej_args, ChannelModelRejection):
+            # automatically generated: build+cache the rejection, then inspect read-only
+            rej_ctx = self._resolve_derivative('epoch-rejection-channel-model')
+            rej_ctx.load()
+            path = rej_ctx.node.path(rej_ctx)
+            ds = self._load_derivative('epochs', options={'reject': False, 'ndvar': False})
+            return gui.select_epochs(ds, 'epochs', trigger='value', path=path, read_only=True)
+        elif not isinstance(rej_args, ManualRejection):
+            raise NotImplementedError(f"make_epoch_rejection for {type(rej_args).__name__}")
 
         rej_ctx = self._resolve_derivative('epoch-rejection-input')
         path = rej_ctx.node.path(rej_ctx)

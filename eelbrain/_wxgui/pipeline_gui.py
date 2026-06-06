@@ -12,7 +12,7 @@ import wx
 from .. import load
 from .._exceptions import ConfigurationError, DataError
 from .._experiment.derivative_cache import ProtectedArtifactError
-from .._experiment.epoch_rejection import ManualRejection
+from .._experiment.epoch_rejection import ChannelModelRejection, ManualRejection
 from .._experiment.epochs import PrimaryEpoch
 from .._experiment.pathing import MRI_SDIR
 from .._experiment.preprocessing import RawICA, RawSource, ica_input_name, raw_bad_channels_input_name, raw_input_name
@@ -65,12 +65,11 @@ class PipelineFrame(EelbrainFrame):
             self._task_choice.SetSelection(0)
             self._on_task_changed(None)
 
-        # Width: fit the widest column set (ICA: 490 px) plus scrollbar + frame chrome.
+        # Width: fit the widest toolbar
         # Height: fill the usable display (wx.Fit() doesn't help here because the
         # ListCtrl uses proportion=1 and its content is populated asynchronously).
-        col_total = 180 + 110 + 110 + 90  # ICA columns are the wider of the two task types
         display = wx.GetClientDisplayRect()
-        self.SetSize((col_total + 40, display.height - 80))
+        self.SetSize((800, display.height - 80))
         self.Centre()
         self.Bind(wx.EVT_CLOSE, self._on_close)
 
@@ -96,6 +95,9 @@ class PipelineFrame(EelbrainFrame):
         )
 
         # Extra controls shown only in epoch-rejection mode
+        self._epoch_rejection_label = wx.StaticText(self._panel, label="Rejection:")
+        self._epoch_rejection_choice = wx.Choice(self._panel)
+        self._epoch_rejection_choice.Bind(wx.EVT_CHOICE, self._on_epoch_rejection_changed)
         self._epoch_label = wx.StaticText(self._panel, label="Epoch:")
         self._epoch_choice = wx.Choice(self._panel)
         self._epoch_choice.Bind(wx.EVT_CHOICE, self._on_state_changed)
@@ -104,7 +106,9 @@ class PipelineFrame(EelbrainFrame):
         self._raw_choice.Bind(wx.EVT_CHOICE, self._on_state_changed)
 
         for widget, border in [
-            (self._epoch_label, 14),
+            (self._epoch_rejection_label, 14),
+            (self._epoch_rejection_choice, 4),
+            (self._epoch_label, 10),
             (self._epoch_choice, 4),
             (self._raw_label, 10),
             (self._raw_choice, 4),
@@ -118,6 +122,12 @@ class PipelineFrame(EelbrainFrame):
         self._make_ica_btn.SetToolTip("Compute ICA for all subjects with missing files")
         self._make_ica_btn.Bind(wx.EVT_BUTTON, self._on_make_ica)
         toolbar.Add(self._make_ica_btn, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=6)
+
+        # Compute-rejection button (automatic epoch rejection only)
+        self._make_rej_btn = wx.Button(self._panel, label="Compute rejection", style=wx.BU_EXACTFIT)
+        self._make_rej_btn.SetToolTip("Compute rejection files for all subjects with missing files")
+        self._make_rej_btn.Bind(wx.EVT_BUTTON, self._on_make_rejection)
+        toolbar.Add(self._make_rej_btn, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=6)
 
         self._progress_gauge = wx.Gauge(self._panel, style=wx.GA_HORIZONTAL | wx.GA_SMOOTH)
         self._progress_gauge.SetMinSize((100, -1))
@@ -145,9 +155,11 @@ class PipelineFrame(EelbrainFrame):
         self._panel.SetSizer(vbox)
         self.CreateStatusBar()
 
-        for w in (self._epoch_label, self._epoch_choice,
+        for w in (self._epoch_rejection_label, self._epoch_rejection_choice,
+                  self._epoch_label, self._epoch_choice,
                   self._raw_label, self._raw_choice,
-                  self._make_ica_btn, self._progress_gauge, self._progress_label):
+                  self._make_ica_btn, self._make_rej_btn,
+                  self._progress_gauge, self._progress_label):
             w.Hide()
 
     # ------------------------------------------------------------------
@@ -164,10 +176,9 @@ class PipelineFrame(EelbrainFrame):
                 self._tasks.append(('ica', name))
                 self._task_choice.Append(f"ICA: {name}")
 
-        for name, rej in self._pipeline._epoch_rejection.items():
-            if isinstance(rej, ManualRejection):
-                self._tasks.append(('epoch_rej', name))
-                self._task_choice.Append(f"Epoch rejection: {name}")
+        if any(rej is not None for rej in self._pipeline._epoch_rejection.values()):
+            self._tasks.append(('epoch_rej', None))
+            self._task_choice.Append("Epoch rejection")
 
         self._tasks.append(('mri', 'mri'))
         self._task_choice.Append("MRI")
@@ -195,12 +206,36 @@ class PipelineFrame(EelbrainFrame):
         default = self._raw_choice.FindString('raw')
         self._raw_choice.SetSelection(default if default != wx.NOT_FOUND else 0)
 
+    def _populate_epoch_rejection_choices(self):
+        self._epoch_rejection_choice.Clear()
+        for name, rej in self._pipeline._epoch_rejection.items():
+            if rej is not None:
+                self._epoch_rejection_choice.Append(name)
+        if self._epoch_rejection_choice.GetCount():
+            self._epoch_rejection_choice.SetSelection(0)
+
+    def _current_epoch_rejection(self) -> str | None:
+        return self._epoch_rejection_choice.GetStringSelection() or None
+
+    def _update_rejection_button(self):
+        """Show the 'Compute rejection' button only for an automatic rejection."""
+        task_type, _ = self._current_task()
+        name = self._current_epoch_rejection()
+        is_auto = (task_type == 'epoch_rej' and name is not None
+                   and isinstance(self._pipeline._epoch_rejection[name], ChannelModelRejection))
+        self._make_rej_btn.Show(is_auto)
+        self._panel.Layout()
+
+    def _on_epoch_rejection_changed(self, event):
+        self._update_rejection_button()
+        self._start_refresh()
+
     # ------------------------------------------------------------------
     # Event handlers
 
     def _on_task_changed(self, event):
         task_type, task_key = self._current_task()
-        self._stop_make_ica()
+        self._stop_compute()
         if task_type == 'bad_chs':
             p = self._pipeline
             extra = []
@@ -213,13 +248,18 @@ class PipelineFrame(EelbrainFrame):
             self._bad_chs_iter_fields = extra
         show_epoch = task_type == 'epoch_rej'
         show_raw = task_type in ('epoch_rej', 'bad_chs')
+        self._epoch_rejection_label.Show(show_epoch)
+        self._epoch_rejection_choice.Show(show_epoch)
         self._epoch_label.Show(show_epoch)
         self._epoch_choice.Show(show_epoch)
         self._raw_label.Show(show_raw)
         self._raw_choice.Show(show_raw)
+        if show_epoch:
+            self._populate_epoch_rejection_choices()
         if show_raw:
             self._populate_epoch_raw_choices(with_epoch=show_epoch)
         self._make_ica_btn.Show(task_type == 'ica')
+        self._update_rejection_button()
         self._panel.Layout()
         self._setup_columns(task_type)
         self._start_refresh()
@@ -260,15 +300,19 @@ class PipelineFrame(EelbrainFrame):
                         lambda: wx.CallAfter(self._update_ica_row, subject, task_key, doc),
                     )
             elif task_type == 'epoch_rej':
-                self._pipeline.make_epoch_rejection(
-                    subject=subject,
-                    epoch_rejection=task_key,
-                    epoch=self._epoch_choice.GetStringSelection(),
-                    raw=self._raw_choice.GetStringSelection(),
-                )
-                # Epoch rejection has no in-memory object to read from,
-                # so do a targeted single-subject refresh instead.
-                self._start_refresh()
+                name = self._current_epoch_rejection()
+                if name is not None:
+                    # opens an editable GUI for ManualRejection, read-only for an
+                    # automatically generated rejection
+                    self._pipeline.make_epoch_rejection(
+                        subject=subject,
+                        epoch_rejection=name,
+                        epoch=self._epoch_choice.GetStringSelection(),
+                        raw=self._raw_choice.GetStringSelection(),
+                    )
+                    # Epoch rejection has no in-memory object to read from,
+                    # so do a targeted single-subject refresh instead.
+                    self._start_refresh()
             elif task_type == 'mri':
                 self._on_mri_activated(idx, subject)
             elif task_type == 'coreg':
@@ -460,9 +504,15 @@ class PipelineFrame(EelbrainFrame):
         raw_name = (self._raw_choice.GetStringSelection()
                     if task_type in ('epoch_rej', 'bad_chs') else None)
 
-        if task_type == 'epoch_rej' and not epoch_name:
-            self.SetStatusText("No epochs defined")
-            return
+        if task_type == 'epoch_rej':
+            # carry the selected rejection name through as task_key
+            task_key = self._current_epoch_rejection()
+            if task_key is None:
+                self.SetStatusText("No epoch rejection defined")
+                return
+            if not epoch_name:
+                self.SetStatusText("No epochs defined")
+                return
 
         threading.Thread(
             target=self._refresh_thread,
@@ -517,7 +567,7 @@ class PipelineFrame(EelbrainFrame):
 
     def _on_make_ica(self, event):
         if self._compute_token is not None:
-            self._stop_make_ica()
+            self._stop_compute()
             return
 
         task_type, task_key = self._current_task()
@@ -556,24 +606,27 @@ class PipelineFrame(EelbrainFrame):
             daemon=True,
         ).start()
 
-    def _finish_make_ica_ui(self):
+    def _finish_compute_ui(self):
         """Restore toolbar controls after computation ends or is cancelled."""
         self._make_ica_btn.SetLabel("Make ICA")
+        self._make_rej_btn.SetLabel("Compute rejection")
         self._progress_gauge.Hide()
         self._progress_label.Hide()
         self._refresh_btn.Enable()
         self._task_choice.Enable()
         self._panel.Layout()
 
-    def _stop_make_ica(self):
-        """Cancel the make-ICA thread and immediately restore the UI."""
+    def _stop_compute(self):
+        """Cancel a running compute thread and immediately restore the UI."""
         if self._compute_token is None:
             return
         self._compute_token = None
+        task_type, _ = self._current_task()
+        missing = 'no ICA' if task_type == 'ica' else 'missing'
         for i in range(self._list.GetItemCount()):
             if self._list.GetItemText(i, 1) == '⟳':
-                self._list.SetItem(i, 1, 'no ICA')
-        self._finish_make_ica_ui()
+                self._list.SetItem(i, 1, missing)
+        self._finish_compute_ui()
 
     def _make_ica_thread(self, token, task_key, subjects):
         pipeline = self._pipeline
@@ -645,9 +698,98 @@ class PipelineFrame(EelbrainFrame):
     def _on_make_ica_done(self, token):
         """Called when the make-ICA thread exits (finished or cancelled)."""
         if token is not self._compute_token:
-            return  # _stop_make_ica already cleaned up
+            return  # _stop_compute already cleaned up
         self._compute_token = None
-        self._finish_make_ica_ui()
+        self._finish_compute_ui()
+        self._refresh_status_bar()
+
+    # ------------------------------------------------------------------
+    # Compute-rejection background computation (automatic rejection)
+
+    def _on_make_rejection(self, event):
+        if self._compute_token is not None:
+            self._stop_compute()
+            return
+
+        task_type, _ = self._current_task()
+        name = self._current_epoch_rejection()
+        if task_type != 'epoch_rej' or name is None:
+            return
+        if not isinstance(self._pipeline._epoch_rejection[name], ChannelModelRejection):
+            return
+
+        epoch_name = self._epoch_choice.GetStringSelection()
+        raw_name = self._raw_choice.GetStringSelection()
+        subjects = [
+            self._list.GetItemText(i, 0)
+            for i in range(self._list.GetItemCount())
+            if self._list.GetItemText(i, 1) == 'missing'
+        ]
+        if not subjects:
+            return
+
+        self._refresh_token = object()
+        token = object()
+        self._compute_token = token
+        n_total = len(subjects)
+
+        self._make_rej_btn.SetLabel("Stop")
+        self._progress_gauge.SetRange(n_total)
+        self._progress_gauge.SetValue(0)
+        self._progress_gauge.Show()
+        self._progress_label.SetLabel(f"0 / {n_total}")
+        self._progress_label.Show()
+        self._refresh_btn.Disable()
+        self._task_choice.Disable()
+        self._panel.Layout()
+
+        threading.Thread(
+            target=self._make_rejection_thread,
+            args=(token, name, epoch_name, raw_name, subjects),
+            daemon=True,
+        ).start()
+
+    def _make_rejection_thread(self, token, name, epoch_name, raw_name, subjects):
+        pipeline = self._pipeline
+        n_done = 0
+        n_total = len(subjects)
+        for subject in subjects:
+            if token is not self._compute_token:
+                break
+            wx.CallAfter(self._on_subject_computing, token, subject)
+            try:
+                pipeline.set(subject=subject, epoch_rejection=name, epoch=epoch_name, raw=raw_name)
+                ctx = pipeline._resolve_derivative('epoch-rejection-channel-model')
+                rej_ds = ctx.load()
+                n_rej = int((~rej_ds['accept']).sum())
+                n_done += 1
+                wx.CallAfter(self._on_subject_rejection_computed, token, subject, str(rej_ds.n_cases), str(n_rej), n_done, n_total)
+            except Exception:
+                tb = traceback.format_exc()
+                n_done += 1
+                wx.CallAfter(self._on_subject_error, token, subject, tb, n_done, n_total)
+        wx.CallAfter(self._on_make_rejection_done, token)
+
+    def _on_subject_rejection_computed(self, token, subject, n_epochs, n_rej, n_done, n_total):
+        """Update a row after a successful rejection computation."""
+        if token is not self._compute_token:
+            return
+        for i in range(self._list.GetItemCount()):
+            if self._list.GetItemText(i, 0) == subject:
+                self._list.SetItem(i, 1, 'done')
+                self._list.SetItem(i, 2, n_epochs)
+                self._list.SetItem(i, 3, n_rej)
+                break
+        self._progress_gauge.SetValue(n_done)
+        self._progress_label.SetLabel(f"{n_done} / {n_total}")
+        self._refresh_status_bar()
+
+    def _on_make_rejection_done(self, token):
+        """Called when the compute-rejection thread exits (finished or cancelled)."""
+        if token is not self._compute_token:
+            return  # _stop_compute already cleaned up
+        self._compute_token = None
+        self._finish_compute_ui()
         self._refresh_status_bar()
 
     def _handle_stale_ica(self, subject: str, error: ProtectedArtifactError, pipeline, raw_name: str) -> tuple:
@@ -780,11 +922,13 @@ class PipelineFrame(EelbrainFrame):
                     rows.append((subject, 'no data', '—', '—'))
 
         elif task_type == 'epoch_rej':
+            rej = pipeline._epoch_rejection[task_key]
+            node_name = 'epoch-rejection-input' if isinstance(rej, ManualRejection) else 'epoch-rejection-channel-model'
             for subject in pipeline.iter(
                     raw=raw_name, epoch=epoch_name, epoch_rejection=task_key):
                 if token is not self._refresh_token:
                     break
-                rej_ctx = pipeline._resolve_derivative('epoch-rejection-input')
+                rej_ctx = pipeline._resolve_derivative(node_name)
                 path = rej_ctx.node.path(rej_ctx)
                 if path.exists():
                     ds = load.unpickle(path)

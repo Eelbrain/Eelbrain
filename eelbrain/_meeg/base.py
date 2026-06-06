@@ -5,7 +5,7 @@ import numpy as np
 
 from .._data_obj import Datalist, Dataset
 from .._ndvar import neighbor_correlation
-from .._info import BAD_CHANNELS
+from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS
 
 
 def _out(out, epochs):
@@ -17,12 +17,24 @@ def _out(out, epochs):
     return out
 
 
-def new_rejection_ds(ds):
-    """Create a rejection Dataset from a Dataset with epochs"""
+def new_rejection_ds(ds, interpolation=False):
+    """Create a rejection Dataset from a Dataset with epochs
+
+    Parameters
+    ----------
+    ds : Dataset
+        Dataset with epochs (needs a ``'value'`` column and the
+        ``'epochs.selection'`` info entry).
+    interpolation : bool
+        Also add an empty :data:`INTERPOLATE_CHANNELS` column (a
+        :class:`Datalist` with one empty channel list per epoch).
+    """
     out = Dataset(info={BAD_CHANNELS: [], 'epochs.selection': ds.info.get('epochs.selection')})
     out['value'] = ds['value']
     out[:, 'accept'] = True
     out[:, 'rej_tag'] = ''
+    if interpolation:
+        out[INTERPOLATE_CHANNELS] = Datalist([[] for _ in range(ds.n_cases)], INTERPOLATE_CHANNELS, 'strlist')
     return out
 
 

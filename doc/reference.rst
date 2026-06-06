@@ -749,6 +749,7 @@ Epoch rejection methods:
    :toctree: generated
 
    ManualRejection
+   ChannelModelRejection
 
 Tests:
 

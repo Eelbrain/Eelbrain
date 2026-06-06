@@ -128,3 +128,15 @@ def test_select_epochs():
     background = frame.canvas._background
     frame.SetVLim(1e-12)
     assert frame.canvas._background is not background
+
+    # read-only mode
+    ro_path = join(tempdir, 'rej_ro.pickle')
+    save.pickle(rej_ds, ro_path)
+    frame = gui.select_epochs(ds, path=ro_path, nplots=9, read_only=True)
+    assert frame.read_only is True
+    assert frame.CanSave() is False
+    assert '(read-only)' in frame.GetTitle()
+    # editing is a no-op in read-only mode
+    n_bad = len(frame.doc.bad_channels)
+    frame.OnSetBadChannels(None)
+    assert len(frame.doc.bad_channels) == n_bad

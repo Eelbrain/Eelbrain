@@ -718,6 +718,53 @@ def test_epoch_reference():
 
 
 @requires_mne_sample_data
+def test_channel_model_rejection():
+    "Automatic epoch rejection via ChannelModel (the 'epoch_rejection' state)"
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+    from eelbrain._info import INTERPOLATE_CHANNELS
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, 1, 1, pick='')  # keep EEG channels
+    root = join(tempdir, 'SampleExperiment')
+
+    class Experiment(SampleExperiment):
+        epoch_rejection = {'auto': ChannelModelRejection(model='ridge', fit_threshold=None, score_threshold=2e-5, max_interpolate=2)}
+
+    e = Experiment(root)
+    e.set(subject='R0000', epoch='target', raw='raw')
+    n_total = e.load_epochs(epoch_rejection='', interpolate_bads=False).n_cases
+
+    # build + cache the automatically generated rejection file
+    e.set(epoch_rejection='auto')
+    ctx = e._resolve_derivative('epoch-rejection-channel-model')
+    rej_ds = ctx.load()
+    cache_path = ctx.node.path(ctx)
+    assert exists(str(cache_path))
+    assert 'cache' in cache_path.parts and 'epoch-rejection-channel-model' in cache_path.parts
+    assert rej_ds.n_cases == n_total
+    n_rejected = int((~rej_ds['accept']).sum())
+    n_interp = sum(1 for x in rej_ds[INTERPOLATE_CHANNELS] if x)
+    assert n_rejected > 0  # some epochs rejected (> max_interpolate bad channels)
+    assert n_interp > 0    # some epochs have channels marked for interpolation
+    assert max(len(x) for x in rej_ds[INTERPOLATE_CHANNELS]) <= 2  # never exceeds max_interpolate
+    assert set(rej_ds['rej_tag'][~rej_ds['accept'].x]) == {'channel-model'}
+
+    # end-to-end: reject=True drops the rejected epochs
+    ds = e.load_epochs(reject=True, interpolate_bads=False)
+    assert ds.n_cases == n_total - n_rejected
+    # second resolve is a cache hit (no rebuild)
+    assert e._resolve_derivative('epoch-rejection-channel-model').is_valid()
+
+    # MEG-only data: ChannelModelRejection has no EEG to model -> raises
+    datasets.setup_samples_experiment(tempdir, 1, 1, pick='mag', name='MegOnly')
+    e_meg = Experiment(join(tempdir, 'MegOnly'))
+    e_meg.set(subject='R0000', epoch='target', raw='raw', epoch_rejection='auto')
+    with pytest.raises(ConfigurationError):
+        e_meg._resolve_derivative('epoch-rejection-channel-model').load()
+
+
+@requires_mne_sample_data
 def test_evoked_backed_test_vars_are_post_aggregation_only():
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment

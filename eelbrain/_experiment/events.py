@@ -9,14 +9,15 @@ Dependency structure:
     │           ├── labeled-events
     │           │     ├── events-input   (BIDS sidecar, preferred when present)
     │           │     └── events         (trigger-based fallback)
-    │           └── epoch-rejection-input  (only when epoch_rejection is set and reject != False)
+    │           └── rejection            (epoch-rejection-input | epoch-rejection-channel-model;
+    │                                      only when epoch_rejection is set and reject != False)
     │
     ├── PrimaryEpoch (combine runs: run=None and multiple runs exist)
     │     └── selected-events  ×N  (one per run)
     │           ├── labeled-events
     │           │     ├── events-input
     │           │     └── events
-    │           └── epoch-rejection-input
+    │           └── rejection
     │
     ├── SecondaryEpoch
     │     └── epoch-events  (base epoch, recursively)
@@ -43,9 +44,11 @@ Dependency structure:
 :class:`SelectedEventsDerivative` (``'selected-events'``)
     Applies epoch-specific trial selection (``sel`` predicate), artifact
     rejection, and bad-channel annotations for a single raw recording file.
-    Always restricted to one task/run combination.  Adds
-    ``epoch-rejection-input`` as a dependency when epoch rejection is active
-    (``epoch_rejection`` is set and ``reject`` is not ``False``).
+    Always restricted to one task/run combination.  Adds the rejection node
+    (``epoch-rejection-input`` for a manual rejection, or
+    ``epoch-rejection-channel-model`` for an automatic one) as a dependency when
+    epoch rejection is active (``epoch_rejection`` is set and ``reject`` is not
+    ``False``).
 
 :class:`EpochEventsDerivative` (``'epoch-events'``)
     Epoch-level event aggregation.  For :class:`~epochs.PrimaryEpoch` and
@@ -73,7 +76,7 @@ from .._data_obj import Datalist, Dataset, Factor, Var, combine
 from .._exceptions import ConfigurationError
 from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS
 from .derivative_cache import CachePolicy, Dependency, Derivative, Input, Request, UncachedDerivative, file_fingerprint
-from .epoch_rejection import EpochRejection
+from .epoch_rejection import EpochRejection, ManualRejection
 from .epochs import EPOCH_EXTRACT_OPTIONS, EpochCollection, SecondaryEpoch, SuperEpoch, PrimaryEpoch, ContinuousEpoch
 from .pathing import BIDS_ENTITY_KEYS, bids_path
 from .preprocessing import raw_node_name
@@ -350,7 +353,8 @@ class SelectedEventsDerivative(UncachedDerivative[Dataset]):
                 state['run'] = epoch.run
             deps = [Dependency('labeled-events', state=state)]
             if rejection_params is not None and reject:
-                deps.append(Dependency('epoch-rejection-input', state=state))
+                node = 'epoch-rejection-input' if isinstance(rejection_params, ManualRejection) else 'epoch-rejection-channel-model'
+                deps.append(Dependency(node, label='rejection', state=state))
             return tuple(deps)
         elif isinstance(epoch, SecondaryEpoch):
             options = ctx.options_for('selected-events', 'reject', *EPOCH_EXTRACT_OPTIONS)
@@ -377,7 +381,7 @@ class SelectedEventsDerivative(UncachedDerivative[Dataset]):
             reject = ctx.options['reject']
             rejection_params = self.epoch_rejection[ctx.state['epoch_rejection']]
             if rejection_params is not None and reject:
-                rejection_ds = ctx.load('epoch-rejection-input')
+                rejection_ds = ctx.load('rejection')
 
                 # Handle event mismatches
                 if rejection_ds.info.get('epochs.selection') is not None:

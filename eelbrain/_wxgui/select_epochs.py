@@ -823,6 +823,7 @@ class Frame(NavigableFrame, FileFrame):
             pos: tuple[int, int] | None,
             size: tuple[int, int] | None,
             allow_interpolation: bool,
+            read_only: bool = False,
     ) -> None:
         """View object of the epoch selection GUI
 
@@ -835,6 +836,7 @@ class Frame(NavigableFrame, FileFrame):
         """
         super().__init__(parent, pos, size, model)
         self.allow_interpolation = allow_interpolation
+        self.read_only = read_only
 
         # bind events
         self.doc.callbacks.subscribe('case_change', self.CaseChanged)
@@ -862,15 +864,16 @@ class Frame(NavigableFrame, FileFrame):
         self.AddNavigationButtons(tb)
         tb.AddSeparator()
 
-        # --> Bad Channels
-        button = wx.Button(tb, ID.SET_BAD_CHANNELS, "Bad Channels")
-        button.Bind(wx.EVT_BUTTON, self.OnSetBadChannels)
-        tb.AddControl(button)
+        if not read_only:
+            # --> Bad Channels
+            button = wx.Button(tb, ID.SET_BAD_CHANNELS, "Bad Channels")
+            button.Bind(wx.EVT_BUTTON, self.OnSetBadChannels)
+            tb.AddControl(button)
 
-        # --> Thresholding
-        button = wx.Button(tb, ID.THRESHOLD, "Threshold")
-        button.Bind(wx.EVT_BUTTON, self.OnThreshold)
-        tb.AddControl(button)
+            # --> Thresholding
+            button = wx.Button(tb, ID.THRESHOLD, "Threshold")
+            button.Bind(wx.EVT_BUTTON, self.OnThreshold)
+            tb.AddControl(button)
 
         # right-most part
         tb.AddStretchableSpace()
@@ -961,6 +964,16 @@ class Frame(NavigableFrame, FileFrame):
     def CanForward(self):
         return bool(self._current_page_i < self._n_pages - 1)
 
+    def CanSave(self) -> bool:
+        if self.read_only:
+            return False
+        return super().CanSave()
+
+    def UpdateTitle(self) -> None:
+        super().UpdateTitle()
+        if self.read_only:
+            self.SetTitle(self.GetTitle() + ' (read-only)')
+
     def CaseChanged(self, index):
         "Update the states of the segments on the current page"
         if isinstance(index, INT_TYPES):
@@ -1034,6 +1047,8 @@ class Frame(NavigableFrame, FileFrame):
         if ax:
             logger.debug("Canvas click at ax.ax_idx=%i", ax.ax_idx)
             if ax.ax_idx >= 0:
+                if self.read_only:
+                    return
                 idx = ax.epoch_idx
                 state = not self.doc.accept[idx]
                 tag = "manual"
@@ -1084,11 +1099,15 @@ class Frame(NavigableFrame, FileFrame):
         elif event.key == 'c':
             self.PlotCorrelation(ax.ax_idx)
         elif event.key == 'i':
-            self.ToggleChannelInterpolation(ax, event)
+            if not self.read_only:
+                self.ToggleChannelInterpolation(ax, event)
         elif event.key == 'I':
-            self.OnSetInterpolation(ax.epoch_idx)
+            if not self.read_only:
+                self.OnSetInterpolation(ax.epoch_idx)
 
     def OnFindNoisyChannels(self, event):
+        if self.read_only:
+            return
         dlg = FindNoisyChannelsDialog(self)
         if dlg.ShowModal() == wx.ID_OK:
             # Find bad channels
@@ -1228,6 +1247,8 @@ class Frame(NavigableFrame, FileFrame):
             self._topo_plot_info_str = (f"Topomap: {desc},  t = {x} ms,  marked: {marked}")
 
     def OnRejectRange(self, event):
+        if self.read_only:
+            return
         dlg = RejectRangeDialog(self)
         if dlg.ShowModal() == wx.ID_OK:
             start = int(dlg.first.GetValue())
@@ -1238,6 +1259,8 @@ class Frame(NavigableFrame, FileFrame):
         dlg.Destroy()
 
     def OnSetBadChannels(self, event):
+        if self.read_only:
+            return
         default_value = ', '.join(self.doc.bad_channel_names)
         dlg = wx.TextEntryDialog(self, "Please enter bad channel names separated by comma (e.g., \"MEG 003, MEG 010\"):", "Set Bad Channels", default_value)
         while True:
@@ -1260,6 +1283,8 @@ class Frame(NavigableFrame, FileFrame):
 
     def OnSetInterpolation(self, epoch):
         "Show Dialog for channel interpolation for this epoch (index)"
+        if self.read_only:
+            return
         old = self.doc.interpolate[epoch]
         dlg = wx.TextEntryDialog(self, "Please enter channel names separated by "
                                  "comma (e.g., \"MEG 003, MEG 010\"):", "Set "
@@ -1348,6 +1373,8 @@ class Frame(NavigableFrame, FileFrame):
             dlg.Destroy()
 
     def OnThreshold(self, event):
+        if self.read_only:
+            return
         type_scales = {ct: ch_type_scale(ct) for ct in self.doc.ch_type_names}
         dlg = ThresholdDialog(self, type_scales, _THRESHOLD_DEFAULT_SI)
         if dlg.ShowModal() == wx.ID_OK:
@@ -1746,6 +1773,8 @@ class Frame(NavigableFrame, FileFrame):
         wx.EndBusyCursor()
 
     def ToggleChannelInterpolation(self, ax, event):
+        if self.read_only:
+            return
         if not self.allow_interpolation:
             wx.MessageBox("Interpolation is disabled for this session",
                           "Interpolation disabled", wx.OK)

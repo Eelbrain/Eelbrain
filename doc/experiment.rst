@@ -725,6 +725,7 @@ a ``{name: EpochRejection}`` dictionary of trial-rejection settings.
    :template: class_nomethods.rst
 
    ManualRejection
+   ChannelModelRejection
 
 
 References (re-referencing)
