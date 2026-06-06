@@ -950,6 +950,7 @@ class Frame(NavigableFrame, FileFrame):
         self._axes_by_idx = None
         self._topo_axes = []        # list of axes (one per channel type)
         self._topo_plots = []       # list of AxTopomap (one per channel type)
+        self._topo_interp_handles = []  # transient blue-x marks for the hovered epoch's interpolation channels
         self._topo_plot_info_str = None
         self._case_segs_by_type = None  # list of [(ch_type, NDVar)] per visible epoch
         self._bfly_vlim = None          # normalized vlim last applied (multi-type only)
@@ -1242,6 +1243,15 @@ class Frame(NavigableFrame, FileFrame):
             else:
                 tseg = self._get_ax_data(ax.ax_idx, event.xdata)
                 self._topo_plots[0].set_data([tseg])
+            # mark the hovered epoch's interpolation channels with a blue x
+            while self._topo_interp_handles:
+                self._topo_interp_handles.pop().remove()
+            if ax.ax_idx >= 0:
+                for topo in self._topo_plots:
+                    smap = topo.sensors
+                    idx = [smap.sensors._array_index(ch) for ch in self.doc.interpolate[ax.epoch_idx] if ch in smap.sensors.names]
+                    if idx:
+                        self._topo_interp_handles.append(smap.ax.scatter(smap.locs[idx, 0], smap.locs[idx, 1], s=20, c='blue', marker='x'))
             self.canvas.redraw(self._topo_axes)
             marked = ', '.join(self._mark)
             self._topo_plot_info_str = (f"Topomap: {desc},  t = {x} ms,  marked: {marked}")
@@ -1754,13 +1764,19 @@ class Frame(NavigableFrame, FileFrame):
                     self._topo_axes.append(ax)
                     self._topo_plots.append(topo)
             else:
-                tseg = self._get_ax_data(0, True)
+                # build the sensor map from all good channels (not excluding the
+                # first epoch's interpolation channels) so that every interpolation
+                # channel has a location to mark; the image preview still excludes
+                # the displayed epoch's interpolation channels
+                seg = self._case_segs[0]
+                t_init = min(max(0.1, seg.time.tmin), seg.time.tmax)
                 ax = self.figure.add_subplot(nrow, ncol, plot_i)
                 ax.ax_idx = TOPO_PLOT
                 ax.topo_idx = 0
                 ax.set_axis_off()
-                layers = AxisData([DataLayer(tseg, PlotType.IMAGE)])
+                layers = AxisData([DataLayer(seg.sub(time=t_init), PlotType.IMAGE)])
                 topo = AxTopomap(ax, layers, mark=mark_topo, **self._topo_kwargs)
+                topo.set_data([self._get_ax_data(0, True)])
                 self._topo_axes = [ax]
                 self._topo_plots = [topo]
             self._topo_plot_info_str = ""
