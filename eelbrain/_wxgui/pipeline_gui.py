@@ -14,6 +14,7 @@ from .._exceptions import ConfigurationError, DataError
 from .._experiment.derivative_cache import ProtectedArtifactError
 from .._experiment.epoch_rejection import ChannelModelRejection, ManualRejection
 from .._experiment.epochs import PrimaryEpoch
+from .._experiment.exceptions import FileMissingError
 from .._experiment.pathing import MRI_SDIR
 from .._experiment.preprocessing import RawICA, RawSource, ica_input_name, raw_bad_channels_input_name, raw_input_name
 from .._utils.mne_utils import is_fake_mri
@@ -42,6 +43,30 @@ def _launch_coreg_subprocess(
 
 class _AbortRequested(Exception):
     """Raised in the refresh thread when the user clicks Abort."""
+
+
+_USER_ERROR_TYPES = (ConfigurationError, DataError, FileMissingError, FileNotFoundError)
+
+
+def _format_user_error(error: Exception) -> tuple[str, str] | None:
+    """Return a dialog title/message for expected pipeline failures."""
+    if isinstance(error, FileMissingError):
+        return "Missing input", f"A required input file is missing.\n\n{error}"
+    if isinstance(error, FileNotFoundError):
+        path = error.filename or str(error)
+        return "Missing file", f"A required file is missing:\n\n{path}"
+    if isinstance(error, DataError):
+        return "Data error", str(error)
+    if isinstance(error, ConfigurationError):
+        return "Configuration error", str(error)
+    return None
+
+
+def _user_error_dialog(error: Exception) -> tuple[str, str]:
+    dialog = _format_user_error(error)
+    if dialog is None:
+        raise TypeError(f"{error!r} is not a user-facing GUI error")
+    return dialog
 
 
 class PipelineFrame(EelbrainFrame):
@@ -317,10 +342,8 @@ class PipelineFrame(EelbrainFrame):
                 self._on_mri_activated(idx, subject)
             elif task_type == 'coreg':
                 self._on_coreg_activated(idx)
-        except DataError as error:
-            wx.MessageBox(str(error), "Data error", wx.OK | wx.ICON_ERROR, self)
-        except ConfigurationError as error:
-            wx.MessageBox(str(error), "Configuration error", wx.OK | wx.ICON_ERROR, self)
+        except _USER_ERROR_TYPES as error:
+            self._show_user_error(*_user_error_dialog(error))
         finally:
             wx.EndBusyCursor()
 
@@ -532,11 +555,18 @@ class PipelineFrame(EelbrainFrame):
             rows = self._compute_rows(token, task_type, task_key, epoch_name, raw_name)
         except _AbortRequested:
             return  # app exit already scheduled
+        except _USER_ERROR_TYPES as error:
+            wx.CallAfter(self._show_user_error, *_user_error_dialog(error))
+            return
         except Exception:
             tb = traceback.format_exc()
             wx.CallAfter(self._show_error, tb)
             return
         wx.CallAfter(self._populate_table, rows, token)
+
+    def _show_user_error(self, title: str, message: str):
+        self.SetStatusText("Error")
+        wx.MessageBox(message, title, wx.OK | wx.ICON_ERROR, self)
 
     def _show_error(self, tb: str):
         self.SetStatusText("Error")
@@ -648,6 +678,10 @@ class PipelineFrame(EelbrainFrame):
                     str(ica.n_components_), str(len(ica.exclude)),
                     n_done, n_total,
                 )
+            except _USER_ERROR_TYPES as error:
+                title, message = _user_error_dialog(error)
+                n_done += 1
+                wx.CallAfter(self._on_subject_user_error, token, subject, title, message, n_done, n_total)
             except Exception:
                 tb = traceback.format_exc()
                 n_done += 1
@@ -679,6 +713,18 @@ class PipelineFrame(EelbrainFrame):
         self._progress_gauge.SetValue(n_done)
         self._progress_label.SetLabel(f"{n_done} / {n_total}")
         self._refresh_status_bar()
+
+    def _on_subject_user_error(self, token, subject, title, message, n_done, n_total):
+        """Mark a row after an expected input/configuration failure."""
+        if token is not self._compute_token:
+            return
+        for i in range(self._list.GetItemCount()):
+            if self._list.GetItemText(i, 0) == subject:
+                self._list.SetItem(i, 1, 'error')
+                break
+        self._progress_gauge.SetValue(n_done)
+        self._progress_label.SetLabel(f"{n_done} / {n_total}")
+        wx.MessageBox(f"{subject}: {message}", title, wx.OK | wx.ICON_ERROR, self)
 
     def _on_subject_error(self, token, subject, tb, n_done, n_total):
         """Mark a row as errored after a failed ICA computation."""
@@ -764,6 +810,10 @@ class PipelineFrame(EelbrainFrame):
                 n_rej = int((~rej_ds['accept']).sum())
                 n_done += 1
                 wx.CallAfter(self._on_subject_rejection_computed, token, subject, str(rej_ds.n_cases), str(n_rej), n_done, n_total)
+            except _USER_ERROR_TYPES as error:
+                title, message = _user_error_dialog(error)
+                n_done += 1
+                wx.CallAfter(self._on_subject_user_error, token, subject, title, message, n_done, n_total)
             except Exception:
                 tb = traceback.format_exc()
                 n_done += 1
