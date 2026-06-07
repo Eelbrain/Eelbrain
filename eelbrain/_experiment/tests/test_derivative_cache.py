@@ -27,6 +27,10 @@ DEFAULT_STATE = {'subject': 's1', 'mode': 'default'}
 LOG = logging.getLogger('eelbrain.test.derivative_cache')
 
 
+# ---------------------------------------------------------------------------
+# Test doubles: pipelines and dependency-graph nodes
+# ---------------------------------------------------------------------------
+
 class _TemporaryState:
     def __init__(self, pipeline):
         self.pipeline = pipeline
@@ -490,6 +494,62 @@ class ProtectedDerivative(Derivative[str]):
         Path(path).write_text(value)
 
 
+# Instrumented doubles for the quick-fingerprint shortcut: ``CountingQuickInput``
+# exposes a cheap quick fingerprint (file mtime) and counts how often its
+# expensive full fingerprint is computed, so a test can assert the full one is
+# skipped while the quick fingerprint still matches.
+class CountingQuickInput(Input):
+    """Input with a cheap quick fingerprint and an instrumented full fingerprint."""
+    name = 'counting'
+
+    def __init__(self, root: str | Path):
+        self.root = Path(root)
+        self.full_calls = 0
+
+    def path(self, ctx: Request) -> Path:
+        path = self.root / 'inputs' / f"{ctx.state['subject']}.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        self.full_calls += 1
+        return {'content': self.path(ctx).read_text()}
+
+    def dependency_fingerprint_quick(self, ctx: Request, view: str | None = None) -> dict[str, object]:
+        return {'mtime': self.path(ctx).stat().st_mtime_ns}
+
+    def load(self, ctx: Request) -> str:
+        return self.path(ctx).read_text()
+
+
+class CountingValueDerivative(Derivative[str]):
+    name = 'counting-value'
+    key_fields = ('subject',)
+    cache_suffix = '.txt'
+
+    def __init__(self, root: str | Path):
+        self.root = Path(root)
+
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        return (Dependency('counting'),)
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {'subject': ctx.state['subject']}
+
+    def build(self, ctx: Request) -> str:
+        return ctx.load('counting')
+
+    def load(self, ctx: Request, path: str) -> str:
+        return Path(path).read_text()
+
+    def save(self, ctx: Request, path: str, value: str) -> None:
+        Path(path).write_text(value)
+
+
+# ---------------------------------------------------------------------------
+# Registry builders
+# ---------------------------------------------------------------------------
+
 def make_empty_registry():
     root = TempDir()
     return root, DerivativeRegistry(root, LOG)
@@ -519,6 +579,10 @@ def make_registry():
     registry.register(protected)
     return pipeline, registry, source, value, summary, comparison, ephemeral, protected, root
 
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
 
 def test_manifest_roundtrip_ignores_unknown_fields():
     manifest = ArtifactManifest.from_dict({
@@ -946,3 +1010,39 @@ def test_request_loads_named_view_from_input():
     value = registry.resolve('source', state=DEFAULT_STATE, options={'upper': True}).load(view='echo')
 
     assert value == 'source:ALPHA'
+
+
+# ---------------------------------------------------------------------------
+# Quick-fingerprint cache validity
+#
+# A matching quick fingerprint should let `_check_valid` reuse the stored
+# fingerprint and skip the expensive full fingerprint (CountingQuickInput above).
+# ---------------------------------------------------------------------------
+
+def test_quick_fingerprint_skips_full_fingerprint_when_unchanged():
+    import os
+
+    root, registry = make_empty_registry()
+    source = CountingQuickInput(root)
+    registry.register(source)
+    registry.register(CountingValueDerivative(root))
+    source.path(registry.resolve('counting', state={'subject': 's1'})).write_text('hello')
+
+    handle = registry.resolve('counting-value', state={'subject': 's1'})
+    assert handle.load() == 'hello'
+
+    # Re-validation with an unchanged quick fingerprint must not recompute the full one.
+    source.full_calls = 0
+    assert handle.is_valid()
+    assert source.full_calls == 0
+
+    # A changed quick fingerprint falls back to (and recomputes) the full fingerprint.
+    os.utime(source.path(registry.resolve('counting', state={'subject': 's1'})), None)
+    source.full_calls = 0
+    assert handle.is_valid()  # spurious quick change: full fingerprint still matches
+    assert source.full_calls == 1
+
+    source.path(registry.resolve('counting', state={'subject': 's1'})).write_text('changed')
+    source.full_calls = 0
+    assert not handle.is_valid()
+    assert source.full_calls == 1

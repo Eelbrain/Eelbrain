@@ -980,9 +980,15 @@ class Request(Generic[T]):
         forwarded.update(overrides)
         return forwarded
 
-    def dependency_fingerprints(self, cache: bool | None = None) -> dict[str, Any]:
-        """Return the current dependency manifest fragment for this request."""
-        return self.registry.dependency_fingerprints(self.node, self, cache)
+    def dependency_fingerprints(self, cache: bool | None = None, stored: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Return the current dependency manifest fragment for this request.
+
+        ``stored`` is the dependency fragment from the previous manifest, if
+        any. When given, each entry reuses its stored fingerprint where the
+        cheap quick fingerprint still matches (see :meth:`describe_dependency`),
+        so cache-validity checks skip the expensive recomputation.
+        """
+        return self.registry.dependency_fingerprints(self.node, self, cache, stored)
 
     def current_fingerprint(self) -> dict[str, Any]:
         """Return the canonical current fingerprint for this node request."""
@@ -1006,15 +1012,26 @@ class Request(Generic[T]):
             cache: bool | None = None,
             view: str | None = None,
             fingerprint_override: dict[str, Any] | None = None,
+            stored: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Describe this request for inclusion in another node's manifest."""
+        """Describe this request for inclusion in another node's manifest.
+
+        ``stored`` is the matching entry from the previous manifest, if any.
+        When it is given and the cheap ``quick_fingerprint`` still matches, the
+        stored full fingerprint and sub-dependencies are reused instead of being
+        recomputed, so a validity check does not pay for the expensive walk.
+        """
         out: dict[str, Any] = {'name': self.node.name}
         if fingerprint_override is None:
-            out['fingerprint'] = self.current_dependency_fingerprint(view)
-            out['dependencies'] = self.dependency_fingerprints(cache)
             quick = self.current_dependency_fingerprint_quick(view)
             if quick is not None:
                 out['quick_fingerprint'] = quick
+            if stored is not None and quick is not None and stored.get('quick_fingerprint') == quick:
+                out['fingerprint'] = stored.get('fingerprint')
+                out['dependencies'] = stored.get('dependencies', {})
+            else:
+                out['fingerprint'] = self.current_dependency_fingerprint(view)
+                out['dependencies'] = self.dependency_fingerprints(cache, stored and stored.get('dependencies'))
         else:
             out['fingerprint'] = self.registry.canonicalize(fingerprint_override)
 
@@ -1099,7 +1116,7 @@ class Request(Generic[T]):
             derivative_version=derivative.version,
             key=self.key(),
             fingerprint=self.current_fingerprint(),
-            dependencies=self.dependency_fingerprints(cache),
+            dependencies=self.dependency_fingerprints(cache, stored=manifest.dependencies),
             cache_policy=derivative.cache_policy.value,
             software={},
         )
@@ -1590,13 +1607,15 @@ class DerivativeRegistry:
             node: DependencyNode[Any],  # Node whose dependencies are being fingerprinted.
             ctx: Request,  # Bound state/options for the current load.
             cache: bool | None,  # Explicit cache override propagated to dependencies.
+            stored: dict[str, Any] | None = None,  # Previous manifest fragment, reused on quick-match.
     ) -> dict[str, Any]:
         out = {}
         with ctx._build_deps_context(cache), ctx._state_check_context():
             for dep, dep_ctx in self._dependency_handles(node, ctx):
                 key = dep.label or dep.name
                 fingerprint = node.dependency_fingerprint_override(ctx, dep, dep_ctx)
-                out[key] = dep_ctx.describe_dependency(cache, dep.view, fingerprint)
+                stored_entry = stored.get(key) if stored else None
+                out[key] = dep_ctx.describe_dependency(cache, dep.view, fingerprint, stored_entry)
         return out
 
     def read_manifest(self, path: str | Path) -> ArtifactManifest | None:
