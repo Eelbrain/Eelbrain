@@ -16,8 +16,10 @@ from eelbrain._experiment.derivative_cache import (
     DerivativeRegistry,
     Input,
     ProtectedArtifactError,
+    compare_manifests,
     file_fingerprint,
 )
+from eelbrain._experiment.logging import CacheInvalidation, StructuredFormatter
 from eelbrain.testing import TempDir
 
 
@@ -556,6 +558,11 @@ def test_registry_logs_cache_events(caplog):
     assert value.save_calls == 1
     assert value.load_calls == 2
 
+    # structured fields are attached for machine-readable consumption
+    events = [event for event in (getattr(record, 'cache_event', None) for record in caplog.records) if event]
+    assert any(event == {'event': 'build', 'derivative': 'value'} for event in events)
+    assert any(event == {'event': 'cached', 'derivative': 'value'} for event in events)
+
     handle = registry.resolve('value', state=DEFAULT_STATE)
     cache_path = handle.artifact_path
     manifest_path = handle.manifest_path
@@ -569,6 +576,69 @@ def test_registry_logs_cache_events(caplog):
     assert manifest['derivative'] == 'value'
     assert manifest['key'] == {'subject': 's1'}
     assert manifest['dependencies']['source']['kind'] == 'input'
+
+
+def test_recompute_logs_invalidation_reason(caplog):
+    _, registry, source, value, _, _, _, _, _root = make_registry()
+
+    registry.resolve('value', state=DEFAULT_STATE).load()  # initial build
+    source.source_path('s1').write_text('changed')  # invalidate the source dependency
+
+    with caplog.at_level(logging.DEBUG, logger='eelbrain.test.derivative_cache'):
+        assert registry.resolve('value', state=DEFAULT_STATE).load() == 'changed'
+
+    events = [getattr(record, 'cache_event', None) for record in caplog.records]
+    recompute = next(event for event in events if event and event['event'] == 'recompute')
+    assert recompute['derivative'] == 'value'
+    assert recompute['category'] == 'dependencies'
+    assert recompute['old'] != recompute['new']
+    assert recompute['field']
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(message.startswith('Recompute value (dependency changed') for message in messages)
+
+
+def _fake_manifest(**overrides) -> ArtifactManifest:
+    fields = dict(
+        schema_version=1, derivative='value', derivative_version=1,
+        key={'subject': 's1'}, fingerprint={'a': 1}, dependencies={},
+        cache_policy='required', software={},
+    )
+    fields.update(overrides)
+    return ArtifactManifest(**fields)
+
+
+def test_compare_manifests_reports_first_difference():
+    stored = _fake_manifest(fingerprint={'a': 1, 'b': 2})
+    current = _fake_manifest(fingerprint={'a': 1, 'b': 3})
+
+    invalidation = compare_manifests(stored, current)
+    assert invalidation.category == 'fingerprint'
+    assert invalidation.field() == 'b'
+    assert (invalidation.old, invalidation.new) == (2, 3)
+    assert invalidation.as_dict() == {'category': 'fingerprint', 'field': 'b', 'old': 2, 'new': 3}
+    assert invalidation.message() == "fingerprint changed (b: 2 -> 3)"
+
+
+def test_compare_manifests_categories():
+    assert compare_manifests(_fake_manifest(), _fake_manifest()) is None
+    assert compare_manifests(None, _fake_manifest()) == CacheInvalidation('missing_manifest')
+    assert compare_manifests(_fake_manifest(key={'subject': 's1'}), _fake_manifest(key={'subject': 's2'})).category == 'key'
+    assert compare_manifests(_fake_manifest(derivative_version=1), _fake_manifest(derivative_version=2)).category == 'version'
+
+
+def test_structured_formatter_appends_tab_columns():
+    formatter = StructuredFormatter('%(message)s')
+    record = logging.LogRecord('x', logging.DEBUG, __file__, 1, 'hello', None, None)
+    assert formatter.format(record) == 'hello'
+
+    # full recompute event maps to all columns in fixed order
+    record.cache_event = {'event': 'recompute', 'derivative': 'value', 'category': 'fingerprint', 'field': 'b', 'old': 2, 'new': 3}
+    assert formatter.format(record).split('\t') == ['hello', 'recompute', 'value', 'fingerprint', 'b', '2', '3']
+
+    # build/cached events leave the reason columns empty but keep the shared layout
+    record.cache_event = {'event': 'build', 'derivative': 'value'}
+    assert formatter.format(record).split('\t') == ['hello', 'build', 'value', '', '', '', '']
 
 
 def test_dependency_change_invalidates_downstream_derivatives():

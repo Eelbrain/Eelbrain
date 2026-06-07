@@ -55,6 +55,7 @@ import numpy as np
 
 from .._data_obj import Factor, Interaction, Var
 from .configuration import Configuration
+from .logging import CacheInvalidation, diff_invalidation
 from .pathing import CACHE_DIR, DERIV_DIR, LOG_DIR
 
 T = TypeVar('T')
@@ -610,21 +611,35 @@ class Derivative(DependencyNode[T]):
 
     def log_cache_hit(self, ctx: Request, path: Path) -> None:
         """Emit the standard cache-hit message for this derivative."""
-        self._log_cache_event(ctx, path, "Load cached")
+        self._log_cache_event(ctx, path, "Load cached", 'cached')
 
     def log_cache_build(self, ctx: Request, path: Path) -> None:
-        """Emit the standard cache-build message for this derivative."""
-        self._log_cache_event(ctx, path, "Build")
+        """Emit the standard cache-build message for this derivative (no prior artifact)."""
+        self._log_cache_event(ctx, path, "Build", 'build')
+
+    def log_cache_recompute(self, ctx: Request, path: Path, reason: CacheInvalidation) -> None:
+        """Emit the cache-recompute message, reporting why the cached artifact was invalid."""
+        self._log_cache_event(ctx, path, "Recompute", 'recompute', reason=reason)
 
     def _log_cache_event(
             self,
             ctx: Request,
             path: Path,
             action: str,
+            event: str,
+            *,
+            reason: CacheInvalidation | None = None,
     ) -> None:
         if self.cache_log_level is None:
             return
-        ctx.registry.log.log(self.cache_log_level, "%s %s: %s", action, self.name, self.cache_log_path(ctx, path))
+        detail = f" ({reason.message()})" if reason is not None else ""
+        cache_event = {'event': event, 'derivative': self.name}
+        if reason is not None:
+            cache_event.update(reason.as_dict())
+        ctx.registry.log.log(
+            self.cache_log_level, "%s %s%s: %s", action, self.name, detail, self.cache_log_path(ctx, path),
+            extra={'cache_event': cache_event},
+        )
 
     def path(self, ctx: Request) -> Path:
         """Return the concrete artifact path for this request.
@@ -809,6 +824,29 @@ def dependencies_match(stored: dict[str, Any], current: dict[str, Any]) -> bool:
     if stored.keys() != current.keys():
         return False
     return all(_dep_entry_matches(stored[k], current[k]) for k in stored)
+
+
+def compare_manifests(stored: ArtifactManifest | None, current: ArtifactManifest) -> CacheInvalidation | None:
+    """Return why ``stored`` is invalid relative to ``current``, or ``None`` if it matches.
+
+    Composes the diff engine in :mod:`.logging` with manifest-level knowledge
+    (the six validity checks and the quick-fingerprint dependency shortcut).
+    """
+    if stored is None:
+        return CacheInvalidation('missing_manifest')
+    if stored.schema_version != current.schema_version:
+        return CacheInvalidation('schema', ('schema_version',), stored.schema_version, current.schema_version)
+    if stored.derivative != current.derivative:
+        return CacheInvalidation('derivative', ('derivative',), stored.derivative, current.derivative)
+    if stored.derivative_version != current.derivative_version:
+        return CacheInvalidation('version', ('derivative_version',), stored.derivative_version, current.derivative_version)
+    if stored.key != current.key:
+        return diff_invalidation('key', stored.key, current.key)
+    if stored.fingerprint != current.fingerprint:
+        return diff_invalidation('fingerprint', stored.fingerprint, current.fingerprint)
+    if not dependencies_match(stored.dependencies, current.dependencies):
+        return diff_invalidation('dependencies', stored.dependencies, current.dependencies, strip_quick=True)
+    return None
 
 
 class Request(Generic[T]):
@@ -1048,25 +1086,24 @@ class Request(Generic[T]):
     def _manifest(self) -> ArtifactManifest | None:
         return self.registry.read_manifest(self.manifest_path)
 
-    def _is_valid(
+    def _check_valid(
             self,
             manifest: ArtifactManifest,
             cache: bool | None = None,
-    ) -> bool:
+    ) -> CacheInvalidation | None:
+        """Return why ``manifest`` is stale for this request, or ``None`` if valid."""
         derivative = self._require_derivative()
-        if manifest.schema_version != MANIFEST_SCHEMA_VERSION:
-            return False
-        if manifest.derivative != derivative.name:
-            return False
-        if manifest.derivative_version != derivative.version:
-            return False
-        if manifest.key != self.key():
-            return False
-        if manifest.fingerprint != self.current_fingerprint():
-            return False
-        if not dependencies_match(manifest.dependencies, self.dependency_fingerprints(cache)):
-            return False
-        return True
+        current = ArtifactManifest(
+            schema_version=MANIFEST_SCHEMA_VERSION,
+            derivative=derivative.name,
+            derivative_version=derivative.version,
+            key=self.key(),
+            fingerprint=self.current_fingerprint(),
+            dependencies=self.dependency_fingerprints(cache),
+            cache_policy=derivative.cache_policy.value,
+            software={},
+        )
+        return compare_manifests(manifest, current)
 
     def is_valid(self, cache: bool | None = None) -> bool:
         """Return whether the current derivative request already has a valid artifact."""
@@ -1074,7 +1111,7 @@ class Request(Generic[T]):
         manifest = self._manifest()
         if manifest is None or not self.artifact_path.exists():
             return False
-        return self._is_valid(manifest, cache)
+        return self._check_valid(manifest, cache) is None
 
     def _dependency_map(self) -> dict[str, Dependency]:
         return {dep.label or dep.name: dep for dep in self.node.dependencies(self)}
@@ -1099,13 +1136,23 @@ class Request(Generic[T]):
         use_cache = derivative.should_cache(cache)
         if use_cache:
             manifest = self._manifest()
-            if manifest and self.artifact_path.exists() and self._is_valid(manifest, cache):
+            artifact_exists = self.artifact_path.exists()
+            if manifest is None:
+                reason = None if not artifact_exists else CacheInvalidation('missing_manifest')
+            elif not artifact_exists:
+                reason = CacheInvalidation('missing_artifact')
+            else:
+                reason = self._check_valid(manifest, cache)
+            if manifest is not None and artifact_exists and reason is None:
                 self._artifact_metadata = manifest.artifact_metadata
                 derivative.log_cache_hit(self, self.artifact_path)
                 return derivative.load(self, self.artifact_path)
-            if self.artifact_path.exists() and not self.registry.is_cache_artifact(self.artifact_path) and not self.has_control(ALLOW_PROTECTED_OVERWRITE):
+            if artifact_exists and not self.registry.is_cache_artifact(self.artifact_path) and not self.has_control(ALLOW_PROTECTED_OVERWRITE):
                 raise ProtectedArtifactError(derivative.name, self.artifact_path)
-            derivative.log_cache_build(self, self.artifact_path)
+            if reason is None:
+                derivative.log_cache_build(self, self.artifact_path)
+            else:
+                derivative.log_cache_recompute(self, self.artifact_path, reason)
 
         with self._build_deps_context(cache), self.registry._node_warning_context(self), self._state_check_context():
             artifact = derivative.build(self)

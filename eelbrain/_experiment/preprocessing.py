@@ -61,8 +61,9 @@ from .._utils import user_activity
 from .derivative_cache import (
     ArtifactManifest, CachePolicy, Dependency, Derivative, UncachedDerivative,
     Request, Input, MANIFEST_SCHEMA_VERSION, ProtectedArtifactError,
-    canonical_state_subset, dependencies_match, file_fingerprint,
+    canonical_state_subset, compare_manifests, file_fingerprint,
 )
+from .logging import find_difference, format_difference_path
 from .configuration import Configuration, sequence_arg, typed_arg
 from .exceptions import FileMissingError
 from .pathing import bids_path, ica_file_path
@@ -514,108 +515,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             previous: ArtifactManifest | None,
             current: ArtifactManifest,
     ) -> bool:
-        return (
-            previous is not None
-            and previous.schema_version == current.schema_version
-            and previous.derivative == current.derivative
-            and previous.derivative_version == current.derivative_version
-            and previous.key == current.key
-            and previous.fingerprint == current.fingerprint
-            and dependencies_match(previous.dependencies, current.dependencies)
-        )
-
-    @staticmethod
-    def _strip_quick_fingerprints(obj: Any) -> Any:
-        """Recursively remove ``quick_fingerprint`` keys so diffs show content changes only."""
-        if isinstance(obj, dict):
-            return {k: ICAInput._strip_quick_fingerprints(v) for k, v in obj.items() if k != 'quick_fingerprint'}
-        if isinstance(obj, list):
-            return [ICAInput._strip_quick_fingerprints(v) for v in obj]
-        return obj
-
-    @classmethod
-    def _first_difference(
-            cls,
-            old: Any,
-            new: Any,
-            path: tuple[str, ...] = (),
-    ) -> tuple[tuple[str, ...], Any, Any] | None:
-        if isinstance(old, dict) and isinstance(new, dict):
-            for key in sorted(set(old).union(new), key=str):
-                if key not in old:
-                    return (*path, str(key)), None, new[key]
-                if key not in new:
-                    return (*path, str(key)), old[key], None
-                diff = cls._first_difference(old[key], new[key], (*path, str(key)))
-                if diff is not None:
-                    return diff
-            return None
-        if isinstance(old, list) and isinstance(new, list):
-            for i in range(max(len(old), len(new))):
-                if i >= len(old):
-                    return (*path, f'[{i}]'), None, new[i]
-                if i >= len(new):
-                    return (*path, f'[{i}]'), old[i], None
-                diff = cls._first_difference(old[i], new[i], (*path, f'[{i}]'))
-                if diff is not None:
-                    return diff
-            return None
-        if old != new:
-            return path, old, new
-        return None
-
-    @staticmethod
-    def _coarsen_diff(
-            path: tuple[str, ...],
-            old_val: Any,
-            new_val: Any,
-            old_root: Any,
-            new_root: Any,
-    ) -> tuple[tuple[str, ...], Any, Any]:
-        """When a diff path ends in list indices, return the parent list instead.
-
-        E.g. ``('bads', '[5]'), 'FT9', 'FT10'`` becomes ``('bads',), ['FT9', ...], ['FT10', ...]``.
-        """
-        trimmed = path
-        while trimmed and trimmed[-1].startswith('['):
-            trimmed = trimmed[:-1]
-        if trimmed == path:
-            return path, old_val, new_val
-
-        def nav(data: Any, p: tuple[str, ...]) -> Any:
-            for key in p:
-                if data is None:
-                    return None
-                if key.startswith('['):
-                    idx = int(key[1:-1])
-                    data = data[idx] if isinstance(data, list) and idx < len(data) else None
-                elif isinstance(data, dict):
-                    data = data.get(key)
-                else:
-                    return None
-            return data
-
-        old_parent = nav(old_root, trimmed)
-        new_parent = nav(new_root, trimmed)
-        if old_parent is None and new_parent is None:
-            return path, old_val, new_val
-        return trimmed, old_parent, new_parent
-
-    @staticmethod
-    def _format_difference_path(path: tuple[str, ...], strip_prefix: tuple[str, ...] = ()) -> str:
-        parts = list(path)
-        if strip_prefix and tuple(parts[:len(strip_prefix)]) == strip_prefix:
-            parts = parts[len(strip_prefix):]
-        out = []
-        for part in parts:
-            if part.startswith('['):
-                if out:
-                    out[-1] += part
-                else:
-                    out.append(part)
-            else:
-                out.append(part)
-        return '.'.join(out) or 'value'
+        return compare_manifests(previous, current) is None
 
     def _stale_reason(
             self,
@@ -625,17 +525,15 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         if previous is None:
             return "Eelbrain has no saved record for how this ICA file was created."
 
-        diff = self._first_difference(previous.fingerprint.get('pipe'), current.fingerprint.get('pipe'))
+        diff = find_difference(previous.fingerprint.get('pipe'), current.fingerprint.get('pipe'), coarsen=False)
         if diff is not None:
             path, old, new = diff
             field = self._format_pipe_setting(path)
             return f"The ICA step {self.raw_name!r} changed ({field}: {old!r} -> {new!r})."
 
-        prev_deps = self._strip_quick_fingerprints(previous.dependencies)
-        curr_deps = self._strip_quick_fingerprints(current.dependencies)
-        diff = self._first_difference(prev_deps, curr_deps)
+        diff = find_difference(previous.dependencies, current.dependencies, strip_quick=True)
         if diff is not None:
-            path, old, new = self._coarsen_diff(*diff, prev_deps, curr_deps)
+            path, old, new = diff
             dep = path[0]
             if dep.endswith(':raw'):
                 raw_name = self._dependency_raw_name(previous, current, dep)
@@ -648,12 +546,12 @@ class ICAInput(Input[mne.preprocessing.ICA]):
                     return f"The source data for raw step {raw_name!r} was modified ({_fmt_mtime(old)} -> {_fmt_mtime(new)})."
                 field = self._format_pipe_setting(path[1:], ('fingerprint', 'pipe'))
                 return f"This ICA was estimated using different settings for raw step {raw_name!r} ({field}: {old!r} -> {new!r})."
-            field = self._format_difference_path(path)
+            field = format_difference_path(path)
             return f"One of the recorded ICA inputs changed ({field}: {old!r} -> {new!r})."
 
-        diff = self._first_difference(previous.fingerprint, current.fingerprint)
+        diff = find_difference(previous.fingerprint, current.fingerprint)
         if diff is not None:
-            path, old, new = self._coarsen_diff(*diff, previous.fingerprint, current.fingerprint)
+            path, old, new = diff
             if path == ('bads',):
                 old_set = set(old or [])
                 new_set = set(new or [])
@@ -668,7 +566,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
                 if removed:
                     lines.append(f"  removed: {', '.join(removed)}")
                 return '\n'.join(lines)
-            field = self._format_difference_path(path)
+            field = format_difference_path(path)
             return f"The recorded ICA settings changed ({field}: {old!r} -> {new!r})."
 
         return "This ICA file no longer matches the current data and settings."
@@ -703,7 +601,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             return 'settings'
         if parts[0] in ('kwargs', 'fit_kwargs'):
             parts = parts[1:] or [parts[0]]
-        return ICAInput._format_difference_path(tuple(parts))
+        return format_difference_path(tuple(parts))
 
     def _current_value_manifest(
             self,

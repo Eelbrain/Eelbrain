@@ -44,6 +44,7 @@ from .epochs import (
 from .epoch_rejection import ChannelModelRejection, ChannelModelRejectionDerivative, EpochRejection, ManualRejection, RejectionInput
 from .events import EpochEventsDerivative, EventsDerivative, EventsInput, LabeledEventsDerivative, SelectedEventsDerivative
 from .exceptions import FileMissingError
+from .logging import CACHE_EVENT_COLUMNS, StructuredFormatter
 from .state_model import StateModel
 from .groups import assemble_groups
 from .pathing import (
@@ -278,11 +279,15 @@ class Pipeline(StateModel):
         # Logger
         ########
         # log-file
+        # A dedicated Logger instance per experiment (not via getLogger, which returns a
+        # singleton keyed by name): keeps each instance's handlers and log level isolated,
+        # even for two live experiments on the same root. ``parent`` is None, so records
+        # never propagate to the root logger (no double-logging via host configuration).
         self._log = log = logging.Logger(self.__class__.__name__, logging.DEBUG)
         log_file = root / LOG_DIR / f'{self.__class__.__name__}.log'
         os.makedirs(log_file.parent, exist_ok=True)
         handler = logging.FileHandler(log_file)
-        formatter = logging.Formatter("%(levelname)-8s %(asctime)s %(message)s", "%m-%d %H:%M")  # %(name)-12s
+        formatter = StructuredFormatter("%(levelname)-8s %(asctime)s %(message)s", "%m-%d %H:%M")
         handler.setFormatter(formatter)
         handler.setLevel(logging.DEBUG)
         log.addHandler(handler)
@@ -409,6 +414,8 @@ class Pipeline(StateModel):
         log.info("*** %s initialized with root %s on %s ***", self.__class__.__name__, root, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
         level = logging.DEBUG if any('dev' in v for v in (__version__, mne.__version__)) else logging.INFO
         log.log(level, "Using eelbrain %s, mne %s.", __version__, mne.__version__)
+        # Legend for the tab-separated columns appended to cache-event log lines (DEBUG, file only).
+        log.debug("Cache-event columns (tab-separated after the message): %s", '\t'.join(CACHE_EVENT_COLUMNS))
 
         # set initial values
         self.set(**state)
