@@ -556,6 +556,7 @@ def setup_samples_experiment(
         n_subjects: int = 3,
         n_tasks: int = 1,
         n_segments: int = 4,
+        n_runs: int = 1,
         mris: bool = False,
         name: str = 'SampleExperiment',
         pick: str = 'mag',
@@ -577,6 +578,9 @@ def setup_samples_experiment(
         Number of tasks per subject.
     n_segments
         Number of data segments to include in each file.
+    n_runs
+        Number of runs per subject/task (default 1, i.e. no run entity).
+        When >1, each run receives the same data segment.
     mris
         Set up MRIs.
     name
@@ -615,7 +619,8 @@ def setup_samples_experiment(
     sfreq = emptyroom_raw.info['sfreq']
 
     # segmentation
-    n_recordings = n_subjects * n_tasks
+    n_recordings = n_subjects * n_tasks * n_runs
+    runs = [str(i + 1) for i in range(n_runs)] if n_runs > 1 else [None]
     events = mne.find_events(raw)
     events[:, 0] -= raw.first_samp
     segs = []
@@ -656,25 +661,26 @@ def setup_samples_experiment(
 
     for subject in subjects:
         for task in tasks:
-            start, stop = segs.pop()
-            raw_ = raw.copy().crop(start, stop)
-            raw_.load_data()
-            if pick == 'eeg':
-                raw_.pick_types(eeg=True, stim=True, exclude=[])
-            elif pick:
-                raw_.pick_types(pick, stim=True, exclude=[])
-            bids_path.update(subject=subject, task=task, datatype=datatype)
-            write_raw_bids(
-                raw=raw_,
-                bids_path=bids_path,
-                event_id=event_id,
-                events=mne.find_events(raw_),
-                overwrite=True,
-                allow_preload=True,
-                format=format,
-            )
+            for run in runs:
+                start, stop = segs.pop()
+                raw_ = raw.copy().crop(start, stop)
+                raw_.load_data()
+                if pick == 'eeg':
+                    raw_.pick_types(eeg=True, stim=True, exclude=[])
+                elif pick:
+                    raw_.pick_types(pick, stim=True, exclude=[])
+                bids_path.update(subject=subject, task=task, run=run, datatype=datatype)
+                write_raw_bids(
+                    raw=raw_,
+                    bids_path=bids_path,
+                    event_id=event_id,
+                    events=mne.find_events(raw_),
+                    overwrite=True,
+                    allow_preload=True,
+                    format=format,
+                )
         if datatype == 'meg':
-            bids_path.update(task='noise', suffix='meg', extension='.fif')
+            bids_path.update(task='noise', run=None, suffix='meg', extension='.fif')
             write_raw_bids(
                 raw=emptyroom_raw,
                 bids_path=bids_path,

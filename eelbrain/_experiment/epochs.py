@@ -1,12 +1,31 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-"""Epoch definitions and epoch/evoked sensor derivatives."""
+"""Epoch definitions and epoch/evoked sensor derivatives.
+
+Dependency structure:
+
+    epochs
+    ├── PrimaryEpoch (single run) / ContinuousEpoch / SecondaryEpoch
+    │     ├── epoch-events               (trial metadata, see events tree)
+    │     └── recording-epochs
+    │           ├── selected-events      (same epoch, provides trial timings)
+    │           └── raw
+    │
+    ├── PrimaryEpoch (combine runs)
+    │     ├── epoch-events               (aggregated across all runs)
+    │     └── recording-epochs  ×N      (one per run)
+    │           ├── selected-events      (for that run)
+    │           └── raw
+    │
+    └── SuperEpoch
+          └── epochs  ×N                 (one per sub-epoch, each recursing into this tree)
+
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Literal
 from collections.abc import Iterator
-import inspect
 from collections.abc import Mapping, Sequence
 import math
 import shutil
@@ -158,7 +177,9 @@ class EpochBase(Configuration):
     _rej_file_epochs_from_name = False
     _needs_task: bool = False
     _tasks = None  # set if tasks is not (task,)
-    _allowed_eval_attrs: tuple[str, ...] = ('trigger_shift', 'post_baseline_trigger_shift')  # str to be evaluated in the events dataset
+    # Attributes that can contain a str to be evaluated in the events Dataset
+    # Used to construct the fingerprint for the events this epoch depends on
+    _allowed_eval_attrs: tuple[str, ...] = ('trigger_shift', 'post_baseline_trigger_shift')
 
     def _prepare_selected_events(
             self,
@@ -180,10 +201,9 @@ class EpochBase(Configuration):
 
         Returns
         -------
-        ds
-            Dataset to use as the event shell for epoch extraction.
-            Implementations may return a rewritten dataset, for example for
-            continuous epochs.
+        Dataset to use as the event shell for epoch extraction.
+        Implementations may return a rewritten dataset, for example for
+        continuous epochs.
         """
         if ds.n_cases == 0:
             raise RuntimeError(f"No events left for epoch {subject}/{self.name}")
@@ -204,6 +224,7 @@ class EpochBase(Configuration):
         return ds
 
     def _eval_attrs(self) -> Iterator[str]:
+        """Yield settings that must be evaluated in the events dataset."""
         for attr in self._allowed_eval_attrs:
             if isinstance(getattr(self, attr), str):
                 yield attr
@@ -240,21 +261,8 @@ class EpochBase(Configuration):
         """
         raise NotImplementedError(f"{self.__class__.__name__}._extraction_parameters()")
 
-    def _repr_args(self):
-        args = []
-        for name, param in inspect.signature(self.__class__).parameters.items():
-            value = getattr(self, name)
-            if param.default is param.empty:
-                args.append(repr(value))
-            elif value != param.default:
-                args.append(f'{name}={value!r}')
-        return args
-
-    def __repr__(self):
-        args = ', '.join(self._repr_args())
-        return f"{self.__class__.__name__}({args})"
-
     def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase], tasks: Sequence[str]) -> None:
+        """Bind epoch-graph parameters after all epoch names are known."""
         if self._rej_file_epochs_from_name:
             self.rej_file_epochs = (self.name,)
         if self._needs_task:
@@ -268,7 +276,7 @@ class EpochBase(Configuration):
 
     @property
     def tasks(self) -> tuple[str, ...]:
-        """Which tasks go into this epoch"""
+        """Tasks contributing data to this epoch definition."""
         if self._tasks:
             return self._tasks
         return (self.task,)
@@ -282,39 +290,7 @@ class Epoch(EpochBase):
     # to be set by subclass
     rej_file_epochs = None
 
-    def _prepare_selected_events(
-            self,
-            ds: Dataset,
-            subject: str,
-            options: dict[str, Any],
-    ) -> Dataset:
-        ds = super()._prepare_selected_events(ds, subject, options)
-        tmin, tmax, tstop, _, decim, variable_tmax = self._extraction_parameters(ds, options)
-        if variable_tmax:
-            return ds
-        raw_sfreq = ds.info['raw.samplingrate']
-        if tmax is None:
-            if tstop is None:
-                tmax = 0.6
-            else:
-                sfreq = raw_sfreq / decim
-                start_index = int(round(tmin * sfreq))
-                stop_index = int(round(tstop * sfreq))
-                tmax = tmin + (stop_index - start_index - 1) / sfreq
-        elif tstop is not None:
-            raise TypeError(f"tmax and tstop can not both be specified at the same time, got tmax={tmax}, tstop={tstop}")
-        sample = ds['sample'].x
-        i_min = sample + math.floor(tmin * raw_sfreq)
-        i_max = sample + math.floor(tmax * raw_sfreq)
-        selection = np.flatnonzero((i_min >= ds.info['raw.first_samp']) & (i_max <= ds.info['raw.last_samp']))
-        if len(selection) == ds.n_cases and np.array_equal(selection, np.arange(ds.n_cases)):
-            return ds
-        ds = ds[selection]
-        ds.info = ds.info.copy()
-        ds.info['epochs.selection'] = selection
-        return ds
-
-    def _set_epoch_parameters(
+    def __init__(
             self,
             tmin: float | str = -0.1,
             tmax: float | str = 0.6,
@@ -325,7 +301,8 @@ class Epoch(EpochBase):
             post_baseline_trigger_shift: str = None,
             post_baseline_trigger_shift_min: float = None,
             post_baseline_trigger_shift_max: float = None,
-    ) -> None:
+    ):
+        """Store and validate common fixed-length epoch parameters."""
         if post_baseline_trigger_shift is not None:
             if post_baseline_trigger_shift_min is None or post_baseline_trigger_shift_max is None:
                 raise ConfigurationError(f"{post_baseline_trigger_shift=} but missing post_baseline_trigger_shift_min and/or post_baseline_trigger_shift_max")
@@ -367,35 +344,53 @@ class Epoch(EpochBase):
         self.post_baseline_trigger_shift_min = post_baseline_trigger_shift_min
         self.post_baseline_trigger_shift_max = post_baseline_trigger_shift_max
 
-    def __init__(
+    def _prepare_selected_events(
             self,
-            tmin: float | str = -0.1,
-            tmax: float | str = 0.6,
-            samplingrate: float = None,
-            decim: int = None,
-            baseline: EpochBaselineArg = None,
-            trigger_shift: float | str = 0.,
-            post_baseline_trigger_shift: str = None,
-            post_baseline_trigger_shift_min: float = None,
-            post_baseline_trigger_shift_max: float = None,
-    ):
-        self._set_epoch_parameters(
-            tmin,
-            tmax,
-            samplingrate,
-            decim,
-            baseline,
-            trigger_shift,
-            post_baseline_trigger_shift,
-            post_baseline_trigger_shift_min,
-            post_baseline_trigger_shift_max,
-        )
+            ds: Dataset,
+            subject: str,
+            options: dict[str, Any],
+    ) -> Dataset:
+        """Apply common event preparation and discard out-of-bounds epochs."""
+        ds = super()._prepare_selected_events(ds, subject, options)
+        return self._trim_to_raw_boundaries(ds, options)
+
+    def _trim_to_raw_boundaries(
+            self,
+            ds: Dataset,
+            options: dict[str, Any],
+    ) -> Dataset:
+        """Remove events whose requested epoch window exceeds raw bounds."""
+        tmin, tmax, tstop, _, decim, variable_tmax = self._extraction_parameters(ds, options)
+        if variable_tmax:
+            return ds
+        raw_sfreq = ds.info['raw.samplingrate']
+        if tmax is None:
+            if tstop is None:
+                tmax = 0.6
+            else:
+                sfreq = raw_sfreq / decim
+                start_index = int(round(tmin * sfreq))
+                stop_index = int(round(tstop * sfreq))
+                tmax = tmin + (stop_index - start_index - 1) / sfreq
+        elif tstop is not None:
+            raise TypeError(f"tmax and tstop can not both be specified at the same time, got tmax={tmax}, tstop={tstop}")
+        sample = ds['sample'].x
+        i_min = sample + math.floor(tmin * raw_sfreq)
+        i_max = sample + math.floor(tmax * raw_sfreq)
+        selection = np.flatnonzero((i_min >= ds.info['raw.first_samp']) & (i_max <= ds.info['raw.last_samp']))
+        if len(selection) == ds.n_cases and np.array_equal(selection, np.arange(ds.n_cases)):
+            return ds
+        ds = ds[selection]
+        ds.info = ds.info.copy()
+        ds.info['epochs.selection'] = selection
+        return ds
 
     def _extraction_parameters(
             self,
             ds: Dataset,
             options: dict[str, Any],
     ) -> tuple[float, Any, float | None, Any, int, bool]:
+        """Resolve fixed-length extraction settings with load-time overrides."""
         tmin = self.tmin if options['tmin'] is None else options['tmin']
         tmax = options['tmax']
         tstop = options['tstop']
@@ -470,6 +465,9 @@ class PrimaryEpoch(Epoch):
     n_cases
         Expected number of epochs. If n_cases is defined, a ``RuntimeError``
         will be raised whenever the actual number of matching events is different.
+    run
+        Restrict the epoch to a specific run. By default (``None``), events are
+        combined across all available runs for the given task.
 
     See Also
     --------
@@ -490,7 +488,7 @@ class PrimaryEpoch(Epoch):
         PrimaryEpoch('task', "(variable == 'label') & (other_variable == 'other_label)")
 
     """
-    DICT_ATTRS = Epoch.DICT_ATTRS + ('sel',)
+    DICT_ATTRS = Epoch.DICT_ATTRS + ('task', 'run', 'sel',)
     _rej_file_epochs_from_name = True
     _needs_task = True
 
@@ -508,21 +506,13 @@ class PrimaryEpoch(Epoch):
             post_baseline_trigger_shift_min: float = None,
             post_baseline_trigger_shift_max: float = None,
             n_cases: int = None,
+            run: str | None = None,
     ):
-        Epoch.__init__(self, tmin, tmax, samplingrate, decim, baseline, trigger_shift, post_baseline_trigger_shift, post_baseline_trigger_shift_min, post_baseline_trigger_shift_max)
+        super().__init__(tmin, tmax, samplingrate, decim, baseline, trigger_shift, post_baseline_trigger_shift, post_baseline_trigger_shift_min, post_baseline_trigger_shift_max)
         self.task = task
+        self.run = typed_arg(run, str)
         self.sel = typed_arg(sel, str)
         self.n_cases = typed_arg(n_cases, int)
-
-    def _repr_args(self):
-        args = [repr(self.task)]
-        if self.sel is not None:
-            args.append(repr(self.sel))
-        for name, param in inspect.signature(Epoch).parameters.items():
-            value = getattr(self, name)
-            if value != param.default:
-                args.append(f'{name}={value!r}')
-        return args
 
 
 class SecondaryEpoch(Epoch):
@@ -563,13 +553,6 @@ class SecondaryEpoch(Epoch):
         self.sel = typed_arg(sel, str)
         self._kwargs = kwargs
 
-    def _repr_args(self):
-        args = [repr(self.sel_epoch)]
-        if self.sel is not None:
-            args.append(repr(self.sel))
-        args.extend([f'{key}={value!r}' for key, value in self._kwargs.items()])
-        return args
-
     def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase], tasks: Sequence[str]) -> None:
         base = epochs[self.sel_epoch]
         if not isinstance(base, (PrimaryEpoch, SecondaryEpoch)):
@@ -577,7 +560,7 @@ class SecondaryEpoch(Epoch):
         params = self._kwargs.copy()
         for param in self.INHERITED_PARAMS:
             params.setdefault(param, getattr(base, param))
-        self._set_epoch_parameters(**params)
+        Epoch.__init__(self, **params)
         self.rej_file_epochs = base.rej_file_epochs
         self.task = base.task
 
@@ -619,19 +602,17 @@ class SuperEpoch(Epoch):
             if sub_epoch.post_baseline_trigger_shift is not None:
                 raise ConfigurationError(f"Epoch {self.name}: Super-epochs are merged on the level of events and can't contain epochs with post_baseline_trigger_shift")
         params = self._kwargs.copy()
-        for param, value in _shared_sub_epoch_parameters(self.name, sub_epochs, self.INHERITED_PARAMS).items():
-            params.setdefault(param, value)
-        self._set_epoch_parameters(**params)
+        # Only check sub-epoch agreement for params that are not explicitly overridden
+        non_overridden = [p for p in self.INHERITED_PARAMS if p not in params]
+        params.update(_shared_sub_epoch_parameters(self.name, sub_epochs, non_overridden))
+        Epoch.__init__(self, **params)
+        # Record which params were explicitly overridden; _kwargs is kept for idempotent re-resolution
+        self._explicit_params = tuple(self._kwargs)
         self._tasks = tuple(sorted({sub_epoch.task for sub_epoch in sub_epochs}))
         self.rej_file_epochs = [epoch_name for sub_epoch in sub_epochs for epoch_name in sub_epoch.rej_file_epochs]
 
-    def _prepare_selected_events(
-            self,
-            ds: Dataset,
-            subject: str,
-            options: dict[str, Any],
-    ) -> Dataset:
-        return EpochBase._prepare_selected_events(self, ds, subject, options)
+    def _trim_to_raw_boundaries(self, ds: Dataset, options: dict[str, Any]) -> Dataset:
+        return ds
 
 
 class EpochCollection(EpochBase):
@@ -661,10 +642,6 @@ class EpochCollection(EpochBase):
 
     def __init__(self, collect: Sequence[str]):
         self.collect = collect
-        EpochBase.__init__(self)
-
-    def _repr_args(self):
-        return [repr(self.collect)]
 
     def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase], tasks: Sequence[str]) -> None:
         sub_epochs = [epochs[sub_epoch] for sub_epoch in self.collect]
@@ -724,7 +701,6 @@ class ContinuousEpoch(EpochBase):
             split: float = 10,
             samplingrate: float = None,
     ):
-        EpochBase.__init__(self)
         self.task = typed_arg(task, str)
         self.sel = typed_arg(sel, str)
         self.pad_start = typed_arg(pad_start, float)
@@ -766,35 +742,69 @@ class ContinuousEpoch(EpochBase):
         return -self.pad_start, ds.eval('tmax'), None, baseline, decim, True
 
 
-class EpochsDerivative(Derivative[Any]):
-    """Epoch dataset with cached MNE epochs as internal artifact.
+# save/load one or multiple epochs objects
+def _save_epochs(path: Path, value) -> None:
+    if path.exists():
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    path.mkdir()
+    if isinstance(value, Datalist):
+        for i, epochs in enumerate(value):
+            epochs.save(path / f'epochs-{i:04d}-epo.fif', overwrite=True)
+    else:
+        value.save(path / 'epochs-0000-epo.fif', overwrite=True)
+
+
+def _load_epochs(path: Path, metadata: dict[str, Any]):
+    if metadata['kind'] == 'datalist':
+        return Datalist(
+            [mne.read_epochs(path / relpath, proj=False) for relpath in metadata['files']],
+            metadata['name'],
+            metadata['fmt'],
+        )
+    return mne.read_epochs(path / metadata['file'], proj=False)
+
+
+def _epochs_artifact_metadata(value) -> dict[str, Any]:
+    if isinstance(value, Datalist):
+        return {
+            'kind': 'datalist',
+            'files': [f'epochs-{i:04d}-epo.fif' for i in range(len(value))],
+            'name': value.name,
+            'fmt': value._fmt,
+        }
+    return {'kind': 'single', 'file': 'epochs-0000-epo.fif'}
+
+
+class RecordingEpochsDerivative(Derivative[Any]):
+    """MNE epochs extracted from a single raw recording.
+
+    Loads the event shell from :class:`~events.SelectedEventsDerivative`,
+    reads the corresponding raw data, and extracts fixed-length or
+    variable-length MNE :class:`~mne.Epochs`.  Always restricted to one
+    task/run combination; multi-run aggregation is handled by
+    :class:`EpochsDerivative`.
 
     Options
     -------
-    ndvar
-        Whether to convert epoch data to NDVars (``True | False | 'both'``).
-    data
-        Sensor representation to return.
     baseline
-        Baseline correction to apply while creating cached epochs.
-    samplingrate
-        Sampling rate override for epoch extraction.
-    decim
-        Decimation override for epoch extraction.
+        Baseline correction to apply during epoch extraction.
+    samplingrate / decim
+        Sampling rate or decimation override.
     pad
-        Extra time padding to add before epoch extraction.
+        Extra time padding before epoch extraction.
     trigger_shift
         Whether to apply trigger shifting from the epoch definition.
     tmin, tmax, tstop
-        Time window overrides for epoch extraction.
+        Time window overrides.
     interpolate_bads
-        Whether and how to interpolate bad channels while building epochs.
+        Whether to interpolate bad channels while building epochs.
     reject
-        Whether to apply per-epoch interpolation/rejection state.
-    cat
-        Optional subset of model cells to keep before epoch creation.
+        Whether to apply per-epoch rejection state.
     """
-    name = 'epochs'
+    name = 'recording-epochs'
     key_fields = ('subject', 'session', 'task', 'run', 'raw', 'epoch', 'rej')
     cache_suffix = '.epochs'
     cache_policy = CachePolicy.DISABLED_BY_DEFAULT
@@ -809,52 +819,183 @@ class EpochsDerivative(Derivative[Any]):
         'tstop': None,
         'interpolate_bads': False,
         'reject': True,
-        'cat': None,
     }
-    VIEW_OPTION_DEFAULTS = {'ndvar': True, 'data': 'sensor'}
 
-    def __init__(
-            self,
-            raw,
-            epochs: dict[str, Any],
-    ):
+    def __init__(self, raw, epochs: dict[str, Any]):
         self.raw = raw
         self.epochs = epochs
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         epoch = self.epochs[ctx.state['epoch']]
-        if isinstance(epoch, EpochCollection):
-            raise TypeError(f"{epoch=}: load_epochs not supported for EpochCollection")
-        elif isinstance(epoch, SuperEpoch):
-            options = ctx.options_for('epochs', *self.OPTION_DEFAULTS, ndvar=False, data='sensor')
-            return tuple(
-                Dependency('epochs', label=sub_epoch, state={'epoch': sub_epoch, 'task': self.epochs[sub_epoch].task}, options=options)
-                for sub_epoch in epoch.sub_epochs
-            )
+        if not isinstance(epoch, (PrimaryEpoch, SecondaryEpoch, ContinuousEpoch)):
+            raise TypeError(f"{epoch=}")
+        raw_name = ctx.state['raw']
         state = {'task': epoch.task}
+        event_options = ctx.options_for('selected-events', 'reject', *EPOCH_EXTRACT_OPTIONS)
         return (
-            Dependency(
-                raw_node_name(ctx.state['raw']),
-                label='raw',
-                state=state,
-                options=ctx.options_for(raw_node_name(ctx.state['raw']), preload=False, noise=False),
-            ),
-            Dependency(
-                'selected-events',
-                state=state,
-                options=ctx.options_for('selected-events', 'reject', 'cat', *EPOCH_EXTRACT_OPTIONS, index=False),
-            ),
+            Dependency('selected-events', state=state, options=event_options),
+            Dependency(raw_node_name(raw_name), label='raw', state=state),
         )
 
     def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, Any] | None:
         if dep.name != 'selected-events':
             return None
         epoch = self.epochs[ctx.state['epoch']]
+        ds = ctx.load('selected-events')
+        out = {'sample': ds['sample'], 'bad_channels': ds.info[BAD_CHANNELS]}
+        for attr in epoch._eval_attrs():
+            out[attr] = getattr(epoch, attr)
+        if ds.info.get(INTERPOLATE_CHANNELS, False) and INTERPOLATE_CHANNELS in ds:
+            out[INTERPOLATE_CHANNELS] = ds[INTERPOLATE_CHANNELS]
+        return out
+
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        epoch = self.epochs[ctx.state['epoch']]
+        return self.standard_fingerprint(ctx, definitions={'epoch': epoch})
+
+    def build(self, ctx: Request):
+        epoch = self.epochs[ctx.state['epoch']]
+        ds = ctx.load('selected-events')
+        raw = ctx.load('raw')
+        if ds.info[BAD_CHANNELS]:
+            raw.info['bads'] = sorted(set(raw.info['bads'] + ds.info[BAD_CHANNELS]))
+        ds.info['raw'] = raw
+        tmin, tmax, tstop, baseline, decim, variable_tmax = epoch._extraction_parameters(ds, ctx.options)
+        if variable_tmax:
+            epoch_value = load.mne.variable_length_mne_epochs(ds, tmin, tmax, baseline, allow_truncation=True, decim=decim, reject_by_annotation=False, i_start='sample', trigger='value')
+            epochs_list = epoch_value
+        else:
+            epochs = load.mne.mne_epochs(ds, tmin, tmax, baseline, i_start='sample', decim=decim, drop_bad_chs=False, tstop=tstop, reject_by_annotation=False, trigger='value')
+            if len(epochs) != ds.n_cases:
+                ctx.registry.log.warning("%s missing for %s/%s", n_of(ds.n_cases - len(epochs), 'epoch'), ctx.state['subject'], epoch.name)
+                raise NotImplementedError("Incomplete epochs")
+            ds['epochs'] = epochs
+            if ctx.options['trigger_shift'] and epoch.post_baseline_trigger_shift:
+                shift = ds.eval(epoch.post_baseline_trigger_shift)
+                ds['epochs'] = shift_mne_epoch_trigger(ds['epochs'], shift, epoch.post_baseline_trigger_shift_min, epoch.post_baseline_trigger_shift_max)
+            epoch_value = ds['epochs']
+            epochs_list = [epoch_value]
+
+        interpolate_bads = ctx.options['interpolate_bads']
+        if not interpolate_bads:
+            return epoch_value
+
+        _drop_bad_eeg_channels_with_missing_locs(epochs_list)
+        if ds.info[INTERPOLATE_CHANNELS] and any(ds[INTERPOLATE_CHANNELS]):
+            info = epochs_list[0].info
+            bads_all = info['bads']
+            bads_individual = [sorted(set(bads_all + bads_i)) for bads_i in ds[INTERPOLATE_CHANNELS]]
+            data_types = TestDims.coerce('sensor').data_to_ndvar(info)
+            if 'mag' in data_types:
+                interp_cache = {}
+                _interpolate_bads_meg(epoch_value, bads_individual, interp_cache)
+            if 'eeg' in data_types:
+                _interpolate_bads_eeg(epoch_value, bads_individual)
+        else:
+            for epochs in epochs_list:
+                epochs.interpolate_bads(reset_bads=False)
+        return epoch_value
+
+    def load(self, ctx: Request, path: Path):
+        return _load_epochs(path, ctx.artifact_metadata)
+
+    def save(self, ctx: Request, path: Path, value) -> None:
+        _save_epochs(path, value)
+
+    def artifact_metadata(self, ctx: Request, value) -> dict[str, Any]:
+        return _epochs_artifact_metadata(value)
+
+
+class EpochsDerivative(Derivative[Any]):
+    """Epoch dataset aggregating across runs and sub-epochs.
+
+    For single-run :class:`PrimaryEpoch` and :class:`ContinuousEpoch`, wraps
+    :class:`RecordingEpochsDerivative` directly.  For combine-all
+    :class:`PrimaryEpoch` epochs, concatenates per-run
+    :class:`RecordingEpochsDerivative` results.  For :class:`SuperEpoch`,
+    concatenates sub-epoch :class:`EpochsDerivative` results.
+
+    Options
+    -------
+    ndvar
+        Whether to convert epoch data to NDVars (``True | False | 'both'``).
+    data
+        Sensor representation to return.
+    (remaining options forwarded to :class:`RecordingEpochsDerivative`)
+    """
+    name = 'epochs'
+    key_fields = ('subject', 'session', 'raw', 'epoch', 'rej')
+    cache_suffix = '.epochs'
+    cache_policy = CachePolicy.DISABLED_BY_DEFAULT
+    OPTION_DEFAULTS = {
+        'baseline': False,
+        'samplingrate': None,
+        'decim': None,
+        'pad': 0,
+        'trigger_shift': True,
+        'tmin': None,
+        'tmax': None,
+        'tstop': None,
+        'interpolate_bads': False,
+        'reject': True,
+    }
+    VIEW_OPTION_DEFAULTS = {
+        'ndvar': True,
+        'data': 'sensor',
+    }
+
+    def __init__(self, raw, epochs: dict[str, Any], runs_for: dict[tuple[str, str, str], tuple[str, ...]]):
+        self.raw = raw
+        self.epochs = epochs
+        self._runs_for = runs_for
+
+    def _find_runs(self, ctx: Request, epoch) -> tuple[str, ...]:
+        """Runs to aggregate over"""
+        if isinstance(epoch, PrimaryEpoch):
+            if epoch.run is None:
+                key = (ctx.state['subject'], ctx.state['session'], epoch.task)
+                if key in self._runs_for:
+                    return self._runs_for[key]
+            return ()
+        if isinstance(epoch, SecondaryEpoch):
+            return self._find_runs(ctx, self.epochs[epoch.sel_epoch])
+        return ()
+
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        epoch = self.epochs[ctx.state['epoch']]
+        if isinstance(epoch, EpochCollection):
+            raise TypeError(f"{epoch=}: load_epochs not supported for EpochCollection")
+        if isinstance(epoch, SuperEpoch):
+            # Inject explicitly-overridden INHERITED_PARAMS as direct options so sub-epochs
+            # are loaded with the SuperEpoch's window/baseline/decim rather than their own.
+            epoch_overrides = {k: getattr(epoch, k) for k in epoch._explicit_params if k in epoch.INHERITED_PARAMS}
+            forward_keys = [k for k in self.OPTION_DEFAULTS if k not in epoch_overrides]
+            sub_options = ctx.options_for('epochs', *forward_keys, ndvar=False, data='sensor', **epoch_overrides)
+            return tuple(
+                Dependency('epochs', label=sub_epoch, state={'epoch': sub_epoch}, options=sub_options)
+                for sub_epoch in epoch.sub_epochs
+            )
+        runs = self._find_runs(ctx, epoch)
+        rec_options = ctx.options_for('recording-epochs', *self.OPTION_DEFAULTS)
+        sel_options = ctx.options_for('epoch-events', 'reject', *EPOCH_EXTRACT_OPTIONS)
+        state = {'task': epoch.task}
+        if runs:
+            return (
+                Dependency('epoch-events', options=sel_options, state=state),
+                *[Dependency('recording-epochs', label=f'epochs-{run}', state={**state, 'run': run}, options=rec_options) for run in runs],
+            )
+        return (
+            Dependency('epoch-events', options=sel_options, state=state),
+            Dependency('recording-epochs', state=state, options=rec_options),
+        )
+
+    def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, Any] | None:
+        """Depend on the subset of events that is actually relevant for the epoch"""
+        if dep.name != 'epoch-events':
+            return None
+        epoch = self.epochs[ctx.state['epoch']]
         ds = ctx.load(dep.label or dep.name)
-        out = {
-            'sample': ds['sample'],
-            'bad_channels': ds.info[BAD_CHANNELS],
-        }
+        out = {'sample': ds['sample'], 'bad_channels': ds.info[BAD_CHANNELS]}
         for attr in epoch._eval_attrs():
             out[attr] = getattr(epoch, attr)
         if ds.info.get(INTERPOLATE_CHANNELS, False) and INTERPOLATE_CHANNELS in ds:
@@ -882,89 +1023,19 @@ class EpochsDerivative(Derivative[Any]):
                 else:
                     epochs_list.append(epoch_value)
             return Datalist(epochs_list, 'epochs')
-
-        # Shell
-        ds = ctx.load('selected-events')
-        # Raw data
-        raw = ctx.load('raw')
-        if ds.info[BAD_CHANNELS]:
-            raw.info['bads'] = sorted(set(raw.info['bads'] + ds.info[BAD_CHANNELS]))
-        ds.info['raw'] = raw
-        # Extract epochs
-        tmin, tmax, tstop, baseline, decim, variable_tmax = epoch._extraction_parameters(ds, ctx.options)
-        if variable_tmax:
-            epoch_value = load.mne.variable_length_mne_epochs(ds, tmin, tmax, baseline, allow_truncation=True, decim=decim, reject_by_annotation=False, i_start='sample', trigger='value')
-            epochs_list = epoch_value
-        else:
-            epochs = load.mne.mne_epochs(ds, tmin, tmax, baseline, i_start='sample', decim=decim, drop_bad_chs=False, tstop=tstop, reject_by_annotation=False, trigger='value')
-            if len(epochs) != ds.n_cases:
-                ctx.registry.log.warning("%s missing for %s/%s", n_of(ds.n_cases - len(epochs), 'epoch'), ctx.state['subject'], epoch.name)
-                raise NotImplementedError("Incomplete epochs")
-            ds['epochs'] = epochs
-
-            if ctx.options['trigger_shift'] and epoch.post_baseline_trigger_shift:
-                shift = ds.eval(epoch.post_baseline_trigger_shift)
-                ds['epochs'] = shift_mne_epoch_trigger(ds['epochs'], shift, epoch.post_baseline_trigger_shift_min, epoch.post_baseline_trigger_shift_max)
-            epoch_value = ds['epochs']
-            epochs_list = [epoch_value]
-
-        interpolate_bads = ctx.options['interpolate_bads']
-        if not interpolate_bads:
-            return epoch_value
-
-        # Drop bad channels with missing location
-        _drop_bad_eeg_channels_with_missing_locs(epochs_list)
-
-        # Interpolate bad channels
-        if ds.info[INTERPOLATE_CHANNELS] and any(ds[INTERPOLATE_CHANNELS]):
-            info = epochs_list[0].info
-            bads_all = info['bads']
-            bads_individual = [sorted(set(bads_all + bads_i)) for bads_i in ds[INTERPOLATE_CHANNELS]]
-            data_types = TestDims.coerce('sensor').data_to_ndvar(info)
-            if 'mag' in data_types:
-                interp_cache = {}
-                _interpolate_bads_meg(epoch_value, bads_individual, interp_cache)
-            if 'eeg' in data_types:
-                _interpolate_bads_eeg(epoch_value, bads_individual)
-        else:
-            for epochs in epochs_list:
-                epochs.interpolate_bads(reset_bads=False)
-
-        return epoch_value
+        runs = self._find_runs(ctx, epoch)
+        if runs:
+            return Datalist([ctx.load(f'epochs-{run}') for run in runs], 'epochs')
+        return ctx.load('recording-epochs')
 
     def load(self, ctx: Request, path: Path):
-        metadata = ctx.artifact_metadata
-        if metadata['kind'] == 'datalist':
-            return Datalist(
-                [mne.read_epochs(path / relpath, proj=False) for relpath in metadata['files']],
-                metadata['name'],
-                metadata['fmt'],
-            )
-        return mne.read_epochs(path / metadata['file'], proj=False)
+        return _load_epochs(path, ctx.artifact_metadata)
 
     def save(self, ctx: Request, path: Path, value) -> None:
-        if path.exists():
-            if path.is_dir():
-                shutil.rmtree(path)
-            else:
-                path.unlink()
-        path.mkdir()
-        if isinstance(value, Datalist):
-            for i, epochs in enumerate(value):
-                epochs.save(path / f'epochs-{i:04d}-epo.fif', overwrite=True)
-        else:
-            value.save(path / 'epochs-0000-epo.fif', overwrite=True)
+        _save_epochs(path, value)
 
     def artifact_metadata(self, ctx: Request, value) -> dict[str, Any]:
-        """Whether to read one file multiple files"""
-        if isinstance(value, Datalist):
-            return {
-                'kind': 'datalist',
-                'files': [f'epochs-{i:04d}-epo.fif' for i in range(len(value))],
-                'name': value.name,
-                'fmt': value._fmt,
-            }
-        return {'kind': 'single', 'file': 'epochs-0000-epo.fif'}
+        return _epochs_artifact_metadata(value)
 
     def apply_view_options(self, ctx: Request, epoch_value):
         epoch = self.epochs[ctx.state['epoch']]
@@ -981,9 +1052,12 @@ class EpochsDerivative(Derivative[Any]):
                 ds[:, 'epoch'] = sub_epoch
                 dss.append(ds)
             ds = combine(dss)
+        else:
+            ds = ctx.load('epoch-events')
+
+        if isinstance(epoch_value, Datalist):
             ds['epochs'] = combine(epoch_value)
         else:
-            ds = ctx.load('selected-events')
             ds['epochs'] = epoch_value
 
         ndvar = ctx.view_options['ndvar']
@@ -1031,8 +1105,16 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
     )
     cache_policy = CachePolicy.OPTIONAL
     cache_suffix = '-ave.fif'
-    OPTION_DEFAULTS = {'samplingrate': None, 'decim': None}
-    VIEW_OPTION_DEFAULTS = {'baseline': False, 'ndvar': True, 'cat': None, 'data': 'sensor'}
+    OPTION_DEFAULTS = {
+        'samplingrate': None,
+        'decim': None,
+    }
+    VIEW_OPTION_DEFAULTS = {
+        'baseline': False,
+        'ndvar': False,
+        'cat': None,
+        'data': 'sensor',  # TODO
+    }
 
     def __init__(self, raw, epochs: dict[str, Any]):
         self.raw = raw
@@ -1052,14 +1134,14 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         }
         return (
             Dependency('epochs', options=options),
-            Dependency('selected-events', options=ctx.options_for('selected-events', 'samplingrate', 'decim', reject=True, cat=None)),
+            Dependency('epoch-events', options=ctx.options_for('epoch-events', 'samplingrate', 'decim', reject=True)),
         )
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return self.standard_fingerprint(ctx)
 
     def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, Any] | None:
-        if dep.name != 'selected-events':
+        if dep.name != 'epoch-events':
             return None
         model = ctx.state['model']
         if model:
@@ -1120,7 +1202,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
                 dss.append(ds)
             return combine(dss)
 
-        data = ctx.load('selected-events')
+        data = ctx.load('epoch-events')
         return self._aggregate(data, ctx)
 
     def apply_view_options(self, ctx: Request, evoked: list[mne.Evoked]) -> Dataset:
@@ -1140,7 +1222,6 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
             evoked = [evoked_by_cell[cell] for cell in cells]
         except KeyError:
             raise RuntimeError(f"Error reading cached evoked: available={tuple(evoked_by_cell)}, requested={tuple(cells)}") from None
-        ds['evoked'] = evoked
 
         # Baseline
         epoch = self.epochs[ctx.state['epoch']]
@@ -1148,16 +1229,13 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         if baseline is True:
             baseline = epoch.baseline
         if baseline and not epoch.post_baseline_trigger_shift:
-            for evoked_i in ds['evoked']:
+            for evoked_i in evoked:
                 mne.baseline.rescale(evoked_i.data, evoked_i.times, baseline, 'mean', copy=False)
 
         # NDVar
         data = TestDims.coerce(ctx.view_options['data'])
-        ndvar = ctx.view_options['ndvar']
-        if ndvar:
-            evoked = ds['evoked']
-            if ndvar == 1:
-                del ds['evoked']
+        to_ndvar = isinstance(data.sensor, str) or ctx.view_options['ndvar']
+        if to_ndvar:
             info = evoked[0].info
             sensor_types = ds.info['sensor_types'] = data.data_to_ndvar(info)
             source_pipe = self.raw.root_source_pipe(ctx.state['raw'])
@@ -1168,6 +1246,8 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
                 ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
                 if sensor_type != 'eog' and isinstance(data.sensor, str):
                     ds[name] = getattr(ds[name], data.sensor)('sensor')
+        else:
+            ds['evoked'] = evoked
         return ds
 
 
@@ -1190,7 +1270,16 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
         Sensor representation to return.
     """
     name = 'evoked-group-dataset'
-    OPTION_DEFAULTS = {'baseline': False, 'ndvar': True, 'cat': None, 'samplingrate': None, 'decim': None, 'data': 'sensor'}
+    OPTION_DEFAULTS = {
+        'baseline': False,
+        'ndvar': True,
+        'samplingrate': None,
+        'decim': None,
+        'data': 'sensor',
+    }
+    VIEW_OPTION_DEFAULTS = {
+        'cat': None,
+    }
 
     def __init__(self, raw, groups):
         self.raw = raw
@@ -1202,11 +1291,8 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return self.key(ctx)
 
-    def _subject_options(self, ctx: Request) -> dict[str, Any]:
-        return ctx.options_for('evoked', 'baseline', 'cat', 'samplingrate', 'decim', 'data', ndvar=isinstance(TestDims.coerce(ctx.options['data']).sensor, str))
-
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        options = self._subject_options(ctx)
+        options = ctx.options_for('evoked', 'baseline', 'samplingrate', 'decim', 'data')
         return tuple(
             Dependency('evoked', label=subject, state={'subject': subject}, options=options)
             for subject in self.groups[ctx.state['group']]

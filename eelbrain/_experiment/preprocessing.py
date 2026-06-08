@@ -250,19 +250,10 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
             bids_path_ = bids_path_.find_empty_room()
         if bids_path_.fpath.exists():
             return bids_path_
-        # Alternative paths: split files and omitted run
-        alternative_path = bids_path_.copy()
-        alternative_path.update(split='01')
-        if alternative_path.fpath.exists():
-            return alternative_path
-        # run-01 may be stored without the run entity (single-run subject/task).
-        if bids_path_.run == '01':
-            alternative_path.update(run=None)
-            if alternative_path.fpath.exists():
-                return alternative_path
-            alternative_path.update(split=None)
-            if alternative_path.fpath.exists():
-                return alternative_path
+        # Alternative path: split files
+        split_path = bids_path_.copy().update(split='01')
+        if split_path.fpath.exists():
+            return split_path
         if require:
             raise FileMissingError(f"Raw input file does not exist at expected location {bids_path_.fpath}")
         return bids_path_
@@ -1936,13 +1927,12 @@ class RawReReference(CachedRawPipe):
             log: logging.Logger | None = None,
             source_pipe: RawSource | None = None,
     ) -> mne.io.BaseRaw:
-        montage = raw.get_montage()
         if self.add:
             with warnings.catch_warnings():
                 warnings.filterwarnings('ignore', 'The locations of multiple reference channels are ignored', module='mne')
                 raw = mne.add_reference_channels(raw, self.add, copy=False)
-            if montage:
-                raw.set_montage(montage)
+            if source_pipe.montage:
+                raw.set_montage(source_pipe.montage)
         raw.set_eeg_reference(self.reference)
         if self.drop:
             raw = raw.drop_channels(self.drop)

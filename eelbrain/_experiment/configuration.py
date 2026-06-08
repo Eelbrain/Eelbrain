@@ -1,4 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+import inspect
 from itertools import chain
 import logging
 from typing import Any
@@ -148,6 +149,19 @@ class Configuration:
             return self._as_dict() == other._as_dict()
         else:
             return False
+
+    def _repr_args(self):
+        args = []
+        for name, param in inspect.signature(self.__class__).parameters.items():
+            value = getattr(self, name)
+            if param.default is param.empty:
+                args.append(repr(value))
+            elif value != param.default:
+                args.append(f'{name}={value!r}')
+        return args
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}({', '.join(self._repr_args())})"
 
 
 def name_ok(key: str, allow_empty: bool) -> bool:

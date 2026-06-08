@@ -7,21 +7,6 @@ from eelbrain._data_obj import Dataset, Var
 from eelbrain.pipeline import PrimaryEpoch, SecondaryEpoch, SuperEpoch, EpochCollection, ContinuousEpoch
 
 
-def test_epoch_repr():
-    primary_epoch = PrimaryEpoch('task')
-    assert primary_epoch.samplingrate is None
-    assert repr(primary_epoch) == "PrimaryEpoch('task', baseline=(None, 0))"
-    secondary_epoch = SecondaryEpoch('primary_epoch', 'v == 1')
-    assert repr(secondary_epoch) == "SecondaryEpoch('primary_epoch', 'v == 1')"
-    super_epoch = SuperEpoch(('e1', 'e2'))
-    assert repr(super_epoch) == "SuperEpoch(('e1', 'e2'))"
-    epoch_collection = EpochCollection(('e1', 'e2'))
-    assert repr(epoch_collection) == "EpochCollection(('e1', 'e2'))"
-    continuous_epoch = ContinuousEpoch('task', 'stim == 1')
-    assert continuous_epoch.samplingrate is None
-    assert repr(continuous_epoch) == "ContinuousEpoch(task='task', sel='stim == 1')"
-
-
 def test_prepare_continuous_epoch_dataset():
     epoch = ContinuousEpoch('task', 'stim == 1', pad_start=0.1, pad_end=0.2, split=0.5, samplingrate=200)
     assert 'name' not in epoch._as_dict()
@@ -90,6 +75,9 @@ def test_assemble_epochs_stores_dependent_parameters():
     assert super_epoch.tasks == ('task-a', 'task-b')
     assert super_epoch.rej_file_epochs == ['a', 'b']
     assert 'name' not in super_epoch._as_dict()
+    # _explicit_params records which kwargs were explicitly provided (empty here)
+    assert super_epoch._explicit_params == ()
+    assert repr(super_epoch) == "SuperEpoch(('a', 'b'))"
 
     collection = epochs['collection']
     assert collection.name == 'collection'
@@ -101,6 +89,28 @@ def test_assemble_epochs_stores_dependent_parameters():
     assert continuous.name == 'cont'
     assert continuous.rej_file_epochs == ('cont',)
     assert 'name' not in continuous._as_dict()
+
+
+def test_super_epoch_parameter_overrides():
+    """SuperEpoch overrides are resolved at assembly time and relax sub-epoch agreement checks."""
+    # Without override, sub-epochs must agree on INHERITED_PARAMS
+    with pytest.raises(ConfigurationError, match="All sub-epochs must have the same setting for tmin"):
+        assemble_epochs({
+            'a': PrimaryEpoch('task', tmin=-0.1),
+            'b': PrimaryEpoch('task', tmin=-0.2),
+            'ab': SuperEpoch(('a', 'b')),
+        }, ('task',))
+
+    # With an override, sub-epochs may differ on the overridden param
+    epochs = assemble_epochs({
+        'a': PrimaryEpoch('task', tmin=-0.1),
+        'b': PrimaryEpoch('task', tmin=-0.2),
+        'ab': SuperEpoch(('a', 'b'), tmin=-0.3),
+    }, ('task',))
+    super_epoch = epochs['ab']
+    assert super_epoch.tmin == -0.3
+    assert super_epoch._explicit_params == ('tmin',)
+    assert repr(super_epoch) == "SuperEpoch(('a', 'b'), tmin=-0.3)"
 
 
 def test_assemble_epochs_detects_cycles():

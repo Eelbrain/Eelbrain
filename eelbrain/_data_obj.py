@@ -6481,6 +6481,7 @@ class Dataset(dict):
             df,
             random: str | Collection[str] = None,
             skip: str | Collection[str] = None,
+            info: dict = None,
     ) -> Dataset:
         """Create a dataset from a :class:`pandas.DataFrame`
 
@@ -6530,7 +6531,7 @@ class Dataset(dict):
                 item.random = True
             else:
                 raise ValueError(f"{random=}: {key!r} is not a Factor but {item}")
-        return cls(items)
+        return cls(items, info=info)
 
     @classmethod
     def from_r(cls, name) -> Dataset:

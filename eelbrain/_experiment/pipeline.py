@@ -1,6 +1,6 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Pipeline class to manage data from an experiment"""
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Sequence
 import copy
 from datetime import datetime
@@ -15,7 +15,7 @@ import numpy as np
 import mne
 from mne.minimum_norm import apply_inverse_raw
 import mne_bids
-from mne_bids import get_entity_vals
+from mne_bids import find_matching_paths, get_entity_vals
 
 from .. import fmtxt
 from .. import gui
@@ -37,11 +37,11 @@ from .covariance import CovDerivative, EpochCovariance, RawCovariance
 from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, DerivativeRegistry, ProtectedArtifactError, Request
 from .configuration import sequence_arg
 from .epochs import (
-    EpochBase, EpochsDerivative,
+    EpochBase, EpochsDerivative, RecordingEpochsDerivative,
     EvokedDerivative, EvokedGroupDatasetDerivative, PrimaryEpoch, RejectionInput,
     SecondaryEpoch, SuperEpoch, assemble_epochs, decim_param,
 )
-from .events import EventsDerivative, EventsInput, LabeledEventsDerivative, SelectedEventsDerivative
+from .events import EpochEventsDerivative, EventsDerivative, EventsInput, LabeledEventsDerivative, SelectedEventsDerivative
 from .exceptions import FileMissingError
 from .state_model import StateModel
 from .groups import assemble_groups
@@ -244,6 +244,14 @@ class Pipeline(StateModel):
         self._sessions = tuple(get_entity_vals(root, 'session', **ignore_entities))
         self._tasks = tuple(get_entity_vals(root, 'task', **ignore_entities))
         self._runs = tuple(get_entity_vals(root, 'run', **ignore_entities))
+        # Per-(subject, session, task) run lists; used for combine-all epoch aggregation.
+        # Runs can vary by subject, so we build the mapping from a single find_matching_paths
+        # call (subjects/sessions/tasks are already filtered to valid values above).
+        runs_seen: dict[tuple[str, str, str], set[str]] = defaultdict(set)
+        if self._runs:
+            for path in find_matching_paths(root, subjects=self._subjects, sessions=self._sessions, tasks=self._tasks):
+                runs_seen[(path.subject or '', path.session or '', path.task or '')].add(path.run or '')
+        self._runs_for: dict[tuple[str, str, str], list[str]] = {key: sorted(runs) for key, runs in runs_seen.items()}
 
         if self.datatype is not None:
             if self.datatype not in ('meg', 'eeg'):
@@ -350,7 +358,7 @@ class Pipeline(StateModel):
         self._register_field('subject', self._subjects, repr=True)
         self._register_field('session', self._sessions or None, repr=True)
         self._register_field('task', self._tasks, depends_on=('epoch',), slave_handler=self._update_task, repr=True)
-        self._register_field('run', self._runs or None, repr=True)
+        self._register_field('run', self._runs, repr=True, depends_on=('epoch', 'subject', 'session', 'task'), slave_handler=self._update_run)
         self._register_field('datatype', (datatype,), repr=True)
         self._register_field('equalize_evoked_count', ('', 'eq'), allow_empty=True)
         self._register_field('common_brain', ('fsaverage',))
@@ -441,16 +449,18 @@ class Pipeline(StateModel):
             self.__class__.__name__,
         ))
         self._derivatives.register(LabeledEventsDerivative(
-            type(self).label_events,
+            self.label_events,
             self.__class__.__name__,
             len(self._tasks) > 1,
             len(self._sessions) > 1,
             self._variables,
             self._groups,
-            type(self).cache_event_labels,
+            self.cache_event_labels,
         ))
-        self._derivatives.register(SelectedEventsDerivative(self._raw, self._epochs, self._artifact_rejection))
-        self._derivatives.register(EpochsDerivative(self._raw, self._epochs))
+        self._derivatives.register(SelectedEventsDerivative(self._epochs, self._artifact_rejection))
+        self._derivatives.register(EpochEventsDerivative(self._epochs, self._runs_for))
+        self._derivatives.register(RecordingEpochsDerivative(self._raw, self._epochs))
+        self._derivatives.register(EpochsDerivative(self._raw, self._epochs, self._runs_for))
         self._derivatives.register(EvokedDerivative(self._raw, self._epochs))
         self._derivatives.register(EvokedGroupDatasetDerivative(self._raw, self._groups))
 
@@ -859,7 +869,6 @@ class Pipeline(StateModel):
             baseline: BaselineArg = False,
             ndvar: bool | Literal['both'] = True,
             reject: bool | Literal['keep'] = True,
-            cat: Sequence[CellArg] = None,
             samplingrate: int = None,
             decim: int = None,
             pad: float = 0,
@@ -895,8 +904,6 @@ class Pipeline(StateModel):
             from the Dataset. Set to ``False`` to ignore the trial rejection.
             Set ``reject='keep'`` to load the rejection (added it to the events
             as ``'accept'`` variable), but keep bad trails.
-        cat
-            Only load data for these cells (cells of model).
         samplingrate
             Samplingrate in Hz for the analysis (default is specified in epoch
             definition).
@@ -945,7 +952,6 @@ class Pipeline(StateModel):
             'baseline': baseline,
             'ndvar': ndvar,
             'reject': reject,
-            'cat': cat,
             'samplingrate': samplingrate,
             'decim': decim,
             'pad': pad,
@@ -1691,9 +1697,7 @@ class Pipeline(StateModel):
             self,
             subjects: SubjectArg = None,
             reject: bool | Literal['keep'] = True,
-            index: bool | str = True,
             vardef: str = None,
-            cat: Sequence[CellArg] = None,
             **kwargs,
     ) -> Dataset:
         """
@@ -1711,13 +1715,9 @@ class Pipeline(StateModel):
             from the Dataset. Set to ``False`` to ignore the trial rejection.
             Set ``reject='keep'`` to load the rejection (added it to the events
             as ``'accept'`` variable), but keep bad trails.
-        index
-            Index the Dataset before rejection (provide index name as str).
         vardef
             Name of a test defining additional variables to add to the returned
             Dataset.
-        cat
-            Only load data for these cells (cells of the current ``model``).
         ...
             State parameters.
 
@@ -1728,24 +1728,16 @@ class Pipeline(StateModel):
         """
         if reject not in (True, False, 'keep'):
             raise ValueError(f"{reject=}")
-        if index is True:
-            index = 'index'
-        elif index and not isinstance(index, str):
-            raise TypeError(f"{index=}")
         state = dict(kwargs)
         subject, group = self._process_subject_arg(subjects, state)
 
         if group is not None:
-            return combine([self.load_selected_events(subjects=subject_, reject=reject, index=index, vardef=vardef, cat=cat, **state) for subject_ in self.iter(group=group)])
+            return combine([self.load_selected_events(subjects=subject_, reject=reject, vardef=vardef, **state) for subject_ in self.iter(group=group)])
         elif subject is None:
             raise RuntimeError(f"{subject=}, {group=}")
 
-        options = {
-            'reject': reject,
-            'index': index,
-            'cat': cat,
-        }
-        ds = self._load_derivative('selected-events', options=options)
+        options = {'reject': reject}
+        ds = self._load_derivative('epoch-events', options=options)
         apply_vardef(ds, vardef, self.tests, self._groups)
         return ds
 
@@ -3472,6 +3464,30 @@ class Pipeline(StateModel):
         elif not epoch or epoch == '*':
             return  # don't force task
         return '*'  # if a named epoch is not in _epochs it might be a removed epoch
+
+    def _update_run(self, fields: dict) -> str | None:
+        if not self._runs:
+            return None
+        epoch_name = fields['epoch']
+        if epoch_name not in self._epochs:
+            # No epoch set: constrain run to what's valid for the current task
+            task = fields.get('task', '')
+            runs = self._runs_for.get((fields['subject'], fields.get('session', ''), task), ())
+        else:
+            epoch = self._epochs[epoch_name]
+            if not isinstance(epoch, PrimaryEpoch):
+                return None
+            runs = self._runs_for.get((fields['subject'], fields.get('session', ''), epoch.task), ())
+            if epoch.run is not None:
+                # Subject may lack run tags entirely (single untagged recording);
+                # epoch.run='01' should then resolve to '' rather than a missing file.
+                # any(runs) is False for ('',) since '' is falsy.
+                return epoch.run if any(runs) else ''
+        if len(runs) == 1:
+            return runs[0]
+        if runs and fields.get('run') not in runs:
+            return runs[0]  # current run invalid for this subject/session/task; reset
+        return None  # don't force run
 
     def _eval_parc(self, parc: str) -> str:
         if not parc:

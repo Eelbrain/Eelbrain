@@ -227,6 +227,7 @@ class StateModel:
             Slave fields: Fields in depends_on trigger change in ``key``.
         slave_handler : func
             Slave fields: Function that determines the new value of ``key``.
+            Return None to leave value unchanged.
         allow_empty : bool
             Allow empty string in ``values``.
         repr : bool
