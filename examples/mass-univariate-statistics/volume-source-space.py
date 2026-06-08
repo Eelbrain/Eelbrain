@@ -95,7 +95,7 @@ for t in times:
     p = plot.GlassBrain(y.sub(time=t), title=f"{t * 1000:.0f} ms", vmax=4)
 
 ###############################################################################
-# In a notebook, `LiveNeuron <https://github.com/liang-bo96/LiveNeuron>`_
+# In a notebook, `LiveNeuron <https://github.com/Eelbrain/LiveNeuro>`_
 # can provide interactive visualization. Start the visualization with
 # the code below (after uncommenting):
 
