@@ -609,6 +609,32 @@ def test_registry_load_caches_derivative_and_writes_manifest():
     assert value.build_calls == 1
 
 
+def test_restricted_state_get_is_checked():
+    root, registry, _ = make_source_registry()
+
+    class SneakyDerivative(ValueDerivative):
+        name = 'sneaky'
+
+        def build(self, ctx: Request) -> str:
+            return str(ctx.state.get('mode'))
+
+    class AbsentFieldDerivative(ValueDerivative):
+        name = 'absent-field'
+
+        def build(self, ctx: Request) -> str:
+            return str(ctx.state.get('no-such-field', 'fallback'))
+
+    registry.register(SneakyDerivative(root))
+    registry.register(AbsentFieldDerivative(root))
+
+    # .get() of an undeclared state field is checked like item access
+    with pytest.raises(RuntimeError, match="not declared in this node's key_fields"):
+        registry.resolve('sneaky', state=DEFAULT_STATE).load()
+
+    # .get() of a field that is not part of state at all stays allowed
+    assert registry.resolve('absent-field', state=DEFAULT_STATE).load() == 'fallback'
+
+
 def test_dependency_key_change_invalidates_parent():
     """A dependency pointing to a different artifact must invalidate the parent.
 

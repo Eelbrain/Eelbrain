@@ -513,7 +513,12 @@ class DependencyNode(Generic[T]):
         its own dependencies, or is used as a build input by other derivatives.
 
         Implementations acquire node data through ``ctx.load(...)`` just like
-        :meth:`build`.
+        :meth:`build`. Note that the declared-dependency restriction on
+        ``ctx.load(...)`` is only enforced when the view is requested during
+        the requesting node's own build; when the view is loaded through a
+        dependency edge or directly, implementations are themselves
+        responsible for reading only data that
+        :meth:`dependency_fingerprint` covers for that view.
         """
         raise ValueError(f"{self.name!r} does not define load view {view!r}")
 
@@ -806,13 +811,24 @@ class _RestrictedStateView(dict):
         super().__init__(state)
         self._allowed = allowed
 
-    def __getitem__(self, key: str) -> Any:
+    def _check_allowed(self, key: str) -> None:
         if key not in self._allowed:
             raise RuntimeError(
                 f"State field {key!r} is not declared in this node's key_fields or "
                 f"fixed_state. If it affects the cached artifact, add it to key_fields."
             )
+
+    def __getitem__(self, key: str) -> Any:
+        self._check_allowed(key)
         return super().__getitem__(key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        # Same contract as __getitem__; without this, .get() would silently
+        # bypass the declared-state check. Reading an absent field stays
+        # allowed, matching plain dict semantics.
+        if key in self:
+            self._check_allowed(key)
+        return super().get(key, default)
 
 
 def _dep_entry_matches(stored: dict[str, Any], current: dict[str, Any]) -> bool:
