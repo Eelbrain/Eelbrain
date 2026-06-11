@@ -609,6 +609,48 @@ def test_registry_load_caches_derivative_and_writes_manifest():
     assert value.build_calls == 1
 
 
+def test_dependency_key_change_invalidates_parent():
+    """A dependency pointing to a different artifact must invalidate the parent.
+
+    The dependency's fingerprint is configuration-only (the default, empty),
+    so only its cache key distinguishes the two artifacts.
+    """
+    root, registry = make_empty_registry()
+
+    class PlainDerivative(Derivative[str]):
+        name = 'plain'
+        key_fields = ('subject',)
+        cache_suffix = '.txt'
+
+        def build(self, ctx: Request) -> str:
+            return ctx.state['subject']
+
+        def load(self, ctx: Request, path: Path) -> str:
+            return path.read_text()
+
+        def save(self, ctx: Request, path: Path, value: str) -> None:
+            path.write_text(value)
+
+    class PassthroughDerivative(PlainDerivative):
+        # key_fields intentionally empty: identity comes from the dependency key
+        name = 'passthrough'
+        key_fields = ()
+
+        def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+            return (Dependency('plain', label='dep', state={'subject': ctx.state['pick']}),)
+
+        def build(self, ctx: Request) -> str:
+            return ctx.load('dep')
+
+    registry.register(PlainDerivative())
+    registry.register(PassthroughDerivative())
+
+    assert registry.resolve('passthrough', state={'pick': 's1'}).load() == 's1'
+    assert registry.resolve('passthrough', state={'pick': 's1'}).is_valid()
+    assert not registry.resolve('passthrough', state={'pick': 's2'}).is_valid()
+    assert registry.resolve('passthrough', state={'pick': 's2'}).load() == 's2'
+
+
 def test_duplicate_dependency_labels_fail_before_build():
     root, registry, _ = make_source_registry()
 

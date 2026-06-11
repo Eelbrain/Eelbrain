@@ -816,8 +816,13 @@ class _RestrictedStateView(dict):
 
 
 def _dep_entry_matches(stored: dict[str, Any], current: dict[str, Any]) -> bool:
-    """Compare one describe_dependency entry with quick-fingerprint shortcut."""
-    for key in ('name', 'kind', 'view'):
+    """Compare one describe_dependency entry with quick-fingerprint shortcut.
+
+    ``key`` participates because fingerprints often describe configuration
+    only: a dependency that resolves to a different artifact (different cache
+    key) must invalidate the parent even when its fingerprint is unchanged.
+    """
+    for key in ('name', 'kind', 'view', 'key'):
         if stored.get(key) != current.get(key):
             return False
     stored_quick = stored.get('quick_fingerprint')
