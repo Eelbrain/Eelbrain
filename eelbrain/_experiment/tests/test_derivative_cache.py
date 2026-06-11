@@ -609,6 +609,23 @@ def test_registry_load_caches_derivative_and_writes_manifest():
     assert value.build_calls == 1
 
 
+def test_duplicate_dependency_labels_fail_before_build():
+    root, registry, _ = make_source_registry()
+
+    class DuplicateDepDerivative(ValueDerivative):
+        name = 'duplicate-dep'
+
+        def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+            return (Dependency('source'), Dependency('source'))
+
+    derivative = DuplicateDepDerivative(root)
+    registry.register(derivative)
+
+    with pytest.raises(RuntimeError, match="Duplicate dependency label"):
+        registry.resolve('duplicate-dep', state=DEFAULT_STATE).load()
+    assert derivative.build_calls == 0
+
+
 def test_key_override_with_non_json_values_caches_stably():
     pipeline, registry, _, _, _, _, _, _, _root = make_registry()
 

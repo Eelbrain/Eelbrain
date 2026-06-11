@@ -1144,7 +1144,14 @@ class Request(Generic[T]):
         return self._check_valid(manifest, cache) is None
 
     def _dependency_map(self) -> dict[str, Dependency]:
-        return {dep.label or dep.name: dep for dep in self.node.dependencies(self)}
+        """Declared dependencies keyed by label, rejecting duplicate labels."""
+        out: dict[str, Dependency] = {}
+        for dep in self.node.dependencies(self):
+            label = dep.label or dep.name
+            if label in out:
+                raise RuntimeError(f"Duplicate dependency label {label!r} for node {self.node.name!r}")
+            out[label] = dep
+        return out
 
     @contextmanager
     def _build_deps_context(self, cache: bool | None):
@@ -1429,16 +1436,10 @@ class DerivativeRegistry:
 
     def _dependency_handles(
             self,
-            node: DependencyNode[Any],
             ctx: Request,
     ) -> list[tuple[Dependency, Request[Any]]]:
         out = []
-        keys = set()
-        for dep in node.dependencies(ctx):
-            key = dep.label or dep.name
-            if key in keys:
-                raise RuntimeError(f"Duplicate dependency label {key!r} for node {node.name!r}")
-            keys.add(key)
+        for dep in ctx._dependency_map().values():
             request = self.resolve(
                 dep.name,
                 state={**ctx.state, **(dep.state or {})},
@@ -1580,7 +1581,7 @@ class DerivativeRegistry:
 
             seen.add(request_id)
             lines.extend(self._format_tree_line(first_prefix, continuation_prefix, parts, line_width))
-            children = self._dependency_handles(handle.node, handle)
+            children = self._dependency_handles(handle)
             child_prefix = continuation_prefix if dep is not None else prefix
             for i, (child_dep, child_handle) in enumerate(children):
                 append_node(child_handle, child_dep, child_prefix, i == len(children) - 1)
@@ -1627,7 +1628,7 @@ class DerivativeRegistry:
     ) -> dict[str, Any]:
         out = {}
         with ctx._build_deps_context(cache), ctx._state_check_context():
-            for dep, dep_ctx in self._dependency_handles(node, ctx):
+            for dep, dep_ctx in self._dependency_handles(ctx):
                 key = dep.label or dep.name
                 fingerprint = node.dependency_fingerprint_override(ctx, dep, dep_ctx)
                 stored_entry = stored.get(key) if stored else None
