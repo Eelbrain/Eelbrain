@@ -236,8 +236,7 @@ class ComparisonDerivative(Derivative[str]):
 class EphemeralDerivative(Derivative[str]):
     name = 'ephemeral'
     key_fields = ('subject',)
-    cache_policy = CachePolicy.DISABLED_BY_DEFAULT
-    cache_suffix = '.txt'
+    cache_policy = CachePolicy.NEVER
 
     def __init__(self, root: str | Path):
         self.root = Path(root)
@@ -932,7 +931,7 @@ def test_dependency_tree_respects_max_line_length():
     assert "{subject='s2'} [state: subject='s2']" in tree
 
 
-def test_disabled_by_default_derivative_skips_cache_by_default():
+def test_uncached_derivative_rebuilds_every_time():
     _, registry, _, _, _, _, ephemeral, _, _root = make_registry()
 
     first = registry.resolve('ephemeral', state=DEFAULT_STATE).load()
@@ -942,8 +941,11 @@ def test_disabled_by_default_derivative_skips_cache_by_default():
     assert first == 'ephemeral-1'
     assert second == 'ephemeral-2'
     assert ephemeral.build_calls == 2
-    assert not handle.artifact_path.exists()
-    assert not handle.manifest_path.exists()
+    assert not handle.is_valid()
+    with pytest.raises(TypeError, match="uncached derivative 'ephemeral'"):
+        handle.artifact_path
+    with pytest.raises(TypeError, match="uncached derivative 'ephemeral'"):
+        handle.manifest_path
 
 
 def test_registry_resolve_returns_request_for_input_and_derivative():

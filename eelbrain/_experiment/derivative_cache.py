@@ -161,28 +161,18 @@ def logged_warnings(
 
 
 class CachePolicy(str, Enum):
-    """How strongly the cache engine should prefer persistence for a derivative.
+    """Whether artifacts for a derivative persist to the cache.
 
     REQUIRED
-        Caching is always on. The artifact is always written and read from disk.
-        Use for derivatives that are expensive to compute.
-    OPTIONAL
-        Caching is on by default but can be disabled by passing ``cache=False``
-        to the caller. Use for derivatives that are cheap to rebuild but
-        benefit from persistence across sessions.
-    DISABLED_BY_DEFAULT
-        Caching is opt-in: disabled unless the caller passes ``cache=True``
-        explicitly. Use for derived values that are fast to compute or that
-        should not accumulate on disk without explicit intent.
+        The artifact is always written to and read from disk.
     NEVER
-        Caching is permanently disabled and the derivative has no artifact
-        path or manifest. Used by :class:`UncachedDerivative` subclasses that
-        are always rebuilt on every request.
+        Caching is permanently disabled: the derivative has no artifact path
+        or manifest and is rebuilt on every request. Set by
+        :class:`UncachedDerivative` subclasses, or at registration time for
+        derivatives configured as uncached (e.g. ``Pipeline.cache_inv``).
     """
 
     REQUIRED = 'required'
-    OPTIONAL = 'optional'
-    DISABLED_BY_DEFAULT = 'disabled_by_default'
     NEVER = 'never'
 
 
@@ -582,7 +572,7 @@ class Derivative(DependencyNode[T]):
         relevant state keys in their :meth:`fingerprint` logic, but that
         usage is a convention, not a framework contract.
     cache_policy
-        Default caching mode used by :meth:`should_cache`.
+        Whether artifacts of this derivative persist to the cache.
     cache_suffix
         File suffix for the default :meth:`path` implementation. Leave
         ``None`` when overriding :meth:`path` directly.
@@ -597,7 +587,7 @@ class Derivative(DependencyNode[T]):
     # ``ctx.state`` fields that define the default artifact key. Override
     # :meth:`key` directly when artifact identity is not just a state subset.
     key_fields: tuple[str, ...] = ()
-    # Default cache behavior when callers do not pass an explicit cache=...
+    # Whether artifacts of this derivative persist to the cache.
     cache_policy: CachePolicy = CachePolicy.REQUIRED
     # File suffix for the default :meth:`path` implementation.
     cache_suffix: str | None = None
@@ -699,17 +689,6 @@ class Derivative(DependencyNode[T]):
         if ctx.options:
             key['options'] = ctx.options
         return key
-
-    def should_cache(
-            self,
-            cache: bool | None,
-    ) -> bool:
-        """Decide whether this request should read/write a cached artifact"""
-        if self.cache_policy == CachePolicy.NEVER:
-            return False
-        if cache is not None:
-            return cache
-        return self.cache_policy != CachePolicy.DISABLED_BY_DEFAULT
 
     def build(self, ctx: Request) -> T:
         """Compute the artifact value for this request.
@@ -937,7 +916,6 @@ class Request(Generic[T]):
         self._artifact_metadata: dict[str, Any] | None = None
         # Populated while derivative methods are constrained to declared dependencies.
         self._build_deps: dict[str, Dependency] | None = None
-        self._build_deps_cache: bool | None = None
         self._build_deps_depth = 0
         # Restricted view for enforcement; None when there is nothing to enforce.
         # Skipped for Input and UncachedDerivative (no key_fields contract), and
@@ -1014,7 +992,7 @@ class Request(Generic[T]):
         forwarded.update(overrides)
         return forwarded
 
-    def dependency_fingerprints(self, cache: bool | None = None, stored: dict[str, Any] | None = None) -> dict[str, Any]:
+    def dependency_fingerprints(self, stored: dict[str, Any] | None = None) -> dict[str, Any]:
         """Return the current dependency manifest fragment for this request.
 
         ``stored`` is the dependency fragment from the previous manifest, if
@@ -1022,7 +1000,7 @@ class Request(Generic[T]):
         cheap quick fingerprint still matches (see :meth:`describe_dependency`),
         so cache-validity checks skip the expensive recomputation.
         """
-        return self.registry.dependency_fingerprints(self.node, self, cache, stored)
+        return self.registry.dependency_fingerprints(self, stored)
 
     def current_fingerprint(self) -> dict[str, Any]:
         """Return the canonical current fingerprint for this node request."""
@@ -1043,7 +1021,6 @@ class Request(Generic[T]):
 
     def describe_dependency(
             self,
-            cache: bool | None = None,
             view: str | None = None,
             fingerprint_override: dict[str, Any] | None = None,
             stored: dict[str, Any] | None = None,
@@ -1065,7 +1042,7 @@ class Request(Generic[T]):
                 out['dependencies'] = stored.get('dependencies', {})
             else:
                 out['fingerprint'] = self.current_dependency_fingerprint(view)
-                out['dependencies'] = self.dependency_fingerprints(cache, stored and stored.get('dependencies'))
+                out['dependencies'] = self.dependency_fingerprints(stored and stored.get('dependencies'))
         else:
             out['fingerprint'] = self.registry.canonicalize(fingerprint_override)
 
@@ -1084,30 +1061,35 @@ class Request(Generic[T]):
             return self.node
         raise TypeError(f"Request for input {self.node.name!r} has no derivative artifact state")
 
+    def _require_cached_derivative(self, attribute: str) -> None:
+        derivative = self._require_derivative()
+        if derivative.cache_policy is CachePolicy.NEVER:
+            raise TypeError(f"Request for uncached derivative {derivative.name!r} has no {attribute}")
+
     @property
     def base_artifact_path(self) -> Path:
         """Base artifact path before any cache-path disambiguation."""
-        self._require_derivative()
+        self._require_cached_derivative('artifact path')
         assert self._base_artifact_path is not None
         return self._base_artifact_path
 
     @property
     def artifact_path(self) -> Path:
         """Resolved artifact path for a derivative request."""
-        self._require_derivative()
+        self._require_cached_derivative('artifact path')
         assert self._artifact_path is not None
         return self._artifact_path
 
     @property
     def manifest_path(self) -> Path:
         """Resolved manifest path for a derivative request."""
-        self._require_derivative()
+        self._require_cached_derivative('manifest path')
         assert self._manifest_path is not None
         return self._manifest_path
 
     def key(self) -> dict[str, Any]:
         """Return the normalized derivative key for this request."""
-        self._require_derivative()
+        self._require_cached_derivative('cache key')
         assert self._key is not None
         return self._key
 
@@ -1140,7 +1122,6 @@ class Request(Generic[T]):
     def _check_valid(
             self,
             manifest: ArtifactManifest,
-            cache: bool | None = None,
     ) -> CacheInvalidation | None:
         """Return why ``manifest`` is stale for this request, or ``None`` if valid."""
         derivative = self._require_derivative()
@@ -1150,7 +1131,7 @@ class Request(Generic[T]):
             derivative_version=derivative.version,
             key=self.key(),
             fingerprint=self.current_fingerprint(),
-            dependencies=self.dependency_fingerprints(cache, stored=manifest.dependencies),
+            dependencies=self.dependency_fingerprints(stored=manifest.dependencies),
             cache_policy=derivative.cache_policy.value,
             software={},
         )
@@ -1165,13 +1146,15 @@ class Request(Generic[T]):
             self.registry.write_manifest(self.manifest_path, current)
         return reason
 
-    def is_valid(self, cache: bool | None = None) -> bool:
+    def is_valid(self) -> bool:
         """Return whether the current derivative request already has a valid artifact."""
-        self._require_derivative()
+        derivative = self._require_derivative()
+        if derivative.cache_policy is CachePolicy.NEVER:
+            return False
         manifest = self._manifest()
         if manifest is None or not self.artifact_path.exists():
             return False
-        return self._check_valid(manifest, cache) is None
+        return self._check_valid(manifest) is None
 
     def _dependency_map(self) -> dict[str, Dependency]:
         """Declared dependencies keyed by label, rejecting duplicate labels."""
@@ -1184,10 +1167,9 @@ class Request(Generic[T]):
         return out
 
     @contextmanager
-    def _build_deps_context(self, cache: bool | None):
+    def _build_deps_context(self):
         if self._build_deps is None:
             self._build_deps = self._dependency_map()
-            self._build_deps_cache = cache
         self._build_deps_depth += 1
         try:
             yield
@@ -1195,12 +1177,11 @@ class Request(Generic[T]):
             self._build_deps_depth -= 1
             if self._build_deps_depth == 0:
                 self._build_deps = None
-                self._build_deps_cache = None
 
-    def load_artifact(self, cache: bool | None = None) -> T:
+    def load_artifact(self) -> T:
         """Load or build the underlying derivative artifact without view shaping."""
         derivative = self._require_derivative()
-        use_cache = derivative.should_cache(cache)
+        use_cache = derivative.cache_policy is not CachePolicy.NEVER
         if use_cache:
             manifest = self._manifest()
             artifact_exists = self.artifact_path.exists()
@@ -1209,7 +1190,7 @@ class Request(Generic[T]):
             elif not artifact_exists:
                 reason = CacheInvalidation('missing_artifact')
             else:
-                reason = self._check_valid(manifest, cache)
+                reason = self._check_valid(manifest)
             if manifest is not None and artifact_exists and reason is None:
                 self._artifact_metadata = manifest.artifact_metadata
                 derivative.log_cache_hit(self, self.artifact_path)
@@ -1221,7 +1202,7 @@ class Request(Generic[T]):
             else:
                 derivative.log_cache_recompute(self, self.artifact_path, reason)
 
-        with self._build_deps_context(cache), self.registry._node_warning_context(self), self._state_check_context():
+        with self._build_deps_context(), self.registry._node_warning_context(self), self._state_check_context():
             artifact = derivative.build(self)
         artifact_metadata = self.registry.canonicalize(derivative.artifact_metadata(self, artifact))
         self._artifact_metadata = artifact_metadata
@@ -1236,7 +1217,7 @@ class Request(Generic[T]):
             derivative_version=derivative.version,
             key=self.key(),
             fingerprint=self.current_fingerprint(),
-            dependencies=self.dependency_fingerprints(cache),
+            dependencies=self.dependency_fingerprints(),
             cache_policy=derivative.cache_policy.value,
             software={
                 'eelbrain_cache_schema': str(MANIFEST_SCHEMA_VERSION),
@@ -1251,7 +1232,6 @@ class Request(Generic[T]):
     def load(
             self,
             name: str | None = None,
-            cache: bool | None = None,
             state: dict[str, Any] | None = None,
             options: dict[str, Any] | None = None,
             *,
@@ -1265,12 +1245,6 @@ class Request(Generic[T]):
         name
             Registered node name to load as a dependency. When omitted or
             ``None``, the current request itself is materialized.
-        cache
-            Override the node's default :class:`CachePolicy`. ``True`` forces
-            a cache read/write; ``False`` bypasses the cache and always
-            rebuilds. ``None`` (the default) defers to the node's own policy.
-            Only meaningful for :class:`Derivative` nodes; ignored for
-            :class:`Input` nodes.
         state
             State overrides merged on top of the current request's state
             before resolving the dependency. Only valid when ``name`` is
@@ -1297,31 +1271,31 @@ class Request(Generic[T]):
         Notes
         -----
         When loading the current request (``name`` is ``None``), only
-        ``cache`` and ``view`` are accepted; passing ``state``, ``options``,
-        or ``controls`` raises :class:`TypeError`.
+        ``view`` is accepted; passing ``state``, ``options``, or ``controls``
+        raises :class:`TypeError`.
         """
         if isinstance(name, str):
             if self._build_deps is not None:
                 if name not in self._build_deps:
                     declared = sorted(self._build_deps)
                     raise RuntimeError(f"{self.node.name!r} called ctx.load({name!r}) which is not a declared dependency. Declared: {declared}")
-                if cache is not None or view is not None or state is not None or options is not None or controls:
-                    raise TypeError(f"{self.node.name!r} passed overrides to ctx.load({name!r}); declare cache, view, state, and options on the Dependency instead, and do not override controls here")
+                if view is not None or state is not None or options is not None or controls:
+                    raise TypeError(f"{self.node.name!r} passed overrides to ctx.load({name!r}); declare view, state, and options on the Dependency instead, and do not override controls here")
                 dep = self._build_deps[name]
                 return self.registry.resolve(
                     name=dep.name,
                     state={**self.state, **dep.state} if dep.state else self.state,
                     options=dep.options,
-                ).load(cache=self._build_deps_cache, view=dep.view)
+                ).load(view=dep.view)
             return self.registry.resolve(
                 name,
                 state={**self.state, **(state or {})},
                 options=options,
                 controls=controls,
-            ).load(cache=cache, view=view)
+            ).load(view=view)
 
         if state is not None or options is not None or controls:
-            raise TypeError("Request.load() without a dependency name only accepts cache and view overrides")
+            raise TypeError("Request.load() without a dependency name only accepts a view override")
         if view is not None:
             with self.registry._node_warning_context(self):
                 return self.node.load_view(self, view)
@@ -1330,8 +1304,8 @@ class Request(Generic[T]):
                 return self.node.load(self)
 
         derivative = self._require_derivative()
-        with self._build_deps_context(cache):
-            artifact = self.load_artifact(cache)
+        with self._build_deps_context():
+            artifact = self.load_artifact()
             return derivative.apply_view_options(self, artifact)
 
 
@@ -1651,18 +1625,16 @@ class DerivativeRegistry:
 
     def dependency_fingerprints(
             self,
-            node: DependencyNode[Any],  # Node whose dependencies are being fingerprinted.
             ctx: Request,  # Bound state/options for the current load.
-            cache: bool | None,  # Explicit cache override propagated to dependencies.
             stored: dict[str, Any] | None = None,  # Previous manifest fragment, reused on quick-match.
     ) -> dict[str, Any]:
         out = {}
-        with ctx._build_deps_context(cache), ctx._state_check_context():
+        with ctx._build_deps_context(), ctx._state_check_context():
             for dep, dep_ctx in self._dependency_handles(ctx):
                 key = dep.label or dep.name
-                fingerprint = node.dependency_fingerprint_override(ctx, dep, dep_ctx)
+                fingerprint = ctx.node.dependency_fingerprint_override(ctx, dep, dep_ctx)
                 stored_entry = stored.get(key) if stored else None
-                out[key] = dep_ctx.describe_dependency(cache, dep.view, fingerprint, stored_entry)
+                out[key] = dep_ctx.describe_dependency(dep.view, fingerprint, stored_entry)
         return out
 
     def read_manifest(self, path: str | Path) -> ArtifactManifest | None:

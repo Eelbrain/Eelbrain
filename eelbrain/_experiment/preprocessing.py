@@ -621,7 +621,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             derivative_version=self.version,
             key=self._key(ctx),
             fingerprint=ctx.registry.canonicalize(self.fingerprint(ctx)),
-            dependencies=ctx.registry.dependency_fingerprints(self, ctx, None),
+            dependencies=ctx.registry.dependency_fingerprints(ctx),
             cache_policy='external',
             software={'eelbrain_cache_schema': str(MANIFEST_SCHEMA_VERSION), 'mne': mne.__version__},
         )
@@ -757,7 +757,6 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         the subject recording.
     """
     key_fields = ('subject', 'session', 'task', 'run', 'datatype')
-    cache_policy = CachePolicy.OPTIONAL
     cache_suffix = '-raw.fif'
     OPTION_DEFAULTS = {'noise': False}
     VIEW_OPTION_DEFAULTS = {'preload': False}
@@ -776,7 +775,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         self.pipes = pipes
         self.extension = extension
         if not pipe._cache:
-            self.cache_policy = CachePolicy.DISABLED_BY_DEFAULT
+            self.cache_policy = CachePolicy.NEVER
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         source_node = raw_node_name(self.pipe.source)

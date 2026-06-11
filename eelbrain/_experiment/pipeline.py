@@ -106,6 +106,11 @@ class Pipeline(StateModel):
     cache_inv: bool = True  # Whether to cache inverse solution
     # moderate speed gain for loading source estimates (34 subjects: 20 vs 70 s)
     # hard drive space ~ 100 mb/file
+    # Whether to persist sensor-space epochs to disk. Off by default because
+    # epochs are cheap to re-extract and accumulate large files.
+    cache_epochs: bool = False
+    # Whether to persist single-subject source-space estimates to disk.
+    cache_source_estimates: bool = False
 
     # datatype and extension are usually inferred from a BIDS dataset; override here if needed
     datatype: str = None
@@ -482,8 +487,8 @@ class Pipeline(StateModel):
         ))
         self._derivatives.register(SelectedEventsDerivative(self._epochs, self._epoch_rejection))
         self._derivatives.register(EpochEventsDerivative(self._epochs, self._runs_for))
-        self._derivatives.register(RecordingEpochsDerivative(self._raw, self._epochs, self._references))
-        self._derivatives.register(EpochsDerivative(self._raw, self._epochs, self._runs_for))
+        self._derivatives.register(RecordingEpochsDerivative(self._raw, self._epochs, self._references, self.cache_epochs))
+        self._derivatives.register(EpochsDerivative(self._raw, self._epochs, self._runs_for, self.cache_epochs))
         self._derivatives.register(EvokedDerivative(self._raw, self._epochs))
         self._derivatives.register(EvokedGroupDatasetDerivative(self._raw, self._groups))
 
@@ -494,12 +499,12 @@ class Pipeline(StateModel):
         self._derivatives.register(SrcDerivative())
         self._derivatives.register(SourceMorphDerivative())
         self._derivatives.register(FwdDerivative(self._raw, self._references))
-        self._derivatives.register(InvDerivative(self._raw, self._references))
+        self._derivatives.register(InvDerivative(self._raw, self._references, self.cache_inv))
         self._derivatives.register(AnnotDerivative(self._parcs))
 
         # --- Source-space: epochs/evoked projected to source space ---
-        self._derivatives.register(EpochsStcDerivative(self._raw, self._epochs, self._references))
-        self._derivatives.register(EvokedStcDerivative(self._raw, self._epochs, self._references))
+        self._derivatives.register(EpochsStcDerivative(self._raw, self._epochs, self._references, self.cache_source_estimates))
+        self._derivatives.register(EvokedStcDerivative(self._raw, self._epochs, self._references, self.cache_source_estimates))
         self._derivatives.register(EpochsStcGroupDatasetDerivative(self._mri_subjects, self.get('common_brain'), self._groups))
         self._derivatives.register(EvokedStcGroupDatasetDerivative(self._mri_subjects, self.get('common_brain'), self._groups))
 
@@ -531,7 +536,6 @@ class Pipeline(StateModel):
     def _load_derivative(
             self,
             name: str,  # Registered derivative name.
-            cache: bool | None = None,  # Explicit cache override for this load.
             options: dict[str, Any] | None = None,
             view: str | None = None,
             *,
@@ -541,7 +545,7 @@ class Pipeline(StateModel):
         ctx = self._resolve_derivative(name, options=options, controls=controls)
         if not redo and ctx.is_valid():
             return None
-        return ctx.load(cache=cache, view=view)
+        return ctx.load(view=view)
 
     def __iter__(self):
         "Iterate state through subjects and yield each subject name."
@@ -1466,7 +1470,7 @@ class Pipeline(StateModel):
         with self._temporary_state:
             if state:
                 self.set(**state)
-            inv = self._load_derivative('inv', cache=self.cache_inv, options={'fiff': fiff})
+            inv = self._load_derivative('inv', options={'fiff': fiff})
 
             if ndvar:
                 parc = self._current_source_parc()

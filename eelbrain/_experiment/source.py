@@ -562,12 +562,13 @@ class FwdDerivative(Derivative[mne.Forward]):
 class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
     name = 'inv'
     key_fields = ('subject', 'session', 'raw', 'epoch', 'epoch_rejection', 'cov', 'mrisubject', 'src', 'inv')
-    cache_policy = CachePolicy.OPTIONAL
     cache_suffix = '-inv.fif'
 
-    def __init__(self, raw, references: dict[str, Reference | None]):
+    def __init__(self, raw, references: dict[str, Reference | None], cache: bool = True):
         self.raw = raw
         self._references = references
+        if not cache:
+            self.cache_policy = CachePolicy.NEVER
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (
@@ -791,7 +792,6 @@ class EpochsStcDerivative(Derivative[Dataset]):
     )
     # source localization handles EEG referencing internally
     fixed_state = {'reference': ''}
-    cache_policy = CachePolicy.DISABLED_BY_DEFAULT
     cache_suffix = '.pickle'
     OPTION_DEFAULTS = {
         'baseline': False,
@@ -805,10 +805,12 @@ class EpochsStcDerivative(Derivative[Dataset]):
     }
     VIEW_OPTION_DEFAULTS = {'ndvar': True, 'keep_epochs': False}
 
-    def __init__(self, raw, epochs: dict[str, Any], references: dict[str, Reference | None]):
+    def __init__(self, raw, epochs: dict[str, Any], references: dict[str, Reference | None], cache: bool = False):
         self.raw = raw
         self.epochs = epochs
         self._references = references
+        if not cache:
+            self.cache_policy = CachePolicy.NEVER
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return _source_dependencies(ctx, Dependency('epochs', options=ctx.options_for('epochs', baseline=ctx.options['baseline'], ndvar=False, reject=ctx.options['reject'], cat=ctx.options['cat'], samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], pad=ctx.options['pad'], data='sensor')))
@@ -920,7 +922,6 @@ class EvokedStcDerivative(Derivative[Dataset]):
     )
     # source localization handles EEG referencing internally
     fixed_state = {'reference': ''}
-    cache_policy = CachePolicy.DISABLED_BY_DEFAULT
     cache_suffix = '.pickle'
     OPTION_DEFAULTS = {
         'baseline': False,
@@ -932,10 +933,12 @@ class EvokedStcDerivative(Derivative[Dataset]):
     }
     VIEW_OPTION_DEFAULTS = {'ndvar': True, 'keep_evoked': False}
 
-    def __init__(self, raw, epochs: dict[str, Any], references: dict[str, Reference | None]):
+    def __init__(self, raw, epochs: dict[str, Any], references: dict[str, Reference | None], cache: bool = False):
         self.raw = raw
         self.epochs = epochs
         self._references = references
+        if not cache:
+            self.cache_policy = CachePolicy.NEVER
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return _source_dependencies(ctx, Dependency('evoked', options=ctx.options_for('evoked', baseline=ctx.options['baseline'], ndvar=False, cat=ctx.options['cat'], samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], data='sensor')))

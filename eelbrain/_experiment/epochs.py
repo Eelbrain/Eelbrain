@@ -774,7 +774,6 @@ class RecordingEpochsDerivative(Derivative[Any]):
     name = 'recording-epochs'
     key_fields = ('subject', 'session', 'run', 'raw', 'epoch', 'epoch_rejection', 'reference')
     cache_suffix = '.epochs'
-    cache_policy = CachePolicy.DISABLED_BY_DEFAULT
     OPTION_DEFAULTS = {
         'baseline': False,
         'samplingrate': None,
@@ -788,10 +787,12 @@ class RecordingEpochsDerivative(Derivative[Any]):
         'reject': True,
     }
 
-    def __init__(self, raw: RawPipeGraph, epochs: dict[str, EpochBase], references: dict[str, Reference | None]):
+    def __init__(self, raw: RawPipeGraph, epochs: dict[str, EpochBase], references: dict[str, Reference | None], cache: bool = False):
         self.raw = raw
         self.epochs = epochs
         self.references = references
+        if not cache:
+            self.cache_policy = CachePolicy.NEVER
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         epoch = self.epochs[ctx.state['epoch']]
@@ -903,7 +904,6 @@ class EpochsDerivative(Derivative[Any]):
     name = 'epochs'
     key_fields = ('subject', 'session', 'raw', 'epoch', 'epoch_rejection', 'reference')
     cache_suffix = '.epochs'
-    cache_policy = CachePolicy.DISABLED_BY_DEFAULT
     OPTION_DEFAULTS = {
         'baseline': False,
         'samplingrate': None,
@@ -921,10 +921,12 @@ class EpochsDerivative(Derivative[Any]):
         'data': 'sensor',
     }
 
-    def __init__(self, raw, epochs: dict[str, Any], runs_for: dict[tuple[str, str, str], tuple[str, ...]]):
+    def __init__(self, raw, epochs: dict[str, Any], runs_for: dict[tuple[str, str, str], tuple[str, ...]], cache: bool = False):
         self.raw = raw
         self.epochs = epochs
         self._runs_for = runs_for
+        if not cache:
+            self.cache_policy = CachePolicy.NEVER
 
     def _find_runs(self, ctx: Request, epoch) -> tuple[str, ...]:
         """Runs to aggregate over"""
@@ -1079,7 +1081,6 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         'subject', 'session', 'task', 'run', 'raw',
         'epoch', 'epoch_rejection', 'reference', 'model', 'equalize_evoked_count',
     )
-    cache_policy = CachePolicy.OPTIONAL
     cache_suffix = '-ave.fif'
     OPTION_DEFAULTS = {
         'samplingrate': None,

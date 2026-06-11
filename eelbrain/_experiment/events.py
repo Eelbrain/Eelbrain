@@ -258,7 +258,7 @@ class LabeledEventsDerivative(Derivative[Dataset]):
         self._variables = variables
         self._groups = groups
         if not cache:
-            self.cache_policy = CachePolicy.DISABLED_BY_DEFAULT
+            self.cache_policy = CachePolicy.NEVER
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (
