@@ -609,7 +609,7 @@ class Derivative(DependencyNode[T]):
         fields. The label is only for readability; the hash derived from
         :meth:`key` remains authoritative.
         """
-        label_key = self.key(ctx) if not self.key_fields else canonical_state_subset(ctx.state, self.key_fields)
+        label_key = ctx.key() if not self.key_fields else canonical_state_subset(ctx.state, self.key_fields)
         return _simple_cache_label(label_key)
 
     def cache_log_path(self, ctx: Request, path: Path) -> str:
@@ -666,8 +666,7 @@ class Derivative(DependencyNode[T]):
         """
         if self.cache_suffix is None:
             raise NotImplementedError
-        key = ctx.registry.canonicalize(self.key(ctx))
-        key_hash = _full_cache_key_digest(key)[:CACHE_KEY_HASH_LEN]
+        key_hash = _full_cache_key_digest(ctx.key())[:CACHE_KEY_HASH_LEN]
         label = self.cache_label(ctx) or DEFAULT_CACHE_LABEL
         label_slug = _slug_cache_path_part(label)[:MAX_CACHE_LABEL_LEN].rstrip('-') or DEFAULT_CACHE_LABEL
         node_slug = _slug_cache_path_part(self.name)
@@ -685,12 +684,16 @@ class Derivative(DependencyNode[T]):
         on cache address/identity. It is narrower than :meth:`fingerprint`,
         which records the fuller set of non-dependency request
         state/options/definitions that make an existing artifact stale.
+
+        The returned mapping is passed through
+        :meth:`~DerivativeRegistry.canonicalize` by the registry, so
+        implementations can include arbitrary supported values without
+        pre-serializing them.
         """
         key = canonical_state_subset(ctx.state, self.key_fields)
-        options = ctx.registry.canonicalize(ctx.options)
-        if options:
-            key['options'] = options
-        return ctx.registry.canonicalize(key)
+        if ctx.options:
+            key['options'] = ctx.options
+        return key
 
     def should_cache(
             self,
@@ -925,7 +928,10 @@ class Request(Generic[T]):
         else:
             self._restricted_state = None
         if isinstance(node, Derivative) and node.cache_policy != CachePolicy.NEVER:
-            self._key = node.key(self)
+            # Canonicalize here so key() implementations need not: a key that
+            # only became canonical through the manifest JSON round-trip would
+            # never equal its stored form and silently recompute on every run.
+            self._key = registry.canonicalize(node.key(self))
             self._base_artifact_path = Path(node.path(self))
             self._artifact_path = Path(self.registry.resolve_cache_artifact_path(self._base_artifact_path, self._key))
             self._manifest_path = Path(self.registry.manifest_path(self._artifact_path))
@@ -1390,14 +1396,13 @@ class DerivativeRegistry:
     def resolve_cache_artifact_path(
             self,
             path: str | Path,
-            key: dict[str, Any],
+            key: dict[str, Any],  # Canonical derivative key (see Request.key()).
     ) -> Path:
         artifact_path = Path(path)
         if not self.is_cache_artifact(artifact_path):
             return artifact_path
 
-        canonical_key = self.canonicalize(key)
-        digest = _full_cache_key_digest(canonical_key)
+        digest = _full_cache_key_digest(key)
         mapping = self._read_cache_disambiguation(artifact_path)
         suffix = mapping.get(digest)
         if suffix is not None:
@@ -1407,7 +1412,7 @@ class DerivativeRegistry:
             return artifact_path
 
         manifest = self.read_manifest(self.manifest_path(artifact_path))
-        if manifest is None or self.canonicalize(manifest.key) == canonical_key:
+        if manifest is None or manifest.key == key:
             return artifact_path
 
         used_suffixes = set(mapping.values())
@@ -1550,7 +1555,7 @@ class DerivativeRegistry:
                     parts.append(' [uncached]')
                 else:
                     parts.append(' [derivative]')
-                    key_text = self._tree_mapping_text(self.canonicalize(handle.key()))
+                    key_text = self._tree_mapping_text(handle.key())
                     if key_text:
                         parts.append(f" {{{key_text}}}")
             else:

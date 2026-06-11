@@ -350,10 +350,10 @@ class ResultOutputDerivative(Derivative[T]):
         return {}
 
     def key(self, ctx: Request) -> dict[str, Any]:
-        return ctx.registry.canonicalize({
+        return {
             'identity': self._key_identity(ctx),
-            'options': ctx.registry.canonicalize(ctx.options),
-        })
+            'options': ctx.options,
+        }
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         out = {

@@ -609,6 +609,28 @@ def test_registry_load_caches_derivative_and_writes_manifest():
     assert value.build_calls == 1
 
 
+def test_key_override_with_non_json_values_caches_stably():
+    pipeline, registry, _, _, _, _, _, _, _root = make_registry()
+
+    class TupleKeyDerivative(ValueDerivative):
+        name = 'tuple-key'
+        key_fields = ()
+
+        def key(self, ctx: Request) -> dict[str, object]:
+            # Keys need not be pre-canonicalized: the tuple only becomes a
+            # list through the manifest JSON round-trip.
+            return {'subjects': ('s1', 's2'), 'options': ctx.options}
+
+    derivative = TupleKeyDerivative(pipeline.root)
+    registry.register(derivative)
+
+    handle = registry.resolve('tuple-key', state=DEFAULT_STATE)
+    assert handle.load() == 'alpha'
+    assert registry.resolve('tuple-key', state=DEFAULT_STATE).is_valid()
+    assert registry.resolve('tuple-key', state=DEFAULT_STATE).load() == 'alpha'
+    assert derivative.build_calls == 1
+
+
 def test_unreadable_manifest_triggers_rebuild():
     pipeline, registry, _, value, _, _, _, _, _root = make_registry()
     handle = registry.resolve('value', state=DEFAULT_STATE)
