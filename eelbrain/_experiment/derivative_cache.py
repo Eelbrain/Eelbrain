@@ -1138,7 +1138,16 @@ class Request(Generic[T]):
             cache_policy=derivative.cache_policy.value,
             software={},
         )
-        return compare_manifests(manifest, current)
+        reason = compare_manifests(manifest, current)
+        if reason is None and current.dependencies != manifest.dependencies:
+            # A quick fingerprint drifted while the full fingerprint still
+            # matched (e.g. a touched file). Persist the refreshed dependency
+            # entries so future checks take the quick path again instead of
+            # paying for the full fingerprint walk on every validation.
+            current.software = manifest.software
+            current.artifact_metadata = manifest.artifact_metadata
+            self.registry.write_manifest(self.manifest_path, current)
+        return reason
 
     def is_valid(self, cache: bool | None = None) -> bool:
         """Return whether the current derivative request already has a valid artifact."""

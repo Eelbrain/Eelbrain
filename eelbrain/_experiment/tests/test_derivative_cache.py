@@ -1145,6 +1145,11 @@ def test_quick_fingerprint_skips_full_fingerprint_when_unchanged():
     assert handle.is_valid()  # spurious quick change: full fingerprint still matches
     assert source.full_calls == 1
 
+    # The successful validation refreshed the manifest, restoring the quick path.
+    source.full_calls = 0
+    assert handle.is_valid()
+    assert source.full_calls == 0
+
     source.path(registry.resolve('counting', state={'subject': 's1'})).write_text('changed')
     source.full_calls = 0
     assert not handle.is_valid()
