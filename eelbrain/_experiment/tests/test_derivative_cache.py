@@ -609,6 +609,28 @@ def test_registry_load_caches_derivative_and_writes_manifest():
     assert value.build_calls == 1
 
 
+def test_unreadable_manifest_triggers_rebuild():
+    pipeline, registry, _, value, _, _, _, _, _root = make_registry()
+    handle = registry.resolve('value', state=DEFAULT_STATE)
+    handle.load()
+
+    # Corrupt JSON, e.g. from an interrupted write
+    handle.manifest_path.write_text('{"derivative": "val')
+    assert registry.read_manifest(handle.manifest_path) is None
+    assert not handle.is_valid()
+    assert registry.resolve('value', state=DEFAULT_STATE).load() == 'alpha'
+    assert value.build_calls == 2
+
+    # Structurally incompatible manifest (missing required fields)
+    handle.manifest_path.write_text('{"schema_version": 1}')
+    assert registry.read_manifest(handle.manifest_path) is None
+    assert registry.resolve('value', state=DEFAULT_STATE).load() == 'alpha'
+    assert value.build_calls == 3
+
+    # Valid again after the rebuild rewrote the manifest
+    assert registry.resolve('value', state=DEFAULT_STATE).is_valid()
+
+
 def test_registry_logs_cache_events(caplog):
     _, registry, _, value, _, _, _, _, _root = make_registry()
 

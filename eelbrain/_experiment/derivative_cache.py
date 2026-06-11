@@ -76,6 +76,13 @@ def _toml_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write ``text`` via a temporary file so an interrupted write cannot leave a partial file."""
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    tmp_path.write_text(text)
+    tmp_path.replace(path)
+
+
 def _read_warning_log(path: Path) -> list[dict[str, str]]:
     if not path.exists():
         return []
@@ -1366,7 +1373,11 @@ class DerivativeRegistry:
         sidecar_path = _cache_disambiguation_path(path)
         if not sidecar_path.exists():
             return {}
-        data = json.loads(sidecar_path.read_text())
+        try:
+            data = json.loads(sidecar_path.read_text())
+        except (OSError, ValueError) as error:
+            self.log.debug("Treating unreadable disambiguation sidecar %s as empty (%s)", sidecar_path, error)
+            return {}
         if not isinstance(data, dict):
             return {}
         return {str(key): value for key, value in data.items() if isinstance(value, str)}
@@ -1374,7 +1385,7 @@ class DerivativeRegistry:
     def _write_cache_disambiguation(self, path: str | Path, data: dict[str, str]) -> None:
         sidecar_path = _cache_disambiguation_path(path)
         sidecar_path.parent.mkdir(parents=True, exist_ok=True)
-        sidecar_path.write_text(json.dumps(data, sort_keys=True, indent=2))
+        _atomic_write_text(sidecar_path, json.dumps(data, sort_keys=True, indent=2))
 
     def resolve_cache_artifact_path(
             self,
@@ -1619,16 +1630,27 @@ class DerivativeRegistry:
         return out
 
     def read_manifest(self, path: str | Path) -> ArtifactManifest | None:
+        """Read a manifest, returning ``None`` when it is missing or unreadable.
+
+        An unreadable manifest (corrupt JSON, e.g. from an interrupted write,
+        or an incompatible structure from an old schema) means the artifact
+        cannot be validated, which is equivalent to a missing manifest: the
+        artifact will be rebuilt.
+        """
         manifest_path = Path(path)
         if not manifest_path.exists():
             return None
-        data = json.loads(manifest_path.read_text())
-        return ArtifactManifest.from_dict(data)
+        try:
+            data = json.loads(manifest_path.read_text())
+            return ArtifactManifest.from_dict(data)
+        except (OSError, ValueError, TypeError, AttributeError) as error:
+            self.log.debug("Treating unreadable manifest %s as missing (%s)", manifest_path, error)
+            return None
 
     def write_manifest(self, path: str | Path, manifest: ArtifactManifest) -> None:
         manifest_path = Path(path)
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        manifest_path.write_text(json.dumps(manifest.to_dict(), sort_keys=True, indent=2))
+        _atomic_write_text(manifest_path, json.dumps(manifest.to_dict(), sort_keys=True, indent=2))
 
     @staticmethod
     def canonicalize(value: Any) -> Any:
