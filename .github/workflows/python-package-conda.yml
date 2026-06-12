@@ -67,6 +67,6 @@ jobs:
       run: |
         pytest eelbrain --cov --cov-branch --cov-report=xml -v -rfEXs --durations=15
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v6
+      uses: codecov/codecov-action@v6.0.1
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
