@@ -30,6 +30,7 @@ def select_components(
         adjacency: str | Sequence = None,
         decim: int = None,
         debug: bool = False,
+        events: Dataset = None,
 ):
     """GUI for selecting ICA-components
 
@@ -53,6 +54,12 @@ def select_components(
     decim
         Decimate the data for display (only applies when data is a ``Raw``
         object; default is to approximate 100 Hz samplingrate).
+    events
+        Optional :class:`Dataset` with events to show on the timeline (only
+        used when ``data`` is a ``Raw`` object). Must contain a ``'time'``
+        column (seconds from recording start); an optional ``'duration'``
+        column draws filled bands, and any :class:`Factor` can be selected in
+        the toolbar to color-code events.
 
     Notes
     -----
@@ -69,7 +76,7 @@ def select_components(
     from ._wxgui.select_components import TEST_MODE, Document, Frame, Model
 
     get_app()  # make sure app is created
-    doc = Document(path, data, sysname, adjacency, decim=decim)
+    doc = Document(path, data, sysname, adjacency, decim=decim, events=events)
     model = Model(doc)
     frame = Frame(model)
     frame.Show()
@@ -199,6 +206,72 @@ def select_epochs(
     doc = Document(ds, data, accept, blink, tag, trigger, path, bad_chs, allow_interpolation)
     model = Model(doc)
     frame = Frame(None, model, nplots, topo, vlim, color, lw, mark, mcolor, mlw, antialiased, pos, size, allow_interpolation)
+    frame.Show()
+    frame.Raise()
+    if TEST_MODE:
+        return frame
+    run()
+    return frame
+
+
+def select_channels(
+        raw: mne.io.BaseRaw,
+        path: PathArg,
+        events: Dataset = None,
+        t_column: str = None,
+        sysname: str = None,
+        adjacency=None,
+        decim: int = None,
+        pos: tuple[int, int] = None,
+        size: tuple[int, int] = None,
+):
+    """GUI for selecting bad channels in continuous M/EEG recordings
+
+    Parameters
+    ----------
+    raw
+        MNE Raw object to visualize (must have sensor position info / montage).
+    path
+        Path to the BIDS ``*_channels.tsv`` file that records channel status.
+        Bad channels already marked in the file are highlighted on open.
+        The file is updated when the user saves (Cmd/Ctrl-S).
+    events
+        Optional :class:`Dataset` describing events in the recording.
+        A ``'duration'`` column (seconds) causes events to be shown as
+        filled rectangles instead of vertical lines.  Any :class:`Factor`
+        columns can be selected in the toolbar to color-code events.
+    t_column
+        Name of the column in ``events`` holding event onset times in seconds
+        from the start of the recording.  ``None`` (default) tries ``'onset'``
+        first (BIDS standard), then ``'time'``.
+    sysname
+        Sensor system name for adjacency lookup (see
+        :func:`eelbrain.load.mne.sensor_dim`).
+    adjacency
+        Sensor adjacency specification (see
+        :func:`eelbrain.load.mne.sensor_dim`).
+    decim
+        Decimation factor for the downsampled NDVar used in neighbor-correlation
+        computation.  ``None`` (default) picks a value targeting a sample rate
+        of at least 3× the low-pass cutoff (≥ 100 Hz), falling back to 200 Hz
+        if no low-pass filter has been applied.
+    pos
+        Window position on screen.  ``None`` restores the last session.
+    size
+        Window size on screen.  ``None`` restores the last session.
+
+    Returns
+    -------
+    frame : Frame
+        The GUI window (also kept alive by the wx event loop).
+    """
+    from ._wxgui.app import get_app
+    from ._wxgui.select_channels import TEST_MODE, Document, Frame, Model
+
+    get_app()
+    doc = Document(path, raw, events=events, t_column=t_column, sysname=sysname, adjacency=adjacency, decim=decim)
+    model = Model(doc)
+    frame = Frame(model, parent=None, pos=pos, size=size)
     frame.Show()
     frame.Raise()
     if TEST_MODE:

@@ -14,7 +14,7 @@ from .._exceptions import ConfigurationError, DataError
 from .._experiment.derivative_cache import ProtectedArtifactError
 from .._experiment.epochs import PrimaryEpoch
 from .._experiment.pathing import MRI_SDIR
-from .._experiment.preprocessing import RawICA, ica_input_name, raw_input_name
+from .._experiment.preprocessing import RawICA, RawSource, ica_input_name, raw_bad_channels_input_name, raw_input_name
 from .._utils.mne_utils import is_fake_mri
 from .frame import EelbrainFrame
 from .utils import StaleICADialog, TracebackDialog
@@ -56,6 +56,7 @@ class PipelineFrame(EelbrainFrame):
         self._refresh_token = None  # replaced each refresh; threads compare identity
         self._compute_token = None  # replaced each make-ICA run; threads compare identity
         self._tasks = []  # list of (task_type, task_key)
+        self._bad_chs_iter_fields: list[str] = []  # session/task/run columns for bad_chs
 
         self._init_ui()
         self._populate_tasks()
@@ -153,6 +154,11 @@ class PipelineFrame(EelbrainFrame):
 
     def _populate_tasks(self):
         for name, pipe in self._pipeline._raw.items():
+            if isinstance(pipe, RawSource):
+                self._tasks.append(('bad_chs', name))
+                self._task_choice.Append(f"Bad channels: {name}")
+
+        for name, pipe in self._pipeline._raw.items():
             if isinstance(pipe, RawICA):
                 self._tasks.append(('ica', name))
                 self._task_choice.Append(f"ICA: {name}")
@@ -173,13 +179,14 @@ class PipelineFrame(EelbrainFrame):
             return None, None
         return self._tasks[idx]
 
-    def _populate_epoch_raw_choices(self):
-        self._epoch_choice.Clear()
-        for name, epoch in self._pipeline._epochs.items():
-            if isinstance(epoch, PrimaryEpoch):
-                self._epoch_choice.Append(name)
-        if self._epoch_choice.GetCount():
-            self._epoch_choice.SetSelection(0)
+    def _populate_epoch_raw_choices(self, with_epoch: bool = True):
+        if with_epoch:
+            self._epoch_choice.Clear()
+            for name, epoch in self._pipeline._epochs.items():
+                if isinstance(epoch, PrimaryEpoch):
+                    self._epoch_choice.Append(name)
+            if self._epoch_choice.GetCount():
+                self._epoch_choice.SetSelection(0)
 
         self._raw_choice.Clear()
         for raw in self._pipeline.get_field_values('raw'):
@@ -191,14 +198,26 @@ class PipelineFrame(EelbrainFrame):
     # Event handlers
 
     def _on_task_changed(self, event):
-        task_type, _ = self._current_task()
+        task_type, task_key = self._current_task()
         self._stop_make_ica()
-        show_extra = task_type == 'epoch_rej'
-        for w in (self._epoch_label, self._epoch_choice,
-                  self._raw_label, self._raw_choice):
-            w.Show(show_extra)
-        if show_extra:
-            self._populate_epoch_raw_choices()
+        if task_type == 'bad_chs':
+            p = self._pipeline
+            extra = []
+            if len(p._sessions) > 1:
+                extra.append('session')
+            if len(p._tasks) > 1:
+                extra.append('task')
+            if len(p._runs) > 1:
+                extra.append('run')
+            self._bad_chs_iter_fields = extra
+        show_epoch = task_type == 'epoch_rej'
+        show_raw = task_type in ('epoch_rej', 'bad_chs')
+        self._epoch_label.Show(show_epoch)
+        self._epoch_choice.Show(show_epoch)
+        self._raw_label.Show(show_raw)
+        self._raw_choice.Show(show_raw)
+        if show_raw:
+            self._populate_epoch_raw_choices(with_epoch=show_epoch)
         self._make_ica_btn.Show(task_type == 'ica')
         self._panel.Layout()
         self._setup_columns(task_type)
@@ -219,7 +238,19 @@ class PipelineFrame(EelbrainFrame):
             return
         wx.BeginBusyCursor()
         try:
-            if task_type == 'ica':
+            if task_type == 'bad_chs':
+                raw_name = self._raw_choice.GetStringSelection() or task_key
+                state = {'subject': subject}
+                for col, field in enumerate(self._bad_chs_iter_fields, start=1):
+                    state[field] = self._list.GetItemText(idx, col)
+                frame = self._pipeline.make_bad_channels_selection(raw=raw_name, **state)
+                if frame is not None:
+                    doc = frame.model.doc
+                    doc.callbacks.subscribe(
+                        'saved',
+                        lambda: wx.CallAfter(self._start_refresh),
+                    )
+            elif task_type == 'ica':
                 frame = self._pipeline.make_ica_selection(subject=subject, raw=task_key)
                 if frame is not None:
                     doc = frame.model.doc
@@ -314,7 +345,12 @@ class PipelineFrame(EelbrainFrame):
 
     def _setup_columns(self, task_type):
         self._list.ClearAll()
-        if task_type == 'ica':
+        if task_type == 'bad_chs':
+            cols = [('Subject', 180)]
+            for f in self._bad_chs_iter_fields:
+                cols.append((f.title(), 90))
+            cols += [('Status', 110), ('N bad', 90)]
+        elif task_type == 'ica':
             cols = [('Subject', 180), ('Status', 110), ('Components', 110), ('Rejected', 90)]
         elif task_type == 'mri':
             cols = [('Subject', 180), ('MRI subject', 170), ('Status', 130)]
@@ -335,7 +371,11 @@ class PipelineFrame(EelbrainFrame):
             idx = self._list.InsertItem(self._list.GetItemCount(), row[0])
             for col, val in enumerate(row[1:], 1):
                 self._list.SetItem(idx, col, val)
-            if task_type == 'ica':
+            if task_type == 'bad_chs':
+                status = row[-2]  # status is always second-to-last
+                if status in ('no data', 'no file'):
+                    self._list.SetItemTextColour(idx, grey)
+            elif task_type == 'ica':
                 if row[1] == 'selected' and row[3] == '0':
                     self._list.SetItemTextColour(idx, wx.RED)
             elif task_type == 'mri':
@@ -366,6 +406,14 @@ class PipelineFrame(EelbrainFrame):
         """Recompute the status bar summary from the current table contents."""
         task_type, _ = self._current_task()
         n = self._list.GetItemCount()
+        if task_type == 'bad_chs':
+            n_done = sum(1 for i in range(n) if self._list.GetItemText(i, 1) == 'done')
+            n_missing = sum(1 for i in range(n) if self._list.GetItemText(i, 1) == 'no file')
+            msg = f"{n_done} / {n} subjects · bad channels defined"
+            if n_missing:
+                msg += f"  ({n_missing} missing channels.tsv)"
+            self.SetStatusText(msg)
+            return
         if task_type == 'ica':
             n_ok = sum(1 for i in range(n) if self._list.GetItemText(i, 1) == 'selected')
             n_missing = sum(1 for i in range(n) if self._list.GetItemText(i, 1) == 'no ICA')
@@ -409,7 +457,7 @@ class PipelineFrame(EelbrainFrame):
         epoch_name = (self._epoch_choice.GetStringSelection()
                       if task_type == 'epoch_rej' else None)
         raw_name = (self._raw_choice.GetStringSelection()
-                    if task_type == 'epoch_rej' else None)
+                    if task_type in ('epoch_rej', 'bad_chs') else None)
 
         if task_type == 'epoch_rej' and not epoch_name:
             self.SetStatusText("No epochs defined")
@@ -601,7 +649,7 @@ class PipelineFrame(EelbrainFrame):
         self._finish_make_ica_ui()
         self._refresh_status_bar()
 
-    def _handle_stale_ica(self, subject: str, error: ProtectedArtifactError, pipeline) -> tuple:
+    def _handle_stale_ica(self, subject: str, error: ProtectedArtifactError, pipeline, raw_name: str) -> tuple:
         """Show StaleICADialog on the main thread; block until the user decides.
 
         Returns a table row tuple for the subject.
@@ -613,7 +661,7 @@ class PipelineFrame(EelbrainFrame):
             dlg = StaleICADialog(
                 self, subject,
                 error.message or str(error),
-                error.instructions or '',
+                error.reason or '',
             )
             dlg.ShowModal()
             result[0] = dlg.choice
@@ -631,7 +679,7 @@ class PipelineFrame(EelbrainFrame):
             Path(error.path).unlink()
             return (subject, 'no ICA', '—', '—')
         elif choice == StaleICADialog.INCORPORATE:
-            ica = pipeline.load_ica(accept_stale=True)
+            ica = pipeline.load_ica(raw=raw_name, accept_stale=True)
             return (subject, 'selected', str(ica.n_components_), str(len(ica.exclude)))
         elif choice == StaleICADialog.IGNORE:
             ica = mne.preprocessing.read_ica(error.path)
@@ -689,7 +737,29 @@ class PipelineFrame(EelbrainFrame):
         pipeline = self._pipeline
         rows = []
 
-        if task_type == 'ica':
+        if task_type == 'bad_chs':
+            source_name = pipeline._raw.root_source_name(task_key)
+            extra = self._bad_chs_iter_fields
+            iter_fields = ('subject',) + tuple(extra)
+            iter_arg = iter_fields[0] if len(iter_fields) == 1 else list(iter_fields)
+            for combo in pipeline.iter(iter_arg):
+                if token is not self._refresh_token:
+                    break
+                if isinstance(combo, str):
+                    combo = (combo,)
+                raw_ctx = pipeline._resolve_derivative(raw_input_name(source_name))
+                if not raw_ctx.node.exists(raw_ctx):
+                    rows.append(combo + ('no data', '—'))
+                    continue
+                bads_ctx = pipeline._resolve_derivative(raw_bad_channels_input_name(source_name))
+                tsv_path = bads_ctx.node.path(bads_ctx)
+                if not tsv_path.exists():
+                    rows.append(combo + ('no file', '—'))
+                else:
+                    bads = bads_ctx.load()
+                    rows.append(combo + ('done', str(len(bads))))
+
+        elif task_type == 'ica':
             for subject in pipeline:
                 if token is not self._refresh_token:
                     break
@@ -701,7 +771,7 @@ class PipelineFrame(EelbrainFrame):
                         rows.append((subject, 'selected',
                                      str(ica.n_components_), str(len(ica.exclude))))
                     except ProtectedArtifactError as error:
-                        row = self._handle_stale_ica(subject, error, pipeline)
+                        row = self._handle_stale_ica(subject, error, pipeline, task_key)
                         rows.append(row)
                 elif status == 'missing-ica':
                     rows.append((subject, 'no ICA', '—', '—'))

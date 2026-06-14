@@ -332,9 +332,9 @@ def _sensor_info(
         summary_vmax = 0.1 * vmax if vmax else None
         info['summary_info'] = _info.for_meg(summary_vmax, mult)
     elif data in ['grad', 'planar1', 'planar2']:
-        info = _info.for_meg(vmax, mult, 'T/cm', '∆U')
+        info = _info.for_meg(vmax, mult, 'T/m', '∆U')
         summary_vmax = 0.1 * vmax if vmax else None
-        info['summary_info'] = _info.for_meg(summary_vmax, mult, 'T/cm', '∆U')
+        info['summary_info'] = _info.for_meg(summary_vmax, mult, 'T/m', '∆U')
     else:
         info = {}
 
@@ -1267,7 +1267,7 @@ def evoked_ndvar(evoked, name=None, data=None, exclude='bads', vmax=None,
     elif data == 'eeg':
         info = _info.for_eeg(vmax)
     elif data in ('grad', 'planar1', 'planar2'):
-        info = _info.for_meg(vmax, unit='T/cm')
+        info = _info.for_meg(vmax, unit='T/m')
     else:
         raise ValueError(f"{data=}")
 

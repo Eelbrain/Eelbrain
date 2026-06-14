@@ -31,6 +31,7 @@ cache policy belong to the lower cache and graph layers, not to
 without editing the cache kernel or injecting facade behavior into nodes.
 """
 from __future__ import annotations
+from datetime import datetime
 import fnmatch
 import itertools
 import json
@@ -60,7 +61,7 @@ from .._utils import user_activity
 from .derivative_cache import (
     ArtifactManifest, CachePolicy, Dependency, Derivative, UncachedDerivative,
     Request, Input, MANIFEST_SCHEMA_VERSION, ProtectedArtifactError,
-    canonical_state_subset, file_fingerprint,
+    canonical_state_subset, dependencies_match, file_fingerprint,
 )
 from .configuration import Configuration, sequence_arg, typed_arg
 from .exceptions import FileMissingError
@@ -520,8 +521,17 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             and previous.derivative_version == current.derivative_version
             and previous.key == current.key
             and previous.fingerprint == current.fingerprint
-            and previous.dependencies == current.dependencies
+            and dependencies_match(previous.dependencies, current.dependencies)
         )
+
+    @staticmethod
+    def _strip_quick_fingerprints(obj: Any) -> Any:
+        """Recursively remove ``quick_fingerprint`` keys so diffs show content changes only."""
+        if isinstance(obj, dict):
+            return {k: ICAInput._strip_quick_fingerprints(v) for k, v in obj.items() if k != 'quick_fingerprint'}
+        if isinstance(obj, list):
+            return [ICAInput._strip_quick_fingerprints(v) for v in obj]
+        return obj
 
     @classmethod
     def _first_difference(
@@ -621,12 +631,21 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             field = self._format_pipe_setting(path)
             return f"The ICA step {self.raw_name!r} changed ({field}: {old!r} -> {new!r})."
 
-        diff = self._first_difference(previous.dependencies, current.dependencies)
+        prev_deps = self._strip_quick_fingerprints(previous.dependencies)
+        curr_deps = self._strip_quick_fingerprints(current.dependencies)
+        diff = self._first_difference(prev_deps, curr_deps)
         if diff is not None:
-            path, old, new = self._coarsen_diff(*diff, previous.dependencies, current.dependencies)
+            path, old, new = self._coarsen_diff(*diff, prev_deps, curr_deps)
             dep = path[0]
             if dep.endswith(':raw'):
                 raw_name = self._dependency_raw_name(previous, current, dep)
+                if path[-1] == 'bads':
+                    return f"This ICA was estimated using different bad channels: {old!r} -> {new!r}."
+                if any(a == 'fingerprint' and b == 'source' for a, b in zip(path, path[1:])):
+                    def _fmt_mtime(v: Any) -> str:
+                        t = v if isinstance(v, (int, float)) else (v.get('mtime') if isinstance(v, dict) else None)
+                        return datetime.fromtimestamp(t).strftime('%Y-%m-%d %H:%M:%S') if t is not None else '?'
+                    return f"The source data for raw step {raw_name!r} was modified ({_fmt_mtime(old)} -> {_fmt_mtime(new)})."
                 field = self._format_pipe_setting(path[1:], ('fingerprint', 'definitions', 'pipe'))
                 return f"This ICA was estimated using different settings for raw step {raw_name!r} ({field}: {old!r} -> {new!r})."
             field = self._format_difference_path(path)
@@ -756,7 +775,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
                 ctx.registry.write_manifest(ctx.registry.manifest_path(path), current)
                 return value
             reason = self._stale_reason(previous, current)
-            raise ProtectedArtifactError(self.name, path, message=f"Existing ICA file {path.name!r} no longer matches the current data and ICA settings.", instructions=f"{reason}\nTo make this ICA match the current pipeline again, revert the raw pipeline change or recompute the ICA. To keep using this existing ICA anyway, call e.load_ica(raw={self.raw_name!r}, accept_stale=True) once or run e.make_ica(raw={self.raw_name!r}) and choose 'incorporate'. To recompute it from the current data, run e.make_ica(raw={self.raw_name!r}) and choose 'overwrite'.")
+            raise ProtectedArtifactError(self.name, path, message=f"Existing ICA file {path.name!r} no longer matches the current data and ICA settings.", reason=reason, instructions=f"{reason}\nTo make this ICA match the current pipeline again, revert the raw pipeline change or recompute the ICA. To keep using this existing ICA anyway, call e.load_ica(raw={self.raw_name!r}, accept_stale=True) once or run e.make_ica(raw={self.raw_name!r}) and choose 'incorporate'. To recompute it from the current data, run e.make_ica(raw={self.raw_name!r}) and choose 'overwrite'.")
         return value
 
     def load_view(

@@ -36,6 +36,7 @@ from .._utils.parse import FLOAT_PATTERN, POS_FLOAT_PATTERN
 from .._utils.system import IS_OSX
 from ..plot._base import AxisData, DataLayer, PlotType
 from ..plot._topo import AxTopomap
+from ._ch_types import CH_TYPE_PICK_KWARGS, CH_TYPE_COLORS, ch_type_scale
 from .frame import EelbrainDialog
 from .frame import NavigableFrame
 from .history import Action, FileDocument, FileModel, FileFrame, FileFrameChild
@@ -47,24 +48,17 @@ from . import ID
 
 COLOR = {True: (.5, 1, .5), False: (1, .3, .3)}
 LINE_COLOR = {True: 'k', False: (1, 0, 0)}
-_CH_TYPE_COLORS = {'mag': 'steelblue', 'grad': 'forestgreen', 'eeg': 'firebrick'}
+_EVENT_COLORS = list(UNAMBIGUOUS_COLORS.values())
 TOPO_ARGS = {
     'interpolation': 'linear',  # interpolation that does not assume continuity
     'clip': 'even',
 }
-# Per-type display info for FindNoisyEpochsDialog:
-# (display_unit, scale_from_display_to_SI, default_threshold_in_display_units)
+# Default peak amplitude thresholds for FindNoisyEpochsDialog, in SI units.
 # Peak amplitudes from mne_epochs.get_data() are in SI: T for mag, T/m for grad, V for eeg.
-_CH_TYPE_THRESHOLD_INFO = {
-    'mag':  ('fT',   1e-15, 1000),
-    'grad': ('fT/m', 1e-15, 1000),
-    'eeg':  ('µV',   1e-6,  100),
-}
-# pick_types kwargs per channel type (used for peak computation and component creation)
-_CH_TYPE_PICK_KWARGS = {
-    'mag':  {'meg': 'mag'},
-    'grad': {'meg': 'grad'},
-    'eeg':  {'meg': False, 'eeg': True},
+_THRESHOLD_DEFAULT_SI = {
+    'mag':  1000e-15,   # 1000 fT
+    'grad': 1000e-15,   # 10 fT/cm
+    'eeg':  100e-6,     # 100 µV
 }
 
 # For unit-tests
@@ -122,7 +116,14 @@ class Document(FileDocument):
     data
         Dataset containing 'epochs' (mne Epochs), 'index' (Var describing
         epochs) and variables describing cases in epochs, used to plot
-        condition averages.
+        condition averages. When a :class:`mne.io.Raw` object is passed, the
+        data is treated as continuous (split into 1 s windows for display) and
+        ``events`` can be shown on the timeline.
+    events
+        Optional :class:`Dataset` with events to show on the timeline (only
+        used with continuous data). Must contain a ``'time'`` column (seconds
+        from recording start); an optional ``'duration'`` column draws filled
+        bands, and any :class:`Factor` can be selected to color-code events.
     """
 
     def __init__(
@@ -133,23 +134,27 @@ class Document(FileDocument):
             adjacency: str | Sequence = None,
             drop_epochs_std: float = None,  # drop epochs with high signal (e.g. 10)
             decim: int = None,
+            events: Dataset = None,
     ):
         FileDocument.__init__(self, path)
         self._ndvar_args = dict(sysname=sysname, adjacency=adjacency)
         self.saved = True
         self._explained_variance = {}
 
-        if isinstance(data, mne.io.BaseRaw):
-            events = mne.make_fixed_length_events(data)
+        self.continuous = isinstance(data, mne.io.BaseRaw)
+        if self.continuous:
+            mne_events = mne.make_fixed_length_events(data)
             if decim is None:
                 decim = int(round(data.info['sfreq'] / 100))
-            ds = Dataset({'epochs': mne.Epochs(data, events, 1, 0, 1, baseline=None, proj=False, decim=decim, preload=True)})
+            ds = Dataset({'epochs': mne.Epochs(data, mne_events, 1, 0, 1, baseline=None, proj=False, decim=decim, preload=True)})
         elif isinstance(data, mne.BaseEpochs):
             ds = Dataset({'epochs': data})
         elif isinstance(data, Dataset):
             ds = data
         else:
             raise TypeError(f'{data=}')
+        # events only apply to the continuous representation
+        self.events = events if self.continuous else None
 
         # Exclude extreme epochs
         epochs_ndvar = self.as_ndvar(ds['epochs'])
@@ -186,7 +191,7 @@ class Document(FileDocument):
         topo_picks = mne.pick_types(ica.info, meg=True, eeg=True, ref_meg=False, exclude='bads')
         ch_types_present = set(ica.info.get_channel_types(topo_picks, unique=True))
         components_by_type = []
-        for ch_type, pick_kwargs in _CH_TYPE_PICK_KWARGS.items():
+        for ch_type, pick_kwargs in CH_TYPE_PICK_KWARGS.items():
             if ch_type == 'grad':
                 if not ch_types_present & {'grad', 'planar1', 'planar2'}:
                     continue
@@ -348,8 +353,8 @@ class SharedToolsMenu:  # Frame mixin
         menu.AppendSubMenu(blmenu, "Baseline")
 
     def OnFindNoisyEpochs(self, event):
-        ch_types = [ct for ct, _ in self.doc.components_by_type]
-        dlg = FindNoisyEpochsDialog(self, ch_types=ch_types)
+        type_scales = {ct: ch_type_scale(ct) for ct, _ in self.doc.components_by_type}
+        dlg = FindNoisyEpochsDialog(self, type_scales, _THRESHOLD_DEFAULT_SI)
         rcode = dlg.ShowModal()
         dlg.Destroy()
         if rcode != wx.ID_OK:
@@ -372,7 +377,7 @@ class SharedToolsMenu:  # Frame mixin
         type_peaks = {}
         for ch_type, threshold_si, _ in type_thresholds:
             picks = mne.pick_types(mne_epochs.info, ref_meg=False, exclude='bads',
-                                   **_CH_TYPE_PICK_KWARGS[ch_type])
+                                   **CH_TYPE_PICK_KWARGS[ch_type])
             type_peaks[ch_type] = np.abs(mne_epochs.get_data(picks=picks)).max(axis=(1, 2))
 
         # collect output: epoch is noisy if any enabled type exceeds its threshold
@@ -450,10 +455,9 @@ class SharedToolsMenu:  # Frame mixin
                     sec.append(fmtxt.linebreak)
         else:
             for i, peak_si, ch_type in res:
-                display_unit, scale, _ = _CH_TYPE_THRESHOLD_INFO.get(ch_type, (ch_type, None, 1))
-                peak_display = peak_si / scale if scale is not None else peak_si
+                display_unit, scale = ch_type_scale(ch_type)
                 doc.append(fmtxt.Link(self.doc.epoch_labels[i], f'epoch:{i}'))
-                doc.append(f": {peak_display:g} {display_unit}")
+                doc.append(f": {peak_si * scale:g} {display_unit}")
                 doc.append(fmtxt.linebreak)
         InfoFrame(self, "Noisy Epochs", doc, 300)
 
@@ -677,7 +681,7 @@ class SharedToolsMenu:  # Frame mixin
             orig_by_type = [(ct, o - o.mean(time=(None, 0))) for ct, o in orig_by_type]
             clean_by_type = [(ct, c - c.mean(time=(None, 0))) for ct, c in clean_by_type]
         # Build color dict: {sensor_name: type_color}
-        color = {name: _CH_TYPE_COLORS.get(ch_type, 'k') for ch_type, o in orig_by_type for name in o.sensor.names}
+        color = {name: CH_TYPE_COLORS.get(ch_type, 'k') for ch_type, o in orig_by_type for name in o.sensor.names}
 
         has_case = orig_by_type[0][1].has_case
         if has_case:
@@ -746,8 +750,23 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
         self.figure.subplots_adjust(0, 0, 1, 1, 0, 0)
         self.figure.set_facecolor('white')
 
+        # scrollbars: horizontal = epochs, vertical = components
+        self.scrollbar_h = wx.ScrollBar(self, style=wx.SB_HORIZONTAL)
+        self.scrollbar_h.Bind(wx.EVT_SCROLL, self.OnScrollH)
+        self.scrollbar_v = wx.ScrollBar(self, style=wx.SB_VERTICAL)
+        self.scrollbar_v.Bind(wx.EVT_SCROLL, self.OnScrollV)
+        sizer = wx.FlexGridSizer(2, 2, 0, 0)
+        sizer.AddGrowableCol(0)
+        sizer.AddGrowableRow(0)
+        sizer.Add(self.canvas, 0, wx.EXPAND)
+        sizer.Add(self.scrollbar_v, 0, wx.EXPAND)
+        sizer.Add(self.scrollbar_h, 0, wx.EXPAND)
+        sizer.Add((0, 0))
+        self.SetSizer(sizer)
+
         # attributes
         self.topo_frame = None
+        self._event_artists = []  # handles for current event markers
         self.n_comp_actual = self.n_comp = self.config.ReadInt('layout_n_comp', 10)
         self.n_comp_in_ica = len(self.doc.components)
         self.i_first = 0
@@ -771,6 +790,25 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
         button.Bind(wx.EVT_BUTTON, self.OnShowTopos)
         tb.AddControl(button)
         SharedToolsMenu.AddToolbarButtons(self, tb)
+
+        # events color-by dropdown (continuous data only)
+        self._events_colorby = None
+        self._t_column = None
+        if self.doc.continuous and self.doc.events is not None:
+            events = self.doc.events
+            self._t_column = 'onset' if 'onset' in events else 'time' if 'time' in events else None
+            if self._t_column is None:
+                raise ValueError("events Dataset has no time column; expected an 'onset' or 'time' column to place events on the timeline")
+            factor_cols = [k for k, v in events.items() if isinstance(v, Factor)]
+            if factor_cols:
+                self._events_colorby = factor_cols[0]
+                tb.AddSeparator()
+                tb.AddControl(wx.StaticText(tb, label="Color events by:"))
+                choice = wx.Choice(tb, choices=factor_cols)
+                choice.SetSelection(0)
+                choice.Bind(wx.EVT_CHOICE, self.OnColorByChoice)
+                tb.AddControl(choice)
+
         tb.AddStretchableSpace()
         self.InitToolbarTail(tb)
         tb.Realize()
@@ -868,16 +906,18 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
             self.topo_labels.append(text)
 
         # source time course data
-        y, xtick_labels = self._get_source_data()
+        y, _ = self._get_source_data()
 
         # axes: time course starts after all topo columns + half-width label margin
         left = (n_types + 0.5) * axwidth
         bottom = 1 - n_rows * axheight
-        xticks = np.arange(elen / 2, elen * self.n_epochs, elen)
+        xticks, xtick_labels = self._xticks_labels()
         ax = self.figure.add_axes((left, bottom, 1 - left, 1 - bottom), frameon=False, yticks=(), xticks=xticks, xticklabels=xtick_labels)
         ax.tick_params(bottom=False)
         ax.i = -1
         ax.i_comp = None
+        if self.doc.continuous:
+            ax.set_xlabel("Time (s)")
 
         # store canvas before plotting lines
         self.canvas.draw()
@@ -905,12 +945,18 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
         self.ax_tc_ylim = (-0.5 * self.y_scale, (n_rows - 0.5) * self.y_scale)
         ax.set_ylim(self.ax_tc_ylim)
         ax.set_xlim((0, y.shape[1]))
-        # epoch demarcation
+        # epoch / second demarcation
+        if self.doc.continuous:
+            demarc = dict(ls='-', c=(0.85, 0.85, 0.85), lw=0.5)
+        else:
+            demarc = dict(ls='--', c='k')
         for x in range(elen, elen * self.n_epochs, elen):
-            ax.axvline(x, ls='--', c='k')
+            ax.axvline(x, **demarc)
 
         self.ax_tc = ax
+        self._draw_events()
         self.canvas.draw()
+        self._update_scrollbars()
 
     def _plot_update_raw_range(self):
         y_min, y_max = self._get_raw_range()
@@ -921,6 +967,68 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
         y_min, y_max = self._get_clean_range()
         for line, data in zip(self.y_range_post_lines, (y_min, y_max)):
             line.set_ydata(data)
+
+    def _xticks_labels(self):
+        "Return ``(xticks, labels)`` for the source time-course axes by mode"
+        elen = len(self.doc.sources.time)
+        if self.doc.continuous:
+            # one tick per 1-s window boundary, labeled with absolute seconds
+            step = max(1, int(ceil(self.n_epochs / 12)))  # cap visible ticks
+            ks = range(0, self.n_epochs + 1, step)
+            xticks = [k * elen for k in ks]
+            labels = [str(self.i_first_epoch + k) for k in ks]
+        else:
+            labels = list(self.doc.epoch_labels[self.i_first_epoch:self.i_first_epoch + self.n_epochs])
+            if len(labels) < self.n_epochs:
+                labels += [''] * (self.n_epochs - len(labels))
+            xticks = np.arange(elen / 2, elen * self.n_epochs, elen)
+        return xticks, labels
+
+    def _draw_events(self):
+        "Draw event markers on the bottom amplitude row (continuous data only)"
+        for h in self._event_artists:
+            try:
+                h.remove()
+            except ValueError:
+                pass
+        self._event_artists = []
+        events = self.doc.events
+        if not self.doc.continuous or events is None:
+            return
+
+        elen = len(self.doc.sources.time)
+        x_max = self.n_epochs * elen
+        # confine markers to the bottom range row
+        y0 = -0.5 * self.y_scale
+        height = self.y_scale
+        times = events[self._t_column].x
+        has_duration = 'duration' in events
+        colorby = self._events_colorby
+        cell_color = {}
+        if colorby and colorby in events and isinstance(events[colorby], Factor):
+            factor = events[colorby]
+            for k, cell in enumerate(factor.cells):
+                cell_color[cell] = _EVENT_COLORS[k % len(_EVENT_COLORS)]
+
+        # each 1-s window is elen samples wide, so time t maps to x = (t - i_first_epoch) * elen
+        for i in range(events.n_cases):
+            t = float(times[i])
+            x = (t - self.i_first_epoch) * elen
+            dur = float(events['duration'].x[i]) if has_duration else 0.0
+            x_end = x + dur * elen
+            if x_end < 0 or x > x_max:
+                continue
+            color = cell_color.get(events[colorby][i], (0.5, 0.5, 0.5)) if cell_color else (0.5, 0.5, 0.5)
+            if dur > 0:
+                h = Rectangle((x, y0), x_end - x, height, color=color, alpha=0.4, lw=0)
+                self.ax_tc.add_patch(h)
+            else:
+                (h,) = self.ax_tc.plot([x, x], [y0, y0 + height], color=color, alpha=0.8, lw=0.8)
+            self._event_artists.append(h)
+
+    def _update_scrollbars(self):
+        self.scrollbar_h.SetScrollbar(self.i_first_epoch, self.n_epochs, self.n_epochs_in_data, self.n_epochs)
+        self.scrollbar_v.SetScrollbar(self.i_first, self.n_comp, self.n_comp_in_ica, self.n_comp)
 
     def _event_i_comp(self, event):
         if event.inaxes:
@@ -1011,6 +1119,22 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
     def OnBackward(self, event):
         "Turn the page backward"
         self.SetFirstEpoch(self.i_first_epoch - self.n_epochs)
+
+    def OnColorByChoice(self, event):
+        factor_cols = [k for k, v in self.doc.events.items() if isinstance(v, Factor)]
+        self._events_colorby = factor_cols[event.GetEventObject().GetSelection()]
+        self._draw_events()
+        self.canvas.draw()
+
+    def OnScrollH(self, event):
+        pos = min(self.scrollbar_h.GetThumbPosition(), max(0, self.n_epochs_in_data - 1))
+        if pos != self.i_first_epoch:
+            self.SetFirstEpoch(pos)
+
+    def OnScrollV(self, event):
+        pos = self.scrollbar_v.GetThumbPosition()
+        if pos != self.i_first:
+            self.SetFirstComponent(pos)
 
     def OnCanvasKey(self, event):
         if event.key is None:
@@ -1128,7 +1252,10 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
 
     def OnSetLayout(self, event):
         caption = "Set ICA Source Layout"
-        msg = "Number of components and epochs (e.g., '10 20')"
+        if self.doc.continuous:
+            msg = "Number of components and seconds per page (e.g., '10 20')"
+        else:
+            msg = "Number of components and epochs (e.g., '10 20')"
         default = '%i %i' % (self.n_comp, self.n_epochs)
         dlg = wx.TextEntryDialog(self, msg, caption, default)
         while True:
@@ -1230,7 +1357,7 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
             self.lines[i].set_color(LINE_COLOR[self.doc.accept[i_comp]])
 
         if n_comp_actual < self.n_comp:
-            for i in range(n_comp_actual, self.n_comp):
+            for i in range(n_comp_actual, len(self.topo_plots)):
                 for j, (ch_type, comp_ndvar) in enumerate(self.doc.components_by_type):
                     p = self.topo_plots[i][j]
                     empty_data = comp_ndvar[0].copy()
@@ -1261,7 +1388,7 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
                 self.ax_tc.add_patch(self._marked_epoch_h)
 
         # update data
-        y, tick_labels = self._get_source_data()
+        y, _ = self._get_source_data()
         if i_first_epoch + self.n_epochs > self.n_epochs_in_data:
             elen = len(self.doc.sources.time)
             n_missing = self.i_first_epoch + self.n_epochs - self.n_epochs_in_data
@@ -1285,8 +1412,12 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
             self._plot_update_raw_range()
             self._plot_update_clean_range()
 
+        xticks, tick_labels = self._xticks_labels()
+        self.ax_tc.set_xticks(xticks)
         self.ax_tc.set_xticklabels(tick_labels)
         self.ax_tc.set_ylim(self.ax_tc_ylim)
+        self._draw_events()
+        self._update_scrollbars()
         self.canvas.draw()
 
     def ShowTopos(self):
@@ -1576,7 +1707,7 @@ class TopoFrame(SharedToolsMenu, FileFrameChild):
 
 class FindNoisyEpochsDialog(EelbrainDialog):
 
-    def __init__(self, parent, ch_types: list, **kwargs):
+    def __init__(self, parent, type_scales: dict, default_thresholds_si: dict, **kwargs):
         super().__init__(parent, wx.ID_ANY, "Find Bad Epochs", **kwargs)
         config = parent.config
         apply_rejection = config.ReadBool("FindNoisyEpochsDialog/apply_rejection", True)
@@ -1586,12 +1717,13 @@ class FindNoisyEpochsDialog(EelbrainDialog):
         sizer = wx.BoxSizer(wx.VERTICAL)
 
         # One threshold row per channel type: [checkbox] [type] [value] [unit]
-        grid = wx.FlexGridSizer(rows=len(ch_types), cols=4, vgap=3, hgap=5)
+        self._default_thresholds_si = default_thresholds_si
+        grid = wx.FlexGridSizer(rows=len(type_scales), cols=4, vgap=3, hgap=5)
         self.type_rows = []  # list of (ch_type, enabled_ctrl, threshold_ctrl, display_unit, scale)
-        for ch_type in ch_types:
-            display_unit, scale, default = _CH_TYPE_THRESHOLD_INFO.get(ch_type, (ch_type, None, 1))
+        for ch_type, (display_unit, scale) in type_scales.items():
+            threshold_si = config.ReadFloat(f"FindNoisyEpochsDialog/threshold_si_{ch_type}", default_thresholds_si.get(ch_type, 0))
+            threshold = threshold_si * scale
             enabled = config.ReadBool(f"FindNoisyEpochsDialog/enabled_{ch_type}", True)
-            threshold = config.ReadFloat(f"FindNoisyEpochsDialog/threshold_{ch_type}", default)
             enabled_ctrl = wx.CheckBox(self, label='')
             enabled_ctrl.SetValue(enabled)
             grid.Add(enabled_ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
@@ -1649,13 +1781,13 @@ class FindNoisyEpochsDialog(EelbrainDialog):
             if not enabled_ctrl.GetValue():
                 continue
             threshold_display = float(threshold_ctrl.GetValue())
-            threshold_si = threshold_display * scale if scale is not None else threshold_display
+            threshold_si = threshold_display / scale
             result.append((ch_type, threshold_si, f'{threshold_display:g} {display_unit}'))
         return result
 
     def OnSetDefault(self, event):
         for ch_type, enabled_ctrl, threshold_ctrl, display_unit, scale in self.type_rows:
-            _, _, default = _CH_TYPE_THRESHOLD_INFO.get(ch_type, (None, None, 1))
+            default = self._default_thresholds_si.get(ch_type, 0) * scale
             threshold_ctrl.SetValue(f'{default:g}')
             enabled_ctrl.SetValue(True)
 
@@ -1663,7 +1795,7 @@ class FindNoisyEpochsDialog(EelbrainDialog):
         config = self.Parent.config
         for ch_type, enabled_ctrl, threshold_ctrl, display_unit, scale in self.type_rows:
             config.WriteBool(f"FindNoisyEpochsDialog/enabled_{ch_type}", enabled_ctrl.GetValue())
-            config.WriteFloat(f"FindNoisyEpochsDialog/threshold_{ch_type}", float(threshold_ctrl.GetValue()))
+            config.WriteFloat(f"FindNoisyEpochsDialog/threshold_si_{ch_type}", float(threshold_ctrl.GetValue()) / scale)
         config.WriteBool("FindNoisyEpochsDialog/apply_rejection", self.apply_rejection.GetValue())
         config.WriteBool("FindNoisyEpochsDialog/sort_by_component", self.sort_by_component.GetValue())
         config.Write("FindNoisyEpochsDialog/max_ch_ratio", self.max_ch_ratio.GetValue())

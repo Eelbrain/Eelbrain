@@ -227,11 +227,13 @@ class ProtectedArtifactError(RuntimeError):
             path: Path,
             message: str | None = None,
             instructions: str | None = None,
+            reason: str | None = None,
     ):
         self.derivative = derivative
         self.path = str(path)
         self.message = message
         self.instructions = instructions
+        self.reason = reason
         text = message or (
             f"Existing artifact for derivative {derivative!r} at {self.path!r} does not match "
             "the current settings and was not replaced automatically."
@@ -840,10 +842,10 @@ def _dep_entry_matches(stored: dict[str, Any], current: dict[str, Any]) -> bool:
         return True
     if stored.get('fingerprint') != current.get('fingerprint'):
         return False
-    return _dependencies_match(stored.get('dependencies', {}), current.get('dependencies', {}))
+    return dependencies_match(stored.get('dependencies', {}), current.get('dependencies', {}))
 
 
-def _dependencies_match(stored: dict[str, Any], current: dict[str, Any]) -> bool:
+def dependencies_match(stored: dict[str, Any], current: dict[str, Any]) -> bool:
     """Compare dependency manifests, using quick fingerprints as a first-pass shortcut."""
     if stored.keys() != current.keys():
         return False
@@ -1069,7 +1071,7 @@ class Request(Generic[T]):
             return False
         if manifest.fingerprint != self.current_fingerprint():
             return False
-        if not _dependencies_match(manifest.dependencies, self.dependency_fingerprints(cache)):
+        if not dependencies_match(manifest.dependencies, self.dependency_fingerprints(cache)):
             return False
         return True
 
