@@ -124,7 +124,9 @@ class StaleICADialog(wx.Dialog):
 
     After :meth:`ShowModal` returns, read :attr:`choice` for the user's
     decision: one of the :attr:`DELETE`, :attr:`INCORPORATE`, or :attr:`IGNORE`
-    class constants, or ``None`` if the dialog was dismissed.
+    class constants, or ``None`` if the dialog was dismissed. When
+    ``allow_apply_to_all`` is set, :attr:`apply_to_all` reports whether the
+    "Apply to all" checkbox was ticked.
     """
 
     ABORT = 'abort'
@@ -138,12 +140,14 @@ class StaleICADialog(wx.Dialog):
             subject: str,
             message: str,
             instructions: str = '',
+            allow_apply_to_all: bool = False,
     ) -> None:
         super().__init__(
             parent, title=f"Stale ICA: {subject}",
             style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
         )
         self.choice: str | None = None
+        self.apply_to_all: bool = False
 
         vbox = wx.BoxSizer(wx.VERTICAL)
 
@@ -166,6 +170,12 @@ class StaleICADialog(wx.Dialog):
         help_label = wx.StaticText(self, label=help_text)
         help_label.Wrap(540)
         vbox.Add(help_label, flag=wx.LEFT | wx.RIGHT | wx.BOTTOM, border=12)
+
+        self._apply_all_cb: wx.CheckBox | None = None
+        if allow_apply_to_all:
+            self._apply_all_cb = wx.CheckBox(self, label="Apply this choice to all remaining stale ICA files")
+            self._apply_all_cb.SetToolTip("Use the button you click for every other stale ICA file in this refresh, without asking again.")
+            vbox.Add(self._apply_all_cb, flag=wx.LEFT | wx.RIGHT | wx.BOTTOM, border=12)
 
         vbox.Add(wx.StaticLine(self), flag=wx.EXPAND)
 
@@ -200,6 +210,8 @@ class StaleICADialog(wx.Dialog):
 
     def _choose(self, choice: str) -> None:
         self.choice = choice
+        if self._apply_all_cb is not None:
+            self.apply_to_all = self._apply_all_cb.GetValue()
         self.EndModal(0)
 
 

@@ -319,8 +319,9 @@ class PipelineFrame(EelbrainFrame):
             except ProtectedArtifactError as error:
                 # A stale ICA dependency surfaced while building the requested
                 # artifact (e.g. make_epoch_rejection); route it through the
-                # same dialog used during refresh.
-                choice = self._ask_stale_ica(subject, error)
+                # same dialog used during refresh. A single row is involved, so
+                # "Apply to all" is not offered here.
+                choice, _ = self._ask_stale_ica(subject, error)
                 if choice == StaleICADialog.INCORPORATE:
                     self._pipeline.load_ica(raw=self._raw_choice.GetStringSelection(), accept_stale=True)
                     continue  # manifest now matches; retry the action
@@ -874,23 +875,24 @@ class PipelineFrame(EelbrainFrame):
         self._finish_compute_ui()
         self._refresh_status_bar()
 
-    def _ask_stale_ica(self, subject: str, error: ProtectedArtifactError) -> str | None:
-        """Show StaleICADialog and return the user's choice.
+    def _ask_stale_ica(self, subject: str, error: ProtectedArtifactError, allow_apply_to_all: bool = False) -> tuple[str | None, bool]:
+        """Show StaleICADialog and return ``(choice, apply_to_all)``.
 
         Safe to call from any thread: when called off the main thread the
         dialog is shown via ``CallAfter`` and this blocks until the user
         decides.
         """
-        def show() -> str | None:
+        def show() -> tuple[str | None, bool]:
             dlg = StaleICADialog(
                 self, subject,
                 error.message or str(error),
                 error.reason or '',
+                allow_apply_to_all=allow_apply_to_all,
             )
             dlg.ShowModal()
-            choice = dlg.choice
+            result = (dlg.choice, dlg.apply_to_all)
             dlg.Destroy()
-            return choice
+            return result
 
         if wx.IsMainThread():
             return show()
@@ -905,9 +907,8 @@ class PipelineFrame(EelbrainFrame):
         ready.wait()
         return result[0]
 
-    def _handle_stale_ica(self, subject: str, error: ProtectedArtifactError, pipeline, raw_name: str) -> tuple:
-        """Resolve a stale ICA during refresh, returning a table row tuple."""
-        choice = self._ask_stale_ica(subject, error)
+    def _handle_stale_ica(self, subject: str, error: ProtectedArtifactError, choice: str | None, pipeline, raw_name: str) -> tuple:
+        """Apply a stale-ICA ``choice`` during refresh, returning a table row tuple."""
         if choice == StaleICADialog.ABORT:
             wx.CallAfter(wx.GetApp().ExitMainLoop)
             raise _AbortRequested()
@@ -996,6 +997,7 @@ class PipelineFrame(EelbrainFrame):
                     rows.append(combo + ('done', str(len(bads))))
 
         elif task_type == 'ica':
+            bulk_choice = None  # set once the user ticks "Apply to all"
             for subject in pipeline:
                 if token is not self._refresh_token:
                     break
@@ -1007,7 +1009,13 @@ class PipelineFrame(EelbrainFrame):
                         rows.append((subject, 'selected',
                                      str(ica.n_components_), str(len(ica.exclude))))
                     except ProtectedArtifactError as error:
-                        row = self._handle_stale_ica(subject, error, pipeline, task_key)
+                        if bulk_choice is None:
+                            choice, apply_to_all = self._ask_stale_ica(subject, error, allow_apply_to_all=True)
+                            if apply_to_all:
+                                bulk_choice = choice
+                        else:
+                            choice = bulk_choice
+                        row = self._handle_stale_ica(subject, error, choice, pipeline, raw_name)
                         rows.append(row)
                 elif status == 'missing-ica':
                     rows.append((subject, 'no ICA', '—', '—'))
