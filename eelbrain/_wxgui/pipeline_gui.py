@@ -42,7 +42,7 @@ def _launch_coreg_subprocess(
 
 
 class _AbortRequested(Exception):
-    """Raised in the refresh thread when the user clicks Abort."""
+    """Raised when the user clicks Abort in the stale-ICA dialog."""
 
 
 _USER_ERROR_TYPES = (ConfigurationError, DataError, FileMissingError, FileNotFoundError)
@@ -308,6 +308,32 @@ class PipelineFrame(EelbrainFrame):
         task_type, task_key = self._current_task()
         if task_type is None:
             return
+        # Loop so that after the user incorporates a stale ICA we can retry the
+        # action through the same try, keeping the _USER_ERROR_TYPES handler
+        # around the retry; every other path falls through to the return.
+        while True:
+            try:
+                self._activate_item(idx, subject, task_type, task_key)
+            except _USER_ERROR_TYPES as error:
+                self._show_user_error(*_user_error_dialog(error))
+            except ProtectedArtifactError as error:
+                # A stale ICA dependency surfaced while building the requested
+                # artifact (e.g. make_epoch_rejection); route it through the
+                # same dialog used during refresh.
+                choice = self._ask_stale_ica(subject, error)
+                if choice == StaleICADialog.INCORPORATE:
+                    self._pipeline.load_ica(raw=self._raw_choice.GetStringSelection(), accept_stale=True)
+                    continue  # manifest now matches; retry the action
+                elif choice == StaleICADialog.ABORT:
+                    wx.CallAfter(wx.GetApp().ExitMainLoop)
+                else:  # DELETE / IGNORE / dismissed: the action can not proceed
+                    if choice == StaleICADialog.DELETE:
+                        Path(error.path).unlink()
+                    self._start_refresh()
+            return
+
+    def _activate_item(self, idx, subject, task_type, task_key):
+        """Perform the action for a double-clicked row."""
         wx.BeginBusyCursor()
         try:
             if task_type == 'bad_chs':
@@ -349,8 +375,6 @@ class PipelineFrame(EelbrainFrame):
                 self._on_mri_activated(idx, subject)
             elif task_type == 'coreg':
                 self._on_coreg_activated(idx)
-        except _USER_ERROR_TYPES as error:
-            self._show_user_error(*_user_error_dialog(error))
         finally:
             wx.EndBusyCursor()
 
@@ -850,29 +874,40 @@ class PipelineFrame(EelbrainFrame):
         self._finish_compute_ui()
         self._refresh_status_bar()
 
-    def _handle_stale_ica(self, subject: str, error: ProtectedArtifactError, pipeline, raw_name: str) -> tuple:
-        """Show StaleICADialog on the main thread; block until the user decides.
+    def _ask_stale_ica(self, subject: str, error: ProtectedArtifactError) -> str | None:
+        """Show StaleICADialog and return the user's choice.
 
-        Returns a table row tuple for the subject.
+        Safe to call from any thread: when called off the main thread the
+        dialog is shown via ``CallAfter`` and this blocks until the user
+        decides.
         """
-        result = [None]
-        ready = threading.Event()
-
-        def show():
+        def show() -> str | None:
             dlg = StaleICADialog(
                 self, subject,
                 error.message or str(error),
                 error.reason or '',
             )
             dlg.ShowModal()
-            result[0] = dlg.choice
+            choice = dlg.choice
             dlg.Destroy()
+            return choice
+
+        if wx.IsMainThread():
+            return show()
+        result = [None]
+        ready = threading.Event()
+
+        def run():
+            result[0] = show()
             ready.set()
 
-        wx.CallAfter(show)
+        wx.CallAfter(run)
         ready.wait()
-        choice = result[0]
+        return result[0]
 
+    def _handle_stale_ica(self, subject: str, error: ProtectedArtifactError, pipeline, raw_name: str) -> tuple:
+        """Resolve a stale ICA during refresh, returning a table row tuple."""
+        choice = self._ask_stale_ica(subject, error)
         if choice == StaleICADialog.ABORT:
             wx.CallAfter(wx.GetApp().ExitMainLoop)
             raise _AbortRequested()
