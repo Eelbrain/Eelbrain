@@ -710,6 +710,16 @@ class ContinuousEpoch(EpochBase):
 
 
 # save/load one or multiple epochs objects
+def _flatten_epochs(value) -> list[mne.BaseEpochs]:
+    """Flatten a (possibly nested) epochs artifact into a list of MNE Epochs."""
+    if isinstance(value, mne.BaseEpochs):
+        return [value]
+    out = []
+    for item in value:
+        out.extend(_flatten_epochs(item))
+    return out
+
+
 def _save_epochs(path: Path, value) -> None:
     if path.exists():
         if path.is_dir():
@@ -833,8 +843,8 @@ class RecordingEpochsDerivative(Derivative[Any]):
         ds.info['raw'] = raw
         tmin, tmax, tstop, baseline, decim, variable_tmax = epoch._extraction_parameters(ds, ctx.options)
         if variable_tmax:
-            epoch_value = load.mne.variable_length_mne_epochs(ds, tmin, tmax, baseline, allow_truncation=True, decim=decim, reject_by_annotation=False, i_start='sample', trigger='value')
-            epochs_list = epoch_value
+            epochs_list = load.mne.variable_length_mne_epochs(ds, tmin, tmax, baseline, allow_truncation=True, decim=decim, reject_by_annotation=False, i_start='sample', trigger='value')
+            epoch_value = Datalist(epochs_list, 'epochs')
         else:
             epochs = load.mne.mne_epochs(ds, tmin, tmax, baseline, i_start='sample', decim=decim, drop_bad_chs=False, tstop=tstop, reject_by_annotation=False, trigger='value')
             if len(epochs) != ds.n_cases:
@@ -1033,14 +1043,20 @@ class EpochsDerivative(Derivative[Any]):
         else:
             ds = ctx.load('epoch-events')
 
-        if isinstance(epoch_value, Datalist):
-            ds['epochs'] = combine(epoch_value)
+        # Flatten to a list of MNE Epochs (variable-length epochs are stored as
+        # single-trial Epochs and can be nested when aggregating across runs).
+        epochs_list = _flatten_epochs(epoch_value)
+        # Variable-length epochs have differing numbers of samples and cannot be
+        # concatenated into a single Epochs object.
+        variable_tmax = len({epochs.times.size for epochs in epochs_list}) > 1
+        if variable_tmax:
+            ds['epochs'] = Datalist(epochs_list, 'epochs')
         else:
-            ds['epochs'] = epoch_value
+            ds['epochs'] = combine(epochs_list)
 
         ndvar = ctx.view_options['ndvar']
         if ndvar:
-            info = ds['epochs'].info
+            info = epochs_list[0].info
             sensor_types = data.data_to_ndvar(info)
             ds.info['sensor_types'] = sensor_types
             source_pipe = self.raw.root_source_pipe(ctx.state['raw'])
@@ -1048,9 +1064,14 @@ class EpochsDerivative(Derivative[Any]):
                 sysname = source_pipe._get_sysname(info, ds.info['subject'], data_kind)
                 adjacency = source_pipe._get_adjacency(data_kind)
                 name = 'meg' if data_kind == 'mag' and 'grad' not in sensor_types else data_kind
-                ys = load.mne.epochs_ndvar(ds['epochs'], data=data_kind, sysname=sysname, adjacency=adjacency)
-                if isinstance(data.sensor, str):
-                    ys = getattr(ys, data.sensor)('sensor')
+                if variable_tmax:
+                    ys = Datalist([load.mne.epochs_ndvar(epochs, data=data_kind, sysname=sysname, adjacency=adjacency, name=data_kind)[0] for epochs in epochs_list])
+                    if isinstance(data.sensor, str):
+                        ys = Datalist([getattr(y, data.sensor)('sensor') for y in ys])
+                else:
+                    ys = load.mne.epochs_ndvar(ds['epochs'], data=data_kind, sysname=sysname, adjacency=adjacency)
+                    if isinstance(data.sensor, str):
+                        ys = getattr(ys, data.sensor)('sensor')
                 ds[name] = ys
             if ndvar != 'both':
                 del ds['epochs']

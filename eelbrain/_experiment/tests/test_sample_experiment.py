@@ -718,6 +718,46 @@ def test_epoch_reference():
     e_meg.load_epochs(reference='')
 
 
+def test_variable_length_epochs():
+    "load_epochs for variable-length (variable-tmax) epochs returns per-epoch NDVars"
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, 1, n_segments=2, mris=False)
+    root = join(tempdir, 'SampleExperiment')
+
+    class Experiment(SampleExperiment):
+        epochs = {
+            **SampleExperiment.epochs,
+            # tmax varies per epoch (0.2 or 0.3 s) -> variable-length epochs
+            'varlen': PrimaryEpoch('sample', "event == 'target'", tmin=-0.1, tmax='0.2 + 0.1*(index % 2)', decim=5),
+        }
+
+    e = Experiment(root)
+    e.set(subject='R0000', epoch='varlen', epoch_rejection='', raw='raw')
+
+    ds = e.load_epochs()
+    n = ds.n_cases
+    assert n > 0
+    # each epoch becomes its own NDVar because the epochs have different lengths
+    assert isinstance(ds['meg'], Datalist)
+    assert len(ds['meg']) == n
+    n_times = {y.time.nsamples for y in ds['meg']}
+    assert len(n_times) == 2  # two distinct epoch lengths
+    assert 'epochs' not in ds
+
+    # ndvar=False keeps the raw MNE epochs as a Datalist, one per trial
+    ds_mne = e.load_epochs(ndvar=False)
+    assert isinstance(ds_mne['epochs'], Datalist)
+    assert len(ds_mne['epochs']) == n
+
+    # ndvar='both' keeps both the MNE epochs and the NDVars
+    ds_both = e.load_epochs(ndvar='both')
+    assert isinstance(ds_both['epochs'], Datalist)
+    assert isinstance(ds_both['meg'], Datalist)
+
+
 @requires_mne_sample_data
 def test_channel_model_rejection():
     "Automatic epoch rejection via ChannelModel (the 'epoch_rejection' state)"

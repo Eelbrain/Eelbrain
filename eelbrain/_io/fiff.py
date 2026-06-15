@@ -1128,7 +1128,7 @@ def epochs_ndvar(
         sysname: str = None,
         adjacency: AdjacencyArg = None,
         proj: bool = True,
-):
+) -> NDVar:
     """
     Convert an :class:`mne.Epochs` object to an :class:`NDVar`.
 
