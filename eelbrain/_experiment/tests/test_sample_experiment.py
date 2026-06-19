@@ -806,6 +806,39 @@ def test_channel_model_rejection():
 
 
 @requires_mne_sample_data
+def test_channel_model_rejection_continuous():
+    "ChannelModelRejection: equal-length epochs longer than ``continuous`` use windowed detection"
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+    from eelbrain._info import INTERPOLATE_CHANNELS, INTERPOLATE_WINDOWS
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, 1, 1, pick='')  # keep EEG channels
+    root = join(tempdir, 'SampleExperiment')
+
+    # ``continuous`` below the (equal) epoch duration -> time-resolved detection
+    class Experiment(SampleExperiment):
+        epoch_rejection = {'auto': ChannelModelRejection(model='ridge', fit_threshold=None, score_threshold=1e-5, max_interpolate=2, continuous=0.1)}
+
+    e = Experiment(root)
+    e.set(subject='R0000', epoch='target', raw='raw', epoch_rejection='auto')
+    rej_ds = e._resolve_derivative('epoch-rejection-channel-model').load()
+    assert INTERPOLATE_WINDOWS in rej_ds
+    assert INTERPOLATE_CHANNELS not in rej_ds
+    assert rej_ds['accept'].x.all()  # windowed detection never rejects wholesale
+
+    # with the default ``continuous`` (5 s) the same short epoch uses whole-epoch detection
+    class Experiment2(SampleExperiment):
+        epoch_rejection = {'auto': ChannelModelRejection(model='ridge', fit_threshold=None, score_threshold=1e-5, max_interpolate=2)}
+
+    e2 = Experiment2(root)
+    e2.set(subject='R0000', epoch='target', raw='raw', epoch_rejection='auto')
+    rej_ds2 = e2._resolve_derivative('epoch-rejection-channel-model').load()
+    assert INTERPOLATE_CHANNELS in rej_ds2
+    assert INTERPOLATE_WINDOWS not in rej_ds2
+
+
+@requires_mne_sample_data
 def test_channel_model_rejection_variable_length():
     "ChannelModelRejection on long, variable-length epochs -> time-windowed interpolation"
     set_log_level('warning', 'mne')

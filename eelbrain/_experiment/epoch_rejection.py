@@ -62,10 +62,13 @@ class ChannelModelRejection(EpochRejection):
     marked for interpolation. The rejection file is generated and cached
     automatically (no manual selection).
 
-    For long, variable-length epochs (loaded as a list of epochs), bad channels
-    are detected time-resolved with :meth:`ChannelModel.find_bad_windows` and
-    each channel is interpolated only over the time window in which it is bad;
-    such epochs are never rejected wholesale.
+    Time-resolved (windowed) detection with
+    :meth:`ChannelModel.find_bad_windows` is used for long epochs: always for
+    variable-length epochs (loaded as a list of epochs), and for equal-length
+    epochs longer than ``continuous`` seconds. Each channel is then interpolated
+    only over the time window in which it is bad, and such epochs are never
+    rejected wholesale. Shorter equal-length epochs use whole-epoch detection
+    with :meth:`ChannelModel.score`.
 
     Parameters
     ----------
@@ -85,6 +88,10 @@ class ChannelModelRejection(EpochRejection):
     interpolation
         Apply the by-epoch channel interpolation when loading epochs (default
         ``True``).
+    continuous
+        Duration threshold in seconds: equal-length epochs longer than this use
+        time-resolved (windowed) detection instead of whole-epoch detection
+        (default 5). Variable-length epochs always use windowed detection.
     window, hop, min_duration, merge_gap
         Time-resolved detection parameters for long epochs (see
         :meth:`ChannelModel.find_bad_windows`).
@@ -95,7 +102,7 @@ class ChannelModelRejection(EpochRejection):
     --------
     Pipeline.epoch_rejection
     """
-    DICT_ATTRS = ('interpolation', 'fit_threshold', 'score_threshold', 'max_interpolate', 'raw', 'window', 'hop', 'min_duration', 'merge_gap', 'model', 'alpha', 'epsilon')
+    DICT_ATTRS = ('interpolation', 'fit_threshold', 'score_threshold', 'max_interpolate', 'raw', 'continuous', 'window', 'hop', 'min_duration', 'merge_gap', 'model', 'alpha', 'epsilon')
 
     def __init__(
             self,
@@ -104,6 +111,7 @@ class ChannelModelRejection(EpochRejection):
             score_threshold: float = 50e-6,
             raw: str | None = None,
             interpolation: bool = True,
+            continuous: float = 5.,
             window: float = 1.0,
             hop: float = 0.5,
             min_duration: float = 0.1,
@@ -117,6 +125,7 @@ class ChannelModelRejection(EpochRejection):
         self.fit_threshold = fit_threshold
         self.score_threshold = score_threshold
         self.raw = raw
+        self.continuous = continuous
         self.window = window
         self.hop = hop
         self.min_duration = min_duration
@@ -205,8 +214,13 @@ class ChannelModelRejectionDerivative(Derivative[Dataset]):
         model = ChannelModel(rej.model, alpha=rej.alpha, epsilon=rej.epsilon)
         model.fit(fit_eeg, threshold=rej.fit_threshold)
 
+        # use time-resolved detection for variable-length epochs and for
+        # equal-length epochs longer than ``continuous`` seconds
         if isinstance(eeg, Datalist):
-            # long, variable-length epochs: time-resolved interpolation windows
+            continuous = True
+        else:
+            continuous = (eeg.time.tstop - eeg.time.tmin) > rej.continuous
+        if continuous:
             rej_ds = new_rejection_ds(score_ds, windows=True)
             rej_ds[INTERPOLATE_WINDOWS] = model.find_bad_windows(eeg, threshold=rej.score_threshold, max_exclude=rej.max_interpolate, window=rej.window, hop=rej.hop, min_duration=rej.min_duration, merge_gap=rej.merge_gap)
             return rej_ds
