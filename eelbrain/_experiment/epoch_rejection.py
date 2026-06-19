@@ -16,7 +16,8 @@ import numpy as np
 from .. import load, save
 from .._data_obj import Dataset
 from .._exceptions import ConfigurationError
-from .._info import INTERPOLATE_CHANNELS
+from .._data_obj import Datalist
+from .._info import INTERPOLATE_CHANNELS, INTERPOLATE_WINDOWS
 from .._meeg._channel_model import ChannelModel
 from .._meeg.base import new_rejection_ds
 from .configuration import Configuration
@@ -61,11 +62,17 @@ class ChannelModelRejection(EpochRejection):
     marked for interpolation. The rejection file is generated and cached
     automatically (no manual selection).
 
+    For long, variable-length epochs (loaded as a list of epochs), bad channels
+    are detected time-resolved with :meth:`ChannelModel.find_bad_windows` and
+    each channel is interpolated only over the time window in which it is bad;
+    such epochs are never rejected wholesale.
+
     Parameters
     ----------
     max_interpolate
         Reject an epoch when it has more than this many bad channels; with this
-        many or fewer, mark the bad channels for interpolation instead.
+        many or fewer, mark the bad channels for interpolation instead. For long
+        epochs this caps the number of channels interpolated simultaneously.
     fit_threshold
         Amplitude threshold for excluding epochs from fitting the model (see
         :meth:`ChannelModel.fit`).
@@ -78,6 +85,9 @@ class ChannelModelRejection(EpochRejection):
     interpolation
         Apply the by-epoch channel interpolation when loading epochs (default
         ``True``).
+    window, hop, min_duration, merge_gap
+        Time-resolved detection parameters for long epochs (see
+        :meth:`ChannelModel.find_bad_windows`).
     model, alpha, epsilon
         :class:`ChannelModel` parameters.
 
@@ -85,7 +95,7 @@ class ChannelModelRejection(EpochRejection):
     --------
     Pipeline.epoch_rejection
     """
-    DICT_ATTRS = ('interpolation', 'fit_threshold', 'score_threshold', 'max_interpolate', 'raw', 'model', 'alpha', 'epsilon')
+    DICT_ATTRS = ('interpolation', 'fit_threshold', 'score_threshold', 'max_interpolate', 'raw', 'window', 'hop', 'min_duration', 'merge_gap', 'model', 'alpha', 'epsilon')
 
     def __init__(
             self,
@@ -94,6 +104,10 @@ class ChannelModelRejection(EpochRejection):
             score_threshold: float = 50e-6,
             raw: str | None = None,
             interpolation: bool = True,
+            window: float = 1.0,
+            hop: float = 0.5,
+            min_duration: float = 0.1,
+            merge_gap: float | None = None,
             model: str = 'huber',
             alpha: float = 1e-4,
             epsilon: float = 1.35,
@@ -103,6 +117,10 @@ class ChannelModelRejection(EpochRejection):
         self.fit_threshold = fit_threshold
         self.score_threshold = score_threshold
         self.raw = raw
+        self.window = window
+        self.hop = hop
+        self.min_duration = min_duration
+        self.merge_gap = merge_gap
         self.model = model
         self.alpha = alpha
         self.epsilon = epsilon
@@ -186,8 +204,14 @@ class ChannelModelRejectionDerivative(Derivative[Dataset]):
             fit_eeg = eeg
         model = ChannelModel(rej.model, alpha=rej.alpha, epsilon=rej.epsilon)
         model.fit(fit_eeg, threshold=rej.fit_threshold)
-        scores = model.score(eeg, threshold=rej.score_threshold, max_exclude=rej.max_interpolate + 1)
 
+        if isinstance(eeg, Datalist):
+            # long, variable-length epochs: time-resolved interpolation windows
+            rej_ds = new_rejection_ds(score_ds, windows=True)
+            rej_ds[INTERPOLATE_WINDOWS] = model.find_bad_windows(eeg, threshold=rej.score_threshold, max_exclude=rej.max_interpolate, window=rej.window, hop=rej.hop, min_duration=rej.min_duration, merge_gap=rej.merge_gap)
+            return rej_ds
+
+        scores = model.score(eeg, threshold=rej.score_threshold, max_exclude=rej.max_interpolate + 1)
         rej_ds = new_rejection_ds(score_ds, interpolation=True)
         names = scores.get_dim('sensor').names
         score_data = scores.get_data(('case', 'sensor'))

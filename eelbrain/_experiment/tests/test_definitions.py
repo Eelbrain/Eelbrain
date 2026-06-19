@@ -177,8 +177,9 @@ def test_epoch_rejection_semantic_dict():
     assert isinstance(auto, EpochRejection)
     assert auto._as_dict() == {
         'type': 'ChannelModelRejection', 'interpolation': True, 'fit_threshold': 50e-6,
-        'score_threshold': 1e-4, 'max_interpolate': 3, 'raw': '1-40', 'model': 'huber',
-        'alpha': 1e-4, 'epsilon': 1.35,
+        'score_threshold': 1e-4, 'max_interpolate': 3, 'raw': '1-40',
+        'window': 1.0, 'hop': 0.5, 'min_duration': 0.1, 'merge_gap': None,
+        'model': 'huber', 'alpha': 1e-4, 'epsilon': 1.35,
     }
 
 

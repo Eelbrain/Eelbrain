@@ -6,7 +6,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .._data_obj import NDVar, NDVarArg, asndvar
+from .._data_obj import Datalist, NDVar, NDVarArg, UTS, asndvar
+from .base import BadChannelWindow
 
 if TYPE_CHECKING:
     from sklearn.base import BaseEstimator
@@ -105,48 +106,53 @@ class ChannelModel:
         else:
             raise ValueError(f"{self.model=}; needs to be 'huber', 'ridge', 'ols' or a scikit-learn estimator")
 
-    def fit(self, data: NDVarArg, threshold: float = 50e-6):
+    def fit(self, data: NDVarArg | list, threshold: float = 50e-6):
         """Fit the model.
 
         Parameters
         ----------
-        data : NDVar
+        data
             EEG data with ``sensor`` and ``time`` dimensions (``[case x] sensor
             x time``). All non-sensor dimensions are flattened into regression
-            samples.
+            samples. A ``list`` (or :class:`Datalist`) of long, variable-length
+            epochs (each ``sensor x time``, e.g. :class:`mne.Epochs` or NDVar)
+            is also accepted; each is treated like continuous data and all are
+            concatenated.
         threshold
             Exclude data in which any channel exceeds this absolute value
             (default 50 µV). In epoched data (with a ``case`` dimension) the
-            whole epoch is excluded; in continuous data the ±250 ms around each
-            exceeding time point is excluded. Set to ``None`` to disable.
+            whole epoch is excluded; in continuous and long-epoch data the
+            ±250 ms around each exceeding time point is excluded. Set to
+            ``None`` to disable.
 
         Returns
         -------
         self
         """
-        data = asndvar(data)
-        if not data.has_dim('sensor'):
-            raise ValueError(f"{data=}: needs a sensor dimension")
-        if not data.has_dim('time'):
-            raise ValueError(f"{data=}: needs a time dimension")
-        sensor = data.get_dim('sensor')
-        n_sensors = len(sensor)
-        if data.has_case:
-            # epoched: sensor x case x time
-            x = data.get_data(('sensor', 'case', 'time'))
-            if threshold is not None:
-                keep = ~(np.abs(x) > threshold).any((0, 2))  # per epoch
-                x = x[:, keep]
+        if isinstance(data, list):
+            # long epochs: concatenate the good samples of each epoch
+            blocks = self._as_blocks(data)
+            sensor = blocks[0].get_dim('sensor')
+            n_sensors = len(sensor)
+            x = np.concatenate([self._exclude_continuous(ndvar.get_data(('sensor', 'time')), ndvar.get_dim('time').tstep, threshold) for ndvar in blocks], axis=1)
         else:
-            # continuous: sensor x time
-            x = data.get_data(('sensor', 'time'))
-            if threshold is not None:
-                bad = (np.abs(x) > threshold).any(0)  # per time point
-                w = round(0.250 / data.get_dim('time').tstep)  # ±250 ms
-                bad = np.convolve(bad, np.ones(2 * w + 1), 'same') > 0
-                x = x[:, ~bad]
-        # sensor x sample
-        x = x.reshape(n_sensors, -1)
+            data = asndvar(data)
+            if not data.has_dim('sensor'):
+                raise ValueError(f"{data=}: needs a sensor dimension")
+            if not data.has_dim('time'):
+                raise ValueError(f"{data=}: needs a time dimension")
+            sensor = data.get_dim('sensor')
+            n_sensors = len(sensor)
+            if data.has_case:
+                # epoched: sensor x case x time
+                x = data.get_data(('sensor', 'case', 'time'))
+                if threshold is not None:
+                    keep = ~(np.abs(x) > threshold).any((0, 2))  # per epoch
+                    x = x[:, keep]
+                x = x.reshape(n_sensors, -1)  # sensor x sample
+            else:
+                # continuous: sensor x time
+                x = self._exclude_continuous(data.get_data(('sensor', 'time')), data.get_dim('time').tstep, threshold)
         if x.shape[1] == 0:
             raise ValueError(f"{threshold=}: excluded all data")
         estimators = []
@@ -158,21 +164,27 @@ class ChannelModel:
         self.sensor = sensor
         self.estimators_ = estimators
 
-    def predict(self, data: NDVarArg) -> NDVar:
+    def predict(self, data: NDVarArg | list) -> NDVar | Datalist:
         """Predict each sensor from the other sensors.
 
         Parameters
         ----------
-        data : NDVar
+        data
             EEG data (``[case x] sensor x time``) with the same sensors used for
-            fitting.
+            fitting. A ``list`` of long, variable-length epochs is also accepted
+            (see :meth:`fit`).
 
         Returns
         -------
-        prediction : NDVar
+        prediction
             Data with the same dimensions as ``data``, where each channel is
-            predicted from the other channels.
+            predicted from the other channels. For a list of long epochs, a
+            :class:`Datalist` with one prediction NDVar per epoch.
         """
+        if isinstance(data, list):
+            blocks = self._check_blocks(data)
+            out = [NDVar(self._predict_raw(ndvar.get_data(('sensor', 'time'))), (self.sensor, ndvar.get_dim('time')), ndvar.name, ndvar.info) for ndvar in blocks]
+            return Datalist(out, blocks.name)
         data = self._check_data(data)
         time = data.get_dim('time')
         if data.has_case:
@@ -184,7 +196,7 @@ class ChannelModel:
             dims = (self.sensor, time)
         return NDVar(out, dims, data.name, data.info)
 
-    def score(self, data: NDVarArg, threshold: float = 50e-6, max_exclude: float = 0.25) -> NDVar:
+    def score(self, data: NDVarArg | list, threshold: float = 50e-6, max_exclude: float = 0.25) -> NDVar | Datalist:
         """Score each sensor by how badly it is predicted from the others.
 
         A high score identifies a bad channel. Within each epoch, the channel
@@ -196,9 +208,10 @@ class ChannelModel:
 
         Parameters
         ----------
-        data : NDVar
+        data
             EEG data (``[case x] sensor x time``) with the same sensors used for
-            fitting.
+            fitting. A ``list`` of long, variable-length epochs is also accepted;
+            use :meth:`find_bad_windows` instead to score those time-resolved.
         threshold
             Stop excluding channels once the largest error drops to this
             absolute value (default 50 µV).
@@ -209,12 +222,17 @@ class ChannelModel:
 
         Returns
         -------
-        score : NDVar
-            The per-channel error score (``[case x] sensor``).
+        score
+            The per-channel error score (``[case x] sensor``). For a list of long
+            epochs, a :class:`Datalist` with one score NDVar per epoch.
         """
-        data = self._check_data(data)
-        n_sensors = len(self.sensor)
+        n_sensors = len(self.sensor) if self.sensor is not None else 0
         max_n = int(max_exclude) if max_exclude >= 1 else int(max_exclude * n_sensors)
+        if isinstance(data, list):
+            blocks = self._check_blocks(data)
+            out = [NDVar(self._score_block(ndvar.get_data(('sensor', 'time')), threshold, max_n), (self.sensor,), ndvar.name) for ndvar in blocks]
+            return Datalist(out, blocks.name)
+        data = self._check_data(data)
         if data.has_case:
             x = data.get_data(('case', 'sensor', 'time'))
             out = np.stack([self._score_block(xi, threshold, max_n) for xi in x])
@@ -224,13 +242,111 @@ class ChannelModel:
             dims = (self.sensor,)
         return NDVar(out, dims, data.name)
 
-    def _check_data(self, data: NDVarArg) -> NDVar:
+    def find_bad_windows(
+            self,
+            data: NDVarArg | list,
+            threshold: float = 50e-6,
+            max_exclude: float = 0.25,
+            window: float = 1.0,
+            hop: float = 0.5,
+            min_duration: float = 0.1,
+            merge_gap: float | None = None,
+    ) -> Datalist | list:
+        """Find the time windows in which each sensor is bad.
+
+        Like :meth:`score`, but time-resolved: instead of flagging a channel for
+        a whole epoch, the channel is scored within sliding time windows so that
+        a bad channel is only flagged over the interval in which it is actually
+        bad. This is intended for long, variable-length epochs.
+
+        Parameters
+        ----------
+        data
+            EEG data with the same sensors used for fitting; typically a ``list``
+            (or :class:`Datalist`) of long, variable-length epochs (each
+            ``sensor x time``). A single continuous NDVar (``sensor x time``) or
+            epoched NDVar (``case x sensor x time``) is also accepted.
+        threshold
+            A channel is bad in a window when its error exceeds this absolute
+            value (default 50 µV; see :meth:`score`).
+        max_exclude
+            Maximum number of channels to exclude per window (see :meth:`score`).
+        window
+            Length of the sliding scoring window in seconds (default 1.0).
+        hop
+            Step between successive windows in seconds (default 0.5).
+        min_duration
+            Discard bad windows shorter than this many seconds (default 0.1).
+        merge_gap
+            Merge two bad windows of the same channel separated by less than this
+            many seconds (default: ``window``).
+
+        Returns
+        -------
+        windows
+            One list of :class:`BadChannelWindow` per epoch (per case for an
+            epoched NDVar; a single list for a continuous NDVar).
+        """
+        n_sensors = len(self.sensor) if self.sensor is not None else 0
+        max_n = int(max_exclude) if max_exclude >= 1 else int(max_exclude * n_sensors)
+        if merge_gap is None:
+            merge_gap = window
+        args = (threshold, max_n, window, hop, min_duration, merge_gap)
+        if isinstance(data, list):
+            blocks = self._check_blocks(data)
+            out = [self._windows_for_block(ndvar.get_data(('sensor', 'time')), ndvar.get_dim('time'), *args) for ndvar in blocks]
+            return Datalist(out, blocks.name)
+        data = self._check_data(data)
+        time = data.get_dim('time')
+        if data.has_case:
+            x = data.get_data(('case', 'sensor', 'time'))
+            out = [self._windows_for_block(xi, time, *args) for xi in x]
+            return Datalist(out, data.name)
+        return self._windows_for_block(data.get_data(('sensor', 'time')), time, *args)
+
+    def _as_blocks(self, data: list) -> Datalist:
+        # normalize a list/Datalist of long epochs to a Datalist of validated
+        # sensor x time NDVars
+        data = asndvar(data, ragged=True)
+        for ndvar in data:
+            if not ndvar.has_dim('sensor'):
+                raise ValueError(f"{ndvar=}: needs a sensor dimension")
+            if not ndvar.has_dim('time'):
+                raise ValueError(f"{ndvar=}: needs a time dimension")
+        return data
+
+    def _check_fit(self):
         if self.estimators_ is None:
             raise RuntimeError("This ChannelModel has not been fit yet; call .fit() first")
+
+    def _check_data(self, data: NDVarArg) -> NDVar:
+        self._check_fit()
         data = asndvar(data)
         if data.get_dim('sensor') != self.sensor:
             raise ValueError(f"{data=}: sensors do not match the sensors used for fitting")
         return data
+
+    def _check_blocks(self, data: list) -> Datalist:
+        self._check_fit()
+        blocks = self._as_blocks(data)
+        for ndvar in blocks:
+            if ndvar.get_dim('sensor') != self.sensor:
+                raise ValueError(f"{ndvar=}: sensors do not match the sensors used for fitting")
+        return blocks
+
+    @staticmethod
+    def _exclude_continuous(
+            x: np.ndarray,
+            tstep: float,
+            threshold: float | None,
+    ) -> np.ndarray:
+        # drop the ±250 ms around any time point where a channel exceeds threshold
+        if threshold is None:
+            return x
+        bad = (np.abs(x) > threshold).any(0)  # per time point
+        w = round(0.250 / tstep)  # ±250 ms
+        bad = np.convolve(bad, np.ones(2 * w + 1), 'same') > 0
+        return x[:, ~bad]
 
     def _predict_raw(self, x: np.ndarray) -> np.ndarray:
         # predict each channel from the others; x and output are sensor x time
@@ -264,4 +380,73 @@ class ChannelModel:
                 return scores
             scores[worst] = error[worst]
             bad.append(worst)
-            bad.append(worst)
+
+    def _windows_for_block(
+            self,
+            x: np.ndarray,
+            time: UTS,
+            threshold: float,
+            max_n: int,
+            window: float,
+            hop: float,
+            min_duration: float,
+            merge_gap: float,
+    ) -> list[BadChannelWindow]:
+        # time-resolved bad-channel windows for one block (sensor x time)
+        error = self._score_windows(x, time, threshold, max_n, window, hop)
+        return self._windows_from_error(error, time, threshold, min_duration, merge_gap)
+
+    def _score_windows(
+            self,
+            x: np.ndarray,
+            time: UTS,
+            threshold: float,
+            max_n: int,
+            window: float,
+            hop: float,
+    ) -> np.ndarray:
+        # per-sample error from sliding-window step-down scoring (sensor x time)
+        n_times = x.shape[1]
+        w = max(1, round(window / time.tstep))
+        h = max(1, round(hop / time.tstep))
+        starts = list(range(0, max(1, n_times - w + 1), h))
+        if starts[-1] != n_times - w and n_times > w:
+            starts.append(n_times - w)  # make sure the last samples are covered
+        error = np.zeros_like(x)
+        for s in starts:
+            t0, t1 = s, min(s + w, n_times)
+            block = self._score_block(x[:, t0:t1], threshold, max_n)  # per channel
+            error[:, t0:t1] = np.maximum(error[:, t0:t1], block[:, None])
+        return error
+
+    def _windows_from_error(
+            self,
+            error: np.ndarray,
+            time: UTS,
+            threshold: float,
+            min_duration: float,
+            merge_gap: float,
+    ) -> list[BadChannelWindow]:
+        # convert a per-sample error array (sensor x time) into bad-channel windows
+        mask = error > threshold
+        n_times = mask.shape[1]
+        min_samples = max(1, round(min_duration / time.tstep))
+        merge_samples = round(merge_gap / time.tstep)
+        names = self.sensor.names
+        out = []
+        for ci in np.flatnonzero(mask.any(1)):
+            # half-open [start, stop) runs of bad samples
+            edges = np.flatnonzero(np.diff(np.concatenate(([0], mask[ci].view(np.int8), [0]))))
+            runs = []
+            for start, stop in zip(edges[::2], edges[1::2]):
+                if runs and start - runs[-1][1] < merge_samples:
+                    runs[-1] = (runs[-1][0], stop)
+                else:
+                    runs.append((start, stop))
+            for start, stop in runs:
+                if stop - start < min_samples:
+                    continue
+                tmin = time.tmin + start * time.tstep
+                tmax = time.tstop if stop == n_times else time.tmin + stop * time.tstep
+                out.append(BadChannelWindow(names[ci], tmin, tmax))
+        return out

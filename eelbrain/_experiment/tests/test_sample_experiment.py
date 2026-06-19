@@ -806,6 +806,61 @@ def test_channel_model_rejection():
 
 
 @requires_mne_sample_data
+def test_channel_model_rejection_variable_length():
+    "ChannelModelRejection on long, variable-length epochs -> time-windowed interpolation"
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+    from eelbrain._info import INTERPOLATE_WINDOWS
+    from eelbrain._meeg import BadChannelWindow
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, 1, 1, pick='')  # keep EEG channels
+    root = join(tempdir, 'SampleExperiment')
+
+    class Experiment(SampleExperiment):
+        epochs = {
+            **SampleExperiment.epochs,
+            'varlen': PrimaryEpoch('sample', "event == 'target'", tmin=-0.1, tmax='0.2 + 0.1*(index % 2)'),
+        }
+        epoch_rejection = {'auto': ChannelModelRejection(model='ridge', fit_threshold=None, score_threshold=1e-5, max_interpolate=2)}
+
+    e = Experiment(root)
+    e.set(subject='R0000', epoch='varlen', raw='raw', epoch_rejection='auto')
+
+    # the rejection file stores per-epoch BadChannelWindow lists
+    ctx = e._resolve_derivative('epoch-rejection-channel-model')
+    rej_ds = ctx.load()
+    assert INTERPOLATE_WINDOWS in rej_ds
+    windows = rej_ds[INTERPOLATE_WINDOWS]
+    assert all(isinstance(w, BadChannelWindow) for epoch_windows in windows for w in epoch_windows)
+    # nothing is rejected wholesale for long epochs
+    assert rej_ds['accept'].x.all()
+    n_windows = sum(len(epoch_windows) for epoch_windows in windows)
+    assert n_windows > 0  # score_threshold low enough to flag something
+
+    # end-to-end: interpolation runs and only touches samples inside the windows
+    ds0 = e.load_epochs(interpolate_bads=False)
+    ds1 = e.load_epochs(interpolate_bads=True)
+    assert isinstance(ds1['eeg'], Datalist)
+    assert len(ds1['eeg']) == len(windows)
+    changed = False
+    for i, (y0, y1, epoch_windows) in enumerate(zip(ds0['eeg'], ds1['eeg'], windows)):
+        bad_by_channel = {}
+        for w in epoch_windows:
+            bad_by_channel.setdefault(w.channel, []).append((w.tmin, w.tmax))
+        for ci, ch in enumerate(y0.sensor.names):
+            spans = bad_by_channel.get(ch, [])
+            inside = np.zeros(y0.time.nsamples, bool)
+            for tmin, tmax in spans:
+                inside |= (y0.time.times >= tmin) & (y0.time.times < tmax)
+            # samples outside any bad window are unchanged
+            assert_array_equal(y0.x[ci, ~inside], y1.x[ci, ~inside])
+            if inside.any() and not np.array_equal(y0.x[ci, inside], y1.x[ci, inside]):
+                changed = True
+    assert changed  # interpolation actually modified the flagged windows
+
+
+@requires_mne_sample_data
 def test_evoked_backed_test_vars_are_post_aggregation_only():
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment

@@ -74,7 +74,7 @@ from mne_bids import BIDSPath
 from .. import load, save
 from .._data_obj import Datalist, Dataset, Factor, Var, combine
 from .._exceptions import ConfigurationError
-from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS
+from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS, INTERPOLATE_WINDOWS
 from .derivative_cache import CachePolicy, Dependency, Derivative, Input, Request, UncachedDerivative, file_fingerprint
 from .epoch_rejection import EpochRejection, ManualRejection
 from .epochs import EPOCH_EXTRACT_OPTIONS, EpochCollection, SecondaryEpoch, SuperEpoch, PrimaryEpoch, ContinuousEpoch
@@ -396,8 +396,15 @@ class SelectedEventsDerivative(UncachedDerivative[Dataset]):
                         ds[INTERPOLATE_CHANNELS] = rejection_ds[INTERPOLATE_CHANNELS]
                     else:
                         ds[INTERPOLATE_CHANNELS] = Datalist([[]] * ds.n_cases, INTERPOLATE_CHANNELS, 'strlist')
+                    # Time-resolved interpolation windows (long epochs)
+                    if INTERPOLATE_WINDOWS in rejection_ds:
+                        ds.info[INTERPOLATE_WINDOWS] = True
+                        ds[INTERPOLATE_WINDOWS] = rejection_ds[INTERPOLATE_WINDOWS]
+                    else:
+                        ds.info[INTERPOLATE_WINDOWS] = False
                 else:
                     ds.info[INTERPOLATE_CHANNELS] = False
+                    ds.info[INTERPOLATE_WINDOWS] = False
 
                 if reject == 'keep':
                     ds['accept'] = rejection_ds['accept']
@@ -409,6 +416,7 @@ class SelectedEventsDerivative(UncachedDerivative[Dataset]):
                 ds.info[BAD_CHANNELS] = rejection_ds.info.get(BAD_CHANNELS, [])
             else:
                 ds.info[INTERPOLATE_CHANNELS] = False
+                ds.info[INTERPOLATE_WINDOWS] = False
                 ds.info[BAD_CHANNELS] = []
         elif isinstance(epoch, SecondaryEpoch):
             ds = ctx.load('selected-events')
@@ -510,6 +518,7 @@ class EpochEventsDerivative(UncachedDerivative[Dataset]):
                 ds = combine(dss)
                 ds.info[BAD_CHANNELS] = sorted({ch for d in dss for ch in d.info.get(BAD_CHANNELS, [])})
                 ds.info[INTERPOLATE_CHANNELS] = any(d.info.get(INTERPOLATE_CHANNELS, False) for d in dss)
+                ds.info[INTERPOLATE_WINDOWS] = any(d.info.get(INTERPOLATE_WINDOWS, False) for d in dss)
                 if epoch.n_cases is not None and ds.n_cases != epoch.n_cases:
                     raise RuntimeError(f"Number of epochs {ds.n_cases}, expected {epoch.n_cases}")
                 return ds
