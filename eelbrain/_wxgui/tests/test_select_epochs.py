@@ -7,6 +7,9 @@ import numpy as np
 import pytest
 
 from eelbrain import gui, load, save, set_log_level
+from eelbrain._data_obj import Dataset, Datalist, Var
+from eelbrain._info import INTERPOLATE_WINDOWS
+from eelbrain._meeg import BadChannelWindow
 from eelbrain.testing import TempDir, gui_test, requires_mne_testing_data
 from eelbrain._wxgui.select_epochs import Document, Model
 
@@ -140,3 +143,86 @@ def test_select_epochs():
     n_bad = len(frame.doc.bad_channels)
     frame.OnSetBadChannels(None)
     assert len(frame.doc.bad_channels) == n_bad
+
+
+def _variable_length_ds():
+    "Dataset with ragged epochs (different lengths) and windowed interpolation"
+    set_log_level('warning', 'mne')
+    ch_names = ['Fp1', 'Fp2', 'F3', 'F4', 'C3', 'C4', 'P3', 'P4']
+    sfreq = 100.
+    rng = np.random.RandomState(0)
+
+    def make_epoch(n_times):
+        info = mne.create_info(ch_names, sfreq, 'eeg')
+        data = rng.standard_normal((1, len(ch_names), n_times)) * 1e-5
+        epochs = mne.EpochsArray(data, info, tmin=-0.1, verbose='error')
+        epochs.set_montage('standard_1020')
+        return epochs
+
+    epochs_list = [make_epoch(300), make_epoch(400)]  # 3 s and 4 s
+    ds = Dataset()
+    ds['epochs'] = Datalist(epochs_list, 'epochs')
+    ds['value'] = Var([1, 2])
+    ds[INTERPOLATE_WINDOWS] = Datalist([
+        [BadChannelWindow('C3', 0.5, 1.5)],
+        [],
+    ], INTERPOLATE_WINDOWS)
+    return ds
+
+
+@gui_test
+def test_select_epochs_long():
+    "Select-Epochs GUI for long, variable-length epochs with windowed interpolation"
+    ds = _variable_length_ds()
+
+    # Document
+    doc = Document(ds, 'epochs', trigger='value')
+    assert doc.long_epochs is True
+    assert doc.n_epochs == 2
+    assert len(doc.epoch_data) == 2
+    # epoch 0 has 300 samples, epoch 1 has 400
+    assert doc.epoch_data[0][0][1].time.nsamples == 300
+    assert doc.epoch_data[1][0][1].time.nsamples == 400
+    assert doc.interpolate_windows[0][0].channel == 'C3'
+    assert not doc.interpolate_windows[1]
+    assert [w.channel for w in doc.windows_in_range(0, 1.0, 1.2)] == ['C3']
+    assert doc.windows_in_range(0, 2.0, 2.5) == []
+    assert doc.windows_in_range(1, 0.0, 4.0) == []
+
+    # windows are read back from a rejection file (as the pipeline supplies them)
+    tempdir = TempDir()
+    rej_path = join(tempdir, 'rej.pickle')
+    rej_ds = Dataset()
+    rej_ds['value'] = ds['value']
+    rej_ds[:, 'accept'] = True
+    rej_ds[:, 'rej_tag'] = ''
+    rej_ds[INTERPOLATE_WINDOWS] = ds[INTERPOLATE_WINDOWS]
+    save.pickle(rej_ds, rej_path)
+    doc_file = Document(_variable_length_ds(), 'epochs', trigger='value', path=rej_path)
+    assert doc_file.interpolate_windows[0][0].channel == 'C3'
+    assert not doc_file.interpolate_windows[1]
+
+    # Frame (read-only continuous browser)
+    frame = gui.select_epochs(ds, 'epochs', trigger='value', topo=True)
+    assert frame.long_epochs is True
+    assert frame.read_only is True
+    assert '(read-only)' in frame.GetTitle()
+
+    # exercise multi-row tiling and paging
+    frame._seconds_per_row = 1.
+    frame._rows_per_page = 4
+    frame._build_rows()
+    # epoch 0 -> 3 rows, epoch 1 -> 4 rows; each epoch starts a new row
+    assert len(frame._rows_spec) == 7
+    assert frame._rows_spec[0][0] == 0
+    assert frame._rows_spec[3][0] == 1  # epoch 1 starts on its own row
+    assert frame._n_pages == 2
+
+    frame.ShowPage(0)
+    assert frame.CanForward()
+    assert not frame.CanBackward()
+    # the C3 window (0.5-1.5 s) overlaps rows on the first page -> highlight artists
+    assert len(frame._window_handles) >= 1
+
+    frame.OnForward(None)
+    assert frame.CanBackward()
