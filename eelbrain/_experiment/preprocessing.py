@@ -266,9 +266,11 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
     @staticmethod
     def _read_raw(path: BIDSPath, preload: bool) -> mne.io.BaseRaw:
         """Read a raw file using the MNE reader appropriate for its BIDS extension."""
+        kwargs = {'preload': preload, 'verbose': MNE_VERBOSITY}
         match path.extension:
             case '.fif':
                 reader = mne.io.read_raw_fif
+                kwargs['allow_maxshield'] = True
             case '.edf':
                 reader = mne.io.read_raw_edf
             case '.vhdr':
@@ -279,7 +281,7 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
                 reader = mne.io.read_raw_bdf
             case _:
                 raise RuntimeError(f"Unrecognized file format: {path.extension}")
-        return reader(path.fpath, preload=preload, verbose=MNE_VERBOSITY)
+        return reader(path.fpath, **kwargs)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         path = self._resolve_bids_path(ctx)
@@ -1741,17 +1743,20 @@ class RawMaxwell(CachedRawPipe):
             cross_talk: Path | None = None,
             destination: mne.transforms.Transform | None = None,
     ) -> mne.io.BaseRaw:
-        assert source_pipe is not None
-        sysname = source_pipe._get_sysname(raw.info, path.subject, path.datatype)
-        adjacency = source_pipe._get_adjacency(path.datatype)
-        raw_ndvar = load.mne.raw_ndvar(raw, sysname=sysname, adjacency=adjacency)
-        raw.info['bads'].extend(raw_ndvar.sensor.names[raw_ndvar.std('time') < self.flat])
         logger = log or LOG
         logger.info("Raw %s: computing Maxwell filter for %s", raw_name, path.fpath if not noise else path.find_empty_room().fpath)
+        if noise:
+            coord_frame = 'meg'
+            destination = None
+        else:
+            coord_frame = 'head'
+
         with user_activity:
-            coord_frame = 'meg' if noise else 'head'
-            # destination is not meaningful for noise (empty-room) recordings
-            return mne.preprocessing.maxwell_filter(raw, calibration=calibration, cross_talk=cross_talk, destination=None if noise else destination, bad_condition=self.bad_condition, coord_frame=coord_frame, verbose=MNE_VERBOSITY, **self.kwargs)
+            # find bad channels
+            noisy_chs, flat_chs = mne.preprocessing.find_bad_channels_maxwell(raw, calibration=calibration, cross_talk=cross_talk, bad_condition=self.bad_condition, coord_frame=coord_frame)
+            raw.info['bads'] = sorted(raw.info['bads'] + noisy_chs + flat_chs)
+            # Maxwell filter
+            return mne.preprocessing.maxwell_filter(raw, calibration=calibration, cross_talk=cross_talk, destination=destination, bad_condition=self.bad_condition, coord_frame=coord_frame, verbose=MNE_VERBOSITY, **self.kwargs)
 
     def _make_info(
             self,
