@@ -1324,8 +1324,7 @@ class Frame(NavigableFrame, FileFrame):
             y = ' / '.join(y_parts)
         else:
             y = ax.yaxis.get_major_formatter().format_data(event.ydata)
-        desc = "Epoch %i" % ax.epoch_idx
-        status = f"{desc},  x = {x} ms,  y = {y}"
+        status = f"Epoch {ax.epoch_idx},  x = {x} s,  y = {y}"
         if ax.ax_idx >= 0:  # single trial plot
             if self.long_epochs:
                 interp = sorted({w.channel for w in self.doc.windows_in_range(ax.epoch_idx, event.xdata, event.xdata + 1e-9)})
@@ -1339,7 +1338,7 @@ class Frame(NavigableFrame, FileFrame):
         if self._plot_topo:
             self._update_topomaps(ax.epoch_idx, ax.ax_idx, event.xdata)
             marked = ', '.join(self._mark)
-            self._topo_plot_info_str = (f"Topomap: {desc},  t = {x} ms,  marked: {marked}")
+            self._topo_plot_info_str = (f"Topomap: Epoch {ax.epoch_idx},  t = {x} s,  marked: {marked}")
 
     def OnRejectRange(self, event):
         if self.read_only:
