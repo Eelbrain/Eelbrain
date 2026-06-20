@@ -385,9 +385,7 @@ class DependencyNode(Generic[T]):
     @classmethod
     def declared_options(cls) -> set[str]:
         """Return all option names declared by this node."""
-        options = set(cls.OPTION_DEFAULTS)
-        options.update(cls.VIEW_OPTION_DEFAULTS)
-        return options
+        return {*cls.OPTION_DEFAULTS, *cls.VIEW_OPTION_DEFAULTS}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         """Describe other registered nodes that this node depends on.
@@ -560,7 +558,6 @@ class Derivative(DependencyNode[T]):
     - implement :meth:`load` / :meth:`save` for that artifact representation
     - optionally implement :meth:`apply_view_options` to transform the loaded
       artifact into the final return value
-
 
 
     Attributes
