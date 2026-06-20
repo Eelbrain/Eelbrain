@@ -45,6 +45,7 @@ import hashlib
 import json
 import logging
 from pathlib import Path
+import re
 import shutil
 import tomllib
 from typing import Any, Generic, TypeVar
@@ -63,6 +64,7 @@ MANIFEST_SUFFIX = '.manifest.json'
 MANIFEST_SCHEMA_VERSION = 2
 DEFAULT_CACHE_LABEL = 'artifact'
 MAX_CACHE_LABEL_LEN = 96
+CACHE_PATH_UNSAFE = re.compile(r'[\x00-\x1f<>:"/\\|?*]+')
 # Hash prefix length for artifact path components (hex chars, i.e. 48 bits).
 # Collisions at the path level are handled gracefully by the disambiguation
 # sidecar, so a shorter prefix is acceptable in exchange for more readable paths.
@@ -239,19 +241,6 @@ class ProtectedArtifactError(RuntimeError):
         if instructions:
             text += f" {instructions}"
         super().__init__(text)
-
-
-def _slug_cache_path_part(text: str) -> str:
-    out = []
-    pending_sep = False
-    for char in text:
-        if char.isalnum():
-            out.append(char.lower())
-            pending_sep = False
-        elif out and not pending_sep:
-            out.append('-')
-            pending_sep = True
-    return ''.join(out).strip('-') or DEFAULT_CACHE_LABEL
 
 
 def _simple_cache_label(key: dict[str, Any]) -> str | None:
@@ -660,9 +649,9 @@ class Derivative(DependencyNode[T]):
             raise NotImplementedError
         key_hash = _full_cache_key_digest(ctx.key())[:CACHE_KEY_HASH_LEN]
         label = self.cache_label(ctx) or DEFAULT_CACHE_LABEL
-        label_slug = _slug_cache_path_part(label)[:MAX_CACHE_LABEL_LEN].rstrip('-') or DEFAULT_CACHE_LABEL
-        node_slug = _slug_cache_path_part(self.name)
-        return ctx.registry.cache_dir / node_slug / key_hash[:2] / f"{label_slug}_key-{key_hash}{self.cache_suffix}"
+        label_clean = CACHE_PATH_UNSAFE.sub('', label.casefold())
+        label_slug = label_clean[:MAX_CACHE_LABEL_LEN].rstrip('-_')
+        return ctx.registry.cache_dir / self.name / key_hash[:2] / f"{label_slug}_key-{key_hash}{self.cache_suffix}"
 
     def key(self, ctx: Request) -> dict[str, Any]:
         """The key used to generate a unique path for this artifact.
@@ -1363,11 +1352,10 @@ class DerivativeRegistry:
         """Capture warnings during one input load or derivative build, logging new ones once."""
         node = ctx.node
         item = str(node.path(ctx)) if isinstance(node, Input) else node.name
-        log_slug = _slug_cache_path_part(node.name)
         with logged_warnings(
             self.root,
             item,
-            log_slug,
+            node.name,
             f"Warnings emitted during {node.name}.\n",
             f"issued during {node.name}",
             self.log,
