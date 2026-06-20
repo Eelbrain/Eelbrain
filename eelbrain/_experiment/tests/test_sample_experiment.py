@@ -625,7 +625,7 @@ def test_sample_tasks(samples_experiment):
     handle = e._resolve_derivative(raw_node_name('ica'))
     assert 'root' not in e.state
     assert handle.root == Path(root)
-    assert handle.artifact_path.is_relative_to(Path(root) / 'derivatives' / 'eelbrain' / 'cache' / 'raw-ica')
+    assert handle.artifact_path.is_relative_to(Path(root) / 'derivatives' / 'eelbrain' / 'cache' / 'raw@ica')
     assert handle.artifact_path.suffix == '.fif'
     assert '_key-' in handle.artifact_path.name
     assert str(ica_file_path(e.state, 'ica')) == join('derivatives', 'ica', 'sub-R0000_meg_raw-ica_ica.fif')
@@ -1048,9 +1048,9 @@ def test_raw_reader_warnings_are_summarized(monkeypatch, samples_experiment):
         warnings.simplefilter('always')
         e.load_raw(raw='raw')
         e.load_raw(raw='raw')
-    assert not any('issued during raw-input:raw' in str(w.message) for w in record)
+    assert not any('issued during raw-input@raw' in str(w.message) for w in record)
 
-    details_path = e.root / LOG_DIR / 'raw-input-raw-warnings.toml'
+    details_path = e.root / LOG_DIR / 'raw-input@raw-warnings.toml'
     assert details_path.exists()
     text = details_path.read_text()
     assert 'Synthetic raw reader warning 1' in text
@@ -1061,11 +1061,11 @@ def test_raw_reader_warnings_are_summarized(monkeypatch, samples_experiment):
     log_path = Path(next(handler.baseFilename for handler in e._log.handlers if isinstance(handler, logging.FileHandler)))
     log_text = log_path.read_text()
     assert str(details_path) in log_text
-    assert log_text.count('issued during raw-input:raw') == 1
+    assert log_text.count('issued during raw-input@raw') == 1
 
     e.load_raw(raw='raw')
     assert details_path.read_text() == text
-    assert log_path.read_text().count('issued during raw-input:raw') == 1
+    assert log_path.read_text().count('issued during raw-input@raw') == 1
 
 
 @requires_mne_sample_data

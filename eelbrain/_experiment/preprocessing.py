@@ -104,19 +104,19 @@ class RawPipe(Configuration):
 
 
 def raw_node_name(raw: str) -> str:
-    return f'raw:{raw}'
+    return f'raw@{raw}'
 
 
 def raw_bad_channels_input_name(raw: str) -> str:
-    return f'raw-input-bads:{raw}'
+    return f'raw-input-bads@{raw}'
 
 
 def raw_input_name(raw: str) -> str:
-    return f'raw-input:{raw}'
+    return f'raw-input@{raw}'
 
 
 def ica_input_name(raw: str) -> str:
-    return f'ica-input:{raw}'
+    return f'ica-input@{raw}'
 
 
 class RawBadChannelsInput(Input[list[str]]):
