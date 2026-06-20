@@ -122,46 +122,6 @@ def _write_warning_log(path: Path, header: str, warnings_: list[dict[str, str]])
     path.write_text('\n'.join(lines))
 
 
-@contextmanager
-def logged_warnings(
-        root: str | Path,
-        item: str | Path,
-        log_name: str,
-        header: str,
-        summary: str,
-        log: logging.Logger,
-):
-    """Capture warnings and write unique entries to an experiment log file."""
-    with warnings.catch_warnings(record=True) as warning_list:
-        warnings.simplefilter('always')
-        warnings.filterwarnings('ignore', r'unclosed file ', ResourceWarning)
-        yield
-    if not warning_list:
-        return
-    details_path = Path(root) / LOG_DIR / f'{log_name}-warnings.toml'
-    details_path.parent.mkdir(parents=True, exist_ok=True)
-    entries = _read_warning_log(details_path)
-    seen = {(entry['item'], entry['category'], entry['message']) for entry in entries}
-    item = str(item)
-    new_entries = []
-    for message in warning_list:
-        category = message.category.__name__
-        text = str(message.message)
-        key = (item, category, text)
-        if key in seen:
-            continue
-        seen.add(key)
-        entry = {'item': item, 'category': category, 'message': text}
-        entries.append(entry)
-        new_entries.append(entry)
-    if not new_entries:
-        return
-    _write_warning_log(details_path, header, entries)
-    count = len(new_entries)
-    noun = 'warning was' if count == 1 else 'warnings were'
-    log.warning("%s new %s %s. Full details were written to %s. Previously recorded %s warnings will be suppressed in the terminal for this experiment.", count, noun, summary, details_path, log_name)
-
-
 class CachePolicy(str, Enum):
     """Whether artifacts for a derivative persist to the cache.
 
@@ -1349,18 +1309,42 @@ class DerivativeRegistry:
 
     @contextmanager
     def _node_warning_context(self, ctx: Request):
-        """Capture warnings during one input load or derivative build, logging new ones once."""
+        """Capture warnings during one input load or derivative build, writing new ones once to an experiment log file."""
         node = ctx.node
-        item = str(node.path(ctx)) if isinstance(node, Input) else node.name
-        with logged_warnings(
-            self.root,
-            item,
-            node.name,
-            f"Warnings emitted during {node.name}.\n",
-            f"issued during {node.name}",
-            self.log,
-        ):
+        if isinstance(node, Input):
+            path = node.path(ctx)
+            if path.is_relative_to(self.root):
+                path = path.relative_to(self.root)
+            item = str(path)
+        else:
+            item = node.name
+        with warnings.catch_warnings(record=True) as warning_list:
+            warnings.simplefilter('always')
+            warnings.filterwarnings('ignore', r'unclosed file ', ResourceWarning)
             yield
+        if not warning_list:
+            return
+        details_path = Path(self.root) / LOG_DIR / f'{node.name}-warnings.toml'
+        details_path.parent.mkdir(parents=True, exist_ok=True)
+        entries = _read_warning_log(details_path)
+        seen = {(entry['item'], entry['category'], entry['message']) for entry in entries}
+        new_entries = []
+        for message in warning_list:
+            category = message.category.__name__
+            text = str(message.message)
+            key = (item, category, text)
+            if key in seen:
+                continue
+            seen.add(key)
+            entry = {'item': item, 'category': category, 'message': text}
+            entries.append(entry)
+            new_entries.append(entry)
+        if not new_entries:
+            return
+        _write_warning_log(details_path, f"Warnings emitted during {node.name}.\n", entries)
+        count = len(new_entries)
+        noun = 'warning was' if count == 1 else 'warnings were'
+        self.log.warning("%s new %s issued during %s. Full details were written to %s. Previously recorded %s warnings will be suppressed in the terminal for this experiment.", count, noun, node.name, details_path, node.name)
 
     def describe_artifact_path(self, path: str | Path) -> str:
         artifact_path = Path(path)
