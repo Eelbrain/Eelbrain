@@ -7,7 +7,7 @@ from eelbrain._data_obj import Factor, Interaction, Var
 from eelbrain._experiment import test_def
 from eelbrain._experiment.configuration import Configuration, ConfigurationError, find_dependent_epochs, find_epoch_vars, find_epochs_vars, sequence_arg
 from eelbrain._experiment.derivative_cache import DerivativeRegistry
-from eelbrain._experiment.preprocessing import RawApplyICA, RawFilter, RawICA, RawPipeGraph, RawReReference, RawSource, assemble_raw_pipes
+from eelbrain._experiment.preprocessing import RawApplyICA, RawFilter, RawICA, RawMaxwell, RawPipeGraph, RawReReference, RawSource, assemble_raw_pipes
 from eelbrain._experiment.two_stage import TwoStageTest
 from eelbrain._experiment.variable_def import EvalVar, GroupVar, LabelVar, Variables
 from eelbrain.testing import TempDir
@@ -243,8 +243,36 @@ def test_raw_pipe_graph_lineage():
 
 
 def test_raw_configurations():
-    with pytest.raises(ConfigurationError, match='explicit task'):
+    # task=None with multiple tasks is only allowed after RawMaxwell
+    with pytest.raises(ConfigurationError, match='RawMaxwell'):
         assemble_raw_pipes({
             'raw': RawSource(),
             'ica': RawICA('raw'),
         }, ('sample1', 'sample2'))
+
+    # task=None with a single task: use that task, no run concatenation
+    raw = assemble_raw_pipes({
+        'raw': RawSource(),
+        'ica': RawICA('raw'),
+    }, ('sample',))
+    assert raw['ica'].task == ('sample',)
+    assert raw['ica']._concatenate_runs is False
+
+    # task=None after RawMaxwell: accept all tasks and concatenate runs
+    raw = assemble_raw_pipes({
+        'raw': RawSource(),
+        'maxwell': RawMaxwell('raw'),
+        '1-40': RawFilter('maxwell', 1, 40),
+        'ica': RawICA('1-40'),
+    }, ('sample1', 'sample2'))
+    assert raw['ica'].task == ('sample1', 'sample2')
+    assert raw['ica']._concatenate_runs is True
+
+    # explicit task after RawMaxwell also concatenates runs
+    raw = assemble_raw_pipes({
+        'raw': RawSource(),
+        'maxwell': RawMaxwell('raw'),
+        'ica': RawICA('maxwell', 'sample1'),
+    }, ('sample1', 'sample2'))
+    assert raw['ica'].task == ('sample1',)
+    assert raw['ica']._concatenate_runs is True

@@ -85,8 +85,9 @@ def raw_dir(state: dict[str, Any]) -> Path:
     return path / state['datatype']
 
 
-def ica_file_path(state: dict[str, Any], raw: str) -> Path:
-    return DERIV_DIR / 'ica' / f"{epoch_basename(state)}_raw-{raw}_ica.fif"
+def ica_file_path(state: dict[str, Any], raw: str, concatenate_runs: bool = False) -> Path:
+    basename = subject_session_basename(state) if concatenate_runs else epoch_basename(state)
+    return DERIV_DIR / 'ica' / f"{basename}_raw-{raw}_ica.fif"
 
 
 def trans_file_path(state: dict[str, Any]) -> Path:

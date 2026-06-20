@@ -466,6 +466,8 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             pipe: RawICA,
             pipes: RawPipeGraph,
             extension: str,
+            tasks: Sequence[str],
+            runs: Sequence[str],
     ):
         self.name = ica_input_name(raw_name)
         self.raw_name = raw_name
@@ -473,9 +475,15 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         self.pipe = pipe
         self.pipes = pipes
         self.extension = extension
+        self._tasks = tasks
+        self._runs = runs or ['']
+        # When runs are concatenated, the ICA spans every run, so it is cached
+        # per subject/session rather than per run.
+        if pipe._concatenate_runs:
+            self.key_fields = ('subject', 'session')
 
     def path(self, ctx: Request) -> Path:
-        return ctx.root / ica_file_path(ctx.state, self.raw_name)
+        return ctx.root / ica_file_path(ctx.state, self.raw_name, self.pipe._concatenate_runs)
 
     def _key(self, ctx: Request) -> dict[str, Any]:
         return canonical_state_subset({**ctx.state, 'raw': self.raw_name}, self.key_fields)
@@ -486,11 +494,28 @@ class ICAInput(Input[mne.preprocessing.ICA]):
     def _load_value(self, ctx: Request) -> mne.preprocessing.ICA:
         return self.pipe._load_ica(ctx)
 
+    def _source_states(self, ctx: Request, tasks: Sequence[str]) -> list[dict[str, str]]:
+        """Existing source ``{'task', 'run'}`` states for the current subject/session.
+
+        Runs are included only when the ICA step concatenates runs (after
+        :class:`RawMaxwell`); otherwise the current run is used. Combinations
+        without a recording for the current subject/session are skipped.
+        """
+        source_input = raw_input_name(self.pipes.root_source_name(self.pipe.source))
+        run_states = [{'run': run} for run in self._runs] if self.pipe._concatenate_runs else [{}]
+        states = []
+        for task in tasks:
+            for run_state in run_states:
+                state = {'task': task, **run_state}
+                if ctx.registry.resolve(source_input, state={**ctx.state, **state}, options={'noise': False}).exists():
+                    states.append(state)
+        return states
+
     def _load_bad_channels(self, ctx: Request) -> list[str]:
         bads = set()
         source_raw = raw_node_name(self.pipe.source)
-        for task in self.pipe.task:
-            bads.update(ctx.load(source_raw, state={'task': task}, options={'noise': False}, view='bads'))
+        for state in self._source_states(ctx, self.pipe.task):
+            bads.update(ctx.load(source_raw, state=state, options={'noise': False}, view='bads'))
         return sorted(bads)
 
     def load_concatenated_source_raw(
@@ -499,10 +524,13 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             tasks: tuple[str, ...],
     ) -> mne.io.BaseRaw:
         bad_channels = self._load_bad_channels(ctx)
-        raw = load_raw_dependency(ctx, self.pipe.source, preload=True, state={'task': tasks[0]})
+        states = self._source_states(ctx, tasks)
+        if not states:
+            raise FileMissingError(f"No source recordings found to estimate ICA {self.raw_name!r} ({ctx.state['subject']=}, session={ctx.state.get('session')!r}).")
+        raw = load_raw_dependency(ctx, self.pipe.source, preload=True, state=states[0])
         raw.info['bads'] = bad_channels
-        for task in tasks[1:]:
-            raw_ = load_raw_dependency(ctx, self.pipe.source, preload=True, state={'task': task})
+        for state in states[1:]:
+            raw_ = load_raw_dependency(ctx, self.pipe.source, preload=True, state=state)
             raw_.info['bads'] = bad_channels
             raw.append(raw_)
         return raw
@@ -636,11 +664,11 @@ class ICAInput(Input[mne.preprocessing.ICA]):
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         deps = []
-        for i, task in enumerate(self.pipe.task):
+        for i, state in enumerate(self._source_states(ctx, self.pipe.task)):
             deps.append(Dependency(
                 raw_node_name(self.pipe.source),
                 label=f'source-{i}:raw',
-                state={'task': task},
+                state=state,
             ))
         return tuple(deps)
 
@@ -684,12 +712,15 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             view: str,
     ):
         if view == 'bads':
-            return sorted(self.load(ctx).info['bads'])
+            # Bad channels recorded on the ICA, or, before it has been computed,
+            # the (existence-filtered) source bad channels that the fit will use
+            if self.path(ctx).exists():
+                return sorted(self.load(ctx).info['bads'])
+            return self._load_bad_channels(ctx)
         if view == 'status':
-            if exists(self.path(ctx)):
+            if self.path(ctx).exists():
                 return 'ok'
-            source_node = raw_input_name(self.pipes.root_source_name(self.pipe.source))
-            if all(ctx.registry.resolve(source_node, state={**ctx.state, 'task': task}, options={'noise': False}).exists() for task in self.pipe.task):
+            if self._source_states(ctx, self.pipe.task):
                 return 'missing-ica'
             return 'missing-raw'
         return super().load_view(ctx, view)
@@ -1441,8 +1472,10 @@ class RawICA(CachedRawPipe):
     source
         Name of the raw pipe to use for input data.
     task
-        Task(s) to use for estimating ICA components. Can be omitted when the
-        experiment has exactly one task.
+        Task(s) to use for estimating ICA components. Can be omitted (``None``)
+        when the experiment has exactly one task, or when the ICA step occurs
+        after a :class:`RawMaxwell` step (in which case all tasks are used, see
+        Notes).
     method
         Method for ICA decomposition (default: ``'extended-infomax'``; see
         :class:`mne.preprocessing.ICA`).
@@ -1473,6 +1506,14 @@ class RawICA(CachedRawPipe):
     step, regardless of whether they were used to estimate the components or
     not.
 
+    When the ICA step occurs after a :class:`RawMaxwell` step, ``task`` can be
+    omitted even with multiple tasks: all tasks and runs available for each
+    subject/session are concatenated for the fit. This is safe because Maxwell
+    filtering maps every recording to a common head position. Run concatenation
+    applies to any ICA step after a :class:`RawMaxwell` step (also with an
+    explicit ``task``); without a preceding :class:`RawMaxwell` step a single
+    run is used.
+
     Use :meth:`Pipeline.make_ica_selection` for each subject to
     select ICA components that should be removed. The arguments to that function
     determine what data is used to visualize the component time courses.
@@ -1501,6 +1542,9 @@ class RawICA(CachedRawPipe):
     DICT_ATTRS = CachedRawPipe.DICT_ATTRS + ('task', 'kwargs', 'fit_kwargs')
 
     run: str | Sequence[str] = None
+    # Whether to concatenate all runs per subject/session for the ICA fit.
+    # Resolved during pipeline assembly (True when the step is after RawMaxwell).
+    _concatenate_runs: bool = False
 
     def __init__(
             self,
@@ -1521,7 +1565,7 @@ class RawICA(CachedRawPipe):
             self,
             ctx: Request,
     ) -> mne.preprocessing.ICA:
-        ica_path = ctx.root / ica_file_path(ctx.state, self.name)
+        ica_path = ctx.root / ica_file_path(ctx.state, self.name, self._concatenate_runs)
         if not exists(ica_path):
             raise FileMissingError(f"ICA file {ica_path.name} does not exist for raw={self.name!r}. Run e.make_ica() to create it.")
         return mne.preprocessing.read_ica(ica_path)
@@ -1599,13 +1643,7 @@ class RawICA(CachedRawPipe):
             noise: bool = False,
     ) -> list[str]:
         bads = set()
-        # Try to read bad channels on ICA
-        try:
-            bads.update(ctx.load(ica_input_name(self.name), view='bads'))
-        except FileMissingError:
-            # Merged task file bad channels
-            for task in self.task:
-                bads.update(ctx.load(raw_node_name(self.source), state={'task': task}, view='bads'))
+        bads.update(ctx.load(ica_input_name(self.name), view='bads'))
         # Task that has not been used for ICA fit
         if noise:
             bads.update(ctx.load(raw_node_name(self.source), options={'noise': True}, view='bads'))
@@ -2043,11 +2081,13 @@ def assemble_raw_pipes(
             if pending[key]._can_resolve(resolved):
                 pipe = pending.pop(key)
                 if isinstance(pipe, RawICA):
+                    after_maxwell = any(isinstance(resolved[name], RawMaxwell) for name in lineages[pipe.source])
+                    pipe._concatenate_runs = after_maxwell
                     if pipe.task is None:
-                        if len(tasks) == 1:
+                        if len(tasks) == 1 or after_maxwell:
                             pipe.task = tasks
                         else:
-                            raise ConfigurationError(f"RawICA {key!r} needs an explicit task when the experiment has {len(tasks)} tasks. Available tasks: {', '.join(tasks)}.")
+                            raise ConfigurationError(f"RawICA {key!r} has task=None but the experiment has {len(tasks)} tasks. Specify task explicitly, or place the ICA step after a RawMaxwell step to use all tasks. Available tasks: {', '.join(tasks)}.")
                     missing = set(pipe.task).difference(tasks)
                     if missing:
                         raise ConfigurationError(f"RawICA {key!r} lists one or more non-exising tasks: {', '.join(missing)}. Available tasks: {', '.join(tasks)}.")

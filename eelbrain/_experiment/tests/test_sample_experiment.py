@@ -668,6 +668,45 @@ def test_sample_tasks():
         assert e.make_ica() == join(root, 'derivatives', 'ica', 'sub-R0000_meg_raw-ica_ica.fif')
 
 
+def test_ica_all_tasks_after_maxwell():
+    "task=None ICA after RawMaxwell uses all tasks and runs per subject/session"
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
+
+    tempdir = TempDir()
+    datasets.setup_samples_experiment(tempdir, n_subjects=2, n_tasks=2, n_segments=1, n_runs=2)
+    root = join(tempdir, 'SampleExperiment')
+
+    # task=None with multiple tasks is rejected without a preceding RawMaxwell step
+    class BadExperiment(SampleExperiment):
+        raw = {**SampleExperiment.raw, 'ica': RawICA('1-40')}
+    with pytest.raises(ConfigurationError, match='RawMaxwell'):
+        BadExperiment(root)
+
+    class Experiment(SampleExperiment):
+        raw = {
+            'tsss': RawMaxwell('raw', st_duration=10., ignore_ref=True, st_correlation=.9, st_only=True, st_overlap=False),
+            'ica': RawICA('tsss', method='fastica', max_iter=1, n_components=0.95),
+            **SampleExperiment.raw,
+        }
+    e = Experiment(root)
+    # task=None resolves to all tasks; after RawMaxwell runs are concatenated
+    assert e._raw['ica'].task == ('sample1', 'sample2')
+    assert e._raw['ica']._concatenate_runs is True
+
+    e.set('R0000', raw='ica')
+    # the ICA spans all tasks/runs, so the file is per subject/session (no task/run entity)
+    assert str(ica_file_path(e.state, 'ica', concatenate_runs=True)) == join('derivatives', 'ica', 'sub-R0000_meg_raw-ica_ica.fif')
+    with catch_warnings():
+        filterwarnings('ignore', "FastICA did not converge", UserWarning)
+        ica_path = e.make_ica()
+    assert ica_path == join(root, 'derivatives', 'ica', 'sub-R0000_meg_raw-ica_ica.fif')
+    assert exists(ica_path)
+    assert isinstance(e.load_ica(), mne.preprocessing.ICA)
+    # the ICA can be applied to an individual recording
+    assert isinstance(e.load_raw(), mne.io.BaseRaw)
+
+
 @requires_mne_sample_data
 def test_epoch_reference():
     "EEG re-referencing after channel interpolation (the 'reference' state)"

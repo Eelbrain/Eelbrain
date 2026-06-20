@@ -450,11 +450,9 @@ class Pipeline(StateModel):
                 self._derivatives.register(RawHeadPositionDerivative(raw_input.name))
                 self._derivatives.register(MedianHeadPositionDerivative(raw_input.name, self._tasks, self._runs))
             elif isinstance(pipe, CachedRawPipe):
-                # FIXME: run handling
-                # runs = self._runs if isinstance(pipe, RawICA) else None
                 self._derivatives.register(RawDerivative(raw_name, pipe, self._raw, self._raw_extension))
                 if isinstance(pipe, RawICA):
-                    self._derivatives.register(ICAInput(raw_name, pipe, self._raw, self._raw_extension))
+                    self._derivatives.register(ICAInput(raw_name, pipe, self._raw, self._raw_extension, self._tasks, self._runs))
                 elif isinstance(pipe, RawMaxwell) and not maxwell_registered:
                     self._derivatives.register(MaxwellCalibrationInput())
                     self._derivatives.register(MaxwellCrosstalkInput())
@@ -2287,7 +2285,7 @@ class Pipeline(StateModel):
                 raise RuntimeError(f"{command=}")
             else:
                 raise RuntimeError("User aborted ICA overwrite")
-        return str(self.root / ica_file_path(ctx.state, ica_raw_name))
+        return str(self.root / ica_file_path(ctx.state, ica_raw_name, self._raw[ica_raw_name]._concatenate_runs))
 
     def make_movie_dspm(
             self,
