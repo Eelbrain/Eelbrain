@@ -164,19 +164,26 @@ class Configuration:
         return f"{self.__class__.__name__}({', '.join(self._repr_args())})"
 
 
+# Names become components of cache/derivative file paths and of dependency-node
+# identifiers (e.g. 'raw@{name}'). Forbid the characters that would corrupt that
+# structure: whitespace, the '@' and ':' node-name separators, and path separators.
+_FORBIDDEN_NAME_CHARS = frozenset(' \t@:/\\')
+
+
 def name_ok(key: str, allow_empty: bool) -> bool:
-    if not key and not allow_empty:
+    if not isinstance(key, str):
         return False
-    try:
-        return all(c not in key for c in ' ')
-    except TypeError:
+    elif not key:
+        return allow_empty
+    elif key in ('.', '..'):  # unsafe as path components
         return False
+    return not _FORBIDDEN_NAME_CHARS.intersection(key)
 
 
 def check_names(keys, attribute, allow_empty: bool):
     invalid = [key for key in keys if not name_ok(key, allow_empty)]
     if invalid:
-        raise ConfigurationError(f"Invalid {plural('name', len(invalid))} for {attribute}: {enumeration(invalid)}")
+        raise ConfigurationError(f"Invalid {plural('name', len(invalid))} for {attribute}: {enumeration(invalid)}. Names can not contain whitespace or any of the characters '@', ':', '/' and '\\'.")
 
 
 def compound(items):
