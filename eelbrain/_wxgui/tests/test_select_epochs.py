@@ -125,6 +125,14 @@ def test_select_epochs():
     frame = gui.select_epochs(ds, nplots=9)
     assert not frame.CanBackward()
     assert frame.CanForward()
+    # before/after-rejection topomaps (single MEG type -> one pair), each
+    # occupying a full reserved grid cell (epochs keep full cell height)
+    assert [kind for _, kind in frame._topo_specs] == ['all', 'rejected']
+    assert len(frame._topo_plots) == 2
+    assert frame._n_reserve == 2
+    epoch_h = frame._case_axes[0].get_position().height
+    topo_h = frame._topo_axes[0].get_position().height
+    assert abs(topo_h - epoch_h) < 0.02  # topomap as tall as an epoch cell
     background = frame.canvas._background
     frame.OnForward(None)
     assert frame.canvas._background is not background
@@ -223,6 +231,25 @@ def test_select_epochs_long():
     assert not frame.CanBackward()
     # the C3 window (0.5-1.5 s) overlaps rows on the first page -> highlight artists
     assert len(frame._window_handles) >= 1
+
+    # before/after-rejection topomaps (single EEG type -> one pair)
+    assert [kind for _, kind in frame._topo_specs] == ['all', 'rejected']
+    assert len(frame._topo_plots) == 2
+    # row 0 spans [-0.1, 0.9) s; C3 is rejected at 0.7 s, marked with a blue x
+    frame._update_topomaps(0, 0, 0.7)
+    assert len(frame._topo_interp_handles) == 2  # one mark per topomap
+    # outside the window no channel is rejected -> no marks
+    frame._update_topomaps(0, 0, 0.0)
+    assert len(frame._topo_interp_handles) == 0
+
+    # too few electrodes remain to interpolate -> the after-rejection map is blanked
+    from eelbrain._meeg import BadChannelWindow as _BCW
+    frame.doc.interpolate_windows[0] = [_BCW(ch, 0.5, 1.5) for ch in ('C3', 'C4', 'F3', 'F4', 'P3')]
+    frame._update_topomaps(0, 0, 0.7)
+    all_ax, rej_ax = frame._topo_axes
+    assert all_ax.patch.get_visible() is False   # 'all' map still shown
+    assert rej_ax.patch.get_visible() is True    # 'rejected' map blanked (white patch)
+    assert not any(im.get_visible() for im in rej_ax.images)
 
     frame.OnForward(None)
     assert frame.CanBackward()

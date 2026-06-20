@@ -32,6 +32,7 @@ import os
 import re
 import time
 
+from matplotlib.transforms import Bbox
 import mne
 import numpy as np
 from scipy.spatial.distance import cdist
@@ -64,6 +65,9 @@ from . import ID
 # IDs
 TOPO_PLOT = -2
 OUT_OF_RANGE = -3
+
+# Minimum number of sensors required to compute a topomap projection; with fewer the after-rejection topomap is blanked
+MIN_TOPO_SENSORS = 4
 
 # For unit-tests
 TEST_MODE = False
@@ -1022,9 +1026,10 @@ class Frame(NavigableFrame, FileFrame):
         self._case_axes = None
         self._case_segs = None
         self._axes_by_idx = None
-        self._topo_axes = []        # list of axes (one per channel type)
-        self._topo_plots = []       # list of AxTopomap (one per channel type)
-        self._topo_interp_handles = []  # transient blue-x marks for the hovered epoch's interpolation channels
+        self._topo_axes = []        # list of axes (before/after-rejection pair per channel type)
+        self._topo_plots = []       # list of AxTopomap, parallel to _topo_axes
+        self._topo_specs = []       # list of (ch_type, kind) where kind in {'all', 'rejected'}
+        self._topo_interp_handles = []  # transient blue-x marks for the hovered epoch's rejected channels
         self._topo_plot_info_str = None
         self._case_segs_by_type = None  # list of [(ch_type, NDVar)] per visible epoch
         self._bfly_vlim = None          # normalized vlim last applied (multi-type only)
@@ -1330,27 +1335,9 @@ class Frame(NavigableFrame, FileFrame):
                 status += f",  interpolate {', '.join(interp)}"
         self.SetStatusText(status)
 
-        # update topomap
+        # update topomaps (before / after channel rejection) at the pointer time
         if self._plot_topo:
-            if len(self._topo_plots) > 1:
-                # Multi-type: get per-type data at the pointer time
-                if ax.ax_idx >= 0:
-                    case_by_type = self._case_segs_by_type[ax.ax_idx]
-                    for topo, (ch_type, case_ndvar) in zip(self._topo_plots, case_by_type):
-                        topo.set_data([case_ndvar.sub(time=event.xdata)])
-            else:
-                tseg = self._get_ax_data(ax.ax_idx, event.xdata)
-                self._topo_plots[0].set_data([tseg])
-            # mark the hovered epoch's interpolation channels with a blue x
-            while self._topo_interp_handles:
-                self._topo_interp_handles.pop().remove()
-            if ax.ax_idx >= 0:
-                for topo in self._topo_plots:
-                    smap = topo.sensors
-                    idx = [smap.sensors._array_index(ch) for ch in self.doc.interpolate[ax.epoch_idx] if ch in smap.sensors.names]
-                    if idx:
-                        self._topo_interp_handles.append(smap.ax.scatter(smap.locs[idx, 0], smap.locs[idx, 1], s=20, c='blue', marker='x'))
-            self.canvas.redraw(self._topo_axes)
+            self._update_topomaps(ax.epoch_idx, ax.ax_idx, event.xdata)
             marked = ', '.join(self._mark)
             self._topo_plot_info_str = (f"Topomap: {desc},  t = {x} ms,  marked: {marked}")
 
@@ -1570,40 +1557,55 @@ class Frame(NavigableFrame, FileFrame):
         self._SetLayout(nplots, topo)
         self.ShowPage(0)
 
-    def _SetLayout(self, nplots, topo):
+    def _SetLayout(
+            self,
+            nplots: int | tuple[int, int] | None,
+            topo: bool,
+    ):
         if topo is None:
             topo = self.config.ReadBool('Layout/show_topo', True)
         else:
             topo = bool(topo)
             self.config.WriteBool('Layout/show_topo', topo)
 
+        # the topomaps occupy whole grid cells (the last ``n_reserve``), one cell
+        # per map (all + rejected, per channel type), so epochs keep full cell size
+        n_topo = 2 * len(self.doc.ch_type_names)
+
         if nplots is None:
             nrow = self.config.ReadInt('Layout/n_rows', 6)
             ncol = self.config.ReadInt('Layout/n_cols', 6)
             nax = ncol * nrow
-            n_per_page = nax - bool(topo)
+            reserve = n_topo if topo else 0
+            if reserve >= nax:
+                topo = False
+                reserve = 0
+            n_per_page = nax - reserve
         else:
             if isinstance(nplots, int):
                 if nplots < 1:
                     raise ValueError(f"{nplots=}: needs to be >= 1")
-                nax = nplots + bool(topo)
-                nrow = math.ceil(math.sqrt(nax))
+                reserve = n_topo if topo else 0
+                nax = nplots + reserve
+                nrow = int(math.ceil(math.sqrt(nax)))
                 ncol = int(math.ceil(nax / nrow))
-                nrow = int(nrow)
                 n_per_page = nplots
             else:
                 nrow, ncol = nplots
                 nax = ncol * nrow
-                if nax == 1:
-                    topo = False
-                elif nax < 1:
+                if nax < 1:
                     raise ValueError(f"{nplots=}: Need at least one plot.")
-                n_per_page = nax - bool(topo)
+                reserve = n_topo if topo else 0
+                if reserve >= nax:
+                    topo = False
+                    reserve = 0
+                n_per_page = nax - reserve
             self.config.WriteInt('Layout/n_rows', nrow)
             self.config.WriteInt('Layout/n_cols', ncol)
         self.config.Flush()
 
         self._plot_topo = topo
+        self._n_reserve = reserve  # grid cells reserved for topomaps (one per map)
 
         # prepare segments
         n = self.doc.n_epochs
@@ -1745,9 +1747,10 @@ class Frame(NavigableFrame, FileFrame):
             self._bfly_vlim = self._get_bfly_vlim()
             for h in self._case_plots:
                 h.set_ylim(self._bfly_vlim)
-            if self._plot_topo and len(self._topo_plots) > 1:
-                for topo, ch_type in zip(self._topo_plots, self.doc.ch_type_names):
-                    topo.set_vlim(self._bfly_vlim * self._type_display_vlims[ch_type])
+            if self._plot_topo:
+                for (ch_type, _), topo in zip(self._topo_specs, self._topo_plots):
+                    if ch_type in self._type_display_vlims:
+                        topo.set_vlim(self._bfly_vlim * self._type_display_vlims[ch_type])
 
         self.canvas.draw()
         self.canvas.store_canvas()
@@ -1789,6 +1792,7 @@ class Frame(NavigableFrame, FileFrame):
             self._page_change(page)
 
         self.figure.clf()
+        self._topo_interp_handles = []  # cleared by clf(); drop stale references
         nrow = self._rows
         ncol = self._columns
 
@@ -1851,55 +1855,18 @@ class Frame(NavigableFrame, FileFrame):
             for h in self._case_plots:
                 h.set_ylim(self._bfly_vlim)
 
-        # topomap
+        # topomaps (before / after channel rejection) in the last reserved cells
+        self._topo_axes = []
+        self._topo_plots = []
+        self._topo_specs = []
         if self._plot_topo:
-            plot_i = nrow * ncol
-            if self._mark:
-                mark_topo = [ch for ch in self._mark if ch not in self.doc.bad_channel_names]
-            else:
-                mark_topo = None
-            n_types = len(self.doc.ch_type_names)
-            if n_types > 1:
-                # Split the single subplot slot into N side-by-side topo axes;
-                # use the first visible epoch's per-type data at a default time
-                first_cbt = self._case_segs_by_type[0]
-                t_init = min(max(0.1, first_cbt[0][1].time.tmin), first_cbt[0][1].time.tmax)
-                placeholder = self.figure.add_subplot(nrow, ncol, plot_i)
-                bbox = placeholder.get_position()
+            bboxes = []
+            for k in range(self._n_reserve):
+                cell = nrow * ncol - self._n_reserve + 1 + k
+                placeholder = self.figure.add_subplot(nrow, ncol, cell)
+                bboxes.append(placeholder.get_position())
                 self.figure.delaxes(placeholder)
-                topo_kwargs = dict(self._topo_kwargs, vlims={})
-                self._topo_axes = []
-                self._topo_plots = []
-                for j, (ch_type, case_ndvar) in enumerate(first_cbt):
-                    x0 = bbox.x0 + j * bbox.width / n_types
-                    ax = self.figure.add_axes([x0, bbox.y0, bbox.width / n_types, bbox.height])
-                    ax.ax_idx = TOPO_PLOT
-                    ax.topo_idx = j
-                    ax.set_axis_off()
-                    type_tseg = case_ndvar.sub(time=t_init)
-                    layers = AxisData([DataLayer(type_tseg, PlotType.IMAGE)])
-                    topo = AxTopomap(ax, layers, mark=mark_topo, **topo_kwargs)
-                    if self._bfly_vlim is not None and ch_type in self._type_display_vlims:
-                        topo.set_vlim(self._bfly_vlim * self._type_display_vlims[ch_type])
-                    self._topo_axes.append(ax)
-                    self._topo_plots.append(topo)
-            else:
-                # build the sensor map from all good channels (not excluding the
-                # first epoch's interpolation channels) so that every interpolation
-                # channel has a location to mark; the image preview still excludes
-                # the displayed epoch's interpolation channels
-                seg = self._case_segs[0]
-                t_init = min(max(0.1, seg.time.tmin), seg.time.tmax)
-                ax = self.figure.add_subplot(nrow, ncol, plot_i)
-                ax.ax_idx = TOPO_PLOT
-                ax.topo_idx = 0
-                ax.set_axis_off()
-                layers = AxisData([DataLayer(seg.sub(time=t_init), PlotType.IMAGE)])
-                topo = AxTopomap(ax, layers, mark=mark_topo, **self._topo_kwargs)
-                topo.set_data([self._get_ax_data(0, True)])
-                self._topo_axes = [ax]
-                self._topo_plots = [topo]
-            self._topo_plot_info_str = ""
+            self._create_topomaps(bboxes)
 
         self.canvas.draw()
         self.canvas.store_canvas()
@@ -1918,6 +1885,7 @@ class Frame(NavigableFrame, FileFrame):
             topo = bool(topo)
             self.config.WriteBool('Layout/show_topo', topo)
         self._plot_topo = topo
+        self._n_reserve = 0  # long mode uses a bottom strip, not reserved cells
         self._rows_per_page = max(1, self.config.ReadInt('Layout/n_rows', 6))
         seconds_per_row = self.config.ReadFloat('Layout/seconds_per_row', 10.0)
         self._seconds_per_row = seconds_per_row if seconds_per_row > 0 else 10.0
@@ -1961,6 +1929,7 @@ class Frame(NavigableFrame, FileFrame):
 
         self.figure.clf()
         self._window_handles = []
+        self._topo_interp_handles = []  # cleared by clf(); drop stale references
         rpp = self._rows_per_page
 
         if self._plot_topo:
@@ -2016,31 +1985,21 @@ class Frame(NavigableFrame, FileFrame):
             for h in self._case_plots:
                 h.set_ylim(self._bfly_vlim)
 
-        # persistent hover-topomap(s) in a strip at the bottom of the page
+        # persistent before/after-rejection hover-topomaps in a bottom strip
         self._topo_axes = []
         self._topo_plots = []
+        self._topo_specs = []
         if self._plot_topo and self._case_segs_by_type:
             placeholder = self.figure.add_subplot(gs[rpp, 0])
-            bbox = placeholder.get_position()
+            strip = placeholder.get_position()
             self.figure.delaxes(placeholder)
-            first_cbt = self._case_segs_by_type[0]
-            n_types = len(first_cbt)
-            mark_topo = [ch for ch in self._mark if ch not in self.doc.bad_channel_names] or None
-            topo_kwargs = dict(self._topo_kwargs, vlims={}) if self._type_vlims else dict(self._topo_kwargs)
-            for j, (ch_type, case_ndvar) in enumerate(first_cbt):
-                t_init = case_ndvar.time.tmin
-                x0 = bbox.x0 + j * bbox.width / n_types
-                ax = self.figure.add_axes([x0, bbox.y0, bbox.width / n_types, bbox.height])
-                ax.ax_idx = TOPO_PLOT
-                ax.topo_idx = j
-                ax.set_axis_off()
-                layers = AxisData([DataLayer(case_ndvar.sub(time=t_init), PlotType.IMAGE)])
-                topo = AxTopomap(ax, layers, mark=mark_topo, **topo_kwargs)
-                if self._type_vlims and self._bfly_vlim is not None and ch_type in self._type_display_vlims:
-                    topo.set_vlim(self._bfly_vlim * self._type_display_vlims[ch_type])
-                self._topo_axes.append(ax)
-                self._topo_plots.append(topo)
-            self._topo_plot_info_str = ""
+            # square maps flush to the right edge of the strip
+            n_topo = 2 * len(self._case_segs_by_type[0])
+            fig_w, fig_h = self.figure.get_size_inches()
+            size = min(strip.height * fig_h / fig_w, strip.width / n_topo)
+            x_start = strip.x0 + strip.width - size * n_topo
+            bboxes = [Bbox.from_bounds(x_start + k * size, strip.y0, size, strip.height) for k in range(n_topo)]
+            self._create_topomaps(bboxes)
 
         self.canvas.draw()
         self.canvas.store_canvas()
@@ -2062,6 +2021,99 @@ class Frame(NavigableFrame, FileFrame):
                 continue
             handles = ax.plot(seg.time.times, seg.x, color='b', lw=1.2, ls=':', zorder=8)
             self._window_handles.extend(handles)
+
+    # -- topomaps (before / after channel rejection) -------------------------
+
+    def _rejected_channels(self, epoch_idx, t):
+        "Channels rejected (interpolated) in ``epoch_idx`` at time ``t``"
+        if self.long_epochs:
+            return {w.channel for w in self.doc.windows_in_range(epoch_idx, t, t + 1e-9)}
+        return set(self.doc.interpolate[epoch_idx])
+
+    def _create_topomaps(self, bboxes):
+        """Create the before/after-rejection topomaps, one per ``bbox``.
+
+        ``bboxes`` holds one position per map, ordered ``(type0 all, type0
+        rejected, type1 all, ...)``. The first map of each pair shows all
+        channels; the second excludes the channels rejected at the cursor time
+        (and is blanked when too few channels remain to interpolate). Both keep
+        the full sensor layout so that rejected channels can be marked with a
+        blue x in either map.
+        """
+        self._topo_axes = []
+        self._topo_plots = []
+        self._topo_specs = []
+        if not self._case_segs_by_type:
+            return
+        first_cbt = self._case_segs_by_type[0]
+        specs = [(ch_type, kind) for ch_type, _ in first_cbt for kind in ('all', 'rejected')]
+        case_by_type = dict(first_cbt)
+        mark_topo = [ch for ch in self._mark if ch not in self.doc.bad_channel_names] if self._mark else None
+        multi = bool(self._type_vlims)
+        t_init = min(max(0.1, first_cbt[0][1].time.tmin), first_cbt[0][1].time.tmax)
+        for slot, ((ch_type, kind), bbox) in enumerate(zip(specs, bboxes)):
+            case_ndvar = case_by_type[ch_type]
+            topo_kwargs = dict(self._topo_kwargs, vlims={}) if multi else dict(self._topo_kwargs)
+            ax = self.figure.add_axes([bbox.x0, bbox.y0, bbox.width, bbox.height])
+            ax.ax_idx = TOPO_PLOT
+            ax.topo_idx = slot
+            ax.set_axis_off()
+            # construct with the full sensor layout so every rejected channel
+            # has a marker location, even where excluded from the image
+            layers = AxisData([DataLayer(case_ndvar.sub(time=t_init), PlotType.IMAGE)])
+            topo = AxTopomap(ax, layers, mark=mark_topo, **topo_kwargs)
+            if multi and self._bfly_vlim is not None and ch_type in self._type_display_vlims:
+                topo.set_vlim(self._bfly_vlim * self._type_display_vlims[ch_type])
+            # label overlapping the bottom of the map (saves vertical space)
+            label = ch_type if kind == 'all' else f'{ch_type} −rej'
+            ax.text(0.5, 0.0, label, transform=ax.transAxes, ha='center', va='bottom', fontsize=8, zorder=10, bbox=dict(boxstyle='round,pad=0.1', fc='white', ec='none', alpha=0.6))
+            self._topo_axes.append(ax)
+            self._topo_plots.append(topo)
+            self._topo_specs.append((ch_type, kind))
+        self._topo_plot_info_str = ""
+        # initial images and marks for the first visible epoch
+        self._update_topomaps(self._epoch_idxs[0], 0, t_init, redraw=False)
+
+    def _set_topo_blank(self, ax, blank):
+        "White out a topomap axes when too few electrodes remain to interpolate"
+        # blitting restores a cached background, so the axes patch is made
+        # opaque-white to paint over any previously drawn map
+        ax.patch.set_visible(blank)
+        if blank:
+            ax.patch.set_facecolor('white')
+        for artist in (*ax.images, *ax.collections, *ax.lines):
+            artist.set_visible(not blank)
+
+    def _update_topomaps(self, epoch_idx, ax_idx, t, redraw=True):
+        "Update both topomaps and the blue-x rejected-channel marks at time ``t``"
+        if not self._topo_plots:
+            return
+        case_by_type = dict(self._case_segs_by_type[ax_idx])
+        rejected = self._rejected_channels(epoch_idx, t)
+        while self._topo_interp_handles:
+            self._topo_interp_handles.pop().remove()
+        for (ch_type, kind), ax, topo in zip(self._topo_specs, self._topo_axes, self._topo_plots):
+            ndvar = case_by_type.get(ch_type)
+            if ndvar is None:
+                continue
+            if kind == 'rejected' and rejected:
+                keep = [n for n in ndvar.sensor.names if n not in rejected]
+            else:
+                keep = list(ndvar.sensor.names)
+            if len(keep) < MIN_TOPO_SENSORS:
+                self._set_topo_blank(ax, True)
+                continue
+            self._set_topo_blank(ax, False)
+            tseg = ndvar.sub(time=t, sensor=keep) if len(keep) < len(ndvar.sensor) else ndvar.sub(time=t)
+            topo.set_data([tseg])
+            # mark rejected channels with a blue x
+            if rejected:
+                smap = topo.sensors
+                idx = [smap.sensors._array_index(ch) for ch in rejected if ch in smap.sensors.names]
+                if idx:
+                    self._topo_interp_handles.append(smap.ax.scatter(smap.locs[idx, 0], smap.locs[idx, 1], s=20, c='blue', marker='x'))
+        if redraw:
+            self.canvas.redraw(self._topo_axes)
 
     def ToggleChannelInterpolation(self, ax, event):
         if self.read_only:
