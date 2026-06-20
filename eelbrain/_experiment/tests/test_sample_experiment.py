@@ -905,7 +905,7 @@ def test_channel_model_rejection_variable_length(samples_experiment):
     "ChannelModelRejection on long, variable-length epochs -> time-windowed interpolation"
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
-    from eelbrain._info import INTERPOLATE_WINDOWS
+    from eelbrain._info import INTERPOLATE_WINDOWS, INTERPOLATE_WINDOWS_MAX
     from eelbrain._meeg import BadChannelWindow
 
     root = samples_experiment(1, 1, pick='')  # keep EEG channels
@@ -932,25 +932,41 @@ def test_channel_model_rejection_variable_length(samples_experiment):
     assert n_windows > 0  # score_threshold low enough to flag something
 
     # end-to-end: interpolation runs and only touches samples inside the windows
+    max_interpolate = rej_ds.info[INTERPOLATE_WINDOWS_MAX]
     ds0 = e.load_epochs(interpolate_bads=False)
     ds1 = e.load_epochs(interpolate_bads=True)
     assert isinstance(ds1['eeg'], Datalist)
     assert len(ds1['eeg']) == len(windows)
-    changed = False
+    changed = zeroed_any = False
     for i, (y0, y1, epoch_windows) in enumerate(zip(ds0['eeg'], ds1['eeg'], windows)):
         bad_by_channel = {}
         for w in epoch_windows:
             bad_by_channel.setdefault(w.channel, []).append((w.tmin, w.tmax))
+        # intervals where more than max_interpolate channels are bad are zeroed
+        # across all channels (too few good channels for reliable interpolation)
+        n_bad = np.zeros(y0.time.nsamples, int)
+        for spans in bad_by_channel.values():
+            in_channel = np.zeros(y0.time.nsamples, bool)
+            for tmin, tmax in spans:
+                in_channel |= (y0.time.times >= tmin) & (y0.time.times < tmax)
+            n_bad += in_channel
+        zeroed = n_bad > max_interpolate
+        if zeroed.any():
+            zeroed_any = True
+            assert_array_equal(y1.x[:, zeroed], 0.)
         for ci, ch in enumerate(y0.sensor.names):
             spans = bad_by_channel.get(ch, [])
             inside = np.zeros(y0.time.nsamples, bool)
             for tmin, tmax in spans:
                 inside |= (y0.time.times >= tmin) & (y0.time.times < tmax)
-            # samples outside any bad window are unchanged
-            assert_array_equal(y0.x[ci, ~inside], y1.x[ci, ~inside])
+            # samples outside any bad window (and outside zeroed intervals) are unchanged
+            unchanged = ~inside & ~zeroed
+            assert_array_equal(y0.x[ci, unchanged], y1.x[ci, unchanged])
+            # flagged samples are modified, whether interpolated or zeroed
             if inside.any() and not np.array_equal(y0.x[ci, inside], y1.x[ci, inside]):
                 changed = True
-    assert changed  # interpolation actually modified the flagged windows
+    assert changed  # flagged windows were actually modified
+    assert zeroed_any  # some interval had more than max_interpolate bad channels
 
 
 @requires_mne_sample_data
