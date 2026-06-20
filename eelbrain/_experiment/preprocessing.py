@@ -1756,7 +1756,14 @@ class RawMaxwell(CachedRawPipe):
             noisy_chs, flat_chs = mne.preprocessing.find_bad_channels_maxwell(raw, calibration=calibration, cross_talk=cross_talk, bad_condition=self.bad_condition, coord_frame=coord_frame)
             raw.info['bads'] = sorted(raw.info['bads'] + noisy_chs + flat_chs)
             # Maxwell filter
-            return mne.preprocessing.maxwell_filter(raw, calibration=calibration, cross_talk=cross_talk, destination=destination, bad_condition=self.bad_condition, coord_frame=coord_frame, verbose=MNE_VERBOSITY, **self.kwargs)
+            kwargs = self.kwargs
+            st_duration = kwargs.get('st_duration')
+            if st_duration is not None and kwargs.get('st_overlap', True):
+                # MNE's overlapping tSSS uses a Hann window of round(st_duration * sfreq) samples with 50% overlap, which only satisfies the constant-overlap-add constraint for an even sample count; nudge st_duration up by one sample when it would be odd
+                n_samples = int(round(st_duration * raw.info['sfreq']))
+                if n_samples % 2:
+                    kwargs = {**kwargs, 'st_duration': (n_samples + 1) / raw.info['sfreq']}
+            return mne.preprocessing.maxwell_filter(raw, calibration=calibration, cross_talk=cross_talk, destination=destination, bad_condition=self.bad_condition, coord_frame=coord_frame, verbose=MNE_VERBOSITY, **kwargs)
 
     def _make_info(
             self,
