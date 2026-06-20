@@ -17,7 +17,7 @@ from .. import load, save
 from .._data_obj import Dataset
 from .._exceptions import ConfigurationError
 from .._data_obj import Datalist
-from .._info import INTERPOLATE_CHANNELS, INTERPOLATE_WINDOWS
+from .._info import INTERPOLATE_CHANNELS, INTERPOLATE_WINDOWS, INTERPOLATE_WINDOWS_MAX
 from .._meeg._channel_model import ChannelModel
 from .._meeg.base import new_rejection_ds
 from .configuration import Configuration
@@ -222,6 +222,7 @@ class ChannelModelRejectionDerivative(Derivative[Dataset]):
             continuous = (eeg.time.tstop - eeg.time.tmin) > rej.continuous
         if continuous:
             rej_ds = new_rejection_ds(score_ds, windows=True)
+            rej_ds.info[INTERPOLATE_WINDOWS_MAX] = rej.max_interpolate
             rej_ds[INTERPOLATE_WINDOWS] = model.find_bad_windows(eeg, threshold=rej.score_threshold, max_exclude=rej.max_interpolate, window=rej.window, hop=rej.hop, min_duration=rej.min_duration, merge_gap=rej.merge_gap)
             return rej_ds
 

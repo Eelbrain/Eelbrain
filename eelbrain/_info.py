@@ -46,6 +46,7 @@ import numpy as np
 BAD_CHANNELS = 'bad_channels'
 INTERPOLATE_CHANNELS = "interpolate_channels"
 INTERPOLATE_WINDOWS = "interpolate_windows"
+INTERPOLATE_WINDOWS_MAX = "interpolate_windows_max"
 # Parameters that should be reset if measurement type changes
 MAIN_ARGS = ('meas', 'unit', 'cmap', 'vmin', 'vmax', 'contours')
 

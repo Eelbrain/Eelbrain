@@ -249,6 +249,7 @@ def _window_intervals(
 def _interpolate_bad_windows_eeg(
         epochs: mne.Epochs,
         windows_by_epoch: list[list[BadChannelWindow]],
+        max_interpolate: int,
 ) -> None:
     """Interpolate bad EEG channels over the time window in which they are bad
 
@@ -262,8 +263,12 @@ def _interpolate_bad_windows_eeg(
         The data to interpolate. Must be preloaded.
     windows_by_epoch
         Bad-channel time windows specified for each epoch.
+    max_interpolate
+        Maximum number of channels to interpolate simultaneously. In a time
+        interval where more channels than this are bad, the bad channels are set
+        to 0 instead of interpolated (too few good channels remain for a reliable
+        interpolation).
     """
-    logger = logging.getLogger(__name__)
     if len(windows_by_epoch) != len(epochs):
         raise ValueError(f"Unequal length of epochs ({len(epochs)}) and windows_by_epoch ({len(windows_by_epoch)})")
 
@@ -272,11 +277,16 @@ def _interpolate_bad_windows_eeg(
     for i, windows in enumerate(windows_by_epoch):
         windows = [w for w in windows if w.channel in eeg_chs]
         for a, b, key in _window_intervals(windows, epochs):
+            if len(key) > max_interpolate:
+                # too many bad channels to interpolate reliably: zero them out
+                # picks_bad = mne.pick_channels(epochs.ch_names, key)
+                # epochs._data[i, picks_bad, a:b] = 0
+                epochs._data[i, :, a:b] = 0
+                continue
             if key in interp_cache:
                 goods_idx, bads_idx, interpolation = interp_cache[key]
             else:
                 goods_idx, bads_idx, interpolation = interp_cache[key] = _make_interpolator(epochs, key)
-            logger.info(f'Interpolating {bads_idx.sum()} sensors on epoch {i} samples {a}:{b}')
             epochs._data[i, bads_idx, a:b] = np.dot(interpolation, epochs._data[i, goods_idx, a:b])
 
 
@@ -300,7 +310,6 @@ def _interpolate_bad_windows_meg(
     interp_cache
         Will be updated.
     """
-    logger = logging.getLogger(__name__)
     if len(windows_by_epoch) != len(epochs):
         raise ValueError(f"Unequal length of epochs ({len(epochs)}) and windows_by_epoch ({len(windows_by_epoch)})")
 
@@ -317,5 +326,4 @@ def _interpolate_bad_windows_meg(
         make_interpolators(interp_cache, {key for _, _, key in intervals}, bads, epochs)
         for a, b, key in intervals:
             picks_good, picks_bad, interpolation = interp_cache[bads, key]
-            logger.info(f'Interpolating sensors {picks_bad} on epoch {i} samples {a}:{b}')
             epochs._data[i, picks_bad, a:b] = interpolation.dot(epochs._data[i, picks_good, a:b])

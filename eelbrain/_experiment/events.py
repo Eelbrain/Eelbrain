@@ -74,7 +74,7 @@ from mne_bids import BIDSPath
 from .. import load, save
 from .._data_obj import Datalist, Dataset, Factor, Var, combine
 from .._exceptions import ConfigurationError
-from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS, INTERPOLATE_WINDOWS
+from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS, INTERPOLATE_WINDOWS, INTERPOLATE_WINDOWS_MAX
 from .derivative_cache import CachePolicy, Dependency, Derivative, Input, Request, UncachedDerivative, file_fingerprint
 from .epoch_rejection import EpochRejection, ManualRejection
 from .epochs import EPOCH_EXTRACT_OPTIONS, EpochCollection, SecondaryEpoch, SuperEpoch, PrimaryEpoch, ContinuousEpoch
@@ -399,6 +399,7 @@ class SelectedEventsDerivative(UncachedDerivative[Dataset]):
                     # Time-resolved interpolation windows (long epochs)
                     if INTERPOLATE_WINDOWS in rejection_ds:
                         ds.info[INTERPOLATE_WINDOWS] = True
+                        ds.info[INTERPOLATE_WINDOWS_MAX] = rejection_ds.info[INTERPOLATE_WINDOWS_MAX]
                         ds[INTERPOLATE_WINDOWS] = rejection_ds[INTERPOLATE_WINDOWS]
                     else:
                         ds.info[INTERPOLATE_WINDOWS] = False
@@ -519,6 +520,10 @@ class EpochEventsDerivative(UncachedDerivative[Dataset]):
                 ds.info[BAD_CHANNELS] = sorted({ch for d in dss for ch in d.info.get(BAD_CHANNELS, [])})
                 ds.info[INTERPOLATE_CHANNELS] = any(d.info.get(INTERPOLATE_CHANNELS, False) for d in dss)
                 ds.info[INTERPOLATE_WINDOWS] = any(d.info.get(INTERPOLATE_WINDOWS, False) for d in dss)
+                windows_max = {d.info.get(INTERPOLATE_WINDOWS_MAX) for d in dss} - {None}
+                if windows_max:
+                    assert len(windows_max) == 1
+                    ds.info[INTERPOLATE_WINDOWS_MAX] = windows_max.pop()
                 if epoch.n_cases is not None and ds.n_cases != epoch.n_cases:
                     raise RuntimeError(f"Number of epochs {ds.n_cases}, expected {epoch.n_cases}")
                 return ds

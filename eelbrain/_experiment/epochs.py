@@ -37,7 +37,7 @@ import numpy as np
 from .. import load
 from .._data_obj import Datalist, Dataset, Var, combine
 from .._exceptions import ConfigurationError, DimensionMismatchError
-from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS, INTERPOLATE_WINDOWS
+from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS, INTERPOLATE_WINDOWS, INTERPOLATE_WINDOWS_MAX
 from .._mne import shift_mne_epoch_trigger
 from .._text import enumeration
 from .._text import n_of
@@ -865,6 +865,7 @@ class RecordingEpochsDerivative(Derivative[Any]):
             if ds.info.get(INTERPOLATE_WINDOWS, False) and any(ds[INTERPOLATE_WINDOWS]):
                 # time-resolved interpolation for long, variable-length epochs
                 windows_all = list(ds[INTERPOLATE_WINDOWS])
+                max_interpolate = ds.info[INTERPOLATE_WINDOWS_MAX]
                 interp_cache = {}
                 offset = 0
                 for epochs in epochs_list:
@@ -873,7 +874,7 @@ class RecordingEpochsDerivative(Derivative[Any]):
                     if 'mag' in data_types:
                         _interpolate_bad_windows_meg(epochs, windows, interp_cache)
                     if 'eeg' in data_types:
-                        _interpolate_bad_windows_eeg(epochs, windows)
+                        _interpolate_bad_windows_eeg(epochs, windows, max_interpolate)
             elif ds.info[INTERPOLATE_CHANNELS] and any(ds[INTERPOLATE_CHANNELS]):
                 bads_all = epochs_list[0].info['bads']
                 bads_individual = [sorted(set(bads_all + bads_i)) for bads_i in ds[INTERPOLATE_CHANNELS]]
