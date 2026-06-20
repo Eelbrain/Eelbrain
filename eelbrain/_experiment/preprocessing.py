@@ -36,7 +36,6 @@ import fnmatch
 import itertools
 import json
 import logging
-from os.path import exists, relpath
 from pathlib import Path
 from typing import Any
 import warnings
@@ -483,7 +482,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             self.key_fields = ('subject', 'session')
 
     def path(self, ctx: Request) -> Path:
-        return ctx.root / ica_file_path(ctx.state, self.raw_name, self.pipe._concatenate_runs)
+        return self.pipe.path(ctx)
 
     def _key(self, ctx: Request) -> dict[str, Any]:
         return canonical_state_subset({**ctx.state, 'raw': self.raw_name}, self.key_fields)
@@ -678,15 +677,15 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             'raw': self.raw_name,
             'pipe': self.pipe,
             'bads': self._load_bad_channels(ctx),
-            'ica_path': relpath(path, ctx.root),
-            'exists': exists(path),
+            'ica_path': path.relative_to(ctx.root),
+            'exists': path.exists(),
         }
 
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
         fingerprint = self.fingerprint(ctx)
         path = self.path(ctx)
         fingerprint['ica_file'] = file_fingerprint(ctx.root, path, 'ica-file')
-        if exists(path):
+        if path.exists():
             fingerprint['exclude'] = self.pipe._load_ica(ctx).exclude
         else:
             fingerprint['exclude'] = []
@@ -694,7 +693,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
 
     def load(self, ctx: Request) -> mne.preprocessing.ICA:
         path = self.path(ctx)
-        if not exists(path):
+        if not path.exists():
             raise FileMissingError(f"ICA file {path.name} does not exist. Run e.make_ica() to create it.")
         value, current = self._current_value_manifest(ctx)
         previous = self._manifest(ctx)
@@ -758,18 +757,17 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         """
         path = self.path(ctx)
         previous = self._manifest(ctx)
-        current = None
-        if exists(path):
+        if path.exists():
             value, current = self._current_value_manifest(ctx)
             if self._manifest_matches(previous, current):
                 return value
-        if exists(path) and not allow_protected_overwrite:
-            if allow_protected_reindex:
+            elif allow_protected_reindex:
                 assert current is not None
                 ctx.registry.write_manifest(ctx.registry.manifest_path(path), current)
                 return value
-            reason = self._stale_reason(previous, current)
-            raise ProtectedArtifactError(self.name, path, message=f"Existing ICA file {path.name!r} no longer matches the current data and ICA settings.", instructions=f"{reason}\nUse allow_protected_reindex=True to keep this ICA file and rewrite its manifest, or allow_protected_overwrite=True to recompute it.")
+            elif not allow_protected_overwrite:
+                reason = self._stale_reason(previous, current)
+                raise ProtectedArtifactError(self.name, path, message=f"Existing ICA file {path.name!r} no longer matches the current data and ICA settings.", instructions=f"{reason}\nUse allow_protected_reindex=True to keep this ICA file and rewrite its manifest, or allow_protected_overwrite=True to recompute it.")
         raw = self.load_concatenated_source_raw(ctx, self.pipe.task)
         value = self.pipe._fit_ica(raw, ctx.state['subject'], self.raw_name)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1561,12 +1559,15 @@ class RawICA(CachedRawPipe):
         self.kwargs = {'method': method, 'random_state': random_state, **kwargs}
         self.fit_kwargs = dict(fit_kwargs) if fit_kwargs else {}
 
+    def path(self, ctx: Request) -> Path:
+        return ctx.root / ica_file_path(ctx.state, self.name, self._concatenate_runs)
+
     def _load_ica(
             self,
             ctx: Request,
     ) -> mne.preprocessing.ICA:
-        ica_path = ctx.root / ica_file_path(ctx.state, self.name, self._concatenate_runs)
-        if not exists(ica_path):
+        ica_path = self.path(ctx)
+        if not ica_path.exists():
             raise FileMissingError(f"ICA file {ica_path.name} does not exist for raw={self.name!r}. Run e.make_ica() to create it.")
         return mne.preprocessing.read_ica(ica_path)
 

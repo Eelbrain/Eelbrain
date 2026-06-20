@@ -48,7 +48,7 @@ from .logging import CACHE_EVENT_COLUMNS, StructuredFormatter
 from .state_model import StateModel
 from .groups import assemble_groups
 from .pathing import (
-    LOG_DIR, MRI_SDIR, RESULTS_DIR, bids_path, ica_file_path, join_stem_parts, mri_dir, raw_basename, raw_dir,
+    LOG_DIR, MRI_SDIR, RESULTS_DIR, bids_path, join_stem_parts, mri_dir, raw_basename, raw_dir,
     src_file_path, trans_file_path,
 )
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, _resolve_parc
@@ -2285,7 +2285,7 @@ class Pipeline(StateModel):
                 raise RuntimeError(f"{command=}")
             else:
                 raise RuntimeError("User aborted ICA overwrite")
-        return str(self.root / ica_file_path(ctx.state, ica_raw_name, self._raw[ica_raw_name]._concatenate_runs))
+        return str(self._raw[ica_raw_name].path(ctx))
 
     def make_movie_dspm(
             self,
