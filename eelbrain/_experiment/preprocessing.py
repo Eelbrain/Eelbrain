@@ -1067,7 +1067,7 @@ class MedianHeadPositionDerivative(Derivative):
         trans = numpy.eye(4)
         trans[:3, :3] = Rotation.from_quat(numpy.column_stack([q, q0])).mean().as_matrix()
         trans[:3, 3] = numpy.mean(all_pos[:, 3:], axis=0)
-        return mne.transforms.Transform(fro='head', to='meg', trans=trans)
+        return mne.transforms.Transform(fro='meg', to='head', trans=trans)
 
     def save(self, ctx: Request, path: Path, value: mne.transforms.Transform | None) -> None:
         if value is None:
