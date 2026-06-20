@@ -257,7 +257,7 @@ class ChannelModel:
         Like :meth:`score`, but time-resolved: instead of flagging a channel for
         a whole epoch, the channel is scored within sliding time windows so that
         a bad channel is only flagged over the interval in which it is actually
-        bad. This is intended for long, variable-length epochs.
+        bad.
 
         Parameters
         ----------
@@ -286,6 +286,27 @@ class ChannelModel:
         windows
             One list of :class:`BadChannelWindow` per epoch (per case for an
             epoched NDVar; a single list for a continuous NDVar).
+
+        Notes
+        -----
+        The data are scanned with a window of length ``window`` seconds, stepped
+        by ``hop`` seconds. Within each window the step-down scoring of
+        :meth:`score` is applied, so every channel gets an error and hence a
+        good/bad classification (bad when the error exceeds ``threshold``) for
+        that window, with at most ``max_exclude`` channels flagged per window. A
+        time point is then considered bad for a channel if it is covered by *any*
+        window in which that channel was classified bad; since each window's
+        verdict applies to the window's full width and successive windows overlap
+        (when ``hop`` < ``window``), the bad time points form contiguous runs.
+        Each run is returned as a :class:`BadChannelWindow`, after discarding
+        runs shorter than ``min_duration`` and merging runs of the same channel
+        separated by less than ``merge_gap``.
+
+        Because a window's verdict spans its whole width, a localized artifact is
+        bracketed by up to roughly one ``window`` length of margin on each side.
+        ``window`` therefore effectively sets the amount of padding around
+        detected artifacts, while ``hop`` controls how precisely the window edges
+        are placed.
         """
         n_sensors = len(self.sensor) if self.sensor is not None else 0
         max_n = int(max_exclude) if max_exclude >= 1 else int(max_exclude * n_sensors)
@@ -357,7 +378,7 @@ class ChannelModel:
         return out
 
     def _score_block(self, x: np.ndarray, threshold: float, max_n: int) -> np.ndarray:
-        # step-down error score per channel for one block (sensor x time)
+        # step-down error score per channel (sensor,) for one block (sensor x time)
         n_sensors = len(x)
         scores = np.empty(n_sensors)
         xi = x
