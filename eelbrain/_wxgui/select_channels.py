@@ -290,6 +290,8 @@ class Frame(NavigableFrame, FileFrame):
         self._static_nc_topos: list[AxTopomap] = []
         self._dynamic_nc_topos: list[AxTopomap] = []
         self._topo_axes: list = []
+        self._cursor_cbars: list = []        # Colorbar per cursor topo (rescales with cursor)
+        self._cursor_cbar_axes: list = []    # their axes, for blitted redraws
         self._events_ax = None
         self._event_artists: list = []   # handles for current event markers
         self._cursor_t: float | None = None
@@ -484,17 +486,23 @@ class Frame(NavigableFrame, FileFrame):
 
         # --- Topo row (cursor | static NC | dynamic NC per channel type) ---
         n_topo_cols = 3 * n_types
-        topo_w = 1.0 / n_topo_cols
+        cell_w = 1.0 / n_topo_cols
+        # Within each cell, reserve a thin strip on the right for a colorbar
+        cbar_w = min(0.012, cell_w * 0.12)
+        cbar_pad = cell_w * 0.06
+        map_w = cell_w - cbar_w - cbar_pad
         fig_w = self.figure.get_figwidth()
         fig_h = self.figure.get_figheight()
         # Make topos square in physical space, but cap at the allocated height
-        topo_h = min(topo_w * (fig_w / fig_h), topo_h_frac * 0.85)
+        topo_h = min(map_w * (fig_w / fig_h), topo_h_frac * 0.85)
         topo_bottom = (topo_h_frac - topo_h) / 2
 
         self._cursor_topos = []
         self._static_nc_topos = []
         self._dynamic_nc_topos = []
         self._topo_axes = []
+        self._cursor_cbars = []
+        self._cursor_cbar_axes = []
 
         topo_groups = [
             ('Cursor', self._cursor_topos),
@@ -504,33 +512,40 @@ class Frame(NavigableFrame, FileFrame):
 
         for i_type, (ch_type, ndvar, picks) in enumerate(doc.ndvars_by_type):
             sensor = ndvar.sensor
+            display_unit, scale = ch_type_scale(ch_type)
             for j_group, (label, topo_list) in enumerate(topo_groups):
                 col = i_type * 3 + j_group
                 ax = self.figure.add_axes(
-                    (col * topo_w, topo_bottom, topo_w, topo_h),
+                    (col * cell_w, topo_bottom, map_w, topo_h),
                 )
                 ax.ch_type = ch_type
                 ax.topo_group = j_group
                 self._topo_axes.append(ax)
 
-                # Initial data for this topo
+                # Initial data for this topo; cursor in display units, NC unitless
                 if j_group == 0:
-                    # Cursor topo: data at t=0 in SI units
-                    d = raw[picks, 0:1][0][:, 0]
+                    d = raw[picks, 0:1][0][:, 0] * scale
                     topo_ndvar = NDVar(d, (sensor,), name=ch_type, info=ndvar.info)
-                elif j_group == 1:
-                    topo_ndvar = doc.nc_static.get(ch_type)
-                    if topo_ndvar is None:
-                        topo_ndvar = NDVar(np.zeros(len(sensor)), (sensor,), name=ch_type)
+                    cbar_label = display_unit or ch_type
                 else:
                     topo_ndvar = doc.nc_static.get(ch_type)
                     if topo_ndvar is None:
                         topo_ndvar = NDVar(np.zeros(len(sensor)), (sensor,), name=ch_type)
+                    cbar_label = 'r'
 
                 layers = AxisData([DataLayer(topo_ndvar, PlotType.IMAGE)])
                 p = AxTopomap(ax, layers, **TOPO_ARGS)
-                ax.text(0.5, -0.08, f"{label} ({ch_type})", transform=ax.transAxes,
-                        ha='center', va='top', fontsize=7)
+                ax.text(0.5, 0.0, f"{label} ({ch_type})", transform=ax.transAxes,
+                        ha='center', va='bottom', fontsize=7)
+
+                # Colorbar in the reserved strip to the right of the topomap
+                cbar_ax = self.figure.add_axes(
+                    (col * cell_w + map_w + cbar_pad, topo_bottom, cbar_w, topo_h),
+                )
+                cbar = self._add_topo_colorbar(p, cbar_ax, cbar_label)
+                if j_group == 0:
+                    self._cursor_cbars.append(cbar)
+                    self._cursor_cbar_axes.append(cbar_ax)
 
                 # Mark bad channels with red ×
                 if doc.bad_channels:
@@ -540,6 +555,20 @@ class Frame(NavigableFrame, FileFrame):
 
         self.canvas.store_canvas()
         self.canvas.draw()
+
+    def _add_topo_colorbar(self, topo_plot: AxTopomap, cbar_ax, label: str):
+        """Attach a thin vertical colorbar (with unit label) to a topomap."""
+        cbar = self.figure.colorbar(topo_plot.plots[0].im, cax=cbar_ax)
+        cbar_ax.tick_params(labelsize=6)
+        cbar.set_label(label, fontsize=7)
+        cbar.outline.set_linewidth(0.5)
+        self._set_cbar_ticks(cbar)
+        return cbar
+
+    def _set_cbar_ticks(self, cbar):
+        """Label only the min, center, and max of the colorbar range."""
+        vmin, vmax = cbar.mappable.get_clim()
+        cbar.set_ticks([vmin, (vmin + vmax) / 2, vmax])
 
     def _mark_bad_on_topo(self, topo_plot: AxTopomap, sensor, bad: set[str]):
         """Add red × marks at bad channel positions on a topomap."""
@@ -665,10 +694,16 @@ class Frame(NavigableFrame, FileFrame):
         for i_type, (ch_type, ndvar, picks) in enumerate(self.doc.ndvars_by_type):
             if i_type >= len(self._cursor_topos):
                 break
-            d = raw[picks, t_idx:t_idx + 1][0][:, 0]
+            _, scale = ch_type_scale(ch_type)
+            d = raw[picks, t_idx:t_idx + 1][0][:, 0] * scale
             cursor_ndvar = NDVar(d, (ndvar.sensor,), name=ch_type, info=ndvar.info)
             self._cursor_topos[i_type].set_data([cursor_ndvar], vlim=True)
+            # Rescale the matching colorbar to the new cursor vlim
+            cbar = self._cursor_cbars[i_type]
+            cbar.update_normal(self._cursor_topos[i_type].plots[0].im)
+            self._set_cbar_ticks(cbar)
             redraw_axes.append(self._topo_axes[i_type * 3])
+            redraw_axes.append(self._cursor_cbar_axes[i_type])
 
         if redraw_axes:
             self.canvas.redraw(redraw_axes)
