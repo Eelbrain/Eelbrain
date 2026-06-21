@@ -10,6 +10,7 @@
 #  - issues commands to Model
 
 import mne
+from matplotlib.collections import LineCollection
 import numpy as np
 import pandas as pd
 import wx
@@ -19,11 +20,13 @@ from .._data_obj import Dataset, Factor, NDVar, UTS
 from .._io.fiff import _picks, sensor_dim as _sensor_dim, _sensor_info
 from .._ndvar import neighbor_correlation
 from .._types import PathArg
+from .._utils.parse import INT_PATTERN, POS_FLOAT_PATTERN
 from ..plot._base import AxisData, DataLayer, PlotType
 from ..plot._topo import AxTopomap
-from .frame import NavigableFrame
+from .frame import EelbrainDialog, NavigableFrame
 from .history import Action, FileDocument, FileModel, FileFrame
 from .mpl_canvas import FigureCanvasPanel
+from .utils import REValidator
 from ._ch_types import CH_TYPE_COLORS, CH_TYPE_DEFAULT_VLIM_SI, ch_type_scale
 from .select_epochs import VLimDialog
 
@@ -34,6 +37,37 @@ DEFAULT_WINDOW = 30.0  # seconds
 _EVENT_COLORS = [c for c in UNAMBIGUOUS_COLORS.values()]
 
 TEST_MODE = False
+
+
+def _minmax_envelope(
+        times: np.ndarray,
+        data: np.ndarray,
+        n_bins: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Reduce data to <= ``2 * n_bins`` points/channel, preserving per-bin min & max.
+
+    Parameters
+    ----------
+    times
+        Time axis matching the last dimension of ``data``.
+    data
+        Data array, ``(n_channels, n_samples)``.
+    n_bins
+        Number of bins (pixel columns); each bin contributes its minimum and
+        maximum, so spikes/noise remain visible after reduction.
+    """
+    n_samples = data.shape[1]
+    bin_size = n_samples // n_bins
+    if bin_size <= 1:  # already at or below target resolution
+        return times, data
+    n_full = n_samples // bin_size
+    n_used = n_full * bin_size
+    d = data[:, :n_used].reshape(data.shape[0], n_full, bin_size)
+    env = np.empty((data.shape[0], 2 * n_full), data.dtype)
+    env[:, 0::2] = d.min(axis=2)
+    env[:, 1::2] = d.max(axis=2)
+    t = times[:n_used].reshape(n_full, bin_size).mean(axis=1)
+    return np.repeat(t, 2), env
 
 
 class ChangeAction(Action):
@@ -111,6 +145,7 @@ class Document(FileDocument):
             else:
                 target_sfreq = 200.0
             decim = max(1, int(round(sfreq / target_sfreq)))
+        self.decim = decim
 
         # Resolve time column for events
         if t_column is None and events is not None:
@@ -274,18 +309,24 @@ class Frame(NavigableFrame, FileFrame):
         self.t_start = 0.0
         self._window_samples = int(self.window_size * sfreq)
 
+        # Display reduction state (configured via the Layout dialog)
+        self._envelope = self.config.ReadBool('Display/envelope', True)
+        # decim_auto: pick the factor to draw ~1 sample per horizontal pixel
+        self._decim_auto = self.config.ReadBool('Display/decim_auto', True)
+        self._decim = max(1, self.config.ReadInt('Display/decim', self.doc.decim))
+
         # VLim state: stored in SI units; auto=True recomputes from data each window
-        self._auto_vlim = self.config.ReadBool('VLim/auto', True)
-        self._type_vlims_si: dict[str, float] = {}
+        self._auto_vlim = self.config.ReadBool('VLim/auto', False)
+        self._type_display_vlims: dict[str, float] = {}
         for ch_type, _, _ in self.doc.ndvars_by_type:
-            self._type_vlims_si[ch_type] = self.config.ReadFloat(
-                f'VLim/vlim_{ch_type}', CH_TYPE_DEFAULT_VLIM_SI[ch_type]
-            )
+            saved = self.config.ReadFloat(f'VLim/vlim_{ch_type}', -1.0)
+            self._type_display_vlims[ch_type] = saved if saved > 0 else CH_TYPE_DEFAULT_VLIM_SI[ch_type]
         self._max_t_start = max(0.0, (raw.n_times - self._window_samples) / sfreq)
 
         # Plot handles (populated by _plot)
         self._butterfly_axes: list = []
-        self._butterfly_lines: dict[str, list] = {}  # ch_type → [Line2D, ...]
+        self._butterfly_lc: dict[str, LineCollection] = {}  # ch_type → LineCollection
+        self._butterfly_names: dict[str, list] = {}  # ch_type → [ch_name, ...]
         self._cursor_topos: list[AxTopomap] = []
         self._static_nc_topos: list[AxTopomap] = []
         self._dynamic_nc_topos: list[AxTopomap] = []
@@ -402,6 +443,65 @@ class Frame(NavigableFrame, FileFrame):
 
     # --- Plotting ---
 
+    def _axis_width_px(self) -> int:
+        """Width of the butterfly axes in pixels (they span 95% of the figure)."""
+        return max(1, int(self.figure.get_figwidth() * self.figure.dpi * 0.95))
+
+    def _effective_decim(self) -> int:
+        """Decimation factor actually applied to the display.
+
+        In ``decim_auto`` mode this targets ~1 sample per horizontal pixel for
+        the current window (``sfreq * window_size / width_px``); otherwise it is
+        the user-specified :attr:`_decim`.
+        """
+        if self._decim_auto:
+            return max(1, round(self._sfreq * self.window_size / self._axis_width_px()))
+        return self._decim
+
+    def _window_lines(
+            self,
+            picks: np.ndarray,
+            scale: float,
+            start: int,
+            stop: int,
+            times: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Window data prepared for display: optional decimation, then envelope.
+
+        Parameters
+        ----------
+        picks
+            Channel indices into ``raw``.
+        scale
+            Multiplier converting SI units to display units.
+        start
+            First sample of the window.
+        stop
+            Sample after the last sample of the window.
+        times
+            Time axis for ``raw[:, start:stop]``.
+        """
+        d = self.doc.raw[picks, start:stop][0]
+        decim = self._effective_decim()
+        if decim > 1:
+            d = d[:, ::decim]
+            times = times[::decim]
+        d = d * scale
+        if self._envelope:
+            return _minmax_envelope(times, d, self._axis_width_px())
+        return times, d
+
+    def _line_styles(self, ch_type: str) -> tuple[list, list]:
+        """Per-channel ``(colors, linestyles)`` for a butterfly LineCollection."""
+        bad = self.doc.bad_channels
+        type_color = CH_TYPE_COLORS.get(ch_type, 'k')
+        colors, linestyles = [], []
+        for ch_name in self._butterfly_names[ch_type]:
+            is_bad = ch_name in bad
+            colors.append('red' if is_bad else type_color)
+            linestyles.append(':' if is_bad else '-')
+        return colors, linestyles
+
     def _plot(self):
         """Create the initial figure layout with butterfly, events, and topo axes."""
         self.figure.clf()
@@ -423,7 +523,8 @@ class Frame(NavigableFrame, FileFrame):
 
         # --- Butterfly axes (one per channel type, stacked top-to-bottom) ---
         self._butterfly_axes = []
-        self._butterfly_lines = {}
+        self._butterfly_lc = {}
+        self._butterfly_names = {}
 
         for i_type, (ch_type, ndvar, picks) in enumerate(doc.ndvars_by_type):
             bottom = events_h_frac + topo_h_frac + (n_types - 1 - i_type) * bf_per_type
@@ -438,32 +539,26 @@ class Frame(NavigableFrame, FileFrame):
             ax.tick_params(labelbottom=show_xticks, labelsize=7)
             ax.ch_type = ch_type
             ax.i_type = i_type
+            self._butterfly_names[ch_type] = list(ndvar.sensor.names)
 
-            # Fetch and scale raw window data
-            raw_data = raw[picks, start:stop][0]  # (n_ch, n_times)
-            display_data = raw_data * scale
+            # Fetch, decimate, scale and (optionally) envelope the window data
+            t_env, display_data = self._window_lines(picks, scale, start, stop, times)
 
             # Determine y-axis limits
             if self._auto_vlim:
                 abs_max = float(np.percentile(np.abs(display_data), 99))
                 vlim_display = abs_max if abs_max > 0 else 1.0
             else:
-                vlim_display = self._type_vlims_si[ch_type] * scale
+                vlim_display = self._type_display_vlims[ch_type] * scale
             ax.set_ylim(-vlim_display, vlim_display)
 
-            ch_names = ndvar.sensor.names
-            bad = doc.bad_channels
-            lines = []
-            for j, ch_name in enumerate(ch_names):
-                is_bad = ch_name in bad
-                color = 'red' if is_bad else CH_TYPE_COLORS.get(ch_type, 'k')
-                ls = ':' if is_bad else '-'
-                (line,) = ax.plot(times, display_data[j], color=color, ls=ls, lw=0.4)
-                line.ch_name = ch_name
-                lines.append(line)
+            segments = [np.column_stack([t_env, display_data[j]]) for j in range(display_data.shape[0])]
+            colors, linestyles = self._line_styles(ch_type)
+            lc = LineCollection(segments, linewidths=0.4, colors=colors, linestyles=linestyles, antialiased=False)
+            ax.add_collection(lc)
 
             self._butterfly_axes.append(ax)
-            self._butterfly_lines[ch_type] = lines
+            self._butterfly_lc[ch_type] = lc
 
         if self._butterfly_axes:
             self._butterfly_axes[-1].set_xlabel("Time (s)", fontsize=8)
@@ -591,11 +686,9 @@ class Frame(NavigableFrame, FileFrame):
             ax = self._butterfly_axes[i_type]
             ax.set_xlim(t_start, t_end)
             _, scale = ch_type_scale(ch_type)
-            raw_data = raw[picks, start:stop][0]
-            display_data = raw_data * scale
-            for j, line in enumerate(self._butterfly_lines[ch_type]):
-                line.set_xdata(times)
-                line.set_ydata(display_data[j])
+            t_env, display_data = self._window_lines(picks, scale, start, stop, times)
+            segments = [np.column_stack([t_env, display_data[j]]) for j in range(display_data.shape[0])]
+            self._butterfly_lc[ch_type].set_segments(segments)
             if self._auto_vlim:
                 abs_max = float(np.percentile(np.abs(display_data), 99))
                 vlim_display = abs_max if abs_max > 0 else 1.0
@@ -605,7 +698,10 @@ class Frame(NavigableFrame, FileFrame):
             self._events_ax.set_xlim(t_start, t_end)
             self._draw_events()
 
-        self.canvas.draw()
+        redraw_axes = list(self._butterfly_axes)
+        if self._events_ax is not None:
+            redraw_axes.append(self._events_ax)
+        self.canvas.redraw(redraw_axes)
 
     def _draw_events(self):
         """Redraw event markers for the current time window."""
@@ -658,11 +754,12 @@ class Frame(NavigableFrame, FileFrame):
 
         # Update butterfly line colors and styles
         for ch_type, ndvar, picks in self.doc.ndvars_by_type:
-            type_color = CH_TYPE_COLORS.get(ch_type, 'k')
-            for line in self._butterfly_lines.get(ch_type, []):
-                is_bad = line.ch_name in bad
-                line.set_color('red' if is_bad else type_color)
-                line.set_linestyle(':' if is_bad else '-')
+            lc = self._butterfly_lc.get(ch_type)
+            if lc is None:
+                continue
+            colors, linestyles = self._line_styles(ch_type)
+            lc.set_color(colors)
+            lc.set_linestyle(linestyles)
 
         # Update sensor marks on all topos
         for p, (ch_type, ndvar, picks) in zip(
@@ -681,6 +778,8 @@ class Frame(NavigableFrame, FileFrame):
                 self._dynamic_nc_topos[i_type].set_data([nc_dyn])
 
         self.canvas.draw()
+        # Refresh the blit background so cursor-topo / window updates stay valid
+        self.canvas.store_canvas()
 
     def _update_cursor_topo(self, t: float):
         """Update cursor topomaps to show data at time t."""
@@ -709,8 +808,8 @@ class Frame(NavigableFrame, FileFrame):
             self.canvas.redraw(redraw_axes)
 
     def SetVLim(self, vlim_si_dict: dict):
-        """Apply y-axis limits (SI units) to butterfly axes and update config."""
-        self._type_vlims_si.update(vlim_si_dict)
+        """Apply y-axis limits (SI units) to butterfly axes."""
+        self._type_display_vlims.update(vlim_si_dict)
         for i_type, (ch_type, _, _) in enumerate(self.doc.ndvars_by_type):
             if ch_type not in vlim_si_dict:
                 continue
@@ -718,25 +817,24 @@ class Frame(NavigableFrame, FileFrame):
             vlim_display = vlim_si_dict[ch_type] * scale
             self._butterfly_axes[i_type].set_ylim(-vlim_display, vlim_display)
         self.canvas.draw()
+        self.canvas.store_canvas()
 
     # --- Event handlers ---
 
     def OnSetVLim(self, event):
         type_scales = {ch_type: ch_type_scale(ch_type) for ch_type, _, _ in self.doc.ndvars_by_type}
-        dlg = VLimDialog(self, type_scales, self._type_vlims_si, self._auto_vlim, CH_TYPE_DEFAULT_VLIM_SI)
+        dlg = VLimDialog(self, type_scales, self._type_display_vlims, self._auto_vlim, CH_TYPE_DEFAULT_VLIM_SI)
         if dlg.ShowModal() == wx.ID_OK:
             self._auto_vlim = dlg.GetAuto()
+            self._type_display_vlims = dlg.GetVLims()
             self.config.WriteBool('VLim/auto', self._auto_vlim)
-            if not self._auto_vlim:
-                new_vlims = dlg.GetVLims()
-                for ch_type, vlim_si in new_vlims.items():
-                    self.config.WriteFloat(f'VLim/vlim_{ch_type}', vlim_si)
-                self.config.Flush()
-                self.SetVLim(new_vlims)
+            for ch_type, vlim_si in self._type_display_vlims.items():
+                self.config.WriteFloat(f'VLim/vlim_{ch_type}', vlim_si)
+            self.config.Flush()
+            if self._auto_vlim:
+                self._update_window()  # recompute from current window data
             else:
-                self.config.Flush()
-                # Force recompute from current window data
-                self._update_window()
+                self.SetVLim(self._type_display_vlims)
         dlg.Destroy()
 
     def OnCanvasClick(self, event):
@@ -835,8 +933,142 @@ class Frame(NavigableFrame, FileFrame):
     def OnClearBadChannels(self, event):
         self.model.clear()
 
+    def OnSetLayout(self, event):
+        dlg = LayoutDialog(self, self.window_size, self._envelope, self._decim_auto, self._decim, self._sfreq, self._axis_width_px())
+        if dlg.ShowModal() == wx.ID_OK:
+            self._envelope = dlg.envelope
+            self._decim_auto = dlg.decim_auto
+            self._decim = dlg.decim
+            self.config.WriteBool('Display/envelope', self._envelope)
+            self.config.WriteBool('Display/decim_auto', self._decim_auto)
+            self.config.WriteInt('Display/decim', self._decim)
+            if dlg.window_size != self.window_size:
+                self.window_size = dlg.window_size
+                self._window_samples = int(self.window_size * self._sfreq)
+                self._max_t_start = max(0.0, (self.doc.raw.n_times - self._window_samples) / self._sfreq)
+                self.t_start = float(np.clip(self.t_start, 0.0, self._max_t_start))
+                self.config.WriteFloat('window_size', self.window_size)
+                self._update_scrollbar()
+                self._plot()  # sample count and x-limits change: full re-layout
+            else:
+                self._update_window()  # only the displayed point density changes
+            self.config.Flush()
+        dlg.Destroy()
+
+    def OnUpdateUISetLayout(self, event):
+        event.Enable(True)
+
     def OnClose(self, event):
         if super().OnClose(event):
             self.doc.callbacks.remove('bad_chs_change', self._update_bad_channels)
             self.config.WriteFloat('window_size', self.window_size)
+            self.config.WriteBool('Display/envelope', self._envelope)
+            self.config.WriteBool('Display/decim_auto', self._decim_auto)
+            self.config.WriteInt('Display/decim', self._decim)
             self.config.Flush()
+
+
+class LayoutDialog(EelbrainDialog):
+    "Display/layout options for the select-channels GUI"
+
+    def __init__(
+            self,
+            parent: wx.Window,
+            window_size: float,
+            envelope: bool,
+            decim_auto: bool,
+            decim: int,
+            sfreq: float,
+            width_px: int,
+    ):
+        EelbrainDialog.__init__(self, parent, wx.ID_ANY, "Select-Channels Layout")
+        self.window_size: float | None = None
+        self.envelope: bool | None = None
+        self.decim_auto: bool | None = None
+        self.decim: int | None = None
+        self._sfreq = sfreq
+        self._width_px = width_px
+
+        sizer = wx.BoxSizer(wx.VERTICAL)
+
+        sizer.Add(wx.StaticText(self, wx.ID_ANY, "Window length (s):"))
+        validator = REValidator(POS_FLOAT_PATTERN, "Invalid window length: {value}. Need a number > 0.", False)
+        self.window_ctrl = wx.TextCtrl(self, wx.ID_ANY, f'{window_size:g}', validator=validator)
+        self.window_ctrl.Bind(wx.EVT_TEXT, self.OnRefresh)
+        sizer.Add(self.window_ctrl)
+
+        sizer.AddSpacer(8)
+        self.envelope_ctrl = wx.CheckBox(self, wx.ID_ANY, "Reduce to screen resolution (min/max)")
+        self.envelope_ctrl.SetValue(envelope)
+        self.envelope_ctrl.SetToolTip("Draw the per-pixel minimum and maximum (fast). Uncheck to draw every channel sample, which shows whether a peak comes from one channel or many.")
+        sizer.Add(self.envelope_ctrl)
+
+        sizer.AddSpacer(8)
+        sizer.Add(wx.StaticText(self, wx.ID_ANY, f"Downsample data; original sampling rate: {sfreq:g} Hz"))
+        self.auto_ctrl = wx.CheckBox(self, wx.ID_ANY, "Fit to display (~1 sample per pixel)")
+        self.auto_ctrl.SetValue(decim_auto)
+        self.auto_ctrl.SetToolTip("Pick the decimation factor automatically so the displayed window has about one sample per horizontal pixel.")
+        self.auto_ctrl.Bind(wx.EVT_CHECKBOX, self.OnRefresh)
+        sizer.Add(self.auto_ctrl)
+        sizer.Add(wx.StaticText(self, wx.ID_ANY, "Decimation factor:"))
+        validator = REValidator(INT_PATTERN, "Invalid decimation factor: {value}. Need an integer >= 1.")
+        self.decim_ctrl = wx.TextCtrl(self, wx.ID_ANY, str(decim), validator=validator)
+        self.decim_ctrl.Bind(wx.EVT_TEXT, self.OnRefresh)
+        sizer.Add(self.decim_ctrl)
+        self.rate_label = wx.StaticText(self, wx.ID_ANY, "")
+        sizer.Add(self.rate_label)
+
+        button_sizer = wx.StdDialogButtonSizer()
+        btn = wx.Button(self, wx.ID_OK)
+        btn.SetDefault()
+        button_sizer.AddButton(btn)
+        button_sizer.AddButton(wx.Button(self, wx.ID_CANCEL))
+        button_sizer.Realize()
+        sizer.Add(button_sizer)
+
+        self.Bind(wx.EVT_BUTTON, self.OnOk, id=wx.ID_OK)
+        self.SetSizer(sizer)
+        sizer.Fit(self)
+        self._refresh()
+
+    def _effective_decim(self) -> int:
+        """Decimation factor implied by the current field values."""
+        if self.auto_ctrl.GetValue():
+            try:
+                window = float(self.window_ctrl.GetValue())
+            except ValueError:
+                return 1
+            if window <= 0:
+                return 1
+            return max(1, round(self._sfreq * window / self._width_px))
+        try:
+            return max(1, int(self.decim_ctrl.GetValue()))
+        except ValueError:
+            return 1
+
+    def _refresh(self):
+        """Enable/disable the manual field and update the effective-rate label."""
+        auto = self.auto_ctrl.GetValue()
+        self.decim_ctrl.Enable(not auto)
+        decim = self._effective_decim()
+        suffix = " (auto)" if auto else ""
+        self.rate_label.SetLabel(f"Effective display rate: {self._sfreq / decim:g} Hz (decim {decim}){suffix}")
+
+    def OnRefresh(self, event):
+        self._refresh()
+
+    def OnOk(self, event):
+        try:
+            window_size = float(self.window_ctrl.GetValue())
+            decim = int(self.decim_ctrl.GetValue())
+        except ValueError:
+            wx.MessageBox("Invalid layout values", "Invalid Layout", wx.OK | wx.ICON_ERROR, self)
+            return
+        if window_size <= 0 or decim < 1:
+            wx.MessageBox("Window length must be > 0 and decimation factor >= 1", "Invalid Layout", wx.OK | wx.ICON_ERROR, self)
+            return
+        self.window_size = window_size
+        self.envelope = self.envelope_ctrl.GetValue()
+        self.decim_auto = self.auto_ctrl.GetValue()
+        self.decim = decim
+        event.Skip()
