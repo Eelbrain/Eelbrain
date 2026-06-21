@@ -83,6 +83,7 @@ class PipelineFrame(EelbrainFrame):
         self._compute_token = None  # replaced each make-ICA run; threads compare identity
         self._tasks = []  # list of (task_type, task_key)
         self._bad_chs_iter_fields: list[str] = []  # session/task/run columns for bad_chs
+        self._ica_iter_fields: list[str] = []  # session/run columns for ica
 
         self._init_ui()
         self._populate_tasks()
@@ -128,7 +129,7 @@ class PipelineFrame(EelbrainFrame):
         self._epoch_choice.Bind(wx.EVT_CHOICE, self._on_state_changed)
         self._raw_label = wx.StaticText(self._panel, label="Raw:")
         self._raw_choice = wx.Choice(self._panel)
-        self._raw_choice.Bind(wx.EVT_CHOICE, self._on_state_changed)
+        self._raw_choice.Bind(wx.EVT_CHOICE, self._on_raw_changed)
 
         for widget, border in [
             (self._epoch_rejection_label, 14),
@@ -289,13 +290,39 @@ class PipelineFrame(EelbrainFrame):
             self._populate_epoch_choices()
         if show_raw:
             self._populate_raw_choices(task_type)
+        if task_type == 'ica':
+            self._update_ica_iter_fields()
         self._make_ica_btn.Show(task_type == 'ica')
         self._update_rejection_button()
         self._panel.Layout()
         self._setup_columns(task_type)
         self._start_refresh()
 
+    def _update_ica_iter_fields(self):
+        """Recompute the per-row key fields for the currently selected ICA raw.
+
+        ICA is cached per (subject, session[, run]); show one row per
+        combination of the key fields that vary in this experiment.
+        """
+        p = self._pipeline
+        raw_name = self._raw_choice.GetStringSelection()
+        extra = []
+        if len(p._sessions) > 1:
+            extra.append('session')
+        if raw_name and not p._raw[raw_name]._concatenate_runs and len(p._runs) > 1:
+            extra.append('run')
+        self._ica_iter_fields = extra
+
     def _on_state_changed(self, event):
+        self._start_refresh()
+
+    def _on_raw_changed(self, event):
+        # Switching the ICA raw pipe can change run concatenation, so recompute
+        # the per-row key fields and columns before refreshing.
+        task_type, _ = self._current_task()
+        if task_type == 'ica':
+            self._update_ica_iter_fields()
+            self._setup_columns(task_type)
         self._start_refresh()
 
     def _on_refresh(self, event):
@@ -351,12 +378,14 @@ class PipelineFrame(EelbrainFrame):
                     )
             elif task_type == 'ica':
                 raw_name = self._raw_choice.GetStringSelection()
-                frame = self._pipeline.make_ica_selection(subject=subject, raw=raw_name)
+                combo = self._ica_row_combo(idx)
+                state = dict(zip(('subject',) + tuple(self._ica_iter_fields), combo))
+                frame = self._pipeline.make_ica_selection(raw=raw_name, **state)
                 if frame is not None:
                     doc = frame.model.doc
                     doc.callbacks.subscribe(
                         'saved',
-                        lambda: wx.CallAfter(self._update_ica_row, subject, doc),
+                        lambda: wx.CallAfter(self._update_ica_row, combo, doc),
                     )
             elif task_type == 'epoch_rej':
                 name = self._current_epoch_rejection()
@@ -451,7 +480,10 @@ class PipelineFrame(EelbrainFrame):
                 cols.append((f.title(), 90))
             cols += [('Status', 110), ('N bad', 90)]
         elif task_type == 'ica':
-            cols = [('Subject', 180), ('Status', 110), ('Components', 110), ('Rejected', 90)]
+            cols = [('Subject', 180)]
+            for f in self._ica_iter_fields:
+                cols.append((f.title(), 90))
+            cols += [('Status', 110), ('Components', 110), ('Rejected', 90)]
         elif task_type == 'mri':
             cols = [('Subject', 180), ('MRI subject', 170), ('Status', 130)]
         elif task_type == 'coreg':
@@ -460,6 +492,27 @@ class PipelineFrame(EelbrainFrame):
             cols = [('Subject', 180), ('Status', 110), ('N total', 90), ('N rejected', 90)]
         for i, (label, width) in enumerate(cols):
             self._list.InsertColumn(i, label, width=width)
+
+    def _ica_status_col(self) -> int:
+        """Column index of the ICA Status column (after subject + key fields)."""
+        return 1 + len(self._ica_iter_fields)
+
+    def _ica_row_combo(self, idx: int) -> tuple:
+        """Leading key-field column values (subject + session/run) of a row."""
+        n = 1 + len(self._ica_iter_fields)
+        return tuple(self._list.GetItemText(idx, c) for c in range(n))
+
+    def _find_row(self, combo: tuple) -> int:
+        """Row index whose leading columns match ``combo``, or -1."""
+        for i in range(self._list.GetItemCount()):
+            if all(self._list.GetItemText(i, c) == val for c, val in enumerate(combo)):
+                return i
+        return -1
+
+    def _status_col(self) -> int:
+        """Column index of the Status column for the current task."""
+        task_type, _ = self._current_task()
+        return self._ica_status_col() if task_type == 'ica' else 1
 
     def _populate_table(self, rows: list[tuple[str, ...]], token: object) -> None:
         if token is not self._refresh_token:
@@ -476,7 +529,8 @@ class PipelineFrame(EelbrainFrame):
                 if status == 'no file':
                     self._list.SetItemTextColour(idx, grey)
             elif task_type == 'ica':
-                if row[1] == 'selected' and row[3] == '0':
+                # status is third-to-last, rejected count is last
+                if row[-3] == 'selected' and row[-1] == '0':
                     self._list.SetItemTextColour(idx, wx.RED)
             elif task_type == 'mri':
                 if row[2] == 'no MRI':
@@ -488,18 +542,18 @@ class PipelineFrame(EelbrainFrame):
                     self._list.SetItemTextColour(idx, wx.RED)
         self._refresh_status_bar()
 
-    def _update_ica_row(self, subject: str, doc) -> None:
+    def _update_ica_row(self, combo: tuple, doc) -> None:
         """Update a single ICA row from the already-in-memory document (no disk I/O)."""
         n_comp = doc.ica.n_components_
         n_excl = len(doc.ica.exclude)
-        for i in range(self._list.GetItemCount()):
-            if self._list.GetItemText(i, 0) == subject:
-                self._list.SetItem(i, 1, 'selected')
-                self._list.SetItem(i, 2, str(n_comp))
-                self._list.SetItem(i, 3, str(n_excl))
-                colour = wx.RED if n_excl == 0 else wx.SystemSettings.GetColour(wx.SYS_COLOUR_LISTBOXTEXT)
-                self._list.SetItemTextColour(i, colour)
-                break
+        i = self._find_row(combo)
+        if i != -1:
+            status_col = self._ica_status_col()
+            self._list.SetItem(i, status_col, 'selected')
+            self._list.SetItem(i, status_col + 1, str(n_comp))
+            self._list.SetItem(i, status_col + 2, str(n_excl))
+            colour = wx.RED if n_excl == 0 else wx.SystemSettings.GetColour(wx.SYS_COLOUR_LISTBOXTEXT)
+            self._list.SetItemTextColour(i, colour)
         self._refresh_status_bar()
 
     def _refresh_status_bar(self):
@@ -515,9 +569,11 @@ class PipelineFrame(EelbrainFrame):
             self.SetStatusText(msg)
             return
         if task_type == 'ica':
-            n_ok = sum(1 for i in range(n) if self._list.GetItemText(i, 1) == 'selected')
-            n_missing = sum(1 for i in range(n) if self._list.GetItemText(i, 1) == 'no ICA')
-            msg = f"{n_ok} / {n} subjects · ICA selected"
+            status_col = self._ica_status_col()
+            n_ok = sum(1 for i in range(n) if self._list.GetItemText(i, status_col) == 'selected')
+            n_missing = sum(1 for i in range(n) if self._list.GetItemText(i, status_col) == 'no ICA')
+            unit = 'recordings' if self._ica_iter_fields else 'subjects'
+            msg = f"{n_ok} / {n} {unit} · ICA selected"
             if n_missing:
                 msg += f"  ({n_missing} missing ICA file)"
         elif task_type == 'epoch_rej':
@@ -637,12 +693,13 @@ class PipelineFrame(EelbrainFrame):
             return
         raw_name = self._raw_choice.GetStringSelection()
 
-        subjects = [
-            self._list.GetItemText(i, 0)
+        status_col = self._ica_status_col()
+        combos = [
+            self._ica_row_combo(i)
             for i in range(self._list.GetItemCount())
-            if self._list.GetItemText(i, 1) == 'no ICA'
+            if self._list.GetItemText(i, status_col) == 'no ICA'
         ]
-        if not subjects:
+        if not combos:
             return
 
         # Invalidate any running refresh so both threads don't touch the
@@ -651,7 +708,7 @@ class PipelineFrame(EelbrainFrame):
 
         token = object()
         self._compute_token = token
-        n_total = len(subjects)
+        n_total = len(combos)
 
         self._make_ica_btn.SetLabel("Stop")
         self._progress_gauge.SetRange(n_total)
@@ -665,7 +722,7 @@ class PipelineFrame(EelbrainFrame):
 
         threading.Thread(
             target=self._make_ica_thread,
-            args=(token, raw_name, subjects),
+            args=(token, raw_name, combos, tuple(self._ica_iter_fields)),
             daemon=True,
         ).start()
 
@@ -686,87 +743,105 @@ class PipelineFrame(EelbrainFrame):
         self._compute_token = None
         task_type, _ = self._current_task()
         missing = 'no ICA' if task_type == 'ica' else 'missing'
+        status_col = self._status_col()
         for i in range(self._list.GetItemCount()):
-            if self._list.GetItemText(i, 1) == '⟳':
-                self._list.SetItem(i, 1, missing)
+            if self._list.GetItemText(i, status_col) == '⟳':
+                self._list.SetItem(i, status_col, missing)
         self._finish_compute_ui()
 
-    def _make_ica_thread(self, token, raw_name, subjects):
+    def _make_ica_thread(self, token, raw_name, combos, extra):
         pipeline = self._pipeline
+        fields = ('subject',) + extra
         n_done = 0
-        n_total = len(subjects)
-        for subject in subjects:
+        n_total = len(combos)
+        for combo in combos:
             if token is not self._compute_token:
                 break
-            wx.CallAfter(self._on_subject_computing, token, subject)
+            state = dict(zip(fields, combo))
+            wx.CallAfter(self._on_subject_computing, token, combo)
             try:
                 # make_ica computes and saves the ICA file; it also leaves the
-                # pipeline context set to this subject so ctx.load() works below.
-                pipeline.make_ica(subject=subject, raw=raw_name)
+                # pipeline context set to this recording so ctx.load() works below.
+                pipeline.make_ica(raw=raw_name, **state)
                 ctx = pipeline._resolve_derivative(ica_input_name(raw_name))
                 ica = ctx.load()
                 n_done += 1
                 wx.CallAfter(
-                    self._on_subject_computed, token, subject,
+                    self._on_subject_computed, token, combo,
                     str(ica.n_components_), str(len(ica.exclude)),
                     n_done, n_total,
                 )
             except _USER_ERROR_TYPES as error:
                 title, message = _user_error_dialog(error)
                 n_done += 1
-                wx.CallAfter(self._on_subject_user_error, token, subject, title, message, n_done, n_total)
+                wx.CallAfter(self._on_subject_user_error, token, combo, title, message, n_done, n_total)
             except Exception:
                 tb = traceback.format_exc()
                 n_done += 1
-                wx.CallAfter(self._on_subject_error, token, subject, tb, n_done, n_total)
+                wx.CallAfter(self._on_subject_error, token, combo, tb, n_done, n_total)
         wx.CallAfter(self._on_make_ica_done, token)
 
-    def _on_subject_computing(self, token, subject):
-        """Mark a subject's row with ⟳ while its ICA is being computed."""
+    def _on_subject_computing(self, token, combo):
+        """Mark a recording's row with ⟳ while its artifact step is computed.
+
+        Shared by the make-ICA and compute-rejection flows; ``combo`` is the
+        leading key-field tuple (``(subject,)`` for rejection).
+        """
         if token is not self._compute_token:
             return
-        for i in range(self._list.GetItemCount()):
-            if self._list.GetItemText(i, 0) == subject:
-                self._list.SetItem(i, 1, '⟳')
-                break
+        if isinstance(combo, str):
+            combo = (combo,)
+        i = self._find_row(combo)
+        if i != -1:
+            self._list.SetItem(i, self._status_col(), '⟳')
 
-    def _on_subject_computed(self, token, subject, n_comp, n_excl, n_done, n_total):
+    def _on_subject_computed(self, token, combo, n_comp, n_excl, n_done, n_total):
         """Update a row after successful ICA computation."""
         if token is not self._compute_token:
             return
-        for i in range(self._list.GetItemCount()):
-            if self._list.GetItemText(i, 0) == subject:
-                self._list.SetItem(i, 1, 'selected')
-                self._list.SetItem(i, 2, n_comp)
-                self._list.SetItem(i, 3, n_excl)
-                colour = (wx.RED if n_excl == '0'
-                          else wx.SystemSettings.GetColour(wx.SYS_COLOUR_LISTBOXTEXT))
-                self._list.SetItemTextColour(i, colour)
-                break
+        i = self._find_row(combo)
+        if i != -1:
+            status_col = self._ica_status_col()
+            self._list.SetItem(i, status_col, 'selected')
+            self._list.SetItem(i, status_col + 1, n_comp)
+            self._list.SetItem(i, status_col + 2, n_excl)
+            colour = (wx.RED if n_excl == '0'
+                      else wx.SystemSettings.GetColour(wx.SYS_COLOUR_LISTBOXTEXT))
+            self._list.SetItemTextColour(i, colour)
         self._progress_gauge.SetValue(n_done)
         self._progress_label.SetLabel(f"{n_done} / {n_total}")
         self._refresh_status_bar()
 
-    def _on_subject_user_error(self, token, subject, title, message, n_done, n_total):
-        """Mark a row after an expected input/configuration failure."""
+    def _on_subject_user_error(self, token, combo, title, message, n_done, n_total):
+        """Mark a row after an expected input/configuration failure.
+
+        Shared by the make-ICA and compute-rejection flows; ``combo`` is the
+        leading key-field tuple (``(subject,)`` for rejection).
+        """
         if token is not self._compute_token:
             return
-        for i in range(self._list.GetItemCount()):
-            if self._list.GetItemText(i, 0) == subject:
-                self._list.SetItem(i, 1, 'error')
-                break
+        if isinstance(combo, str):
+            combo = (combo,)
+        i = self._find_row(combo)
+        if i != -1:
+            self._list.SetItem(i, self._status_col(), 'error')
         self._progress_gauge.SetValue(n_done)
         self._progress_label.SetLabel(f"{n_done} / {n_total}")
-        wx.MessageBox(f"{subject}: {message}", title, wx.OK | wx.ICON_ERROR, self)
+        wx.MessageBox(f"{' '.join(combo)}: {message}", title, wx.OK | wx.ICON_ERROR, self)
 
-    def _on_subject_error(self, token, subject, tb, n_done, n_total):
-        """Mark a row as errored after a failed ICA computation."""
+    def _on_subject_error(self, token, combo, tb, n_done, n_total):
+        """Mark a row as errored after a failed computation.
+
+        Shared by the make-ICA and compute-rejection flows; ``combo`` is the
+        leading key-field tuple (``(subject,)`` for rejection).
+        """
         if token is not self._compute_token:
             return
-        for i in range(self._list.GetItemCount()):
-            if self._list.GetItemText(i, 0) == subject:
-                self._list.SetItem(i, 1, 'error')
-                break
+        if isinstance(combo, str):
+            combo = (combo,)
+        i = self._find_row(combo)
+        if i != -1:
+            self._list.SetItem(i, self._status_col(), 'error')
         self._progress_gauge.SetValue(n_done)
         self._progress_label.SetLabel(f"{n_done} / {n_total}")
         # Show the traceback so the user knows what went wrong, then continue.
@@ -907,22 +982,26 @@ class PipelineFrame(EelbrainFrame):
         ready.wait()
         return result[0]
 
-    def _handle_stale_ica(self, subject: str, error: ProtectedArtifactError, choice: str | None, pipeline, raw_name: str) -> tuple:
-        """Apply a stale-ICA ``choice`` during refresh, returning a table row tuple."""
+    def _handle_stale_ica(self, combo: tuple, error: ProtectedArtifactError, choice: str | None, pipeline, raw_name: str) -> tuple:
+        """Apply a stale-ICA ``choice`` during refresh, returning a table row tuple.
+
+        ``combo`` holds the leading key-field columns (subject and any
+        session/run columns) that the row is prefixed with.
+        """
         if choice == StaleICADialog.ABORT:
             wx.CallAfter(wx.GetApp().ExitMainLoop)
             raise _AbortRequested()
         elif choice == StaleICADialog.DELETE:
             Path(error.path).unlink()
-            return (subject, 'no ICA', '—', '—')
+            return combo + ('no ICA', '—', '—')
         elif choice == StaleICADialog.INCORPORATE:
             ica = pipeline.load_ica(raw=raw_name, accept_stale=True)
-            return (subject, 'selected', str(ica.n_components_), str(len(ica.exclude)))
+            return combo + ('selected', str(ica.n_components_), str(len(ica.exclude)))
         elif choice == StaleICADialog.IGNORE:
             ica = mne.preprocessing.read_ica(error.path)
-            return (subject, 'stale', str(ica.n_components_), str(len(ica.exclude)))
+            return combo + ('stale', str(ica.n_components_), str(len(ica.exclude)))
         else:  # dialog dismissed without a choice
-            return (subject, 'stale', '—', '—')
+            return combo + ('stale', '—', '—')
 
     def _fetch_fsaverage(self):
         """Download fsaverage to the experiment's FreeSurfer subjects directory in a thread."""
@@ -997,16 +1076,21 @@ class PipelineFrame(EelbrainFrame):
 
         elif task_type == 'ica':
             bulk_choice = None  # set once the user ticks "Apply to all"
-            for subject in pipeline:
+            extra = self._ica_iter_fields
+            iter_fields = ('subject',) + tuple(extra)
+            iter_arg = iter_fields[0] if len(iter_fields) == 1 else list(iter_fields)
+            for combo in pipeline.iter(iter_arg):
                 if token is not self._refresh_token:
                     break
+                if isinstance(combo, str):
+                    combo = (combo,)
+                subject = combo[0]
                 ctx = pipeline._resolve_derivative(ica_input_name(raw_name))
                 status = ctx.load(view='status')
                 if status == 'ok':
                     try:
                         ica = ctx.load()
-                        rows.append((subject, 'selected',
-                                     str(ica.n_components_), str(len(ica.exclude))))
+                        rows.append(combo + ('selected', str(ica.n_components_), str(len(ica.exclude))))
                     except ProtectedArtifactError as error:
                         if bulk_choice is None:
                             choice, apply_to_all = self._ask_stale_ica(subject, error, allow_apply_to_all=True)
@@ -1014,12 +1098,12 @@ class PipelineFrame(EelbrainFrame):
                                 bulk_choice = choice
                         else:
                             choice = bulk_choice
-                        row = self._handle_stale_ica(subject, error, choice, pipeline, raw_name)
+                        row = self._handle_stale_ica(combo, error, choice, pipeline, raw_name)
                         rows.append(row)
                 elif status == 'missing-ica':
-                    rows.append((subject, 'no ICA', '—', '—'))
+                    rows.append(combo + ('no ICA', '—', '—'))
                 else:
-                    rows.append((subject, 'no data', '—', '—'))
+                    rows.append(combo + ('no data', '—', '—'))
 
         elif task_type == 'epoch_rej':
             rej = pipeline._epoch_rejection[task_key]
