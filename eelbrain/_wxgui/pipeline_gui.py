@@ -473,7 +473,7 @@ class PipelineFrame(EelbrainFrame):
                 self._list.SetItem(idx, col, val)
             if task_type == 'bad_chs':
                 status = row[-2]  # status is always second-to-last
-                if status in ('no data', 'no file'):
+                if status == 'no file':
                     self._list.SetItemTextColour(idx, grey)
             elif task_type == 'ica':
                 if row[1] == 'selected' and row[3] == '0':
@@ -986,7 +986,6 @@ class PipelineFrame(EelbrainFrame):
                     combo = (combo,)
                 raw_ctx = pipeline._resolve_derivative(raw_input_name(source_name))
                 if not raw_ctx.node.exists(raw_ctx):
-                    rows.append(combo + ('no data', '—'))
                     continue
                 bads_ctx = pipeline._resolve_derivative(raw_bad_channels_input_name(source_name))
                 tsv_path = bads_ctx.node.path(bads_ctx)
