@@ -1516,7 +1516,6 @@ def test_source_cache_identity_ignores_view_options(samples_experiment):
     epochs_stc_default = e._resolve_derivative('epochs-stc', options={
         'baseline': False,
         'src_baseline': False,
-        'cat': None,
         'morph': False,
         'samplingrate': None,
         'decim': None,
@@ -1528,7 +1527,6 @@ def test_source_cache_identity_ignores_view_options(samples_experiment):
     epochs_stc_view = e._resolve_derivative('epochs-stc', options={
         'baseline': False,
         'src_baseline': False,
-        'cat': None,
         'morph': False,
         'samplingrate': None,
         'decim': None,
@@ -1540,7 +1538,6 @@ def test_source_cache_identity_ignores_view_options(samples_experiment):
     epochs_stc_artifact = e._resolve_derivative('epochs-stc', options={
         'baseline': (-0.1, 0),
         'src_baseline': False,
-        'cat': None,
         'morph': False,
         'samplingrate': None,
         'decim': None,
@@ -1557,7 +1554,6 @@ def test_source_cache_identity_ignores_view_options(samples_experiment):
     evoked_stc_default = e._resolve_derivative('evoked-stc', options={
         'baseline': False,
         'src_baseline': False,
-        'cat': None,
         'morph': False,
         'samplingrate': None,
         'decim': None,
@@ -1567,7 +1563,6 @@ def test_source_cache_identity_ignores_view_options(samples_experiment):
     evoked_stc_view = e._resolve_derivative('evoked-stc', options={
         'baseline': False,
         'src_baseline': False,
-        'cat': None,
         'morph': False,
         'samplingrate': None,
         'decim': None,
@@ -1577,7 +1572,6 @@ def test_source_cache_identity_ignores_view_options(samples_experiment):
     evoked_stc_artifact = e._resolve_derivative('evoked-stc', options={
         'baseline': (-0.1, 0),
         'src_baseline': False,
-        'cat': None,
         'morph': False,
         'samplingrate': None,
         'decim': None,
