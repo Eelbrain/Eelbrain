@@ -480,7 +480,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
     """
     name = 'evoked'
     key_fields = (
-        'subject', 'session', 'task', 'run', 'raw',
+        'subject', 'session', 'raw',
         'epoch', 'epoch_rejection', 'reference', 'model', 'equalize_evoked_count',
     )
     cache_suffix = '-ave.fif'

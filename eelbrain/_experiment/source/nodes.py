@@ -557,7 +557,7 @@ def _source_dependencies(ctx: Request, sensor_dependency: Dependency) -> tuple[D
 
 
 class EpochsStcDerivative(Derivative[Dataset]):
-    """Source-space single-trial dataset derived from cached epochs.
+    """Source-space single-trial dataset derived from epochs.
 
     Options
     -------
@@ -565,8 +565,6 @@ class EpochsStcDerivative(Derivative[Dataset]):
         Sensor-space baseline correction before inverse application.
     src_baseline
         Source-space baseline correction after inverse application.
-    cat
-        Optional subset of model cells to keep.
     keep_epochs
         Whether to keep the sensor epochs alongside source output.
     morph
@@ -584,7 +582,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
     """
     name = 'epochs-stc'
     key_fields = (
-        'subject', 'session', 'task', 'run', 'raw',
+        'subject', 'session', 'raw',
         'epoch', 'epoch_rejection', 'cov', 'mrisubject', 'src', 'inv', 'parc', 'common_brain', 'adjacency',
     )
     # source localization handles EEG referencing internally
@@ -593,14 +591,16 @@ class EpochsStcDerivative(Derivative[Dataset]):
     OPTION_DEFAULTS = {
         'baseline': False,
         'src_baseline': False,
-        'cat': None,
         'morph': None,
         'samplingrate': None,
         'decim': None,
         'pad': 0,
         'reject': True,
     }
-    VIEW_OPTION_DEFAULTS = {'ndvar': True, 'keep_epochs': False}
+    VIEW_OPTION_DEFAULTS = {
+        'ndvar': True,
+        'keep_epochs': False,
+    }
 
     def __init__(self, raw, epochs: dict[str, Any], references: dict[str, Reference | None], cache: bool = False):
         self.raw = raw
@@ -610,7 +610,8 @@ class EpochsStcDerivative(Derivative[Dataset]):
             self.cache_policy = CachePolicy.NEVER
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        return _source_dependencies(ctx, Dependency('epochs', options=ctx.options_for('epochs', baseline=ctx.options['baseline'], ndvar=False, reject=ctx.options['reject'], cat=ctx.options['cat'], samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], pad=ctx.options['pad'], data='sensor')))
+        options = ctx.options_for('epochs', 'baseline', 'reject', 'samplingrate', 'decim', 'pad', ndvar=False, data='sensor')
+        return _source_dependencies(ctx, Dependency('epochs', options=options))
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {'source_reference_add': self._references['average'].add}
@@ -713,7 +714,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
     """
     name = 'evoked-stc'
     key_fields = (
-        'subject', 'session', 'task', 'run', 'raw',
+        'subject', 'session', 'raw',
         'epoch', 'epoch_rejection', 'model', 'equalize_evoked_count', 'cov', 'mrisubject',
         'src', 'inv', 'parc', 'common_brain', 'adjacency',
     )
@@ -723,12 +724,15 @@ class EvokedStcDerivative(Derivative[Dataset]):
     OPTION_DEFAULTS = {
         'baseline': False,
         'src_baseline': False,
-        'cat': None,
         'morph': False,
         'samplingrate': None,
         'decim': None,
     }
-    VIEW_OPTION_DEFAULTS = {'ndvar': True, 'keep_evoked': False}
+    VIEW_OPTION_DEFAULTS = {
+        'ndvar': True,
+        'keep_evoked': False,
+        'cat': None,
+    }
 
     def __init__(self, raw, epochs: dict[str, Any], references: dict[str, Reference | None], cache: bool = False):
         self.raw = raw
@@ -738,7 +742,7 @@ class EvokedStcDerivative(Derivative[Dataset]):
             self.cache_policy = CachePolicy.NEVER
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        return _source_dependencies(ctx, Dependency('evoked', options=ctx.options_for('evoked', baseline=ctx.options['baseline'], ndvar=False, cat=ctx.options['cat'], samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], data='sensor')))
+        return _source_dependencies(ctx, Dependency('evoked', options=ctx.options_for('evoked', baseline=ctx.options['baseline'], ndvar=False, samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], data='sensor')))
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {'source_reference_add': self._references['average'].add}
@@ -767,6 +771,9 @@ class EvokedStcDerivative(Derivative[Dataset]):
 
     def apply_view_options(self, ctx: Request, ds: Dataset) -> Dataset:
         ds = ds.copy()
+        cat = ctx.view_options['cat']
+        if cat:
+            ds = ds.sub(ds.eval(ctx.state['model']).isin(cat))
         ndvar = ctx.view_options['ndvar']
         keep_evoked = ctx.view_options['keep_evoked']
         stc_key = 'stcm' if 'stcm' in ds else 'stc'

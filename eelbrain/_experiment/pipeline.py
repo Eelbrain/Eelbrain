@@ -28,7 +28,7 @@ from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS
 from .._meeg import new_rejection_ds
 from .._mne import find_source_subject, label_from_annot
 from ..mne_fixes import suppress_mne_warning
-from .._ndvar import concatenate, cwt_morlet, neighbor_correlation
+from .._ndvar import concatenate, neighbor_correlation
 from .._text import enumeration
 from .._types import PathArg
 from .._utils import ask, subp, keydefaultdict, log_level, ScreenHandler
@@ -1004,7 +1004,6 @@ class Pipeline(StateModel):
             subjects: str | int = None,
             baseline: BaselineArg = True,
             src_baseline: BaselineArg = False,
-            cat: Sequence[CellArg] = None,
             keep_epochs: bool | str = False,
             morph: bool = None,
             samplingrate: int = None,
@@ -1032,8 +1031,6 @@ class Pipeline(StateModel):
             Apply baseline correction using this period in source space.
             True to use the epoch's baseline specification. The default is to
             not apply baseline correction.
-        cat
-            Only load data for these cells (cells of model).
         keep_epochs : bool | 'ndvar' | 'both'
             Keep the sensor space data in the Dataset that is returned (default
             False; True to keep :class:`mne.Epochs` object; ``'ndvar'`` to keep
@@ -1077,7 +1074,6 @@ class Pipeline(StateModel):
         options = {
             'baseline': baseline,
             'src_baseline': src_baseline,
-            'cat': cat,
             'keep_epochs': keep_epochs,
             'morph': morph,
             'samplingrate': samplingrate,
@@ -1276,89 +1272,6 @@ class Pipeline(StateModel):
         if subject is not None:
             self.set(subject=subject)
         return self._load_derivative('evoked-stc', options=options)
-
-    def load_induced_stc(
-            self,
-            subjects: str | int = None,
-            frequencies: float | Sequence[float] = None,
-            n_cycles: float | Sequence[float] = None,
-            pad: float = 0.250,
-            baseline: BaselineArg = True,
-            cat: Sequence[CellArg] = None,
-            morph: bool = False,
-            decim: int = 1,
-            **state,
-    ) -> Dataset:
-        """Morlet wavelet induced power and phase in source space.
-
-        Parameters
-        ----------
-        subjects : str | 1 | -1
-            Subject(s) for which to load data. Can be a single subject
-            name or a group name such as ``'all'``. ``1`` to use the current
-            subject; ``-1`` for the current group. Default is current subject
-            (or group if ``group`` is specified).
-        frequencies
-            Frequencies for which to compute induced activity.
-        n_cycles
-            Number of cycles in each wavelet. Fixed number or one per frequency.
-        pad
-            Pad the epochs data to avoid edge effects in wavelet representation
-            (specified in seconds; default 0.250).
-        baseline
-            Baseline for the epochs, ``True`` to use the epoch's baseline
-            specification (default).
-        cat
-            Only load data for these cells (cells of model).
-        morph
-            Morph the source estimates to the common_brain (default False).
-        decim
-            Decimate time-frequency representation (cumulative with epoch
-            decimation factor).
-        ...
-            Applicable :ref:`state-parameters`:
-
-             - :ref:`state-raw`: preprocessing pipeline
-             - :ref:`state-epoch`: which events to use and time window
-             - :ref:`state-epoch_rejection`: which trials to use
-             - :ref:`state-model`: how to group trials into conditions
-             - :ref:`state-equalize_evoked_count`: control number of trials per cell
-             - :ref:`state-cov`: covariance matrix for inverse solution
-             - :ref:`state-src`: source space
-             - :ref:`state-inv`: inverse solution
-        """
-        self._current_source_parc(**state)
-        subject, group = self._process_subject_arg(subjects, state)
-        if frequencies is None:
-            frequencies = np.logspace(2, 5, 10, base=2)
-        elif not np.isscalar(frequencies):
-            frequencies = np.asarray(frequencies)
-
-        if n_cycles is None:
-            n_cycles = frequencies / 3
-        elif not np.isscalar(n_cycles):
-            n_cycles = np.asarray(n_cycles)
-
-        epoch_name = self.get('epoch')
-        epoch = self._epochs[epoch_name]
-        if group is not None:
-            dss = []
-            for _ in self.iter(group=group, progress_bar=f"Load induced {epoch_name}"):
-                ds = self.load_induced_stc(None, frequencies, n_cycles, pad, baseline, cat, morph, decim)
-                dss.append(ds)
-            return combine(dss)
-
-        # 1 subject
-        ds = self.load_epochs_stc(1, baseline, False, cat, morph=morph, pad=pad)
-        # conditions
-        model = self.get('model') or None
-        stc = ds['srcm' if morph else 'src']
-        cwt = cwt_morlet(stc, frequencies, False, n_cycles, True, 'complex', decim)
-        if pad:
-            cwt = cwt.sub(time=(epoch.tmin, epoch.tmax + cwt.time.tstep / 10))
-        cwt.x = (cwt.x * cwt.x.conj()).real
-        ds['power'] = cwt
-        return ds.aggregate(model, drop_bad=True)
 
     def load_fwd(
             self,

@@ -545,6 +545,12 @@ def test_sample_source(samples_experiment):
     assert exists(e._resolve_derivative('src').manifest_path)
     assert exists(e._resolve_derivative('fwd').manifest_path)
     assert exists(e._resolve_derivative('inv').manifest_path)
+    # cat is a view option on evoked-stc: subsetting model cells
+    ds_all = e.load_evoked_stc(model='side', ndvar=False)
+    ds_left = e.load_evoked_stc(model='side', cat=('left',), ndvar=False)
+    assert set(ds_all['side'].cells) == {'left', 'right'}
+    assert set(ds_left['side'].cells) == {'left'}
+    assert ds_left.n_cases < ds_all.n_cases
     with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=8, data='source')) as fid:
         source_manifest_data = json.load(fid)
     with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=8, data='source', disconnect_labels=True)) as fid:
