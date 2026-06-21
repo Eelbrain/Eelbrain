@@ -3771,8 +3771,7 @@ class Pipeline(StateModel):
         CHL_MARK = '†'
 
         # Collect dev_head_t for every (subject, session, task, run).
-        # Iterating over these four fields always yields 4-tuples; session is ''
-        # when the dataset has no BIDS sessions, run is '' when no runs exist.
+        # session is '' when the dataset has no BIDS sessions, run is '' when no runs exist.
         source_name = self._raw.root_source_name('raw')
         node_name = raw_input_name(source_name)
         # Inner dicts are keyed by (task, run) pairs.
@@ -3877,15 +3876,17 @@ class Pipeline(StateModel):
                 pat_str = '–'.join(majority_pat)
                 if majority_n == len(subjects):
                     if set(majority_pat) == {'A'}:
-                        return "All subjects have the same head position for all tasks."
-                    return f"All subjects: {pat_str}."
-                exceptions = [
-                    f"{s} ({'–'.join(p)})"
-                    for s, p in zip(subjects, patterns)
-                    if p != majority_pat
-                ]
-                pattern = f"Majority ({majority_n}/{len(subjects)} subjects): {pat_str}. Exceptions: {', '.join(exceptions)}."
-                parts.append(pattern)
+                        parts.append("All subjects have the same head position for all tasks.")
+                    else:
+                        parts.append(f"All subjects: {pat_str}.")
+                else:
+                    exceptions = [
+                        f"{s} ({'–'.join(p)})"
+                        for s, p in zip(subjects, patterns)
+                        if p != majority_pat
+                    ]
+                    pattern = f"Majority ({majority_n}/{len(subjects)} subjects): {pat_str}. Exceptions: {', '.join(exceptions)}."
+                    parts.append(pattern)
             if any_missing:
                 parts.append(f"{MISSING_MARK}: no initial head position (dev_head_t).")
             if any_chl:
