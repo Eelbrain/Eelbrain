@@ -556,13 +556,13 @@ def test_sample_source(samples_experiment):
     with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=8, data='source', disconnect_labels=True)) as fid:
         disconnected_manifest_data = json.load(fid)
     assert source_manifest_data['fingerprint']['parc']['base'] == 'aparc'
-    assert source_manifest_data['fingerprint']['state']['parc'] == 'ac'
+    assert source_manifest_data['key']['identity']['state']['parc'] == 'ac'
     assert 'dependencies' not in source_manifest_data['fingerprint']
     assert 'evoked-test-data' in source_manifest_data['dependencies']
     assert 'evoked-stc-group-dataset' in source_manifest_data['dependencies']['evoked-test-data']['dependencies']
     assert set(source_manifest_data['dependencies']['evoked-test-data']['dependencies']['evoked-stc-group-dataset']['dependencies']) == {'R0000', 'R0001', 'R0002'}
-    assert source_manifest_data['fingerprint']['options']['disconnect_labels'] is False
-    assert disconnected_manifest_data['fingerprint']['options']['disconnect_labels'] is True
+    assert source_manifest_data['key']['identity']['options']['disconnect_labels'] is False
+    assert disconnected_manifest_data['key']['identity']['options']['disconnect_labels'] is True
     assert_dataobj_equal(res.t, res_labels.t)
     # ROI tests
     e.set(epoch='target')
