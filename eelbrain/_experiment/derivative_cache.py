@@ -64,7 +64,12 @@ MANIFEST_SUFFIX = '.manifest.json'
 MANIFEST_SCHEMA_VERSION = 2
 DEFAULT_CACHE_LABEL = 'artifact'
 MAX_CACHE_LABEL_LEN = 96
+# Characters that are illegal in path components on Windows (plus control chars).
+# They are replaced with '-' rather than deleted so that semantically meaningful
+# operators in labels (e.g. the '>' in a test named 'a>v') leave operands separated
+# in the readable slug instead of being silently merged ('a>v' -> 'a-v', not 'av').
 CACHE_PATH_UNSAFE = re.compile(r'[\x00-\x1f<>:"/\\|?*]+')
+CACHE_PATH_UNSAFE_REPLACEMENT = '-'
 # Hash prefix length for artifact path components (hex chars, i.e. 48 bits).
 # Collisions at the path level are handled gracefully by the disambiguation
 # sidecar, so a shorter prefix is acceptable in exchange for more readable paths.
@@ -609,8 +614,8 @@ class Derivative(DependencyNode[T]):
             raise NotImplementedError
         key_hash = _full_cache_key_digest(ctx.key())[:CACHE_KEY_HASH_LEN]
         label = self.cache_label(ctx) or DEFAULT_CACHE_LABEL
-        label_clean = CACHE_PATH_UNSAFE.sub('', label.casefold())
-        label_slug = label_clean[:MAX_CACHE_LABEL_LEN].rstrip('-_')
+        label_clean = CACHE_PATH_UNSAFE.sub(CACHE_PATH_UNSAFE_REPLACEMENT, label.casefold())
+        label_slug = label_clean[:MAX_CACHE_LABEL_LEN].strip('-_')
         return ctx.registry.cache_dir / self.name / key_hash[:2] / f"{label_slug}_key-{key_hash}{self.cache_suffix}"
 
     def key(self, ctx: Request) -> dict[str, Any]:

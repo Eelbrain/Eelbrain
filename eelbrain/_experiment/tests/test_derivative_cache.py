@@ -868,6 +868,23 @@ def test_generic_cache_path_uses_node_name_and_key():
     assert c.is_relative_to(registry.cache_dir / 'value')
 
 
+def test_cache_label_substitutes_path_unsafe_characters():
+    # Key-field values can contain characters that are illegal in Windows path
+    # components (e.g. the '>' in a test named 'a>v'). These are replaced with '-'
+    # rather than deleted, so operands stay separated in the readable slug while
+    # the hash keeps distinct keys on distinct paths.
+    _, registry, _, _, _, _, _, _, _root = make_registry()
+
+    gt = registry.resolve('value', state={'subject': 'a>v'}).artifact_path
+    lt = registry.resolve('value', state={'subject': 'a<v'}).artifact_path
+
+    assert gt.name.startswith('subject-a-v_key-')
+    assert not any(c in gt.name for c in '<>:"/\\|?*')
+    # '>' and '<' map to the same readable slug but remain distinct cache entries
+    assert gt.name.split('_key-')[0] == lt.name.split('_key-')[0]
+    assert gt != lt
+
+
 def test_cache_collision_sidecar_disambiguates_artifact_paths():
     root, registry = make_empty_registry()
     derivative = CollidingDerivative(root)
