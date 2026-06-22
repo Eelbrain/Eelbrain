@@ -734,7 +734,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         self.pipe = pipe
         self.pipes = pipes
         self.extension = extension
-        if not pipe._cache:
+        if not pipe.cache:
             self.cache_policy = CachePolicy.NEVER
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:

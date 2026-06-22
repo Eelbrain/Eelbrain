@@ -198,7 +198,7 @@ class CachedRawPipe(RawPipe):
     def __init__(self, source: str, cache: bool = True):
         RawPipe.__init__(self)
         self.source = source
-        self._cache = cache
+        self.cache = cache
 
     def _can_resolve(self, pipes: Mapping[str, RawPipe]) -> bool:
         return self.source in pipes
@@ -499,6 +499,8 @@ class RawICA(CachedRawPipe):
     ):
         CachedRawPipe.__init__(self, source, cache)
         self.task = sequence_arg('task', task, allow_none=True)
+        self.method = method
+        self.random_state = random_state
         self.kwargs = {'method': method, 'random_state': random_state, **kwargs}
         self.fit_kwargs = dict(fit_kwargs) if fit_kwargs else {}
 
