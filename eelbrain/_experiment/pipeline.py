@@ -109,8 +109,6 @@ class Pipeline(StateModel):
     # Whether to persist sensor-space epochs to disk. Off by default because
     # epochs are cheap to re-extract and accumulate large files.
     cache_epochs: bool = False
-    # Whether to persist single-subject source-space estimates to disk.
-    cache_source_estimates: bool = False
 
     # datatype and extension are usually inferred from a BIDS dataset; override here if needed
     datatype: str = None
@@ -501,8 +499,8 @@ class Pipeline(StateModel):
         self._derivatives.register(AnnotDerivative(self._parcs))
 
         # --- Source-space: epochs/evoked projected to source space ---
-        self._derivatives.register(EpochsStcDerivative(self._raw, self._epochs, self._references, self.cache_source_estimates))
-        self._derivatives.register(EvokedStcDerivative(self._raw, self._epochs, self._references, self.cache_source_estimates))
+        self._derivatives.register(EpochsStcDerivative(self._raw, self._epochs, self._references))
+        self._derivatives.register(EvokedStcDerivative(self._raw, self._epochs, self._references))
         self._derivatives.register(EpochsStcGroupDatasetDerivative(self._mri_subjects, self.get('common_brain'), self._groups))
         self._derivatives.register(EvokedStcGroupDatasetDerivative(self._mri_subjects, self.get('common_brain'), self._groups))
 

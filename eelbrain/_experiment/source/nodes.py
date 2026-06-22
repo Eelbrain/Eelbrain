@@ -25,7 +25,7 @@ import numpy as np
 from mne.morph import SourceMorph
 from scipy import sparse
 
-from ... import load, save
+from ... import load
 from ..._data_obj import Dataset, Datalist, NDVar, combine
 from ..derivative_cache import CachePolicy, Dependency, Derivative, Request, Input, UncachedDerivative, file_fingerprint
 from ..pathing import (
@@ -556,7 +556,7 @@ def _source_dependencies(ctx: Request, sensor_dependency: Dependency) -> tuple[D
     return tuple(deps)
 
 
-class EpochsStcDerivative(Derivative[Dataset]):
+class EpochsStcDerivative(UncachedDerivative[Dataset]):
     """Source-space single-trial dataset derived from epochs.
 
     Options
@@ -581,13 +581,8 @@ class EpochsStcDerivative(Derivative[Dataset]):
         Whether to apply epoch rejection/interpolation state.
     """
     name = 'epochs-stc'
-    key_fields = (
-        'subject', 'session', 'raw',
-        'epoch', 'epoch_rejection', 'cov', 'mrisubject', 'src', 'inv', 'parc', 'common_brain', 'adjacency',
-    )
     # source localization handles EEG referencing internally
     fixed_state = {'reference': ''}
-    cache_suffix = '.pickle'
     OPTION_DEFAULTS = {
         'baseline': False,
         'src_baseline': False,
@@ -602,12 +597,10 @@ class EpochsStcDerivative(Derivative[Dataset]):
         'keep_epochs': False,
     }
 
-    def __init__(self, raw, epochs: dict[str, Any], references: dict[str, Reference | None], cache: bool = False):
+    def __init__(self, raw, epochs: dict[str, Any], references: dict[str, Reference | None]):
         self.raw = raw
         self.epochs = epochs
         self._references = references
-        if not cache:
-            self.cache_policy = CachePolicy.NEVER
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         options = ctx.options_for('epochs', 'baseline', 'reject', 'samplingrate', 'decim', 'pad', ndvar=False, data='sensor')
@@ -630,7 +623,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
         _check_head_position_alignment(ctx, epoch_list[0].info)
 
         src_baseline = ctx.options['src_baseline']
-        if not ctx.options['baseline'] and src_baseline and epoch.post_baseline_trigger_shift:
+        if src_baseline and epoch.post_baseline_trigger_shift:
             raise NotImplementedError("src_baseline with post_baseline_trigger_shift")
         if src_baseline is True:
             src_baseline = epoch.baseline
@@ -683,14 +676,8 @@ class EpochsStcDerivative(Derivative[Dataset]):
         ds.info.pop('raw', None)
         return ds
 
-    def load(self, ctx: Request, path: Path) -> Dataset:
-        return load.unpickle(path)
 
-    def save(self, ctx: Request, path: Path, value: Dataset) -> None:
-        save.pickle(value, path)
-
-
-class EvokedStcDerivative(Derivative[Dataset]):
+class EvokedStcDerivative(UncachedDerivative[Dataset]):
     """Source-space evoked dataset derived from cached evokeds.
 
     Options
@@ -713,18 +700,12 @@ class EvokedStcDerivative(Derivative[Dataset]):
         Whether to return source output as NDVars.
     """
     name = 'evoked-stc'
-    key_fields = (
-        'subject', 'session', 'raw',
-        'epoch', 'epoch_rejection', 'model', 'equalize_evoked_count', 'cov', 'mrisubject',
-        'src', 'inv', 'parc', 'common_brain', 'adjacency',
-    )
     # source localization handles EEG referencing internally
     fixed_state = {'reference': ''}
-    cache_suffix = '.pickle'
     OPTION_DEFAULTS = {
         'baseline': False,
         'src_baseline': False,
-        'morph': False,
+        'morph': None,
         'samplingrate': None,
         'decim': None,
     }
@@ -734,12 +715,10 @@ class EvokedStcDerivative(Derivative[Dataset]):
         'cat': None,
     }
 
-    def __init__(self, raw, epochs: dict[str, Any], references: dict[str, Reference | None], cache: bool = False):
+    def __init__(self, raw, epochs: dict[str, Any], references: dict[str, Reference | None]):
         self.raw = raw
         self.epochs = epochs
         self._references = references
-        if not cache:
-            self.cache_policy = CachePolicy.NEVER
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return _source_dependencies(ctx, Dependency('evoked', options=ctx.options_for('evoked', baseline=ctx.options['baseline'], ndvar=False, samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], data='sensor')))
@@ -799,12 +778,6 @@ class EvokedStcDerivative(Derivative[Dataset]):
 
         ds.info.pop('raw', None)
         return ds
-
-    def load(self, ctx: Request, path: Path) -> Dataset:
-        return load.unpickle(path)
-
-    def save(self, ctx: Request, path: Path, value: Dataset) -> None:
-        save.pickle(value, path)
 
 
 class EpochsStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
