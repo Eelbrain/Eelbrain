@@ -1,0 +1,83 @@
+import pytest
+
+from eelbrain._experiment.trf._model import TRFModelError, Model, ModelExpression, StructuredModel, Comparison
+
+
+models = {
+    'x-abcd': 'x-a + x-b + x-c + x-d',
+    'x-ab': 'x-a + x-b',
+    'x-cd': 'x-c + x-d',
+    'xyz': 'x + y + z',
+}
+structured_models = {k: StructuredModel.coerce(v) for k, v in models.items()}
+
+
+def test_model():
+    xyz = Model.coerce('x + y + z')
+    xy = Model.coerce('x + y')
+    yz = Model.coerce('y + z')
+    y = Model.coerce('y')
+    z = Model.coerce('z')
+    assert xy + z == xyz
+    assert xyz - z == xy
+    assert xy.intersection(yz) == y
+    # subtraction
+    xy2 = ModelExpression.from_string("xyz - z").initialize(structured_models)
+    assert xy2 == xy
+    # duplicate term
+    with pytest.raises(TRFModelError):
+        Model.coerce("term-1 + term-2 + term-2")
+
+
+# comparison, cv, x1, x0, name
+test_data = [
+    # direct
+    ('x + a > x + b', 'x + a', 'x + b'),
+    ('x = x + y', 'x', 'x + y'),
+    ('x > 0', 'x', '0'),
+    ('x + a > 0', 'x + a', '0'),
+    # omit
+    ('x + y @ y', 'x + y', 'x'),
+    ('x + y @ x', 'x + y', 'y'),
+    # add
+    ('x +@ y', 'x + y', 'x'),
+    ('x +@ y = z', 'x + y', 'x + z'),
+    ('x + y +@ z', 'x + y + z', 'x + y'),
+    # named direct
+    ('x-ab < x-cd', 'x-a + x-b', 'x-c + x-d'),
+    # named omit
+    ('x-ab @ x-b', 'x-a + x-b', 'x-a'),
+    ('x-abcd @ x-ab', 'x-a + x-b + x-c + x-d', 'x-c + x-d'),
+    # named add
+    ('x-ab +@ x-c', 'x-a + x-b + x-c', 'x-a + x-b'),
+    # named add2
+    ('x-ab +@ x-c > x-d', 'x-a + x-b + x-c', 'x-a + x-b + x-d'),
+    #
+    ('x-abcd @ x-ab', 'x-a + x-b + x-c + x-d', 'x-c + x-d'),
+    ('x-abcd @ x-ab = x-cd', 'x-a + x-b', 'x-c + x-d'),
+]
+# allow name being different from args[0]
+test_data = [(*t, None) if len(t) == 3 else t for t in test_data]
+
+
+@pytest.mark.parametrize('string,x1,x0,name', test_data, ids=[items[0] for items in test_data])
+def test_comparison(string: str, x1: str, x0: str, name: str | None):
+    """Assert that comparison is parsed correctly"""
+    if name is None:
+        name = string
+
+    # Make sure it is not mis-recognized as model
+    with pytest.raises(TRFModelError):
+        Model.coerce(string)
+
+    comparison = Comparison.coerce(string, structured_models)
+
+    assert isinstance(comparison, Comparison)
+    assert comparison.x1.name == x1
+    assert comparison.x0.name == x0
+    assert comparison.name == name
+
+
+def test_comparison_parser():
+    with pytest.raises(TRFModelError):
+        Comparison.coerce('model @ whot$shift', structured_models)
