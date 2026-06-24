@@ -19,8 +19,12 @@ Dependency structure:
     └── SuperEpoch
           └── epochs  ×N                 (one per sub-epoch, each recursing into this tree)
 
-The epoch definitions these nodes build on live in
-:mod:`._experiment.epochs.config`.
+Explanations:
+
+- The ``epoch`` node combines events (``epoch-events``) with data epochs.
+  The reason for keeping those separate is to make data caches less dependent on event changes.
+- :class:`SuperEpochs` combine already epoched data (at the ``epochs`` node).
+- Other epoch types work by selecting events before loading data (at the ``recording-epochs`` node).
 """
 
 from __future__ import annotations
@@ -214,14 +218,17 @@ class RecordingEpochsDerivative(Derivative[Any]):
             epoch_value = Datalist(epochs_list, 'epochs')
         else:
             epochs = load.mne.mne_epochs(ds, tmin, tmax, baseline, i_start='sample', decim=decim, drop_bad_chs=False, tstop=tstop, reject_by_annotation=False, trigger='value')
-            if len(epochs) != ds.n_cases:
-                ctx.registry.log.warning("%s missing for %s/%s", n_of(ds.n_cases - len(epochs), 'epoch'), ctx.state['subject'], epoch.name)
-                raise NotImplementedError("Incomplete epochs")
-            ds['epochs'] = epochs
             if ctx.options['trigger_shift'] and epoch.post_baseline_trigger_shift:
                 shift = ds.eval(epoch.post_baseline_trigger_shift)
-                ds['epochs'] = shift_mne_epoch_trigger(ds['epochs'], shift, epoch.post_baseline_trigger_shift_min, epoch.post_baseline_trigger_shift_max)
-            epoch_value = ds['epochs']
+                epochs = shift_mne_epoch_trigger(epochs, shift, epoch.post_baseline_trigger_shift_min, epoch.post_baseline_trigger_shift_max)
+            else:
+                # Baseline is already applied to the data; clear the attribute so that the
+                # downstream combine() -> mne.concatenate_epochs() does not apply it a second
+                # time (double baseline correction). The post_baseline_trigger_shift branch
+                # above already yields baseline=None via shift_mne_epoch_trigger.
+                epochs.baseline = None
+            assert len(epochs) == ds.n_cases
+            epoch_value = epochs
             epochs_list = [epoch_value]
 
         if ctx.options['interpolate_bads']:
