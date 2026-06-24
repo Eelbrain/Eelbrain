@@ -36,6 +36,9 @@ class EpochCovariance(Configuration):
         self.keep_sample_mean = keep_sample_mean
 
     def make(self, epochs: mne.Epochs, log_path: Path) -> mne.Covariance:
+        # MNE expects zero mean data
+        epochs.apply_baseline((None, None))
+
         method = 'empirical' if self.method == 'best' else self.method
         cov = mne.compute_covariance(epochs, self.keep_sample_mean, method=method)
 
@@ -70,17 +73,6 @@ class CovDerivative(Derivative[mne.Covariance]):
     # Fixed options used when loading epochs for covariance estimation.
     # Declared on both the Dependency edge and the build() load call so that
     # cache validation and the actual load request stay in sync.
-    _EPOCH_COV_OPTIONS = {
-        'baseline': True,
-        'ndvar': False,
-        'data': 'sensor',
-        'reject': False,
-        'samplingrate': None,
-        'decim': 1,
-        'pad': 0,
-        'trigger_shift': True,
-        'interpolate_bads': False,
-    }
 
     def __init__(self, covs: dict[str, RawCovariance | EpochCovariance], raw, references: dict[str, Reference | None]):
         self._covs = covs
@@ -90,7 +82,7 @@ class CovDerivative(Derivative[mne.Covariance]):
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         cov = self._covs[ctx.state['cov']]
         if isinstance(cov, EpochCovariance):
-            return (Dependency('epochs', state={'epoch': cov.epoch}, options=self._EPOCH_COV_OPTIONS),)
+            return (Dependency('epochs', state={'epoch': cov.epoch}, options={'ndvar': False, 'decim': 1}),)
         elif isinstance(cov, RawCovariance):
             return (Dependency(raw_node_name(ctx.state['raw']), options={'noise': True}, label='raw'),)
         raise NotImplementedError(f"{cov=}")
