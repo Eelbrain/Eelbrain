@@ -1,6 +1,6 @@
 import pytest
 
-from eelbrain._experiment.trf._model import TRFModelError, Model, ModelExpression, StructuredModel, Comparison
+from eelbrain._experiment.trf._model import TRFModelError, Model, ModelExpression, Comparison
 
 
 models = {
@@ -9,7 +9,7 @@ models = {
     'x-cd': 'x-c + x-d',
     'xyz': 'x + y + z',
 }
-structured_models = {k: StructuredModel.coerce(v) for k, v in models.items()}
+named_models = {k: Model.coerce(v) for k, v in models.items()}
 
 
 def test_model():
@@ -22,7 +22,7 @@ def test_model():
     assert xyz - z == xy
     assert xy.intersection(yz) == y
     # subtraction
-    xy2 = ModelExpression.from_string("xyz - z").initialize(structured_models)
+    xy2 = ModelExpression.from_string("xyz - z").initialize(named_models)
     assert xy2 == xy
     # duplicate term
     with pytest.raises(TRFModelError):
@@ -70,7 +70,7 @@ def test_comparison(string: str, x1: str, x0: str, name: str | None):
     with pytest.raises(TRFModelError):
         Model.coerce(string)
 
-    comparison = Comparison.coerce(string, structured_models)
+    comparison = Comparison.coerce(string, named_models)
 
     assert isinstance(comparison, Comparison)
     assert comparison.x1.name == x1
@@ -80,4 +80,4 @@ def test_comparison(string: str, x1: str, x0: str, name: str | None):
 
 def test_comparison_parser():
     with pytest.raises(TRFModelError):
-        Comparison.coerce('model @ whot$shift', structured_models)
+        Comparison.coerce('model @ whot$shift', named_models)

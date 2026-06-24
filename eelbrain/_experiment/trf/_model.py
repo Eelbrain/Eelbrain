@@ -53,7 +53,7 @@ class Term:
 
 def _expand_term(
         term: Term,
-        named_models: dict[str, StructuredModel],
+        named_models: dict[str, Model],
 ) -> tuple[Term, ...]:
     """ModelTerms can represent multiple effective terms"""
     # if term.code.endswith('-is'):
@@ -64,8 +64,7 @@ def _expand_term(
         terms = _expand_term(replace(term, code=term.code[:-5]), named_models)
         return tuple([replace(term, code=f'{term.code}-step') for term in terms])
     elif term.code in named_models:
-        model = named_models[term.code].model
-        return model.terms
+        return named_models[term.code].terms
     else:
         return term,
 
@@ -74,6 +73,7 @@ def _expand_term(
 class Model:
     """Model that can be fit to data"""
     terms: tuple[Term, ...]
+    public_name: str = None
 
     def __post_init__(self):
         counts = Counter([term.string for term in self.terms])
@@ -104,15 +104,11 @@ class Model:
         return tuple([term.string for term in self.terms])
 
     @classmethod
-    def from_string(cls, string: str | Sequence[str]):
-        if isinstance(string, str):
-            try:
-                return model.parseString(string, True)[0]
-            except ParseException:
-                raise TRFModelError(f"{string!r}: invalid Model")
-        else:
-            terms = [parse_term(s) for s in string]
-            return cls(tuple(terms))
+    def from_string(cls, string: str):
+        try:
+            return model.parseString(string, True)[0]
+        except ParseException:
+            raise TRFModelError(f"{string!r}: invalid Model")
 
     def __repr__(self):
         return f"<Model: {self.name}>"
@@ -139,11 +135,14 @@ class Model:
         return self.name == other.name
 
     @classmethod
-    def coerce(cls, x: Model | str):
+    def coerce(cls, x: Model | str | Sequence) -> Model:
         if isinstance(x, cls):
             return x
-        else:
+        elif isinstance(x, str):
             return cls.from_string(x)
+        elif isinstance(x, abc.Sequence):
+            return cls(tuple(Term._coerce(term) for term in x))
+        raise TypeError(x)
 
     def difference(self, other: Model) -> Model:
         terms = [term for term in self.terms if term not in other.terms]
@@ -153,18 +152,20 @@ class Model:
         terms = [term for term in self.terms if term in other.terms]
         return Model(tuple(terms))
 
-    def initialize(self, named_models: dict[str, StructuredModel]) -> Model:
+    def initialize(self, named_models: dict[str, Model]) -> Model:
         terms = list(chain.from_iterable(_expand_term(term, named_models) for term in self.terms))
         return Model(tuple(terms))
 
     def term_table(self) -> fmtxt.Table:
         show_stimulus = any(term.stimulus for term in self.terms)
-        t = fmtxt.Table('l' * (1 + show_stimulus))
+        t = fmtxt.Table('rl' * (1 + show_stimulus))
+        t.cell('#')
         if show_stimulus:
             t.cell('Stimulus')
         t.cell('Code')
         t.midrule()
-        for term in self.terms:
+        for i, term in enumerate(self.terms):
+            t.cell(i)
             if show_stimulus:
                 t.cell(term.stimulus)
             t.cell(term.code)
@@ -197,7 +198,7 @@ class ModelExpression:
 
     def initialize(
             self,
-            named_models: dict[str, StructuredModel],
+            named_models: dict[str, Model],
     ) -> Model:
         "Expand into full model"
         base = self.base.initialize(named_models)
@@ -241,47 +242,14 @@ def model_comparison_table(x1: Model, x0: Model, x1_name: str = 'x1', x0_name: s
     return table
 
 
-@dataclass(frozen=True)
-class StructuredModel:
-    """Model including information about each Term"""
-    terms: tuple[Term, ...]
-    public_name: str = None
-
-    @classmethod
-    def coerce(cls, x):
-        if isinstance(x, cls):
-            return x
-        elif isinstance(x, str):
-            model = parse_model(x)
-            terms = model.terms
-        elif isinstance(x, abc.Sequence):
-            terms = [Term._coerce(term) for term in x]
-        else:
-            raise TypeError(x)
-        return cls(tuple(terms))
-
-    @cached_property
-    def model(self) -> Model:
-        return Model(self.terms)
-
-    def term_table(self):
-        "Table describing the structured model terms"
-        table = fmtxt.Table('rl')
-        table.cells('#', 'term')
-        table.midrule()
-        for i, term in enumerate(self.terms):
-            table.cells(i, term.string)
-        return table
-
-
 @dataclass
 class ComparisonSpec:
     x: Model
 
     def initialize(
             self,
-            named_models: dict[str, StructuredModel],
-    ) -> Comparison | StructuredModel:
+            named_models: dict[str, Model],
+    ) -> Comparison | Model:
         raise NotImplementedError
 
 
@@ -292,7 +260,7 @@ class DirectComparison(ComparisonSpec):
 
     def initialize(
             self,
-            named_models: dict[str, StructuredModel],
+            named_models: dict[str, Model],
     ) -> Comparison:
         public_name = f"{self.x.name} {self.operator} {self.x0.name}"
         x = self.x.initialize(named_models)
@@ -307,7 +275,7 @@ class OmitComparison(ComparisonSpec):
 
     def initialize(
             self,
-            named_models: dict[str, StructuredModel],
+            named_models: dict[str, Model],
     ) -> Comparison:
         public_name = f"{self.x.name} @ {self.x_omit.name}"
         x = self.x.initialize(named_models)
@@ -324,7 +292,7 @@ class Omit2Comparison(ComparisonSpec):
 
     def initialize(
             self,
-            named_models: dict[str, StructuredModel],
+            named_models: dict[str, Model],
     ) -> Comparison:
         public_name = f"{self.x.name} @ {self.x1_omit.name} {self.operator} {self.x0_omit.name}"
         x = self.x.initialize(named_models)
@@ -343,7 +311,7 @@ class AddComparison(ComparisonSpec):
 
     def initialize(
             self,
-            named_models: dict[str, StructuredModel],
+            named_models: dict[str, Model],
     ) -> Comparison:
         public_name = f"{self.x.name} +@ {self.x_add.name}"
         x = self.x.initialize(named_models)
@@ -361,7 +329,7 @@ class Add2Comparison(ComparisonSpec):
 
     def initialize(
             self,
-            named_models: dict[str, StructuredModel],
+            named_models: dict[str, Model],
     ) -> Comparison:
         public_name = f"{self.x.name} +@ {self.x1_add.name} {self.operator} {self.x0_add.name}"
         x = self.x.initialize(named_models)
@@ -432,9 +400,9 @@ class Comparison:
     def coerce(
             cls,
             x,
-            named_models: dict[str, StructuredModel] = {},
-    ) -> StructuredModel | Comparison:
-        if isinstance(x, (cls, StructuredModel)):
+            named_models: dict[str, Model] = {},
+    ) -> Model | Comparison:
+        if isinstance(x, (cls, Model)):
             return x
         comp = parse_comparison(x)
         return comp.initialize(named_models)
