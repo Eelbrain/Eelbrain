@@ -135,14 +135,10 @@ class RecordingEpochsDerivative(Derivative[Any]):
 
     Options
     -------
-    baseline
-        Baseline correction to apply during epoch extraction.
     samplingrate / decim
         Sampling rate or decimation override.
     pad
         Extra time padding before epoch extraction.
-    trigger_shift
-        Whether to apply trigger shifting from the epoch definition.
     tmin, tmax, tstop
         Time window overrides.
     interpolate_bads
@@ -154,11 +150,9 @@ class RecordingEpochsDerivative(Derivative[Any]):
     key_fields = ('subject', 'session', 'run', 'raw', 'epoch', 'epoch_rejection', 'reference')
     cache_suffix = '.epochs'
     OPTION_DEFAULTS = {
-        'baseline': False,
         'samplingrate': None,
         'decim': None,
         'pad': 0,
-        'trigger_shift': True,
         'tmin': None,
         'tmax': None,
         'tstop': None,
@@ -212,21 +206,23 @@ class RecordingEpochsDerivative(Derivative[Any]):
         if ds.info[BAD_CHANNELS]:
             raw.info['bads'] = sorted(set(raw.info['bads'] + ds.info[BAD_CHANNELS]))
         ds.info['raw'] = raw
-        tmin, tmax, tstop, baseline, decim, variable_tmax = epoch._extraction_parameters(ds, ctx.options)
+        tmin, tmax, tstop, decim, variable_tmax = epoch._extraction_parameters(ds, ctx.options)
+        # Baseline correction is deferred to a view operation and must not enter the cache,
+        # except for post_baseline_trigger_shift epochs where it has to precede the shift.
         if variable_tmax:
-            epochs_list = load.mne.variable_length_mne_epochs(ds, tmin, tmax, baseline, allow_truncation=True, decim=decim, reject_by_annotation=False, i_start='sample', trigger='value')
+            epochs_list = load.mne.variable_length_mne_epochs(ds, tmin, tmax, None, allow_truncation=True, decim=decim, reject_by_annotation=False, i_start='sample', trigger='value')
             epoch_value = Datalist(epochs_list, 'epochs')
         else:
-            epochs = load.mne.mne_epochs(ds, tmin, tmax, baseline, i_start='sample', decim=decim, drop_bad_chs=False, tstop=tstop, reject_by_annotation=False, trigger='value')
-            if ctx.options['trigger_shift'] and epoch.post_baseline_trigger_shift:
+            epochs = load.mne.mne_epochs(ds, tmin, tmax, None, i_start='sample', decim=decim, drop_bad_chs=False, tstop=tstop, reject_by_annotation=False, trigger='value')
+            if epoch.post_baseline_trigger_shift:
+                # Apply baseline before the trigger shift, on the (projected) epoch data, to
+                # match the deferred view baseline (which also acts on projected data).
+                if isinstance(epochs, Datalist):
+                    raise NotImplementedError("post_baseline_trigger_shift for variable-length SuperEpoch")
+                if epoch.baseline:
+                    epochs.apply_baseline(epoch.baseline)
                 shift = ds.eval(epoch.post_baseline_trigger_shift)
                 epochs = shift_mne_epoch_trigger(epochs, shift, epoch.post_baseline_trigger_shift_min, epoch.post_baseline_trigger_shift_max)
-            else:
-                # Baseline is already applied to the data; clear the attribute so that the
-                # downstream combine() -> mne.concatenate_epochs() does not apply it a second
-                # time (double baseline correction). The post_baseline_trigger_shift branch
-                # above already yields baseline=None via shift_mne_epoch_trigger.
-                epochs.baseline = None
             assert len(epochs) == ds.n_cases
             epoch_value = epochs
             epochs_list = [epoch_value]
@@ -291,6 +287,8 @@ class EpochsDerivative(Derivative[Any]):
 
     Options
     -------
+    baseline
+        Baseline correction to apply at load time (view option, not cached).
     ndvar
         Whether to convert epoch data to NDVars (``True | False | 'both'``).
     data
@@ -301,11 +299,9 @@ class EpochsDerivative(Derivative[Any]):
     key_fields = ('subject', 'session', 'raw', 'epoch', 'epoch_rejection', 'reference')
     cache_suffix = '.epochs'
     OPTION_DEFAULTS = {
-        'baseline': False,
         'samplingrate': None,
         'decim': None,
         'pad': 0,
-        'trigger_shift': True,
         'tmin': None,
         'tmax': None,
         'tstop': None,
@@ -313,6 +309,7 @@ class EpochsDerivative(Derivative[Any]):
         'reject': True,
     }
     VIEW_OPTION_DEFAULTS = {
+        'baseline': False,
         'ndvar': True,
         'data': 'sensor',
     }
@@ -342,10 +339,15 @@ class EpochsDerivative(Derivative[Any]):
             raise TypeError(f"{epoch=}: load_epochs not supported for EpochCollection")
         if isinstance(epoch, SuperEpoch):
             # Inject explicitly-overridden INHERITED_PARAMS as direct options so sub-epochs
-            # are loaded with the SuperEpoch's window/baseline/decim rather than their own.
+            # are loaded with the SuperEpoch's window/decim rather than their own.
             epoch_overrides = {k: getattr(epoch, k) for k in epoch._explicit_params if k in epoch.INHERITED_PARAMS}
             forward_keys = [k for k in self.OPTION_DEFAULTS if k not in epoch_overrides]
-            sub_options = ctx.options_for('epochs', *forward_keys, ndvar=False, data='sensor', **epoch_overrides)
+            overrides = {'ndvar': False, 'data': 'sensor', **epoch_overrides}
+            # post_baseline_trigger_shift needs baseline applied (on the sub-epochs) before
+            # the shift, so it cannot be deferred for shifted super-epochs.
+            if epoch.post_baseline_trigger_shift:
+                overrides['baseline'] = True
+            sub_options = ctx.options_for('epochs', *forward_keys, **overrides)
             return tuple(
                 Dependency('epochs', label=sub_epoch, state={'epoch': sub_epoch}, options=sub_options)
                 for sub_epoch in epoch.sub_epochs
@@ -389,7 +391,8 @@ class EpochsDerivative(Derivative[Any]):
             for sub_epoch in epoch.sub_epochs:
                 ds = ctx.load(sub_epoch)
                 epoch_value = ds['epochs']
-                if ctx.options['trigger_shift'] and epoch.post_baseline_trigger_shift:
+                if epoch.post_baseline_trigger_shift:
+                    # SuperEpoch shifts trigger after baseline from original epochs has been applied
                     if isinstance(epoch_value, Datalist):
                         raise NotImplementedError("post_baseline_trigger_shift for variable-length SuperEpoch")
                     shift = ds.eval(epoch.post_baseline_trigger_shift)
@@ -441,6 +444,21 @@ class EpochsDerivative(Derivative[Any]):
             ds['epochs'] = Datalist(epochs_list, 'epochs')
         else:
             ds['epochs'] = combine(epochs_list)
+
+        # Baseline correction (for post_baseline_trigger_shift epochs it was already applied)
+        baseline = ctx.view_options['baseline']
+        if epoch.post_baseline_trigger_shift:
+            if baseline is not True and baseline != epoch.baseline:
+                raise NotImplementedError(f"{baseline=} for epoch {epoch.name!r}: baseline correction is applied before the post_baseline_trigger_shift and can not be changed at load time; use baseline=True")
+        else:
+            if baseline is True:
+                baseline = epoch.baseline
+            if baseline:
+                if variable_tmax:
+                    for epochs in epochs_list:
+                        epochs.apply_baseline(baseline)
+                else:
+                    ds['epochs'].apply_baseline(baseline)
 
         ndvar = ctx.view_options['ndvar']
         if ndvar:
@@ -514,7 +532,6 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
             'decim': ctx.options['decim'],
             'interpolate_bads': 'keep',
             'reject': True,
-            'trigger_shift': True,
             'ndvar': False,
             'data': 'sensor',
         }
@@ -609,14 +626,18 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         except KeyError:
             raise RuntimeError(f"Error reading cached evoked: available={tuple(evoked_by_cell)}, requested={tuple(cells)}") from None
 
-        # Baseline
+        # Baseline correction (for post_baseline_trigger_shift epochs it was already applied).
         epoch = self.epochs[ctx.state['epoch']]
         baseline = ctx.view_options['baseline']
-        if baseline is True:
-            baseline = epoch.baseline
-        if baseline and not epoch.post_baseline_trigger_shift:
-            for evoked_i in evoked:
-                mne.baseline.rescale(evoked_i.data, evoked_i.times, baseline, 'mean', copy=False)
+        if epoch.post_baseline_trigger_shift:
+            if baseline is not True and baseline != epoch.baseline:
+                raise NotImplementedError(f"baseline={baseline!r} for epoch {epoch.name!r}: baseline correction is applied before the post_baseline_trigger_shift and can not be changed at load time; use baseline=True")
+        else:
+            if baseline is True:
+                baseline = epoch.baseline
+            if baseline:
+                for evoked_i in evoked:
+                    evoked_i.apply_baseline(epoch.baseline)
 
         # NDVar
         data = TestDims.coerce(ctx.view_options['data'])
@@ -657,13 +678,13 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
     """
     name = 'evoked-group-dataset'
     OPTION_DEFAULTS = {
-        'baseline': False,
         'ndvar': True,
         'samplingrate': None,
         'decim': None,
         'data': 'sensor',
     }
     VIEW_OPTION_DEFAULTS = {
+        'baseline': False,
         'cat': None,
     }
 

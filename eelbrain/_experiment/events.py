@@ -322,7 +322,6 @@ class SelectedEventsDerivative(UncachedDerivative[Dataset]):
     name = 'selected-events'
     OPTION_DEFAULTS = {
         'reject': True,
-        'baseline': False,
         'samplingrate': None,
         'decim': None,
         'pad': 0,
@@ -447,7 +446,6 @@ class EpochEventsDerivative(UncachedDerivative[Dataset]):
     name = 'epoch-events'
     OPTION_DEFAULTS = {
         'reject': True,
-        'baseline': False,
         'samplingrate': None,
         'decim': None,
         'pad': 0,

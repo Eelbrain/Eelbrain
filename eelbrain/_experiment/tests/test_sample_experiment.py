@@ -298,6 +298,11 @@ def test_sample(samples_experiment):
     assert_dataobj_equal(evs[0, 'meg'], ep[0, 'meg'].sub(time=(tstart, None)), decimal=19)
     tstop = ep['meg'].time.tstop + shift
     assert_almost_equal(evs[1, 'meg'].x, ep[1, 'meg'].sub(time=(None, tstop)).x, decimal=19)
+    # baseline correction can not be deferred/disabled for post_baseline_trigger_shift epochs
+    with pytest.raises(NotImplementedError):
+        e.load_epochs(baseline=False, epoch='visual-s', epoch_rejection='')
+    with pytest.raises(NotImplementedError):
+        e.load_evoked(baseline=False, epoch='visual-s', epoch_rejection='', model='side')
 
     # post_baseline_trigger_shift
     class Experiment(SampleExperiment):
@@ -1293,7 +1298,6 @@ def test_epochs_cache_uses_fif(samples_experiment):
         'samplingrate': None,
         'decim': None,
         'pad': 0,
-        'trigger_shift': True,
         'tmin': None,
         'tmax': None,
         'tstop': None,
@@ -1343,7 +1347,6 @@ def test_epochs_cached_load_uses_current_selected_events(samples_experiment):
         'samplingrate': None,
         'decim': None,
         'pad': 0,
-        'trigger_shift': True,
         'tmin': None,
         'tmax': None,
         'tstop': None,

@@ -22,7 +22,7 @@ from ..configuration import Configuration, typed_arg
 
 
 EpochBaselineArg = Literal[False] | tuple[float | None, float | None] | None
-EPOCH_EXTRACT_OPTIONS = ('baseline', 'samplingrate', 'decim', 'pad', 'tmin', 'tmax', 'tstop')
+EPOCH_EXTRACT_OPTIONS = ('samplingrate', 'decim', 'pad', 'tmin', 'tmax', 'tstop')
 
 
 def _shared_sub_epoch_parameters(name: str, sub_epochs: Sequence[EpochBase], parameters: Sequence[str]) -> dict[str, Any]:
@@ -146,7 +146,7 @@ class EpochBase(Configuration):
             self,
             ds: Dataset,
             options: dict[str, Any],
-    ) -> tuple[float, Any, float | None, Any, int, bool]:
+    ) -> tuple[float, Any, float | None, int, bool]:
         """Compute epoch extraction parameters for a prepared shell.
 
         Parameters
@@ -155,7 +155,7 @@ class EpochBase(Configuration):
             Prepared event shell returned by :meth:`_prepare_selected_events`.
         options
             `epochs` node options that affect extraction, such as time-window,
-            baseline, padding, and decimation overrides.
+            padding, and decimation overrides.
 
         Returns
         -------
@@ -165,8 +165,6 @@ class EpochBase(Configuration):
             End of the extraction window, or a per-epoch :class:`Var`.
         tstop
             Optional explicit stop time for fixed-length extraction.
-        baseline
-            Baseline interval to apply during epoch extraction.
         decim
             Decimation factor for MNE epoch extraction.
         variable_tmax
@@ -273,7 +271,7 @@ class Epoch(EpochBase):
             options: dict[str, Any],
     ) -> Dataset:
         """Remove events whose requested epoch window exceeds raw bounds."""
-        tmin, tmax, tstop, _, decim, variable_tmax = self._extraction_parameters(ds, options)
+        tmin, tmax, tstop, decim, variable_tmax = self._extraction_parameters(ds, options)
         if variable_tmax:
             return ds
         raw_sfreq = ds.info['raw.samplingrate']
@@ -302,14 +300,13 @@ class Epoch(EpochBase):
             self,
             ds: Dataset,
             options: dict[str, Any],
-    ) -> tuple[float, Any, float | None, Any, int, bool]:
+    ) -> tuple[float, Any, float | None, int, bool]:
         """Resolve fixed-length extraction settings with load-time overrides."""
         tmin = self.tmin if options['tmin'] is None else options['tmin']
         tmax = options['tmax']
         tstop = options['tstop']
         if tmax is None and tstop is None:
             tmax = self.tmax
-        baseline = self.baseline if options['baseline'] is True else options['baseline']
         if isinstance(tmax, str):
             tmax = ds.eval(tmax)
             assert isinstance(tmax, Var)
@@ -318,16 +315,13 @@ class Epoch(EpochBase):
         else:
             variable_tmax = False
         if pad := options['pad']:
-            if baseline:
-                b0, b1 = baseline
-                baseline = (tmin if b0 is None else b0, tmax if b1 is None else b1)
             tmin -= pad
             if tmax is not None:
                 tmax = tmax + pad
             elif tstop is not None:
                 tstop = tstop + pad
         decim = decim_param(options['samplingrate'], options['decim'], self, ds.info)
-        return tmin, tmax, tstop, baseline, decim, variable_tmax
+        return tmin, tmax, tstop, decim, variable_tmax
 
 
 class PrimaryEpoch(Epoch):
@@ -368,8 +362,11 @@ class PrimaryEpoch(Epoch):
         Shift the trigger (i.e., where epoch time = 0) after baseline correction.
         The value of this entry is an expression that is evaluated in the
         selected-events Dataset and needs to yield the actual amount of time
-        shift (in seconds) for each epoch. If the
-        ``post_baseline_trigger_shift`` parameter is specified, the parameters
+        shift (in seconds) for each epoch.
+        Typically, this parameter is defined on a :class:`SecondaryEpoch`, such that
+        trial rejection can be performed on a larger :class:`PrimaryEpoch` that
+        encompasses the baseline as well as the target time window.
+        If the ``post_baseline_trigger_shift`` parameter is specified, the parameters
         ``post_baseline_trigger_shift_min`` and ``post_baseline_trigger_shift_max``
         are also needed, specifying the smallest and largest possible shift. These
         are used to crop the resulting epochs appropriately, to the region from
@@ -649,10 +646,9 @@ class ContinuousEpoch(EpochBase):
             self,
             ds: Dataset,
             options: dict[str, Any],
-    ) -> tuple[float, Any, float | None, Any, int, bool]:
-        baseline = self.baseline if options['baseline'] is True else options['baseline']
+    ) -> tuple[float, Any, float | None, int, bool]:
         decim = decim_param(options['samplingrate'], options['decim'], self, ds.info)
-        return -self.pad_start, ds.eval('tmax'), None, baseline, decim, True
+        return -self.pad_start, ds.eval('tmax'), None, decim, True
 
 
 def decim_param(

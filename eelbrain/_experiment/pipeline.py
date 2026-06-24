@@ -896,7 +896,6 @@ class Pipeline(StateModel):
             decim: int = None,
             pad: float = 0,
             data: str = 'sensor',
-            trigger_shift: bool = True,
             tmin: float = None,
             tmax: float = None,
             tstop: float = None,
@@ -939,9 +938,6 @@ class Pipeline(StateModel):
             Data to load; 'sensor' to load all sensor data (default);
             'sensor.rms' to return RMS over sensors. Only applies to NDVar
             output.
-        trigger_shift
-            Apply post-baseline trigger-shift if it applies to the epoch
-            (default True).
         tmin
             Override the epoch's ``tmin`` parameter.
         tmax
@@ -979,7 +975,6 @@ class Pipeline(StateModel):
             'decim': decim,
             'pad': pad,
             'data': data,
-            'trigger_shift': trigger_shift,
             'tmin': tmin,
             'tmax': tmax,
             'tstop': tstop,
@@ -2578,7 +2573,7 @@ class Pipeline(StateModel):
                 raise TypeError(f"{overwrite=}")
 
         if auto is not None:
-            ds = self._load_derivative('epochs', options={'reject': False, 'ndvar': True})  # trigger_shift=False??
+            ds = self._load_derivative('epochs', options={'reject': False, 'ndvar': True})
             ch_types = ['meg', 'mag', 'grad', 'planar1', 'planar2', 'eeg']
             ch_types = [t for t in ch_types if t in ds]
             if not ch_types:
@@ -2616,7 +2611,7 @@ class Pipeline(StateModel):
             self._log.info(f"make_epoch_rejection: {n_rej} of {rej_ds.n_cases} epochs rejected with threshold {auto} for {desc}")
             return
 
-        ds = self._load_derivative('epochs', options={'reject': False, 'ndvar': False})  # trigger_shift=False??
+        ds = self._load_derivative('epochs', options={'reject': False, 'ndvar': False})
         # eog_sns = self._eog_sns.get(ds[y_name].sensor.sysname, ())
         # don't mark eog sns if it is bad
         # bad_channels = self.load_bad_channels()
