@@ -63,10 +63,14 @@ class PredictorInput(Input[NDVar]):
         return self.directory / f"{term.nuts_file_name(predictor.columns)}.pickle"
 
     def fingerprint(self, ctx: Request) -> dict:
-        fp = file_fingerprint(self.root, self.path(ctx), 'predictor-file')
+        term, predictor = self._resolve(ctx)
+        fp = {
+            'file': file_fingerprint(self.root, self.path(ctx), 'predictor-file'),
+            'config': predictor,
+        }
         if ctx.options['filter_x']:
             raw_name = ctx.state['raw']
-            fp = {'file': fp, 'raw': raw_name, 'filter': self._filter_pipes(raw_name)}
+            fp['raw'] = self._filter_pipes(raw_name)
         return fp
 
     def load(self, ctx: Request) -> NDVar:

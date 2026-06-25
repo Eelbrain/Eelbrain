@@ -12,6 +12,10 @@ def test_term():
     assert term.nuts_method is None
     assert term.nuts_file_name(False) == 'gammatone'
 
+    term = parse_term('1~gammatone')
+    assert term.stimulus == '1'
+    assert term.code == 'gammatone'
+
     # stimulus + columns
     term = parse_term('stim~word-frequency-noun')
     assert term.stimulus == 'stim'

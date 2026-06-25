@@ -29,7 +29,7 @@ class TRFModelError(Exception):
 
 @dataclass(frozen=True)
 class Term:
-    stimulus: str
+    stimulus: str | None
     code: str
 
     @cached_property
@@ -40,7 +40,7 @@ class Term:
 
     @cached_property
     def key(self) -> str:
-        "Dataset-compatible key for the term"
+        """Dataset-compatible key for the term"""
         return Dataset.as_key(self.string)
 
     @cached_property
@@ -49,13 +49,13 @@ class Term:
 
     @cached_property
     def nuts_method(self) -> str | None:
-        "NUTS representation method (the trailing ``-step``/``-is`` item, if any)"
+        """NUTS representation method (the trailing ``-step``/``-is`` item, if any)"""
         if self._items[-1] in NUTS_METHODS:
             return self._items[-1]
 
     @cached_property
     def nuts_columns(self) -> tuple[str | None, str | None]:
-        "``(value-column, mask-column)`` for a ``columns`` NUTS predictor"
+        """``(value-column, mask-column)`` for a ``columns`` NUTS predictor"""
         n = len(self._items) - 1 - bool(self.nuts_method)
         column = self._items[1] if n > 0 else None
         if n <= 1:
@@ -67,7 +67,7 @@ class Term:
         return column, mask
 
     def nuts_file_name(self, columns: bool) -> str:
-        "File name (without extension) of the predictor file backing this term"
+        """File name (without extension) of the predictor file backing this term"""
         if columns:
             items = self._items[:1]
         elif self.nuts_method:
@@ -75,10 +75,10 @@ class Term:
         else:
             items = self._items
         code = '-'.join(items)
-        return f"{self.stimulus}~{code}" if self.stimulus else code
+        return f"""{self.stimulus}~{code}""" if self.stimulus else code
 
     def with_stimulus(self, stimulus: str) -> Term:
-        "Copy of the term with a different stimulus"
+        """Copy of the term with a different stimulus"""
         return replace(self, stimulus=stimulus)
 
     @classmethod
@@ -244,7 +244,7 @@ class ModelExpression:
             self,
             named_models: dict[str, Model],
     ) -> Model:
-        "Expand into full model"
+        """Expand into full model"""
         base = self.base.initialize(named_models)
         if not self.subtract:
             return base
@@ -257,7 +257,7 @@ class ModelExpression:
 
 
 def model_comparison_table(x1: Model, x0: Model, x1_name: str = 'x1', x0_name: str = 'x0'):
-    "Generate a table comparing the terms in two models"
+    """Generate a table comparing the terms in two models"""
     # find corresponding terms
     term_map = []
     x0_terms = list(x0.term_names)
@@ -455,7 +455,7 @@ class Comparison:
         return f"<Comparison: {self.name}>"
 
     def term_table(self):
-        "Generate a table comparing the terms in the two models"
+        """Generate a table comparing the terms in the two models"""
         return model_comparison_table(self.x1, self.x0)
 
 
@@ -465,7 +465,8 @@ pyword = Word(alphas + '_', alphanums + '_')
 name = Word(alphas + '_', alphanums + '_-')
 
 # term
-stimulus_prefix = name + Literal('~').suppress().leaveWhitespace()
+stimulus = Word(alphanums + '_', alphanums + '_-')
+stimulus_prefix = stimulus + Literal('~').suppress().leaveWhitespace()
 term = Optional(stimulus_prefix, '') + name
 term.addParseAction(lambda s, l, t: Term(t[0] or None, t[1]))
 
