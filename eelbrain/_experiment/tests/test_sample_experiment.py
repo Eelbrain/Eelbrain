@@ -20,6 +20,7 @@ from eelbrain import *
 from eelbrain.pipeline import *
 from eelbrain._exceptions import ConfigurationError
 from eelbrain._experiment.derivative_cache import ProtectedArtifactError
+from eelbrain._experiment.exceptions import FileMissingError
 from eelbrain._experiment.pathing import LOG_DIR, ica_file_path
 from eelbrain._experiment.preprocessing import RawFilterElliptic, ica_input_name, raw_node_name
 from eelbrain._experiment.reports import _report_subject_info
@@ -1648,3 +1649,99 @@ def test_sample_eeg(samples_experiment):
     # average reference
     raw = e.load_raw(raw='av-ref')
     assert raw.info['custom_ref_applied'] == True
+
+
+@requires_mne_sample_data
+def test_load_trf(samples_experiment):
+    "load_trf, caching, and the separable TRFJob"
+    import pickle
+    from eelbrain import BoostingResult
+    from eelbrain._experiment.tests.sample_experiment import SampleTRF
+
+    set_log_level('warning', 'mne')
+    root = samples_experiment(n_subjects=1, n_segments=4)
+    e = SampleTRF(root)
+    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40')
+
+    # compute
+    res = e.load_trf('imp', 0, 0.1, data='sensor', make=True)
+    assert isinstance(res, BoostingResult)
+
+    # not computed without make
+    with pytest.raises(FileMissingError):
+        e.load_trf('imp', 0, 0.2, data='sensor')
+
+    # cache hit
+    options = e._trf_options('imp', 0., 0.1, 'boosting', 'sensor', None, None, False, {})
+    assert e._resolve_derivative('trf', options=options).is_valid()
+
+    # path
+    path = Path(e.load_trf('imp', 0, 0.1, data='sensor', path_only=True))
+    assert path.exists()
+
+    # separable, picklable job reproduces the result
+    job = e._trf_job('imp', 0, 0.1, data='sensor')
+    job = pickle.loads(pickle.dumps(job))
+    assert Path(job.path) == path
+    res2 = job.fit()
+    assert isinstance(res2, BoostingResult)
+
+
+@requires_mne_sample_data
+@pytest.mark.slow
+def test_load_trf_source(samples_experiment):
+    "load_trf in source space"
+    from eelbrain import BoostingResult
+    from eelbrain._experiment.tests.sample_experiment import SampleTRF
+
+    set_log_level('warning', 'mne')
+    root = samples_experiment(n_subjects=1, n_segments=4, mris=True)
+    e = SampleTRF(root)
+    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40', src='ico-2', parc='ac')
+    res = e.load_trf('imp', 0, 0.1, data='source', make=True)
+    assert isinstance(res, BoostingResult)
+    assert e._resolve_derivative('trf', options=e._trf_options('imp', 0., 0.1, 'boosting', 'source', None, None, False, {})).is_valid()
+
+
+@requires_mne_sample_data
+def test_load_trf_filepredictor(samples_experiment):
+    "load_trf with a FilePredictor: per-stimulus predictor dependency edges"
+    from eelbrain import BoostingResult, NDVar, UTS, save
+    from eelbrain._experiment.tests.sample_experiment import SampleTRF
+    from eelbrain._experiment.trf.model import TRFModelError
+
+    set_log_level('warning', 'mne')
+    root = samples_experiment(n_subjects=1, n_segments=4)
+    e = SampleTRF(root)
+    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40')
+
+    # match the predictor sampling to the data's natural (decimated) rate so the
+    # samplingrate is an integer ratio of the raw rate and needs no resampling
+    tstep = e.load_epochs(reject=False)['meg'].time.tstep
+    samplingrate = 1 / tstep
+
+    # write a predictor file per stimulus (one for each 'modality' cell)
+    pdir = Path(root) / 'derivatives' / 'predictors'
+    pdir.mkdir(parents=True, exist_ok=True)
+    uts = UTS(0, tstep, 60)
+    rng = np.random.RandomState(0)
+    for stim in ('auditory', 'visual'):
+        save.pickle(NDVar(rng.normal(size=60), uts, name='env'), pdir / f'{stim}~env.pickle')
+
+    # samplingrate is required for FilePredictor TRFs
+    with pytest.raises(TRFModelError):
+        e.load_trf('env', 0, 0.1, data='sensor', make=True)
+
+    # compute
+    res = e.load_trf('env', 0, 0.1, data='sensor', samplingrate=samplingrate, make=True)
+    assert isinstance(res, BoostingResult)
+
+    # the per-stimulus predictor edges are recorded in the manifest
+    options = e._trf_options('env', 0., 0.1, 'boosting', 'sensor', None, samplingrate, False, {})
+    ctx = e._resolve_derivative('trf', options=options)
+    assert ctx.is_valid()
+    assert {'auditory~env', 'visual~env'} <= set(ctx._manifest().dependencies)
+
+    # editing a predictor file invalidates the cached TRF
+    save.pickle(NDVar(rng.normal(size=60), uts, name='env'), pdir / 'auditory~env.pickle')
+    assert not e._resolve_derivative('trf', options=options).is_valid()

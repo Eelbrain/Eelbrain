@@ -72,5 +72,19 @@ class SampleExperiment(Pipeline):
     }
 
 
+class SampleTRF(SampleExperiment):
+    "SampleExperiment with TRF predictors, for testing load_trf"
+
+    predictors = {
+        'imp': EventPredictor(),
+        'env': FilePredictor(),
+    }
+    # the 'modality' event variable ('auditory'/'visual') identifies the stimulus
+    stim_var = 'modality'
+    estimators = {
+        'boosting': Boosting(partitions=5),
+    }
+
+
 if __name__ == '__main__':
     e = SampleExperiment("~/Data/SampleExperiment")

@@ -7,6 +7,6 @@ from ._experiment.epoch_rejection import ChannelModelRejection, EpochRejection, 
 from ._experiment.groups import Group, SubGroup
 from ._experiment.parc import SubParc, CombinationParc, FreeSurferParc, FSAverageParc, SeededParc, IndividualSeededParc
 from ._experiment.test_def import ANOVA, TTestOneSample, TTestIndependent, TTestRelated, TContrastRelated, ROITestResult
-from ._experiment.trf import FilePredictor
+from ._experiment.trf import Boosting, EventPredictor, FilePredictor, NCRF
 from ._experiment.two_stage import ROI2StageResult, TwoStageTest
 from ._experiment.variable_def import EvalVar, GroupVar, LabelVar

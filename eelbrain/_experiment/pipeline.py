@@ -68,7 +68,7 @@ from .source import (
     InverseSolution, MinimumNormInverseSolution, _drop_unknown_labels, _source_parc, eval_src,
 )
 from .test_def import Test, TestDims, guess_y, validate_tests
-from .trf import FilePredictor, PredictorInput
+from .trf import Boosting, Estimator, FilePredictor, Model, PredictorInput, TRFDerivative, TRFJob
 from .two_stage import TwoStageDataDerivative, TwoStageLevel1Derivative, TwoStageLevel2Derivative, TwoStageTest
 from .variable_def import Variables, apply_vardef, label_groups as label_groups_var
 
@@ -140,6 +140,15 @@ class Pipeline(StateModel):
     # predictors for TRF models, selected through the 'code' argument of
     # load_predictor (e.g. {'gammatone': FilePredictor(resample='bin')})
     predictors: dict[str, FilePredictor] = {}
+
+    # estimators for TRF fitting, selected through the 'estimator' argument of
+    # load_trf (e.g. {'ncrf': NCRF()}); 'boosting' (Boosting()) is always available
+    estimators: dict[str, Estimator] = {}
+    # named TRF models, for abbreviations in model strings passed to load_trf
+    models: dict[str, str] = {}
+    # events Dataset column(s) identifying the stimulus for FilePredictors; a
+    # single name, or a {key: column} mapping for multiple stimuli per event
+    stim_var: str | dict[str, str] = 'stimulus'
 
     # Rejection
     # =========
@@ -369,6 +378,23 @@ class Pipeline(StateModel):
         # tests
         validate_tests(self.tests)
 
+        # TRF: named models, estimators, stimulus variables
+        self._named_models: dict[str, Model] = {}
+        for name, value in self.models.items():
+            self._named_models[name] = Model.coerce(value).initialize(self._named_models)
+        estimators = {'boosting': Boosting(), **self.estimators}
+        for name, estimator in estimators.items():
+            if not isinstance(estimator, Estimator):
+                raise TypeError(f"estimators[{name!r}]={estimator!r}: need Estimator")
+            estimator._store_name(name)
+        self._estimators = estimators
+        if isinstance(self.stim_var, str):
+            self._stim_var = {'': self.stim_var}
+        elif isinstance(self.stim_var, dict):
+            self._stim_var = dict(self.stim_var)
+        else:
+            raise TypeError(f"{self.__class__.__name__}.stim_var={self.stim_var!r}")
+
         ########################################################################
         # Experiment class setup
         ########################
@@ -467,8 +493,9 @@ class Pipeline(StateModel):
         self._derivatives.register(RejectionInput(self.root, self._epoch_rejection, self._epochs))
         self._derivatives.register(ChannelModelRejectionDerivative(self._epochs, self._epoch_rejection))
 
-        # --- Predictors ---
+        # --- Predictors and TRFs ---
         self._derivatives.register(PredictorInput(self.root, self.predictors, self._raw))
+        self._derivatives.register(TRFDerivative(self.root, self._estimators, self.predictors, self._named_models, self._stim_var, self._raw))
 
         # --- Sensor-space: events → epochs → evoked ---
         self._derivatives.register(EventsInput(self._raw_extension))
@@ -1164,6 +1191,97 @@ class Pipeline(StateModel):
         if name is not None:
             x.name = name
         return x
+
+    def _trf_options(
+            self,
+            x: str,
+            tstart: float,
+            tstop: float,
+            estimator: str,
+            data: str | None,
+            mask: str | None,
+            samplingrate: int | None,
+            filter_x: bool | str,
+            state: dict[str, Any],
+    ) -> dict[str, Any]:
+        if state:
+            self.set(**state)
+        if mask is not None:
+            raise NotImplementedError(f"{mask=}: source-space masking is not implemented yet")
+        model = Model.coerce(x).initialize(self._named_models)
+        return {'x': model.name, 'tstart': float(tstart), 'tstop': float(tstop), 'estimator': estimator, 'data': data, 'mask': mask, 'samplingrate': samplingrate, 'filter_x': filter_x}
+
+    def load_trf(
+            self,
+            x: str,
+            tstart: float = 0.,
+            tstop: float = 0.5,
+            *,
+            estimator: str = 'boosting',
+            data: str = None,
+            mask: str = None,
+            samplingrate: int = None,
+            filter_x: bool | Literal['continuous'] = False,
+            make: bool = False,
+            path_only: bool = False,
+            **state,
+    ):
+        """Load (or compute) the TRF for a model and the current subject
+
+        Parameters
+        ----------
+        x
+            Model (e.g. ``'gammatone + word'``).
+        tstart
+            Start of the TRF in seconds.
+        tstop
+            Stop of the TRF in seconds.
+        estimator
+            Name of the estimator in :attr:`estimators` (default ``'boosting'``).
+            Estimator-specific parameters (``basis``, ``delta``, ``mu``, …) are
+            set on the :class:`~eelbrain._experiment.trf.Estimator` object.
+        data
+            Response data to fit: ``'sensor'``/``'meg'``/``'eeg'`` or
+            ``'source'``. The default (``None``) uses the estimator's default
+            (and must be left unset for NCRF, which uses sensor data internally).
+        mask
+            Parcellation to mask source-space data (not implemented yet).
+        samplingrate
+            Samplingrate in Hz for the analysis.
+        filter_x
+            Filter predictors like the M/EEG data (see :meth:`load_predictor`).
+        make
+            Compute and cache the TRF if it does not exist yet.
+        path_only
+            Return the path to the cache file instead of loading the TRF.
+        ...
+            State parameters.
+        """
+        options = self._trf_options(x, tstart, tstop, estimator, data, mask, samplingrate, filter_x, state)
+        ctx = self._resolve_derivative('trf', options=options)
+        if path_only:
+            return ctx.artifact_path
+        if not make and not ctx.is_valid():
+            raise FileMissingError(f"TRF for {x!r} has not been computed; set make=True to compute it")
+        return ctx.load()
+
+    def _trf_job(
+            self,
+            x: str,
+            tstart: float = 0.,
+            tstop: float = 0.5,
+            *,
+            estimator: str = 'boosting',
+            data: str = None,
+            mask: str = None,
+            samplingrate: int = None,
+            filter_x: bool | Literal['continuous'] = False,
+            **state,
+    ) -> TRFJob:
+        "Create a picklable :class:`TRFJob` for computing a TRF elsewhere"
+        options = self._trf_options(x, tstart, tstop, estimator, data, mask, samplingrate, filter_x, state)
+        ctx = self._resolve_derivative('trf', options=options)
+        return self._derivatives._get_node('trf').make_job(ctx, type(self))
 
     def load_evoked(
             self,
