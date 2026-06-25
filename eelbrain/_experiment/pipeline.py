@@ -68,6 +68,7 @@ from .source import (
     InverseSolution, MinimumNormInverseSolution, _drop_unknown_labels, _source_parc, eval_src,
 )
 from .test_def import Test, TestDims, guess_y, validate_tests
+from .trf import FilePredictor, PredictorInput
 from .two_stage import TwoStageDataDerivative, TwoStageLevel1Derivative, TwoStageLevel2Derivative, TwoStageTest
 from .variable_def import Variables, apply_vardef, label_groups as label_groups_var
 
@@ -135,6 +136,10 @@ class Pipeline(StateModel):
 
     # named epochs
     epochs: dict[str, EpochBase] = {}
+
+    # predictors for TRF models, selected through the 'code' argument of
+    # load_predictor (e.g. {'gammatone': FilePredictor(resample='bin')})
+    predictors: dict[str, FilePredictor] = {}
 
     # Rejection
     # =========
@@ -461,6 +466,9 @@ class Pipeline(StateModel):
         self._derivatives.register(BemInput())
         self._derivatives.register(RejectionInput(self.root, self._epoch_rejection, self._epochs))
         self._derivatives.register(ChannelModelRejectionDerivative(self._epochs, self._epoch_rejection))
+
+        # --- Predictors ---
+        self._derivatives.register(PredictorInput(self.root, self.predictors, self._raw))
 
         # --- Sensor-space: events → epochs → evoked ---
         self._derivatives.register(EventsInput(self._raw_extension))
@@ -1108,6 +1116,54 @@ class Pipeline(StateModel):
         if kwargs:
             self.set(**kwargs)
         return self._load_derivative('labeled-events')
+
+    def load_predictor(
+            self,
+            code: str,
+            tstep: float = 0.01,
+            n_samples: int = None,
+            tmin: float = None,
+            filter_x: bool | Literal['continuous'] = False,
+            name: str = None,
+            **state,
+    ) -> NDVar:
+        """Load a predictor as an :class:`NDVar`
+
+        Parameters
+        ----------
+        code
+            Code of the predictor to load, using the pattern
+            ``{stimulus}~{predictor}``. The ``predictor`` part selects a
+            definition in :attr:`predictors`; additional ``-`` delimited items
+            specify columns or a NUTS representation method (see
+            :class:`FilePredictor`).
+        tstep
+            Time-step for the predictor (for :class:`NDVar` predictors the
+            original ``tstep`` is used by default; for :class:`Dataset`
+            predictors ``tstep`` determines the sampling of the output).
+        n_samples
+            Number of samples in the predictor (the default returns all
+            available samples).
+        tmin
+            First sample time stamp (default is all available data).
+        filter_x
+            Filter the predictor with the same filters as the M/EEG data (i.e.
+            the :class:`RawFilter` pipes of the current ``raw`` pipeline).
+            ``True`` to filter all predictors; ``'continuous'`` to filter only
+            time-continuous predictors (those with ``sampling='continuous'``,
+            see :class:`FilePredictor`).
+        name
+            Reassign the name of the predictor :class:`NDVar`.
+        ...
+            State parameters.
+        """
+        if state:
+            self.set(**state)
+        options = {'code': code, 'tstep': tstep, 'n_samples': n_samples, 'tmin': tmin, 'filter_x': filter_x}
+        x = self._load_derivative('predictor', options=options)
+        if name is not None:
+            x.name = name
+        return x
 
     def load_evoked(
             self,

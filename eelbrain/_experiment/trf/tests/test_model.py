@@ -1,6 +1,36 @@
 import pytest
 
-from eelbrain._experiment.trf._model import TRFModelError, Model, ModelExpression, Comparison
+from eelbrain._experiment.trf.model import TRFModelError, Model, ModelExpression, Comparison, parse_term
+
+
+def test_term():
+    # plain term
+    term = parse_term('gammatone')
+    assert term.stimulus is None
+    assert term.code == 'gammatone'
+    assert term.key == 'gammatone'
+    assert term.nuts_method is None
+    assert term.nuts_file_name(False) == 'gammatone'
+
+    # stimulus + columns
+    term = parse_term('stim~word-frequency-noun')
+    assert term.stimulus == 'stim'
+    assert term.code == 'word-frequency-noun'
+    assert term.key == 'stim_word_frequency_noun'
+    assert term.nuts_method is None
+    assert term.nuts_columns == ('frequency', 'noun')
+    assert term.nuts_file_name(False) == 'stim~word-frequency-noun'
+    assert term.nuts_file_name(True) == 'stim~word'
+    assert term.with_stimulus('other').string == 'other~word-frequency-noun'
+
+    # NUTS method suffix
+    term = parse_term('stim~envelope-step')
+    assert term.nuts_method == 'step'
+    assert term.nuts_file_name(False) == 'stim~envelope'
+
+    # too many '-' separated elements (with columns)
+    with pytest.raises(TRFModelError):
+        parse_term('stim~word-a-b-c').nuts_columns
 
 
 models = {

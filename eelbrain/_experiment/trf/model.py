@@ -20,6 +20,7 @@ from ... import fmtxt
 
 COMP = {1: '>', 0: '=', -1: '<'}
 TAIL = {'>': 1, '=': 0, '<': -1}
+NUTS_METHODS = ('step', 'is')
 
 
 class TRFModelError(Exception):
@@ -36,6 +37,49 @@ class Term:
         if self.stimulus:
             return f"{self.stimulus}~{self.code}"
         return self.code
+
+    @cached_property
+    def key(self) -> str:
+        "Dataset-compatible key for the term"
+        return Dataset.as_key(self.string)
+
+    @cached_property
+    def _items(self) -> list[str]:
+        return self.code.split('-')
+
+    @cached_property
+    def nuts_method(self) -> str | None:
+        "NUTS representation method (the trailing ``-step``/``-is`` item, if any)"
+        if self._items[-1] in NUTS_METHODS:
+            return self._items[-1]
+
+    @cached_property
+    def nuts_columns(self) -> tuple[str | None, str | None]:
+        "``(value-column, mask-column)`` for a ``columns`` NUTS predictor"
+        n = len(self._items) - 1 - bool(self.nuts_method)
+        column = self._items[1] if n > 0 else None
+        if n <= 1:
+            mask = None
+        elif n == 2:
+            mask = self._items[2]
+        else:
+            raise TRFModelError(f"{self.string}: too many '-' separated elements")
+        return column, mask
+
+    def nuts_file_name(self, columns: bool) -> str:
+        "File name (without extension) of the predictor file backing this term"
+        if columns:
+            items = self._items[:1]
+        elif self.nuts_method:
+            items = self._items[:-1]
+        else:
+            items = self._items
+        code = '-'.join(items)
+        return f"{self.stimulus}~{code}" if self.stimulus else code
+
+    def with_stimulus(self, stimulus: str) -> Term:
+        "Copy of the term with a different stimulus"
+        return replace(self, stimulus=stimulus)
 
     @classmethod
     def _coerce(cls, x: Term | str):
@@ -423,7 +467,7 @@ name = Word(alphas + '_', alphanums + '_-')
 # term
 stimulus_prefix = name + Literal('~').suppress().leaveWhitespace()
 term = Optional(stimulus_prefix, '') + name
-term.addParseAction(lambda s, l, t: Term(*t))
+term.addParseAction(lambda s, l, t: Term(t[0] or None, t[1]))
 
 # model
 model = delimitedList(term, '+').addParseAction(lambda s, l, t: Model(tuple(t)))
