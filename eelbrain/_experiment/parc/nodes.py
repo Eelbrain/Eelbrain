@@ -20,11 +20,11 @@ from ...mne_fixes import write_labels_to_annot
 from ..._utils import subp
 from ..._utils.mne_utils import fix_annot_names, is_fake_mri
 from ..pathing import MRI_SDIR, annot_file_path, annot_stamp_path, label_dir, mri_dir
-from ..derivative_cache import Dependency, Derivative, Request, file_fingerprint
+from ..derivative_cache import Dependency, ExternalArtifactDerivative, Request, file_fingerprint
 from .config import Parcellation, FreeSurferParc, FSAverageParc, LabelParc, VolumeParc, _resolve_parc
 
 
-class AnnotDerivative(Derivative[list[mne.Label]]):
+class AnnotDerivative(ExternalArtifactDerivative[list[mne.Label]]):
     name = 'annot'
     key_fields = ('mrisubject', 'parc', 'common_brain')
 
@@ -148,25 +148,26 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
             fingerprint['labels'] = self.label_file_fingerprints(ctx, parc_def)
         return fingerprint
 
-    def build(self, ctx: Request) -> list[mne.Label]:
+    def build(self, ctx: Request) -> None:
         parc, parc_def = _resolve_parc(self.parcs, ctx.state['parc'])
         if parc_def is None or isinstance(parc_def, VolumeParc):
-            return []
+            return
         if not self.managed_annot(ctx.state, parc_def):
-            return self.annot_labels(ctx)
+            return  # annot files are externally managed; load() reads them
 
         mrisubject = ctx.state['mrisubject']
         common_brain = ctx.state['common_brain']
         fake_mri = is_fake_mri(ctx.root / mri_dir(ctx.state))
         if mrisubject != common_brain and (parc_def.morph_from_fsaverage or fake_mri):
+            # materialize the common-brain annotation through the dependency tree
+            # (its build writes the source .annot) rather than reading it off-disk
+            common_brain_labels = ctx.load('common-brain')
+            (ctx.root / label_dir(ctx.state)).mkdir(parents=True, exist_ok=True)
             if fake_mri:
-                for hemi in ('lh', 'rh'):
-                    src = ctx.root / annot_file_path({**ctx.state, 'mrisubject': common_brain}, hemi)
-                    dst = ctx.root / annot_file_path(ctx.state, hemi)
-                    dst.parent.mkdir(parents=True, exist_ok=True)
-                    dst.write_bytes(src.read_bytes())
+                # a scaled MRI shares the common brain's surface topology, so its
+                # labels can be written for this subject directly
+                write_labels_to_annot(common_brain_labels, mrisubject, parc, True, ctx.root / MRI_SDIR)
             else:
-                (ctx.root / label_dir(ctx.state)).mkdir(parents=True, exist_ok=True)
                 subjects_dir = ctx.root / MRI_SDIR
                 for hemi in ('lh', 'rh'):
                     cmd = [
@@ -179,21 +180,11 @@ class AnnotDerivative(Derivative[list[mne.Label]]):
                     ]
                     subp.run_freesurfer_command(cmd, subjects_dir)
                 fix_annot_names(mrisubject, parc, common_brain, subjects_dir=subjects_dir)
-            return self.annot_labels(ctx)
-
-        return self.make_parcellation(ctx, parc, parc_def)
+        else:
+            self.make_parcellation(ctx, parc, parc_def)
 
     def load(
             self,
             ctx: Request,
             path: Path) -> list[mne.Label]:
         return self.annot_labels(ctx)
-
-    def save(
-            self,
-            ctx: Request,
-            path: Path,
-            value: list[mne.Label],
-    ) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("annot\n")

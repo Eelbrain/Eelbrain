@@ -727,6 +727,45 @@ class UncachedDerivative(Derivative[T]):
         raise NotImplementedError(f"{type(self).__name__} is uncached; path() must not be called")
 
 
+class ExternalArtifactDerivative(Derivative[T]):
+    """Base class for derivatives whose artifact is materialized on disk by :meth:`build`.
+
+    Some derivatives wrap external tools (e.g. FreeSurfer) that write their
+    output directly into the conventional subjects-dir folder structure, and
+    have no independent in-memory form the cache could serialize and reload on
+    its own. For these nodes :meth:`build` is the writer: it runs the tools
+    (and/or writes the value) and returns the in-memory value, while
+    :meth:`load` re-reads the value from the real on-disk artifact. Unlike a
+    plain :class:`Derivative`, :meth:`save` does not write the real artifact.
+
+    Validity is tracked the normal way (manifest plus artifact existence), so
+    :meth:`path` must point at something whose existence means "materialized".
+    That anchor is either:
+
+    - the real artifact file itself, when it is a single pipeline-generated
+      file (e.g. a source space ``.fif``); or
+    - a small stamp inside ``cache-dir``, when the real output is multiple
+      files, or when a user-provided variant must stay a fingerprinted input
+      rather than this node's writable artifact (e.g. parcellation ``*.annot``
+      files, where anchoring on the user files outside ``cache-dir`` would route
+      them through :class:`ProtectedArtifactError`).
+
+    The :meth:`save` provided here materializes that stamp when, and only when,
+    the anchor lives in ``cache-dir``; when :meth:`path` is the real external
+    file, :meth:`build` already wrote it and there is nothing to do (writing
+    would clobber the real artifact). Subclasses implement :meth:`build` and
+    :meth:`load`.
+    """
+
+    def save(self, ctx: Request, path: Path, value: T) -> None:
+        # build() materialized the real artifact via external tools. When path()
+        # anchors on a cache-dir stamp, create it; when path() is the real
+        # external file, it already exists and there is nothing to write.
+        if ctx.registry.is_cache_artifact(path):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"{self.name}\n")
+
+
 class _RestrictedStateView(dict):
     """State view that enforces access only to declared key fields.
 

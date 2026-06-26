@@ -27,7 +27,7 @@ from scipy import sparse
 
 from ... import load
 from ..._data_obj import Dataset, Datalist, NDVar, combine
-from ..derivative_cache import CachePolicy, Dependency, Derivative, Request, Input, UncachedDerivative, file_fingerprint
+from ..derivative_cache import CachePolicy, Dependency, Derivative, ExternalArtifactDerivative, Request, Input, UncachedDerivative, file_fingerprint
 from ..pathing import (
     MRI_SDIR, bem_dir, bem_file_path, mri_dir, src_file_path, trans_file_path,
 )
@@ -143,7 +143,7 @@ class BemInput(Input):
         return mne.make_bem_model(subject, conductivity=(0.3,), subjects_dir=ctx.root / MRI_SDIR)
 
 
-class SrcDerivative(Derivative[mne.SourceSpaces]):
+class SrcDerivative(ExternalArtifactDerivative[mne.SourceSpaces]):
     name = 'src'
     key_fields = ('mrisubject', 'src', 'common_brain')
 
@@ -168,7 +168,7 @@ class SrcDerivative(Derivative[mne.SourceSpaces]):
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {'fake_mri': is_fake_mri(ctx.root / mri_dir(ctx.state))}
 
-    def build(self, ctx: Request) -> mne.SourceSpaces:
+    def build(self, ctx: Request) -> None:
         dst = self.path(ctx)
         dst.parent.mkdir(parents=True, exist_ok=True)
         subject = ctx.state['mrisubject']
@@ -178,7 +178,7 @@ class SrcDerivative(Derivative[mne.SourceSpaces]):
             ctx.load('common-brain-src')
             ctx.registry.log.info("Scaling %s source space for %s...", src, subject)
             mne.scale_source_space(subject, f'{{subject}}-{src}-src.fif', subjects_dir=ctx.root / MRI_SDIR, n_jobs=1)
-            return mne.read_source_spaces(dst)
+            return
 
         subjects_dir = ctx.root / MRI_SDIR
         kind, param, special = parse_src(src)
@@ -220,24 +220,18 @@ class SrcDerivative(Derivative[mne.SourceSpaces]):
             sss = merge_volume_source_space(sss, name)
             if special is None:
                 sss = restrict_volume_source_space(sss, grade, subjects_dir, subject, grow=1)
-            return prune_volume_source_space(sss, grade, 3, remove_midline=remove_midline, fill_holes=4)
+            sss = prune_volume_source_space(sss, grade, 3, remove_midline=remove_midline, fill_holes=4)
+        else:
+            spacing = kind + param
+            sss = mne.setup_source_space(subject, spacing=spacing, add_dist=True, subjects_dir=subjects_dir, n_jobs=1)
 
-        spacing = kind + param
-        return mne.setup_source_space(subject, spacing=spacing, add_dist=True, subjects_dir=subjects_dir, n_jobs=1)
+        mne.write_source_spaces(dst, sss, overwrite=True)
 
     def load(
             self,
             ctx: Request,
             path: Path) -> mne.SourceSpaces:
         return mne.read_source_spaces(path)
-
-    def save(
-            self,
-            ctx: Request,
-            path: Path,
-            value: mne.SourceSpaces,
-    ) -> None:
-        mne.write_source_spaces(path, value, overwrite=True)
 
 
 class SourceMorphDerivative(Derivative[mne.SourceMorph]):
