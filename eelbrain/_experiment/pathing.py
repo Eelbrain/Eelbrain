@@ -16,6 +16,7 @@ BIDS_ENTITY_PREFIX_MAP = {
     'run': 'run',
 }
 DERIV_DIR = Path('derivatives')
+BAD_CHANNELS_DIR = DERIV_DIR / 'eelbrain' / 'bad_channels'
 CACHE_DIR = DERIV_DIR / 'eelbrain' / 'cache'
 LOG_DIR = DERIV_DIR / 'eelbrain' / 'logs'
 RESULTS_DIR = DERIV_DIR / 'eelbrain' / 'results'

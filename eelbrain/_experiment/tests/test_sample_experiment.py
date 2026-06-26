@@ -645,9 +645,8 @@ def test_sample_tasks(samples_experiment):
     assert ica_handle.load(view='status') == 'missing-ica'
     e.set(raw='raw')
 
-    # automatically generate channels.tsv
-    bad_path = join(root, 'sub-R0000', 'meg', 'sub-R0000_task-sample1_channels.tsv')
-    remove(bad_path)
+    # bad channels are stored in derivatives, not in the BIDS source dataset
+    bad_path = join(root, 'derivatives', 'eelbrain', 'bad_channels', 'sub-R0000_task-sample1_channels.tsv')
     assert not exists(bad_path)
     e.make_bad_channels('MEG 0111')
     assert exists(bad_path)

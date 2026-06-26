@@ -36,7 +36,7 @@ from ..derivative_cache import (
 )
 from ..logging import find_difference, format_difference_path
 from ..exceptions import FileMissingError
-from ..pathing import bids_path
+from ..pathing import bids_path, BAD_CHANNELS_DIR
 from .config import (
     MNE_VERBOSITY, RawPipeGraph, RawSource, CachedRawPipe, RawICA, RawApplyICA, RawMaxwell,
     raw_node_name, raw_bad_channels_input_name, raw_input_name, ica_input_name,
@@ -49,7 +49,11 @@ COORD_SCALE = {'mm': 1e-3, 'cm': 1e-2, 'm': 1.0}
 
 
 class RawBadChannelsInput(Input[list[str]]):
-    """Access to source bad channel definitions from ``channels.tsv`` files."""
+    """Access to Pipeline-specific bad channel definitions.
+
+    User-specified bad channels are stored in an Eelbrain-specific  ``channels.tsv`` file under ``derivatives/eelbrain/bad_channels/``  rather than in the BIDS source dataset, so that re-downloading the dataset does not overwrite them.
+    The BIDS source ``channels.tsv`` is used as seed when the derivatives file is first written.
+    """
     OPTION_DEFAULTS = {'noise': False}
 
     def __init__(
@@ -65,20 +69,29 @@ class RawBadChannelsInput(Input[list[str]]):
         self.extension = extension
 
     def path(self, ctx: Request) -> Path:
-        """Path to the BIDS channels sidecar (.tsv) for this request."""
+        """Path to the Pipeline-specific bad-channels ``channels.tsv`` file."""
+        return ctx.root / BAD_CHANNELS_DIR / self._bids_path(ctx).name
+
+    def _bids_path(self, ctx: Request) -> Path:
+        """Path to the BIDS source ``channels.tsv`` sidecar for this request."""
         bpath = bids_path(ctx.root, ctx.state, self.extension)
         if ctx.options['noise']:
             bpath = bpath.find_empty_room()
         return Path(bpath.copy().update(suffix='channels', extension='.tsv').fpath)
 
+    def _active_path(self, ctx: Request) -> Path:
+        """The file ``load`` reads from: derivatives file if present, else BIDS source."""
+        path = self.path(ctx)
+        return path if path.exists() else self._bids_path(ctx)
+
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {'bads': self.load(ctx)}
 
     def dependency_fingerprint_quick(self, ctx: Request, view: str | None = None) -> dict[str, Any] | None:
-        return file_fingerprint(ctx.root, self.path(ctx), 'bads-file')
+        return file_fingerprint(ctx.root, self._active_path(ctx), 'bads-file')
 
     def load(self, ctx: Request) -> list[str]:
-        path = self.path(ctx)
+        path = self._active_path(ctx)
         if not path.exists():
             return []
         channels_df = pd.read_csv(path, sep='\t')
@@ -97,10 +110,13 @@ class RawBadChannelsInput(Input[list[str]]):
             *,
             create: bool = False,
     ) -> None:
-        """Write bad-channel status to the BIDS ``channels.tsv`` sidecar.
+        """Write bad-channel status to the Pipeline-specific ``channels.tsv`` file.
 
-        With ``create=True``, missing sidecar files are initialized from
-        ``raw`` before writing, so the resulting file contains one row for
+        Bad channels are written to ``derivatives/eelbrain/bad_channels/`` so
+        that the BIDS source dataset is never modified. With ``create=True``, a
+        missing file is initialized from the BIDS source ``channels.tsv`` (to
+        preserve any bad channels shipped with the dataset), or from ``raw`` if
+        no source sidecar exists, so the resulting file contains one row for
         every channel in the recording.
         Channel names in ``new_bads`` are normalized against the raw file using
         the associated :class:`RawSource`. By default, new bad channels are
@@ -120,8 +136,7 @@ class RawBadChannelsInput(Input[list[str]]):
         redo
             Replace existing bad-channel markings instead of adding to them.
         create
-            Create a missing ``channels.tsv`` sidecar from ``raw`` before
-            writing.
+            Create a missing ``channels.tsv`` file before writing.
         """
         path = self.path(ctx)
         if path.exists():
@@ -132,10 +147,19 @@ class RawBadChannelsInput(Input[list[str]]):
                 channels_df['status'] = 'good'
             created = False
         elif create:
-            LOG.info("No channels.tsv found at %s, creating an empty one.", path)
+            source_path = self._bids_path(ctx)
+            if source_path.exists():
+                LOG.info("No bad-channels file found at %s, seeding from BIDS source %s.", path, source_path)
+                channels_df = pd.read_csv(source_path, sep='\t')
+                if 'name' not in channels_df.columns:
+                    raise RuntimeError(f"channels.tsv file at {source_path} is missing required column 'name'.")
+                if 'status' not in channels_df.columns:
+                    channels_df['status'] = 'good'
+            else:
+                LOG.info("No bad-channels file found at %s, creating one from raw.", path)
+                ch_status = ['bad' if ch in raw.info['bads'] else 'good' for ch in raw.ch_names]
+                channels_df = pd.DataFrame({'name': raw.ch_names, 'status': ch_status})
             path.parent.mkdir(parents=True, exist_ok=True)
-            ch_status = ['bad' if ch in raw.info['bads'] else 'good' for ch in raw.ch_names]
-            channels_df = pd.DataFrame({'name': raw.ch_names, 'status': ch_status})
             created = True
         else:
             raise FileMissingError(f"Bad channels file does not exist at {path}")
