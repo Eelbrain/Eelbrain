@@ -25,7 +25,7 @@ jobs:
         shell: bash -el {0}
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - if: matrix.os == 'ubuntu-latest'
       name: Install dependencies
       run: |
@@ -51,7 +51,7 @@ jobs:
     - name: Build eelbrain
       run: pip install --no-deps -e .
     - name: Cache MNE datasets
-      uses: actions/cache@v5
+      uses: actions/cache@v5.0.5
       with:
         path: ~/mne_data
         key: mne-data
@@ -67,6 +67,6 @@ jobs:
       run: |
         pytest eelbrain --cov --cov-branch --cov-report=xml -v -rfEXs --durations=15
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v6
+      uses: codecov/codecov-action@v7
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
