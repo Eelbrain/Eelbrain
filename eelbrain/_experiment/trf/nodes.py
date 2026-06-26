@@ -201,11 +201,7 @@ class TRFDerivative(Derivative[object]):
         return key
 
     def fingerprint(self, ctx: Request) -> dict[str, object]:
-        model = self._model(ctx)
-        # predictor definitions: covers EventPredictor (which has no dependency
-        # edge) and is harmless redundancy for FilePredictor (tracked via edges)
-        predictors = {term.string: self._term_predictor(term)[0] for term in model.terms}
-        return {'model': model.name, 'estimator': self._estimator(ctx), 'predictors': predictors}
+        return {'estimator': self._estimator(ctx)}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         est = self._estimator(ctx)
