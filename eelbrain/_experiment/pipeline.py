@@ -68,7 +68,8 @@ from .source import (
     InverseSolution, MinimumNormInverseSolution, _drop_unknown_labels, _source_parc, eval_src,
 )
 from .test_def import Test, TestDims, guess_y, validate_tests
-from .trf import Boosting, Estimator, FilePredictor, Model, PredictorInput, TRFDerivative, TRFJob
+from .trf import Boosting, Estimator, FilePredictor, Model, PredictorInput, TRFDerivative, TRFJob, filter_predictor
+from .trf.model import TRFModelError, parse_term
 from .two_stage import TwoStageDataDerivative, TwoStageLevel1Derivative, TwoStageLevel2Derivative, TwoStageTest
 from .variable_def import Variables, apply_vardef, label_groups as label_groups_var
 
@@ -148,7 +149,7 @@ class Pipeline(StateModel):
     models: dict[str, str] = {}
     # events Dataset column(s) identifying the stimulus for FilePredictors; a
     # single name, or a {key: column} mapping for multiple stimuli per event
-    stim_var: str | dict[str, str] = 'stimulus'
+    stim_var: str = 'stimulus'
 
     # Rejection
     # =========
@@ -388,11 +389,7 @@ class Pipeline(StateModel):
                 raise TypeError(f"estimators[{name!r}]={estimator!r}: need Estimator")
             estimator._store_name(name)
         self._estimators = estimators
-        if isinstance(self.stim_var, str):
-            self._stim_var = {'': self.stim_var}
-        elif isinstance(self.stim_var, dict):
-            self._stim_var = dict(self.stim_var)
-        else:
+        if not isinstance(self.stim_var, str):
             raise TypeError(f"{self.__class__.__name__}.stim_var={self.stim_var!r}")
 
         ########################################################################
@@ -494,8 +491,8 @@ class Pipeline(StateModel):
         self._derivatives.register(ChannelModelRejectionDerivative(self._epochs, self._epoch_rejection))
 
         # --- Predictors and TRFs ---
-        self._derivatives.register(PredictorInput(self.root, self.predictors, self._raw))
-        self._derivatives.register(TRFDerivative(self.root, self._estimators, self.predictors, self._named_models, self._stim_var, self._raw))
+        self._derivatives.register(PredictorInput(self.root, self.predictors))
+        self._derivatives.register(TRFDerivative(self.root, self._estimators, self.predictors, self._named_models, self.stim_var, self._raw))
 
         # --- Sensor-space: events → epochs → evoked ---
         self._derivatives.register(EventsInput(self._raw_extension))
@@ -1154,7 +1151,12 @@ class Pipeline(StateModel):
             name: str = None,
             **state,
     ) -> NDVar:
-        """Load a predictor as an :class:`NDVar`
+        """Load a :class:`FilePredictor` as an :class:`NDVar`
+
+        Reads the predictor file's relevant data and shapes it into a predictor
+        on the requested time axis. Only :class:`FilePredictor` predictors can
+        be loaded directly; an :class:`EventPredictor` is generated from the
+        data and is only available through :meth:`load_trf`.
 
         Parameters
         ----------
@@ -1186,10 +1188,17 @@ class Pipeline(StateModel):
         """
         if state:
             self.set(**state)
-        options = {'code': code, 'tstep': tstep, 'n_samples': n_samples, 'tmin': tmin, 'filter_x': filter_x}
-        x = self._load_derivative('predictor', options=options)
-        if name is not None:
-            x.name = name
+        term = parse_term(code)
+        try:
+            predictor = self.predictors[term.predictor_key]
+        except KeyError:
+            raise TRFModelError(f"{term.string}: predictor {term.predictor_key!r} not defined")
+        if not isinstance(predictor, FilePredictor):
+            raise NotImplementedError(f"{term.string}: load_predictor only supports FilePredictor; load {type(predictor).__name__} through load_trf")
+        contents = self._load_derivative('predictor', options={'code': code})
+        x = predictor._generate(contents, tmin, tstep, n_samples, term)
+        x = filter_predictor(x, self._raw, self.get('raw'), filter_x)
+        x.name = term.string if name is None else name
         return x
 
     def _trf_options(

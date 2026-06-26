@@ -48,6 +48,10 @@ class Term:
         return self.code.split('-')
 
     @cached_property
+    def predictor_key(self) -> str:
+        return self._items[0]
+
+    @cached_property
     def nuts_method(self) -> str | None:
         """NUTS representation method (the trailing ``-step``/``-is`` item, if any)"""
         if self._items[-1] in NUTS_METHODS:

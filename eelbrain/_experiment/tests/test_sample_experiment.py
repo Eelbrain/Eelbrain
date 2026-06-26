@@ -1687,6 +1687,49 @@ def test_load_trf(samples_experiment):
 
 
 @requires_mne_sample_data
+def test_predictor_subset_fingerprint(samples_experiment):
+    "Editing an unused predictor-file column does not invalidate a cached TRF; editing a used one does"
+    import os
+    from eelbrain import BoostingResult, Dataset, Var, save
+    from eelbrain._experiment.tests.sample_experiment import SampleTRF
+
+    set_log_level('warning', 'mne')
+    root = samples_experiment(n_subjects=1, n_segments=4)
+    e = SampleTRF(root)
+    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40')
+    samplingrate = 1 / e.load_epochs(reject=False)['meg'].time.tstep
+
+    pdir = Path(root) / 'derivatives' / 'predictors'
+    pdir.mkdir(parents=True, exist_ok=True)
+    mtime = [1_700_000_000]
+
+    def write(stim, value, unused):
+        # a NUTS Dataset predictor with an extra column ('unused') the term ignores
+        ds = Dataset({'time': Var([0., .1, .2, .3, .4]), 'value': Var(value), 'unused': Var(unused)})
+        path = pdir / f'{stim}~env.pickle'
+        save.pickle(ds, path)
+        mtime[0] += 1  # ensure the quick (mtime) fingerprint changes between writes
+        os.utime(path, (mtime[0], mtime[0]))
+
+    ones = [1., 1., 1., 1., 1.]
+    for stim in ('auditory', 'visual'):
+        write(stim, ones, [0., 0., 0., 0., 0.])
+
+    res = e.load_trf('env', 0, 0.1, data='sensor', samplingrate=samplingrate, make=True)
+    assert isinstance(res, BoostingResult)
+    options = e._trf_options('env', 0., 0.1, 'boosting', 'sensor', None, samplingrate, False, {})
+    assert e._resolve_derivative('trf', options=options).is_valid()
+
+    # editing only the unused column (new mtime, same relevant data) keeps the TRF valid
+    write('auditory', ones, [9., 9., 9., 9., 9.])
+    assert e._resolve_derivative('trf', options=options).is_valid()
+
+    # editing a used column (value) invalidates the TRF
+    write('auditory', [2., 2., 2., 2., 2.], [9., 9., 9., 9., 9.])
+    assert not e._resolve_derivative('trf', options=options).is_valid()
+
+
+@requires_mne_sample_data
 @pytest.mark.slow
 def test_load_trf_source(samples_experiment):
     "load_trf in source space"
@@ -1731,15 +1774,25 @@ def test_load_trf_filepredictor(samples_experiment):
     with pytest.raises(TRFModelError):
         e.load_trf('env', 0, 0.1, data='sensor', make=True)
 
+    # load_predictor shapes one stimulus' file into an NDVar at the requested tstep
+    x = e.load_predictor('auditory~env', tstep)
+    assert isinstance(x, NDVar)
+    assert x.time.tstep == tstep
+    assert x.name == 'auditory~env'
+
     # compute
     res = e.load_trf('env', 0, 0.1, data='sensor', samplingrate=samplingrate, make=True)
     assert isinstance(res, BoostingResult)
 
-    # the per-stimulus predictor edges are recorded in the manifest
+    # the per-stimulus predictor file edges are recorded in the manifest
     options = e._trf_options('env', 0., 0.1, 'boosting', 'sensor', None, samplingrate, False, {})
     ctx = e._resolve_derivative('trf', options=options)
     assert ctx.is_valid()
     assert {'auditory~env', 'visual~env'} <= set(ctx._manifest().dependencies)
+
+    # editing a predictor file invalidates the cached TRF
+    save.pickle(NDVar(rng.normal(size=60), uts, name='env'), pdir / 'auditory~env.pickle')
+    assert not e._resolve_derivative('trf', options=options).is_valid()
 
     # editing a predictor file invalidates the cached TRF
     save.pickle(NDVar(rng.normal(size=60), uts, name='env'), pdir / 'auditory~env.pickle')

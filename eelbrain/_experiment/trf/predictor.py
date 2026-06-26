@@ -1,4 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+import hashlib
 from itertools import chain
 from pathlib import Path
 from typing import Literal
@@ -242,27 +243,61 @@ class FilePredictor(FilePredictorBase):
         self.columns = columns
         super().__init__(resample, sampling)
 
-    def _load(self, tstep: float, filename: str, directory: Path) -> NDVar:
-        path = directory / f'{filename}.pickle'
-        x = load.unpickle(path)
+    def _prepare(self, x: NDVar | Dataset | list, tstep: float) -> NDVar | Dataset:
+        "Select/resample the raw file contents (:class:`NDVar`/:class:`Dataset`/list) to ``tstep``"
         # allow for pre-computed resampled versions
         if isinstance(x, list):
-            xs = x
-            for x in xs:
-                if x.time.tstep == tstep:
-                    break
-            else:
-                raise OSError(f"Predictor file {path.name} is a list but does not contain a predictor with {tstep=}")
+            for xi in x:
+                if xi.time.tstep == tstep:
+                    return xi
+            raise OSError(f"Predictor file is a list but does not contain a predictor with {tstep=}")
         elif isinstance(x, NDVar):
-            x = self._resample(x, tstep)
-        elif not isinstance(x, Dataset):
-            raise TypeError(f'Predictor file {path.name} has invalid type {type(x)}:\n{x!r}')
-        return x
+            return self._resample(x, tstep)
+        elif isinstance(x, Dataset):
+            return x
+        raise TypeError(f'Predictor file has invalid type {type(x)}:\n{x!r}')
 
-    def _generate(self, tmin: float, tstep: float, n_samples: int, term: Term, directory: Path):
-        # predictor for one input file
-        file_name = term.nuts_file_name(self.columns)
-        x = self._load(tstep, file_name, directory)
+    def _relevant_columns(self, contents: Dataset, term: Term) -> tuple[str, str | None]:
+        "The ``(value-column, mask-column)`` of a NUTS :class:`Dataset` that feed ``term``"
+        if self.columns:
+            return term.nuts_columns
+        return 'value', ('mask' if 'mask' in contents else None)
+
+    def _relevant_data(self, contents: NDVar | Dataset | list, term: Term) -> NDVar | Dataset | list:
+        "The subset of the file contents that actually feeds the predictor"
+        if not isinstance(contents, Dataset):
+            return contents
+        column_key, mask_key = self._relevant_columns(contents, term)
+        keys = ['time']
+        for key in (column_key, mask_key):
+            if key is not None and key in contents:
+                keys.append(key)
+        out = contents[keys]
+        if 'tstop' in contents.info:
+            out.info['tstop'] = contents.info['tstop']
+        return out
+
+    def _relevant_digest(self, contents: NDVar | Dataset | list, term: Term) -> str:
+        "A stable digest of only the file data relevant to ``term`` (ignores unused columns)"
+        data = self._relevant_data(contents, term)
+        h = hashlib.sha1()
+        if isinstance(data, Dataset):
+            for key in sorted(data):
+                h.update(key.encode())
+                h.update(numpy.ascontiguousarray(data[key].x).tobytes())
+            h.update(repr(data.info.get('tstop')).encode())
+        else:
+            for x in (data if isinstance(data, list) else [data]):
+                h.update(numpy.ascontiguousarray(x.x).tobytes())
+                h.update(repr((x.time.tmin, x.time.tstep, x.time.nsamples)).encode())
+        return h.hexdigest()
+
+    def _load(self, tstep: float, filename: str, directory: Path) -> NDVar:
+        return self._prepare(load.unpickle(directory / f'{filename}.pickle'), tstep)
+
+    def _generate(self, x: NDVar | Dataset | list, tmin: float, tstep: float, n_samples: int, term: Term):
+        # build the predictor for one input file from its raw (unpickled) contents
+        x = self._prepare(x, tstep)
         if isinstance(x, Dataset):
             if tmin is None:
                 tmin = 0

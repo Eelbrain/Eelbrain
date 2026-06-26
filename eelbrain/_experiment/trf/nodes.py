@@ -14,8 +14,42 @@ from .model import Model, Term, TRFModelError, parse_term
 from .predictor import EventPredictor, FilePredictor, SessionPredictor
 
 
+def filter_pipes(raw: dict[str, RawPipe], raw_name: str) -> list[RawFilter]:
+    "The RawFilter pipes for ``raw_name``, ordered from source to output"
+    pipe = raw[raw_name]
+    pipes = []
+    while not isinstance(pipe, RawSource):
+        if isinstance(pipe, RawFilter):
+            pipes.append(pipe)
+        pipe = raw[pipe.source]
+    pipes.reverse()
+    return pipes
+
+
+def filter_predictor(x: NDVar, raw: dict[str, RawPipe], raw_name: str, filter_x: bool | str) -> NDVar:
+    "Filter a predictor with the current ``raw`` pipeline's :class:`RawFilter` pipes when requested"
+    if isinstance(filter_x, str):
+        if filter_x == 'continuous':
+            filter_x = x.info['sampling'] == 'continuous'
+        else:
+            raise ValueError(f"{filter_x=}")
+    if filter_x:
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', 'filter_length ', RuntimeWarning)
+            for pipe in filter_pipes(raw, raw_name):
+                x = pipe._filter_ndvar(x, pad='edge')
+    return x
+
+
 class PredictorInput(Input[NDVar]):
-    """Materialize a predictor :class:`NDVar` from its source file
+    """Read the relevant data of a single predictor file
+
+    Reads one ``{stimulus}~{code}.pickle`` file of a :class:`FilePredictor` and
+    returns the subset of its contents that actually feeds the predictor (for a
+    NUTS :class:`Dataset`, only the ``time`` and value/mask columns; an
+    :class:`NDVar`/list is returned unchanged). Shaping that data into a
+    predictor on the M/EEG time axis (resampling, NUTS conversion, padding) is
+    done by :class:`TRFDerivative`, which knows the response sampling rate.
 
     Parameters
     ----------
@@ -23,49 +57,29 @@ class PredictorInput(Input[NDVar]):
         Experiment root directory.
     predictors
         Mapping of predictor key to predictor definition (the
-        :attr:`Pipeline.predictors` attribute).
-    raw
-        Mapping of raw pipeline definitions (the assembled ``Pipeline._raw``),
-        used to filter predictors when ``filter_x`` is requested.
+        :attr:`Pipeline.predictors` attribute), used to resolve the file name
+        and the relevant columns.
     """
     name = 'predictor'
     OPTION_DEFAULTS = {
         'code': None,
-        'tstep': None,
-        'tmin': None,
-        'n_samples': None,
-        'filter_x': False,
     }
 
     def __init__(
             self,
             root: str | Path,
             predictors: dict[str, FilePredictor],
-            raw: dict[str, RawPipe],
     ):
         self.root = Path(root)
         self.predictors = predictors
-        self.raw = raw
         self.directory = self.root / 'derivatives' / 'predictors'
-
-    def _filter_pipes(self, raw_name: str) -> list[RawFilter]:
-        "The RawFilter pipes for ``raw_name``, ordered from source to output"
-        pipe = self.raw[raw_name]
-        pipes = []
-        while not isinstance(pipe, RawSource):
-            if isinstance(pipe, RawFilter):
-                pipes.append(pipe)
-            pipe = self.raw[pipe.source]
-        pipes.reverse()
-        return pipes
 
     def _resolve(self, ctx: Request) -> tuple[Term, FilePredictor]:
         term = parse_term(ctx.options['code'])
-        key = term.code.split('-')[0]
         try:
-            predictor = self.predictors[key]
+            predictor = self.predictors[term.predictor_key]
         except KeyError:
-            raise TRFModelError(f"{term.string}: predictor {key!r} not defined")
+            raise TRFModelError(f"{term.string}: predictor {term.predictor_key!r} not defined")
         if not isinstance(predictor, FilePredictor):
             raise NotImplementedError(f"{term.string}: loading {type(predictor).__name__} is not supported")
         return term, predictor
@@ -74,34 +88,17 @@ class PredictorInput(Input[NDVar]):
         term, predictor = self._resolve(ctx)
         return self.directory / f"{term.nuts_file_name(predictor.columns)}.pickle"
 
-    def fingerprint(self, ctx: Request) -> dict:
+    def dependency_fingerprint_quick(self, ctx: Request, view: str | None = None) -> dict:
         term, predictor = self._resolve(ctx)
-        fp = {
-            'file': file_fingerprint(self.root, self.path(ctx), 'predictor-file'),
-            'config': predictor,
-        }
-        if ctx.options['filter_x']:
-            raw_name = ctx.state['raw']
-            fp['raw'] = self._filter_pipes(raw_name)
-        return fp
+        return {'file': file_fingerprint(self.root, self.path(ctx), 'predictor-file'), 'config': predictor}
 
-    def load(self, ctx: Request) -> NDVar:
+    def fingerprint(self, ctx: Request) -> dict:
+        return {'data': self.load(ctx)}
+
+    def load(self, ctx: Request):
         term, predictor = self._resolve(ctx)
-        options = ctx.options
-        x = predictor._generate(options['tmin'], options['tstep'], options['n_samples'], term, self.directory)
-        filter_x = options['filter_x']
-        if isinstance(filter_x, str):
-            if filter_x == 'continuous':
-                filter_x = x.info['sampling'] == 'continuous'
-            else:
-                raise ValueError(f"{filter_x=}")
-        if filter_x:
-            with warnings.catch_warnings():
-                warnings.filterwarnings('ignore', 'filter_length ', RuntimeWarning)
-                for pipe in self._filter_pipes(ctx.state['raw']):
-                    x = pipe._filter_ndvar(x, pad='edge')
-        x.name = term.string
-        return x
+        contents = load.unpickle(self.path(ctx))
+        return predictor._relevant_data(contents, term)
 
 
 # Response NDVar keys in the loaded Dataset, ordered by preference
@@ -139,6 +136,7 @@ class TRFDerivative(Derivative[object]):
         'data': None,
         'mask': None,
         'samplingrate': None,
+        'decim': None,
         'filter_x': False,
     }
 
@@ -148,7 +146,7 @@ class TRFDerivative(Derivative[object]):
             estimators: dict[str, Estimator],
             predictors: dict[str, FilePredictor],
             named_models: dict[str, Model],
-            stim_var: dict[str, str],
+            stim_var: str,
             raw: dict[str, RawPipe],
     ):
         self.root = Path(root)
@@ -157,7 +155,6 @@ class TRFDerivative(Derivative[object]):
         self.named_models = named_models
         self.stim_var = stim_var
         self.raw = raw
-        self.directory = self.root / 'derivatives' / 'predictors'
 
     def _estimator(self, ctx: Request) -> Estimator:
         name = ctx.options['estimator']
@@ -171,18 +168,11 @@ class TRFDerivative(Derivative[object]):
 
     def _term_predictor(self, term: Term) -> tuple[Configuration, str]:
         """The ``(predictor_definition, stimulus_column)`` for a model term"""
-        key = term.code.split('-')[0]
         try:
-            predictor = self.predictors[key]
+            predictor = self.predictors[term.predictor_key]
         except KeyError:
-            raise TRFModelError(f"{term.string}: predictor {key!r} not defined")
-        stim = term.stimulus
-        if stim is None:
-            stim_var = self.stim_var['']
-        elif stim in self.stim_var:
-            stim_var = self.stim_var[stim]
-        else:
-            stim_var = stim
+            raise TRFModelError(f"{term.string}: predictor {term.predictor_key!r} not defined")
+        stim_var = term.stimulus or self.stim_var
         return predictor, stim_var
 
     def key(self, ctx: Request) -> dict[str, object]:
@@ -206,36 +196,36 @@ class TRFDerivative(Derivative[object]):
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         est = self._estimator(ctx)
         data = est.resolve_data(ctx.options['data'])
-        samplingrate = ctx.options['samplingrate']
-        filter_x = ctx.options['filter_x']
-        deps = []
-        options = {'samplingrate': samplingrate}
-        if data in ('sensor', 'meg', 'eeg'):
-            if data in ('meg', 'eeg'):
-                options['data'] = data
-            deps.append(Dependency('epochs', label='response', options=options))
+
+        # M/EEG data
+        option_kwargs = {}
+        if data in ('meg', 'eeg'):
+            option_kwargs['data'] = data
+        if data in (None, 'sensor', 'meg', 'eeg'):
+            node = 'epochs'
         else:
-            deps.append(Dependency('epochs-stc', label='response', options=options))
+            node = 'epochs-stc'
+        options = ctx.options_for(node, 'samplingrate', 'decim', **option_kwargs)
+        deps = [Dependency(node, label='response', options=options)]
+
         for extra in est.extra_inputs:
             deps.append(Dependency(extra))
-        # one predictor edge per (FilePredictor term, stimulus); the stimuli are
-        # data-derived, so enumerate them from the (lightweight) epoch events
-        pred_state = {'raw': ctx.state['raw']} if filter_x else None
+
+        # one predictor-file edge per (FilePredictor term, stimulus); the stimuli
+        # are data-derived, so enumerate them from the (lightweight) epoch events
         edges: dict[str, Dependency] = {}
         events = None
         for term in self._model(ctx).terms:
             predictor, stim_var = self._term_predictor(term)
             if not isinstance(predictor, FilePredictor):
                 continue
-            if samplingrate is None:
-                raise TRFModelError(f"{term.string}: samplingrate must be specified for FilePredictor TRFs")
             if events is None:
                 events = ctx.registry.resolve('epoch-events', state=dict(ctx.state)).load()
             if stim_var not in events:
                 raise TRFModelError(f"{term.string}: stimulus variable {stim_var!r} not in the events")
             for stim in events[stim_var].cells:
                 code = term.with_stimulus(stim).string
-                edges[code] = Dependency('predictor', label=code, state=pred_state, options={'code': code, 'tstep': 1 / samplingrate, 'tmin': None, 'n_samples': None, 'filter_x': filter_x})
+                edges[code] = Dependency('predictor', label=code, options={'code': code})
         deps.extend(edges.values())
         return tuple(deps)
 
@@ -253,23 +243,23 @@ class TRFDerivative(Derivative[object]):
         else:
             raise RuntimeError(f"No response NDVar in loaded data (keys: {', '.join(ds.keys())})")
         y = ds[y_name]
-        xs = [self._load_predictor(ctx, ds, term, y, y_name) for term in model.terms]
+        xs = [self._load_predictor(ctx, ds, term, y) for term in model.terms]
         fwd = cov = None
         if 'fwd' in est.extra_inputs:
-            ctx.load('fwd')  # ensure built and tracked as a dependency
-            fwd_path = ctx.registry.resolve('fwd', state=dict(ctx.state)).artifact_path
-            fwd = load.mne.forward_operator(fwd_path, ctx.state['src'], self.root / MRI_SDIR, None, adjacency=False)
+            fwd = ctx.load('fwd')  # ensure built and tracked as a dependency
+            fwd = load.mne.forward_operator(fwd, ctx.state['src'], self.root / MRI_SDIR, None)
         if 'cov' in est.extra_inputs:
             cov = ctx.load('cov')
         return est._fit(y, xs, tstart, tstop, fwd=fwd, cov=cov)
 
-    def _load_predictor(self, ctx: Request, ds, term: Term, y, y_name: str) -> NDVar:
-        "Assemble one model term's predictor, aligned per case to the response"
+    def _load_predictor(self, ctx: Request, ds, term: Term, y) -> NDVar:
+        "Assemble one model term's predictor, shaped to the response time axis"
         predictor, stim_var = self._term_predictor(term)
         is_variable_time = isinstance(y, Datalist)
+        filter_x = ctx.options['filter_x']
 
         if isinstance(predictor, EventPredictor):
-            if ctx.options['filter_x']:
+            if filter_x:
                 raise ValueError(f"filter_x: not available for {type(predictor).__name__}")
             if is_variable_time:
                 raise NotImplementedError(f"{type(predictor).__name__} for variable-length epochs")
@@ -281,25 +271,25 @@ class TRFDerivative(Derivative[object]):
         if not isinstance(predictor, FilePredictor):
             raise NotImplementedError(f"{term.string}: loading {type(predictor).__name__} is not supported")
 
-        # FilePredictor: one declared predictor edge per stimulus (the full
-        # predictor at the analysis tstep), aligned per case to the response
+        # FilePredictor: build each stimulus' predictor from its file data at the
+        # response sampling rate, then align per case to the response
         if stim_var not in ds:
             raise TRFModelError(f"{term.string}: stimulus variable {stim_var!r} not in the data")
         stim_factor = ds[stim_var]
-
         if is_variable_time:
-            xs = [self._aligned_predictor(ctx, term, s, yi.time) for s, yi in zip(stim_factor, y)]
+            xs = [self._aligned_predictor(ctx, predictor, term, s, yi.time, filter_x) for s, yi in zip(stim_factor, y)]
             return Datalist(xs)
         time = y.time
-        cache = {s: self._aligned_predictor(ctx, term, s, time) for s in stim_factor.cells}
+        cache = {s: self._aligned_predictor(ctx, predictor, term, s, time, filter_x) for s in stim_factor.cells}
         x = combine([cache[s] for s in stim_factor])
         x.name = term.string
         return x
 
-    def _aligned_predictor(self, ctx: Request, term: Term, stim: str, time) -> NDVar:
-        "Load the declared predictor edge for one stimulus and align it to ``time``"
-        code = term.with_stimulus(stim).string
-        x = ctx.load(code)
+    def _aligned_predictor(self, ctx: Request, predictor: FilePredictor, term: Term, stim: str, time, filter_x: bool | str) -> NDVar:
+        "Build one stimulus' predictor from its file data and align it to ``time``"
+        subset = ctx.load(term.with_stimulus(stim).string)
+        x = predictor._generate(subset, None, time.tstep, None, term)
+        x = filter_predictor(x, self.raw, ctx.state['raw'], filter_x)
         x = pad(x, time.tmin, nsamples=time.nsamples, set_tmin=True)
         x.name = term.string
         return x
