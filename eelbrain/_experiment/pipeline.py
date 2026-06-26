@@ -23,7 +23,7 @@ from .. import load
 from .. import plot
 from .. import save
 from .._data_obj import CellArg, Datalist, Dataset, Factor, Var, NDVar, SourceSpace, VolumeSourceSpace, assert_is_legal_dataset_key, combine
-from .._exceptions import ConfigurationError, OldVersionError
+from .._exceptions import ConfigurationError, DimensionMismatchError, OldVersionError
 from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS
 from .._meeg import new_rejection_ds
 from .._mne import find_source_subject, label_from_annot
@@ -43,7 +43,7 @@ from .epochs import (
 )
 from .epoch_rejection import ChannelModelRejection, ChannelModelRejectionDerivative, EpochRejection, ManualRejection, RejectionInput
 from .events import EpochEventsDerivative, EventsDerivative, EventsInput, LabeledEventsDerivative, SelectedEventsDerivative
-from .exceptions import FileMissingError
+from .exceptions import FileMissingError, ICAChannelsChangedError
 from .logging import CACHE_EVENT_COLUMNS, StructuredFormatter
 from .state_model import StateModel
 from .groups import assemble_groups
@@ -2268,7 +2268,12 @@ class Pipeline(StateModel):
         source_pipe = self._raw.root_source_pipe(ica_name)
         sysname = source_pipe._get_sysname(info, subject, data_kind)
         adjacency = source_pipe._get_adjacency(data_kind)
-        frame = gui.select_components(path, display_data, sysname, adjacency, decim, debug, events=labeled_events)
+        try:
+            frame = gui.select_components(path, display_data, sysname, adjacency, decim, debug, events=labeled_events)
+        except DimensionMismatchError as error:
+            # The sensors no longer match those the ICA was estimated on, which
+            # in this context means the bad channels have changed.
+            raise ICAChannelsChangedError(path) from error
         return frame
 
     def make_bad_channels_selection(

@@ -14,7 +14,7 @@ from .._exceptions import ConfigurationError, DataError
 from .._experiment.derivative_cache import ProtectedArtifactError
 from .._experiment.epoch_rejection import ChannelModelRejection, ManualRejection
 from .._experiment.epochs import PrimaryEpoch
-from .._experiment.exceptions import FileMissingError
+from .._experiment.exceptions import FileMissingError, ICAChannelsChangedError
 from .._experiment.pathing import MRI_SDIR
 from .._experiment.preprocessing import RawICA, RawSource, ica_input_name, raw_bad_channels_input_name, raw_input_name
 from .._utils.mne_utils import is_fake_mri
@@ -343,6 +343,12 @@ class PipelineFrame(EelbrainFrame):
                 self._activate_item(idx, subject, task_type, task_key)
             except _USER_ERROR_TYPES as error:
                 self._show_user_error(*_user_error_dialog(error))
+            except ICAChannelsChangedError as error:
+                if self._ask_ica_channels_changed():
+                    Path(error.path).unlink()
+                    self._start_refresh()
+                else:
+                    wx.CallAfter(wx.GetApp().ExitMainLoop)
             except ProtectedArtifactError as error:
                 # A stale ICA dependency surfaced while building the requested
                 # artifact (e.g. make_epoch_rejection); route it through the
@@ -981,6 +987,22 @@ class PipelineFrame(EelbrainFrame):
         wx.CallAfter(run)
         ready.wait()
         return result[0]
+
+    def _ask_ica_channels_changed(self) -> bool:
+        """Prompt when bad channels changed since the ICA was created.
+
+        Returns ``True`` to delete the ICA, ``False`` to abort.
+        """
+        dlg = wx.MessageDialog(
+            self,
+            "Bad channels have changed since creating the ICA. Delete ICA or abort?",
+            "Bad channels changed",
+            wx.YES_NO | wx.ICON_WARNING,
+        )
+        dlg.SetYesNoLabels("Delete ICA", "Abort")
+        delete = dlg.ShowModal() == wx.ID_YES
+        dlg.Destroy()
+        return delete
 
     def _handle_stale_ica(self, combo: tuple, error: ProtectedArtifactError, choice: str | None, pipeline, raw_name: str) -> tuple:
         """Apply a stale-ICA ``choice`` during refresh, returning a table row tuple.
