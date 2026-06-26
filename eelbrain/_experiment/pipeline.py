@@ -35,7 +35,7 @@ from .._utils import ask, subp, keydefaultdict, log_level, ScreenHandler
 from .._utils.mne_utils import is_fake_mri
 from .covariance import CovDerivative, EpochCovariance, RawCovariance
 from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, DerivativeRegistry, ProtectedArtifactError, Request
-from .configuration import sequence_arg
+from .configuration import ConfigurationDict, sequence_arg
 from .epochs import (
     EpochBase, EpochsDerivative, RecordingEpochsDerivative,
     EvokedDerivative, EvokedGroupDatasetDerivative, PrimaryEpoch,
@@ -69,7 +69,7 @@ from .source import (
 )
 from .test_def import Test, TestDims, guess_y, validate_tests
 from .trf import Boosting, Estimator, FilePredictor, Model, PredictorInput, TRFDerivative, TRFJob, filter_predictor
-from .trf.model import TRFModelError, parse_term
+from .trf.model import parse_term
 from .two_stage import TwoStageDataDerivative, TwoStageLevel1Derivative, TwoStageLevel2Derivative, TwoStageTest
 from .variable_def import Variables, apply_vardef, label_groups as label_groups_var
 
@@ -321,7 +321,7 @@ class Pipeline(StateModel):
         # Experiment arguments
         ######################
         # groups
-        self._groups = assemble_groups(self.groups, set(self._subjects))
+        self._groups = ConfigurationDict('group', assemble_groups(self.groups, set(self._subjects)))
 
         # mri_subjects
         self._mri_subjects = self.mri_subjects.copy()
@@ -334,7 +334,7 @@ class Pipeline(StateModel):
         self._variables._check_trigger_vars()
 
         # epochs
-        self._epochs = assemble_epochs(self.epochs, self._tasks)
+        self._epochs = ConfigurationDict('epoch', assemble_epochs(self.epochs, self._tasks))
 
         # epoch rejection; 'manual' is always available, '' selects no rejection
         epoch_rejection: dict[str, EpochRejection | None] = {'': None, 'manual': ManualRejection()}
@@ -346,7 +346,7 @@ class Pipeline(StateModel):
             elif not isinstance(rejection, EpochRejection):
                 raise TypeError(f"epoch_rejection[{name!r}]={rejection!r}: need EpochRejection")
             epoch_rejection[name] = rejection
-        self._epoch_rejection = epoch_rejection
+        self._epoch_rejection = ConfigurationDict('epoch_rejection', epoch_rejection)
 
         # epoch re-referencing; 'average' is always available and user-overridable
         references = {'': None, 'average': Reference('average')}
@@ -363,7 +363,7 @@ class Pipeline(StateModel):
                 elif reference.drop:
                     raise ConfigurationError(f"references[{name!r}]={reference!r}: the standard average reference can not drop channels")
             references[name] = reference
-        self._references = references
+        self._references = ConfigurationDict('reference', references)
 
         # parcellations
         # make : can be made if non-existent
@@ -371,16 +371,17 @@ class Pipeline(StateModel):
         for name, parc in self.parcs.items():
             if not isinstance(parc, Parcellation):
                 raise TypeError(f"parcs[{name!r}]={parc!r}: need Parcellation")
-        self._parcs = {**self._default_parcs, **self.parcs}
+        self._parcs = ConfigurationDict('parcellation', {**self._default_parcs, **self.parcs})
         for name, parc in self._parcs.items():
             parc._store_name(name)
         parc_values = [*self._parcs.keys(), '']
 
         # tests
         validate_tests(self.tests)
+        self.tests = ConfigurationDict('test', self.tests)
 
-        # TRF: named models, estimators, stimulus variables
-        self._named_models: dict[str, Model] = {}
+        # TRF: named models, estimators, predictors, stimulus variables
+        self._named_models: dict[str, Model] = ConfigurationDict('model')
         for name, value in self.models.items():
             self._named_models[name] = Model.coerce(value).initialize(self._named_models)
         estimators = {'boosting': Boosting(), **self.estimators}
@@ -388,7 +389,8 @@ class Pipeline(StateModel):
             if not isinstance(estimator, Estimator):
                 raise TypeError(f"estimators[{name!r}]={estimator!r}: need Estimator")
             estimator._store_name(name)
-        self._estimators = estimators
+        self._estimators = ConfigurationDict('estimator', estimators)
+        self.predictors = ConfigurationDict('predictor', self.predictors)
         if not isinstance(self.stim_var, str):
             raise TypeError(f"{self.__class__.__name__}.stim_var={self.stim_var!r}")
 
@@ -521,6 +523,7 @@ class Pipeline(StateModel):
         self._derivatives.register(EvokedGroupDatasetDerivative(self._raw, self._groups))
 
         # --- Source-space infrastructure ---
+        self._covs = ConfigurationDict('covariance', self._covs)
         for cov_name, cov in self._covs.items():
             cov._store_name(cov_name)
         self._derivatives.register(CovDerivative(self._covs, self._raw, self._references))
@@ -1189,10 +1192,7 @@ class Pipeline(StateModel):
         if state:
             self.set(**state)
         term = parse_term(code)
-        try:
-            predictor = self.predictors[term.predictor_key]
-        except KeyError:
-            raise TRFModelError(f"{term.string}: predictor {term.predictor_key!r} not defined")
+        predictor = self.predictors[term.predictor_key]
         if not isinstance(predictor, FilePredictor):
             raise NotImplementedError(f"{term.string}: load_predictor only supports FilePredictor; load {type(predictor).__name__} through load_trf")
         contents = self._load_derivative('predictor', options={'code': code})

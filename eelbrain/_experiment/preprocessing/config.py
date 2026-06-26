@@ -29,7 +29,7 @@ from ..._ndvar import filter_data
 from ..._text import enumeration
 from ..._utils import user_activity
 from ..derivative_cache import Request
-from ..configuration import Configuration, sequence_arg, typed_arg
+from ..configuration import Configuration, ConfigurationDict, sequence_arg, typed_arg
 from ..exceptions import FileMissingError
 from ..pathing import ica_file_path
 
@@ -949,7 +949,7 @@ class RawPipeGraph(Mapping[str, RawPipe]):
             ica_names: dict[str, str | None],
             lineages: dict[str, tuple[str, ...]],
     ):
-        self._pipes = pipes
+        self._pipes = ConfigurationDict('raw pipe', pipes)
         self._source_names = source_names
         self._root_source_names = root_source_names
         self._ica_names = ica_names

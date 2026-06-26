@@ -4,7 +4,7 @@ import logging
 from typing import Any
 from collections.abc import Sequence
 
-from .._exceptions import ConfigurationError
+from .._exceptions import ConfigurationError, ConfigurationKeyError
 from .._text import enumeration, plural
 from .._utils.parse import find_variables
 
@@ -74,6 +74,29 @@ class Configuration:
 
     def __repr__(self):
         return f"{self.__class__.__name__}({', '.join(self._repr_args())})"
+
+
+class ConfigurationDict(dict):
+    """Mapping of names to configurations with informative missing-key errors.
+
+    Parameters
+    ----------
+    kind
+        Singular description of the configuration kind, used in the error
+        message when a key is missing (e.g. ``'predictor'``).
+    ...
+        Items, as for :class:`dict`.
+    """
+
+    def __init__(self, kind: str, *args, **kwargs):
+        self._kind = kind
+        super().__init__(*args, **kwargs)
+
+    def __missing__(self, key):
+        raise ConfigurationKeyError(key, self._kind, self)
+
+    def __reduce__(self):  # keep pickle / copy.deepcopy working with the custom __init__
+        return (self.__class__, (self._kind, dict(self)))
 
 
 # Names become components of cache/derivative file paths and of dependency-node

@@ -76,10 +76,7 @@ class PredictorInput(Input[NDVar]):
 
     def _resolve(self, ctx: Request) -> tuple[Term, FilePredictor]:
         term = parse_term(ctx.options['code'])
-        try:
-            predictor = self.predictors[term.predictor_key]
-        except KeyError:
-            raise TRFModelError(f"{term.string}: predictor {term.predictor_key!r} not defined")
+        predictor = self.predictors[term.predictor_key]
         if not isinstance(predictor, FilePredictor):
             raise NotImplementedError(f"{term.string}: loading {type(predictor).__name__} is not supported")
         return term, predictor
@@ -157,21 +154,14 @@ class TRFDerivative(Derivative[object]):
         self.raw = raw
 
     def _estimator(self, ctx: Request) -> Estimator:
-        name = ctx.options['estimator']
-        try:
-            return self.estimators[name]
-        except KeyError:
-            raise TRFModelError(f"estimator {name!r} not defined in Pipeline.estimators")
+        return self.estimators[ctx.options['estimator']]
 
     def _model(self, ctx: Request) -> Model:
         return Model.coerce(ctx.options['x']).initialize(self.named_models)
 
     def _term_predictor(self, term: Term) -> tuple[Configuration, str]:
         """The ``(predictor_definition, stimulus_column)`` for a model term"""
-        try:
-            predictor = self.predictors[term.predictor_key]
-        except KeyError:
-            raise TRFModelError(f"{term.string}: predictor {term.predictor_key!r} not defined")
+        predictor = self.predictors[term.predictor_key]
         stim_var = term.stimulus or self.stim_var
         return predictor, stim_var
 
