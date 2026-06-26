@@ -4,6 +4,7 @@ import warnings
 from ... import load, save
 from ..._data_obj import Datalist, NDVar, combine
 from ..._ndvar.uts import pad
+from ..configuration import Configuration
 from ..derivative_cache import Dependency, Derivative, Input, Request, canonical_state_subset, file_fingerprint
 from ..pathing import MRI_SDIR
 from ..preprocessing import RawFilter, RawPipe, RawSource
@@ -168,8 +169,8 @@ class TRFDerivative(Derivative[object]):
     def _model(self, ctx: Request) -> Model:
         return Model.coerce(ctx.options['x']).initialize(self.named_models)
 
-    def _term_predictor(self, term: Term):
-        "The ``(predictor_definition, stimulus_column)`` for a model term"
+    def _term_predictor(self, term: Term) -> tuple[Configuration, str]:
+        """The ``(predictor_definition, stimulus_column)`` for a model term"""
         key = term.code.split('-')[0]
         try:
             predictor = self.predictors[key]
@@ -196,6 +197,7 @@ class TRFDerivative(Derivative[object]):
             fields += ['cov', 'mrisubject', 'src']
         key = canonical_state_subset(ctx.state, tuple(fields))
         key.update(ctx.options)
+        key['x'] = self._model(ctx).name
         return key
 
     def fingerprint(self, ctx: Request) -> dict[str, object]:
