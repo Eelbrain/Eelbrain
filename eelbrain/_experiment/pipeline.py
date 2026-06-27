@@ -983,7 +983,10 @@ class Pipeline(StateModel):
             Override the epoch's ``tmax`` parameter as exclusive ``tstop``.
         interpolate_bads
             Interpolate channels marked as bad for the whole recording (useful
-            when comparing topographies across subjects; default False).
+            when comparing topographies across subjects; default ``False``).
+            ``True`` interpolates and includes those channels in the output;
+            ``'keep'`` interpolates but leaves the channels marked as bad (so they
+            remain excluded from NDVar output).
         ...
             Applicable :ref:`state-parameters`:
 

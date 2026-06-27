@@ -664,10 +664,9 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             view: str,
     ):
         if view == 'bads':
-            # Bad channels recorded on the ICA, or, before it has been computed,
-            # the (existence-filtered) source bad channels that the fit will use
-            if self.path(ctx).exists():
-                return sorted(self.load(ctx).info['bads'])
+            # The (existence-filtered) source bad channels that the fit uses. The ICA object
+            # itself cannot report them: channels bad at fit time are excluded from the
+            # decomposition, so they are absent from ica.info['bads'].
             return self._load_bad_channels(ctx)
         if view == 'status':
             if self.path(ctx).exists():

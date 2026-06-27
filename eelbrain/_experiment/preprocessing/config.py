@@ -520,10 +520,12 @@ class RawICA(CachedRawPipe):
     def _check_ica_channels(
             ica: mne.preprocessing.ICA,
             info: mne.Info,
-            return_missing: bool = False,  # if ICA is missing channels, return those (they can be dropped in data)
+            return_missing: bool = False,  # return channels present in the data but missing from the ICA
     ) -> bool | tuple:
         "Check whether `ica` and `info` contain the same channels"
-        picks = mne.pick_types(info, meg=True, eeg=True, ref_meg=False)
+        # Compare channel presence, not bad-status (exclude=[]): a currently-bad channel that
+        # is still in the data is not "missing" from the ICA.
+        picks = mne.pick_types(info, meg=True, eeg=True, ref_meg=False, exclude=[])
         raw_ch_names = [info.ch_names[i] for i in picks]
         if return_missing:
             raw_set = set(raw_ch_names)
@@ -567,7 +569,11 @@ class RawICA(CachedRawPipe):
         raw.info['bads'] = [ch for ch in bad_channels if ch in raw.ch_names]
         missing = self._check_ica_channels(ica, raw.info, return_missing=True)
         if missing:
-            raw.drop_channels(missing)
+            # Channels excluded from the ICA fit (e.g. bad at fit time) are not in
+            # ica.ch_names. Keep them in the data marked as bad — ica.apply leaves them
+            # untouched and they remain available for downstream interpolation — rather than
+            # dropping them outright.
+            raw.info['bads'] = sorted(set(raw.info['bads']).union(missing))
         ica.apply(raw)
         return raw
 

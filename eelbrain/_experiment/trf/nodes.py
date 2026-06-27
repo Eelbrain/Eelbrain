@@ -197,6 +197,7 @@ class TRFDerivative(Derivative[object]):
             option_kwargs['data'] = data
         if data in (None, 'sensor', 'meg', 'eeg'):
             node = 'epochs'
+            option_kwargs['interpolate_bads'] = est.interpolate_bads
         else:
             node = 'epochs-stc'
         options = ctx.options_for(node, 'samplingrate', 'decim', **option_kwargs)

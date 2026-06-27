@@ -797,6 +797,93 @@ def test_epoch_reference(samples_experiment):
     e_meg.load_epochs(reference='')
 
 
+@requires_mne_sample_data
+def test_interpolate_bads(samples_experiment):
+    "load_epochs interpolate_bads False / 'keep' / True semantics"
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    root = samples_experiment(1, 1, pick='mag')
+    bad = 'MEG 0111'
+    e = SampleExperiment(root)
+    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='raw')
+    e.make_bad_channels(bad)
+
+    epo_false = e.load_epochs(ndvar=False, interpolate_bads=False)['epochs']
+    epo_keep = e.load_epochs(ndvar=False, interpolate_bads='keep')['epochs']
+    epo_true = e.load_epochs(ndvar=False, interpolate_bads=True)['epochs']
+
+    # the bad channel stays marked for False/'keep' and is reset for True
+    assert epo_false.info['bads'] == [bad]
+    assert epo_keep.info['bads'] == [bad]
+    assert epo_true.info['bads'] == []
+
+    # 'keep' interpolates the data (changed vs False); True yields the same data as 'keep',
+    # differing only by the bad-channel marker (so it can share the cached artifact)
+    i = epo_false.ch_names.index(bad)
+    data_false = epo_false.get_data()[:, i]
+    data_keep = epo_keep.get_data()[:, i]
+    data_true = epo_true.get_data()[:, i]
+    assert not np.array_equal(data_false, data_keep)
+    assert_array_equal(data_true, data_keep)
+
+    # the interpolated channel is included in NDVar output only for True
+    assert bad not in e.load_epochs(interpolate_bads=False)['meg'].sensor.names
+    assert bad not in e.load_epochs(interpolate_bads='keep')['meg'].sensor.names
+    assert bad in e.load_epochs(interpolate_bads=True)['meg'].sensor.names
+
+    # when caching epochs, True and 'keep' share one artifact (the reset is a view op),
+    # while False is a separate, non-interpolated artifact
+    class CachedExperiment(SampleExperiment):
+        cache_epochs = True
+
+    ec = CachedExperiment(root)
+    ec.set(subject='R0000', epoch='target', epoch_rejection='', raw='raw')
+
+    def epochs_path(interpolate_bads):
+        options = {'baseline': False, 'reject': True, 'samplingrate': None, 'decim': None, 'pad': 0, 'tmin': None, 'tmax': None, 'tstop': None, 'ndvar': False, 'data': 'sensor', 'interpolate_bads': interpolate_bads}
+        return ec._resolve_derivative('epochs', options=options).artifact_path
+
+    assert epochs_path(True) == epochs_path('keep')
+    assert epochs_path(False) != epochs_path('keep')
+
+
+@requires_mne_sample_data
+def test_interpolate_bads_after_ica(samples_experiment):
+    "A channel bad at ICA-fit time is preserved (not dropped) for downstream interpolation"
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    root = samples_experiment(1, 1, pick='')  # keep EEG channels
+
+    class Experiment(SampleExperiment):
+        raw = {
+            **SampleExperiment.raw,
+            'ica': RawICA('tsss', 'sample', method='fastica', n_components=0.95, fit_kwargs={'reject': None}),
+        }
+
+    e = Experiment(root)
+    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='ica')
+    bad = 'EEG 003'
+    e.make_bad_channels(bad)  # bad before fit -> excluded from the ICA decomposition
+    with catch_warnings():
+        filterwarnings('ignore', "FastICA did not converge", UserWarning)
+        e.make_ica()
+
+    # the channel is excluded from the ICA, so it is absent from ica.info['bads']
+    assert bad not in e.load_ica().ch_names
+
+    # the post-ICA raw still contains the bad channel (kept marked, not dropped)
+    raw = e.load_raw()
+    assert bad in raw.ch_names
+    assert bad in raw.info['bads']
+
+    # interpolation works just as without ICA: included for True, excluded otherwise
+    assert bad in e.load_epochs(interpolate_bads=True)['eeg'].sensor.names
+    assert bad not in e.load_epochs(interpolate_bads='keep')['eeg'].sensor.names
+    assert bad not in e.load_epochs(interpolate_bads=False)['eeg'].sensor.names
+
+
 def test_variable_length_epochs(samples_experiment):
     "load_epochs for variable-length (variable-tmax) epochs returns per-epoch NDVars"
     set_log_level('warning', 'mne')

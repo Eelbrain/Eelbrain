@@ -51,6 +51,11 @@ class Estimator(Configuration):
         """
         return self.default_data if data is None else data
 
+    @property
+    def interpolate_bads(self) -> bool:
+        "Whether bad channels should be interpolated when loading sensor-space epochs"
+        return False
+
     def _result_metrics(self, result) -> dict[str, NDVar | float]:
         """Fit-quality metrics for one result, keyed by output-Dataset column.
 
@@ -199,6 +204,12 @@ class Boosting(Estimator):
         self.cv = cv
         self.partition_results = partition_results
         self.backward = backward
+
+    @property
+    def interpolate_bads(self) -> bool:
+        # A forward model predicts the sensor response, so bad channels must be interpolated to
+        # a consistent set; a backward model predicts the stimulus and uses the channels as-is.
+        return not self.backward
 
     def _fit(self, y, xs, tstart, tstop, *, fwd=None, cov=None):
         partitions = self.partitions

@@ -142,7 +142,10 @@ class RecordingEpochsDerivative(Derivative[Any]):
     tmin, tmax, tstop
         Time window overrides.
     interpolate_bads
-        Whether to interpolate bad channels while building epochs.
+        Whether to interpolate bad channels while building epochs. ``False`` to
+        skip interpolation; ``'keep'`` (or ``True``) to interpolate while leaving
+        the channels marked as bad. The ``interpolate_bads=True`` bad-channel
+        reset is applied above this node, in :class:`EpochsDerivative`.
     reject
         Whether to apply per-epoch rejection state.
     """
@@ -227,6 +230,10 @@ class RecordingEpochsDerivative(Derivative[Any]):
             epoch_value = epochs
             epochs_list = [epoch_value]
 
+        # Interpolation happens here (rather than in the aggregating EpochsDerivative) because
+        # it must precede the EEG re-referencing below. Bad channels are always kept marked
+        # (the 'keep' representation): interpolate_bads=True and 'keep' produce the same data,
+        # and the True bad-channel reset is applied as a view operation in EpochsDerivative.
         if ctx.options['interpolate_bads']:
             _drop_bad_eeg_channels_with_missing_locs(epochs_list)
             data_types = TestDims.coerce('sensor').data_to_ndvar(epochs_list[0].info)
@@ -354,6 +361,11 @@ class EpochsDerivative(Derivative[Any]):
             )
         runs = self._find_runs(ctx, epoch)
         rec_options = ctx.options_for('recording-epochs', *self.OPTION_DEFAULTS)
+        # recording-epochs always store the interpolated-but-marked ('keep') data; the
+        # interpolate_bads=True bad-channel reset is applied as a view operation (see
+        # apply_view_options), so True and 'keep' share one cached recording-epochs artifact.
+        if rec_options['interpolate_bads'] is True:
+            rec_options['interpolate_bads'] = 'keep'
         sel_options = ctx.options_for('epoch-events', 'reject', *EPOCH_EXTRACT_OPTIONS)
         state = {'task': epoch.task}
         if runs:
@@ -383,6 +395,16 @@ class EpochsDerivative(Derivative[Any]):
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {'epoch': self.epochs[ctx.state['epoch']]}
+
+    def key(self, ctx: Request) -> dict[str, Any]:
+        # interpolate_bads=True and 'keep' produce identical cached epoch data (they differ
+        # only in info['bads'], which is reset as a view operation), so collapse them onto a
+        # single artifact.
+        key = super().key(ctx)
+        options = key.get('options')
+        if options and options.get('interpolate_bads') is True:
+            key['options'] = {**options, 'interpolate_bads': 'keep'}
+        return key
 
     def build(self, ctx: Request):
         epoch = self.epochs[ctx.state['epoch']]
@@ -437,6 +459,12 @@ class EpochsDerivative(Derivative[Any]):
         # Flatten to a list of MNE Epochs (variable-length epochs are stored as
         # single-trial Epochs and can be nested when aggregating across runs).
         epochs_list = _flatten_epochs(epoch_value)
+        # interpolate_bads=True: the cached epochs hold the interpolated data with the
+        # recording's bad channels still marked (the 'keep' representation); drop the bad
+        # markers so the interpolated channels are kept in the output.
+        if ctx.options['interpolate_bads'] is True:
+            for epochs in epochs_list:
+                epochs.info['bads'] = []
         # Variable-length epochs have differing numbers of samples and cannot be
         # concatenated into a single Epochs object.
         variable_tmax = len({epochs.times.size for epochs in epochs_list}) > 1
