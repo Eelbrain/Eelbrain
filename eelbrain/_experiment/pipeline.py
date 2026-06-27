@@ -37,9 +37,9 @@ from .covariance import CovDerivative, EpochCovariance, RawCovariance
 from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, DerivativeRegistry, ProtectedArtifactError, Request
 from .configuration import ConfigurationDict, sequence_arg
 from .epochs import (
-    EpochBase, EpochsDerivative, RecordingEpochsDerivative,
-    EvokedDerivative, EvokedGroupDatasetDerivative, PrimaryEpoch,
-    SecondaryEpoch, SuperEpoch, assemble_epochs, decim_param,
+    EpochBase, EpochsDerivative, RecordingEpochsDerivative, EvokedDerivative,
+    EvokedGroupDatasetDerivative, PrimaryEpoch, SecondaryEpoch,
+    SuperEpoch, assemble_epochs, decim_param,
 )
 from .epoch_rejection import ChannelModelRejection, ChannelModelRejectionDerivative, EpochRejection, ManualRejection, RejectionInput
 from .events import EpochEventsDerivative, EventsDerivative, EventsInput, LabeledEventsDerivative, SelectedEventsDerivative
@@ -68,7 +68,7 @@ from .source import (
     InverseSolution, MinimumNormInverseSolution, _drop_unknown_labels, _source_parc, eval_src,
 )
 from .test_def import Test, TestDims, guess_y, validate_tests
-from .trf import Boosting, Estimator, FilePredictor, Model, PredictorInput, TRFDerivative, TRFJob, filter_predictor
+from .trf import Boosting, Estimator, FilePredictor, Model, PredictorInput, TRFDatasetDerivative, TRFDerivative, TRFGroupDatasetDerivative, TRFJob, filter_predictor
 from .trf.model import parse_term
 from .two_stage import TwoStageDataDerivative, TwoStageLevel1Derivative, TwoStageLevel2Derivative, TwoStageTest
 from .variable_def import Variables, apply_vardef, label_groups as label_groups_var
@@ -495,6 +495,8 @@ class Pipeline(StateModel):
         # --- Predictors and TRFs ---
         self._derivatives.register(PredictorInput(self.root, self.predictors))
         self._derivatives.register(TRFDerivative(self.root, self._estimators, self.predictors, self._named_models, self.stim_var, self._raw))
+        self._derivatives.register(TRFDatasetDerivative(self.root, self._estimators, self._named_models, self._epochs))
+        self._derivatives.register(TRFGroupDatasetDerivative(self._mri_subjects, self.get('common_brain'), self._groups))
 
         # --- Sensor-space: events → epochs → evoked ---
         self._derivatives.register(EventsInput(self._raw_extension))
@@ -1231,7 +1233,6 @@ class Pipeline(StateModel):
             mask: str = None,
             samplingrate: int = None,
             filter_x: bool | Literal['continuous'] = False,
-            make: bool = False,
             path_only: bool = False,
             **state,
     ):
@@ -1259,8 +1260,6 @@ class Pipeline(StateModel):
             Samplingrate in Hz for the analysis.
         filter_x
             Filter predictors like the M/EEG data (see :meth:`load_predictor`).
-        make
-            Compute and cache the TRF if it does not exist yet.
         path_only
             Return the path to the cache file instead of loading the TRF.
         ...
@@ -1270,8 +1269,6 @@ class Pipeline(StateModel):
         ctx = self._resolve_derivative('trf', options=options)
         if path_only:
             return ctx.artifact_path
-        if not make and not ctx.is_valid():
-            raise FileMissingError(f"TRF for {x!r} has not been computed; set make=True to compute it")
         return ctx.load()
 
     def _trf_job(
@@ -1291,6 +1288,93 @@ class Pipeline(StateModel):
         options = self._trf_options(x, tstart, tstop, estimator, data, mask, samplingrate, filter_x, state)
         ctx = self._resolve_derivative('trf', options=options)
         return self._derivatives._get_node('trf').make_job(ctx, type(self))
+
+    def load_trfs(
+            self,
+            subjects: SubjectArg,
+            x: str,
+            tstart: float = 0.,
+            tstop: float = 0.5,
+            *,
+            estimator: str = 'boosting',
+            data: str = None,
+            mask: str = None,
+            samplingrate: int = None,
+            filter_x: bool | Literal['continuous'] = False,
+            scale: Literal['original'] = None,
+            smooth: float = None,
+            trfs: bool = True,
+            **state,
+    ) -> Dataset:
+        """Load TRFs for a group (or subject) as a :class:`Dataset`
+
+        Assembles the per-subject TRFs (see :meth:`load_trf`) into a group-level
+        :class:`Dataset` with one case per subject (× member epoch for an
+        :class:`EpochCollection`), holding the estimator's fit-quality metrics
+        and the TRF kernels. Source-space data is morphed to the common brain so
+        that subjects are comparable.
+
+        Parameters
+        ----------
+        subjects : str | 1 | -1
+            Subject(s) for which to load data. Can be a single subject name or a
+            group name such as ``'all'``. ``1`` to use the current subject;
+            ``-1`` for the current group.
+        x
+            Model (e.g. ``'gammatone + word'``).
+        tstart
+            Start of the TRF in seconds.
+        tstop
+            Stop of the TRF in seconds.
+        estimator
+            Name of the estimator in :attr:`estimators` (default ``'boosting'``).
+        data
+            Response data to fit (see :meth:`load_trf`).
+        mask
+            Parcellation to mask source-space data (not implemented yet).
+        samplingrate
+            Samplingrate in Hz for the analysis.
+        filter_x
+            Filter predictors like the M/EEG data (see :meth:`load_predictor`).
+        scale : 'original'
+            Rescale the TRFs to the scale of the source data (the default is the
+            scale based on normalized predictors and responses).
+        smooth
+            Smooth the TRFs and metric maps in space (STD of the Gaussian kernel
+            in [m]; only for source data).
+        trfs
+            Include the TRF kernels. Set ``False`` to load only the fit metrics.
+        ...
+            State parameters.
+
+        Returns
+        -------
+        trf_ds
+            Dataset with ``subject``, ``epoch``, the estimator's fit metrics, and
+            one :class:`NDVar` per TRF component. ``trf_ds.info['xs']`` lists the
+            TRF component keys.
+        """
+        subject, group = self._process_subject_arg(subjects, state)
+        trf_options = self._trf_options(x, tstart, tstop, estimator, data, mask, samplingrate, filter_x, {})
+        options = {**trf_options, 'scale': scale, 'trfs': trfs}
+        if group is not None:
+            ds = self._load_derivative('trf-group-dataset', options=options)
+        else:
+            ds = self._load_derivative('trf-dataset', options=options)
+        is_source = self._estimators[estimator].resolve_data(data) not in ('sensor', 'meg', 'eeg')
+        self._smooth_trfs(ds, smooth, is_source)
+        return ds
+
+    @staticmethod
+    def _smooth_trfs(ds: Dataset, smooth: float, is_source: bool) -> None:
+        "Spatially smooth the TRF kernels and metric maps in ``ds`` in place"
+        if not smooth:
+            return
+        if not is_source:
+            raise ValueError(f"{smooth=}: smoothing is only available for source-space data")
+        for key in (*ds.info['xs'], *ds.info['metrics']):
+            if key in ds and isinstance(ds[key], NDVar) and ds[key].has_dim('source'):
+                ds[key] = ds[key].smooth('source', smooth, 'gaussian')
 
     def load_evoked(
             self,

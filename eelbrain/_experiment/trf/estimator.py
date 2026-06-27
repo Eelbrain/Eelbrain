@@ -10,10 +10,19 @@ parameters (``basis``, ``delta``, ``mu``, …) live on the estimator.
 from typing import Literal
 from collections.abc import Sequence
 
-from ..._data_obj import Datalist, NDVar
+import numpy as np
+
+from ..._data_obj import Dataset, Datalist, NDVar, Var
 from ..._ndvar import concatenate
 from ..._trf._boosting import boosting
 from ..configuration import Configuration, typed_arg
+
+
+def arctanh(r: NDVar | float) -> NDVar | float:
+    "Fisher z-transform of a correlation (preserving :class:`NDVar` dims)"
+    if isinstance(r, NDVar):
+        return NDVar(np.arctanh(r.x), r.dims, r.name, {'unit': 'z(r)'})
+    return np.arctanh(r)
 
 
 class Estimator(Configuration):
@@ -28,6 +37,8 @@ class Estimator(Configuration):
     extra_inputs: tuple[str, ...] = ()
     # Default response when ``load_trf(data=None)``.
     default_data: str = 'source'
+    # Fit-quality metric columns this estimator contributes to the TRFs Dataset.
+    metric_keys: tuple[str, ...] = ()
 
     def resolve_data(self, data: str | None) -> str:
         """Normalize the ``data`` argument for this estimator.
@@ -39,6 +50,60 @@ class Estimator(Configuration):
             to use the estimator default).
         """
         return self.default_data if data is None else data
+
+    def _result_metrics(self, result) -> dict[str, NDVar | float]:
+        """Fit-quality metrics for one result, keyed by output-Dataset column.
+
+        Subclasses return the columns named in :attr:`metric_keys` that apply to
+        ``result`` (e.g. boosting omits the vector-only ``r1``/``z1`` for scalar
+        data).
+        """
+        raise NotImplementedError
+
+    def _result_tstep(self, result) -> float:
+        "Time-step of the estimated TRF (for the output ``samplingrate``)"
+        raise NotImplementedError
+
+    def _result_kernels(self, result, *, scale: str) -> list[NDVar]:
+        "TRF kernels for one result as a list of :class:`NDVar`"
+        if scale == 'original':
+            h = result.h_scaled
+        elif scale is None:
+            h = result.h
+        else:
+            raise ValueError(f"{scale=}")
+        return [h] if isinstance(h, NDVar) else list(h)
+
+    def _result_dataset(self, result, *, scale: str, trfs: bool) -> Dataset:
+        """Single-case :class:`Dataset` of fit metrics and (optionally) TRF kernels.
+
+        ``ds.info['metrics']`` lists the metric columns and ``ds.info['xs']`` the
+        kernel columns (both consumed by group morphing and smoothing).
+
+        Parameters
+        ----------
+        result
+            A single fitted result (e.g. :class:`~eelbrain.BoostingResult`).
+        scale
+            Kernel scaling (``None`` or ``'original'``, see
+            :meth:`Pipeline.load_trfs`).
+        trfs
+            Include the TRF kernels (set ``False`` to load metrics only).
+        """
+        ds = Dataset()
+        metrics = self._result_metrics(result)
+        for key, value in metrics.items():
+            ds[key] = value[np.newaxis] if isinstance(value, NDVar) else Var([value])
+        xs = []
+        if trfs:
+            for h in self._result_kernels(result, scale=scale):
+                key = Dataset.as_key(h.name)
+                ds[key] = h[np.newaxis]
+                xs.append(key)
+        ds.info['metrics'] = list(metrics)
+        ds.info['xs'] = xs
+        ds.info['samplingrate'] = 1. / self._result_tstep(result)
+        return ds
 
     def _fit(
             self,
@@ -107,6 +172,7 @@ class Boosting(Estimator):
         valid with a single-term model.
     """
     DICT_ATTRS = ('basis', 'basis_window', 'error', 'delta', 'mindelta', 'selective_stopping', 'scale_data', 'partitions', 'cv', 'partition_results', 'backward')
+    metric_keys = ('r', 'z', 'residual', 'det', 'r1', 'z1')
 
     def __init__(
             self,
@@ -153,6 +219,21 @@ class Boosting(Estimator):
             x = xs
         return boosting(y, x, tstart, tstop, self.scale_data, self.delta, self.mindelta, self.error, self.basis, self.basis_window, partitions=partitions, test=int(self.cv), selective_stopping=self.selective_stopping, partition_results=self.partition_results)
 
+    def _result_metrics(self, result) -> dict[str, NDVar | float]:
+        r = result.r
+        metrics = {'r': r, 'z': arctanh(r), 'residual': result.residual, 'det': result.proportion_explained}
+        if result.r_l1 is not None:  # vector data
+            r1 = result.r_l1
+            metrics['r1'] = r1
+            metrics['z1'] = arctanh(r1)
+        return metrics
+
+    def _result_tstep(self, result) -> float:
+        h = result.h_source
+        if not isinstance(h, NDVar):
+            h = h[0]
+        return h.time.tstep
+
 
 class NCRF(Estimator):
     """Neuro-Current Response Function estimator
@@ -186,6 +267,7 @@ class NCRF(Estimator):
     """
     extra_inputs = ('fwd', 'cov')
     DICT_ATTRS = ('mu', 'nlevels', 'n_iter', 'n_iterc', 'n_iterf', 'n_splits', 'tol', 'use_ES', 'basis_std')
+    metric_keys = ('mu',)
 
     def __init__(
             self,
@@ -230,3 +312,9 @@ class NCRF(Estimator):
             x = xs
         from ncrf import fit_ncrf
         return fit_ncrf(y, x, fwd, cov, tstart, tstop, nlevels=self.nlevels, n_iter=self.n_iter, n_iterc=self.n_iterc, n_iterf=self.n_iterf, normalize=True, in_place=True, mu=self.mu, tol=self.tol, n_splits=self.n_splits, use_ES=self.use_ES, basis_std=self.basis_std)
+
+    def _result_metrics(self, result) -> dict[str, NDVar | float]:
+        return {'mu': result.mu}
+
+    def _result_tstep(self, result) -> float:
+        return result.tstep

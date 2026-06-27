@@ -2,12 +2,16 @@ from pathlib import Path
 import warnings
 
 from ... import load, save
-from ..._data_obj import Datalist, NDVar, combine
+from ..._data_obj import Dataset, Datalist, Factor, NDVar, combine
+from ..._mne import morph_source_space
 from ..._ndvar.uts import pad
+from ..._utils.mne_utils import is_fake_mri
 from ..configuration import Configuration
-from ..derivative_cache import Dependency, Derivative, Input, Request, canonical_state_subset, file_fingerprint
-from ..pathing import MRI_SDIR
+from ..derivative_cache import Dependency, Derivative, Input, Request, UncachedDerivative, canonical_state_subset, file_fingerprint
+from ..epochs.config import EpochCollection
+from ..pathing import MRI_SDIR, mri_dir
 from ..preprocessing import RawFilter, RawPipe, RawSource
+from ..source.nodes import _subject_state
 from .estimator import Estimator
 from .job import TRFJob
 from .model import Model, Term, TRFModelError, parse_term
@@ -301,3 +305,148 @@ class TRFDerivative(Derivative[object]):
             The :class:`Pipeline` subclass to reconstruct on the worker.
         """
         return TRFJob(experiment_class, str(self.root), dict(ctx.state), dict(ctx.options), ctx.artifact_path)
+
+
+# Options shared by the TRF-dataset nodes: the :class:`TRFDerivative` options that
+# select the fit, plus the dataset-shaping ``scale`` and ``trfs``.
+_TRF_DATASET_OPTIONS = {
+    'x': None,
+    'tstart': 0.0,
+    'tstop': 0.5,
+    'estimator': 'boosting',
+    'data': None,
+    'mask': None,
+    'samplingrate': None,
+    'decim': None,
+    'filter_x': False,
+    'scale': None,
+    'trfs': True,
+}
+
+
+class TRFDatasetDerivative(UncachedDerivative[Dataset]):
+    """Assemble one subject's TRF result(s) into a :class:`Dataset`
+
+    Wraps the cached :class:`TRFDerivative` result into a single-case dataset of
+    fit metrics and TRF kernels (one case per member epoch for an
+    :class:`EpochCollection`). Source-space data is morphed to the common brain
+    so that subjects can be combined.
+
+    Parameters
+    ----------
+    root
+        Experiment root directory.
+    estimators
+        Mapping of estimator name to :class:`Estimator` definition.
+    named_models
+        Named models for expanding model abbreviations.
+    epochs
+        Assembled epoch definitions (for :class:`EpochCollection` expansion).
+    """
+    name = 'trf-dataset'
+    OPTION_DEFAULTS = _TRF_DATASET_OPTIONS
+
+    def __init__(
+            self,
+            root: str | Path,
+            estimators: dict[str, Estimator],
+            named_models: dict[str, Model],
+            epochs: dict[str, object],
+    ):
+        self.root = Path(root)
+        self.estimators = estimators
+        self.named_models = named_models
+        self.epochs = epochs
+
+    def _estimator(self, ctx: Request) -> Estimator:
+        return self.estimators[ctx.options['estimator']]
+
+    def _model(self, ctx: Request) -> Model:
+        return Model.coerce(ctx.options['x']).initialize(self.named_models)
+
+    def _is_source(self, ctx: Request) -> bool:
+        return self._estimator(ctx).resolve_data(ctx.options['data']) not in ('sensor', 'meg', 'eeg')
+
+    def _epoch_names(self, ctx: Request) -> list[str]:
+        epoch = self.epochs[ctx.state['epoch']]
+        if isinstance(epoch, EpochCollection):
+            return list(epoch.collect)
+        return [ctx.state['epoch']]
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {}
+
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        trf_options = ctx.options_for('trf', 'x', 'tstart', 'tstop', 'estimator', 'data', 'mask', 'samplingrate', 'decim', 'filter_x')
+        deps = [Dependency('trf', label=epoch, state={'epoch': epoch}, options=trf_options) for epoch in self._epoch_names(ctx)]
+        if self._is_source(ctx) and not is_fake_mri(self.root / mri_dir(ctx.state)):
+            deps.append(Dependency('source-morph'))
+        return tuple(deps)
+
+    def build(self, ctx: Request) -> Dataset:
+        est = self._estimator(ctx)
+        scale = ctx.options['scale']
+        trfs = ctx.options['trfs']
+        subject = ctx.state['subject']
+        is_source = self._is_source(ctx)
+        source_morph = None
+        if is_source and not is_fake_mri(self.root / mri_dir(ctx.state)):
+            source_morph = ctx.load('source-morph')
+        common_brain = ctx.state['common_brain']
+        dss = []
+        for epoch in self._epoch_names(ctx):
+            res = ctx.load(epoch)
+            ds = est._result_dataset(res, scale=scale, trfs=trfs)
+            ds['subject'] = Factor([subject], random=True)
+            ds[:, 'epoch'] = epoch
+            if is_source:
+                for key in (*ds.info['xs'], *ds.info['metrics']):
+                    if key in ds and isinstance(ds[key], NDVar) and ds[key].has_dim('source'):
+                        ds[key] = morph_source_space(ds[key], common_brain, morph=source_morph)
+            dss.append(ds)
+        ds = combine(dss)
+        ds.name = self._model(ctx).name
+        return ds
+
+
+class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
+    """Combine per-subject TRF datasets for a group into one :class:`Dataset`
+
+    Parameters
+    ----------
+    mri_subjects
+        Mapping of ``mri`` value to subject→MRI-subject (for per-subject state).
+    common_brain
+        Common-brain MRI subject (morph target for source data).
+    groups
+        Mapping of group name to the sequence of member subjects.
+    """
+    name = 'trf-group-dataset'
+    OPTION_DEFAULTS = _TRF_DATASET_OPTIONS
+
+    def __init__(
+            self,
+            mri_subjects: dict[str, dict[str, str]],
+            common_brain: str,
+            groups: dict[str, tuple[str, ...]],
+    ):
+        self.mri_subjects = mri_subjects
+        self.common_brain = common_brain
+        self.groups = groups
+
+    def key(self, ctx: Request) -> dict[str, object]:
+        return {'subjects': tuple(self.groups[ctx.state['group']]), 'options': ctx.options}
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {'subjects': tuple(self.groups[ctx.state['group']])}
+
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        options = ctx.options_for('trf-dataset', *self.OPTION_DEFAULTS)
+        return tuple(
+            Dependency('trf-dataset', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
+            for subject in self.groups[ctx.state['group']]
+        )
+
+    def build(self, ctx: Request) -> Dataset:
+        dss = [ctx.load(subject) for subject in self.groups[ctx.state['group']]]
+        return combine(dss, to_list=True)

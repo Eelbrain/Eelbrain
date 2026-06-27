@@ -1797,3 +1797,84 @@ def test_load_trf_filepredictor(samples_experiment):
     # editing a predictor file invalidates the cached TRF
     save.pickle(NDVar(rng.normal(size=60), uts, name='env'), pdir / 'auditory~env.pickle')
     assert not e._resolve_derivative('trf', options=options).is_valid()
+
+
+@requires_mne_sample_data
+def test_load_trfs(samples_experiment):
+    "load_trfs: per-subject and group assembly in sensor space"
+    from eelbrain._experiment.tests.sample_experiment import SampleTRF
+
+    set_log_level('warning', 'mne')
+    root = samples_experiment(n_subjects=2, n_segments=4)
+    e = SampleTRF(root)
+    e.set(epoch='target', epoch_rejection='', raw='1-40')
+
+    # single subject -> 1-case Dataset with metrics and kernel
+    ds = e.load_trfs('R0000', 'imp', 0, 0.1, data='sensor', make=True)
+    assert isinstance(ds, Dataset)
+    assert ds.n_cases == 1
+    assert ds[0, 'subject'] == 'R0000'
+    assert ds[0, 'epoch'] == 'target'
+    assert ds.info['xs'] == ['imp']
+    for key in ('r', 'z', 'residual', 'det', 'imp'):
+        assert isinstance(ds[key], NDVar)
+
+    # not computed without make
+    with pytest.raises(FileMissingError):
+        e.load_trfs('R0000', 'imp', 0, 0.2, data='sensor')
+
+    # group -> one case per subject
+    ds_all = e.load_trfs('all', 'imp', 0, 0.1, data='sensor', make=True)
+    assert ds_all.n_cases == 2
+    assert sorted(ds_all['subject'].cells) == ['R0000', 'R0001']
+
+    # scale='original' rescales the kernel
+    ds_scaled = e.load_trfs('R0000', 'imp', 0, 0.1, data='sensor', scale='original')
+    assert (ds_scaled[0, 'imp'].x != ds[0, 'imp'].x).any()
+
+    # trfs=False loads only the metrics
+    ds_metrics = e.load_trfs('R0000', 'imp', 0, 0.1, data='sensor', trfs=False)
+    assert ds_metrics.info['xs'] == []
+    assert 'imp' not in ds_metrics
+    assert isinstance(ds_metrics['r'], NDVar)
+
+
+@requires_mne_sample_data
+def test_load_trfs_collection(samples_experiment):
+    "load_trfs over an EpochCollection: one case per member epoch"
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment, SampleTRF
+
+    class SampleTRFCollection(SampleTRF):
+        epochs = {**SampleExperiment.epochs, 'avc': EpochCollection(('auditory', 'visual'))}
+
+    set_log_level('warning', 'mne')
+    root = samples_experiment(n_subjects=1, n_segments=4)
+    e = SampleTRFCollection(root)
+    e.set(subject='R0000', epoch='avc', epoch_rejection='', raw='1-40')
+
+    ds = e.load_trfs('R0000', 'imp', 0, 0.1, data='sensor', make=True)
+    assert ds.n_cases == 2
+    assert sorted(ds['epoch'].cells) == ['auditory', 'visual']
+    assert ds.info['xs'] == ['imp']
+    assert all(s == 'R0000' for s in ds['subject'])
+
+
+@requires_mne_sample_data
+@pytest.mark.slow
+def test_load_trfs_source(samples_experiment):
+    "load_trfs in source space: group morph to the common brain plus smoothing"
+    from eelbrain._experiment.tests.sample_experiment import SampleTRF
+
+    set_log_level('warning', 'mne')
+    root = samples_experiment(n_subjects=2, n_segments=4, mris=True)
+    e = SampleTRF(root)
+    e.set(epoch='target', epoch_rejection='', raw='1-40', src='ico-2', parc='ac')
+
+    ds = e.load_trfs('all', 'imp', 0, 0.1, data='source', make=True, smooth=0.005)
+    assert ds.n_cases == 2
+    assert sorted(ds['subject'].cells) == ['R0000', 'R0001']
+    # all subjects morphed onto the common brain, so kernels share one source space
+    common_brain = e.get('common_brain')
+    assert ds[0, 'imp'].source.subject == common_brain
+    assert ds[1, 'imp'].source.subject == common_brain
+    assert ds[0, 'imp'].source == ds[1, 'imp'].source
