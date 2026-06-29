@@ -35,21 +35,10 @@ class Estimator(Configuration):
     # Dependencies (registered derivative names) that :meth:`_fit` needs beyond
     # the response, loaded by the TRF node and passed as keyword arguments.
     extra_inputs: tuple[str, ...] = ()
-    # Default response when ``load_trf(data=None)``.
-    default_data: str = 'source'
+    # Whether the estimator requires sensor-space data (inv=''; e.g., NCRF)
+    requires_sensor_space: bool = False
     # Fit-quality metric columns this estimator contributes to the TRFs Dataset.
     metric_keys: tuple[str, ...] = ()
-
-    def resolve_data(self, data: str | None) -> str:
-        """Normalize the ``data`` argument for this estimator.
-
-        Parameters
-        ----------
-        data
-            The ``data`` argument passed to :meth:`Pipeline.load_trf` (``None``
-            to use the estimator default).
-        """
-        return self.default_data if data is None else data
 
     @property
     def interpolate_bads(self) -> bool:
@@ -277,6 +266,7 @@ class NCRF(Estimator):
         Standard deviation of the temporal basis (in seconds).
     """
     extra_inputs = ('fwd', 'cov')
+    requires_sensor_space = True
     DICT_ATTRS = ('mu', 'nlevels', 'n_iter', 'n_iterc', 'n_iterf', 'n_splits', 'tol', 'use_ES', 'basis_std')
     metric_keys = ('mu',)
 
@@ -301,11 +291,6 @@ class NCRF(Estimator):
         self.tol = typed_arg(tol, float)
         self.use_ES = use_ES
         self.basis_std = typed_arg(basis_std, float)
-
-    def resolve_data(self, data: str | None) -> str:
-        if data is not None:
-            raise ValueError(f"{data=}: NCRF uses sensor data and localizes internally; leave data unset")
-        return 'sensor'
 
     def _fit(self, y, xs, tstart, tstop, *, fwd=None, cov=None):
         if fwd is None or cov is None:

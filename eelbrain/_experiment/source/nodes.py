@@ -2,10 +2,10 @@
 """Source-model and source-data derivatives.
 
 These nodes own the reusable source-space products behind
-``Pipeline.load_inv``, ``Pipeline.load_evoked_stc``, and
-``Pipeline.load_epochs_stc``. Higher-level derivatives should load them
-through :meth:`Request.load` instead of relying on injected facade
-methods.
+``Pipeline.load_inv`` and the source-space branch of
+``Pipeline.load_evoked``/``Pipeline.load_epochs`` (selected via a non-empty
+``inv``). Higher-level derivatives should load them through
+:meth:`Request.load` instead of relying on injected facade methods.
 
 The inverse-solution and source-space configurations they build on live in
 :mod:`._experiment.source.config`.
@@ -32,7 +32,7 @@ from ..pathing import (
     MRI_SDIR, bem_dir, bem_file_path, mri_dir, src_file_path, trans_file_path,
 )
 from ..preprocessing import Reference, raw_node_name
-from ..test_def import TestDims
+from ..test_def import DataSpec
 from ..._text import enumeration, plural
 from ..._utils import subp
 from ..._utils.mne_utils import is_fake_mri
@@ -650,7 +650,7 @@ class EpochsStcDerivative(UncachedDerivative[Dataset]):
             epochs_value = ds['epochs']
             epochs_list = epochs_value if isinstance(epochs_value, Datalist) else [epochs_value]
             info = epochs_list[0].info
-            sensor_types = TestDims.coerce('sensor').data_to_ndvar(info)
+            sensor_types = DataSpec.coerce('sensor').data_to_ndvar(info)
             ds.info['sensor_types'] = sensor_types
             raw_pipe = self.raw.root_source_pipe(ctx.state['raw'])
             for data_kind in sensor_types:
@@ -760,7 +760,7 @@ class EvokedStcDerivative(UncachedDerivative[Dataset]):
             evoked = ds['evoked']
             pipe = self.raw.root_source_pipe(ctx.state['raw'])
             info = evoked[0].info
-            sensor_types = ds.info['sensor_types'] = TestDims.coerce('sensor').data_to_ndvar(info)
+            sensor_types = ds.info['sensor_types'] = DataSpec.coerce('sensor').data_to_ndvar(info)
             for sensor_type in sensor_types:
                 sysname = pipe._get_sysname(info, ctx.state['subject'], sensor_type)
                 adjacency = pipe._get_adjacency(sensor_type)

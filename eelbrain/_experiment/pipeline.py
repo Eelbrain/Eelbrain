@@ -67,7 +67,7 @@ from .source import (
     InvDerivative, ROIData, SourceMorphDerivative, SrcDerivative, TransInput,
     InverseSolution, MinimumNormInverseSolution, _drop_unknown_labels, _source_parc, eval_src,
 )
-from .test_def import Test, TestDims, guess_y, validate_tests
+from .test_def import Test, DataSpec, guess_y, validate_tests
 from .trf import Boosting, Estimator, FilePredictor, Model, PredictorInput, TRFDatasetDerivative, TRFDerivative, TRFGroupDatasetDerivative, TRFJob, filter_predictor
 from .trf.model import parse_term
 from .two_stage import TwoStageDataDerivative, TwoStageLevel1Derivative, TwoStageLevel2Derivative, TwoStageTest
@@ -78,7 +78,7 @@ from .variable_def import Variables, apply_vardef, label_groups as label_groups_
 COV_PARAMS = {'epoch', 'method', 'reg', 'keep_sample_mean', 'reg_eval_win_pad'}
 # Argument types
 BaselineArg = bool | tuple[float | None, float | None]
-DataArg = str | TestDims
+DataArg = str | DataSpec
 PMinArg = Literal['tfce'] | float | None
 SubjectArg = str | Literal[1, -1]
 
@@ -115,6 +115,10 @@ class Pipeline(StateModel):
     # datatype and extension are usually inferred from a BIDS dataset; override here if needed
     datatype: str = None
     extension: str = None
+    # default sensor-space data kind for analyses (load_test/load_trf) when ``data`` is
+    # unspecified and the analysis is in sensor space; ``None`` infers from datatype
+    # ('eeg' for EEG, 'meg' for MEG).
+    default_data: str = None
 
     ignore_entities: dict[str, list[str]] = {}
     preload: bool = False
@@ -426,7 +430,16 @@ class Pipeline(StateModel):
 
         # cov
         self._register_field('cov', sorted(self._covs))
-        self._register_field('inv', default='free-3-dSPM', eval_handler=self._eval_inv)
+        # inv determines the analysis space: a non-empty inverse means source space, inv='' means sensor space.
+        self._register_field('inv', default='', eval_handler=self._eval_inv, allow_empty=True)
+        # default sensor-space data kind for analyses (see .default_data)
+        if self.default_data is None:
+            self._default_data = 'eeg' if datatype == 'eeg' else 'meg'
+        else:
+            data = DataSpec(self.default_data)
+            if not data.sensor or data.string.split('.', 1)[0] == 'sensor':
+                raise ConfigurationError(f"{self.__class__.__name__}.default_data={self.default_data!r}; must be a specific sensor type ('mag', 'grad', or 'eeg').")
+            self._default_data = self.default_data
         self._register_field('model', eval_handler=self._eval_model)
         self._register_field('test', sorted(self.tests), post_set_handler=self._post_set_test, allow_empty=self._empty_test, repr=False)
         self._register_field('parc', parc_values, 'aparc', eval_handler=self._eval_parc, allow_empty=True)
@@ -603,7 +616,7 @@ class Pipeline(StateModel):
             subjects: SubjectArg | None,
             kwargs: dict[str, str],
     ) -> tuple[str | None, str | None]:
-        """Process subject arg for methods that work on groups and subjects
+        """Determine subject or group for analysis and update state
 
         Parameters
         ----------
@@ -922,21 +935,55 @@ class Pipeline(StateModel):
         """
         return self._load_derivative('cov', **kwargs)
 
+    def _resolve_data(
+            self,
+            data: 'DataArg',
+            morph: bool = False,
+    ) -> DataSpec:
+        """Resolve the ``data`` argument into a :class:`DataSpec` for analysis.
+
+        :class:`DataSpec` parses the value; this method supplies the default for
+        ``data=None`` and checks the parsed *space* against the ``inv`` state
+        (``inv=''`` → sensor, non-empty → source). Must be called after
+        ``**state`` has been applied so that ``self.get('inv')`` is current.
+
+        Parameters
+        ----------
+        data
+            Data kind: ``None`` (the datatype default in the current space), a
+            sensor type (``'meg'``/``'mag'``/``'grad'``/``'eeg'``) or
+            ``'source'``, optionally with a ``'.mean'``/``'.rms'`` aggregation.
+        morph
+            Morph source data to the common brain.
+        """
+        source_space = bool(self.get('inv'))
+        if data is None:
+            data = 'source' if source_space else self._default_data
+        spec = DataSpec.coerce(data, morph=morph)
+        if source_space and not spec.source:
+            raise ValueError(f"data={data!r} is sensor-space data, but the analysis is in source space (inv={self.get('inv')!r}); set inv='' for sensor-space analysis")
+        if not source_space and spec.source:
+            raise ValueError(f"data={data!r} is source-space data, but the analysis is in sensor space (inv=''); set a non-empty inverse for source-space analysis")
+        if spec.sensor and spec.string.split('.', 1)[0] == 'sensor':
+            raise ValueError(f"data={data!r}: 'sensor' selects all sensor types; specify a single type ('mag', 'grad', 'eeg') for analysis")
+        return spec
+
     @suppress_mne_warning
     def load_epochs(
             self,
-            subjects: SubjectArg = None,
-            baseline: BaselineArg = False,
-            ndvar: bool | Literal['both'] = True,
+            baseline: BaselineArg = True,
+            ndvar: bool | str = True,
             reject: bool | Literal['keep'] = True,
             samplingrate: int = None,
             decim: int = None,
             pad: float = 0,
-            data: str = 'sensor',
             tmin: float = None,
             tmax: float = None,
             tstop: float = None,
             interpolate_bads: Literal[True, False, 'keep'] = False,
+            src_baseline: BaselineArg = False,
+            morph: bool = None,
+            keep_mne: bool = False,
             **state,
     ) -> Dataset:
         """
@@ -950,14 +997,16 @@ class Pipeline(StateModel):
             subject; ``-1`` for the current group. Default is current subject
             (or group if ``group`` is specified).
         baseline
-            Apply baseline correction using this period. True to use the
-            epoch's baseline specification. The default is to not apply baseline
-            correction.
+            Apply baseline correction using this period. ``True`` (default) to
+            use the epoch's baseline specification; ``False`` to not apply
+            baseline correction.
         ndvar
-            Convert epochs to :class:`NDVar` (using keys ``'meg'`` for MEG data and
-            ``'eeg'`` for EEG data in the returned :class:`Dataset`).
-            With ``ndvar=False``, include :class:`mne.Epochs` with key ``'epochs'``.
-            Use ``'both'`` to include both NDVar and :class:`mne.Epochs`.
+            Data to convert to :class:`NDVar`. ``True`` (default) converts all
+            sensor types (with keys ``'meg'``/``'eeg'`` …); a sensor type
+            (``'meg'``/``'mag'``/``'grad'``/``'eeg'``), optionally aggregated
+            (e.g. ``'eeg.rms'``/``'eeg.mean'``), returns a single :class:`NDVar`;
+            ``False`` returns :class:`mne.Epochs` with key ``'epochs'``. In source
+            space (``inv`` set) the source estimates are returned as ``'src'``.
         reject
             Reject bad trials. If ``True`` (default), bad trials are removed
             from the Dataset. Set to ``False`` to ignore the trial rejection.
@@ -971,45 +1020,71 @@ class Pipeline(StateModel):
         pad : scalar
             Pad the epochs with this much time (in seconds; e.g. for spectral
             analysis).
-        data
-            Data to load; 'sensor' to load all sensor data (default);
-            'sensor.rms' to return RMS over sensors. Only applies to NDVar
-            output.
         tmin
-            Override the epoch's ``tmin`` parameter.
+            Override the epoch's ``tmin`` parameter (sensor space only).
         tmax
-            Override the epoch's ``tmax`` parameter.
+            Override the epoch's ``tmax`` parameter (sensor space only).
         tstop
-            Override the epoch's ``tmax`` parameter as exclusive ``tstop``.
+            Override the epoch's ``tmax`` parameter as exclusive ``tstop``
+            (sensor space only).
         interpolate_bads
             Interpolate channels marked as bad for the whole recording (useful
-            when comparing topographies across subjects; default ``False``).
-            ``True`` interpolates and includes those channels in the output;
-            ``'keep'`` interpolates but leaves the channels marked as bad (so they
-            remain excluded from NDVar output).
+            when comparing topographies across subjects; default ``False``;
+            sensor space only). ``True`` interpolates and includes those channels
+            in the output; ``'keep'`` interpolates but leaves the channels marked
+            as bad (so they remain excluded from NDVar output).
+        src_baseline
+            Apply baseline correction in source space using this period (source
+            space only; ``True`` to use the epoch's baseline specification).
+        morph
+            Morph source estimates to the common brain (source space only;
+            default ``False``, except when loading multiple subjects with
+            ``ndvar=True``).
+        keep_mne
+            Also include the underlying :class:`mne.Epochs` (sensor space) or
+            sensor-space data (source space) in the returned :class:`Dataset`.
         ...
             Applicable :ref:`state-parameters`:
 
              - :ref:`state-raw`: preprocessing pipeline
              - :ref:`state-epoch`: which events to use and time window
              - :ref:`state-epoch_rejection`: which trials to use
+             - :ref:`state-inv`: inverse solution (``inv=''`` for sensor space,
+               a non-empty inverse for source space)
 
         """
-        data = TestDims.coerce(data)
-        if not data.sensor:
-            raise ValueError(f"data={data.string!r}; load_evoked is for loading sensor data")
-        if data.sensor is not True:
-            if not ndvar:
-                raise ValueError(f"data={data.string!r} with ndvar=False")
-            if interpolate_bads:
-                raise ValueError(f"{interpolate_bads=} with data={data.string!r}")
-        if isinstance(ndvar, str) and ndvar != 'both':
-            raise ValueError(f"{ndvar=}")
+        if self.get('inv', **state):  # source space
+            if interpolate_bads or tmin is not None or tmax is not None or tstop is not None:
+                raise ValueError("interpolate_bads/tmin/tmax/tstop are not available for source-space epochs; set inv='' for sensor space")
+            if isinstance(ndvar, str):
+                raise ValueError(f"{ndvar=}: a data-kind ndvar is only valid for sensor-space epochs; in source space use ndvar=True or ndvar=False")
+            self._current_source_parc()
+            options = {
+                'baseline': baseline,
+                'src_baseline': src_baseline,
+                'keep_epochs': keep_mne,
+                'morph': morph,
+                'samplingrate': samplingrate,
+                'decim': decim,
+                'pad': pad,
+                'ndvar': ndvar,
+                'reject': reject,
+            }
+            return self._load_derivative('epochs-stc', options=options)
 
-        subject, group = self._process_subject_arg(subjects, state)
+        # sensor space
+        if isinstance(ndvar, str):
+            data = self._resolve_data(ndvar)
+            node_ndvar = 'both' if keep_mne else True
+        elif ndvar:
+            data = DataSpec('sensor')
+            node_ndvar = 'both' if keep_mne else True
+        else:
+            data = DataSpec('sensor')
+            node_ndvar = False
         options = {
             'baseline': baseline,
-            'ndvar': ndvar,
+            'ndvar': node_ndvar,
             'reject': reject,
             'samplingrate': samplingrate,
             'decim': decim,
@@ -1020,105 +1095,7 @@ class Pipeline(StateModel):
             'tstop': tstop,
             'interpolate_bads': interpolate_bads,
         }
-        if group is None:
-            if subject is not None:
-                self.set(subject=subject)
-            return self._load_derivative('epochs', options=options)
-
-        epoch_name = self.get('epoch')
-        dss = [
-            self._load_derivative('epochs', options=options)
-            for _ in self.iter(group=group, progress_bar=f"Load {epoch_name}")
-        ]
-        return combine(dss)
-
-    def load_epochs_stc(
-            self,
-            subjects: str | int = None,
-            baseline: BaselineArg = True,
-            src_baseline: BaselineArg = False,
-            keep_epochs: bool | str = False,
-            morph: bool = None,
-            samplingrate: int = None,
-            decim: int = None,
-            pad: float = 0,
-            ndvar: bool = True,
-            reject: bool | str = True,
-            **state):
-        """Load a Dataset with stcs for single epochs
-
-        Parameters
-        ----------
-        subjects : str | 1 | -1
-            Subject(s) for which to load data. Can be a single subject
-            name or a group name such as ``'all'``. ``1`` to use the current
-            subject; ``-1`` for the current group. Default is current subject
-            (or group if ``group`` is specified).
-            Warning: loading single trial data for multiple subjects at once
-            uses a lot of memory, which can lead to a periodically unresponsive
-            terminal).
-        baseline
-            Apply baseline correction using this period in sensor space.
-            True to use the epoch's baseline specification (default).
-        src_baseline
-            Apply baseline correction using this period in source space.
-            True to use the epoch's baseline specification. The default is to
-            not apply baseline correction.
-        keep_epochs : bool | 'ndvar' | 'both'
-            Keep the sensor space data in the Dataset that is returned (default
-            False; True to keep :class:`mne.Epochs` object; ``'ndvar'`` to keep
-            :class:`NDVar`; ``'both'`` to keep both).
-        morph
-            Morph the source estimates to the common brain
-            (default ``False``, except when loading multiple subjects and ``ndvar=True``).
-        samplingrate
-            Samplingrate in Hz for the analysis (default is specified in epoch
-            definition).
-        decim
-            Data decimation factor (alternative to ``samplingrate``).
-        pad
-            Pad the epoch's data by extending ``tmin`` and ``tmax`` (specify
-            ``pad`` time in seconds).
-        ndvar
-            Add the source estimates as :class:`NDVar` named "src" instead of a list of
-            :class:`mne.SourceEstimate` objects named "stc" (default True).
-        reject : bool | 'keep'
-            Reject bad trials. If ``True`` (default), bad trials are removed
-            from the Dataset. Set to ``False`` to ignore the trial rejection.
-            Set ``reject='keep'`` to load the rejection (added it to the events
-            as ``'accept'`` variable), but keep bad trails.
-        ...
-            Applicable :ref:`state-parameters`:
-
-             - :ref:`state-raw`: preprocessing pipeline
-             - :ref:`state-epoch`: which events to use and time window
-             - :ref:`state-epoch_rejection`: which trials to use
-             - :ref:`state-cov`: covariance matrix for inverse solution
-             - :ref:`state-src`: source space
-             - :ref:`state-inv`: inverse solution
-
-        Returns
-        -------
-        epochs_dataset : Dataset
-            Dataset containing single trial data (epochs).
-        """
-        self._current_source_parc(**state)
-        subject, group = self._process_subject_arg(subjects, state)
-        options = {
-            'baseline': baseline,
-            'src_baseline': src_baseline,
-            'keep_epochs': keep_epochs,
-            'morph': morph,
-            'samplingrate': samplingrate,
-            'decim': decim,
-            'pad': pad,
-            'ndvar': ndvar,
-            'reject': reject,
-        }
-        if group is not None:
-            return self._load_derivative('epochs-stc-group-dataset', options=options)
-        else:
-            return self._load_derivative('epochs-stc', options=options)
+        return self._load_derivative('epochs', options=options)
 
     def load_events(
             self,
@@ -1222,8 +1199,18 @@ class Pipeline(StateModel):
             self.set(**state)
         if mask is not None:
             raise NotImplementedError(f"{mask=}: source-space masking is not implemented yet")
+        # Resolve the data kind against the analysis space (inv state) and the estimator.
+        est = self._estimators[estimator]
+        if est.requires_sensor_space:
+            if (inv := self.get('inv')):
+                raise ValueError(f"{inv=} for {estimator=}: {estimator} uses sensor data and localizes internally; set inv='' for sensor-space analysis")
+            if data is not None:
+                raise ValueError(f"{data=}: estimator {estimator!r} uses all sensor data; leave data unset")
+            data_string = 'sensor'
+        else:
+            data_string = self._resolve_data(data).string
         model = Model.coerce(x).initialize(self._named_models)
-        return {'x': model.name, 'tstart': float(tstart), 'tstop': float(tstop), 'estimator': estimator, 'data': data, 'mask': mask, 'samplingrate': samplingrate, 'filter_x': filter_x}
+        return {'x': model.name, 'tstart': float(tstart), 'tstop': float(tstop), 'estimator': estimator, 'data': data_string, 'mask': mask, 'samplingrate': samplingrate, 'filter_x': filter_x}
 
     def load_trf(
             self,
@@ -1254,9 +1241,13 @@ class Pipeline(StateModel):
             Estimator-specific parameters (``basis``, ``delta``, ``mu``, …) are
             set on the :class:`~eelbrain._experiment.trf.Estimator` object.
         data
-            Response data to fit: ``'sensor'``/``'meg'``/``'eeg'`` or
-            ``'source'``. The default (``None``) uses the estimator's default
-            (and must be left unset for NCRF, which uses sensor data internally).
+            Sensor-space data *kind* to fit: a sensor type
+            (``'meg'``/``'mag'``/``'grad'``/``'eeg'``), optionally aggregated
+            (e.g. ``'eeg.rms'``/``'eeg.mean'``). The default (``None``) uses
+            :attr:`default_data`. The analysis *space* is set by the ``inv``
+            state (``inv=''`` for sensor space; a non-empty inverse for source
+            space); in source space leave ``data`` unset. NCRF requires
+            ``inv=''`` and leaves ``data`` unset.
         mask
             Parcellation to mask source-space data (not implemented yet).
         samplingrate
@@ -1364,7 +1355,7 @@ class Pipeline(StateModel):
             ds = self._load_derivative('trf-group-dataset', options=options)
         else:
             ds = self._load_derivative('trf-dataset', options=options)
-        is_source = self._estimators[estimator].resolve_data(data) not in ('sensor', 'meg', 'eeg')
+        is_source = bool(self.get('inv'))
         self._smooth_trfs(ds, smooth, is_source)
         return ds
 
@@ -1382,12 +1373,14 @@ class Pipeline(StateModel):
     def load_evoked(
             self,
             subjects: str | int = None,
-            baseline: BaselineArg = False,
-            ndvar: bool | int = True,
+            baseline: BaselineArg = True,
+            ndvar: bool | str = True,
             cat: Sequence[CellArg] = None,
             samplingrate: int = None,
             decim: int = None,
-            data: DataArg = 'sensor',
+            src_baseline: BaselineArg = False,
+            morph: bool = None,
+            keep_mne: bool = False,
             **state):
         """
         Load a Dataset with condition average responses for each subject.
@@ -1400,14 +1393,17 @@ class Pipeline(StateModel):
             subject; ``-1`` for the current group. Default is current subject
             (or group if ``group`` is specified).
         baseline
-            Apply baseline correction using this period. True to use the
-            epoch's baseline specification. The default is to not apply baseline
-            correction.
-        ndvar : bool | 2
-            Convert the :class:`mne.Evoked` objects to an :class:`NDVar` (the
-            name in the Dataset is ``'meg'`` or ``'eeg'``). With
-            ``ndvar=False``, the :class:`mne.Evoked` objects are added as
-            ``'evoked'``. ``2`` to add both.
+            Apply baseline correction using this period. ``True`` (default) to
+            use the epoch's baseline specification; ``False`` to not apply
+            baseline correction.
+        ndvar
+            Data to convert to :class:`NDVar`. ``True`` (default) converts all
+            sensor types (with keys ``'meg'``/``'eeg'`` …); a sensor type
+            (``'meg'``/``'mag'``/``'grad'``/``'eeg'``), optionally aggregated
+            (e.g. ``'eeg.rms'``/``'eeg.mean'``), returns a single :class:`NDVar`;
+            ``False`` returns the :class:`mne.Evoked` objects as ``'evoked'``. In
+            source space (``inv`` set) the source estimates are returned as
+            ``'src'``.
         cat
             Only load data for these cells (cells of model).
         samplingrate
@@ -1415,10 +1411,16 @@ class Pipeline(StateModel):
             definition).
         decim
             Data decimation factor (alternative to ``samplingrate``).
-        data
-            Data to load; 'sensor' to load all sensor data (default);
-            'sensor.rms' to return RMS over sensors. Only applies to NDVar
-            output.
+        src_baseline
+            Apply baseline correction in source space using this period (source
+            space only; ``True`` to use the epoch's baseline specification).
+        morph
+            Morph source estimates to the common brain (source space only;
+            default ``False``, except when loading multiple subjects with
+            ``ndvar=True``).
+        keep_mne
+            Also include the underlying :class:`mne.Evoked` (sensor space) or
+            sensor-space data (source space) in the returned :class:`Dataset`.
         ...
             Applicable :ref:`state-parameters`:
 
@@ -1427,6 +1429,8 @@ class Pipeline(StateModel):
              - :ref:`state-epoch_rejection`: which trials to use
              - :ref:`state-model`: how to group trials into conditions
              - :ref:`state-equalize_evoked_count`: control number of trials per cell
+             - :ref:`state-inv`: inverse solution (``inv=''`` for sensor space,
+               a non-empty inverse for source space)
 
         Notes
         -----
@@ -1435,106 +1439,50 @@ class Pipeline(StateModel):
         bad/excluded. When loading group level data, datasets are merged using
         interpolated data.
         """
-        data = TestDims.coerce(data)
-        if not data.sensor:
-            raise ValueError(f"data={data.string!r}; load_evoked is for loading sensor data")
-        elif data.sensor is not True and not ndvar:
-            raise ValueError(f"data={data.string!r} with ndvar=False")
         subject, group = self._process_subject_arg(subjects, state)
+        if (inv := self.get('inv')):  # source space
+            if isinstance(ndvar, str):
+                raise ValueError(f"{ndvar=} with {inv=}: a data-kind ndvar is only valid for sensor-space evoked; in source space use ndvar=True or ndvar=False")
+            self._current_source_parc()
+            options = {
+                'baseline': baseline,
+                'src_baseline': src_baseline,
+                'cat': cat,
+                'keep_evoked': keep_mne,
+                'morph': morph,
+                'samplingrate': samplingrate,
+                'decim': decim,
+                'ndvar': ndvar,
+            }
+            if group is not None:
+                return self._load_derivative('evoked-stc-group-dataset', options=options)
+            return self._load_derivative('evoked-stc', options=options)
+
+        # sensor space
+        if isinstance(ndvar, str):
+            data = self._resolve_data(ndvar)
+            node_ndvar = 'both' if keep_mne else True
+        elif ndvar:
+            data = DataSpec('sensor')
+            node_ndvar = 'both' if keep_mne else True
+        else:
+            data = DataSpec('sensor')
+            node_ndvar = False
         epoch_name = self.get('epoch')
         epoch = self._epochs[epoch_name]
         if baseline is True:
             baseline = epoch.baseline
         options = {
             'baseline': baseline,
-            'ndvar': ndvar,
+            'ndvar': node_ndvar,
             'cat': cat,
             'samplingrate': samplingrate,
             'decim': decim,
             'data': data,
         }
         if group is not None:
-            self.set(group=group)
             return self._load_derivative('evoked-group-dataset', options=options)
-        if subject is not None:
-            self.set(subject=subject)
         return self._load_derivative('evoked', options=options)
-
-    def load_evoked_stc(
-            self,
-            subjects: str | int = None,
-            baseline: BaselineArg = True,
-            src_baseline: BaselineArg = False,
-            cat: Sequence[CellArg] = None,
-            keep_evoked: bool = False,
-            morph: bool = None,
-            samplingrate: int = None,
-            decim: int = None,
-            ndvar: bool = True,
-            **state):
-        """Load evoked source estimates.
-
-        Parameters
-        ----------
-        subjects : str | 1 | -1
-            Subject(s) for which to load data. Can be a single subject
-            name or a group name such as ``'all'``. ``1`` to use the current
-            subject; ``-1`` for the current group. Default is current subject
-            (or group if ``group`` is specified).
-        baseline
-            Apply baseline correction using this period in sensor space.
-            True to use the epoch's baseline specification. The default is True.
-        src_baseline
-            Apply baseline correction using this period in source space.
-            True to use the epoch's baseline specification. The default is to
-            not apply baseline correction.
-        cat
-            Only load data for these cells (cells of model).
-        keep_evoked
-            Keep the sensor space data in the Dataset that is returned (default
-            False).
-        morph
-            Morph the source estimates to the common brain
-            (default ``False``, except when loading multiple subjects and ``ndvar=True``).
-        samplingrate
-            Samplingrate in Hz for the analysis (default is specified in epoch
-            definition).
-        decim
-            Data decimation factor (alternative to ``samplingrate``).
-        ndvar
-            Add the source estimates as NDVar named "src" instead of a list of
-            :class:`mne.SourceEstimate` objects named "stc" (default True).
-        ...
-            Applicable :ref:`state-parameters`:
-
-             - :ref:`state-raw`: preprocessing pipeline
-             - :ref:`state-epoch`: which events to use and time window
-             - :ref:`state-epoch_rejection`: which trials to use
-             - :ref:`state-model`: how to group trials into conditions
-             - :ref:`state-equalize_evoked_count`: control number of trials per cell
-             - :ref:`state-cov`: covariance matrix for inverse solution
-             - :ref:`state-src`: source space
-             - :ref:`state-inv`: inverse solution
-
-        """
-        self._current_source_parc(**state)
-        subject, group = self._process_subject_arg(subjects, state)
-        options = {
-            'baseline': baseline,
-            'src_baseline': src_baseline,
-            'cat': cat,
-            'keep_evoked': keep_evoked,
-            'morph': morph,
-            'samplingrate': samplingrate,
-            'decim': decim,
-            'ndvar': ndvar,
-        }
-        if group is not None:
-            self.set(group=group)
-            return self._load_derivative('evoked-stc-group-dataset', options=options)
-        if subject is not None:
-            self.set(subject=subject)
-        return self._load_derivative('evoked-stc', options=options)
 
     def load_fwd(
             self,
@@ -1837,7 +1785,7 @@ class Pipeline(StateModel):
 
         if ndvar:
             source_pipe = self._raw.root_source_pipe(raw_name)
-            data = TestDims('sensor')
+            data = DataSpec('sensor')
             data_kind = data.data_to_ndvar(raw.info)[0]
             sysname = source_pipe._get_sysname(raw.info, self.get('subject'), data_kind)
             adjacency = source_pipe._get_adjacency(data_kind)
@@ -1845,11 +1793,9 @@ class Pipeline(StateModel):
 
         return raw
 
-    def _current_source_parc(self, **state) -> str:
-        return _source_parc({
-            'src': self.get('src', **state),
-            'parc': self.get('parc', **state),
-        })
+    def _current_source_parc(self) -> str:
+        """Ensure valid parc setting in state"""
+        return _source_parc(self.state)
 
     def load_raw_stc(
             self,
@@ -1992,7 +1938,7 @@ class Pipeline(StateModel):
             pmin: PMinArg = None,
             disconnect_labels: bool = False,
             samples: int = 10000,
-            data: str = 'source',
+            data: str = None,
             baseline: BaselineArg = True,
             smooth: float = None,
             src_baseline: BaselineArg = None,
@@ -2025,13 +1971,17 @@ class Pipeline(StateModel):
             number ≥ ``samples`` the cached version is returned, otherwise the
             test is recomputed.
         data
-            Data to test, for example:
+            Data *kind* to test (the analysis *space* is set by the ``inv``
+            state: ``inv=''`` for sensor space, a non-empty inverse for source
+            space). The default (``None``) uses :attr:`default_data` in sensor
+            space, or the full source estimates in source space. Examples:
 
-            - ``'source'`` spatio-temporal test in source space.
-            - ``'sensor'`` spatio-temporal test in sensor space (MEG).
-            - ``'eeg'`` spatio-temporal test in EEG sensor space.
-            - ``'source.mean'`` ROI mean time course.
-            - ``'sensor.rms'`` RMS across sensors.
+            - ``None`` with ``inv`` set: spatio-temporal test in source space.
+            - ``None`` with ``inv=''``: spatio-temporal test in sensor space
+              (using :attr:`default_data`, e.g. ``'meg'`` or ``'eeg'``).
+            - ``'source.mean'`` with ``inv`` set: ROI mean time course.
+            - ``'eeg.rms'`` with ``inv=''``: RMS across the EEG sensors.
+            - ``'eeg'`` with ``inv=''``: spatio-temporal test of EEG sensors.
 
         baseline
             Apply baseline correction using this period in sensor space.
@@ -2070,9 +2020,9 @@ class Pipeline(StateModel):
             an :class:`~_experiment.ROITestResult` object).
         """
         self.set(test=test, **state)
-        data = TestDims.coerce(data, morph=True)
+        data = self._resolve_data(data, morph=True)
         if data.source:
-            self._current_source_parc(**state)
+            self._current_source_parc()
         data._testnd_parc(disconnect_labels)
         options = {
             'data': data,
@@ -2359,7 +2309,7 @@ class Pipeline(StateModel):
             info = ds['epochs'].info
             decim = None
             display_data = ds
-        data = TestDims('sensor')
+        data = DataSpec('sensor')
         data_kind = data.data_to_ndvar(info)[0]
         source_pipe = self._raw.root_source_pipe(ica_name)
         sysname = source_pipe._get_sysname(info, subject, data_kind)
@@ -2409,7 +2359,7 @@ class Pipeline(StateModel):
         events = self._load_derivative('labeled-events')
         # Sensor system info
         source_pipe = self._raw.root_source_pipe(raw_name)
-        data_kind = TestDims('sensor').data_to_ndvar(raw_data.info)[0]
+        data_kind = DataSpec('sensor').data_to_ndvar(raw_data.info)[0]
         sysname = source_pipe._get_sysname(raw_data.info, subject, data_kind)
         adjacency = source_pipe._get_adjacency(data_kind)
         return gui.select_channels(raw_data, channels_path, events=events, sysname=sysname, adjacency=adjacency)
@@ -2536,7 +2486,7 @@ class Pipeline(StateModel):
         """
         state['model'] = ''
         subject, group = self._process_subject_arg(subjects, state)
-        data = TestDims("source", morph=bool(group))
+        data = DataSpec("source", morph=bool(group))
         brain_kwargs = self._surfer_plot_kwargs(surf, views, foreground, background, smoothing_steps, hemi)
         self.set(equalize_evoked_count='')
 
@@ -2650,7 +2600,7 @@ class Pipeline(StateModel):
         else:
             raise ValueError(f"p={p}")
 
-        data = TestDims("source", morph=True)
+        data = DataSpec("source", morph=True)
         brain_kwargs = self._surfer_plot_kwargs(surf, views, foreground, background, smoothing_steps, hemi)
         surf = brain_kwargs['surf']
         if model:
@@ -2666,9 +2616,9 @@ class Pipeline(StateModel):
             cat = None
 
         state.update(model=model)
-        self._current_source_parc(**state)
+        subject, group = self._process_subject_arg(subjects, state)
+        self._current_source_parc()
         with self._temporary_state:
-            subject, group = self._process_subject_arg(subjects, state)
             if dst is not None:
                 dst = os.path.expanduser(dst)
 
@@ -2957,8 +2907,8 @@ class Pipeline(StateModel):
             raise ValueError(f"{include=}: needs to be 0 < include <= 1")
 
         self.set(**state)
-        self._current_source_parc(**state)
-        data = TestDims('source', morph=True)
+        self._current_source_parc()
+        data = DataSpec('source', morph=True)
         options = {
             'data': data,
             'samples': samples,
@@ -3026,8 +2976,8 @@ class Pipeline(StateModel):
         elif isinstance(test_obj, TwoStageTest):
             raise NotImplementedError("ROI analysis not implemented for two-stage tests")
 
-        self._current_source_parc(**state)
-        data = TestDims('source.mean')
+        self._current_source_parc()
+        data = DataSpec('source.mean')
         options = {
             'data': data,
             'samples': samples,
@@ -3398,11 +3348,15 @@ class Pipeline(StateModel):
             State parameters.
         """
         subject, group = self._process_subject_arg(subjects, kwargs)
+        source_inv = self.get('inv')  # source space requires a configured inverse
         if data is None:
-            sns = src = True
+            sns = True
+            src = bool(source_inv)  # only plot source estimates if an inverse is configured
         else:
-            data = TestDims.coerce(data)
+            data = DataSpec.coerce(data)
             sns, src = bool(data.sensor), bool(data.source)
+            if src and not source_inv:
+                raise ValueError(f"data={data.string!r}: no inverse is configured (inv=''); set inv to plot source estimates")
         model = self.get('model') or None
         epoch = self.get('epoch')
         if model:
@@ -3450,7 +3404,7 @@ class Pipeline(StateModel):
             src_key = 'srcm'
 
         if src:
-            ds = self.load_evoked_stc(subject_arg, baseline=baseline, keep_evoked=sns)
+            ds = self.load_evoked(subject_arg, baseline=baseline, keep_mne=sns, inv=source_inv)
             out = [ds]
             if model:
                 x = ds.eval(model)
@@ -3465,7 +3419,7 @@ class Pipeline(StateModel):
                 out.extend(plots)
             right_of = out[2]
         else:
-            ds = self.load_evoked(subject_arg, baseline=baseline)
+            ds = self.load_evoked(subject_arg, baseline=baseline, inv='')
             out = [ds]
             right_of = None
         if sns:
@@ -3694,6 +3648,8 @@ class Pipeline(StateModel):
 
     @staticmethod
     def _eval_inv(inv: str):
+        if inv == '':  # sensor space
+            return ''
         return MinimumNormInverseSolution._from_string(inv)._string()
 
     def _eval_model(self, model: str) -> str:

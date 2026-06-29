@@ -162,7 +162,7 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
             raise RuntimeError(f"{self.name!r} requires a TwoStageTest")
         if data.sensor:
             raise NotImplementedError(f"Two-stage test with data={data.string!r}")
-        elif data.source is True:
+        elif data.source and not data.aggregate:
             if test_obj.model:
                 dependency = Dependency(
                     'evoked-stc',
@@ -205,7 +205,7 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         if test_obj.vars:
             apply_vardef(ds, test_obj.vars, self.tests, self.groups)
 
-        if data.source is True:
+        if data.source and not data.aggregate:
             if ctx.options['smooth']:
                 ds[data.y_name] = ds[data.y_name].smooth('source', ctx.options['smooth'], 'gaussian')
             return ds
@@ -247,7 +247,7 @@ class TwoStageLevel1Derivative(Derivative[Any]):
         data = ctx.options['data']
         subject = ctx.state['subject']
         ds = ctx.load('two-stage-data')
-        if data.source is True:
+        if data.source and not data.aggregate:
             return test_obj.make_stage_1(data.y_name, ds, subject)
         if data.sensor:
             raise NotImplementedError(f"Two-stage test with data={data.string!r}")
@@ -293,10 +293,10 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
         data = ctx.options['data']
         test_spec = ResolvedTestNDSpec.from_request(ctx, data)
         subjects = self.groups[ctx.state['group']]
-        if data.source is not True and not isinstance(data.source, str):
+        if not data.source:
             raise NotImplementedError(f"Two-stage test with data={data.string!r}")
         subject_results = [ctx.load(subject) for subject in subjects]
-        if data.source is True:
+        if data.source and not data.aggregate:
             return test_obj.make_stage_2(subject_results, test_spec.kwargs)
 
         label_lms = {}

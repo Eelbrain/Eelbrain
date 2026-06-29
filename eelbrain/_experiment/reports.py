@@ -33,7 +33,7 @@ from .results import (
     _test_result_options,
 )
 from .source import _subject_state
-from .test_def import ResolvedTestNDSpec, TestDims
+from .test_def import ResolvedTestNDSpec, DataSpec
 from .two_stage import TwoStageTest
 
 
@@ -419,7 +419,7 @@ class LMReportDerivative(BrainReportDerivative):
     sampled_path = True
 
     def _level_1_options(self, ctx: Request) -> dict[str, Any]:
-        return ctx.options_for('two-stage-level-1', *RESULT_OPTION_DEFAULTS, data=TestDims.coerce('source', morph=False), smooth=None)
+        return ctx.options_for('two-stage-level-1', *RESULT_OPTION_DEFAULTS, data=DataSpec.coerce('source', morph=False), smooth=None)
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         test_obj = self.tests[ctx.options['test']]

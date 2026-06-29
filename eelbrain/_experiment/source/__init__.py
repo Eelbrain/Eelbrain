@@ -3,8 +3,9 @@
 
 The inverse-solution and source-space configuration classes live in
 :mod:`._experiment.source.config`; the graph nodes that build the reusable
-source-space products behind ``Pipeline.load_inv``, ``Pipeline.load_evoked_stc``,
-and ``Pipeline.load_epochs_stc`` live in :mod:`._experiment.source.nodes`.
+source-space products behind ``Pipeline.load_inv`` and the source-space branch
+of ``Pipeline.load_evoked``/``Pipeline.load_epochs`` live in
+:mod:`._experiment.source.nodes`.
 """
 
 from .config import (

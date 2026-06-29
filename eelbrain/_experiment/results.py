@@ -36,7 +36,7 @@ from .pathing import (
     time_window_str,
 )
 from .source import ROIData, roi_data_from_subject_datasets
-from .test_def import ROITestResult, ResolvedTestNDSpec, Test, TestDims
+from .test_def import ROITestResult, ResolvedTestNDSpec, Test, DataSpec
 from .variable_def import apply_vardef
 
 T = TypeVar('T')
@@ -67,7 +67,7 @@ TEST_DATA_OPTION_NAMES = (
 def _test_result_options(
         ctx: Request,
         *,
-        data: TestDims | object = USE_CTX,
+        data: DataSpec | object = USE_CTX,
 ) -> dict[str, Any]:
     if data is USE_CTX:
         data = ctx.options['data']
@@ -458,7 +458,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         if data.sensor:
             return (Dependency('evoked-group-dataset', options=self._sensor_evoked_options(ctx, test_obj.cat)),)
 
-        if data.source is True:
+        if data.source and not data.aggregate:
             return (Dependency(
                 'evoked-stc-group-dataset',
                 options=_evoked_stc_options(ctx, morph=True, cat=test_obj.cat, samplingrate=samplingrate),
@@ -485,7 +485,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
             ds = ctx.load('evoked-group-dataset')
             return _apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string)
 
-        if data.source is True:
+        if data.source and not data.aggregate:
             ds = ctx.load('evoked-stc-group-dataset')
             ds = _apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string)
             if smooth := ctx.options['smooth']:
@@ -546,7 +546,7 @@ class TestResultDerivative(ResultOutputDerivative):
             ctx: Request,
             path: Path):
         res = load.unpickle(path)
-        if ctx.options['data'].source is True:
+        if ctx.options['data'].source and not ctx.options['data'].aggregate:
             update_subjects_dir(res, ctx.root / MRI_SDIR, 2)
         return res
 

@@ -20,11 +20,10 @@ from eelbrain import *
 from eelbrain.pipeline import *
 from eelbrain._exceptions import ConfigurationError
 from eelbrain._experiment.derivative_cache import ProtectedArtifactError
-from eelbrain._experiment.exceptions import FileMissingError
 from eelbrain._experiment.pathing import LOG_DIR, ica_file_path
 from eelbrain._experiment.preprocessing import RawFilterElliptic, ica_input_name, raw_node_name
 from eelbrain._experiment.reports import _report_subject_info
-from eelbrain._experiment.test_def import TestDims as _TestDims
+from eelbrain._experiment.test_def import DataSpec as _DataSpec
 from eelbrain._experiment.variable_def import EvalVar, LabelVar, Variables
 from eelbrain.testing import assert_dataobj_equal, requires_mne_sample_data
 
@@ -46,7 +45,7 @@ def _test_result_manifest_path(
         samplingrate=None,
 ) -> Path:
     options = {
-        'data': _TestDims.coerce(data, morph=True),
+        'data': _DataSpec.coerce(data, morph=True),
         'samples': samples,
         'test': test,
         'tstart': tstart,
@@ -173,7 +172,7 @@ def test_sample(samples_experiment):
     test_tree = e.show_dependencies(
         'test-result',
         options={
-            'data': _TestDims.coerce('sensor.rms', morph=True),
+            'data': _DataSpec.coerce('meg.rms', morph=True),
             'samples': 100,
             'test': 'a>v',
             'tstart': 0.05,
@@ -191,7 +190,7 @@ def test_sample(samples_experiment):
     movie_tree = e.show_dependencies(
         'movie-ttest',
         options={
-            'data': _TestDims.coerce('source', morph=True),
+            'data': _DataSpec.coerce('source', morph=True),
             'single_subject': False,
             'subject': None,
             'baseline': False,
@@ -218,9 +217,9 @@ def test_sample(samples_experiment):
     assert_dataobj_equal(ds_ind, ds, decimal=19)  # make vs load evoked
 
     # sensor space tests
-    megs = [e.load_evoked(cat='auditory')['meg'] for _ in e]
-    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.rms', baseline=False, make=True)
-    test_manifest = _test_result_manifest_path(e, 'a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.rms', baseline=False)
+    megs = [e.load_evoked(cat='auditory', baseline=False)['meg'] for _ in e]
+    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False, make=True)
+    test_manifest = _test_result_manifest_path(e, 'a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', baseline=False)
     assert exists(test_manifest)
     with open(test_manifest) as fid:
         test_manifest_data = json.load(fid)
@@ -231,8 +230,8 @@ def test_sample(samples_experiment):
     assert 'evoked-group-dataset' in test_manifest_data['dependencies']['evoked-test-data']['dependencies']
     remove(test_manifest)
     with pytest.raises(IOError):
-        e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.rms', baseline=False)
-    _ = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.rms', baseline=False, make=True)
+        e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False)
+    _ = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False, make=True)
     assert exists(test_manifest)
 
     class ChangedTestExperiment(SampleExperiment):
@@ -242,7 +241,7 @@ def test_sample(samples_experiment):
         }
 
     with pytest.raises(IOError):
-        ChangedTestExperiment(root).load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.rms', baseline=False)
+        ChangedTestExperiment(root).load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False)
 
     class ChangedEpochExperiment(SampleExperiment):
         epochs = {
@@ -251,16 +250,16 @@ def test_sample(samples_experiment):
         }
 
     with pytest.raises(IOError):
-        ChangedEpochExperiment(root).load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.rms', baseline=False)
+        ChangedEpochExperiment(root).load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False)
 
     meg_rms = combine(meg.rms('sensor') for meg in megs).mean('case', name='auditory')
     assert_dataobj_equal(res.c1_mean, meg_rms, decimal=21)
-    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='sensor.mean', baseline=False, make=True)
+    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.mean', inv='', baseline=False, make=True)
     meg_mean = combine(meg.mean('sensor') for meg in megs).mean('case', name='auditory')
     assert_dataobj_equal(res.c1_mean, meg_mean, decimal=21)
     with pytest.raises(IOError):
-        e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False)
-    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False, make=True)
+        e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, inv='', baseline=False)
+    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, inv='', baseline=False, make=True)
     assert res.p.min() == pytest.approx(.143, abs=.001)
     assert res.difference.max() == pytest.approx(4.47e-13, 1e-15)
     # plot (skip to avoid using framework build)
@@ -361,7 +360,7 @@ def test_sample(samples_experiment):
     assert e._groups['ab'] == e._groups['alias'] == ('R0000', 'R0002')
     # Check that derivative paths reflect group content
     result_options = {
-        'data': _TestDims.coerce('sensor.rms', morph=True),
+        'data': _DataSpec.coerce('meg.rms', morph=True),
         'samples': 20,
         'test': 'a>v',
         'tstart': 0.05,
@@ -552,8 +551,8 @@ def test_sample_source(samples_experiment):
     assert exists(e._resolve_derivative('fwd').manifest_path)
     assert exists(e._resolve_derivative('inv').manifest_path)
     # cat is a view option on evoked-stc: subsetting model cells
-    ds_all = e.load_evoked_stc(model='side', ndvar=False)
-    ds_left = e.load_evoked_stc(model='side', cat=('left',), ndvar=False)
+    ds_all = e.load_evoked(model='side', ndvar=False, inv='free-3-dSPM')
+    ds_left = e.load_evoked(model='side', cat=('left',), ndvar=False, inv='free-3-dSPM')
     assert set(ds_all['side'].cells) == {'left', 'right'}
     assert set(ds_left['side'].cells) == {'left'}
     assert ds_left.n_cases < ds_all.n_cases
@@ -591,7 +590,7 @@ def test_sample_source(samples_experiment):
     with open(Path(subject_dep['manifest'])) as fid:
         level_1_manifest_data = json.load(fid)
     assert level_1_manifest_data['dependencies']['two-stage-data']['dependencies']['R0000']['name'] == 'evoked-stc'
-    ds_return, _ = e.load_test('twostage', 0.05, 0.2, 0.05, samples=8, data='source', return_data=True, make=True)
+    ds_return, _ = e.load_test('twostage', 0.05, 0.2, 0.05, samples=8, return_data=True, make=True)
     assert isinstance(ds_return, Dataset)
     assert 'subject' in ds_return
     res = ress.res['transversetemporal-lh']
@@ -916,8 +915,8 @@ def test_variable_length_epochs(samples_experiment):
     assert isinstance(ds_mne['epochs'], Datalist)
     assert len(ds_mne['epochs']) == n
 
-    # ndvar='both' keeps both the MNE epochs and the NDVars
-    ds_both = e.load_epochs(ndvar='both')
+    # keep_mne keeps both the MNE epochs and the NDVars
+    ds_both = e.load_epochs(keep_mne=True)
     assert isinstance(ds_both['epochs'], Datalist)
     assert isinstance(ds_both['meg'], Datalist)
 
@@ -1083,7 +1082,7 @@ def test_evoked_backed_test_vars_are_post_aggregation_only(samples_experiment):
     e = Experiment(root, epoch_rejection='', test='anova-ok')
 
     options = {
-        'data': _TestDims.coerce('sensor.mean', morph=True),
+        'data': _DataSpec.coerce('meg.mean', morph=True),
         'test': 'anova-ok',
         'baseline': False,
         'src_baseline': None,
@@ -1747,26 +1746,22 @@ def test_load_trf(samples_experiment):
     set_log_level('warning', 'mne')
     root = samples_experiment(n_subjects=1, n_segments=4)
     e = SampleTRF(root)
-    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40')
+    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40', inv='')
 
     # compute
-    res = e.load_trf('imp', 0, 0.1, data='sensor', make=True)
+    res = e.load_trf('imp', 0, 0.1)
     assert isinstance(res, BoostingResult)
 
-    # not computed without make
-    with pytest.raises(FileMissingError):
-        e.load_trf('imp', 0, 0.2, data='sensor')
-
     # cache hit
-    options = e._trf_options('imp', 0., 0.1, 'boosting', 'sensor', None, None, False, {})
+    options = e._trf_options('imp', 0., 0.1, 'boosting', None, None, None, False, {})
     assert e._resolve_derivative('trf', options=options).is_valid()
 
     # path
-    path = Path(e.load_trf('imp', 0, 0.1, data='sensor', path_only=True))
+    path = Path(e.load_trf('imp', 0, 0.1, path_only=True))
     assert path.exists()
 
     # separable, picklable job reproduces the result
-    job = e._trf_job('imp', 0, 0.1, data='sensor')
+    job = e._trf_job('imp', 0, 0.1)
     job = pickle.loads(pickle.dumps(job))
     assert Path(job.path) == path
     res2 = job.fit()
@@ -1783,7 +1778,7 @@ def test_predictor_subset_fingerprint(samples_experiment):
     set_log_level('warning', 'mne')
     root = samples_experiment(n_subjects=1, n_segments=4)
     e = SampleTRF(root)
-    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40')
+    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40', inv='')
     samplingrate = 1 / e.load_epochs(reject=False)['meg'].time.tstep
 
     pdir = Path(root) / 'derivatives' / 'predictors'
@@ -1802,9 +1797,9 @@ def test_predictor_subset_fingerprint(samples_experiment):
     for stim in ('auditory', 'visual'):
         write(stim, ones, [0., 0., 0., 0., 0.])
 
-    res = e.load_trf('env', 0, 0.1, data='sensor', samplingrate=samplingrate, make=True)
+    res = e.load_trf('env', 0, 0.1, samplingrate=samplingrate)
     assert isinstance(res, BoostingResult)
-    options = e._trf_options('env', 0., 0.1, 'boosting', 'sensor', None, samplingrate, False, {})
+    options = e._trf_options('env', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
     assert e._resolve_derivative('trf', options=options).is_valid()
 
     # editing only the unused column (new mtime, same relevant data) keeps the TRF valid
@@ -1827,9 +1822,9 @@ def test_load_trf_source(samples_experiment):
     root = samples_experiment(n_subjects=1, n_segments=4, mris=True)
     e = SampleTRF(root)
     e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40', src='ico-2', parc='ac')
-    res = e.load_trf('imp', 0, 0.1, data='source', make=True)
+    res = e.load_trf('imp', 0, 0.1)
     assert isinstance(res, BoostingResult)
-    assert e._resolve_derivative('trf', options=e._trf_options('imp', 0., 0.1, 'boosting', 'source', None, None, False, {})).is_valid()
+    assert e._resolve_derivative('trf', options=e._trf_options('imp', 0., 0.1, 'boosting', None, None, None, False, {})).is_valid()
 
 
 @requires_mne_sample_data
@@ -1842,7 +1837,7 @@ def test_load_trf_filepredictor(samples_experiment):
     set_log_level('warning', 'mne')
     root = samples_experiment(n_subjects=1, n_segments=4)
     e = SampleTRF(root)
-    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40')
+    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40', inv='')
 
     # match the predictor sampling to the data's natural (decimated) rate so the
     # samplingrate is an integer ratio of the raw rate and needs no resampling
@@ -1859,7 +1854,7 @@ def test_load_trf_filepredictor(samples_experiment):
 
     # samplingrate is required for FilePredictor TRFs
     with pytest.raises(TRFModelError):
-        e.load_trf('env', 0, 0.1, data='sensor', make=True)
+        e.load_trf('env', 0, 0.1)
 
     # load_predictor shapes one stimulus' file into an NDVar at the requested tstep
     x = e.load_predictor('auditory~env', tstep)
@@ -1868,11 +1863,11 @@ def test_load_trf_filepredictor(samples_experiment):
     assert x.name == 'auditory~env'
 
     # compute
-    res = e.load_trf('env', 0, 0.1, data='sensor', samplingrate=samplingrate, make=True)
+    res = e.load_trf('env', 0, 0.1, samplingrate=samplingrate)
     assert isinstance(res, BoostingResult)
 
     # the per-stimulus predictor file edges are recorded in the manifest
-    options = e._trf_options('env', 0., 0.1, 'boosting', 'sensor', None, samplingrate, False, {})
+    options = e._trf_options('env', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
     ctx = e._resolve_derivative('trf', options=options)
     assert ctx.is_valid()
     assert {'auditory~env', 'visual~env'} <= set(ctx._manifest().dependencies)
@@ -1894,10 +1889,10 @@ def test_load_trfs(samples_experiment):
     set_log_level('warning', 'mne')
     root = samples_experiment(n_subjects=2, n_segments=4)
     e = SampleTRF(root)
-    e.set(epoch='target', epoch_rejection='', raw='1-40')
+    e.set(epoch='target', epoch_rejection='', raw='1-40', inv='')
 
     # single subject -> 1-case Dataset with metrics and kernel
-    ds = e.load_trfs('R0000', 'imp', 0, 0.1, data='sensor', make=True)
+    ds = e.load_trfs('R0000', 'imp', 0, 0.1)
     assert isinstance(ds, Dataset)
     assert ds.n_cases == 1
     assert ds[0, 'subject'] == 'R0000'
@@ -1906,21 +1901,17 @@ def test_load_trfs(samples_experiment):
     for key in ('r', 'z', 'residual', 'det', 'imp'):
         assert isinstance(ds[key], NDVar)
 
-    # not computed without make
-    with pytest.raises(FileMissingError):
-        e.load_trfs('R0000', 'imp', 0, 0.2, data='sensor')
-
     # group -> one case per subject
-    ds_all = e.load_trfs('all', 'imp', 0, 0.1, data='sensor', make=True)
+    ds_all = e.load_trfs('all', 'imp', 0, 0.1)
     assert ds_all.n_cases == 2
     assert sorted(ds_all['subject'].cells) == ['R0000', 'R0001']
 
     # scale='original' rescales the kernel
-    ds_scaled = e.load_trfs('R0000', 'imp', 0, 0.1, data='sensor', scale='original')
+    ds_scaled = e.load_trfs('R0000', 'imp', 0, 0.1, scale='original')
     assert (ds_scaled[0, 'imp'].x != ds[0, 'imp'].x).any()
 
     # trfs=False loads only the metrics
-    ds_metrics = e.load_trfs('R0000', 'imp', 0, 0.1, data='sensor', trfs=False)
+    ds_metrics = e.load_trfs('R0000', 'imp', 0, 0.1, trfs=False)
     assert ds_metrics.info['xs'] == []
     assert 'imp' not in ds_metrics
     assert isinstance(ds_metrics['r'], NDVar)
@@ -1937,9 +1928,9 @@ def test_load_trfs_collection(samples_experiment):
     set_log_level('warning', 'mne')
     root = samples_experiment(n_subjects=1, n_segments=4)
     e = SampleTRFCollection(root)
-    e.set(subject='R0000', epoch='avc', epoch_rejection='', raw='1-40')
+    e.set(subject='R0000', epoch='avc', epoch_rejection='', raw='1-40', inv='')
 
-    ds = e.load_trfs('R0000', 'imp', 0, 0.1, data='sensor', make=True)
+    ds = e.load_trfs('R0000', 'imp', 0, 0.1)
     assert ds.n_cases == 2
     assert sorted(ds['epoch'].cells) == ['auditory', 'visual']
     assert ds.info['xs'] == ['imp']
@@ -1957,7 +1948,7 @@ def test_load_trfs_source(samples_experiment):
     e = SampleTRF(root)
     e.set(epoch='target', epoch_rejection='', raw='1-40', src='ico-2', parc='ac')
 
-    ds = e.load_trfs('all', 'imp', 0, 0.1, data='source', make=True, smooth=0.005)
+    ds = e.load_trfs('all', 'imp', 0, 0.1, smooth=0.005)
     assert ds.n_cases == 2
     assert sorted(ds['subject'].cells) == ['R0000', 'R0001']
     # all subjects morphed onto the common brain, so kernels share one source space

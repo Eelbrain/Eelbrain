@@ -363,62 +363,69 @@ class ANOVA(Test):
         return test.ANOVA(y, self.x, data=ds)
 
 
-class TestDims:
-    """Data shape for test
+class DataSpec:
+    """Internal description of the data going into an analysis
+
+    Combines the data *space* (sensor vs source, determined by the ``inv``
+    state) with the data *kind* (sensor type and/or aggregation). Instances are
+    composed at the :class:`Pipeline` boundary from the user-facing ``data``
+    argument and the ``inv`` state; see ``Pipeline._resolve_data``.
 
     Parameters
     ----------
     string : str
-        String describing data.
+        Internal string describing the data: ``'sensor'``/``'source'`` (or a
+        specific sensor type ``'meg'``/``'mag'``/``'grad'``/``'eeg'``), with an
+        optional ``.mean``/``.rms`` aggregation suffix.
     time : bool
         Whether the base data contains a time axis.
     morph : bool
         If loading source space data, whether the data is morphed to the common
         brain.
     """
-    RE = re.compile(r"^(source|sensor|meg|eeg)(?:\.(mean|rms))?$")
-    source = None
-    sensor = None
+    RE = re.compile(r"^(source|sensor|meg|mag|grad|eeg)(?:\.(mean|rms))?$")
+    source = False
+    sensor = False
+    aggregate = None  # None, 'mean', or 'rms'
 
     def __init__(self, string, time=True, morph=False):
         self.time = bool(time)
         self.morph = bool(morph)
         m = self.RE.match(string)
         if m is None:
-            raise ValueError(f"data={string!r}: invalid test dimension description")
-        dim, aggregate = m.groups()
+            raise ValueError(f"data={string!r}: invalid data description")
+        dim, self.aggregate = m.groups()
         if dim in ('meg', 'mag'):
             self._to_ndvar = ('mag',)
-            self.y_name = 'meg'  # see .load_epochs()
-            dim = 'sensor'
-        elif dim in ('eeg', 'planar1', 'planar2'):
+            self.y_name = 'meg'  # mag NDVars are keyed 'meg' (see .load_epochs())
+            self.sensor = True
+        elif dim in ('grad', 'eeg'):
             self._to_ndvar = (dim,)
             self.y_name = dim
-            dim = 'sensor'
+            self.sensor = True
         elif dim == 'sensor':
             self._to_ndvar = None
             self.y_name = 'meg'
+            self.sensor = True
         elif dim == 'source':
             self._to_ndvar = None
             self.y_name = 'srcm' if self.morph else 'src'
+            self.source = True
         else:
             raise RuntimeError(f"{string=} ({dim=})")
-        setattr(self, dim, aggregate or True)
-        if sum(map(bool, (self.source, self.sensor))) != 1:
-            raise ValueError(f"data={string!r}: invalid test dimension description")
         self.string = string
 
         dims = []
-        if self.source is True:
+        if self.source and not self.aggregate:
             dims.append('source')
-        elif self.sensor is True:
+        elif self.sensor and not self.aggregate:
             dims.append('sensor')
-        if self.time is True:
+        if self.time:
             dims.append('time')
         self.dims = tuple(dims)
 
         # whether parc is used from subjects or from common-brain
-        if self.source is True:
+        if self.source and not self.aggregate:
             self.parc_level = 'common'
         elif self.source:
             self.parc_level = 'individual'
@@ -436,15 +443,15 @@ class TestDims:
             return cls(obj, time, morph)
 
     def __repr__(self):
-        return f"TestDims({self.string!r})"
+        return f"DataSpec({self.string!r})"
 
     def __eq__(self, other):
-        if not isinstance(other, TestDims):
+        if not isinstance(other, DataSpec):
             return False
         return self.string == other.string and self.time == other.time
 
     def _testnd_parc(self, disconnect_labels: bool) -> str | None:
-        if self.source is True:
+        if self.source and not self.aggregate:
             return 'source' if disconnect_labels else None
         if disconnect_labels:
             raise TypeError(f"{disconnect_labels=}: invalid for data={self.string!r}")
@@ -462,18 +469,18 @@ class TestDims:
 class ResolvedTestNDSpec:
     """Resolved request-local plan for `testnd` execution.
 
-    This combines a :class:`TestDims` semantic data description with the current
+    This combines a :class:`DataSpec` semantic data description with the current
     request-local ``testnd`` kwargs.
     """
 
-    data: TestDims
+    data: DataSpec
     kwargs: dict[str, Any]
 
     @classmethod
     def from_request(
             cls,
             ctx: Request,
-            data: TestDims,
+            data: DataSpec,
     ) -> ResolvedTestNDSpec:
         pmin = ctx.options['pmin']
         kwargs = {

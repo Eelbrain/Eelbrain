@@ -47,7 +47,7 @@ from ..._text import n_of
 from ..._meeg.interpolation import _interpolate_bads_eeg, _interpolate_bads_meg, _interpolate_bad_windows_eeg, _interpolate_bad_windows_meg
 from ..derivative_cache import CachePolicy, Dependency, Derivative, Request, UncachedDerivative
 from ..preprocessing import RawPipeGraph, Reference, raw_node_name
-from ..test_def import TestDims
+from ..test_def import DataSpec
 from .config import EPOCH_EXTRACT_OPTIONS, ContinuousEpoch, EpochBase, EpochCollection, PrimaryEpoch, SecondaryEpoch, SuperEpoch
 
 
@@ -236,7 +236,7 @@ class RecordingEpochsDerivative(Derivative[Any]):
         # and the True bad-channel reset is applied as a view operation in EpochsDerivative.
         if ctx.options['interpolate_bads']:
             _drop_bad_eeg_channels_with_missing_locs(epochs_list)
-            data_types = TestDims.coerce('sensor').data_to_ndvar(epochs_list[0].info)
+            data_types = DataSpec.coerce('sensor').data_to_ndvar(epochs_list[0].info)
             if ds.info.get(INTERPOLATE_WINDOWS, False) and any(ds[INTERPOLATE_WINDOWS]):
                 # time-resolved interpolation for long, variable-length epochs
                 windows_all = list(ds[INTERPOLATE_WINDOWS])
@@ -265,7 +265,7 @@ class RecordingEpochsDerivative(Derivative[Any]):
         # EEG re-referencing, after channel interpolation
         reference = self.references[ctx.state['reference']]
         if reference is not None:
-            if 'eeg' not in TestDims.coerce('sensor').data_to_ndvar(epochs_list[0].info):
+            if 'eeg' not in DataSpec.coerce('sensor').data_to_ndvar(epochs_list[0].info):
                 raise ConfigurationError(f"reference={ctx.state['reference']!r}: {ctx.state['subject']}/{epoch.name} has no EEG channels to re-reference; set reference='' for data without EEG.")
             montage = self.raw.root_source_pipe(ctx.state['raw']).montage
             epochs_list = [reference._apply_reference(epochs, montage=montage) for epochs in epochs_list]
@@ -440,10 +440,10 @@ class EpochsDerivative(Derivative[Any]):
 
     def apply_view_options(self, ctx: Request, epoch_value):
         epoch = self.epochs[ctx.state['epoch']]
-        data = TestDims.coerce(ctx.view_options['data'])
+        data = DataSpec.coerce(ctx.view_options['data'])
         if not data.sensor:
             raise ValueError(f"data={data.string!r}; load_evoked is for loading sensor data")
-        if data.sensor is not True and not ctx.view_options['ndvar']:
+        if data.aggregate and not ctx.view_options['ndvar']:
             raise ValueError(f"data={data.string!r} with ndvar=False")
 
         if isinstance(epoch, SuperEpoch):
@@ -500,12 +500,12 @@ class EpochsDerivative(Derivative[Any]):
                 name = 'meg' if data_kind == 'mag' and 'grad' not in sensor_types else data_kind
                 if variable_tmax:
                     ys = Datalist([load.mne.epochs_ndvar(epochs, data=data_kind, sysname=sysname, adjacency=adjacency, name=data_kind)[0] for epochs in epochs_list])
-                    if isinstance(data.sensor, str):
-                        ys = Datalist([getattr(y, data.sensor)('sensor') for y in ys])
+                    if data.aggregate:
+                        ys = Datalist([getattr(y, data.aggregate)('sensor') for y in ys])
                 else:
                     ys = load.mne.epochs_ndvar(ds['epochs'], data=data_kind, sysname=sysname, adjacency=adjacency)
-                    if isinstance(data.sensor, str):
-                        ys = getattr(ys, data.sensor)('sensor')
+                    if data.aggregate:
+                        ys = getattr(ys, data.aggregate)('sensor')
                 ds[name] = ys
             if ndvar != 'both':
                 del ds['epochs']
@@ -668,8 +668,8 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
                     evoked_i.apply_baseline(epoch.baseline)
 
         # NDVar
-        data = TestDims.coerce(ctx.view_options['data'])
-        to_ndvar = isinstance(data.sensor, str) or ctx.view_options['ndvar']
+        data = DataSpec.coerce(ctx.view_options['data'])
+        to_ndvar = data.aggregate or ctx.view_options['ndvar']
         if to_ndvar:
             info = evoked[0].info
             sensor_types = ds.info['sensor_types'] = data.data_to_ndvar(info)
@@ -679,8 +679,10 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
                 adjacency = source_pipe._get_adjacency(sensor_type)
                 name = 'meg' if sensor_type == 'mag' else sensor_type
                 ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
-                if sensor_type != 'eog' and isinstance(data.sensor, str):
-                    ds[name] = getattr(ds[name], data.sensor)('sensor')
+                if sensor_type != 'eog' and data.aggregate:
+                    ds[name] = getattr(ds[name], data.aggregate)('sensor')
+            if ctx.view_options['ndvar'] == 'both':
+                ds['evoked'] = evoked
         else:
             ds['evoked'] = evoked
         return ds
@@ -735,17 +737,16 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
 
     def build(self, ctx: Request) -> Dataset:
         dss = [ctx.load(subject) for subject in self.groups[ctx.state['group']]]
-        data = TestDims.coerce(ctx.options['data'])
+        data = DataSpec.coerce(ctx.options['data'])
         ndvar = ctx.options['ndvar']
-        individual_ndvar = isinstance(data.sensor, str)
-        if individual_ndvar:
+        if data.aggregate:
             ndvar = False
         elif ndvar:
             for ds in dss:
                 for evoked in ds['evoked']:
                     evoked.info['bads'] = []
         ds = combine(dss, incomplete='drop')
-        if not ndvar and not individual_ndvar:
+        if not ndvar and not data.aggregate:
             lens = [len(evoked.times) for evoked in ds['evoked']]
             ulens = set(lens)
             if len(ulens) > 1:
@@ -756,7 +757,7 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
                     err.append(f"{length}: {subjects}")
                 raise DimensionMismatchError('\n'.join(err))
             return ds
-        if ndvar and not individual_ndvar:
+        if ndvar and not data.aggregate:
             evoked = ds['evoked']
             del ds['evoked']
             info = evoked[0].info
@@ -768,6 +769,6 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
                 adjacency = source_pipe._get_adjacency(sensor_type)
                 name = 'meg' if sensor_type == 'mag' else sensor_type
                 ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
-                if sensor_type != 'eog' and isinstance(data.sensor, str):
-                    ds[name] = getattr(ds[name], data.sensor)('sensor')
+                if sensor_type != 'eog' and data.aggregate:
+                    ds[name] = getattr(ds[name], data.aggregate)('sensor')
         return ds

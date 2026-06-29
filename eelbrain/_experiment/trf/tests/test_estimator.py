@@ -9,8 +9,7 @@ from eelbrain._experiment.trf.estimator import Boosting, Estimator, NCRF
 def test_boosting():
     est = Boosting()
     assert isinstance(est, Estimator)
-    assert est.resolve_data(None) == 'source'
-    assert est.resolve_data('sensor') == 'sensor'
+    assert est.requires_sensor_space is False
     assert est.extra_inputs == ()
     # _as_dict covers every DICT_ATTRS entry
     d = est._as_dict()
@@ -28,9 +27,7 @@ def test_ncrf():
     est = NCRF(mu=0.5)
     assert isinstance(est, Estimator)
     assert est.extra_inputs == ('fwd', 'cov')
-    assert est.resolve_data(None) == 'sensor'
-    with pytest.raises(ValueError):
-        est.resolve_data('sensor')
+    assert est.requires_sensor_space is True
     d = est._as_dict()
     assert d['type'] == 'NCRF'
     assert set(d) == {'type', *NCRF.DICT_ATTRS}

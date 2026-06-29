@@ -171,16 +171,14 @@ class TRFDerivative(Derivative[object]):
 
     def key(self, ctx: Request) -> dict[str, object]:
         est = self._estimator(ctx)
-        data = est.resolve_data(ctx.options['data'])
+        source = bool(ctx.state['inv'])  # non-empty inverse → source space
         fields = ['subject', 'session', 'raw', 'epoch', 'epoch_rejection', 'reference']
-        if data not in ('sensor', 'meg', 'eeg'):
-            fields += ['cov', 'mrisubject', 'src', 'parc']
-            if 'fwd' not in est.extra_inputs:  # boosting source uses the inverse
-                fields.append('inv')
+        if source:
+            fields += ['cov', 'mrisubject', 'src', 'parc', 'inv']
         elif est.extra_inputs:  # NCRF: sensor data + forward solution
             fields += ['cov', 'mrisubject', 'src']
         key = canonical_state_subset(ctx.state, tuple(fields))
-        key.update(ctx.options)
+        key.update(ctx.options)  # ctx.options['data'] is the resolved kind string
         key['x'] = self._model(ctx).name
         return key
 
@@ -189,17 +187,15 @@ class TRFDerivative(Derivative[object]):
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         est = self._estimator(ctx)
-        data = est.resolve_data(ctx.options['data'])
 
-        # M/EEG data
+        # M/EEG response: sensor (inv='') vs source space
         option_kwargs = {}
-        if data in ('meg', 'eeg'):
-            option_kwargs['data'] = data
-        if data in (None, 'sensor', 'meg', 'eeg'):
-            node = 'epochs'
-            option_kwargs['interpolate_bads'] = est.interpolate_bads
-        else:
+        if ctx.state['inv']:  # source space
             node = 'epochs-stc'
+        else:
+            node = 'epochs'
+            option_kwargs['data'] = ctx.options['data']  # resolved sensor kind
+            option_kwargs['interpolate_bads'] = est.interpolate_bads
         options = ctx.options_for(node, 'samplingrate', 'decim', **option_kwargs)
         deps = [Dependency(node, label='response', options=options)]
 
@@ -366,7 +362,7 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
         return Model.coerce(ctx.options['x']).initialize(self.named_models)
 
     def _is_source(self, ctx: Request) -> bool:
-        return self._estimator(ctx).resolve_data(ctx.options['data']) not in ('sensor', 'meg', 'eeg')
+        return bool(ctx.state['inv'])  # non-empty inverse → source space
 
     def _epoch_names(self, ctx: Request) -> list[str]:
         epoch = self.epochs[ctx.state['epoch']]
