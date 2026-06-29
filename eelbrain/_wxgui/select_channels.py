@@ -21,6 +21,7 @@ from .._io.fiff import _picks, sensor_dim as _sensor_dim, _sensor_info
 from .._ndvar import neighbor_correlation
 from .._types import PathArg
 from .._utils.parse import INT_PATTERN, POS_FLOAT_PATTERN
+from .. import plot
 from ..plot._base import AxisData, DataLayer, PlotType
 from ..plot._topo import AxTopomap
 from .frame import EelbrainDialog, NavigableFrame
@@ -31,7 +32,6 @@ from ._ch_types import CH_TYPE_COLORS, CH_TYPE_DEFAULT_VLIM_SI, ch_type_scale
 from .select_epochs import VLimDialog
 
 
-TOPO_ARGS = {'interpolation': 'linear', 'clip': 'even'}
 DEFAULT_WINDOW = 30.0  # seconds
 
 _EVENT_COLORS = [c for c in UNAMBIGUOUS_COLORS.values()]
@@ -214,20 +214,16 @@ class Document(FileDocument):
         return frozenset(new_bad)
 
     def compute_nc_dynamic(self, ch_type: str, ndvar: NDVar) -> NDVar | None:
-        """NC with bad-channel rows zeroed, making them appear near 0 on the map."""
+        """NC recomputed with bad channels omitted, for a smooth interpolated map."""
         static = self.nc_static.get(ch_type)
         bad = self.bad_channels
-        if not bad or static is None:
+        if static is None:
+            return None
+        good = [n for n in ndvar.sensor.names if n not in bad]
+        if len(good) == len(ndvar.sensor) or len(good) < 2:
             return static
-        ch_names = ndvar.sensor.names
-        bad_indices = [i for i, n in enumerate(ch_names) if n in bad]
-        if not bad_indices:
-            return static
-        x = ndvar.x.copy()
-        x[bad_indices] = 0
-        ndvar_masked = NDVar(x, ndvar.dims, name=ndvar.name, info=ndvar.info)
         try:
-            return neighbor_correlation(ndvar_masked, flat=0)
+            return neighbor_correlation(ndvar.sub(sensor=good))
         except Exception:
             return static
 
@@ -283,6 +279,7 @@ class Frame(NavigableFrame, FileFrame):
     right       scroll forward one window
     alt+left    jump to beginning
     alt+right   jump to end
+    t           enlarge the topomap under the pointer (with channel names)
     =========== ============================================================
     """
 
@@ -397,6 +394,10 @@ class Frame(NavigableFrame, FileFrame):
         self.canvas.mpl_connect('button_press_event', self.OnCanvasClick)
         self.canvas.mpl_connect('key_release_event', self.OnCanvasKey)
         self.canvas.mpl_connect('motion_notify_event', self.OnPointerMotion)
+        # Re-layout and re-capture the blit background after a resize (the stored
+        # background and the square-topo layout both depend on the figure size).
+        self._resize_pending = False
+        self.canvas.Bind(wx.EVT_SIZE, self.OnCanvasResize)
 
         self._update_scrollbar()
         self._plot()
@@ -440,6 +441,20 @@ class Frame(NavigableFrame, FileFrame):
         pos = int(self.t_start * self._sfreq)
         n = self.doc.raw.n_times
         self.scrollbar.SetScrollbar(pos, self._window_samples, n, self._window_samples)
+
+    def OnCanvasResize(self, event):
+        # Let matplotlib resize the figure first, then re-plot once the new size
+        # has propagated. A full re-layout (rather than a blitted redraw) is
+        # required because the stale blit background causes jumbled artifacts.
+        event.Skip()
+        if not self._resize_pending:
+            self._resize_pending = True
+            wx.CallAfter(self._do_resize)
+
+    def _do_resize(self):
+        self._resize_pending = False
+        if self:  # window may have been destroyed before the deferred call
+            self._plot()
 
     # --- Plotting ---
 
@@ -572,6 +587,7 @@ class Frame(NavigableFrame, FileFrame):
                 (0.05, bottom, 0.95, events_h_frac - 0.005),
                 frameon=True,
             )
+            events_ax.set_ylabel('Events')
             events_ax.set_xlim(self.t_start, t_end)
             events_ax.set_ylim(0, 1)
             events_ax.set_yticks([])
@@ -579,18 +595,54 @@ class Frame(NavigableFrame, FileFrame):
             self._events_ax = events_ax
             self._draw_events()
 
-        # --- Topo row (cursor | static NC | dynamic NC per channel type) ---
-        n_topo_cols = 3 * n_types
-        cell_w = 1.0 / n_topo_cols
-        # Within each cell, reserve a thin strip on the right for a colorbar
-        cbar_w = min(0.012, cell_w * 0.12)
-        cbar_pad = cell_w * 0.06
-        map_w = cell_w - cbar_w - cbar_pad
+        # --- Topo row: square (1:1) topomaps. The dynamic cursor maps are
+        #     left-aligned, the neighbor-correlation (raw + clean) maps are
+        #     right-aligned. Each channel type contributes one cursor map on the
+        #     left and an NC pair (sharing one colorbar) on the right. ---
         fig_w = self.figure.get_figwidth()
         fig_h = self.figure.get_figheight()
-        # Make topos square in physical space, but cap at the allocated height
-        topo_h = min(map_w * (fig_w / fig_h), topo_h_frac * 0.85)
+        cbar_w = 0.006       # colorbar axis width (figure fraction)
+        cbar_pad = 0.004     # gap between a map and its colorbar
+        cbar_label_w = 0.045  # space right of a colorbar for its tick/unit labels
+        nc_inner_gap = 0.008  # gap between the NC raw and NC clean maps of a type
+        group_gap = 0.02     # gap between channel-type groups
+        middle_gap = 0.03    # minimum gap between the left and right groups
+
+        # Topomaps are square; their height is the constraining dimension, but
+        # cap the width so the left and right groups never overlap.
+        topo_h_max = topo_h_frac * 0.85
+        square_w = topo_h_max * fig_h / fig_w
+        # 3 maps per type span the width (1 cursor + 2 NC); the rest is overhead
+        overhead = (
+            n_types * (cbar_pad + cbar_w + cbar_label_w)  # left: one colorbar per cursor map
+            + n_types * (nc_inner_gap + cbar_pad + cbar_w + cbar_label_w)  # right: NC pair + colorbar
+            + 2 * (n_types - 1) * group_gap
+            + middle_gap
+        )
+        topo_w = min(square_w, (1.0 - overhead) / (3 * n_types))
+        topo_h = topo_w * fig_w / fig_h  # keep square in physical space
         topo_bottom = (topo_h_frac - topo_h) / 2
+
+        # Left-aligned cursor maps: (map_x, cbar_x) per channel type
+        cursor_map_x, cursor_cbar_x = [], []
+        x = 0.0
+        for _ in range(n_types):
+            cursor_map_x.append(x)
+            cursor_cbar_x.append(x + topo_w + cbar_pad)
+            x += topo_w + cbar_pad + cbar_w + cbar_label_w + group_gap
+
+        # Right-aligned NC maps: (raw_x, clean_x, cbar_x) per channel type. The
+        # unit reserves cbar_label_w right of the colorbar so tick/unit labels
+        # are not clipped at the figure edge (or by the next group).
+        nc_unit_w = 2 * topo_w + nc_inner_gap + cbar_pad + cbar_w + cbar_label_w
+        nc_total_w = n_types * nc_unit_w + (n_types - 1) * group_gap
+        nc_raw_x, nc_clean_x, nc_cbar_x = [], [], []
+        x = 1.0 - nc_total_w
+        for _ in range(n_types):
+            nc_raw_x.append(x)
+            nc_clean_x.append(x + topo_w + nc_inner_gap)
+            nc_cbar_x.append(x + 2 * topo_w + nc_inner_gap + cbar_pad)
+            x += nc_unit_w + group_gap
 
         self._cursor_topos = []
         self._static_nc_topos = []
@@ -601,17 +653,23 @@ class Frame(NavigableFrame, FileFrame):
 
         topo_groups = [
             ('Cursor', self._cursor_topos),
-            ('NC raw', self._static_nc_topos),
-            ('NC clean', self._dynamic_nc_topos),
+            ('Neighbor corr raw', self._static_nc_topos),
+            ('Neighbor corr clean', self._dynamic_nc_topos),
         ]
 
         for i_type, (ch_type, ndvar, picks) in enumerate(doc.ndvars_by_type):
             sensor = ndvar.sensor
             display_unit, scale = ch_type_scale(ch_type)
+            nc_raw_topo = None  # provides the shared color scale/colorbar for the NC pair
             for j_group, (label, topo_list) in enumerate(topo_groups):
-                col = i_type * 3 + j_group
+                if j_group == 0:
+                    map_x = cursor_map_x[i_type]
+                elif j_group == 1:
+                    map_x = nc_raw_x[i_type]
+                else:
+                    map_x = nc_clean_x[i_type]
                 ax = self.figure.add_axes(
-                    (col * cell_w, topo_bottom, map_w, topo_h),
+                    (map_x, topo_bottom, topo_w, topo_h),
                 )
                 ax.ch_type = ch_type
                 ax.topo_group = j_group
@@ -622,25 +680,42 @@ class Frame(NavigableFrame, FileFrame):
                     d = raw[picks, 0:1][0][:, 0] * scale
                     topo_ndvar = NDVar(d, (sensor,), name=ch_type, info=ndvar.info)
                     cbar_label = display_unit or ch_type
+                    interpolation = 'linear'
+                    vlims = {ndvar.info.get('meas'): (-vlim_display, vlim_display)}
                 else:
-                    topo_ndvar = doc.nc_static.get(ch_type)
+                    # NC raw uses the static map; NC clean omits bad channels
+                    if j_group == 1:
+                        topo_ndvar = doc.nc_static.get(ch_type)
+                    else:
+                        topo_ndvar = doc.compute_nc_dynamic(ch_type, ndvar)
                     if topo_ndvar is None:
                         topo_ndvar = NDVar(np.zeros(len(sensor)), (sensor,), name=ch_type)
                     cbar_label = 'r'
+                    interpolation = 'nearest'
+                    vlims = {'r': (-1, 1)}
 
                 layers = AxisData([DataLayer(topo_ndvar, PlotType.IMAGE)])
-                p = AxTopomap(ax, layers, **TOPO_ARGS)
+                p = AxTopomap(ax, layers, vlims=vlims, interpolation=interpolation, clip='even')
                 ax.text(0.5, 0.0, f"{label} ({ch_type})", transform=ax.transAxes,
                         ha='center', va='bottom', fontsize=7)
 
-                # Colorbar in the reserved strip to the right of the topomap
-                cbar_ax = self.figure.add_axes(
-                    (col * cell_w + map_w + cbar_pad, topo_bottom, cbar_w, topo_h),
-                )
-                cbar = self._add_topo_colorbar(p, cbar_ax, cbar_label)
                 if j_group == 0:
+                    # Cursor topo: own colorbar that rescales with the cursor
+                    cbar_ax = self.figure.add_axes(
+                        (cursor_cbar_x[i_type], topo_bottom, cbar_w, topo_h),
+                    )
+                    cbar = self._add_topo_colorbar(p, cbar_ax, cbar_label)
                     self._cursor_cbars.append(cbar)
                     self._cursor_cbar_axes.append(cbar_ax)
+                elif j_group == 1:
+                    # NC raw defines the shared color scale; colorbar drawn with the clean topo
+                    nc_raw_topo = p
+                else:
+                    # NC clean: share the raw NC color scale and a single colorbar
+                    cbar_ax = self.figure.add_axes(
+                        (nc_cbar_x[i_type], topo_bottom, cbar_w, topo_h),
+                    )
+                    self._add_topo_colorbar(nc_raw_topo, cbar_ax, cbar_label)
 
                 # Mark bad channels with red ×
                 if doc.bad_channels:
@@ -698,10 +773,11 @@ class Frame(NavigableFrame, FileFrame):
             self._events_ax.set_xlim(t_start, t_end)
             self._draw_events()
 
-        redraw_axes = list(self._butterfly_axes)
-        if self._events_ax is not None:
-            redraw_axes.append(self._events_ax)
-        self.canvas.redraw(redraw_axes)
+        # Full redraw + re-capture the blit background: the new window changed
+        # the butterfly/events axes, so a stale background would otherwise be
+        # restored (showing the previous page) on the next cursor-topo blit.
+        self.canvas.draw()
+        self.canvas.store_canvas()
 
     def _draw_events(self):
         """Redraw event markers for the current time window."""
@@ -796,13 +872,8 @@ class Frame(NavigableFrame, FileFrame):
             _, scale = ch_type_scale(ch_type)
             d = raw[picks, t_idx:t_idx + 1][0][:, 0] * scale
             cursor_ndvar = NDVar(d, (ndvar.sensor,), name=ch_type, info=ndvar.info)
-            self._cursor_topos[i_type].set_data([cursor_ndvar], vlim=True)
-            # Rescale the matching colorbar to the new cursor vlim
-            cbar = self._cursor_cbars[i_type]
-            cbar.update_normal(self._cursor_topos[i_type].plots[0].im)
-            self._set_cbar_ticks(cbar)
+            self._cursor_topos[i_type].set_data([cursor_ndvar])
             redraw_axes.append(self._topo_axes[i_type * 3])
-            redraw_axes.append(self._cursor_cbar_axes[i_type])
 
         if redraw_axes:
             self.canvas.redraw(redraw_axes)
@@ -888,6 +959,34 @@ class Frame(NavigableFrame, FileFrame):
             self.SetWindowStart(self._max_t_start)
         elif key == 'alt+left':
             self.SetWindowStart(0.0)
+        elif key in ('t', 'T') and event.inaxes is not None and hasattr(event.inaxes, 'topo_group'):
+            self._plot_topomap_popup(event.inaxes)
+
+    def _plot_topomap_popup(self, ax):
+        """Pop up an enlarged topomap (with channel names) for the topo under the cursor."""
+        ch_type = getattr(ax, 'ch_type', None)
+        group = ax.topo_group
+        entry = next(((ct, nd, pk) for ct, nd, pk in self.doc.ndvars_by_type if ct == ch_type), None)
+        if entry is None:
+            return
+        ch_type, ndvar, picks = entry
+        if group == 0:
+            t = self._cursor_t if self._cursor_t is not None else self.t_start
+            raw = self.doc.raw
+            t_idx = int(np.clip(int(t * self._sfreq), 0, raw.n_times - 1))
+            _, scale = ch_type_scale(ch_type)
+            d = raw[picks, t_idx:t_idx + 1][0][:, 0] * scale
+            data = NDVar(d, (ndvar.sensor,), name=ch_type, info=ndvar.info)
+            title = f"Cursor ({ch_type}) t={t:.3f} s"
+        elif group == 1:
+            data = self.doc.nc_static.get(ch_type)
+            title = f"Neighbor corr raw ({ch_type})"
+        else:
+            data = self.doc.compute_nc_dynamic(ch_type, ndvar)
+            title = f"Neighbor corr clean ({ch_type})"
+        if data is None:
+            return
+        plot.Topomap(data, sensorlabels='name', axw=9, title=title)
 
     def OnPointerMotion(self, event):
         if not event.inaxes:

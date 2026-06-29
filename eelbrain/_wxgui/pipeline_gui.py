@@ -1089,7 +1089,9 @@ class PipelineFrame(EelbrainFrame):
                 if not raw_ctx.node.exists(raw_ctx):
                     continue
                 bads_ctx = pipeline._resolve_derivative(raw_bad_channels_input_name(source_name))
-                tsv_path = bads_ctx.node.path(bads_ctx)
+                # _active_path falls back to the BIDS source channels.tsv when no
+                # Pipeline-specific bad-channels file has been written yet.
+                tsv_path = bads_ctx.node._active_path(bads_ctx)
                 if not tsv_path.exists():
                     rows.append(combo + ('no file', '—'))
                 else:
