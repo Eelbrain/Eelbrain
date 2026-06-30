@@ -60,6 +60,11 @@ jobs:
           name: ${{ matrix.buildplat[1] }}-dist
           path: ./wheelhouse/*.whl
 
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+
   test-sdist:
     name: Test sdist
     needs: [build-sdist]
