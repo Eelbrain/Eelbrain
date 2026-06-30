@@ -221,27 +221,41 @@ class TRFDerivative(Derivative[object]):
         return tuple(deps)
 
     def build(self, ctx: Request) -> object:
-        est = self._estimator(ctx)
-        model = self._model(ctx)
-        if not model.terms:
-            raise TRFModelError(f"{ctx.options['x']!r}: empty model")
-        tstart = ctx.options['tstart']
-        tstop = ctx.options['tstop']
-        ds = ctx.load('response')
-        for y_name in _Y_NAMES:
-            if y_name in ds:
-                break
-        else:
-            raise RuntimeError(f"No response NDVar in loaded data (keys: {', '.join(ds.keys())})")
-        y = ds[y_name]
-        xs = [self._load_predictor(ctx, ds, term, y) for term in model.terms]
-        fwd = cov = None
-        if 'fwd' in est.extra_inputs:
-            fwd = ctx.load('fwd')  # ensure built and tracked as a dependency
-            fwd = load.mne.forward_operator(fwd, ctx.state['src'], self.root / MRI_SDIR, None)
-        if 'cov' in est.extra_inputs:
-            cov = ctx.load('cov')
-        return est._fit(y, xs, tstart, tstop, fwd=fwd, cov=cov)
+        return self.make_job(ctx).fit()
+
+    def make_job(self, ctx: Request) -> TRFJob:
+        """Load the data and assemble a picklable :class:`TRFJob` (the fit deferred).
+
+        Parameters
+        ----------
+        ctx
+            Resolved request for this TRF (carries state and options).
+        """
+        # ctx.load('response'/<predictor code>) resolves dependency labels, which
+        # requires the build-deps context; it is re-entrant, so this is safe both
+        # from build() (already inside it) and from TRFJobSpec.make_job() (fresh).
+        with ctx._build_deps_context():
+            est = self._estimator(ctx)
+            model = self._model(ctx)
+            if not model.terms:
+                raise TRFModelError(f"{ctx.options['x']!r}: empty model")
+            tstart = ctx.options['tstart']
+            tstop = ctx.options['tstop']
+            ds = ctx.load('response')
+            for y_name in _Y_NAMES:
+                if y_name in ds:
+                    break
+            else:
+                raise RuntimeError(f"No response NDVar in loaded data (keys: {', '.join(ds.keys())})")
+            y = ds[y_name]
+            xs = [self._load_predictor(ctx, ds, term, y) for term in model.terms]
+            fwd = cov = None
+            if 'fwd' in est.extra_inputs:
+                fwd = ctx.load('fwd')  # ensure built and tracked as a dependency
+                fwd = load.mne.forward_operator(fwd, ctx.state['src'], self.root / MRI_SDIR, None)
+            if 'cov' in est.extra_inputs:
+                cov = ctx.load('cov')
+        return TRFJob(est, y, xs, tstart, tstop, fwd, cov, key=ctx.key())
 
     def _load_predictor(self, ctx: Request, ds, term: Term, y) -> NDVar:
         "Assemble one model term's predictor, shaped to the response time axis"
@@ -290,18 +304,6 @@ class TRFDerivative(Derivative[object]):
 
     def load(self, ctx: Request, path: Path) -> object:
         return load.unpickle(path)
-
-    def make_job(self, ctx: Request, experiment_class: type) -> TRFJob:
-        """Create a picklable :class:`TRFJob` for computing this TRF elsewhere.
-
-        Parameters
-        ----------
-        ctx
-            Resolved request for this TRF (carries state and options).
-        experiment_class
-            The :class:`Pipeline` subclass to reconstruct on the worker.
-        """
-        return TRFJob(experiment_class, str(self.root), dict(ctx.state), dict(ctx.options), ctx.artifact_path)
 
 
 # Options shared by the TRF-dataset nodes: the :class:`TRFDerivative` options that

@@ -1194,11 +1194,20 @@ class Request(Generic[T]):
 
         with self._build_deps_context(), self.registry._node_warning_context(self), self._state_check_context():
             artifact = derivative.build(self)
-        artifact_metadata = self.registry.canonicalize(derivative.artifact_metadata(self, artifact))
-        self._artifact_metadata = artifact_metadata
         if not use_cache:
+            self._artifact_metadata = self.registry.canonicalize(derivative.artifact_metadata(self, artifact))
             return artifact
+        return self.save_artifact(artifact)
 
+    def save_artifact(self, artifact: T) -> T:
+        """Persist a built artifact and write its manifest; return the reloaded artifact.
+
+        Shared by :meth:`load_artifact` and by off-host execution (an externally
+        computed result re-united with its cache entry, e.g. via
+        :meth:`~eelbrain._experiment.trf.job.TRFJobSpec.save_result`).
+        """
+        derivative = self._require_derivative()
+        artifact_metadata = self.registry.canonicalize(derivative.artifact_metadata(self, artifact))
         self.artifact_path.parent.mkdir(parents=True, exist_ok=True)
         derivative.save(self, self.artifact_path, artifact)
         manifest = ArtifactManifest(

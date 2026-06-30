@@ -68,7 +68,7 @@ from .source import (
     InverseSolution, MinimumNormInverseSolution, _drop_unknown_labels, _source_parc, eval_src,
 )
 from .test_def import Test, DataSpec, guess_y, validate_tests
-from .trf import Boosting, Estimator, FilePredictor, Model, PredictorInput, TRFDatasetDerivative, TRFDerivative, TRFGroupDatasetDerivative, TRFJob, filter_predictor
+from .trf import Boosting, Estimator, FilePredictor, Model, PredictorInput, TRFDatasetDerivative, TRFDerivative, TRFGroupDatasetDerivative, TRFJob, TRFJobSpec, filter_predictor
 from .trf.model import parse_term
 from .two_stage import TwoStageDataDerivative, TwoStageLevel1Derivative, TwoStageLevel2Derivative, TwoStageTest
 from .variable_def import Variables, apply_vardef, label_groups as label_groups_var
@@ -1267,7 +1267,25 @@ class Pipeline(StateModel):
             return ctx.artifact_path
         return ctx.load()
 
-    def _trf_job(
+    def _trf_job_spec(
+            self,
+            x: str,
+            tstart: float = 0.,
+            tstop: float = 0.5,
+            *,
+            estimator: str = 'boosting',
+            data: str = None,
+            mask: str = None,
+            samplingrate: int = None,
+            filter_x: bool | Literal['continuous'] = False,
+            **state,
+    ) -> TRFJobSpec:
+        "Host-side handle for one TRF fit (generate job, check whether done, save result)"
+        options = self._trf_options(x, tstart, tstop, estimator, data, mask, samplingrate, filter_x, state)
+        ctx = self._resolve_derivative('trf', options=options)
+        return TRFJobSpec(ctx)
+
+    def load_trf_job(
             self,
             x: str,
             tstart: float = 0.,
@@ -1280,10 +1298,35 @@ class Pipeline(StateModel):
             filter_x: bool | Literal['continuous'] = False,
             **state,
     ) -> TRFJob:
-        "Create a picklable :class:`TRFJob` for computing a TRF elsewhere"
-        options = self._trf_options(x, tstart, tstop, estimator, data, mask, samplingrate, filter_x, state)
-        ctx = self._resolve_derivative('trf', options=options)
-        return self._derivatives._get_node('trf').make_job(ctx, type(self))
+        """Load the data and return a picklable :class:`TRFJob` for fitting this TRF elsewhere
+
+        The returned job carries the M/EEG response and regressors, so it can be
+        pickled and executed on a machine without access to the raw data. This is
+        useful for distributed fitting and for inspecting the exact data used to
+        estimate a model.
+
+        Parameters
+        ----------
+        x
+            Model (e.g. ``'gammatone + word'``).
+        tstart
+            Start of the TRF in seconds.
+        tstop
+            Stop of the TRF in seconds.
+        estimator
+            Name of the estimator in :attr:`estimators` (default ``'boosting'``).
+        data
+            Sensor-space data *kind* to fit (see :meth:`load_trf`).
+        mask
+            Parcellation to mask source-space data (not implemented yet).
+        samplingrate
+            Samplingrate in Hz for the analysis.
+        filter_x
+            Filter predictors like the M/EEG data (see :meth:`load_predictor`).
+        ...
+            State parameters.
+        """
+        return self._trf_job_spec(x, tstart, tstop, estimator=estimator, data=data, mask=mask, samplingrate=samplingrate, filter_x=filter_x, **state).make_job()
 
     def load_trfs(
             self,

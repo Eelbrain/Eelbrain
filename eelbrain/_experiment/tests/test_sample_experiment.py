@@ -1760,12 +1760,23 @@ def test_load_trf(samples_experiment):
     path = Path(e.load_trf('imp', 0, 0.1, path_only=True))
     assert path.exists()
 
-    # separable, picklable job reproduces the result
-    job = e._trf_job('imp', 0, 0.1)
+    # data-carrying, picklable job reproduces the result
+    job = e.load_trf_job('imp', 0, 0.1)
     job = pickle.loads(pickle.dumps(job))
-    assert Path(job.path) == path
     res2 = job.fit()
     assert isinstance(res2, BoostingResult)
+
+    # external execution re-incorporated into the cache
+    spec = e._trf_job_spec('imp', 0, 0.1)
+    assert Path(spec.path) == path
+    assert spec.is_done
+    path.unlink()
+    spec.ctx.manifest_path.unlink(missing_ok=True)
+    assert not spec.is_done
+    result = pickle.loads(pickle.dumps(spec.make_job())).fit()  # "off-host"
+    spec.save_result(result)
+    assert spec.is_done
+    assert path.exists()
 
 
 @requires_mne_sample_data
