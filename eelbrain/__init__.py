@@ -42,5 +42,10 @@ from . import testnd
 
 from .fmtxt import Report
 
+from importlib.metadata import version
 
-__version__ = '0.42.dev'
+try:
+    __version__ = version("eelbrain")
+except Exception:
+    __version__ = "0.0.0"
+del version

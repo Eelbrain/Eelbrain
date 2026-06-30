@@ -1,6 +1,7 @@
 [build-system]
 requires = [
     "setuptools >= 70.1.0",
+    "setuptools_scm >= 6.2",
     "numpy >= 2,< 3",  # build code 2.0 and 1.x compatible
     "cython >= 3",
 ]
@@ -98,7 +99,10 @@ test-requires = [
     "pytest",
     "pingouin",
 ]
-test-command = "pytest -m \"not (slow or framework_build or file_test)\" -rsx -v --pyargs eelbrain"
+test-command = [
+  "python -c \"import eelbrain; v = eelbrain.__version__; assert v != '0.0.0' and v[0].isdigit(), f'Bad version: {v!r}'\"",
+  "pytest -m \"not (slow or framework_build or file_test)\" -rsx -v --pyargs eelbrain",
+]
 
 [tool.cibuildwheel.linux]
 repair-wheel-command = [
@@ -151,5 +155,4 @@ include-package-data = false
 [tool.setuptools.packages.find]
 include = ['eelbrain*']
 
-[tool.setuptools.dynamic]
-version = {attr = "eelbrain.__version__"}
+[tool.setuptools_scm]

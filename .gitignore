@@ -51,3 +51,4 @@ doc/auto_examples
 doc/scripts/cache-search.json
 
 test_data/
+wheelhouse/
