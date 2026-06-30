@@ -1030,8 +1030,8 @@ def test_channel_model_rejection_variable_length(samples_experiment):
 
     # end-to-end: interpolation runs and only touches samples inside the windows
     max_interpolate = rej_ds.info[INTERPOLATE_WINDOWS_MAX]
-    ds0 = e.load_epochs(interpolate_bads=False)
-    ds1 = e.load_epochs(interpolate_bads=True)
+    ds0 = e.load_epochs(interpolate_bads=False, baseline=False)
+    ds1 = e.load_epochs(interpolate_bads=True, baseline=False)
     assert isinstance(ds1['eeg'], Datalist)
     assert len(ds1['eeg']) == len(windows)
     changed = zeroed_any = False
