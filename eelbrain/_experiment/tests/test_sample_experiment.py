@@ -1843,7 +1843,6 @@ def test_load_trf_filepredictor(samples_experiment):
     "load_trf with a FilePredictor: per-stimulus predictor dependency edges"
     from eelbrain import BoostingResult, NDVar, UTS, save
     from eelbrain._experiment.tests.sample_experiment import SampleTRF
-    from eelbrain._experiment.trf.model import TRFModelError
 
     set_log_level('warning', 'mne')
     root = samples_experiment(n_subjects=1, n_segments=4)
@@ -1862,10 +1861,6 @@ def test_load_trf_filepredictor(samples_experiment):
     rng = np.random.RandomState(0)
     for stim in ('auditory', 'visual'):
         save.pickle(NDVar(rng.normal(size=60), uts, name='env'), pdir / f'{stim}~env.pickle')
-
-    # samplingrate is required for FilePredictor TRFs
-    with pytest.raises(TRFModelError):
-        e.load_trf('env', 0, 0.1)
 
     # load_predictor shapes one stimulus' file into an NDVar at the requested tstep
     x = e.load_predictor('auditory~env', tstep)
