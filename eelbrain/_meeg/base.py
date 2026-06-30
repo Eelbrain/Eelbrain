@@ -31,8 +31,7 @@ def _out(out, epochs):
     if out is None:
         return Datalist([[] for _ in range(len(epochs))])
     elif len(out) != len(epochs):
-        raise ValueError("out needs same length as epochs, got %i/%i" %
-                         (len(out), len(epochs)))
+        raise ValueError(f"out needs same length as epochs, got {len(out)}/{len(epochs)}")
     return out
 
 

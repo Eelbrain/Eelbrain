@@ -834,7 +834,7 @@ def test_interpolate_bads(samples_experiment):
     # when caching epochs, True and 'keep' share one artifact (the reset is a view op),
     # while False is a separate, non-interpolated artifact
     class CachedExperiment(SampleExperiment):
-        cache_epochs = True
+        cache_epochs = 2
 
     ec = CachedExperiment(root)
     ec.set(subject='R0000', epoch='target', epoch_rejection='', raw='raw')
@@ -1323,7 +1323,7 @@ def test_epochs_dependency_views_distinguish_model_sensitivity(samples_experimen
     root = samples_experiment(n_subjects=1, n_segments=2, mris=False)
 
     class CachedEpochsExperiment(SampleExperiment):
-        cache_epochs = True
+        cache_epochs = 2
 
     e = CachedEpochsExperiment(root)
     e.set(subject='R0000', epoch='target', epoch_rejection='', model='modality')
@@ -1372,7 +1372,7 @@ def test_epochs_cache_uses_fif(samples_experiment):
     from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
 
     class CachedEpochsExperiment(SampleExperiment):
-        cache_epochs = True
+        cache_epochs = 2
 
     root = samples_experiment(1, 2, 1)
     e = CachedEpochsExperiment(root)
@@ -1421,7 +1421,7 @@ def test_epochs_cached_load_uses_current_selected_events(samples_experiment):
     from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
 
     class CachedEpochsExperiment(SampleExperiment):
-        cache_epochs = True
+        cache_epochs = 2
 
     root = samples_experiment(1, 2, 1)
     e = CachedEpochsExperiment(root)
