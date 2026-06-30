@@ -218,15 +218,16 @@ class PipelineFrame(EelbrainFrame):
         return self._tasks[idx]
 
     def _populate_epoch_choices(self):
+        previous = self._epoch_choice.GetStringSelection()
         self._epoch_choice.Clear()
         for name, epoch in self._pipeline._epochs.items():
             if isinstance(epoch, PrimaryEpoch):
                 self._epoch_choice.Append(name)
-        if self._epoch_choice.GetCount():
-            self._epoch_choice.SetSelection(0)
+        self._restore_selection(self._epoch_choice, previous, 0)
 
     def _populate_raw_choices(self, task_type: str):
         """Fill the Raw dropdown with the pipes relevant to ``task_type``."""
+        previous = self._raw_choice.GetStringSelection()
         self._raw_choice.Clear()
         if task_type == 'ica':
             names = [name for name, pipe in self._pipeline._raw.items() if isinstance(pipe, RawICA)]
@@ -235,15 +236,23 @@ class PipelineFrame(EelbrainFrame):
         for name in names:
             self._raw_choice.Append(name)
         default = self._raw_choice.FindString('raw')
-        self._raw_choice.SetSelection(default if default != wx.NOT_FOUND else 0)
+        self._restore_selection(self._raw_choice, previous, default if default != wx.NOT_FOUND else 0)
 
     def _populate_epoch_rejection_choices(self):
+        previous = self._epoch_rejection_choice.GetStringSelection()
         self._epoch_rejection_choice.Clear()
         for name, rej in self._pipeline._epoch_rejection.items():
             if rej is not None:
                 self._epoch_rejection_choice.Append(name)
-        if self._epoch_rejection_choice.GetCount():
-            self._epoch_rejection_choice.SetSelection(0)
+        self._restore_selection(self._epoch_rejection_choice, previous, 0)
+
+    @staticmethod
+    def _restore_selection(choice: wx.Choice, previous: str, default: int):
+        """Re-select ``previous`` if still present, else fall back to ``default``."""
+        if not choice.GetCount():
+            return
+        index = choice.FindString(previous) if previous else wx.NOT_FOUND
+        choice.SetSelection(index if index != wx.NOT_FOUND else default)
 
     def _current_epoch_rejection(self) -> str | None:
         return self._epoch_rejection_choice.GetStringSelection() or None
