@@ -24,6 +24,12 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - uses: actions/setup-python@v6.2.0
+        with:
+          python-version: "3.11"
+      - name: Set version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: python .github/scripts/set_release_version.py
       - name: Build sdist
         run: pipx run build -s
       - uses: actions/upload-artifact@v7
@@ -49,7 +55,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - uses: actions/setup-python@v6.2.0
+        with:
+          python-version: "3.11"
 
+      - name: Set version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: python .github/scripts/set_release_version.py
       - name: Build wheel(s)
         uses: pypa/cibuildwheel@v4.1.0
         env:
