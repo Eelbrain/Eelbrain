@@ -54,7 +54,7 @@ import warnings
 import mne
 import numpy as np
 
-from .._data_obj import Factor, Interaction, Var
+from .._data_obj import Factor, Interaction, NDVar, Var
 from .configuration import Configuration
 from .logging import CacheInvalidation, diff_invalidation
 from .pathing import CACHE_DIR, DERIV_DIR, LOG_DIR
@@ -1692,14 +1692,17 @@ class DerivativeRegistry:
         ``repr()``.
 
         Domain-specific types handled here (:class:`~eelbrain.Var`,
-        :class:`~eelbrain.Factor`, :class:`~eelbrain.Interaction`,
-        :class:`Configuration`) are an intentional coupling between the cache
+        :class:`~eelbrain.NDVar`, :class:`~eelbrain.Factor`,
+        :class:`~eelbrain.Interaction`, :class:`Configuration`) are an
+        intentional coupling between the cache
         kernel and the Eelbrain data model; they allow fingerprints and keys to
         contain arbitrary data objects without callers having to pre-serialize
         them.
         """
         if isinstance(value, Var):
             return DerivativeRegistry.canonicalize(value.x.tolist())
+        if isinstance(value, NDVar):
+            return {'name': value.name, 'dims': [repr(dim) for dim in value.dims], 'x': DerivativeRegistry.canonicalize(value.x)}
         if isinstance(value, (Factor, Interaction)):
             return DerivativeRegistry.canonicalize(list(value))
         if isinstance(value, Configuration):

@@ -69,6 +69,49 @@ def _user_error_dialog(error: Exception) -> tuple[str, str]:
     return dialog
 
 
+class BadChannelsDialog(wx.Dialog):
+    """Editable comma-separated bad-channel entry with live validation.
+
+    The OK button is disabled while the entry contains channel names that are
+    not present in the recording, and a status message lists the offenders.
+    """
+
+    def __init__(self, parent, sensor, current_bads: list[str]) -> None:
+        super().__init__(parent, title="Set Bad Channels")
+        self._sensor = sensor
+        vbox = wx.BoxSizer(wx.VERTICAL)
+        vbox.Add(wx.StaticText(self, label="Bad channels (comma-separated):"), flag=wx.LEFT | wx.RIGHT | wx.TOP, border=12)
+        self._text = wx.TextCtrl(self, value=', '.join(current_bads), size=(400, -1))
+        self._text.Bind(wx.EVT_TEXT, self._on_text)
+        vbox.Add(self._text, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, border=12)
+        self._status = wx.StaticText(self, label="")
+        self._status.SetForegroundColour(wx.RED)
+        vbox.Add(self._status, flag=wx.EXPAND | wx.ALL, border=12)
+        buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
+        self._ok_button = self.FindWindowById(wx.ID_OK)
+        vbox.Add(buttons, flag=wx.ALIGN_RIGHT | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=12)
+        self.SetSizerAndFit(vbox)
+        self._validate()
+
+    def _parse(self) -> list[str]:
+        return [name for name in (part.strip() for part in self._text.GetValue().split(',')) if name]
+
+    def _on_text(self, event):
+        self._validate()
+
+    def _validate(self) -> None:
+        missing = [ch for ch in self._parse() if ch not in self._sensor.names]
+        if missing:
+            self._status.SetLabel(f"Not in data: {', '.join(sorted(missing))}")
+            self._ok_button.Disable()
+        else:
+            self._status.SetLabel("")
+            self._ok_button.Enable()
+
+    def get_bad_channels(self) -> list[str]:
+        return self._parse()
+
+
 class PipelineFrame(EelbrainFrame):
     """Top-level window for inspecting and running pipeline setup tasks.
 
@@ -176,6 +219,7 @@ class PipelineFrame(EelbrainFrame):
             style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.BORDER_NONE,
         )
         self._list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self._on_item_activated)
+        self._list.Bind(wx.EVT_LIST_ITEM_RIGHT_CLICK, self._on_item_right_click)
         vbox.Add(self._list, proportion=1, flag=wx.EXPAND)
 
         self._panel.SetSizer(vbox)
@@ -339,7 +383,62 @@ class PipelineFrame(EelbrainFrame):
 
     def _on_item_activated(self, event):
         """Row double-click"""
+        self._activate_row(event.GetIndex())
+
+    def _on_item_right_click(self, event):
+        """Row right-click: context menu (Bad channels task only)."""
+        task_type, _ = self._current_task()
+        if task_type != 'bad_chs':
+            return
         idx = event.GetIndex()
+        if idx == wx.NOT_FOUND:
+            return
+        menu = wx.Menu()
+        set_item = menu.Append(wx.ID_ANY, "Set Bad Channels")
+        plot_item = menu.Append(wx.ID_ANY, "Plot continuous data")
+        self.Bind(wx.EVT_MENU, lambda event: self._set_bad_channels_dialog(idx), set_item)
+        self.Bind(wx.EVT_MENU, lambda event: self._activate_row(idx), plot_item)
+        self._list.PopupMenu(menu)
+        self.Unbind(wx.EVT_MENU, source=set_item)
+        self.Unbind(wx.EVT_MENU, source=plot_item)
+        menu.Destroy()
+
+    def _set_bad_channels_dialog(self, idx: int) -> None:
+        """Edit a row's bad channels via a text dialog with live validation."""
+        pipeline = self._pipeline
+        raw_name = self._raw_choice.GetStringSelection()
+        state = {'subject': self._list.GetItemText(idx, 0)}
+        for col, field in enumerate(self._bad_chs_iter_fields, start=1):
+            state[field] = self._list.GetItemText(idx, col)
+        wx.BeginBusyCursor()
+        try:
+            pipeline.set(raw=raw_name, **state)
+            source_name = pipeline._raw.root_source_name(raw_name)
+            source_pipe = pipeline._raw.root_source_pipe(raw_name)
+            raw = pipeline._load_derivative(raw_input_name(source_name), options={'noise': False})
+            sensor = load.mne.sensor_dim(raw.info, adjacency=source_pipe.adjacency)
+            current_bads = pipeline.load_bad_channels()
+        except _USER_ERROR_TYPES as error:
+            self._show_user_error(*_user_error_dialog(error))
+            return
+        finally:
+            wx.EndBusyCursor()
+        dlg = BadChannelsDialog(self, sensor, current_bads)
+        try:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            bad_chs = dlg.get_bad_channels()
+        finally:
+            dlg.Destroy()
+        try:
+            pipeline.make_bad_channels(bad_chs, redo=True, raw=raw_name, **state)
+        except _USER_ERROR_TYPES as error:
+            self._show_user_error(*_user_error_dialog(error))
+            return
+        self._start_refresh()
+
+    def _activate_row(self, idx: int) -> None:
+        """Perform the double-click action for the row at ``idx``."""
         subject = self._list.GetItemText(idx, 0)
         task_type, task_key = self._current_task()
         if task_type is None:
