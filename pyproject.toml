@@ -115,6 +115,7 @@ repair-wheel-command = [
 select = "*-musllinux*"
 test-requires = [
     "pytest",
+    "pytest-cov",
     "statsmodels",  # no pingouin because it requires sklearn, which does not have binary wheels
 ]
 
