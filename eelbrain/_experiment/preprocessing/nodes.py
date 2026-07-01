@@ -258,9 +258,7 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
                 reader = mne.io.read_raw_bdf
             case _:
                 raise RuntimeError(f"Unrecognized file format: {path.extension}")
-        raw = reader(path.fpath, **kwargs)
-        RawSourceInput._apply_bids_channels(path, raw)
-        return raw
+        return reader(path.fpath, **kwargs)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         path = self._resolve_bids_path(ctx)
@@ -281,8 +279,18 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         return fp
 
     def load(self, ctx: Request) -> mne.io.BaseRaw:
+        return self._load_raw(ctx, ctx.view_options['preload'])
+
+    def load_view(self, ctx: Request, view: str):
+        if view != 'info':
+            return super().load_view(ctx, view)
+        raw = self._load_raw(ctx, preload=False)
+        return raw.info
+
+    def _load_raw(self, ctx: Request, preload: bool):
         path = self._resolve_bids_path(ctx, require=True)
-        raw = self._read_raw(path, preload=ctx.view_options['preload'])
+        raw = self._read_raw(path, preload=preload)
+        self._apply_bids_channels(path, raw)
         if self.pipe.rename_channels:
             if rename := {k: v for k, v in self.pipe.rename_channels.items() if k in raw.ch_names}:
                 raw.rename_channels(rename)
@@ -291,17 +299,6 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         elif path.datatype == 'eeg':
             self._apply_bids_electrodes(path, raw)
         return raw
-
-    def load_view(self, ctx: Request, view: str):
-        if view != 'info':
-            return super().load_view(ctx, view)
-        path = self._resolve_bids_path(ctx, require=True)
-        raw = self._read_raw(path, preload=False)
-        if self.pipe.montage:
-            raw.set_montage(self.pipe.montage)
-        elif path.datatype == 'eeg':
-            self._apply_bids_electrodes(path, raw)
-        return raw.info
 
     @staticmethod
     def _find_bids_channels(path: BIDSPath) -> Path | None:
