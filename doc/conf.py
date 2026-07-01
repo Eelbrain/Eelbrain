@@ -11,6 +11,7 @@
 
 from datetime import datetime
 from pathlib import Path
+from packaging.version import Version
 import os
 import sys
 
@@ -98,7 +99,8 @@ def linkcode_resolve(domain, info):
         except ValueError:
             return None
     end = start + len(source) - 1
-    ref = 'main' if eelbrain.__version__.endswith('.dev') else f'v{eelbrain.__version__}'
+    pkg_version = Version(eelbrain.__version__)
+    ref = 'main' if pkg_version.is_devrelease else f'v{pkg_version.public}'
     return f'https://github.com/Eelbrain/Eelbrain/blob/{ref}/{rel.as_posix()}#L{start}-L{end}'
 
 
