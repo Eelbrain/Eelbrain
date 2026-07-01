@@ -214,9 +214,14 @@ class EventsDerivative(Derivative[Dataset]):
         if trigger_shift:
             ds['sample'] += int(round(trigger_shift * ds.info['raw.samplingrate']))
 
-        ds = _check_ds(self.fix_events_impl(self, ds), f'{self.owner_name}.fix_events()', ds.info)
-        ds['onset'] = ds['sample'] / ds.info['raw.samplingrate']
-        return ds
+        # Apply e.fix_events()
+        info = ds.info
+        n_args = len(inspect.signature(self.fix_events_impl).parameters)
+        if n_args == 1:
+            ds = self.fix_events_impl(ds)
+        else:
+            raise ValueError(f"{self.owner_name}.label_events {self.label_events_impl!r}: number of arguments: {n_args}; should take one argument, {self.owner_name}.label_events(self, ds) or label_events(ds) ")
+        return _check_ds(ds, f'{self.owner_name}.fix_events()', info)
 
     def load(self, ctx: Request, path: Path) -> Dataset:
         ds = load.unpickle(path)
@@ -293,6 +298,7 @@ class LabeledEventsDerivative(Derivative[Dataset]):
         if self.multi_session:
             ds[:, 'session'] = ctx.state['session']
         self._variables._apply(ds, self._groups)
+
         # Apply e.label_events()
         info = ds.info
         n_args = len(inspect.signature(self.label_events_impl).parameters)

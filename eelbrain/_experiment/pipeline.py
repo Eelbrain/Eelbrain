@@ -520,7 +520,7 @@ class Pipeline(StateModel):
             sequence_arg(f'{self.__class__.__name__}.stim_channel', self.stim_channel),
             self.merge_triggers,
             self.preload,
-            type(self).fix_events,    # bound to the subclass at construction time
+            self.fix_events,
             self.__class__.__name__,
         ))
         self._derivatives.register(LabeledEventsDerivative(
@@ -768,7 +768,9 @@ class Pipeline(StateModel):
         Notes
         -----
         Override this method in subclasses to change the event structure or
-        timing. This method is called *before* adding other variables.
+        timing. This method only applies to events derived from M/EEG raw data files,
+        and not to events from BIDS ``events.tsv`` sidecar files,
+        and is called *before* adding other variables.
 
         The subject and session the events are from can be determined with
         ``ds.info['subject']`` and ``ds.info['session']``.
