@@ -454,11 +454,11 @@ class RawSourceDerivative(UncachedDerivative[mne.io.BaseRaw]):
         raw_bads = raw.info['bads']
         all_bads = set(tsv_bads) | set(raw_bads)
 
-        # Detect channels whose positions contain NaN
-        nan_bads = {ch['ch_name'] for ch in raw.info['chs'] if numpy.any(numpy.isnan(ch['loc'][:3]))}
+        # Detect EEG channels whose positions contain NaN
+        eeg_picks = mne.pick_types(raw.info, meg=False, eeg=True, exclude=())
+        nan_bads = {raw.info['chs'][i]['ch_name'] for i in eeg_picks if numpy.any(numpy.isnan(raw.info['chs'][i]['loc'][:3]))}
         nan_bads.difference_update(all_bads)
         if nan_bads:
-            eeg_picks = mne.pick_types(raw.info, meg=False, eeg=True, exclude=())
             eeg_names = {raw.info['chs'][i]['ch_name'] for i in eeg_picks}
             if eeg_names and eeg_names.issubset(nan_bads):
                 raise DataError("All EEG channel positions are NaN. This usually means that the raw file does not contain electrode positions and a montage needs to be applied. Set the montage parameter in RawSource to supply channel positions.")
