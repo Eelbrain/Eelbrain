@@ -46,6 +46,31 @@ LOG = logging.getLogger(__name__)
 REINDEX_ICA = 'reindex_ica'
 # Scaling factors from BIDS coordinate units to metres
 COORD_SCALE = {'mm': 1e-3, 'cm': 1e-2, 'm': 1.0}
+BIDS_MEG_CHANNEL_TYPES = (
+    'MEGGRADAXIAL', 'MEGMAG', 'MEGGRAD', 'MEGREFGRADAXIAL',
+    'MEGGRADPLANAR', 'MEGREFMAG', 'MEGOTHER', 'HLU',
+)
+# Adapted from mne-bids _get_ch_type_mapping (BSD-3-Clause; MNE-BIDS developers).
+BIDS_TO_MNE_CHANNEL_TYPES = {
+    'EEG': 'eeg',
+    'MISC': 'misc',
+    'TRIG': 'stim',
+    'EMG': 'emg',
+    'ECOG': 'ecog',
+    'SEEG': 'seeg',
+    'EOG': 'eog',
+    'ECG': 'ecg',
+    'RESP': 'resp',
+    'GSR': 'gsr',
+    'TEMP': 'temperature',
+    'NIRSCWAMPLITUDE': 'fnirs_cw_amplitude',
+    'NIRS': 'fnirs_cw_amplitude',
+    'VEOG': 'eog',
+    'HEOG': 'eog',
+    'DBS': 'dbs',
+    'EYEGAZE': 'eyegaze',
+    'PUPIL': 'pupil',
+}
 
 
 class RawBadChannelsInput(Input[list[str]]):
@@ -233,7 +258,9 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
                 reader = mne.io.read_raw_bdf
             case _:
                 raise RuntimeError(f"Unrecognized file format: {path.extension}")
-        return reader(path.fpath, **kwargs)
+        raw = reader(path.fpath, **kwargs)
+        RawSourceInput._apply_bids_channels(path, raw)
+        return raw
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         path = self._resolve_bids_path(ctx)
@@ -242,6 +269,9 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
             'pipe': self.pipe,
             'source': file_fingerprint(ctx.root, path.fpath, 'raw-source'),
         }
+        channels_path = self._find_bids_channels(path)
+        if channels_path is not None:
+            fp['channels'] = file_fingerprint(ctx.root, channels_path, 'channels')
         if path.datatype == 'eeg':
             elec_pair = self._find_bids_electrodes(path)
             if elec_pair is not None:
@@ -272,6 +302,39 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         elif path.datatype == 'eeg':
             self._apply_bids_electrodes(path, raw)
         return raw.info
+
+    @staticmethod
+    def _find_bids_channels(path: BIDSPath) -> Path | None:
+        """Find the BIDS channels.tsv sidecar for a recording."""
+        channels_path = path.find_matching_sidecar(suffix='channels', extension='.tsv', on_error='ignore')
+        return Path(channels_path) if channels_path is not None else None
+
+    @staticmethod
+    def _apply_bids_channels(path: BIDSPath, raw: mne.io.BaseRaw) -> None:
+        """Apply channel metadata from BIDS channels.tsv sidecar if present."""
+        channels_path = RawSourceInput._find_bids_channels(path)
+        if channels_path is None:
+            return
+        channels_df = pd.read_csv(channels_path, sep='\t')
+        if 'name' not in channels_df.columns:
+            warnings.warn(f"{channels_path} has no 'name' column; skipping channel metadata.")
+            return
+
+        if 'type' in channels_df.columns:
+            channel_types = {}
+            for ch_name, ch_type in zip(channels_df['name'], channels_df['type']):
+                if ch_name not in raw.ch_names:
+                    continue
+                ch_type_bids = str(ch_type).upper()
+                if ch_type_bids in BIDS_MEG_CHANNEL_TYPES:
+                    continue
+                updated_ch_type = BIDS_TO_MNE_CHANNEL_TYPES.get(ch_type_bids)
+                if updated_ch_type is None:
+                    updated_ch_type = 'misc'
+                    warnings.warn(f"No BIDS -> MNE mapping found for channel type {ch_type_bids!r}. Type of channel {ch_name!r} will be set to 'misc'.")
+                channel_types[ch_name] = updated_ch_type
+            if channel_types:
+                raw.set_channel_types(channel_types, on_unit_change='ignore')
 
     @staticmethod
     def _find_bids_electrodes(path: BIDSPath) -> tuple[Path, Path] | None:
