@@ -26,15 +26,15 @@ from .derivative_cache import Dependency, Derivative, Request, file_fingerprint
 from .parc import IndividualSeededParc, _resolve_parc
 from .pathing import MRI_SDIR, coreg_report_path, mri_dir, trans_file_path
 from .preprocessing import RawPipeGraph, raw_node_name
-from .results import (
+from .data import DataSpec
+from .source import _subject_state
+from .statistics.config import ResolvedTestNDSpec, TwoStageTest
+from .statistics.nodes import (
     RESULT_OPTION_DEFAULTS,
     TEST_DATA_OPTION_NAMES,
     ResultOutputDerivative,
     _test_result_options,
 )
-from .source import _subject_state
-from .test_def import ResolvedTestNDSpec, DataSpec
-from .two_stage import TwoStageTest
 
 
 def _format_text(state: dict[str, Any], template: str) -> str:

@@ -1,5 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-"""Two-stage test definitions and derivatives."""
+"""Derivatives for two-stage tests."""
 
 from __future__ import annotations
 
@@ -7,95 +7,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .. import load, save, testnd
-from .._data_obj import Dataset, combine
-from .._io.pickle import update_subjects_dir
-from .._utils.parse import find_variables
-from .derivative_cache import Dependency, Derivative, Request, UncachedDerivative
-from .pathing import MRI_SDIR
-from .results import RESULT_OPTION_DEFAULTS, ResultOutputDerivative, _epochs_stc_options, _evoked_stc_options
-from .source import ROIData, roi_data_from_subject_datasets
-from .test_def import ROITestResult, ResolvedTestNDSpec, Test
-from .variable_def import apply_vardef
-
-
-class TwoStageTest(Test):
-    """Two-stage test: T-test of regression coefficients
-
-    Stage 1: fit a regression model to the data for each subject.
-    Stage 2: test coefficients from stage 1 against 0 across subjects.
-
-    Parameters
-    ----------
-    stage_1 : str
-        Stage 1 model specification. Coding for categorial predictors uses 0/1 dummy
-        coding.
-    vars : dict
-        Add new variables for the stage 1 model. This is useful for specifying
-        coding schemes based on categorial variables.
-        Each entry specifies a variable with the following schema:
-        ``{name: definition}``. ``definition`` can be either a string that is
-        evaluated in the events-:class:`Dataset`, or a
-        ``(source_name, {value: code})``-tuple (see example below).
-        ``source_name`` can also be an interaction, in which case cells are joined
-        with spaces (``"f1_cell f2_cell"``).
-    model : str
-        This parameter can be supplied to perform stage 1 tests on condition
-        averages. If ``model`` is not specified, the stage1 model is fit on single
-        trial data.
-
-    See Also
-    --------
-    Pipeline.tests
-
-    Examples
-    --------
-    The first example assumes 2 categorical variables present in events,
-    'a' with values 'a1' and 'a2', and 'b' with values 'b1' and 'b2'. These are
-    recoded into 0/1 codes::
-
-        TwoStageTest(
-            "a_num + b_num + a_num * b_num + index + a_num * index",
-            vars={
-                'a_num': ('a', {'a1': 0, 'a2': 1}),
-                'b_num': ('b', {'b1': 0, 'b2': 1}),
-            }),
-
-    The second test definition uses the "index" variable which is always present
-    and specifies the chronological index of the events as an integer count.
-    This variable can thus be used to test for a linear change over time. Due
-    to the numeric nature of these variables interactions can be computed by
-    multiplication::
-
-        TwoStageTest("a_num + index + a_num * index",
-                     vars={'a_num': ('a', {'a1': 0, 'a2': 1})
-
-    Numerical variables can also defined using data-object methods (e.g.
-    :meth:`Factor.label_length`) or from interactions::
-
-        TwoStageTest('wordlength', vars={'wordlength': 'word.label_length()'})
-        TwoStageTest("ab", vars={'ab': ('a%b', {'a1 b1': 0, 'a1 b2': 1, 'a2 b1': 1, 'a2 b2': 2})})
-    """
-    kind = 'two-stage'
-    DICT_ATTRS = Test.DICT_ATTRS + ('stage_1',)
-
-    def __init__(self, stage_1: str, vars: dict = None, model: str = None):
-        Test.__init__(self, stage_1, model, vars=vars, depend_on=find_variables(stage_1))
-        self.stage_1 = stage_1
-
-    def make_stage_1(self, y, data, subject, sub=None):
-        """Assumes that model has already been applied"""
-        return testnd.LM(y, self.stage_1, sub=sub, data=data, samples=0, subject=subject)
-
-    @staticmethod
-    def make_stage_2(lms, kwargs):
-        lm = testnd.LMGroup(lms)
-        lm.compute_column_ttests(**kwargs)
-        return lm
-
-    def make(self, y, ds, force_permutation, kwargs):
-        lms = [self.make_stage_1(y, ds, subject, f"subject=={subject!r}") for subject in ds['subject'].cells]
-        return self.make_stage_2(lms, kwargs)
+from ... import load, save
+from ..._data_obj import Dataset, combine
+from ..._io.pickle import update_subjects_dir
+from ..derivative_cache import Dependency, Derivative, Request, UncachedDerivative
+from ..pathing import MRI_SDIR
+from ..source import ROIData, roi_data_from_subject_datasets
+from ..variable_def import apply_vardef
+from .config import ResolvedTestNDSpec, Test, TwoStageTest
+from .nodes import RESULT_OPTION_DEFAULTS, ROITestResult, ResultOutputDerivative, _epochs_stc_options, _evoked_stc_options
 
 
 class ROI2StageResult(ROITestResult):

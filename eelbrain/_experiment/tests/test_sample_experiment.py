@@ -23,7 +23,7 @@ from eelbrain._experiment.derivative_cache import ProtectedArtifactError
 from eelbrain._experiment.pathing import LOG_DIR, ica_file_path
 from eelbrain._experiment.preprocessing import RawFilterElliptic, ica_input_name, raw_node_name
 from eelbrain._experiment.reports import _report_subject_info
-from eelbrain._experiment.test_def import DataSpec as _DataSpec
+from eelbrain._experiment.data import DataSpec
 from eelbrain._experiment.variable_def import EvalVar, LabelVar, Variables
 from eelbrain.testing import assert_dataobj_equal, requires_mne_sample_data
 
@@ -45,7 +45,7 @@ def _test_result_manifest_path(
         samplingrate=None,
 ) -> Path:
     options = {
-        'data': _DataSpec.coerce(data, morph=True),
+        'data': DataSpec.coerce(data, morph=True),
         'samples': samples,
         'test': test,
         'tstart': tstart,
@@ -172,7 +172,7 @@ def test_sample(samples_experiment):
     test_tree = e.show_dependencies(
         'test-result',
         options={
-            'data': _DataSpec.coerce('meg.rms', morph=True),
+            'data': DataSpec.coerce('meg.rms', morph=True),
             'samples': 100,
             'test': 'a>v',
             'tstart': 0.05,
@@ -190,7 +190,7 @@ def test_sample(samples_experiment):
     movie_tree = e.show_dependencies(
         'movie-ttest',
         options={
-            'data': _DataSpec.coerce('source', morph=True),
+            'data': DataSpec.coerce('source', morph=True),
             'single_subject': False,
             'subject': None,
             'baseline': False,
@@ -360,7 +360,7 @@ def test_sample(samples_experiment):
     assert e._groups['ab'] == e._groups['alias'] == ('R0000', 'R0002')
     # Check that derivative paths reflect group content
     result_options = {
-        'data': _DataSpec.coerce('meg.rms', morph=True),
+        'data': DataSpec.coerce('meg.rms', morph=True),
         'samples': 20,
         'test': 'a>v',
         'tstart': 0.05,
@@ -1083,7 +1083,7 @@ def test_evoked_backed_test_vars_are_post_aggregation_only(samples_experiment):
     e = Experiment(root, epoch_rejection='', test='anova-ok')
 
     options = {
-        'data': _DataSpec.coerce('meg.mean', morph=True),
+        'data': DataSpec.coerce('meg.mean', morph=True),
         'test': 'anova-ok',
         'baseline': False,
         'src_baseline': None,

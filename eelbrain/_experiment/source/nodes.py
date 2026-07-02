@@ -32,7 +32,7 @@ from ..pathing import (
     MRI_SDIR, bem_dir, bem_file_path, mri_dir, src_file_path, trans_file_path,
 )
 from ..preprocessing import Reference, raw_node_name
-from ..test_def import DataSpec
+from ..data import DataSpec
 from ..._text import enumeration, plural
 from ..._utils import subp
 from ..._utils.mne_utils import is_fake_mri

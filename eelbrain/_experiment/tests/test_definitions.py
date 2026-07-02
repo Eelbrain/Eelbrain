@@ -4,11 +4,10 @@ import logging
 import pytest
 
 from eelbrain._data_obj import Factor, Interaction, Var
-from eelbrain._experiment import test_def
 from eelbrain._experiment.configuration import Configuration, ConfigurationError, find_dependent_epochs, find_epoch_vars, find_epochs_vars, sequence_arg
 from eelbrain._experiment.derivative_cache import DerivativeRegistry
 from eelbrain._experiment.preprocessing import RawApplyICA, RawFilter, RawICA, RawMaxwell, RawPipeGraph, RawReReference, RawSource, assemble_raw_pipes
-from eelbrain._experiment.two_stage import TwoStageTest
+from eelbrain._experiment.statistics import config as test_def
 from eelbrain._experiment.variable_def import EvalVar, GroupVar, LabelVar, Variables
 from eelbrain.testing import TempDir
 
@@ -44,37 +43,6 @@ def test_find_epoch_vars():
     assert find_dependent_epochs('b', epochs) == ['super']
     assert find_dependent_epochs('sec', epochs) == []
     assert find_dependent_epochs('super', epochs) == []
-
-
-def test_find_test_vars():
-    none = set()
-    # t-test
-    test = test_def.TTestRelated('A', 'a', 'b')
-    assert test._find_test_vars() == ({'A'}, none)
-    # groups
-    test = test_def.TTestIndependent('group', 'a', 'b')
-    assert test._find_test_vars() == (none, {'a', 'b'})
-    # within-ANOVA
-    test = test_def.ANOVA('a * b * subject')
-    assert test.model == 'a%b'
-    assert test._find_test_vars() == ({'a', 'b'}, none)
-    # between ANOVA
-    with pytest.raises(ConfigurationError):
-        test_def.ANOVA('a*b*c')
-    test = test_def.ANOVA('a*b*c', model='')
-    assert test.model == ''
-    assert test._find_test_vars() == ({'a', 'b', 'c'}, none)
-    # mixed ANOVA
-    test = test_def.ANOVA('A * GR * subject(GR)')
-    assert test.model == 'A'
-    assert test._find_test_vars() == ({'A', 'GR'}, none)
-    # two-stage
-    test = TwoStageTest("a + b + a*b", vars={'a': EvalVar('c * d'), 'b': EvalVar('c * e')})
-    assert test._find_test_vars() == ({'c', 'd', 'e'}, none)
-    test = TwoStageTest("a + b + a*b", vars={'a': EvalVar('c * d'), 'b': EvalVar('c * e'), 'x': EvalVar('something * nonexistent')})
-    assert test._find_test_vars() == ({'c', 'd', 'e'}, none)
-    test = TwoStageTest("a + b + a*b", vars={'a': LabelVar('c%d', {1: 'x'}), 'b': LabelVar('c%e', {1: 'x'})})
-    assert test._find_test_vars() == ({'c', 'd', 'e'}, none)
 
 
 def test_sequence_arg():

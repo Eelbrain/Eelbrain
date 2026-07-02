@@ -60,17 +60,18 @@ from .reports import (
     CoregReportDerivative, EEGReportDerivative, EEGSensorsReportDerivative,
     LMReportDerivative, ROIReportDerivative, SourceReportDerivative,
 )
-from .results import DSPMMovieDerivative, EvokedTestDataDerivative, TTestMovieDerivative, TestResultDerivative
+from .data import DataSpec
+from .results import DSPMMovieDerivative, TTestMovieDerivative
 from .source import (
     BemInput, EpochsStcDerivative, EpochsStcGroupDatasetDerivative,
     EvokedStcDerivative, EvokedStcGroupDatasetDerivative, FwdDerivative,
     InvDerivative, ROIData, SourceMorphDerivative, SrcDerivative, TransInput,
     InverseSolution, MinimumNormInverseSolution, _drop_unknown_labels, _source_parc, eval_src,
 )
-from .test_def import Test, DataSpec, guess_y, validate_tests
+from .statistics import EvokedTestDataDerivative, TestResultDerivative, TwoStageDataDerivative, TwoStageLevel1Derivative, TwoStageLevel2Derivative, TwoStageTest
+from .statistics.config import Test, guess_y, validate_tests
 from .trf import Boosting, Estimator, FilePredictor, Model, PredictorInput, TRFDatasetDerivative, TRFDerivative, TRFGroupDatasetDerivative, TRFJob, TRFJobSpec, filter_predictor
 from .trf.model import parse_term
-from .two_stage import TwoStageDataDerivative, TwoStageLevel1Derivative, TwoStageLevel2Derivative, TwoStageTest
 from .variable_def import Variables, apply_vardef, label_groups as label_groups_var
 
 

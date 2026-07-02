@@ -47,7 +47,7 @@ from ..._text import n_of
 from ..._meeg.interpolation import _interpolate_bads_eeg, _interpolate_bads_meg, _interpolate_bad_windows_eeg, _interpolate_bad_windows_meg
 from ..derivative_cache import CachePolicy, Dependency, Derivative, Request, UncachedDerivative
 from ..preprocessing import RawPipeGraph, Reference, raw_node_name
-from ..test_def import DataSpec
+from ..data import DataSpec
 from .config import EPOCH_EXTRACT_OPTIONS, ContinuousEpoch, EpochBase, EpochCollection, PrimaryEpoch, SecondaryEpoch, SuperEpoch
 
 
