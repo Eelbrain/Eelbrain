@@ -62,11 +62,17 @@ def _format_user_error(error: Exception) -> tuple[str, str] | None:
     return None
 
 
-def _user_error_dialog(error: Exception) -> tuple[str, str]:
+def _error_dialog_args(error: Exception) -> tuple[str, str, str | None]:
+    """Return ``(tb, title, message)`` for :meth:`PipelineFrame._show_error`.
+
+    Must be called from the ``except`` block handling ``error``; ``message``
+    is ``None`` for unexpected errors, selecting the bug-report presentation.
+    """
+    tb = traceback.format_exc()
     dialog = _format_user_error(error)
     if dialog is None:
-        raise TypeError(f"{error!r} is not a user-facing GUI error")
-    return dialog
+        return tb, "Error", None
+    return tb, *dialog
 
 
 class BadChannelsDialog(wx.Dialog):
@@ -419,7 +425,7 @@ class PipelineFrame(EelbrainFrame):
             sensor = load.mne.sensor_dim(raw.info, adjacency=source_pipe.adjacency)
             current_bads = pipeline.load_bad_channels()
         except _USER_ERROR_TYPES as error:
-            self._show_user_error(*_user_error_dialog(error))
+            self._show_error(*_error_dialog_args(error))
             return
         finally:
             wx.EndBusyCursor()
@@ -433,7 +439,7 @@ class PipelineFrame(EelbrainFrame):
         try:
             pipeline.make_bad_channels(bad_chs, redo=True, raw=raw_name, **state)
         except _USER_ERROR_TYPES as error:
-            self._show_user_error(*_user_error_dialog(error))
+            self._show_error(*_error_dialog_args(error))
             return
         self._start_refresh()
 
@@ -450,7 +456,7 @@ class PipelineFrame(EelbrainFrame):
             try:
                 self._activate_item(idx, subject, task_type, task_key)
             except _USER_ERROR_TYPES as error:
-                self._show_user_error(*_user_error_dialog(error))
+                self._show_error(*_error_dialog_args(error))
             except ICAChannelsChangedError as error:
                 if self._ask_ica_channels_changed():
                     Path(error.path).unlink()
@@ -757,22 +763,14 @@ class PipelineFrame(EelbrainFrame):
             rows = self._compute_rows(token, task_type, task_key, epoch_name, raw_name)
         except _AbortRequested:
             return  # app exit already scheduled
-        except _USER_ERROR_TYPES as error:
-            wx.CallAfter(self._show_user_error, *_user_error_dialog(error))
-            return
-        except Exception:
-            tb = traceback.format_exc()
-            wx.CallAfter(self._show_error, tb)
+        except Exception as error:
+            wx.CallAfter(self._show_error, *_error_dialog_args(error))
             return
         wx.CallAfter(self._populate_table, rows, token)
 
-    def _show_user_error(self, title: str, message: str):
+    def _show_error(self, tb: str, title: str = "Error", message: str | None = None):
         self.SetStatusText("Error")
-        wx.MessageBox(message, title, wx.OK | wx.ICON_ERROR, self)
-
-    def _show_error(self, tb: str):
-        self.SetStatusText("Error")
-        dlg = TracebackDialog(self, tb)
+        dlg = TracebackDialog(self, tb, title, message)
         dlg.ShowModal()
         dlg.Destroy()
 
@@ -885,14 +883,9 @@ class PipelineFrame(EelbrainFrame):
                     str(ica.n_components_), str(len(ica.exclude)),
                     n_done, n_total,
                 )
-            except _USER_ERROR_TYPES as error:
-                title, message = _user_error_dialog(error)
+            except Exception as error:
                 n_done += 1
-                wx.CallAfter(self._on_subject_user_error, token, combo, title, message, n_done, n_total)
-            except Exception:
-                tb = traceback.format_exc()
-                n_done += 1
-                wx.CallAfter(self._on_subject_error, token, combo, tb, n_done, n_total)
+                wx.CallAfter(self._on_subject_error, token, combo, *_error_dialog_args(error), n_done, n_total)
         wx.CallAfter(self._on_make_ica_done, token)
 
     def _on_subject_computing(self, token, combo):
@@ -926,8 +919,8 @@ class PipelineFrame(EelbrainFrame):
         self._progress_label.SetLabel(f"{n_done} / {n_total}")
         self._refresh_status_bar()
 
-    def _on_subject_user_error(self, token, combo, title, message, n_done, n_total):
-        """Mark a row after an expected input/configuration failure.
+    def _on_subject_error(self, token, combo, tb, title, message, n_done, n_total):
+        """Mark a row as errored and show the error dialog, then continue.
 
         Shared by the make-ICA and compute-rejection flows; ``combo`` is the
         leading key-field tuple (``(subject,)`` for rejection).
@@ -941,27 +934,7 @@ class PipelineFrame(EelbrainFrame):
             self._list.SetItem(i, self._status_col(), 'error')
         self._progress_gauge.SetValue(n_done)
         self._progress_label.SetLabel(f"{n_done} / {n_total}")
-        wx.MessageBox(f"{' '.join(combo)}: {message}", title, wx.OK | wx.ICON_ERROR, self)
-
-    def _on_subject_error(self, token, combo, tb, n_done, n_total):
-        """Mark a row as errored after a failed computation.
-
-        Shared by the make-ICA and compute-rejection flows; ``combo`` is the
-        leading key-field tuple (``(subject,)`` for rejection).
-        """
-        if token is not self._compute_token:
-            return
-        if isinstance(combo, str):
-            combo = (combo,)
-        i = self._find_row(combo)
-        if i != -1:
-            self._list.SetItem(i, self._status_col(), 'error')
-        self._progress_gauge.SetValue(n_done)
-        self._progress_label.SetLabel(f"{n_done} / {n_total}")
-        # Show the traceback so the user knows what went wrong, then continue.
-        dlg = TracebackDialog(self, tb)
-        dlg.ShowModal()
-        dlg.Destroy()
+        self._show_error(tb, f"{title}: {' '.join(combo)}", message)
 
     def _on_make_ica_done(self, token):
         """Called when the make-ICA thread exits (finished or cancelled)."""
@@ -1032,14 +1005,9 @@ class PipelineFrame(EelbrainFrame):
                 n_rej = int((~rej_ds['accept']).sum())
                 n_done += 1
                 wx.CallAfter(self._on_subject_rejection_computed, token, subject, str(rej_ds.n_cases), str(n_rej), n_done, n_total)
-            except _USER_ERROR_TYPES as error:
-                title, message = _user_error_dialog(error)
+            except Exception as error:
                 n_done += 1
-                wx.CallAfter(self._on_subject_user_error, token, subject, title, message, n_done, n_total)
-            except Exception:
-                tb = traceback.format_exc()
-                n_done += 1
-                wx.CallAfter(self._on_subject_error, token, subject, tb, n_done, n_total)
+                wx.CallAfter(self._on_subject_error, token, subject, *_error_dialog_args(error), n_done, n_total)
         wx.CallAfter(self._on_make_rejection_done, token)
 
     def _on_subject_rejection_computed(self, token, subject, n_epochs, n_rej, n_done, n_total):
