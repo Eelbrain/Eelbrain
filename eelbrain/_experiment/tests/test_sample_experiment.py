@@ -708,7 +708,8 @@ def test_sample_tasks(samples_experiment):
     e.set('R0000', raw='ica')
     with catch_warnings():
         filterwarnings('ignore', "FastICA did not converge", UserWarning)
-        assert e.make_ica() == join(root, 'derivatives', 'ica', 'sub-R0000_meg_raw-ica_ica.fif')
+        ica_path = e.make_ica()
+    assert ica_path == Path(root) / 'derivatives' / 'ica' / 'sub-R0000_meg_raw-ica_ica.fif'
 
 
 def test_ica_all_tasks_after_maxwell(samples_experiment):
@@ -741,7 +742,7 @@ def test_ica_all_tasks_after_maxwell(samples_experiment):
     with catch_warnings():
         filterwarnings('ignore', "FastICA did not converge", UserWarning)
         ica_path = e.make_ica()
-    assert ica_path == join(root, 'derivatives', 'ica', 'sub-R0000_meg_raw-ica_ica.fif')
+    assert ica_path == Path(root) / 'derivatives' / 'ica' / 'sub-R0000_meg_raw-ica_ica.fif'
     assert exists(ica_path)
     assert isinstance(e.load_ica(), mne.preprocessing.ICA)
     # the ICA can be applied to an individual recording

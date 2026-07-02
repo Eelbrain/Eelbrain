@@ -2410,7 +2410,7 @@ class Pipeline(StateModel):
         adjacency = source_pipe._get_adjacency(data_kind)
         return gui.select_channels(raw_data, channels_path, events=events, sysname=sysname, adjacency=adjacency)
 
-    def make_ica(self, **state):
+    def make_ica(self, **state) -> Path:
         """Compute ICA decomposition for a :class:`pipeline.RawICA` preprocessing step
 
         Parameters
@@ -2420,7 +2420,7 @@ class Pipeline(StateModel):
 
         Returns
         -------
-        path : str
+        path : Path
             Path to the ICA file.
 
         Notes
@@ -2465,7 +2465,7 @@ class Pipeline(StateModel):
                 raise RuntimeError(f"{command=}")
             else:
                 raise RuntimeError("User aborted ICA overwrite")
-        return str(self._raw[ica_raw_name].path(ctx))
+        return self._raw[ica_raw_name].path(ctx)
 
     def make_movie_dspm(
             self,
