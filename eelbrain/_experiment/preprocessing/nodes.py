@@ -514,7 +514,10 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         without a recording for the current subject/session are skipped.
         """
         source_input = raw_input_name(self.pipes.root_source_name(self.pipe.source))
-        run_states = [{'run': run} for run in self._runs] if self.pipe._concatenate_runs else [{}]
+        if self.pipe._concatenate_runs:
+            run_states = [{'run': run} for run in self._runs]
+        else:
+            run_states = [{}]
         states = []
         for task in tasks:
             for run_state in run_states:

@@ -2330,9 +2330,8 @@ class Pipeline(StateModel):
                 event_dss = []
                 offset = 0.0  # seconds into the concatenated recording
                 with self._temporary_state:
-                    self.set(raw=pipe.source)
-                    for task_ in task:
-                        ds_t = self.load_events(task=task_).copy()
+                    for state in ctx.node._source_states(ctx, task):
+                        ds_t = self.load_events(raw=pipe.source, **state)
                         ds_t['onset'] = ds_t['onset'] + offset
                         event_dss.append(ds_t)
                         offset += (ds_t.info['raw.last_samp'] - ds_t.info['raw.first_samp'] + 1) / ds_t.info['raw.samplingrate']
