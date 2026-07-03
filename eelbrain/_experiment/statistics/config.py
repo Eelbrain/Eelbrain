@@ -61,9 +61,9 @@ class Test(Configuration):
     def __init__(
             self,
             desc: str,
-            model: str = None,  # within-subject model; None for single-trial analysis
+            model: str | None = None,  # within-subject model; None for single-trial analysis
             vars: dict[str, VarDef] | None = None,  # dynamic variables
-            cat: tuple[CellArg, ...] = None,  # cells in model to load
+            cat: tuple[CellArg, ...] | None = None,  # cells in model to load
             depend_on: Collection[str] = (),  # non-model variables
     ):
         self.desc = desc
@@ -77,7 +77,7 @@ class Test(Configuration):
         try:
             self.vars = Variables(vars)
         except Exception as error:
-            raise ConfigurationError(f"vars={vars} ({error})")
+            raise ConfigurationError(f"{vars=} ({error})")
         self._test_vars.extend(depend_on)
 
     def _find_test_vars(self):

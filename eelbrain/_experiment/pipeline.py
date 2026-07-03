@@ -232,9 +232,8 @@ class Pipeline(StateModel):
 
     # Tests
     # -----
-    # Tests imply a model which is set automatically
     tests: dict[str, Test] = {}
-    _empty_test = False  # for TRFExperiment
+
     # plotting
     # --------
     _brain_plot_defaults = {'surf': 'inflated'}
@@ -385,6 +384,9 @@ class Pipeline(StateModel):
 
         # tests
         validate_tests(self.tests)
+        for test_obj in self.tests.values():
+            if test_obj.model:
+                test_obj.model = self._eval_model(test_obj.model)
         self.tests = ConfigurationDict('test', self.tests)
 
         # TRF: named models, estimators, predictors, stimulus variables
@@ -443,8 +445,6 @@ class Pipeline(StateModel):
             if not data.sensor or data.string.split('.', 1)[0] == 'sensor':
                 raise ConfigurationError(f"{self.__class__.__name__}.default_data={self.default_data!r}; must be a specific sensor type ('mag', 'grad', or 'eeg').")
             self._default_data = self.default_data
-        self._register_field('model', eval_handler=self._eval_model)
-        self._register_field('test', sorted(self.tests), post_set_handler=self._post_set_test, allow_empty=self._empty_test, repr=False)
         self._register_field('parc', parc_values, 'aparc', eval_handler=self._eval_parc, allow_empty=True)
         self._register_field('src', default='ico-4', eval_handler=eval_src)
         self._register_field('adjacency', ('', 'link-midline'), allow_empty=True)
@@ -1429,6 +1429,7 @@ class Pipeline(StateModel):
             src_baseline: BaselineArg = False,
             morph: bool = None,
             keep_mne: bool = False,
+            model: str = '',
             **state):
         """
         Load a Dataset with condition average responses for each subject.
@@ -1469,13 +1470,16 @@ class Pipeline(StateModel):
         keep_mne
             Also include the underlying :class:`mne.Evoked` (sensor space) or
             sensor-space data (source space) in the returned :class:`Dataset`.
+        model
+            How to group trials into conditions before averaging (e.g.
+            ``'condition'`` or ``'a % b'``). The default (``''``) is the grand
+            average across all trials.
         ...
             Applicable :ref:`state-parameters`:
 
              - :ref:`state-raw`: preprocessing pipeline
              - :ref:`state-epoch`: which events to use and time window
              - :ref:`state-epoch_rejection`: which trials to use
-             - :ref:`state-model`: how to group trials into conditions
              - :ref:`state-equalize_evoked_count`: control number of trials per cell
              - :ref:`state-inv`: inverse solution (``inv=''`` for sensor space,
                a non-empty inverse for source space)
@@ -1488,11 +1492,13 @@ class Pipeline(StateModel):
         interpolated data.
         """
         subject, group = self._process_subject_arg(subjects, state)
+        model = self._eval_model(model)
         if (inv := self.get('inv')):  # source space
             if isinstance(ndvar, str):
                 raise ValueError(f"{ndvar=} with {inv=}: a data-kind ndvar is only valid for sensor-space evoked; in source space use ndvar=True or ndvar=False")
             self._current_source_parc()
             options = {
+                'model': model,
                 'baseline': baseline,
                 'src_baseline': src_baseline,
                 'cat': cat,
@@ -1521,6 +1527,7 @@ class Pipeline(StateModel):
         if baseline is True:
             baseline = epoch.baseline
         options = {
+            'model': model,
             'baseline': baseline,
             'ndvar': node_ndvar,
             'cat': cat,
@@ -2061,7 +2068,8 @@ class Pipeline(StateModel):
             Test result for the specified test (for ROIs tests,
             an :class:`~_experiment.ROITestResult` object).
         """
-        self.set(test=test, **state)
+        test_obj = self.tests[test]
+        self.set(**state)
         data = self._resolve_data(data, morph=True)
         if data.source:
             self._current_source_parc()
@@ -2079,7 +2087,6 @@ class Pipeline(StateModel):
             'smooth': smooth,
             'samplingrate': samplingrate,
         }
-        test_obj = self.tests[test]
         result_node = 'two-stage-level-2' if isinstance(test_obj, TwoStageTest) else 'test-result'
         data_node = 'two-stage-data' if isinstance(test_obj, TwoStageTest) else 'evoked-test-data'
         handle = self._resolve_derivative(result_node, options=options)
@@ -2521,7 +2528,6 @@ class Pipeline(StateModel):
         ...
             State parameters.
         """
-        state['model'] = ''
         subject, group = self._process_subject_arg(subjects, state)
         data = DataSpec("source", morph=bool(group))
         brain_kwargs = self._surfer_plot_kwargs(surf, views, foreground, background, smoothing_steps, hemi)
@@ -2635,7 +2641,7 @@ class Pipeline(StateModel):
             pmid = 0.0001
             pmin = 0.00001
         else:
-            raise ValueError(f"p={p}")
+            raise ValueError(f"{p=}")
 
         data = DataSpec("source", morph=True)
         brain_kwargs = self._surfer_plot_kwargs(surf, views, foreground, background, smoothing_steps, hemi)
@@ -2652,31 +2658,29 @@ class Pipeline(StateModel):
         else:
             cat = None
 
-        state.update(model=model)
         subject, group = self._process_subject_arg(subjects, state)
-        self._current_source_parc()
-        with self._temporary_state:
-            if dst is not None:
-                dst = os.path.expanduser(dst)
+        if dst is not None:
+            dst = Path(dst).expanduser()
 
-            options = {
-                'dst': dst,
-                'data': data,
-                'single_subject': group is None,
-                'subject': subject,
-                'group': group,
-                'baseline': baseline,
-                'src_baseline': src_baseline,
-                'disconnect_labels': disconnect_labels,
-                'cat': cat,
-                'p': p,
-                'pmin': pmin,
-                'pmid': pmid,
-                'surf': surf,
-                'time_dilation': time_dilation,
-                'cluster_state': state,
-            }
-            self._load_derivative('movie-ttest', options=options, redo=redo, controls={ALLOW_PROTECTED_OVERWRITE})
+        options = {
+            'dst': dst,
+            'data': data,
+            'model': self._eval_model(model),
+            'single_subject': group is None,
+            'subject': subject,
+            'group': group,
+            'baseline': baseline,
+            'src_baseline': src_baseline,
+            'disconnect_labels': disconnect_labels,
+            'cat': cat,
+            'p': p,
+            'pmin': pmin,
+            'pmid': pmid,
+            'surf': surf,
+            'time_dilation': time_dilation,
+            'cluster_state': state,
+        }
+        self._load_derivative('movie-ttest', options=options, redo=redo, controls={ALLOW_PROTECTED_OVERWRITE})
 
     def make_plot_annot(self, surf='inflated', redo=False, **state):
         """Create a figure for the contents of an annotation file
@@ -3006,8 +3010,8 @@ class Pipeline(StateModel):
         --------
         load_test : load corresponding data and tests (use ``data="source.mean"``)
         """
-        self.set(test=test, **state)
         test_obj = self.tests[test]
+        self.set(**state)
         if samples < 1:
             raise ValueError("Need samples > 0 to run permutation test.")
         elif isinstance(test_obj, TwoStageTest):
@@ -3321,7 +3325,6 @@ class Pipeline(StateModel):
         gfps = []
         subjects = []
         with self._temporary_state:
-            self.set(model='')
             for subject in self.iter_range(s_start, s_stop):
                 cov = self.load_cov()
                 picks = np.arange(len(cov.ch_names))
@@ -3352,6 +3355,7 @@ class Pipeline(StateModel):
             name: str = None,
             h: float = 2.5,
             run: bool = None,
+            model: str = '',
             **kwargs):
         """Plot evoked sensor data
 
@@ -3381,6 +3385,9 @@ class Pipeline(StateModel):
         run
             Run the GUI after plotting (default in accordance with plotting
             default).
+        model
+            How to group trials into conditions before averaging. The default
+            (``''``) plots the grand average.
         ...
             State parameters.
         """
@@ -3394,7 +3401,7 @@ class Pipeline(StateModel):
             sns, src = bool(data.sensor), bool(data.source)
             if src and not source_inv:
                 raise ValueError(f"data={data.string!r}: no inverse is configured (inv=''); set inv to plot source estimates")
-        model = self.get('model') or None
+        model = self._eval_model(model)
         epoch = self.get('epoch')
         if model:
             model_name = f"~{model}"
@@ -3413,10 +3420,10 @@ class Pipeline(StateModel):
             plots = []
             vlim = []
             for subject in self.iter(group=group):
-                ds = self.load_evoked(baseline=baseline)
+                ds = self.load_evoked(baseline=baseline, model=model)
                 y = guess_y(ds)
                 title = f"{subject} {epoch} {model_name}"
-                p = plot.TopoButterfly(y, model, data=ds, axh=h, name=title, run=False)
+                p = plot.TopoButterfly(y, model or None, data=ds, axh=h, name=title, run=False)
                 plots.append(p)
                 vlim.append(p.get_vlim())
 
@@ -3441,7 +3448,7 @@ class Pipeline(StateModel):
             src_key = 'srcm'
 
         if src:
-            ds = self.load_evoked(subject_arg, baseline=baseline, keep_mne=sns, inv=source_inv)
+            ds = self.load_evoked(subject_arg, baseline=baseline, keep_mne=sns, inv=source_inv, model=model)
             out = [ds]
             if model:
                 x = ds.eval(model)
@@ -3456,12 +3463,12 @@ class Pipeline(StateModel):
                 out.extend(plots)
             right_of = out[2]
         else:
-            ds = self.load_evoked(subject_arg, baseline=baseline, inv='')
+            ds = self.load_evoked(subject_arg, baseline=baseline, inv='', model=model)
             out = [ds]
             right_of = None
         if sns:
             key = 'meg' if 'meg' in ds else 'eeg'
-            p = plot.TopoButterfly(key, model, data=ds, axh=h, w=2.5 * h, name=title, right_of=right_of, run=run)
+            p = plot.TopoButterfly(key, model or None, data=ds, axh=h, w=2.5 * h, name=title, right_of=right_of, run=run)
             if right_of:
                 p.link_time_axis(right_of)
             out.append(p)
@@ -3780,12 +3787,6 @@ class Pipeline(StateModel):
         ``parc_definition`` is ``None`` when ``parc=''``.
         """
         return _resolve_parc(self._parcs, self.get('parc'))
-
-    def _post_set_test(self, _: str, test: str) -> None:
-        if test != '*' and test in self.tests:  # with vmatch=False, test object might not be availale
-            test_obj = self.tests[test]
-            if test_obj.model is not None:
-                self.set(model=test_obj.model)
 
     def show_bad_channels(
             self,

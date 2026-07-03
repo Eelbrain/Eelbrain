@@ -168,7 +168,7 @@ def test_sample(samples_experiment):
     ds = e.load_evoked(ndvar=False)
     assert ds[0, 'evoked'].info['bads'] == ['MEG 0331']
 
-    e.set(epoch_rejection='manual', model='modality')
+    e.set(epoch_rejection='manual')
     test_tree = e.show_dependencies(
         'test-result',
         options={
@@ -217,7 +217,7 @@ def test_sample(samples_experiment):
     assert_dataobj_equal(ds_ind, ds, decimal=19)  # make vs load evoked
 
     # sensor space tests
-    megs = [e.load_evoked(cat='auditory', baseline=False)['meg'] for _ in e]
+    megs = [e.load_evoked(cat='auditory', baseline=False, model='modality')['meg'] for _ in e]
     res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False, make=True)
     test_manifest = _test_result_manifest_path(e, 'a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', baseline=False)
     assert exists(test_manifest)
@@ -371,7 +371,7 @@ def test_sample(samples_experiment):
         'smooth': None,
         'samplingrate': None,
     }
-    e.set(group='ab', epoch_rejection='manual', model='modality')
+    e.set(group='ab', epoch_rejection='manual')
     handle_ab = e._resolve_derivative('test-result', options=result_options)
     e.set(group='alias')
     handle_alias = e._resolve_derivative('test-result', options=result_options)
@@ -453,7 +453,7 @@ def test_sample(samples_experiment):
     ica = e.load_ica(raw='ica', accept_stale=True)
     assert isinstance(ica, mne.preprocessing.ICA)
     assert isinstance(e.load_ica(raw='ica'), mne.preprocessing.ICA)
-    e.set(raw='ica1-40', model='', epoch_rejection='manual')
+    e.set(raw='ica1-40', epoch_rejection='manual')
     e.make_epoch_rejection(auto=2e-12, overwrite=True)
     ds1 = e.load_evoked(raw='ica1-40')
     ica = e.load_ica(raw='ica')
@@ -777,15 +777,15 @@ def test_epoch_reference(samples_experiment):
         assert_dataobj_equal(ds['mag'], ds_ref0['mag'], decimal=20)
 
     # changing the Reference config invalidates the cache (same name)
-    e.set(reference='avg', model='modality')
-    e.load_evoked(ndvar=False)
+    e.set(reference='avg')
+    e.load_evoked(ndvar=False, model='modality')
 
     class ChangedExperiment(Experiment):
         references = {'avg': Reference(['EEG 001'])}
 
     e_changed = ChangedExperiment(root)
-    e_changed.set(subject='R0000', epoch='target', epoch_rejection='', raw='raw', reference='avg', model='modality')
-    assert not e_changed._resolve_derivative('evoked').is_valid()
+    e_changed.set(subject='R0000', epoch='target', epoch_rejection='', raw='raw', reference='avg')
+    assert not e_changed._resolve_derivative('evoked', options={'model': 'modality'}).is_valid()
 
     # MEG-only data: a reference with no EEG to apply raises (rather than
     # silently producing a duplicate cache entry); reference='' works
@@ -1080,7 +1080,7 @@ def test_evoked_backed_test_vars_are_post_aggregation_only(samples_experiment):
         }
 
     root = samples_experiment(n_subjects=3, n_segments=2, mris=False)
-    e = Experiment(root, epoch_rejection='', test='anova-ok')
+    e = Experiment(root, epoch_rejection='')
 
     options = {
         'data': DataSpec.coerce('meg.mean', morph=True),
@@ -1093,7 +1093,6 @@ def test_evoked_backed_test_vars_are_post_aggregation_only(samples_experiment):
     ds = e._resolve_derivative('evoked-test-data', options=options).load()
     assert 'modality_num' in ds
 
-    e.set(test='anova-bad')
     with pytest.raises(ConfigurationError, match='post-aggregation dataset'):
         e._resolve_derivative('evoked-test-data', options={**options, 'test': 'anova-bad'}).load()
 
@@ -1230,9 +1229,9 @@ def test_evoked_cached_load_applies_cat_without_rebuilding_epochs(monkeypatch, s
 
     root = samples_experiment(2, 2, 1)
     e = SampleExperiment(root)
-    e.set(subject='R0000', epoch='target1', epoch_rejection='', model='modality')
+    e.set(subject='R0000', epoch='target1', epoch_rejection='')
 
-    target = e.load_evoked(ndvar=False, cat='auditory')
+    target = e.load_evoked(ndvar=False, cat='auditory', model='modality')
     epochs_node = e._derivatives._get_node('epochs')
 
     def fail(*args, **kwargs):
@@ -1251,7 +1250,7 @@ def test_evoked_cached_load_applies_cat_without_rebuilding_epochs(monkeypatch, s
 
     monkeypatch.setattr(mne, 'read_evokeds', read_evokeds)
 
-    ds = e.load_evoked(ndvar=False, cat='auditory')
+    ds = e.load_evoked(ndvar=False, cat='auditory', model='modality')
     assert ds.n_cases == 1
     assert_dataobj_equal(ds, target, decimal=19)
     assert calls == 1
@@ -1265,15 +1264,14 @@ def test_evoked_cache_ignores_irrelevant_selected_events_changes(samples_experim
     root = samples_experiment(1, 2, 1)
     e = SampleExperiment(root)
 
-    e.set(subject='R0000', epoch='target1', epoch_rejection='', model='modality')
-    assert not e._resolve_derivative('evoked').is_valid()
-    e.load_evoked(ndvar=False)
-    assert e._resolve_derivative('evoked').is_valid()
+    e.set(subject='R0000', epoch='target1', epoch_rejection='')
+    assert not e._resolve_derivative('evoked', options={'model': 'modality'}).is_valid()
+    e.load_evoked(ndvar=False, model='modality')
+    assert e._resolve_derivative('evoked', options={'model': 'modality'}).is_valid()
 
-    e.set(model='side')
-    assert not e._resolve_derivative('evoked').is_valid()
-    e.load_evoked(ndvar=False)
-    assert e._resolve_derivative('evoked').is_valid()
+    assert not e._resolve_derivative('evoked', options={'model': 'side'}).is_valid()
+    e.load_evoked(ndvar=False, model='side')
+    assert e._resolve_derivative('evoked', options={'model': 'side'}).is_valid()
 
     class SampleExperimentModified(SampleExperiment):
 
@@ -1283,11 +1281,10 @@ def test_evoked_cache_ignores_irrelevant_selected_events_changes(samples_experim
         }
 
     e = SampleExperimentModified(root)
-    e.set(subject='R0000', epoch='target1', epoch_rejection='', model='modality')
-    assert e._resolve_derivative('evoked').is_valid()
+    e.set(subject='R0000', epoch='target1', epoch_rejection='')
+    assert e._resolve_derivative('evoked', options={'model': 'modality'}).is_valid()
 
-    e.set(model='side')
-    assert not e._resolve_derivative('evoked').is_valid()
+    assert not e._resolve_derivative('evoked', options={'model': 'side'}).is_valid()
 
 
 @requires_mne_sample_data
@@ -1298,8 +1295,8 @@ def test_evoked_cache_stales_on_model_change(samples_experiment):
     root = samples_experiment(n_subjects=1, n_segments=2, mris=False)
 
     e = SampleExperiment(root)
-    e.set(subject='R0000', epoch='target', epoch_rejection='', model='modality')
-    _ = e.load_evoked(ndvar=False)
+    e.set(subject='R0000', epoch='target', epoch_rejection='')
+    _ = e.load_evoked(ndvar=False, model='modality')
 
     class ChangedExperiment(SampleExperiment):
         variables = {
@@ -1308,11 +1305,11 @@ def test_evoked_cache_stales_on_model_change(samples_experiment):
         }
 
     e_changed = ChangedExperiment(root)
-    e_changed.set(subject='R0000', epoch='target', epoch_rejection='', model='modality')
-    handle = e_changed._resolve_derivative('evoked')
+    e_changed.set(subject='R0000', epoch='target', epoch_rejection='')
+    handle = e_changed._resolve_derivative('evoked', options={'model': 'modality'})
 
     assert not handle.is_valid()
-    ds = e_changed.load_evoked(ndvar=False)
+    ds = e_changed.load_evoked(ndvar=False, model='modality')
     assert set(ds['modality'].cells) == {'auditory_changed', 'visual'}
 
 
@@ -1327,8 +1324,8 @@ def test_epochs_dependency_views_distinguish_model_sensitivity(samples_experimen
         cache_epochs = 2
 
     e = CachedEpochsExperiment(root)
-    e.set(subject='R0000', epoch='target', epoch_rejection='', model='modality')
-    evoked_handle = e._resolve_derivative('evoked', options={})
+    e.set(subject='R0000', epoch='target', epoch_rejection='')
+    evoked_handle = e._resolve_derivative('evoked', options={'model': 'modality'})
     epochs_dep = next(dep for dep in evoked_handle.node.dependencies(evoked_handle) if dep.name == 'epochs')
     epochs_handle = e._resolve_derivative('epochs', options=epochs_dep.options)
 
@@ -1341,7 +1338,7 @@ def test_epochs_dependency_views_distinguish_model_sensitivity(samples_experimen
     # Build evoked once. Unlike epochs, evoked depends on the labels of the
     # current model because it stores one averaged response per model cell.
     assert not evoked_handle.is_valid()
-    ds = e.load_evoked(ndvar=False)
+    ds = e.load_evoked(ndvar=False, model='modality')
     assert set(ds['modality'].cells) == {'auditory', 'visual'}
     assert evoked_handle.is_valid()
 
@@ -1352,8 +1349,8 @@ def test_epochs_dependency_views_distinguish_model_sensitivity(samples_experimen
         }
 
     e_changed = ChangedExperiment(root)
-    e_changed.set(subject='R0000', epoch='target', epoch_rejection='', model='modality')
-    evoked_handle_changed = e_changed._resolve_derivative('evoked')
+    e_changed.set(subject='R0000', epoch='target', epoch_rejection='')
+    evoked_handle_changed = e_changed._resolve_derivative('evoked', options={'model': 'modality'})
     epochs_handle_changed = e_changed._resolve_derivative('epochs', options=epochs_dep.options)
 
     # Changing the labels for the current model still does not affect epoch
@@ -1362,7 +1359,7 @@ def test_epochs_dependency_views_distinguish_model_sensitivity(samples_experimen
     # The evoked artifact aggregates by model cells, so the same change should
     # invalidate evoked and rebuild it with the current labels.
     assert not evoked_handle_changed.is_valid()
-    ds_changed = e_changed.load_evoked(ndvar=False)
+    ds_changed = e_changed.load_evoked(ndvar=False, model='modality')
     assert set(ds_changed['modality'].cells) == {'auditory_changed', 'visual'}
     assert evoked_handle_changed.is_valid()
 

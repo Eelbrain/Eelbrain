@@ -47,6 +47,9 @@ class DSPMMovieDerivative(ResultOutputDerivative[Path]):
     name = 'movie-dspm'
     OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, **_MOVIE_OPTION_DEFAULTS, 'fmin': None, 'brain_kwargs': None}
 
+    def _result_model(self, ctx: Request) -> str:
+        return ''  # grand-average movie has no model
+
     def _identity_extra(self, ctx: Request) -> dict[str, Any]:
         return {
             'time_dilation': ctx.options['time_dilation'],
@@ -116,6 +119,7 @@ class TTestMovieDerivative(ResultOutputDerivative[Path]):
     OPTION_DEFAULTS = {
         **RESULT_OPTION_DEFAULTS,
         **_MOVIE_OPTION_DEFAULTS,
+        'model': '',
         'disconnect_labels': False,
         'cat': None,
         'p': None,
@@ -123,6 +127,9 @@ class TTestMovieDerivative(ResultOutputDerivative[Path]):
         'surf': None,
         'cluster_state': None,
     }
+
+    def _result_model(self, ctx: Request) -> str:
+        return ctx.options['model']
 
     def _identity_extra(self, ctx: Request) -> dict[str, Any]:
         return {
@@ -160,7 +167,7 @@ class TTestMovieDerivative(ResultOutputDerivative[Path]):
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if ctx.options['single_subject']:
             return (Dependency('epochs-stc', state={'subject': ctx.options['subject']}, options=_epochs_stc_options(ctx)),)
-        return (Dependency('evoked-stc-group-dataset', options=_evoked_stc_options(ctx, morph=True, cat=ctx.options['cat'])),)
+        return (Dependency('evoked-stc-group-dataset', options=_evoked_stc_options(ctx, model=ctx.options['model'], morph=True, cat=ctx.options['cat'])),)
 
     def build(self, ctx: Request) -> Path:
         dst = self.path(ctx)
@@ -176,12 +183,13 @@ class TTestMovieDerivative(ResultOutputDerivative[Path]):
         if ctx.options['disconnect_labels']:
             cluster_state['parc'] = 'source'
         cat = ctx.options['cat']
-        if ctx.state['model'] and cat and len(cat) == 2:
+        model = ctx.options['model']
+        if model and cat and len(cat) == 2:
             c1, c0 = cat
             if ctx.options['single_subject']:
-                res = testnd.TTestIndependent(y, ctx.state['model'], c1, c0, data=ds, **cluster_state)
+                res = testnd.TTestIndependent(y, model, c1, c0, data=ds, **cluster_state)
             else:
-                res = testnd.TTestRelated(y, ctx.state['model'], c1, c0, match='subject', data=ds, **cluster_state)
+                res = testnd.TTestRelated(y, model, c1, c0, match='subject', data=ds, **cluster_state)
         elif cat:
             res = testnd.TTestOneSample(y, data=ds, **cluster_state)
         else:

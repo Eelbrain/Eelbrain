@@ -87,6 +87,7 @@ def _test_result_options(
 
 def _evoked_stc_options(
         ctx: Request,
+        model: str = '',
         baseline=USE_CTX,
         src_baseline=USE_CTX,
         morph: bool = False,
@@ -101,6 +102,7 @@ def _evoked_stc_options(
         src_baseline = ctx.options['src_baseline']
     return ctx.options_for(
         'evoked-stc',
+        model=model,
         baseline=baseline,
         src_baseline=src_baseline,
         morph=morph,
@@ -281,7 +283,8 @@ class ResultOutputDerivative(Derivative[T]):
     ) -> dict[str, Any]:
         """Canonical state subset used by :meth:`key`."""
         data = ctx.options['data']
-        fields = ['epoch', 'raw', 'epoch_rejection', 'model', 'equalize_evoked_count', 'test']
+        # model is determined by the test (an option already in the key), so it is not a separate identity field
+        fields = ['epoch', 'raw', 'epoch_rejection', 'equalize_evoked_count']
         if data.source:
             fields.extend(['cov', 'inv', 'src', 'mri', 'parc'])
         else:
@@ -322,12 +325,17 @@ class ResultOutputDerivative(Derivative[T]):
             **self._identity_extra(ctx),
         })
 
+    def _result_model(self, ctx: Request) -> str:
+        """Model that groups trials for this result; derived from the test definition by default."""
+        return self.tests[ctx.options['test']].model or ''
+
     def _path_context_parts(self, ctx: Request) -> list[str]:
         """Path-stem parts derived from analysis context/state."""
         data = ctx.options['data']
         parts = [f'data-{data.string}', f'raw-{ctx.state["raw"]}', f'rej-{ctx.state["epoch_rejection"]}']
-        if ctx.state['model']:
-            parts.append(f'model-{ctx.state["model"]}')
+        model = self._result_model(ctx)
+        if model:
+            parts.append(f'model-{model}')
         if ctx.state['equalize_evoked_count']:
             parts.append(f'count-{ctx.state["equalize_evoked_count"]}')
         if data.source:
@@ -461,9 +469,10 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         self.epochs = epochs
         self.groups = groups
 
-    def _sensor_evoked_options(self, ctx: Request, cat) -> dict[str, Any]:
+    def _sensor_evoked_options(self, ctx: Request, cat, model: str) -> dict[str, Any]:
         return ctx.options_for(
             'evoked',
+            model=model,
             baseline=ctx.options['baseline'],
             ndvar=True,
             cat=cat,
@@ -482,6 +491,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
+        model = test_obj.model or ''
         samplingrate = ctx.options['samplingrate']
         subjects = self.groups[ctx.state['group']]
 
@@ -494,12 +504,12 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
             raise TypeError(f"src_baseline={ctx.options['src_baseline']!r} for sensor tests")
 
         if data.sensor:
-            return (Dependency('evoked-group-dataset', options=self._sensor_evoked_options(ctx, test_obj.cat)),)
+            return (Dependency('evoked-group-dataset', options=self._sensor_evoked_options(ctx, test_obj.cat, model)),)
 
         if data.source and not data.aggregate:
             return (Dependency(
                 'evoked-stc-group-dataset',
-                options=_evoked_stc_options(ctx, morph=True, cat=test_obj.cat, samplingrate=samplingrate),
+                options=_evoked_stc_options(ctx, model=model, morph=True, cat=test_obj.cat, samplingrate=samplingrate),
             ),)
 
         return tuple(
@@ -507,7 +517,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
                 'evoked-stc',
                 label=subject,
                 state={'subject': subject},
-                options=_evoked_stc_options(ctx, morph=False, cat=None, samplingrate=samplingrate),
+                options=_evoked_stc_options(ctx, model=model, morph=False, cat=None, samplingrate=samplingrate),
             )
             for subject in subjects
         )
@@ -520,10 +530,6 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
             _validate_post_aggregation_test_vars(test_obj, data.string)
 
         if data.sensor:
-            if ctx.options['smooth']:
-                raise TypeError(f"smooth={ctx.options['smooth']!r} for sensor tests")
-            if ctx.options['src_baseline'] not in (None, False):
-                raise TypeError(f"src_baseline={ctx.options['src_baseline']!r} for sensor tests")
             ds = ctx.load('evoked-group-dataset')
             return _apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string)
 
@@ -533,9 +539,6 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
             if smooth := ctx.options['smooth']:
                 ds[data.y_name] = ds[data.y_name].smooth('source', smooth, 'gaussian')
             return ds
-
-        if ctx.options['smooth']:
-            raise TypeError(f"smooth={ctx.options['smooth']!r} for ROI tests")
 
         dss = []
         for subject in subjects:

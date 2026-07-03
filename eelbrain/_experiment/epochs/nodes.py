@@ -536,10 +536,11 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
     name = 'evoked'
     key_fields = (
         'subject', 'session', 'raw',
-        'epoch', 'epoch_rejection', 'reference', 'model', 'equalize_evoked_count',
+        'epoch', 'epoch_rejection', 'reference', 'equalize_evoked_count',
     )
     cache_suffix = '-ave.fif'
     OPTION_DEFAULTS = {
+        'model': '',
         'samplingrate': None,
         'decim': None,
     }
@@ -547,7 +548,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         'baseline': False,
         'ndvar': False,
         'cat': None,
-        'data': 'sensor',  # TODO
+        'data': 'sensor',
     }
 
     def __init__(self, raw, epochs: dict[str, Any]):
@@ -576,7 +577,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
     def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, Any] | None:
         if dep.name != 'epoch-events':
             return None
-        model = ctx.state['model']
+        model = ctx.options['model']
         if model:
             ds = ctx.load(dep.label or dep.name)
             ds = self._aggregate(ds, ctx)
@@ -584,7 +585,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         return {}
 
     def build(self, ctx: Request) -> list[mne.Evoked]:
-        model = ctx.state['model']
+        model = ctx.options['model']
         data = ctx.load('epochs')
         data = self._aggregate(data, ctx)
         data.rename('epochs', 'evoked')
@@ -597,7 +598,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
     @staticmethod
     def _aggregate(data: Dataset, ctx: Request) -> Dataset:
         return data.aggregate(
-            ctx.state['model'],
+            ctx.options['model'],
             never_drop=('epochs',),
             drop_bad=True,
             equal_count=ctx.state['equalize_evoked_count'] == 'eq',
@@ -642,10 +643,10 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         ds = ctx.load(view='shell')
         cat = ctx.view_options['cat']
         if cat:
-            ds = ds.sub(ds.eval(ctx.state['model']).isin(cat))
+            ds = ds.sub(ds.eval(ctx.options['model']).isin(cat))
 
         # Unpack evoked objects and map them to the ds rows
-        model = ctx.state['model']
+        model = ctx.options['model']
         model_vars = model.split('%') if model else ()
         cells = [' | '.join(cell) or 'No comment' for cell in ds.zip(*model_vars)] if model_vars else ['No comment']
         evoked_by_cell = dict(zip(_evoked_comments(evoked), evoked))
@@ -712,6 +713,7 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
     """
     name = 'evoked-group-dataset'
     OPTION_DEFAULTS = {
+        'model': '',
         'ndvar': True,
         'samplingrate': None,
         'decim': None,
@@ -733,7 +735,7 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
         return {'subjects': tuple(self.groups[ctx.state['group']])}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        options = ctx.options_for('evoked', 'baseline', 'samplingrate', 'decim', 'data')
+        options = ctx.options_for('evoked', 'model', 'baseline', 'samplingrate', 'decim', 'data')
         return tuple(
             Dependency('evoked', label=subject, state={'subject': subject}, options=options)
             for subject in self.groups[ctx.state['group']]

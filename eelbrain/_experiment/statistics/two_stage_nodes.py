@@ -87,8 +87,8 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
                 dependency = Dependency(
                     'evoked-stc',
                     label=subject,
-                    state={'subject': subject, 'model': test_obj.model},
-                    options=_evoked_stc_options(ctx, morph=data.morph, cat=None, samplingrate=samplingrate),
+                    state={'subject': subject},
+                    options=_evoked_stc_options(ctx, model=test_obj.model, morph=data.morph, cat=None, samplingrate=samplingrate),
                 )
             else:
                 dependency = Dependency(
@@ -104,8 +104,8 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
                 dependency = Dependency(
                     'evoked-stc',
                     label=subject,
-                    state={'subject': subject, 'model': test_obj.model},
-                    options=_evoked_stc_options(ctx, morph=False, cat=None, samplingrate=samplingrate),
+                    state={'subject': subject},
+                    options=_evoked_stc_options(ctx, model=test_obj.model, morph=False, cat=None, samplingrate=samplingrate),
                 )
             else:
                 dependency = Dependency(
@@ -137,8 +137,8 @@ class TwoStageLevel1Derivative(Derivative[Any]):
     """Cached first-stage LM fit for one subject."""
     name = 'two-stage-level-1'
     key_fields = (
-        'subject', 'epoch', 'raw', 'epoch_rejection', 'model', 'equalize_evoked_count',
-        'test', 'cov', 'inv', 'src', 'mri', 'parc',
+        'subject', 'epoch', 'raw', 'epoch_rejection', 'equalize_evoked_count',
+        'cov', 'inv', 'src', 'mri', 'parc',
     )
     cache_suffix = '.pickle'
     OPTION_DEFAULTS = {

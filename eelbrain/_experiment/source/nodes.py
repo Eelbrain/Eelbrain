@@ -176,7 +176,7 @@ class SrcDerivative(ExternalArtifactDerivative[mne.SourceSpaces]):
         out = {'fake_mri': is_fake_mri(ctx.root / mri_dir(ctx.state))}
         if ctx.state['src'].startswith('vol'):
             # volume source spaces are built from the aseg segmentation (see build())
-            out['aseg'] = file_fingerprint(ctx.root, ctx.root / mri_dir(ctx.state) / 'mri' / 'aseg.mgz', 'aseg')
+            out['aseg'] = file_fingerprint(ctx.root, ctx.root / mri_dir(ctx.state) / 'mri' / 'aseg.mgz')
         return out
 
     def build(self, ctx: Request) -> None:
@@ -306,13 +306,16 @@ class FwdDerivative(Derivative[mne.Forward]):
         self._references = references
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        return (
+        deps = [
             Dependency(raw_node_name('raw')),
             Dependency('trans-input'),
-            Dependency('bem-input'),
             Dependency('src'),
             Dependency('median-head-position'),
-        )
+        ]
+        # fsaverage uses a precomputed BEM solution (see build/fingerprint); other subjects build it from bem-input
+        if ctx.state['mrisubject'] != 'fsaverage':
+            deps.append(Dependency('bem-input'))
+        return tuple(deps)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         out = {'source_reference_add': self._references['average'].add}
@@ -714,6 +717,7 @@ class EvokedStcDerivative(UncachedDerivative[Dataset]):
     # source localization handles EEG referencing internally
     fixed_state = {'reference': ''}
     OPTION_DEFAULTS = {
+        'model': '',
         'baseline': False,
         'src_baseline': False,
         'morph': None,
@@ -732,7 +736,8 @@ class EvokedStcDerivative(UncachedDerivative[Dataset]):
         self._references = references
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        return _source_dependencies(ctx, Dependency('evoked', options=ctx.options_for('evoked', baseline=ctx.options['baseline'], ndvar=False, samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], data='sensor')))
+        options = ctx.options_for('evoked', 'model', 'baseline', 'samplingrate', 'decim')
+        return _source_dependencies(ctx, Dependency('evoked', options=options))
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {'source_reference_add': self._references['average'].add}
@@ -763,7 +768,7 @@ class EvokedStcDerivative(UncachedDerivative[Dataset]):
         ds = ds.copy()
         cat = ctx.view_options['cat']
         if cat:
-            ds = ds.sub(ds.eval(ctx.state['model']).isin(cat))
+            ds = ds.sub(ds.eval(ctx.options['model']).isin(cat))
         ndvar = ctx.view_options['ndvar']
         keep_evoked = ctx.view_options['keep_evoked']
         stc_key = 'stcm' if 'stcm' in ds else 'stc'

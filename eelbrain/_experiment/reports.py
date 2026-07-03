@@ -110,17 +110,15 @@ def _report_subject_info(state: dict[str, Any], subjects: tuple[str, ...], ds, m
     return s_ds.as_table(midrule=True, count=True, caption="All subjects included in the analysis with trials per condition")
 
 
-def _report_test_info(node: ResultOutputDerivative, state: dict[str, Any], subjects: tuple[str, ...], section, ds, test, res, data, include=None, model=True):
+def _report_test_info(node: ResultOutputDerivative, state: dict[str, Any], subjects: tuple[str, ...], section, ds, test, res, data, include=None):
     test_obj = node.tests[test] if isinstance(test, str) else test
     info = fmtxt.List("Analysis:")
     epoch = _format_text(state, 'epoch = {epoch}')
     evoked_kind = '_'.join(part for part in (state.get('epoch_rejection'), state.get('reference'), state.get('equalize_evoked_count')) if part not in (None, '')) or None
     if evoked_kind:
         epoch += f' {evoked_kind}'
-    if model is True:
-        model = state.get('model')
-    if model:
-        epoch += f" ~ {model}"
+    if test_obj.model:
+        epoch += f" ~ {test_obj.model}"
     info.add_item(epoch)
     if data.source:
         info.add_item(_format_text(state, "cov = {cov}"))
