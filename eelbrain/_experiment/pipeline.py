@@ -1,7 +1,7 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Pipeline class to manage data from an experiment"""
 from collections import Counter, defaultdict
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 import copy
 from datetime import datetime
 from itertools import product
@@ -664,7 +664,12 @@ class Pipeline(StateModel):
         else:
             raise TypeError(f"{subjects=}")
 
-    def get_field_values(self, field, exclude=(), **state):
+    def get_field_values(
+            self,
+            field: str,
+            exclude: Iterable[str] = (),
+            **state,
+    ) -> list[str]:
         """Find values for a field taking into account exclusion
 
         Parameters
