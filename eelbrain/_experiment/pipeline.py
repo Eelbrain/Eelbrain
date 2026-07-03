@@ -31,7 +31,7 @@ from ..mne_fixes import suppress_mne_warning
 from .._ndvar import concatenate, neighbor_correlation
 from .._text import enumeration
 from .._types import PathArg
-from .._utils import ask, subp, keydefaultdict, log_level, ScreenHandler
+from .._utils import ask, keydefaultdict, log_level, ScreenHandler
 from .._utils.mne_utils import is_fake_mri
 from .covariance import CovDerivative, EpochCovariance, RawCovariance
 from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, DerivativeRegistry, ProtectedArtifactError, Request
@@ -48,7 +48,7 @@ from .logging import CACHE_EVENT_COLUMNS, StructuredFormatter
 from .state_model import StateModel
 from .groups import assemble_groups
 from .pathing import (
-    LOG_DIR, MRI_SDIR, RESULTS_DIR, bids_path, join_stem_parts, mri_dir, raw_basename, raw_dir,
+    LOG_DIR, MRI_SDIR, RESULTS_DIR, bids_path, join_stem_parts, mri_dir, raw_basename,
     src_file_path, trans_file_path,
 )
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, _resolve_parc
@@ -3517,39 +3517,6 @@ class Pipeline(StateModel):
         if subtract_mean:
             raw -= raw.mean('time')
         return plot.TopoButterfly(raw, w=0, h=3, xlim=xlim, vmax=vmax, name=name)
-
-    def run_mne_analyze(self, modal=False):
-        """Run mne_analyze
-
-        Parameters
-        ----------
-        modal : bool
-            Causes the shell to block until mne_analyze is closed.
-
-        Notes
-        -----
-        Sets the current directory to raw-dir, and sets the SUBJECT and
-        SUBJECTS_DIR to current values
-        """
-        state_ = self._fields
-        subp.run_mne_analyze(str(self.root / raw_dir(state_)), self.get('mrisubject'),
-                             str(self.root / MRI_SDIR), modal)
-
-    def run_mne_browse_raw(self, modal=False):
-        """Run mne_analyze
-
-        Parameters
-        ----------
-        modal : bool
-            Causes the shell to block until mne_browse_raw is closed.
-
-        Notes
-        -----
-        Sets the current directory to raw-dir, and sets the SUBJECT and
-        SUBJECTS_DIR to current values
-        """
-        state_ = self._fields
-        subp.run_mne_browse_raw(str(self.root / raw_dir(state_)), self.get('mrisubject'), str(self.root / MRI_SDIR), modal)
 
     def set(self, subject: str = None, match: bool = True, **state):
         """
