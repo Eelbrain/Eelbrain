@@ -282,7 +282,7 @@ class ResultOutputDerivative(Derivative[T]):
         """Canonical state subset used by :meth:`key`."""
         data = ctx.options['data']
         fields = ['epoch', 'raw', 'epoch_rejection', 'model', 'equalize_evoked_count', 'test']
-        if data and data.source:
+        if data.source:
             fields.extend(['cov', 'inv', 'src', 'mri', 'parc'])
         else:
             fields.append('reference')
@@ -296,8 +296,8 @@ class ResultOutputDerivative(Derivative[T]):
     def _key_analysis_options(self, ctx: Request) -> dict[str, Any]:
         """Canonical analysis options used by :meth:`key`."""
         data = ctx.options['data']
-        return ctx.registry.canonicalize({
-            'data': None if data is None else data.string,
+        out = {
+            'data': data.string,
             'samples': ctx.options['samples'],
             'baseline': ctx.options['baseline'],
             'src_baseline': ctx.options['src_baseline'],
@@ -307,8 +307,11 @@ class ResultOutputDerivative(Derivative[T]):
             'tstop': ctx.options['tstop'],
             'samplingrate': ctx.options['samplingrate'],
             'smooth': ctx.options['smooth'],
-            'adjacency': ctx.state['adjacency'],
-        })
+        }
+        # adjacency only affects the result when clustering source data (see :meth:`_path_option_parts`)
+        if ctx.options['pmin'] is not None and data.source:
+            out['adjacency'] = ctx.state['adjacency']
+        return ctx.registry.canonicalize(out)
 
     def _key_identity(self, ctx: Request) -> dict[str, Any]:
         """Stable logical identity shared by result-output cache keys."""
@@ -382,6 +385,8 @@ class ResultOutputDerivative(Derivative[T]):
         return {}
 
     def key(self, ctx: Request) -> dict[str, Any]:
+        if ctx.options['data'] is None:
+            raise RuntimeError(f"{self.name!r} requires the 'data' option")
         return {
             'identity': self._key_identity(ctx),
             'options': ctx.options,
@@ -546,7 +551,6 @@ class TestResultDerivative(ResultOutputDerivative):
     :class:`ResultOutputDerivative`.
     """
     name = 'test-result'
-    sampled_path = True
     cache_suffix = '.pickle'
     path = Derivative.path
     OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'disconnect_labels': False}

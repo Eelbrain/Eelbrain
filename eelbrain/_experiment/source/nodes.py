@@ -173,7 +173,11 @@ class SrcDerivative(ExternalArtifactDerivative[mne.SourceSpaces]):
         return tuple(deps)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {'fake_mri': is_fake_mri(ctx.root / mri_dir(ctx.state))}
+        out = {'fake_mri': is_fake_mri(ctx.root / mri_dir(ctx.state))}
+        if ctx.state['src'].startswith('vol'):
+            # volume source spaces are built from the aseg segmentation (see build())
+            out['aseg'] = file_fingerprint(ctx.root, ctx.root / mri_dir(ctx.state) / 'mri' / 'aseg.mgz', 'aseg')
+        return out
 
     def build(self, ctx: Request) -> None:
         dst = self.path(ctx)
@@ -260,10 +264,9 @@ class SourceMorphDerivative(Derivative[mne.SourceMorph]):
         subject_to = ctx.state['common_brain']
         subjects_dir = ctx.root / MRI_SDIR
         src_to = ctx.load('src-to')
-        if is_fake_mri(ctx.root / mri_dir(ctx.state)) and subject_from != subject_to:
-            src_from = ctx.load('src-from')
-            return _identity_source_morph(subject_from, subject_to, src_from, src_to)
         src_from = ctx.load('src-from')
+        if is_fake_mri(ctx.root / mri_dir(ctx.state)) and subject_from != subject_to:
+            return _identity_source_morph(subject_from, subject_to, src_from, src_to)
         return mne.compute_source_morph(
             src_from,
             subject_from,
@@ -778,7 +781,7 @@ class EvokedStcDerivative(UncachedDerivative[Dataset]):
             for sensor_type in sensor_types:
                 sysname = pipe._get_sysname(info, ctx.state['subject'], sensor_type)
                 adjacency = pipe._get_adjacency(sensor_type)
-                name = 'meg' if sensor_type == 'mag' else sensor_type
+                name = 'meg' if sensor_type == 'mag' and 'grad' not in sensor_types else sensor_type
                 ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
             del ds['evoked']
         elif not keep_evoked:

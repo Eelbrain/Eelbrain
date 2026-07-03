@@ -190,7 +190,6 @@ class TwoStageLevel1Derivative(Derivative[Any]):
 class TwoStageLevel2Derivative(ResultOutputDerivative):
     """Cached second-stage group result for two-stage tests."""
     name = 'two-stage-level-2'
-    sampled_path = True
     cache_suffix = '.pickle'
     path = Derivative.path
     OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'disconnect_labels': False}
@@ -223,6 +222,9 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
         for subject_result in subject_results:
             for label, lm in subject_result.lms.items():
                 label_lms.setdefault(label, []).append(lm)
+        dropped = sorted(label for label, lms in label_lms.items() if len(lms) <= 2)
+        if dropped:
+            ctx.registry.log.warning("Two-stage ROI test: dropping label(s) %s with data from 2 or fewer subjects (a group test needs more than 2)", ', '.join(dropped))
         results = {
             label: test_obj.make_stage_2(lms, test_spec.kwargs)
             for label, lms in label_lms.items()
