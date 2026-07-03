@@ -9,7 +9,6 @@ of ``Pipeline.load_evoked``/``Pipeline.load_epochs`` live in
 """
 
 from .config import (
-    INV_METHODS,
     INV_RE,
     SRC_RE,
     InverseSolution,

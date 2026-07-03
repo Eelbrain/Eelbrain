@@ -171,7 +171,7 @@ class TwoStageLevel1Derivative(Derivative[Any]):
             return test_obj.make_stage_1(data.y_name, ds, subject)
         if data.sensor:
             raise NotImplementedError(f"Two-stage test with data={data.string!r}")
-        roi_data = roi_data_from_subject_datasets([ds], data.source)
+        roi_data = roi_data_from_subject_datasets([ds], data.aggregate)
         return SubjectROILMResult(
             {label: test_obj.make_stage_1('label_tc', label_ds, subject) for label, label_ds in roi_data.label_data.items()},
             roi_data.n_trials_ds,

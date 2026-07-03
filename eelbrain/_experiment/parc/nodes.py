@@ -39,7 +39,6 @@ class AnnotDerivative(ExternalArtifactDerivative[list[mne.Label]]):
             file_fingerprint(
                 ctx.root,
                 ctx.root / annot_file_path(ctx.state, hemi),
-                'annot-file',
                 metadata={'mrisubject': ctx.state['mrisubject'], 'parc': ctx.state['parc'], 'hemi': hemi},
             )
             for hemi in ('lh', 'rh')
@@ -55,12 +54,7 @@ class AnnotDerivative(ExternalArtifactDerivative[list[mne.Label]]):
             else:
                 labels.extend(f'{hemi}{label}' for hemi in hemis)
         return [
-            file_fingerprint(
-                ctx.root,
-                pattern % label,
-                'label-file',
-                metadata={'label': label, 'parc': ctx.state['parc']},
-            )
+            file_fingerprint(ctx.root, pattern % label, metadata={'parc': ctx.state['parc']})
             for label in labels
         ]
 

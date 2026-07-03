@@ -159,7 +159,7 @@ class TTestMovieDerivative(ResultOutputDerivative[Path]):
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if ctx.options['single_subject']:
-            return (Dependency('epochs-stc', state={'subject': ctx.options['subject']}, options=_epochs_stc_options(ctx, cat=ctx.options['cat'])),)
+            return (Dependency('epochs-stc', state={'subject': ctx.options['subject']}, options=_epochs_stc_options(ctx)),)
         return (Dependency('evoked-stc-group-dataset', options=_evoked_stc_options(ctx, morph=True, cat=ctx.options['cat'])),)
 
     def build(self, ctx: Request) -> Path:

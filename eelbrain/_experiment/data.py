@@ -35,6 +35,7 @@ class DataSpec:
     def __init__(self, string, time=True, morph=False):
         self.time = bool(time)
         self.morph = bool(morph)
+        self.string = string
         m = self.RE.match(string)
         if m is None:
             raise ValueError(f"data={string!r}: invalid data description")
@@ -57,7 +58,6 @@ class DataSpec:
             self.source = True
         else:
             raise RuntimeError(f"{string=} ({dim=})")
-        self.string = string
 
         dims = []
         if self.source and not self.aggregate:
@@ -87,12 +87,21 @@ class DataSpec:
             return cls(obj, time, morph)
 
     def __repr__(self):
-        return f"DataSpec({self.string!r})"
+        args = [repr(self.string)]
+        if not self.time:
+            args.append('time=False')
+        if self.source and self.morph:
+            args.append('morph=True')
+        return f"DataSpec({', '.join(args)})"
 
     def __eq__(self, other):
         if not isinstance(other, DataSpec):
             return False
-        return self.string == other.string and self.time == other.time
+        elif self.string != other.string or self.time != other.time:
+            return False
+        elif self.source:
+            return self.morph == other.morph
+        return True
 
     def _testnd_parc(self, disconnect_labels: bool) -> str | None:
         if self.source and not self.aggregate:

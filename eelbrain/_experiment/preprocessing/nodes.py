@@ -113,7 +113,7 @@ class RawBadChannelsInput(Input[list[str]]):
         return {'bads': self.load(ctx)}
 
     def dependency_fingerprint_quick(self, ctx: Request, view: str | None = None) -> dict[str, Any] | None:
-        return file_fingerprint(ctx.root, self._active_path(ctx), 'bads-file')
+        return file_fingerprint(ctx.root, self._active_path(ctx))
 
     def load(self, ctx: Request) -> list[str]:
         path = self._active_path(ctx)
@@ -265,17 +265,17 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         fp = {
             'raw': self.raw_name,
             'pipe': self.pipe,
-            'source': file_fingerprint(ctx.root, path.fpath, 'raw-source'),
+            'source': file_fingerprint(ctx.root, path.fpath),
         }
         channels_path = self._find_bids_channels(path)
         if channels_path is not None:
-            fp['channels'] = file_fingerprint(ctx.root, channels_path, 'channels')
+            fp['channels'] = file_fingerprint(ctx.root, channels_path)
         if path.datatype == 'eeg':
             elec_pair = self._find_bids_electrodes(path)
             if elec_pair is not None:
                 elec_path, coord_path = elec_pair
-                fp['electrodes'] = file_fingerprint(ctx.root, elec_path, 'electrodes')
-                fp['coordsystem'] = file_fingerprint(ctx.root, coord_path, 'coordsystem')
+                fp['electrodes'] = file_fingerprint(ctx.root, elec_path)
+                fp['coordsystem'] = file_fingerprint(ctx.root, coord_path)
         return fp
 
     def load(self, ctx: Request) -> mne.io.BaseRaw:
@@ -700,7 +700,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
         fingerprint = self.fingerprint(ctx)
         path = self.path(ctx)
-        fingerprint['ica_file'] = file_fingerprint(ctx.root, path, 'ica-file')
+        fingerprint['ica_file'] = file_fingerprint(ctx.root, path)
         if path.exists():
             fingerprint['exclude'] = self.pipe._load_ica(ctx).exclude
         else:
@@ -969,7 +969,7 @@ class MaxwellCalibrationInput(Input[Path]):
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         path = self.path(ctx)
         if path.exists():
-            return file_fingerprint(ctx.root, path, 'maxwell-calibration')
+            return file_fingerprint(ctx.root, path)
         return {'maxwell-calibration': None}
 
     def load(self, ctx: Request) -> Path | None:
@@ -995,7 +995,7 @@ class MaxwellCrosstalkInput(Input[Path]):
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         path = self.path(ctx)
         if path.exists():
-            return file_fingerprint(ctx.root, path, 'maxwell-crosstalk')
+            return file_fingerprint(ctx.root, path)
         return {'maxwell-crosstalk': None}
 
     def load(self, ctx: Request) -> Path | None:

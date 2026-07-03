@@ -154,7 +154,7 @@ class RejectionInput(Input):
             return {'kind': 'none'}
         return {
             'rej': rejection,
-            'file': file_fingerprint(ctx.root, self.path(ctx), 'rej-file'),
+            'file': file_fingerprint(ctx.root, self.path(ctx)),
         }
 
     def path(self, ctx: Request) -> Path:

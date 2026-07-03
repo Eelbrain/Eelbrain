@@ -91,7 +91,10 @@ class PredictorInput(Input[NDVar]):
 
     def dependency_fingerprint_quick(self, ctx: Request, view: str | None = None) -> dict:
         term, predictor = self._resolve(ctx)
-        return {'file': file_fingerprint(self.root, self.path(ctx), 'predictor-file'), 'config': predictor}
+        return {
+            'config': predictor,
+            'file': file_fingerprint(self.root, self.path(ctx)),
+        }
 
     def fingerprint(self, ctx: Request) -> dict:
         return {'data': self.load(ctx)}

@@ -147,7 +147,6 @@ class CachePolicy(str, Enum):
 class InputFingerprint:
     """Portable description of one non-derivative input."""
 
-    kind: str
     path: str | None
     exists: bool
     size: int | None = None
@@ -1730,11 +1729,22 @@ class DerivativeRegistry:
 def file_fingerprint(
         root: str | Path,
         path: str | Path,
-        kind: str,
         digest: bool = False,
         metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Fingerprint one input path using a project-relative location when possible."""
+    """Fingerprint one input path using a project-relative location when possible.
+
+    Parameters
+    ----------
+    root
+        Project root directory; ``path`` is stored relative to it when possible, so that fingerprints remain valid when the project is moved.
+    path
+        The file (or directory) to fingerprint.
+    digest
+        Include a SHA-1 digest of the file's content (by default, only size and modification time are used).
+    metadata
+        Additional information to store in the fingerprint.
+    """
     root = Path(root)
     path = Path(path)
     try:
@@ -1742,13 +1752,13 @@ def file_fingerprint(
     except ValueError:
         relative = str(path)
     if not path.exists():
-        out = InputFingerprint(kind, relative, False, metadata=metadata or {})
+        out = InputFingerprint(relative, False, metadata=metadata or {})
     else:
         stat = path.stat()
         sha1 = None
         if digest and path.is_file():
             sha1 = hashlib.sha1(path.read_bytes()).hexdigest()
-        out = InputFingerprint(kind, relative, True, stat.st_size, stat.st_mtime, sha1, metadata or {})
+        out = InputFingerprint(relative, True, stat.st_size, stat.st_mtime, sha1, metadata or {})
     return asdict(out)
 
 

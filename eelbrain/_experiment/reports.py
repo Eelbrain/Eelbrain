@@ -455,7 +455,7 @@ class CoregReportDerivative(Derivative[Path]):
         self.raw = raw
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {'mri': file_fingerprint(ctx.root, ctx.root / mri_dir(ctx.state), 'mri-dir', metadata={'mrisubject': ctx.state['mrisubject']})}
+        return {'mri': file_fingerprint(ctx.root, ctx.root / mri_dir(ctx.state), metadata={'mrisubject': ctx.state['mrisubject']})}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         raw_name = self.raw.root_source_name(ctx.state['raw'])

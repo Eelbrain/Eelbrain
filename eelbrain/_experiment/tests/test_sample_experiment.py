@@ -541,7 +541,7 @@ def test_sample_source(samples_experiment):
 
     # source space tests
     # ico-2 (320 vertices/hemi) keeps forward/inverse fast while still covering the transversetemporal ROI
-    e.set(src='ico-2', epoch_rejection='', epoch='auditory', parc='ac')
+    e.set(epoch='auditory', epoch_rejection='', src='ico-2', parc='ac', inv='free-3-dSPM')
     morph = e.load_source_morph(subject='R0000')
     assert isinstance(morph, mne.SourceMorph)
     assert exists(e._resolve_derivative('source-morph').manifest_path)
@@ -597,6 +597,11 @@ def test_sample_source(samples_experiment):
     assert res.samples == -1
     assert res.tests['intercept'].p.min() == 1 / 7
 
+    # Parc needs to be set
+    with pytest.raises(ValueError, match='state parc'):
+        e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, parc='', make=True)
+
+    # Outdated test requires make=True
     class ChangedParcExperiment(SampleExperiment):
         parcs = {
             **SampleExperiment.parcs,
@@ -605,13 +610,8 @@ def test_sample_source(samples_experiment):
 
     with pytest.raises(IOError):
         changed = ChangedParcExperiment(root)
-        changed.set(parc='ac')
+        changed.set(epoch='auditory', epoch_rejection='', src='ico-2', parc='ac', inv='free-3-dSPM')
         changed.load_test('left=right', 0.05, 0.2, 0.05, samples=8, data='source.rms')
-
-    with e._temporary_state:
-        e.set(parc='')
-        with pytest.raises(ValueError, match='state parc'):
-            e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, make=True)
 
 
 @requires_mne_sample_data
@@ -1953,7 +1953,7 @@ def test_load_trfs_source(samples_experiment):
     set_log_level('warning', 'mne')
     root = samples_experiment(n_subjects=2, n_segments=4, mris=True)
     e = SampleTRF(root)
-    e.set(epoch='target', epoch_rejection='', raw='1-40', src='ico-2', parc='ac')
+    e.set(epoch='target', epoch_rejection='', raw='1-40', src='ico-2', parc='ac', inv='free-6-MNE')
 
     ds = e.load_trfs('all', 'imp', 0, 0.1, smooth=0.005)
     assert ds.n_cases == 2

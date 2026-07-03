@@ -159,11 +159,11 @@ Running tests locally (from the project root):
 
 For more options, see the `pytest docs <https://docs.pytest.org/en/stable/how-to/usage.html>`_.
 
-An additional test for the :class:`Pipeline` takes longer to run and can be run separately as needed:
+Additional tests for the :class:`Pipeline` takes longer to run and can be run separately as needed:
 
 .. code-block:: console
 
-    $ pytest --runslow eelbrain/_experiment/tests/test_sample_experiment.py::test_sample_source
+    $ pytest -m slow --runslow eelbrain/_experiment/
 
 All pull requests trigger a Continuous Integration (CI) workflow that automatically runs the full test suite.
 

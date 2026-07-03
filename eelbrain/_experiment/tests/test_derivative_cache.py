@@ -113,7 +113,7 @@ class SourceInput(Input):
 
     def fingerprint(self, ctx: Request) -> dict[str, object]:
         path = self.source_path(ctx.state['subject'])
-        return file_fingerprint(str(self.root), path, 'source-file', digest=True)
+        return file_fingerprint(str(self.root), path, digest=True)
 
     def load(self, ctx: Request) -> str:
         value = self.source_path(ctx.state['subject']).read_text()

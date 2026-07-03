@@ -23,7 +23,7 @@ from .. import load
 from .. import plot
 from .. import save
 from .._data_obj import CellArg, Datalist, Dataset, Factor, Var, NDVar, SourceSpace, VolumeSourceSpace, assert_is_legal_dataset_key, combine
-from .._exceptions import ConfigurationError, DimensionMismatchError, OldVersionError
+from .._exceptions import ConfigurationError, DimensionMismatchError
 from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS
 from .._meeg import new_rejection_ds
 from .._mne import find_source_subject, label_from_annot
@@ -1611,7 +1611,6 @@ class Pipeline(StateModel):
 
     def load_inv(
             self,
-            fiff: Any = None,
             ndvar: bool = False,
             **state,
     ) -> mne.minimum_norm.InverseOperator | NDVar:
@@ -1619,9 +1618,6 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        fiff : Raw | Epochs | Evoked | ...
-            Object which provides the mne info dictionary (default: load the
-            raw file).
         ndvar
             Return the inverse operator as NDVar (default is
             :class:`mne.minimum_norm.InverseOperator`). The NDVar representation
@@ -1637,30 +1633,28 @@ class Pipeline(StateModel):
              - :ref:`state-inv`: inverse solution
 
         """
-        with self._temporary_state:
-            if state:
-                self.set(**state)
-            inv = self._load_derivative('inv', options={'fiff': fiff})
+        if state:
+            self.set(**state)
+        inv = self._load_derivative('inv')
 
-            if ndvar:
-                parc = self._current_source_parc()
-                inv = load.mne.inverse_operator(inv, self.get('src'), self.root / MRI_SDIR, parc)
-                if parc:
-                    inv = _drop_unknown_labels(inv)
-            return inv
+        if ndvar:
+            parc = self._current_source_parc()
+            inv = load.mne.inverse_operator(inv, self.get('src'), self.root / MRI_SDIR, parc)
+            if parc:
+                inv = _drop_unknown_labels(inv)
+        return inv
 
     def _prepare_inv(
             self,
-            fiff: Any,
             morph: bool,
     ):
-        # load inv
-        parc = self._current_source_parc()
+        """Prepare for local MNE source localization"""
         # make sure annotation exists
+        parc = self._current_source_parc()
         if parc:
             self.make_annot()
 
-        inv = self.load_inv(fiff)
+        inv = self.load_inv()
 
         # determine whether initial source-space can be restricted
         subjects_dir = str(self.root / MRI_SDIR)
@@ -1878,7 +1872,7 @@ class Pipeline(StateModel):
              - :ref:`state-raw`: preprocessing pipeline
         """
         raw = self.load_raw(samplingrate=samplingrate, tstart=tstart, tstop=tstop, **kwargs)
-        inv, label, mri_sdir, mrisubject, is_scaled, parc = self._prepare_inv(raw, morph)
+        inv, label, mri_sdir, mrisubject, is_scaled, parc = self._prepare_inv(morph)
         solution = InverseSolution._coerce(self.get('inv'))
         stc = apply_inverse_raw(raw, inv, label=label, **solution._apply_kw)
 
@@ -2093,13 +2087,9 @@ class Pipeline(StateModel):
         desc = self._derivatives.describe_artifact_path(dst)
 
         if handle.is_valid():
-            try:
-                res = handle.load()
-            except OldVersionError:
-                res = None
-            else:
-                if not return_data:
-                    return res
+            res = handle.load()
+            if not return_data:
+                return res
         elif not make and dst.exists():
             raise OSError(f"The requested test is outdated: {desc}. Set make=True to perform the test.")
         else:
@@ -3687,7 +3677,7 @@ class Pipeline(StateModel):
             ori: str = 'free',
             snr: float = 3,
             method: str = 'dSPM',
-            depth: float = 0.8,
+            depth: float = 0,
             pick_normal: bool = False,
     ):
         "Construct inv string from settings; see :meth:`.set_inv`"

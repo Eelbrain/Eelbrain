@@ -116,7 +116,6 @@ def _epochs_stc_options(
         ctx: Request,
         baseline=USE_CTX,
         src_baseline=USE_CTX,
-        cat=None,
         keep_epochs: bool | str = False,
         morph: bool | None = None,
         samplingrate: int | None = None,
@@ -132,7 +131,6 @@ def _epochs_stc_options(
         'epochs-stc',
         baseline=baseline,
         src_baseline=src_baseline,
-        cat=cat,
         keep_epochs=keep_epochs,
         morph=morph,
         samplingrate=samplingrate,
@@ -482,6 +480,14 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         samplingrate = ctx.options['samplingrate']
         subjects = self.groups[ctx.state['group']]
 
+        if ctx.options['smooth']:
+            if data.sensor:
+                raise TypeError(f"smooth={ctx.options['smooth']!r} for sensor tests")
+            if data.aggregate:
+                raise TypeError(f"smooth={ctx.options['smooth']!r} for ROI tests")
+        if data.sensor and ctx.options['src_baseline'] not in (None, False):
+            raise TypeError(f"src_baseline={ctx.options['src_baseline']!r} for sensor tests")
+
         if data.sensor:
             return (Dependency('evoked-group-dataset', options=self._sensor_evoked_options(ctx, test_obj.cat)),)
 
@@ -509,6 +515,10 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
             _validate_post_aggregation_test_vars(test_obj, data.string)
 
         if data.sensor:
+            if ctx.options['smooth']:
+                raise TypeError(f"smooth={ctx.options['smooth']!r} for sensor tests")
+            if ctx.options['src_baseline'] not in (None, False):
+                raise TypeError(f"src_baseline={ctx.options['src_baseline']!r} for sensor tests")
             ds = ctx.load('evoked-group-dataset')
             return _apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string)
 
@@ -526,7 +536,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         for subject in subjects:
             ds = ctx.load(subject)
             dss.append(_apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string))
-        return roi_data_from_subject_datasets(dss, data.source)
+        return roi_data_from_subject_datasets(dss, data.aggregate)
 
 
 class TestResultDerivative(ResultOutputDerivative):

@@ -121,7 +121,7 @@ class EventsInput(Input[Dataset]):
         return self._resolve_bids_events_path(ctx).fpath
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return file_fingerprint(ctx.root, self.path(ctx), 'events-tsv')
+        return file_fingerprint(ctx.root, self.path(ctx))
 
     def load(self, ctx: Request) -> Dataset | None:
         path = self.path(ctx)

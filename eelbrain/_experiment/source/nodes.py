@@ -101,7 +101,7 @@ class TransInput(Input):
         return ctx.root / trans_file_path(ctx.state)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return file_fingerprint(ctx.root, self.path(ctx), 'trans-file')
+        return file_fingerprint(ctx.root, self.path(ctx))
 
     def load(self, ctx: Request) -> mne.transforms.Transform:
         return mne.read_trans(self.path(ctx))
@@ -113,18 +113,25 @@ class BemInput(Input):
     def path(self, ctx: Request) -> Path:
         return ctx.root / bem_file_path(ctx.state)
 
+    def _surface_paths(self, ctx: Request) -> dict[str, Path]:
+        bem_dir_ = ctx.root / bem_dir(ctx.state)
+        return {surf: bem_dir_ / f'{surf}.surf' for surf in ('brain', 'inner_skull', 'outer_skull', 'outer_skin')}
+
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return file_fingerprint(ctx.root, self.path(ctx), 'bem-file')
+        subject = ctx.state['mrisubject']
+        if subject == 'fsaverage' or is_fake_mri(ctx.root / mri_dir(ctx.state)):
+            return file_fingerprint(ctx.root, self.path(ctx))
+        return {surf: file_fingerprint(ctx.root, path) for surf, path in self._surface_paths(ctx).items()}
 
     def load(self, ctx: Request) -> mne.ConductorModel:
         subject = ctx.state['mrisubject']
         if subject == 'fsaverage' or is_fake_mri(ctx.root / mri_dir(ctx.state)):
             return mne.read_bem_surfaces(self.path(ctx))
         bem_dir_ = ctx.root / bem_dir(ctx.state)
-        surfs = ('brain', 'inner_skull', 'outer_skull', 'outer_skin')
-        paths = {surf: bem_dir_ / f'{surf}.surf' for surf in surfs}
-        missing = [surf for surf in surfs if not paths[surf].exists()]
+        paths = self._surface_paths(ctx)
+        missing = [surf for surf, path in paths.items() if not paths.exists()]
         if missing:
+            # Test for broken FreeSurfer symlinks
             for surf in missing[:]:
                 path = paths[surf]
                 if path.is_symlink():
@@ -305,7 +312,11 @@ class FwdDerivative(Derivative[mne.Forward]):
         )
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {'source_reference_add': self._references['average'].add}
+        out = {'source_reference_add': self._references['average'].add}
+        if ctx.state['mrisubject'] == 'fsaverage':
+            bemsol = ctx.root / mri_dir(ctx.state) / 'bem' / 'fsaverage-5120-5120-5120-bem-sol.fif'
+            out['bem_solution'] = file_fingerprint(ctx.root, bemsol)
+        return out
 
     def build(self, ctx: Request) -> mne.Forward:
         raw = ctx.load(raw_node_name('raw'))
@@ -369,7 +380,10 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
         )
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {'source_reference_add': self._references['average'].add}
+        return {
+            'solution': InverseSolution._coerce(ctx.state['inv']),
+            'source_reference_add': self._references['average'].add,
+        }
 
     def build(self, ctx: Request) -> mne.minimum_norm.InverseOperator:
         solution = InverseSolution._coerce(ctx.state['inv'])
@@ -794,9 +808,6 @@ class EpochsStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
         self.common_brain = common_brain
         self.groups = groups
 
-    def key(self, ctx: Request) -> dict[str, Any]:
-        return {'parc': ctx.state['parc'], 'subjects': self.groups[ctx.state['group']], 'options': ctx.options}
-
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {'subjects': tuple(self.groups[ctx.state['group']])}
 
@@ -843,9 +854,6 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
         self.common_brain = common_brain
         self.groups = groups
 
-    def key(self, ctx: Request) -> dict[str, Any]:
-        return {'parc': ctx.state['parc'], 'subjects': self.groups[ctx.state['group']], 'options': ctx.options}
-
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {'subjects': tuple(self.groups[ctx.state['group']])}
 
@@ -871,16 +879,16 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
 
 
 def roi_data_from_subject_datasets(dss: Sequence[Dataset], reducer: str) -> ROIData:
+    """Extract ROI time course; mutates ``dss``"""
     n_trials_dss = []
     label_dss = {}
     for ds in dss:
+        src = ds.pop(next(name for name in ('srcm', 'src', 'stcm', 'stc') if name in ds))
         n_trials_dss.append(ds)
-        ds_n = ds.copy()
-        src = ds_n.pop(next(name for name in ('srcm', 'src', 'stcm', 'stc') if name in ds_n))
         for label in src.source.parc.cells:
             if label.startswith('unknown-'):
                 continue
-            label_ds = ds_n.copy()
+            label_ds = ds.copy()
             label_ds['label_tc'] = getattr(src, reducer)(source=label)
             label_dss.setdefault(label, []).append(label_ds)
     return ROIData({label: combine(label_ds, incomplete='drop') for label, label_ds in label_dss.items()}, combine(n_trials_dss, incomplete='drop'))

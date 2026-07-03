@@ -20,7 +20,7 @@ from ..._data_obj import NDVar
 from ..configuration import Configuration
 
 
-INV_METHODS = ('MNE', 'dSPM', 'sLORETA', 'eLORETA', 'champ')
+INV_METHODS = ('MNE', 'dSPM', 'sLORETA', 'eLORETA')
 SRC_RE = re.compile(r'^(ico|vol)-(\d+)(?:-(cortex|brainstem))?$')
 INV_RE = re.compile(
     r"^"
@@ -93,7 +93,7 @@ class MinimumNormInverseSolution(InverseSolution):
             ori: str | float = 'free',
             snr: float = 3,
             method: str = 'dSPM',
-            depth: float = 0.8,
+            depth: float = 0,
             pick_normal: bool = False,
     ):
         if isinstance(ori, str):
@@ -157,8 +157,11 @@ class MinimumNormInverseSolution(InverseSolution):
         return '-'.join(items)
 
     def _validate_for_source_space(self, src: str) -> None:
-        if src[:3] == 'vol' and self.ori not in ('free', 'vec'):
-            raise ValueError(f"{self._string()=!r} with {src=}: volume source space requires free or vector inverse")
+        if src[:3] == 'vol':
+            if self.ori not in ('free', 'vec'):
+                raise ValueError(f"inv={self._string()!r} with {src=}: volume source space requires free or vector inverse")
+            if self.pick_normal:
+                raise ValueError(f"inv={self._string()!r} with {src=}: volume source space does not support pick_normal")
 
     @property
     def _make_kw(self) -> dict[str, Any]:
