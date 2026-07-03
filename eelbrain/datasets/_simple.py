@@ -729,6 +729,6 @@ def setup_samples_experiment(
     trans = mne.Transform(4, 5, m)
     for subject in subjects:
         mne.scale_mri('fsaverage', f'sub-{subject}', 1., subjects_dir=mri_sdir, skip_fiducials=True, labels=False)
-        trans_dir = root / 'derivatives' / 'trans'
+        trans_dir = root / 'derivatives' / 'mne' / f'sub-{subject}' / 'meg'
         trans_dir.mkdir(parents=True, exist_ok=True)
-        trans.save(str(trans_dir / f'sub-{subject}_meg_trans.fif'))
+        trans.save(str(trans_dir / f'sub-{subject}_trans.fif'))

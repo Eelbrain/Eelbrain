@@ -63,10 +63,6 @@ def bids_path(root: Path, state: dict[str, Any], extension: str, *, suffix: str 
         return path
 
 
-def subject_session_basename(state: dict[str, Any]) -> str:
-    return _bids_name(state, ('subject', 'session'))
-
-
 def raw_basename(state: dict[str, Any]) -> str:
     return _bids_name(state, ('subject', 'session', 'task', 'run'))
 
@@ -87,12 +83,17 @@ def raw_dir(state: dict[str, Any]) -> Path:
 
 
 def ica_file_path(state: dict[str, Any], raw: str, concatenate_runs: bool = False) -> Path:
-    basename = subject_session_basename(state) if concatenate_runs else epoch_basename(state)
-    return DERIV_DIR / 'ica' / f"{basename}_raw-{raw}_ica.fif"
+    if concatenate_runs:
+        entity_keys = ('subject', 'session')
+    else:
+        entity_keys = ('subject', 'session', 'run')
+    basename = _bids_name(state, entity_keys, suffix='')
+    return DERIV_DIR / 'mne' / raw_dir(state) / f"{basename}_desc-{raw}_ica.fif"
 
 
 def trans_file_path(state: dict[str, Any]) -> Path:
-    return DERIV_DIR / 'trans' / f"{subject_session_basename(state)}_trans.fif"
+    basename = _bids_name(state, ('subject', 'session'), suffix='')
+    return DERIV_DIR / 'mne' / raw_dir(state) / f"{basename}_trans.fif"
 
 
 def rej_file_path(state: dict[str, Any], epoch: str | None = None, epoch_rejection: str | None = None) -> Path:
