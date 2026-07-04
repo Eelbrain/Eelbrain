@@ -234,23 +234,24 @@ class RecordingEpochsDerivative(Derivative[Any]):
         # it must precede the EEG re-referencing below. Bad channels are always kept marked
         # (the 'keep' representation): interpolate_bads=True and 'keep' produce the same data,
         # and the True bad-channel reset is applied as a view operation in EpochsDerivative.
-        if ctx.options['interpolate_bads']:
+        data_types = DataSpec.coerce('sensor').data_to_ndvar(epochs_list[0].info)
+        if ds.info.get(INTERPOLATE_WINDOWS, False) and any(ds[INTERPOLATE_WINDOWS]):
+            # time-resolved interpolation for long, variable-length epochs
             _drop_bad_eeg_channels_with_missing_locs(epochs_list)
-            data_types = DataSpec.coerce('sensor').data_to_ndvar(epochs_list[0].info)
-            if ds.info.get(INTERPOLATE_WINDOWS, False) and any(ds[INTERPOLATE_WINDOWS]):
-                # time-resolved interpolation for long, variable-length epochs
-                windows_all = list(ds[INTERPOLATE_WINDOWS])
-                max_interpolate = ds.info[INTERPOLATE_WINDOWS_MAX]
-                interp_cache = {}
-                offset = 0
-                for epochs in epochs_list:
-                    windows = windows_all[offset:offset + len(epochs)]
-                    offset += len(epochs)
-                    if 'mag' in data_types:
-                        _interpolate_bad_windows_meg(epochs, windows, interp_cache)
-                    if 'eeg' in data_types:
-                        _interpolate_bad_windows_eeg(epochs, windows, max_interpolate)
-            elif ds.info[INTERPOLATE_CHANNELS] and any(ds[INTERPOLATE_CHANNELS]):
+            windows_all = list(ds[INTERPOLATE_WINDOWS])
+            max_interpolate = ds.info[INTERPOLATE_WINDOWS_MAX]
+            interp_cache = {}
+            offset = 0
+            for epochs in epochs_list:
+                windows = windows_all[offset:offset + len(epochs)]
+                offset += len(epochs)
+                if 'mag' in data_types:
+                    _interpolate_bad_windows_meg(epochs, windows, interp_cache)
+                if 'eeg' in data_types:
+                    _interpolate_bad_windows_eeg(epochs, windows, max_interpolate)
+        elif ctx.options['interpolate_bads']:
+            _drop_bad_eeg_channels_with_missing_locs(epochs_list)
+            if ds.info[INTERPOLATE_CHANNELS] and any(ds[INTERPOLATE_CHANNELS]):
                 bads_all = epochs_list[0].info['bads']
                 bads_individual = [sorted(set(bads_all + bads_i)) for bads_i in ds[INTERPOLATE_CHANNELS]]
                 if 'mag' in data_types:
