@@ -3,6 +3,7 @@
 name: eelbrain
 channels:
 - conda-forge
+- conda-forge/label/eelbrain_dev
 dependencies:
 - eelbrain >=0.42.0a6,<0.43.dev0
 - pip
