@@ -314,7 +314,16 @@ html_theme_options = {
     'includehidden': False,
     'navigation_depth': 2,  # otherwise RTD includes all autosummary sub-headings
 }
-html_baseurl = 'https://eelbrain.readthedocs.io/en/stable/'
+html_baseurl = os.environ.get('READTHEDOCS_CANONICAL_URL', 'https://eelbrain.readthedocs.io/en/stable/')
+
+# Use the current Read the Docs build URL for copy-paste commands.
+environment_yml_url = f"{html_baseurl.rstrip('/')}/_static/environment.yml"
+_environment_yml_url_placeholder = '{{ environment_yml_url }}'
+
+
+def resolve_build_urls(app, docname, source):
+    """Resolve URL placeholders that occur inside literal blocks."""
+    source[0] = source[0].replace(_environment_yml_url_placeholder, environment_yml_url)
 
 # Add any paths that contain custom themes here, relative to this directory.
 # html_theme_path = []
@@ -435,6 +444,7 @@ man_pages = [
 
 def setup(app):
     """Set up the Sphinx app."""
+    app.connect('source-read', resolve_build_urls)
     # ensure we have the data necessary to build examples
     logger.info("Ensuring example data is available")
     mne.datasets.sample.data_path(verbose=True)

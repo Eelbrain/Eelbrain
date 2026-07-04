@@ -25,7 +25,7 @@ The recommended tool for deploying Eelbrain is the `Mamba <https://mamba.readthe
 
 .. code-block:: bash
 
-    $ mamba env create --file=https://eelbrain.readthedocs.io/en/stable/_static/environment.yml
+    $ mamba env create --file={{ environment_yml_url }}
 
 
 By default, this new environment will be called ``eelbrain`` (as specified in the `environment.yml <_static/environment.yml>`_ file), and can be activated with the following command (note the change in the command line prefix):
