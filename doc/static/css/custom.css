@@ -12,6 +12,13 @@
     background-color: #55555d;
 }
 
+.rst-content h1 .project-version {
+    color: #555555;
+    font-size: 70%;
+    font-weight: normal;
+    white-space: nowrap;
+}
+
 /* Reset gloabl font size */
 /* p {
     font-size: 14px;

@@ -235,9 +235,30 @@ copyright = '%i, Christian Brodbeck' % datetime.now().year
 # |version| and |release|, also used in various other places throughout the
 # built documents.
 #
-_version_items = eelbrain.__version__.split('.')
-# The short X.Y version.
-version = '.'.join(_version_items[:2])
+def _format_version_display(version_string):
+    parsed = Version(version_string)
+    display_parts = [parsed.base_version]
+    if parsed.pre:
+        pre_label, pre_number = parsed.pre
+        pre_label = {
+            'a': '\N{GREEK SMALL LETTER ALPHA}',
+            'b': '\N{GREEK SMALL LETTER BETA}',
+        }.get(pre_label, pre_label)
+        display_parts.extend((pre_label, str(pre_number)))
+    if parsed.dev is not None:
+        display_parts.extend(('dev', str(parsed.dev)))
+    if parsed.post is not None:
+        display_parts.extend(('post', str(parsed.post)))
+    return ' '.join(display_parts)
+
+
+# The displayed version.
+version = _format_version_display(eelbrain.__version__)
+rst_epilog = f"""
+.. role:: project-version
+
+.. |version_title| replace:: :project-version:`{version}`
+"""
 # The full version, including alpha/beta/rc tags.
 release = eelbrain.__version__  # '0.0.3'
 
