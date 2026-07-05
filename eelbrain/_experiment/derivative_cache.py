@@ -1621,14 +1621,16 @@ class DerivativeRegistry:
             self,
             ctx: Request,
     ) -> list[tuple[Dependency, Request[Any]]]:
+
         out = []
-        for dep in ctx._dependency_map().values():
-            request = self.resolve(
-                dep.name,
-                state={**ctx._state, **(dep.state or {})},
-                options=dep.options,
-            )
-            out.append((dep, request))
+        with ctx._build_deps_context():
+            for dep in ctx._build_deps.values():
+                request = self.resolve(
+                    dep.name,
+                    state={**ctx._state, **(dep.state or {})},
+                    options=dep.options,
+                )
+                out.append((dep, request))
         return out
 
     @staticmethod
