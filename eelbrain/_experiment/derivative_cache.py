@@ -71,10 +71,9 @@ MAX_CACHE_LABEL_LEN = 96
 # in the readable slug instead of being silently merged ('a>v' -> 'a-v', not 'av').
 CACHE_PATH_UNSAFE = re.compile(r'[\x00-\x1f<>:"/\\|?*]+')
 CACHE_PATH_UNSAFE_REPLACEMENT = '-'
-# Hash prefix length for artifact path components (hex chars, i.e. 48 bits).
-# Collisions at the path level are handled gracefully by the disambiguation
-# sidecar, so a shorter prefix is acceptable in exchange for more readable paths.
-CACHE_KEY_HASH_LEN = 12
+# Hash prefix length for artifact path components (hex chars, i.e. 64 bits).
+# Collisions at the path level are handled gracefully by the disambiguation sidecar
+CACHE_KEY_HASH_LEN = 16
 CACHE_DISAMBIGUATION_SUFFIX = '.disambiguation.json'
 ALLOW_PROTECTED_OVERWRITE = 'allow_protected_overwrite'
 
@@ -291,6 +290,31 @@ class OptionSpec:
 def _option_default(spec: Any) -> Any:
     """Default value of one ``key_options`` / ``view_options`` entry (plain default or :class:`OptionSpec`)."""
     return spec.default if isinstance(spec, OptionSpec) else spec
+
+
+def _cache_entity_dir(key: dict[str, Any]) -> Path:
+    """Directory grouping cache artifacts by BIDS subject/session entities.
+
+    Per-subject derivatives are grouped under ``sub-<subject>/ses-<session>``
+    (session omitted when absent), giving a browsable, BIDS-like layout and
+    natural directory fan-out per subject. Group-level derivatives, which do not
+    key on a subject, are grouped under ``group``.
+
+    Parameters
+    ----------
+    key
+        Canonical derivative key (see :meth:`Request.key`); subject and session
+        are read from it so that grouping honors the node's actual identity
+        fields rather than incidental pipeline state.
+    """
+    subject = key.get('subject')
+    if subject in (None, ''):
+        return Path('group')
+    parts = [f'sub-{subject}']
+    session = key.get('session')
+    if session not in (None, ''):
+        parts.append(f'ses-{session}')
+    return Path(*(CACHE_PATH_UNSAFE.sub(CACHE_PATH_UNSAFE_REPLACEMENT, part) for part in parts))
 
 
 def _cache_disambiguation_path(path: str | Path) -> Path:
@@ -704,11 +728,12 @@ class Derivative(DependencyNode[T]):
         """
         if self.cache_suffix is None:
             raise NotImplementedError
-        key_hash = _full_cache_key_digest(ctx.key())[:CACHE_KEY_HASH_LEN]
+        key = ctx.key()
+        key_hash = _full_cache_key_digest(key)[:CACHE_KEY_HASH_LEN]
         label = self.cache_label(ctx) or DEFAULT_CACHE_LABEL
         label_clean = CACHE_PATH_UNSAFE.sub(CACHE_PATH_UNSAFE_REPLACEMENT, label.casefold())
         label_slug = label_clean[:MAX_CACHE_LABEL_LEN].strip('-_')
-        return ctx.registry.cache_dir / self.name / key_hash[:2] / f"{label_slug}_key-{key_hash}{self.cache_suffix}"
+        return ctx.registry.cache_dir / self.name / _cache_entity_dir(key) / f"{label_slug}_key-{key_hash}{self.cache_suffix}"
 
     def key(self, ctx: Request) -> dict[str, Any]:
         """The key used to generate a unique path for this artifact.
