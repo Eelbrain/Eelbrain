@@ -263,15 +263,6 @@ class Pipeline(StateModel):
         self._sessions = tuple(get_entity_vals(root, 'session', **ignore_entities))
         self._tasks = tuple(get_entity_vals(root, 'task', **ignore_entities))
         self._runs = tuple(get_entity_vals(root, 'run', **ignore_entities))
-        # Per-(subject, session, task) run lists; used for combine-all epoch aggregation.
-        # Runs can vary by subject, so we build the mapping from a single find_matching_paths
-        # call (subjects/sessions/tasks are already filtered to valid values above).
-        runs_seen: dict[tuple[str, str, str], set[str]] = defaultdict(set)
-        if self._runs:
-            for path in find_matching_paths(root, subjects=self._subjects, sessions=self._sessions, tasks=self._tasks):
-                runs_seen[(path.subject or '', path.session or '', path.task or '')].add(path.run or '')
-        self._runs_for: dict[tuple[str, str, str], list[str]] = {key: sorted(runs) for key, runs in runs_seen.items()}
-
         if self.datatype is not None:
             if self.datatype not in ('meg', 'eeg'):
                 raise ConfigurationError(f"`datatype` must be 'meg' or 'eeg', not {self.datatype!r}.")
@@ -297,6 +288,26 @@ class Pipeline(StateModel):
             else:
                 raise ConfigurationError(f"Can't infer datatype. No MEG or EEG data found in {root}.")
         self._raw_extension = extensions[0]
+
+        # Recordings index: existing (subject, session, task, run) combinations of source
+        # recordings, from a single find_matching_paths scan. Scoped to the raw datatype /
+        # suffix / extension and to ``sub-*`` directories (ignore_nosub) so it never
+        # descends into ``derivatives`` / ``sourcedata`` (where non-BIDS names would fail
+        # to parse). Absent entities are recorded as ''. Snapshot at init time; used for
+        # recording-existence checks in preprocessing nodes and for the
+        # per-(subject, session, task) run lists below.
+        self._recordings: frozenset[tuple[str, str, str, str]] = frozenset(
+            (path.subject or '', path.session or '', path.task or '', path.run or '')
+            for path in find_matching_paths(root, subjects=self._subjects, sessions=self._sessions, tasks=self._tasks, datatypes=datatype, suffixes=datatype, extensions=extensions, ignore_nosub=True)
+        )
+        # Per-(subject, session, task) run lists; used for combine-all epoch aggregation.
+        # Runs can vary by subject.
+        runs_seen: dict[tuple[str, str, str], set[str]] = defaultdict(set)
+        if self._runs:
+            for subject, session, task, run in self._recordings:
+                runs_seen[(subject, session, task)].add(run)
+        self._runs_for: dict[tuple[str, str, str], list[str]] = {key: sorted(runs) for key, runs in runs_seen.items()}
+
         StateModel.__init__(self)
 
         ########################################################################
@@ -492,11 +503,11 @@ class Pipeline(StateModel):
                 self._derivatives.register(RawBadChannelsInput(raw_name, pipe, self._raw_extension))
                 self._derivatives.register(RawSourceDerivative(raw_name, pipe, self._raw_extension))
                 self._derivatives.register(RawHeadPositionDerivative(raw_input.name))
-                self._derivatives.register(MedianHeadPositionDerivative(raw_input.name, self._tasks, self._runs))
+                self._derivatives.register(MedianHeadPositionDerivative(self._recordings, self._tasks, self._runs))
             elif isinstance(pipe, CachedRawPipe):
                 self._derivatives.register(RawDerivative(raw_name, pipe, self._raw, self._raw_extension))
                 if isinstance(pipe, RawICA):
-                    self._derivatives.register(ICAInput(raw_name, pipe, self._raw, self._raw_extension, self._tasks, self._runs))
+                    self._derivatives.register(ICAInput(raw_name, pipe, self._recordings, self._runs))
                 elif isinstance(pipe, RawMaxwell) and not maxwell_registered:
                     self._derivatives.register(MaxwellCalibrationInput())
                     self._derivatives.register(MaxwellCrosstalkInput())
@@ -1203,7 +1214,7 @@ class Pipeline(StateModel):
             mask: str | None,
             samplingrate: int | None,
             filter_x: bool | str,
-            state: dict[str, Any],
+            state: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if state:
             self.set(**state)
@@ -1402,7 +1413,7 @@ class Pipeline(StateModel):
             TRF component keys.
         """
         subject, group = self._process_subject_arg(subjects, state)
-        trf_options = self._trf_options(x, tstart, tstop, estimator, data, mask, samplingrate, filter_x, {})
+        trf_options = self._trf_options(x, tstart, tstop, estimator, data, mask, samplingrate, filter_x)
         options = {**trf_options, 'scale': scale, 'trfs': trfs}
         if group is not None:
             ds = self._load_derivative('trf-group-dataset', options=options)

@@ -148,7 +148,7 @@ def _report_parc_image(
             raise RuntimeError("subjects needs to be specified for plotting individual parcellations")
         legend = None
         for subject in subjects:
-            plot_state = _subject_state(state, subject, node.mri_subjects, node.common_brain)
+            plot_state = {**state, **_subject_state(state, subject, node.mri_subjects, node.common_brain)}
             labels = ctx.load(f'annot:{subject}')
             if all(label.name.startswith('unknown-') for label in labels):
                 section.add_image_figure("No labels", subject)
@@ -213,7 +213,7 @@ class SourceReportDerivative(BrainReportDerivative):
     """
     name = 'source-report'
     sampled_path = True
-    OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'disconnect_labels': False, 'include': None}
+    key_options = {**RESULT_OPTION_DEFAULTS, 'disconnect_labels': False, 'include': None}
 
     def _identity_extra(self, ctx: Request) -> dict[str, Any]:
         return {'include': ctx.options['include']}
@@ -277,7 +277,7 @@ class ROIReportDerivative(BrainReportDerivative):
     """
     name = 'roi-report'
     sampled_path = True
-    OPTION_DEFAULTS = RESULT_OPTION_DEFAULTS
+    key_options = RESULT_OPTION_DEFAULTS
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if isinstance(self.tests[ctx.options['test']], TwoStageTest):
@@ -333,7 +333,7 @@ class EEGReportDerivative(ResultOutputDerivative[Path]):
     """
     name = 'eeg-report'
     sampled_path = True
-    OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'include': None}
+    key_options = {**RESULT_OPTION_DEFAULTS, 'include': None}
 
     def _identity_extra(self, ctx: Request) -> dict[str, Any]:
         return {'include': ctx.options['include']}
@@ -372,7 +372,7 @@ class EEGSensorsReportDerivative(ResultOutputDerivative[Path]):
     """
     name = 'eeg-sensors-report'
     sampled_path = True
-    OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'sensors': ()}
+    key_options = {**RESULT_OPTION_DEFAULTS, 'sensors': ()}
 
     def _identity_extra(self, ctx: Request) -> dict[str, Any]:
         return {'sensors': tuple(ctx.options['sensors'])}
@@ -446,8 +446,8 @@ class CoregReportDerivative(Derivative[Path]):
     """
     name = 'coreg-report'
     key_fields = ('subject', 'session', 'task', 'run', 'raw', 'mri', 'mrisubject')
-    OPTION_DEFAULTS = {}
-    VIEW_OPTION_DEFAULTS = {'dst': None}
+    key_options = {}
+    view_options = {'dst': None}
 
     def __init__(self, raw: RawPipeGraph):
         self.raw = raw
@@ -461,10 +461,10 @@ class CoregReportDerivative(Derivative[Path]):
             Dependency(
                 raw_node_name(raw_name),
                 label='raw',
-                state={**ctx.state, 'raw': raw_name},
+                state={'raw': raw_name},
                 options={'noise': False},
             ),
-            Dependency('trans-input', label='trans', state=ctx.state),
+            Dependency('trans-input', label='trans'),
         )
 
     def path(

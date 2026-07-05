@@ -326,7 +326,8 @@ class SelectedEventsDerivative(UncachedDerivative[Dataset]):
     handled by :class:`EpochEventsDerivative`.
     """
     name = 'selected-events'
-    OPTION_DEFAULTS = {
+    key_fields = ('subject', 'epoch', 'epoch_rejection')
+    key_options = {
         'reject': True,
         'samplingrate': None,
         'decim': None,
@@ -450,7 +451,8 @@ class EpochEventsDerivative(UncachedDerivative[Dataset]):
         Whether to apply artifact rejection (``True``, ``False``, or ``'keep'``).
     """
     name = 'epoch-events'
-    OPTION_DEFAULTS = {
+    key_fields = ('subject', 'session', 'epoch')
+    key_options = {
         'reject': True,
         'samplingrate': None,
         'decim': None,

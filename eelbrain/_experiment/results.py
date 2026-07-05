@@ -45,7 +45,7 @@ class DSPMMovieDerivative(ResultOutputDerivative[Path]):
         Subject to render when ``single_subject=True``.
     """
     name = 'movie-dspm'
-    OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, **_MOVIE_OPTION_DEFAULTS, 'fmin': None, 'brain_kwargs': None}
+    key_options = {**RESULT_OPTION_DEFAULTS, **_MOVIE_OPTION_DEFAULTS, 'fmin': None, 'brain_kwargs': None}
 
     def _result_model(self, ctx: Request) -> str:
         return ''  # grand-average movie has no model
@@ -116,7 +116,7 @@ class TTestMovieDerivative(ResultOutputDerivative[Path]):
         Subject to render when ``single_subject=True``.
     """
     name = 'movie-ttest'
-    OPTION_DEFAULTS = {
+    key_options = {
         **RESULT_OPTION_DEFAULTS,
         **_MOVIE_OPTION_DEFAULTS,
         'model': '',

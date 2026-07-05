@@ -58,7 +58,8 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         Optional source-space smoothing.
     """
     name = 'two-stage-data'
-    OPTION_DEFAULTS = {
+    key_fields = ('subject', 'epoch')
+    key_options = {
         **RESULT_OPTION_DEFAULTS,
     }
 
@@ -141,7 +142,7 @@ class TwoStageLevel1Derivative(Derivative[Any]):
         'cov', 'inv', 'src', 'mri', 'parc',
     )
     cache_suffix = '.pickle'
-    OPTION_DEFAULTS = {
+    key_options = {
         **RESULT_OPTION_DEFAULTS,
     }
 
@@ -192,8 +193,8 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
     name = 'two-stage-level-2'
     cache_suffix = '.pickle'
     path = Derivative.path
-    OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'disconnect_labels': False}
-    VIEW_OPTION_DEFAULTS = {}
+    key_options = {**RESULT_OPTION_DEFAULTS, 'disconnect_labels': False}
+    view_options = {}
 
     def cache_label(self, ctx: Request) -> str:
         return self._path_stem(ctx) if ctx.options['samples'] is None else f"{self._path_stem(ctx)}_samples-{ctx.options['samples']}"

@@ -45,7 +45,7 @@ from ..._info import BAD_CHANNELS, INTERPOLATE_CHANNELS, INTERPOLATE_WINDOWS, IN
 from ..._mne import shift_mne_epoch_trigger
 from ..._text import n_of
 from ..._meeg.interpolation import _interpolate_bads_eeg, _interpolate_bads_meg, _interpolate_bad_windows_eeg, _interpolate_bad_windows_meg
-from ..derivative_cache import CachePolicy, Dependency, Derivative, Request, UncachedDerivative
+from ..derivative_cache import CachePolicy, Dependency, Derivative, OptionSpec, Request, UncachedDerivative
 from ..preprocessing import RawPipeGraph, Reference, raw_node_name
 from ..data import DataSpec
 from .config import EPOCH_EXTRACT_OPTIONS, ContinuousEpoch, EpochBase, EpochCollection, PrimaryEpoch, SecondaryEpoch, SuperEpoch
@@ -152,14 +152,14 @@ class RecordingEpochsDerivative(Derivative[Any]):
     name = 'recording-epochs'
     key_fields = ('subject', 'session', 'run', 'raw', 'epoch', 'epoch_rejection', 'reference')
     cache_suffix = '.epochs'
-    OPTION_DEFAULTS = {
+    key_options = {
         'samplingrate': None,
         'decim': None,
         'pad': 0,
         'tmin': None,
         'tmax': None,
         'tstop': None,
-        'interpolate_bads': False,
+        'interpolate_bads': OptionSpec(False, literal=(False, True, 'keep')),
         'reject': True,
     }
 
@@ -306,17 +306,17 @@ class EpochsDerivative(Derivative[Any]):
     name = 'epochs'
     key_fields = ('subject', 'session', 'raw', 'epoch', 'epoch_rejection', 'reference')
     cache_suffix = '.epochs'
-    OPTION_DEFAULTS = {
+    key_options = {
         'samplingrate': None,
         'decim': None,
         'pad': 0,
         'tmin': None,
         'tmax': None,
         'tstop': None,
-        'interpolate_bads': False,
+        'interpolate_bads': OptionSpec(False, literal=(False, True, 'keep')),
         'reject': True,
     }
-    VIEW_OPTION_DEFAULTS = {
+    view_options = {
         'baseline': False,
         'ndvar': True,
         'data': 'sensor',
@@ -349,7 +349,7 @@ class EpochsDerivative(Derivative[Any]):
             # Inject explicitly-overridden INHERITED_PARAMS as direct options so sub-epochs
             # are loaded with the SuperEpoch's window/decim rather than their own.
             epoch_overrides = {k: getattr(epoch, k) for k in epoch._explicit_params if k in epoch.INHERITED_PARAMS}
-            forward_keys = [k for k in self.OPTION_DEFAULTS if k not in epoch_overrides]
+            forward_keys = [k for k in self.key_options if k not in epoch_overrides]
             overrides = {'ndvar': False, 'data': 'sensor', **epoch_overrides}
             # post_baseline_trigger_shift needs baseline applied (on the sub-epochs) before
             # the shift, so it cannot be deferred for shifted super-epochs.
@@ -361,7 +361,7 @@ class EpochsDerivative(Derivative[Any]):
                 for sub_epoch in epoch.sub_epochs
             )
         runs = self._find_runs(ctx, epoch)
-        rec_options = ctx.options_for('recording-epochs', *self.OPTION_DEFAULTS)
+        rec_options = ctx.options_for('recording-epochs', *self.key_options)
         # recording-epochs always store the interpolated-but-marked ('keep') data; the
         # interpolate_bads=True bad-channel reset is applied as a view operation (see
         # apply_view_options), so True and 'keep' share one cached recording-epochs artifact.
@@ -540,12 +540,12 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         'epoch', 'epoch_rejection', 'reference', 'equalize_evoked_count',
     )
     cache_suffix = '-ave.fif'
-    OPTION_DEFAULTS = {
+    key_options = {
         'model': '',
         'samplingrate': None,
         'decim': None,
     }
-    VIEW_OPTION_DEFAULTS = {
+    view_options = {
         'baseline': False,
         'ndvar': False,
         'cat': None,
@@ -630,7 +630,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
                 ds = ctx.load(
                     'evoked',
                     state={'epoch': sub_epoch},
-                    options=ctx.options_for('evoked', *self.OPTION_DEFAULTS),
+                    options=ctx.options_for('evoked', *self.key_options),
                     view='shell',
                 )
                 ds[:, 'epoch'] = sub_epoch
@@ -713,14 +713,15 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
         Sensor representation to return.
     """
     name = 'evoked-group-dataset'
-    OPTION_DEFAULTS = {
+    key_fields = ('group', 'raw')
+    key_options = {
         'model': '',
         'ndvar': True,
         'samplingrate': None,
         'decim': None,
         'data': 'sensor',
     }
-    VIEW_OPTION_DEFAULTS = {
+    view_options = {
         'baseline': False,
         'cat': None,
     }

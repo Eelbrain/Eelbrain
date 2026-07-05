@@ -38,6 +38,7 @@ opt-in from the caller.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
@@ -76,6 +77,9 @@ CACHE_PATH_UNSAFE_REPLACEMENT = '-'
 CACHE_KEY_HASH_LEN = 12
 CACHE_DISAMBIGUATION_SUFFIX = '.disambiguation.json'
 ALLOW_PROTECTED_OVERWRITE = 'allow_protected_overwrite'
+
+# Sentinel for undeclared key_fields
+UNSET: Any = object()
 
 
 def _toml_string(value: str) -> str:
@@ -227,6 +231,68 @@ def _full_cache_key_digest(key: dict[str, Any]) -> str:
     return hashlib.sha1(_cache_key_json(key).encode()).hexdigest()
 
 
+@dataclass(frozen=True)
+class OptionSpec:
+    """Declared specification for one node option.
+
+    Use as a value in :attr:`DependencyNode.key_options` /
+    :attr:`DependencyNode.view_options` in place of a plain default to
+    normalize and validate the option value when a request is resolved. This
+    happens before the cache key is computed, so equivalent spellings share
+    one cached artifact and invalid values fail before build.
+
+    The declared ``default`` itself is exempt from normalization and
+    validation (checked by identity), so a ``None`` placeholder default does
+    not need to satisfy ``type`` or ``literal``.
+
+    Parameters
+    ----------
+    default
+        Value used when the caller does not set the option.
+    type
+        Required type (or types) for the value. Booleans only match an
+        explicit ``bool`` declaration, never ``int``, so an option declared as
+        ``bool`` rejects ``1`` even though ``1 == True``.
+    literal
+        Exact allowed values. Matching is type-strict, so ``True`` in
+        ``literal`` does not admit ``1``.
+    normalize
+        Called as ``normalize(ctx, value)`` before validation; the return
+        value replaces the option value for the whole request (key,
+        fingerprint, and build all see the normalized value). Must be
+        idempotent, since child requests are normalized again when they are
+        resolved.
+    """
+
+    default: Any
+    type: type | tuple[type, ...] | None = None
+    literal: tuple[Any, ...] | None = None
+    normalize: Callable[[Request, Any], Any] | None = None
+
+    def validated(self, ctx: Request, name: str, value: Any) -> Any:
+        """Normalize and validate one option value for ``ctx``."""
+        if value is self.default:
+            return value
+        if self.normalize is not None:
+            value = self.normalize(ctx, value)
+        if self.type is not None:
+            types = self.type if isinstance(self.type, tuple) else (self.type,)
+            # bool subclasses int; require an explicit bool declaration so that 1 does not pass as True
+            valid = bool in types if isinstance(value, bool) else isinstance(value, types)
+            if not valid:
+                expected = ' | '.join(t.__name__ for t in types)
+                raise TypeError(f"{ctx.node.name!r} option {name}={value!r}: expected {expected}, got {type(value).__name__}")
+        if self.literal is not None:
+            if not any(value is allowed or (type(value) is type(allowed) and value == allowed) for allowed in self.literal):
+                raise ValueError(f"{ctx.node.name!r} option {name}={value!r}: must be one of {self.literal}")
+        return value
+
+
+def _option_default(spec: Any) -> Any:
+    """Default value of one ``key_options`` / ``view_options`` entry (plain default or :class:`OptionSpec`)."""
+    return spec.default if isinstance(spec, OptionSpec) else spec
+
+
 def _cache_disambiguation_path(path: str | Path) -> Path:
     return Path(f"{Path(path)}{CACHE_DISAMBIGUATION_SUFFIX}")
 
@@ -260,8 +326,8 @@ class Dependency:
         Optional child request options passed to the target node when the
         dependency is resolved. Keys must be declared by the target node and
         can refer to either standard options from
-        ``target.OPTION_DEFAULTS`` or view-only options from
-        ``target.VIEW_OPTION_DEFAULTS``. The registry splits the mapping into
+        ``target.key_options`` or view-only options from
+        ``target.view_options``. The registry splits the mapping into
         artifact-affecting ``Request.options`` and post-load
         ``Request.view_options`` for the child request.
     view
@@ -307,16 +373,28 @@ class DependencyNode(Generic[T]):
         Stable registry name for this node. Must be unique across all
         registered nodes and must not change once artifacts have been cached
         under that name.
-    OPTION_DEFAULTS
-        Options that affect how this node's artifact is built, or its cache
-        identity. Keys declare the option names; values are their defaults.
-        Options are node-local: they apply to this node only and do not
-        propagate to dependencies unless the node explicitly forwards them
-        via :meth:`Request.options_for`.
-    VIEW_OPTION_DEFAULTS
+    key_fields
+        State fields whose values determine this node's output. Reading any
+        state field outside ``key_fields`` / ``fixed_state`` during
+        :meth:`~Derivative.build`, :meth:`fingerprint`, or
+        :meth:`dependencies` raises :class:`RuntimeError`. Use
+        :meth:`override_key_fields` when a node's key depends on the state
+        dynamically. An explicit empty tuple opts out (the
+        node manages its own identity via a :meth:`Derivative.key` override).
+    key_options
+        Options that affect how this node's artifact is built, and that enter
+        the cache key. Keys declare the option names; values are their
+        defaults, or :class:`OptionSpec` declarations that additionally
+        normalize and validate the value when a request is resolved. Options
+        are node-local: they apply to this node only and do not propagate to
+        dependencies unless the node explicitly forwards them via
+        :meth:`Request.options_for`. Which options actually enter the key
+        can be narrowed per request via :meth:`override_key_options`.
+    view_options
         Options that only shape the returned value after the artifact has
-        been built or loaded. They do not affect cache identity and are not
-        forwarded to dependencies.
+        been built or loaded. They do not affect cache identity. Like
+        :attr:`key_options`, values are plain defaults or :class:`OptionSpec`
+        declarations.
     fixed_state
         State entries that this node always forces to specific values,
         regardless of caller-provided state. Applied by the registry on top
@@ -325,20 +403,40 @@ class DependencyNode(Generic[T]):
         specific state value — e.g. a raw-processing node that always
         implies ``state['raw'] == raw_name`` — so that :class:`Dependency`
         declarations targeting this node need not redundantly repeat a
-        ``state`` override. The counterpart to :attr:`Derivative.key_fields`:
-        where ``key_fields`` declares polymorphism over state keys,
-        ``fixed_state`` pins them.
+        ``state`` override. The counterpart to :attr:`key_fields`: where
+        ``key_fields`` declares polymorphism over state keys, ``fixed_state``
+        pins them.
     """
 
     name: str
-    OPTION_DEFAULTS: dict[str, Any] = {}
-    VIEW_OPTION_DEFAULTS: dict[str, Any] = {}
+    key_fields: tuple[str, ...] = UNSET
+    key_options: dict[str, Any] = {}
+    view_options: dict[str, Any] = {}
     fixed_state: dict[str, Any] = {}
 
     @classmethod
     def declared_options(cls) -> set[str]:
         """Return all option names declared by this node."""
-        return {*cls.OPTION_DEFAULTS, *cls.VIEW_OPTION_DEFAULTS}
+        return {*cls.key_options, *cls.view_options}
+
+    def override_key_fields(self, ctx: Request) -> tuple[str, ...] | None:
+        """Dynamically choose the state fields in the cache key for this request.
+
+        Override this when a node's identity fields depend on the request — for
+        example a source/sensor node that only keys on ``src`` when it is
+        in source space. Return the field names, or ``None`` to use the static
+        :attr:`key_fields`.
+        """
+        return None
+
+    def override_key_options(self, ctx: Request) -> tuple[str, ...] | None:
+        """Dynamically choose the options that enter the cache key for this request.
+
+        Override this to drop options that are inert in the current mode.
+        Return the option names (a subset of :attr:`key_options`), or ``None``
+        to use all of :attr:`key_options`.
+        """
+        return None
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         """Describe other registered nodes that this node depends on.
@@ -503,7 +601,7 @@ class Derivative(DependencyNode[T]):
 
     The standard subclass contract is:
 
-    - declare ``OPTION_DEFAULTS`` and ``VIEW_OPTION_DEFAULTS`` (inherited
+    - declare ``key_options`` and ``view_options`` (inherited
       from :class:`DependencyNode`) for options affecting artifact identity
       or post-load shaping respectively
     - implement :meth:`build` to construct the artifact representation from
@@ -515,12 +613,6 @@ class Derivative(DependencyNode[T]):
 
     Attributes
     ----------
-    key_fields
-        ``ctx.state`` fields that define the default artifact key and cache
-        label when :meth:`key` is not overridden. Subclasses that override
-        :meth:`key` may still use ``key_fields`` as a reference list of
-        relevant state keys in their :meth:`fingerprint` logic, but that
-        usage is a convention, not a framework contract.
     cache_policy
         Whether artifacts of this derivative persist to the cache.
     cache_suffix
@@ -534,9 +626,6 @@ class Derivative(DependencyNode[T]):
         when the serialization format changes incompatibly.
     """
 
-    # ``ctx.state`` fields that define the default artifact key. Override
-    # :meth:`key` directly when artifact identity is not just a state subset.
-    key_fields: tuple[str, ...] = ()
     # Whether artifacts of this derivative persist to the cache.
     cache_policy: CachePolicy = CachePolicy.REQUIRED
     # File suffix for the default :meth:`path` implementation.
@@ -554,7 +643,11 @@ class Derivative(DependencyNode[T]):
         fields. The label is only for readability; the hash derived from
         :meth:`key` remains authoritative.
         """
-        label_key = ctx.key() if not self.key_fields else canonical_state_subset(ctx.state, self.key_fields)
+        fields = self.override_key_fields(ctx)
+        if fields is None:
+            assert self.key_fields is not UNSET
+            fields = self.key_fields
+        label_key = canonical_state_subset(ctx.state, fields) if fields else ctx.key()
         return _simple_cache_label(label_key)
 
     def cache_log_path(self, ctx: Request, path: Path) -> str:
@@ -620,10 +713,14 @@ class Derivative(DependencyNode[T]):
     def key(self, ctx: Request) -> dict[str, Any]:
         """The key used to generate a unique path for this artifact.
 
-        Override this only when the default ``key_fields`` subset is not
-        sufficient. The default implementation uses the configured
-        ``key_fields`` subset of state and adds an ``options`` entry when the
-        derivative's declared options also contribute to artifact identity.
+        This is the framework assembler and rarely needs overriding: it takes
+        the identity state fields (from :meth:`override_key_fields`, else the
+        static :attr:`key_fields`) and the identity options (the names from
+        :meth:`override_key_options`, else all of :attr:`key_options`, at
+        their request values) and combines them. To make either piece
+        request-dependent, override the corresponding hook rather than this
+        method; override :meth:`key` itself only when the identity is not a
+        state-subset-plus-options at all.
 
         The key is used to resolve the artifact path and should stay focused
         on cache address/identity. It is narrower than :meth:`fingerprint`,
@@ -635,9 +732,16 @@ class Derivative(DependencyNode[T]):
         implementations can include arbitrary supported values without
         pre-serializing them.
         """
-        key = canonical_state_subset(ctx.state, self.key_fields)
-        if ctx.options:
-            key['options'] = ctx.options
+        fields = self.override_key_fields(ctx)
+        if fields is None:
+            if self.key_fields is UNSET:
+                raise RuntimeError(f"{self.name!r}: cached derivative must declare key_fields, or override override_key_fields()/key()")
+            fields = self.key_fields
+        key = canonical_state_subset(ctx.state, fields)
+        option_names = self.override_key_options(ctx)
+        options = ctx.options if option_names is None else {name: ctx.options[name] for name in option_names}
+        if options:
+            key['options'] = options
         return key
 
     def build(self, ctx: Request) -> T:
@@ -712,8 +816,11 @@ class UncachedDerivative(Derivative[T]):
     """Base class for derived values that should never persist to the cache.
 
     :attr:`cache_policy` is :attr:`CachePolicy.NEVER`, so no artifact path or
-    manifest is created and ``build`` is called on every request.
-    Subclasses must not declare ``key_fields`` or override :meth:`key`.
+    manifest is created and ``build`` is called on every request. There is no
+    cache key, so :meth:`key` and :meth:`path` are not used; subclasses still
+    declare the state they depend on through :attr:`~DependencyNode.key_fields`
+    purely for read enforcement, so reading an undeclared state field raises
+    :class:`RuntimeError` exactly as for a cached derivative.
     """
 
     cache_policy = CachePolicy.NEVER
@@ -765,38 +872,53 @@ class ExternalArtifactDerivative(Derivative[T]):
             path.write_text(f"{self.name}\n")
 
 
-class _RestrictedStateView(dict):
+class _RestrictedStateView(Mapping):
     """State view that enforces access only to declared key fields.
 
     Used during :meth:`Derivative.build`, :meth:`~DependencyNode.fingerprint`,
     :meth:`~DependencyNode.dependency_fingerprint`, and
     :meth:`~DependencyNode.dependencies` to ensure every state field that
-    affects the artifact is declared in :attr:`Derivative.key_fields` or
+    affects the artifact is declared in :attr:`~DependencyNode.key_fields` or
     :attr:`~DependencyNode.fixed_state`.
+
+    This is a :class:`~collections.abc.Mapping`, not a :class:`dict`, so that
+    bulk access goes through checked reads. Iteration — and hence ``keys()``,
+    ``**ctx.state``, etc. yields only the declared fields, so ``**ctx.state``
+    means "the state this node may depend on", never the complete pipeline
+    state. Membership tests see the full state, since they do not read a
+    value.
     """
 
     def __init__(self, state: dict[str, Any], allowed: frozenset[str]):
-        super().__init__(state)
+        self._state = state
         self._allowed = allowed
 
     def _check_allowed(self, key: str) -> None:
         if key not in self._allowed:
             raise RuntimeError(
-                f"State field {key!r} is not declared in this node's key_fields or "
-                f"fixed_state. If it affects the cached artifact, add it to key_fields."
+                f"State field {key!r} is not declared in this node's key_fields (or fixed_state). If it affects this node's output, add it to key_fields."
             )
 
     def __getitem__(self, key: str) -> Any:
         self._check_allowed(key)
-        return super().__getitem__(key)
+        return self._state[key]
 
     def get(self, key: str, default: Any = None) -> Any:
-        # Same contract as __getitem__; without this, .get() would silently
-        # bypass the declared-state check. Reading an absent field stays
-        # allowed, matching plain dict semantics.
-        if key in self:
+        # Reading a present field is checked like __getitem__; reading an absent
+        # field stays allowed, matching plain dict semantics.
+        if key in self._state:
             self._check_allowed(key)
-        return super().get(key, default)
+        return self._state.get(key, default)
+
+    def __contains__(self, key: object) -> bool:
+        # Membership tests do not read a value, so they stay allowed.
+        return key in self._state
+
+    def __len__(self) -> int:
+        return sum(1 for key in self._state if key in self._allowed)
+
+    def __iter__(self):
+        return (key for key in self._state if key in self._allowed)
 
 
 def _dep_entry_matches(stored: dict[str, Any], current: dict[str, Any]) -> bool:
@@ -889,6 +1011,7 @@ class Request(Generic[T]):
             options: dict[str, Any],
             view_options: dict[str, Any],
             controls: frozenset[str] | set[str] | tuple[str, ...] = (),
+            provided_key_options: frozenset[str] | set[str] | tuple[str, ...] = (),
     ):
         self.node = node
         self.registry = registry
@@ -898,6 +1021,15 @@ class Request(Generic[T]):
         self.options = options
         self.view_options = view_options
         self.controls = frozenset(controls)
+        # Key-tier options the caller explicitly set (for the inert-option warning).
+        self._provided_key_options = frozenset(provided_key_options)
+        # Normalize and validate OptionSpec-declared option values before the cache
+        # key is computed below, so keys are canonical (equivalent spellings share
+        # one artifact) and invalid values fail before build.
+        for declared, values in ((node.key_options, self.options), (node.view_options, self.view_options)):
+            for option, spec in declared.items():
+                if isinstance(spec, OptionSpec):
+                    values[option] = spec.validated(self, option, values[option])
         self._key: dict[str, Any] | None = None
         self._base_artifact_path: Path | None = None
         self._artifact_path: Path | None = None
@@ -907,14 +1039,20 @@ class Request(Generic[T]):
         self._build_deps: dict[str, Dependency] | None = None
         self._build_deps_depth = 0
         # Restricted view for enforcement; None when there is nothing to enforce.
-        # Skipped for Input and UncachedDerivative (no key_fields contract), and
-        # for nodes that override key() with an empty key_fields (they manage
-        # their own cache identity and are not covered by the standard scheme).
-        if isinstance(node, Derivative) and not isinstance(node, UncachedDerivative):
-            allowed = frozenset(node.key_fields) | frozenset(node.fixed_state)
-            self._restricted_state: _RestrictedStateView | None = _RestrictedStateView(state, allowed) if allowed else None
-        else:
-            self._restricted_state = None
+        # Skipped for Input (inputs locate external files from arbitrary state).
+        # The readable set is this request's identity fields — from
+        # override_key_fields() when defined, else the static key_fields — so a
+        # node that keys dynamically need not also declare a redundant static
+        # key_fields. A node that declares neither (e.g. a result node that
+        # overrides key() and manages its own identity) is not read-restricted.
+        self._restricted_state: _RestrictedStateView | None = None
+        if isinstance(node, Derivative):
+            read_fields = node.override_key_fields(self)
+            if read_fields is None:
+                read_fields = () if node.key_fields is UNSET else node.key_fields
+            allowed = frozenset(read_fields) | frozenset(node.fixed_state)
+            if allowed:
+                self._restricted_state = _RestrictedStateView(state, allowed)
         if isinstance(node, Derivative) and node.cache_policy != CachePolicy.NEVER:
             # Canonicalize here so key() implementations need not: a key that
             # only became canonical through the manifest JSON round-trip would
@@ -923,6 +1061,25 @@ class Request(Generic[T]):
             self._base_artifact_path = Path(node.path(self))
             self._artifact_path = Path(self.registry.resolve_cache_artifact_path(self._base_artifact_path, self._key))
             self._manifest_path = Path(self.registry.manifest_path(self._artifact_path))
+            self._warn_inert_key_options()
+
+    def _warn_inert_key_options(self) -> None:
+        """Warn if the caller set a key option that is inert for this request.
+
+        Only fires when the node narrows its key options via
+        :meth:`~DependencyNode.override_key_options` and drops an option the
+        caller explicitly set — i.e. the option has no effect in the current
+        mode, so the caller likely expected an effect it will not get.
+        """
+        if not self._provided_key_options:
+            return
+        effective = self.node.override_key_options(self)
+        if effective is None:
+            return
+        inert = self._provided_key_options.difference(effective)
+        if inert:
+            joined = ', '.join(repr(option) for option in sorted(inert))
+            warnings.warn(f"{self.node.name!r}: option(s) {joined} were set but have no effect for this request (inert in the current mode); the result does not depend on them.", stacklevel=2)
 
     def has_control(self, control: str) -> bool:
         """Return whether this request includes one explicit execution control."""
@@ -1282,12 +1439,12 @@ class Request(Generic[T]):
                 dep = self._build_deps[name]
                 return self.registry.resolve(
                     name=dep.name,
-                    state={**self.state, **dep.state} if dep.state else self.state,
+                    state={**self._state, **dep.state} if dep.state else self._state,
                     options=dep.options,
                 ).load(view=dep.view)
             return self.registry.resolve(
                 name,
-                state={**self.state, **(state or {})},
+                state={**self._state, **(state or {})},
                 options=options,
                 controls=controls,
             ).load(view=view)
@@ -1343,8 +1500,8 @@ class DerivativeRegistry:
         if undeclared:
             keys = ', '.join(repr(key) for key in sorted(undeclared))
             raise TypeError(f"{node.name!r} got undeclared option(s): {keys}")
-        options = dict(node.OPTION_DEFAULTS)
-        view_options = dict(node.VIEW_OPTION_DEFAULTS)
+        options = {name: _option_default(spec) for name, spec in node.key_options.items()}
+        view_options = {name: _option_default(spec) for name, spec in node.view_options.items()}
         for key, value in node_options.items():
             if key in options:
                 options[key] = value
@@ -1357,6 +1514,7 @@ class DerivativeRegistry:
             options=options,
             view_options=view_options,
             controls=controls,
+            provided_key_options=frozenset(node_options).intersection(node.key_options),
         )
 
     @contextmanager
@@ -1467,7 +1625,7 @@ class DerivativeRegistry:
         for dep in ctx._dependency_map().values():
             request = self.resolve(
                 dep.name,
-                state={**ctx.state, **(dep.state or {})},
+                state={**ctx._state, **(dep.state or {})},
                 options=dep.options,
             )
             out.append((dep, request))

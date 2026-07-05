@@ -12,6 +12,7 @@ from eelbrain._experiment.derivative_cache import (
     CachePolicy,
     Dependency,
     Derivative,
+    OptionSpec,
     Request,
     DerivativeRegistry,
     Input,
@@ -98,7 +99,7 @@ class FakePipeline:
 
 class SourceInput(Input):
     name = 'source'
-    VIEW_OPTION_DEFAULTS = {'upper': False}
+    view_options = {'upper': False}
 
     def __init__(self, root: str | Path):
         self.root = Path(root)
@@ -303,8 +304,8 @@ class OptionDerivative(Derivative[str]):
     name = 'optioned'
     key_fields = ('subject',)
     cache_suffix = '.txt'
-    OPTION_DEFAULTS = {'artifact': 0}
-    VIEW_OPTION_DEFAULTS = {'view': 0}
+    key_options = {'artifact': 0}
+    view_options = {'view': 0}
 
     def __init__(self, root: str | Path):
         self.root = Path(root)
@@ -334,6 +335,71 @@ class OptionDerivative(Derivative[str]):
         value = ctx.load_artifact()
         self.calls.append(('named-view', ctx.options['artifact'], ctx.view_options['view']))
         return f"{value}|meta:{ctx.artifact_metadata['value']}"
+
+    def save(
+            self,
+            ctx: Request,
+            path: str,
+            value: str,
+    ) -> None:
+        Path(path).write_text(value)
+
+
+class SpecOptionDerivative(Derivative[str]):
+    name = 'spec-optioned'
+    key_fields = ('subject',)
+    cache_suffix = '.txt'
+    key_options = {
+        'flag': OptionSpec(False, type=bool),
+        'mode': OptionSpec(None, literal=('a', 'b', True)),
+        'label': OptionSpec('', normalize=lambda ctx, value: value.lower()),
+    }
+
+    def __init__(self, root: str | Path):
+        self.root = Path(root)
+        self.build_calls = 0
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {}
+
+    def build(self, ctx: Request) -> str:
+        self.build_calls += 1
+        return f"flag:{ctx.options['flag']}|mode:{ctx.options['mode']}|label:{ctx.options['label']}"
+
+    def load(self, ctx: Request, path: str) -> str:
+        return Path(path).read_text()
+
+    def save(
+            self,
+            ctx: Request,
+            path: str,
+            value: str,
+    ) -> None:
+        Path(path).write_text(value)
+
+
+class NarrowingDerivative(Derivative[str]):
+    name = 'narrowing'
+    key_fields = ('subject', 'mode')
+    cache_suffix = '.txt'
+    key_options = {'alpha': 0, 'beta': 0}
+
+    def __init__(self, root: str | Path):
+        self.root = Path(root)
+
+    def override_key_options(self, ctx: Request) -> tuple[str, ...] | None:
+        if ctx.state['mode'] == 'narrow':
+            return ('alpha',)
+        return None
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {}
+
+    def build(self, ctx: Request) -> str:
+        return f"alpha:{ctx.options['alpha']}"
+
+    def load(self, ctx: Request, path: str) -> str:
+        return Path(path).read_text()
 
     def save(
             self,
@@ -1056,6 +1122,54 @@ def test_registry_rejects_undeclared_options():
 
     with pytest.raises(TypeError, match="undeclared option"):
         registry.resolve('optioned', state=DEFAULT_STATE, options={'artifact': 1, 'extra': 3})
+
+
+def test_option_spec_validates_and_fills_defaults():
+    root, registry = make_empty_registry()
+    registry.register(SpecOptionDerivative(root))
+
+    # defaults are exempt from validation ('mode' default None is not in literal)
+    handle = registry.resolve('spec-optioned', state=DEFAULT_STATE)
+    assert handle.options == {'flag': False, 'mode': None, 'label': ''}
+
+    # type=bool is strict: 1 == True, but 1 is not a bool
+    with pytest.raises(TypeError, match="expected bool"):
+        registry.resolve('spec-optioned', state=DEFAULT_STATE, options={'flag': 1})
+    # literal matching is type-strict: 1 == True, but does not match literal True
+    with pytest.raises(ValueError, match="must be one of"):
+        registry.resolve('spec-optioned', state=DEFAULT_STATE, options={'mode': 1})
+    assert registry.resolve('spec-optioned', state=DEFAULT_STATE, options={'mode': True}).options['mode'] is True
+    with pytest.raises(ValueError, match="must be one of"):
+        registry.resolve('spec-optioned', state=DEFAULT_STATE, options={'mode': 'c'})
+
+
+def test_option_spec_normalize_canonicalizes_cache_key():
+    root, registry = make_empty_registry()
+    derivative = SpecOptionDerivative(root)
+    registry.register(derivative)
+
+    first = registry.resolve('spec-optioned', state=DEFAULT_STATE, options={'label': 'ABC'})
+    second = registry.resolve('spec-optioned', state=DEFAULT_STATE, options={'label': 'abc'})
+
+    # the normalized value replaces the option for the whole request
+    assert first.options['label'] == 'abc'
+    # equivalent spellings share one cache key and one artifact
+    assert first.key() == second.key()
+    assert first.load() == second.load() == 'flag:False|mode:None|label:abc'
+    assert derivative.build_calls == 1
+
+
+def test_override_key_options_narrows_key():
+    root, registry = make_empty_registry()
+    registry.register(NarrowingDerivative(root))
+
+    narrow = registry.resolve('narrowing', state={'subject': 's1', 'mode': 'narrow'}, options={'alpha': 1})
+    assert narrow.key()['options'] == {'alpha': 1}
+    wide = registry.resolve('narrowing', state={'subject': 's1', 'mode': 'wide'}, options={'beta': 2})
+    assert wide.key()['options'] == {'alpha': 0, 'beta': 2}
+    # a caller-set option that the node drops for this request triggers a warning
+    with pytest.warns(UserWarning, match="no effect"):
+        registry.resolve('narrowing', state={'subject': 's1', 'mode': 'narrow'}, options={'beta': 2})
 
 
 def test_request_applies_view_options_after_build_and_load():

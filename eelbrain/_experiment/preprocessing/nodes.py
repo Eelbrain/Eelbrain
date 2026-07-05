@@ -79,7 +79,7 @@ class RawBadChannelsInput(Input[list[str]]):
     User-specified bad channels are stored in an Eelbrain-specific  ``channels.tsv`` file under ``derivatives/eelbrain/bad_channels/``  rather than in the BIDS source dataset, so that re-downloading the dataset does not overwrite them.
     The BIDS source ``channels.tsv`` is used as seed when the derivatives file is first written.
     """
-    OPTION_DEFAULTS = {'noise': False}
+    key_options = {'noise': False}
 
     def __init__(
             self,
@@ -207,8 +207,8 @@ class RawBadChannelsInput(Input[list[str]]):
 
 
 class RawSourceInput(Input[mne.io.BaseRaw]):
-    OPTION_DEFAULTS = {'noise': False}
-    VIEW_OPTION_DEFAULTS = {'preload': False}
+    key_options = {'noise': False}
+    view_options = {'preload': False}
 
     def __init__(
             self,
@@ -400,8 +400,8 @@ class RawSourceDerivative(UncachedDerivative[mne.io.BaseRaw]):
     :class:`RawSourceInput`) before delegating the actual sidecar write to
     :class:`RawBadChannelsInput`.
     """
-    OPTION_DEFAULTS = {'noise': False}
-    VIEW_OPTION_DEFAULTS = {'preload': False}
+    key_options = {'noise': False}
+    view_options = {'preload': False}
 
     def __init__(
             self,
@@ -476,18 +476,14 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             self,
             raw_name: str,
             pipe: RawICA,
-            pipes: RawPipeGraph,
-            extension: str,
-            tasks: Sequence[str],
+            recordings: frozenset[tuple[str, str, str, str]],
             runs: Sequence[str],
     ):
         self.name = ica_input_name(raw_name)
         self.raw_name = raw_name
         self.fixed_state = {'raw': raw_name}
         self.pipe = pipe
-        self.pipes = pipes
-        self.extension = extension
-        self._tasks = tasks
+        self._recordings = recordings
         self._runs = runs or ['']
         # When runs are concatenated, the ICA spans every run, so it is cached
         # per subject/session rather than per run.
@@ -513,17 +509,19 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         :class:`RawMaxwell`); otherwise the current run is used. Combinations
         without a recording for the current subject/session are skipped.
         """
-        source_input = raw_input_name(self.pipes.root_source_name(self.pipe.source))
+        subject = ctx.state['subject']
+        session = ctx.state.get('session') or ''
         if self.pipe._concatenate_runs:
             run_states = [{'run': run} for run in self._runs]
         else:
             run_states = [{}]
+        current_run = ctx.state.get('run') or ''
         states = []
         for task in tasks:
             for run_state in run_states:
-                state = {'task': task, **run_state}
-                if ctx.registry.resolve(source_input, state={**ctx.state, **state}, options={'noise': False}).exists():
-                    states.append(state)
+                run = run_state.get('run', current_run)
+                if (subject, session, task, run) in self._recordings:
+                    states.append({'task': task, **run_state})
         return states
 
     def _load_bad_channels(self, ctx: Request) -> list[str]:
@@ -804,8 +802,8 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
     """
     key_fields = ('subject', 'session', 'task', 'run', 'datatype')
     cache_suffix = '-raw.fif'
-    OPTION_DEFAULTS = {'noise': False}
-    VIEW_OPTION_DEFAULTS = {'preload': False}
+    key_options = {'noise': False}
+    view_options = {'preload': False}
 
     def __init__(
             self,
@@ -1060,8 +1058,8 @@ class MedianHeadPositionDerivative(Derivative):
 
     Parameters
     ----------
-    raw_input_name
-        Registry name of the :class:`RawSourceInput` node used for per-file
+    recordings
+        Existing ``(subject, session, task, run)`` recordings, used for
         existence checks in :meth:`dependencies`.
     tasks
         All task names defined in the experiment.
@@ -1074,19 +1072,22 @@ class MedianHeadPositionDerivative(Derivative):
     key_fields = ('subject', 'session')
     cache_suffix = '.fif'
 
-    def __init__(self, raw_input_name: str, tasks: Sequence[str], runs: Sequence[str]):
-        self._raw_input_name = raw_input_name
+    def __init__(
+            self,
+            recordings: frozenset[tuple[str, str, str, str]],
+            tasks: Sequence[str],
+            runs: Sequence[str],
+    ):
+        self._recordings = recordings
         self._tasks = tasks
         self._runs = runs or ['']
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        subject = ctx.state['subject']
+        session = ctx.state.get('session') or ''
         deps = []
         for task, run in itertools.product(self._tasks, self._runs):
-            raw_ctx = ctx.registry.resolve(
-                self._raw_input_name,
-                state={**ctx.state, 'task': task, 'run': run},
-            )
-            if raw_ctx.exists():
+            if (subject, session, task, run) in self._recordings:
                 deps.append(Dependency(
                     name='raw-head-position',
                     label=f'task-{task}_run-{run}' if run else f'task-{task}',

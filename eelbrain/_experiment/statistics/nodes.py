@@ -261,8 +261,8 @@ class ResultOutputDerivative(Derivative[T]):
     cache_log_level = logging.INFO
     single_subject = False
     sampled_path = False
-    OPTION_DEFAULTS = RESULT_OPTION_DEFAULTS
-    VIEW_OPTION_DEFAULTS = {'dst': None}
+    key_options = RESULT_OPTION_DEFAULTS
+    view_options = {'dst': None}
 
     def __init__(
             self,
@@ -455,7 +455,8 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         Optional source-space smoothing.
     """
     name = 'evoked-test-data'
-    OPTION_DEFAULTS = {
+    key_fields = ('epoch', 'group')
+    key_options = {
         'data': None,
         'test': None,
         'baseline': None,
@@ -556,8 +557,8 @@ class TestResultDerivative(ResultOutputDerivative):
     name = 'test-result'
     cache_suffix = '.pickle'
     path = Derivative.path
-    OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'disconnect_labels': False}
-    VIEW_OPTION_DEFAULTS = {}
+    key_options = {**RESULT_OPTION_DEFAULTS, 'disconnect_labels': False}
+    view_options = {}
 
     def cache_label(self, ctx: Request) -> str:
         return join_stem_parts(self._path_stem(ctx), f'samples-{ctx.options["samples"]}') if ctx.options['samples'] is not None else self._path_stem(ctx)
