@@ -217,7 +217,7 @@ def test_sample(samples_experiment):
     assert_dataobj_equal(ds_ind, ds, decimal=19)  # make vs load evoked
 
     # sensor space tests
-    megs = [e.load_evoked(cat='auditory', baseline=False, model='modality')['meg'] for _ in e]
+    megs = [e.load_evoked(cat='auditory', baseline=False, model='modality', interpolate_bads=True)['meg'] for _ in e]
     res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False, make=True)
     test_manifest = _test_result_manifest_path(e, 'a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', baseline=False)
     assert exists(test_manifest)
@@ -831,21 +831,6 @@ def test_interpolate_bads(samples_experiment):
     assert bad not in e.load_epochs(interpolate_bads=False)['meg'].sensor.names
     assert bad not in e.load_epochs(interpolate_bads='keep')['meg'].sensor.names
     assert bad in e.load_epochs(interpolate_bads=True)['meg'].sensor.names
-
-    # when caching epochs, True and 'keep' share one artifact (the reset is a view op),
-    # while False is a separate, non-interpolated artifact
-    class CachedExperiment(SampleExperiment):
-        cache_epochs = 2
-
-    ec = CachedExperiment(root)
-    ec.set(subject='R0000', epoch='target', epoch_rejection='', raw='raw')
-
-    def epochs_path(interpolate_bads):
-        options = {'baseline': False, 'reject': True, 'samplingrate': None, 'decim': None, 'pad': 0, 'tmin': None, 'tmax': None, 'tstop': None, 'ndvar': False, 'data': 'sensor', 'interpolate_bads': interpolate_bads}
-        return ec._resolve_derivative('epochs', options=options).artifact_path
-
-    assert epochs_path(True) == epochs_path('keep')
-    assert epochs_path(False) != epochs_path('keep')
 
 
 @requires_mne_sample_data

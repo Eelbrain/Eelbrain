@@ -142,10 +142,9 @@ class RecordingEpochsDerivative(Derivative[Any]):
     tmin, tmax, tstop
         Time window overrides.
     interpolate_bads
-        Whether to interpolate bad channels while building epochs. ``False`` to
-        skip interpolation; ``'keep'`` (or ``True``) to interpolate while leaving
-        the channels marked as bad. The ``interpolate_bads=True`` bad-channel
-        reset is applied above this node, in :class:`EpochsDerivative`.
+        Whether to interpolate bad channels while building epochs.
+        ``False``: skip interpolation;
+        ``True``: interpolate while leaving the channels marked as bad.
     reject
         Whether to apply per-epoch rejection state.
     """
@@ -159,7 +158,7 @@ class RecordingEpochsDerivative(Derivative[Any]):
         'tmin': None,
         'tmax': None,
         'tstop': None,
-        'interpolate_bads': OptionSpec(False, literal=(False, True, 'keep')),
+        'interpolate_bads': OptionSpec(False, bool),
         'reject': True,
     }
 
@@ -230,10 +229,7 @@ class RecordingEpochsDerivative(Derivative[Any]):
             epoch_value = epochs
             epochs_list = [epoch_value]
 
-        # Interpolation happens here (rather than in the aggregating EpochsDerivative) because
-        # it must precede the EEG re-referencing below. Bad channels are always kept marked
-        # (the 'keep' representation): interpolate_bads=True and 'keep' produce the same data,
-        # and the True bad-channel reset is applied as a view operation in EpochsDerivative.
+        # Interpolation happens here (rather than in the aggregating EpochsDerivative) because it must precede the EEG re-referencing below. Bad channels are always kept marked
         data_types = DataSpec.coerce('sensor').data_to_ndvar(epochs_list[0].info)
         if ds.info.get(INTERPOLATE_WINDOWS, False) and any(ds[INTERPOLATE_WINDOWS]):
             # time-resolved interpolation for long, variable-length epochs
@@ -301,7 +297,10 @@ class EpochsDerivative(Derivative[Any]):
         Whether to convert epoch data to NDVars (``True | False | 'both'``).
     data
         Sensor representation to return.
-    (remaining options forwarded to :class:`RecordingEpochsDerivative`)
+    reset_bads
+        Mark interpolated channels as good.
+    ...
+        (remaining options forwarded to :class:`RecordingEpochsDerivative`)
     """
     name = 'epochs'
     key_fields = ('subject', 'session', 'raw', 'epoch', 'epoch_rejection', 'reference')
@@ -313,13 +312,14 @@ class EpochsDerivative(Derivative[Any]):
         'tmin': None,
         'tmax': None,
         'tstop': None,
-        'interpolate_bads': OptionSpec(False, literal=(False, True, 'keep')),
+        'interpolate_bads': OptionSpec(False, bool),
         'reject': True,
     }
     view_options = {
         'baseline': False,
         'ndvar': True,
         'data': 'sensor',
+        'reset_bads': OptionSpec(True, bool),
     }
 
     def __init__(self, raw, epochs: dict[str, Any], runs_for: dict[tuple[str, str, str], tuple[str, ...]], cache: bool = False):
@@ -362,11 +362,6 @@ class EpochsDerivative(Derivative[Any]):
             )
         runs = self._find_runs(ctx, epoch)
         rec_options = ctx.options_for('recording-epochs', *self.key_options)
-        # recording-epochs always store the interpolated-but-marked ('keep') data; the
-        # interpolate_bads=True bad-channel reset is applied as a view operation (see
-        # apply_view_options), so True and 'keep' share one cached recording-epochs artifact.
-        if rec_options['interpolate_bads'] is True:
-            rec_options['interpolate_bads'] = 'keep'
         sel_options = ctx.options_for('epoch-events', 'reject', *EPOCH_EXTRACT_OPTIONS)
         state = {'task': epoch.task}
         if runs:
@@ -396,16 +391,6 @@ class EpochsDerivative(Derivative[Any]):
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {'epoch': self.epochs[ctx.state['epoch']]}
-
-    def key(self, ctx: Request) -> dict[str, Any]:
-        # interpolate_bads=True and 'keep' produce identical cached epoch data (they differ
-        # only in info['bads'], which is reset as a view operation), so collapse them onto a
-        # single artifact.
-        key = super().key(ctx)
-        options = key.get('options')
-        if options and options.get('interpolate_bads') is True:
-            key['options'] = {**options, 'interpolate_bads': 'keep'}
-        return key
 
     def build(self, ctx: Request):
         epoch = self.epochs[ctx.state['epoch']]
@@ -460,12 +445,11 @@ class EpochsDerivative(Derivative[Any]):
         # Flatten to a list of MNE Epochs (variable-length epochs are stored as
         # single-trial Epochs and can be nested when aggregating across runs).
         epochs_list = _flatten_epochs(epoch_value)
-        # interpolate_bads=True: the cached epochs hold the interpolated data with the
-        # recording's bad channels still marked (the 'keep' representation); drop the bad
-        # markers so the interpolated channels are kept in the output.
-        if ctx.options['interpolate_bads'] is True:
+
+        if ctx.view_options['reset_bads'] and ctx.options['interpolate_bads']:
             for epochs in epochs_list:
                 epochs.info['bads'] = []
+
         # Variable-length epochs have differing numbers of samples and cannot be
         # concatenated into a single Epochs object.
         variable_tmax = len({epochs.times.size for epochs in epochs_list}) > 1
@@ -483,7 +467,7 @@ class EpochsDerivative(Derivative[Any]):
             if baseline is True:
                 baseline = epoch.baseline
             if baseline:
-                if ctx.options['interpolate_bads'] and ds.info.get(INTERPOLATE_WINDOWS, False):
+                if ds.info.get(INTERPOLATE_WINDOWS, False):
                     raise NotImplementedError(f"Baseline correction together with ChannelModelRejection for epoch {epoch.name!r}: time-windowed interpolation sets data segments with too many bad channels to zero before baseline correction, and baseline correction would assign these segments non-zero values; load with baseline=False")
                 if variable_tmax:
                     for epochs in epochs_list:
@@ -549,6 +533,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         'baseline': False,
         'ndvar': False,
         'cat': None,
+        'interpolate_bads': OptionSpec(False, bool),
         'data': 'sensor',
     }
 
@@ -558,17 +543,15 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         epoch = self.epochs[ctx.state['epoch']]
-        options = {
-            'baseline': True if epoch.post_baseline_trigger_shift else False,
-            'samplingrate': ctx.options['samplingrate'],
-            'decim': ctx.options['decim'],
-            'interpolate_bads': 'keep',
-            'reject': True,
-            'ndvar': False,
-            'data': 'sensor',
-        }
+        epoch_options = ctx.options_for(
+            'epochs', 'samplingrate', 'decim',
+            interpolate_bads=True,
+            reset_bads=False,
+            baseline=True if epoch.post_baseline_trigger_shift else False,
+            ndvar=False,
+        )
         return (
-            Dependency('epochs', options=options),
+            Dependency('epochs', options=epoch_options),
             Dependency('epoch-events', options=ctx.options_for('epoch-events', 'samplingrate', 'decim', reject=True)),
         )
 
@@ -658,6 +641,10 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         except KeyError:
             raise RuntimeError(f"Error reading cached evoked: available={tuple(evoked_by_cell)}, requested={tuple(cells)}") from None
 
+        if ctx.view_options['interpolate_bads']:
+            for evoked_i in evoked:
+                evoked_i.info['bads'] = []
+
         # Baseline correction (for post_baseline_trigger_shift epochs it was already applied).
         epoch = self.epochs[ctx.state['epoch']]
         baseline = ctx.view_options['baseline']
@@ -719,6 +706,7 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
         'ndvar': True,
         'samplingrate': None,
         'decim': None,
+        'interpolate_bads': OptionSpec(True, bool),
         'data': 'sensor',
     }
     view_options = {
@@ -737,7 +725,7 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
         return {'subjects': tuple(self.groups[ctx.state['group']])}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        options = ctx.options_for('evoked', 'model', 'baseline', 'samplingrate', 'decim', 'data')
+        options = ctx.options_for('evoked', 'model', 'baseline', 'samplingrate', 'decim', 'interpolate_bads', 'data')
         return tuple(
             Dependency('evoked', label=subject, state={'subject': subject}, options=options)
             for subject in self.groups[ctx.state['group']]
@@ -746,13 +734,7 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
     def build(self, ctx: Request) -> Dataset:
         dss = [ctx.load(subject) for subject in self.groups[ctx.state['group']]]
         data = DataSpec.coerce(ctx.options['data'])
-        ndvar = ctx.options['ndvar']
-        if data.aggregate:
-            ndvar = False
-        elif ndvar:
-            for ds in dss:
-                for evoked in ds['evoked']:
-                    evoked.info['bads'] = []
+        ndvar = False if data.aggregate else ctx.options['ndvar']
         ds = combine(dss, incomplete='drop')
         if not ndvar and not data.aggregate:
             lens = [len(evoked.times) for evoked in ds['evoked']]

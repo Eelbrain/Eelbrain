@@ -1114,7 +1114,8 @@ class Pipeline(StateModel):
             'tmin': tmin,
             'tmax': tmax,
             'tstop': tstop,
-            'interpolate_bads': interpolate_bads,
+            'interpolate_bads': bool(interpolate_bads),
+            'reset_bads': interpolate_bads == True,
         }
         return self._load_derivative('epochs', options=options)
 
@@ -1442,6 +1443,7 @@ class Pipeline(StateModel):
             cat: Sequence[CellArg] = None,
             samplingrate: int = None,
             decim: int = None,
+            interpolate_bads: bool = False,
             src_baseline: BaselineArg = False,
             morph: bool = None,
             keep_mne: bool = False,
@@ -1476,6 +1478,9 @@ class Pipeline(StateModel):
             definition).
         decim
             Data decimation factor (alternative to ``samplingrate``).
+        interpolate_bads
+            Interpolate channels marked as bad (useful when comparing topographies
+            across subjects; default ``False``; sensor space only).
         src_baseline
             Apply baseline correction in source space using this period (source
             space only; ``True`` to use the epoch's baseline specification).
@@ -1509,7 +1514,9 @@ class Pipeline(StateModel):
         """
         subject, group = self._process_subject_arg(subjects, state)
         model = self._eval_model(model)
-        if (inv := self.get('inv')):  # source space
+        if inv := self.get('inv'):  # source space
+            if interpolate_bads:
+                raise ValueError("interpolate_bads not available for source-space data; set inv='' for sensor space")
             if isinstance(ndvar, str):
                 raise ValueError(f"{ndvar=} with {inv=}: a data-kind ndvar is only valid for sensor-space evoked; in source space use ndvar=True or ndvar=False")
             self._current_source_parc()
@@ -1549,9 +1556,12 @@ class Pipeline(StateModel):
             'cat': cat,
             'samplingrate': samplingrate,
             'decim': decim,
+            'interpolate_bads': interpolate_bads,
             'data': data,
         }
         if group is not None:
+            # Group data is merged in a common sensor space, so bad channels are always interpolated (the interpolate_bads argument only controls single-subject loads).
+            options['interpolate_bads'] = True
             return self._load_derivative('evoked-group-dataset', options=options)
         return self._load_derivative('evoked', options=options)
 
