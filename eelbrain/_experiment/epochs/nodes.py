@@ -350,7 +350,8 @@ class EpochsDerivative(Derivative[Any]):
             # are loaded with the SuperEpoch's window/decim rather than their own.
             epoch_overrides = {k: getattr(epoch, k) for k in epoch._explicit_params if k in epoch.INHERITED_PARAMS}
             forward_keys = [k for k in self.key_options if k not in epoch_overrides]
-            overrides = {'ndvar': False, 'data': 'sensor', **epoch_overrides}
+            # Keep bad channels marked on the sub-epochs; the SuperEpoch applies reset_bads once, after aggregation.
+            overrides = {'ndvar': False, 'data': 'sensor', 'reset_bads': False, **epoch_overrides}
             # post_baseline_trigger_shift needs baseline applied (on the sub-epochs) before
             # the shift, so it cannot be deferred for shifted super-epochs.
             if epoch.post_baseline_trigger_shift:
