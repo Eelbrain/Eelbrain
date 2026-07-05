@@ -16,7 +16,6 @@ BIDS_ENTITY_PREFIX_MAP = {
     'run': 'run',
 }
 DERIV_DIR = Path('derivatives')
-BAD_CHANNELS_DIR = DERIV_DIR / 'eelbrain' / 'bad_channels'
 CACHE_DIR = DERIV_DIR / 'eelbrain' / 'cache'
 LOG_DIR = DERIV_DIR / 'eelbrain' / 'logs'
 RESULTS_DIR = DERIV_DIR / 'eelbrain' / 'results'
@@ -99,7 +98,8 @@ def trans_file_path(state: dict[str, Any]) -> Path:
 def rej_file_path(state: dict[str, Any], epoch: str | None = None, epoch_rejection: str | None = None) -> Path:
     epoch_name = state['epoch'] if epoch is None else epoch
     rej_name = state['epoch_rejection'] if epoch_rejection is None else epoch_rejection
-    return DERIV_DIR / 'eelbrain' / 'epoch selection' / f"{epoch_basename(state)}_raw-{state['raw']}_epoch-{epoch_name}_rej-{rej_name}_epoch.pickle"
+    basename = _bids_name(state, ('subject', 'session', 'run'), suffix='')
+    return DERIV_DIR / 'mne' / raw_dir(state) / f"{basename}_raw-{state['raw']}_epoch-{epoch_name}_rej-{rej_name}_epoch.pickle"
 
 
 def mri_dir(state: dict[str, Any]) -> Path:

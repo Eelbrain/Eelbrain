@@ -645,7 +645,7 @@ def test_sample_tasks(samples_experiment):
     e.set(raw='raw')
 
     # bad channels are stored in derivatives, not in the BIDS source dataset
-    bad_path = join(root, 'derivatives', 'eelbrain', 'bad_channels', 'sub-R0000_task-sample1_channels.tsv')
+    bad_path = join(root, 'derivatives', 'mne', 'sub-R0000', 'meg', 'sub-R0000_task-sample1_channels.tsv')
     assert not exists(bad_path)
     e.make_bad_channels('MEG 0111')
     assert exists(bad_path)
@@ -697,7 +697,7 @@ def test_sample_tasks(samples_experiment):
     assert_dataobj_equal(dse_super, target, 19)
 
     # conflicting task and epoch settings
-    rej_path = join(root, 'derivatives', 'eelbrain', 'epoch selection', 'sub-R0000_meg_raw-1-40_epoch-target2_rej-manual_epoch.pickle')
+    rej_path = join(root, 'derivatives', 'mne', 'sub-R0000', 'meg', 'sub-R0000_raw-1-40_epoch-target2_rej-manual_epoch.pickle')
     e.set(epoch='target2', raw='1-40')
     assert not exists(rej_path)
     e.set(task='sample1')

@@ -2401,7 +2401,7 @@ class Pipeline(StateModel):
 
         Opens :func:`eelbrain.gui.select_channels` for the current subject.
         The document is the Pipeline-specific ``*_channels.tsv`` file under
-        ``derivatives/eelbrain/bad_channels/`` (seeded from the BIDS source the
+        the ``derivatives/mne/`` hierarchy (seeded from the BIDS source the
         first time it is written). Events come from labeled-events.
 
         Parameters
@@ -2420,7 +2420,7 @@ class Pipeline(StateModel):
         subject = self.get('subject')
         # Load raw at the requested pipeline stage (unprocessed input if source)
         raw_data = self._load_derivative(raw_node_name(raw_name), options={'preload': False, 'noise': False})
-        # Bad channels are stored in derivatives/eelbrain/bad_channels; ensure the
+        # Bad channels are stored in the derivatives/mne hierarchy; ensure the
         # file exists (seeded from the BIDS source) so the GUI can read/write it
         bads_ctx = self._resolve_derivative(raw_bad_channels_input_name(source_name))
         bads_ctx.node.write(bads_ctx, raw_data, [], redo=False, create=True)

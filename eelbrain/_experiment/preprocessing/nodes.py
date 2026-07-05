@@ -36,7 +36,7 @@ from ..derivative_cache import (
 )
 from ..logging import find_difference, format_difference_path
 from ..exceptions import FileMissingError
-from ..pathing import bids_path, BAD_CHANNELS_DIR
+from ..pathing import bids_path, DERIV_DIR
 from .config import (
     MNE_VERBOSITY, RawPipeGraph, RawSource, CachedRawPipe, RawICA, RawApplyICA, RawMaxwell,
     raw_node_name, raw_bad_channels_input_name, raw_input_name, ica_input_name,
@@ -76,7 +76,7 @@ BIDS_TO_MNE_CHANNEL_TYPES = {
 class RawBadChannelsInput(Input[list[str]]):
     """Access to Pipeline-specific bad channel definitions.
 
-    User-specified bad channels are stored in an Eelbrain-specific  ``channels.tsv`` file under ``derivatives/eelbrain/bad_channels/``  rather than in the BIDS source dataset, so that re-downloading the dataset does not overwrite them.
+    User-specified bad channels are stored in an Eelbrain-specific  ``channels.tsv`` file under the ``derivatives/mne/`` hierarchy  rather than in the BIDS source dataset, so that re-downloading the dataset does not overwrite them.
     The BIDS source ``channels.tsv`` is used as seed when the derivatives file is first written.
     """
     key_options = {'noise': False}
@@ -95,19 +95,21 @@ class RawBadChannelsInput(Input[list[str]]):
 
     def path(self, ctx: Request) -> Path:
         """Path to the Pipeline-specific bad-channels ``channels.tsv`` file."""
-        return ctx.root / BAD_CHANNELS_DIR / self._bids_path(ctx).name
+        # Same sidecar as the BIDS source, relocated under derivatives/mne so the source dataset is never modified.
+        bpath = self._bids_path(ctx)
+        return bpath.update(root=ctx.root / DERIV_DIR / 'mne', check=False).fpath
 
-    def _bids_path(self, ctx: Request) -> Path:
-        """Path to the BIDS source ``channels.tsv`` sidecar for this request."""
-        bpath = bids_path(ctx.root, ctx.state, self.extension)
-        if ctx.options['noise']:
-            bpath = bpath.find_empty_room()
-        return Path(bpath.copy().update(suffix='channels', extension='.tsv').fpath)
+    def _bids_path(self, ctx: Request) -> BIDSPath:
+        """Noise-resolved ``channels.tsv`` :class:`BIDSPath` in the source dataset."""
+        bpath = bids_path(ctx.root, ctx.state, self.extension, noise=ctx.options['noise'])
+        return bpath.update(suffix='channels', extension='.tsv')
 
     def _active_path(self, ctx: Request) -> Path:
         """The file ``load`` reads from: derivatives file if present, else BIDS source."""
         path = self.path(ctx)
-        return path if path.exists() else self._bids_path(ctx)
+        if path.exists():
+            return path
+        return self._bids_path(ctx).fpath
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {'bads': self.load(ctx)}
@@ -137,7 +139,7 @@ class RawBadChannelsInput(Input[list[str]]):
     ) -> None:
         """Write bad-channel status to the Pipeline-specific ``channels.tsv`` file.
 
-        Bad channels are written to ``derivatives/eelbrain/bad_channels/`` so
+        Bad channels are written to the ``derivatives/mne/`` hierarchy so
         that the BIDS source dataset is never modified. With ``create=True``, a
         missing file is initialized from the BIDS source ``channels.tsv`` (to
         preserve any bad channels shipped with the dataset), or from ``raw`` if
@@ -172,7 +174,7 @@ class RawBadChannelsInput(Input[list[str]]):
                 channels_df['status'] = 'good'
             created = False
         elif create:
-            source_path = self._bids_path(ctx)
+            source_path = self._bids_path(ctx).fpath
             if source_path.exists():
                 LOG.info("No bad-channels file found at %s, seeding from BIDS source %s.", path, source_path)
                 channels_df = pd.read_csv(source_path, sep='\t')

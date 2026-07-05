@@ -29,7 +29,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument(
         '--migrate',
         action='store_true',
-        help='Migrate legacy derivative files (ICA, trans) to the current BIDS-style layout and exit without opening the GUI',
+        help='Migrate legacy derivative files (ICA, trans, bad channels, epoch rejection) to the current BIDS-style layout and exit without opening the GUI',
     )
     args = parser.parse_args(argv)
 
