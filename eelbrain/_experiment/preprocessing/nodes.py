@@ -499,7 +499,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         return canonical_state_subset({**ctx.state, 'raw': self.raw_name}, self.key_fields)
 
     def _manifest(self, ctx: Request) -> ArtifactManifest | None:
-        return ctx.registry.read_manifest(ctx.registry.manifest_path(self.path(ctx)))
+        return ctx.registry.read_manifest(ctx.registry.manifest_path(self.path(ctx), self.name))
 
     def _load_value(self, ctx: Request) -> mne.preprocessing.ICA:
         return self.pipe._load_ica(ctx)
@@ -552,7 +552,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
 
     def _reindex_existing(self, ctx: Request) -> mne.preprocessing.ICA:
         value = self._load_value(ctx)
-        ctx.registry.write_manifest(ctx.registry.manifest_path(self.path(ctx)), self._build_manifest(ctx, value))
+        ctx.registry.write_manifest(ctx.registry.manifest_path(self.path(ctx), self.name), self._build_manifest(ctx, value))
         return value
 
     @staticmethod
@@ -715,7 +715,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         previous = self._manifest(ctx)
         if not self._manifest_matches(previous, current):
             if ctx.has_control(REINDEX_ICA):
-                ctx.registry.write_manifest(ctx.registry.manifest_path(path), current)
+                ctx.registry.write_manifest(ctx.registry.manifest_path(path, self.name), current)
                 return value
             reason = self._stale_reason(previous, current)
             raise ProtectedArtifactError(self.name, path, message=f"Existing ICA file {path.name!r} no longer matches the current data and ICA settings.", reason=reason, instructions=f"{reason}\nTo make this ICA match the current pipeline again, revert the raw pipeline change or recompute the ICA. To keep using this existing ICA anyway, call e.load_ica(raw={self.raw_name!r}, accept_stale=True) once or run e.make_ica(raw={self.raw_name!r}) and choose 'incorporate'. To recompute it from the current data, run e.make_ica(raw={self.raw_name!r}) and choose 'overwrite'.")
@@ -778,7 +778,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
                 return value
             elif allow_protected_reindex:
                 assert current is not None
-                ctx.registry.write_manifest(ctx.registry.manifest_path(path), current)
+                ctx.registry.write_manifest(ctx.registry.manifest_path(path, self.name), current)
                 return value
             elif not allow_protected_overwrite:
                 reason = self._stale_reason(previous, current)
@@ -787,7 +787,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         value = self.pipe._fit_ica(raw, ctx.state['subject'], self.raw_name)
         path.parent.mkdir(parents=True, exist_ok=True)
         value.save(path, overwrite=True)
-        ctx.registry.write_manifest(ctx.registry.manifest_path(path), self._build_manifest(ctx, value))
+        ctx.registry.write_manifest(ctx.registry.manifest_path(path, self.name), self._build_manifest(ctx, value))
         return self.load(ctx)
 
 

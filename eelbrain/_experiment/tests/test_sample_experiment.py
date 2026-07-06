@@ -57,7 +57,7 @@ def _test_result_manifest_path(
         'smooth': smooth,
         'samplingrate': samplingrate,
     }
-    return e._derivatives.manifest_path(e._derivatives.resolve(node, state=e.state, options=options).artifact_path)
+    return e._derivatives.resolve(node, state=e.state, options=options).manifest_path
 
 
 @pytest.fixture(scope='session')
@@ -424,7 +424,7 @@ def test_sample(samples_experiment):
         }
     e = Experiment(root)
     ica_path = e.make_ica(raw='ica')
-    ica_manifest = e._derivatives.manifest_path(ica_path)
+    ica_manifest = e._derivatives.manifest_path(ica_path, ica_input_name('ica'))
     assert exists(ica_manifest)
 
     class ChangedExperiment(Experiment):

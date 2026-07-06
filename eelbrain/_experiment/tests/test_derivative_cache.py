@@ -81,7 +81,7 @@ class FakePipeline:
         elif key == 'ephemeral-file':
             path = self.root / 'derivatives' / 'eelbrain' / 'cache' / subject / 'ephemeral.txt'
         elif key == 'protected-file':
-            path = self.root / 'derived' / subject / 'protected.txt'
+            path = self.root / 'derivatives' / 'mne' / subject / 'protected.txt'
         else:
             raise KeyError(key)
 
@@ -533,7 +533,7 @@ class ProtectedDerivative(Derivative[str]):
         self.root = Path(root)
 
     def path(self, ctx: Request) -> str:
-        return str(self.root / 'derived' / ctx.state['subject'] / 'protected.txt')
+        return str(self.root / 'derivatives' / 'mne' / ctx.state['subject'] / 'protected.txt')
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (Dependency('source'),)
@@ -1056,10 +1056,13 @@ def test_stale_external_artifact_is_protected():
 
     assert registry.resolve('protected', state=DEFAULT_STATE).load() == 'alpha'
     protected_path = Path(pipeline.get('protected-file'))
-    manifest_path = Path(registry.manifest_path(protected_path))
+    manifest_path = Path(registry.manifest_path(protected_path, 'protected'))
     assert protected_path.exists()
     assert manifest_path.exists()
-    assert manifest_path.is_relative_to(Path(pipeline.get('cache-dir')) / 'manifests')
+    # The manifest mirrors the artifact under the node directory, dropping the
+    # artifact's top-level namespace ('mne').
+    entity = Path(*protected_path.relative_to(pipeline.get('deriv-dir')).parts[1:])
+    assert manifest_path == Path(f"{Path(pipeline.get('cache-dir')) / 'protected' / entity}.manifest.json")
 
     pipeline.source_path().write_text('changed')
 

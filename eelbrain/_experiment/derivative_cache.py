@@ -31,9 +31,10 @@ graph still match the current pipeline configuration.
 
 Artifacts inside ``cache-dir`` keep sidecar manifests and can be rebuilt
 automatically when they go stale. Artifacts stored elsewhere are treated as
-user-managed outputs: their manifests are mirrored under
-``cache-dir/manifests`` and they are not overwritten without an explicit
-opt-in from the caller.
+user-managed outputs: their manifests are mirrored under the owning
+derivative's node directory in the cache (e.g. an ICA at
+``derivatives/mne/sub-01/...`` → ``cache-dir/<node-name>/sub-01/...``) and they
+are not overwritten without an explicit opt-in from the caller.
 """
 
 from __future__ import annotations
@@ -720,7 +721,7 @@ class Derivative(DependencyNode[T]):
         The returned path identifies where the artifact itself lives. For
         artifacts inside ``cache-dir``, the registry writes the manifest next
         to the artifact. For public/export artifacts outside ``cache-dir``,
-        the registry mirrors the manifest under ``cache-dir/manifests``.
+        the registry mirrors the manifest under the derivative's node directory in ``cache-dir``.
 
         Implementations should derive the path from semantic state/options
         only. They should not perform dependency traversal, create directories,
@@ -1085,7 +1086,7 @@ class Request(Generic[T]):
             self._key = registry.canonicalize(node.key(self))
             self._base_artifact_path = Path(node.path(self))
             self._artifact_path = Path(self.registry.resolve_cache_artifact_path(self._base_artifact_path, self._key))
-            self._manifest_path = Path(self.registry.manifest_path(self._artifact_path))
+            self._manifest_path = Path(self.registry.manifest_path(self._artifact_path, self.node.name))
             self._warn_inert_key_options()
 
     def _warn_inert_key_options(self) -> None:
@@ -1809,25 +1810,15 @@ class DerivativeRegistry:
         else:
             return True
 
-    def manifest_path(self, path: str | Path) -> Path:
-        artifact_path = Path(path)
+    def manifest_path(self, artifact_path: Path, node_name: str | None = None) -> Path:
         if self.is_cache_artifact(artifact_path):
             return Path(f"{artifact_path}{MANIFEST_SUFFIX}")
 
-        manifest_root = self.cache_dir / 'manifests'
-        resolved_path = artifact_path.resolve()
-        for label, root in (
-                ('deriv-dir', self.deriv_dir),
-                ('root', self.root),
-        ):
-            try:
-                relative = resolved_path.relative_to(root.resolve())
-            except ValueError:
-                continue
-            return Path(f"{manifest_root / label / relative}{MANIFEST_SUFFIX}")
-
-        digest = hashlib.sha1(str(resolved_path).encode()).hexdigest()
-        return Path(f"{manifest_root / 'external' / digest}{MANIFEST_SUFFIX}")
+        # External (user-managed) artifact: mirror the manifest under the owning derivative's node directory in the cache
+        assert node_name is not None, "node_name is required for external artifacts"
+        relative = artifact_path.relative_to(self.deriv_dir)
+        relative = relative.relative_to(relative.parts[0])
+        return self.cache_dir / node_name / relative.parent / f"{relative.name}{MANIFEST_SUFFIX}"
 
     def dependency_fingerprints(
             self,
