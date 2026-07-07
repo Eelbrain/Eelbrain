@@ -35,7 +35,7 @@ from .._utils import ask, keydefaultdict, log_level, ScreenHandler
 from .._utils.mne_utils import is_fake_mri
 from .covariance import CovDerivative, EpochCovariance, RawCovariance
 from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, DerivativeRegistry, ProtectedArtifactError, Request
-from .configuration import ConfigurationDict, sequence_arg
+from .configuration import Configuration, ConfigurationDict, sequence_arg
 from .epochs import (
     EpochBase, EpochsDerivative, RecordingEpochsDerivative, EvokedDerivative,
     EvokedGroupDatasetDerivative, PrimaryEpoch, SecondaryEpoch,
@@ -70,7 +70,7 @@ from .source import (
 )
 from .statistics import EvokedTestDataDerivative, TestResultDerivative, TwoStageDataDerivative, TwoStageLevel1Derivative, TwoStageLevel2Derivative, TwoStageTest
 from .statistics.config import Test, guess_y, validate_tests
-from .trf import Boosting, Estimator, FilePredictor, Model, PredictorInput, TRFDatasetDerivative, TRFDerivative, TRFGroupDatasetDerivative, TRFJob, TRFJobSpec, filter_predictor
+from .trf import Boosting, Estimator, Model, NUTSPredictor, PredictorInput, TRFDatasetDerivative, TRFDerivative, TRFGroupDatasetDerivative, TRFJob, TRFJobSpec, UTSPredictor, filter_predictor
 from .trf.model import parse_term
 from .variable_def import Variables, apply_vardef, label_groups as label_groups_var
 
@@ -146,15 +146,15 @@ class Pipeline(StateModel):
     epochs: dict[str, EpochBase] = {}
 
     # predictors for TRF models, selected through the 'code' argument of
-    # load_predictor (e.g. {'gammatone': FilePredictor(resample='bin')})
-    predictors: dict[str, FilePredictor] = {}
+    # load_predictor (e.g. {'gammatone': UTSPredictor(resample='bin')})
+    predictors: dict[str, Configuration] = {}
 
     # estimators for TRF fitting, selected through the 'estimator' argument of
     # load_trf (e.g. {'ncrf': NCRF()}); 'boosting' (Boosting()) is always available
     estimators: dict[str, Estimator] = {}
     # named TRF models, for abbreviations in model strings passed to load_trf
     models: dict[str, str] = {}
-    # events Dataset column(s) identifying the stimulus for FilePredictors; a
+    # events Dataset column(s) identifying the stimulus for file predictors; a
     # single name, or a {key: column} mapping for multiple stimuli per event
     stim_var: str = 'stimulus'
 
@@ -1156,12 +1156,13 @@ class Pipeline(StateModel):
             name: str = None,
             **state,
     ) -> NDVar:
-        """Load a :class:`FilePredictor` as an :class:`NDVar`
+        """Load a file predictor as an :class:`NDVar`
 
         Reads the predictor file's relevant data and shapes it into a predictor
-        on the requested time axis. Only :class:`FilePredictor` predictors can
-        be loaded directly; an :class:`EventPredictor` is generated from the
-        data and is only available through :meth:`load_trf`.
+        on the requested time axis. Only file predictors
+        (:class:`UTSPredictor`, :class:`NUTSPredictor`) can be loaded directly;
+        an :class:`EventPredictor` is generated from the data and is only
+        available through :meth:`load_trf`.
 
         Parameters
         ----------
@@ -1170,7 +1171,7 @@ class Pipeline(StateModel):
             ``{stimulus}~{predictor}``. The ``predictor`` part selects a
             definition in :attr:`predictors`; additional ``-`` delimited items
             specify columns or a NUTS representation method (see
-            :class:`FilePredictor`).
+            :class:`NUTSPredictor`).
         tstep
             Time-step for the predictor (for :class:`NDVar` predictors the
             original ``tstep`` is used by default; for :class:`Dataset`
@@ -1185,7 +1186,7 @@ class Pipeline(StateModel):
             the :class:`RawFilter` pipes of the current ``raw`` pipeline).
             ``True`` to filter all predictors; ``'continuous'`` to filter only
             time-continuous predictors (those with ``sampling='continuous'``,
-            see :class:`FilePredictor`).
+            see :class:`FilePredictorBase`).
         name
             Reassign the name of the predictor :class:`NDVar`.
         ...
@@ -1195,8 +1196,8 @@ class Pipeline(StateModel):
             self.set(**state)
         term = parse_term(code)
         predictor = self.predictors[term.predictor_key]
-        if not isinstance(predictor, FilePredictor):
-            raise NotImplementedError(f"{term.string}: load_predictor only supports FilePredictor; load {type(predictor).__name__} through load_trf")
+        if not isinstance(predictor, (UTSPredictor, NUTSPredictor)):
+            raise NotImplementedError(f"{term.string}: load_predictor only supports file predictors; load {type(predictor).__name__} through load_trf")
         contents = self._load_derivative('predictor', options={'code': code})
         x = predictor._generate(contents, tmin, tstep, n_samples, term)
         x = filter_predictor(x, self._raw, self.get('raw'), filter_x)

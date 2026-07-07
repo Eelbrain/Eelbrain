@@ -12,7 +12,7 @@ from pathlib import Path
 import pickle
 from collections.abc import Callable, Sequence
 
-from pyparsing import ParseException, Literal, Optional, Word, alphas, alphanums, delimitedList, nums, oneOf
+from pyparsing import ParseException, Literal, Optional, Word, alphanums, delimitedList, oneOf
 
 from ..._data_obj import Dataset
 from ... import fmtxt
@@ -54,32 +54,44 @@ class Term:
     @cached_property
     def nuts_method(self) -> str | None:
         """NUTS representation method (the trailing ``-step``/``-is`` item, if any)"""
-        if self._items[-1] in NUTS_METHODS:
+        if len(self._items) > 2 and self._items[-1] in NUTS_METHODS:
             return self._items[-1]
+        return None
+
+    @cached_property
+    def string_without_nuts_method(self) -> str:
+        if self.nuts_method:
+            code = '-'.join(self._items[:-1])
+            if self.stimulus:
+                return f"{self.stimulus}~{code}"
+            return code
+        return self.string
 
     @cached_property
     def nuts_columns(self) -> tuple[str | None, str | None]:
         """``(value-column, mask-column)`` for a ``columns`` NUTS predictor"""
-        n = len(self._items) - 1 - bool(self.nuts_method)
-        column = self._items[1] if n > 0 else None
-        if n <= 1:
-            mask = None
-        elif n == 2:
-            mask = self._items[2]
-        else:
-            raise TRFModelError(f"{self.string}: too many '-' separated elements")
+        # bare key = intercept: unit impulse at each time stamp
+        column = mask = None
+        n = len(self._items)
+        if n > 1:
+            column = self._items[1]
+            n -= bool(self.nuts_method)
+            if n == 3:
+                mask = self._items[2]
+            elif n != 2:
+                raise TRFModelError(f"{self.string}: too many '-' separated elements")
         return column, mask
 
-    def nuts_file_name(self, columns: bool) -> str:
+    @cached_property
+    def uts_file_name(self) -> str:
         """File name (without extension) of the predictor file backing this term"""
-        if columns:
-            items = self._items[:1]
-        elif self.nuts_method:
-            items = self._items[:-1]
-        else:
-            items = self._items
-        code = '-'.join(items)
-        return f"""{self.stimulus}~{code}""" if self.stimulus else code
+        return self.string
+
+    @cached_property
+    def nuts_file_name(self) -> str:
+        """File name (without extension) of the predictor file backing this term"""
+        code = self._items[0]
+        return f"{self.stimulus}~{code}" if self.stimulus else code
 
     def with_stimulus(self, stimulus: str) -> Term:
         """Copy of the term with a different stimulus"""
@@ -463,15 +475,11 @@ class Comparison:
         return model_comparison_table(self.x1, self.x0)
 
 
-# components
-integer = Word(nums).addParseAction(lambda s, l, t: int(t[0]))
-pyword = Word(alphas + '_', alphanums + '_')
-name = Word(alphas + '_', alphanums + '_-')
-
 # term
+name = Word(alphanums + '_')
 stimulus = Word(alphanums + '_', alphanums + '_-')
 stimulus_prefix = stimulus + Literal('~').suppress().leaveWhitespace()
-term = Optional(stimulus_prefix, '') + name
+term = Optional(stimulus_prefix, '') + delimitedList(name, '-', combine=True, min=1)
 term.addParseAction(lambda s, l, t: Term(t[0] or None, t[1]))
 
 # model
@@ -493,9 +501,6 @@ add_comparison.addParseAction(lambda s, l, t: AddComparison(*t))
 add2_comparison = model + Literal('+@').suppress() + direct_comparison
 add2_comparison.addParseAction(lambda s, l, t: Add2Comparison(t[0], t[1].x, t[1].operator, t[1].x0))
 comparison = direct_comparison ^ omit_comparison ^ omit2_comparison ^ add_comparison ^ add2_comparison
-
-# for name checking
-model_name_parser = Optional(stimulus_prefix) + name
 
 
 def parse_term(string: str) -> Term:

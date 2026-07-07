@@ -81,7 +81,8 @@ class SampleTRF(SampleExperiment):
 
     predictors = {
         'imp': EventPredictor(),
-        'env': FilePredictor(),
+        'env': UTSPredictor(),
+        'word': NUTSPredictor(),
     }
     # the 'modality' event variable ('auditory'/'visual') identifies the stimulus
     stim_var = 'modality'

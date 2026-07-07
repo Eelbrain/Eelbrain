@@ -1,5 +1,4 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-import hashlib
 from itertools import chain
 from pathlib import Path
 from typing import Literal
@@ -74,6 +73,40 @@ class EventPredictor(Configuration):
 
 
 class FilePredictorBase(Configuration):
+    """Base class for predictors stored in files corresponding to specific stimuli
+
+    Use :class:`UTSPredictor` for predictors stored as uniform time series
+    (:class:`NDVar`) and :class:`NUTSPredictor` for predictors stored as
+    non-uniform time series (:class:`Dataset`).
+
+    Parameters
+    ----------
+    resample
+        How to resample the predictor when an analysis is done at a lower
+        sampling rate than the stored data:
+
+         - ``bin``: averaging the values in time bins
+         - ``resample``: use appropriate filter followed by decimation
+
+        For predictors with non-continuous information, such as impulses,
+        binning is more appropriate.
+    sampling
+        Whether the predictor is continuous or discrete. Used to decide
+        whether to filter this predictor with ``filter_x='continuous'``.
+
+    Notes
+    -----
+    Predictor files are expected for each stimulus at::
+
+        {root}/derivatives/predictors/{stimulus}~{key}[-...].pickle
+
+    Where ``stimulus`` refers to the name provided by ``stim_var`` and ``key``
+    refers to the predictor's name (the key used in
+    :attr:`TRFExperiment.predictors`).
+
+    Changes to predictor files are detected automatically: cached results that
+    used the old data are invalidated and rebuilt when requested.
+    """
     DICT_ATTRS = ('resample', 'sampling')
 
     def __init__(
@@ -122,88 +155,130 @@ class FilePredictorBase(Configuration):
         else:
             return self.sampling
 
+    def _load(self, tstep: float, filename: str, directory: Path) -> NDVar | Dataset:
+        raise NotImplementedError  # Used in _generate_continuous
+        # return self._prepare(load.unpickle(directory / f'{filename}.pickle'), tstep)
 
-class FilePredictor(FilePredictorBase):
-    """Predictor stored in files corresponding to specific stimuli
 
-    There are two basic ways to represent predictors in files (see the Notes
-    section below for  details):
+def _arrays_equal(a: numpy.ndarray, b: numpy.ndarray) -> bool:
+    "Exact array equality; NaN counts as equal to itself"
+    if a.dtype != b.dtype or a.shape != b.shape:
+        return False
+    if a.dtype.kind in 'fc':
+        return bool(numpy.array_equal(a, b, equal_nan=True))
+    return bool(numpy.array_equal(a, b))
 
-        1. Uniform time series (UTS). A :class:`NDVar` with time dimension
-           matching the data.
-        2. Non-uniform time series (NUTS). A :class:`Dataset` with columns
-           representing time stamps, event values and optionally event masks.
 
-    .. warning::
-        When changing a file in which a predictor is stored, cached results
-        using that predictor will not automatically be deleted. Use
-        :meth:`TRFExperiment.invalidate` whenever replacing a predictors.
+def _columns_equal(a: Var | Factor, b: Var | Factor) -> bool:
+    "Exact equality for one Dataset column"
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, Factor):
+        return len(a) == len(b) and all(ai == bi for ai, bi in zip(a, b))
+    return _arrays_equal(a.x, b.x)
+
+
+class UTSPredictor(FilePredictorBase):
+    """Uniform time series predictor, stored as :class:`NDVar` files
 
     Parameters
     ----------
     resample
-        How to resample predictor. When analyses are done at different sampling
-        rates, it is often convenient to generate predictors at a high sampling
-        rate and then downsample dynamically to match the data.
+        How to resample the predictor when an analysis is done at a lower
+        sampling rate than the stored :class:`NDVar`:
 
          - ``bin``: averaging the values in time bins
          - ``resample``: use appropriate filter followed by decimation
 
         For predictors with non-continuous information, such as impulses,
-        binning is more appropriate. Alternatively, the predictor can be saved
-        as a list of :class:`NDVar` with all the needed sampling frequencies.
-    columns
-        Only applies to NUTS (:class:`Dataset`) predictors.
-        Use a single file with different columns. The code is interpreted as
-        ``{name}-{value-column}-{mask-column}``. The code ``{name}`` alone
-        invokes an intercept, i.e. a value of 1 at each time point.
+        binning is more appropriate.
     sampling
-        Whether to expect a continuous or a discrete predictor (usually an
-        :class:`NDVar` or a :class:`Dataset`, respectively). Used to decide
-        whether to filter this predictor with ``filter_x='continuous'``.
-        Note: ``'discrete'`` predictors with ``*-step`` suffix will always be
-        trated as continuous.
+        Whether the predictor is continuous or discrete. Used to decide
+        whether to filter this predictor with ``filter_x='continuous'``
+        (default ``'continuous'``).
 
     Notes
     -----
-    The file-predictor expects to find a file for each stimulus containing the
-    predictor at::
-
-        {root}/derivatives/predictors/{stimulus}~{key}[-{variant}].pickle
-
-    Where ``stimulus`` refers to the name provided by ``stim_var``, ``key``
-    refers to the predictor's name (key used in :attr:`TRFExperiment.predictors`),
-    and the optional ``variant`` can be used to
-    distinguish different variants of the same predictor.
-
-    UTS
-    ^^^
     UTS predictors are stored as :class:`NDVar` objects with time dimension
-    matching the data. The ``-{variant}`` part of the filename can be used
-    freely to manage multiple predictors with the same
-    :class:`FilePredictor` instance. Use the ``resample`` parameter to
-    determine how the predictor is resampled to match the samplingrate of the
-    data.
+    matching the data (see :class:`FilePredictorBase` for the file location).
+    The file name after ``{key}`` can be extended freely
+    (``{stimulus}~{key}-{variant}``) to manage multiple predictor variants with
+    the same :class:`UTSPredictor` instance.
+    """
+    DICT_ATTRS = ('resample', 'sampling')
 
-    NUTS
-    ^^^^
-    NUTS predictors are specified as :class:`Dataset` objects.
-    When loading a predictor, :class:`Dataset`
-    predictors are converted to uniform time series by placing impulses at
-    time-stamps specified in the datasets.
+    def _file_stem(self, term: Term) -> str:
+        "File name (without extension) of the predictor file backing ``term``"
+        return term.uts_file_name
 
-    Without the ``columns`` option, the dataset is expected to contain the
-    following columns:
+    def _reference_stem(self, term: Term) -> str:
+        "Identifier for the cache-internal reference copy of ``term``'s relevant data"
+        return self._file_stem(term)
 
-     - ``time``: Time stamp of the event (impulse) in seconds.
-     - ``value``: Value of the impulse (magnitude).
-     - ``mask`` (optional): If present, the (boolean) mask will be applied to
-       ``value`` (i.e., ``value`` will be set to zero wherever ``mask`` is
-       ``False``).
+    def _prepare(self, x: NDVar, tstep: float) -> NDVar:
+        "Resample the raw file contents to ``tstep``"
+        if not isinstance(x, NDVar):
+            raise TypeError(f"UTSPredictor file must contain an NDVar, contains {x!r}")
+        return self._resample(x, tstep)
 
-    With the ``columns=True`` option, the columns containing the ``value`` and
-    ``mask`` values can be specified dynamically in the variable name, as
-    ``{key}-{value-column}`` or ``{key}-{value-column}-{mask-column}``.
+    def _relevant_data(self, contents: NDVar, term: Term) -> NDVar:
+        "The subset of the file contents that actually feeds the predictor (the whole NDVar)"
+        if not isinstance(contents, NDVar):
+            raise TypeError(f"UTSPredictor file must contain an NDVar, contains {contents!r}")
+        return contents
+
+    def _data_equal(self, stored: NDVar, current: NDVar) -> bool:
+        "Exact comparison of two versions of the relevant data"
+        return isinstance(stored, NDVar) and stored.dims == current.dims and _arrays_equal(stored.x, current.x)
+
+    def _generate(self, x: NDVar, tmin: float, tstep: float, n_samples: int, term: Term) -> NDVar:
+        # build the predictor for one input file from its raw (unpickled) contents
+        x = self._prepare(x, tstep)
+        if term.nuts_method:
+            raise TRFModelError(f"{term.string}: suffix {term.nuts_method} reserved for non-uniform time series predictors")
+        x = pad(x, tmin, nsamples=n_samples, set_tmin=True)
+        x.info['sampling'] = self._sampling('uts')
+        return x
+
+    def _generate_continuous(
+            self,
+            uts: UTS,  # time axis for the output
+            ds: Dataset,  # events
+            stim_var: str,
+            term: Term,
+            directory: Path,
+    ) -> NDVar:
+        # place multiple input files into a continuous predictor
+        cache = {stim: self._load(uts.tstep, self._file_stem(term.with_stimulus(stim)), directory) for stim in ds[stim_var].cells}
+        v = cache[ds[0, stim_var]]
+        dimnames = v.get_dimnames(first='time')
+        dims = (uts, *v.get_dims(dimnames[1:]))
+        x = NDVar.zeros(dims, term.key)
+        for t, stim in ds.zip('T_relative', stim_var):
+            x_stim = cache[stim]
+            i_start = uts._array_index(t + x_stim.time.tmin)
+            i_stop = i_start + len(x_stim.time)
+            if i_stop > len(uts):
+                raise ValueError(f"{term.string} for {stim} is longer than the data")
+            x.x[i_start:i_stop] = x_stim.get_data(dimnames)
+        return x
+
+
+class NUTSPredictor(FilePredictorBase):
+    """Non-uniform time series predictor, stored as :class:`Dataset` files
+
+    NUTS predictors are specified as :class:`Dataset` objects with a ``time``
+    column (time stamp of each event in seconds) and further columns with
+    event values. When loading a predictor, they are converted to uniform time
+    series by placing impulses at the time stamps. The columns to use are
+    specified in the model term, as ``{key}-{value-column}`` or
+    ``{key}-{value-column}-{mask-column}`` (the boolean mask column sets
+    ``value`` to zero wherever it is ``False``). The term ``{key}`` alone
+    invokes an intercept, i.e. a value of 1 at each time point.
+
+    Notes
+    -----
+    See :class:`FilePredictorBase` for the predictor file location.
 
     Examples
     --------
@@ -218,7 +293,7 @@ class FilePredictor(FilePredictorBase):
     This could be added to the experiment as follows:
 
         predictors = {
-            'word': FilePredictor(columns=True),
+            'word': NUTSPredictor(),
         }
 
     With this predictor, the following terms could be used for TRF models:
@@ -232,42 +307,25 @@ class FilePredictor(FilePredictorBase):
         experiment.load_trfs(x="word + word-frequency + word-surprisal")
 
     """
-    DICT_ATTRS = ('resample', 'columns', 'sampling')
+    DICT_ATTRS = ()
 
-    def __init__(
-            self,
-            resample: Literal['bin', 'resample'] = None,
-            columns: bool = False,
-            sampling: Literal['continuous', 'discrete'] = None,
-    ):
-        self.columns = columns
-        super().__init__(resample, sampling)
+    def __init__(self):
+        super().__init__()
 
-    def _prepare(self, x: NDVar | Dataset | list, tstep: float) -> NDVar | Dataset:
-        "Select/resample the raw file contents (:class:`NDVar`/:class:`Dataset`/list) to ``tstep``"
-        # allow for pre-computed resampled versions
-        if isinstance(x, list):
-            for xi in x:
-                if xi.time.tstep == tstep:
-                    return xi
-            raise OSError(f"Predictor file is a list but does not contain a predictor with {tstep=}")
-        elif isinstance(x, NDVar):
-            return self._resample(x, tstep)
-        elif isinstance(x, Dataset):
-            return x
-        raise TypeError(f'Predictor file has invalid type {type(x)}:\n{x!r}')
+    def _file_stem(self, term: Term) -> str:
+        "File name (without extension) of the predictor file backing ``term``"
+        return term.nuts_file_name
 
-    def _relevant_columns(self, contents: Dataset, term: Term) -> tuple[str, str | None]:
-        "The ``(value-column, mask-column)`` of a NUTS :class:`Dataset` that feed ``term``"
-        if self.columns:
-            return term.nuts_columns
-        return 'value', ('mask' if 'mask' in contents else None)
+    def _reference_stem(self, term: Term) -> str:
+        "Identifier for the cache-internal reference copy of ``term``'s relevant data"
+        # stimulus~file-column[-mask]
+        return term.string_without_nuts_method
 
-    def _relevant_data(self, contents: NDVar | Dataset | list, term: Term) -> NDVar | Dataset | list:
+    def _relevant_data(self, contents: Dataset, term: Term) -> Dataset:
         "The subset of the file contents that actually feeds the predictor"
         if not isinstance(contents, Dataset):
-            return contents
-        column_key, mask_key = self._relevant_columns(contents, term)
+            raise TypeError(f"NUTSPredictor file must contain a Dataset, contains {contents!r}")
+        column_key, mask_key = term.nuts_columns
         keys = ['time']
         for key in (column_key, mask_key):
             if key is not None and key in contents:
@@ -277,48 +335,29 @@ class FilePredictor(FilePredictorBase):
             out.info['tstop'] = contents.info['tstop']
         return out
 
-    def _relevant_digest(self, contents: NDVar | Dataset | list, term: Term) -> str:
-        "A stable digest of only the file data relevant to ``term`` (ignores unused columns)"
-        data = self._relevant_data(contents, term)
-        h = hashlib.sha1()
-        if isinstance(data, Dataset):
-            for key in sorted(data):
-                h.update(key.encode())
-                h.update(numpy.ascontiguousarray(data[key].x).tobytes())
-            h.update(repr(data.info.get('tstop')).encode())
-        else:
-            for x in (data if isinstance(data, list) else [data]):
-                h.update(numpy.ascontiguousarray(x.x).tobytes())
-                h.update(repr((x.time.tmin, x.time.tstep, x.time.nsamples)).encode())
-        return h.hexdigest()
+    def _data_equal(self, stored: Dataset, current: Dataset) -> bool:
+        "Exact comparison of two versions of the relevant data"
+        if not isinstance(stored, Dataset) or set(stored.keys()) != set(current.keys()):
+            return False
+        if stored.info.get('tstop') != current.info.get('tstop'):
+            return False
+        return all(_columns_equal(stored[key], current[key]) for key in current)
 
-    def _load(self, tstep: float, filename: str, directory: Path) -> NDVar:
-        return self._prepare(load.unpickle(directory / f'{filename}.pickle'), tstep)
-
-    def _generate(self, x: NDVar | Dataset | list, tmin: float, tstep: float, n_samples: int, term: Term):
+    def _generate(self, x: Dataset, tmin: float, tstep: float, n_samples: int, term: Term) -> NDVar:
         # build the predictor for one input file from its raw (unpickled) contents
-        x = self._prepare(x, tstep)
-        if isinstance(x, Dataset):
-            if tmin is None:
-                tmin = 0
-            if tstep is None:
-                tstep = 0.001
-            if n_samples is None:
-                if 'tstop' in x.info:
-                    tstop = x.info['tstop']
-                else:
-                    tstop = x[-1, 'time'] + 0.5
-                n_samples = int((tstop - tmin) // tstep)
-            uts = UTS(tmin, tstep, n_samples)
-            x = self._ds_to_ndvar(x, uts, term)
-            x.info['sampling'] = self._sampling('nuts', term.nuts_method)
-        elif isinstance(x, NDVar):
-            if term.nuts_method:
-                raise TRFModelError(f"{term.string}: suffix {term.nuts_method} reserved for non-uniform time series predictors")
-            x = pad(x, tmin, nsamples=n_samples, set_tmin=True)
-            x.info['sampling'] = self._sampling('uts')
-        else:
-            raise RuntimeError(x)
+        if tmin is None:
+            tmin = 0
+        if tstep is None:
+            tstep = 0.001
+        if n_samples is None:
+            if 'tstop' in x.info:
+                tstop = x.info['tstop']
+            else:
+                tstop = x[-1, 'time'] + 0.5
+            n_samples = int((tstop - tmin) // tstep)
+        uts = UTS(tmin, tstep, n_samples)
+        x = self._ds_to_ndvar(x, uts, term)
+        x.info['sampling'] = self._sampling('nuts', term.nuts_method)
         return x
 
     def _generate_continuous(
@@ -328,49 +367,24 @@ class FilePredictor(FilePredictorBase):
             stim_var: str,
             term: Term,
             directory: Path,
-    ):
+    ) -> NDVar:
         # place multiple input files into a continuous predictor
-        cache = {stim: self._load(uts.tstep, term.with_stimulus(stim).nuts_file_name(self.columns), directory) for stim in ds[stim_var].cells}
-        # determine type
-        stim_type = {type(s) for s in cache.values()}
-        assert len(stim_type) == 1
-        stim_type = stim_type.pop()
-        # generate x
-        if stim_type is Dataset:
-            dss = []
-            for t, stim in ds.zip('T_relative', stim_var):
-                x = cache[stim].copy()
-                x['time'] += t
-                dss.append(x)
-                if term.nuts_method:
-                    x_stop_ds = t_stop_ds(x, t)
-                    dss.append(x_stop_ds)
-            x = self._ds_to_ndvar(combine(dss), uts, term)
-        elif stim_type is NDVar:
-            v = cache[ds[0, stim_var]]
-            dimnames = v.get_dimnames(first='time')
-            dims = (uts, *v.get_dims(dimnames[1:]))
-            x = NDVar.zeros(dims, term.key)
-            for t, stim in ds.zip('T_relative', stim_var):
-                x_stim = cache[stim]
-                i_start = uts._array_index(t + x_stim.time.tmin)
-                i_stop = i_start + len(x_stim.time)
-                if i_stop > len(uts):
-                    raise ValueError(f"{term.string} for {stim} is longer than the data")
-                x.x[i_start:i_stop] = x_stim.get_data(dimnames)
-        else:
-            raise RuntimeError(f"{stim_type=}")
-        return x
+        cache = {stim: self._load(uts.tstep, self._file_stem(term.with_stimulus(stim)), directory) for stim in ds[stim_var].cells}
+        dss = []
+        for t, stim in ds.zip('T_relative', stim_var):
+            x = cache[stim].copy()
+            x['time'] += t
+            dss.append(x)
+            if term.nuts_method:
+                x_stop_ds = t_stop_ds(x, t)
+                dss.append(x_stop_ds)
+        return self._ds_to_ndvar(combine(dss), uts, term)
 
     def _ds_to_ndvar(self, ds: Dataset, uts: UTS, term: Term):
-        if self.columns:
-            column_key, mask_key = term.nuts_columns
-            if column_key is None:
-                column_key = 'value'
-                ds[:, column_key] = 1
-        else:
+        column_key, mask_key = term.nuts_columns
+        if column_key is None:
             column_key = 'value'
-            mask_key = 'mask' if 'mask' in ds else None
+            ds[:, column_key] = 1
 
         if mask_key:
             mask = ds[mask_key].x
@@ -421,15 +435,15 @@ class SessionPredictor(FilePredictorBase):
     Parameters
     ----------
     resample
-        See :class:`FilePredictor`.
+        See :class:`FilePredictorBase`.
     sampling
-        See :class:`FilePredictor`.
+        See :class:`FilePredictorBase`.
 
     Notes
     -----
-    In contrast to a :class:`FilePredictor`, which represents a specific
-    stimulus, a :class:`SessionPredictor` represents a whole recording session
-    for a specific subject.
+    In contrast to a :class:`UTSPredictor` or :class:`NUTSPredictor`, which
+    represent a specific stimulus, a :class:`SessionPredictor` represents a
+    whole recording session for a specific subject.
 
     Session-predictors need to provide a different predictor file for each
     subject, because the experiment timeline may differ between subjects.

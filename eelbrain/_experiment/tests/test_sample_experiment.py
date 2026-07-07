@@ -1777,32 +1777,65 @@ def test_predictor_subset_fingerprint(samples_experiment):
 
     pdir = Path(root) / 'derivatives' / 'predictors'
     pdir.mkdir(parents=True, exist_ok=True)
+    ref_dir = Path(root) / 'derivatives' / 'eelbrain' / 'cache' / 'predictor'
     mtime = [1_700_000_000]
 
     def write(stim, value, unused):
-        # a NUTS Dataset predictor with an extra column ('unused') the term ignores
-        ds = Dataset({'time': Var([0., .1, .2, .3, .4]), 'value': Var(value), 'unused': Var(unused)})
-        path = pdir / f'{stim}~env.pickle'
+        # a NUTS Dataset predictor with a bool mask and an extra column ('unused') the term ignores
+        ds = Dataset({'time': Var([0., .1, .2, .3, .4]), 'value': Var(value), 'mask': Var(np.array([True, True, True, True, False])), 'unused': Var(unused)})
+        path = pdir / f'{stim}~word.pickle'
         save.pickle(ds, path)
         mtime[0] += 1  # ensure the quick (mtime) fingerprint changes between writes
         os.utime(path, (mtime[0], mtime[0]))
+
+    def read_reference(stim):
+        return json.loads((ref_dir / f'{stim}~word-value-mask.json').read_text())
 
     ones = [1., 1., 1., 1., 1.]
     for stim in ('auditory', 'visual'):
         write(stim, ones, [0., 0., 0., 0., 0.])
 
-    res = e.load_trf('env', 0, 0.1, samplingrate=samplingrate)
+    # bare key = intercept: unit impulse at each time stamp
+    x = e.load_predictor('auditory~word', 0.1)
+    assert x.sum() == 5.
+
+    res = e.load_trf('word-value-mask', 0, 0.1, samplingrate=samplingrate)
     assert isinstance(res, BoostingResult)
-    options = e._trf_options('env', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
-    assert e._resolve_derivative('trf', options=options).is_valid()
+    options = e._trf_options('word-value-mask', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
+    ctx = e._resolve_derivative('trf', options=options)
+    assert ctx.is_valid()
+
+    # dependent manifests store only the small version identity, never the data
+    for code in ('auditory~word-value-mask', 'visual~word-value-mask'):
+        fingerprint = ctx._manifest().dependencies[code]['fingerprint']
+        assert 'data' not in fingerprint
+        assert set(fingerprint['version']) == {'uid', 'serial'}
+    version_0 = read_reference('auditory')['version']
+    assert version_0['serial'] == 0
 
     # editing only the unused column (new mtime, same relevant data) keeps the TRF valid
     write('auditory', ones, [9., 9., 9., 9., 9.])
     assert e._resolve_derivative('trf', options=options).is_valid()
+    reference = read_reference('auditory')
+    assert reference['version'] == version_0  # same data → same version
+    assert reference['source']['mtime'] == mtime[0]  # refreshed for the fast path
 
-    # editing a used column (value) invalidates the TRF
+    # editing a used column (value) invalidates the TRF and bumps the serial
     write('auditory', [2., 2., 2., 2., 2.], [9., 9., 9., 9., 9.])
     assert not e._resolve_derivative('trf', options=options).is_valid()
+    assert read_reference('auditory')['version'] == {'uid': version_0['uid'], 'serial': 1}
+
+    # a deleted reference is recreated with a new uid → dependents rebuild, never stale-accept
+    e.load_trf('word-value-mask', 0, 0.1, samplingrate=samplingrate)
+    assert e._resolve_derivative('trf', options=options).is_valid()
+    reference = read_reference('auditory')
+    (ref_dir / reference['data_file']).unlink()
+    (ref_dir / 'auditory~word-value-mask.json').unlink()
+    write('auditory', [2., 2., 2., 2., 2.], [9., 9., 9., 9., 9.])  # touch to force a quick-fingerprint mismatch
+    assert not e._resolve_derivative('trf', options=options).is_valid()
+    version_new = read_reference('auditory')['version']
+    assert version_new['serial'] == 0
+    assert version_new['uid'] != version_0['uid']
 
 
 @requires_mne_sample_data
@@ -1823,7 +1856,7 @@ def test_load_trf_source(samples_experiment):
 
 @requires_mne_sample_data
 def test_load_trf_filepredictor(samples_experiment):
-    "load_trf with a FilePredictor: per-stimulus predictor dependency edges"
+    "load_trf with a UTSPredictor: per-stimulus predictor dependency edges"
     from eelbrain import BoostingResult, NDVar, UTS, save
     from eelbrain._experiment.tests.sample_experiment import SampleTRF
 
@@ -1842,8 +1875,9 @@ def test_load_trf_filepredictor(samples_experiment):
     pdir.mkdir(parents=True, exist_ok=True)
     uts = UTS(0, tstep, 60)
     rng = np.random.RandomState(0)
-    for stim in ('auditory', 'visual'):
-        save.pickle(NDVar(rng.normal(size=60), uts, name='env'), pdir / f'{stim}~env.pickle')
+    predictor_ndvars = {stim: NDVar(rng.normal(size=60), uts, name='env') for stim in ('auditory', 'visual')}
+    for stim, ndvar in predictor_ndvars.items():
+        save.pickle(ndvar, pdir / f'{stim}~env.pickle')
 
     # load_predictor shapes one stimulus' file into an NDVar at the requested tstep
     x = e.load_predictor('auditory~env', tstep)
@@ -1861,9 +1895,18 @@ def test_load_trf_filepredictor(samples_experiment):
     assert ctx.is_valid()
     assert {'auditory~env', 'visual~env'} <= set(ctx._manifest().dependencies)
 
-    # editing a predictor file invalidates the cached TRF
-    save.pickle(NDVar(rng.normal(size=60), uts, name='env'), pdir / 'auditory~env.pickle')
-    assert not e._resolve_derivative('trf', options=options).is_valid()
+    # the manifest stores only the small version identity, never the data
+    for code in ('auditory~env', 'visual~env'):
+        fingerprint = ctx._manifest().dependencies[code]['fingerprint']
+        assert 'data' not in fingerprint
+        assert set(fingerprint['version']) == {'uid', 'serial'}
+
+    # re-saving identical data (new mtime) keeps the TRF valid: the deep
+    # comparison against the reference copy absorbs the file-stat drift
+    import os
+    save.pickle(predictor_ndvars['auditory'], pdir / 'auditory~env.pickle')
+    os.utime(pdir / 'auditory~env.pickle', (1_700_000_000, 1_700_000_000))
+    assert e._resolve_derivative('trf', options=options).is_valid()
 
     # editing a predictor file invalidates the cached TRF
     save.pickle(NDVar(rng.normal(size=60), uts, name='env'), pdir / 'auditory~env.pickle')

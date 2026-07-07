@@ -47,10 +47,12 @@ import hashlib
 import json
 import logging
 from pathlib import Path
+import pickle
 import re
 import shutil
 import tomllib
 from typing import Any, Generic, TypeVar
+from uuid import uuid4
 import warnings
 
 import mne
@@ -610,6 +612,111 @@ class Input(DependencyNode[T]):
     def exists(self, ctx: Request) -> bool:
         """Return whether the input artifact for this request exists."""
         return self.path(ctx).exists()
+
+
+class VersionedInput(Input[T]):
+    """Input tracked through one canonical reference copy and a version identity.
+
+    For inputs whose data is too large to embed in every dependent manifest
+    (e.g. predictor time series): the node keeps a single canonical copy of the
+    tracked data under ``cache-dir/<node-name>/``, together with a version
+    identity ``{'uid': <uuid4 hex>, 'serial': <int>}``. Dependent manifests
+    only store the small version identity (subclasses include
+    :meth:`reference_version` in :meth:`~DependencyNode.fingerprint`), so the
+    data exists once regardless of how many artifacts depend on it.
+
+    Change detection is exact: when the cheap source fingerprint
+    (typically a file stat) drifts, the current data is compared against the
+    reference copy. Identical data refreshes the stored source fingerprint
+    without changing the version, so dependents stay valid; changed data
+    becomes the new reference with an incremented ``serial``, so dependents
+    rebuild. ``uid`` is minted once when the reference is created, which makes
+    the identity reset-safe: deleting and recreating a reference always
+    changes it (a bare counter could climb back to a previously stored value
+    with different data).
+    """
+
+    def _reference_stem(self, ctx: Request) -> str:
+        """Stable identifier for the tracked data; sanitized for use as a file name."""
+        raise NotImplementedError
+
+    def _source_fingerprint(self, ctx: Request) -> dict[str, Any]:
+        """Cheap fingerprint of the source (e.g. :func:`file_fingerprint`); the data is only compared when it drifts."""
+        raise NotImplementedError
+
+    def _current_data(self, ctx: Request) -> Any:
+        """Load the tracked data from the source."""
+        raise NotImplementedError
+
+    def _data_equal(self, ctx: Request, stored: Any, current: Any) -> bool:
+        """Exact comparison between the reference copy and the current data."""
+        raise NotImplementedError
+
+    def _reference_path(self, ctx: Request) -> Path:
+        stem = CACHE_PATH_UNSAFE.sub(CACHE_PATH_UNSAFE_REPLACEMENT, self._reference_stem(ctx))
+        return ctx.registry.cache_dir / self.name / f'{stem}.json'
+
+    def reference_version(self, ctx: Request) -> dict[str, Any]:
+        """Version identity of the tracked data, updating the reference when the source changed.
+
+        May write to the reference (a data pickle plus a JSON pointing to it)
+        even during a mere validity check; this parallels the in-place
+        dependency-entry refresh the registry performs on parent manifests.
+        Concurrent writers racing on the same change write identical content
+        (the atomic replace picks one); concurrent creation can mint two
+        ``uid`` values, costing at most one spurious rebuild, never a stale
+        accept.
+        """
+        path = self._reference_path(ctx)
+        # canonicalize so equality survives the JSON round-trip (tuples, key order)
+        source = ctx.registry.canonicalize(self._source_fingerprint(ctx))
+        reference = self._read_reference(path)
+        if reference is not None and reference['source'] == source:
+            return reference['version']
+        data = self._current_data(ctx)
+        if reference is not None:
+            stored = self._read_reference_data(path, reference)
+            if stored is None:  # data file lost → cannot compare, treat as new reference
+                reference = None
+            elif self._data_equal(ctx, stored, data):
+                # only the source stat drifted → refresh it so later checks take the fast path
+                reference['source'] = source
+                _atomic_write_text(path, json.dumps(reference, sort_keys=True, indent=2))
+                return reference['version']
+        if reference is None:
+            version = {'uid': uuid4().hex, 'serial': 0}
+        else:
+            version = {'uid': reference['version']['uid'], 'serial': reference['version']['serial'] + 1}
+        data_file = f'{path.stem}.{version["serial"]}.pickle'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # write the data first, then atomically replace the JSON (the source of
+        # truth), so an interrupted write leaves the old reference intact
+        data_path = path.parent / data_file
+        tmp_path = data_path.with_name(f'{data_path.name}.tmp')
+        tmp_path.write_bytes(pickle.dumps(data, pickle.HIGHEST_PROTOCOL))
+        tmp_path.replace(data_path)
+        _atomic_write_text(path, json.dumps({'source': source, 'version': version, 'data_file': data_file}, sort_keys=True, indent=2))
+        return version
+
+    @staticmethod
+    def _read_reference(path: Path) -> dict[str, Any] | None:
+        "Read the reference JSON; an unreadable or malformed reference counts as missing."
+        if not path.exists():
+            return None
+        try:
+            reference = json.loads(path.read_text())
+            if isinstance(reference, dict) and {'source', 'version', 'data_file'} <= reference.keys():
+                return reference
+        except (OSError, ValueError):
+            pass
+        return None
+
+    @staticmethod
+    def _read_reference_data(path: Path, reference: dict[str, Any]) -> Any | None:
+        try:
+            return pickle.loads((path.parent / reference['data_file']).read_bytes())
+        except (OSError, pickle.UnpicklingError, EOFError, AttributeError, ImportError):
+            return None
 
 
 class Derivative(DependencyNode[T]):

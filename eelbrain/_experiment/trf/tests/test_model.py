@@ -10,31 +10,42 @@ def test_term():
     assert term.code == 'gammatone'
     assert term.key == 'gammatone'
     assert term.nuts_method is None
-    assert term.nuts_file_name(False) == 'gammatone'
+    assert term.uts_file_name == 'gammatone'
 
     term = parse_term('1~gammatone')
     assert term.stimulus == '1'
     assert term.code == 'gammatone'
 
-    # stimulus + columns
+    term = parse_term('1~gammatone-1')
+    assert term.code == 'gammatone-1'
+
+    # NUTS: stimulus + columns
+    term = parse_term('stim~word')
+    assert term.nuts_columns == (None, None)
+    term = parse_term('stim~word-frequency')
+    assert term.nuts_columns == ('frequency', None)
     term = parse_term('stim~word-frequency-noun')
+    assert term.nuts_columns == ('frequency', 'noun')
     assert term.stimulus == 'stim'
     assert term.code == 'word-frequency-noun'
     assert term.key == 'stim_word_frequency_noun'
     assert term.nuts_method is None
-    assert term.nuts_columns == ('frequency', 'noun')
-    assert term.nuts_file_name(False) == 'stim~word-frequency-noun'
-    assert term.nuts_file_name(True) == 'stim~word'
+    assert term.uts_file_name == 'stim~word-frequency-noun'
+    assert term.nuts_file_name == 'stim~word'
     assert term.with_stimulus('other').string == 'other~word-frequency-noun'
 
     # NUTS method suffix
-    term = parse_term('stim~envelope-step')
+    term = parse_term('stim~word-surprisal-step')
     assert term.nuts_method == 'step'
-    assert term.nuts_file_name(False) == 'stim~envelope'
+    assert term.nuts_file_name == 'stim~word'
+    assert term.string_without_nuts_method == 'stim~word-surprisal'
 
     # too many '-' separated elements (with columns)
     with pytest.raises(TRFModelError):
         parse_term('stim~word-a-b-c').nuts_columns
+    # double '--'
+    with pytest.raises(TRFModelError):
+        parse_term('stim~word--b')
 
 
 models = {

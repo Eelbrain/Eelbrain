@@ -7,7 +7,7 @@ from ..._mne import morph_source_space
 from ..._ndvar.uts import pad
 from ..._utils.mne_utils import is_fake_mri
 from ..configuration import Configuration
-from ..derivative_cache import Dependency, Derivative, Input, OptionSpec, Request, UncachedDerivative, file_fingerprint
+from ..derivative_cache import Dependency, Derivative, OptionSpec, Request, UncachedDerivative, VersionedInput, file_fingerprint
 from ..epochs.config import EpochCollection
 from ..pathing import MRI_SDIR, mri_dir
 from ..preprocessing import RawFilter, RawPipe, RawSource
@@ -15,7 +15,7 @@ from ..source.nodes import _subject_state
 from .estimator import Estimator
 from .job import TRFJob
 from .model import Model, Term, TRFModelError, parse_term
-from .predictor import EventPredictor, FilePredictor, SessionPredictor
+from .predictor import EventPredictor, NUTSPredictor, UTSPredictor
 
 
 def filter_pipes(raw: dict[str, RawPipe], raw_name: str) -> list[RawFilter]:
@@ -45,15 +45,20 @@ def filter_predictor(x: NDVar, raw: dict[str, RawPipe], raw_name: str, filter_x:
     return x
 
 
-class PredictorInput(Input[NDVar]):
+class PredictorInput(VersionedInput[NDVar]):
     """Read the relevant data of a single predictor file
 
-    Reads one ``{stimulus}~{code}.pickle`` file of a :class:`FilePredictor` and
-    returns the subset of its contents that actually feeds the predictor (for a
-    NUTS :class:`Dataset`, only the ``time`` and value/mask columns; an
-    :class:`NDVar`/list is returned unchanged). Shaping that data into a
-    predictor on the M/EEG time axis (resampling, NUTS conversion, padding) is
-    done by :class:`TRFDerivative`, which knows the response sampling rate.
+    Reads one ``{stimulus}~{code}.pickle`` predictor file and returns the
+    subset of its contents that actually feeds the predictor (for a
+    :class:`NUTSPredictor`, only the ``time`` and value/mask columns; a
+    :class:`UTSPredictor` NDVar is returned unchanged). Shaping that data into
+    a predictor on the M/EEG time axis (resampling, NUTS conversion, padding)
+    is done by :class:`TRFDerivative`, which knows the response sampling rate.
+
+    Because the relevant data can be large, dependent manifests do not embed
+    it; they store a small version identity backed by one canonical reference
+    copy per (file, relevant columns) in the cache (see
+    :class:`~..derivative_cache.VersionedInput`).
 
     Parameters
     ----------
@@ -72,22 +77,22 @@ class PredictorInput(Input[NDVar]):
     def __init__(
             self,
             root: str | Path,
-            predictors: dict[str, FilePredictor],
+            predictors: dict[str, Configuration],
     ):
         self.root = Path(root)
         self.predictors = predictors
         self.directory = self.root / 'derivatives' / 'predictors'
 
-    def _resolve(self, ctx: Request) -> tuple[Term, FilePredictor]:
+    def _resolve(self, ctx: Request) -> tuple[Term, UTSPredictor | NUTSPredictor]:
         term = parse_term(ctx.options['code'])
         predictor = self.predictors[term.predictor_key]
-        if not isinstance(predictor, FilePredictor):
+        if not isinstance(predictor, (UTSPredictor, NUTSPredictor)):
             raise NotImplementedError(f"{term.string}: loading {type(predictor).__name__} is not supported")
         return term, predictor
 
     def path(self, ctx: Request) -> Path:
         term, predictor = self._resolve(ctx)
-        return self.directory / f"{term.nuts_file_name(predictor.columns)}.pickle"
+        return self.directory / f"{predictor._file_stem(term)}.pickle"
 
     def dependency_fingerprint_quick(self, ctx: Request, view: str | None = None) -> dict:
         term, predictor = self._resolve(ctx)
@@ -97,7 +102,22 @@ class PredictorInput(Input[NDVar]):
         }
 
     def fingerprint(self, ctx: Request) -> dict:
-        return {'data': self.load(ctx)}
+        term, predictor = self._resolve(ctx)
+        return {'config': predictor, 'version': self.reference_version(ctx)}
+
+    def _reference_stem(self, ctx: Request) -> str:
+        term, predictor = self._resolve(ctx)
+        return predictor._reference_stem(term)
+
+    def _source_fingerprint(self, ctx: Request) -> dict:
+        return file_fingerprint(self.root, self.path(ctx))
+
+    def _current_data(self, ctx: Request):
+        return self.load(ctx)
+
+    def _data_equal(self, ctx: Request, stored, current) -> bool:
+        term, predictor = self._resolve(ctx)
+        return predictor._data_equal(stored, current)
 
     def load(self, ctx: Request):
         term, predictor = self._resolve(ctx)
@@ -154,7 +174,7 @@ class TRFDerivative(Derivative[object]):
             self,
             root: str | Path,
             estimators: dict[str, Estimator],
-            predictors: dict[str, FilePredictor],
+            predictors: dict[str, Configuration],
             named_models: dict[str, Model],
             stim_var: str,
             raw: dict[str, RawPipe],
@@ -209,13 +229,13 @@ class TRFDerivative(Derivative[object]):
         for extra in est.extra_inputs:
             deps.append(Dependency(extra))
 
-        # one predictor-file edge per (FilePredictor term, stimulus); the stimuli
+        # one predictor-file edge per (file-predictor term, stimulus); the stimuli
         # are data-derived, so enumerate them from the (lightweight) epoch events
         edges: dict[str, Dependency] = {}
         events = None
         for term in self._model(ctx).terms:
             predictor, stim_var = self._term_predictor(term)
-            if not isinstance(predictor, FilePredictor):
+            if not isinstance(predictor, (UTSPredictor, NUTSPredictor)):
                 continue
             if events is None:
                 events = ctx.load('epoch-events')
@@ -278,12 +298,10 @@ class TRFDerivative(Derivative[object]):
             x = predictor._generate(y.time, ds, term)
             x.name = term.string
             return x
-        if isinstance(predictor, SessionPredictor):
-            raise NotImplementedError(f"{term.string}: {type(predictor).__name__} is not supported yet")
-        if not isinstance(predictor, FilePredictor):
+        elif not isinstance(predictor, (UTSPredictor, NUTSPredictor)):
             raise NotImplementedError(f"{term.string}: loading {type(predictor).__name__} is not supported")
 
-        # FilePredictor: build each stimulus' predictor from its file data at the
+        # file predictor: build each stimulus' predictor from its file data at the
         # response sampling rate, then align per case to the response
         if stim_var not in ds:
             raise TRFModelError(f"{term.string}: stimulus variable {stim_var!r} not in the data")
@@ -297,7 +315,7 @@ class TRFDerivative(Derivative[object]):
         x.name = term.string
         return x
 
-    def _aligned_predictor(self, ctx: Request, predictor: FilePredictor, term: Term, stim: str, time, filter_x: bool | str) -> NDVar:
+    def _aligned_predictor(self, ctx: Request, predictor: UTSPredictor | NUTSPredictor, term: Term, stim: str, time, filter_x: bool | str) -> NDVar:
         "Build one stimulus' predictor from its file data and align it to ``time``"
         subset = ctx.load(term.with_stimulus(stim).string)
         x = predictor._generate(subset, None, time.tstep, None, term)
