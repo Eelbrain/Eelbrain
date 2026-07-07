@@ -54,6 +54,10 @@ class SampleExperiment(Pipeline):
         'cov': SecondaryEpoch('target', tmax=0),
     }
 
+    epoch_rejection = {
+        'manual': ManualRejection(),
+    }
+
     tests = {
         # T-test to compare left-sided vs right-sided stimulation
         'left=right': TTestRelated('side', 'left', 'right'),

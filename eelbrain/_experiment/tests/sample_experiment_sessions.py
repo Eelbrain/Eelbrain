@@ -41,3 +41,7 @@ class SampleExperiment(Pipeline):
         'target2': PrimaryEpoch('sample2', "event == 'target'", decim=5),
         'super': SuperEpoch(('target1', 'target2')),
     }
+
+    epoch_rejection = {
+        'manual': ManualRejection(),
+    }

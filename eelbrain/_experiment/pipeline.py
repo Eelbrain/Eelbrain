@@ -172,9 +172,7 @@ class Pipeline(StateModel):
         'KIT-BRAINVISION': ('HEOGL', 'HEOGR', 'VEOGb'),
         'neuromag306mag': ('MEG 0121', 'MEG 1411'),
     }
-    # epoch_rejection: named EpochRejection configurations, selected through the
-    # 'epoch_rejection' state. A built-in 'manual' entry (ManualRejection()) is
-    # always available; '' selects no rejection.
+    # epoch_rejection: named EpochRejection configurations, selected through the 'epoch_rejection' state.
     epoch_rejection = {}
 
     # references: named Reference configurations, selected through the
@@ -354,7 +352,7 @@ class Pipeline(StateModel):
         self._epochs = ConfigurationDict('epoch', assemble_epochs(self.epochs, self._tasks))
 
         # epoch rejection; 'manual' is always available, '' selects no rejection
-        epoch_rejection: dict[str, EpochRejection | None] = {'': None, 'manual': ManualRejection()}
+        epoch_rejection: dict[str, EpochRejection | None] = {'': None}
         for name, rejection in self.epoch_rejection.items():
             if not isinstance(name, str):
                 raise TypeError(f"epoch_rejection[{name!r}]: name must be a string")
