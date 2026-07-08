@@ -96,7 +96,7 @@ def test_interpolate_bad_windows_eeg():
 
 
 def test_interpolate_bad_windows_eeg_zeroes_when_too_many_bad():
-    "Windowed EEG interpolation zeroes bad channels when more than max_interpolate are bad"
+    "Windowed EEG interpolation zeroes intervals when more than max_interpolate channels are bad"
     ch_names = ['Fp1', 'Fp2', 'F3', 'F4', 'C3', 'C4', 'P3', 'P4', 'O1', 'O2', 'F7', 'F8', 'T7', 'T8', 'P7', 'P8', 'Fz', 'Cz', 'Pz', 'Oz']
     montage = mne.channels.make_standard_montage('standard_1020')
     info = mne.create_info(ch_names, 100., 'eeg')
@@ -105,16 +105,14 @@ def test_interpolate_bad_windows_eeg_zeroes_when_too_many_bad():
     data = rng.randn(1, len(ch_names), 50) * 1e-6
     epochs = mne.EpochsArray(data.copy(), info, verbose='error')
 
-    # 3 channels bad over samples 10:30, but max_interpolate=2 -> zero them instead
+    # 3 channels bad over samples 10:30, but max_interpolate=2 -> zero the interval instead
     bad = ['F3', 'C3', 'P3']
     windows = [[BadChannelWindow(ch, 0.10, 0.30) for ch in bad]]
     _interpolate_bad_windows_eeg(epochs, windows, max_interpolate=2)
 
-    picks_bad = [ch_names.index(ch) for ch in bad]
     d = epochs.get_data(copy=True)
-    # bad channels set to 0 inside the window
-    assert np.array_equal(d[0, picks_bad, 10:30], np.zeros((len(bad), 20)))
-    # outside the window and other channels unchanged
-    assert np.array_equal(d[0, picks_bad, :10], data[0, picks_bad, :10])
-    assert np.array_equal(d[0, picks_bad, 30:], data[0, picks_bad, 30:])
-    assert np.array_equal(np.delete(d[0], picks_bad, 0), np.delete(data[0], picks_bad, 0))
+    # the whole interval is set to 0
+    assert np.array_equal(d[0, :, 10:30], np.zeros((len(ch_names), 20)))
+    # outside the interval, data are unchanged
+    assert np.array_equal(d[0, :, :10], data[0, :, :10])
+    assert np.array_equal(d[0, :, 30:], data[0, :, 30:])

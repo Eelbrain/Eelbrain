@@ -265,8 +265,8 @@ def _interpolate_bad_windows_eeg(
         Bad-channel time windows specified for each epoch.
     max_interpolate
         Maximum number of channels to interpolate simultaneously. In a time
-        interval where more channels than this are bad, the bad channels are set
-        to 0 instead of interpolated (too few good channels remain for a reliable
+        interval where more channels than this are bad, all channels are set to
+        0 instead of interpolated (too few good channels remain for a reliable
         interpolation).
     """
     if len(windows_by_epoch) != len(epochs):
@@ -278,9 +278,7 @@ def _interpolate_bad_windows_eeg(
         windows = [w for w in windows if w.channel in eeg_chs]
         for a, b, key in _window_intervals(windows, epochs):
             if len(key) > max_interpolate:
-                # too many bad channels to interpolate reliably: zero them out
-                # picks_bad = mne.pick_channels(epochs.ch_names, key)
-                # epochs._data[i, picks_bad, a:b] = 0
+                # Too many bad channels to interpolate reliably: mask the interval.
                 epochs._data[i, :, a:b] = 0
                 continue
             if key in interp_cache:
