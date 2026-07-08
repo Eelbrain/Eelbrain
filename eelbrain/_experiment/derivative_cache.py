@@ -29,6 +29,13 @@ Manifests store the derivative fingerprint plus dependency fingerprints, so a
 cache hit is valid when the artifact, its normalized key, and its dependency
 graph still match the current pipeline configuration.
 
+Dependency edges are validated for key-field coverage (see
+:meth:`DerivativeRegistry._check_edge_key_coverage`): when a dependency's output
+is sensitive to a state field, the depending node must either key on that field
+too, or pin it on the edge (the way aggregation over a field is expressed).
+Otherwise the parent would silently share one cache slot across different values
+of that field.
+
 Artifacts inside ``cache-dir`` keep sidecar manifests and can be rebuilt
 automatically when they go stale. Artifacts stored elsewhere are treated as
 user-managed outputs: their manifests are mirrored under the owning
@@ -348,7 +355,10 @@ class Dependency:
         has a stable distinct name in the dependency manifest.
     state
         Optional state updates for this dependency. The mapping is merged on
-        top of the parent state before resolving the dependency.
+        top of the parent state before resolving the dependency. This is also
+        how a dependency's key field is satisfied when the parent does not key
+        on it — pinning it here (the way aggregation over a field is expressed)
+        covers it for the edge-coverage check.
     options
         Optional child request options passed to the target node when the
         dependency is resolved. Keys must be declared by the target node and
@@ -408,6 +418,11 @@ class DependencyNode(Generic[T]):
         :meth:`override_key_fields` when a node's key depends on the state
         dynamically. An explicit empty tuple opts out (the
         node manages its own identity via a :meth:`Derivative.key` override).
+        Mandatory for :class:`Input` nodes (only ``()`` opts out). ``key_fields``
+        also feeds the edge-coverage check (see
+        :meth:`DerivativeRegistry._check_edge_key_coverage`): every field a
+        dependency keys on must be pinned on the edge or covered by the parent's
+        key fields.
     key_options
         Options that affect how this node's artifact is built, and that enter
         the cache key. Keys declare the option names; values are their
@@ -455,6 +470,13 @@ class DependencyNode(Generic[T]):
         :attr:`key_fields`.
         """
         return None
+
+    def _get_key_fields(self, ctx: Request) -> tuple[str, ...]:
+        fields = self.override_key_fields(ctx)
+        if fields is None:
+            assert self.key_fields is not UNSET
+            return self.key_fields
+        return fields
 
     def override_key_options(self, ctx: Request) -> tuple[str, ...] | None:
         """Dynamically choose the options that enter the cache key for this request.
@@ -775,10 +797,7 @@ class Derivative(DependencyNode[T]):
         fields. The label is only for readability; the hash derived from
         :meth:`key` remains authoritative.
         """
-        fields = self.override_key_fields(ctx)
-        if fields is None:
-            assert self.key_fields is not UNSET
-            fields = self.key_fields
+        fields = self._get_key_fields(ctx)
         label_key = canonical_state_subset(ctx.state, fields) if fields else ctx.key()
         return _simple_cache_label(label_key)
 
@@ -865,11 +884,7 @@ class Derivative(DependencyNode[T]):
         implementations can include arbitrary supported values without
         pre-serializing them.
         """
-        fields = self.override_key_fields(ctx)
-        if fields is None:
-            if self.key_fields is UNSET:
-                raise RuntimeError(f"{self.name!r}: cached derivative must declare key_fields, or override override_key_fields()/key()")
-            fields = self.key_fields
+        fields = self._get_key_fields(ctx)
         key = canonical_state_subset(ctx.state, fields)
         option_names = self.override_key_options(ctx)
         options = ctx.options if option_names is None else {name: ctx.options[name] for name in option_names}
@@ -1149,6 +1164,7 @@ class Request(Generic[T]):
         self.node = node
         self.registry = registry
         self.root = registry.root
+        self.datatype = registry.datatype
         self._state = state
         self.state = state
         self.options = options
@@ -1172,17 +1188,17 @@ class Request(Generic[T]):
         self._build_deps: dict[str, Dependency] | None = None
         self._build_deps_depth = 0
         # Restricted view for enforcement; None when there is nothing to enforce.
-        # Skipped for Input (inputs locate external files from arbitrary state).
         # The readable set is this request's identity fields — from
         # override_key_fields() when defined, else the static key_fields — so a
         # node that keys dynamically need not also declare a redundant static
         # key_fields. A node that declares neither (e.g. a result node that
-        # overrides key() and manages its own identity) is not read-restricted.
+        # overrides key() and manages its own identity, or an Input with
+        # key_fields=()) is not read-restricted. Inputs are restricted only in
+        # their cache-affecting methods (fingerprint/dependencies); load() etc.
+        # run outside the check context and may read arbitrary state.
         self._restricted_state: _RestrictedStateView | None = None
-        if isinstance(node, Derivative):
-            read_fields = node.override_key_fields(self)
-            if read_fields is None:
-                read_fields = () if node.key_fields is UNSET else node.key_fields
+        if isinstance(node, (Derivative, Input)):
+            read_fields = node._get_key_fields(self)
             allowed = frozenset(read_fields) | frozenset(node.fixed_state)
             if allowed:
                 self._restricted_state = _RestrictedStateView(state, allowed)
@@ -1226,7 +1242,8 @@ class Request(Generic[T]):
         :attr:`~Derivative.key_fields` or :attr:`~DependencyNode.fixed_state`
         raises :class:`RuntimeError`.  Safe to nest: the restriction is
         activated by the outermost call and deactivated only on its exit.
-        A no-op for :class:`Input` and :class:`UncachedDerivative` nodes.
+        A no-op for nodes that declare no identity fields (an
+        :class:`UncachedDerivative` or :class:`Input` with ``key_fields=()``).
         """
         if self._restricted_state is None:
             yield
@@ -1570,11 +1587,13 @@ class Request(Generic[T]):
                 if view is not None or state is not None or options is not None or controls:
                     raise TypeError(f"{self.node.name!r} passed overrides to ctx.load({name!r}); declare view, state, and options on the Dependency instead, and do not override controls here")
                 dep = self._build_deps[name]
-                return self.registry.resolve(
+                child = self.registry.resolve(
                     name=dep.name,
                     state={**self._state, **dep.state} if dep.state else self._state,
                     options=dep.options,
-                ).load(view=dep.view)
+                )
+                self.registry._check_edge_key_coverage(self, dep, child)
+                return child.load(view=dep.view)
             return self.registry.resolve(
                 name,
                 state={**self._state, **(state or {})},
@@ -1600,9 +1619,10 @@ class Request(Generic[T]):
 class DerivativeRegistry:
     """Registry and resolver for dependency nodes bound to one experiment root."""
 
-    def __init__(self, root: str | Path, log: logging.Logger):
+    def __init__(self, root: str | Path, log: logging.Logger, datatype: str = 'meg'):
         self.root = Path(root)
         self.log = log
+        self.datatype = datatype
         self.deriv_dir = self.root / DERIV_DIR
         self.cache_dir = self.root / CACHE_DIR
         self._nodes: dict[str, DependencyNode[Any]] = {}
@@ -1612,6 +1632,8 @@ class DerivativeRegistry:
             raise RuntimeError(f"Dependency node {node.name!r} already registered")
         if not isinstance(node, (Derivative, Input)):
             raise TypeError(f"Unsupported node type: {type(node)!r}")
+        if isinstance(node, Input) and node.key_fields is UNSET:
+            raise TypeError(f"Input {node.name!r} must declare key_fields (state fields that determine its content); use an empty tuple () only if its identity is fully option-based.")
         self._nodes[node.name] = node
 
     def _get_node(self, name: str) -> DependencyNode[Any]:
@@ -1750,6 +1772,45 @@ class DerivativeRegistry:
         self._write_cache_disambiguation(artifact_path, mapping)
         return _disambiguated_cache_artifact_path(artifact_path, suffix)
 
+    def _check_edge_key_coverage(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> None:
+        """Validate that a dependency's key fields are determined by this edge.
+
+        Every state field in the child's effective key must be pinned on the
+        edge (``dep.state`` or the child's :attr:`~DependencyNode.fixed_state`)
+        or covered by the parent's own identity (its effective key fields,
+        :attr:`~DependencyNode.fixed_state`, or — for a cached parent — its
+        cache key). A gap means the parent's cache slot does not distinguish
+        values of a field the child's output depends on, so the parent artifact
+        would silently share one slot across those values (see the module
+        docstring on silent cache-slot sharing).
+
+        Parameters
+        ----------
+        ctx
+            Request for the parent node whose dependencies are being resolved.
+        dep
+            The dependency edge being validated.
+        dep_ctx
+            Resolved child request for ``dep``.
+        """
+        child = dep_ctx.node
+        # collect child key fields
+        fields = set(child._get_key_fields(dep_ctx))
+        if not fields:
+            # FIXME: Opaque child (custom key()/uncached derivative that declares no
+            # fields) or explicit opt-out: nothing to guarantee.
+            return
+        # collect parent key fields
+        pinned = set(dep.state or ()) | set(child.fixed_state)
+        parent = ctx.node
+        parent_fields = parent._get_key_fields(ctx)
+        coverage = set(parent_fields) | set(parent.fixed_state)
+        if isinstance(parent, Derivative) and parent.cache_policy is not CachePolicy.NEVER:
+            coverage |= set(ctx.key())  # FIXME: custom .key()
+        missing = fields.difference(pinned | coverage)
+        if missing:
+            raise RuntimeError(f"{parent.name!r} depends on {child.name!r}, whose output depends on state field(s) {missing}, but {parent.name!r} neither keys or pins these on this edge. Fix by adding {missing} to {parent.name!r}.key_fields, or pin it via Dependency({child.name!r}, state=...).")
+
     def _dependency_handles(
             self,
             ctx: Request,
@@ -1763,6 +1824,7 @@ class DerivativeRegistry:
                     state={**ctx._state, **(dep.state or {})},
                     options=dep.options,
                 )
+                self._check_edge_key_coverage(ctx, dep, request)
                 out.append((dep, request))
         return out
 

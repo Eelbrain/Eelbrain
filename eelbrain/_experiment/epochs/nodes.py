@@ -48,7 +48,7 @@ from ..._meeg.interpolation import _interpolate_bads_eeg, _interpolate_bads_meg,
 from ..derivative_cache import CachePolicy, Dependency, Derivative, OptionSpec, Request, UncachedDerivative
 from ..preprocessing import RawPipeGraph, Reference, raw_node_name
 from ..data import DataSpec
-from .config import EPOCH_EXTRACT_OPTIONS, ContinuousEpoch, EpochBase, EpochCollection, PrimaryEpoch, SecondaryEpoch, SuperEpoch
+from .config import EPOCH_EXTRACT_OPTIONS, ContinuousEpoch, EpochBase, EpochCollection, PrimaryEpoch, SecondaryEpoch, SuperEpoch, single_recording_run
 
 
 def _drop_bad_eeg_channels_with_missing_locs(
@@ -372,7 +372,7 @@ class EpochsDerivative(Derivative[Any]):
             )
         return (
             Dependency('epoch-events', options=sel_options, state=state),
-            Dependency('recording-epochs', state=state, options=rec_options),
+            Dependency('recording-epochs', state={**state, 'run': single_recording_run(self.epochs, epoch)}, options=rec_options),
         )
 
     def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, Any] | None:
@@ -701,7 +701,7 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
         Sensor representation to return.
     """
     name = 'evoked-group-dataset'
-    key_fields = ('group', 'raw')
+    key_fields = ('group', 'raw', 'session', 'epoch', 'epoch_rejection', 'reference', 'equalize_evoked_count')
     key_options = {
         'model': '',
         'ndvar': True,

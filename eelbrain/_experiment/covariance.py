@@ -12,7 +12,7 @@ import numpy
 
 from .configuration import Configuration
 from .derivative_cache import Dependency, Derivative, Request
-from .preprocessing import Reference, raw_node_name
+from .preprocessing import Reference, canonical_recording, raw_node_name
 
 
 class RawCovariance(Configuration):
@@ -65,26 +65,38 @@ class EpochCovariance(Configuration):
 
 class CovDerivative(Derivative[mne.Covariance]):
     name = 'cov'
-    key_fields = ('subject', 'session', 'raw', 'cov')
     cache_suffix = '-cov.fif'
     # source localization handles EEG referencing internally
     fixed_state = {'reference': ''}
+
+    def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
+        # ``epoch_rejection`` only affects an epoch-based covariance (which loads
+        # rejected epochs); a noise (raw) covariance does not depend on it.
+        fields = ['subject', 'session', 'raw', 'cov']
+        if isinstance(self._covs[ctx.state['cov']], EpochCovariance):
+            fields.append('epoch_rejection')
+        return tuple(fields)
 
     # Fixed options used when loading epochs for covariance estimation.
     # Declared on both the Dependency edge and the build() load call so that
     # cache validation and the actual load request stay in sync.
 
-    def __init__(self, covs: dict[str, RawCovariance | EpochCovariance], raw, references: dict[str, Reference | None]):
+    def __init__(self, covs: dict[str, RawCovariance | EpochCovariance], raw, references: dict[str, Reference | None], recordings: frozenset[tuple[str, str, str, str]]):
         self._covs = covs
         self.raw = raw
         self._references = references
+        self._recordings = recordings
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         cov = self._covs[ctx.state['cov']]
         if isinstance(cov, EpochCovariance):
             return (Dependency('epochs', state={'epoch': cov.epoch}, options={'ndvar': False, 'decim': 1}),)
         elif isinstance(cov, RawCovariance):
-            return (Dependency(raw_node_name(ctx.state['raw']), options={'noise': True}, label='raw'),)
+            # Only the noise recording's sensor data is used; pin a canonical
+            # recording so identity does not depend on the ambient task/run.
+            recording = canonical_recording(self._recordings, ctx.state['subject'], ctx.state.get('session'))
+            raw_state = {'task': recording[0], 'run': recording[1]} if recording else None
+            return (Dependency(raw_node_name(ctx.state['raw']), options={'noise': True}, label='raw', state=raw_state),)
         raise NotImplementedError(f"{cov=}")
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:

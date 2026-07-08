@@ -30,6 +30,7 @@ from .config import (
 from .nodes import (
     COORD_SCALE,
     REINDEX_ICA,
+    canonical_recording,
     ICAInput,
     MaxwellCalibrationInput,
     MaxwellCrosstalkInput,

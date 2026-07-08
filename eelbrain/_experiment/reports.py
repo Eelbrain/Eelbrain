@@ -487,7 +487,7 @@ class CoregReportDerivative(Derivative[Path]):
 
         report = fmtxt.Report(title)
         raw = ctx.load('raw')
-        fig = mne.viz.plot_alignment(raw.info, ctx.root / trans_file_path(ctx.state), mrisubject, ctx.root / MRI_SDIR, 'auto', meg=('helmet', 'sensors'), dig=True, interaction='terrain')
+        fig = mne.viz.plot_alignment(raw.info, ctx.root / trans_file_path(ctx.state, datatype=ctx.datatype), mrisubject, ctx.root / MRI_SDIR, 'auto', meg=('helmet', 'sensors'), dig=True, interaction='terrain')
         fig.plotter.enable_parallel_projection()
         fig.scene.camera.parallel_projection = True
         fig.scene.camera.parallel_scale = .175

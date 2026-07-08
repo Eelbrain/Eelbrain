@@ -77,7 +77,7 @@ from .._exceptions import ConfigurationError
 from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS, INTERPOLATE_WINDOWS, INTERPOLATE_WINDOWS_MAX
 from .derivative_cache import CachePolicy, Dependency, Derivative, Input, Request, UncachedDerivative, file_fingerprint
 from .epoch_rejection import EpochRejection, ManualRejection
-from .epochs import EPOCH_EXTRACT_OPTIONS, EpochCollection, SecondaryEpoch, SuperEpoch, PrimaryEpoch, ContinuousEpoch
+from .epochs import EPOCH_EXTRACT_OPTIONS, EpochCollection, SecondaryEpoch, SuperEpoch, PrimaryEpoch, ContinuousEpoch, single_recording_run
 from .pathing import BIDS_ENTITY_KEYS, bids_path
 from .preprocessing import raw_node_name
 from .variable_def import Variables
@@ -107,6 +107,7 @@ class EventsInput(Input[Dataset]):
 
     """
     name = 'events-input'
+    key_fields = ('subject', 'session', 'task', 'run')
 
     def __init__(
             self,
@@ -115,7 +116,7 @@ class EventsInput(Input[Dataset]):
         self.raw_extension = raw_extension
 
     def _resolve_bids_events_path(self, ctx: Request) -> BIDSPath:
-        return bids_path(ctx.root, ctx.state, extension='.tsv', suffix='events')
+        return bids_path(ctx.root, ctx.state, extension='.tsv', datatype=ctx.datatype, suffix='events')
 
     def path(self, ctx: Request) -> Path:
         return self._resolve_bids_events_path(ctx).fpath
@@ -326,7 +327,7 @@ class SelectedEventsDerivative(UncachedDerivative[Dataset]):
     handled by :class:`EpochEventsDerivative`.
     """
     name = 'selected-events'
-    key_fields = ('subject', 'epoch', 'epoch_rejection')
+    key_fields = ('subject', 'session', 'run', 'raw', 'epoch', 'epoch_rejection')
     key_options = {
         'reject': True,
         'samplingrate': None,
@@ -451,7 +452,7 @@ class EpochEventsDerivative(UncachedDerivative[Dataset]):
         Whether to apply artifact rejection (``True``, ``False``, or ``'keep'``).
     """
     name = 'epoch-events'
-    key_fields = ('subject', 'session', 'epoch')
+    key_fields = ('subject', 'session', 'epoch', 'raw', 'epoch_rejection')
     key_options = {
         'reject': True,
         'samplingrate': None,
@@ -496,7 +497,7 @@ class EpochEventsDerivative(UncachedDerivative[Dataset]):
                 for run in runs
             )
         elif isinstance(epoch, (PrimaryEpoch, SecondaryEpoch, ContinuousEpoch)):
-            return (Dependency('selected-events', state={'task': epoch.task},
+            return (Dependency('selected-events', state={'task': epoch.task, 'run': single_recording_run(self.epochs, epoch)},
                                options=ctx.options_for('selected-events', 'reject', *EPOCH_EXTRACT_OPTIONS)),)
         else:
             options = ctx.options_for('epoch-events', 'reject', *EPOCH_EXTRACT_OPTIONS)

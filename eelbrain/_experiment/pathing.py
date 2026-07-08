@@ -32,6 +32,8 @@ def _bids_name(
         state: dict[str, Any],
         entity_keys: tuple[str, ...],
         suffix: str | None = None,
+        *,
+        datatype: str,
 ) -> str:
     parts = []
     for key in BIDS_ENTITY_KEYS:
@@ -41,19 +43,19 @@ def _bids_name(
         if value is not None:
             parts.append(f"{BIDS_ENTITY_PREFIX_MAP[key]}-{value}")
     if suffix is None:
-        suffix = state['datatype']
+        suffix = datatype
     if suffix:
         parts.append(suffix)
     return '_'.join(parts)
 
 
-def bids_path(root: Path, state: dict[str, Any], extension: str, *, suffix: str = None, noise: bool = False) -> BIDSPath:
+def bids_path(root: Path, state: dict[str, Any], extension: str, *, datatype: str, suffix: str = None, noise: bool = False) -> BIDSPath:
     kwargs = {key: _state_value(state, key) for key in BIDS_ENTITY_KEYS}
     path = BIDSPath(
         root=root,
-        suffix=suffix or state['datatype'],
+        suffix=suffix or datatype,
         extension=extension,
-        datatype=state['datatype'],
+        datatype=datatype,
         **kwargs,
     )
     if noise:
@@ -62,44 +64,44 @@ def bids_path(root: Path, state: dict[str, Any], extension: str, *, suffix: str 
         return path
 
 
-def raw_basename(state: dict[str, Any]) -> str:
-    return _bids_name(state, ('subject', 'session', 'task', 'run'))
+def raw_basename(state: dict[str, Any], *, datatype: str) -> str:
+    return _bids_name(state, ('subject', 'session', 'task', 'run'), datatype=datatype)
 
 
-def epoch_basename(state: dict[str, Any]) -> str:
-    return _bids_name(state, ('subject', 'session', 'run'))
+def epoch_basename(state: dict[str, Any], *, datatype: str) -> str:
+    return _bids_name(state, ('subject', 'session', 'run'), datatype=datatype)
 
 
-def test_basename(state: dict[str, Any]) -> str:
-    return _bids_name(state, ('session', 'run'))
+def test_basename(state: dict[str, Any], *, datatype: str) -> str:
+    return _bids_name(state, ('session', 'run'), datatype=datatype)
 
 
-def raw_dir(state: dict[str, Any]) -> Path:
+def raw_dir(state: dict[str, Any], *, datatype: str) -> Path:
     path = Path(f"sub-{state['subject']}")
     if state.get('session'):
         path /= f"ses-{state['session']}"
-    return path / state['datatype']
+    return path / datatype
 
 
-def ica_file_path(state: dict[str, Any], raw: str, concatenate_runs: bool = False) -> Path:
+def ica_file_path(state: dict[str, Any], raw: str, concatenate_runs: bool = False, *, datatype: str) -> Path:
     if concatenate_runs:
         entity_keys = ('subject', 'session')
     else:
         entity_keys = ('subject', 'session', 'run')
-    basename = _bids_name(state, entity_keys, suffix='')
-    return DERIV_DIR / 'mne' / raw_dir(state) / f"{basename}_desc-{raw}_ica.fif"
+    basename = _bids_name(state, entity_keys, suffix='', datatype=datatype)
+    return DERIV_DIR / 'mne' / raw_dir(state, datatype=datatype) / f"{basename}_desc-{raw}_ica.fif"
 
 
-def trans_file_path(state: dict[str, Any]) -> Path:
-    basename = _bids_name(state, ('subject', 'session'), suffix='')
-    return DERIV_DIR / 'mne' / raw_dir(state) / f"{basename}_trans.fif"
+def trans_file_path(state: dict[str, Any], *, datatype: str) -> Path:
+    basename = _bids_name(state, ('subject', 'session'), suffix='', datatype=datatype)
+    return DERIV_DIR / 'mne' / raw_dir(state, datatype=datatype) / f"{basename}_trans.fif"
 
 
-def rej_file_path(state: dict[str, Any], epoch: str | None = None, epoch_rejection: str | None = None) -> Path:
+def rej_file_path(state: dict[str, Any], epoch: str | None = None, epoch_rejection: str | None = None, *, datatype: str) -> Path:
     epoch_name = state['epoch'] if epoch is None else epoch
     rej_name = state['epoch_rejection'] if epoch_rejection is None else epoch_rejection
-    basename = _bids_name(state, ('subject', 'session', 'run'), suffix='')
-    return DERIV_DIR / 'mne' / raw_dir(state) / f"{basename}_raw-{state['raw']}_epoch-{epoch_name}_rej-{rej_name}_epoch.pickle"
+    basename = _bids_name(state, ('subject', 'session', 'run'), suffix='', datatype=datatype)
+    return DERIV_DIR / 'mne' / raw_dir(state, datatype=datatype) / f"{basename}_raw-{state['raw']}_epoch-{epoch_name}_rej-{rej_name}_epoch.pickle"
 
 
 def mri_dir(state: dict[str, Any]) -> Path:

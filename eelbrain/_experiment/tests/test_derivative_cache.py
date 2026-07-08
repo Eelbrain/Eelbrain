@@ -17,6 +17,7 @@ from eelbrain._experiment.derivative_cache import (
     DerivativeRegistry,
     Input,
     ProtectedArtifactError,
+    UncachedDerivative,
     compare_manifests,
     file_fingerprint,
 )
@@ -99,6 +100,7 @@ class FakePipeline:
 
 class SourceInput(Input):
     name = 'source'
+    key_fields = ('subject',)
     view_options = {'upper': False}
 
     def __init__(self, root: str | Path):
@@ -566,6 +568,7 @@ class ProtectedDerivative(Derivative[str]):
 class CountingQuickInput(Input):
     """Input with a cheap quick fingerprint and an instrumented full fingerprint."""
     name = 'counting'
+    key_fields = ('subject',)
 
     def __init__(self, root: str | Path):
         self.root = Path(root)
@@ -765,6 +768,12 @@ def test_key_override_with_non_json_values_caches_stably():
     class TupleKeyDerivative(ValueDerivative):
         name = 'tuple-key'
         key_fields = ()
+
+        def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+            # Pin the source subject on the edge: the node manages its own
+            # identity via key() rather than key_fields, so it must pin any
+            # field its dependency keys on.
+            return (Dependency('source', state={'subject': ctx.state['subject']}),)
 
         def key(self, ctx: Request) -> dict[str, object]:
             # Keys need not be pre-canonicalized: the tuple only becomes a
@@ -1316,3 +1325,215 @@ def test_quick_fingerprint_skips_full_fingerprint_when_unchanged():
     source.full_calls = 0
     assert not handle.is_valid()
     assert source.full_calls == 1
+
+
+# ---------------------------------------------------------------------------
+# Input key_fields + edge key-coverage validation
+# ---------------------------------------------------------------------------
+
+class _Leaf(Derivative[str]):
+    """Minimal cached derivative for key-coverage tests."""
+    cache_suffix = '.txt'
+
+    def __init__(self, root: str | Path):
+        self.root = Path(root)
+
+    def build(self, ctx: Request) -> str:
+        return 'x'
+
+    def load(self, ctx: Request, path: Path) -> str:
+        return path.read_text()
+
+    def save(self, ctx: Request, path: Path, value: str) -> None:
+        path.write_text(value)
+
+
+def test_input_requires_key_fields():
+    root, registry = make_empty_registry()
+
+    class NoFieldsInput(Input):
+        name = 'no-fields'
+
+        def path(self, ctx: Request) -> Path:
+            return Path(self.root) / 'x'
+
+    class OptOutInput(Input):
+        name = 'opt-out'
+        key_fields = ()
+
+        def __init__(self, root):
+            self.root = root
+
+        def path(self, ctx: Request) -> Path:
+            return Path(self.root) / 'x'
+
+    with pytest.raises(TypeError, match='must declare key_fields'):
+        registry.register(NoFieldsInput())
+    # an explicit empty tuple opts out and is accepted
+    registry.register(OptOutInput(root))
+
+
+def test_input_read_restriction():
+    root, registry = make_empty_registry()
+
+    class RestrictedInput(Input):
+        name = 'restricted'
+        key_fields = ('subject',)
+
+        def __init__(self, root):
+            self.root = Path(root)
+
+        def path(self, ctx: Request) -> Path:
+            return self.root / f"{ctx.state['subject']}.txt"
+
+        def fingerprint(self, ctx: Request) -> dict[str, object]:
+            # reads an undeclared field in a cache-affecting method
+            return {'mode': ctx.state['mode']}
+
+        def load(self, ctx: Request):
+            # load() is not restricted: reading an undeclared field is allowed
+            return ctx.state['mode']
+
+    node = RestrictedInput(root)
+    registry.register(node)
+    node.path(registry.resolve('restricted', state={'subject': 's1'})).write_text('data')
+
+    with pytest.raises(RuntimeError, match="not declared in this node's key_fields"):
+        registry.resolve('restricted', state={'subject': 's1', 'mode': 'a'}).current_fingerprint()
+    # load() runs outside the check context, so the same read is allowed
+    assert registry.resolve('restricted', state={'subject': 's1', 'mode': 'a'}).load() == 'a'
+
+
+def _register_child_parent(registry, root, parent_cls):
+    class Child(_Leaf):
+        name = 'child'
+        key_fields = ('subject', 'mode')
+    registry.register(Child(root))
+    registry.register(parent_cls(root))
+
+
+def test_edge_key_coverage_violation():
+    root, registry = make_empty_registry()
+
+    class Parent(_Leaf):
+        name = 'parent'
+        key_fields = ('subject',)
+
+        def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+            return (Dependency('child'),)
+
+        def build(self, ctx: Request) -> str:
+            return ctx.load('child')
+
+    _register_child_parent(registry, root, Parent)
+    with pytest.raises(RuntimeError, match=r"depends on state field\(s\).*'mode'"):
+        registry.resolve('parent', state={'subject': 's1', 'mode': 'a'}).load()
+
+
+def test_edge_key_coverage_pinned_on_edge():
+    root, registry = make_empty_registry()
+
+    class Parent(_Leaf):
+        name = 'parent'
+        key_fields = ('subject',)
+
+        def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+            return (Dependency('child', state={'mode': 'fixed'}),)
+
+        def build(self, ctx: Request) -> str:
+            return ctx.load('child')
+
+    _register_child_parent(registry, root, Parent)
+    # 'mode' pinned on the edge → covered even though the parent does not key on it
+    assert registry.resolve('parent', state={'subject': 's1', 'mode': 'a'}).load() == 'x'
+
+
+def test_edge_key_coverage_parent_keys_field():
+    root, registry = make_empty_registry()
+
+    class Parent(_Leaf):
+        name = 'parent'
+        key_fields = ('subject', 'mode')
+
+        def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+            return (Dependency('child'),)
+
+        def build(self, ctx: Request) -> str:
+            return ctx.load('child')
+
+    _register_child_parent(registry, root, Parent)
+    assert registry.resolve('parent', state={'subject': 's1', 'mode': 'a'}).load() == 'x'
+
+
+def test_edge_key_coverage_dynamic_fields():
+    root, registry = make_empty_registry()
+
+    class Parent(_Leaf):
+        name = 'parent'
+        key_fields = ('subject',)
+
+        def override_key_fields(self, ctx: Request):
+            return ('subject', 'mode')
+
+        def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+            return (Dependency('child'),)
+
+        def build(self, ctx: Request) -> str:
+            return ctx.load('child')
+
+    _register_child_parent(registry, root, Parent)
+    # override_key_fields makes 'mode' part of the parent's coverage
+    assert registry.resolve('parent', state={'subject': 's1', 'mode': 'a'}).load() == 'x'
+
+
+def test_edge_key_coverage_enforces_uncached_child():
+    root, registry = make_empty_registry()
+
+    class UncachedChild(UncachedDerivative[str]):
+        name = 'child'
+        key_fields = ('subject', 'mode')
+
+        def build(self, ctx: Request) -> str:
+            return 'x'
+
+    class Parent(_Leaf):
+        name = 'parent'
+        key_fields = ('subject',)
+
+        def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+            return (Dependency('child'),)
+
+        def build(self, ctx: Request) -> str:
+            return ctx.load('child')
+
+    registry.register(UncachedChild())
+    registry.register(Parent(root))
+    # strict rule: an uncached child's declared key fields are enforced too
+    with pytest.raises(RuntimeError, match=r"depends on state field\(s\).*'mode'"):
+        registry.resolve('parent', state={'subject': 's1', 'mode': 'a'}).load()
+
+
+def test_edge_key_coverage_optout_child():
+    root, registry = make_empty_registry()
+
+    class OptOutChild(UncachedDerivative[str]):
+        name = 'child'
+        key_fields = ()
+
+        def build(self, ctx: Request) -> str:
+            return 'x'
+
+    class Parent(_Leaf):
+        name = 'parent'
+        key_fields = ('subject',)
+
+        def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+            return (Dependency('child'),)
+
+        def build(self, ctx: Request) -> str:
+            return ctx.load('child')
+
+    registry.register(OptOutChild())
+    registry.register(Parent(root))
+    # child opts out of key_fields → nothing to enforce
+    assert registry.resolve('parent', state={'subject': 's1', 'mode': 'a'}).load() == 'x'

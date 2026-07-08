@@ -124,9 +124,9 @@ def test_sample(samples_experiment):
     with e._temporary_state:
         state = e.state
         state['subject'] = '*'
-        assert str(ica_file_path(state, '*')) == join('derivatives', 'mne', 'sub-*', 'meg', 'sub-*_desc-*_ica.fif')
+        assert str(ica_file_path(state, '*', datatype='meg')) == join('derivatives', 'mne', 'sub-*', 'meg', 'sub-*_desc-*_ica.fif')
         state['subject'] = 'R0002'
-        assert str(ica_file_path(state, '*')) == join('derivatives', 'mne', 'sub-R0002', 'meg', 'sub-R0002_desc-*_ica.fif')
+        assert str(ica_file_path(state, '*', datatype='meg')) == join('derivatives', 'mne', 'sub-R0002', 'meg', 'sub-R0002_desc-*_ica.fif')
 
     # events
     e.set('R0001', epoch_rejection='')
@@ -639,7 +639,7 @@ def test_sample_tasks(samples_experiment):
     assert handle.artifact_path.is_relative_to(Path(root) / 'derivatives' / 'eelbrain' / 'cache' / 'raw@ica')
     assert handle.artifact_path.suffix == '.fif'
     assert '_key-' in handle.artifact_path.name
-    assert str(ica_file_path(e.state, 'ica')) == join('derivatives', 'mne', 'sub-R0000', 'meg', 'sub-R0000_desc-ica_ica.fif')
+    assert str(ica_file_path(e.state, 'ica', datatype='meg')) == join('derivatives', 'mne', 'sub-R0000', 'meg', 'sub-R0000_desc-ica_ica.fif')
     ica_handle = e._resolve_derivative(ica_input_name('ica'))
     assert ica_handle.load(view='status') == 'missing-ica'
     e.set(raw='raw')
@@ -738,7 +738,7 @@ def test_ica_all_tasks_after_maxwell(samples_experiment):
 
     e.set('R0000', raw='ica')
     # the ICA spans all tasks/runs, so the file is per subject/session (no task/run entity)
-    assert str(ica_file_path(e.state, 'ica', concatenate_runs=True)) == join('derivatives', 'mne', 'sub-R0000', 'meg', 'sub-R0000_desc-ica_ica.fif')
+    assert str(ica_file_path(e.state, 'ica', concatenate_runs=True, datatype='meg')) == join('derivatives', 'mne', 'sub-R0000', 'meg', 'sub-R0000_desc-ica_ica.fif')
     with catch_warnings():
         filterwarnings('ignore', "FastICA did not converge", UserWarning)
         ica_path = e.make_ica()

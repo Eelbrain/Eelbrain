@@ -73,12 +73,39 @@ BIDS_TO_MNE_CHANNEL_TYPES = {
 }
 
 
+def canonical_recording(recordings: frozenset[tuple[str, str, str, str]], subject: str, session: str | None) -> tuple[str, str] | None:
+    """Return a deterministic ``(task, run)`` recording for one subject/session.
+
+    Used to pin an info-only raw load (forward/inverse/covariance) to a single
+    representative recording, so the derivative's identity does not depend on the
+    ambient ``task``/``run``. The sensor ``info`` (channel geometry) is shared
+    across a subject's recordings, so any existing recording is equivalent.
+
+    Parameters
+    ----------
+    recordings
+        Existing ``(subject, session, task, run)`` recordings.
+    subject
+        Subject to select a recording for.
+    session
+        Session to select a recording for (``None`` is treated as ``''``).
+
+    Returns
+    -------
+    The first ``(task, run)`` in sorted order for the subject/session, or
+    ``None`` when no recording exists.
+    """
+    matches = sorted((task, run) for subject_, session_, task, run in recordings if subject_ == subject and session_ == (session or ''))
+    return matches[0] if matches else None
+
+
 class RawBadChannelsInput(Input[list[str]]):
     """Access to Pipeline-specific bad channel definitions.
 
     User-specified bad channels are stored in an Eelbrain-specific  ``channels.tsv`` file under the ``derivatives/mne/`` hierarchy  rather than in the BIDS source dataset, so that re-downloading the dataset does not overwrite them.
     The BIDS source ``channels.tsv`` is used as seed when the derivatives file is first written.
     """
+    key_fields = ('subject', 'session', 'task', 'run')
     key_options = {'noise': False}
 
     def __init__(
@@ -101,7 +128,7 @@ class RawBadChannelsInput(Input[list[str]]):
 
     def _bids_path(self, ctx: Request) -> BIDSPath:
         """Noise-resolved ``channels.tsv`` :class:`BIDSPath` in the source dataset."""
-        bpath = bids_path(ctx.root, ctx.state, self.extension, noise=ctx.options['noise'])
+        bpath = bids_path(ctx.root, ctx.state, self.extension, datatype=ctx.datatype, noise=ctx.options['noise'])
         return bpath.update(suffix='channels', extension='.tsv')
 
     def _active_path(self, ctx: Request) -> Path:
@@ -209,6 +236,7 @@ class RawBadChannelsInput(Input[list[str]]):
 
 
 class RawSourceInput(Input[mne.io.BaseRaw]):
+    key_fields = ('subject', 'session', 'task', 'run')
     key_options = {'noise': False}
     view_options = {'preload': False}
 
@@ -226,7 +254,7 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
 
     def _resolve_bids_path(self, ctx: Request, require: bool = False) -> BIDSPath:
         """Return the noise-resolved BIDSPath and the actual file path on disk."""
-        bids_path_ = bids_path(ctx.root, ctx.state, self.extension)
+        bids_path_ = bids_path(ctx.root, ctx.state, self.extension, datatype=ctx.datatype)
         if ctx.options['noise']:
             bids_path_ = bids_path_.find_empty_room()
         if bids_path_.fpath.exists():
@@ -402,6 +430,7 @@ class RawSourceDerivative(UncachedDerivative[mne.io.BaseRaw]):
     :class:`RawSourceInput`) before delegating the actual sidecar write to
     :class:`RawBadChannelsInput`.
     """
+    key_fields = ('subject', 'session', 'task', 'run')
     key_options = {'noise': False}
     view_options = {'preload': False}
 
@@ -514,16 +543,16 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         subject = ctx.state['subject']
         session = ctx.state.get('session') or ''
         if self.pipe._concatenate_runs:
-            run_states = [{'run': run} for run in self._runs]
+            # Spans every run, so identity is keyed on subject/session only; the
+            # ambient run must not be read (it is not in key_fields here).
+            runs = self._runs
         else:
-            run_states = [{}]
-        current_run = ctx.state.get('run') or ''
+            runs = [ctx.state.get('run') or '']
         states = []
         for task in tasks:
-            for run_state in run_states:
-                run = run_state.get('run', current_run)
+            for run in runs:
                 if (subject, session, task, run) in self._recordings:
-                    states.append({'task': task, **run_state})
+                    states.append({'task': task, 'run': run})
         return states
 
     def _load_bad_channels(self, ctx: Request) -> list[str]:
@@ -802,7 +831,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         Whether to resolve the corresponding empty-room recording instead of
         the subject recording.
     """
-    key_fields = ('subject', 'session', 'task', 'run', 'datatype')
+    key_fields = ('subject', 'session', 'task', 'run')
     cache_suffix = '-raw.fif'
     key_options = {'noise': False}
     view_options = {'preload': False}
@@ -873,7 +902,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
 
     def build(self, ctx: Request) -> mne.io.BaseRaw:
         source_node = raw_node_name(self.pipe.source)
-        path = bids_path(ctx.root, ctx.state, self.extension)
+        path = bids_path(ctx.root, ctx.state, self.extension, datatype=ctx.datatype)
         source_pipe = self.pipes.root_source_pipe(self.raw_name)
         raw = ctx.load(source_node)
         if not raw.preload:
@@ -915,7 +944,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
             return super().load_view(ctx, view)
 
         state = {**ctx.state, 'raw': self.raw_name}
-        path = bids_path(ctx.root, state, self.extension)
+        path = bids_path(ctx.root, state, self.extension, datatype=ctx.datatype)
         upstream_info = load_raw_info_dependency(ctx, self.pipe.source, noise=ctx.options['noise']).copy()
         info = self.pipe._make_info(upstream_info, path=path, noise=ctx.options['noise'], raw_name=self.raw_name, log=ctx.registry.log)
         if info is None:
@@ -942,6 +971,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
 class MaxwellCalibrationInput(Input[Path]):
     """Input node for the fine-calibration file (acq-calibration_meg.dat/.fif)."""
     name = 'maxwell-calibration'
+    key_fields = ('subject', 'session')
 
     def path(self, ctx: Request) -> Path:
         for ext in ('.dat', '.fif'):
@@ -980,6 +1010,7 @@ class MaxwellCalibrationInput(Input[Path]):
 class MaxwellCrosstalkInput(Input[Path]):
     """Input node for the cross-talk compensation file (acq-crosstalk_meg.fif)."""
     name = 'maxwell-crosstalk'
+    key_fields = ('subject', 'session')
 
     def path(self, ctx: Request) -> Path:
         return BIDSPath(
@@ -1017,6 +1048,7 @@ class RawHeadPositionDerivative(UncachedDerivative[numpy.ndarray]):
     """
 
     name = 'raw-head-position'
+    key_fields = ('subject', 'session', 'task', 'run')
 
     def __init__(self, raw_input_name: str):
         self._raw_input_name = raw_input_name

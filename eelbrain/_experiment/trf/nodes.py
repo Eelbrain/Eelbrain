@@ -70,6 +70,7 @@ class PredictorInput(VersionedInput[NDVar]):
         and the relevant columns.
     """
     name = 'predictor'
+    key_fields = ()  # identity is fully option-based (the predictor ``code``)
     key_options = {
         'code': None,
     }
@@ -204,9 +205,9 @@ class TRFDerivative(Derivative[object]):
         # field the build may read: 'inv' is always read (to pick the space).
         fields = ['subject', 'session', 'raw', 'epoch', 'epoch_rejection', 'reference', 'inv']
         if ctx.state['inv']:  # non-empty inverse → source space
-            fields += ['cov', 'mrisubject', 'src', 'parc']
+            fields += ['cov', 'mrisubject', 'src', 'parc', 'common_brain', 'adjacency']
         elif self._estimator(ctx).extra_inputs:  # NCRF: sensor data + forward solution
-            fields += ['cov', 'mrisubject', 'src']
+            fields += ['cov', 'mrisubject', 'src', 'common_brain']
         return tuple(fields)
 
     def fingerprint(self, ctx: Request) -> dict[str, object]:
@@ -368,7 +369,6 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
         Assembled epoch definitions (for :class:`EpochCollection` expansion).
     """
     name = 'trf-dataset'
-    key_fields = ('subject', 'epoch', 'inv', 'common_brain', 'mrisubject')
     key_options = _TRF_DATASET_OPTIONS
 
     def __init__(
@@ -383,14 +383,17 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
         self.named_models = named_models
         self.epochs = epochs
 
+    def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
+        fields = ['subject', 'session', 'epoch', 'epoch_rejection', 'reference', 'raw', 'inv']
+        if ctx.state['inv']:
+            fields += ['cov', 'src', 'parc', 'adjacency', 'mrisubject', 'common_brain']
+        return tuple(fields)
+
     def _estimator(self, ctx: Request) -> Estimator:
         return self.estimators[ctx.options['estimator']]
 
     def _model(self, ctx: Request) -> Model:
         return Model.coerce(ctx.options['x']).initialize(self.named_models)
-
-    def _is_source(self, ctx: Request) -> bool:
-        return bool(ctx.state['inv'])  # non-empty inverse → source space
 
     def _epoch_names(self, ctx: Request) -> list[str]:
         epoch = self.epochs[ctx.state['epoch']]
@@ -404,7 +407,7 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         trf_options = ctx.options_for('trf', 'x', 'tstart', 'tstop', 'estimator', 'data', 'mask', 'samplingrate', 'decim', 'filter_x')
         deps = [Dependency('trf', label=epoch, state={'epoch': epoch}, options=trf_options) for epoch in self._epoch_names(ctx)]
-        if self._is_source(ctx) and not is_fake_mri(self.root / mri_dir(ctx.state)):
+        if ctx.state['inv'] and not is_fake_mri(self.root / mri_dir(ctx.state)):
             deps.append(Dependency('source-morph'))
         return tuple(deps)
 
@@ -413,18 +416,17 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
         scale = ctx.options['scale']
         trfs = ctx.options['trfs']
         subject = ctx.state['subject']
-        is_source = self._is_source(ctx)
-        source_morph = None
-        if is_source and not is_fake_mri(self.root / mri_dir(ctx.state)):
+        common_brain = source_morph = None
+        if ctx.state['inv'] and not is_fake_mri(self.root / mri_dir(ctx.state)):
+            common_brain = ctx.state['common_brain']
             source_morph = ctx.load('source-morph')
-        common_brain = ctx.state['common_brain']
         dss = []
         for epoch in self._epoch_names(ctx):
             res = ctx.load(epoch)
             ds = est._result_dataset(res, scale=scale, trfs=trfs)
             ds['subject'] = Factor([subject], random=True)
             ds[:, 'epoch'] = epoch
-            if is_source:
+            if ctx.state['inv']:
                 for key in (*ds.info['xs'], *ds.info['metrics']):
                     if key in ds and isinstance(ds[key], NDVar) and ds[key].has_dim('source'):
                         ds[key] = morph_source_space(ds[key], common_brain, morph=source_morph)
@@ -447,7 +449,6 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
         Mapping of group name to the sequence of member subjects.
     """
     name = 'trf-group-dataset'
-    key_fields = ('group', 'mri')
     key_options = _TRF_DATASET_OPTIONS
 
     def __init__(
@@ -459,6 +460,12 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
         self.mri_subjects = mri_subjects
         self.common_brain = common_brain
         self.groups = groups
+
+    def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
+        fields = ['group', 'mri', 'session', 'epoch', 'epoch_rejection', 'reference', 'raw', 'inv']
+        if ctx.state['inv']:
+            fields += ['cov', 'src', 'parc', 'adjacency', 'mrisubject', 'common_brain']
+        return tuple(fields)
 
     def key(self, ctx: Request) -> dict[str, object]:
         return {'subjects': tuple(self.groups[ctx.state['group']]), 'options': ctx.options}

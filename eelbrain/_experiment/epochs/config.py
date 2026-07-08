@@ -684,3 +684,24 @@ def decim_param(
             return int(raw_samplingrate / 100)
 
     return 1
+
+
+def single_recording_run(epochs: Mapping[str, EpochBase], epoch: EpochBase) -> str:
+    """Run value for an epoch that wraps a single recording.
+
+    Used to pin the ``run`` of a per-recording dependency when an aggregating
+    node (``epochs``/``epoch-events``) is not combining across multiple runs, so
+    the pinned value comes from the epoch definition rather than ambient state.
+    Returns the :class:`PrimaryEpoch` ``run`` (following ``SecondaryEpoch``
+    bases), or ``''`` when the experiment has no run entity.
+
+    Parameters
+    ----------
+    epochs
+        All epoch definitions, to resolve ``SecondaryEpoch`` bases.
+    epoch
+        The epoch being resolved.
+    """
+    while isinstance(epoch, SecondaryEpoch):
+        epoch = epochs[epoch.sel_epoch]
+    return getattr(epoch, 'run', None) or ''

@@ -58,7 +58,6 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         Optional source-space smoothing.
     """
     name = 'two-stage-data'
-    key_fields = ('subject', 'epoch')
     key_options = {
         **RESULT_OPTION_DEFAULTS,
     }
@@ -67,6 +66,14 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         self.tests = tests
         self.epochs = epochs
         self.groups = groups
+
+    def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
+        # Match TwoStageLevel1Derivative
+        data = ctx.options['data']
+        fields = ['subject', 'session', 'epoch', 'epoch_rejection', 'raw']
+        if data is None or data.source:
+            fields += ['equalize_evoked_count', 'inv', 'cov', 'src', 'parc', 'mrisubject', 'common_brain', 'adjacency']
+        return tuple(fields)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {
@@ -137,10 +144,6 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
 class TwoStageLevel1Derivative(Derivative[Any]):
     """Cached first-stage LM fit for one subject."""
     name = 'two-stage-level-1'
-    key_fields = (
-        'subject', 'epoch', 'raw', 'epoch_rejection', 'equalize_evoked_count',
-        'cov', 'inv', 'src', 'mri', 'parc',
-    )
     cache_suffix = '.pickle'
     key_options = {
         **RESULT_OPTION_DEFAULTS,
@@ -148,6 +151,14 @@ class TwoStageLevel1Derivative(Derivative[Any]):
 
     def __init__(self, tests: dict[str, Test]):
         self.tests = tests
+
+    def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
+        # ``data`` is ``None`` until resolved, in which case the source superset is used (the artifact is never built for an unresolved request)
+        data = ctx.options['data']
+        fields = ['subject', 'session', 'epoch', 'raw', 'epoch_rejection']
+        if data is None or data.source:
+            fields += ['equalize_evoked_count', 'cov', 'inv', 'src', 'mri', 'mrisubject', 'parc', 'common_brain', 'adjacency']
+        return tuple(fields)
 
     def key(self, ctx: Request) -> dict[str, Any]:
         subject = ctx.state['subject']

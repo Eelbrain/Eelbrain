@@ -286,6 +286,7 @@ class Pipeline(StateModel):
             else:
                 raise ConfigurationError(f"Can't infer datatype. No MEG or EEG data found in {root}.")
         self._raw_extension = extensions[0]
+        self._datatype = datatype
 
         # Recordings index: existing (subject, session, task, run) combinations of source
         # recordings, from a single find_matching_paths scan. Scoped to the raw datatype /
@@ -429,7 +430,6 @@ class Pipeline(StateModel):
         self._register_field('session', self._sessions or None, repr=True)
         self._register_field('task', self._tasks, depends_on=('epoch',), slave_handler=self._update_task, repr=True)
         self._register_field('run', self._runs, repr=True, depends_on=('epoch', 'subject', 'session', 'task'), slave_handler=self._update_run)
-        self._register_field('datatype', (datatype,), repr=True)
         self._register_field('equalize_evoked_count', ('', 'eq'), allow_empty=True)
         self._register_field('common_brain', ('fsaverage',))
 
@@ -483,7 +483,7 @@ class Pipeline(StateModel):
         return (str(self.root),)
 
     def _init_derivative_registry(self):
-        self._derivatives = DerivativeRegistry(self.root, self._log)
+        self._derivatives = DerivativeRegistry(self.root, self._log, self._datatype)
         result_args = (
             self.tests,
             self._epochs,
@@ -553,11 +553,11 @@ class Pipeline(StateModel):
         self._covs = ConfigurationDict('covariance', self._covs)
         for cov_name, cov in self._covs.items():
             cov._store_name(cov_name)
-        self._derivatives.register(CovDerivative(self._covs, self._raw, self._references))
+        self._derivatives.register(CovDerivative(self._covs, self._raw, self._references, self._recordings))
         self._derivatives.register(SrcDerivative())
         self._derivatives.register(SourceMorphDerivative())
-        self._derivatives.register(FwdDerivative(self._raw, self._references))
-        self._derivatives.register(InvDerivative(self._raw, self._references, self.cache_inv))
+        self._derivatives.register(FwdDerivative(self._raw, self._references, self._recordings))
+        self._derivatives.register(InvDerivative(self._raw, self._references, self._recordings, self.cache_inv))
         self._derivatives.register(AnnotDerivative(self._parcs))
 
         # --- Source-space: epochs/evoked projected to source space ---
@@ -3330,7 +3330,7 @@ class Pipeline(StateModel):
         with self._temporary_state:
             raw = self.load_raw(raw='raw')
         state_ = self._fields
-        fig = mne.viz.plot_alignment(raw.info, self.root / trans_file_path(state_), self.get('mrisubject'), self.root / MRI_SDIR, surfaces, meg=meg, dig=dig, interaction='terrain')
+        fig = mne.viz.plot_alignment(raw.info, self.root / trans_file_path(state_, datatype=self._datatype), self.get('mrisubject'), self.root / MRI_SDIR, surfaces, meg=meg, dig=dig, interaction='terrain')
         if parallel:
             fig.plotter.enable_parallel_projection()
         return fig
@@ -3527,7 +3527,7 @@ class Pipeline(StateModel):
         """
         raw = self.load_raw(ndvar=True, decim=decim, **state)
         state_ = self._fields
-        name = join_stem_parts(raw_basename(state_), f'raw-{state_["raw"]}')
+        name = join_stem_parts(raw_basename(state_, datatype=self._datatype), f'raw-{state_["raw"]}')
         if raw.info['meas'] == 'V':
             vmax = 1.5e-4
         elif raw.info['meas'] == 'B':
@@ -4338,7 +4338,7 @@ class Pipeline(StateModel):
                 #     pass
                 # FIXME: use ctx.node.exists()
                 fixed_state = {k: v for k, v in self._fields.items() if not (isinstance(v, str) and '*' in v)}
-                query = bids_path(self.root, fixed_state, self._raw_extension)
+                query = bids_path(self.root, fixed_state, self._raw_extension, datatype=self._datatype)
                 matches = query.match()
                 basenames = [match.basename for match in matches]
                 raw_list.append(', '.join(basenames))

@@ -505,7 +505,7 @@ class RawICA(CachedRawPipe):
         self.fit_kwargs = dict(fit_kwargs) if fit_kwargs else {}
 
     def path(self, ctx: Request) -> Path:
-        return ctx.root / ica_file_path(ctx.state, self.name, self._concatenate_runs)
+        return ctx.root / ica_file_path(ctx.state, self.name, self._concatenate_runs, datatype=ctx.datatype)
 
     def _load_ica(
             self,

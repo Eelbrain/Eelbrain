@@ -137,6 +137,7 @@ class ChannelModelRejection(EpochRejection):
 
 class RejectionInput(Input):
     name = 'epoch-rejection-input'
+    key_fields = ('subject', 'session', 'run', 'raw', 'epoch', 'epoch_rejection')
 
     def __init__(
             self,
@@ -161,7 +162,7 @@ class RejectionInput(Input):
         epoch = self.epochs[ctx.state['epoch']]
         if not isinstance(epoch, PrimaryEpoch):
             raise RuntimeError(f"{epoch=}")
-        return ctx.root / rej_file_path(ctx.state, epoch=epoch.name)
+        return ctx.root / rej_file_path(ctx.state, epoch=epoch.name, datatype=ctx.datatype)
 
     def load(self, ctx: Request) -> Dataset:
         return load.unpickle(self.path(ctx))

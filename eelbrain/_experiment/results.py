@@ -59,7 +59,7 @@ class DSPMMovieDerivative(ResultOutputDerivative[Path]):
 
     def _path_stem(self, ctx: Request) -> str:
         return join_stem_parts(
-            epoch_basename(ctx.state),
+            epoch_basename(ctx.state, datatype=ctx.datatype),
             f'epoch-{ctx.state["epoch"]}',
             'ga-dspm',
             self._path_context_parts(ctx),
@@ -151,7 +151,7 @@ class TTestMovieDerivative(ResultOutputDerivative[Path]):
         else:
             contrast = f'{cat[0]}-{cat[1]}'
         return join_stem_parts(
-            epoch_basename(ctx.state),
+            epoch_basename(ctx.state, datatype=ctx.datatype),
             f'epoch-{ctx.state["epoch"]}',
             'ttest',
             self._path_context_parts(ctx),

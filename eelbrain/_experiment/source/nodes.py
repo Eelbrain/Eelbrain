@@ -31,7 +31,7 @@ from ..derivative_cache import CachePolicy, Dependency, Derivative, ExternalArti
 from ..pathing import (
     MRI_SDIR, bem_dir, bem_file_path, mri_dir, src_file_path, trans_file_path,
 )
-from ..preprocessing import Reference, raw_node_name
+from ..preprocessing import Reference, canonical_recording, raw_node_name
 from ..data import DataSpec
 from ..._text import enumeration, plural
 from ..._utils import subp
@@ -96,9 +96,10 @@ def _identity_source_morph(
 
 class TransInput(Input):
     name = 'trans-input'
+    key_fields = ('subject', 'session')
 
     def path(self, ctx: Request) -> Path:
-        return ctx.root / trans_file_path(ctx.state)
+        return ctx.root / trans_file_path(ctx.state, datatype=ctx.datatype)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return file_fingerprint(ctx.root, self.path(ctx))
@@ -109,6 +110,7 @@ class TransInput(Input):
 
 class BemInput(Input):
     name = 'bem-input'
+    key_fields = ('mrisubject',)
 
     def path(self, ctx: Request) -> Path:
         return ctx.root / bem_file_path(ctx.state)
@@ -298,16 +300,22 @@ def _eeg_channel_names(info: mne.Info) -> set[str]:
 
 class FwdDerivative(Derivative[mne.Forward]):
     name = 'fwd'
-    key_fields = ('subject', 'session', 'mrisubject', 'src')
+    key_fields = ('subject', 'session', 'mrisubject', 'src', 'common_brain')
     cache_suffix = '-fwd.fif'
 
-    def __init__(self, raw, references: dict[str, Reference | None]):
+    def __init__(self, raw, references: dict[str, Reference | None], recordings: frozenset[tuple[str, str, str, str]]):
         self.raw = raw
         self._references = references
+        self._recordings = recordings
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        # The forward solution only needs the raw sensor info (shared across a
+        # subject's recordings), so pin a canonical recording rather than key
+        # on the ambient task/run.
+        recording = canonical_recording(self._recordings, ctx.state['subject'], ctx.state.get('session'))
+        raw_state = {'task': recording[0], 'run': recording[1]} if recording else None
         deps = [
-            Dependency(raw_node_name('raw')),
+            Dependency(raw_node_name('raw'), state=raw_state),
             Dependency('trans-input'),
             Dependency('src'),
             Dependency('median-head-position'),
@@ -369,18 +377,23 @@ class FwdDerivative(Derivative[mne.Forward]):
 
 class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
     name = 'inv'
-    key_fields = ('subject', 'session', 'raw', 'epoch', 'epoch_rejection', 'cov', 'mrisubject', 'src', 'inv')
+    key_fields = ('subject', 'session', 'raw', 'epoch', 'epoch_rejection', 'cov', 'mrisubject', 'src', 'common_brain', 'inv')
     cache_suffix = '-inv.fif'
 
-    def __init__(self, raw, references: dict[str, Reference | None], cache: bool = True):
+    def __init__(self, raw, references: dict[str, Reference | None], recordings: frozenset[tuple[str, str, str, str]], cache: bool = True):
         self.raw = raw
         self._references = references
+        self._recordings = recordings
         if not cache:
             self.cache_policy = CachePolicy.NEVER
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        # Only the raw sensor info is used (see build), so pin a canonical
+        # recording rather than key on the ambient task/run.
+        recording = canonical_recording(self._recordings, ctx.state['subject'], ctx.state.get('session'))
+        raw_state = {'task': recording[0], 'run': recording[1]} if recording else None
         return (
-            Dependency(raw_node_name(ctx.state['raw']), label='raw'),
+            Dependency(raw_node_name(ctx.state['raw']), label='raw', state=raw_state),
             Dependency('fwd'),
             Dependency('cov'),
         )
@@ -600,7 +613,7 @@ class EpochsStcDerivative(UncachedDerivative[Dataset]):
         Whether to apply epoch rejection/interpolation state.
     """
     name = 'epochs-stc'
-    key_fields = ('epoch', 'inv', 'raw', 'src', 'parc', 'mrisubject', 'common_brain', 'adjacency')
+    key_fields = ('subject', 'session', 'epoch', 'epoch_rejection', 'inv', 'cov', 'raw', 'src', 'parc', 'mrisubject', 'common_brain', 'adjacency')
     # source localization handles EEG referencing internally
     fixed_state = {'reference': ''}
     key_options = {
@@ -720,7 +733,7 @@ class EvokedStcDerivative(UncachedDerivative[Dataset]):
         Whether to return source output as NDVars.
     """
     name = 'evoked-stc'
-    key_fields = ('epoch', 'inv', 'raw', 'src', 'parc', 'mrisubject', 'common_brain', 'adjacency')
+    key_fields = ('subject', 'session', 'epoch', 'epoch_rejection', 'equalize_evoked_count', 'inv', 'cov', 'raw', 'src', 'parc', 'mrisubject', 'common_brain', 'adjacency')
     # source localization handles EEG referencing internally
     fixed_state = {'reference': ''}
     key_options = {
@@ -816,7 +829,7 @@ class EpochsStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
     omitted.
     """
     name = 'epochs-stc-group-dataset'
-    key_fields = ('group', 'mri')
+    key_fields = ('group', 'mri', 'session', 'epoch', 'epoch_rejection', 'inv', 'cov', 'raw', 'src', 'parc', 'mrisubject', 'common_brain', 'adjacency')
     key_options = {**EpochsStcDerivative.key_options, **EpochsStcDerivative.view_options}
 
     def __init__(self, mri_subjects: dict[str, dict[str, str]], common_brain: str, groups: dict[str, tuple[str, ...]]):
@@ -863,7 +876,7 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
     and ``morph`` defaults to ``True`` when omitted in that case.
     """
     name = 'evoked-stc-group-dataset'
-    key_fields = ('group', 'mri')
+    key_fields = ('group', 'mri', 'session', 'epoch', 'epoch_rejection', 'equalize_evoked_count', 'inv', 'cov', 'raw', 'src', 'parc', 'mrisubject', 'common_brain', 'adjacency')
     key_options = {**EvokedStcDerivative.key_options, **EvokedStcDerivative.view_options}
 
     def __init__(self, mri_subjects: dict[str, dict[str, str]], common_brain: str, groups: dict[str, tuple[str, ...]]):

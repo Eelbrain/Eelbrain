@@ -276,6 +276,19 @@ class ResultOutputDerivative(Derivative[T]):
         self.parcs = parcs
         self.groups = groups
 
+    def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
+        # Subclasses define their own key(), so this does not feed the cache key;
+        # it is the read-enforcement allowlist and the edge-coverage set for the
+        # uncached result-data children (evoked-test-data / two-stage-data /
+        # evoked-stc). It lists every state field the analysis identity may depend
+        # on (see _key_state_snapshot), returned as a generous static set since it
+        # has no effect on the cache path.
+        return (
+            'subject', 'group', 'session', 'epoch', 'raw', 'epoch_rejection',
+            'reference', 'equalize_evoked_count', 'cov', 'inv', 'src', 'mri',
+            'mrisubject', 'parc', 'common_brain', 'adjacency',
+        )
+
     def _key_state_snapshot(
             self,
             ctx: Request,
@@ -377,7 +390,7 @@ class ResultOutputDerivative(Derivative[T]):
     def _path_stem(self, ctx: Request) -> str:
         """Default export stem used by :meth:`path`."""
         return join_stem_parts(
-            test_basename(ctx.state),
+            test_basename(ctx.state, datatype=ctx.datatype),
             f'epoch-{ctx.state["epoch"]}',
             f'test-{ctx.options["test"]}',
             self._path_context_parts(ctx),
@@ -455,7 +468,6 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         Optional source-space smoothing.
     """
     name = 'evoked-test-data'
-    key_fields = ('epoch', 'group')
     key_options = {
         'data': None,
         'test': None,
@@ -464,6 +476,15 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         'samplingrate': None,
         'smooth': None,
     }
+
+    def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
+        # Source-space fields identify the artifact only for source/ROI analyses
+        # (see dependencies); a sensor test uses only evoked-group-dataset.
+        fields = ['group', 'epoch', 'raw', 'session', 'epoch_rejection', 'reference', 'equalize_evoked_count']
+        data = ctx.options['data']
+        if data is None or data.source:
+            fields += ['mri', 'inv', 'cov', 'src', 'parc', 'mrisubject', 'common_brain', 'adjacency']
+        return tuple(fields)
 
     def __init__(self, tests: dict[str, Test], epochs: dict[str, Any], groups: dict[str, tuple[str, ...] | list[str]]):
         self.tests = tests
