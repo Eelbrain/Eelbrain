@@ -18,15 +18,16 @@ import mne
 
 from ...mne_fixes import write_labels_to_annot
 from ..._utils import subp
+from ..._mne import find_source_subject
 from ..._utils.mne_utils import fix_annot_names, is_fake_mri
-from ..pathing import MRI_SDIR, annot_file_path, annot_stamp_path, label_dir, mri_dir
 from ..derivative_cache import Dependency, ExternalArtifactDerivative, Request, file_fingerprint
+from ..pathing import MRI_SDIR, annot_file_path, annot_stamp_path, label_dir
 from .config import Parcellation, FreeSurferParc, FSAverageParc, LabelParc, VolumeParc, _resolve_parc
 
 
 class AnnotDerivative(ExternalArtifactDerivative[list[mne.Label]]):
     name = 'annot'
-    key_fields = ('mrisubject', 'parc', 'common_brain')
+    key_fields = ('mrisubject', 'parc')
 
     def __init__(self, parcs: dict[str, Parcellation]):
         self.parcs = parcs
@@ -65,7 +66,7 @@ class AnnotDerivative(ExternalArtifactDerivative[list[mne.Label]]):
         if isinstance(parc_def, FreeSurferParc):
             return False
         if isinstance(parc_def, FSAverageParc):
-            return state['mrisubject'] != state['common_brain']
+            return state['mrisubject'] != 'fsaverage'
         return True
 
     def load_annot(
@@ -121,10 +122,12 @@ class AnnotDerivative(ExternalArtifactDerivative[list[mne.Label]]):
             deps.append(Dependency('annot', label='mask', state={'parc': mask}))
 
         mrisubject = ctx.state['mrisubject']
-        common_brain = ctx.state['common_brain']
-        fake_mri = is_fake_mri(ctx.root / mri_dir(ctx.state))
-        if mrisubject != common_brain and (parc_def.morph_from_fsaverage or fake_mri):
-            deps.append(Dependency('annot', label='common-brain', state={'mrisubject': common_brain}))
+        if parc_def.morph_from_fsaverage:
+            source_subject = 'fsaverage'
+        else:
+            source_subject = find_source_subject(mrisubject, ctx.root / MRI_SDIR)
+        if source_subject and source_subject != mrisubject:
+            deps.append(Dependency('annot', label='source-subject', state={'mrisubject': source_subject}))
         return tuple(deps)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
@@ -150,30 +153,29 @@ class AnnotDerivative(ExternalArtifactDerivative[list[mne.Label]]):
             return  # annot files are externally managed; load() reads them
 
         mrisubject = ctx.state['mrisubject']
-        common_brain = ctx.state['common_brain']
-        fake_mri = is_fake_mri(ctx.root / mri_dir(ctx.state))
-        if mrisubject != common_brain and (parc_def.morph_from_fsaverage or fake_mri):
-            # materialize the common-brain annotation through the dependency tree
+        if 'source-subject' in ctx.declared_dependencies:
+            source_subject = ctx.declared_dependencies['source-subject'].state['mrisubject']
+            # materialize the source-subject annotation through the dependency tree
             # (its build writes the source .annot) rather than reading it off-disk
-            common_brain_labels = ctx.load('common-brain')
+            common_brain_labels = ctx.load('source-subject')
             (ctx.root / label_dir(ctx.state)).mkdir(parents=True, exist_ok=True)
-            if fake_mri:
+            subjects_dir = ctx.root / MRI_SDIR
+            if is_fake_mri(subjects_dir / mrisubject):
                 # a scaled MRI shares the common brain's surface topology, so its
                 # labels can be written for this subject directly
                 write_labels_to_annot(common_brain_labels, mrisubject, parc, True, ctx.root / MRI_SDIR)
             else:
-                subjects_dir = ctx.root / MRI_SDIR
                 for hemi in ('lh', 'rh'):
                     cmd = [
                         "mri_surf2surf",
-                        "--srcsubject", common_brain,
+                        "--srcsubject", source_subject,
                         "--trgsubject", mrisubject,
                         "--sval-annot", parc,
                         "--tval", parc,
                         "--hemi", hemi,
                     ]
                     subp.run_freesurfer_command(cmd, subjects_dir)
-                fix_annot_names(mrisubject, parc, common_brain, subjects_dir=subjects_dir)
+                fix_annot_names(mrisubject, parc, source_subject, subjects_dir=subjects_dir)
         else:
             self.make_parcellation(ctx, parc, parc_def)
 

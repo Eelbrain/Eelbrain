@@ -154,25 +154,26 @@ class BemInput(Input):
 
 class SrcDerivative(ExternalArtifactDerivative[mne.SourceSpaces]):
     name = 'src'
-    key_fields = ('mrisubject', 'src', 'common_brain')
+    key_fields = ('mrisubject', 'src')
 
-    def _is_scaled(self, ctx: Request) -> bool:
-        return ctx.state['mrisubject'] != ctx.state['common_brain'] and is_fake_mri(ctx.root / mri_dir(ctx.state))
+    def _source_subject(self, ctx: Request) -> str | None:
+        """The subject a scaled MRI was scaled from, or ``None`` for a real MRI"""
+        return find_source_subject(ctx.state['mrisubject'], ctx.root / MRI_SDIR)
 
     def path(self, ctx: Request) -> Path:
         return ctx.root / src_file_path(ctx.state)
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        deps = []
-        if self._is_scaled(ctx):
-            deps.append(Dependency(
+        source_subject = self._source_subject(ctx)
+        if source_subject is not None:
+            return Dependency(
                 'src',
-                label='common-brain-src',
-                state={'mrisubject': ctx.state['common_brain']},
-            ))
+                label='source-src',
+                state={'mrisubject': source_subject},
+            ),
         elif ctx.state['src'].startswith('vol'):
-            deps.append(Dependency('bem-input'))
-        return tuple(deps)
+            return Dependency('bem-input'),
+        return ()
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         out = {'fake_mri': is_fake_mri(ctx.root / mri_dir(ctx.state))}
@@ -187,8 +188,8 @@ class SrcDerivative(ExternalArtifactDerivative[mne.SourceSpaces]):
         subject = ctx.state['mrisubject']
         src = ctx.state['src']
 
-        if self._is_scaled(ctx):
-            ctx.load('common-brain-src')
+        if self._source_subject(ctx) is not None:
+            ctx.load('source-src')
             ctx.registry.log.info("Scaling %s source space for %s...", src, subject)
             mne.scale_source_space(subject, f'{{subject}}-{src}-src.fif', subjects_dir=ctx.root / MRI_SDIR, n_jobs=1)
             return
@@ -300,7 +301,7 @@ def _eeg_channel_names(info: mne.Info) -> set[str]:
 
 class FwdDerivative(Derivative[mne.Forward]):
     name = 'fwd'
-    key_fields = ('subject', 'session', 'mrisubject', 'src', 'common_brain')
+    key_fields = ('subject', 'session', 'mrisubject', 'src')
     cache_suffix = '-fwd.fif'
 
     def __init__(self, raw, references: dict[str, Reference | None], recordings: frozenset[tuple[str, str, str, str]]):
@@ -377,7 +378,7 @@ class FwdDerivative(Derivative[mne.Forward]):
 
 class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
     name = 'inv'
-    key_fields = ('subject', 'session', 'raw', 'epoch', 'epoch_rejection', 'cov', 'mrisubject', 'src', 'common_brain', 'inv')
+    key_fields = ('subject', 'session', 'raw', 'epoch', 'epoch_rejection', 'cov', 'mrisubject', 'src', 'inv')
     cache_suffix = '-inv.fif'
 
     def __init__(self, raw, references: dict[str, Reference | None], recordings: frozenset[tuple[str, str, str, str]], cache: bool = True):
@@ -446,21 +447,18 @@ def _subject_state(
         state: dict[str, Any],
         subject: str,
         mri_subjects: dict[str, dict[str, str]],
-        common_brain: str,
+        common_brain: str = 'fsaverage',
 ) -> dict[str, Any]:
     """The state fields to override to switch to ``subject`` (a dependency delta).
 
     Only the changed fields are returned; the parent state propagates to the
     dependency automatically.
     """
-    out = {'subject': subject}
-    mri = state.get('mri')
-    if mri not in (None, '', '*'):
-        mrisubject = mri_subjects[mri][subject]
-        if mrisubject != common_brain and not mrisubject.startswith('sub-'):
-            mrisubject = 'sub-' + mrisubject
-        out['mrisubject'] = mrisubject
-    return out
+    mri = state['mri']
+    mrisubject = mri_subjects[mri][subject]
+    if mrisubject != common_brain and not mrisubject.startswith('sub-'):
+        mrisubject = 'sub-' + mrisubject
+    return {'subject': subject, 'mrisubject': mrisubject}
 
 
 @dataclass
@@ -516,8 +514,6 @@ def _prepare_source_projection(
     parc = _source_parc(ctx.state)
     if parc:
         ctx.load('annot')
-        if (is_scaled or not morph) and source_subject != target_subject:
-            ctx.load('source')
 
     operator = ctx.load('inv')
     if parc and (is_scaled or not morph):
@@ -576,15 +572,17 @@ def _source_dependencies(ctx: Request, sensor_dependency: Dependency) -> tuple[D
     deps = [sensor_dependency, Dependency('inv'), Dependency('median-head-position')]
     parc = _source_parc(ctx.state)
     if parc:
-        subjects_dir = ctx.root / MRI_SDIR
-        mrisubject = ctx.state['mrisubject']
-        source_subject = find_source_subject(mrisubject, subjects_dir) or mrisubject
-        target_subject = ctx.state['common_brain'] if ctx.options['morph'] else mrisubject
+        if ctx.options['morph']:
+            target_subject = ctx.state['common_brain']
+        else:
+            target_subject = ctx.state['mrisubject']
         deps.append(Dependency('annot', state={'mrisubject': target_subject, 'parc': parc}))
-        if (source_subject != target_subject) and (source_subject != mrisubject or not ctx.options['morph']):
-            deps.append(Dependency('annot', label='source', state={'mrisubject': source_subject, 'parc': parc}))
-    if ctx.options['morph'] and (ctx.state['common_brain'] if is_fake_mri(ctx.root / mri_dir(ctx.state)) else ctx.state['mrisubject']) != ctx.state['common_brain']:
-        deps.append(Dependency('source-morph'))
+    if ctx.options['morph']:
+        source_subject = find_source_subject(ctx.state['mrisubject'], ctx.root / MRI_SDIR)
+        if source_subject == ctx.state['common_brain']:
+            pass  # no morph required
+        else:
+            deps.append(Dependency('source-morph'))
     return tuple(deps)
 
 
@@ -613,13 +611,12 @@ class EpochsStcDerivative(UncachedDerivative[Dataset]):
         Whether to apply epoch rejection/interpolation state.
     """
     name = 'epochs-stc'
-    key_fields = ('subject', 'session', 'epoch', 'epoch_rejection', 'inv', 'cov', 'raw', 'src', 'parc', 'mrisubject', 'common_brain', 'adjacency')
     # source localization handles EEG referencing internally
     fixed_state = {'reference': ''}
     key_options = {
         'baseline': False,
         'src_baseline': False,
-        'morph': None,
+        'morph': False,
         'samplingrate': None,
         'decim': None,
         'pad': 0,
@@ -629,6 +626,13 @@ class EpochsStcDerivative(UncachedDerivative[Dataset]):
         'ndvar': True,
         'keep_epochs': False,
     }
+
+    def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
+        # ``common_brain`` is only used when morphing the estimate to it
+        fields = ('subject', 'session', 'epoch', 'epoch_rejection', 'inv', 'cov', 'raw', 'src', 'parc', 'mrisubject', 'adjacency')
+        if ctx.options['morph']:
+            fields += ('common_brain',)
+        return fields
 
     def __init__(self, raw, epochs: dict[str, Any], references: dict[str, Reference | None]):
         self.raw = raw
@@ -733,14 +737,13 @@ class EvokedStcDerivative(UncachedDerivative[Dataset]):
         Whether to return source output as NDVars.
     """
     name = 'evoked-stc'
-    key_fields = ('subject', 'session', 'epoch', 'epoch_rejection', 'equalize_evoked_count', 'inv', 'cov', 'raw', 'src', 'parc', 'mrisubject', 'common_brain', 'adjacency')
     # source localization handles EEG referencing internally
     fixed_state = {'reference': ''}
     key_options = {
         'model': '',
         'baseline': False,
         'src_baseline': False,
-        'morph': None,
+        'morph': False,
         'samplingrate': None,
         'decim': None,
     }
@@ -749,6 +752,13 @@ class EvokedStcDerivative(UncachedDerivative[Dataset]):
         'keep_evoked': False,
         'cat': None,
     }
+
+    def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
+        # ``common_brain`` is only used when morphing the estimate to it
+        fields = ('subject', 'session', 'epoch', 'epoch_rejection', 'inv', 'cov', 'raw', 'src', 'parc', 'mrisubject', 'adjacency', 'equalize_evoked_count')
+        if ctx.options['morph']:
+            fields += ('common_brain',)
+        return fields
 
     def __init__(self, raw, epochs: dict[str, Any], references: dict[str, Reference | None]):
         self.raw = raw
@@ -816,53 +826,6 @@ class EvokedStcDerivative(UncachedDerivative[Dataset]):
         return ds
 
 
-class EpochsStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
-    """Group-level dataset assembled from subject ``epochs-stc`` datasets.
-
-    Options
-    -------
-    Same options as :class:`EpochsStcDerivative`.
-
-    Notes
-    -----
-    ``keep_epochs`` must be falsey, and ``morph`` defaults to ``True`` when
-    omitted.
-    """
-    name = 'epochs-stc-group-dataset'
-    key_fields = ('group', 'mri', 'session', 'epoch', 'epoch_rejection', 'inv', 'cov', 'raw', 'src', 'parc', 'mrisubject', 'common_brain', 'adjacency')
-    key_options = {**EpochsStcDerivative.key_options, **EpochsStcDerivative.view_options}
-
-    def __init__(self, mri_subjects: dict[str, dict[str, str]], common_brain: str, groups: dict[str, tuple[str, ...]]):
-        self.mri_subjects = mri_subjects
-        self.common_brain = common_brain
-        self.groups = groups
-
-    def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {'subjects': tuple(self.groups[ctx.state['group']])}
-
-    def _group_options(self, ctx: Request) -> dict[str, Any]:
-        keep_epochs = ctx.options['keep_epochs']
-        if keep_epochs:
-            raise ValueError(f"keep_epochs={keep_epochs!r} with group: Can not combine Epochs objects for different subjects. Set keep_epochs=False (default).")
-        morph = ctx.options['morph']
-        if morph is None:
-            return ctx.options_for('epochs-stc', *EpochsStcDerivative.key_options, *EpochsStcDerivative.view_options, morph=True)
-        if not morph:
-            raise ValueError(f"morph={morph!r} with group: Source estimates can only be combined after morphing data to common brain model. Set morph=True.")
-        return ctx.options_for('epochs-stc', *EpochsStcDerivative.key_options, *EpochsStcDerivative.view_options)
-
-    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        options = self._group_options(ctx)
-        return tuple(
-            Dependency('epochs-stc', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
-            for subject in self.groups[ctx.state['group']]
-        )
-
-    def build(self, ctx: Request) -> Dataset:
-        dss = [ctx.load(subject) for subject in self.groups[ctx.state['group']]]
-        return combine(dss)
-
-
 class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
     """Group-level dataset assembled from subject ``evoked-stc`` datasets.
 
@@ -876,30 +839,31 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
     and ``morph`` defaults to ``True`` when omitted in that case.
     """
     name = 'evoked-stc-group-dataset'
-    key_fields = ('group', 'mri', 'session', 'epoch', 'epoch_rejection', 'equalize_evoked_count', 'inv', 'cov', 'raw', 'src', 'parc', 'mrisubject', 'common_brain', 'adjacency')
-    key_options = {**EvokedStcDerivative.key_options, **EvokedStcDerivative.view_options}
+    key_options = {
+        **EvokedStcDerivative.key_options,
+        **EvokedStcDerivative.view_options,
+        'morph': True,
+    }
 
-    def __init__(self, mri_subjects: dict[str, dict[str, str]], common_brain: str, groups: dict[str, tuple[str, ...]]):
+    def __init__(self, mri_subjects: dict[str, dict[str, str]], groups: dict[str, tuple[str, ...]]):
         self.mri_subjects = mri_subjects
-        self.common_brain = common_brain
         self.groups = groups
+
+    def override_key_fields(self, ctx: Request) -> tuple[str, ...] | None:
+        fields = ('group', 'mri', 'session', 'epoch', 'epoch_rejection', 'equalize_evoked_count', 'inv', 'cov', 'raw', 'src', 'parc', 'mrisubject', 'adjacency')
+        if ctx.options['morph']:
+            fields += ('common_brain',)
+        return fields
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {'subjects': tuple(self.groups[ctx.state['group']])}
 
-    def _group_options(self, ctx: Request) -> dict[str, Any]:
-        morph = ctx.options['morph']
-        if ctx.options['ndvar']:
-            if morph is None:
-                return ctx.options_for('evoked-stc', *EvokedStcDerivative.key_options, *EvokedStcDerivative.view_options, morph=True)
-            if not morph:
-                raise ValueError("ndvar=True, morph=False with multiple subjects: Can't create ndvars with data from different brains")
-        return ctx.options_for('evoked-stc', *EvokedStcDerivative.key_options, *EvokedStcDerivative.view_options)
-
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        options = self._group_options(ctx)
+        if ctx.options['ndvar'] and not ctx.options['morph']:
+            raise ValueError("ndvar=True, morph=False with multiple subjects: Can't create ndvars with data from different brains")
+        options = ctx.options_for('evoked-stc', *EvokedStcDerivative.key_options, *EvokedStcDerivative.view_options)
         return tuple(
-            Dependency('evoked-stc', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
+            Dependency('evoked-stc', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects), options=options)
             for subject in self.groups[ctx.state['group']]
         )
 

@@ -63,7 +63,7 @@ from .reports import (
 from .data import DataSpec
 from .results import DSPMMovieDerivative, TTestMovieDerivative
 from .source import (
-    BemInput, EpochsStcDerivative, EpochsStcGroupDatasetDerivative,
+    BemInput, EpochsStcDerivative,
     EvokedStcDerivative, EvokedStcGroupDatasetDerivative, FwdDerivative,
     InvDerivative, ROIData, SourceMorphDerivative, SrcDerivative, TransInput,
     InverseSolution, MinimumNormInverseSolution, _drop_unknown_labels, _source_parc, eval_src,
@@ -490,7 +490,7 @@ class Pipeline(StateModel):
             self._parcs,
             self._groups,
         )
-        brain_report_args = (*result_args, self._mri_subjects, self.get('common_brain'), {**self._brain_plot_defaults, **self.brain_plot_defaults})
+        brain_report_args = (*result_args, self._mri_subjects, {**self._brain_plot_defaults, **self.brain_plot_defaults})
 
         # --- Inputs (externally managed files) and preprocessing ---
         maxwell_registered = False
@@ -521,7 +521,7 @@ class Pipeline(StateModel):
         self._derivatives.register(PredictorInput(self.root, self.predictors))
         self._derivatives.register(TRFDerivative(self.root, self._estimators, self.predictors, self._named_models, self.stim_var, self._raw))
         self._derivatives.register(TRFDatasetDerivative(self.root, self._estimators, self._named_models, self._epochs))
-        self._derivatives.register(TRFGroupDatasetDerivative(self._mri_subjects, self.get('common_brain'), self._groups))
+        self._derivatives.register(TRFGroupDatasetDerivative(self._mri_subjects, self._groups))
 
         # --- Sensor-space: events → epochs → evoked ---
         self._derivatives.register(EventsInput(self._raw_extension))
@@ -563,8 +563,7 @@ class Pipeline(StateModel):
         # --- Source-space: epochs/evoked projected to source space ---
         self._derivatives.register(EpochsStcDerivative(self._raw, self._epochs, self._references))
         self._derivatives.register(EvokedStcDerivative(self._raw, self._epochs, self._references))
-        self._derivatives.register(EpochsStcGroupDatasetDerivative(self._mri_subjects, self.get('common_brain'), self._groups))
-        self._derivatives.register(EvokedStcGroupDatasetDerivative(self._mri_subjects, self.get('common_brain'), self._groups))
+        self._derivatives.register(EvokedStcGroupDatasetDerivative(self._mri_subjects, self._groups))
 
         # --- Statistical tests ---
         self._derivatives.register(EvokedTestDataDerivative(self.tests, self._epochs, self._groups))

@@ -19,7 +19,6 @@ from .config import (
 from .nodes import (
     BemInput,
     EpochsStcDerivative,
-    EpochsStcGroupDatasetDerivative,
     EvokedStcDerivative,
     EvokedStcGroupDatasetDerivative,
     FwdDerivative,

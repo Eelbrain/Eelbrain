@@ -627,11 +627,11 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
     def apply_view_options(self, ctx: Request, evoked: list[mne.Evoked]) -> Dataset:
         ds = ctx.load(view='shell')
         cat = ctx.view_options['cat']
+        model = ctx.options['model']
         if cat:
-            ds = ds.sub(ds.eval(ctx.options['model']).isin(cat))
+            ds = ds.sub(ds.eval(model).isin(cat))
 
         # Unpack evoked objects and map them to the ds rows
-        model = ctx.options['model']
         model_vars = model.split('%') if model else ()
         cells = [' | '.join(cell) or 'No comment' for cell in ds.zip(*model_vars)] if model_vars else ['No comment']
         evoked_by_cell = dict(zip(_evoked_comments(evoked), evoked))

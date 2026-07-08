@@ -277,6 +277,7 @@ class ResultOutputDerivative(Derivative[T]):
         self.groups = groups
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
+        # FIXME:
         # Subclasses define their own key(), so this does not feed the cache key;
         # it is the read-enforcement allowlist and the edge-coverage set for the
         # uncached result-data children (evoked-test-data / two-stage-data /
@@ -480,28 +481,16 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
         # Source-space fields identify the artifact only for source/ROI analyses
         # (see dependencies); a sensor test uses only evoked-group-dataset.
-        fields = ['group', 'epoch', 'raw', 'session', 'epoch_rejection', 'reference', 'equalize_evoked_count']
+        fields = ('group', 'epoch', 'raw', 'session', 'epoch_rejection', 'reference', 'equalize_evoked_count', 'inv')
         data = ctx.options['data']
         if data is None or data.source:
-            fields += ['mri', 'inv', 'cov', 'src', 'parc', 'mrisubject', 'common_brain', 'adjacency']
-        return tuple(fields)
+            fields += ('mri', 'cov', 'src', 'parc', 'mrisubject', 'common_brain', 'adjacency')
+        return fields
 
     def __init__(self, tests: dict[str, Test], epochs: dict[str, Any], groups: dict[str, tuple[str, ...] | list[str]]):
         self.tests = tests
         self.epochs = epochs
         self.groups = groups
-
-    def _sensor_evoked_options(self, ctx: Request, cat, model: str) -> dict[str, Any]:
-        return ctx.options_for(
-            'evoked',
-            model=model,
-            baseline=ctx.options['baseline'],
-            ndvar=True,
-            cat=cat,
-            samplingrate=ctx.options['samplingrate'],
-            decim=None,
-            data=ctx.options['data'],
-        )
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {
@@ -522,19 +511,19 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
                 raise TypeError(f"smooth={ctx.options['smooth']!r} for sensor tests")
             if data.aggregate:
                 raise TypeError(f"smooth={ctx.options['smooth']!r} for ROI tests")
-        if data.sensor and ctx.options['src_baseline'] not in (None, False):
-            raise TypeError(f"src_baseline={ctx.options['src_baseline']!r} for sensor tests")
 
         if data.sensor:
-            return (Dependency('evoked-group-dataset', options=self._sensor_evoked_options(ctx, test_obj.cat, model)),)
+            if ctx.options['src_baseline']:
+                raise TypeError(f"src_baseline={ctx.options['src_baseline']!r} for sensor tests")
+            options = ctx.options_for('evoked', 'model', 'baseline', 'samplingrate', 'decim', 'data', cat=test_obj.cat, ndvar=True)
+            return Dependency('evoked-group-dataset', options=options),
 
         if data.source and not data.aggregate:
-            return (Dependency(
-                'evoked-stc-group-dataset',
-                options=_evoked_stc_options(ctx, model=model, morph=True, cat=test_obj.cat, samplingrate=samplingrate),
-            ),)
+            options = _evoked_stc_options(ctx, model=model, morph=True, cat=test_obj.cat, samplingrate=samplingrate)
+            return Dependency('evoked-stc-group-dataset', options=options),
 
         return tuple(
+            # TODO: go through evoked-stc-group-dataset
             Dependency(
                 'evoked-stc',
                 label=subject,

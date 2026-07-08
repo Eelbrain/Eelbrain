@@ -98,7 +98,7 @@ class RawSource(RawPipe):
         Name of a montage that is applied to raw data to set sensor positions
         (see :meth:`mne.io.Raw.set_montage`).
     adjacency
-        Ajacency between sensors. Can be specified as:
+        Adjacency between sensors. Can be specified as:
 
         - ``'auto'`` to use :func:`mne.channels.find_ch_adjacency`
         - Pre-defined adjacency (one of :func:`mne.channels.get_builtin_ch_adjacencies`)

@@ -72,7 +72,9 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         data = ctx.options['data']
         fields = ['subject', 'session', 'epoch', 'epoch_rejection', 'raw']
         if data is None or data.source:
-            fields += ['equalize_evoked_count', 'inv', 'cov', 'src', 'parc', 'mrisubject', 'common_brain', 'adjacency']
+            fields += ['equalize_evoked_count', 'inv', 'cov', 'src', 'parc', 'mrisubject', 'adjacency']
+            if data is None or data.morph:
+                fields += ['common_brain']
         return tuple(fields)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:

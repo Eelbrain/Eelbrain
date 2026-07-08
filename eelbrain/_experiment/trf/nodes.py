@@ -157,8 +157,7 @@ class TRFDerivative(Derivative[object]):
     """
     name = 'trf'
     cache_suffix = '.pickle'
-    # identity fields are request-dependent (source vs sensor space); see
-    # override_key_fields, which is also the read-enforcement set.
+    fixed_state = {'adjacency': ''}
     key_options = {
         'x': OptionSpec(None, normalize=_normalized_model_name),
         'tstart': 0.0,
@@ -203,11 +202,13 @@ class TRFDerivative(Derivative[object]):
         # source vs sensor space changes which fields identify the artifact.
         # This is also the read-enforcement set, so it must cover every state
         # field the build may read: 'inv' is always read (to pick the space).
-        fields = ['subject', 'session', 'raw', 'epoch', 'epoch_rejection', 'reference', 'inv']
+        fields = ('subject', 'session', 'raw', 'epoch', 'epoch_rejection', 'inv')
         if ctx.state['inv']:  # non-empty inverse → source space
-            fields += ['cov', 'mrisubject', 'src', 'parc', 'common_brain', 'adjacency']
+            fields += ('cov', 'mrisubject', 'src', 'parc')
         elif self._estimator(ctx).extra_inputs:  # NCRF: sensor data + forward solution
-            fields += ['cov', 'mrisubject', 'src', 'common_brain']
+            fields += ('cov', 'mrisubject', 'src')
+        else:
+            fields += ('reference',)
         return tuple(fields)
 
     def fingerprint(self, ctx: Request) -> dict[str, object]:
@@ -217,13 +218,15 @@ class TRFDerivative(Derivative[object]):
         est = self._estimator(ctx)
 
         # M/EEG response: sensor (inv='') vs source space
-        option_kwargs = {}
         if ctx.state['inv']:  # source space
             node = 'epochs-stc'
+            option_kwargs = {}
         else:
             node = 'epochs'
-            option_kwargs['data'] = ctx.options['data']  # resolved sensor kind
-            option_kwargs['interpolate_bads'] = est.interpolate_bads
+            option_kwargs = {
+                'data': ctx.options['data'],  # resolved sensor kind
+                'interpolate_bads': est.interpolate_bads,
+            }
         options = ctx.options_for(node, 'samplingrate', 'decim', **option_kwargs)
         deps = [Dependency(node, label='response', options=options)]
 
@@ -416,10 +419,11 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
         scale = ctx.options['scale']
         trfs = ctx.options['trfs']
         subject = ctx.state['subject']
-        common_brain = source_morph = None
+        common_brain = ctx.state['common_brain']
         if ctx.state['inv'] and not is_fake_mri(self.root / mri_dir(ctx.state)):
-            common_brain = ctx.state['common_brain']
             source_morph = ctx.load('source-morph')
+        else:
+            source_morph = None
         dss = []
         for epoch in self._epoch_names(ctx):
             res = ctx.load(epoch)
@@ -428,7 +432,7 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
             ds[:, 'epoch'] = epoch
             if ctx.state['inv']:
                 for key in (*ds.info['xs'], *ds.info['metrics']):
-                    if key in ds and isinstance(ds[key], NDVar) and ds[key].has_dim('source'):
+                    if key in ds and isinstance(ds[key], NDVar):
                         ds[key] = morph_source_space(ds[key], common_brain, morph=source_morph)
             dss.append(ds)
         ds = combine(dss)
@@ -454,11 +458,9 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
     def __init__(
             self,
             mri_subjects: dict[str, dict[str, str]],
-            common_brain: str,
             groups: dict[str, tuple[str, ...]],
     ):
         self.mri_subjects = mri_subjects
-        self.common_brain = common_brain
         self.groups = groups
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
@@ -476,7 +478,7 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         options = ctx.options_for('trf-dataset', *self.key_options)
         return tuple(
-            Dependency('trf-dataset', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
+            Dependency('trf-dataset', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects), options=options)
             for subject in self.groups[ctx.state['group']]
         )
 

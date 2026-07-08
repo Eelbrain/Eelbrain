@@ -1984,7 +1984,6 @@ def test_load_trfs_source(samples_experiment):
     assert ds.n_cases == 2
     assert sorted(ds['subject'].cells) == ['R0000', 'R0001']
     # all subjects morphed onto the common brain, so kernels share one source space
-    common_brain = e.get('common_brain')
-    assert ds[0, 'imp'].source.subject == common_brain
-    assert ds[1, 'imp'].source.subject == common_brain
+    assert ds[0, 'imp'].source.subject == 'fsaverage'
+    assert ds[1, 'imp'].source.subject == 'fsaverage'
     assert ds[0, 'imp'].source == ds[1, 'imp'].source

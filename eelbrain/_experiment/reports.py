@@ -148,7 +148,7 @@ def _report_parc_image(
             raise RuntimeError("subjects needs to be specified for plotting individual parcellations")
         legend = None
         for subject in subjects:
-            plot_state = {**state, **_subject_state(state, subject, node.mri_subjects, node.common_brain)}
+            plot_state = {**state, **_subject_state(state, subject, node.mri_subjects)}
             labels = ctx.load(f'annot:{subject}')
             if all(label.name.startswith('unknown-') for label in labels):
                 section.add_image_figure("No labels", subject)
@@ -186,12 +186,10 @@ class BrainReportDerivative(ResultOutputDerivative[Path]):
             parcs: dict[str, Any],
             groups: dict[str, tuple[str, ...] | list[str]],
             mri_subjects: dict[str, dict[str, str]],
-            common_brain: str,
             brain_plot_defaults: dict[str, Any] | None = None,
     ):
         ResultOutputDerivative.__init__(self, tests, epochs, parcs, groups)
         self.mri_subjects = mri_subjects
-        self.common_brain = common_brain
         self.brain_plot_defaults = {} if brain_plot_defaults is None else brain_plot_defaults
 
     def _annot_deps(self, ctx: Request) -> tuple[Dependency, ...]:
@@ -200,7 +198,7 @@ class BrainReportDerivative(ResultOutputDerivative[Path]):
         if not isinstance(parc, IndividualSeededParc):
             return ()
         return tuple(
-            Dependency('annot', label=f'annot:{subject}', state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain))
+            Dependency('annot', label=f'annot:{subject}', state=_subject_state(ctx.state, subject, self.mri_subjects))
             for subject in self.groups[ctx.state['group']]
         )
 
