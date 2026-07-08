@@ -419,11 +419,11 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
         scale = ctx.options['scale']
         trfs = ctx.options['trfs']
         subject = ctx.state['subject']
-        common_brain = ctx.state['common_brain']
-        if ctx.state['inv'] and not is_fake_mri(self.root / mri_dir(ctx.state)):
-            source_morph = ctx.load('source-morph')
-        else:
-            source_morph = None
+        common_brain = source_morph = None
+        if ctx.state['inv']:
+            common_brain = ctx.state['common_brain']
+            if not is_fake_mri(self.root / mri_dir(ctx.state)):
+                source_morph = ctx.load('source-morph')
         dss = []
         for epoch in self._epoch_names(ctx):
             res = ctx.load(epoch)

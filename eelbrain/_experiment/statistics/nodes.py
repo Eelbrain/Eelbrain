@@ -49,6 +49,7 @@ RESULT_OPTION_DEFAULTS = {
     'src_baseline': None,
     'smooth': None,
     'samplingrate': None,
+    'decim': None,
 }
 
 TEST_DATA_OPTION_NAMES = (
@@ -475,6 +476,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         'baseline': None,
         'src_baseline': None,
         'samplingrate': None,
+        'decim': None,
         'smooth': None,
     }
 
@@ -503,7 +505,6 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
         model = test_obj.model or ''
-        samplingrate = ctx.options['samplingrate']
         subjects = self.groups[ctx.state['group']]
 
         if ctx.options['smooth']:
@@ -515,23 +516,18 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         if data.sensor:
             if ctx.options['src_baseline']:
                 raise TypeError(f"src_baseline={ctx.options['src_baseline']!r} for sensor tests")
-            options = ctx.options_for('evoked', 'model', 'baseline', 'samplingrate', 'decim', 'data', cat=test_obj.cat, ndvar=True)
+            options = ctx.options_for('evoked', 'baseline', 'samplingrate', 'decim', 'data', model=model, cat=test_obj.cat, ndvar=True)
             return Dependency('evoked-group-dataset', options=options),
-
-        if data.source and not data.aggregate:
-            options = _evoked_stc_options(ctx, model=model, morph=True, cat=test_obj.cat, samplingrate=samplingrate)
-            return Dependency('evoked-stc-group-dataset', options=options),
-
-        return tuple(
+        assert data.source
+        if data.aggregate:
+            options = ctx.options_for('evoked-stc', 'baseline', 'src_baseline', 'samplingrate', 'decim', ndvar=True, model=model, morph=False, cat=test_obj.cat)
             # TODO: go through evoked-stc-group-dataset
-            Dependency(
-                'evoked-stc',
-                label=subject,
-                state={'subject': subject},
-                options=_evoked_stc_options(ctx, model=model, morph=False, cat=None, samplingrate=samplingrate),
+            return tuple(
+                Dependency('evoked-stc', label=subject, state={'subject': subject}, options=options)
+                for subject in subjects
             )
-            for subject in subjects
-        )
+        options = ctx.options_for('evoked-stc-group-dataset', 'baseline', 'src_baseline', 'samplingrate', 'decim', ndvar=True, model=model, morph=True, cat=test_obj.cat)
+        return Dependency('evoked-stc-group-dataset', options=options),
 
     def build(self, ctx: Request) -> Dataset | ROIData:
         data = ctx.options['data']
