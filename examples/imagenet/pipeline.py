@@ -2,6 +2,8 @@
 from eelbrain.pipeline import Pipeline, RawFilter, RawICA, LabelVar, PrimaryEpoch, SecondaryEpoch, TTestOneSample, TTestRelated, ANOVA
 
 
+root = '~/Data/ds005810'
+
 class ImageNet(Pipeline):
 
     preload = True
@@ -34,7 +36,3 @@ class ImageNet(Pipeline):
         'connection': TTestRelated('event', 'stim_on', 'resp'),
         'anova': ANOVA('event * subject'),
     }
-
-
-root = '~/Data/ds005810'
-e = ImageNet(root)

@@ -482,13 +482,13 @@ Example
 
 The following is a complete example for an experiment class definition file
 (the source file can be found in the Eelbrain examples folder at
-``examples/imagenet/imagenet.py``):
+``examples/imagenet/pipeline.py``):
 
-.. literalinclude:: ../examples/imagenet/imagenet.py
+.. literalinclude:: ../examples/imagenet/pipeline.py
 
 The event structure is illustrated by looking at the first few events::
 
-    >>> from imagenet import *
+    >>> e = load_pipeline()
     >>> data = e.load_events()
     >>> data.head()
     #     sample    value     event     onset    SOA       subject   position
