@@ -19,14 +19,16 @@ The recommended tool for deploying Eelbrain is the `Mamba <https://mamba.readthe
 
 1. `Install Mamba <https://conda-forge.org/download/>`_.
 
-2. Create an environment containing Eelbrain along with other libraries required for a project. An example environment is provided in the `Alice <https://github.com/Eelbrain/Alice>`_ repository's `environment.yml <https://github.com/Eelbrain/Alice/blob/main/environment.yml>`_ file:
+2. Create an environment containing Eelbrain along with other required libraries.
+   `Environment.yml <_static/environment.yml>`_ combines some useful libraries for M/EEG analysis in Jupyter.
+   Use it directly with:
 
 .. code-block:: bash
 
-    $ mamba env create --file=https://github.com/Eelbrain/Alice/raw/main/environment.yml
+    $ mamba env create --file={{ environment_yml_url }}
 
 
-By default, this new environment will be called ``eelbrain`` (as specified in the `environment.yml <https://github.com/Eelbrain/Alice/blob/main/environment.yml>`_ file), and can be activated with the following command (note the change in the command line prefix):
+By default, this new environment will be called ``eelbrain`` (as specified in the `environment.yml <_static/environment.yml>`_ file), and can be activated with the following command (note the change in the command line prefix):
 
 .. code-block:: bash
 
@@ -34,7 +36,7 @@ By default, this new environment will be called ``eelbrain`` (as specified in th
     (eelbrain) $
 
 
-You will have to activate the environment every time you start a new shell session.
+You will have to activate the environment every time you start a new terminal session.
 
 Eelbrain can then be used from this environment, for example through `Jupyter Lab <https://jupyterlab.readthedocs.io/en/latest/>`_:
 

@@ -11,6 +11,7 @@
 
 from datetime import datetime
 from pathlib import Path
+from packaging.version import Version
 import os
 import sys
 
@@ -43,6 +44,7 @@ extensions = [
     'sphinx.ext.autodoc', 'sphinx.ext.autosummary',  # default
     'sphinx.ext.todo', 'sphinx.ext.imgmath',  # default
     'sphinx.ext.intersphinx',  # http://sphinx.pocoo.org/ext/intersphinx.html
+    'sphinx.ext.linkcode',  # source links to GitHub
     'sphinx.ext.napoleon',  # https://www.sphinx-doc.org/en/master/usage/extensions/napoleon.html
     'sphinxcontrib.bibtex',  # https://sphinxcontrib-bibtex.readthedocs.io
     'sphinx_gallery.gen_gallery',  # https://sphinx-gallery.github.io
@@ -67,6 +69,39 @@ bibtex_bibfiles = ['publications.bib']
 qualname_overrides = {
     "eelbrain._data_obj.NDVar": "eelbrain.NDVar",
 }
+
+
+def linkcode_resolve(domain, info):
+    """Resolve source code links to GitHub."""
+    import importlib
+    import inspect
+    if domain != 'py' or not info['module']:
+        return None
+    try:
+        mod = importlib.import_module(info['module'])
+        obj = mod
+        for part in info['fullname'].split('.'):
+            obj = getattr(obj, part)
+        obj = inspect.unwrap(obj)
+        fname = inspect.getfile(obj)
+        source, start = inspect.getsourcelines(obj)
+    except Exception:
+        return None
+    # Make path relative to the repo root (works for editable installs);
+    # fall back to site-packages-relative path (e.g. on ReadTheDocs)
+    repo_root = Path(__file__).parent.parent
+    try:
+        rel = Path(fname).relative_to(repo_root)
+    except ValueError:
+        pkg_root = Path(eelbrain.__file__).parent.parent
+        try:
+            rel = Path(fname).relative_to(pkg_root)
+        except ValueError:
+            return None
+    end = start + len(source) - 1
+    pkg_version = Version(eelbrain.__version__)
+    ref = 'main' if pkg_version.is_devrelease else f'v{pkg_version.public}'
+    return f'https://github.com/Eelbrain/Eelbrain/blob/{ref}/{rel.as_posix()}#L{start}-L{end}'
 
 
 ################################################################################
@@ -200,9 +235,30 @@ copyright = '%i, Christian Brodbeck' % datetime.now().year
 # |version| and |release|, also used in various other places throughout the
 # built documents.
 #
-_version_items = eelbrain.__version__.split('.')
-# The short X.Y version.
-version = '.'.join(_version_items[:2])
+def _format_version_display(version_string):
+    parsed = Version(version_string)
+    display_parts = [parsed.base_version]
+    if parsed.pre:
+        pre_label, pre_number = parsed.pre
+        pre_label = {
+            'a': '\N{GREEK SMALL LETTER ALPHA}',
+            'b': '\N{GREEK SMALL LETTER BETA}',
+        }.get(pre_label, pre_label)
+        display_parts.extend((pre_label, str(pre_number)))
+    if parsed.dev is not None:
+        display_parts.extend(('dev', str(parsed.dev)))
+    if parsed.post is not None:
+        display_parts.extend(('post', str(parsed.post)))
+    return ' '.join(display_parts)
+
+
+# The displayed version.
+version = _format_version_display(eelbrain.__version__)
+rst_epilog = f"""
+.. role:: project-version
+
+.. |version_title| replace:: :project-version:`{version}`
+"""
 # The full version, including alpha/beta/rc tags.
 release = eelbrain.__version__  # '0.0.3'
 
@@ -279,7 +335,16 @@ html_theme_options = {
     'includehidden': False,
     'navigation_depth': 2,  # otherwise RTD includes all autosummary sub-headings
 }
-html_baseurl = 'https://eelbrain.readthedocs.io/en/stable/'
+html_baseurl = os.environ.get('READTHEDOCS_CANONICAL_URL', 'https://eelbrain.readthedocs.io/en/stable/')
+
+# Use the current Read the Docs build URL for copy-paste commands.
+environment_yml_url = f"{html_baseurl.rstrip('/')}/_static/environment.yml"
+_environment_yml_url_placeholder = '{{ environment_yml_url }}'
+
+
+def resolve_build_urls(app, docname, source):
+    """Resolve URL placeholders that occur inside literal blocks."""
+    source[0] = source[0].replace(_environment_yml_url_placeholder, environment_yml_url)
 
 # Add any paths that contain custom themes here, relative to this directory.
 # html_theme_path = []
@@ -400,6 +465,7 @@ man_pages = [
 
 def setup(app):
     """Set up the Sphinx app."""
+    app.connect('source-read', resolve_build_urls)
     # ensure we have the data necessary to build examples
     logger.info("Ensuring example data is available")
     mne.datasets.sample.data_path(verbose=True)

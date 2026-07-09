@@ -1,0 +1,16 @@
+# Environment for M/EEG analysis with Eelbrain
+# usage: $ mamba env create --file=environment.yml
+name: eelbrain
+channels:
+- conda-forge
+- conda-forge/label/eelbrain_dev
+dependencies:
+- eelbrain >=0.42.0a6,<0.43.dev0
+- pip
+- ipython
+- jupyter
+- ipywidgets
+- jupytext
+- seaborn
+- pip:
+  - gammatone

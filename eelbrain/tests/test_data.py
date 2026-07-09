@@ -1587,6 +1587,19 @@ def test_ndvar_timeseries_methods():
     assert x.time.times[0] == 3.2
 
 
+def test_ndvar_methods():
+    "Test other NDVar methods"
+    ds = datasets.simulate_erp()
+    y = ds['eeg']
+
+    # repeat
+    repeat = 4
+    y_rep = y.repeat(repeat)
+    assert len(y_rep.get_dim('case')) == len(y.get_dim('case')) * repeat
+    for dim in y_rep.dims[1:]:
+        assert len(y_rep.get_dim(dim.name)) == len(y.get_dim(dim.name))
+
+
 def test_nested_effects():
     """Test nested effects"""
     ds = datasets.get_uv(nrm=True)

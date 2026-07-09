@@ -12,8 +12,8 @@ import scipy.stats
 from scipy.linalg import inv
 
 from .._data_obj import CategorialArg, CellArg, Dataset, FactorArg, Model, Parametrization, asarray, ascategorial, asfactor, asmodel
-from . import opt
-from . import vector
+from .._exceptions import WrongDimensionError
+from . import opt, vector
 
 
 FLOAT64 = np.dtype('float64')
@@ -334,10 +334,11 @@ def t2_1samp(y, rotation=None, out=None):
     out : ndarray
         Container for result. Needs shape ``...``.
     """
-    if y.ndim <= 1:
-        raise ValueError(f'y with shape {y.shape}: T**2 statistic needs vector valued samples.')
     n_cases = y.shape[0]
     n_dims = y.shape[1]
+    if n_dims <= 1 or n_dims > 3:
+        raise WrongDimensionError(f'y with shape {y.shape}: T**2 statistic needs 2d/3d vector valued samples.')
+
     if out is None:
         out = np.empty(y.shape[2:])
     else:
@@ -351,10 +352,10 @@ def t2_1samp(y, rotation=None, out=None):
         out_flat = out.ravel()
 
     if rotation is None:
-        vector.t2_stat(y_flat, out_flat)
+        vector.t2_stat(y_flat, out_flat, n_dims)
     else:
-        assert rotation.shape == (n_cases, 3, 3)
-        vector.t2_stat_rotated(y_flat, rotation, out_flat)
+        vector.t2_stat_rotated(y_flat, rotation, out_flat, n_dims)
+
     return out
 
 

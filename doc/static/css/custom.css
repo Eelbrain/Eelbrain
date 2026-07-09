@@ -12,6 +12,13 @@
     background-color: #55555d;
 }
 
+.rst-content h1 .project-version {
+    color: #555555;
+    font-size: 70%;
+    font-weight: normal;
+    white-space: nowrap;
+}
+
 /* Reset gloabl font size */
 /* p {
     font-size: 14px;
@@ -115,4 +122,10 @@ div.highlight-default div.highlight pre {
 div.sphx-glr-script-out div.highlight pre {
     font-size: 13px;
     color: #555555;
+}
+
+/* Source link ([source] button from sphinx.ext.linkcode) */
+.rst-content .viewcode-link {
+    color: #e74c3c;  /* same red as code literals */
+    font-size: 1em;  /* same as signature */
 }

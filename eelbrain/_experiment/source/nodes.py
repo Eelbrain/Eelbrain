@@ -22,6 +22,7 @@ from collections.abc import Sequence
 
 import mne
 import numpy as np
+from mne.io.constants import FIFF
 from mne.morph import SourceMorph
 from scipy import sparse
 
@@ -352,7 +353,7 @@ class FwdDerivative(Derivative[mne.Forward]):
         else:
             bemsol = mne.make_bem_solution(ctx.load('bem-input'))
         if 'kit_system_id' in info:
-            is_kit = info['kit_system_id'] is not None
+            is_kit = (info['kit_system_id'] is not None) or (info['chs'][0]['coil_type'] == FIFF.FIFFV_COIL_KIT_GRAD)
         else:
             raise RuntimeError("Unclear how to set ignor_ref for legacy file without kit_system_id")
         fwd = mne.make_forward_solution(info, ctx.load('trans-input'), src, bemsol, ignore_ref=is_kit)

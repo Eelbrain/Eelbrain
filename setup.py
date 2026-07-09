@@ -70,7 +70,8 @@ extensions = [
     Extension('eelbrain._ndvar._gammatone', [f'eelbrain/_ndvar/_gammatone{ext}'], **base_args),
     Extension('eelbrain._stats.adjacency_opt', [f'eelbrain/_stats/adjacency_opt{ext}'], **base_args),
     Extension('eelbrain._stats.opt', [f'eelbrain/_stats/opt{ext}'], **base_args),
-    Extension('eelbrain._stats.vector', [f'eelbrain/_stats/vector{ext_cpp}'], include_dirs=['dsyevh3C'], **base_args),
+    Extension('eelbrain._stats.vector2d', [f'eelbrain/_stats/vector2d{ext_cpp}'], **base_args),
+    Extension('eelbrain._stats.vector3d', [f'eelbrain/_stats/vector3d{ext_cpp}'], include_dirs=['dsyevh3C'], **base_args),
 ]
 if cythonize:
     extensions = cythonize(extensions)

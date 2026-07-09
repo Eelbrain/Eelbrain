@@ -53,3 +53,4 @@ doc/scripts/cache-search.json
 test_data/
 
 .claude
+wheelhouse/

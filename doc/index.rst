@@ -9,8 +9,8 @@
 
 |
 
-Eelbrain |version|
-==================
+Eelbrain |version_title|
+========================
 `Open-source <https://github.com/Eelbrain/Eelbrain>`_ `Python <https://www.python.org>`_ toolkit for MEG and EEG data analysis, including:
 
 * Mass-univariate :ref:`permutation tests<examples>`
