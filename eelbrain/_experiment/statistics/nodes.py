@@ -258,7 +258,6 @@ class ResultOutputDerivative(Derivative[T]):
     smooth
         Optional source-space smoothing.
     """
-    key_fields = ()
     cache_log_level = logging.INFO
     single_subject = False
     sampled_path = False

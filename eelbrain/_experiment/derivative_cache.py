@@ -1796,10 +1796,6 @@ class DerivativeRegistry:
         child = dep_ctx.node
         # collect child key fields
         fields = set(child._get_key_fields(dep_ctx))
-        if not fields:
-            # FIXME: Opaque child (custom key()/uncached derivative that declares no
-            # fields) or explicit opt-out: nothing to guarantee.
-            return
         # collect parent key fields
         pinned = set(dep.state or ()) | set(child.fixed_state)
         parent = ctx.node

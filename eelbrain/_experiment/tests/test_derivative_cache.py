@@ -1511,29 +1511,3 @@ def test_edge_key_coverage_enforces_uncached_child():
     # strict rule: an uncached child's declared key fields are enforced too
     with pytest.raises(RuntimeError, match=r"depends on state field\(s\).*'mode'"):
         registry.resolve('parent', state={'subject': 's1', 'mode': 'a'}).load()
-
-
-def test_edge_key_coverage_optout_child():
-    root, registry = make_empty_registry()
-
-    class OptOutChild(UncachedDerivative[str]):
-        name = 'child'
-        key_fields = ()
-
-        def build(self, ctx: Request) -> str:
-            return 'x'
-
-    class Parent(_Leaf):
-        name = 'parent'
-        key_fields = ('subject',)
-
-        def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-            return (Dependency('child'),)
-
-        def build(self, ctx: Request) -> str:
-            return ctx.load('child')
-
-    registry.register(OptOutChild())
-    registry.register(Parent(root))
-    # child opts out of key_fields → nothing to enforce
-    assert registry.resolve('parent', state={'subject': 's1', 'mode': 'a'}).load() == 'x'
