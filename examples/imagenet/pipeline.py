@@ -18,8 +18,8 @@ class ImageNet(Pipeline):
     }
 
     variables = {
-        'position': LabelVar('trigger', {1: 'begin', 2: 'end', (3, 4): 'middle'}),
-        'event': LabelVar('trigger', {(1, 2): 'unused', 3: 'resp', 4: 'stim_on'}),
+        'position': LabelVar('value', {1: 'begin', 2: 'end', (3, 4): 'middle'}),
+        'event': LabelVar('value', {(1, 2): 'unused', 3: 'resp', 4: 'stim_on'}),
     }
 
     epochs = {
