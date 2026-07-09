@@ -3,6 +3,8 @@
 import numpy as np
 import pytest
 
+pytest.importorskip("sklearn")
+
 from eelbrain import Datalist, NDVar, Sensor, UTS
 from eelbrain._meeg import ChannelModel
 
