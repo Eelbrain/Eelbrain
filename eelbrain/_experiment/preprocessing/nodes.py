@@ -885,7 +885,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         elif isinstance(self.pipe, RawMaxwell):
             deps.append(Dependency('maxwell-calibration'))
             deps.append(Dependency('maxwell-crosstalk'))
-            deps.append(Dependency('median-head-position'))
+            deps.append(Dependency('canonical-head-position'))
         return tuple(deps)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
@@ -927,7 +927,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         if isinstance(self.pipe, RawMaxwell):
             calibration = ctx.load('maxwell-calibration')
             cross_talk = ctx.load('maxwell-crosstalk')
-            destination = ctx.load('median-head-position')
+            destination = ctx.load('canonical-head-position')
             return self.pipe._make(raw, path=path, noise=ctx.options['noise'], raw_name=self.raw_name, log=ctx.registry.log, source_pipe=source_pipe, calibration=calibration, cross_talk=cross_talk, destination=destination)
         return self.pipe._make(raw, path=path, noise=ctx.options['noise'], raw_name=self.raw_name, log=ctx.registry.log, source_pipe=source_pipe)
 
@@ -1074,7 +1074,7 @@ class RawHeadPositionDerivative(UncachedDerivative[numpy.ndarray]):
         return numpy.array([[*quat, *trans[:3, 3]]])
 
 
-class MedianHeadPositionDerivative(Derivative):
+class CanonicalHeadPositionDerivative(Derivative):
     """Canonical head position for Maxwell filtering across tasks and runs.
 
     Computes a single representative head-to-device transform for a given
@@ -1102,7 +1102,7 @@ class MedianHeadPositionDerivative(Derivative):
         experiment has no run entity (in which case run ``''`` is used).
     """
 
-    name = 'median-head-position'
+    name = 'canonical-head-position'
     key_fields = ('subject', 'session')
     cache_suffix = '.fif'
 

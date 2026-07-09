@@ -320,7 +320,7 @@ class FwdDerivative(Derivative[mne.Forward]):
             Dependency(raw_node_name('raw'), state=raw_state),
             Dependency('trans-input'),
             Dependency('src'),
-            Dependency('median-head-position'),
+            Dependency('canonical-head-position'),
         ]
         # fsaverage uses a precomputed BEM solution (see build/fingerprint); other subjects build it from bem-input
         if ctx.state['mrisubject'] != 'fsaverage':
@@ -340,7 +340,7 @@ class FwdDerivative(Derivative[mne.Forward]):
         if reference.add:
             raw.crop(tmax=0).load_data()
             reference._prepare_source_data(raw, self.raw.root_source_pipe('raw').montage)
-        median_head_pos = ctx.load('median-head-position')
+        median_head_pos = ctx.load('canonical-head-position')
         info = raw.info
         if median_head_pos is not None:
             info = info.copy()
@@ -563,14 +563,14 @@ def _apply_source_baseline(stc_value, baseline) -> None:
 
 def _check_head_position_alignment(ctx: Request, info: mne.Info) -> None:
     """Raise if the data's head position doesn't match the canonical session position."""
-    median_head_pos = ctx.load('median-head-position')
+    median_head_pos = ctx.load('canonical-head-position')
     if median_head_pos is not None:
         if not np.allclose(info['dev_head_t']['trans'], median_head_pos['trans']):
             raise RuntimeError("The data head position does not match the canonical session head position. Apply Maxwell filtering before computing source estimates.")
 
 
 def _source_dependencies(ctx: Request, sensor_dependency: Dependency) -> tuple[Dependency, ...]:
-    deps = [sensor_dependency, Dependency('inv'), Dependency('median-head-position')]
+    deps = [sensor_dependency, Dependency('inv'), Dependency('canonical-head-position')]
     parc = _source_parc(ctx.state)
     if parc:
         if ctx.options['morph']:

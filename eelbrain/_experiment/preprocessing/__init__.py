@@ -34,7 +34,7 @@ from .nodes import (
     ICAInput,
     MaxwellCalibrationInput,
     MaxwellCrosstalkInput,
-    MedianHeadPositionDerivative,
+    CanonicalHeadPositionDerivative,
     RawBadChannelsInput,
     RawDerivative,
     RawHeadPositionDerivative,

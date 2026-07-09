@@ -53,7 +53,7 @@ from .pathing import (
 )
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, _resolve_parc
 from .preprocessing import (
-    CachedRawPipe, ICAInput, MaxwellCalibrationInput, MaxwellCrosstalkInput, MedianHeadPositionDerivative, RawBadChannelsInput, RawDerivative, RawHeadPositionDerivative, RawPipe, RawSource, RawSourceDerivative, RawSourceInput, RawICA, RawMaxwell, Reference,
+    CachedRawPipe, ICAInput, MaxwellCalibrationInput, MaxwellCrosstalkInput, CanonicalHeadPositionDerivative, RawBadChannelsInput, RawDerivative, RawHeadPositionDerivative, RawPipe, RawSource, RawSourceDerivative, RawSourceInput, RawICA, RawMaxwell, Reference,
     REINDEX_ICA, assemble_raw_pipes, ica_input_name, raw_bad_channels_input_name, raw_node_name, raw_input_name,
 )
 from .reports import (
@@ -501,7 +501,7 @@ class Pipeline(StateModel):
                 self._derivatives.register(RawBadChannelsInput(raw_name, pipe, self._raw_extension))
                 self._derivatives.register(RawSourceDerivative(raw_name, pipe, self._raw_extension))
                 self._derivatives.register(RawHeadPositionDerivative(raw_input.name))
-                self._derivatives.register(MedianHeadPositionDerivative(self._recordings, self._tasks, self._runs))
+                self._derivatives.register(CanonicalHeadPositionDerivative(self._recordings, self._tasks, self._runs))
             elif isinstance(pipe, CachedRawPipe):
                 self._derivatives.register(RawDerivative(raw_name, pipe, self._raw, self._raw_extension))
                 if isinstance(pipe, RawICA):
