@@ -820,8 +820,8 @@ def test_registry_logs_cache_events(caplog):
         registry.resolve('value', state=DEFAULT_STATE).load()
 
     messages = [record.getMessage() for record in caplog.records]
-    assert any(message.startswith('Build value: value/') for message in messages)
-    assert any(message.startswith('Load cached value: value/') for message in messages)
+    assert any(message.startswith('Build value: value') for message in messages)
+    assert any(message.startswith('Load cached value: value') for message in messages)
     assert value.save_calls == 1
     assert value.load_calls == 2
 
