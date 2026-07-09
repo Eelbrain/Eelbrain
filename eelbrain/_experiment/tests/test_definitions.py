@@ -4,11 +4,10 @@ import logging
 import pytest
 
 from eelbrain._data_obj import Factor, Interaction, Var
-from eelbrain._experiment import test_def
 from eelbrain._experiment.configuration import Configuration, ConfigurationError, find_dependent_epochs, find_epoch_vars, find_epochs_vars, sequence_arg
 from eelbrain._experiment.derivative_cache import DerivativeRegistry
-from eelbrain._experiment.preprocessing import RawApplyICA, RawFilter, RawICA, RawPipeGraph, RawReReference, RawSource, assemble_raw_pipes
-from eelbrain._experiment.two_stage import TwoStageTest
+from eelbrain._experiment.preprocessing import RawApplyICA, RawFilter, RawICA, RawMaxwell, RawPipeGraph, RawReReference, RawSource, assemble_raw_pipes
+from eelbrain._experiment.statistics import config as test_def
 from eelbrain._experiment.variable_def import EvalVar, GroupVar, LabelVar, Variables
 from eelbrain.testing import TempDir
 
@@ -44,37 +43,6 @@ def test_find_epoch_vars():
     assert find_dependent_epochs('b', epochs) == ['super']
     assert find_dependent_epochs('sec', epochs) == []
     assert find_dependent_epochs('super', epochs) == []
-
-
-def test_find_test_vars():
-    none = set()
-    # t-test
-    test = test_def.TTestRelated('A', 'a', 'b')
-    assert test._find_test_vars() == ({'A'}, none)
-    # groups
-    test = test_def.TTestIndependent('group', 'a', 'b')
-    assert test._find_test_vars() == (none, {'a', 'b'})
-    # within-ANOVA
-    test = test_def.ANOVA('a * b * subject')
-    assert test.model == 'a%b'
-    assert test._find_test_vars() == ({'a', 'b'}, none)
-    # between ANOVA
-    with pytest.raises(ConfigurationError):
-        test_def.ANOVA('a*b*c')
-    test = test_def.ANOVA('a*b*c', model='')
-    assert test.model == ''
-    assert test._find_test_vars() == ({'a', 'b', 'c'}, none)
-    # mixed ANOVA
-    test = test_def.ANOVA('A * GR * subject(GR)')
-    assert test.model == 'A'
-    assert test._find_test_vars() == ({'A', 'GR'}, none)
-    # two-stage
-    test = TwoStageTest("a + b + a*b", vars={'a': EvalVar('c * d'), 'b': EvalVar('c * e')})
-    assert test._find_test_vars() == ({'c', 'd', 'e'}, none)
-    test = TwoStageTest("a + b + a*b", vars={'a': EvalVar('c * d'), 'b': EvalVar('c * e'), 'x': EvalVar('something * nonexistent')})
-    assert test._find_test_vars() == ({'c', 'd', 'e'}, none)
-    test = TwoStageTest("a + b + a*b", vars={'a': LabelVar('c%d', {1: 'x'}), 'b': LabelVar('c%e', {1: 'x'})})
-    assert test._find_test_vars() == ({'c', 'd', 'e'}, none)
 
 
 def test_sequence_arg():
@@ -165,6 +133,63 @@ def test_raw_pipe_semantic_dict():
     assert reref.drop == ['EXG8']
 
 
+def test_epoch_rejection_semantic_dict():
+    from eelbrain._experiment.epoch_rejection import ChannelModelRejection, EpochRejection, ManualRejection
+    rej = ManualRejection(interpolation=False)
+    assert isinstance(rej, EpochRejection)
+    assert rej.interpolation is False
+    assert rej._as_dict() == {'type': 'ManualRejection', 'interpolation': False}
+    assert ManualRejection().interpolation is True
+
+    auto = ChannelModelRejection(max_interpolate=3, score_threshold=1e-4, raw='1-40')
+    assert isinstance(auto, EpochRejection)
+    assert auto._as_dict() == {
+        'type': 'ChannelModelRejection', 'interpolation': True, 'fit_threshold': 50e-6,
+        'score_threshold': 1e-4, 'max_interpolate': 3, 'raw': '1-40', 'continuous': 5.,
+        'window': 1.0, 'hop': 0.5, 'min_duration': 0.1, 'merge_gap': None,
+        'model': 'huber', 'alpha': 1e-4, 'epsilon': 1.35,
+    }
+
+
+def test_reference_prepare_source_data():
+    "Reference.prepare_source_data prepares EEG data for source localization"
+    import numpy as np
+    import mne
+    from mne.minimum_norm.inverse import _check_reference
+    from eelbrain._experiment.preprocessing import Reference
+    mne.set_log_level('ERROR')
+
+    montage = mne.channels.make_standard_montage('standard_1020')
+    info = mne.create_info(['Fz', 'Pz', 'C3', 'C4'], 200., 'eeg')  # Cz absent
+    raw = mne.io.RawArray(np.zeros((4, 200)), info)
+    raw.set_montage(montage)
+
+    # no add: adds an average-reference projection, accepted by MNE inverse modeling
+    x = raw.copy()
+    Reference('average')._prepare_source_data(x, montage)
+    assert x.info['custom_ref_applied'] == 0
+    _check_reference(x)  # must not raise
+
+    # add: reconstruct the implicit channel as zeros + projection
+    x = raw.copy()
+    Reference('average', add='Cz')._prepare_source_data(x, montage)
+    assert 'Cz' in x.ch_names
+    assert np.allclose(x.get_data(picks=['Cz']), 0)
+    assert x.info['custom_ref_applied'] == 0
+    _check_reference(x)  # must not raise
+
+    # MEG-only data: no-op (no EEG channels)
+    meg = mne.io.RawArray(np.zeros((2, 200)), mne.create_info(['MEG 001', 'MEG 002'], 200., 'mag'))
+    Reference('average')._prepare_source_data(meg)
+    assert len(meg.info['projs']) == 0
+
+    # only an average reference (optionally with add) is supported for source localization
+    with pytest.raises(NotImplementedError):
+        Reference(['M1', 'M2'])._prepare_source_data(raw.copy(), montage)
+    with pytest.raises(NotImplementedError):
+        Reference('average', drop='Fz')._prepare_source_data(raw.copy(), montage)
+
+
 def test_raw_pipe_graph_lineage():
     raw = assemble_raw_pipes({
         'raw': RawSource(),
@@ -186,8 +211,36 @@ def test_raw_pipe_graph_lineage():
 
 
 def test_raw_configurations():
-    with pytest.raises(ConfigurationError, match='explicit task'):
+    # task=None with multiple tasks is only allowed after RawMaxwell
+    with pytest.raises(ConfigurationError, match='RawMaxwell'):
         assemble_raw_pipes({
             'raw': RawSource(),
             'ica': RawICA('raw'),
         }, ('sample1', 'sample2'))
+
+    # task=None with a single task: use that task, no run concatenation
+    raw = assemble_raw_pipes({
+        'raw': RawSource(),
+        'ica': RawICA('raw'),
+    }, ('sample',))
+    assert raw['ica'].task == ('sample',)
+    assert raw['ica']._concatenate_runs is False
+
+    # task=None after RawMaxwell: accept all tasks and concatenate runs
+    raw = assemble_raw_pipes({
+        'raw': RawSource(),
+        'maxwell': RawMaxwell('raw'),
+        '1-40': RawFilter('maxwell', 1, 40),
+        'ica': RawICA('1-40'),
+    }, ('sample1', 'sample2'))
+    assert raw['ica'].task == ('sample1', 'sample2')
+    assert raw['ica']._concatenate_runs is True
+
+    # explicit task after RawMaxwell also concatenates runs
+    raw = assemble_raw_pipes({
+        'raw': RawSource(),
+        'maxwell': RawMaxwell('raw'),
+        'ica': RawICA('maxwell', 'sample1'),
+    }, ('sample1', 'sample2'))
+    assert raw['ica'].task == ('sample1',)
+    assert raw['ica']._concatenate_runs is True

@@ -12,7 +12,7 @@ import numpy
 
 from .configuration import Configuration
 from .derivative_cache import Dependency, Derivative, Request
-from .preprocessing import raw_node_name
+from .preprocessing import Reference, canonical_recording, raw_node_name
 
 
 class RawCovariance(Configuration):
@@ -36,6 +36,9 @@ class EpochCovariance(Configuration):
         self.keep_sample_mean = keep_sample_mean
 
     def make(self, epochs: mne.Epochs, log_path: Path) -> mne.Covariance:
+        # MNE expects zero mean data
+        epochs.apply_baseline((None, None))
+
         method = 'empirical' if self.method == 'best' else self.method
         cov = mne.compute_covariance(epochs, self.keep_sample_mean, method=method)
 
@@ -62,49 +65,62 @@ class EpochCovariance(Configuration):
 
 class CovDerivative(Derivative[mne.Covariance]):
     name = 'cov'
-    key_fields = ('subject', 'session', 'raw', 'cov')
     cache_suffix = '-cov.fif'
+    # source localization handles EEG referencing internally
+    fixed_state = {'reference': ''}
+
+    def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
+        # ``epoch_rejection`` only affects an epoch-based covariance (which loads
+        # rejected epochs); a noise (raw) covariance does not depend on it.
+        fields = ['subject', 'session', 'raw', 'cov']
+        if isinstance(self._covs[ctx.state['cov']], EpochCovariance):
+            fields.append('epoch_rejection')
+        return tuple(fields)
 
     # Fixed options used when loading epochs for covariance estimation.
     # Declared on both the Dependency edge and the build() load call so that
     # cache validation and the actual load request stay in sync.
-    _EPOCH_COV_OPTIONS = {
-        'baseline': True,
-        'ndvar': False,
-        'data': 'sensor',
-        'reject': False,
-        'samplingrate': None,
-        'decim': 1,
-        'pad': 0,
-        'trigger_shift': True,
-        'interpolate_bads': False,
-    }
 
-    def __init__(self, covs: dict[str, RawCovariance | EpochCovariance]):
+    def __init__(self, covs: dict[str, RawCovariance | EpochCovariance], raw, references: dict[str, Reference | None], recordings: frozenset[tuple[str, str, str, str]]):
         self._covs = covs
+        self.raw = raw
+        self._references = references
+        self._recordings = recordings
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         cov = self._covs[ctx.state['cov']]
         if isinstance(cov, EpochCovariance):
-            return (Dependency('epochs', state={'epoch': cov.epoch}, options=self._EPOCH_COV_OPTIONS),)
+            return (Dependency('epochs', state={'epoch': cov.epoch}, options={'ndvar': False, 'decim': 1}),)
         elif isinstance(cov, RawCovariance):
-            return (Dependency(raw_node_name(ctx.state['raw']), options={'noise': True}, label='raw'),)
+            # Only the noise recording's sensor data is used; pin a canonical
+            # recording so identity does not depend on the ambient task/run.
+            recording = canonical_recording(self._recordings, ctx.state['subject'], ctx.state.get('session'))
+            raw_state = {'task': recording[0], 'run': recording[1]} if recording else None
+            return (Dependency(raw_node_name(ctx.state['raw']), options={'noise': True}, label='raw', state=raw_state),)
         raise NotImplementedError(f"{cov=}")
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        cov = self._covs[ctx.state['cov']]
-        return cov._as_dict()
+        return {
+            'cov': self._covs[ctx.state['cov']],
+            'source_reference_add': self._references['average'].add,
+        }
 
     def build(self, ctx: Request) -> mne.Covariance:
         cov = self._covs[ctx.state['cov']]
+        reference = self._references['average']
+        montage = self.raw.root_source_pipe(ctx.state['raw']).montage
         if isinstance(cov, EpochCovariance):
             cov_path = self.path(ctx)
             cov_path.parent.mkdir(parents=True, exist_ok=True)
             log_path = cov_path.with_suffix('.info.txt')
             ds = ctx.load('epochs')
+            reference._prepare_source_data(ds['epochs'], montage)
             return cov.make(ds['epochs'], log_path)
         elif isinstance(cov, RawCovariance):
             raw = ctx.load('raw')
+            if reference.add:
+                raw.load_data()
+            reference._prepare_source_data(raw, montage)
             return cov.make(raw)
         raise NotImplementedError(f"{cov=}")
 

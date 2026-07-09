@@ -32,6 +32,7 @@ import os
 import re
 import time
 
+from matplotlib.transforms import Bbox
 import mne
 import numpy as np
 from scipy.spatial.distance import cdist
@@ -41,7 +42,7 @@ from .. import _meeg as meeg
 from .. import _text
 from .. import load, save, plot, fmtxt
 from .._data_obj import Dataset, Factor, NDVar, Var, Datalist, combine
-from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS
+from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS, INTERPOLATE_WINDOWS
 from .._ndvar import neighbor_correlation
 from .._utils.parse import FLOAT_PATTERN, POS_FLOAT_PATTERN, INT_PATTERN
 from .._utils.numpy_utils import FULL_SLICE, INT_TYPES
@@ -64,6 +65,9 @@ from . import ID
 # IDs
 TOPO_PLOT = -2
 OUT_OF_RANGE = -3
+
+# Minimum number of sensors required to compute a topomap projection; with fewer the after-rejection topomap is blanked
+MIN_TOPO_SENSORS = 4
 
 # For unit-tests
 TEST_MODE = False
@@ -216,29 +220,67 @@ class Document(FileDocument):
             allow_interpolation: bool = True,
     ) -> None:
         FileDocument.__init__(self, path)
+        # ``long_epochs`` mode: variable-length epochs supplied as a Datalist of
+        # mne.Epochs (one or more per case) rather than a single equal-length
+        # mne.Epochs. It is a read-only, continuous single-column display.
+        self.long_epochs = False
         if isinstance(ds, MNE_EPOCHS):
             mne_epochs = ds
             ds = Dataset()
             mne_epochs.load_data()
             ds[data] = mne_epochs
             ds[trigger] = Var(mne_epochs.events[:, 2])
+            mne_epochs_list = [mne_epochs]
         elif not isinstance(data, str):
             raise TypeError(f"{data=}; must be a string key into ds")
         else:
-            mne_epochs = ds.get(data)
-            if not isinstance(mne_epochs, MNE_EPOCHS):
-                raise TypeError(f"{ds[data]=}; must be an mne.BaseEpochs instance")
+            value = ds.get(data)
+            if isinstance(value, MNE_EPOCHS):
+                mne_epochs_list = [value]
+            elif isinstance(value, Datalist) and len(value) and all(isinstance(e, MNE_EPOCHS) for e in value):
+                self.long_epochs = True
+                mne_epochs_list = list(value)
+            else:
+                raise TypeError(f"{ds[data]=}; must be an mne.BaseEpochs instance or a Datalist of mne.BaseEpochs")
+            for e in mne_epochs_list:
+                e.load_data()
 
-        epochs_by_type = []
+        # channel types present (from the first epochs object)
+        ch_types = []
         for ch_type, pick_kwargs in CH_TYPE_PICK_KWARGS.items():
-            type_picks = mne.pick_types(mne_epochs.info, ref_meg=False, exclude='bads', **pick_kwargs)
-            if len(type_picks):
-                epochs_by_type.append((ch_type, load.mne.epochs_ndvar(mne_epochs, data=ch_type)))
-        if not epochs_by_type:
+            if len(mne.pick_types(mne_epochs_list[0].info, ref_meg=False, exclude='bads', **pick_kwargs)):
+                ch_types.append(ch_type)
+        if not ch_types:
             raise RuntimeError("No data channels found in MNE Epochs")
-        self.epochs_by_type = epochs_by_type
-        data = epochs_by_type[0][1]  # primary NDVar (backward compat: bad channels, time axis)
-        self.n_epochs = n = len(data)
+
+        if self.long_epochs:
+            # one (sensor x time) NDVar per channel type, per epoch
+            self.epoch_data = []
+            for e in mne_epochs_list:
+                per_type = [(ct, load.mne.epochs_ndvar(e, data=ct)) for ct in ch_types]
+                for ci in range(len(e)):
+                    self.epoch_data.append([(ct, nd[ci]) for ct, nd in per_type])
+            self.epochs_by_type = []
+            data = self.epochs = self.epoch_data[0][0][1]  # representative for sensor/time access
+            n = self.n_epochs = len(self.epoch_data)
+            type_ndvars = self.epoch_data[0]
+            # per-type display vmax over all epochs
+            self.type_vmax = {}
+            for j, ct in enumerate(ch_types):
+                vals = np.concatenate([self.epoch_data[i][j][1].x.ravel() for i in range(n)])
+                vmax = float(np.percentile(np.abs(vals), 99.5))
+                self.type_vmax[ct] = vmax if vmax > 0 else 1.0
+        else:
+            self.epoch_data = None
+            epochs_by_type = [(ct, load.mne.epochs_ndvar(mne_epochs_list[0], data=ct)) for ct in ch_types]
+            self.epochs_by_type = epochs_by_type
+            data = epochs_by_type[0][1]  # primary NDVar (backward compat: bad channels, time axis)
+            self.n_epochs = n = len(data)
+            type_ndvars = epochs_by_type
+            self.type_vmax = {}
+            for ct, nd in epochs_by_type:
+                vmax = float(np.percentile(np.abs(nd.x), 99.5))
+                self.type_vmax[ct] = vmax if vmax > 0 else 1.0
 
         if not isinstance(accept, str):
             raise TypeError("accept needs to be a string")
@@ -269,6 +311,12 @@ class Document(FileDocument):
                 raise ValueError("Dataset contains channel interpolation information but interpolation is turned off")
         else:
             interpolate = Datalist([[]] * ds.n_cases, INTERPOLATE_CHANNELS, 'strlist')
+
+        # time-windowed bad-channel interpolation (long-epoch mode)
+        if INTERPOLATE_WINDOWS in ds:
+            self.interpolate_windows = list(ds[INTERPOLATE_WINDOWS])
+        else:
+            self.interpolate_windows = [[] for _ in range(n)]
 
         if isinstance(blink, str):
             if ds is not None:
@@ -301,11 +349,11 @@ class Document(FileDocument):
         self.good_channels = None
         self.epochs_selection = ds.info.get('epochs.selection')
 
-        # Channel-type metadata (derived directly from epochs_by_type)
-        self.ch_type_names = [ct for ct, _ in epochs_by_type]
+        # Channel-type metadata (derived from a representative per-type NDVar)
+        self.ch_type_names = list(ch_types)
         self._ch_name_to_type = {
             name: ct
-            for ct, ndvar in epochs_by_type
+            for ct, ndvar in type_ndvars
             for name in ndvar.sensor.names
         }
 
@@ -321,10 +369,11 @@ class Document(FileDocument):
             self.set_bad_channels_by_name(bad_chs)
 
         if path and os.path.exists(path):
-            accept, tag, interpolate, bad_chs = self.read_rej_file(path)
+            accept, tag, interpolate, bad_chs, windows = self.read_rej_file(path)
             self.accept[:] = accept
             self.tag[:] = tag
             self.interpolate[:] = interpolate
+            self.interpolate_windows = windows
             self.set_bad_channels(bad_chs)
             self.saved = True
 
@@ -393,17 +442,25 @@ class Document(FileDocument):
         """
         bad_names = set(self.bad_channel_names)
         result = []
-        for ch_type, ndvar in self.epochs_by_type:
+        if self.long_epochs:
+            items = self.epoch_data[case]  # already (sensor x time) per type
+        else:
+            items = [(ct, nd.sub(case=case)) for ct, nd in self.epochs_by_type]
+        for ch_type, ndvar in items:
             if bad_names:
                 good = [i for i, n in enumerate(ndvar.sensor.names) if n not in bad_names]
                 if len(good) < len(ndvar.sensor):
-                    sub = ndvar.sub(case=case, sensor=good, name=name)
+                    sub = ndvar.sub(sensor=good, name=name)
                 else:
-                    sub = ndvar.sub(case=case, name=name)
+                    sub = ndvar.sub(name=name)
             else:
-                sub = ndvar.sub(case=case, name=name)
+                sub = ndvar.sub(name=name)
             result.append((ch_type, sub))
         return result
+
+    def windows_in_range(self, case, tmin, tmax):
+        """Bad-channel interpolation windows of ``case`` overlapping ``[tmin, tmax)``."""
+        return [w for w in self.interpolate_windows[case] if w.tmin < tmax and w.tmax > tmin]
 
     def get_grand_average(self):
         "Grand average of all accepted epochs"
@@ -492,6 +549,8 @@ class Document(FileDocument):
         needed = [self._trigger_key, 'accept', 'rej_tag']
         if INTERPOLATE_CHANNELS in ds:
             needed.append(INTERPOLATE_CHANNELS)
+        if INTERPOLATE_WINDOWS in ds:
+            needed.append(INTERPOLATE_WINDOWS)
         missing = set(needed).difference(ds)
         if missing:
             raise OSError(f"{path} is not a valid epoch rejection file. It is missing the following keys: {', '.join(missing)}")
@@ -513,6 +572,8 @@ class Document(FileDocument):
                 tail['rej_tag'] = Factor([''], repeat=n_missing)
                 if INTERPOLATE_CHANNELS in ds:
                     tail[INTERPOLATE_CHANNELS] = Datalist([[]] * n_missing)
+                if INTERPOLATE_WINDOWS in ds:
+                    tail[INTERPOLATE_WINDOWS] = Datalist([[] for _ in range(n_missing)], INTERPOLATE_WINDOWS)
                 ds = combine((ds[needed], tail))
             else:
                 raise OSError("Unequal number of cases")
@@ -542,12 +603,17 @@ class Document(FileDocument):
         else:
             interpolate = Datalist([[]] * self.n_epochs, INTERPOLATE_CHANNELS, 'strlist')
 
+        if INTERPOLATE_WINDOWS in ds:
+            windows = list(ds[INTERPOLATE_WINDOWS])
+        else:
+            windows = [[] for _ in range(self.n_epochs)]
+
         if BAD_CHANNELS in ds.info:
             bad_channels = self.epochs.sensor._array_index(ds.info[BAD_CHANNELS])
         else:
             bad_channels = []
 
-        return accept, tag, interpolate, bad_channels
+        return accept, tag, interpolate, bad_channels, windows
 
     def save(self):
         # find dest path
@@ -556,6 +622,8 @@ class Document(FileDocument):
         # create Dataset to save
         info = {BAD_CHANNELS: self.bad_channel_names, 'epochs.selection': self.epochs_selection}
         ds = Dataset([self.trigger, self.accept, self.tag, self.interpolate], info=info)
+        if any(self.interpolate_windows):
+            ds[INTERPOLATE_WINDOWS] = Datalist(self.interpolate_windows, INTERPOLATE_WINDOWS)
 
         if ext.startswith('.pickle'):
             save.pickle(ds, self.path)
@@ -583,7 +651,7 @@ class Model(FileModel):
             answer: bool = None,  # User answer to dialogs (for tests)
     ):
         try:
-            new_accept, new_tag, new_interpolate, new_bad_chs = self.doc.read_rej_file(path, answer)
+            new_accept, new_tag, new_interpolate, new_bad_chs, new_windows = self.doc.read_rej_file(path, answer)
         except Exception as error:
             if answer is not None:
                 raise
@@ -599,6 +667,8 @@ class Model(FileModel):
                               self.doc.bad_channels, new_bad_chs,
                               self.doc.interpolate, new_interpolate)
         self.history.do(action)
+        # interpolation windows are not part of the undo history (read-only mode)
+        self.doc.interpolate_windows = new_windows
         self.history.register_save()
 
     def set_bad_channels(self, bad_channels, desc="Set bad channels"):
@@ -823,6 +893,7 @@ class Frame(NavigableFrame, FileFrame):
             pos: tuple[int, int] | None,
             size: tuple[int, int] | None,
             allow_interpolation: bool,
+            read_only: bool = False,
     ) -> None:
         """View object of the epoch selection GUI
 
@@ -834,7 +905,12 @@ class Frame(NavigableFrame, FileFrame):
             See TerminalInterface constructor.
         """
         super().__init__(parent, pos, size, model)
+        # long (variable-length) epochs: continuous single-column read-only browser
+        self.long_epochs = self.doc.long_epochs
+        if self.long_epochs:
+            read_only = True
         self.allow_interpolation = allow_interpolation
+        self.read_only = read_only
 
         # bind events
         self.doc.callbacks.subscribe('case_change', self.CaseChanged)
@@ -862,15 +938,16 @@ class Frame(NavigableFrame, FileFrame):
         self.AddNavigationButtons(tb)
         tb.AddSeparator()
 
-        # --> Bad Channels
-        button = wx.Button(tb, ID.SET_BAD_CHANNELS, "Bad Channels")
-        button.Bind(wx.EVT_BUTTON, self.OnSetBadChannels)
-        tb.AddControl(button)
+        if not read_only:
+            # --> Bad Channels
+            button = wx.Button(tb, ID.SET_BAD_CHANNELS, "Bad Channels")
+            button.Bind(wx.EVT_BUTTON, self.OnSetBadChannels)
+            tb.AddControl(button)
 
-        # --> Thresholding
-        button = wx.Button(tb, ID.THRESHOLD, "Threshold")
-        button.Bind(wx.EVT_BUTTON, self.OnThreshold)
-        tb.AddControl(button)
+            # --> Thresholding
+            button = wx.Button(tb, ID.THRESHOLD, "Threshold")
+            button.Bind(wx.EVT_BUTTON, self.OnThreshold)
+            tb.AddControl(button)
 
         # right-most part
         tb.AddStretchableSpace()
@@ -903,10 +980,8 @@ class Frame(NavigableFrame, FileFrame):
 
         # Per-channel-type vlims for normalized butterfly display (multi-type only)
         self._type_vlims = {}  # {ch_type: vmax_si} for normalising each type to ~[-1, 1]
-        if len(self.doc.epochs_by_type) > 1:
-            for ch_type, ndvar in self.doc.epochs_by_type:
-                vmax = np.percentile(np.abs(ndvar.x), 99.5)
-                self._type_vlims[ch_type] = vmax if vmax > 0 else 1.0
+        if len(self.doc.ch_type_names) > 1:
+            self._type_vlims = dict(self.doc.type_vmax)
         # Persisted per-type display vlims (in SI), falling back to defaults; these
         # give a stable y-axis limit across sessions rather than scaling to the data.
         self._auto_vlim = self.config.ReadBool('VLim/auto', False)
@@ -931,7 +1006,13 @@ class Frame(NavigableFrame, FileFrame):
                              'mcolor': mcolor}
         self._topo_kwargs = {'vlims': self._vlims, 'mcolor': 'red', 'mmarker': 'x'}
 
-        self._SetLayout(nplots, topo)
+        # transient artists for windowed-interpolation highlights (long mode)
+        self._window_handles = []
+
+        if self.long_epochs:
+            self._set_layout_long(topo)
+        else:
+            self._SetLayout(nplots, topo)
 
         # Bind Events ---
         self.canvas.mpl_connect('button_press_event', self.OnCanvasClick)
@@ -945,8 +1026,10 @@ class Frame(NavigableFrame, FileFrame):
         self._case_axes = None
         self._case_segs = None
         self._axes_by_idx = None
-        self._topo_axes = []        # list of axes (one per channel type)
-        self._topo_plots = []       # list of AxTopomap (one per channel type)
+        self._topo_axes = []        # list of axes (before/after-rejection pair per channel type)
+        self._topo_plots = []       # list of AxTopomap, parallel to _topo_axes
+        self._topo_specs = []       # list of (ch_type, kind) where kind in {'all', 'rejected'}
+        self._topo_interp_handles = []  # transient blue-x marks for the hovered epoch's rejected channels
         self._topo_plot_info_str = None
         self._case_segs_by_type = None  # list of [(ch_type, NDVar)] per visible epoch
         self._bfly_vlim = None          # normalized vlim last applied (multi-type only)
@@ -960,6 +1043,16 @@ class Frame(NavigableFrame, FileFrame):
 
     def CanForward(self):
         return bool(self._current_page_i < self._n_pages - 1)
+
+    def CanSave(self) -> bool:
+        if self.read_only:
+            return False
+        return super().CanSave()
+
+    def UpdateTitle(self) -> None:
+        super().UpdateTitle()
+        if self.read_only:
+            self.SetTitle(self.GetTitle() + ' (read-only)')
 
     def CaseChanged(self, index):
         "Update the states of the segments on the current page"
@@ -992,11 +1085,18 @@ class Frame(NavigableFrame, FileFrame):
         self.canvas.store_canvas()
 
     def GoToEpoch(self, i):
-        for page, epochs in enumerate(self._segs_by_page):
-            if i in epochs:
-                break
+        if self.long_epochs:
+            for page, rows in enumerate(self._segs_by_page):
+                if any(self._rows_spec[r][0] == i for r in rows):
+                    break
+            else:
+                raise ValueError(f"Epoch not found: {i!r}")
         else:
-            raise ValueError(f"Epoch not found: {i!r}")
+            for page, epochs in enumerate(self._segs_by_page):
+                if i in epochs:
+                    break
+            else:
+                raise ValueError(f"Epoch not found: {i!r}")
         if page != self._current_page_i:
             self.SetPage(page)
 
@@ -1034,6 +1134,8 @@ class Frame(NavigableFrame, FileFrame):
         if ax:
             logger.debug("Canvas click at ax.ax_idx=%i", ax.ax_idx)
             if ax.ax_idx >= 0:
+                if self.read_only:
+                    return
                 idx = ax.epoch_idx
                 state = not self.doc.accept[idx]
                 tag = "manual"
@@ -1084,11 +1186,15 @@ class Frame(NavigableFrame, FileFrame):
         elif event.key == 'c':
             self.PlotCorrelation(ax.ax_idx)
         elif event.key == 'i':
-            self.ToggleChannelInterpolation(ax, event)
+            if not self.read_only:
+                self.ToggleChannelInterpolation(ax, event)
         elif event.key == 'I':
-            self.OnSetInterpolation(ax.epoch_idx)
+            if not self.read_only:
+                self.OnSetInterpolation(ax.epoch_idx)
 
     def OnFindNoisyChannels(self, event):
+        if self.read_only:
+            return
         dlg = FindNoisyChannelsDialog(self)
         if dlg.ShowModal() == wx.ID_OK:
             # Find bad channels
@@ -1149,7 +1255,7 @@ class Frame(NavigableFrame, FileFrame):
         self.SetPage(self._current_page_i + 1)
 
     def OnInfo(self, event):
-        doc = fmtxt.Section(f"{len(self.doc.epochs)} Epochs")
+        doc = fmtxt.Section(f"{self.doc.n_epochs} Epochs")
 
         # rejected epochs
         rejected = np.invert(self.doc.accept.x)
@@ -1164,8 +1270,22 @@ class Frame(NavigableFrame, FileFrame):
         if self.doc.bad_channels:
             sec.add_paragraph(', '.join(self.doc.bad_channel_names))
 
-        # interpolation by epochs
-        if any(self.doc.interpolate):
+        # interpolation
+        if self.long_epochs:
+            # total interpolated time per channel across all epochs
+            duration = {}
+            for windows in self.doc.interpolate_windows:
+                for w in windows:
+                    duration[w.channel] = duration.get(w.channel, 0.0) + (w.tmax - w.tmin)
+            if duration:
+                sec = doc.add_section("Interpolated time windows")
+                items = fmtxt.List("Channel (total interpolated duration):")
+                for ch in sorted(duration, key=lambda c: -duration[c]):
+                    items.add_item(f"{ch}: {duration[ch]:g} s")
+                sec.add_paragraph(items)
+            else:
+                doc.add_section("No time-windowed channel interpolation")
+        elif any(self.doc.interpolate):
             sec = doc.add_section("Interpolate channels")
             sec.add_paragraph(format_epoch_list(self.doc.interpolate, "Interpolation by epoch:"))
         else:
@@ -1204,30 +1324,25 @@ class Frame(NavigableFrame, FileFrame):
             y = ' / '.join(y_parts)
         else:
             y = ax.yaxis.get_major_formatter().format_data(event.ydata)
-        desc = "Epoch %i" % ax.epoch_idx
-        status = f"{desc},  x = {x} ms,  y = {y}"
+        status = f"Epoch {ax.epoch_idx},  x = {x} s,  y = {y}"
         if ax.ax_idx >= 0:  # single trial plot
-            interp = self.doc.interpolate[ax.epoch_idx]
+            if self.long_epochs:
+                interp = sorted({w.channel for w in self.doc.windows_in_range(ax.epoch_idx, event.xdata, event.xdata + 1e-9)})
+            else:
+                interp = self.doc.interpolate[ax.epoch_idx]
             if interp:
                 status += f",  interpolate {', '.join(interp)}"
         self.SetStatusText(status)
 
-        # update topomap
+        # update topomaps (before / after channel rejection) at the pointer time
         if self._plot_topo:
-            if len(self._topo_plots) > 1:
-                # Multi-type: get per-type data at the pointer time
-                if ax.ax_idx >= 0:
-                    case_by_type = self._case_segs_by_type[ax.ax_idx]
-                    for topo, (ch_type, case_ndvar) in zip(self._topo_plots, case_by_type):
-                        topo.set_data([case_ndvar.sub(time=event.xdata)])
-            else:
-                tseg = self._get_ax_data(ax.ax_idx, event.xdata)
-                self._topo_plots[0].set_data([tseg])
-            self.canvas.redraw(self._topo_axes)
+            self._update_topomaps(ax.epoch_idx, ax.ax_idx, event.xdata)
             marked = ', '.join(self._mark)
-            self._topo_plot_info_str = (f"Topomap: {desc},  t = {x} ms,  marked: {marked}")
+            self._topo_plot_info_str = (f"Topomap: Epoch {ax.epoch_idx},  t = {x} s,  marked: {marked}")
 
     def OnRejectRange(self, event):
+        if self.read_only:
+            return
         dlg = RejectRangeDialog(self)
         if dlg.ShowModal() == wx.ID_OK:
             start = int(dlg.first.GetValue())
@@ -1238,6 +1353,8 @@ class Frame(NavigableFrame, FileFrame):
         dlg.Destroy()
 
     def OnSetBadChannels(self, event):
+        if self.read_only:
+            return
         default_value = ', '.join(self.doc.bad_channel_names)
         dlg = wx.TextEntryDialog(self, "Please enter bad channel names separated by comma (e.g., \"MEG 003, MEG 010\"):", "Set Bad Channels", default_value)
         while True:
@@ -1260,6 +1377,8 @@ class Frame(NavigableFrame, FileFrame):
 
     def OnSetInterpolation(self, epoch):
         "Show Dialog for channel interpolation for this epoch (index)"
+        if self.read_only:
+            return
         old = self.doc.interpolate[epoch]
         dlg = wx.TextEntryDialog(self, "Please enter channel names separated by "
                                  "comma (e.g., \"MEG 003, MEG 010\"):", "Set "
@@ -1283,6 +1402,16 @@ class Frame(NavigableFrame, FileFrame):
             self.model.set_interpolation(epoch, new)
 
     def OnSetLayout(self, event):
+        if self.long_epochs:
+            dlg = LongLayoutDialog(self, self._rows_per_page, self._seconds_per_row, self._plot_topo)
+            if dlg.ShowModal() == wx.ID_OK:
+                self.config.WriteInt('Layout/n_rows', dlg.rows_per_page)
+                self.config.WriteFloat('Layout/seconds_per_row', dlg.seconds_per_row)
+                self.config.Flush()
+                self._set_layout_long(dlg.topo)
+                self.ShowPage(0)
+            dlg.Destroy()
+            return
         dlg = LayoutDialog(self, self._rows, self._columns, self._plot_topo)
         if dlg.ShowModal() == wx.ID_OK:
             self.SetLayout(dlg.layout, dlg.topo)
@@ -1348,6 +1477,8 @@ class Frame(NavigableFrame, FileFrame):
             dlg.Destroy()
 
     def OnThreshold(self, event):
+        if self.read_only:
+            return
         type_scales = {ct: ch_type_scale(ct) for ct in self.doc.ch_type_names}
         dlg = ThresholdDialog(self, type_scales, _THRESHOLD_DEFAULT_SI)
         if dlg.ShowModal() == wx.ID_OK:
@@ -1396,6 +1527,9 @@ class Frame(NavigableFrame, FileFrame):
         plot.TopoButterfly(epoch, vmax=self._vlims)
 
     def PlotGrandAverage(self):
+        if self.long_epochs:
+            wx.MessageBox("Grand average is not available for variable-length epochs.", "Grand Average Unavailable", wx.OK | wx.ICON_INFORMATION)
+            return
         if len(self.doc.epochs_by_type) > 1:
             for ch_type, epoch in self.doc.get_grand_averages_by_type():
                 plot.TopoButterfly(epoch, title=f"Grand Average – {ch_type}")
@@ -1422,40 +1556,55 @@ class Frame(NavigableFrame, FileFrame):
         self._SetLayout(nplots, topo)
         self.ShowPage(0)
 
-    def _SetLayout(self, nplots, topo):
+    def _SetLayout(
+            self,
+            nplots: int | tuple[int, int] | None,
+            topo: bool,
+    ):
         if topo is None:
             topo = self.config.ReadBool('Layout/show_topo', True)
         else:
             topo = bool(topo)
             self.config.WriteBool('Layout/show_topo', topo)
 
+        # the topomaps occupy whole grid cells (the last ``n_reserve``), one cell
+        # per map (all + rejected, per channel type), so epochs keep full cell size
+        n_topo = 2 * len(self.doc.ch_type_names)
+
         if nplots is None:
             nrow = self.config.ReadInt('Layout/n_rows', 6)
             ncol = self.config.ReadInt('Layout/n_cols', 6)
             nax = ncol * nrow
-            n_per_page = nax - bool(topo)
+            reserve = n_topo if topo else 0
+            if reserve >= nax:
+                topo = False
+                reserve = 0
+            n_per_page = nax - reserve
         else:
             if isinstance(nplots, int):
                 if nplots < 1:
                     raise ValueError(f"{nplots=}: needs to be >= 1")
-                nax = nplots + bool(topo)
-                nrow = math.ceil(math.sqrt(nax))
+                reserve = n_topo if topo else 0
+                nax = nplots + reserve
+                nrow = int(math.ceil(math.sqrt(nax)))
                 ncol = int(math.ceil(nax / nrow))
-                nrow = int(nrow)
                 n_per_page = nplots
             else:
                 nrow, ncol = nplots
                 nax = ncol * nrow
-                if nax == 1:
-                    topo = False
-                elif nax < 1:
+                if nax < 1:
                     raise ValueError(f"{nplots=}: Need at least one plot.")
-                n_per_page = nax - bool(topo)
+                reserve = n_topo if topo else 0
+                if reserve >= nax:
+                    topo = False
+                    reserve = 0
+                n_per_page = nax - reserve
             self.config.WriteInt('Layout/n_rows', nrow)
             self.config.WriteInt('Layout/n_cols', ncol)
         self.config.Flush()
 
         self._plot_topo = topo
+        self._n_reserve = reserve  # grid cells reserved for topomaps (one per map)
 
         # prepare segments
         n = self.doc.n_epochs
@@ -1540,7 +1689,10 @@ class Frame(NavigableFrame, FileFrame):
         "Perform operations common to page change events"
         self._current_page_i = page
         self.page_choice.Select(page)
-        self._epoch_idxs = self._segs_by_page[page]
+        if self.long_epochs:
+            self._epoch_idxs = [self._rows_spec[r][0] for r in self._segs_by_page[page]]
+        else:
+            self._epoch_idxs = self._segs_by_page[page]
 
     def _get_bfly_vlim(self):
         """Normalized butterfly y-axis limit for the combined multi-type display.
@@ -1554,6 +1706,10 @@ class Frame(NavigableFrame, FileFrame):
 
     def SetPage(self, page):
         "Change the page that is displayed without redrawing"
+        if self.long_epochs:
+            # rows differ in time range/epoch between pages: full redraw
+            self.ShowPage(page)
+            return
         self._page_change(page)
 
         self._case_segs = []
@@ -1590,9 +1746,10 @@ class Frame(NavigableFrame, FileFrame):
             self._bfly_vlim = self._get_bfly_vlim()
             for h in self._case_plots:
                 h.set_ylim(self._bfly_vlim)
-            if self._plot_topo and len(self._topo_plots) > 1:
-                for topo, ch_type in zip(self._topo_plots, self.doc.ch_type_names):
-                    topo.set_vlim(self._bfly_vlim * self._type_display_vlims[ch_type])
+            if self._plot_topo:
+                for (ch_type, _), topo in zip(self._topo_specs, self._topo_plots):
+                    if ch_type in self._type_display_vlims:
+                        topo.set_vlim(self._bfly_vlim * self._type_display_vlims[ch_type])
 
         self.canvas.draw()
         self.canvas.store_canvas()
@@ -1625,6 +1782,8 @@ class Frame(NavigableFrame, FileFrame):
 
     def ShowPage(self, page=None):
         "Dislay a specific page (start counting with 0)"
+        if self.long_epochs:
+            return self._show_page_long(page)
         wx.BeginBusyCursor()
         logger = getLogger(__name__)
         t0 = time.time()
@@ -1632,6 +1791,7 @@ class Frame(NavigableFrame, FileFrame):
             self._page_change(page)
 
         self.figure.clf()
+        self._topo_interp_handles = []  # cleared by clf(); drop stale references
         nrow = self._rows
         ncol = self._columns
 
@@ -1694,49 +1854,18 @@ class Frame(NavigableFrame, FileFrame):
             for h in self._case_plots:
                 h.set_ylim(self._bfly_vlim)
 
-        # topomap
+        # topomaps (before / after channel rejection) in the last reserved cells
+        self._topo_axes = []
+        self._topo_plots = []
+        self._topo_specs = []
         if self._plot_topo:
-            plot_i = nrow * ncol
-            if self._mark:
-                mark_topo = [ch for ch in self._mark if ch not in self.doc.bad_channel_names]
-            else:
-                mark_topo = None
-            n_types = len(self.doc.ch_type_names)
-            if n_types > 1:
-                # Split the single subplot slot into N side-by-side topo axes;
-                # use the first visible epoch's per-type data at a default time
-                first_cbt = self._case_segs_by_type[0]
-                t_init = min(max(0.1, first_cbt[0][1].time.tmin), first_cbt[0][1].time.tmax)
-                placeholder = self.figure.add_subplot(nrow, ncol, plot_i)
-                bbox = placeholder.get_position()
+            bboxes = []
+            for k in range(self._n_reserve):
+                cell = nrow * ncol - self._n_reserve + 1 + k
+                placeholder = self.figure.add_subplot(nrow, ncol, cell)
+                bboxes.append(placeholder.get_position())
                 self.figure.delaxes(placeholder)
-                topo_kwargs = dict(self._topo_kwargs, vlims={})
-                self._topo_axes = []
-                self._topo_plots = []
-                for j, (ch_type, case_ndvar) in enumerate(first_cbt):
-                    x0 = bbox.x0 + j * bbox.width / n_types
-                    ax = self.figure.add_axes([x0, bbox.y0, bbox.width / n_types, bbox.height])
-                    ax.ax_idx = TOPO_PLOT
-                    ax.topo_idx = j
-                    ax.set_axis_off()
-                    type_tseg = case_ndvar.sub(time=t_init)
-                    layers = AxisData([DataLayer(type_tseg, PlotType.IMAGE)])
-                    topo = AxTopomap(ax, layers, mark=mark_topo, **topo_kwargs)
-                    if self._bfly_vlim is not None and ch_type in self._type_display_vlims:
-                        topo.set_vlim(self._bfly_vlim * self._type_display_vlims[ch_type])
-                    self._topo_axes.append(ax)
-                    self._topo_plots.append(topo)
-            else:
-                tseg = self._get_ax_data(0, True)
-                ax = self.figure.add_subplot(nrow, ncol, plot_i)
-                ax.ax_idx = TOPO_PLOT
-                ax.topo_idx = 0
-                ax.set_axis_off()
-                layers = AxisData([DataLayer(tseg, PlotType.IMAGE)])
-                topo = AxTopomap(ax, layers, mark=mark_topo, **self._topo_kwargs)
-                self._topo_axes = [ax]
-                self._topo_plots = [topo]
-            self._topo_plot_info_str = ""
+            self._create_topomaps(bboxes)
 
         self.canvas.draw()
         self.canvas.store_canvas()
@@ -1745,7 +1874,249 @@ class Frame(NavigableFrame, FileFrame):
         logger.debug('Page draw took %.1f seconds.', dt)
         wx.EndBusyCursor()
 
+    # -- long (variable-length) epoch mode -----------------------------------
+
+    def _set_layout_long(self, topo):
+        "Layout for the continuous single-column long-epoch browser"
+        if topo is None:
+            topo = self.config.ReadBool('Layout/show_topo', True)
+        else:
+            topo = bool(topo)
+            self.config.WriteBool('Layout/show_topo', topo)
+        self._plot_topo = topo
+        self._n_reserve = 0  # long mode uses a bottom strip, not reserved cells
+        self._rows_per_page = max(1, self.config.ReadInt('Layout/n_rows', 6))
+        seconds_per_row = self.config.ReadFloat('Layout/seconds_per_row', 10.0)
+        self._seconds_per_row = seconds_per_row if seconds_per_row > 0 else 10.0
+        self.config.Flush()
+        self._build_rows()
+
+    def _build_rows(self):
+        "Tile each epoch into fixed-width rows; a new epoch always starts a new row"
+        spr = self._seconds_per_row
+        rows = []
+        for epoch_idx in range(self.doc.n_epochs):
+            uts = self.doc.epoch_data[epoch_idx][0][1].time
+            t = uts.tmin
+            tstop = uts.tstop
+            while t < tstop - uts.tstep / 2:
+                t_stop = min(t + spr, tstop)
+                rows.append((epoch_idx, t, t_stop))
+                t = t_stop
+        self._rows_spec = rows
+        n_rows = len(rows)
+        rpp = self._rows_per_page
+        self._rows = rpp
+        self._columns = 1
+        self._n_pages = max(1, math.ceil(n_rows / rpp))
+        self._segs_by_page = [np.arange(i * rpp, min((i + 1) * rpp, n_rows)) for i in range(self._n_pages)]
+        # page selector labels
+        pages = []
+        for rows_on_page in self._segs_by_page:
+            epoch_idx, t_start, _ = self._rows_spec[rows_on_page[0]]
+            pages.append(f"epoch {epoch_idx} ({t_start:g} s)")
+        self.page_choice.SetItems(pages)
+
+    def _show_page_long(self, page=None):
+        "Draw a page of the continuous single-column long-epoch browser"
+        wx.BeginBusyCursor()
+        logger = getLogger(__name__)
+        t0 = time.time()
+        if page is not None:
+            self._page_change(page)
+        row_idxs = self._segs_by_page[self._current_page_i]
+
+        self.figure.clf()
+        self._window_handles = []
+        self._topo_interp_handles = []  # cleared by clf(); drop stale references
+        rpp = self._rows_per_page
+
+        if self._plot_topo:
+            gs = self.figure.add_gridspec(rpp + 1, 1, height_ratios=[1] * rpp + [1.4])
+        else:
+            gs = self.figure.add_gridspec(rpp, 1)
+
+        bfly_kwargs = dict(self._bfly_kwargs)
+        if self._type_vlims:
+            bfly_kwargs['vlims'] = {}
+
+        self._case_plots = []
+        self._case_axes = []
+        self._case_segs = []
+        self._case_segs_by_type = []
+        self._axes_by_idx = {}
+        mark = None
+        for i, row_idx in enumerate(row_idxs):
+            epoch_idx, t_start, t_stop = self._rows_spec[row_idx]
+            case_by_type = self.doc.get_epoch_by_type(epoch_idx, 'Epoch %i' % epoch_idx)
+            row_by_type = [(ct, nd.sub(time=(t_start, t_stop))) for ct, nd in case_by_type]
+            display_row = self._get_display_epoch(row_by_type)
+            if mark is None:
+                mark = [display_row.sensor.channel_idx[ch] for ch in self._mark
+                        if ch in display_row.sensor.channel_idx]
+            state = self.doc.accept[epoch_idx]
+            ax = self.figure.add_subplot(gs[i, 0], xticks=[0], yticks=[])
+            channel_colors = self.doc.get_channel_colors(display_row)
+            label = f'Epoch {epoch_idx}: {t_start:g}–{t_stop:g} s'
+            h = AxButterflyEpoch(ax, display_row, mark, state, label,
+                                 channel_colors=channel_colors, **bfly_kwargs)
+            # highlight the time windows in which channels are interpolated
+            self._draw_window_highlights(ax, epoch_idx, display_row)
+            # formatters
+            t_formatter, t_locator, _ = display_row.time._axis_format(True, True)
+            if t_locator is not None:
+                ax.xaxis.set_major_locator(t_locator)
+            ax.xaxis.set_major_formatter(t_formatter)
+            if not self._type_vlims:
+                ax.yaxis.set_major_formatter(AxisScale(display_row, True).formatter)
+
+            ax.ax_idx = i
+            ax.epoch_idx = epoch_idx
+            self._case_plots.append(h)
+            self._case_axes.append(ax)
+            self._case_segs.append(row_by_type[0][1])
+            self._case_segs_by_type.append(row_by_type)
+            self._axes_by_idx.setdefault(epoch_idx, ax)
+
+        # consistent y-axis limit across rows (multi-type normalized display)
+        if self._type_vlims and self._case_plots:
+            self._bfly_vlim = self._get_bfly_vlim()
+            for h in self._case_plots:
+                h.set_ylim(self._bfly_vlim)
+
+        # persistent before/after-rejection hover-topomaps in a bottom strip
+        self._topo_axes = []
+        self._topo_plots = []
+        self._topo_specs = []
+        if self._plot_topo and self._case_segs_by_type:
+            placeholder = self.figure.add_subplot(gs[rpp, 0])
+            strip = placeholder.get_position()
+            self.figure.delaxes(placeholder)
+            # square maps flush to the right edge of the strip
+            n_topo = 2 * len(self._case_segs_by_type[0])
+            fig_w, fig_h = self.figure.get_size_inches()
+            size = min(strip.height * fig_h / fig_w, strip.width / n_topo)
+            x_start = strip.x0 + strip.width - size * n_topo
+            bboxes = [Bbox.from_bounds(x_start + k * size, strip.y0, size, strip.height) for k in range(n_topo)]
+            self._create_topomaps(bboxes)
+
+        self.canvas.draw()
+        self.canvas.store_canvas()
+        logger.debug('Page draw took %.1f seconds.', time.time() - t0)
+        wx.EndBusyCursor()
+
+    def _draw_window_highlights(self, ax, epoch_idx, display_row):
+        "Recolor interpolated channels' traces over their bad time windows"
+        t_start = display_row.time.tmin
+        t_stop = display_row.time.tstop
+        channel_idx = display_row.sensor.channel_idx
+        for w in self.doc.windows_in_range(epoch_idx, t_start, t_stop):
+            if w.channel not in channel_idx:
+                continue
+            a = max(w.tmin, t_start)
+            b = min(w.tmax, t_stop)
+            seg = display_row.sub(time=(a, b), sensor=w.channel)
+            if seg.time.nsamples == 0:
+                continue
+            handles = ax.plot(seg.time.times, seg.x, color='b', lw=1.2, ls=':', zorder=8)
+            self._window_handles.extend(handles)
+
+    # -- topomaps (before / after channel rejection) -------------------------
+
+    def _rejected_channels(self, epoch_idx, t):
+        "Channels rejected (interpolated) in ``epoch_idx`` at time ``t``"
+        if self.long_epochs:
+            return {w.channel for w in self.doc.windows_in_range(epoch_idx, t, t + 1e-9)}
+        return set(self.doc.interpolate[epoch_idx])
+
+    def _create_topomaps(self, bboxes):
+        """Create the before/after-rejection topomaps, one per ``bbox``.
+
+        ``bboxes`` holds one position per map, ordered ``(type0 all, type0
+        rejected, type1 all, ...)``. The first map of each pair shows all
+        channels; the second excludes the channels rejected at the cursor time
+        (and is blanked when too few channels remain to interpolate). Both keep
+        the full sensor layout so that rejected channels can be marked with a
+        blue x in either map.
+        """
+        self._topo_axes = []
+        self._topo_plots = []
+        self._topo_specs = []
+        if not self._case_segs_by_type:
+            return
+        first_cbt = self._case_segs_by_type[0]
+        specs = [(ch_type, kind) for ch_type, _ in first_cbt for kind in ('all', 'rejected')]
+        case_by_type = dict(first_cbt)
+        mark_topo = [ch for ch in self._mark if ch not in self.doc.bad_channel_names] if self._mark else None
+        multi = bool(self._type_vlims)
+        t_init = min(max(0.1, first_cbt[0][1].time.tmin), first_cbt[0][1].time.tmax)
+        for slot, ((ch_type, kind), bbox) in enumerate(zip(specs, bboxes)):
+            case_ndvar = case_by_type[ch_type]
+            topo_kwargs = dict(self._topo_kwargs, vlims={}) if multi else dict(self._topo_kwargs)
+            ax = self.figure.add_axes([bbox.x0, bbox.y0, bbox.width, bbox.height])
+            ax.ax_idx = TOPO_PLOT
+            ax.topo_idx = slot
+            ax.set_axis_off()
+            # construct with the full sensor layout so every rejected channel
+            # has a marker location, even where excluded from the image
+            layers = AxisData([DataLayer(case_ndvar.sub(time=t_init), PlotType.IMAGE)])
+            topo = AxTopomap(ax, layers, mark=mark_topo, **topo_kwargs)
+            if multi and self._bfly_vlim is not None and ch_type in self._type_display_vlims:
+                topo.set_vlim(self._bfly_vlim * self._type_display_vlims[ch_type])
+            # label overlapping the bottom of the map (saves vertical space)
+            label = ch_type if kind == 'all' else f'{ch_type} −rej'
+            ax.text(0.5, 0.0, label, transform=ax.transAxes, ha='center', va='bottom', fontsize=8, zorder=10, bbox=dict(boxstyle='round,pad=0.1', fc='white', ec='none', alpha=0.6))
+            self._topo_axes.append(ax)
+            self._topo_plots.append(topo)
+            self._topo_specs.append((ch_type, kind))
+        self._topo_plot_info_str = ""
+        # initial images and marks for the first visible epoch
+        self._update_topomaps(self._epoch_idxs[0], 0, t_init, redraw=False)
+
+    def _set_topo_blank(self, ax, blank):
+        "White out a topomap axes when too few electrodes remain to interpolate"
+        # blitting restores a cached background, so the axes patch is made
+        # opaque-white to paint over any previously drawn map
+        ax.patch.set_visible(blank)
+        if blank:
+            ax.patch.set_facecolor('white')
+        for artist in (*ax.images, *ax.collections, *ax.lines):
+            artist.set_visible(not blank)
+
+    def _update_topomaps(self, epoch_idx, ax_idx, t, redraw=True):
+        "Update both topomaps and the blue-x rejected-channel marks at time ``t``"
+        if not self._topo_plots:
+            return
+        case_by_type = dict(self._case_segs_by_type[ax_idx])
+        rejected = self._rejected_channels(epoch_idx, t)
+        while self._topo_interp_handles:
+            self._topo_interp_handles.pop().remove()
+        for (ch_type, kind), ax, topo in zip(self._topo_specs, self._topo_axes, self._topo_plots):
+            ndvar = case_by_type.get(ch_type)
+            if ndvar is None:
+                continue
+            if kind == 'rejected' and rejected:
+                keep = [n for n in ndvar.sensor.names if n not in rejected]
+            else:
+                keep = list(ndvar.sensor.names)
+            if len(keep) < MIN_TOPO_SENSORS:
+                self._set_topo_blank(ax, True)
+                continue
+            self._set_topo_blank(ax, False)
+            tseg = ndvar.sub(time=t, sensor=keep) if len(keep) < len(ndvar.sensor) else ndvar.sub(time=t)
+            topo.set_data([tseg])
+            # mark rejected channels with a blue x
+            if rejected:
+                smap = topo.sensors
+                idx = [smap.sensors._array_index(ch) for ch in rejected if ch in smap.sensors.names]
+                if idx:
+                    self._topo_interp_handles.append(smap.ax.scatter(smap.locs[idx, 0], smap.locs[idx, 1], s=20, c='blue', marker='x'))
+        if redraw:
+            self.canvas.redraw(self._topo_axes)
+
     def ToggleChannelInterpolation(self, ax, event):
+        if self.read_only:
+            return
         if not self.allow_interpolation:
             wx.MessageBox("Interpolation is disabled for this session",
                           "Interpolation disabled", wx.OK)
@@ -1938,6 +2309,59 @@ class LayoutDialog(EelbrainDialog):
             wx.MessageBox(f"Invalid layout string: {value}", "Invalid Layout", wx.OK | wx.ICON_ERROR, self)
         self.text.SetFocus()
         self.text.SelectAll()
+
+
+class LongLayoutDialog(EelbrainDialog):
+    "Layout dialog for the continuous long-epoch browser"
+
+    def __init__(self, parent, rows_per_page, seconds_per_row, topo):
+        EelbrainDialog.__init__(self, parent, wx.ID_ANY, "Select-Epochs Layout")
+        self.rows_per_page = None
+        self.seconds_per_row = None
+        self.topo = None
+
+        sizer = wx.BoxSizer(wx.VERTICAL)
+
+        sizer.Add(wx.StaticText(self, wx.ID_ANY, "Rows per page:"))
+        validator = REValidator(INT_PATTERN, "Invalid number of rows: {value}. Need an integer.")
+        self.rows_ctrl = wx.TextCtrl(self, wx.ID_ANY, str(rows_per_page), validator=validator)
+        sizer.Add(self.rows_ctrl)
+
+        sizer.Add(wx.StaticText(self, wx.ID_ANY, "Seconds per row:"))
+        validator = REValidator(POS_FLOAT_PATTERN, "Invalid duration: {value}. Need a number > 0.", False)
+        self.seconds_ctrl = wx.TextCtrl(self, wx.ID_ANY, f'{seconds_per_row:g}', validator=validator)
+        sizer.Add(self.seconds_ctrl)
+
+        self.topo_ctrl = wx.CheckBox(self, wx.ID_ANY, "Topographic map")
+        self.topo_ctrl.SetValue(topo)
+        sizer.Add(self.topo_ctrl)
+
+        button_sizer = wx.StdDialogButtonSizer()
+        btn = wx.Button(self, wx.ID_OK)
+        btn.SetDefault()
+        button_sizer.AddButton(btn)
+        button_sizer.AddButton(wx.Button(self, wx.ID_CANCEL))
+        button_sizer.Realize()
+        sizer.Add(button_sizer)
+
+        self.Bind(wx.EVT_BUTTON, self.OnOk, id=wx.ID_OK)
+        self.SetSizer(sizer)
+        sizer.Fit(self)
+
+    def OnOk(self, event):
+        try:
+            rows_per_page = int(self.rows_ctrl.GetValue())
+            seconds_per_row = float(self.seconds_ctrl.GetValue())
+        except ValueError:
+            wx.MessageBox("Invalid layout values", "Invalid Layout", wx.OK | wx.ICON_ERROR, self)
+            return
+        if rows_per_page < 1 or seconds_per_row <= 0:
+            wx.MessageBox("Rows per page must be >= 1 and seconds per row > 0", "Invalid Layout", wx.OK | wx.ICON_ERROR, self)
+            return
+        self.rows_per_page = rows_per_page
+        self.seconds_per_row = seconds_per_row
+        self.topo = self.topo_ctrl.GetValue()
+        event.Skip()
 
 
 class RejectRangeDialog(EelbrainDialog):

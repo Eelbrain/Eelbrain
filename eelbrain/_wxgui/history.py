@@ -8,6 +8,7 @@ import os
 
 import wx
 
+from .._types import PathArg
 from .help import show_help_txt
 from .frame import EelbrainFrame
 from .utils import Icon
@@ -153,12 +154,12 @@ class History:
 class FileDocument:
     """Represent a file"""
 
-    def __init__(self, path: str | None) -> None:
+    def __init__(self, path: PathArg | None) -> None:
         self.saved = False  # managed by the history
         self.path = path
         self.callbacks = CallBackManager(('path_change', 'saved'))
 
-    def set_path(self, path: str) -> None:
+    def set_path(self, path: PathArg) -> None:
         self.path = path
         self.callbacks.callback('path_change')
 
@@ -170,7 +171,7 @@ class FileModel:
         self.doc = doc
         self.history = History(doc)
 
-    def load(self, path: str) -> None:
+    def load(self, path: PathArg) -> None:
         raise NotImplementedError
 
     def save(self) -> None:
@@ -178,7 +179,7 @@ class FileModel:
         self.history.register_save()
         self.doc.callbacks.callback('saved')
 
-    def save_as(self, path: str) -> None:
+    def save_as(self, path: PathArg) -> None:
         self.doc.set_path(path)
         self.save()
 

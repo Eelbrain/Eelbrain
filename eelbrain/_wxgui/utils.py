@@ -46,45 +46,52 @@ def show_text_dialog(parent: wx.Window, text: str, caption: str) -> ScrolledMess
 class TracebackDialog(wx.Dialog):
     """Modal dialog showing a full exception traceback with a copy button.
 
-    Intended for surfacing unexpected errors to the user with enough context
-    to file a bug report.
+    Without ``message``, the error is presented as an unexpected bug, with
+    version info and instructions for filing an issue; pass ``message`` (and
+    ``title``) to present an expected error with a specific explanation
+    instead, while keeping the traceback available for copying.
     """
 
-    def __init__(self, parent: wx.Window, tb: str) -> None:
-        super().__init__(parent, title="Error", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+    def __init__(
+            self,
+            parent: wx.Window,
+            tb: str,
+            title: str = "Error",
+            message: str | None = None,
+    ) -> None:
+        super().__init__(parent, title=title, style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self._tb = tb
-        self._version_info = (
-            f"OS:          {platform.platform()}\n"
-            f"Eelbrain:    {eelbrain.__version__}\n"
-            f"MNE-Python:  {mne.__version__}"
-        )
+        bug_report = message is None
+        if bug_report:
+            message = "An unexpected error occurred. Make sure you are using the latest version of Eelbrain and MNE-Python. Check whether a corresponding issue exists, and if not, submit a new issue including the information below, at https://github.com/Eelbrain/Eelbrain/issues"
 
         vbox = wx.BoxSizer(wx.VERTICAL)
 
-        header = wx.StaticText(self, label=(
-            "An unexpected error occurred. Make sure you are using the latest version of "
-            "Eelbrain and MNE-Python. Check whether a corresponding issue exists, and if not, "
-            "submit a new issue including the information below, at "
-            "https://github.com/Eelbrain/Eelbrain/issues"
-        ))
+        header = wx.StaticText(self, label=message)
         header.Wrap(660)
         vbox.Add(header, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, border=10)
 
         mono = wx.Font(wx.FontInfo(10).Family(wx.FONTFAMILY_TELETYPE))
 
-        # Version/platform section
-        version_text = wx.TextCtrl(
-            self, value=self._version_info,
-            style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_DONTWRAP,
-        )
-        version_text.SetFont(mono)
-        vbox.Add(version_text, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, border=10)
+        if bug_report:
+            # Version/platform section
+            self._version_info = (
+                f"OS:          {platform.platform()}\n"
+                f"Eelbrain:    {eelbrain.__version__}\n"
+                f"MNE-Python:  {mne.__version__}"
+            )
+            version_text = wx.TextCtrl(
+                self, value=self._version_info,
+                style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_DONTWRAP,
+            )
+            version_text.SetFont(mono)
+            vbox.Add(version_text, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, border=10)
 
-        version_btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        copy_version_btn = wx.Button(self, label="Copy Version Info")
-        copy_version_btn.Bind(wx.EVT_BUTTON, self._on_copy_version)
-        version_btn_sizer.Add(copy_version_btn)
-        vbox.Add(version_btn_sizer, flag=wx.LEFT | wx.RIGHT | wx.TOP, border=10)
+            version_btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+            copy_version_btn = wx.Button(self, label="Copy Version Info")
+            copy_version_btn.Bind(wx.EVT_BUTTON, self._on_copy_version)
+            version_btn_sizer.Add(copy_version_btn)
+            vbox.Add(version_btn_sizer, flag=wx.LEFT | wx.RIGHT | wx.TOP, border=10)
 
         # Traceback section
         tb_text = wx.TextCtrl(
@@ -124,7 +131,9 @@ class StaleICADialog(wx.Dialog):
 
     After :meth:`ShowModal` returns, read :attr:`choice` for the user's
     decision: one of the :attr:`DELETE`, :attr:`INCORPORATE`, or :attr:`IGNORE`
-    class constants, or ``None`` if the dialog was dismissed.
+    class constants, or ``None`` if the dialog was dismissed. When
+    ``allow_apply_to_all`` is set, :attr:`apply_to_all` reports whether the
+    "Apply to all" checkbox was ticked.
     """
 
     ABORT = 'abort'
@@ -138,12 +147,14 @@ class StaleICADialog(wx.Dialog):
             subject: str,
             message: str,
             instructions: str = '',
+            allow_apply_to_all: bool = False,
     ) -> None:
         super().__init__(
             parent, title=f"Stale ICA: {subject}",
             style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
         )
         self.choice: str | None = None
+        self.apply_to_all: bool = False
 
         vbox = wx.BoxSizer(wx.VERTICAL)
 
@@ -166,6 +177,12 @@ class StaleICADialog(wx.Dialog):
         help_label = wx.StaticText(self, label=help_text)
         help_label.Wrap(540)
         vbox.Add(help_label, flag=wx.LEFT | wx.RIGHT | wx.BOTTOM, border=12)
+
+        self._apply_all_cb: wx.CheckBox | None = None
+        if allow_apply_to_all:
+            self._apply_all_cb = wx.CheckBox(self, label="Apply this choice to all remaining stale ICA files")
+            self._apply_all_cb.SetToolTip("Use the button you click for every other stale ICA file in this refresh, without asking again.")
+            vbox.Add(self._apply_all_cb, flag=wx.LEFT | wx.RIGHT | wx.BOTTOM, border=12)
 
         vbox.Add(wx.StaticLine(self), flag=wx.EXPAND)
 
@@ -200,6 +217,8 @@ class StaleICADialog(wx.Dialog):
 
     def _choose(self, choice: str) -> None:
         self.choice = choice
+        if self._apply_all_cb is not None:
+            self.apply_to_all = self._apply_all_cb.GetValue()
         self.EndModal(0)
 
 

@@ -16,7 +16,6 @@ def test_prepare_continuous_epoch_dataset():
     })
     ds.info['raw.samplingrate'] = 1000
     options = {
-        'baseline': False,
         'samplingrate': None,
         'decim': None,
         'tmin': None,
@@ -25,14 +24,13 @@ def test_prepare_continuous_epoch_dataset():
         'pad': 0,
     }
     ds = epoch._prepare_selected_events(ds, 'R0001', options)
-    tmin, tmax, tstop, baseline, decim, variable_tmax = epoch._extraction_parameters(ds, options)
+    tmin, tmax, tstop, decim, variable_tmax = epoch._extraction_parameters(ds, options)
 
     assert ds.n_cases == 2
     assert ds.info['nested_events'] == 'events'
     assert tmin == -0.1
     assert list(tmax.x) == pytest.approx([0.4, 0.3])
     assert tstop is None
-    assert baseline is False
     assert decim == 5
     assert variable_tmax is True
     assert 'T_relative' in ds[0, 'events']

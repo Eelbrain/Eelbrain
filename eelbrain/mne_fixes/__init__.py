@@ -34,6 +34,5 @@ from ._logging import CaptureLog, reset_logger, suppress_mne_warning
 
 from ._dss import dss
 from ._freesurfer import rename_mri
-from ._interpolation import _interpolate_bads_eeg, _interpolate_bads_meg
 from ._label import write_labels_to_annot
 from ._types import MNE_EPOCHS, MNE_EVOKED, MNE_RAW, MNE_LABEL, MNE_VOLUME_STC

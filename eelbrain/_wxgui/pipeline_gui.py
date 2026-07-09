@@ -12,7 +12,9 @@ import wx
 from .. import load
 from .._exceptions import ConfigurationError, DataError
 from .._experiment.derivative_cache import ProtectedArtifactError
+from .._experiment.epoch_rejection import ChannelModelRejection, ManualRejection
 from .._experiment.epochs import PrimaryEpoch
+from .._experiment.exceptions import FileMissingError, ICAChannelsChangedError
 from .._experiment.pathing import MRI_SDIR
 from .._experiment.preprocessing import RawICA, RawSource, ica_input_name, raw_bad_channels_input_name, raw_input_name
 from .._utils.mne_utils import is_fake_mri
@@ -40,7 +42,80 @@ def _launch_coreg_subprocess(
 
 
 class _AbortRequested(Exception):
-    """Raised in the refresh thread when the user clicks Abort."""
+    """Raised when the user clicks Abort in the stale-ICA dialog."""
+
+
+_USER_ERROR_TYPES = (ConfigurationError, DataError, FileMissingError, FileNotFoundError)
+
+
+def _format_user_error(error: Exception) -> tuple[str, str] | None:
+    """Return a dialog title/message for expected pipeline failures."""
+    if isinstance(error, FileMissingError):
+        return "Missing input", f"A required input file is missing.\n\n{error}"
+    if isinstance(error, FileNotFoundError):
+        path = error.filename or str(error)
+        return "Missing file", f"A required file is missing:\n\n{path}"
+    if isinstance(error, DataError):
+        return "Data error", str(error)
+    if isinstance(error, ConfigurationError):
+        return "Configuration error", str(error)
+    return None
+
+
+def _error_dialog_args(error: Exception) -> tuple[str, str, str | None]:
+    """Return ``(tb, title, message)`` for :meth:`PipelineFrame._show_error`.
+
+    Must be called from the ``except`` block handling ``error``; ``message``
+    is ``None`` for unexpected errors, selecting the bug-report presentation.
+    """
+    tb = traceback.format_exc()
+    dialog = _format_user_error(error)
+    if dialog is None:
+        return tb, "Error", None
+    return tb, *dialog
+
+
+class BadChannelsDialog(wx.Dialog):
+    """Editable comma-separated bad-channel entry with live validation.
+
+    The OK button is disabled while the entry contains channel names that are
+    not present in the recording, and a status message lists the offenders.
+    """
+
+    def __init__(self, parent, sensor, current_bads: list[str]) -> None:
+        super().__init__(parent, title="Set Bad Channels")
+        self._sensor = sensor
+        vbox = wx.BoxSizer(wx.VERTICAL)
+        vbox.Add(wx.StaticText(self, label="Bad channels (comma-separated):"), flag=wx.LEFT | wx.RIGHT | wx.TOP, border=12)
+        self._text = wx.TextCtrl(self, value=', '.join(current_bads), size=(400, -1))
+        self._text.Bind(wx.EVT_TEXT, self._on_text)
+        vbox.Add(self._text, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, border=12)
+        self._status = wx.StaticText(self, label="")
+        self._status.SetForegroundColour(wx.RED)
+        vbox.Add(self._status, flag=wx.EXPAND | wx.ALL, border=12)
+        buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
+        self._ok_button = self.FindWindowById(wx.ID_OK)
+        vbox.Add(buttons, flag=wx.ALIGN_RIGHT | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=12)
+        self.SetSizerAndFit(vbox)
+        self._validate()
+
+    def _parse(self) -> list[str]:
+        return [name for name in (part.strip() for part in self._text.GetValue().split(',')) if name]
+
+    def _on_text(self, event):
+        self._validate()
+
+    def _validate(self) -> None:
+        missing = [ch for ch in self._parse() if ch not in self._sensor.names]
+        if missing:
+            self._status.SetLabel(f"Not in data: {', '.join(sorted(missing))}")
+            self._ok_button.Disable()
+        else:
+            self._status.SetLabel("")
+            self._ok_button.Enable()
+
+    def get_bad_channels(self) -> list[str]:
+        return self._parse()
 
 
 class PipelineFrame(EelbrainFrame):
@@ -57,6 +132,7 @@ class PipelineFrame(EelbrainFrame):
         self._compute_token = None  # replaced each make-ICA run; threads compare identity
         self._tasks = []  # list of (task_type, task_key)
         self._bad_chs_iter_fields: list[str] = []  # session/task/run columns for bad_chs
+        self._ica_iter_fields: list[str] = []  # session/run columns for ica
 
         self._init_ui()
         self._populate_tasks()
@@ -64,12 +140,11 @@ class PipelineFrame(EelbrainFrame):
             self._task_choice.SetSelection(0)
             self._on_task_changed(None)
 
-        # Width: fit the widest column set (ICA: 490 px) plus scrollbar + frame chrome.
+        # Width: fit the widest toolbar
         # Height: fill the usable display (wx.Fit() doesn't help here because the
         # ListCtrl uses proportion=1 and its content is populated asynchronously).
-        col_total = 180 + 110 + 110 + 90  # ICA columns are the wider of the two task types
         display = wx.GetClientDisplayRect()
-        self.SetSize((col_total + 40, display.height - 80))
+        self.SetSize((800, display.height - 80))
         self.Centre()
         self.Bind(wx.EVT_CLOSE, self._on_close)
 
@@ -95,15 +170,20 @@ class PipelineFrame(EelbrainFrame):
         )
 
         # Extra controls shown only in epoch-rejection mode
+        self._epoch_rejection_label = wx.StaticText(self._panel, label="Rejection:")
+        self._epoch_rejection_choice = wx.Choice(self._panel)
+        self._epoch_rejection_choice.Bind(wx.EVT_CHOICE, self._on_epoch_rejection_changed)
         self._epoch_label = wx.StaticText(self._panel, label="Epoch:")
         self._epoch_choice = wx.Choice(self._panel)
         self._epoch_choice.Bind(wx.EVT_CHOICE, self._on_state_changed)
         self._raw_label = wx.StaticText(self._panel, label="Raw:")
         self._raw_choice = wx.Choice(self._panel)
-        self._raw_choice.Bind(wx.EVT_CHOICE, self._on_state_changed)
+        self._raw_choice.Bind(wx.EVT_CHOICE, self._on_raw_changed)
 
         for widget, border in [
-            (self._epoch_label, 14),
+            (self._epoch_rejection_label, 14),
+            (self._epoch_rejection_choice, 4),
+            (self._epoch_label, 10),
             (self._epoch_choice, 4),
             (self._raw_label, 10),
             (self._raw_choice, 4),
@@ -117,6 +197,12 @@ class PipelineFrame(EelbrainFrame):
         self._make_ica_btn.SetToolTip("Compute ICA for all subjects with missing files")
         self._make_ica_btn.Bind(wx.EVT_BUTTON, self._on_make_ica)
         toolbar.Add(self._make_ica_btn, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=6)
+
+        # Compute-rejection button (automatic epoch rejection only)
+        self._make_rej_btn = wx.Button(self._panel, label="Compute rejection", style=wx.BU_EXACTFIT)
+        self._make_rej_btn.SetToolTip("Compute rejection files for all subjects with missing files")
+        self._make_rej_btn.Bind(wx.EVT_BUTTON, self._on_make_rejection)
+        toolbar.Add(self._make_rej_btn, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=6)
 
         self._progress_gauge = wx.Gauge(self._panel, style=wx.GA_HORIZONTAL | wx.GA_SMOOTH)
         self._progress_gauge.SetMinSize((100, -1))
@@ -139,34 +225,36 @@ class PipelineFrame(EelbrainFrame):
             style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.BORDER_NONE,
         )
         self._list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self._on_item_activated)
+        self._list.Bind(wx.EVT_LIST_ITEM_RIGHT_CLICK, self._on_item_right_click)
         vbox.Add(self._list, proportion=1, flag=wx.EXPAND)
 
         self._panel.SetSizer(vbox)
         self.CreateStatusBar()
 
-        for w in (self._epoch_label, self._epoch_choice,
+        for w in (self._epoch_rejection_label, self._epoch_rejection_choice,
+                  self._epoch_label, self._epoch_choice,
                   self._raw_label, self._raw_choice,
-                  self._make_ica_btn, self._progress_gauge, self._progress_label):
+                  self._make_ica_btn, self._make_rej_btn,
+                  self._progress_gauge, self._progress_label):
             w.Hide()
 
     # ------------------------------------------------------------------
     # Task / state population
 
     def _populate_tasks(self):
-        for name, pipe in self._pipeline._raw.items():
-            if isinstance(pipe, RawSource):
-                self._tasks.append(('bad_chs', name))
-                self._task_choice.Append(f"Bad channels: {name}")
+        # The task selects the operation; the raw pipe is chosen separately via
+        # the Raw dropdown (filtered to the sources/ICA stages for the task).
+        if any(isinstance(pipe, RawSource) for pipe in self._pipeline._raw.values()):
+            self._tasks.append(('bad_chs', None))
+            self._task_choice.Append("Bad channels")
 
-        for name, pipe in self._pipeline._raw.items():
-            if isinstance(pipe, RawICA):
-                self._tasks.append(('ica', name))
-                self._task_choice.Append(f"ICA: {name}")
+        if any(isinstance(pipe, RawICA) for pipe in self._pipeline._raw.values()):
+            self._tasks.append(('ica', None))
+            self._task_choice.Append("ICA")
 
-        for name, rej in self._pipeline._artifact_rejection.items():
-            if rej.get('kind') == 'manual':
-                self._tasks.append(('epoch_rej', name))
-                self._task_choice.Append(f"Epoch rejection: {name}")
+        if any(rej is not None for rej in self._pipeline._epoch_rejection.values()):
+            self._tasks.append(('epoch_rej', None))
+            self._task_choice.Append("Epoch rejection")
 
         self._tasks.append(('mri', 'mri'))
         self._task_choice.Append("MRI")
@@ -179,27 +267,65 @@ class PipelineFrame(EelbrainFrame):
             return None, None
         return self._tasks[idx]
 
-    def _populate_epoch_raw_choices(self, with_epoch: bool = True):
-        if with_epoch:
-            self._epoch_choice.Clear()
-            for name, epoch in self._pipeline._epochs.items():
-                if isinstance(epoch, PrimaryEpoch):
-                    self._epoch_choice.Append(name)
-            if self._epoch_choice.GetCount():
-                self._epoch_choice.SetSelection(0)
+    def _populate_epoch_choices(self):
+        previous = self._epoch_choice.GetStringSelection()
+        self._epoch_choice.Clear()
+        for name, epoch in self._pipeline._epochs.items():
+            if isinstance(epoch, PrimaryEpoch):
+                self._epoch_choice.Append(name)
+        self._restore_selection(self._epoch_choice, previous, 0)
 
+    def _populate_raw_choices(self, task_type: str):
+        """Fill the Raw dropdown with the pipes relevant to ``task_type``."""
+        previous = self._raw_choice.GetStringSelection()
         self._raw_choice.Clear()
-        for raw in self._pipeline.get_field_values('raw'):
-            self._raw_choice.Append(raw)
+        if task_type == 'ica':
+            names = [name for name, pipe in self._pipeline._raw.items() if isinstance(pipe, RawICA)]
+        else:  # bad_chs / epoch_rej: any raw stage (source derived where needed)
+            names = list(self._pipeline.get_field_values('raw'))
+        for name in names:
+            self._raw_choice.Append(name)
         default = self._raw_choice.FindString('raw')
-        self._raw_choice.SetSelection(default if default != wx.NOT_FOUND else 0)
+        self._restore_selection(self._raw_choice, previous, default if default != wx.NOT_FOUND else 0)
+
+    def _populate_epoch_rejection_choices(self):
+        previous = self._epoch_rejection_choice.GetStringSelection()
+        self._epoch_rejection_choice.Clear()
+        for name, rej in self._pipeline._epoch_rejection.items():
+            if rej is not None:
+                self._epoch_rejection_choice.Append(name)
+        self._restore_selection(self._epoch_rejection_choice, previous, 0)
+
+    @staticmethod
+    def _restore_selection(choice: wx.Choice, previous: str, default: int):
+        """Re-select ``previous`` if still present, else fall back to ``default``."""
+        if not choice.GetCount():
+            return
+        index = choice.FindString(previous) if previous else wx.NOT_FOUND
+        choice.SetSelection(index if index != wx.NOT_FOUND else default)
+
+    def _current_epoch_rejection(self) -> str | None:
+        return self._epoch_rejection_choice.GetStringSelection() or None
+
+    def _update_rejection_button(self):
+        """Show the 'Compute rejection' button only for an automatic rejection."""
+        task_type, _ = self._current_task()
+        name = self._current_epoch_rejection()
+        is_auto = (task_type == 'epoch_rej' and name is not None
+                   and isinstance(self._pipeline._epoch_rejection[name], ChannelModelRejection))
+        self._make_rej_btn.Show(is_auto)
+        self._panel.Layout()
+
+    def _on_epoch_rejection_changed(self, event):
+        self._update_rejection_button()
+        self._start_refresh()
 
     # ------------------------------------------------------------------
     # Event handlers
 
     def _on_task_changed(self, event):
         task_type, task_key = self._current_task()
-        self._stop_make_ica()
+        self._stop_compute()
         if task_type == 'bad_chs':
             p = self._pipeline
             extra = []
@@ -211,19 +337,51 @@ class PipelineFrame(EelbrainFrame):
                 extra.append('run')
             self._bad_chs_iter_fields = extra
         show_epoch = task_type == 'epoch_rej'
-        show_raw = task_type in ('epoch_rej', 'bad_chs')
+        show_raw = task_type in ('epoch_rej', 'bad_chs', 'ica')
+        self._epoch_rejection_label.Show(show_epoch)
+        self._epoch_rejection_choice.Show(show_epoch)
         self._epoch_label.Show(show_epoch)
         self._epoch_choice.Show(show_epoch)
         self._raw_label.Show(show_raw)
         self._raw_choice.Show(show_raw)
+        if show_epoch:
+            self._populate_epoch_rejection_choices()
+            self._populate_epoch_choices()
         if show_raw:
-            self._populate_epoch_raw_choices(with_epoch=show_epoch)
+            self._populate_raw_choices(task_type)
+        if task_type == 'ica':
+            self._update_ica_iter_fields()
         self._make_ica_btn.Show(task_type == 'ica')
+        self._update_rejection_button()
         self._panel.Layout()
         self._setup_columns(task_type)
         self._start_refresh()
 
+    def _update_ica_iter_fields(self):
+        """Recompute the per-row key fields for the currently selected ICA raw.
+
+        ICA is cached per (subject, session[, run]); show one row per
+        combination of the key fields that vary in this experiment.
+        """
+        p = self._pipeline
+        raw_name = self._raw_choice.GetStringSelection()
+        extra = []
+        if len(p._sessions) > 1:
+            extra.append('session')
+        if raw_name and not p._raw[raw_name]._concatenate_runs and len(p._runs) > 1:
+            extra.append('run')
+        self._ica_iter_fields = extra
+
     def _on_state_changed(self, event):
+        self._start_refresh()
+
+    def _on_raw_changed(self, event):
+        # Switching the ICA raw pipe can change run concatenation, so recompute
+        # the per-row key fields and columns before refreshing.
+        task_type, _ = self._current_task()
+        if task_type == 'ica':
+            self._update_ica_iter_fields()
+            self._setup_columns(task_type)
         self._start_refresh()
 
     def _on_refresh(self, event):
@@ -231,15 +389,103 @@ class PipelineFrame(EelbrainFrame):
 
     def _on_item_activated(self, event):
         """Row double-click"""
+        self._activate_row(event.GetIndex())
+
+    def _on_item_right_click(self, event):
+        """Row right-click: context menu (Bad channels task only)."""
+        task_type, _ = self._current_task()
+        if task_type != 'bad_chs':
+            return
         idx = event.GetIndex()
+        if idx == wx.NOT_FOUND:
+            return
+        menu = wx.Menu()
+        set_item = menu.Append(wx.ID_ANY, "Set Bad Channels")
+        plot_item = menu.Append(wx.ID_ANY, "Plot continuous data")
+        self.Bind(wx.EVT_MENU, lambda event: self._set_bad_channels_dialog(idx), set_item)
+        self.Bind(wx.EVT_MENU, lambda event: self._activate_row(idx), plot_item)
+        self._list.PopupMenu(menu)
+        self.Unbind(wx.EVT_MENU, source=set_item)
+        self.Unbind(wx.EVT_MENU, source=plot_item)
+        menu.Destroy()
+
+    def _set_bad_channels_dialog(self, idx: int) -> None:
+        """Edit a row's bad channels via a text dialog with live validation."""
+        pipeline = self._pipeline
+        raw_name = self._raw_choice.GetStringSelection()
+        state = {'subject': self._list.GetItemText(idx, 0)}
+        for col, field in enumerate(self._bad_chs_iter_fields, start=1):
+            state[field] = self._list.GetItemText(idx, col)
+        wx.BeginBusyCursor()
+        try:
+            pipeline.set(raw=raw_name, **state)
+            source_name = pipeline._raw.root_source_name(raw_name)
+            source_pipe = pipeline._raw.root_source_pipe(raw_name)
+            raw = pipeline._load_derivative(raw_input_name(source_name), options={'noise': False})
+            sensor = load.mne.sensor_dim(raw.info, adjacency=source_pipe.adjacency)
+            current_bads = pipeline.load_bad_channels()
+        except _USER_ERROR_TYPES as error:
+            self._show_error(*_error_dialog_args(error))
+            return
+        finally:
+            wx.EndBusyCursor()
+        dlg = BadChannelsDialog(self, sensor, current_bads)
+        try:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            bad_chs = dlg.get_bad_channels()
+        finally:
+            dlg.Destroy()
+        try:
+            pipeline.make_bad_channels(bad_chs, redo=True, raw=raw_name, **state)
+        except _USER_ERROR_TYPES as error:
+            self._show_error(*_error_dialog_args(error))
+            return
+        self._start_refresh()
+
+    def _activate_row(self, idx: int) -> None:
+        """Perform the double-click action for the row at ``idx``."""
         subject = self._list.GetItemText(idx, 0)
         task_type, task_key = self._current_task()
         if task_type is None:
             return
+        # Loop so that after the user incorporates a stale ICA we can retry the
+        # action through the same try, keeping the _USER_ERROR_TYPES handler
+        # around the retry; every other path falls through to the return.
+        while True:
+            try:
+                self._activate_item(idx, subject, task_type, task_key)
+            except _USER_ERROR_TYPES as error:
+                self._show_error(*_error_dialog_args(error))
+            except ICAChannelsChangedError as error:
+                if self._ask_ica_channels_changed():
+                    Path(error.path).unlink()
+                    self._start_refresh()
+                else:
+                    wx.CallAfter(wx.GetApp().ExitMainLoop)
+            except ProtectedArtifactError as error:
+                # A stale ICA dependency surfaced while building the requested
+                # artifact (e.g. make_epoch_rejection); route it through the
+                # same dialog used during refresh. A single row is involved, so
+                # "Apply to all" is not offered here.
+                choice, _ = self._ask_stale_ica(subject, error)
+                if choice == StaleICADialog.INCORPORATE:
+                    self._pipeline.load_ica(raw=self._raw_choice.GetStringSelection(), accept_stale=True)
+                    continue  # manifest now matches; retry the action
+                elif choice == StaleICADialog.ABORT:
+                    wx.CallAfter(wx.GetApp().ExitMainLoop)
+                else:  # DELETE / IGNORE / dismissed: the action can not proceed
+                    if choice == StaleICADialog.DELETE:
+                        Path(error.path).unlink()
+                    self._start_refresh()
+            return
+
+    def _activate_item(self, idx, subject, task_type, task_key):
+        """Perform the action for a double-clicked row."""
         wx.BeginBusyCursor()
         try:
             if task_type == 'bad_chs':
-                raw_name = self._raw_choice.GetStringSelection() or task_key
+                raw_name = self._raw_choice.GetStringSelection()
                 state = {'subject': subject}
                 for col, field in enumerate(self._bad_chs_iter_fields, start=1):
                     state[field] = self._list.GetItemText(idx, col)
@@ -251,31 +497,34 @@ class PipelineFrame(EelbrainFrame):
                         lambda: wx.CallAfter(self._start_refresh),
                     )
             elif task_type == 'ica':
-                frame = self._pipeline.make_ica_selection(subject=subject, raw=task_key)
+                raw_name = self._raw_choice.GetStringSelection()
+                combo = self._ica_row_combo(idx)
+                state = dict(zip(('subject',) + tuple(self._ica_iter_fields), combo))
+                frame = self._pipeline.make_ica_selection(raw=raw_name, **state)
                 if frame is not None:
                     doc = frame.model.doc
                     doc.callbacks.subscribe(
                         'saved',
-                        lambda: wx.CallAfter(self._update_ica_row, subject, task_key, doc),
+                        lambda: wx.CallAfter(self._update_ica_row, combo, doc),
                     )
             elif task_type == 'epoch_rej':
-                self._pipeline.make_epoch_selection(
-                    subject=subject,
-                    rej=task_key,
-                    epoch=self._epoch_choice.GetStringSelection(),
-                    raw=self._raw_choice.GetStringSelection(),
-                )
-                # Epoch rejection has no in-memory object to read from,
-                # so do a targeted single-subject refresh instead.
-                self._start_refresh()
+                name = self._current_epoch_rejection()
+                if name is not None:
+                    # opens an editable GUI for ManualRejection, read-only for an
+                    # automatically generated rejection
+                    self._pipeline.make_epoch_rejection(
+                        subject=subject,
+                        epoch_rejection=name,
+                        epoch=self._epoch_choice.GetStringSelection(),
+                        raw=self._raw_choice.GetStringSelection(),
+                    )
+                    # Epoch rejection has no in-memory object to read from,
+                    # so do a targeted single-subject refresh instead.
+                    self._start_refresh()
             elif task_type == 'mri':
                 self._on_mri_activated(idx, subject)
             elif task_type == 'coreg':
                 self._on_coreg_activated(idx)
-        except DataError as error:
-            wx.MessageBox(str(error), "Data error", wx.OK | wx.ICON_ERROR, self)
-        except ConfigurationError as error:
-            wx.MessageBox(str(error), "Configuration error", wx.OK | wx.ICON_ERROR, self)
         finally:
             wx.EndBusyCursor()
 
@@ -351,7 +600,10 @@ class PipelineFrame(EelbrainFrame):
                 cols.append((f.title(), 90))
             cols += [('Status', 110), ('N bad', 90)]
         elif task_type == 'ica':
-            cols = [('Subject', 180), ('Status', 110), ('Components', 110), ('Rejected', 90)]
+            cols = [('Subject', 180)]
+            for f in self._ica_iter_fields:
+                cols.append((f.title(), 90))
+            cols += [('Status', 110), ('Components', 110), ('Rejected', 90)]
         elif task_type == 'mri':
             cols = [('Subject', 180), ('MRI subject', 170), ('Status', 130)]
         elif task_type == 'coreg':
@@ -360,6 +612,27 @@ class PipelineFrame(EelbrainFrame):
             cols = [('Subject', 180), ('Status', 110), ('N total', 90), ('N rejected', 90)]
         for i, (label, width) in enumerate(cols):
             self._list.InsertColumn(i, label, width=width)
+
+    def _ica_status_col(self) -> int:
+        """Column index of the ICA Status column (after subject + key fields)."""
+        return 1 + len(self._ica_iter_fields)
+
+    def _ica_row_combo(self, idx: int) -> tuple:
+        """Leading key-field column values (subject + session/run) of a row."""
+        n = 1 + len(self._ica_iter_fields)
+        return tuple(self._list.GetItemText(idx, c) for c in range(n))
+
+    def _find_row(self, combo: tuple) -> int:
+        """Row index whose leading columns match ``combo``, or -1."""
+        for i in range(self._list.GetItemCount()):
+            if all(self._list.GetItemText(i, c) == val for c, val in enumerate(combo)):
+                return i
+        return -1
+
+    def _status_col(self) -> int:
+        """Column index of the Status column for the current task."""
+        task_type, _ = self._current_task()
+        return self._ica_status_col() if task_type == 'ica' else 1
 
     def _populate_table(self, rows: list[tuple[str, ...]], token: object) -> None:
         if token is not self._refresh_token:
@@ -373,10 +646,11 @@ class PipelineFrame(EelbrainFrame):
                 self._list.SetItem(idx, col, val)
             if task_type == 'bad_chs':
                 status = row[-2]  # status is always second-to-last
-                if status in ('no data', 'no file'):
+                if status == 'no file':
                     self._list.SetItemTextColour(idx, grey)
             elif task_type == 'ica':
-                if row[1] == 'selected' and row[3] == '0':
+                # status is third-to-last, rejected count is last
+                if row[-3] == 'selected' and row[-1] == '0':
                     self._list.SetItemTextColour(idx, wx.RED)
             elif task_type == 'mri':
                 if row[2] == 'no MRI':
@@ -388,18 +662,18 @@ class PipelineFrame(EelbrainFrame):
                     self._list.SetItemTextColour(idx, wx.RED)
         self._refresh_status_bar()
 
-    def _update_ica_row(self, subject: str, task_key: str, doc) -> None:
+    def _update_ica_row(self, combo: tuple, doc) -> None:
         """Update a single ICA row from the already-in-memory document (no disk I/O)."""
         n_comp = doc.ica.n_components_
         n_excl = len(doc.ica.exclude)
-        for i in range(self._list.GetItemCount()):
-            if self._list.GetItemText(i, 0) == subject:
-                self._list.SetItem(i, 1, 'selected')
-                self._list.SetItem(i, 2, str(n_comp))
-                self._list.SetItem(i, 3, str(n_excl))
-                colour = wx.RED if n_excl == 0 else wx.SystemSettings.GetColour(wx.SYS_COLOUR_LISTBOXTEXT)
-                self._list.SetItemTextColour(i, colour)
-                break
+        i = self._find_row(combo)
+        if i != -1:
+            status_col = self._ica_status_col()
+            self._list.SetItem(i, status_col, 'selected')
+            self._list.SetItem(i, status_col + 1, str(n_comp))
+            self._list.SetItem(i, status_col + 2, str(n_excl))
+            colour = wx.RED if n_excl == 0 else wx.SystemSettings.GetColour(wx.SYS_COLOUR_LISTBOXTEXT)
+            self._list.SetItemTextColour(i, colour)
         self._refresh_status_bar()
 
     def _refresh_status_bar(self):
@@ -415,9 +689,11 @@ class PipelineFrame(EelbrainFrame):
             self.SetStatusText(msg)
             return
         if task_type == 'ica':
-            n_ok = sum(1 for i in range(n) if self._list.GetItemText(i, 1) == 'selected')
-            n_missing = sum(1 for i in range(n) if self._list.GetItemText(i, 1) == 'no ICA')
-            msg = f"{n_ok} / {n} subjects · ICA selected"
+            status_col = self._ica_status_col()
+            n_ok = sum(1 for i in range(n) if self._list.GetItemText(i, status_col) == 'selected')
+            n_missing = sum(1 for i in range(n) if self._list.GetItemText(i, status_col) == 'no ICA')
+            unit = 'recordings' if self._ica_iter_fields else 'subjects'
+            msg = f"{n_ok} / {n} {unit} · ICA selected"
             if n_missing:
                 msg += f"  ({n_missing} missing ICA file)"
         elif task_type == 'epoch_rej':
@@ -457,11 +733,17 @@ class PipelineFrame(EelbrainFrame):
         epoch_name = (self._epoch_choice.GetStringSelection()
                       if task_type == 'epoch_rej' else None)
         raw_name = (self._raw_choice.GetStringSelection()
-                    if task_type in ('epoch_rej', 'bad_chs') else None)
+                    if task_type in ('epoch_rej', 'bad_chs', 'ica') else None)
 
-        if task_type == 'epoch_rej' and not epoch_name:
-            self.SetStatusText("No epochs defined")
-            return
+        if task_type == 'epoch_rej':
+            # carry the selected rejection name through as task_key
+            task_key = self._current_epoch_rejection()
+            if task_key is None:
+                self.SetStatusText("No epoch rejection defined")
+                return
+            if not epoch_name:
+                self.SetStatusText("No epochs defined")
+                return
 
         threading.Thread(
             target=self._refresh_thread,
@@ -481,15 +763,14 @@ class PipelineFrame(EelbrainFrame):
             rows = self._compute_rows(token, task_type, task_key, epoch_name, raw_name)
         except _AbortRequested:
             return  # app exit already scheduled
-        except Exception:
-            tb = traceback.format_exc()
-            wx.CallAfter(self._show_error, tb)
+        except Exception as error:
+            wx.CallAfter(self._show_error, *_error_dialog_args(error))
             return
         wx.CallAfter(self._populate_table, rows, token)
 
-    def _show_error(self, tb: str):
+    def _show_error(self, tb: str, title: str = "Error", message: str | None = None):
         self.SetStatusText("Error")
-        dlg = TracebackDialog(self, tb)
+        dlg = TracebackDialog(self, tb, title, message)
         dlg.ShowModal()
         dlg.Destroy()
 
@@ -516,19 +797,21 @@ class PipelineFrame(EelbrainFrame):
 
     def _on_make_ica(self, event):
         if self._compute_token is not None:
-            self._stop_make_ica()
+            self._stop_compute()
             return
 
-        task_type, task_key = self._current_task()
+        task_type, _ = self._current_task()
         if task_type != 'ica':
             return
+        raw_name = self._raw_choice.GetStringSelection()
 
-        subjects = [
-            self._list.GetItemText(i, 0)
+        status_col = self._ica_status_col()
+        combos = [
+            self._ica_row_combo(i)
             for i in range(self._list.GetItemCount())
-            if self._list.GetItemText(i, 1) == 'no ICA'
+            if self._list.GetItemText(i, status_col) == 'no ICA'
         ]
-        if not subjects:
+        if not combos:
             return
 
         # Invalidate any running refresh so both threads don't touch the
@@ -537,7 +820,7 @@ class PipelineFrame(EelbrainFrame):
 
         token = object()
         self._compute_token = token
-        n_total = len(subjects)
+        n_total = len(combos)
 
         self._make_ica_btn.SetLabel("Stop")
         self._progress_gauge.SetRange(n_total)
@@ -551,30 +834,163 @@ class PipelineFrame(EelbrainFrame):
 
         threading.Thread(
             target=self._make_ica_thread,
-            args=(token, task_key, subjects),
+            args=(token, raw_name, combos, tuple(self._ica_iter_fields)),
             daemon=True,
         ).start()
 
-    def _finish_make_ica_ui(self):
+    def _finish_compute_ui(self):
         """Restore toolbar controls after computation ends or is cancelled."""
         self._make_ica_btn.SetLabel("Make ICA")
+        self._make_rej_btn.SetLabel("Compute rejection")
         self._progress_gauge.Hide()
         self._progress_label.Hide()
         self._refresh_btn.Enable()
         self._task_choice.Enable()
         self._panel.Layout()
 
-    def _stop_make_ica(self):
-        """Cancel the make-ICA thread and immediately restore the UI."""
+    def _stop_compute(self):
+        """Cancel a running compute thread and immediately restore the UI."""
         if self._compute_token is None:
             return
         self._compute_token = None
+        task_type, _ = self._current_task()
+        missing = 'no ICA' if task_type == 'ica' else 'missing'
+        status_col = self._status_col()
         for i in range(self._list.GetItemCount()):
-            if self._list.GetItemText(i, 1) == '⟳':
-                self._list.SetItem(i, 1, 'no ICA')
-        self._finish_make_ica_ui()
+            if self._list.GetItemText(i, status_col) == '⟳':
+                self._list.SetItem(i, status_col, missing)
+        self._finish_compute_ui()
 
-    def _make_ica_thread(self, token, task_key, subjects):
+    def _make_ica_thread(self, token, raw_name, combos, extra):
+        pipeline = self._pipeline
+        fields = ('subject',) + extra
+        n_done = 0
+        n_total = len(combos)
+        for combo in combos:
+            if token is not self._compute_token:
+                break
+            state = dict(zip(fields, combo))
+            wx.CallAfter(self._on_subject_computing, token, combo)
+            try:
+                # make_ica computes and saves the ICA file; it also leaves the
+                # pipeline context set to this recording so ctx.load() works below.
+                pipeline.make_ica(raw=raw_name, **state)
+                ctx = pipeline._resolve_derivative(ica_input_name(raw_name))
+                ica = ctx.load()
+                n_done += 1
+                wx.CallAfter(
+                    self._on_subject_computed, token, combo,
+                    str(ica.n_components_), str(len(ica.exclude)),
+                    n_done, n_total,
+                )
+            except Exception as error:
+                n_done += 1
+                wx.CallAfter(self._on_subject_error, token, combo, *_error_dialog_args(error), n_done, n_total)
+        wx.CallAfter(self._on_make_ica_done, token)
+
+    def _on_subject_computing(self, token, combo):
+        """Mark a recording's row with ⟳ while its artifact step is computed.
+
+        Shared by the make-ICA and compute-rejection flows; ``combo`` is the
+        leading key-field tuple (``(subject,)`` for rejection).
+        """
+        if token is not self._compute_token:
+            return
+        if isinstance(combo, str):
+            combo = (combo,)
+        i = self._find_row(combo)
+        if i != -1:
+            self._list.SetItem(i, self._status_col(), '⟳')
+
+    def _on_subject_computed(self, token, combo, n_comp, n_excl, n_done, n_total):
+        """Update a row after successful ICA computation."""
+        if token is not self._compute_token:
+            return
+        i = self._find_row(combo)
+        if i != -1:
+            status_col = self._ica_status_col()
+            self._list.SetItem(i, status_col, 'selected')
+            self._list.SetItem(i, status_col + 1, n_comp)
+            self._list.SetItem(i, status_col + 2, n_excl)
+            colour = (wx.RED if n_excl == '0'
+                      else wx.SystemSettings.GetColour(wx.SYS_COLOUR_LISTBOXTEXT))
+            self._list.SetItemTextColour(i, colour)
+        self._progress_gauge.SetValue(n_done)
+        self._progress_label.SetLabel(f"{n_done} / {n_total}")
+        self._refresh_status_bar()
+
+    def _on_subject_error(self, token, combo, tb, title, message, n_done, n_total):
+        """Mark a row as errored and show the error dialog, then continue.
+
+        Shared by the make-ICA and compute-rejection flows; ``combo`` is the
+        leading key-field tuple (``(subject,)`` for rejection).
+        """
+        if token is not self._compute_token:
+            return
+        if isinstance(combo, str):
+            combo = (combo,)
+        i = self._find_row(combo)
+        if i != -1:
+            self._list.SetItem(i, self._status_col(), 'error')
+        self._progress_gauge.SetValue(n_done)
+        self._progress_label.SetLabel(f"{n_done} / {n_total}")
+        self._show_error(tb, f"{title}: {' '.join(combo)}", message)
+
+    def _on_make_ica_done(self, token):
+        """Called when the make-ICA thread exits (finished or cancelled)."""
+        if token is not self._compute_token:
+            return  # _stop_compute already cleaned up
+        self._compute_token = None
+        self._finish_compute_ui()
+        self._refresh_status_bar()
+
+    # ------------------------------------------------------------------
+    # Compute-rejection background computation (automatic rejection)
+
+    def _on_make_rejection(self, event):
+        if self._compute_token is not None:
+            self._stop_compute()
+            return
+
+        task_type, _ = self._current_task()
+        name = self._current_epoch_rejection()
+        if task_type != 'epoch_rej' or name is None:
+            return
+        if not isinstance(self._pipeline._epoch_rejection[name], ChannelModelRejection):
+            return
+
+        epoch_name = self._epoch_choice.GetStringSelection()
+        raw_name = self._raw_choice.GetStringSelection()
+        subjects = [
+            self._list.GetItemText(i, 0)
+            for i in range(self._list.GetItemCount())
+            if self._list.GetItemText(i, 1) == 'missing'
+        ]
+        if not subjects:
+            return
+
+        self._refresh_token = object()
+        token = object()
+        self._compute_token = token
+        n_total = len(subjects)
+
+        self._make_rej_btn.SetLabel("Stop")
+        self._progress_gauge.SetRange(n_total)
+        self._progress_gauge.SetValue(0)
+        self._progress_gauge.Show()
+        self._progress_label.SetLabel(f"0 / {n_total}")
+        self._progress_label.Show()
+        self._refresh_btn.Disable()
+        self._task_choice.Disable()
+        self._panel.Layout()
+
+        threading.Thread(
+            target=self._make_rejection_thread,
+            args=(token, name, epoch_name, raw_name, subjects),
+            daemon=True,
+        ).start()
+
+    def _make_rejection_thread(self, token, name, epoch_name, raw_name, subjects):
         pipeline = self._pipeline
         n_done = 0
         n_total = len(subjects)
@@ -583,109 +999,107 @@ class PipelineFrame(EelbrainFrame):
                 break
             wx.CallAfter(self._on_subject_computing, token, subject)
             try:
-                # make_ica computes and saves the ICA file; it also leaves the
-                # pipeline context set to this subject so ctx.load() works below.
-                pipeline.make_ica(subject=subject, raw=task_key)
-                ctx = pipeline._resolve_derivative(ica_input_name(task_key))
-                ica = ctx.load()
+                pipeline.set(subject=subject, epoch_rejection=name, epoch=epoch_name, raw=raw_name)
+                ctx = pipeline._resolve_derivative('epoch-rejection-channel-model')
+                rej_ds = ctx.load()
+                n_rej = int((~rej_ds['accept']).sum())
                 n_done += 1
-                wx.CallAfter(
-                    self._on_subject_computed, token, subject,
-                    str(ica.n_components_), str(len(ica.exclude)),
-                    n_done, n_total,
-                )
-            except Exception:
-                tb = traceback.format_exc()
+                wx.CallAfter(self._on_subject_rejection_computed, token, subject, str(rej_ds.n_cases), str(n_rej), n_done, n_total)
+            except Exception as error:
                 n_done += 1
-                wx.CallAfter(self._on_subject_error, token, subject, tb, n_done, n_total)
-        wx.CallAfter(self._on_make_ica_done, token)
+                wx.CallAfter(self._on_subject_error, token, subject, *_error_dialog_args(error), n_done, n_total)
+        wx.CallAfter(self._on_make_rejection_done, token)
 
-    def _on_subject_computing(self, token, subject):
-        """Mark a subject's row with ⟳ while its ICA is being computed."""
+    def _on_subject_rejection_computed(self, token, subject, n_epochs, n_rej, n_done, n_total):
+        """Update a row after a successful rejection computation."""
         if token is not self._compute_token:
             return
         for i in range(self._list.GetItemCount()):
             if self._list.GetItemText(i, 0) == subject:
-                self._list.SetItem(i, 1, '⟳')
-                break
-
-    def _on_subject_computed(self, token, subject, n_comp, n_excl, n_done, n_total):
-        """Update a row after successful ICA computation."""
-        if token is not self._compute_token:
-            return
-        for i in range(self._list.GetItemCount()):
-            if self._list.GetItemText(i, 0) == subject:
-                self._list.SetItem(i, 1, 'selected')
-                self._list.SetItem(i, 2, n_comp)
-                self._list.SetItem(i, 3, n_excl)
-                colour = (wx.RED if n_excl == '0'
-                          else wx.SystemSettings.GetColour(wx.SYS_COLOUR_LISTBOXTEXT))
-                self._list.SetItemTextColour(i, colour)
+                self._list.SetItem(i, 1, 'done')
+                self._list.SetItem(i, 2, n_epochs)
+                self._list.SetItem(i, 3, n_rej)
                 break
         self._progress_gauge.SetValue(n_done)
         self._progress_label.SetLabel(f"{n_done} / {n_total}")
         self._refresh_status_bar()
 
-    def _on_subject_error(self, token, subject, tb, n_done, n_total):
-        """Mark a row as errored after a failed ICA computation."""
+    def _on_make_rejection_done(self, token):
+        """Called when the compute-rejection thread exits (finished or cancelled)."""
         if token is not self._compute_token:
-            return
-        for i in range(self._list.GetItemCount()):
-            if self._list.GetItemText(i, 0) == subject:
-                self._list.SetItem(i, 1, 'error')
-                break
-        self._progress_gauge.SetValue(n_done)
-        self._progress_label.SetLabel(f"{n_done} / {n_total}")
-        # Show the traceback so the user knows what went wrong, then continue.
-        dlg = TracebackDialog(self, tb)
-        dlg.ShowModal()
-        dlg.Destroy()
-
-    def _on_make_ica_done(self, token):
-        """Called when the make-ICA thread exits (finished or cancelled)."""
-        if token is not self._compute_token:
-            return  # _stop_make_ica already cleaned up
+            return  # _stop_compute already cleaned up
         self._compute_token = None
-        self._finish_make_ica_ui()
+        self._finish_compute_ui()
         self._refresh_status_bar()
 
-    def _handle_stale_ica(self, subject: str, error: ProtectedArtifactError, pipeline, raw_name: str) -> tuple:
-        """Show StaleICADialog on the main thread; block until the user decides.
+    def _ask_stale_ica(self, subject: str, error: ProtectedArtifactError, allow_apply_to_all: bool = False) -> tuple[str | None, bool]:
+        """Show StaleICADialog and return ``(choice, apply_to_all)``.
 
-        Returns a table row tuple for the subject.
+        Safe to call from any thread: when called off the main thread the
+        dialog is shown via ``CallAfter`` and this blocks until the user
+        decides.
         """
-        result = [None]
-        ready = threading.Event()
-
-        def show():
+        def show() -> tuple[str | None, bool]:
             dlg = StaleICADialog(
                 self, subject,
                 error.message or str(error),
                 error.reason or '',
+                allow_apply_to_all=allow_apply_to_all,
             )
             dlg.ShowModal()
-            result[0] = dlg.choice
+            result = (dlg.choice, dlg.apply_to_all)
             dlg.Destroy()
+            return result
+
+        if wx.IsMainThread():
+            return show()
+        result = [None]
+        ready = threading.Event()
+
+        def run():
+            result[0] = show()
             ready.set()
 
-        wx.CallAfter(show)
+        wx.CallAfter(run)
         ready.wait()
-        choice = result[0]
+        return result[0]
 
+    def _ask_ica_channels_changed(self) -> bool:
+        """Prompt when bad channels changed since the ICA was created.
+
+        Returns ``True`` to delete the ICA, ``False`` to abort.
+        """
+        dlg = wx.MessageDialog(
+            self,
+            "Bad channels have changed since creating the ICA. Delete ICA or abort?",
+            "Bad channels changed",
+            wx.YES_NO | wx.ICON_WARNING,
+        )
+        dlg.SetYesNoLabels("Delete ICA", "Abort")
+        delete = dlg.ShowModal() == wx.ID_YES
+        dlg.Destroy()
+        return delete
+
+    def _handle_stale_ica(self, combo: tuple, error: ProtectedArtifactError, choice: str | None, pipeline, raw_name: str) -> tuple:
+        """Apply a stale-ICA ``choice`` during refresh, returning a table row tuple.
+
+        ``combo`` holds the leading key-field columns (subject and any
+        session/run columns) that the row is prefixed with.
+        """
         if choice == StaleICADialog.ABORT:
             wx.CallAfter(wx.GetApp().ExitMainLoop)
             raise _AbortRequested()
         elif choice == StaleICADialog.DELETE:
             Path(error.path).unlink()
-            return (subject, 'no ICA', '—', '—')
+            return combo + ('no ICA', '—', '—')
         elif choice == StaleICADialog.INCORPORATE:
             ica = pipeline.load_ica(raw=raw_name, accept_stale=True)
-            return (subject, 'selected', str(ica.n_components_), str(len(ica.exclude)))
+            return combo + ('selected', str(ica.n_components_), str(len(ica.exclude)))
         elif choice == StaleICADialog.IGNORE:
             ica = mne.preprocessing.read_ica(error.path)
-            return (subject, 'stale', str(ica.n_components_), str(len(ica.exclude)))
+            return combo + ('stale', str(ica.n_components_), str(len(ica.exclude)))
         else:  # dialog dismissed without a choice
-            return (subject, 'stale', '—', '—')
+            return combo + ('stale', '—', '—')
 
     def _fetch_fsaverage(self):
         """Download fsaverage to the experiment's FreeSurfer subjects directory in a thread."""
@@ -738,7 +1152,7 @@ class PipelineFrame(EelbrainFrame):
         rows = []
 
         if task_type == 'bad_chs':
-            source_name = pipeline._raw.root_source_name(task_key)
+            source_name = pipeline._raw.root_source_name(raw_name)
             extra = self._bad_chs_iter_fields
             iter_fields = ('subject',) + tuple(extra)
             iter_arg = iter_fields[0] if len(iter_fields) == 1 else list(iter_fields)
@@ -749,10 +1163,11 @@ class PipelineFrame(EelbrainFrame):
                     combo = (combo,)
                 raw_ctx = pipeline._resolve_derivative(raw_input_name(source_name))
                 if not raw_ctx.node.exists(raw_ctx):
-                    rows.append(combo + ('no data', '—'))
                     continue
                 bads_ctx = pipeline._resolve_derivative(raw_bad_channels_input_name(source_name))
-                tsv_path = bads_ctx.node.path(bads_ctx)
+                # _active_path falls back to the BIDS source channels.tsv when no
+                # Pipeline-specific bad-channels file has been written yet.
+                tsv_path = bads_ctx.node._active_path(bads_ctx)
                 if not tsv_path.exists():
                     rows.append(combo + ('no file', '—'))
                 else:
@@ -760,30 +1175,44 @@ class PipelineFrame(EelbrainFrame):
                     rows.append(combo + ('done', str(len(bads))))
 
         elif task_type == 'ica':
-            for subject in pipeline:
+            bulk_choice = None  # set once the user ticks "Apply to all"
+            extra = self._ica_iter_fields
+            iter_fields = ('subject',) + tuple(extra)
+            iter_arg = iter_fields[0] if len(iter_fields) == 1 else list(iter_fields)
+            for combo in pipeline.iter(iter_arg):
                 if token is not self._refresh_token:
                     break
-                ctx = pipeline._resolve_derivative(ica_input_name(task_key))
+                if isinstance(combo, str):
+                    combo = (combo,)
+                subject = combo[0]
+                ctx = pipeline._resolve_derivative(ica_input_name(raw_name))
                 status = ctx.load(view='status')
                 if status == 'ok':
                     try:
                         ica = ctx.load()
-                        rows.append((subject, 'selected',
-                                     str(ica.n_components_), str(len(ica.exclude))))
+                        rows.append(combo + ('selected', str(ica.n_components_), str(len(ica.exclude))))
                     except ProtectedArtifactError as error:
-                        row = self._handle_stale_ica(subject, error, pipeline, task_key)
+                        if bulk_choice is None:
+                            choice, apply_to_all = self._ask_stale_ica(subject, error, allow_apply_to_all=True)
+                            if apply_to_all:
+                                bulk_choice = choice
+                        else:
+                            choice = bulk_choice
+                        row = self._handle_stale_ica(combo, error, choice, pipeline, raw_name)
                         rows.append(row)
                 elif status == 'missing-ica':
-                    rows.append((subject, 'no ICA', '—', '—'))
+                    rows.append(combo + ('no ICA', '—', '—'))
                 else:
-                    rows.append((subject, 'no data', '—', '—'))
+                    rows.append(combo + ('no data', '—', '—'))
 
         elif task_type == 'epoch_rej':
+            rej = pipeline._epoch_rejection[task_key]
+            node_name = 'epoch-rejection-input' if isinstance(rej, ManualRejection) else 'epoch-rejection-channel-model'
             for subject in pipeline.iter(
-                    raw=raw_name, epoch=epoch_name, rej=task_key):
+                    raw=raw_name, epoch=epoch_name, epoch_rejection=task_key):
                 if token is not self._refresh_token:
                     break
-                rej_ctx = pipeline._resolve_derivative('rej-input')
+                rej_ctx = pipeline._resolve_derivative(node_name)
                 path = rej_ctx.node.path(rej_ctx)
                 if path.exists():
                     ds = load.unpickle(path)

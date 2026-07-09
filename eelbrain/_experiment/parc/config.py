@@ -1,54 +1,28 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-"""Parcellation configuration and the annotation derivative.
+"""Parcellation configurations.
 
-Parcellations define how the cortical surface is divided into regions of
-interest. Each parcellation type is a :class:`Parcellation` (a
+Each parcellation type is a :class:`Parcellation` (a
 :class:`~configuration.Configuration`) subclass that the user attaches to
-:class:`~pipeline.Pipeline` by name.
-
-The supported parcellation types are:
-
-:class:`FreeSurferParc`
-    A named parcellation that already exists in the FreeSurfer subject's
-    ``label/`` directory (e.g. ``'aparc'``).
-:class:`FSAverageParc`
-    A parcellation defined on the ``fsaverage`` surface and morphed to each
-    individual subject.
-:class:`EelbrainParc`
-    A parcellation provided by Eelbrain (e.g. a functional atlas).
-:class:`SeededParc` / :class:`IndividualSeededParc`
-    A parcellation grown from a set of seed coordinates (MNI or subject-space).
-:class:`CombinationParc`
-    A parcellation derived from another by merging or renaming labels using a
-    declarative expression language.
-:class:`LabelParc`
-    A parcellation defined directly from a list of :class:`mne.Label` objects.
-:class:`VolumeParc`
-    A volumetric parcellation for volume source spaces.
-
-All types produce or load ``*.annot`` files via a single shared
-:class:`AnnotDerivative` graph node keyed on ``(mrisubject, parc)``. The
-derivative dispatches to the appropriate build logic based on the
-:class:`Parcellation` subtype stored in the registry at construction time.
+:class:`~pipeline.Pipeline` by name. The graph node that builds or loads the
+corresponding ``*.annot`` files lives in :mod:`._experiment.parc.nodes`.
 """
 
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import re
-from typing import Any
+from typing import TYPE_CHECKING
 from collections.abc import Sequence
 
 import mne
 
-from .._mne import combination_label, labels_from_mni_coords, rename_label, dissolve_label
-from ..mne_fixes import write_labels_to_annot
-from .._utils import subp
-from .._utils.mne_utils import fix_annot_names, is_fake_mri
-from .pathing import MRI_SDIR, annot_file_path, annot_stamp_path, label_dir, mri_dir
-from .derivative_cache import Dependency, Derivative, Request, file_fingerprint
-from .configuration import Configuration, ConfigurationError, sequence_arg
+from ..._mne import combination_label, labels_from_mni_coords, rename_label, dissolve_label
+from ..pathing import MRI_SDIR, mri_dir
+from ..configuration import Configuration, ConfigurationError, sequence_arg
+
+if TYPE_CHECKING:
+    from ..derivative_cache import Request
+    from .nodes import AnnotDerivative
 
 
 SEEDED_PARC_RE = re.compile(r'^(.+)-(\d+)$')
@@ -489,181 +463,6 @@ class IndividualSeededParc(SeededParc):
         seeds = {name: self.seeds[name][subject] for name in self.seeds}
         # filter out missing
         return {name: seed for name, seed in seeds.items() if seed}
-
-
-class AnnotDerivative(Derivative[list[mne.Label]]):
-    name = 'annot'
-    key_fields = ('mrisubject', 'parc')
-
-    def __init__(self, parcs: dict[str, Parcellation]):
-        self.parcs = parcs
-
-    def annot_file_paths(self, state: dict[str, Any]) -> list[Path]:
-        return [annot_file_path(state, hemi) for hemi in ('lh', 'rh')]
-
-    def annot_file_fingerprints(self, ctx: Request) -> list[dict[str, Any]]:
-        return [
-            file_fingerprint(
-                ctx.root,
-                ctx.root / annot_file_path(ctx.state, hemi),
-                'annot-file',
-                metadata={'mrisubject': ctx.state['mrisubject'], 'parc': ctx.state['parc'], 'hemi': hemi},
-            )
-            for hemi in ('lh', 'rh')
-        ]
-
-    def label_file_fingerprints(self, ctx: Request, parc_def: LabelParc) -> list[dict[str, Any]]:
-        hemis = ('lh.', 'rh.')
-        pattern = os.path.join(str(ctx.root / label_dir(ctx.state)), '%s.label')
-        labels = []
-        for label in parc_def.labels:
-            if label.startswith(hemis):
-                labels.append(label)
-            else:
-                labels.extend(f'{hemi}{label}' for hemi in hemis)
-        return [
-            file_fingerprint(
-                ctx.root,
-                pattern % label,
-                'label-file',
-                metadata={'label': label, 'parc': ctx.state['parc']},
-            )
-            for label in labels
-        ]
-
-    def annot_labels(self, ctx: Request) -> list[mne.Label]:
-        return mne.read_labels_from_annot(ctx.state['mrisubject'], ctx.state['parc'], 'both', subjects_dir=ctx.root / MRI_SDIR)
-
-    def managed_annot(self, state: dict[str, Any], parc_def: Parcellation) -> bool:
-        if isinstance(parc_def, FreeSurferParc):
-            return False
-        if isinstance(parc_def, FSAverageParc):
-            return state['mrisubject'] != state['common_brain']
-        return True
-
-    def load_annot(
-            self,
-            ctx: Request,
-            *,
-            parc: str | None = None,
-            mrisubject: str | None = None,
-    ) -> list[mne.Label]:
-        state = {}
-        if parc is not None:
-            state['parc'] = parc
-        if mrisubject is not None:
-            state['mrisubject'] = mrisubject
-        return ctx.load('annot', state=state)
-
-    def ensure_annot(
-            self,
-            ctx: Request,
-            *,
-            parc: str | None = None,
-            mrisubject: str | None = None,
-    ) -> None:
-        self.load_annot(ctx, parc=parc, mrisubject=mrisubject)
-
-    def make_parcellation(
-            self,
-            ctx: Request,
-            parc: str,
-            parc_def: Parcellation,
-    ) -> list[mne.Label]:
-        labels = parc_def._make(ctx, self, parc)
-        write_labels_to_annot(labels, ctx.state['mrisubject'], parc, True, ctx.root / MRI_SDIR)
-        return labels
-
-    def path(
-            self,
-            ctx: Request,
-    ) -> Path:
-        return ctx.root / annot_stamp_path(ctx.state)
-
-    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        parc, parc_def = _resolve_parc(self.parcs, ctx.state['parc'])
-        if parc_def is None or isinstance(parc_def, VolumeParc):
-            return ()
-
-        deps = []
-        base = getattr(parc_def, 'base', None)
-        if base:
-            deps.append(Dependency('annot', label='base', state={'parc': base}))
-        mask = getattr(parc_def, 'mask', None)
-        if mask:
-            deps.append(Dependency('annot', label='mask', state={'parc': mask}))
-
-        mrisubject = ctx.state['mrisubject']
-        common_brain = ctx.state['common_brain']
-        fake_mri = is_fake_mri(ctx.root / mri_dir(ctx.state))
-        if mrisubject != common_brain and (parc_def.morph_from_fsaverage or fake_mri):
-            deps.append(Dependency('annot', label='common-brain', state={'mrisubject': common_brain}))
-        return tuple(deps)
-
-    def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        parc, parc_def = _resolve_parc(self.parcs, ctx.state['parc'])
-        if parc_def is None:
-            return {'parc': parc, 'kind': 'none'}
-
-        fingerprint = {
-            'parc': parc,
-            'definition': ctx.registry.canonicalize(parc_def._as_dict()),
-        }
-        if not self.managed_annot(ctx.state, parc_def):
-            fingerprint['files'] = self.annot_file_fingerprints(ctx)
-        elif isinstance(parc_def, LabelParc):
-            fingerprint['labels'] = self.label_file_fingerprints(ctx, parc_def)
-        return fingerprint
-
-    def build(self, ctx: Request) -> list[mne.Label]:
-        parc, parc_def = _resolve_parc(self.parcs, ctx.state['parc'])
-        if parc_def is None or isinstance(parc_def, VolumeParc):
-            return []
-        if not self.managed_annot(ctx.state, parc_def):
-            return self.annot_labels(ctx)
-
-        mrisubject = ctx.state['mrisubject']
-        common_brain = ctx.state['common_brain']
-        fake_mri = is_fake_mri(ctx.root / mri_dir(ctx.state))
-        if mrisubject != common_brain and (parc_def.morph_from_fsaverage or fake_mri):
-            if fake_mri:
-                for hemi in ('lh', 'rh'):
-                    src = ctx.root / annot_file_path({**ctx.state, 'mrisubject': common_brain}, hemi)
-                    dst = ctx.root / annot_file_path(ctx.state, hemi)
-                    dst.parent.mkdir(parents=True, exist_ok=True)
-                    dst.write_bytes(src.read_bytes())
-            else:
-                (ctx.root / label_dir(ctx.state)).mkdir(parents=True, exist_ok=True)
-                subjects_dir = ctx.root / MRI_SDIR
-                for hemi in ('lh', 'rh'):
-                    cmd = [
-                        "mri_surf2surf",
-                        "--srcsubject", common_brain,
-                        "--trgsubject", mrisubject,
-                        "--sval-annot", parc,
-                        "--tval", parc,
-                        "--hemi", hemi,
-                    ]
-                    subp.run_freesurfer_command(cmd, subjects_dir)
-                fix_annot_names(mrisubject, parc, common_brain, subjects_dir=subjects_dir)
-            return self.annot_labels(ctx)
-
-        return self.make_parcellation(ctx, parc, parc_def)
-
-    def load(
-            self,
-            ctx: Request,
-            path: Path) -> list[mne.Label]:
-        return self.annot_labels(ctx)
-
-    def save(
-            self,
-            ctx: Request,
-            path: Path,
-            value: list[mne.Label],
-    ) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("annot\n")
 
 
 class VolumeParc(Parcellation):

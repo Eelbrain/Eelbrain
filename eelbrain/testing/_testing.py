@@ -19,6 +19,7 @@ except ImportError:
     _GUITestContextModules = ()
 else:
     _GUITestContextModules = (
+        eelbrain._wxgui.select_channels,
         eelbrain._wxgui.select_epochs,
         eelbrain._wxgui.select_components,
         eelbrain._wxgui.history,

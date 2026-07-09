@@ -12,18 +12,26 @@ from eelbrain._experiment.derivative_cache import (
     CachePolicy,
     Dependency,
     Derivative,
+    OptionSpec,
     Request,
     DerivativeRegistry,
     Input,
     ProtectedArtifactError,
+    UncachedDerivative,
+    compare_manifests,
     file_fingerprint,
 )
+from eelbrain._experiment.logging import CacheInvalidation, StructuredFormatter
 from eelbrain.testing import TempDir
 
 
 DEFAULT_STATE = {'subject': 's1', 'mode': 'default'}
 LOG = logging.getLogger('eelbrain.test.derivative_cache')
 
+
+# ---------------------------------------------------------------------------
+# Test doubles: pipelines and dependency-graph nodes
+# ---------------------------------------------------------------------------
 
 class _TemporaryState:
     def __init__(self, pipeline):
@@ -74,7 +82,7 @@ class FakePipeline:
         elif key == 'ephemeral-file':
             path = self.root / 'derivatives' / 'eelbrain' / 'cache' / subject / 'ephemeral.txt'
         elif key == 'protected-file':
-            path = self.root / 'derived' / subject / 'protected.txt'
+            path = self.root / 'derivatives' / 'mne' / subject / 'protected.txt'
         else:
             raise KeyError(key)
 
@@ -92,7 +100,8 @@ class FakePipeline:
 
 class SourceInput(Input):
     name = 'source'
-    VIEW_OPTION_DEFAULTS = {'upper': False}
+    key_fields = ('subject',)
+    view_options = {'upper': False}
 
     def __init__(self, root: str | Path):
         self.root = Path(root)
@@ -107,7 +116,7 @@ class SourceInput(Input):
 
     def fingerprint(self, ctx: Request) -> dict[str, object]:
         path = self.source_path(ctx.state['subject'])
-        return file_fingerprint(str(self.root), path, 'source-file', digest=True)
+        return file_fingerprint(str(self.root), path, digest=True)
 
     def load(self, ctx: Request) -> str:
         value = self.source_path(ctx.state['subject']).read_text()
@@ -230,8 +239,7 @@ class ComparisonDerivative(Derivative[str]):
 class EphemeralDerivative(Derivative[str]):
     name = 'ephemeral'
     key_fields = ('subject',)
-    cache_policy = CachePolicy.DISABLED_BY_DEFAULT
-    cache_suffix = '.txt'
+    cache_policy = CachePolicy.NEVER
 
     def __init__(self, root: str | Path):
         self.root = Path(root)
@@ -298,15 +306,15 @@ class OptionDerivative(Derivative[str]):
     name = 'optioned'
     key_fields = ('subject',)
     cache_suffix = '.txt'
-    OPTION_DEFAULTS = {'artifact': 0}
-    VIEW_OPTION_DEFAULTS = {'view': 0}
+    key_options = {'artifact': 0}
+    view_options = {'view': 0}
 
     def __init__(self, root: str | Path):
         self.root = Path(root)
         self.calls = []
 
     def fingerprint(self, ctx: Request) -> dict[str, object]:
-        return self.standard_fingerprint(ctx)
+        return {}
 
     def build(self, ctx: Request) -> str:
         self.calls.append(('build', ctx.options['artifact'], ctx.view_options['view']))
@@ -329,6 +337,71 @@ class OptionDerivative(Derivative[str]):
         value = ctx.load_artifact()
         self.calls.append(('named-view', ctx.options['artifact'], ctx.view_options['view']))
         return f"{value}|meta:{ctx.artifact_metadata['value']}"
+
+    def save(
+            self,
+            ctx: Request,
+            path: str,
+            value: str,
+    ) -> None:
+        Path(path).write_text(value)
+
+
+class SpecOptionDerivative(Derivative[str]):
+    name = 'spec-optioned'
+    key_fields = ('subject',)
+    cache_suffix = '.txt'
+    key_options = {
+        'flag': OptionSpec(False, type=bool),
+        'mode': OptionSpec(None, literal=('a', 'b', True)),
+        'label': OptionSpec('', normalize=lambda ctx, value: value.lower()),
+    }
+
+    def __init__(self, root: str | Path):
+        self.root = Path(root)
+        self.build_calls = 0
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {}
+
+    def build(self, ctx: Request) -> str:
+        self.build_calls += 1
+        return f"flag:{ctx.options['flag']}|mode:{ctx.options['mode']}|label:{ctx.options['label']}"
+
+    def load(self, ctx: Request, path: str) -> str:
+        return Path(path).read_text()
+
+    def save(
+            self,
+            ctx: Request,
+            path: str,
+            value: str,
+    ) -> None:
+        Path(path).write_text(value)
+
+
+class NarrowingDerivative(Derivative[str]):
+    name = 'narrowing'
+    key_fields = ('subject', 'mode')
+    cache_suffix = '.txt'
+    key_options = {'alpha': 0, 'beta': 0}
+
+    def __init__(self, root: str | Path):
+        self.root = Path(root)
+
+    def override_key_options(self, ctx: Request) -> tuple[str, ...] | None:
+        if ctx.state['mode'] == 'narrow':
+            return ('alpha',)
+        return None
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {}
+
+    def build(self, ctx: Request) -> str:
+        return f"alpha:{ctx.options['alpha']}"
+
+    def load(self, ctx: Request, path: str) -> str:
+        return Path(path).read_text()
 
     def save(
             self,
@@ -462,7 +535,7 @@ class ProtectedDerivative(Derivative[str]):
         self.root = Path(root)
 
     def path(self, ctx: Request) -> str:
-        return str(self.root / 'derived' / ctx.state['subject'] / 'protected.txt')
+        return str(self.root / 'derivatives' / 'mne' / ctx.state['subject'] / 'protected.txt')
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (Dependency('source'),)
@@ -487,6 +560,63 @@ class ProtectedDerivative(Derivative[str]):
     ) -> None:
         Path(path).write_text(value)
 
+
+# Instrumented doubles for the quick-fingerprint shortcut: ``CountingQuickInput``
+# exposes a cheap quick fingerprint (file mtime) and counts how often its
+# expensive full fingerprint is computed, so a test can assert the full one is
+# skipped while the quick fingerprint still matches.
+class CountingQuickInput(Input):
+    """Input with a cheap quick fingerprint and an instrumented full fingerprint."""
+    name = 'counting'
+    key_fields = ('subject',)
+
+    def __init__(self, root: str | Path):
+        self.root = Path(root)
+        self.full_calls = 0
+
+    def path(self, ctx: Request) -> Path:
+        path = self.root / 'inputs' / f"{ctx.state['subject']}.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        self.full_calls += 1
+        return {'content': self.path(ctx).read_text()}
+
+    def dependency_fingerprint_quick(self, ctx: Request, view: str | None = None) -> dict[str, object]:
+        return {'mtime': self.path(ctx).stat().st_mtime_ns}
+
+    def load(self, ctx: Request) -> str:
+        return self.path(ctx).read_text()
+
+
+class CountingValueDerivative(Derivative[str]):
+    name = 'counting-value'
+    key_fields = ('subject',)
+    cache_suffix = '.txt'
+
+    def __init__(self, root: str | Path):
+        self.root = Path(root)
+
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        return (Dependency('counting'),)
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {'subject': ctx.state['subject']}
+
+    def build(self, ctx: Request) -> str:
+        return ctx.load('counting')
+
+    def load(self, ctx: Request, path: str) -> str:
+        return Path(path).read_text()
+
+    def save(self, ctx: Request, path: str, value: str) -> None:
+        Path(path).write_text(value)
+
+
+# ---------------------------------------------------------------------------
+# Registry builders
+# ---------------------------------------------------------------------------
 
 def make_empty_registry():
     root = TempDir()
@@ -518,6 +648,10 @@ def make_registry():
     return pipeline, registry, source, value, summary, comparison, ephemeral, protected, root
 
 
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
 def test_manifest_roundtrip_ignores_unknown_fields():
     manifest = ArtifactManifest.from_dict({
         'schema_version': 1,
@@ -543,6 +677,141 @@ def test_registry_load_caches_derivative_and_writes_manifest():
     assert value.build_calls == 1
 
 
+def test_restricted_state_get_is_checked():
+    root, registry, _ = make_source_registry()
+
+    class SneakyDerivative(ValueDerivative):
+        name = 'sneaky'
+
+        def build(self, ctx: Request) -> str:
+            return str(ctx.state.get('mode'))
+
+    class AbsentFieldDerivative(ValueDerivative):
+        name = 'absent-field'
+
+        def build(self, ctx: Request) -> str:
+            return str(ctx.state.get('no-such-field', 'fallback'))
+
+    registry.register(SneakyDerivative(root))
+    registry.register(AbsentFieldDerivative(root))
+
+    # .get() of an undeclared state field is checked like item access
+    with pytest.raises(RuntimeError, match="not declared in this node's key_fields"):
+        registry.resolve('sneaky', state=DEFAULT_STATE).load()
+
+    # .get() of a field that is not part of state at all stays allowed
+    assert registry.resolve('absent-field', state=DEFAULT_STATE).load() == 'fallback'
+
+
+def test_dependency_key_change_invalidates_parent():
+    """A dependency pointing to a different artifact must invalidate the parent.
+
+    The dependency's fingerprint is configuration-only (the default, empty),
+    so only its cache key distinguishes the two artifacts.
+    """
+    root, registry = make_empty_registry()
+
+    class PlainDerivative(Derivative[str]):
+        name = 'plain'
+        key_fields = ('subject',)
+        cache_suffix = '.txt'
+
+        def build(self, ctx: Request) -> str:
+            return ctx.state['subject']
+
+        def load(self, ctx: Request, path: Path) -> str:
+            return path.read_text()
+
+        def save(self, ctx: Request, path: Path, value: str) -> None:
+            path.write_text(value)
+
+    class PassthroughDerivative(PlainDerivative):
+        # key_fields intentionally empty: identity comes from the dependency key
+        name = 'passthrough'
+        key_fields = ()
+
+        def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+            return (Dependency('plain', label='dep', state={'subject': ctx.state['pick']}),)
+
+        def build(self, ctx: Request) -> str:
+            return ctx.load('dep')
+
+    registry.register(PlainDerivative())
+    registry.register(PassthroughDerivative())
+
+    assert registry.resolve('passthrough', state={'pick': 's1'}).load() == 's1'
+    assert registry.resolve('passthrough', state={'pick': 's1'}).is_valid()
+    assert not registry.resolve('passthrough', state={'pick': 's2'}).is_valid()
+    assert registry.resolve('passthrough', state={'pick': 's2'}).load() == 's2'
+
+
+def test_duplicate_dependency_labels_fail_before_build():
+    root, registry, _ = make_source_registry()
+
+    class DuplicateDepDerivative(ValueDerivative):
+        name = 'duplicate-dep'
+
+        def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+            return (Dependency('source'), Dependency('source'))
+
+    derivative = DuplicateDepDerivative(root)
+    registry.register(derivative)
+
+    with pytest.raises(RuntimeError, match="Duplicate dependency label"):
+        registry.resolve('duplicate-dep', state=DEFAULT_STATE).load()
+    assert derivative.build_calls == 0
+
+
+def test_key_override_with_non_json_values_caches_stably():
+    pipeline, registry, _, _, _, _, _, _, _root = make_registry()
+
+    class TupleKeyDerivative(ValueDerivative):
+        name = 'tuple-key'
+        key_fields = ()
+
+        def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+            # Pin the source subject on the edge: the node manages its own
+            # identity via key() rather than key_fields, so it must pin any
+            # field its dependency keys on.
+            return (Dependency('source', state={'subject': ctx.state['subject']}),)
+
+        def key(self, ctx: Request) -> dict[str, object]:
+            # Keys need not be pre-canonicalized: the tuple only becomes a
+            # list through the manifest JSON round-trip.
+            return {'subjects': ('s1', 's2'), 'options': ctx.options}
+
+    derivative = TupleKeyDerivative(pipeline.root)
+    registry.register(derivative)
+
+    handle = registry.resolve('tuple-key', state=DEFAULT_STATE)
+    assert handle.load() == 'alpha'
+    assert registry.resolve('tuple-key', state=DEFAULT_STATE).is_valid()
+    assert registry.resolve('tuple-key', state=DEFAULT_STATE).load() == 'alpha'
+    assert derivative.build_calls == 1
+
+
+def test_unreadable_manifest_triggers_rebuild():
+    pipeline, registry, _, value, _, _, _, _, _root = make_registry()
+    handle = registry.resolve('value', state=DEFAULT_STATE)
+    handle.load()
+
+    # Corrupt JSON, e.g. from an interrupted write
+    handle.manifest_path.write_text('{"derivative": "val')
+    assert registry.read_manifest(handle.manifest_path) is None
+    assert not handle.is_valid()
+    assert registry.resolve('value', state=DEFAULT_STATE).load() == 'alpha'
+    assert value.build_calls == 2
+
+    # Structurally incompatible manifest (missing required fields)
+    handle.manifest_path.write_text('{"schema_version": 1}')
+    assert registry.read_manifest(handle.manifest_path) is None
+    assert registry.resolve('value', state=DEFAULT_STATE).load() == 'alpha'
+    assert value.build_calls == 3
+
+    # Valid again after the rebuild rewrote the manifest
+    assert registry.resolve('value', state=DEFAULT_STATE).is_valid()
+
+
 def test_registry_logs_cache_events(caplog):
     _, registry, _, value, _, _, _, _, _root = make_registry()
 
@@ -555,6 +824,11 @@ def test_registry_logs_cache_events(caplog):
     assert any(message.startswith('Load cached value: value/') for message in messages)
     assert value.save_calls == 1
     assert value.load_calls == 2
+
+    # structured fields are attached for machine-readable consumption
+    events = [event for event in (getattr(record, 'cache_event', None) for record in caplog.records) if event]
+    assert any(event == {'event': 'build', 'derivative': 'value'} for event in events)
+    assert any(event == {'event': 'cached', 'derivative': 'value'} for event in events)
 
     handle = registry.resolve('value', state=DEFAULT_STATE)
     cache_path = handle.artifact_path
@@ -569,6 +843,69 @@ def test_registry_logs_cache_events(caplog):
     assert manifest['derivative'] == 'value'
     assert manifest['key'] == {'subject': 's1'}
     assert manifest['dependencies']['source']['kind'] == 'input'
+
+
+def test_recompute_logs_invalidation_reason(caplog):
+    _, registry, source, value, _, _, _, _, _root = make_registry()
+
+    registry.resolve('value', state=DEFAULT_STATE).load()  # initial build
+    source.source_path('s1').write_text('changed')  # invalidate the source dependency
+
+    with caplog.at_level(logging.DEBUG, logger='eelbrain.test.derivative_cache'):
+        assert registry.resolve('value', state=DEFAULT_STATE).load() == 'changed'
+
+    events = [getattr(record, 'cache_event', None) for record in caplog.records]
+    recompute = next(event for event in events if event and event['event'] == 'recompute')
+    assert recompute['derivative'] == 'value'
+    assert recompute['category'] == 'dependencies'
+    assert recompute['old'] != recompute['new']
+    assert recompute['field']
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(message.startswith('Recompute value (dependency changed') for message in messages)
+
+
+def _fake_manifest(**overrides) -> ArtifactManifest:
+    fields = dict(
+        schema_version=1, derivative='value', derivative_version=1,
+        key={'subject': 's1'}, fingerprint={'a': 1}, dependencies={},
+        cache_policy='required', software={},
+    )
+    fields.update(overrides)
+    return ArtifactManifest(**fields)
+
+
+def test_compare_manifests_reports_first_difference():
+    stored = _fake_manifest(fingerprint={'a': 1, 'b': 2})
+    current = _fake_manifest(fingerprint={'a': 1, 'b': 3})
+
+    invalidation = compare_manifests(stored, current)
+    assert invalidation.category == 'fingerprint'
+    assert invalidation.field() == 'b'
+    assert (invalidation.old, invalidation.new) == (2, 3)
+    assert invalidation.as_dict() == {'category': 'fingerprint', 'field': 'b', 'old': 2, 'new': 3}
+    assert invalidation.message() == "fingerprint changed (b: 2 -> 3)"
+
+
+def test_compare_manifests_categories():
+    assert compare_manifests(_fake_manifest(), _fake_manifest()) is None
+    assert compare_manifests(None, _fake_manifest()) == CacheInvalidation('missing_manifest')
+    assert compare_manifests(_fake_manifest(key={'subject': 's1'}), _fake_manifest(key={'subject': 's2'})).category == 'key'
+    assert compare_manifests(_fake_manifest(derivative_version=1), _fake_manifest(derivative_version=2)).category == 'version'
+
+
+def test_structured_formatter_appends_tab_columns():
+    formatter = StructuredFormatter('%(message)s')
+    record = logging.LogRecord('x', logging.DEBUG, __file__, 1, 'hello', None, None)
+    assert formatter.format(record) == 'hello'
+
+    # full recompute event maps to all columns in fixed order
+    record.cache_event = {'event': 'recompute', 'derivative': 'value', 'category': 'fingerprint', 'field': 'b', 'old': 2, 'new': 3}
+    assert formatter.format(record).split('\t') == ['hello', 'recompute', 'value', 'fingerprint', 'b', '2', '3']
+
+    # build/cached events leave the reason columns empty but keep the shared layout
+    record.cache_event = {'event': 'build', 'derivative': 'value'}
+    assert formatter.format(record).split('\t') == ['hello', 'build', 'value', '', '', '', '']
 
 
 def test_dependency_change_invalidates_downstream_derivatives():
@@ -604,6 +941,23 @@ def test_generic_cache_path_uses_node_name_and_key():
     assert a != c
     assert a.is_relative_to(registry.cache_dir / 'value')
     assert c.is_relative_to(registry.cache_dir / 'value')
+
+
+def test_cache_label_substitutes_path_unsafe_characters():
+    # Key-field values can contain characters that are illegal in Windows path
+    # components (e.g. the '>' in a test named 'a>v'). These are replaced with '-'
+    # rather than deleted, so operands stay separated in the readable slug while
+    # the hash keeps distinct keys on distinct paths.
+    _, registry, _, _, _, _, _, _, _root = make_registry()
+
+    gt = registry.resolve('value', state={'subject': 'a>v'}).artifact_path
+    lt = registry.resolve('value', state={'subject': 'a<v'}).artifact_path
+
+    assert gt.name.startswith('subject-a-v_key-')
+    assert not any(c in gt.name for c in '<>:"/\\|?*')
+    # '>' and '<' map to the same readable slug but remain distinct cache entries
+    assert gt.name.split('_key-')[0] == lt.name.split('_key-')[0]
+    assert gt != lt
 
 
 def test_cache_collision_sidecar_disambiguates_artifact_paths():
@@ -669,7 +1023,7 @@ def test_dependency_tree_respects_max_line_length():
     assert "{subject='s2'} [state: subject='s2']" in tree
 
 
-def test_disabled_by_default_derivative_skips_cache_by_default():
+def test_uncached_derivative_rebuilds_every_time():
     _, registry, _, _, _, _, ephemeral, _, _root = make_registry()
 
     first = registry.resolve('ephemeral', state=DEFAULT_STATE).load()
@@ -679,8 +1033,11 @@ def test_disabled_by_default_derivative_skips_cache_by_default():
     assert first == 'ephemeral-1'
     assert second == 'ephemeral-2'
     assert ephemeral.build_calls == 2
-    assert not handle.artifact_path.exists()
-    assert not handle.manifest_path.exists()
+    assert not handle.is_valid()
+    with pytest.raises(TypeError, match="uncached derivative 'ephemeral'"):
+        handle.artifact_path
+    with pytest.raises(TypeError, match="uncached derivative 'ephemeral'"):
+        handle.manifest_path
 
 
 def test_registry_resolve_returns_request_for_input_and_derivative():
@@ -708,10 +1065,13 @@ def test_stale_external_artifact_is_protected():
 
     assert registry.resolve('protected', state=DEFAULT_STATE).load() == 'alpha'
     protected_path = Path(pipeline.get('protected-file'))
-    manifest_path = Path(registry.manifest_path(protected_path))
+    manifest_path = Path(registry.manifest_path(protected_path, 'protected'))
     assert protected_path.exists()
     assert manifest_path.exists()
-    assert manifest_path.is_relative_to(Path(pipeline.get('cache-dir')) / 'manifests')
+    # The manifest mirrors the artifact under the node directory, dropping the
+    # artifact's top-level namespace ('mne').
+    entity = Path(*protected_path.relative_to(pipeline.get('deriv-dir')).parts[1:])
+    assert manifest_path == Path(f"{Path(pipeline.get('cache-dir')) / 'protected' / entity}.manifest.json")
 
     pipeline.source_path().write_text('changed')
 
@@ -758,7 +1118,9 @@ def test_request_splits_artifact_and_view_options():
 
     assert handle.options == {'artifact': 1}
     assert handle.view_options == {'view': 2}
-    assert handle.current_fingerprint()['options'] == {'artifact': 1}
+    # Artifact options are captured by the key, not the fingerprint.
+    assert handle.key()['options'] == {'artifact': 1}
+    assert 'options' not in handle.current_fingerprint()
     assert handle.options_for('optioned', artifact=4) == {'artifact': 4}
     assert handle.options_for('optioned', 'view', artifact=4) == {'view': 2, 'artifact': 4}
     with pytest.raises(TypeError, match="does not declare option"):
@@ -772,6 +1134,54 @@ def test_registry_rejects_undeclared_options():
 
     with pytest.raises(TypeError, match="undeclared option"):
         registry.resolve('optioned', state=DEFAULT_STATE, options={'artifact': 1, 'extra': 3})
+
+
+def test_option_spec_validates_and_fills_defaults():
+    root, registry = make_empty_registry()
+    registry.register(SpecOptionDerivative(root))
+
+    # defaults are exempt from validation ('mode' default None is not in literal)
+    handle = registry.resolve('spec-optioned', state=DEFAULT_STATE)
+    assert handle.options == {'flag': False, 'mode': None, 'label': ''}
+
+    # type=bool is strict: 1 == True, but 1 is not a bool
+    with pytest.raises(TypeError, match="expected bool"):
+        registry.resolve('spec-optioned', state=DEFAULT_STATE, options={'flag': 1})
+    # literal matching is type-strict: 1 == True, but does not match literal True
+    with pytest.raises(ValueError, match="must be one of"):
+        registry.resolve('spec-optioned', state=DEFAULT_STATE, options={'mode': 1})
+    assert registry.resolve('spec-optioned', state=DEFAULT_STATE, options={'mode': True}).options['mode'] is True
+    with pytest.raises(ValueError, match="must be one of"):
+        registry.resolve('spec-optioned', state=DEFAULT_STATE, options={'mode': 'c'})
+
+
+def test_option_spec_normalize_canonicalizes_cache_key():
+    root, registry = make_empty_registry()
+    derivative = SpecOptionDerivative(root)
+    registry.register(derivative)
+
+    first = registry.resolve('spec-optioned', state=DEFAULT_STATE, options={'label': 'ABC'})
+    second = registry.resolve('spec-optioned', state=DEFAULT_STATE, options={'label': 'abc'})
+
+    # the normalized value replaces the option for the whole request
+    assert first.options['label'] == 'abc'
+    # equivalent spellings share one cache key and one artifact
+    assert first.key() == second.key()
+    assert first.load() == second.load() == 'flag:False|mode:None|label:abc'
+    assert derivative.build_calls == 1
+
+
+def test_override_key_options_narrows_key():
+    root, registry = make_empty_registry()
+    registry.register(NarrowingDerivative(root))
+
+    narrow = registry.resolve('narrowing', state={'subject': 's1', 'mode': 'narrow'}, options={'alpha': 1})
+    assert narrow.key()['options'] == {'alpha': 1}
+    wide = registry.resolve('narrowing', state={'subject': 's1', 'mode': 'wide'}, options={'beta': 2})
+    assert wide.key()['options'] == {'alpha': 0, 'beta': 2}
+    # a caller-set option that the node drops for this request triggers a warning
+    with pytest.warns(UserWarning, match="no effect"):
+        registry.resolve('narrowing', state={'subject': 's1', 'mode': 'narrow'}, options={'beta': 2})
 
 
 def test_request_applies_view_options_after_build_and_load():
@@ -874,3 +1284,230 @@ def test_request_loads_named_view_from_input():
     value = registry.resolve('source', state=DEFAULT_STATE, options={'upper': True}).load(view='echo')
 
     assert value == 'source:ALPHA'
+
+
+# ---------------------------------------------------------------------------
+# Quick-fingerprint cache validity
+#
+# A matching quick fingerprint should let `_check_valid` reuse the stored
+# fingerprint and skip the expensive full fingerprint (CountingQuickInput above).
+# ---------------------------------------------------------------------------
+
+def test_quick_fingerprint_skips_full_fingerprint_when_unchanged():
+    import os
+
+    root, registry = make_empty_registry()
+    source = CountingQuickInput(root)
+    registry.register(source)
+    registry.register(CountingValueDerivative(root))
+    source.path(registry.resolve('counting', state={'subject': 's1'})).write_text('hello')
+
+    handle = registry.resolve('counting-value', state={'subject': 's1'})
+    assert handle.load() == 'hello'
+
+    # Re-validation with an unchanged quick fingerprint must not recompute the full one.
+    source.full_calls = 0
+    assert handle.is_valid()
+    assert source.full_calls == 0
+
+    # A changed quick fingerprint falls back to (and recomputes) the full fingerprint.
+    os.utime(source.path(registry.resolve('counting', state={'subject': 's1'})), None)
+    source.full_calls = 0
+    assert handle.is_valid()  # spurious quick change: full fingerprint still matches
+    assert source.full_calls == 1
+
+    # The successful validation refreshed the manifest, restoring the quick path.
+    source.full_calls = 0
+    assert handle.is_valid()
+    assert source.full_calls == 0
+
+    source.path(registry.resolve('counting', state={'subject': 's1'})).write_text('changed')
+    source.full_calls = 0
+    assert not handle.is_valid()
+    assert source.full_calls == 1
+
+
+# ---------------------------------------------------------------------------
+# Input key_fields + edge key-coverage validation
+# ---------------------------------------------------------------------------
+
+class _Leaf(Derivative[str]):
+    """Minimal cached derivative for key-coverage tests."""
+    cache_suffix = '.txt'
+
+    def __init__(self, root: str | Path):
+        self.root = Path(root)
+
+    def build(self, ctx: Request) -> str:
+        return 'x'
+
+    def load(self, ctx: Request, path: Path) -> str:
+        return path.read_text()
+
+    def save(self, ctx: Request, path: Path, value: str) -> None:
+        path.write_text(value)
+
+
+def test_input_requires_key_fields():
+    root, registry = make_empty_registry()
+
+    class NoFieldsInput(Input):
+        name = 'no-fields'
+
+        def path(self, ctx: Request) -> Path:
+            return Path(self.root) / 'x'
+
+    class OptOutInput(Input):
+        name = 'opt-out'
+        key_fields = ()
+
+        def __init__(self, root):
+            self.root = root
+
+        def path(self, ctx: Request) -> Path:
+            return Path(self.root) / 'x'
+
+    with pytest.raises(TypeError, match='must declare key_fields'):
+        registry.register(NoFieldsInput())
+    # an explicit empty tuple opts out and is accepted
+    registry.register(OptOutInput(root))
+
+
+def test_input_read_restriction():
+    root, registry = make_empty_registry()
+
+    class RestrictedInput(Input):
+        name = 'restricted'
+        key_fields = ('subject',)
+
+        def __init__(self, root):
+            self.root = Path(root)
+
+        def path(self, ctx: Request) -> Path:
+            return self.root / f"{ctx.state['subject']}.txt"
+
+        def fingerprint(self, ctx: Request) -> dict[str, object]:
+            # reads an undeclared field in a cache-affecting method
+            return {'mode': ctx.state['mode']}
+
+        def load(self, ctx: Request):
+            # load() is not restricted: reading an undeclared field is allowed
+            return ctx.state['mode']
+
+    node = RestrictedInput(root)
+    registry.register(node)
+    node.path(registry.resolve('restricted', state={'subject': 's1'})).write_text('data')
+
+    with pytest.raises(RuntimeError, match="not declared in this node's key_fields"):
+        registry.resolve('restricted', state={'subject': 's1', 'mode': 'a'}).current_fingerprint()
+    # load() runs outside the check context, so the same read is allowed
+    assert registry.resolve('restricted', state={'subject': 's1', 'mode': 'a'}).load() == 'a'
+
+
+def _register_child_parent(registry, root, parent_cls):
+    class Child(_Leaf):
+        name = 'child'
+        key_fields = ('subject', 'mode')
+    registry.register(Child(root))
+    registry.register(parent_cls(root))
+
+
+def test_edge_key_coverage_violation():
+    root, registry = make_empty_registry()
+
+    class Parent(_Leaf):
+        name = 'parent'
+        key_fields = ('subject',)
+
+        def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+            return (Dependency('child'),)
+
+        def build(self, ctx: Request) -> str:
+            return ctx.load('child')
+
+    _register_child_parent(registry, root, Parent)
+    with pytest.raises(RuntimeError, match=r"depends on state field\(s\).*'mode'"):
+        registry.resolve('parent', state={'subject': 's1', 'mode': 'a'}).load()
+
+
+def test_edge_key_coverage_pinned_on_edge():
+    root, registry = make_empty_registry()
+
+    class Parent(_Leaf):
+        name = 'parent'
+        key_fields = ('subject',)
+
+        def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+            return (Dependency('child', state={'mode': 'fixed'}),)
+
+        def build(self, ctx: Request) -> str:
+            return ctx.load('child')
+
+    _register_child_parent(registry, root, Parent)
+    # 'mode' pinned on the edge → covered even though the parent does not key on it
+    assert registry.resolve('parent', state={'subject': 's1', 'mode': 'a'}).load() == 'x'
+
+
+def test_edge_key_coverage_parent_keys_field():
+    root, registry = make_empty_registry()
+
+    class Parent(_Leaf):
+        name = 'parent'
+        key_fields = ('subject', 'mode')
+
+        def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+            return (Dependency('child'),)
+
+        def build(self, ctx: Request) -> str:
+            return ctx.load('child')
+
+    _register_child_parent(registry, root, Parent)
+    assert registry.resolve('parent', state={'subject': 's1', 'mode': 'a'}).load() == 'x'
+
+
+def test_edge_key_coverage_dynamic_fields():
+    root, registry = make_empty_registry()
+
+    class Parent(_Leaf):
+        name = 'parent'
+        key_fields = ('subject',)
+
+        def override_key_fields(self, ctx: Request):
+            return ('subject', 'mode')
+
+        def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+            return (Dependency('child'),)
+
+        def build(self, ctx: Request) -> str:
+            return ctx.load('child')
+
+    _register_child_parent(registry, root, Parent)
+    # override_key_fields makes 'mode' part of the parent's coverage
+    assert registry.resolve('parent', state={'subject': 's1', 'mode': 'a'}).load() == 'x'
+
+
+def test_edge_key_coverage_enforces_uncached_child():
+    root, registry = make_empty_registry()
+
+    class UncachedChild(UncachedDerivative[str]):
+        name = 'child'
+        key_fields = ('subject', 'mode')
+
+        def build(self, ctx: Request) -> str:
+            return 'x'
+
+    class Parent(_Leaf):
+        name = 'parent'
+        key_fields = ('subject',)
+
+        def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+            return (Dependency('child'),)
+
+        def build(self, ctx: Request) -> str:
+            return ctx.load('child')
+
+    registry.register(UncachedChild())
+    registry.register(Parent(root))
+    # strict rule: an uncached child's declared key fields are enforced too
+    with pytest.raises(RuntimeError, match=r"depends on state field\(s\).*'mode'"):
+        registry.resolve('parent', state={'subject': 's1', 'mode': 'a'}).load()

@@ -1,12 +1,12 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Plot multidimensional uniform time series."""
 from typing import Any
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 
 import matplotlib.axes
 import numpy as np
 
-from .._data_obj import NDVarArg, CategorialArg, IndexArg, Datalist, Dataset
+from .._data_obj import NDVar, NDVarArg, CategorialArg, IndexArg, Datalist, Dataset
 from .._stats.testnd import NDTest
 from .._info import INTERPOLATE_CHANNELS
 from .._utils import deprecate_ds_arg
@@ -161,14 +161,14 @@ class AxImArray:
         for l in self.plots:
             l.set_cmap(cmap, meas)
 
-    def set_data(self, layers, vlim=False):
+    def set_data(self, layers: Iterable[NDVar], vlim: bool = False):
         """Update the plotted data
 
         Parameters
         ----------
-        layers : list of NDVar
+        layers
             Data to plot
-        vlim : bool
+        vlim
             Update vlims for the new data.
         """
         for l, p in zip(layers, self.plots):

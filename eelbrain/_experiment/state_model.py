@@ -5,6 +5,7 @@ A state model with registered fields, constants, and dependent values.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterable
 import difflib
 from functools import cached_property, reduce
 from itertools import chain, product
@@ -333,7 +334,11 @@ class StateModel:
             return value.format(**self._fields)
         return value
 
-    def get_field_values(self, field, exclude=()):
+    def get_field_values(
+            self,
+            field: str,
+            exclude: Iterable[str] = (),
+    ) -> list[str]:
         """Find values for a field taking into account exclusion
 
         Parameters

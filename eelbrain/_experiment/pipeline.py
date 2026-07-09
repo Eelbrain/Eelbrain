@@ -1,10 +1,10 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Pipeline class to manage data from an experiment"""
 from collections import Counter, defaultdict
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 import copy
 from datetime import datetime
-from itertools import chain, product
+from itertools import product
 import logging
 import os
 from os.path import exists
@@ -23,50 +23,55 @@ from .. import load
 from .. import plot
 from .. import save
 from .._data_obj import CellArg, Datalist, Dataset, Factor, Var, NDVar, SourceSpace, VolumeSourceSpace, assert_is_legal_dataset_key, combine
-from .._exceptions import ConfigurationError, OldVersionError
+from .._exceptions import ConfigurationError, DimensionMismatchError
 from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS
 from .._meeg import new_rejection_ds
 from .._mne import find_source_subject, label_from_annot
 from ..mne_fixes import suppress_mne_warning
-from .._ndvar import concatenate, cwt_morlet, neighbor_correlation
+from .._ndvar import concatenate, neighbor_correlation
 from .._text import enumeration
 from .._types import PathArg
-from .._utils import ask, subp, keydefaultdict, log_level, ScreenHandler
+from .._utils import ask, keydefaultdict, log_level, ScreenHandler
 from .._utils.mne_utils import is_fake_mri
 from .covariance import CovDerivative, EpochCovariance, RawCovariance
 from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, DerivativeRegistry, ProtectedArtifactError, Request
-from .configuration import sequence_arg
+from .configuration import Configuration, ConfigurationDict, sequence_arg
 from .epochs import (
-    EpochBase, EpochsDerivative, RecordingEpochsDerivative,
-    EvokedDerivative, EvokedGroupDatasetDerivative, PrimaryEpoch, RejectionInput,
-    SecondaryEpoch, SuperEpoch, assemble_epochs, decim_param,
+    EpochBase, EpochsDerivative, RecordingEpochsDerivative, EvokedDerivative,
+    EvokedGroupDatasetDerivative, PrimaryEpoch, SecondaryEpoch,
+    SuperEpoch, assemble_epochs, decim_param,
 )
+from .epoch_rejection import ChannelModelRejection, ChannelModelRejectionDerivative, EpochRejection, ManualRejection, RejectionInput
 from .events import EpochEventsDerivative, EventsDerivative, EventsInput, LabeledEventsDerivative, SelectedEventsDerivative
-from .exceptions import FileMissingError
+from .exceptions import FileMissingError, ICAChannelsChangedError
+from .logging import CACHE_EVENT_COLUMNS, StructuredFormatter
 from .state_model import StateModel
 from .groups import assemble_groups
 from .pathing import (
-    LOG_DIR, MRI_SDIR, RESULTS_DIR, bids_path, ica_file_path, join_stem_parts, mri_dir, raw_basename, raw_dir,
+    LOG_DIR, MRI_SDIR, RESULTS_DIR, bids_path, join_stem_parts, mri_dir, raw_basename,
     src_file_path, trans_file_path,
 )
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, _resolve_parc
 from .preprocessing import (
-    CachedRawPipe, ICAInput, MaxwellCalibrationInput, MaxwellCrosstalkInput, MedianHeadPositionDerivative, RawBadChannelsInput, RawDerivative, RawHeadPositionDerivative, RawPipe, RawSource, RawSourceDerivative, RawSourceInput, RawICA, RawMaxwell,
+    CachedRawPipe, ICAInput, MaxwellCalibrationInput, MaxwellCrosstalkInput, MedianHeadPositionDerivative, RawBadChannelsInput, RawDerivative, RawHeadPositionDerivative, RawPipe, RawSource, RawSourceDerivative, RawSourceInput, RawICA, RawMaxwell, Reference,
     REINDEX_ICA, assemble_raw_pipes, ica_input_name, raw_bad_channels_input_name, raw_node_name, raw_input_name,
 )
 from .reports import (
     CoregReportDerivative, EEGReportDerivative, EEGSensorsReportDerivative,
     LMReportDerivative, ROIReportDerivative, SourceReportDerivative,
 )
-from .results import DSPMMovieDerivative, EvokedTestDataDerivative, TTestMovieDerivative, TestResultDerivative
+from .data import DataSpec
+from .results import DSPMMovieDerivative, TTestMovieDerivative
 from .source import (
-    BemInput, EpochsStcDerivative, EpochsStcGroupDatasetDerivative,
+    BemInput, EpochsStcDerivative,
     EvokedStcDerivative, EvokedStcGroupDatasetDerivative, FwdDerivative,
     InvDerivative, ROIData, SourceMorphDerivative, SrcDerivative, TransInput,
     InverseSolution, MinimumNormInverseSolution, _drop_unknown_labels, _source_parc, eval_src,
 )
-from .test_def import Test, TestDims, guess_y, validate_tests
-from .two_stage import TwoStageDataDerivative, TwoStageLevel1Derivative, TwoStageLevel2Derivative, TwoStageTest
+from .statistics import EvokedTestDataDerivative, TestResultDerivative, TwoStageDataDerivative, TwoStageLevel1Derivative, TwoStageLevel2Derivative, TwoStageTest
+from .statistics.config import Test, guess_y, validate_tests
+from .trf import Boosting, Estimator, Model, NUTSPredictor, PredictorInput, TRFDatasetDerivative, TRFDerivative, TRFGroupDatasetDerivative, TRFJob, TRFJobSpec, UTSPredictor, filter_predictor
+from .trf.model import parse_term
 from .variable_def import Variables, apply_vardef, label_groups as label_groups_var
 
 
@@ -74,7 +79,7 @@ from .variable_def import Variables, apply_vardef, label_groups as label_groups_
 COV_PARAMS = {'epoch', 'method', 'reg', 'keep_sample_mean', 'reg_eval_win_pad'}
 # Argument types
 BaselineArg = bool | tuple[float | None, float | None]
-DataArg = str | TestDims
+DataArg = str | DataSpec
 PMinArg = Literal['tfce'] | float | None
 SubjectArg = str | Literal[1, -1]
 
@@ -104,10 +109,19 @@ class Pipeline(StateModel):
     cache_inv: bool = True  # Whether to cache inverse solution
     # moderate speed gain for loading source estimates (34 subjects: 20 vs 70 s)
     # hard drive space ~ 100 mb/file
+    # Whether to persist sensor-space epochs to disk.
+    # 0 (default): No caching because epochs are cheap to re-extract
+    # 1: cache epochs per recording
+    # 2: also cache combined epochs
+    cache_epochs: int = 0
 
     # datatype and extension are usually inferred from a BIDS dataset; override here if needed
     datatype: str = None
     extension: str = None
+    # default sensor-space data kind for analyses (load_test/load_trf) when ``data`` is
+    # unspecified and the analysis is in sensor space; ``None`` infers from datatype
+    # ('eeg' for EEG, 'meg' for MEG).
+    default_data: str = None
 
     ignore_entities: dict[str, list[str]] = {}
     preload: bool = False
@@ -131,6 +145,19 @@ class Pipeline(StateModel):
     # named epochs
     epochs: dict[str, EpochBase] = {}
 
+    # predictors for TRF models, selected through the 'code' argument of
+    # load_predictor (e.g. {'gammatone': UTSPredictor(resample='bin')})
+    predictors: dict[str, Configuration] = {}
+
+    # estimators for TRF fitting, selected through the 'estimator' argument of
+    # load_trf (e.g. {'ncrf': NCRF()}); 'boosting' (Boosting()) is always available
+    estimators: dict[str, Estimator] = {}
+    # named TRF models, for abbreviations in model strings passed to load_trf
+    models: dict[str, str] = {}
+    # events Dataset column(s) identifying the stimulus for file predictors; a
+    # single name, or a {key: column} mapping for multiple stimuli per event
+    stim_var: str = 'stimulus'
+
     # Rejection
     # =========
     # eog_sns: The sensors to plot separately in the rejection GUI. The default
@@ -145,24 +172,15 @@ class Pipeline(StateModel):
         'KIT-BRAINVISION': ('HEOGL', 'HEOGR', 'VEOGb'),
         'neuromag306mag': ('MEG 0121', 'MEG 1411'),
     }
-    #
-    # artifact_rejection dict:
-    #
-    # kind : 'manual' | 'make'
-    #     How the rejection is derived:
-    #     'manual': manually create a rejection file (use the selection GUI
-    #     through .make_epoch_selection())
-    #     'make' a rejection file is created by the user
-    # interpolation : bool
-    #     enable by-epoch channel interpolation
-    #
-    # For manual rejection
-    # ^^^^^^^^^^^^^^^^^^^^
-    _artifact_rejection = {
-        '': {'kind': None},
-        'man': {'kind': 'manual', 'interpolation': True},
-    }
-    artifact_rejection = {}
+    # epoch_rejection: named EpochRejection configurations, selected through the 'epoch_rejection' state.
+    epoch_rejection = {}
+
+    # references: named Reference configurations, selected through the
+    # 'reference' state. Applied to epochs after channel interpolation (EEG only).
+    # A built-in 'average' entry (Reference('average')) is always available and
+    # can be overridden here (e.g. to reconstruct an implicit reference channel
+    # with Reference('average', add='Cz')).
+    references = {}
 
     # groups can be defined as subject lists: {'group': ('member1', 'member2', ...)}
     # or by exclusion: {'group': {'base': 'all', 'exclude': ('member1', 'member2')}}
@@ -212,9 +230,8 @@ class Pipeline(StateModel):
 
     # Tests
     # -----
-    # Tests imply a model which is set automatically
     tests: dict[str, Test] = {}
-    _empty_test = False  # for TRFExperiment
+
     # plotting
     # --------
     _brain_plot_defaults = {'surf': 'inflated'}
@@ -244,15 +261,6 @@ class Pipeline(StateModel):
         self._sessions = tuple(get_entity_vals(root, 'session', **ignore_entities))
         self._tasks = tuple(get_entity_vals(root, 'task', **ignore_entities))
         self._runs = tuple(get_entity_vals(root, 'run', **ignore_entities))
-        # Per-(subject, session, task) run lists; used for combine-all epoch aggregation.
-        # Runs can vary by subject, so we build the mapping from a single find_matching_paths
-        # call (subjects/sessions/tasks are already filtered to valid values above).
-        runs_seen: dict[tuple[str, str, str], set[str]] = defaultdict(set)
-        if self._runs:
-            for path in find_matching_paths(root, subjects=self._subjects, sessions=self._sessions, tasks=self._tasks):
-                runs_seen[(path.subject or '', path.session or '', path.task or '')].add(path.run or '')
-        self._runs_for: dict[tuple[str, str, str], list[str]] = {key: sorted(runs) for key, runs in runs_seen.items()}
-
         if self.datatype is not None:
             if self.datatype not in ('meg', 'eeg'):
                 raise ConfigurationError(f"`datatype` must be 'meg' or 'eeg', not {self.datatype!r}.")
@@ -278,17 +286,42 @@ class Pipeline(StateModel):
             else:
                 raise ConfigurationError(f"Can't infer datatype. No MEG or EEG data found in {root}.")
         self._raw_extension = extensions[0]
+        self._datatype = datatype
+
+        # Recordings index: existing (subject, session, task, run) combinations of source
+        # recordings, from a single find_matching_paths scan. Scoped to the raw datatype /
+        # suffix / extension and to ``sub-*`` directories (ignore_nosub) so it never
+        # descends into ``derivatives`` / ``sourcedata`` (where non-BIDS names would fail
+        # to parse). Absent entities are recorded as ''. Snapshot at init time; used for
+        # recording-existence checks in preprocessing nodes and for the
+        # per-(subject, session, task) run lists below.
+        self._recordings: frozenset[tuple[str, str, str, str]] = frozenset(
+            (path.subject or '', path.session or '', path.task or '', path.run or '')
+            for path in find_matching_paths(root, subjects=self._subjects, sessions=self._sessions, tasks=self._tasks, datatypes=datatype, suffixes=datatype, extensions=extensions, ignore_nosub=True)
+        )
+        # Per-(subject, session, task) run lists; used for combine-all epoch aggregation.
+        # Runs can vary by subject.
+        runs_seen: dict[tuple[str, str, str], set[str]] = defaultdict(set)
+        if self._runs:
+            for subject, session, task, run in self._recordings:
+                runs_seen[(subject, session, task)].add(run)
+        self._runs_for: dict[tuple[str, str, str], list[str]] = {key: sorted(runs) for key, runs in runs_seen.items()}
+
         StateModel.__init__(self)
 
         ########################################################################
         # Logger
         ########
         # log-file
+        # A dedicated Logger instance per experiment (not via getLogger, which returns a
+        # singleton keyed by name): keeps each instance's handlers and log level isolated,
+        # even for two live experiments on the same root. ``parent`` is None, so records
+        # never propagate to the root logger (no double-logging via host configuration).
         self._log = log = logging.Logger(self.__class__.__name__, logging.DEBUG)
         log_file = root / LOG_DIR / f'{self.__class__.__name__}.log'
         os.makedirs(log_file.parent, exist_ok=True)
         handler = logging.FileHandler(log_file)
-        formatter = logging.Formatter("%(levelname)-8s %(asctime)s %(message)s", "%m-%d %H:%M")  # %(name)-12s
+        formatter = StructuredFormatter("%(levelname)-8s %(asctime)s %(message)s", "%m-%d %H:%M")
         handler.setFormatter(formatter)
         handler.setLevel(logging.DEBUG)
         log.addHandler(handler)
@@ -304,7 +337,7 @@ class Pipeline(StateModel):
         # Experiment arguments
         ######################
         # groups
-        self._groups = assemble_groups(self.groups, set(self._subjects))
+        self._groups = ConfigurationDict('group', assemble_groups(self.groups, set(self._subjects)))
 
         # mri_subjects
         self._mri_subjects = self.mri_subjects.copy()
@@ -317,16 +350,36 @@ class Pipeline(StateModel):
         self._variables._check_trigger_vars()
 
         # epochs
-        self._epochs = assemble_epochs(self.epochs, self._tasks)
+        self._epochs = ConfigurationDict('epoch', assemble_epochs(self.epochs, self._tasks))
 
-        # epoch rejection
-        artifact_rejection = {}
-        for name, params in chain(self._artifact_rejection.items(), self.artifact_rejection.items()):
-            if params['kind'] in ('manual', 'make', None):
-                artifact_rejection[name] = params.copy()
-            else:
-                raise ValueError(f"kind={params['kind']!r} in artifact_rejection {name!r}")
-        self._artifact_rejection = artifact_rejection
+        # epoch rejection; 'manual' is always available, '' selects no rejection
+        epoch_rejection: dict[str, EpochRejection | None] = {'': None}
+        for name, rejection in self.epoch_rejection.items():
+            if not isinstance(name, str):
+                raise TypeError(f"epoch_rejection[{name!r}]: name must be a string")
+            elif not name:
+                raise ValueError(f"epoch_rejection[{name!r}]: name can't be empty")
+            elif not isinstance(rejection, EpochRejection):
+                raise TypeError(f"epoch_rejection[{name!r}]={rejection!r}: need EpochRejection")
+            epoch_rejection[name] = rejection
+        self._epoch_rejection = ConfigurationDict('epoch_rejection', epoch_rejection)
+
+        # epoch re-referencing; 'average' is always available and user-overridable
+        references = {'': None, 'average': Reference('average')}
+        for name, reference in self.references.items():
+            if not isinstance(name, str):
+                raise TypeError(f"references[{name!r}]: name must be a string")
+            elif not name:
+                raise ValueError(f"references[{name!r}]: name can't be empty")
+            elif not isinstance(reference, Reference) or isinstance(reference, RawPipe):
+                raise TypeError(f"references[{name!r}]={reference!r}: need Reference")
+            elif name == 'average':
+                if reference.reference != 'average':
+                    raise ConfigurationError(f"references[{name!r}]={reference!r}: the standard average reference must be an average reference")
+                elif reference.drop:
+                    raise ConfigurationError(f"references[{name!r}]={reference!r}: the standard average reference can not drop channels")
+            references[name] = reference
+        self._references = ConfigurationDict('reference', references)
 
         # parcellations
         # make : can be made if non-existent
@@ -334,13 +387,31 @@ class Pipeline(StateModel):
         for name, parc in self.parcs.items():
             if not isinstance(parc, Parcellation):
                 raise TypeError(f"parcs[{name!r}]={parc!r}: need Parcellation")
-        self._parcs = {**self._default_parcs, **self.parcs}
+        self._parcs = ConfigurationDict('parcellation', {**self._default_parcs, **self.parcs})
         for name, parc in self._parcs.items():
             parc._store_name(name)
         parc_values = [*self._parcs.keys(), '']
 
         # tests
         validate_tests(self.tests)
+        for test_obj in self.tests.values():
+            if test_obj.model:
+                test_obj.model = self._eval_model(test_obj.model)
+        self.tests = ConfigurationDict('test', self.tests)
+
+        # TRF: named models, estimators, predictors, stimulus variables
+        self._named_models: dict[str, Model] = ConfigurationDict('model')
+        for name, value in self.models.items():
+            self._named_models[name] = Model.coerce(value).initialize(self._named_models)
+        estimators = {'boosting': Boosting(), **self.estimators}
+        for name, estimator in estimators.items():
+            if not isinstance(estimator, Estimator):
+                raise TypeError(f"estimators[{name!r}]={estimator!r}: need Estimator")
+            estimator._store_name(name)
+        self._estimators = ConfigurationDict('estimator', estimators)
+        self.predictors = ConfigurationDict('predictor', self.predictors)
+        if not isinstance(self.stim_var, str):
+            raise TypeError(f"{self.__class__.__name__}.stim_var={self.stim_var!r}")
 
         ########################################################################
         # Experiment class setup
@@ -359,7 +430,6 @@ class Pipeline(StateModel):
         self._register_field('session', self._sessions or None, repr=True)
         self._register_field('task', self._tasks, depends_on=('epoch',), slave_handler=self._update_task, repr=True)
         self._register_field('run', self._runs, repr=True, depends_on=('epoch', 'subject', 'session', 'task'), slave_handler=self._update_run)
-        self._register_field('datatype', (datatype,), repr=True)
         self._register_field('equalize_evoked_count', ('', 'eq'), allow_empty=True)
         self._register_field('common_brain', ('fsaverage',))
 
@@ -369,13 +439,21 @@ class Pipeline(StateModel):
         # raw
         raw_default = sorted(self.raw)[0] if self.raw else None
         self._register_field('raw', sorted(self._raw), default=raw_default, repr=True)
-        self._register_field('rej', self._artifact_rejection.keys(), allow_empty=True)
+        self._register_field('epoch_rejection', self._epoch_rejection.keys(), allow_empty=True)
+        self._register_field('reference', self._references.keys(), allow_empty=True)
 
         # cov
         self._register_field('cov', sorted(self._covs))
-        self._register_field('inv', default='free-3-dSPM', eval_handler=self._eval_inv)
-        self._register_field('model', eval_handler=self._eval_model)
-        self._register_field('test', sorted(self.tests), post_set_handler=self._post_set_test, allow_empty=self._empty_test, repr=False)
+        # inv determines the analysis space: a non-empty inverse means source space, inv='' means sensor space.
+        self._register_field('inv', default='', eval_handler=self._eval_inv, allow_empty=True)
+        # default sensor-space data kind for analyses (see .default_data)
+        if self.default_data is None:
+            self._default_data = 'eeg' if datatype == 'eeg' else 'meg'
+        else:
+            data = DataSpec(self.default_data)
+            if not data.sensor or data.string.split('.', 1)[0] == 'sensor':
+                raise ConfigurationError(f"{self.__class__.__name__}.default_data={self.default_data!r}; must be a specific sensor type ('mag', 'grad', or 'eeg').")
+            self._default_data = self.default_data
         self._register_field('parc', parc_values, 'aparc', eval_handler=self._eval_parc, allow_empty=True)
         self._register_field('src', default='ico-4', eval_handler=eval_src)
         self._register_field('adjacency', ('', 'link-midline'), allow_empty=True)
@@ -394,6 +472,8 @@ class Pipeline(StateModel):
         log.info("*** %s initialized with root %s on %s ***", self.__class__.__name__, root, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
         level = logging.DEBUG if any('dev' in v for v in (__version__, mne.__version__)) else logging.INFO
         log.log(level, "Using eelbrain %s, mne %s.", __version__, mne.__version__)
+        # Legend for the tab-separated columns appended to cache-event log lines (DEBUG, file only).
+        log.debug("Cache-event columns (tab-separated after the message): %s", '\t'.join(CACHE_EVENT_COLUMNS))
 
         # set initial values
         self.set(**state)
@@ -403,14 +483,14 @@ class Pipeline(StateModel):
         return (str(self.root),)
 
     def _init_derivative_registry(self):
-        self._derivatives = DerivativeRegistry(self.root, self._log)
+        self._derivatives = DerivativeRegistry(self.root, self._log, self._datatype)
         result_args = (
             self.tests,
             self._epochs,
             self._parcs,
             self._groups,
         )
-        brain_report_args = (*result_args, self._mri_subjects, self.get('common_brain'), {**self._brain_plot_defaults, **self.brain_plot_defaults})
+        brain_report_args = (*result_args, self._mri_subjects, {**self._brain_plot_defaults, **self.brain_plot_defaults})
 
         # --- Inputs (externally managed files) and preprocessing ---
         maxwell_registered = False
@@ -421,13 +501,11 @@ class Pipeline(StateModel):
                 self._derivatives.register(RawBadChannelsInput(raw_name, pipe, self._raw_extension))
                 self._derivatives.register(RawSourceDerivative(raw_name, pipe, self._raw_extension))
                 self._derivatives.register(RawHeadPositionDerivative(raw_input.name))
-                self._derivatives.register(MedianHeadPositionDerivative(raw_input.name, self._tasks, self._runs))
+                self._derivatives.register(MedianHeadPositionDerivative(self._recordings, self._tasks, self._runs))
             elif isinstance(pipe, CachedRawPipe):
-                # FIXME: run handling
-                # runs = self._runs if isinstance(pipe, RawICA) else None
                 self._derivatives.register(RawDerivative(raw_name, pipe, self._raw, self._raw_extension))
                 if isinstance(pipe, RawICA):
-                    self._derivatives.register(ICAInput(raw_name, pipe, self._raw, self._raw_extension))
+                    self._derivatives.register(ICAInput(raw_name, pipe, self._recordings, self._runs))
                 elif isinstance(pipe, RawMaxwell) and not maxwell_registered:
                     self._derivatives.register(MaxwellCalibrationInput())
                     self._derivatives.register(MaxwellCrosstalkInput())
@@ -436,7 +514,14 @@ class Pipeline(StateModel):
                 raise TypeError(f"Unknown raw pipe {pipe}")
         self._derivatives.register(TransInput())
         self._derivatives.register(BemInput())
-        self._derivatives.register(RejectionInput(self.root, self._artifact_rejection, self._epochs))
+        self._derivatives.register(RejectionInput(self.root, self._epoch_rejection, self._epochs))
+        self._derivatives.register(ChannelModelRejectionDerivative(self._epochs, self._epoch_rejection))
+
+        # --- Predictors and TRFs ---
+        self._derivatives.register(PredictorInput(self.root, self.predictors))
+        self._derivatives.register(TRFDerivative(self.root, self._estimators, self.predictors, self._named_models, self.stim_var, self._raw))
+        self._derivatives.register(TRFDatasetDerivative(self.root, self._estimators, self._named_models, self._epochs))
+        self._derivatives.register(TRFGroupDatasetDerivative(self._mri_subjects, self._groups))
 
         # --- Sensor-space: events → epochs → evoked ---
         self._derivatives.register(EventsInput(self._raw_extension))
@@ -445,7 +530,7 @@ class Pipeline(StateModel):
             sequence_arg(f'{self.__class__.__name__}.stim_channel', self.stim_channel),
             self.merge_triggers,
             self.preload,
-            type(self).fix_events,    # bound to the subclass at construction time
+            self.fix_events,
             self.__class__.__name__,
         ))
         self._derivatives.register(LabeledEventsDerivative(
@@ -457,28 +542,28 @@ class Pipeline(StateModel):
             self._groups,
             self.cache_event_labels,
         ))
-        self._derivatives.register(SelectedEventsDerivative(self._epochs, self._artifact_rejection))
+        self._derivatives.register(SelectedEventsDerivative(self._epochs, self._epoch_rejection))
         self._derivatives.register(EpochEventsDerivative(self._epochs, self._runs_for))
-        self._derivatives.register(RecordingEpochsDerivative(self._raw, self._epochs))
-        self._derivatives.register(EpochsDerivative(self._raw, self._epochs, self._runs_for))
+        self._derivatives.register(RecordingEpochsDerivative(self._raw, self._epochs, self._references, self.cache_epochs > 0))
+        self._derivatives.register(EpochsDerivative(self._raw, self._epochs, self._runs_for, self.cache_epochs > 1))
         self._derivatives.register(EvokedDerivative(self._raw, self._epochs))
         self._derivatives.register(EvokedGroupDatasetDerivative(self._raw, self._groups))
 
         # --- Source-space infrastructure ---
+        self._covs = ConfigurationDict('covariance', self._covs)
         for cov_name, cov in self._covs.items():
             cov._store_name(cov_name)
-        self._derivatives.register(CovDerivative(self._covs))
+        self._derivatives.register(CovDerivative(self._covs, self._raw, self._references, self._recordings))
         self._derivatives.register(SrcDerivative())
         self._derivatives.register(SourceMorphDerivative())
-        self._derivatives.register(FwdDerivative())
-        self._derivatives.register(InvDerivative())
+        self._derivatives.register(FwdDerivative(self._raw, self._references, self._recordings))
+        self._derivatives.register(InvDerivative(self._raw, self._references, self._recordings, self.cache_inv))
         self._derivatives.register(AnnotDerivative(self._parcs))
 
         # --- Source-space: epochs/evoked projected to source space ---
-        self._derivatives.register(EpochsStcDerivative(self._raw, self._epochs))
-        self._derivatives.register(EvokedStcDerivative(self._raw, self._epochs))
-        self._derivatives.register(EpochsStcGroupDatasetDerivative(self._mri_subjects, self.get('common_brain'), self._groups))
-        self._derivatives.register(EvokedStcGroupDatasetDerivative(self._mri_subjects, self.get('common_brain'), self._groups))
+        self._derivatives.register(EpochsStcDerivative(self._raw, self._epochs, self._references))
+        self._derivatives.register(EvokedStcDerivative(self._raw, self._epochs, self._references))
+        self._derivatives.register(EvokedStcGroupDatasetDerivative(self._mri_subjects, self._groups))
 
         # --- Statistical tests ---
         self._derivatives.register(EvokedTestDataDerivative(self.tests, self._epochs, self._groups))
@@ -508,7 +593,6 @@ class Pipeline(StateModel):
     def _load_derivative(
             self,
             name: str,  # Registered derivative name.
-            cache: bool | None = None,  # Explicit cache override for this load.
             options: dict[str, Any] | None = None,
             view: str | None = None,
             *,
@@ -518,7 +602,7 @@ class Pipeline(StateModel):
         ctx = self._resolve_derivative(name, options=options, controls=controls)
         if not redo and ctx.is_valid():
             return None
-        return ctx.load(cache=cache, view=view)
+        return ctx.load(view=view)
 
     def __iter__(self):
         "Iterate state through subjects and yield each subject name."
@@ -543,7 +627,7 @@ class Pipeline(StateModel):
             subjects: SubjectArg | None,
             kwargs: dict[str, str],
     ) -> tuple[str | None, str | None]:
-        """Process subject arg for methods that work on groups and subjects
+        """Determine subject or group for analysis and update state
 
         Parameters
         ----------
@@ -588,7 +672,12 @@ class Pipeline(StateModel):
         else:
             raise TypeError(f"{subjects=}")
 
-    def get_field_values(self, field, exclude=(), **state):
+    def get_field_values(
+            self,
+            field: str,
+            exclude: Iterable[str] = (),
+            **state,
+    ) -> list[str]:
         """Find values for a field taking into account exclusion
 
         Parameters
@@ -693,7 +782,9 @@ class Pipeline(StateModel):
         Notes
         -----
         Override this method in subclasses to change the event structure or
-        timing. This method is called *before* adding other variables.
+        timing. This method only applies to events derived from M/EEG raw data files,
+        and not to events from BIDS ``events.tsv`` sidecar files,
+        and is called *before* adding other variables.
 
         The subject and session the events are from can be determined with
         ``ds.info['subject']`` and ``ds.info['session']``.
@@ -862,22 +953,55 @@ class Pipeline(StateModel):
         """
         return self._load_derivative('cov', **kwargs)
 
+    def _resolve_data(
+            self,
+            data: 'DataArg',
+            morph: bool = False,
+    ) -> DataSpec:
+        """Resolve the ``data`` argument into a :class:`DataSpec` for analysis.
+
+        :class:`DataSpec` parses the value; this method supplies the default for
+        ``data=None`` and checks the parsed *space* against the ``inv`` state
+        (``inv=''`` → sensor, non-empty → source). Must be called after
+        ``**state`` has been applied so that ``self.get('inv')`` is current.
+
+        Parameters
+        ----------
+        data
+            Data kind: ``None`` (the datatype default in the current space), a
+            sensor type (``'meg'``/``'mag'``/``'grad'``/``'eeg'``) or
+            ``'source'``, optionally with a ``'.mean'``/``'.rms'`` aggregation.
+        morph
+            Morph source data to the common brain.
+        """
+        source_space = bool(self.get('inv'))
+        if data is None:
+            data = 'source' if source_space else self._default_data
+        spec = DataSpec.coerce(data, morph=morph)
+        if source_space and not spec.source:
+            raise ValueError(f"data={data!r} is sensor-space data, but the analysis is in source space (inv={self.get('inv')!r}); set inv='' for sensor-space analysis")
+        if not source_space and spec.source:
+            raise ValueError(f"data={data!r} is source-space data, but the analysis is in sensor space (inv=''); set a non-empty inverse for source-space analysis")
+        if spec.sensor and spec.string.split('.', 1)[0] == 'sensor':
+            raise ValueError(f"data={data!r}: 'sensor' selects all sensor types; specify a single type ('mag', 'grad', 'eeg') for analysis")
+        return spec
+
     @suppress_mne_warning
     def load_epochs(
             self,
-            subjects: SubjectArg = None,
-            baseline: BaselineArg = False,
-            ndvar: bool | Literal['both'] = True,
+            baseline: BaselineArg = True,
+            ndvar: bool | str = True,
             reject: bool | Literal['keep'] = True,
             samplingrate: int = None,
             decim: int = None,
             pad: float = 0,
-            data: str = 'sensor',
-            trigger_shift: bool = True,
             tmin: float = None,
             tmax: float = None,
             tstop: float = None,
             interpolate_bads: Literal[True, False, 'keep'] = False,
+            src_baseline: BaselineArg = False,
+            morph: bool = None,
+            keep_mne: bool = False,
             **state,
     ) -> Dataset:
         """
@@ -891,14 +1015,16 @@ class Pipeline(StateModel):
             subject; ``-1`` for the current group. Default is current subject
             (or group if ``group`` is specified).
         baseline
-            Apply baseline correction using this period. True to use the
-            epoch's baseline specification. The default is to not apply baseline
-            correction.
+            Apply baseline correction using this period. ``True`` (default) to
+            use the epoch's baseline specification; ``False`` to not apply
+            baseline correction.
         ndvar
-            Convert epochs to :class:`NDVar` (using keys ``'meg'`` for MEG data and
-            ``'eeg'`` for EEG data in the returned :class:`Dataset`).
-            With ``ndvar=False``, include :class:`mne.Epochs` with key ``'epochs'``.
-            Use ``'both'`` to include both NDVar and :class:`mne.Epochs`.
+            Data to convert to :class:`NDVar`. ``True`` (default) converts all
+            sensor types (with keys ``'meg'``/``'eeg'`` …); a sensor type
+            (``'meg'``/``'mag'``/``'grad'``/``'eeg'``), optionally aggregated
+            (e.g. ``'eeg.rms'``/``'eeg.mean'``), returns a single :class:`NDVar`;
+            ``False`` returns :class:`mne.Epochs` with key ``'epochs'``. In source
+            space (``inv`` set) the source estimates are returned as ``'src'``.
         reject
             Reject bad trials. If ``True`` (default), bad trials are removed
             from the Dataset. Set to ``False`` to ignore the trial rejection.
@@ -912,159 +1038,83 @@ class Pipeline(StateModel):
         pad : scalar
             Pad the epochs with this much time (in seconds; e.g. for spectral
             analysis).
-        data
-            Data to load; 'sensor' to load all sensor data (default);
-            'sensor.rms' to return RMS over sensors. Only applies to NDVar
-            output.
-        trigger_shift
-            Apply post-baseline trigger-shift if it applies to the epoch
-            (default True).
         tmin
-            Override the epoch's ``tmin`` parameter.
+            Override the epoch's ``tmin`` parameter (sensor space only).
         tmax
-            Override the epoch's ``tmax`` parameter.
+            Override the epoch's ``tmax`` parameter (sensor space only).
         tstop
-            Override the epoch's ``tmax`` parameter as exclusive ``tstop``.
+            Override the epoch's ``tmax`` parameter as exclusive ``tstop``
+            (sensor space only).
         interpolate_bads
             Interpolate channels marked as bad for the whole recording (useful
-            when comparing topographies across subjects; default False).
+            when comparing topographies across subjects; default ``False``;
+            sensor space only). ``True`` interpolates and includes those channels
+            in the output; ``'keep'`` interpolates but leaves the channels marked
+            as bad (so they remain excluded from NDVar output).
+        src_baseline
+            Apply baseline correction in source space using this period (source
+            space only; ``True`` to use the epoch's baseline specification).
+        morph
+            Morph source estimates to the common brain (source space only;
+            default ``False``, except when loading multiple subjects with
+            ``ndvar=True``).
+        keep_mne
+            Also include the underlying :class:`mne.Epochs` (sensor space) or
+            sensor-space data (source space) in the returned :class:`Dataset`.
         ...
             Applicable :ref:`state-parameters`:
 
              - :ref:`state-raw`: preprocessing pipeline
              - :ref:`state-epoch`: which events to use and time window
-             - :ref:`state-rej`: which trials to use
+             - :ref:`state-epoch_rejection`: which trials to use
+             - :ref:`state-inv`: inverse solution (``inv=''`` for sensor space,
+               a non-empty inverse for source space)
 
         """
-        data = TestDims.coerce(data)
-        if not data.sensor:
-            raise ValueError(f"data={data.string!r}; load_evoked is for loading sensor data")
-        if data.sensor is not True:
-            if not ndvar:
-                raise ValueError(f"data={data.string!r} with ndvar=False")
-            if interpolate_bads:
-                raise ValueError(f"{interpolate_bads=} with data={data.string!r}")
-        if isinstance(ndvar, str) and ndvar != 'both':
-            raise ValueError(f"{ndvar=}")
+        if self.get('inv', **state):  # source space
+            if interpolate_bads or tmin is not None or tmax is not None or tstop is not None:
+                raise ValueError("interpolate_bads/tmin/tmax/tstop are not available for source-space epochs; set inv='' for sensor space")
+            if isinstance(ndvar, str):
+                raise ValueError(f"{ndvar=}: a data-kind ndvar is only valid for sensor-space epochs; in source space use ndvar=True or ndvar=False")
+            self._current_source_parc()
+            options = {
+                'baseline': baseline,
+                'src_baseline': src_baseline,
+                'keep_epochs': keep_mne,
+                'morph': morph,
+                'samplingrate': samplingrate,
+                'decim': decim,
+                'pad': pad,
+                'ndvar': ndvar,
+                'reject': reject,
+            }
+            return self._load_derivative('epochs-stc', options=options)
 
-        subject, group = self._process_subject_arg(subjects, state)
+        # sensor space
+        if isinstance(ndvar, str):
+            data = self._resolve_data(ndvar)
+            node_ndvar = 'both' if keep_mne else True
+        elif ndvar:
+            data = DataSpec('sensor')
+            node_ndvar = 'both' if keep_mne else True
+        else:
+            data = DataSpec('sensor')
+            node_ndvar = False
         options = {
             'baseline': baseline,
-            'ndvar': ndvar,
+            'ndvar': node_ndvar,
             'reject': reject,
             'samplingrate': samplingrate,
             'decim': decim,
             'pad': pad,
             'data': data,
-            'trigger_shift': trigger_shift,
             'tmin': tmin,
             'tmax': tmax,
             'tstop': tstop,
-            'interpolate_bads': interpolate_bads,
+            'interpolate_bads': bool(interpolate_bads),
+            'reset_bads': interpolate_bads == True,
         }
-        if group is None:
-            if subject is not None:
-                self.set(subject=subject)
-            return self._load_derivative('epochs', options=options)
-
-        epoch_name = self.get('epoch')
-        dss = [
-            self._load_derivative('epochs', options=options)
-            for _ in self.iter(group=group, progress_bar=f"Load {epoch_name}")
-        ]
-        return combine(dss)
-
-    def load_epochs_stc(
-            self,
-            subjects: str | int = None,
-            baseline: BaselineArg = True,
-            src_baseline: BaselineArg = False,
-            cat: Sequence[CellArg] = None,
-            keep_epochs: bool | str = False,
-            morph: bool = None,
-            samplingrate: int = None,
-            decim: int = None,
-            pad: float = 0,
-            ndvar: bool = True,
-            reject: bool | str = True,
-            **state):
-        """Load a Dataset with stcs for single epochs
-
-        Parameters
-        ----------
-        subjects : str | 1 | -1
-            Subject(s) for which to load data. Can be a single subject
-            name or a group name such as ``'all'``. ``1`` to use the current
-            subject; ``-1`` for the current group. Default is current subject
-            (or group if ``group`` is specified).
-            Warning: loading single trial data for multiple subjects at once
-            uses a lot of memory, which can lead to a periodically unresponsive
-            terminal).
-        baseline
-            Apply baseline correction using this period in sensor space.
-            True to use the epoch's baseline specification (default).
-        src_baseline
-            Apply baseline correction using this period in source space.
-            True to use the epoch's baseline specification. The default is to
-            not apply baseline correction.
-        cat
-            Only load data for these cells (cells of model).
-        keep_epochs : bool | 'ndvar' | 'both'
-            Keep the sensor space data in the Dataset that is returned (default
-            False; True to keep :class:`mne.Epochs` object; ``'ndvar'`` to keep
-            :class:`NDVar`; ``'both'`` to keep both).
-        morph
-            Morph the source estimates to the common brain
-            (default ``False``, except when loading multiple subjects and ``ndvar=True``).
-        samplingrate
-            Samplingrate in Hz for the analysis (default is specified in epoch
-            definition).
-        decim
-            Data decimation factor (alternative to ``samplingrate``).
-        pad
-            Pad the epoch's data by extending ``tmin`` and ``tmax`` (specify
-            ``pad`` time in seconds).
-        ndvar
-            Add the source estimates as :class:`NDVar` named "src" instead of a list of
-            :class:`mne.SourceEstimate` objects named "stc" (default True).
-        reject : bool | 'keep'
-            Reject bad trials. If ``True`` (default), bad trials are removed
-            from the Dataset. Set to ``False`` to ignore the trial rejection.
-            Set ``reject='keep'`` to load the rejection (added it to the events
-            as ``'accept'`` variable), but keep bad trails.
-        ...
-            Applicable :ref:`state-parameters`:
-
-             - :ref:`state-raw`: preprocessing pipeline
-             - :ref:`state-epoch`: which events to use and time window
-             - :ref:`state-rej`: which trials to use
-             - :ref:`state-cov`: covariance matrix for inverse solution
-             - :ref:`state-src`: source space
-             - :ref:`state-inv`: inverse solution
-
-        Returns
-        -------
-        epochs_dataset : Dataset
-            Dataset containing single trial data (epochs).
-        """
-        self._current_source_parc(**state)
-        subject, group = self._process_subject_arg(subjects, state)
-        options = {
-            'baseline': baseline,
-            'src_baseline': src_baseline,
-            'cat': cat,
-            'keep_epochs': keep_epochs,
-            'morph': morph,
-            'samplingrate': samplingrate,
-            'decim': decim,
-            'pad': pad,
-            'ndvar': ndvar,
-            'reject': reject,
-        }
-        if group is not None:
-            return self._load_derivative('epochs-stc-group-dataset', options=options)
-        else:
-            return self._load_derivative('epochs-stc', options=options)
+        return self._load_derivative('epochs', options=options)
 
     def load_events(
             self,
@@ -1095,15 +1145,307 @@ class Pipeline(StateModel):
             self.set(**kwargs)
         return self._load_derivative('labeled-events')
 
+    def load_predictor(
+            self,
+            code: str,
+            tstep: float = 0.01,
+            n_samples: int = None,
+            tmin: float = None,
+            filter_x: bool | Literal['continuous'] = False,
+            name: str = None,
+            **state,
+    ) -> NDVar:
+        """Load a file predictor as an :class:`NDVar`
+
+        Reads the predictor file's relevant data and shapes it into a predictor
+        on the requested time axis. Only file predictors
+        (:class:`UTSPredictor`, :class:`NUTSPredictor`) can be loaded directly;
+        an :class:`EventPredictor` is generated from the data and is only
+        available through :meth:`load_trf`.
+
+        Parameters
+        ----------
+        code
+            Code of the predictor to load, using the pattern
+            ``{stimulus}~{predictor}``. The ``predictor`` part selects a
+            definition in :attr:`predictors`; additional ``-`` delimited items
+            specify columns or a NUTS representation method (see
+            :class:`NUTSPredictor`).
+        tstep
+            Time-step for the predictor (for :class:`NDVar` predictors the
+            original ``tstep`` is used by default; for :class:`Dataset`
+            predictors ``tstep`` determines the sampling of the output).
+        n_samples
+            Number of samples in the predictor (the default returns all
+            available samples).
+        tmin
+            First sample time stamp (default is all available data).
+        filter_x
+            Filter the predictor with the same filters as the M/EEG data (i.e.
+            the :class:`RawFilter` pipes of the current ``raw`` pipeline).
+            ``True`` to filter all predictors; ``'continuous'`` to filter only
+            time-continuous predictors (those with ``sampling='continuous'``,
+            see :class:`FilePredictorBase`).
+        name
+            Reassign the name of the predictor :class:`NDVar`.
+        ...
+            State parameters.
+        """
+        if state:
+            self.set(**state)
+        term = parse_term(code)
+        predictor = self.predictors[term.predictor_key]
+        if not isinstance(predictor, (UTSPredictor, NUTSPredictor)):
+            raise NotImplementedError(f"{term.string}: load_predictor only supports file predictors; load {type(predictor).__name__} through load_trf")
+        contents = self._load_derivative('predictor', options={'code': code})
+        x = predictor._generate(contents, tmin, tstep, n_samples, term)
+        x = filter_predictor(x, self._raw, self.get('raw'), filter_x)
+        x.name = term.string if name is None else name
+        return x
+
+    def _trf_options(
+            self,
+            x: str,
+            tstart: float,
+            tstop: float,
+            estimator: str,
+            data: str | None,
+            mask: str | None,
+            samplingrate: int | None,
+            filter_x: bool | str,
+            state: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if state:
+            self.set(**state)
+        if mask is not None:
+            raise NotImplementedError(f"{mask=}: source-space masking is not implemented yet")
+        # Resolve the data kind against the analysis space (inv state) and the estimator.
+        est = self._estimators[estimator]
+        if est.requires_sensor_space:
+            if (inv := self.get('inv')):
+                raise ValueError(f"{inv=} for {estimator=}: {estimator} uses sensor data and localizes internally; set inv='' for sensor-space analysis")
+            if data is not None:
+                raise ValueError(f"{data=}: estimator {estimator!r} uses all sensor data; leave data unset")
+            data_string = 'sensor'
+        else:
+            data_string = self._resolve_data(data).string
+        model = Model.coerce(x).initialize(self._named_models)
+        return {'x': model.name, 'tstart': float(tstart), 'tstop': float(tstop), 'estimator': estimator, 'data': data_string, 'mask': mask, 'samplingrate': samplingrate, 'filter_x': filter_x}
+
+    def load_trf(
+            self,
+            x: str,
+            tstart: float = 0.,
+            tstop: float = 0.5,
+            *,
+            estimator: str = 'boosting',
+            data: str = None,
+            mask: str = None,
+            samplingrate: int = None,
+            filter_x: bool | Literal['continuous'] = False,
+            path_only: bool = False,
+            **state,
+    ):
+        """Load (or compute) the TRF for a model and the current subject
+
+        Parameters
+        ----------
+        x
+            Model (e.g. ``'gammatone + word'``).
+        tstart
+            Start of the TRF in seconds.
+        tstop
+            Stop of the TRF in seconds.
+        estimator
+            Name of the estimator in :attr:`estimators` (default ``'boosting'``).
+            Estimator-specific parameters (``basis``, ``delta``, ``mu``, …) are
+            set on the :class:`~eelbrain._experiment.trf.Estimator` object.
+        data
+            Sensor-space data *kind* to fit: a sensor type
+            (``'meg'``/``'mag'``/``'grad'``/``'eeg'``), optionally aggregated
+            (e.g. ``'eeg.rms'``/``'eeg.mean'``). The default (``None``) uses
+            :attr:`default_data`. The analysis *space* is set by the ``inv``
+            state (``inv=''`` for sensor space; a non-empty inverse for source
+            space); in source space leave ``data`` unset. NCRF requires
+            ``inv=''`` and leaves ``data`` unset.
+        mask
+            Parcellation to mask source-space data (not implemented yet).
+        samplingrate
+            Samplingrate in Hz for the analysis.
+        filter_x
+            Filter predictors like the M/EEG data (see :meth:`load_predictor`).
+        path_only
+            Return the path to the cache file instead of loading the TRF.
+        ...
+            State parameters.
+        """
+        options = self._trf_options(x, tstart, tstop, estimator, data, mask, samplingrate, filter_x, state)
+        ctx = self._resolve_derivative('trf', options=options)
+        if path_only:
+            return ctx.artifact_path
+        return ctx.load()
+
+    def _trf_job_spec(
+            self,
+            x: str,
+            tstart: float = 0.,
+            tstop: float = 0.5,
+            *,
+            estimator: str = 'boosting',
+            data: str = None,
+            mask: str = None,
+            samplingrate: int = None,
+            filter_x: bool | Literal['continuous'] = False,
+            **state,
+    ) -> TRFJobSpec:
+        "Host-side handle for one TRF fit (generate job, check whether done, save result)"
+        options = self._trf_options(x, tstart, tstop, estimator, data, mask, samplingrate, filter_x, state)
+        ctx = self._resolve_derivative('trf', options=options)
+        return TRFJobSpec(ctx)
+
+    def load_trf_job(
+            self,
+            x: str,
+            tstart: float = 0.,
+            tstop: float = 0.5,
+            *,
+            estimator: str = 'boosting',
+            data: str = None,
+            mask: str = None,
+            samplingrate: int = None,
+            filter_x: bool | Literal['continuous'] = False,
+            **state,
+    ) -> TRFJob:
+        """Load the data and return a picklable :class:`TRFJob` for fitting this TRF elsewhere
+
+        The returned job carries the M/EEG response and regressors, so it can be
+        pickled and executed on a machine without access to the raw data. This is
+        useful for distributed fitting and for inspecting the exact data used to
+        estimate a model.
+
+        Parameters
+        ----------
+        x
+            Model (e.g. ``'gammatone + word'``).
+        tstart
+            Start of the TRF in seconds.
+        tstop
+            Stop of the TRF in seconds.
+        estimator
+            Name of the estimator in :attr:`estimators` (default ``'boosting'``).
+        data
+            Sensor-space data *kind* to fit (see :meth:`load_trf`).
+        mask
+            Parcellation to mask source-space data (not implemented yet).
+        samplingrate
+            Samplingrate in Hz for the analysis.
+        filter_x
+            Filter predictors like the M/EEG data (see :meth:`load_predictor`).
+        ...
+            State parameters.
+        """
+        return self._trf_job_spec(x, tstart, tstop, estimator=estimator, data=data, mask=mask, samplingrate=samplingrate, filter_x=filter_x, **state).make_job()
+
+    def load_trfs(
+            self,
+            subjects: SubjectArg,
+            x: str,
+            tstart: float = 0.,
+            tstop: float = 0.5,
+            *,
+            estimator: str = 'boosting',
+            data: str = None,
+            mask: str = None,
+            samplingrate: int = None,
+            filter_x: bool | Literal['continuous'] = False,
+            scale: Literal['original'] = None,
+            smooth: float = None,
+            trfs: bool = True,
+            **state,
+    ) -> Dataset:
+        """Load TRFs for a group (or subject) as a :class:`Dataset`
+
+        Assembles the per-subject TRFs (see :meth:`load_trf`) into a group-level
+        :class:`Dataset` with one case per subject (× member epoch for an
+        :class:`EpochCollection`), holding the estimator's fit-quality metrics
+        and the TRF kernels. Source-space data is morphed to the common brain so
+        that subjects are comparable.
+
+        Parameters
+        ----------
+        subjects : str | 1 | -1
+            Subject(s) for which to load data. Can be a single subject name or a
+            group name such as ``'all'``. ``1`` to use the current subject;
+            ``-1`` for the current group.
+        x
+            Model (e.g. ``'gammatone + word'``).
+        tstart
+            Start of the TRF in seconds.
+        tstop
+            Stop of the TRF in seconds.
+        estimator
+            Name of the estimator in :attr:`estimators` (default ``'boosting'``).
+        data
+            Response data to fit (see :meth:`load_trf`).
+        mask
+            Parcellation to mask source-space data (not implemented yet).
+        samplingrate
+            Samplingrate in Hz for the analysis.
+        filter_x
+            Filter predictors like the M/EEG data (see :meth:`load_predictor`).
+        scale : 'original'
+            Rescale the TRFs to the scale of the source data (the default is the
+            scale based on normalized predictors and responses).
+        smooth
+            Smooth the TRFs and metric maps in space (STD of the Gaussian kernel
+            in [m]; only for source data).
+        trfs
+            Include the TRF kernels. Set ``False`` to load only the fit metrics.
+        ...
+            State parameters.
+
+        Returns
+        -------
+        trf_ds
+            Dataset with ``subject``, ``epoch``, the estimator's fit metrics, and
+            one :class:`NDVar` per TRF component. ``trf_ds.info['xs']`` lists the
+            TRF component keys.
+        """
+        subject, group = self._process_subject_arg(subjects, state)
+        trf_options = self._trf_options(x, tstart, tstop, estimator, data, mask, samplingrate, filter_x)
+        options = {**trf_options, 'scale': scale, 'trfs': trfs}
+        if group is not None:
+            ds = self._load_derivative('trf-group-dataset', options=options)
+        else:
+            ds = self._load_derivative('trf-dataset', options=options)
+        is_source = bool(self.get('inv'))
+        self._smooth_trfs(ds, smooth, is_source)
+        return ds
+
+    @staticmethod
+    def _smooth_trfs(ds: Dataset, smooth: float, is_source: bool) -> None:
+        "Spatially smooth the TRF kernels and metric maps in ``ds`` in place"
+        if not smooth:
+            return
+        if not is_source:
+            raise ValueError(f"{smooth=}: smoothing is only available for source-space data")
+        for key in (*ds.info['xs'], *ds.info['metrics']):
+            if key in ds and isinstance(ds[key], NDVar) and ds[key].has_dim('source'):
+                ds[key] = ds[key].smooth('source', smooth, 'gaussian')
+
     def load_evoked(
             self,
             subjects: str | int = None,
-            baseline: BaselineArg = False,
-            ndvar: bool | int = True,
+            baseline: BaselineArg = True,
+            ndvar: bool | str = True,
             cat: Sequence[CellArg] = None,
             samplingrate: int = None,
             decim: int = None,
-            data: DataArg = 'sensor',
+            interpolate_bads: bool = False,
+            src_baseline: BaselineArg = False,
+            morph: bool = None,
+            keep_mne: bool = False,
+            model: str = '',
             **state):
         """
         Load a Dataset with condition average responses for each subject.
@@ -1116,14 +1458,17 @@ class Pipeline(StateModel):
             subject; ``-1`` for the current group. Default is current subject
             (or group if ``group`` is specified).
         baseline
-            Apply baseline correction using this period. True to use the
-            epoch's baseline specification. The default is to not apply baseline
-            correction.
-        ndvar : bool | 2
-            Convert the :class:`mne.Evoked` objects to an :class:`NDVar` (the
-            name in the Dataset is ``'meg'`` or ``'eeg'``). With
-            ``ndvar=False``, the :class:`mne.Evoked` objects are added as
-            ``'evoked'``. ``2`` to add both.
+            Apply baseline correction using this period. ``True`` (default) to
+            use the epoch's baseline specification; ``False`` to not apply
+            baseline correction.
+        ndvar
+            Data to convert to :class:`NDVar`. ``True`` (default) converts all
+            sensor types (with keys ``'meg'``/``'eeg'`` …); a sensor type
+            (``'meg'``/``'mag'``/``'grad'``/``'eeg'``), optionally aggregated
+            (e.g. ``'eeg.rms'``/``'eeg.mean'``), returns a single :class:`NDVar`;
+            ``False`` returns the :class:`mne.Evoked` objects as ``'evoked'``. In
+            source space (``inv`` set) the source estimates are returned as
+            ``'src'``.
         cat
             Only load data for these cells (cells of model).
         samplingrate
@@ -1131,18 +1476,32 @@ class Pipeline(StateModel):
             definition).
         decim
             Data decimation factor (alternative to ``samplingrate``).
-        data
-            Data to load; 'sensor' to load all sensor data (default);
-            'sensor.rms' to return RMS over sensors. Only applies to NDVar
-            output.
+        interpolate_bads
+            Interpolate channels marked as bad (useful when comparing topographies
+            across subjects; default ``False``; sensor space only).
+        src_baseline
+            Apply baseline correction in source space using this period (source
+            space only; ``True`` to use the epoch's baseline specification).
+        morph
+            Morph source estimates to the common brain (source space only;
+            default ``False``, except when loading multiple subjects with
+            ``ndvar=True``).
+        keep_mne
+            Also include the underlying :class:`mne.Evoked` (sensor space) or
+            sensor-space data (source space) in the returned :class:`Dataset`.
+        model
+            How to group trials into conditions before averaging (e.g.
+            ``'condition'`` or ``'a % b'``). The default (``''``) is the grand
+            average across all trials.
         ...
             Applicable :ref:`state-parameters`:
 
              - :ref:`state-raw`: preprocessing pipeline
              - :ref:`state-epoch`: which events to use and time window
-             - :ref:`state-rej`: which trials to use
-             - :ref:`state-model`: how to group trials into conditions
+             - :ref:`state-epoch_rejection`: which trials to use
              - :ref:`state-equalize_evoked_count`: control number of trials per cell
+             - :ref:`state-inv`: inverse solution (``inv=''`` for sensor space,
+               a non-empty inverse for source space)
 
         Notes
         -----
@@ -1151,189 +1510,58 @@ class Pipeline(StateModel):
         bad/excluded. When loading group level data, datasets are merged using
         interpolated data.
         """
-        data = TestDims.coerce(data)
-        if not data.sensor:
-            raise ValueError(f"data={data.string!r}; load_evoked is for loading sensor data")
-        elif data.sensor is not True and not ndvar:
-            raise ValueError(f"data={data.string!r} with ndvar=False")
         subject, group = self._process_subject_arg(subjects, state)
+        model = self._eval_model(model)
+        if inv := self.get('inv'):  # source space
+            if interpolate_bads:
+                raise ValueError("interpolate_bads not available for source-space data; set inv='' for sensor space")
+            if isinstance(ndvar, str):
+                raise ValueError(f"{ndvar=} with {inv=}: a data-kind ndvar is only valid for sensor-space evoked; in source space use ndvar=True or ndvar=False")
+            self._current_source_parc()
+            options = {
+                'model': model,
+                'baseline': baseline,
+                'src_baseline': src_baseline,
+                'cat': cat,
+                'keep_evoked': keep_mne,
+                'morph': morph,
+                'samplingrate': samplingrate,
+                'decim': decim,
+                'ndvar': ndvar,
+            }
+            if group is not None:
+                return self._load_derivative('evoked-stc-group-dataset', options=options)
+            return self._load_derivative('evoked-stc', options=options)
+
+        # sensor space
+        if isinstance(ndvar, str):
+            data = self._resolve_data(ndvar)
+            node_ndvar = 'both' if keep_mne else True
+        elif ndvar:
+            data = DataSpec('sensor')
+            node_ndvar = 'both' if keep_mne else True
+        else:
+            data = DataSpec('sensor')
+            node_ndvar = False
         epoch_name = self.get('epoch')
         epoch = self._epochs[epoch_name]
         if baseline is True:
             baseline = epoch.baseline
         options = {
+            'model': model,
             'baseline': baseline,
-            'ndvar': ndvar,
+            'ndvar': node_ndvar,
             'cat': cat,
             'samplingrate': samplingrate,
             'decim': decim,
+            'interpolate_bads': interpolate_bads,
             'data': data,
         }
         if group is not None:
-            self.set(group=group)
+            # Group data is merged in a common sensor space, so bad channels are always interpolated (the interpolate_bads argument only controls single-subject loads).
+            options['interpolate_bads'] = True
             return self._load_derivative('evoked-group-dataset', options=options)
-        if subject is not None:
-            self.set(subject=subject)
         return self._load_derivative('evoked', options=options)
-
-    def load_evoked_stc(
-            self,
-            subjects: str | int = None,
-            baseline: BaselineArg = True,
-            src_baseline: BaselineArg = False,
-            cat: Sequence[CellArg] = None,
-            keep_evoked: bool = False,
-            morph: bool = None,
-            samplingrate: int = None,
-            decim: int = None,
-            ndvar: bool = True,
-            **state):
-        """Load evoked source estimates.
-
-        Parameters
-        ----------
-        subjects : str | 1 | -1
-            Subject(s) for which to load data. Can be a single subject
-            name or a group name such as ``'all'``. ``1`` to use the current
-            subject; ``-1`` for the current group. Default is current subject
-            (or group if ``group`` is specified).
-        baseline
-            Apply baseline correction using this period in sensor space.
-            True to use the epoch's baseline specification. The default is True.
-        src_baseline
-            Apply baseline correction using this period in source space.
-            True to use the epoch's baseline specification. The default is to
-            not apply baseline correction.
-        cat
-            Only load data for these cells (cells of model).
-        keep_evoked
-            Keep the sensor space data in the Dataset that is returned (default
-            False).
-        morph
-            Morph the source estimates to the common brain
-            (default ``False``, except when loading multiple subjects and ``ndvar=True``).
-        samplingrate
-            Samplingrate in Hz for the analysis (default is specified in epoch
-            definition).
-        decim
-            Data decimation factor (alternative to ``samplingrate``).
-        ndvar
-            Add the source estimates as NDVar named "src" instead of a list of
-            :class:`mne.SourceEstimate` objects named "stc" (default True).
-        ...
-            Applicable :ref:`state-parameters`:
-
-             - :ref:`state-raw`: preprocessing pipeline
-             - :ref:`state-epoch`: which events to use and time window
-             - :ref:`state-rej`: which trials to use
-             - :ref:`state-model`: how to group trials into conditions
-             - :ref:`state-equalize_evoked_count`: control number of trials per cell
-             - :ref:`state-cov`: covariance matrix for inverse solution
-             - :ref:`state-src`: source space
-             - :ref:`state-inv`: inverse solution
-
-        """
-        self._current_source_parc(**state)
-        subject, group = self._process_subject_arg(subjects, state)
-        options = {
-            'baseline': baseline,
-            'src_baseline': src_baseline,
-            'cat': cat,
-            'keep_evoked': keep_evoked,
-            'morph': morph,
-            'samplingrate': samplingrate,
-            'decim': decim,
-            'ndvar': ndvar,
-        }
-        if group is not None:
-            self.set(group=group)
-            return self._load_derivative('evoked-stc-group-dataset', options=options)
-        if subject is not None:
-            self.set(subject=subject)
-        return self._load_derivative('evoked-stc', options=options)
-
-    def load_induced_stc(
-            self,
-            subjects: str | int = None,
-            frequencies: float | Sequence[float] = None,
-            n_cycles: float | Sequence[float] = None,
-            pad: float = 0.250,
-            baseline: BaselineArg = True,
-            cat: Sequence[CellArg] = None,
-            morph: bool = False,
-            decim: int = 1,
-            **state,
-    ) -> Dataset:
-        """Morlet wavelet induced power and phase in source space.
-
-        Parameters
-        ----------
-        subjects : str | 1 | -1
-            Subject(s) for which to load data. Can be a single subject
-            name or a group name such as ``'all'``. ``1`` to use the current
-            subject; ``-1`` for the current group. Default is current subject
-            (or group if ``group`` is specified).
-        frequencies
-            Frequencies for which to compute induced activity.
-        n_cycles
-            Number of cycles in each wavelet. Fixed number or one per frequency.
-        pad
-            Pad the epochs data to avoid edge effects in wavelet representation
-            (specified in seconds; default 0.250).
-        baseline
-            Baseline for the epochs, ``True`` to use the epoch's baseline
-            specification (default).
-        cat
-            Only load data for these cells (cells of model).
-        morph
-            Morph the source estimates to the common_brain (default False).
-        decim
-            Decimate time-frequency representation (cumulative with epoch
-            decimation factor).
-        ...
-            Applicable :ref:`state-parameters`:
-
-             - :ref:`state-raw`: preprocessing pipeline
-             - :ref:`state-epoch`: which events to use and time window
-             - :ref:`state-rej`: which trials to use
-             - :ref:`state-model`: how to group trials into conditions
-             - :ref:`state-equalize_evoked_count`: control number of trials per cell
-             - :ref:`state-cov`: covariance matrix for inverse solution
-             - :ref:`state-src`: source space
-             - :ref:`state-inv`: inverse solution
-        """
-        self._current_source_parc(**state)
-        subject, group = self._process_subject_arg(subjects, state)
-        if frequencies is None:
-            frequencies = np.logspace(2, 5, 10, base=2)
-        elif not np.isscalar(frequencies):
-            frequencies = np.asarray(frequencies)
-
-        if n_cycles is None:
-            n_cycles = frequencies / 3
-        elif not np.isscalar(n_cycles):
-            n_cycles = np.asarray(n_cycles)
-
-        epoch_name = self.get('epoch')
-        epoch = self._epochs[epoch_name]
-        if group is not None:
-            dss = []
-            for _ in self.iter(group=group, progress_bar=f"Load induced {epoch_name}"):
-                ds = self.load_induced_stc(None, frequencies, n_cycles, pad, baseline, cat, morph, decim)
-                dss.append(ds)
-            return combine(dss)
-
-        # 1 subject
-        ds = self.load_epochs_stc(1, baseline, False, cat, morph=morph, pad=pad)
-        # conditions
-        model = self.get('model') or None
-        stc = ds['srcm' if morph else 'src']
-        cwt = cwt_morlet(stc, frequencies, False, n_cycles, True, 'complex', decim)
-        if pad:
-            cwt = cwt.sub(time=(epoch.tmin, epoch.tmax + cwt.time.tstep / 10))
-        cwt.x = (cwt.x * cwt.x.conj()).real
-        ds['power'] = cwt
-        return ds.aggregate(model, drop_bad=True)
 
     def load_fwd(
             self,
@@ -1414,7 +1642,6 @@ class Pipeline(StateModel):
 
     def load_inv(
             self,
-            fiff: Any = None,
             ndvar: bool = False,
             **state,
     ) -> mne.minimum_norm.InverseOperator | NDVar:
@@ -1422,9 +1649,6 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        fiff : Raw | Epochs | Evoked | ...
-            Object which provides the mne info dictionary (default: load the
-            raw file).
         ndvar
             Return the inverse operator as NDVar (default is
             :class:`mne.minimum_norm.InverseOperator`). The NDVar representation
@@ -1434,36 +1658,34 @@ class Pipeline(StateModel):
             Applicable :ref:`state-parameters`:
 
              - :ref:`state-raw`: preprocessing pipeline
-             - :ref:`state-rej`: which trials to use
+             - :ref:`state-epoch_rejection`: which trials to use
              - :ref:`state-cov`: covariance matrix for inverse solution
              - :ref:`state-src`: source space
              - :ref:`state-inv`: inverse solution
 
         """
-        with self._temporary_state:
-            if state:
-                self.set(**state)
-            inv = self._load_derivative('inv', cache=self.cache_inv, options={'fiff': fiff})
+        if state:
+            self.set(**state)
+        inv = self._load_derivative('inv')
 
-            if ndvar:
-                parc = self._current_source_parc()
-                inv = load.mne.inverse_operator(inv, self.get('src'), self.root / MRI_SDIR, parc)
-                if parc:
-                    inv = _drop_unknown_labels(inv)
-            return inv
+        if ndvar:
+            parc = self._current_source_parc()
+            inv = load.mne.inverse_operator(inv, self.get('src'), self.root / MRI_SDIR, parc)
+            if parc:
+                inv = _drop_unknown_labels(inv)
+        return inv
 
     def _prepare_inv(
             self,
-            fiff: Any,
             morph: bool,
     ):
-        # load inv
-        parc = self._current_source_parc()
+        """Prepare for local MNE source localization"""
         # make sure annotation exists
+        parc = self._current_source_parc()
         if parc:
             self.make_annot()
 
-        inv = self.load_inv(fiff)
+        inv = self.load_inv()
 
         # determine whether initial source-space can be restricted
         subjects_dir = str(self.root / MRI_SDIR)
@@ -1636,7 +1858,7 @@ class Pipeline(StateModel):
 
         if ndvar:
             source_pipe = self._raw.root_source_pipe(raw_name)
-            data = TestDims('sensor')
+            data = DataSpec('sensor')
             data_kind = data.data_to_ndvar(raw.info)[0]
             sysname = source_pipe._get_sysname(raw.info, self.get('subject'), data_kind)
             adjacency = source_pipe._get_adjacency(data_kind)
@@ -1644,11 +1866,9 @@ class Pipeline(StateModel):
 
         return raw
 
-    def _current_source_parc(self, **state) -> str:
-        return _source_parc({
-            'src': self.get('src', **state),
-            'parc': self.get('parc', **state),
-        })
+    def _current_source_parc(self) -> str:
+        """Ensure valid parc setting in state"""
+        return _source_parc(self.state)
 
     def load_raw_stc(
             self,
@@ -1683,7 +1903,7 @@ class Pipeline(StateModel):
              - :ref:`state-raw`: preprocessing pipeline
         """
         raw = self.load_raw(samplingrate=samplingrate, tstart=tstart, tstop=tstop, **kwargs)
-        inv, label, mri_sdir, mrisubject, is_scaled, parc = self._prepare_inv(raw, morph)
+        inv, label, mri_sdir, mrisubject, is_scaled, parc = self._prepare_inv(morph)
         solution = InverseSolution._coerce(self.get('inv'))
         stc = apply_inverse_raw(raw, inv, label=label, **solution._apply_kw)
 
@@ -1791,7 +2011,7 @@ class Pipeline(StateModel):
             pmin: PMinArg = None,
             disconnect_labels: bool = False,
             samples: int = 10000,
-            data: str = 'source',
+            data: str = None,
             baseline: BaselineArg = True,
             smooth: float = None,
             src_baseline: BaselineArg = None,
@@ -1824,13 +2044,17 @@ class Pipeline(StateModel):
             number ≥ ``samples`` the cached version is returned, otherwise the
             test is recomputed.
         data
-            Data to test, for example:
+            Data *kind* to test (the analysis *space* is set by the ``inv``
+            state: ``inv=''`` for sensor space, a non-empty inverse for source
+            space). The default (``None``) uses :attr:`default_data` in sensor
+            space, or the full source estimates in source space. Examples:
 
-            - ``'source'`` spatio-temporal test in source space.
-            - ``'sensor'`` spatio-temporal test in sensor space (MEG).
-            - ``'eeg'`` spatio-temporal test in EEG sensor space.
-            - ``'source.mean'`` ROI mean time course.
-            - ``'sensor.rms'`` RMS across sensors.
+            - ``None`` with ``inv`` set: spatio-temporal test in source space.
+            - ``None`` with ``inv=''``: spatio-temporal test in sensor space
+              (using :attr:`default_data`, e.g. ``'meg'`` or ``'eeg'``).
+            - ``'source.mean'`` with ``inv`` set: ROI mean time course.
+            - ``'eeg.rms'`` with ``inv=''``: RMS across the EEG sensors.
+            - ``'eeg'`` with ``inv=''``: spatio-temporal test of EEG sensors.
 
         baseline
             Apply baseline correction using this period in sensor space.
@@ -1868,10 +2092,11 @@ class Pipeline(StateModel):
             Test result for the specified test (for ROIs tests,
             an :class:`~_experiment.ROITestResult` object).
         """
-        self.set(test=test, **state)
-        data = TestDims.coerce(data, morph=True)
+        test_obj = self.tests[test]
+        self.set(**state)
+        data = self._resolve_data(data, morph=True)
         if data.source:
-            self._current_source_parc(**state)
+            self._current_source_parc()
         data._testnd_parc(disconnect_labels)
         options = {
             'data': data,
@@ -1886,7 +2111,6 @@ class Pipeline(StateModel):
             'smooth': smooth,
             'samplingrate': samplingrate,
         }
-        test_obj = self.tests[test]
         result_node = 'two-stage-level-2' if isinstance(test_obj, TwoStageTest) else 'test-result'
         data_node = 'two-stage-data' if isinstance(test_obj, TwoStageTest) else 'evoked-test-data'
         handle = self._resolve_derivative(result_node, options=options)
@@ -1894,13 +2118,9 @@ class Pipeline(StateModel):
         desc = self._derivatives.describe_artifact_path(dst)
 
         if handle.is_valid():
-            try:
-                res = handle.load()
-            except OldVersionError:
-                res = None
-            else:
-                if not return_data:
-                    return res
+            res = handle.load()
+            if not return_data:
+                return res
         elif not make and dst.exists():
             raise OSError(f"The requested test is outdated: {desc}. Set make=True to perform the test.")
         else:
@@ -2132,9 +2352,8 @@ class Pipeline(StateModel):
                 event_dss = []
                 offset = 0.0  # seconds into the concatenated recording
                 with self._temporary_state:
-                    self.set(raw=pipe.source)
-                    for task_ in task:
-                        ds_t = self.load_events(task=task_).copy()
+                    for state in ctx.node._source_states(ctx, task):
+                        ds_t = self.load_events(raw=pipe.source, **state)
                         ds_t['onset'] = ds_t['onset'] + offset
                         event_dss.append(ds_t)
                         offset += (ds_t.info['raw.last_samp'] - ds_t.info['raw.first_samp'] + 1) / ds_t.info['raw.samplingrate']
@@ -2158,12 +2377,17 @@ class Pipeline(StateModel):
             info = ds['epochs'].info
             decim = None
             display_data = ds
-        data = TestDims('sensor')
+        data = DataSpec('sensor')
         data_kind = data.data_to_ndvar(info)[0]
         source_pipe = self._raw.root_source_pipe(ica_name)
         sysname = source_pipe._get_sysname(info, subject, data_kind)
         adjacency = source_pipe._get_adjacency(data_kind)
-        frame = gui.select_components(path, display_data, sysname, adjacency, decim, debug, events=labeled_events)
+        try:
+            frame = gui.select_components(path, display_data, sysname, adjacency, decim, debug, events=labeled_events)
+        except DimensionMismatchError as error:
+            # The sensors no longer match those the ICA was estimated on, which
+            # in this context means the bad channels have changed.
+            raise ICAChannelsChangedError(path) from error
         return frame
 
     def make_bad_channels_selection(
@@ -2174,8 +2398,9 @@ class Pipeline(StateModel):
         """GUI for selecting bad channels in continuous M/EEG recordings
 
         Opens :func:`eelbrain.gui.select_channels` for the current subject.
-        The document is the BIDS ``*_channels.tsv`` file at the root source
-        of the selected raw pipeline stage. Events come from labeled-events.
+        The document is the Pipeline-specific ``*_channels.tsv`` file under
+        the ``derivatives/mne/`` hierarchy (seeded from the BIDS source the
+        first time it is written). Events come from labeled-events.
 
         Parameters
         ----------
@@ -2193,19 +2418,21 @@ class Pipeline(StateModel):
         subject = self.get('subject')
         # Load raw at the requested pipeline stage (unprocessed input if source)
         raw_data = self._load_derivative(raw_node_name(raw_name), options={'preload': False, 'noise': False})
-        # Channels.tsv is always from the root source
+        # Bad channels are stored in the derivatives/mne hierarchy; ensure the
+        # file exists (seeded from the BIDS source) so the GUI can read/write it
         bads_ctx = self._resolve_derivative(raw_bad_channels_input_name(source_name))
+        bads_ctx.node.write(bads_ctx, raw_data, [], redo=False, create=True)
         channels_path = bads_ctx.node.path(bads_ctx)
         # Labeled events for the timeline
         events = self._load_derivative('labeled-events')
         # Sensor system info
         source_pipe = self._raw.root_source_pipe(raw_name)
-        data_kind = TestDims('sensor').data_to_ndvar(raw_data.info)[0]
+        data_kind = DataSpec('sensor').data_to_ndvar(raw_data.info)[0]
         sysname = source_pipe._get_sysname(raw_data.info, subject, data_kind)
         adjacency = source_pipe._get_adjacency(data_kind)
         return gui.select_channels(raw_data, channels_path, events=events, sysname=sysname, adjacency=adjacency)
 
-    def make_ica(self, **state):
+    def make_ica(self, **state) -> Path:
         """Compute ICA decomposition for a :class:`pipeline.RawICA` preprocessing step
 
         Parameters
@@ -2215,7 +2442,7 @@ class Pipeline(StateModel):
 
         Returns
         -------
-        path : str
+        path : Path
             Path to the ICA file.
 
         Notes
@@ -2260,7 +2487,7 @@ class Pipeline(StateModel):
                 raise RuntimeError(f"{command=}")
             else:
                 raise RuntimeError("User aborted ICA overwrite")
-        return str(self.root / ica_file_path(ctx.state, ica_raw_name))
+        return self._raw[ica_raw_name].path(ctx)
 
     def make_movie_dspm(
             self,
@@ -2325,9 +2552,8 @@ class Pipeline(StateModel):
         ...
             State parameters.
         """
-        state['model'] = ''
         subject, group = self._process_subject_arg(subjects, state)
-        data = TestDims("source", morph=bool(group))
+        data = DataSpec("source", morph=bool(group))
         brain_kwargs = self._surfer_plot_kwargs(surf, views, foreground, background, smoothing_steps, hemi)
         self.set(equalize_evoked_count='')
 
@@ -2439,9 +2665,9 @@ class Pipeline(StateModel):
             pmid = 0.0001
             pmin = 0.00001
         else:
-            raise ValueError(f"p={p}")
+            raise ValueError(f"{p=}")
 
-        data = TestDims("source", morph=True)
+        data = DataSpec("source", morph=True)
         brain_kwargs = self._surfer_plot_kwargs(surf, views, foreground, background, smoothing_steps, hemi)
         surf = brain_kwargs['surf']
         if model:
@@ -2456,31 +2682,29 @@ class Pipeline(StateModel):
         else:
             cat = None
 
-        state.update(model=model)
-        self._current_source_parc(**state)
-        with self._temporary_state:
-            subject, group = self._process_subject_arg(subjects, state)
-            if dst is not None:
-                dst = os.path.expanduser(dst)
+        subject, group = self._process_subject_arg(subjects, state)
+        if dst is not None:
+            dst = Path(dst).expanduser()
 
-            options = {
-                'dst': dst,
-                'data': data,
-                'single_subject': group is None,
-                'subject': subject,
-                'group': group,
-                'baseline': baseline,
-                'src_baseline': src_baseline,
-                'disconnect_labels': disconnect_labels,
-                'cat': cat,
-                'p': p,
-                'pmin': pmin,
-                'pmid': pmid,
-                'surf': surf,
-                'time_dilation': time_dilation,
-                'cluster_state': state,
-            }
-            self._load_derivative('movie-ttest', options=options, redo=redo, controls={ALLOW_PROTECTED_OVERWRITE})
+        options = {
+            'dst': dst,
+            'data': data,
+            'model': self._eval_model(model),
+            'single_subject': group is None,
+            'subject': subject,
+            'group': group,
+            'baseline': baseline,
+            'src_baseline': src_baseline,
+            'disconnect_labels': disconnect_labels,
+            'cat': cat,
+            'p': p,
+            'pmin': pmin,
+            'pmid': pmid,
+            'surf': surf,
+            'time_dilation': time_dilation,
+            'cluster_state': state,
+        }
+        self._load_derivative('movie-ttest', options=options, redo=redo, controls={ALLOW_PROTECTED_OVERWRITE})
 
     def make_plot_annot(self, surf='inflated', redo=False, **state):
         """Create a figure for the contents of an annotation file
@@ -2559,18 +2783,20 @@ class Pipeline(StateModel):
         )
         return directory / f'{join_stem_parts(label)}.png'
 
-    def make_epoch_selection(
+    def make_epoch_rejection(
             self,
             samplingrate: int = None,
             auto: float | dict = None,
             overwrite: bool = None,
             decim: int = None,
             **state):
-        """Open :func:`gui.select_epochs` for manual epoch selection
+        """Open :func:`gui.select_epochs` for the current epoch rejection
 
-        The GUI is opened with the correct file name; if the corresponding
-        file exists, it is loaded, and upon saving the correct path is
-        the default.
+        For a :class:`ManualRejection` the GUI is opened for editing (with the
+        correct file name; an existing file is loaded and is the default save
+        path). For an automatically generated rejection (e.g.
+        :class:`ChannelModelRejection`) the rejection is computed/cached and the
+        GUI is opened **read-only** for inspection.
 
         Parameters
         ----------
@@ -2603,21 +2829,31 @@ class Pipeline(StateModel):
         selection, create the corresponding selection file for each target
         preprocessing setting.
         """
-        rej = self.get('rej', **state)
-        rej_args = self._artifact_rejection[rej]
-        if rej_args['kind'] != 'manual':
-            raise ValueError(f"{rej=}; Epoch rejection is not manual")
+        rej = self.get('epoch_rejection', **state)
+        rej_args = self._epoch_rejection[rej]
+        if rej_args is None:
+            raise ValueError(f"epoch_rejection={rej!r}; no epoch rejection configured")
 
         epoch = self._epochs[self.get('epoch')]
         if not isinstance(epoch, PrimaryEpoch):
             if isinstance(epoch, SecondaryEpoch):
-                raise ValueError(f"The current epoch {epoch.name!r} inherits selections from {epoch.sel_epoch!r}. To access a rejection file for this epoch, call `e.set(epoch={epoch.sel_epoch!r})` and then call `e.make_epoch_selection()` again.")
+                raise ValueError(f"The current epoch {epoch.name!r} inherits selections from {epoch.sel_epoch!r}. To access a rejection file for this epoch, call `e.set(epoch={epoch.sel_epoch!r})` and then call `e.make_epoch_rejection()` again.")
             elif isinstance(epoch, SuperEpoch):
-                raise ValueError(f"The current epoch {epoch.name!r} inherits selections from these other epochs: {epoch.sub_epochs!r}. To access selections for these epochs, call `e.make_epoch_selection(epoch=epoch)` for each.")
+                raise ValueError(f"The current epoch {epoch.name!r} inherits selections from these other epochs: {epoch.sub_epochs!r}. To access selections for these epochs, call `e.make_epoch_rejection(epoch=epoch)` for each.")
             else:
                 raise ValueError(f"The current epoch {epoch.name!r} is not a primary epoch and inherits selections from other epochs. Generate trial rejection for these epochs.")
 
-        rej_ctx = self._resolve_derivative('rej-input')
+        if isinstance(rej_args, ChannelModelRejection):
+            # automatically generated: build+cache the rejection, then inspect read-only
+            rej_ctx = self._resolve_derivative('epoch-rejection-channel-model')
+            rej_ctx.load()
+            path = rej_ctx.node.path(rej_ctx)
+            ds = self._load_derivative('epochs', options={'reject': False, 'ndvar': False})
+            return gui.select_epochs(ds, 'epochs', trigger='value', path=path, read_only=True)
+        elif not isinstance(rej_args, ManualRejection):
+            raise NotImplementedError(f"make_epoch_rejection for {type(rej_args).__name__}")
+
+        rej_ctx = self._resolve_derivative('epoch-rejection-input')
         path = rej_ctx.node.path(rej_ctx)
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -2630,7 +2866,7 @@ class Pipeline(StateModel):
                 raise TypeError(f"{overwrite=}")
 
         if auto is not None:
-            ds = self._load_derivative('epochs', options={'reject': False, 'ndvar': True})  # trigger_shift=False??
+            ds = self._load_derivative('epochs', options={'reject': False, 'ndvar': True})
             ch_types = ['meg', 'mag', 'grad', 'planar1', 'planar2', 'eeg']
             ch_types = [t for t in ch_types if t in ds]
             if not ch_types:
@@ -2659,16 +2895,16 @@ class Pipeline(StateModel):
                 args.append(f"{samplingrate=}")
             if decim is not None:
                 args.append(f"{decim=}")
-            rej_ds.info['desc'] = f"Created with {self.__class__.__name__}.make_epoch_selection({', '.join(args)})"
+            rej_ds.info['desc'] = f"Created with {self.__class__.__name__}.make_epoch_rejection({', '.join(args)})"
             # save
             save.pickle(rej_ds, path)
             # print info
             n_rej = rej_ds.eval("sum(accept == False)")
             desc = self.format("{subject}, epoch {epoch}")
-            self._log.info(f"make_epoch_selection: {n_rej} of {rej_ds.n_cases} epochs rejected with threshold {auto} for {desc}")
+            self._log.info(f"make_epoch_rejection: {n_rej} of {rej_ds.n_cases} epochs rejected with threshold {auto} for {desc}")
             return
 
-        ds = self._load_derivative('epochs', options={'reject': False, 'ndvar': False})  # trigger_shift=False??
+        ds = self._load_derivative('epochs', options={'reject': False, 'ndvar': False})
         # eog_sns = self._eog_sns.get(ds[y_name].sensor.sysname, ())
         # don't mark eog sns if it is bad
         # bad_channels = self.load_bad_channels()
@@ -2736,8 +2972,8 @@ class Pipeline(StateModel):
             raise ValueError(f"{include=}: needs to be 0 < include <= 1")
 
         self.set(**state)
-        self._current_source_parc(**state)
-        data = TestDims('source', morph=True)
+        self._current_source_parc()
+        data = DataSpec('source', morph=True)
         options = {
             'data': data,
             'samples': samples,
@@ -2798,15 +3034,15 @@ class Pipeline(StateModel):
         --------
         load_test : load corresponding data and tests (use ``data="source.mean"``)
         """
-        self.set(test=test, **state)
         test_obj = self.tests[test]
+        self.set(**state)
         if samples < 1:
             raise ValueError("Need samples > 0 to run permutation test.")
         elif isinstance(test_obj, TwoStageTest):
             raise NotImplementedError("ROI analysis not implemented for two-stage tests")
 
-        self._current_source_parc(**state)
-        data = TestDims('source.mean')
+        self._current_source_parc()
+        data = DataSpec('source.mean')
         options = {
             'data': data,
             'samples': samples,
@@ -3093,7 +3329,7 @@ class Pipeline(StateModel):
         with self._temporary_state:
             raw = self.load_raw(raw='raw')
         state_ = self._fields
-        fig = mne.viz.plot_alignment(raw.info, self.root / trans_file_path(state_), self.get('mrisubject'), self.root / MRI_SDIR, surfaces, meg=meg, dig=dig, interaction='terrain')
+        fig = mne.viz.plot_alignment(raw.info, self.root / trans_file_path(state_, datatype=self._datatype), self.get('mrisubject'), self.root / MRI_SDIR, surfaces, meg=meg, dig=dig, interaction='terrain')
         if parallel:
             fig.plotter.enable_parallel_projection()
         return fig
@@ -3113,7 +3349,6 @@ class Pipeline(StateModel):
         gfps = []
         subjects = []
         with self._temporary_state:
-            self.set(model='')
             for subject in self.iter_range(s_start, s_stop):
                 cov = self.load_cov()
                 picks = np.arange(len(cov.ch_names))
@@ -3144,6 +3379,7 @@ class Pipeline(StateModel):
             name: str = None,
             h: float = 2.5,
             run: bool = None,
+            model: str = '',
             **kwargs):
         """Plot evoked sensor data
 
@@ -3173,16 +3409,23 @@ class Pipeline(StateModel):
         run
             Run the GUI after plotting (default in accordance with plotting
             default).
+        model
+            How to group trials into conditions before averaging. The default
+            (``''``) plots the grand average.
         ...
             State parameters.
         """
         subject, group = self._process_subject_arg(subjects, kwargs)
+        source_inv = self.get('inv')  # source space requires a configured inverse
         if data is None:
-            sns = src = True
+            sns = True
+            src = bool(source_inv)  # only plot source estimates if an inverse is configured
         else:
-            data = TestDims.coerce(data)
+            data = DataSpec.coerce(data)
             sns, src = bool(data.sensor), bool(data.source)
-        model = self.get('model') or None
+            if src and not source_inv:
+                raise ValueError(f"data={data.string!r}: no inverse is configured (inv=''); set inv to plot source estimates")
+        model = self._eval_model(model)
         epoch = self.get('epoch')
         if model:
             model_name = f"~{model}"
@@ -3201,10 +3444,10 @@ class Pipeline(StateModel):
             plots = []
             vlim = []
             for subject in self.iter(group=group):
-                ds = self.load_evoked(baseline=baseline)
+                ds = self.load_evoked(baseline=baseline, model=model)
                 y = guess_y(ds)
                 title = f"{subject} {epoch} {model_name}"
-                p = plot.TopoButterfly(y, model, data=ds, axh=h, name=title, run=False)
+                p = plot.TopoButterfly(y, model or None, data=ds, axh=h, name=title, run=False)
                 plots.append(p)
                 vlim.append(p.get_vlim())
 
@@ -3229,7 +3472,7 @@ class Pipeline(StateModel):
             src_key = 'srcm'
 
         if src:
-            ds = self.load_evoked_stc(subject_arg, baseline=baseline, keep_evoked=sns)
+            ds = self.load_evoked(subject_arg, baseline=baseline, keep_mne=sns, inv=source_inv, model=model)
             out = [ds]
             if model:
                 x = ds.eval(model)
@@ -3244,12 +3487,12 @@ class Pipeline(StateModel):
                 out.extend(plots)
             right_of = out[2]
         else:
-            ds = self.load_evoked(subject_arg, baseline=baseline)
+            ds = self.load_evoked(subject_arg, baseline=baseline, inv='', model=model)
             out = [ds]
             right_of = None
         if sns:
             key = 'meg' if 'meg' in ds else 'eeg'
-            p = plot.TopoButterfly(key, model, data=ds, axh=h, w=2.5 * h, name=title, right_of=right_of, run=run)
+            p = plot.TopoButterfly(key, model or None, data=ds, axh=h, w=2.5 * h, name=title, right_of=right_of, run=run)
             if right_of:
                 p.link_time_axis(right_of)
             out.append(p)
@@ -3283,7 +3526,7 @@ class Pipeline(StateModel):
         """
         raw = self.load_raw(ndvar=True, decim=decim, **state)
         state_ = self._fields
-        name = join_stem_parts(raw_basename(state_), f'raw-{state_["raw"]}')
+        name = join_stem_parts(raw_basename(state_, datatype=self._datatype), f'raw-{state_["raw"]}')
         if raw.info['meas'] == 'V':
             vmax = 1.5e-4
         elif raw.info['meas'] == 'B':
@@ -3293,39 +3536,6 @@ class Pipeline(StateModel):
         if subtract_mean:
             raw -= raw.mean('time')
         return plot.TopoButterfly(raw, w=0, h=3, xlim=xlim, vmax=vmax, name=name)
-
-    def run_mne_analyze(self, modal=False):
-        """Run mne_analyze
-
-        Parameters
-        ----------
-        modal : bool
-            Causes the shell to block until mne_analyze is closed.
-
-        Notes
-        -----
-        Sets the current directory to raw-dir, and sets the SUBJECT and
-        SUBJECTS_DIR to current values
-        """
-        state_ = self._fields
-        subp.run_mne_analyze(str(self.root / raw_dir(state_)), self.get('mrisubject'),
-                             str(self.root / MRI_SDIR), modal)
-
-    def run_mne_browse_raw(self, modal=False):
-        """Run mne_analyze
-
-        Parameters
-        ----------
-        modal : bool
-            Causes the shell to block until mne_browse_raw is closed.
-
-        Notes
-        -----
-        Sets the current directory to raw-dir, and sets the SUBJECT and
-        SUBJECTS_DIR to current values
-        """
-        state_ = self._fields
-        subp.run_mne_browse_raw(str(self.root / raw_dir(state_)), self.get('mrisubject'), str(self.root / MRI_SDIR), modal)
 
     def set(self, subject: str = None, match: bool = True, **state):
         """
@@ -3465,7 +3675,7 @@ class Pipeline(StateModel):
             ori: str = 'free',
             snr: float = 3,
             method: str = 'dSPM',
-            depth: float = 0.8,
+            depth: float = 0,
             pick_normal: bool = False,
     ):
         "Construct inv string from settings; see :meth:`.set_inv`"
@@ -3473,6 +3683,8 @@ class Pipeline(StateModel):
 
     @staticmethod
     def _eval_inv(inv: str):
+        if inv == '':  # sensor space
+            return ''
         return MinimumNormInverseSolution._from_string(inv)._string()
 
     def _eval_model(self, model: str) -> str:
@@ -3566,12 +3778,6 @@ class Pipeline(StateModel):
         ``parc_definition`` is ``None`` when ``parc=''``.
         """
         return _resolve_parc(self._parcs, self.get('parc'))
-
-    def _post_set_test(self, _: str, test: str) -> None:
-        if test != '*' and test in self.tests:  # with vmatch=False, test object might not be availale
-            test_obj = self.tests[test]
-            if test_obj.model is not None:
-                self.set(model=test_obj.model)
 
     def show_bad_channels(
             self,
@@ -3734,8 +3940,7 @@ class Pipeline(StateModel):
         CHL_MARK = '†'
 
         # Collect dev_head_t for every (subject, session, task, run).
-        # Iterating over these four fields always yields 4-tuples; session is ''
-        # when the dataset has no BIDS sessions, run is '' when no runs exist.
+        # session is '' when the dataset has no BIDS sessions, run is '' when no runs exist.
         source_name = self._raw.root_source_name('raw')
         node_name = raw_input_name(source_name)
         # Inner dicts are keyed by (task, run) pairs.
@@ -3840,15 +4045,17 @@ class Pipeline(StateModel):
                 pat_str = '–'.join(majority_pat)
                 if majority_n == len(subjects):
                     if set(majority_pat) == {'A'}:
-                        return "All subjects have the same head position for all tasks."
-                    return f"All subjects: {pat_str}."
-                exceptions = [
-                    f"{s} ({'–'.join(p)})"
-                    for s, p in zip(subjects, patterns)
-                    if p != majority_pat
-                ]
-                pattern = f"Majority ({majority_n}/{len(subjects)} subjects): {pat_str}. Exceptions: {', '.join(exceptions)}."
-                parts.append(pattern)
+                        parts.append("All subjects have the same head position for all tasks.")
+                    else:
+                        parts.append(f"All subjects: {pat_str}.")
+                else:
+                    exceptions = [
+                        f"{s} ({'–'.join(p)})"
+                        for s, p in zip(subjects, patterns)
+                        if p != majority_pat
+                    ]
+                    pattern = f"Majority ({majority_n}/{len(subjects)} subjects): {pat_str}. Exceptions: {', '.join(exceptions)}."
+                    parts.append(pattern)
             if any_missing:
                 parts.append(f"{MISSING_MARK}: no initial head position (dev_head_t).")
             if any_chl:
@@ -3998,10 +4205,10 @@ class Pipeline(StateModel):
             self.set(**state)
         raw_name = self.get('raw')
         epoch_name = self.get('epoch')
-        rej_name = self.get('rej')
-        rej = self._artifact_rejection[rej_name]
-        has_epoch_rejection = rej['kind'] is not None
-        has_interp = rej.get('interpolation')
+        rej_name = self.get('epoch_rejection')
+        rej = self._epoch_rejection[rej_name]
+        has_epoch_rejection = rej is not None
+        has_interp = rej is not None and rej.interpolation
 
         # format bad channels
         if bads:
@@ -4051,7 +4258,7 @@ class Pipeline(StateModel):
         caption = f"Rejection info for raw={raw_name}, epoch={epoch_name}, rej={rej_name}. Percent is rounded to one decimal."
 
         if bads_in_rej:
-            caption += " Bad channels: defined in bad_channels file and in rej-file."
+            caption += " Bad channels: defined in bad_channels file and in epoch-rejection file."
             bad_chs = [f'{bads_raw} + {bads_rej}' for bads_raw, bads_rej in bad_chs]
         else:
             bad_chs = [f'{bads_raw}' for bads_raw, bads_rej in bad_chs]
@@ -4130,7 +4337,7 @@ class Pipeline(StateModel):
                 #     pass
                 # FIXME: use ctx.node.exists()
                 fixed_state = {k: v for k, v in self._fields.items() if not (isinstance(v, str) and '*' in v)}
-                query = bids_path(self.root, fixed_state, self._raw_extension)
+                query = bids_path(self.root, fixed_state, self._raw_extension, datatype=self._datatype)
                 matches = query.match()
                 basenames = [match.basename for match in matches]
                 raw_list.append(', '.join(basenames))

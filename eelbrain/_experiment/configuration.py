@@ -1,100 +1,12 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 import inspect
-from itertools import chain
 import logging
 from typing import Any
 from collections.abc import Sequence
 
-from .._exceptions import ConfigurationError
+from .._exceptions import ConfigurationError, ConfigurationKeyError
 from .._text import enumeration, plural
 from .._utils.parse import find_variables
-
-
-class CodeBase:
-    _sep = ' '
-
-    def __init__(
-            self,
-            string: str,
-            code_string: str = None,
-    ):
-        self.string = string
-        if code_string is None:
-            code_string = string
-        self._items = code_string.split(self._sep)
-        self._i = -1
-        self.lookahead_1 = self.lookahead()
-
-    @classmethod
-    def coerce(cls, obj):
-        if isinstance(obj, cls):
-            return obj
-        else:
-            return cls(obj)
-
-    def __repr__(self):
-        return f"{self.__class__.__name__}({self.string!r})"
-
-    def next(self, lookahead=0):
-        self._i += 1
-        self.lookahead_1 = self.lookahead()
-        return self.lookahead(lookahead)
-
-    def __getitem__(self, item):
-        return self._items[item]
-
-    def __iter__(self):
-        i_max = len(self._items) - 1
-        while self._i < i_max:
-            self._i += 1
-            yield self._items[self._i]
-
-    def assert_done(self):
-        if self._i < len(self._items) - 1:
-            raise self.error("Code not processed completely")
-
-    def error(self, message=None, i=None):
-        if i is None:
-            i = self._i
-        elif not isinstance(i, int):
-            raise RuntimeError(f"{i=}")
-
-        if i < 0:
-            code_str = self.string
-        else:
-            n = len(self._items)
-            if i >= n:
-                code_str = f"{self._sep.join(self._items)} >unexpected end<"
-            else:
-                code_str = ''
-                if i:
-                    code_str += self._sep.join(chain(self._items[:i], [''])) + ' '
-                code_str += f"> {self._items[i]} <"
-                if i < n - 1:
-                    code_str += ' ' + self._sep.join(chain([''], self._items[i + 1:]))
-        return CodeError(code_str, message)
-
-    def lookahead(self, offset=1):
-        "Retrieve item without advancing iterator"
-        i = self._i + offset
-        if 0 <= i < len(self._items):
-            return self._items[i]
-        else:
-            return ''
-
-
-class FieldCode(CodeBase):
-    pass
-
-
-class CodeError(Exception):
-
-    def __init__(self, code: str, message: str = None):
-        if message:
-            error_str = f"{code}: {message}"
-        else:
-            error_str = code
-        Exception.__init__(self, error_str)
 
 
 class Configuration:
@@ -164,19 +76,49 @@ class Configuration:
         return f"{self.__class__.__name__}({', '.join(self._repr_args())})"
 
 
+class ConfigurationDict(dict):
+    """Mapping of names to configurations with informative missing-key errors.
+
+    Parameters
+    ----------
+    kind
+        Singular description of the configuration kind, used in the error
+        message when a key is missing (e.g. ``'predictor'``).
+    ...
+        Items, as for :class:`dict`.
+    """
+
+    def __init__(self, kind: str, *args, **kwargs):
+        self._kind = kind
+        super().__init__(*args, **kwargs)
+
+    def __missing__(self, key):
+        raise ConfigurationKeyError(key, self._kind, self)
+
+    def __reduce__(self):  # keep pickle / copy.deepcopy working with the custom __init__
+        return (self.__class__, (self._kind, dict(self)))
+
+
+# Names become components of cache/derivative file paths and of dependency-node
+# identifiers (e.g. 'raw@{name}'). Forbid the characters that would corrupt that
+# structure: whitespace, the '@' and ':' node-name separators, and path separators.
+_FORBIDDEN_NAME_CHARS = frozenset(' \t@:/\\')
+
+
 def name_ok(key: str, allow_empty: bool) -> bool:
-    if not key and not allow_empty:
+    if not isinstance(key, str):
         return False
-    try:
-        return all(c not in key for c in ' ')
-    except TypeError:
+    elif not key:
+        return allow_empty
+    elif key in ('.', '..'):  # unsafe as path components
         return False
+    return not _FORBIDDEN_NAME_CHARS.intersection(key)
 
 
 def check_names(keys, attribute, allow_empty: bool):
     invalid = [key for key in keys if not name_ok(key, allow_empty)]
     if invalid:
-        raise ConfigurationError(f"Invalid {plural('name', len(invalid))} for {attribute}: {enumeration(invalid)}")
+        raise ConfigurationError(f"Invalid {plural('name', len(invalid))} for {attribute}: {enumeration(invalid)}. Names can not contain whitespace or any of the characters '@', ':', '/' and '\\'.")
 
 
 def compound(items):

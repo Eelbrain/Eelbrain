@@ -12,13 +12,12 @@ http://www.doughellmann.com/PyMOTW/subprocess/
 http://explanatorygap.net/2010/05/10/python-subprocess-over-shell/
 http://codeghar.wordpress.com/2011/12/09/introduction-to-python-subprocess-module/
 """
-import fnmatch
 import logging
 import os
 import subprocess
 
 import mne
-from mne.utils import get_subjects_dir, run_subprocess
+from mne.utils import run_subprocess
 
 from . import ui
 
@@ -296,106 +295,3 @@ def setup_mri(subject, subjects_dir=None, ico=4, block=False, redo=False):
     _run(cmd, block=block)  # -> creates a number of files in <mri_sdir>/bem
     if _sub_dir:
         os.environ['SUBJECTS_DIR'] = _sub_dir
-
-
-def _run_mne_gui(name, cwd, modal, subject, subjects_dir):
-    root = get_root('mne')
-    env = os.environ.copy()
-    env['MNE_ROOT'] = root
-    if subjects_dir is not None:
-        env['SUBJECTS_DIR'] = subjects_dir
-    if subject:
-        env['SUBJECT'] = subject
-
-    setup_path = os.path.join(root, 'bin', 'mne_setup_sh').replace(' ', r'\ ')
-    setup = f'. {setup_path}'
-
-    cmd = os.path.join(root, 'bin', name).replace(' ', r'\ ')
-    p = subprocess.Popen(setup + ';' + cmd, shell=True, cwd=cwd, env=env)
-
-    if modal:
-        print(f"Waiting for {name} to be closed...")
-        p.wait()
-
-
-def run_mne_analyze(fif_dir, subject=None, subjects_dir=None, modal=False):
-    """Invoke mne_analyze (e.g., for manual coregistration)
-
-    Parameters
-    ----------
-    fif_dir : str
-        the directory containing the fiff files.
-    subject : None | str
-        The name of the MRI subject.
-    subjects_dir : None | str
-        Override the SUBJECTS_DIR environment variable.
-    modal : bool
-        Causes the shell to block until mne_analyze is closed.
-
-
-    Notes
-    -----
-    **Coregistration Procedure** (For more information see MNE-manual 3.10 &
-    12.11):
-
-    #. File > Load Surface: select the subject`s directory and "Inflated"
-    #. File > Load digitizer data: select the fiff file
-    #. View > Show viewer
-
-       a. ``Options``: Switch cortical surface display off, make
-          scalp transparent. ``Done``
-
-    #. Adjust > Coordinate Alignment:
-
-       a. set LAP, Nasion and RAP.
-       b. ``Align using fiducials``.
-       c. (``Omit``)
-       d. Run ``ICP alignment`` with 20 steps
-       e. ``Save default``
-
-    this creates a file next to the raw file with the '-trans.fif' extension.
-
-    """
-    _run_mne_gui('mne_analyze', fif_dir, modal, subject, subjects_dir)
-
-
-def run_mne_browse_raw(fif_dir, subject=None, subjects_dir=None, modal=False):
-    """Invoke mne_browse_raw
-
-    Parameters
-    ----------
-    fif_dir : str
-        the directory containing the fiff files.
-    subject : None | str
-        The name of the MRI subject.
-    subjects_dir : None | str
-        Override the SUBJECTS_DIR environment variable.
-    modal : bool
-        Causes the shell to block until mne_browse_raw is closed.
-    """
-    _run_mne_gui('mne_browse_raw', fif_dir, modal, subject, subjects_dir)
-
-
-# freesurfer---
-
-
-def _fs_hemis(arg):
-    if arg == '*':
-        return ['lh', 'rh']
-    elif arg in ['lh', 'rh']:
-        return [arg]
-    else:
-        raise ValueError(f"hemi has to be 'lh', 'rh', or '*' (no {arg!r})")
-
-
-def _fs_subjects(arg, exclude=[], subjects_dir=None):
-    if '*' in arg:
-        subjects_dir = get_subjects_dir(subjects_dir)
-        subjects = fnmatch.filter(os.listdir(subjects_dir), arg)
-        subjects = list(filter(os.path.isdir, subjects))
-        for subject in exclude:
-            if subject in subjects:
-                subjects.remove(subject)
-    else:
-        subjects = [arg]
-    return subjects

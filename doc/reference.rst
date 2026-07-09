@@ -741,6 +741,15 @@ Epochs:
    PrimaryEpoch
    SecondaryEpoch
    SuperEpoch
+   Reference
+
+Epoch rejection methods:
+
+.. autosummary::
+   :toctree: generated
+
+   ManualRejection
+   ChannelModelRejection
 
 Tests:
 

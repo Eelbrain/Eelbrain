@@ -46,7 +46,7 @@ except ImportError:
     }
 
 BaselineArg = tuple[float | None, float | None] | None
-AdjacencyArg = str | Sequence[tuple[str, str]] | np.ndarray
+AdjacencyArg = str | Sequence[tuple[str, str]] | np.ndarray | None
 DataArg = Literal['eeg', 'mag', 'grad']
 PicksArg = Any
 
@@ -1128,7 +1128,7 @@ def epochs_ndvar(
         sysname: str = None,
         adjacency: AdjacencyArg = None,
         proj: bool = True,
-):
+) -> NDVar:
     """
     Convert an :class:`mne.Epochs` object to an :class:`NDVar`.
 
@@ -1314,7 +1314,7 @@ def forward_operator(
         fwd: str | mne.Forward,
         src: str,
         subjects_dir: PathArg = None,
-        parc: str = 'aparc',
+        parc: str | None = 'aparc',
         sysname: str = None,
         adjacency: AdjacencyArg = None,
         name: str = None,

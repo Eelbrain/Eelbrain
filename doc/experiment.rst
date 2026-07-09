@@ -8,9 +8,6 @@ The :class:`Pipeline`
 
 .. seealso::
      - :class:`Pipeline` class reference for details on all available methods
-     - `Pipeline wiki page <https://github.com/Eelbrain/Eelbrain/wiki/MNE-Pipeline>`_
-       for additional information
-     - `TRFExperiment <https://trf-tools.readthedocs.io/bids/pipeline.html>`_: an experimental extension of the pipeline to Temporal Response Function analysis
 
 .. contents:: Contents
    :local:
@@ -19,66 +16,82 @@ The :class:`Pipeline`
 Introduction
 ============
 
-The :class:`Pipeline` manages the following analysis steps:
+The :class:`Pipeline` currently implements the following analysis steps:
 
 #. Preprocessing
-#. Epoching
-#. Optional source localization
+#. Epoching and evoked responses
+#. Source localization
 #. Mass univariate group-level statistics
+#. Temporal response function analysis
 
 The input to the pipeline is a BIDS dataset containing raw M/EEG data files and, optionally, MRI files for source localization.
 The pipeline automatizes the complete analysis, and provides an interface for preprocessing steps that require user intervention like ICA.
 It allows access to the data at any intermediate stage, to allow for customizing the analysis.
 It caches intermediate results to make access to these data fast and efficient.
 
+Working with a :class:`Pipeline` typically involves 3 different components or workflows:
+
+1. Setting up the :class:`Pipeline` script
+2. Data preparation
+3. Analysis
+
+These can be achieved in different ways, but the following are the recommended steps.
+
+The :class:`Pipeline` script
+----------------------------
+
 :class:`Pipeline` is a template for the pipeline.
 This template is adapted to a specific experiment by specifying properties of the experiment as attributes (technically, by creating a `subclass <https://docs.python.org/3/tutorial/classes.html>`_).
+This is described in detail below in :ref:`step-by-step`.
+The recommended workflow for this is to write a separate script containing this subclass (e.g., ``pipeline.py``).
+This provides a stable record of global analysis settings.
+
 An instance of this pipeline then provides access to different analysis stages through its methods:
 
  - ``.load_...`` methods are for loading data and results.
    Most of these return Eelbrain data types by default, but they can be used to load :mod:`mne` objects by setting ``ndvar=False`` (e.g., :meth:`Pipeline.load_epochs`).
  - ``.show_...`` methods are for retrieving and displaying information at different stages.
  - ``.plot_...`` methods are for generating plots of the data.
- - ``.make_...`` methods are for generating various intermediate results.
-   Most of these methods do not have to be called by the user, as they are invoked automatically when needed.
-   An exception are those that require user input, like ICA component selection, which are mentioned below.
+ - ``.make_...`` methods are for programmatically accessing processing steps that require user input, like ICA component selection, and caching some intermediate results.
 
 For example, :meth:`Pipeline.load_test` can be used to directly load a mass-univariate test result, without a need to explicitly load data at any intermediate stage.
 On the other hand, :meth:`Pipeline.load_epochs` can be used to load the corresponding data epochs, for example to perform a different analysis that may not be implemented in the pipeline.
 
 
-Two kinds of workflow
----------------------
+Data preparation
+----------------
 
-Working with a pipeline involves two distinct phases that call for different tools:
+Steps that require visual inspection and human decisions, like ICA component selection, trial rejection, and MRI coregistration.
+The preferred tool for all of these is the pipeline GUI, launched from the command line::
 
-**Data preparation**
-    Steps that require visual inspection and human decisions, like ICA component selection, trial rejection, and MRI coregistration.
-    The preferred tool for all of these is the pipeline GUI, launched from the command line::
+    $ cd  ~/Code/MyProject
+    $ eelbrain-gui
 
-        $ cd  ~/Code/MyProject
-        $ eelbrain-gui
+The GUI shows the preparation status for every subject in a single table and opens the relevant sub-GUI (ICA component browser, epoch rejection viewer, MNE coregistration tool) on double-click.
+It also lets you compute ICA decompositions for all missing subjects in one click.
 
-    The GUI shows the preparation status for every subject in a single table and opens the relevant sub-GUI (ICA component browser, epoch rejection viewer, MNE coregistration tool) on double-click.
-    It also lets you compute ICA decompositions for all missing subjects in one click.
+The same steps can alternatively be performed programmatically from an interactive Python session (iPython, a Jupyter notebook, or a terminal), which is useful for scripting or automation::
 
-    The same steps can alternatively be performed programmatically from an interactive Python session (iPython, a Jupyter notebook, or a terminal), which is useful for scripting or automation::
+    >>> e = eelbrain.load_pipeline("~/Code/MyProject")
+    >>> e.make_ica_selection()   # opens ICA GUI for current subject
+    >>> e.next()                 # advance to next subject
+    >>> e.make_epoch_rejection() # opens epoch rejection GUI
 
-        >>> e = eelbrain.load_pipeline("~/Code/MyProject")
-        >>> e.make_ica_selection()   # opens ICA GUI for current subject
-        >>> e.next()                 # advance to next subject
-        >>> e.make_epoch_selection() # opens epoch rejection GUI
+Analysis
+--------
 
-**Analysis**
-    Once data preparation is complete, statistical analysis and visualization are best done in Jupyter notebooks or analysis scripts that can be re-run as needed::
+Once data preparation is complete, statistical analysis and visualization are best done in Jupyter notebooks or analysis scripts that can be re-run as needed::
 
-        >>> import eelbrain
-        >>> e = eelbrain.load_pipeline()
-        >>> result = e.load_test('my_test', tstart=0.1, tstop=0.3)
-        >>> eelbrain.plot.brain.cluster(result.clusters[0], ...)
+    import eelbrain
 
-    Notebooks and scripts typically live in the project code directory alongside ``pipeline.py`` and can be version-controlled together with the pipeline definition.
+    e = eelbrain.load_pipeline()
+    result = e.load_test('my_test', tstart=0.1, tstop=0.3)
+    eelbrain.plot.brain.cluster(result.clusters[0], ...)
 
+Notebooks and scripts typically live in the project code directory alongside ``pipeline.py`` and can be version-controlled together with the pipeline definition.
+
+
+.. _step-by-step:
 
 Step by Step
 ============
@@ -101,7 +114,12 @@ The pipeline expects input dataset in `BIDS (Brain Imaging Data Structure) <http
     datatype folder                            /{datatype}
     raw data file                                 /sub-{subject}_ses-{session}_task-{task}_run-{run}_{datatype}.fif
     derivatives root                     /derivatives
-    trans file                              /trans/sub-{subject}_ses-{session}_{datatype}_trans.fif
+    MNE derivatives                         /mne
+    subject folder                             /sub-{subject}
+    session folder                                /ses-{session}
+    datatype folder                                  /{datatype}
+    trans file                                          /sub-{subject}_ses-{session}_trans.fif
+    ICA decomposition                                   /sub-{subject}_ses-{session}_run-{run}_desc-{raw}_ica.fif
     FreeSurfer SUBJECTS_DIR                 /freesurfer
     mri for each subject                       /sub-{subject}
     mri for template brain                     /fsaverage
@@ -126,15 +144,12 @@ A BIDS dataset can be scanned by initializing a :class:`Pipeline` with the data 
 Assuming a subject without explicit ``{session}`` is named "S001", the pipeline will look for data at the following locations:
 
 - The raw data file at ``~/Data/Experiment/sub-S001/meg/sub-S001_task-words_meg.fif``
-- The trans-file from the coregistration at ``~/Data/Experiment/derivatives/trans/sub-S001_meg_trans.fif``
+- The trans-file from the coregistration at ``~/Data/Experiment/derivatives/mne/sub-S001/meg/sub-S001_trans.fif``
 - The FreeSurfer MRI-directory at ``~/Data/Experiment/derivatives/freesurfer/sub-S001``
 - The template brain MRI-directory at ``~/Data/Experiment/derivatives/freesurfer/fsaverage``
 
-The scan can be tested using :meth:`Pipeline.show_fields`.
-This method shows all fields (subjects, tasks, sessions, etc.) that have been identified.
-
-More details on subjects can be shown using :meth:`Pipeline.show_subjects`.
-This method shows a list of the subjects and corresponding MRIs that were discovered::
+The subjects and corresponding MRIs that were discovered can be shown
+in the ``eelbrain-gui``, or using :meth:`Pipeline.show_subjects`::
 
     >>> e.show_subjects()
     #    subject   mri
@@ -149,7 +164,7 @@ Setting up the analysis code
 ----------------------------
 
 It is recommended to organize analysis scripts in a dedicated folder, for example ``~/Code/MyProject``.
-Version-controlling this folder with `Git <https://git-scm.com>`_ makes it easy to track the history of your analysis.
+Version-controlling this folder (e.g., with `Git <https://git-scm.com>`_) makes it easy to track the history of your analysis.
 
 The project folder typically contains:
 
@@ -207,6 +222,11 @@ With no argument it uses the current working directory::
 
 The GUI opens a window with a **Task** dropdown that gives access to:
 
+Bad Channels
+    Shows and allows modifying bad channels.
+    Double-click on a row to open a visualization of the raw data.
+    Right-click to get bad channels as text.
+
 ICA
     Shows the ICA status (missing / selected / number of components rejected) for every subject.
     Double-clicking a row opens the ICA component selection browser for that subject.
@@ -249,10 +269,10 @@ Which will plot a 10 s excerpt and allow scrolling through the rest of the data.
 Events
 ------
 
+Bu default, events are read from BIDS side-car files.
+Triggers in raw data files provide a fallback.
 If needed, set :attr:`Pipeline.merge_triggers` to handle spurious events.
-Then, add event labels.
-Initially, events are only labeled with the trigger ID. Use the
-:attr:`Pipeline.variables` settings to add labels.
+Use the :attr:`Pipeline.variables` settings to add event labels.
 Events are represented as :class:`~eelbrain.Dataset` objects and can be inspected with
 corresponding methods and functions, for example::
 
@@ -359,29 +379,31 @@ To cycle through subjects::
 See :meth:`Pipeline.make_ica_selection` for display options.
 
 
-Trial selection
----------------
+Trial and channel rejection
+---------------------------
 
-For each primary epoch that is defined, bad trials can be rejected using
-:meth:`Pipeline.make_epoch_selection`. Rejections are specific to a given ``raw``
-state.
+Different methods for artifact rejection in epoched data
+can be defined in :attr:`Pipeline.epoch_rejection`.
 
-The preferred workflow is the :ref:`pipeline-gui`.
-Select the **Epoch rejection** task, choose the epoch and raw pipeline from the dropdowns, and double-click a subject row to open the rejection GUI for that subject.
+For bad trials can be manually rejected, or automatic rejcetions can be visually inspected
+using the :ref:`pipeline-gui` or :meth:`Pipeline.make_epoch_rejection`.
+Rejections are always specific to a given ``raw`` state.
+
+In the :ref:`pipeline-gui`, select the **Epoch rejection** task, choose the epoch and raw pipeline from the dropdowns, and double-click a subject row to open the rejection GUI for that subject.
 
 Alternatively, cycle through subjects programmatically::
 
     >>> e.set(raw='ica1-40', epoch='word')
-    >>> e.make_epoch_selection()
+    >>> e.make_epoch_rejection()
     >>> e.next()
     subject: 'R1801' -> 'R2079'
-    >>> e.make_epoch_selection()
+    >>> e.make_epoch_rejection()
     ...
 
 To reject trials based on a pre-determined amplitude threshold::
 
     >>> for subject in e:
-    ...     e.make_epoch_selection(auto=1e-12)
+    ...     e.make_epoch_rejection(auto=1e-12)
     ...
 
 
@@ -407,7 +429,7 @@ data.
 The most flexible option is loading data from the desired processing stage using
 one of the many ``.load_...`` methods of the :class:`Pipeline`. For
 example, load a :class:`eelbrain.Dataset` with source-localized condition averages using
-:meth:`Pipeline.load_evoked_stc`, then test a hypothesis using one of the
+:meth:`Pipeline.load_evoked` (with ``inv`` set for source space), then test a hypothesis using one of the
 mass-univariate test from the :mod:`testnd` module. To make this kind of
 analysis replicable, it is probably useful to write the complete analysis as a
 separate script that imports the experiment (see the `example experiment folder
@@ -563,7 +585,7 @@ Reading files
 -------------
 
 .. note::
-    Gain more control over reading files through adding a :class:`RawPipe` to :attr:`Pipeline.raw`.
+    Gain more control over reading files by adding a ``'raw'`` entry with a :class:`RawSource` to :attr:`Pipeline.raw`.
 
 .. py:attribute:: Pipeline.stim_channel
    :type: str | Sequence[str]
@@ -580,10 +602,16 @@ Use a non-default ``merge`` parameter for :func:`.load.mne.events`.
 
 Set this attribute to shift all trigger times by a constant (in seconds). For example, with ``trigger_shift = 0.03`` a trigger that originally occurred 35.10 seconds into the recording will be shifted to 35.13. If the trigger delay differs between subjects, this attribute can also be a dictionary mapping subject names to shift values, e.g. ``trigger_shift = {'S001': 0.02, 'S002': 0.05, ...}``.
 
-.. py:attribute:: Pipeline.meg_system
-   :type: str
+The MEG system used to acquire the data determines the sensor neighborhood graph
+(adjacency). This is usually detected automatically; when it needs to be set
+explicitly, define a ``'raw'`` entry with a :class:`RawSource` in
+:attr:`Pipeline.raw` and set its ``sysname`` (and/or ``adjacency``) parameter.
+For example, for data from NYU New York::
 
-Specify the MEG system used to acquire the data so that the right sensor neighborhood graph can be loaded. This is usually automatic, but is needed for KIT files convert with with :mod:`mne` < 0.13. Equivalent to the ``sysname`` parameter in :func:`.load.mne.epochs_ndvar` etc. For example, for data from NYU New York, the correct value is ``meg_system="KIT-157"``.
+    raw = {
+        'raw': RawSource(sysname='KIT-157'),
+        '1-40': RawFilter('raw', 1, 40),
+    }
 
 
 Pre-processing (raw)
@@ -638,9 +666,7 @@ The following is an example for EEG using band-pass filter, ICA and re-referenci
 
 
 .. note::
-    Continuous files take up a lot of hard drive space. By default, files for most pre-processing steps are cached. This can be controlled with the ``cache`` parameter: set ``cache=False`` to avoid caching. To delete files corresponding to a specific step (e.g., ``raw='1-40'``), use the :meth:`Pipeline.rm` method::
-
-        >>> e.rm('cached-raw-file', True, raw='1-40')
+    Continuous files take up a lot of hard drive space. By default, files for most pre-processing steps are cached. This can be controlled with the ``cache`` parameter: set ``cache=False`` to avoid caching. Cached files are stored under the pipeline's cache directory (``{root}/derivatives/eelbrain/cache``) and can be deleted manually to reclaim disk space; they are regenerated on demand.
 
 
 Events
@@ -697,6 +723,7 @@ described below:
    SecondaryEpoch
    SuperEpoch
    ContinuousEpoch
+   EpochCollection
 
 
 Examples::
@@ -712,6 +739,61 @@ Examples::
         # a superset-epoch:
         'all_stimuli': SuperEpoch(('picture', 'word')),
     }
+
+.. py:attribute:: Pipeline.epoch_rejection
+
+Epoch-level artifact rejection is controlled through the
+:ref:`state-epoch_rejection` state.
+Automatic rejection procedures can be implemented through :attr:`Pipeline.epoch_rejection`,
+a ``{name: EpochRejection}`` dictionary of trial-rejection settings.
+
+.. autosummary::
+   :toctree: generated
+   :template: class_nomethods.rst
+
+   ManualRejection
+   ChannelModelRejection
+
+
+References (re-referencing)
+---------------------------
+
+.. py:attribute:: Pipeline.references
+
+EEG re-referencing applied to epochs *after* channel interpolation (so that bad
+channels do not contaminate the reference). References are defined as a
+``{name: reference_definition}`` dictionary and selected through the
+:ref:`state-reference` state:
+
+.. autosummary::
+   :toctree: generated
+   :template: class_nomethods.rst
+
+   Reference
+
+An ``'average'`` reference (``Reference('average')``) is always available. It can
+be overridden, for example to reconstruct an implicit recording reference channel
+(a channel such as ``Cz`` that was the recording reference is absent from the data
+but can be reconstructed as zeros before averaging)::
+
+    references = {
+        # override the built-in 'average' to reconstruct the implicit Cz reference:
+        'average': Reference('average', add='Cz'),
+        # mastoid reference:
+        'mastoid': Reference(['M1', 'M2']),
+    }
+
+This differs from :class:`RawReReference`, which re-references the continuous raw
+data *before* epoching and interpolation. ``references`` is orthogonal to
+``raw``, ``epoch`` and ``epoch_rejection``, so different references can be compared with
+``e.set(reference=...)`` without duplicating epoch definitions.
+
+.. note::
+    The reference is only applied to EEG channels. Loading data that contains no
+    EEG channels with a non-empty ``reference`` raises an error; use
+    ``reference=''`` for such data. Source localization handles EEG referencing
+    internally (via MNE's average-reference projector) and always uses
+    ``reference=''`` regardless of the current state.
 
 
 Tests
@@ -894,33 +976,28 @@ Any epoch defined in :attr:`Pipeline.epochs`. Specify the epoch on which
 the analysis should be conducted.
 
 
-.. _state-rej:
+.. _state-epoch_rejection:
 
-``rej`` (trial rejection)
--------------------------
+``epoch_rejection``
+-------------------
 
-Trial rejection can be turned off ``e.set(rej='')``, meaning that no trials are
-rejected, and back on, meaning that the corresponding rejection files are used
-``e.set(rej='man')``.
+Selects an entry from :attr:`Pipeline.epoch_rejection`. Default options are
+``e.set(epoch_rejection='')``, rejecting no epoch level data, and
+``e.set(epoch_rejection='manual')`` for manually creating rejections
+(using :meth:`Pipeline.make_epoch_rejection`).
 
 
-.. _state-model:
+.. _state-reference:
 
-``model``
----------
+``reference`` (EEG re-referencing)
+----------------------------------
 
-While the :ref:`state-epoch` state parameter determines which events are
-included when loading data, the ``model`` parameter determines how these events
-are split into different condition cells. The parameter should be set to the
-name of a categorial event variable which defines the desired cells.
-In the :ref:`Pipeline-example`,
-``e.load_evoked(epoch='target', model='prediction')``
-would load responses to the target, averaged for expected and unexpected trials.
-
-Cells can also be defined based on crossing two variables using the ``%`` sign.
-In the :ref:`Pipeline-example`, to load corresponding primes together with
-the targets, you would use
-``e.load_evoked(epoch='word', model='stimulus % prediction')``.
+Selects an EEG re-reference defined in :attr:`Pipeline.references`, applied to
+epochs after channel interpolation. ``e.set(reference='')`` (the default) applies
+no epoch-stage re-referencing; ``e.set(reference='avg')`` applies the
+corresponding :class:`Reference`. Has no effect on data without EEG channels
+(loading such data with a non-empty ``reference`` raises an error) and on source
+localization (which handles referencing internally).
 
 
 .. _state-equalize_evoked_count:
@@ -954,7 +1031,7 @@ The method for correcting the sensor covariance.
     Use the default regularization parameter (0.1).
 'auto'
     Use automatic selection of the optimal regularization method, as described in :func:`mne.compute_covariance`.
-`empty_room`
+'emptyroom'
     Empty room covariance; for required setup, see :ref:`Pipeline-intro-cov`.
 'ad_hoc'
     Use diagonal covariance based on :func:`mne.cov.make_ad_hoc_cov`.
@@ -1050,26 +1127,3 @@ setting ``adjacency='link-midline'``, this default adjacency can be
 modified so that the midline gyri of the two hemispheres get linked at sources
 that are at most 15 mm apart. This parameter currently does not affect sensor
 space adjacency.
-
-
-.. _state-select_clusters:
-
-``select_clusters`` (cluster selection criteria)
-------------------------------------------------
-
-In thresholded cluster test, clusters are initially filtered with a minimum
-size criterion. This can be changed with the ``select_clusters`` analysis
-parameter with the following options:
-
-================ ======== =========== ===========
-Name             Min time Min sources Min sensors
-================ ======== =========== ===========
-``"all"``        -        -           -
-``"10ms"``       10 ms    10          4
-``""`` (default) 25 ms    10          4
-``"large"``      25 ms    20          8
-================ ======== =========== ===========
-
-To change the cluster selection criterion use for example::
-
-    >>> e.set(select_clusters='all')

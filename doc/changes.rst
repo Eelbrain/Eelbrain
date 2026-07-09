@@ -455,8 +455,7 @@ New in 0.20
 -----------
 
 * :class:`pipeline.MneExperiment`: new analysis parameter ``select_clusters='all'`` to
-  keep all clusters in cluster tests (see
-  :ref:`state-select_clusters`).
+  keep all clusters in cluster tests.
 * Use :func:`testnd.configure` to limit the number of CPUs that are used in
   permutation cluster tests.
 

@@ -107,6 +107,7 @@ def select_epochs(
         pos: tuple[int, int] = None,
         size: tuple[int, int] = None,
         allow_interpolation: bool = True,
+        read_only: bool = False,
 ):
     """GUI for rejecting trials of MEG/EEG data
 
@@ -167,6 +168,9 @@ def select_epochs(
     allow_interpolation
         Whether to allow interpolating individual channels by epoch (default
         True).
+    read_only
+        Open the GUI for inspection only: editing (rejecting epochs, marking bad
+        channels, interpolation, thresholding) and saving are disabled.
 
     Notes
     -----
@@ -205,7 +209,7 @@ def select_epochs(
     bad_chs = None
     doc = Document(ds, data, accept, blink, tag, trigger, path, bad_chs, allow_interpolation)
     model = Model(doc)
-    frame = Frame(None, model, nplots, topo, vlim, color, lw, mark, mcolor, mlw, antialiased, pos, size, allow_interpolation)
+    frame = Frame(None, model, nplots, topo, vlim, color, lw, mark, mcolor, mlw, antialiased, pos, size, allow_interpolation, read_only)
     frame.Show()
     frame.Raise()
     if TEST_MODE:

@@ -54,6 +54,10 @@ class SampleExperiment(Pipeline):
         'cov': SecondaryEpoch('target', tmax=0),
     }
 
+    epoch_rejection = {
+        'manual': ManualRejection(),
+    }
+
     tests = {
         # T-test to compare left-sided vs right-sided stimulation
         'left=right': TTestRelated('side', 'left', 'right'),
@@ -69,6 +73,21 @@ class SampleExperiment(Pipeline):
 
     parcs = {
         'ac': SubParc('aparc', ('transversetemporal',)),
+    }
+
+
+class SampleTRF(SampleExperiment):
+    "SampleExperiment with TRF predictors, for testing load_trf"
+
+    predictors = {
+        'imp': EventPredictor(),
+        'env': UTSPredictor(),
+        'word': NUTSPredictor(),
+    }
+    # the 'modality' event variable ('auditory'/'visual') identifies the stimulus
+    stim_var = 'modality'
+    estimators = {
+        'boosting': Boosting(partitions=5),
     }
 
 

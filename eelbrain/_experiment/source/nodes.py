@@ -2,10 +2,13 @@
 """Source-model and source-data derivatives.
 
 These nodes own the reusable source-space products behind
-``Pipeline.load_inv``, ``Pipeline.load_evoked_stc``, and
-``Pipeline.load_epochs_stc``. Higher-level derivatives should load them
-through :meth:`Request.load` instead of relying on injected facade
-methods.
+``Pipeline.load_inv`` and the source-space branch of
+``Pipeline.load_evoked``/``Pipeline.load_epochs`` (selected via a non-empty
+``inv``). Higher-level derivatives should load them through
+:meth:`Request.load` instead of relying on injected facade methods.
+
+The inverse-solution and source-space configurations they build on live in
+:mod:`._experiment.source.config`.
 """
 
 from __future__ import annotations
@@ -14,234 +17,28 @@ from dataclasses import dataclass
 from itertools import product
 import os
 from pathlib import Path
-import re
 from typing import Any
 from collections.abc import Sequence
 
 import mne
 import numpy as np
-from mne.minimum_norm import apply_inverse, apply_inverse_epochs, make_inverse_operator
 from mne.morph import SourceMorph
 from scipy import sparse
 
-from .. import load, save
-from .._data_obj import Dataset, Datalist, NDVar, combine
-from .configuration import Configuration
-from .derivative_cache import CachePolicy, Dependency, Derivative, Request, Input, UncachedDerivative, file_fingerprint
-from .pathing import (
+from ... import load
+from ..._data_obj import Dataset, Datalist, NDVar, combine
+from ..derivative_cache import CachePolicy, Dependency, Derivative, ExternalArtifactDerivative, Request, Input, UncachedDerivative, file_fingerprint
+from ..pathing import (
     MRI_SDIR, bem_dir, bem_file_path, mri_dir, src_file_path, trans_file_path,
 )
-from .preprocessing import raw_node_name
-from .test_def import TestDims
-from .._text import enumeration, plural
-from .._utils import subp
-from .._utils.mne_utils import is_fake_mri
-from ..mne_fixes._source_space import merge_volume_source_space, prune_volume_source_space, restrict_volume_source_space
-from .._mne import find_source_subject, label_from_annot
-
-
-INV_METHODS = ('MNE', 'dSPM', 'sLORETA', 'eLORETA', 'champ')
-SRC_RE = re.compile(r'^(ico|vol)-(\d+)(?:-(cortex|brainstem))?$')
-INV_RE = re.compile(
-    r"^"
-    r"(free|fixed|loose\.\d+|vec)"
-    r"(?:-(\d*\.?\d+))?"
-    rf"-({'|'.join(INV_METHODS)})"
-    r"(?:-((?:0\.)?\d+))?"
-    r"(?:-(pick_normal))?"
-    r"$"
-)
-
-
-class InverseSolution(Configuration):
-    """Internal normalized inverse-operator configuration."""
-
-    @classmethod
-    def _coerce(cls, inv: str | InverseSolution) -> InverseSolution:
-        if isinstance(inv, InverseSolution):
-            return inv
-        if isinstance(inv, str):
-            return MinimumNormInverseSolution._from_string(inv)
-        raise TypeError(f"{inv=}: invalid inverse solution specification")
-
-    def _string(self) -> str:
-        raise NotImplementedError(f"{self.__class__.__name__}._string()")
-
-    def _validate_for_source_space(self, src: str) -> None:
-        raise NotImplementedError(f"{self.__class__.__name__}._validate_for_source_space()")
-
-    def _build_operator(
-            self,
-            info: mne.Info,
-            fwd: mne.Forward,
-            cov: mne.Covariance,
-    ):
-        raise NotImplementedError(f"{self.__class__.__name__}._build_operator()")
-
-    def _load_operator(self, path: Path):
-        raise NotImplementedError(f"{self.__class__.__name__}._load_operator()")
-
-    def _save_operator(self, path: Path, value) -> None:
-        raise NotImplementedError(f"{self.__class__.__name__}._save_operator()")
-
-    def _apply_epochs(self, epochs_obj, operator, label=None):
-        raise NotImplementedError(f"{self.__class__.__name__}._apply_epochs()")
-
-    def _apply_evoked(self, evoked, operator):
-        raise NotImplementedError(f"{self.__class__.__name__}._apply_evoked()")
-
-    def _to_ndvar(
-            self,
-            stc,
-            subject: str,
-            src: str,
-            subjects_dir: Path,
-            *,
-            parc: str | None,
-            adjacency: str,
-    ) -> NDVar:
-        return load.mne.stc_ndvar(stc, subject, src, subjects_dir, self.method, self._fixed, parc=parc, adjacency=adjacency)
-
-
-class MinimumNormInverseSolution(InverseSolution):
-    """Normalized minimum-norm inverse configuration."""
-
-    DICT_ATTRS = ('kind', 'ori', 'snr', 'method', 'depth', 'pick_normal')
-
-    def __init__(
-            self,
-            ori: str | float = 'free',
-            snr: float = 3,
-            method: str = 'dSPM',
-            depth: float = 0.8,
-            pick_normal: bool = False,
-    ):
-        if isinstance(ori, str):
-            if ori not in ('free', 'fixed', 'vec'):
-                raise ValueError(f"{ori=}; needs to be 'free', 'fixed', 'vec', or float")
-        elif not 0 < ori < 1:
-            raise ValueError(f"{ori=}; must be in range (0, 1)")
-        if snr < 0:
-            raise ValueError(f"{snr=}")
-        if method not in INV_METHODS:
-            raise ValueError(f"{method=}")
-        if not 0 <= depth <= 1:
-            raise ValueError(f"{depth=}; must be in range [0, 1]")
-        if pick_normal and ori in ('vec', 'fixed'):
-            raise ValueError(f"{ori=} and pick_normal=True are incompatible")
-
-        self.kind = 'minimum_norm'
-        self.ori = ori
-        self.snr = snr
-        self.method = method
-        self.depth = depth
-        self.pick_normal = pick_normal
-
-    @classmethod
-    def _from_string(cls, inv: str) -> MinimumNormInverseSolution:
-        m = INV_RE.match(inv)
-        if m is None:
-            raise ValueError(f"{inv=}: invalid inverse specification")
-
-        ori, snr, method, depth, pick_normal = m.groups()
-        if ori.startswith('loose'):
-            ori = float(ori[5:])
-            if not 0 < ori < 1:
-                raise ValueError(f"{inv=}: loose parameter needs to be in range (0, 1)")
-
-        if snr is None:
-            snr = 0
-        else:
-            snr = float(snr)
-
-        if depth is None:
-            depth = 0
-        else:
-            depth = float(depth)
-
-        return cls(ori, snr, method, depth, bool(pick_normal))
-
-    def _string(self) -> str:
-        if isinstance(self.ori, str):
-            ori = self.ori
-        else:
-            ori = f'loose{str(self.ori)[1:]}'
-        items = [ori]
-        if self.snr > 0:
-            items.append(f'{self.snr:g}')
-        items.append(self.method)
-        if self.depth != 0.8:
-            items.append(f'{self.depth:g}')
-        if self.pick_normal:
-            items.append('pick_normal')
-        return '-'.join(items)
-
-    def _validate_for_source_space(self, src: str) -> None:
-        if src[:3] == 'vol' and self.ori not in ('free', 'vec'):
-            raise ValueError(f"{self._string()=!r} with {src=}: volume source space requires free or vector inverse")
-
-    @property
-    def _make_kw(self) -> dict[str, Any]:
-        if self.ori == 'fixed':
-            out = {'fixed': True}
-        elif self.ori in ('free', 'vec'):
-            out = {'loose': 1}
-        else:
-            out = {'loose': self.ori}
-
-        if self.depth == 0:
-            out['depth'] = None
-        else:
-            out['depth'] = self.depth
-        return out
-
-    @property
-    def _apply_kw(self) -> dict[str, Any]:
-        out = {'method': self.method, 'lambda2': 1. / self.snr ** 2 if self.snr else 0}
-        if self.ori == 'vec':
-            out['pick_ori'] = 'vector'
-        elif self.pick_normal:
-            out['pick_ori'] = 'normal'
-        return out
-
-    @property
-    def _fixed(self) -> bool:
-        return self._make_kw.get('fixed', False)
-
-    def _build_operator(
-            self,
-            info: mne.Info,
-            fwd: mne.Forward,
-            cov: mne.Covariance,
-    ):
-        return make_inverse_operator(info, fwd, cov, use_cps=True, **self._make_kw)
-
-    def _load_operator(self, path: Path):
-        return mne.minimum_norm.read_inverse_operator(path)
-
-    def _save_operator(self, path: Path, value) -> None:
-        mne.minimum_norm.write_inverse_operator(path, value, overwrite=True)
-
-    def _apply_epochs(self, epochs_obj, operator, label=None):
-        return apply_inverse_epochs(epochs_obj, operator, label=label, **self._apply_kw)
-
-    def _apply_evoked(self, evoked, operator):
-        return apply_inverse(evoked, operator, **self._apply_kw)
-
-
-def parse_src(src: str) -> tuple[str, str, str | None]:
-    m = SRC_RE.match(src)
-    if not m:
-        raise ValueError(f'{src=}')
-    kind, param, special = m.groups()
-    if special and kind != 'vol':
-        raise ValueError(f'{src=}')
-    return kind, param, special
-
-
-def eval_src(src: str) -> str:
-    parse_src(src)
-    return src
+from ..preprocessing import Reference, canonical_recording, raw_node_name
+from ..data import DataSpec
+from ..._text import enumeration, plural
+from ..._utils import subp
+from ..._utils.mne_utils import is_fake_mri
+from ...mne_fixes._source_space import merge_volume_source_space, prune_volume_source_space, restrict_volume_source_space
+from ..._mne import find_source_subject, label_from_annot
+from .config import InverseSolution, parse_src
 
 
 def _source_parc(state: dict[str, Any]) -> str | None:
@@ -299,12 +96,13 @@ def _identity_source_morph(
 
 class TransInput(Input):
     name = 'trans-input'
+    key_fields = ('subject', 'session')
 
     def path(self, ctx: Request) -> Path:
-        return ctx.root / trans_file_path(ctx.state)
+        return ctx.root / trans_file_path(ctx.state, datatype=ctx.datatype)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return file_fingerprint(ctx.root, self.path(ctx), 'trans-file')
+        return file_fingerprint(ctx.root, self.path(ctx))
 
     def load(self, ctx: Request) -> mne.transforms.Transform:
         return mne.read_trans(self.path(ctx))
@@ -312,22 +110,30 @@ class TransInput(Input):
 
 class BemInput(Input):
     name = 'bem-input'
+    key_fields = ('mrisubject',)
 
     def path(self, ctx: Request) -> Path:
         return ctx.root / bem_file_path(ctx.state)
 
+    def _surface_paths(self, ctx: Request) -> dict[str, Path]:
+        bem_dir_ = ctx.root / bem_dir(ctx.state)
+        return {surf: bem_dir_ / f'{surf}.surf' for surf in ('brain', 'inner_skull', 'outer_skull', 'outer_skin')}
+
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return file_fingerprint(ctx.root, self.path(ctx), 'bem-file')
+        subject = ctx.state['mrisubject']
+        if subject == 'fsaverage' or is_fake_mri(ctx.root / mri_dir(ctx.state)):
+            return file_fingerprint(ctx.root, self.path(ctx))
+        return {surf: file_fingerprint(ctx.root, path) for surf, path in self._surface_paths(ctx).items()}
 
     def load(self, ctx: Request) -> mne.ConductorModel:
         subject = ctx.state['mrisubject']
         if subject == 'fsaverage' or is_fake_mri(ctx.root / mri_dir(ctx.state)):
             return mne.read_bem_surfaces(self.path(ctx))
         bem_dir_ = ctx.root / bem_dir(ctx.state)
-        surfs = ('brain', 'inner_skull', 'outer_skull', 'outer_skin')
-        paths = {surf: bem_dir_ / f'{surf}.surf' for surf in surfs}
-        missing = [surf for surf in surfs if not paths[surf].exists()]
+        paths = self._surface_paths(ctx)
+        missing = [surf for surf, path in paths.items() if not paths.exists()]
         if missing:
+            # Test for broken FreeSurfer symlinks
             for surf in missing[:]:
                 path = paths[surf]
                 if path.is_symlink():
@@ -346,47 +152,47 @@ class BemInput(Input):
         return mne.make_bem_model(subject, conductivity=(0.3,), subjects_dir=ctx.root / MRI_SDIR)
 
 
-class SrcDerivative(Derivative[mne.SourceSpaces]):
+class SrcDerivative(ExternalArtifactDerivative[mne.SourceSpaces]):
     name = 'src'
     key_fields = ('mrisubject', 'src')
 
-    def _is_scaled(self, ctx: Request) -> bool:
-        return ctx.state['mrisubject'] != ctx.state['common_brain'] and is_fake_mri(ctx.root / mri_dir(ctx.state))
+    def _source_subject(self, ctx: Request) -> str | None:
+        """The subject a scaled MRI was scaled from, or ``None`` for a real MRI"""
+        return find_source_subject(ctx.state['mrisubject'], ctx.root / MRI_SDIR)
 
     def path(self, ctx: Request) -> Path:
         return ctx.root / src_file_path(ctx.state)
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        deps = []
-        if self._is_scaled(ctx):
-            deps.append(Dependency(
+        source_subject = self._source_subject(ctx)
+        if source_subject is not None:
+            return Dependency(
                 'src',
-                label='common-brain-src',
-                state={'mrisubject': ctx.state['common_brain']},
-            ))
+                label='source-src',
+                state={'mrisubject': source_subject},
+            ),
         elif ctx.state['src'].startswith('vol'):
-            deps.append(Dependency('bem-input'))
-        return tuple(deps)
+            return Dependency('bem-input'),
+        return ()
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {
-            'mrisubject': ctx.state['mrisubject'],
-            'src': ctx.state['src'],
-            'common_brain': ctx.state['common_brain'],
-            'fake_mri': is_fake_mri(ctx.root / mri_dir(ctx.state)),
-        }
+        out = {'fake_mri': is_fake_mri(ctx.root / mri_dir(ctx.state))}
+        if ctx.state['src'].startswith('vol'):
+            # volume source spaces are built from the aseg segmentation (see build())
+            out['aseg'] = file_fingerprint(ctx.root, ctx.root / mri_dir(ctx.state) / 'mri' / 'aseg.mgz')
+        return out
 
-    def build(self, ctx: Request) -> mne.SourceSpaces:
+    def build(self, ctx: Request) -> None:
         dst = self.path(ctx)
         dst.parent.mkdir(parents=True, exist_ok=True)
         subject = ctx.state['mrisubject']
         src = ctx.state['src']
 
-        if self._is_scaled(ctx):
-            ctx.load('common-brain-src')
+        if self._source_subject(ctx) is not None:
+            ctx.load('source-src')
             ctx.registry.log.info("Scaling %s source space for %s...", src, subject)
             mne.scale_source_space(subject, f'{{subject}}-{src}-src.fif', subjects_dir=ctx.root / MRI_SDIR, n_jobs=1)
-            return mne.read_source_spaces(dst)
+            return
 
         subjects_dir = ctx.root / MRI_SDIR
         kind, param, special = parse_src(src)
@@ -428,24 +234,18 @@ class SrcDerivative(Derivative[mne.SourceSpaces]):
             sss = merge_volume_source_space(sss, name)
             if special is None:
                 sss = restrict_volume_source_space(sss, grade, subjects_dir, subject, grow=1)
-            return prune_volume_source_space(sss, grade, 3, remove_midline=remove_midline, fill_holes=4)
+            sss = prune_volume_source_space(sss, grade, 3, remove_midline=remove_midline, fill_holes=4)
+        else:
+            spacing = kind + param
+            sss = mne.setup_source_space(subject, spacing=spacing, add_dist=True, subjects_dir=subjects_dir, n_jobs=1)
 
-        spacing = kind + param
-        return mne.setup_source_space(subject, spacing=spacing, add_dist=True, subjects_dir=subjects_dir, n_jobs=1)
+        mne.write_source_spaces(dst, sss, overwrite=True)
 
     def load(
             self,
             ctx: Request,
             path: Path) -> mne.SourceSpaces:
         return mne.read_source_spaces(path)
-
-    def save(
-            self,
-            ctx: Request,
-            path: Path,
-            value: mne.SourceSpaces,
-    ) -> None:
-        mne.write_source_spaces(path, value, overwrite=True)
 
 
 class SourceMorphDerivative(Derivative[mne.SourceMorph]):
@@ -460,22 +260,16 @@ class SourceMorphDerivative(Derivative[mne.SourceMorph]):
         )
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {
-            'mrisubject': ctx.state['mrisubject'],
-            'common_brain': ctx.state['common_brain'],
-            'src': ctx.state['src'],
-            'fake_mri': is_fake_mri(ctx.root / mri_dir(ctx.state)),
-        }
+        return {'fake_mri': is_fake_mri(ctx.root / mri_dir(ctx.state))}
 
     def build(self, ctx: Request) -> mne.SourceMorph:
         subject_from = ctx.state['mrisubject']
         subject_to = ctx.state['common_brain']
         subjects_dir = ctx.root / MRI_SDIR
         src_to = ctx.load('src-to')
-        if is_fake_mri(ctx.root / mri_dir(ctx.state)) and subject_from != subject_to:
-            src_from = ctx.load('src-from')
-            return _identity_source_morph(subject_from, subject_to, src_from, src_to)
         src_from = ctx.load('src-from')
+        if is_fake_mri(ctx.root / mri_dir(ctx.state)) and subject_from != subject_to:
+            return _identity_source_morph(subject_from, subject_to, src_from, src_to)
         return mne.compute_source_morph(
             src_from,
             subject_from,
@@ -500,22 +294,51 @@ class SourceMorphDerivative(Derivative[mne.SourceMorph]):
         value.save(path, overwrite=True)
 
 
+def _eeg_channel_names(info: mne.Info) -> set[str]:
+    names = info['ch_names']
+    return {names[i] for i in mne.pick_types(info, meg=False, eeg=True, exclude=[])}
+
+
 class FwdDerivative(Derivative[mne.Forward]):
     name = 'fwd'
     key_fields = ('subject', 'session', 'mrisubject', 'src')
     cache_suffix = '-fwd.fif'
 
+    def __init__(self, raw, references: dict[str, Reference | None], recordings: frozenset[tuple[str, str, str, str]]):
+        self.raw = raw
+        self._references = references
+        self._recordings = recordings
+
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        return (
-            Dependency(raw_node_name('raw')),
+        # The forward solution only needs the raw sensor info (shared across a
+        # subject's recordings), so pin a canonical recording rather than key
+        # on the ambient task/run.
+        recording = canonical_recording(self._recordings, ctx.state['subject'], ctx.state.get('session'))
+        raw_state = {'task': recording[0], 'run': recording[1]} if recording else None
+        deps = [
+            Dependency(raw_node_name('raw'), state=raw_state),
             Dependency('trans-input'),
-            Dependency('bem-input'),
             Dependency('src'),
             Dependency('median-head-position'),
-        )
+        ]
+        # fsaverage uses a precomputed BEM solution (see build/fingerprint); other subjects build it from bem-input
+        if ctx.state['mrisubject'] != 'fsaverage':
+            deps.append(Dependency('bem-input'))
+        return tuple(deps)
+
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        out = {'source_reference_add': self._references['average'].add}
+        if ctx.state['mrisubject'] == 'fsaverage':
+            bemsol = ctx.root / mri_dir(ctx.state) / 'bem' / 'fsaverage-5120-5120-5120-bem-sol.fif'
+            out['bem_solution'] = file_fingerprint(ctx.root, bemsol)
+        return out
 
     def build(self, ctx: Request) -> mne.Forward:
         raw = ctx.load(raw_node_name('raw'))
+        reference = self._references['average']
+        if reference.add:
+            raw.crop(tmax=0).load_data()
+            reference._prepare_source_data(raw, self.raw.root_source_pipe('raw').montage)
         median_head_pos = ctx.load('median-head-position')
         info = raw.info
         if median_head_pos is not None:
@@ -555,22 +378,45 @@ class FwdDerivative(Derivative[mne.Forward]):
 
 class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
     name = 'inv'
-    key_fields = ('subject', 'session', 'raw', 'epoch', 'rej', 'cov', 'mrisubject', 'src', 'inv')
-    cache_policy = CachePolicy.OPTIONAL
+    key_fields = ('subject', 'session', 'raw', 'epoch', 'epoch_rejection', 'cov', 'mrisubject', 'src', 'inv')
     cache_suffix = '-inv.fif'
 
+    def __init__(self, raw, references: dict[str, Reference | None], recordings: frozenset[tuple[str, str, str, str]], cache: bool = True):
+        self.raw = raw
+        self._references = references
+        self._recordings = recordings
+        if not cache:
+            self.cache_policy = CachePolicy.NEVER
+
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        # Only the raw sensor info is used (see build), so pin a canonical
+        # recording rather than key on the ambient task/run.
+        recording = canonical_recording(self._recordings, ctx.state['subject'], ctx.state.get('session'))
+        raw_state = {'task': recording[0], 'run': recording[1]} if recording else None
         return (
-            Dependency(raw_node_name(ctx.state['raw']), label='raw'),
+            Dependency(raw_node_name(ctx.state['raw']), label='raw', state=raw_state),
             Dependency('fwd'),
             Dependency('cov'),
         )
+
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        return {
+            'solution': InverseSolution._coerce(ctx.state['inv']),
+            'source_reference_add': self._references['average'].add,
+        }
 
     def build(self, ctx: Request) -> mne.minimum_norm.InverseOperator:
         solution = InverseSolution._coerce(ctx.state['inv'])
         solution._validate_for_source_space(ctx.state['src'])
         raw = ctx.load('raw')
         fwd = ctx.load('fwd')
+        reference = self._references['average']
+        if reference.add:
+            # only raw.info is needed for the inverse operator, so crop to a single sample
+            raw.crop(tmax=0).load_data()
+        reference._prepare_source_data(raw, self.raw.root_source_pipe(ctx.state['raw']).montage)
+        if reference.add and _eeg_channel_names(fwd['info']) != _eeg_channel_names(raw.info):
+            raise NotImplementedError(f"EEG channels differ between the forward solution and the {ctx.state['raw']!r} raw used for the inverse operator; source localization with a reconstructed reference channel ({reference.add}) requires the inverse raw to keep the same EEG channels as the root 'raw' source used for the forward solution.")
         return solution._build_operator(raw.info, fwd, ctx.load('cov'))
 
     def load(
@@ -601,16 +447,18 @@ def _subject_state(
         state: dict[str, Any],
         subject: str,
         mri_subjects: dict[str, dict[str, str]],
-        common_brain: str,
+        common_brain: str = 'fsaverage',
 ) -> dict[str, Any]:
-    out = {**state, 'subject': subject}
-    mri = out.get('mri')
-    if mri not in (None, '', '*'):
-        mrisubject = mri_subjects[mri][subject]
-        if mrisubject != common_brain and not mrisubject.startswith('sub-'):
-            mrisubject = 'sub-' + mrisubject
-        out['mrisubject'] = mrisubject
-    return out
+    """The state fields to override to switch to ``subject`` (a dependency delta).
+
+    Only the changed fields are returned; the parent state propagates to the
+    dependency automatically.
+    """
+    mri = state['mri']
+    mrisubject = mri_subjects[mri][subject]
+    if mrisubject != common_brain and not mrisubject.startswith('sub-'):
+        mrisubject = 'sub-' + mrisubject
+    return {'subject': subject, 'mrisubject': mrisubject}
 
 
 @dataclass
@@ -666,8 +514,6 @@ def _prepare_source_projection(
     parc = _source_parc(ctx.state)
     if parc:
         ctx.load('annot')
-        if (is_scaled or not morph) and source_subject != target_subject:
-            ctx.load('source')
 
     operator = ctx.load('inv')
     if parc and (is_scaled or not morph):
@@ -726,20 +572,22 @@ def _source_dependencies(ctx: Request, sensor_dependency: Dependency) -> tuple[D
     deps = [sensor_dependency, Dependency('inv'), Dependency('median-head-position')]
     parc = _source_parc(ctx.state)
     if parc:
-        subjects_dir = ctx.root / MRI_SDIR
-        mrisubject = ctx.state['mrisubject']
-        source_subject = find_source_subject(mrisubject, subjects_dir) or mrisubject
-        target_subject = ctx.state['common_brain'] if ctx.options['morph'] else mrisubject
+        if ctx.options['morph']:
+            target_subject = ctx.state['common_brain']
+        else:
+            target_subject = ctx.state['mrisubject']
         deps.append(Dependency('annot', state={'mrisubject': target_subject, 'parc': parc}))
-        if (source_subject != target_subject) and (source_subject != mrisubject or not ctx.options['morph']):
-            deps.append(Dependency('annot', label='source', state={'mrisubject': source_subject, 'parc': parc}))
-    if ctx.options['morph'] and (ctx.state['common_brain'] if is_fake_mri(ctx.root / mri_dir(ctx.state)) else ctx.state['mrisubject']) != ctx.state['common_brain']:
-        deps.append(Dependency('source-morph'))
+    if ctx.options['morph']:
+        source_subject = find_source_subject(ctx.state['mrisubject'], ctx.root / MRI_SDIR)
+        if source_subject == ctx.state['common_brain']:
+            pass  # no morph required
+        else:
+            deps.append(Dependency('source-morph'))
     return tuple(deps)
 
 
-class EpochsStcDerivative(Derivative[Dataset]):
-    """Source-space single-trial dataset derived from cached epochs.
+class EpochsStcDerivative(UncachedDerivative[Dataset]):
+    """Source-space single-trial dataset derived from epochs.
 
     Options
     -------
@@ -747,8 +595,6 @@ class EpochsStcDerivative(Derivative[Dataset]):
         Sensor-space baseline correction before inverse application.
     src_baseline
         Source-space baseline correction after inverse application.
-    cat
-        Optional subset of model cells to keep.
     keep_epochs
         Whether to keep the sensor epochs alongside source output.
     morph
@@ -765,33 +611,40 @@ class EpochsStcDerivative(Derivative[Dataset]):
         Whether to apply epoch rejection/interpolation state.
     """
     name = 'epochs-stc'
-    key_fields = (
-        'subject', 'session', 'task', 'run', 'raw',
-        'epoch', 'rej', 'cov', 'mrisubject', 'src', 'inv', 'parc',
-    )
-    cache_policy = CachePolicy.DISABLED_BY_DEFAULT
-    cache_suffix = '.pickle'
-    OPTION_DEFAULTS = {
+    # source localization handles EEG referencing internally
+    fixed_state = {'reference': ''}
+    key_options = {
         'baseline': False,
         'src_baseline': False,
-        'cat': None,
-        'morph': None,
+        'morph': False,
         'samplingrate': None,
         'decim': None,
         'pad': 0,
         'reject': True,
     }
-    VIEW_OPTION_DEFAULTS = {'ndvar': True, 'keep_epochs': False}
+    view_options = {
+        'ndvar': True,
+        'keep_epochs': False,
+    }
 
-    def __init__(self, raw, epochs: dict[str, Any]):
+    def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
+        # ``common_brain`` is only used when morphing the estimate to it
+        fields = ('subject', 'session', 'epoch', 'epoch_rejection', 'inv', 'cov', 'raw', 'src', 'parc', 'mrisubject', 'adjacency')
+        if ctx.options['morph']:
+            fields += ('common_brain',)
+        return fields
+
+    def __init__(self, raw, epochs: dict[str, Any], references: dict[str, Reference | None]):
         self.raw = raw
         self.epochs = epochs
+        self._references = references
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        return _source_dependencies(ctx, Dependency('epochs', options=ctx.options_for('epochs', baseline=ctx.options['baseline'], ndvar=False, reject=ctx.options['reject'], cat=ctx.options['cat'], samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], pad=ctx.options['pad'], data='sensor')))
+        options = ctx.options_for('epochs', 'baseline', 'reject', 'samplingrate', 'decim', 'pad', ndvar=False, data='sensor')
+        return _source_dependencies(ctx, Dependency('epochs', options=options))
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return ctx.registry.canonicalize(ctx.options)
+        return {'source_reference_add': self._references['average'].add}
 
     def build(self, ctx: Request) -> Dataset:
         epoch = self.epochs[ctx.state['epoch']]
@@ -800,10 +653,14 @@ class EpochsStcDerivative(Derivative[Dataset]):
         epochs_value = ds['epochs']
         epoch_list = epochs_value if isinstance(epochs_value, Datalist) else [epochs_value]
         variable_time = isinstance(epochs_value, Datalist)
+        reference = self._references['average']
+        montage = self.raw.root_source_pipe(ctx.state['raw']).montage
+        for epoch_obj in epoch_list:
+            reference._prepare_source_data(epoch_obj, montage)
         _check_head_position_alignment(ctx, epoch_list[0].info)
 
         src_baseline = ctx.options['src_baseline']
-        if not ctx.options['baseline'] and src_baseline and epoch.post_baseline_trigger_shift:
+        if src_baseline and epoch.post_baseline_trigger_shift:
             raise NotImplementedError("src_baseline with post_baseline_trigger_shift")
         if src_baseline is True:
             src_baseline = epoch.baseline
@@ -836,7 +693,7 @@ class EpochsStcDerivative(Derivative[Dataset]):
             epochs_value = ds['epochs']
             epochs_list = epochs_value if isinstance(epochs_value, Datalist) else [epochs_value]
             info = epochs_list[0].info
-            sensor_types = TestDims.coerce('sensor').data_to_ndvar(info)
+            sensor_types = DataSpec.coerce('sensor').data_to_ndvar(info)
             ds.info['sensor_types'] = sensor_types
             raw_pipe = self.raw.root_source_pipe(ctx.state['raw'])
             for data_kind in sensor_types:
@@ -856,14 +713,8 @@ class EpochsStcDerivative(Derivative[Dataset]):
         ds.info.pop('raw', None)
         return ds
 
-    def load(self, ctx: Request, path: Path) -> Dataset:
-        return load.unpickle(path)
 
-    def save(self, ctx: Request, path: Path, value: Dataset) -> None:
-        save.pickle(value, path)
-
-
-class EvokedStcDerivative(Derivative[Dataset]):
+class EvokedStcDerivative(UncachedDerivative[Dataset]):
     """Source-space evoked dataset derived from cached evokeds.
 
     Options
@@ -886,36 +737,48 @@ class EvokedStcDerivative(Derivative[Dataset]):
         Whether to return source output as NDVars.
     """
     name = 'evoked-stc'
-    key_fields = (
-        'subject', 'session', 'task', 'run', 'raw',
-        'epoch', 'rej', 'model', 'equalize_evoked_count', 'cov', 'mrisubject',
-        'src', 'inv', 'parc',
-    )
-    cache_policy = CachePolicy.DISABLED_BY_DEFAULT
-    cache_suffix = '.pickle'
-    OPTION_DEFAULTS = {
+    # source localization handles EEG referencing internally
+    fixed_state = {'reference': ''}
+    key_options = {
+        'model': '',
         'baseline': False,
         'src_baseline': False,
-        'cat': None,
         'morph': False,
         'samplingrate': None,
         'decim': None,
     }
-    VIEW_OPTION_DEFAULTS = {'ndvar': True, 'keep_evoked': False}
+    view_options = {
+        'ndvar': True,
+        'keep_evoked': False,
+        'cat': None,
+    }
 
-    def __init__(self, raw, epochs: dict[str, Any]):
+    def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
+        # ``common_brain`` is only used when morphing the estimate to it
+        fields = ('subject', 'session', 'epoch', 'epoch_rejection', 'inv', 'cov', 'raw', 'src', 'parc', 'mrisubject', 'adjacency', 'equalize_evoked_count')
+        if ctx.options['morph']:
+            fields += ('common_brain',)
+        return fields
+
+    def __init__(self, raw, epochs: dict[str, Any], references: dict[str, Reference | None]):
         self.raw = raw
         self.epochs = epochs
+        self._references = references
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        return _source_dependencies(ctx, Dependency('evoked', options=ctx.options_for('evoked', baseline=ctx.options['baseline'], ndvar=False, cat=ctx.options['cat'], samplingrate=ctx.options['samplingrate'], decim=ctx.options['decim'], data='sensor')))
+        options = ctx.options_for('evoked', 'model', 'baseline', 'samplingrate', 'decim')
+        return _source_dependencies(ctx, Dependency('evoked', options=options))
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return ctx.registry.canonicalize(ctx.options)
+        return {'source_reference_add': self._references['average'].add}
 
     def build(self, ctx: Request) -> Dataset:
         solution = InverseSolution._coerce(ctx.state['inv'])
         ds = ctx.load('evoked')
+        reference = self._references['average']
+        montage = self.raw.root_source_pipe(ctx.state['raw']).montage
+        for evoked in ds['evoked']:
+            reference._prepare_source_data(evoked, montage)
         _check_head_position_alignment(ctx, ds['evoked'][0].info)
 
         src_baseline = ctx.options['src_baseline']
@@ -933,6 +796,9 @@ class EvokedStcDerivative(Derivative[Dataset]):
 
     def apply_view_options(self, ctx: Request, ds: Dataset) -> Dataset:
         ds = ds.copy()
+        cat = ctx.view_options['cat']
+        if cat:
+            ds = ds.sub(ds.eval(ctx.options['model']).isin(cat))
         ndvar = ctx.view_options['ndvar']
         keep_evoked = ctx.view_options['keep_evoked']
         stc_key = 'stcm' if 'stcm' in ds else 'stc'
@@ -946,11 +812,11 @@ class EvokedStcDerivative(Derivative[Dataset]):
             evoked = ds['evoked']
             pipe = self.raw.root_source_pipe(ctx.state['raw'])
             info = evoked[0].info
-            sensor_types = ds.info['sensor_types'] = TestDims.coerce('sensor').data_to_ndvar(info)
+            sensor_types = ds.info['sensor_types'] = DataSpec.coerce('sensor').data_to_ndvar(info)
             for sensor_type in sensor_types:
                 sysname = pipe._get_sysname(info, ctx.state['subject'], sensor_type)
                 adjacency = pipe._get_adjacency(sensor_type)
-                name = 'meg' if sensor_type == 'mag' else sensor_type
+                name = 'meg' if sensor_type == 'mag' and 'grad' not in sensor_types else sensor_type
                 ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
             del ds['evoked']
         elif not keep_evoked:
@@ -958,61 +824,6 @@ class EvokedStcDerivative(Derivative[Dataset]):
 
         ds.info.pop('raw', None)
         return ds
-
-    def load(self, ctx: Request, path: Path) -> Dataset:
-        return load.unpickle(path)
-
-    def save(self, ctx: Request, path: Path, value: Dataset) -> None:
-        save.pickle(value, path)
-
-
-class EpochsStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
-    """Group-level dataset assembled from subject ``epochs-stc`` datasets.
-
-    Options
-    -------
-    Same options as :class:`EpochsStcDerivative`.
-
-    Notes
-    -----
-    ``keep_epochs`` must be falsey, and ``morph`` defaults to ``True`` when
-    omitted.
-    """
-    name = 'epochs-stc-group-dataset'
-    OPTION_DEFAULTS = {**EpochsStcDerivative.OPTION_DEFAULTS, **EpochsStcDerivative.VIEW_OPTION_DEFAULTS}
-
-    def __init__(self, mri_subjects: dict[str, dict[str, str]], common_brain: str, groups: dict[str, tuple[str, ...]]):
-        self.mri_subjects = mri_subjects
-        self.common_brain = common_brain
-        self.groups = groups
-
-    def key(self, ctx: Request) -> dict[str, Any]:
-        return ctx.registry.canonicalize({'parc': ctx.state['parc'], 'subjects': self.groups[ctx.state['group']], 'options': ctx.registry.canonicalize(ctx.options)})
-
-    def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(ctx, state_fields=('parc',))
-
-    def _group_options(self, ctx: Request) -> dict[str, Any]:
-        keep_epochs = ctx.options['keep_epochs']
-        if keep_epochs:
-            raise ValueError(f"keep_epochs={keep_epochs!r} with group: Can not combine Epochs objects for different subjects. Set keep_epochs=False (default).")
-        morph = ctx.options['morph']
-        if morph is None:
-            return ctx.options_for('epochs-stc', *EpochsStcDerivative.OPTION_DEFAULTS, *EpochsStcDerivative.VIEW_OPTION_DEFAULTS, morph=True)
-        if not morph:
-            raise ValueError(f"morph={morph!r} with group: Source estimates can only be combined after morphing data to common brain model. Set morph=True.")
-        return ctx.options_for('epochs-stc', *EpochsStcDerivative.OPTION_DEFAULTS, *EpochsStcDerivative.VIEW_OPTION_DEFAULTS)
-
-    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        options = self._group_options(ctx)
-        return tuple(
-            Dependency('epochs-stc', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
-            for subject in self.groups[ctx.state['group']]
-        )
-
-    def build(self, ctx: Request) -> Dataset:
-        dss = [ctx.load(subject) for subject in self.groups[ctx.state['group']]]
-        return combine(dss)
 
 
 class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
@@ -1028,32 +839,31 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
     and ``morph`` defaults to ``True`` when omitted in that case.
     """
     name = 'evoked-stc-group-dataset'
-    OPTION_DEFAULTS = {**EvokedStcDerivative.OPTION_DEFAULTS, **EvokedStcDerivative.VIEW_OPTION_DEFAULTS}
+    key_options = {
+        **EvokedStcDerivative.key_options,
+        **EvokedStcDerivative.view_options,
+        'morph': True,
+    }
 
-    def __init__(self, mri_subjects: dict[str, dict[str, str]], common_brain: str, groups: dict[str, tuple[str, ...]]):
+    def __init__(self, mri_subjects: dict[str, dict[str, str]], groups: dict[str, tuple[str, ...]]):
         self.mri_subjects = mri_subjects
-        self.common_brain = common_brain
         self.groups = groups
 
-    def key(self, ctx: Request) -> dict[str, Any]:
-        return ctx.registry.canonicalize({'parc': ctx.state['parc'], 'subjects': self.groups[ctx.state['group']], 'options': ctx.registry.canonicalize(ctx.options)})
+    def override_key_fields(self, ctx: Request) -> tuple[str, ...] | None:
+        fields = ('group', 'mri', 'session', 'epoch', 'epoch_rejection', 'equalize_evoked_count', 'inv', 'cov', 'raw', 'src', 'parc', 'mrisubject', 'adjacency')
+        if ctx.options['morph']:
+            fields += ('common_brain',)
+        return fields
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(ctx, state_fields=('parc',))
-
-    def _group_options(self, ctx: Request) -> dict[str, Any]:
-        morph = ctx.options['morph']
-        if ctx.options['ndvar']:
-            if morph is None:
-                return ctx.options_for('evoked-stc', *EvokedStcDerivative.OPTION_DEFAULTS, *EvokedStcDerivative.VIEW_OPTION_DEFAULTS, morph=True)
-            if not morph:
-                raise ValueError("ndvar=True, morph=False with multiple subjects: Can't create ndvars with data from different brains")
-        return ctx.options_for('evoked-stc', *EvokedStcDerivative.OPTION_DEFAULTS, *EvokedStcDerivative.VIEW_OPTION_DEFAULTS)
+        return {'subjects': tuple(self.groups[ctx.state['group']])}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        options = self._group_options(ctx)
+        if ctx.options['ndvar'] and not ctx.options['morph']:
+            raise ValueError("ndvar=True, morph=False with multiple subjects: Can't create ndvars with data from different brains")
+        options = ctx.options_for('evoked-stc', *EvokedStcDerivative.key_options, *EvokedStcDerivative.view_options)
         return tuple(
-            Dependency('evoked-stc', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain), options=options)
+            Dependency('evoked-stc', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects), options=options)
             for subject in self.groups[ctx.state['group']]
         )
 
@@ -1063,16 +873,16 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
 
 
 def roi_data_from_subject_datasets(dss: Sequence[Dataset], reducer: str) -> ROIData:
+    """Extract ROI time course; mutates ``dss``"""
     n_trials_dss = []
     label_dss = {}
     for ds in dss:
+        src = ds.pop(next(name for name in ('srcm', 'src', 'stcm', 'stc') if name in ds))
         n_trials_dss.append(ds)
-        ds_n = ds.copy()
-        src = ds_n.pop(next(name for name in ('srcm', 'src', 'stcm', 'stc') if name in ds_n))
         for label in src.source.parc.cells:
             if label.startswith('unknown-'):
                 continue
-            label_ds = ds_n.copy()
+            label_ds = ds.copy()
             label_ds['label_tc'] = getattr(src, reducer)(source=label)
             label_dss.setdefault(label, []).append(label_ds)
     return ROIData({label: combine(label_ds, incomplete='drop') for label, label_ds in label_dss.items()}, combine(n_trials_dss, incomplete='drop'))

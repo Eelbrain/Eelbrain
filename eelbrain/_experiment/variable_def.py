@@ -87,7 +87,7 @@ class LabelVar(VarDef):
             self,
             source: str,
             codes: dict[str | float | tuple[str, ...] | tuple[float, ...], str | float],
-            default: bool | str | float = True,
+            default: str | float | bool | None = True,
             task: str = None,
             fnmatch: bool = False,
     ):
@@ -110,6 +110,8 @@ class LabelVar(VarDef):
         self.is_factor = is_factor
         if default is True:
             default = '' if is_factor else 0
+        elif default is False:
+            default = None
         elif default is not None:
             if isinstance(default, str) != is_factor:
                 raise TypeError(f"{default=}")

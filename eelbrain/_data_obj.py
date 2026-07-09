@@ -9957,7 +9957,7 @@ class SourceSpaceBase(Dimension):
             subjects_dir: PathArg,
             subject: str,
             src: str,
-            parc: str = None,
+            parc: str | None = None,
             label: mne.Label = None,
             source_spaces: mne.SourceSpaces = None,  # speeds up initialization
     ):
@@ -9973,7 +9973,7 @@ class SourceSpaceBase(Dimension):
             source_spaces: mne.SourceSpaces,
             src: str,
             subjects_dir: PathArg,
-            parc: str = None,
+            parc: str | None = None,
             label: mne.Label = None,
     ):
         """SourceSpace dimension from :class:`mne.SourceSpaces` object
@@ -9992,7 +9992,7 @@ class SourceSpaceBase(Dimension):
             subjects_dir: PathArg,
             subject: str,
             src: str,
-            parc: str = None,
+            parc: str | None = None,
             label: mne.Label = None,
             source_spaces: mne.SourceSpaces = None,  # speeds up initialization
             **kwargs,
@@ -10788,7 +10788,7 @@ class VolumeSourceSpace(SourceSpaceBase):
             subject: str = None,
             src: str = None,
             subjects_dir: PathArg = None,
-            parc: str = None,
+            parc: str | None = None,
             adjacency: AdjacencyArg = 'custom',
             name: str = 'source',
             filename: str = '{subject}-{src}-src.fif',

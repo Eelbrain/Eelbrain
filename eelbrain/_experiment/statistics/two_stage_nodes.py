@@ -1,5 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-"""Two-stage test definitions and derivatives."""
+"""Derivatives for two-stage tests."""
 
 from __future__ import annotations
 
@@ -7,95 +7,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .. import load, save, testnd
-from .._data_obj import Dataset, combine
-from .._io.pickle import update_subjects_dir
-from .._utils.parse import find_variables
-from .derivative_cache import Dependency, Derivative, Request, UncachedDerivative
-from .pathing import MRI_SDIR
-from .results import RESULT_OPTION_DEFAULTS, ResultOutputDerivative, _epochs_stc_options, _evoked_stc_options
-from .source import ROIData, roi_data_from_subject_datasets
-from .test_def import ROITestResult, ResolvedTestNDSpec, Test
-from .variable_def import apply_vardef
-
-
-class TwoStageTest(Test):
-    """Two-stage test: T-test of regression coefficients
-
-    Stage 1: fit a regression model to the data for each subject.
-    Stage 2: test coefficients from stage 1 against 0 across subjects.
-
-    Parameters
-    ----------
-    stage_1 : str
-        Stage 1 model specification. Coding for categorial predictors uses 0/1 dummy
-        coding.
-    vars : dict
-        Add new variables for the stage 1 model. This is useful for specifying
-        coding schemes based on categorial variables.
-        Each entry specifies a variable with the following schema:
-        ``{name: definition}``. ``definition`` can be either a string that is
-        evaluated in the events-:class:`Dataset`, or a
-        ``(source_name, {value: code})``-tuple (see example below).
-        ``source_name`` can also be an interaction, in which case cells are joined
-        with spaces (``"f1_cell f2_cell"``).
-    model : str
-        This parameter can be supplied to perform stage 1 tests on condition
-        averages. If ``model`` is not specified, the stage1 model is fit on single
-        trial data.
-
-    See Also
-    --------
-    Pipeline.tests
-
-    Examples
-    --------
-    The first example assumes 2 categorical variables present in events,
-    'a' with values 'a1' and 'a2', and 'b' with values 'b1' and 'b2'. These are
-    recoded into 0/1 codes::
-
-        TwoStageTest(
-            "a_num + b_num + a_num * b_num + index + a_num * index",
-            vars={
-                'a_num': ('a', {'a1': 0, 'a2': 1}),
-                'b_num': ('b', {'b1': 0, 'b2': 1}),
-            }),
-
-    The second test definition uses the "index" variable which is always present
-    and specifies the chronological index of the events as an integer count.
-    This variable can thus be used to test for a linear change over time. Due
-    to the numeric nature of these variables interactions can be computed by
-    multiplication::
-
-        TwoStageTest("a_num + index + a_num * index",
-                     vars={'a_num': ('a', {'a1': 0, 'a2': 1})
-
-    Numerical variables can also defined using data-object methods (e.g.
-    :meth:`Factor.label_length`) or from interactions::
-
-        TwoStageTest('wordlength', vars={'wordlength': 'word.label_length()'})
-        TwoStageTest("ab", vars={'ab': ('a%b', {'a1 b1': 0, 'a1 b2': 1, 'a2 b1': 1, 'a2 b2': 2})})
-    """
-    kind = 'two-stage'
-    DICT_ATTRS = Test.DICT_ATTRS + ('stage_1',)
-
-    def __init__(self, stage_1: str, vars: dict = None, model: str = None):
-        Test.__init__(self, stage_1, model, vars=vars, depend_on=find_variables(stage_1))
-        self.stage_1 = stage_1
-
-    def make_stage_1(self, y, data, subject, sub=None):
-        """Assumes that model has already been applied"""
-        return testnd.LM(y, self.stage_1, sub=sub, data=data, samples=0, subject=subject)
-
-    @staticmethod
-    def make_stage_2(lms, kwargs):
-        lm = testnd.LMGroup(lms)
-        lm.compute_column_ttests(**kwargs)
-        return lm
-
-    def make(self, y, ds, force_permutation, kwargs):
-        lms = [self.make_stage_1(y, ds, subject, f"subject=={subject!r}") for subject in ds['subject'].cells]
-        return self.make_stage_2(lms, kwargs)
+from ... import load, save
+from ..._data_obj import Dataset, combine
+from ..._io.pickle import update_subjects_dir
+from ..derivative_cache import Dependency, Derivative, Request, UncachedDerivative
+from ..pathing import MRI_SDIR
+from ..source import ROIData, roi_data_from_subject_datasets
+from ..variable_def import apply_vardef
+from .config import ResolvedTestNDSpec, Test, TwoStageTest
+from .nodes import RESULT_OPTION_DEFAULTS, ROITestResult, ResultOutputDerivative, _epochs_stc_options, _evoked_stc_options
 
 
 class ROI2StageResult(ROITestResult):
@@ -138,7 +58,7 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         Optional source-space smoothing.
     """
     name = 'two-stage-data'
-    OPTION_DEFAULTS = {
+    key_options = {
         **RESULT_OPTION_DEFAULTS,
     }
 
@@ -147,15 +67,21 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         self.epochs = epochs
         self.groups = groups
 
+    def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
+        # Match TwoStageLevel1Derivative
+        data = ctx.options['data']
+        fields = ['subject', 'session', 'epoch', 'epoch_rejection', 'raw']
+        if data is None or data.source:
+            fields += ['equalize_evoked_count', 'inv', 'cov', 'src', 'parc', 'mrisubject', 'adjacency']
+            if data is None or data.morph:
+                fields += ['common_brain']
+        return tuple(fields)
+
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(
-            ctx,
-            state_fields=('subject', 'epoch', 'raw', 'rej', 'model', 'equalize_evoked_count', 'test', 'cov', 'inv', 'src', 'mri', 'parc'),
-            definitions={
-                'test': self.tests[ctx.options['test']]._as_dict(),
-                'epoch': self.epochs[ctx.state['epoch']]._as_dict(),
-            },
-        )
+        return {
+            'test': self.tests[ctx.options['test']],
+            'epoch': self.epochs[ctx.state['epoch']],
+        }
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         subject = ctx.state['subject']
@@ -166,13 +92,13 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
             raise RuntimeError(f"{self.name!r} requires a TwoStageTest")
         if data.sensor:
             raise NotImplementedError(f"Two-stage test with data={data.string!r}")
-        elif data.source is True:
+        elif data.source and not data.aggregate:
             if test_obj.model:
                 dependency = Dependency(
                     'evoked-stc',
                     label=subject,
-                    state={'subject': subject, 'model': test_obj.model},
-                    options=_evoked_stc_options(ctx, morph=data.morph, cat=None, samplingrate=samplingrate),
+                    state={'subject': subject},
+                    options=_evoked_stc_options(ctx, model=test_obj.model, morph=data.morph, cat=None, samplingrate=samplingrate),
                 )
             else:
                 dependency = Dependency(
@@ -188,8 +114,8 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
                 dependency = Dependency(
                     'evoked-stc',
                     label=subject,
-                    state={'subject': subject, 'model': test_obj.model},
-                    options=_evoked_stc_options(ctx, morph=False, cat=None, samplingrate=samplingrate),
+                    state={'subject': subject},
+                    options=_evoked_stc_options(ctx, model=test_obj.model, morph=False, cat=None, samplingrate=samplingrate),
                 )
             else:
                 dependency = Dependency(
@@ -209,7 +135,7 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         if test_obj.vars:
             apply_vardef(ds, test_obj.vars, self.tests, self.groups)
 
-        if data.source is True:
+        if data.source and not data.aggregate:
             if ctx.options['smooth']:
                 ds[data.y_name] = ds[data.y_name].smooth('source', ctx.options['smooth'], 'gaussian')
             return ds
@@ -220,17 +146,21 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
 class TwoStageLevel1Derivative(Derivative[Any]):
     """Cached first-stage LM fit for one subject."""
     name = 'two-stage-level-1'
-    key_fields = (
-        'subject', 'epoch', 'raw', 'rej', 'model', 'equalize_evoked_count',
-        'test', 'cov', 'inv', 'src', 'mri', 'parc',
-    )
     cache_suffix = '.pickle'
-    OPTION_DEFAULTS = {
+    key_options = {
         **RESULT_OPTION_DEFAULTS,
     }
 
     def __init__(self, tests: dict[str, Test]):
         self.tests = tests
+
+    def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
+        # ``data`` is ``None`` until resolved, in which case the source superset is used (the artifact is never built for an unresolved request)
+        data = ctx.options['data']
+        fields = ['subject', 'session', 'epoch', 'raw', 'epoch_rejection']
+        if data is None or data.source:
+            fields += ['equalize_evoked_count', 'cov', 'inv', 'src', 'mri', 'mrisubject', 'parc', 'common_brain', 'adjacency']
+        return tuple(fields)
 
     def key(self, ctx: Request) -> dict[str, Any]:
         subject = ctx.state['subject']
@@ -239,10 +169,7 @@ class TwoStageLevel1Derivative(Derivative[Any]):
         return super().key(ctx)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(
-            ctx,
-            definitions={'test': self.tests[ctx.options['test']]._as_dict()},
-        )
+        return {'test': self.tests[ctx.options['test']]}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (Dependency('two-stage-data', options=ctx.options_for('two-stage-data', *RESULT_OPTION_DEFAULTS)),)
@@ -254,11 +181,11 @@ class TwoStageLevel1Derivative(Derivative[Any]):
         data = ctx.options['data']
         subject = ctx.state['subject']
         ds = ctx.load('two-stage-data')
-        if data.source is True:
+        if data.source and not data.aggregate:
             return test_obj.make_stage_1(data.y_name, ds, subject)
         if data.sensor:
             raise NotImplementedError(f"Two-stage test with data={data.string!r}")
-        roi_data = roi_data_from_subject_datasets([ds], data.source)
+        roi_data = roi_data_from_subject_datasets([ds], data.aggregate)
         return SubjectROILMResult(
             {label: test_obj.make_stage_1('label_tc', label_ds, subject) for label, label_ds in roi_data.label_data.items()},
             roi_data.n_trials_ds,
@@ -277,11 +204,10 @@ class TwoStageLevel1Derivative(Derivative[Any]):
 class TwoStageLevel2Derivative(ResultOutputDerivative):
     """Cached second-stage group result for two-stage tests."""
     name = 'two-stage-level-2'
-    sampled_path = True
     cache_suffix = '.pickle'
     path = Derivative.path
-    OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'disconnect_labels': False}
-    VIEW_OPTION_DEFAULTS = {}
+    key_options = {**RESULT_OPTION_DEFAULTS, 'disconnect_labels': False}
+    view_options = {}
 
     def cache_label(self, ctx: Request) -> str:
         return self._path_stem(ctx) if ctx.options['samples'] is None else f"{self._path_stem(ctx)}_samples-{ctx.options['samples']}"
@@ -300,16 +226,19 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
         data = ctx.options['data']
         test_spec = ResolvedTestNDSpec.from_request(ctx, data)
         subjects = self.groups[ctx.state['group']]
-        if data.source is not True and not isinstance(data.source, str):
+        if not data.source:
             raise NotImplementedError(f"Two-stage test with data={data.string!r}")
         subject_results = [ctx.load(subject) for subject in subjects]
-        if data.source is True:
+        if data.source and not data.aggregate:
             return test_obj.make_stage_2(subject_results, test_spec.kwargs)
 
         label_lms = {}
         for subject_result in subject_results:
             for label, lm in subject_result.lms.items():
                 label_lms.setdefault(label, []).append(lm)
+        dropped = sorted(label for label, lms in label_lms.items() if len(lms) <= 2)
+        if dropped:
+            ctx.registry.log.warning("Two-stage ROI test: dropping label(s) %s with data from 2 or fewer subjects (a group test needs more than 2)", ', '.join(dropped))
         results = {
             label: test_obj.make_stage_2(lms, test_spec.kwargs)
             for label, lms in label_lms.items()

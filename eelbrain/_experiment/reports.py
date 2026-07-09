@@ -26,15 +26,15 @@ from .derivative_cache import Dependency, Derivative, Request, file_fingerprint
 from .parc import IndividualSeededParc, _resolve_parc
 from .pathing import MRI_SDIR, coreg_report_path, mri_dir, trans_file_path
 from .preprocessing import RawPipeGraph, raw_node_name
-from .results import (
+from .data import DataSpec
+from .source import _subject_state
+from .statistics.config import ResolvedTestNDSpec, TwoStageTest
+from .statistics.nodes import (
     RESULT_OPTION_DEFAULTS,
     TEST_DATA_OPTION_NAMES,
     ResultOutputDerivative,
     _test_result_options,
 )
-from .source import _subject_state
-from .test_def import ResolvedTestNDSpec, TestDims
-from .two_stage import TwoStageTest
 
 
 def _format_text(state: dict[str, Any], template: str) -> str:
@@ -110,17 +110,15 @@ def _report_subject_info(state: dict[str, Any], subjects: tuple[str, ...], ds, m
     return s_ds.as_table(midrule=True, count=True, caption="All subjects included in the analysis with trials per condition")
 
 
-def _report_test_info(node: ResultOutputDerivative, state: dict[str, Any], subjects: tuple[str, ...], section, ds, test, res, data, include=None, model=True):
+def _report_test_info(node: ResultOutputDerivative, state: dict[str, Any], subjects: tuple[str, ...], section, ds, test, res, data, include=None):
     test_obj = node.tests[test] if isinstance(test, str) else test
     info = fmtxt.List("Analysis:")
     epoch = _format_text(state, 'epoch = {epoch}')
-    evoked_kind = '_'.join(part for part in (state.get('rej'), state.get('equalize_evoked_count')) if part not in (None, '')) or None
+    evoked_kind = '_'.join(part for part in (state.get('epoch_rejection'), state.get('reference'), state.get('equalize_evoked_count')) if part not in (None, '')) or None
     if evoked_kind:
         epoch += f' {evoked_kind}'
-    if model is True:
-        model = state.get('model')
-    if model:
-        epoch += f" ~ {model}"
+    if test_obj.model:
+        epoch += f" ~ {test_obj.model}"
     info.add_item(epoch)
     if data.source:
         info.add_item(_format_text(state, "cov = {cov}"))
@@ -150,7 +148,7 @@ def _report_parc_image(
             raise RuntimeError("subjects needs to be specified for plotting individual parcellations")
         legend = None
         for subject in subjects:
-            plot_state = _subject_state(state, subject, node.mri_subjects, node.common_brain)
+            plot_state = {**state, **_subject_state(state, subject, node.mri_subjects)}
             labels = ctx.load(f'annot:{subject}')
             if all(label.name.startswith('unknown-') for label in labels):
                 section.add_image_figure("No labels", subject)
@@ -188,12 +186,10 @@ class BrainReportDerivative(ResultOutputDerivative[Path]):
             parcs: dict[str, Any],
             groups: dict[str, tuple[str, ...] | list[str]],
             mri_subjects: dict[str, dict[str, str]],
-            common_brain: str,
             brain_plot_defaults: dict[str, Any] | None = None,
     ):
         ResultOutputDerivative.__init__(self, tests, epochs, parcs, groups)
         self.mri_subjects = mri_subjects
-        self.common_brain = common_brain
         self.brain_plot_defaults = {} if brain_plot_defaults is None else brain_plot_defaults
 
     def _annot_deps(self, ctx: Request) -> tuple[Dependency, ...]:
@@ -202,7 +198,7 @@ class BrainReportDerivative(ResultOutputDerivative[Path]):
         if not isinstance(parc, IndividualSeededParc):
             return ()
         return tuple(
-            Dependency('annot', label=f'annot:{subject}', state=_subject_state(ctx.state, subject, self.mri_subjects, self.common_brain))
+            Dependency('annot', label=f'annot:{subject}', state=_subject_state(ctx.state, subject, self.mri_subjects))
             for subject in self.groups[ctx.state['group']]
         )
 
@@ -215,7 +211,7 @@ class SourceReportDerivative(BrainReportDerivative):
     """
     name = 'source-report'
     sampled_path = True
-    OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'disconnect_labels': False, 'include': None}
+    key_options = {**RESULT_OPTION_DEFAULTS, 'disconnect_labels': False, 'include': None}
 
     def _identity_extra(self, ctx: Request) -> dict[str, Any]:
         return {'include': ctx.options['include']}
@@ -279,7 +275,7 @@ class ROIReportDerivative(BrainReportDerivative):
     """
     name = 'roi-report'
     sampled_path = True
-    OPTION_DEFAULTS = RESULT_OPTION_DEFAULTS
+    key_options = RESULT_OPTION_DEFAULTS
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if isinstance(self.tests[ctx.options['test']], TwoStageTest):
@@ -335,7 +331,7 @@ class EEGReportDerivative(ResultOutputDerivative[Path]):
     """
     name = 'eeg-report'
     sampled_path = True
-    OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'include': None}
+    key_options = {**RESULT_OPTION_DEFAULTS, 'include': None}
 
     def _identity_extra(self, ctx: Request) -> dict[str, Any]:
         return {'include': ctx.options['include']}
@@ -374,7 +370,7 @@ class EEGSensorsReportDerivative(ResultOutputDerivative[Path]):
     """
     name = 'eeg-sensors-report'
     sampled_path = True
-    OPTION_DEFAULTS = {**RESULT_OPTION_DEFAULTS, 'sensors': ()}
+    key_options = {**RESULT_OPTION_DEFAULTS, 'sensors': ()}
 
     def _identity_extra(self, ctx: Request) -> dict[str, Any]:
         return {'sensors': tuple(ctx.options['sensors'])}
@@ -419,7 +415,7 @@ class LMReportDerivative(BrainReportDerivative):
     sampled_path = True
 
     def _level_1_options(self, ctx: Request) -> dict[str, Any]:
-        return ctx.options_for('two-stage-level-1', *RESULT_OPTION_DEFAULTS, data=TestDims.coerce('source', morph=False), smooth=None)
+        return ctx.options_for('two-stage-level-1', *RESULT_OPTION_DEFAULTS, data=DataSpec.coerce('source', morph=False), smooth=None)
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         test_obj = self.tests[ctx.options['test']]
@@ -447,18 +443,15 @@ class CoregReportDerivative(Derivative[Path]):
         Optional explicit output path.
     """
     name = 'coreg-report'
-    key_fields = ('subject', 'session', 'task', 'run', 'mri', 'mrisubject')
-    OPTION_DEFAULTS = {}
-    VIEW_OPTION_DEFAULTS = {'dst': None}
+    key_fields = ('subject', 'session', 'task', 'run', 'raw', 'mri', 'mrisubject')
+    key_options = {}
+    view_options = {'dst': None}
 
     def __init__(self, raw: RawPipeGraph):
         self.raw = raw
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return self.standard_fingerprint(
-            ctx,
-            extra={'mri': file_fingerprint(ctx.root, ctx.root / mri_dir(ctx.state), 'mri-dir', metadata={'mrisubject': ctx.state['mrisubject']})},
-        )
+        return {'mri': file_fingerprint(ctx.root, ctx.root / mri_dir(ctx.state), metadata={'mrisubject': ctx.state['mrisubject']})}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         raw_name = self.raw.root_source_name(ctx.state['raw'])
@@ -466,10 +459,10 @@ class CoregReportDerivative(Derivative[Path]):
             Dependency(
                 raw_node_name(raw_name),
                 label='raw',
-                state={**ctx.state, 'raw': raw_name},
+                state={'raw': raw_name},
                 options={'noise': False},
             ),
-            Dependency('trans-input', label='trans', state=ctx.state),
+            Dependency('trans-input', label='trans'),
         )
 
     def path(
@@ -492,7 +485,7 @@ class CoregReportDerivative(Derivative[Path]):
 
         report = fmtxt.Report(title)
         raw = ctx.load('raw')
-        fig = mne.viz.plot_alignment(raw.info, ctx.root / trans_file_path(ctx.state), mrisubject, ctx.root / MRI_SDIR, 'auto', meg=('helmet', 'sensors'), dig=True, interaction='terrain')
+        fig = mne.viz.plot_alignment(raw.info, ctx.root / trans_file_path(ctx.state, datatype=ctx.datatype), mrisubject, ctx.root / MRI_SDIR, 'auto', meg=('helmet', 'sensors'), dig=True, interaction='terrain')
         fig.plotter.enable_parallel_projection()
         fig.scene.camera.parallel_projection = True
         fig.scene.camera.parallel_scale = .175

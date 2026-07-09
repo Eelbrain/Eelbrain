@@ -15,4 +15,4 @@ if _config.SUPPRESS_WARNINGS:
 
 from .utils import Icon, show_text_dialog
 from .app import needs_jumpstart, get_app, run
-from . import history, select_epochs, select_components, load_stcs
+from . import history, select_channels, select_epochs, select_components, load_stcs
