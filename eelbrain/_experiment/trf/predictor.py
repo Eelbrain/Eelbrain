@@ -285,12 +285,12 @@ class NUTSPredictor(FilePredictorBase):
     Assume a :class:`Dataset` stored at ``predictors/story~word.pickle``, etc.,
     with the following columns:
 
-     - ``time``, indicating the word's onset time
-     - ``frequency``, the word frequency
-     - ``surprisal``, how surprising the word is in its context
-     - ``noun``, ``True`` if the word is a noun, ``False`` otherwise
+    - ``time``, indicating the word's onset time
+    - ``frequency``, the word frequency
+    - ``surprisal``, how surprising the word is in its context
+    - ``noun``, ``True`` if the word is a noun, ``False`` otherwise
 
-    This could be added to the experiment as follows:
+    This could be added to the experiment as follows::
 
         predictors = {
             'word': NUTSPredictor(),
@@ -298,9 +298,9 @@ class NUTSPredictor(FilePredictorBase):
 
     With this predictor, the following terms could be used for TRF models:
 
-     - ``word``: Unit size impulse at every word onset
-     - ``word-frequency``: An impulse at each word onset reflecting the word's frequency
-     - ``word-frequency-noun``: An impulse at each noun's onset reflecting the noun's frequency
+    - ``word``: Unit size impulse at every word onset
+    - ``word-frequency``: An impulse at each word onset reflecting the word's frequency
+    - ``word-frequency-noun``: An impulse at each noun's onset reflecting the noun's frequency
 
     These terms in turn could be used to construct the following model::
 

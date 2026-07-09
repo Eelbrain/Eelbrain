@@ -2,6 +2,8 @@
 from eelbrain.pipeline import Pipeline, RawFilter, RawICA, LabelVar, PrimaryEpoch, SecondaryEpoch, TTestOneSample, TTestRelated, ANOVA
 
 
+root = '~/Data/ds005810'
+
 class ImageNet(Pipeline):
 
     preload = True
@@ -18,8 +20,8 @@ class ImageNet(Pipeline):
     }
 
     variables = {
-        'position': LabelVar('trigger', {1: 'begin', 2: 'end', (3, 4): 'middle'}),
-        'event': LabelVar('trigger', {(1, 2): 'unused', 3: 'resp', 4: 'stim_on'}),
+        'position': LabelVar('value', {1: 'begin', 2: 'end', (3, 4): 'middle'}),
+        'event': LabelVar('value', {(1, 2): 'unused', 3: 'resp', 4: 'stim_on'}),
     }
 
     epochs = {
@@ -34,7 +36,3 @@ class ImageNet(Pipeline):
         'connection': TTestRelated('event', 'stim_on', 'resp'),
         'anova': ANOVA('event * subject'),
     }
-
-
-root = '~/Data/ds005810'
-e = ImageNet(root)

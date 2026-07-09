@@ -61,7 +61,7 @@ On the other hand, :meth:`Pipeline.load_epochs` can be used to load the correspo
 Data preparation
 ----------------
 
-Steps that require visual inspection and human decisions, like ICA component selection, trial rejection, and MRI coregistration.
+Steps that require visual inspection and human decisions, like bad-channel marking, ICA component selection, trial rejection, and MRI coregistration.
 The preferred tool for all of these is the pipeline GUI, launched from the command line::
 
     $ cd  ~/Code/MyProject
@@ -105,7 +105,7 @@ Step by Step
 Setting up the file structure
 -----------------------------
 
-The pipeline expects input dataset in `BIDS (Brain Imaging Data Structure) <https://bids.neuroimaging.io/>`_ format. (To convert your data into BIDS format, use the `MNE-BIDS <https://mne.tools/mne-bids/stable/use.html>_` library.) In the schema below, curly brackets indicate slots that the pipeline will replace with specific names::
+The pipeline expects input dataset in `BIDS (Brain Imaging Data Structure) <https://bids.neuroimaging.io/>`_ format. (To convert your data into BIDS format, use the `MNE-BIDS <https://mne.tools/mne-bids/stable/use.html>`_ library.) In the schema below, curly brackets indicate slots that the pipeline will replace with specific names::
 
 
     root                              {root}
@@ -234,8 +234,9 @@ ICA
     The **Make ICA** button computes ICA decompositions for all subjects that are still missing one.
 
 Epoch rejection
-    Shows the trial-rejection status (done / missing) for the selected epoch and raw pipeline combination.
+    Shows the trial-rejection status (done / missing) for the selected epoch, rejection method, and raw pipeline combination.
     Double-clicking opens the epoch rejection GUI for that subject.
+    For automatic rejection methods, the GUI is read-only and the **Compute rejection** button generates missing rejection files.
 
 MRI
     Shows whether each subject has a FreeSurfer reconstruction (full recon, scaled template, or missing) and whether the common brain (fsaverage) is present.
@@ -269,7 +270,7 @@ Which will plot a 10 s excerpt and allow scrolling through the rest of the data.
 Events
 ------
 
-Bu default, events are read from BIDS side-car files.
+By default, events are read from BIDS side-car files.
 Triggers in raw data files provide a fallback.
 If needed, set :attr:`Pipeline.merge_triggers` to handle spurious events.
 Use the :attr:`Pipeline.variables` settings to add event labels.
@@ -279,12 +280,12 @@ corresponding methods and functions, for example::
     >>> e = MyExperiment("~/Data/Experiment")
     >>> data = e.load_events()
     >>> data.head()
-    >>> print(table.frequencies('trigger', data=data))
+    >>> print(table.frequencies('value', data=data))
 
 
 For more complex designs and variables, you can override methods that provide
 complete control over the events. These are the transformations applied to
-the triggers extracted from raw files (in this order):
+events from BIDS side-cars or from raw-file triggers (in this order):
 
  - :meth:`Pipeline.fix_events`: Change event order, timing and remove/add
    events
@@ -303,12 +304,16 @@ source estimation.
 
 In order to find the right ``sel`` epoch parameter, it can be useful to actually
 load the events with :meth:`Pipeline.load_events` and test different
-selection strings. The epoch selection is determined by
-``selection = event_ds.eval(epoch['sel'])``. Thus, a specific setting could be
+selection strings. The epoch selection is determined by evaluating the
+epoch's ``sel`` expression in the events Dataset. Thus, a specific setting could be
 tested with::
 
     >>> data = e.load_events()
     >>> print(data.sub("event == 'value'"))
+
+For datasets with a ``run`` entity, :class:`PrimaryEpoch` combines all runs for
+the selected subject/session/task by default. To analyze a single run, set the
+epoch's ``run`` parameter, for example ``PrimaryEpoch('task', run='1')``.
 
 
 Bad channels
@@ -385,15 +390,28 @@ Trial and channel rejection
 Different methods for artifact rejection in epoched data
 can be defined in :attr:`Pipeline.epoch_rejection`.
 
-For bad trials can be manually rejected, or automatic rejcetions can be visually inspected
-using the :ref:`pipeline-gui` or :meth:`Pipeline.make_epoch_rejection`.
-Rejections are always specific to a given ``raw`` state.
+Bad trials can be manually rejected with :class:`ManualRejection`, or detected
+automatically with :class:`ChannelModelRejection`.
+Automatic rejection can also mark bad EEG channels for interpolation within an
+epoch, or within shorter windows for long and variable-length epochs.
+Rejections are always specific to a given ``raw`` state, primary epoch, and
+``epoch_rejection`` setting.
+
+For example::
+
+    class Experiment(Pipeline):
+
+        epoch_rejection = {
+            'manual': ManualRejection(),
+            'auto': ChannelModelRejection(max_interpolate=5),
+        }
 
 In the :ref:`pipeline-gui`, select the **Epoch rejection** task, choose the epoch and raw pipeline from the dropdowns, and double-click a subject row to open the rejection GUI for that subject.
+For automatic rejection, click **Compute rejection** to generate missing files and double-click rows to inspect them.
 
 Alternatively, cycle through subjects programmatically::
 
-    >>> e.set(raw='ica1-40', epoch='word')
+    >>> e.set(raw='ica1-40', epoch='word', epoch_rejection='manual')
     >>> e.make_epoch_rejection()
     >>> e.next()
     subject: 'R1801' -> 'R2079'
@@ -464,24 +482,24 @@ Example
 
 The following is a complete example for an experiment class definition file
 (the source file can be found in the Eelbrain examples folder at
-``examples/imagenet/imagenet.py``):
+``examples/imagenet/pipeline.py``):
 
-.. literalinclude:: ../examples/imagenet/imagenet.py
+.. literalinclude:: ../examples/imagenet/pipeline.py
 
 The event structure is illustrated by looking at the first few events::
 
-    >>> from imagenet import *
+    >>> e = load_pipeline()
     >>> data = e.load_events()
     >>> data.head()
-    #     i_start   trigger   event     T        SOA       subject   position
+    #     sample    value     event     onset    SOA       subject   position
     -------------------------------------------------------------------------
-    0     2814      1         unused    2.345    5.0392    01        begin   
-    1     8861      4         stim_on   7.3842   1.0242    01        middle  
-    2     10090     3         resp      8.4083   0.2925    01        middle  
-    3     10441     4         stim_on   8.7008   0.915     01        middle  
-    4     11539     3         resp      9.6158   0.63417   01        middle  
-    5     12300     4         stim_on   10.25    0.90167   01        middle  
-    6     13382     3         resp      11.152   0.64833   01        middle  
+    0     2814      1         unused    2.345    5.0392    01        begin
+    1     8861      4         stim_on   7.3842   1.0242    01        middle
+    2     10090     3         resp      8.4083   0.2925    01        middle
+    3     10441     4         stim_on   8.7008   0.915     01        middle
+    4     11539     3         resp      9.6158   0.63417   01        middle
+    5     12300     4         stim_on   10.25    0.90167   01        middle
+    6     13382     3         resp      11.152   0.64833   01        middle
 
 
 Experiment Definition
@@ -511,13 +529,12 @@ will send you an email as soon as the report is finished (or the program
 encountered an error)
 
 :class:`Pipeline` caches intermediate results and validates them when they are
-loaded. If a stored cache entry or result is outdated, load it again with
-``make=True`` to recompute it. Cache files that are no longer reachable from
-the current pipeline definition are not deleted automatically. Files stored
-outside ``cache-dir`` are treated as user-managed outputs and are not
-overwritten automatically when they become stale; their manifest files are
-stored under ``cache-dir/manifests`` instead of next to the artifacts
-themselves.
+loaded. Most stale intermediate cache entries are recomputed on demand. Files
+stored outside ``cache-dir`` are treated as user-managed outputs and are not
+overwritten automatically when they become stale; the corresponding error or GUI
+dialog explains whether to recompute, delete, or explicitly accept the existing
+file. Cached tests and reports are likewise not overwritten silently; use the
+corresponding ``make`` or ``redo`` option to regenerate them.
 
 .. py:attribute:: Pipeline.screen_log_level
    :type: str
@@ -646,18 +663,17 @@ For example, the following definition sets up a pipeline for MEG, using TSSS, a 
             '1-40': RawFilter('tsss', 1, 40),
             'ica': RawICA('1-40', 'task', 'extended-infomax', n_components=0.99),
         }
-        
-To use the ``raw --> TSSS --> 1-40 Hz band-pass`` pipeline, use ``e.set(raw="1-40")``. 
+
+To use the ``raw --> TSSS --> 1-40 Hz band-pass`` pipeline, use ``e.set(raw="1-40")``.
 To use ``raw --> TSSS --> 1-40 Hz band-pass --> ICA``, select ``e.set(raw="ica")``.
 
-The following is an example for EEG using band-pass filter, ICA and re-referencing::
+The following is an example for EEG using band-pass filter and ICA::
 
     class Experiment(Pipeline):
 
         raw = {
             '1-20': RawFilter('raw', 1, 20, cache=False),
             'ica': RawICA('1-20', 'stories'),
-            'reref': RawReReference('ica', ['A1', 'A2'], 'A2')
             # Use the same ICA, but with a high pass filter with a lower cutoff frequency:
             '0.2-20': RawFilter('raw', 0.2, 20, cache=False),
             '0.2-20ica': RawApplyICA('0.2-20', 'ica'),
@@ -688,15 +704,15 @@ Event variables add labels and variables to the events:
    GroupVar
 
 
-Most of the time, the main purpose of this attribute is to turn trigger
-values into meaningful labels::
+Most of the time, the main purpose of this attribute is to turn trigger values
+(the ``value`` column in the events Dataset) into meaningful labels::
 
 
     class Mouse(Pipeline):
 
         variables = {
-            'stimulus': LabelVar('trigger', {(162, 163): 'target', (166, 167): 'prime'}),
-            'prediction': LabelVar('trigger', {162: 'expected', 163: 'unexpected'}),
+            'stimulus': LabelVar('value', {(162, 163): 'target', (166, 167): 'prime'}),
+            'prediction': LabelVar('value', {162: 'expected', 163: 'unexpected'}),
         }
 
 This defines a variable called "stimulus", and on this variable all events
@@ -738,14 +754,16 @@ Examples::
         'animal_words': SecondaryEpoch('noun', sel="word_type == 'animal'"),
         # a superset-epoch:
         'all_stimuli': SuperEpoch(('picture', 'word')),
+        # estimate one TRF for each member epoch:
+        'stimuli_separate': EpochCollection(('picture', 'word')),
     }
 
 .. py:attribute:: Pipeline.epoch_rejection
 
 Epoch-level artifact rejection is controlled through the
 :ref:`state-epoch_rejection` state.
-Automatic rejection procedures can be implemented through :attr:`Pipeline.epoch_rejection`,
-a ``{name: EpochRejection}`` dictionary of trial-rejection settings.
+Define :attr:`Pipeline.epoch_rejection` as a ``{name: EpochRejection}``
+dictionary of trial-rejection settings.
 
 .. autosummary::
    :toctree: generated
@@ -753,6 +771,12 @@ a ``{name: EpochRejection}`` dictionary of trial-rejection settings.
 
    ManualRejection
    ChannelModelRejection
+
+The empty rejection name (``epoch_rejection=''``) is always available and means
+that no epoch-level rejection is applied.
+Add a :class:`ManualRejection` entry for rejection files edited in the GUI, and
+use :class:`ChannelModelRejection` for automatically generated EEG rejection and
+channel-interpolation files.
 
 
 References (re-referencing)
@@ -794,6 +818,76 @@ data *before* epoching and interpolation. ``references`` is orthogonal to
     ``reference=''`` for such data. Source localization handles EEG referencing
     internally (via MNE's average-reference projector) and always uses
     ``reference=''`` regardless of the current state.
+
+
+Temporal Response Functions
+---------------------------
+
+Pipeline-managed TRF analyses are configured through predictors, estimators,
+and optional named models.
+Use :meth:`Pipeline.load_trf` to compute or load a single subject's TRF and
+:meth:`Pipeline.load_trfs` to assemble TRFs and fit metrics for a subject group.
+
+.. py:attribute:: Pipeline.predictors
+
+Predictors are defined as a ``{name: predictor_definition}`` dictionary:
+
+.. autosummary::
+   :toctree: generated
+   :template: class_nomethods.rst
+
+   EventPredictor
+   UTSPredictor
+   NUTSPredictor
+
+:class:`EventPredictor` creates impulses from the events Dataset.
+:class:`UTSPredictor` and :class:`NUTSPredictor` load per-stimulus predictor
+files from ``{root}/derivatives/predictors``.
+
+.. py:attribute:: Pipeline.estimators
+
+Estimators are defined as a ``{name: estimator_definition}`` dictionary.
+The built-in ``'boosting'`` estimator is always available and can be overridden
+to change its parameters.
+
+.. autosummary::
+   :toctree: generated
+   :template: class_nomethods.rst
+
+   Boosting
+   NCRF
+
+.. py:attribute:: Pipeline.models
+
+Named model strings can be defined as abbreviations and reused in
+:meth:`Pipeline.load_trf` and :meth:`Pipeline.load_trfs`.
+
+.. py:attribute:: Pipeline.stim_var
+
+Column in the events Dataset that identifies the stimulus for file predictors
+(default ``'stimulus'``).
+
+Example::
+
+    class Experiment(Pipeline):
+
+        predictors = {
+            'onset': EventPredictor(),
+            'env': UTSPredictor(resample='resample'),
+            'word': NUTSPredictor(),
+        }
+        stim_var = 'stimulus'
+        estimators = {
+            'boosting': Boosting(partitions=5),
+        }
+        models = {
+            'acoustic': 'onset + env',
+        }
+
+    e = Experiment("~/Data/Experiment")
+    e.set(epoch='story', raw='1-40', inv='')
+    trf = e.load_trf('acoustic + word-frequency', -0.1, 0.5)
+    trfs = e.load_trfs('all', 'acoustic', -0.1, 0.5)
 
 
 Tests
@@ -935,9 +1029,11 @@ Which task to work with (usually set automatically when :ref:`state-epoch` is se
 .. _state-run:
 
 ``run``
----------
+-------
 
-Which run to work with.
+Which run to work with. For :class:`PrimaryEpoch` definitions without an
+explicit ``run`` parameter, events and epochs are combined across all available
+runs for the current subject/session/task.
 
 
 .. _state-raw:
@@ -981,10 +1077,10 @@ the analysis should be conducted.
 ``epoch_rejection``
 -------------------
 
-Selects an entry from :attr:`Pipeline.epoch_rejection`. Default options are
-``e.set(epoch_rejection='')``, rejecting no epoch level data, and
-``e.set(epoch_rejection='manual')`` for manually creating rejections
-(using :meth:`Pipeline.make_epoch_rejection`).
+Selects an entry from :attr:`Pipeline.epoch_rejection`.
+``e.set(epoch_rejection='')`` is always available and disables epoch-level
+rejection. Other values correspond to user-defined entries such as
+``ManualRejection`` or ``ChannelModelRejection`` settings.
 
 
 .. _state-reference:
@@ -994,10 +1090,10 @@ Selects an entry from :attr:`Pipeline.epoch_rejection`. Default options are
 
 Selects an EEG re-reference defined in :attr:`Pipeline.references`, applied to
 epochs after channel interpolation. ``e.set(reference='')`` (the default) applies
-no epoch-stage re-referencing; ``e.set(reference='avg')`` applies the
-corresponding :class:`Reference`. Has no effect on data without EEG channels
-(loading such data with a non-empty ``reference`` raises an error) and on source
-localization (which handles referencing internally).
+no epoch-stage re-referencing; ``e.set(reference='average')`` applies the
+corresponding :class:`Reference`. Loading sensor-space data that contains no EEG
+channels with a non-empty ``reference`` raises an error. Source localization
+handles EEG referencing internally.
 
 
 .. _state-equalize_evoked_count:

@@ -20,6 +20,34 @@ Issues on prior versions
 
 Major changes
 =============
+
+New in 0.43
+-----------
+
+* Experiment :class:`Pipeline`:
+
+  - New :func:`load_pipeline` helper and ``eelbrain-gui`` command for loading
+    a project from a ``pipeline.py`` file and managing data preparation in one
+    place.
+  - Pipeline-managed derivative files now follow a BIDS-style layout under
+    ``derivatives/mne``. The ``eelbrain-gui --migrate`` command can move
+    legacy ICA, coregistration, bad-channel, and epoch-rejection files to the
+    new layout.
+  - BIDS datasets with multiple runs are supported throughout epoching:
+    :class:`pipeline.PrimaryEpoch` combines all available runs by default, or
+    can be restricted to a specific run.
+  - Epoch rejection is now configured through
+    :attr:`pipeline.Pipeline.epoch_rejection`, with manual rejection and
+    :class:`pipeline.ChannelModelRejection` for automatic EEG channel/epoch
+    artifact detection.
+  - EEG data can be re-referenced after epoching and channel interpolation
+    through :attr:`pipeline.Pipeline.references` and the ``reference`` state.
+    This is generally preferable to re-referencing before epoching.
+  - Temporal response function analyses can be managed directly by the
+    pipeline with predictors, estimators, and :meth:`pipeline.Pipeline.load_trf`
+    / :meth:`pipeline.Pipeline.load_trfs`.
+
+
 New in 0.42
 -----------
 
