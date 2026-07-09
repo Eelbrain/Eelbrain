@@ -594,7 +594,6 @@ def setup_samples_experiment(
     # find data source
     # input paths
     data_path = mne.datasets.sample.data_path(download=download)
-    fsaverage_path = mne.datasets.fetch_fsaverage()
     raw_fname = join(data_path, "MEG", "sample", "sample_audvis_raw.fif")
     emptyroom_fname = join(data_path, "MEG", "sample", "ernoise_raw.fif")
     event_id = {
@@ -694,6 +693,7 @@ def setup_samples_experiment(
         return
 
     # freesurfer
+    fsaverage_path = mne.datasets.fetch_fsaverage()
     mri_sdir = root / 'derivatives' / 'freesurfer'
     mri_sdir.mkdir(parents=True)
     # copy rudimentary fsaverage

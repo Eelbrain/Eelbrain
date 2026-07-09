@@ -86,6 +86,8 @@ def samples_experiment(_samples_templates, tmp_path):
             mris: bool = False,
             pick: str = 'mag',
     ) -> str:
+        if not mne.datasets.has_dataset("sample"):
+            pytest.skip("mne sample data unavailable")
         key = (n_subjects, n_tasks, n_segments, n_runs, mris, pick)
         if key not in cache:
             template = template_dir / f'template-{len(cache)}'
@@ -712,6 +714,7 @@ def test_sample_tasks(samples_experiment):
     assert ica_path == Path(root) / 'derivatives' / 'mne' / 'sub-R0000' / 'meg' / 'sub-R0000_desc-ica_ica.fif'
 
 
+@requires_mne_sample_data
 def test_ica_all_tasks_after_maxwell(samples_experiment):
     "task=None ICA after RawMaxwell uses all tasks and runs per subject/session"
     set_log_level('warning', 'mne')
