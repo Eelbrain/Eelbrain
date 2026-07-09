@@ -719,9 +719,6 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
         self.raw = raw
         self.groups = groups
 
-    def key(self, ctx: Request) -> dict[str, Any]:
-        return {'subjects': tuple(self.groups[ctx.state['group']]), 'options': ctx.options}
-
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {'subjects': tuple(self.groups[ctx.state['group']])}
 

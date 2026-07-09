@@ -162,12 +162,6 @@ class TwoStageLevel1Derivative(Derivative[Any]):
             fields += ['equalize_evoked_count', 'cov', 'inv', 'src', 'mri', 'mrisubject', 'parc', 'common_brain', 'adjacency']
         return tuple(fields)
 
-    def key(self, ctx: Request) -> dict[str, Any]:
-        subject = ctx.state['subject']
-        if subject in (None, '', '*'):
-            raise RuntimeError(f"{self.name!r} requires an explicit subject")
-        return super().key(ctx)
-
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {'test': self.tests[ctx.options['test']]}
 

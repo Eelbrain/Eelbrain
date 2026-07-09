@@ -469,9 +469,6 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
             fields += ['cov', 'src', 'parc', 'adjacency', 'mrisubject', 'common_brain']
         return tuple(fields)
 
-    def key(self, ctx: Request) -> dict[str, object]:
-        return {'subjects': tuple(self.groups[ctx.state['group']]), 'options': ctx.options}
-
     def fingerprint(self, ctx: Request) -> dict[str, object]:
         return {'subjects': tuple(self.groups[ctx.state['group']])}
 
