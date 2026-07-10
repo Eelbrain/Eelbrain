@@ -1104,7 +1104,8 @@ def test_protected_artifact_requires_derivative_owned_reindexing():
 
 
 def test_runtime_code_does_not_use_private_get_node():
-    experiment_dir = Path(__file__).resolve().parents[1]
+    """Make sure private API is not used"""
+    experiment_dir = Path(__file__).resolve().parents[2]
     offenders = []
     for path in experiment_dir.glob('*.py'):
         if path.name == 'derivative_cache.py':
