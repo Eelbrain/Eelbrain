@@ -130,11 +130,6 @@ class PredictorInput(VersionedInput[NDVar]):
 _Y_NAMES = ('srcm', 'src', 'meg', 'eeg')
 
 
-def _normalized_model_name(ctx: Request, x) -> str:
-    "Expand model abbreviations so the cache key stores the full model name"
-    return Model.coerce(x).initialize(ctx.node.named_models).name
-
-
 class TRFDerivative(Derivative[object]):
     """Fit and cache a TRF for one subject
 
@@ -147,8 +142,6 @@ class TRFDerivative(Derivative[object]):
         :attr:`Pipeline.estimators` attribute).
     predictors
         Mapping of predictor key to predictor definition.
-    named_models
-        Named models for expanding model abbreviations.
     stim_var
         Mapping of stimulus key to the events :class:`Dataset` column that
         identifies the stimulus (the assembled ``Pipeline._stim_var``).
@@ -159,7 +152,7 @@ class TRFDerivative(Derivative[object]):
     cache_suffix = '.pickle'
     fixed_state = {'adjacency': ''}
     key_options = {
-        'x': OptionSpec(None, normalize=_normalized_model_name),
+        'x': OptionSpec(None, Model, normalize=Model.coerce),
         'tstart': 0.0,
         'tstop': 0.5,
         'estimator': 'boosting',
@@ -175,22 +168,17 @@ class TRFDerivative(Derivative[object]):
             root: str | Path,
             estimators: dict[str, Estimator],
             predictors: dict[str, Configuration],
-            named_models: dict[str, Model],
             stim_var: str,
             raw: dict[str, RawPipe],
     ):
         self.root = Path(root)
         self.estimators = estimators
         self.predictors = predictors
-        self.named_models = named_models
         self.stim_var = stim_var
         self.raw = raw
 
     def _estimator(self, ctx: Request) -> Estimator:
         return self.estimators[ctx.options['estimator']]
-
-    def _model(self, ctx: Request) -> Model:
-        return Model.coerce(ctx.options['x']).initialize(self.named_models)
 
     def _term_predictor(self, term: Term) -> tuple[Configuration, str]:
         """The ``(predictor_definition, stimulus_column)`` for a model term"""
@@ -237,7 +225,7 @@ class TRFDerivative(Derivative[object]):
         # are data-derived, so enumerate them from the (lightweight) epoch events
         edges: dict[str, Dependency] = {}
         events = None
-        for term in self._model(ctx).terms:
+        for term in ctx.options['x'].terms:
             predictor, stim_var = self._term_predictor(term)
             if not isinstance(predictor, (UTSPredictor, NUTSPredictor)):
                 continue
@@ -267,7 +255,7 @@ class TRFDerivative(Derivative[object]):
         # from build() (already inside it) and from TRFJobSpec.make_job() (fresh).
         with ctx._build_deps_context():
             est = self._estimator(ctx)
-            model = self._model(ctx)
+            model = ctx.options['x']
             if not model.terms:
                 raise TRFModelError(f"{ctx.options['x']!r}: empty model")
             tstart = ctx.options['tstart']
@@ -338,7 +326,7 @@ class TRFDerivative(Derivative[object]):
 # Options shared by the TRF-dataset nodes: the :class:`TRFDerivative` options that
 # select the fit, plus the dataset-shaping ``scale`` and ``trfs``.
 _TRF_DATASET_OPTIONS = {
-    'x': None,
+    'x': OptionSpec(None, Model, normalize=Model.coerce),
     'tstart': 0.0,
     'tstop': 0.5,
     'estimator': 'boosting',
@@ -366,8 +354,6 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
         Experiment root directory.
     estimators
         Mapping of estimator name to :class:`Estimator` definition.
-    named_models
-        Named models for expanding model abbreviations.
     epochs
         Assembled epoch definitions (for :class:`EpochCollection` expansion).
     """
@@ -378,12 +364,10 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
             self,
             root: str | Path,
             estimators: dict[str, Estimator],
-            named_models: dict[str, Model],
             epochs: dict[str, object],
     ):
         self.root = Path(root)
         self.estimators = estimators
-        self.named_models = named_models
         self.epochs = epochs
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
@@ -394,9 +378,6 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
 
     def _estimator(self, ctx: Request) -> Estimator:
         return self.estimators[ctx.options['estimator']]
-
-    def _model(self, ctx: Request) -> Model:
-        return Model.coerce(ctx.options['x']).initialize(self.named_models)
 
     def _epoch_names(self, ctx: Request) -> list[str]:
         epoch = self.epochs[ctx.state['epoch']]
@@ -436,7 +417,7 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
                         ds[key] = morph_source_space(ds[key], common_brain, morph=source_morph)
             dss.append(ds)
         ds = combine(dss)
-        ds.name = self._model(ctx).name
+        ds.name = ctx.options['x'].name
         return ds
 
 

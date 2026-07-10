@@ -519,8 +519,8 @@ class Pipeline(StateModel):
 
         # --- Predictors and TRFs ---
         self._derivatives.register(PredictorInput(self.root, self.predictors))
-        self._derivatives.register(TRFDerivative(self.root, self._estimators, self.predictors, self._named_models, self.stim_var, self._raw))
-        self._derivatives.register(TRFDatasetDerivative(self.root, self._estimators, self._named_models, self._epochs))
+        self._derivatives.register(TRFDerivative(self.root, self._estimators, self.predictors, self.stim_var, self._raw))
+        self._derivatives.register(TRFDatasetDerivative(self.root, self._estimators, self._epochs))
         self._derivatives.register(TRFGroupDatasetDerivative(self._mri_subjects, self._groups))
 
         # --- Sensor-space: events → epochs → evoked ---
@@ -1282,6 +1282,7 @@ class Pipeline(StateModel):
             filter_x: bool | str,
             state: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Normalize parameters for TRF nodes"""
         if state:
             self.set(**state)
         if mask is not None:
@@ -1289,15 +1290,15 @@ class Pipeline(StateModel):
         # Resolve the data kind against the analysis space (inv state) and the estimator.
         est = self._estimators[estimator]
         if est.requires_sensor_space:
-            if (inv := self.get('inv')):
+            if inv := self.get('inv'):
                 raise ValueError(f"{inv=} for {estimator=}: {estimator} uses sensor data and localizes internally; set inv='' for sensor-space analysis")
-            if data is not None:
+            elif data is not None:
                 raise ValueError(f"{data=}: estimator {estimator!r} uses all sensor data; leave data unset")
             data_string = 'sensor'
         else:
             data_string = self._resolve_data(data).string
-        model = Model.coerce(x).initialize(self._named_models)
-        return {'x': model.name, 'tstart': float(tstart), 'tstop': float(tstop), 'estimator': estimator, 'data': data_string, 'mask': mask, 'samplingrate': samplingrate, 'filter_x': filter_x}
+        model = Model.coerce(x).initialize(self._named_models).sorted()
+        return {'x': model, 'tstart': float(tstart), 'tstop': float(tstop), 'estimator': estimator, 'data': data_string, 'mask': mask, 'samplingrate': samplingrate, 'filter_x': filter_x}
 
     def load_trf(
             self,

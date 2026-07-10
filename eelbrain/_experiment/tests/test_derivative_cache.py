@@ -24,7 +24,7 @@ from eelbrain._experiment.derivative_cache import (
     compare_manifests,
     file_fingerprint,
 )
-from eelbrain._experiment.data import DataSpec, normalize_data_option
+from eelbrain._experiment.data import DataSpec
 from eelbrain._experiment.logging import CacheInvalidation, StructuredFormatter
 from eelbrain.testing import TempDir
 
@@ -358,7 +358,7 @@ class SpecOptionDerivative(Derivative[str]):
     key_options = {
         'flag': OptionSpec(False, type=bool),
         'mode': OptionSpec(None, literal=('a', 'b', True)),
-        'label': OptionSpec('', normalize=lambda ctx, value: value.lower()),
+        'label': OptionSpec('', normalize=lambda value: value.lower()),
     }
 
     def __init__(self, root: str | Path):
@@ -1666,7 +1666,7 @@ class RichSpec:
         return {'label': self.label}
 
 
-def _normalize_rich_spec(ctx, value):
+def _normalize_rich_spec(value):
     if isinstance(value, RichSpec):
         return value
     if isinstance(value, dict):
@@ -2028,9 +2028,7 @@ def test_data_spec_cache_form_round_trip():
     for spec in (DataSpec('sensor'), DataSpec('source'), DataSpec('source', morph=True), DataSpec('eeg.mean', time=False)):
         form = DerivativeRegistry.canonicalize(spec)
         assert isinstance(form, dict)
-        assert normalize_data_option(None, form) == spec
         assert DataSpec.coerce(form) == spec
-        assert normalize_data_option(None, spec) is spec  # idempotent on the rich form
 
 
 def test_gc_collect_logs_deletions(caplog):

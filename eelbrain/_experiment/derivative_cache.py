@@ -389,7 +389,7 @@ class OptionSpec:
         Exact allowed values. Matching is type-strict, so ``True`` in
         ``literal`` does not admit ``1``.
     normalize
-        Called as ``normalize(ctx, value)`` before validation; the return
+        Called as ``normalize(value)`` before validation; the return
         value replaces the option value for the whole request (key,
         fingerprint, and build all see the normalized value). Must be
         idempotent, since child requests are normalized again when they are
@@ -399,14 +399,14 @@ class OptionSpec:
     default: Any
     type: type | tuple[type, ...] | None = None
     literal: tuple[Any, ...] | None = None
-    normalize: Callable[[Request, Any], Any] | None = None
+    normalize: Callable[[Any], Any] | None = None
 
     def validated(self, ctx: Request, name: str, value: Any) -> Any:
         """Normalize and validate one option value for ``ctx``."""
         if value is self.default:
             return value
         if self.normalize is not None:
-            value = self.normalize(ctx, value)
+            value = self.normalize(value)
         if self.type is not None:
             types = self.type if isinstance(self.type, tuple) else (self.type,)
             # bool subclasses int; require an explicit bool declaration so that 1 does not pass as True

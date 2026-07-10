@@ -30,7 +30,6 @@ class DataSpec:
     RE = re.compile(r"^(source|sensor|meg|mag|grad|eeg)(?:\.(mean|rms))?$")
     source = False
     sensor = False
-    aggregate = None  # None, 'mean', or 'rms'
 
     def __init__(self, string, time=True, morph=False):
         self.time = bool(time)
@@ -123,18 +122,3 @@ class DataSpec:
             return info.get_channel_types(unique=True, only_data_chs=True)
         else:
             return self._to_ndvar
-
-
-def normalize_data_option(ctx, value) -> DataSpec:
-    """:class:`~.derivative_cache.OptionSpec` normalizer for ``data`` options holding a :class:`DataSpec`.
-
-    Accepts a :class:`DataSpec` (returned unchanged — unlike
-    :meth:`DataSpec.coerce`, whose ``time``/``morph`` arguments are
-    authoritative and would rebuild the spec), its canonical dict form from
-    :meth:`DataSpec._cache_form_` (an offline-reconstructed request), or a
-    plain data string. Idempotent, as :class:`~.derivative_cache.OptionSpec`
-    requires.
-    """
-    if isinstance(value, DataSpec):
-        return value
-    return DataSpec.coerce(value)
