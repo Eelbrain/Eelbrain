@@ -607,28 +607,17 @@ class Pipeline(StateModel):
     def clean_cache(
             self,
             dry_run: bool = False,
-            confirm: bool = True,
+            delete: bool = False,
             revalidate: bool = True,
     ) -> fmtxt.Table | None:
         """Report and delete invalid or stale cache files (garbage collection).
-
-        Scans the cache directory and classifies every file. Deletable
-        categories cover definitively-invalid files (artifacts of removed
-        nodes, outdated manifest schemas or derivative versions, orphaned
-        manifests and sidecars, superseded key variants, leftover temporary
-        files) and stale artifacts: files whose cache key is still current but
-        whose configuration changed since they were built, including
-        transitively through their recorded dependencies. Files that cannot be
-        verified are reported but never deleted.
 
         Parameters
         ----------
         dry_run
             Only scan and report; delete nothing.
-        confirm
-            Ask for confirmation before deleting (set to ``False`` for
-            non-interactive use; every deleted file is logged at DEBUG level
-            either way).
+        delete
+            Delete stale files without asking for confirmation.
         revalidate
             Detect stale artifacts by re-validating each cached request
             against the current pipeline configuration. Set to ``False`` for a
@@ -648,13 +637,17 @@ class Pipeline(StateModel):
         if dry_run or not deletable:
             return table
         print(table)
-        if confirm:
+        while not delete:
             command = ask(
                 f"Delete {len(deletable)} cache files ({_format_size(total_size)})?",
-                {'delete': 'permanently delete the listed files', 'abort': 'keep everything'},
+                {'delete': 'permanently delete the listed files', 'list': 'List files that will be deleted', 'abort': 'keep everything'},
                 help="Deleted artifacts are rebuilt automatically when they are requested again. Files categorized as unverifiable or unknown are always kept.",
             )
-            if command != 'delete':
+            if command == 'list':
+                print(report.file_table())
+            elif command == 'delete':
+                delete = True
+            else:
                 return None
         self._derivatives.collect(report)
         return None
