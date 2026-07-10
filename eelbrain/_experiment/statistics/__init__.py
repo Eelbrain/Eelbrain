@@ -16,7 +16,6 @@ from .config import (
     TTestRelated,
     Test,
     TwoStageTest,
-    guess_y,
     tail_arg,
     validate_tests,
 )

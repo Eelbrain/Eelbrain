@@ -887,7 +887,10 @@ class Reference(Configuration):
 
 
 class RawReReference(Reference, CachedRawPipe):
-    """Re-reference EEG data
+    """Re-reference EEG data as preprocessing step
+
+    For most workflows, it is recommended to re-reference after epoching
+    using :ref:`state-reference`.
 
     Parameters
     ----------

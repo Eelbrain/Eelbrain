@@ -34,7 +34,7 @@ from .._types import PathArg
 from .._utils import ask, keydefaultdict, log_level, ScreenHandler
 from .._utils.mne_utils import is_fake_mri
 from .covariance import CovDerivative, EpochCovariance, RawCovariance
-from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, DerivativeRegistry, ProtectedArtifactError, Request
+from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, DerivativeRegistry, ProtectedArtifactError, Request, _format_size
 from .configuration import Configuration, ConfigurationDict, sequence_arg
 from .epochs import (
     EpochBase, EpochsDerivative, RecordingEpochsDerivative, EvokedDerivative,
@@ -69,7 +69,7 @@ from .source import (
     InverseSolution, MinimumNormInverseSolution, _drop_unknown_labels, _source_parc, eval_src,
 )
 from .statistics import EvokedTestDataDerivative, TestResultDerivative, TwoStageDataDerivative, TwoStageLevel1Derivative, TwoStageLevel2Derivative, TwoStageTest
-from .statistics.config import Test, guess_y, validate_tests
+from .statistics.config import Test, validate_tests
 from .trf import Boosting, Estimator, Model, NUTSPredictor, PredictorInput, TRFDatasetDerivative, TRFDerivative, TRFGroupDatasetDerivative, TRFJob, TRFJobSpec, UTSPredictor, filter_predictor
 from .trf.model import parse_term
 from .variable_def import Variables, apply_vardef, label_groups as label_groups_var
@@ -519,8 +519,8 @@ class Pipeline(StateModel):
 
         # --- Predictors and TRFs ---
         self._derivatives.register(PredictorInput(self.root, self.predictors))
-        self._derivatives.register(TRFDerivative(self.root, self._estimators, self.predictors, self._named_models, self.stim_var, self._raw))
-        self._derivatives.register(TRFDatasetDerivative(self.root, self._estimators, self._named_models, self._epochs))
+        self._derivatives.register(TRFDerivative(self.root, self._estimators, self.predictors, self.stim_var, self._raw))
+        self._derivatives.register(TRFDatasetDerivative(self.root, self._estimators, self._epochs))
         self._derivatives.register(TRFGroupDatasetDerivative(self._mri_subjects, self._groups))
 
         # --- Sensor-space: events → epochs → evoked ---
@@ -603,6 +603,54 @@ class Pipeline(StateModel):
         if not redo and ctx.is_valid():
             return None
         return ctx.load(view=view)
+
+    def clean_cache(
+            self,
+            dry_run: bool = False,
+            delete: bool = False,
+            revalidate: bool = True,
+    ) -> fmtxt.Table | None:
+        """Report and delete invalid or stale cache files (garbage collection).
+
+        Parameters
+        ----------
+        dry_run
+            Only scan and report; delete nothing.
+        delete
+            Delete stale files without asking for confirmation.
+        revalidate
+            Detect stale artifacts by re-validating each cached request
+            against the current pipeline configuration. Set to ``False`` for a
+            faster scan restricted to structurally invalid files.
+
+        Returns
+        -------
+        report_table
+            Per-category summary of the scan (file counts and sizes).
+        """
+        report = self._derivatives.scan_cache(revalidate=revalidate)
+        deletable = report.deletable()
+        total_size = report.total_size()
+        table = report.summary()
+        if report.errors:
+            self._log.debug("Cache scan errors:\n%s", '\n'.join(f"{path}: {error}" for path, error in report.errors))
+        if dry_run or not deletable:
+            return table
+        print(table)
+        while not delete:
+            command = ask(
+                f"Delete {len(deletable)} cache files ({_format_size(total_size)})?",
+                {'delete': 'permanently delete the listed files', 'list': 'List files that will be deleted', 'abort': 'keep everything'},
+                help="Deleted artifacts are rebuilt automatically when they are requested again. Files categorized as unverifiable or unknown are always kept.",
+            )
+            if command == 'list':
+                print(report.file_table())
+            elif command == 'delete':
+                delete = True
+            else:
+                return None
+        self._derivatives.collect(report)
+        return None
 
     def __iter__(self):
         "Iterate state through subjects and yield each subject name."
@@ -955,8 +1003,7 @@ class Pipeline(StateModel):
 
     def _resolve_data(
             self,
-            data: 'DataArg',
-            morph: bool = False,
+            data: DataArg,
     ) -> DataSpec:
         """Resolve the ``data`` argument into a :class:`DataSpec` for analysis.
 
@@ -971,13 +1018,11 @@ class Pipeline(StateModel):
             Data kind: ``None`` (the datatype default in the current space), a
             sensor type (``'meg'``/``'mag'``/``'grad'``/``'eeg'``) or
             ``'source'``, optionally with a ``'.mean'``/``'.rms'`` aggregation.
-        morph
-            Morph source data to the common brain.
         """
         source_space = bool(self.get('inv'))
         if data is None:
             data = 'source' if source_space else self._default_data
-        spec = DataSpec.coerce(data, morph=morph)
+        spec = DataSpec.coerce(data)
         if source_space and not spec.source:
             raise ValueError(f"data={data!r} is sensor-space data, but the analysis is in source space (inv={self.get('inv')!r}); set inv='' for sensor-space analysis")
         if not source_space and spec.source:
@@ -1020,8 +1065,8 @@ class Pipeline(StateModel):
             baseline correction.
         ndvar
             Data to convert to :class:`NDVar`. ``True`` (default) converts all
-            sensor types (with keys ``'meg'``/``'eeg'`` …); a sensor type
-            (``'meg'``/``'mag'``/``'grad'``/``'eeg'``), optionally aggregated
+            sensor types (with keys ``'mag'``/``'grad'``/``'eeg'`` …); a sensor
+            type (``'meg'``/``'mag'``/``'grad'``/``'eeg'``), optionally aggregated
             (e.g. ``'eeg.rms'``/``'eeg.mean'``), returns a single :class:`NDVar`;
             ``False`` returns :class:`mne.Epochs` with key ``'epochs'``. In source
             space (``inv`` set) the source estimates are returned as ``'src'``.
@@ -1215,6 +1260,7 @@ class Pipeline(StateModel):
             filter_x: bool | str,
             state: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Normalize parameters for TRF nodes"""
         if state:
             self.set(**state)
         if mask is not None:
@@ -1222,15 +1268,15 @@ class Pipeline(StateModel):
         # Resolve the data kind against the analysis space (inv state) and the estimator.
         est = self._estimators[estimator]
         if est.requires_sensor_space:
-            if (inv := self.get('inv')):
+            if inv := self.get('inv'):
                 raise ValueError(f"{inv=} for {estimator=}: {estimator} uses sensor data and localizes internally; set inv='' for sensor-space analysis")
-            if data is not None:
+            elif data is not None:
                 raise ValueError(f"{data=}: estimator {estimator!r} uses all sensor data; leave data unset")
             data_string = 'sensor'
         else:
             data_string = self._resolve_data(data).string
-        model = Model.coerce(x).initialize(self._named_models)
-        return {'x': model.name, 'tstart': float(tstart), 'tstop': float(tstop), 'estimator': estimator, 'data': data_string, 'mask': mask, 'samplingrate': samplingrate, 'filter_x': filter_x}
+        model = Model.coerce(x).initialize(self._named_models).sorted()
+        return {'x': model, 'tstart': float(tstart), 'tstop': float(tstop), 'estimator': estimator, 'data': data_string, 'mask': mask, 'samplingrate': samplingrate, 'filter_x': filter_x}
 
     def load_trf(
             self,
@@ -1463,8 +1509,8 @@ class Pipeline(StateModel):
             baseline correction.
         ndvar
             Data to convert to :class:`NDVar`. ``True`` (default) converts all
-            sensor types (with keys ``'meg'``/``'eeg'`` …); a sensor type
-            (``'meg'``/``'mag'``/``'grad'``/``'eeg'``), optionally aggregated
+            sensor types (with keys ``'mag'``/``'grad'``/``'eeg'`` …); a sensor
+            type (``'meg'``/``'mag'``/``'grad'``/``'eeg'``), optionally aggregated
             (e.g. ``'eeg.rms'``/``'eeg.mean'``), returns a single :class:`NDVar`;
             ``False`` returns the :class:`mne.Evoked` objects as ``'evoked'``. In
             source space (``inv`` set) the source estimates are returned as
@@ -1859,7 +1905,7 @@ class Pipeline(StateModel):
         if ndvar:
             source_pipe = self._raw.root_source_pipe(raw_name)
             data = DataSpec('sensor')
-            data_kind = data.data_to_ndvar(raw.info)[0]
+            data_kind = data.find_ndvar_channel_types(raw.info)[0]
             sysname = source_pipe._get_sysname(raw.info, self.get('subject'), data_kind)
             adjacency = source_pipe._get_adjacency(data_kind)
             raw = load.mne.raw_ndvar(raw, sysname=sysname, adjacency=adjacency)
@@ -2094,7 +2140,7 @@ class Pipeline(StateModel):
         """
         test_obj = self.tests[test]
         self.set(**state)
-        data = self._resolve_data(data, morph=True)
+        data = self._resolve_data(data)
         if data.source:
             self._current_source_parc()
         data._testnd_parc(disconnect_labels)
@@ -2378,7 +2424,7 @@ class Pipeline(StateModel):
             decim = None
             display_data = ds
         data = DataSpec('sensor')
-        data_kind = data.data_to_ndvar(info)[0]
+        data_kind = data.find_ndvar_channel_types(info)[0]
         source_pipe = self._raw.root_source_pipe(ica_name)
         sysname = source_pipe._get_sysname(info, subject, data_kind)
         adjacency = source_pipe._get_adjacency(data_kind)
@@ -2427,7 +2473,7 @@ class Pipeline(StateModel):
         events = self._load_derivative('labeled-events')
         # Sensor system info
         source_pipe = self._raw.root_source_pipe(raw_name)
-        data_kind = DataSpec('sensor').data_to_ndvar(raw_data.info)[0]
+        data_kind = DataSpec('sensor').find_ndvar_channel_types(raw_data.info)[0]
         sysname = source_pipe._get_sysname(raw_data.info, subject, data_kind)
         adjacency = source_pipe._get_adjacency(data_kind)
         return gui.select_channels(raw_data, channels_path, events=events, sysname=sysname, adjacency=adjacency)
@@ -2553,7 +2599,7 @@ class Pipeline(StateModel):
             State parameters.
         """
         subject, group = self._process_subject_arg(subjects, state)
-        data = DataSpec("source", morph=bool(group))
+        data = DataSpec("source")
         brain_kwargs = self._surfer_plot_kwargs(surf, views, foreground, background, smoothing_steps, hemi)
         self.set(equalize_evoked_count='')
 
@@ -2667,7 +2713,7 @@ class Pipeline(StateModel):
         else:
             raise ValueError(f"{p=}")
 
-        data = DataSpec("source", morph=True)
+        data = DataSpec("source")
         brain_kwargs = self._surfer_plot_kwargs(surf, views, foreground, background, smoothing_steps, hemi)
         surf = brain_kwargs['surf']
         if model:
@@ -2973,7 +3019,7 @@ class Pipeline(StateModel):
 
         self.set(**state)
         self._current_source_parc()
-        data = DataSpec('source', morph=True)
+        data = DataSpec('source')
         options = {
             'data': data,
             'samples': samples,
@@ -3425,6 +3471,8 @@ class Pipeline(StateModel):
             sns, src = bool(data.sensor), bool(data.source)
             if src and not source_inv:
                 raise ValueError(f"data={data.string!r}: no inverse is configured (inv=''); set inv to plot source estimates")
+        # response NDVar key(s) for the sensor plots are named by a DataSpec
+        sensor_data = data if isinstance(data, DataSpec) else DataSpec('sensor')
         model = self._eval_model(model)
         epoch = self.get('epoch')
         if model:
@@ -3445,7 +3493,7 @@ class Pipeline(StateModel):
             vlim = []
             for subject in self.iter(group=group):
                 ds = self.load_evoked(baseline=baseline, model=model)
-                y = guess_y(ds)
+                y = sensor_data.response_key(ds)
                 title = f"{subject} {epoch} {model_name}"
                 p = plot.TopoButterfly(y, model or None, data=ds, axh=h, name=title, run=False)
                 plots.append(p)
@@ -3465,20 +3513,18 @@ class Pipeline(StateModel):
         if subject:
             title = name or f"{subject} {epoch} {model_name}"
             subject_arg = subject
-            src_key = 'src'
         else:
             title = name or f"{group} {epoch} {model_name}"
             subject_arg = group
-            src_key = 'srcm'
 
         if src:
             ds = self.load_evoked(subject_arg, baseline=baseline, keep_mne=sns, inv=source_inv, model=model)
             out = [ds]
             if model:
                 x = ds.eval(model)
-                ys = [ds[src_key].mean(case=x == cell) for cell in x.cells]
+                ys = [ds['src'].mean(case=x == cell) for cell in x.cells]
             else:
-                ys = [ds[src_key]]
+                ys = [ds['src']]
             for y in ys:
                 if is_volume_source_space:
                     plots = plot.GlassBrain.butterfly(y, w=2 * h, h=h, name=title)
@@ -3491,7 +3537,7 @@ class Pipeline(StateModel):
             out = [ds]
             right_of = None
         if sns:
-            key = 'meg' if 'meg' in ds else 'eeg'
+            key = sensor_data.response_key(ds)
             p = plot.TopoButterfly(key, model or None, data=ds, axh=h, w=2.5 * h, name=title, right_of=right_of, run=run)
             if right_of:
                 p.link_time_axis(right_of)

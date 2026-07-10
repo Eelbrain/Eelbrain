@@ -529,8 +529,6 @@ def _prepare_source_projection(
     remove_unknown_after_ndvar = False
     if morph:
         target_subject = ctx.state['common_brain']
-        stc_key = 'stcm'
-        src_key = 'srcm'
         subject_from = ctx.state['common_brain'] if is_fake_mri(ctx.root / mri_dir(ctx.state)) else mrisubject
         if subject_from == ctx.state['common_brain']:
             set_subject = ctx.state['common_brain']
@@ -683,29 +681,26 @@ class EpochsStcDerivative(UncachedDerivative[Dataset]):
         if keep_epochs not in (True, False, 'ndvar', 'both'):
             raise ValueError(f"{keep_epochs=}")
 
-        stc_key = 'stcm' if 'stcm' in ds else 'stc'
-        src_key = 'srcm' if 'srcm' in ds else 'src'
         if ndvar:
-            del ds[stc_key]
+            del ds['stc']
         else:
-            del ds[src_key]
+            del ds['src']
 
         if keep_epochs in ('ndvar', 'both'):
             epochs_value = ds['epochs']
             epochs_list = epochs_value if isinstance(epochs_value, Datalist) else [epochs_value]
             info = epochs_list[0].info
-            sensor_types = DataSpec.coerce('sensor').data_to_ndvar(info)
+            sensor_types = DataSpec('sensor').find_ndvar_channel_types(info)
             ds.info['sensor_types'] = sensor_types
             raw_pipe = self.raw.root_source_pipe(ctx.state['raw'])
             for data_kind in sensor_types:
                 sysname = raw_pipe._get_sysname(info, ds.info['subject'], data_kind)
                 adjacency = raw_pipe._get_adjacency(data_kind)
-                name = 'meg' if data_kind == 'mag' and 'grad' not in sensor_types else data_kind
                 if isinstance(epochs_value, Datalist):
                     ys = [load.mne.epochs_ndvar(value, data=data_kind, sysname=sysname, adjacency=adjacency, name=data_kind)[0] for value in epochs_value]
                 else:
                     ys = load.mne.epochs_ndvar(epochs_value, data=data_kind, sysname=sysname, adjacency=adjacency)
-                ds[name] = ys
+                ds[data_kind] = ys
             if keep_epochs == 'ndvar':
                 del ds['epochs']
         elif not keep_epochs:
@@ -802,23 +797,20 @@ class EvokedStcDerivative(UncachedDerivative[Dataset]):
             ds = ds.sub(ds.eval(ctx.options['model']).isin(cat))
         ndvar = ctx.view_options['ndvar']
         keep_evoked = ctx.view_options['keep_evoked']
-        stc_key = 'stcm' if 'stcm' in ds else 'stc'
-        src_key = 'srcm' if 'srcm' in ds else 'src'
         if ndvar:
-            del ds[stc_key]
+            del ds['stc']
         else:
-            del ds[src_key]
+            del ds['src']
 
         if keep_evoked and ndvar:
             evoked = ds['evoked']
             pipe = self.raw.root_source_pipe(ctx.state['raw'])
             info = evoked[0].info
-            sensor_types = ds.info['sensor_types'] = DataSpec.coerce('sensor').data_to_ndvar(info)
+            sensor_types = ds.info['sensor_types'] = DataSpec('sensor').find_ndvar_channel_types(info)
             for sensor_type in sensor_types:
                 sysname = pipe._get_sysname(info, ctx.state['subject'], sensor_type)
                 adjacency = pipe._get_adjacency(sensor_type)
-                name = 'meg' if sensor_type == 'mag' and 'grad' not in sensor_types else sensor_type
-                ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
+                ds[sensor_type] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
             del ds['evoked']
         elif not keep_evoked:
             del ds['evoked']
@@ -878,7 +870,7 @@ def roi_data_from_subject_datasets(dss: Sequence[Dataset], reducer: str) -> ROID
     n_trials_dss = []
     label_dss = {}
     for ds in dss:
-        src = ds.pop(next(name for name in ('srcm', 'src', 'stcm', 'stc') if name in ds))
+        src = ds.pop('src')
         n_trials_dss.append(ds)
         for label in src.source.parc.cells:
             if label.startswith('unknown-'):

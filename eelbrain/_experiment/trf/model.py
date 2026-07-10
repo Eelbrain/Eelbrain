@@ -170,6 +170,10 @@ class Model:
         except ParseException:
             raise TRFModelError(f"{string!r}: invalid Model")
 
+    def _cache_form_(self) -> str:
+        """Canonical form for cache keys/fingerprints/manifests"""
+        return self.name
+
     def __repr__(self):
         return f"<Model: {self.name}>"
 

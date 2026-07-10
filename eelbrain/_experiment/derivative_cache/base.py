@@ -42,6 +42,13 @@ user-managed outputs: their manifests are mirrored under the owning
 derivative's node directory in the cache (e.g. an ICA at
 ``derivatives/mne/sub-01/...`` → ``cache-dir/<node-name>/sub-01/...``) and they
 are not overwritten without an explicit opt-in from the caller.
+
+Garbage collection
+------------------
+
+Stale artifacts left behind by changed definitions or removed nodes are found
+and removed by :mod:`.garbage_collection`; the entry points are
+:meth:`DerivativeRegistry.scan_cache` and :meth:`DerivativeRegistry.collect`.
 """
 
 from __future__ import annotations
@@ -58,17 +65,20 @@ import pickle
 import re
 import shutil
 import tomllib
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TYPE_CHECKING, TypeVar
 from uuid import uuid4
 import warnings
 
 import mne
 import numpy as np
 
-from .._data_obj import Factor, Interaction, NDVar, Var
-from .configuration import Configuration
-from .logging import CacheInvalidation, diff_invalidation
-from .pathing import CACHE_DIR, DERIV_DIR, LOG_DIR
+from ..._data_obj import Factor, Interaction, NDVar, Var
+from ..configuration import Configuration
+from ..logging import CacheInvalidation, diff_invalidation
+from ..pathing import CACHE_DIR, DERIV_DIR, LOG_DIR
+
+if TYPE_CHECKING:
+    from .garbage_collection import GCReport
 
 T = TypeVar('T')
 MANIFEST_SUFFIX = '.manifest.json'
@@ -181,6 +191,13 @@ class ArtifactManifest:
     cache_policy: str
     software: dict[str, str]
     artifact_metadata: dict[str, Any] = field(default_factory=dict)
+    # Canonical (state, options) that reproduce this request through
+    # DerivativeRegistry.resolve(), enabling offline revalidation (garbage
+    # collection). None (as opposed to {}) means the manifest predates these
+    # fields and cannot be revalidated offline. Not compared by
+    # compare_manifests, so adding them does not invalidate existing caches.
+    resolve_state: dict[str, Any] | None = None
+    resolve_options: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -266,7 +283,7 @@ class OptionSpec:
         Exact allowed values. Matching is type-strict, so ``True`` in
         ``literal`` does not admit ``1``.
     normalize
-        Called as ``normalize(ctx, value)`` before validation; the return
+        Called as ``normalize(value)`` before validation; the return
         value replaces the option value for the whole request (key,
         fingerprint, and build all see the normalized value). Must be
         idempotent, since child requests are normalized again when they are
@@ -276,14 +293,14 @@ class OptionSpec:
     default: Any
     type: type | tuple[type, ...] | None = None
     literal: tuple[Any, ...] | None = None
-    normalize: Callable[[Request, Any], Any] | None = None
+    normalize: Callable[[Any], Any] | None = None
 
     def validated(self, ctx: Request, name: str, value: Any) -> Any:
         """Normalize and validate one option value for ``ctx``."""
         if value is self.default:
             return value
         if self.normalize is not None:
-            value = self.normalize(ctx, value)
+            value = self.normalize(value)
         if self.type is not None:
             types = self.type if isinstance(self.type, tuple) else (self.type,)
             # bool subclasses int; require an explicit bool declaration so that 1 does not pass as True
@@ -702,13 +719,20 @@ class VersionedInput(Input[T]):
                 reference = None
             elif self._data_equal(ctx, stored, data):
                 # only the source stat drifted → refresh it so later checks take the fast path
-                reference['source'] = source
-                _atomic_write_text(path, json.dumps(reference, sort_keys=True, indent=2))
+                if not ctx.registry._readonly:
+                    reference['source'] = source
+                    _atomic_write_text(path, json.dumps(reference, sort_keys=True, indent=2))
                 return reference['version']
         if reference is None:
             version = {'uid': uuid4().hex, 'serial': 0}
         else:
             version = {'uid': reference['version']['uid'], 'serial': reference['version']['serial'] + 1}
+        if ctx.registry._readonly:
+            # Read-only validation (garbage-collection scan): report the
+            # version that a write would produce — it mismatches any stored
+            # dependent version, so dependents classify as stale — without
+            # persisting anything.
+            return version
         data_file = f'{path.stem}.{version["serial"]}.pickle'
         path.parent.mkdir(parents=True, exist_ok=True)
         # write the data first, then atomically replace the JSON (the source of
@@ -1303,6 +1327,21 @@ class Request(Generic[T]):
         with self._state_check_context():
             return self.registry.canonicalize(self.node.fingerprint(self))
 
+    def _resolve_context(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Canonical ``(state, options)`` that reproduce this request through :meth:`DerivativeRegistry.resolve`.
+
+        Stored in the manifest (``resolve_state`` / ``resolve_options``) so a
+        request can be reconstructed offline for cache garbage collection. The
+        state subset covers the effective key fields, which suffices to
+        re-resolve the dependency subtree (see
+        :meth:`DerivativeRegistry._check_edge_key_coverage`). ``fixed_state``
+        is not stored; :meth:`DerivativeRegistry.resolve` re-applies it.
+        """
+        fields = self.node._get_key_fields(self)
+        state = canonical_state_subset(self._state, fields)
+        options = self.registry.canonicalize(self.options)
+        return state, options
+
     def current_dependency_fingerprint(self, view: str | None = None) -> dict[str, Any]:
         """Return the canonical dependency-facing fingerprint for this request."""
         with self._state_check_context():
@@ -1347,7 +1386,7 @@ class Request(Generic[T]):
         if isinstance(self.node, Derivative) and self.node.cache_policy != CachePolicy.NEVER:
             out['kind'] = 'derivative'
             out['key'] = self.key()
-            out['manifest'] = str(self.manifest_path)
+            out['manifest'] = self.manifest_path.relative_to(self.registry.cache_dir).as_posix()
         else:
             out['kind'] = 'input'
         return out
@@ -1421,6 +1460,7 @@ class Request(Generic[T]):
     ) -> CacheInvalidation | None:
         """Return why ``manifest`` is stale for this request, or ``None`` if valid."""
         derivative = self._require_derivative()
+        resolve_state, resolve_options = self._resolve_context()
         current = ArtifactManifest(
             schema_version=MANIFEST_SCHEMA_VERSION,
             derivative=derivative.name,
@@ -1430,13 +1470,14 @@ class Request(Generic[T]):
             dependencies=self.dependency_fingerprints(stored=manifest.dependencies),
             cache_policy=derivative.cache_policy.value,
             software={},
+            resolve_state=resolve_state,
+            resolve_options=resolve_options,
         )
         reason = compare_manifests(manifest, current)
-        if reason is None and current.dependencies != manifest.dependencies:
+        if reason is None and not self.registry._readonly and (current.dependencies != manifest.dependencies or manifest.resolve_state is None):
             # A quick fingerprint drifted while the full fingerprint still
             # matched (e.g. a touched file). Persist the refreshed dependency
-            # entries so future checks take the quick path again instead of
-            # paying for the full fingerprint walk on every validation.
+            # entries so future checks take the quick path again.
             current.software = manifest.software
             current.artifact_metadata = manifest.artifact_metadata
             self.registry.write_manifest(self.manifest_path, current)
@@ -1516,6 +1557,7 @@ class Request(Generic[T]):
         artifact_metadata = self.registry.canonicalize(derivative.artifact_metadata(self, artifact))
         self.artifact_path.parent.mkdir(parents=True, exist_ok=True)
         derivative.save(self, self.artifact_path, artifact)
+        resolve_state, resolve_options = self._resolve_context()
         manifest = ArtifactManifest(
             schema_version=MANIFEST_SCHEMA_VERSION,
             derivative=derivative.name,
@@ -1529,6 +1571,8 @@ class Request(Generic[T]):
                 'mne': mne.__version__,
             },
             artifact_metadata=artifact_metadata,
+            resolve_state=resolve_state,
+            resolve_options=resolve_options,
         )
         self.registry.write_manifest(self.manifest_path, manifest)
         self._artifact_metadata = manifest.artifact_metadata
@@ -1626,6 +1670,20 @@ class DerivativeRegistry:
         self.deriv_dir = self.root / DERIV_DIR
         self.cache_dir = self.root / CACHE_DIR
         self._nodes: dict[str, DependencyNode[Any]] = {}
+        # When True, cache validation must not write anything (no manifest
+        # refresh, no disambiguation sidecars, no VersionedInput references).
+        # Set by _readonly_context() during a garbage-collection scan.
+        self._readonly = False
+
+    @contextmanager
+    def _readonly_context(self):
+        """Suppress all incidental cache writes during validation (used by :meth:`scan_cache`)."""
+        already = self._readonly
+        self._readonly = True
+        try:
+            yield
+        finally:
+            self._readonly = already
 
     def register(self, node: DependencyNode[Any]) -> None:
         if node.name in self._nodes:
@@ -1768,8 +1826,9 @@ class DerivativeRegistry:
                 break
             index += 1
 
-        mapping[digest] = suffix
-        self._write_cache_disambiguation(artifact_path, mapping)
+        if not self._readonly:
+            mapping[digest] = suffix
+            self._write_cache_disambiguation(artifact_path, mapping)
         return _disambiguated_cache_artifact_path(artifact_path, suffix)
 
     def _check_edge_key_coverage(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> None:
@@ -2022,6 +2081,47 @@ class DerivativeRegistry:
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(manifest_path, json.dumps(manifest.to_dict(), sort_keys=True, indent=2))
 
+    # --- Garbage collection -------------------------------------------------
+
+    def scan_cache(self, revalidate: bool = True) -> GCReport:
+        """Classify every file in the cache directory without modifying anything.
+
+        Parameters
+        ----------
+        revalidate
+            Reconstruct each cached request from its manifest and re-validate
+            it against the current pipeline configuration (detects artifacts
+            whose key is unchanged but whose configuration definitions
+            changed). Set to ``False`` for a faster, structural-only scan.
+
+        See Also
+        --------
+        collect : delete the files a scan flags
+        """
+        from .garbage_collection import scan_cache
+        return scan_cache(self, revalidate)
+
+    def collect(
+            self,
+            report: GCReport | None = None,
+            revalidate: bool = True,
+    ) -> GCReport:
+        """Delete the cache files flagged by a garbage-collection scan.
+
+        Parameters
+        ----------
+        report
+            Scan result to act on; scans first when omitted.
+        revalidate
+            Passed to :meth:`scan_cache` when scanning here.
+
+        See Also
+        --------
+        scan_cache : the scan and the classification categories
+        """
+        from .garbage_collection import collect
+        return collect(self, report, revalidate)
+
     @staticmethod
     def canonicalize(value: Any) -> Any:
         """Recursively convert ``value`` to a JSON-serializable, stable form.
@@ -2038,7 +2138,20 @@ class DerivativeRegistry:
         kernel and the Eelbrain data model; they allow fingerprints and keys to
         contain arbitrary data objects without callers having to pre-serialize
         them.
+
+        Other rich objects can participate by defining ``_cache_form_()``,
+        returning a simple (canonicalizable) representation of the object's
+        identity. For objects used as key-tier option values, the owning node
+        should declare the option with an :class:`OptionSpec` whose
+        ``normalize`` accepts both the object and this form, so that a request
+        reconstructed from a stored manifest (offline revalidation) re-parses
+        the value into the rich object.
         """
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        cache_form = getattr(value, '_cache_form_', None)
+        if cache_form is not None:
+            return DerivativeRegistry.canonicalize(cache_form())
         if isinstance(value, Var):
             return DerivativeRegistry.canonicalize(value.x.tolist())
         if isinstance(value, NDVar):
@@ -2062,8 +2175,6 @@ class DerivativeRegistry:
                 return value.item()
             except Exception:
                 return repr(value)
-        if isinstance(value, (str, int, float, bool)) or value is None:
-            return value
         return repr(value)
 
 

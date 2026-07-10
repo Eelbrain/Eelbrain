@@ -24,7 +24,7 @@ from ..._io.pickle import update_subjects_dir
 from ..._text import enumeration
 from ..._stats.testnd import _MergedTemporalClusterDist
 from ..data import DataSpec
-from ..derivative_cache import Dependency, Derivative, Request, UncachedDerivative
+from ..derivative_cache import Dependency, Derivative, OptionSpec, Request, UncachedDerivative
 from ..pathing import (
     MRI_SDIR,
     join_stem_parts,
@@ -40,7 +40,9 @@ T = TypeVar('T')
 USE_CTX = object()
 RESULT_OPTION_DEFAULTS = {
     'samples': None,
-    'data': None,
+    # normalize so that a request reconstructed from a manifest (offline
+    # revalidation) re-parses the canonical dict form into a DataSpec
+    'data': OptionSpec(None, DataSpec, normalize=DataSpec.coerce),
     'test': None,
     'tstart': None,
     'tstop': None,
@@ -470,7 +472,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
     """
     name = 'evoked-test-data'
     key_options = {
-        'data': None,
+        'data': OptionSpec(None, DataSpec, normalize=DataSpec.coerce),
         'test': None,
         'baseline': None,
         'src_baseline': None,
@@ -543,7 +545,8 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
             ds = ctx.load('evoked-stc-group-dataset')
             ds = _apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string)
             if smooth := ctx.options['smooth']:
-                ds[data.y_name] = ds[data.y_name].smooth('source', smooth, 'gaussian')
+                y = data.response_key(ds)
+                ds[y] = ds[y].smooth('source', smooth, 'gaussian')
             return ds
 
         dss = []
@@ -589,7 +592,7 @@ class TestResultDerivative(ResultOutputDerivative):
         if data.sensor and len(data_value.info['sensor_types']) > 1:
             desc = ', '.join(data_value.info['sensor_types'])
             raise RuntimeError(f"Data contains more than one sensor type ({desc}). Mass-univariate tests are not designed for multiple sensor types. Use the data argument to perform test on one sensor type.")
-        return test_spec.make_result(self, test_spec.data.y_name, data_value, test_obj)
+        return test_spec.make_result(self, test_spec.data.response_key(data_value), data_value, test_obj)
 
     def load(
             self,

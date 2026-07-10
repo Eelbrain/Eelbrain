@@ -8,19 +8,23 @@ import pytest
 
 from eelbrain._experiment.derivative_cache import (
     ALLOW_PROTECTED_OVERWRITE,
+    CACHE_DISAMBIGUATION_SUFFIX,
     ArtifactManifest,
     CachePolicy,
     Dependency,
     Derivative,
+    GCCategory,
     OptionSpec,
     Request,
     DerivativeRegistry,
     Input,
     ProtectedArtifactError,
     UncachedDerivative,
+    VersionedInput,
     compare_manifests,
     file_fingerprint,
 )
+from eelbrain._experiment.data import DataSpec
 from eelbrain._experiment.logging import CacheInvalidation, StructuredFormatter
 from eelbrain.testing import TempDir
 
@@ -354,7 +358,7 @@ class SpecOptionDerivative(Derivative[str]):
     key_options = {
         'flag': OptionSpec(False, type=bool),
         'mode': OptionSpec(None, literal=('a', 'b', True)),
-        'label': OptionSpec('', normalize=lambda ctx, value: value.lower()),
+        'label': OptionSpec('', normalize=lambda value: value.lower()),
     }
 
     def __init__(self, root: str | Path):
@@ -1054,7 +1058,8 @@ def test_registry_resolve_returns_request_for_input_and_derivative():
     assert isinstance(value_handle, Request)
     assert value_handle.describe_dependency()['name'] == 'value'
     assert value_handle.describe_dependency()['kind'] == 'derivative'
-    assert value_handle.describe_dependency()['manifest'] == str(value_handle.manifest_path)
+    # the manifest path is recorded relative to the cache dir (portable across a moved root)
+    assert value_handle.describe_dependency()['manifest'] == value_handle.manifest_path.relative_to(registry.cache_dir).as_posix()
 
     assert registry.resolve('source', state=DEFAULT_STATE).load() == 'alpha'
     assert registry.resolve('source', state=DEFAULT_STATE, options={'upper': True}).load() == 'ALPHA'
@@ -1099,7 +1104,8 @@ def test_protected_artifact_requires_derivative_owned_reindexing():
 
 
 def test_runtime_code_does_not_use_private_get_node():
-    experiment_dir = Path(__file__).resolve().parents[1]
+    """Make sure private API is not used"""
+    experiment_dir = Path(__file__).resolve().parents[2]
     offenders = []
     for path in experiment_dir.glob('*.py'):
         if path.name == 'derivative_cache.py':
@@ -1511,3 +1517,561 @@ def test_edge_key_coverage_enforces_uncached_child():
     # strict rule: an uncached child's declared key fields are enforced too
     with pytest.raises(RuntimeError, match=r"depends on state field\(s\).*'mode'"):
         registry.resolve('parent', state={'subject': 's1', 'mode': 'a'}).load()
+
+
+# ---------------------------------------------------------------------------
+# Garbage collection
+# ---------------------------------------------------------------------------
+
+class ConfiguredDerivative(Derivative[str]):
+    """Derivative whose fingerprint depends on a mutable configuration value."""
+    name = 'configured'
+    key_fields = ('subject',)
+    cache_suffix = '.txt'
+
+    def __init__(self, root: str | Path, config: str = 'a'):
+        self.root = Path(root)
+        self.config = config
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {'config': self.config}
+
+    def build(self, ctx: Request) -> str:
+        return f"configured:{self.config}"
+
+    def load(self, ctx: Request, path: Path) -> str:
+        return Path(path).read_text()
+
+    def save(self, ctx: Request, path: Path, value: str) -> None:
+        Path(path).write_text(value)
+
+
+class DownstreamDerivative(Derivative[str]):
+    name = 'downstream'
+    key_fields = ('subject',)
+    cache_suffix = '.txt'
+
+    def __init__(self, root: str | Path):
+        self.root = Path(root)
+
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        return (Dependency('configured'),)
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {}
+
+    def build(self, ctx: Request) -> str:
+        return f"downstream:{ctx.load('configured')}"
+
+    def load(self, ctx: Request, path: Path) -> str:
+        return Path(path).read_text()
+
+    def save(self, ctx: Request, path: Path, value: str) -> None:
+        Path(path).write_text(value)
+
+
+class DirArtifactDerivative(Derivative[str]):
+    """Derivative whose artifact is a directory containing several files."""
+    name = 'dir-artifact'
+    key_fields = ('subject',)
+    cache_suffix = '.parts'
+
+    def __init__(self, root: str | Path, config: str = 'a'):
+        self.root = Path(root)
+        self.config = config
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {'config': self.config}
+
+    def build(self, ctx: Request) -> str:
+        return 'xy'
+
+    def load(self, ctx: Request, path: Path) -> str:
+        return ''.join((Path(path) / f'part-{i}.txt').read_text() for i in range(2))
+
+    def save(self, ctx: Request, path: Path, value: str) -> None:
+        path = Path(path)
+        path.mkdir(parents=True, exist_ok=True)
+        for i, part in enumerate(value):
+            (path / f'part-{i}.txt').write_text(part)
+
+
+class FakeVersionedInput(VersionedInput[str]):
+    name = 'versioned'
+    key_fields = ()  # single tracked source
+
+    def __init__(self, root: str | Path):
+        self.root = Path(root)
+
+    def _source_path(self) -> Path:
+        path = self.root / 'inputs' / 'versioned.txt'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def path(self, ctx: Request) -> Path:
+        return self._source_path()
+
+    def _reference_stem(self, ctx: Request) -> str:
+        return 'ref'
+
+    def _source_fingerprint(self, ctx: Request) -> dict[str, object]:
+        return file_fingerprint(str(self.root), self._source_path())
+
+    def _current_data(self, ctx: Request) -> str:
+        return self._source_path().read_text()
+
+    def _data_equal(self, ctx: Request, stored: str, current: str) -> bool:
+        return stored == current
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {'version': self.reference_version(ctx)}
+
+    def load(self, ctx: Request) -> str:
+        return self._source_path().read_text()
+
+
+class VersionedConsumerDerivative(Derivative[str]):
+    name = 'versioned-consumer'
+    key_fields = ()
+    cache_suffix = '.txt'
+
+    def __init__(self, root: str | Path):
+        self.root = Path(root)
+
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        return (Dependency('versioned'),)
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {}
+
+    def build(self, ctx: Request) -> str:
+        return ctx.load('versioned')
+
+    def load(self, ctx: Request, path: Path) -> str:
+        return Path(path).read_text()
+
+    def save(self, ctx: Request, path: Path, value: str) -> None:
+        Path(path).write_text(value)
+
+
+class RichSpec:
+    """Option value with a rich in-memory form and a simple canonical form."""
+
+    def __init__(self, label: str):
+        self.label = label
+
+    def __eq__(self, other):
+        return isinstance(other, RichSpec) and other.label == self.label
+
+    def _cache_form_(self) -> dict:
+        return {'label': self.label}
+
+
+def _normalize_rich_spec(value):
+    if isinstance(value, RichSpec):
+        return value
+    if isinstance(value, dict):
+        return RichSpec(value['label'])
+    return RichSpec(value)
+
+
+class RichOptionDerivative(Derivative[str]):
+    name = 'rich-option'
+    key_fields = ('subject',)
+    cache_suffix = '.txt'
+    key_options = {'spec': OptionSpec(None, normalize=_normalize_rich_spec)}
+
+    def __init__(self, root: str | Path, config: str = 'a'):
+        self.root = Path(root)
+        self.config = config
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {'config': self.config, 'label': ctx.options['spec'].label}
+
+    def build(self, ctx: Request) -> str:
+        return ctx.options['spec'].label
+
+    def load(self, ctx: Request, path: Path) -> str:
+        return Path(path).read_text()
+
+    def save(self, ctx: Request, path: Path, value: str) -> None:
+        Path(path).write_text(value)
+
+
+def make_gc_registry():
+    root, registry, _ = make_source_registry()
+    configured = ConfiguredDerivative(root)
+    downstream = DownstreamDerivative(root)
+    registry.register(configured)
+    registry.register(downstream)
+    return registry, configured, downstream, root
+
+
+def _strip_resolve_fields(manifest_path: Path) -> None:
+    """Rewrite a manifest as if it predated offline revalidation."""
+    data = json.loads(manifest_path.read_text())
+    del data['resolve_state']
+    del data['resolve_options']
+    manifest_path.write_text(json.dumps(data))
+
+
+def _single_entry(report, category: GCCategory):
+    entries = [entry for entry in report.entries if entry.category is category]
+    assert len(entries) == 1, f"{category}: {report.entries}"
+    return entries[0]
+
+
+def test_manifest_resolve_fields_roundtrip():
+    base = {
+        'schema_version': 2,
+        'derivative': 'value',
+        'derivative_version': 1,
+        'key': {'subject': 's1'},
+        'fingerprint': {},
+        'dependencies': {},
+        'cache_policy': 'required',
+        'software': {},
+    }
+    old = ArtifactManifest.from_dict(base)
+    assert old.resolve_state is None
+    assert old.resolve_options is None
+    new = ArtifactManifest.from_dict({**base, 'resolve_state': {'subject': 's1'}, 'resolve_options': {}})
+    assert new.resolve_state == {'subject': 's1'}
+    assert ArtifactManifest.from_dict(new.to_dict()).resolve_state == {'subject': 's1'}
+    assert compare_manifests(old, new) is None  # resolve fields never invalidate
+
+
+def test_gc_clean_cache_is_empty():
+    registry, configured, downstream, root = make_gc_registry()
+    registry.resolve('downstream', state=DEFAULT_STATE).load()
+    report = registry.scan_cache()
+    assert report.entries == []
+    assert report.errors == []
+    assert report.scanned_manifests == 2
+    # collect on a clean cache is a no-op
+    registry.collect(report)
+    assert registry.resolve('downstream', state=DEFAULT_STATE).is_valid()
+
+
+def test_gc_dead_node_dir():
+    registry, configured, downstream, root = make_gc_registry()
+    ctx = registry.resolve('configured', state=DEFAULT_STATE)
+    ctx.load()
+    ghost_dir = registry.cache_dir / 'ghost'
+    (ghost_dir / 'sub-s1').mkdir(parents=True)
+    (ghost_dir / 'sub-s1' / 'artifact.txt').write_text('x')
+    report = registry.scan_cache()
+    entry = _single_entry(report, GCCategory.DEAD_NODE_DIR)
+    assert entry.path == ghost_dir
+    assert entry.size > 0
+    registry.collect(report)
+    assert not ghost_dir.exists()
+    assert ctx.artifact_path.exists()
+
+
+def test_gc_schema_mismatch():
+    registry, configured, downstream, root = make_gc_registry()
+    ctx = registry.resolve('configured', state=DEFAULT_STATE)
+    ctx.load()
+    data = json.loads(ctx.manifest_path.read_text())
+    data['schema_version'] = 1
+    ctx.manifest_path.write_text(json.dumps(data))
+    report = registry.scan_cache()
+    entry = _single_entry(report, GCCategory.SCHEMA)
+    assert entry.path == ctx.artifact_path
+    registry.collect(report)
+    assert not ctx.artifact_path.exists()
+    assert not ctx.manifest_path.exists()
+    assert not (registry.cache_dir / 'configured').exists()  # emptied dirs are pruned
+
+
+def test_gc_derivative_version_mismatch():
+    registry, configured, downstream, root = make_gc_registry()
+    ctx = registry.resolve('configured', state=DEFAULT_STATE)
+    ctx.load()
+    configured.version = 2
+    report = registry.scan_cache()
+    _single_entry(report, GCCategory.DERIVATIVE_VERSION)
+    registry.collect(report)
+    assert not ctx.artifact_path.exists()
+
+
+def test_gc_orphan_manifest():
+    registry, configured, downstream, root = make_gc_registry()
+    ctx = registry.resolve('configured', state=DEFAULT_STATE)
+    ctx.load()
+    ctx.artifact_path.unlink()
+    report = registry.scan_cache()
+    entry = _single_entry(report, GCCategory.ORPHAN_MANIFEST)
+    assert entry.path == ctx.manifest_path
+    registry.collect(report)
+    assert not ctx.manifest_path.exists()
+
+
+def test_gc_external_mirror():
+    pipeline, registry, source, value, summary, comparison, ephemeral, protected, root = make_registry()
+    ctx = registry.resolve('protected', state=DEFAULT_STATE)
+    ctx.load()
+    assert not registry.is_cache_artifact(ctx.artifact_path)
+    # the mirror manifest of a live external artifact is preserved silently
+    report = registry.scan_cache()
+    assert report.entries == []
+    registry.collect(report)
+    assert ctx.manifest_path.exists()
+    # once the external artifact is gone, the mirror is dead weight
+    Path(ctx.artifact_path).unlink()
+    report = registry.scan_cache()
+    entry = _single_entry(report, GCCategory.ORPHAN_MIRROR)
+    assert entry.path == ctx.manifest_path
+    registry.collect(report)
+    assert not ctx.manifest_path.exists()
+
+
+def test_gc_superseded_key():
+    registry, configured, downstream, root = make_gc_registry()
+    ctx = registry.resolve('configured', state=DEFAULT_STATE)
+    ctx.load()
+    old_artifact = ctx.artifact_path
+    configured.key_fields = ()  # definition change: subject no longer keys the artifact
+    report = registry.scan_cache()
+    entry = _single_entry(report, GCCategory.SUPERSEDED_KEY)
+    assert entry.path == old_artifact
+    registry.collect(report)
+    assert not old_artifact.exists()
+    assert registry.resolve('configured', state=DEFAULT_STATE).load() == 'configured:a'
+
+
+def test_gc_added_key_field_is_unverifiable():
+    registry, configured, downstream, root = make_gc_registry()
+    ctx = registry.resolve('configured', state=DEFAULT_STATE)
+    ctx.load()
+    configured.key_fields = ('subject', 'mode')  # old manifests lack the new field's value
+    report = registry.scan_cache()
+    _single_entry(report, GCCategory.UNVERIFIABLE)
+    assert report.errors
+    registry.collect(report)
+    assert ctx.artifact_path.exists()  # unverifiable files are never deleted
+
+
+def test_gc_revalidation_stale():
+    registry, configured, downstream, root = make_gc_registry()
+    ctx = registry.resolve('configured', state=DEFAULT_STATE)
+    ctx.load()
+    configured.config = 'b'
+    assert registry.scan_cache(revalidate=False).entries == []
+    report = registry.scan_cache()
+    entry = _single_entry(report, GCCategory.REVALIDATION_STALE)
+    assert 'fingerprint' in entry.reason
+    registry.collect(report)
+    assert not ctx.artifact_path.exists()
+    assert registry.resolve('configured', state=DEFAULT_STATE).load() == 'configured:b'
+
+
+def test_gc_stale_dependency_propagation():
+    registry, configured, downstream, root = make_gc_registry()
+    downstream_ctx = registry.resolve('downstream', state=DEFAULT_STATE)
+    downstream_ctx.load()
+    # make the parent unverifiable on its own (like a rich-option node with a pre-migration manifest)
+    _strip_resolve_fields(downstream_ctx.manifest_path)
+    configured.config = 'b'
+    report = registry.scan_cache()
+    _single_entry(report, GCCategory.REVALIDATION_STALE)
+    entry = _single_entry(report, GCCategory.STALE_DEPENDENCY)
+    assert entry.path == downstream_ctx.artifact_path
+    assert 'configured' in entry.reason
+    registry.collect(report)
+    assert not downstream_ctx.artifact_path.exists()
+    assert not downstream_ctx.manifest_path.exists()
+
+
+def test_gc_stale_dependency_after_child_rebuild():
+    registry, configured, downstream, root = make_gc_registry()
+    downstream_ctx = registry.resolve('downstream', state=DEFAULT_STATE)
+    downstream_ctx.load()
+    _strip_resolve_fields(downstream_ctx.manifest_path)
+    configured.config = 'b'
+    registry.resolve('configured', state=DEFAULT_STATE).load()  # rebuild the child in place
+    report = registry.scan_cache()
+    entry = _single_entry(report, GCCategory.STALE_DEPENDENCY)
+    assert entry.path == downstream_ctx.artifact_path
+    registry.collect(report)
+    assert not downstream_ctx.artifact_path.exists()
+    assert registry.resolve('configured', state=DEFAULT_STATE).is_valid()
+
+
+def test_gc_directory_artifact():
+    root, registry = make_empty_registry()
+    node = DirArtifactDerivative(root)
+    registry.register(node)
+    ctx = registry.resolve('dir-artifact', state=DEFAULT_STATE)
+    assert ctx.load() == 'xy'
+    assert ctx.artifact_path.is_dir()
+    # files inside the directory artifact are not classified individually
+    assert registry.scan_cache().entries == []
+    node.config = 'b'
+    report = registry.scan_cache()
+    entry = _single_entry(report, GCCategory.REVALIDATION_STALE)
+    assert entry.path == ctx.artifact_path
+    registry.collect(report)
+    assert not ctx.artifact_path.exists()
+
+
+def test_gc_stale_versioned_reference():
+    root, registry = make_empty_registry()
+    node = FakeVersionedInput(root)
+    registry.register(node)
+    node._source_path().write_text('one')
+    ctx = registry.resolve('versioned')
+    version_0 = node.reference_version(ctx)
+    node._source_path().write_text('two!')
+    version_1 = node.reference_version(ctx)
+    assert version_1['serial'] == version_0['serial'] + 1
+    reference_dir = registry.cache_dir / 'versioned'
+    assert (reference_dir / 'ref.0.pickle').exists()
+    report = registry.scan_cache()
+    entry = _single_entry(report, GCCategory.STALE_REFERENCE)
+    assert entry.path == reference_dir / 'ref.0.pickle'
+    registry.collect(report)
+    assert not (reference_dir / 'ref.0.pickle').exists()
+    assert (reference_dir / 'ref.json').exists()
+    assert (reference_dir / 'ref.1.pickle').exists()
+
+
+def test_gc_tmp_and_unknown_files():
+    registry, configured, downstream, root = make_gc_registry()
+    registry.resolve('configured', state=DEFAULT_STATE).load()
+    node_dir = registry.cache_dir / 'configured'
+    tmp_file = node_dir / 'manifest.json.tmp'
+    tmp_file.write_text('partial')
+    stray_file = node_dir / 'stray.bin'
+    stray_file.write_text('who knows')
+    report = registry.scan_cache()
+    assert _single_entry(report, GCCategory.TMP).path == tmp_file
+    assert _single_entry(report, GCCategory.UNKNOWN).path == stray_file
+    file_table = str(report.file_table())
+    assert 'Filename' in file_table
+    assert tmp_file.relative_to(registry.cache_dir).as_posix() in file_table
+    assert stray_file.relative_to(registry.cache_dir).as_posix() in file_table
+    assert 'tmp' in file_table
+    assert 'unknown' in file_table
+    registry.collect(report)
+    assert not tmp_file.exists()
+    assert stray_file.exists()  # unknown files are never deleted
+
+
+def test_gc_disambiguation_pruning():
+    root, registry = make_empty_registry()
+    colliding = CollidingDerivative(root)
+    registry.register(colliding)
+    base_ctx = registry.resolve('colliding', state={'subject': 's1', 'mode': 'default'})
+    base_ctx.load()
+    alt_ctx = registry.resolve('colliding', state={'subject': 's2', 'mode': 'default'})
+    alt_ctx.load()
+    sidecar_path = Path(f"{base_ctx.artifact_path}{CACHE_DISAMBIGUATION_SUFFIX}")
+    assert sidecar_path.exists()
+    assert registry.scan_cache().entries == []  # both variants live
+    # simulate a variant that disappeared (e.g. collected in an earlier run)
+    alt_ctx.artifact_path.unlink()
+    alt_ctx.manifest_path.unlink()
+    report = registry.scan_cache()
+    entry = _single_entry(report, GCCategory.STALE_DISAMBIGUATION)
+    assert len(entry.prune_digests) == 1
+    registry.collect(report)
+    assert not sidecar_path.exists()  # last entry pruned → sidecar removed
+    assert base_ctx.artifact_path.exists()
+
+
+def test_gc_scan_is_readonly():
+    root, registry = make_empty_registry()
+    versioned = FakeVersionedInput(root)
+    consumer = VersionedConsumerDerivative(root)
+    registry.register(versioned)
+    registry.register(consumer)
+    versioned._source_path().write_text('one')
+    registry.resolve('versioned-consumer').load()
+    versioned._source_path().write_text('two!')
+    cache_files = {path: path.stat().st_mtime_ns for path in registry.cache_dir.rglob('*') if path.is_file()}
+    report = registry.scan_cache()
+    _single_entry(report, GCCategory.REVALIDATION_STALE)
+    after = {path: path.stat().st_mtime_ns for path in registry.cache_dir.rglob('*') if path.is_file()}
+    assert after == cache_files  # no new reference pickle, no manifest refresh
+    # a normal load rebuilds and mints the new reference
+    assert registry.resolve('versioned-consumer').load() == 'two!'
+    assert (registry.cache_dir / 'versioned' / 'ref.1.pickle').exists()
+
+
+def test_gc_unverifiable_manifest_backfilled_on_use():
+    registry, configured, downstream, root = make_gc_registry()
+    ctx = registry.resolve('configured', state=DEFAULT_STATE)
+    ctx.load()
+    _strip_resolve_fields(ctx.manifest_path)
+    report = registry.scan_cache()
+    entry = _single_entry(report, GCCategory.UNVERIFIABLE)
+    assert 'predates' in entry.reason
+    registry.collect(report)
+    assert ctx.artifact_path.exists()
+    # a cache hit backfills the resolve context without rebuilding
+    assert registry.resolve('configured', state=DEFAULT_STATE).load() == 'configured:a'
+    data = json.loads(ctx.manifest_path.read_text())
+    assert data['resolve_state'] == {'subject': 's1'}
+    assert registry.scan_cache().entries == []
+
+
+def test_gc_rich_option_round_trip():
+    root, registry = make_empty_registry()
+    node = RichOptionDerivative(root)
+    registry.register(node)
+    ctx = registry.resolve('rich-option', state=DEFAULT_STATE, options={'spec': RichSpec('A')})
+    assert ctx.load() == 'A'
+    report = registry.scan_cache()
+    assert report.entries == []
+    assert report.errors == []  # reconstruction re-parses the canonical form into a RichSpec
+    node.config = 'b'
+    report = registry.scan_cache()
+    _single_entry(report, GCCategory.REVALIDATION_STALE)
+
+
+def test_data_spec_cache_form_round_trip():
+    for spec in (DataSpec('sensor'), DataSpec('source'), DataSpec('eeg.mean')):
+        form = DerivativeRegistry.canonicalize(spec)
+        assert isinstance(form, str)
+        assert DataSpec.coerce(form) == spec
+
+
+def test_gc_collect_logs_deletions(caplog):
+    registry, configured, downstream, root = make_gc_registry()
+    ctx = registry.resolve('configured', state=DEFAULT_STATE)
+    ctx.load()
+    configured.config = 'b'
+    report = registry.scan_cache()
+    with caplog.at_level(logging.DEBUG, logger=LOG.name):
+        registry.collect(report)
+    debug_messages = [record.message for record in caplog.records if record.levelno == logging.DEBUG]
+    assert any('Cache GC: removed' in message and 'revalidation_stale' in message for message in debug_messages)
+    info_messages = [record.message for record in caplog.records if record.levelno == logging.INFO]
+    assert any(message.startswith('Cache GC: removed 2 files') for message in info_messages)
+
+
+def test_pipeline_clean_cache(monkeypatch):
+    """Pipeline.clean_cache: dry_run reports only; confirm=False deletes."""
+    from eelbrain import Pipeline
+
+    registry, configured, downstream, root = make_gc_registry()
+    registry.resolve('downstream', state=DEFAULT_STATE).load()
+    configured.config = 'b'
+
+    class FakeExperiment:
+        _derivatives = registry
+        _log = LOG
+        clean_cache = Pipeline.clean_cache
+
+    experiment = FakeExperiment()
+    ctx = registry.resolve('configured', state=DEFAULT_STATE)
+
+    table = experiment.clean_cache(dry_run=True)
+    assert 'revalidation_stale' in str(table)
+    assert ctx.artifact_path.exists()  # dry run deletes nothing
+
+    experiment.clean_cache(delete=True)
+    assert not ctx.artifact_path.exists()
+    assert registry.scan_cache().entries == []
