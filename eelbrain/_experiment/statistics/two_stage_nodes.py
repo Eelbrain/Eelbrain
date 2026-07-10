@@ -71,9 +71,9 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         # Match TwoStageLevel1Derivative
         data = ctx.options['data']
         fields = ['subject', 'session', 'epoch', 'epoch_rejection', 'raw']
-        if data is None or data.source:
+        if data.source:
             fields += ['equalize_evoked_count', 'inv', 'cov', 'src', 'parc', 'mrisubject', 'adjacency']
-            if data is None or data.morph:
+            if not data.aggregate:
                 fields += ['common_brain']
         return tuple(fields)
 
@@ -84,7 +84,6 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         }
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        subject = ctx.state['subject']
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
         samplingrate = ctx.options['samplingrate']
@@ -96,16 +95,14 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
             if test_obj.model:
                 dependency = Dependency(
                     'evoked-stc',
-                    label=subject,
-                    state={'subject': subject},
-                    options=_evoked_stc_options(ctx, model=test_obj.model, morph=data.morph, cat=None, samplingrate=samplingrate),
+                    label='data',
+                    options=_evoked_stc_options(ctx, model=test_obj.model, morph=True, samplingrate=samplingrate),
                 )
             else:
                 dependency = Dependency(
                     'epochs-stc',
-                    label=subject,
-                    state={'subject': subject},
-                    options=_epochs_stc_options(ctx, morph=data.morph, samplingrate=samplingrate),
+                    label='data',
+                    options=_epochs_stc_options(ctx, morph=True, samplingrate=samplingrate),
                 )
         else:
             if ctx.options['smooth']:
@@ -113,25 +110,22 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
             if test_obj.model:
                 dependency = Dependency(
                     'evoked-stc',
-                    label=subject,
-                    state={'subject': subject},
+                    label='data',
                     options=_evoked_stc_options(ctx, model=test_obj.model, morph=False, cat=None, samplingrate=samplingrate),
                 )
             else:
                 dependency = Dependency(
                     'epochs-stc',
-                    label=subject,
-                    state={'subject': subject},
+                    label='data',
                     options=_epochs_stc_options(ctx, morph=None, samplingrate=samplingrate),
                 )
         return dependency,
 
     def build(self, ctx: Request) -> Dataset | ROIData:
-        subject = ctx.state['subject']
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
 
-        ds = ctx.load(subject)
+        ds = ctx.load('data')
         if test_obj.vars:
             apply_vardef(ds, test_obj.vars, self.tests, self.groups)
 

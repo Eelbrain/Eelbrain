@@ -2025,9 +2025,9 @@ def test_gc_rich_option_round_trip():
 
 
 def test_data_spec_cache_form_round_trip():
-    for spec in (DataSpec('sensor'), DataSpec('source'), DataSpec('source', morph=True), DataSpec('eeg.mean', time=False)):
+    for spec in (DataSpec('sensor'), DataSpec('source'), DataSpec('eeg.mean')):
         form = DerivativeRegistry.canonicalize(spec)
-        assert isinstance(form, dict)
+        assert isinstance(form, str)
         assert DataSpec.coerce(form) == spec
 
 

@@ -529,8 +529,6 @@ def _prepare_source_projection(
     remove_unknown_after_ndvar = False
     if morph:
         target_subject = ctx.state['common_brain']
-        stc_key = 'stcm'
-        src_key = 'srcm'
         subject_from = ctx.state['common_brain'] if is_fake_mri(ctx.root / mri_dir(ctx.state)) else mrisubject
         if subject_from == ctx.state['common_brain']:
             set_subject = ctx.state['common_brain']
@@ -683,12 +681,10 @@ class EpochsStcDerivative(UncachedDerivative[Dataset]):
         if keep_epochs not in (True, False, 'ndvar', 'both'):
             raise ValueError(f"{keep_epochs=}")
 
-        stc_key = 'stcm' if 'stcm' in ds else 'stc'
-        src_key = 'srcm' if 'srcm' in ds else 'src'
         if ndvar:
-            del ds[stc_key]
+            del ds['stc']
         else:
-            del ds[src_key]
+            del ds['src']
 
         if keep_epochs in ('ndvar', 'both'):
             epochs_value = ds['epochs']
@@ -802,12 +798,10 @@ class EvokedStcDerivative(UncachedDerivative[Dataset]):
             ds = ds.sub(ds.eval(ctx.options['model']).isin(cat))
         ndvar = ctx.view_options['ndvar']
         keep_evoked = ctx.view_options['keep_evoked']
-        stc_key = 'stcm' if 'stcm' in ds else 'stc'
-        src_key = 'srcm' if 'srcm' in ds else 'src'
         if ndvar:
-            del ds[stc_key]
+            del ds['stc']
         else:
-            del ds[src_key]
+            del ds['src']
 
         if keep_evoked and ndvar:
             evoked = ds['evoked']
@@ -878,7 +872,7 @@ def roi_data_from_subject_datasets(dss: Sequence[Dataset], reducer: str) -> ROID
     n_trials_dss = []
     label_dss = {}
     for ds in dss:
-        src = ds.pop(next(name for name in ('srcm', 'src', 'stcm', 'stc') if name in ds))
+        src = ds.pop('src')
         n_trials_dss.append(ds)
         for label in src.source.parc.cells:
             if label.startswith('unknown-'):

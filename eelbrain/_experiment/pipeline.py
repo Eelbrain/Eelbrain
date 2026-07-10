@@ -1022,8 +1022,7 @@ class Pipeline(StateModel):
 
     def _resolve_data(
             self,
-            data: 'DataArg',
-            morph: bool = False,
+            data: DataArg,
     ) -> DataSpec:
         """Resolve the ``data`` argument into a :class:`DataSpec` for analysis.
 
@@ -1038,13 +1037,11 @@ class Pipeline(StateModel):
             Data kind: ``None`` (the datatype default in the current space), a
             sensor type (``'meg'``/``'mag'``/``'grad'``/``'eeg'``) or
             ``'source'``, optionally with a ``'.mean'``/``'.rms'`` aggregation.
-        morph
-            Morph source data to the common brain.
         """
         source_space = bool(self.get('inv'))
         if data is None:
             data = 'source' if source_space else self._default_data
-        spec = DataSpec.coerce(data, morph=morph)
+        spec = DataSpec.coerce(data)
         if source_space and not spec.source:
             raise ValueError(f"data={data!r} is sensor-space data, but the analysis is in source space (inv={self.get('inv')!r}); set inv='' for sensor-space analysis")
         if not source_space and spec.source:
@@ -2162,7 +2159,7 @@ class Pipeline(StateModel):
         """
         test_obj = self.tests[test]
         self.set(**state)
-        data = self._resolve_data(data, morph=True)
+        data = self._resolve_data(data)
         if data.source:
             self._current_source_parc()
         data._testnd_parc(disconnect_labels)
@@ -2621,7 +2618,7 @@ class Pipeline(StateModel):
             State parameters.
         """
         subject, group = self._process_subject_arg(subjects, state)
-        data = DataSpec("source", morph=bool(group))
+        data = DataSpec("source")
         brain_kwargs = self._surfer_plot_kwargs(surf, views, foreground, background, smoothing_steps, hemi)
         self.set(equalize_evoked_count='')
 
@@ -2735,7 +2732,7 @@ class Pipeline(StateModel):
         else:
             raise ValueError(f"{p=}")
 
-        data = DataSpec("source", morph=True)
+        data = DataSpec("source")
         brain_kwargs = self._surfer_plot_kwargs(surf, views, foreground, background, smoothing_steps, hemi)
         surf = brain_kwargs['surf']
         if model:
@@ -3041,7 +3038,7 @@ class Pipeline(StateModel):
 
         self.set(**state)
         self._current_source_parc()
-        data = DataSpec('source', morph=True)
+        data = DataSpec('source')
         options = {
             'data': data,
             'samples': samples,
@@ -3533,20 +3530,18 @@ class Pipeline(StateModel):
         if subject:
             title = name or f"{subject} {epoch} {model_name}"
             subject_arg = subject
-            src_key = 'src'
         else:
             title = name or f"{group} {epoch} {model_name}"
             subject_arg = group
-            src_key = 'srcm'
 
         if src:
             ds = self.load_evoked(subject_arg, baseline=baseline, keep_mne=sns, inv=source_inv, model=model)
             out = [ds]
             if model:
                 x = ds.eval(model)
-                ys = [ds[src_key].mean(case=x == cell) for cell in x.cells]
+                ys = [ds['src'].mean(case=x == cell) for cell in x.cells]
             else:
-                ys = [ds[src_key]]
+                ys = [ds['src']]
             for y in ys:
                 if is_volume_source_space:
                     plots = plot.GlassBrain.butterfly(y, w=2 * h, h=h, name=title)

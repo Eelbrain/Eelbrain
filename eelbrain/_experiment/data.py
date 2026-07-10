@@ -17,23 +17,16 @@ class DataSpec:
 
     Parameters
     ----------
-    string : str
+    string
         Internal string describing the data: ``'sensor'``/``'source'`` (or a
         specific sensor type ``'meg'``/``'mag'``/``'grad'``/``'eeg'``), with an
         optional ``.mean``/``.rms`` aggregation suffix.
-    time : bool
-        Whether the base data contains a time axis.
-    morph : bool
-        If loading source space data, whether the data is morphed to the common
-        brain.
     """
     RE = re.compile(r"^(source|sensor|meg|mag|grad|eeg)(?:\.(mean|rms))?$")
     source = False
     sensor = False
 
-    def __init__(self, string, time=True, morph=False):
-        self.time = bool(time)
-        self.morph = bool(morph)
+    def __init__(self, string: str):
         self.string = string
         m = self.RE.match(string)
         if m is None:
@@ -53,61 +46,30 @@ class DataSpec:
             self.sensor = True
         elif dim == 'source':
             self._to_ndvar = None
-            self.y_name = 'srcm' if self.morph else 'src'
+            self.y_name = 'src'
             self.source = True
         else:
             raise RuntimeError(f"{string=} ({dim=})")
 
-        dims = []
-        if self.source and not self.aggregate:
-            dims.append('source')
-        elif self.sensor and not self.aggregate:
-            dims.append('sensor')
-        if self.time:
-            dims.append('time')
-        self.dims = tuple(dims)
-
-        # whether parc is used from subjects or from common-brain
-        if self.source and not self.aggregate:
-            self.parc_level = 'common'
-        elif self.source:
-            self.parc_level = 'individual'
-        else:
-            self.parc_level = None
-
     @classmethod
-    def coerce(cls, obj, time=True, morph=False):
+    def coerce(cls, obj):
         if isinstance(obj, cls):
-            if obj.time == time and obj.morph == morph:
-                return obj
-            else:
-                return cls(obj.string, time, morph)
+            return obj
         elif isinstance(obj, dict):
-            # canonical form from _cache_form_(); complete, so time/morph args are ignored
-            return cls(obj['string'], obj.get('time', True), obj.get('morph', False))
+            # canonical form from _cache_form_()
+            return cls(obj['string'])
         else:
-            return cls(obj, time, morph)
+            return cls(obj)
 
-    def _cache_form_(self) -> dict:
-        """Simple canonical form for cache keys/fingerprints/manifests (see :meth:`~.derivative_cache.DerivativeRegistry.canonicalize`); :func:`normalize_data_option` parses it back."""
-        return {'string': self.string, 'time': self.time, 'morph': self.morph if self.source else False}
+    def _cache_form_(self) -> str:
+        """Canonical form for cache keys/fingerprints/manifests"""
+        return self.string
 
     def __repr__(self):
-        args = [repr(self.string)]
-        if not self.time:
-            args.append('time=False')
-        if self.source and self.morph:
-            args.append('morph=True')
-        return f"DataSpec({', '.join(args)})"
+        return f"DataSpec({self.string!r})"
 
     def __eq__(self, other):
-        if not isinstance(other, DataSpec):
-            return False
-        elif self.string != other.string or self.time != other.time:
-            return False
-        elif self.source:
-            return self.morph == other.morph
-        return True
+        return isinstance(other, DataSpec) and self.string == other.string
 
     def _testnd_parc(self, disconnect_labels: bool) -> str | None:
         if self.source and not self.aggregate:

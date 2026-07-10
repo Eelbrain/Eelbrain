@@ -80,10 +80,9 @@ class DSPMMovieDerivative(ResultOutputDerivative[Path]):
         dst = self.path(ctx)
         if ctx.options['single_subject']:
             ds = ctx.load('evoked-stc')
-            y = ds['src']
         else:
             ds = ctx.load('evoked-stc-group-dataset')
-            y = ds['srcm']
+        y = ds['src']
         brain = plot.brain.dspm(y, ctx.options['fmin'], ctx.options['fmin'] * 3, colorbar=False, **ctx.options['brain_kwargs'])
         brain.save_movie(dst, ctx.options['time_dilation'])
         brain.close()
@@ -174,10 +173,9 @@ class TTestMovieDerivative(ResultOutputDerivative[Path]):
         cluster_state = dict(ctx.options['cluster_state'] or {})
         if ctx.options['single_subject']:
             ds = ctx.load('epochs-stc')
-            y = 'src'
         else:
             ds = ctx.load('evoked-stc-group-dataset')
-            y = 'srcm'
+        y = 'src'
         if cluster_state:
             cluster_state.update(samples=0, pmin=ctx.options['p'])
         if ctx.options['disconnect_labels']:

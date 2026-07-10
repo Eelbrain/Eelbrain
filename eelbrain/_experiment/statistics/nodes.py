@@ -42,7 +42,7 @@ RESULT_OPTION_DEFAULTS = {
     'samples': None,
     # normalize so that a request reconstructed from a manifest (offline
     # revalidation) re-parses the canonical dict form into a DataSpec
-    'data': OptionSpec(None, normalize=DataSpec.coerce),
+    'data': OptionSpec(None, DataSpec, normalize=DataSpec.coerce),
     'test': None,
     'tstart': None,
     'tstop': None,

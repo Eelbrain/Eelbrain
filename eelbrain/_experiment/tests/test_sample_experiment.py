@@ -45,7 +45,7 @@ def _test_result_manifest_path(
         samplingrate=None,
 ) -> Path:
     options = {
-        'data': DataSpec.coerce(data, morph=True),
+        'data': DataSpec.coerce(data),
         'samples': samples,
         'test': test,
         'tstart': tstart,
@@ -174,7 +174,7 @@ def test_sample(samples_experiment):
     test_tree = e.show_dependencies(
         'test-result',
         options={
-            'data': DataSpec.coerce('meg.rms', morph=True),
+            'data': DataSpec.coerce('meg.rms'),
             'samples': 100,
             'test': 'a>v',
             'tstart': 0.05,
@@ -192,7 +192,7 @@ def test_sample(samples_experiment):
     movie_tree = e.show_dependencies(
         'movie-ttest',
         options={
-            'data': DataSpec.coerce('source', morph=True),
+            'data': DataSpec.coerce('source'),
             'single_subject': False,
             'subject': None,
             'baseline': False,
@@ -362,7 +362,7 @@ def test_sample(samples_experiment):
     assert e.get_field_values('subject', group='ab') == e.get_field_values('subject', group='alias') == ['R0000', 'R0002']
     # Check that derivative paths reflect group content
     result_options = {
-        'data': DataSpec.coerce('meg.rms', morph=True),
+        'data': DataSpec.coerce('meg.rms'),
         'samples': 20,
         'test': 'a>v',
         'tstart': 0.05,
@@ -1071,7 +1071,7 @@ def test_evoked_backed_test_vars_are_post_aggregation_only(samples_experiment):
     e = Experiment(root, epoch_rejection='')
 
     options = {
-        'data': DataSpec.coerce('meg.mean', morph=True),
+        'data': DataSpec.coerce('meg.mean'),
         'test': 'anova-ok',
         'baseline': False,
         'src_baseline': None,

@@ -127,7 +127,7 @@ class PredictorInput(VersionedInput[NDVar]):
 
 
 # Response NDVar keys in the loaded Dataset, ordered by preference
-_Y_NAMES = ('srcm', 'src', 'meg', 'eeg')
+_Y_NAMES = ('src', 'meg', 'eeg')
 
 
 class TRFDerivative(Derivative[object]):

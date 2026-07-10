@@ -33,7 +33,7 @@ def validate_tests(test_dict):
 
 def guess_y(ds: Dataset, default: str = None) -> str:
     "Given a dataset, guess the dependent variable"
-    for y in ('srcm', 'src', 'meg', 'eeg'):
+    for y in ('src', 'meg', 'eeg'):
         if y in ds:
             return y
     if default is not None:
