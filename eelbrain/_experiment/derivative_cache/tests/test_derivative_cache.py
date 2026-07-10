@@ -2072,6 +2072,6 @@ def test_pipeline_clean_cache(monkeypatch):
     assert 'revalidation_stale' in str(table)
     assert ctx.artifact_path.exists()  # dry run deletes nothing
 
-    experiment.clean_cache(confirm=False)
+    experiment.clean_cache(delete=True)
     assert not ctx.artifact_path.exists()
     assert registry.scan_cache().entries == []
