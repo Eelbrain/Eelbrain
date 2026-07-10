@@ -31,7 +31,7 @@ from typing import Any
 import warnings
 
 from ... import fmtxt
-from .base import CACHE_DISAMBIGUATION_SUFFIX, MANIFEST_SCHEMA_VERSION, MANIFEST_SUFFIX, ArtifactManifest, CachePolicy, DependencyNode, Derivative, DerivativeRegistry, Request, VersionedInput, _disambiguated_cache_artifact_path
+from .base import CACHE_DISAMBIGUATION_SUFFIX, MANIFEST_SCHEMA_VERSION, MANIFEST_SUFFIX, ArtifactManifest, CachePolicy, DependencyNode, Derivative, DerivativeRegistry, Input, Request, VersionedInput, _disambiguated_cache_artifact_path
 
 
 class GCCategory(str, Enum):
@@ -48,12 +48,13 @@ class GCCategory(str, Enum):
     TMP = 'tmp'                                    # leftover from an interrupted atomic write
     REVALIDATION_STALE = 'revalidation_stale'      # key is current but the configuration changed
     STALE_DEPENDENCY = 'stale_dependency'          # a recorded dependency is stale or was rebuilt with a different fingerprint
+    PROTECTED_STALE = 'protected_stale'            # user-managed input no longer validates — kept, reported only
     UNVERIFIABLE = 'unverifiable'                  # cannot be validated offline — kept, reported only
     UNKNOWN = 'unknown'                            # unclassified file — kept, reported only
 
 
 # Categories that scan_cache reports but collect() never deletes.
-GC_KEPT_CATEGORIES = frozenset({GCCategory.UNVERIFIABLE, GCCategory.UNKNOWN})
+GC_KEPT_CATEGORIES = frozenset({GCCategory.PROTECTED_STALE, GCCategory.UNVERIFIABLE, GCCategory.UNKNOWN})
 # Deletion phases for collect(): plain files, artifact+manifest pairs, sidecar maintenance, whole dead trees.
 _GC_DELETE_PHASE = {GCCategory.TMP: 0, GCCategory.STALE_REFERENCE: 0, GCCategory.STALE_DISAMBIGUATION: 2, GCCategory.DEAD_NODE_DIR: 3}
 
@@ -334,7 +335,7 @@ def _classify_manifest(
             return None, f"cannot reconstruct request ({error})"
         if ctx is None:
             return None, 'manifest predates offline revalidation'
-        if not isinstance(ctx.node, Derivative) or ctx.node.cache_policy is CachePolicy.NEVER:
+        if isinstance(ctx.node, Derivative) and ctx.node.cache_policy is CachePolicy.NEVER:
             return None, 'node is no longer a cached derivative'
         return ctx, None
 
@@ -344,13 +345,29 @@ def _classify_manifest(
         entry = classify(GCCategory.UNVERIFIABLE, f"manifest names unregistered derivative {manifest.derivative!r}")
     elif artifact_exists:
         if manifest.schema_version != MANIFEST_SCHEMA_VERSION:
-            entry = classify(GCCategory.SCHEMA, f"manifest schema {manifest.schema_version} (current: {MANIFEST_SCHEMA_VERSION})")
+            category = GCCategory.PROTECTED_STALE if isinstance(owner, Input) else GCCategory.SCHEMA
+            entry = classify(category, f"manifest schema {manifest.schema_version} (current: {MANIFEST_SCHEMA_VERSION})")
         elif isinstance(owner, Derivative) and manifest.derivative_version != owner.version:
             entry = classify(GCCategory.DERIVATIVE_VERSION, f"derivative version {manifest.derivative_version} (current: {owner.version})")
+        elif isinstance(owner, Input) and manifest.derivative_version != owner.version:
+            entry = classify(GCCategory.PROTECTED_STALE, f"input version {manifest.derivative_version} (current: {owner.version})")
         else:
             ctx, failure = reconstruct()
             if ctx is None:
                 entry = classify(GCCategory.UNVERIFIABLE, failure)
+            elif isinstance(owner, Input):
+                expected_manifest = registry.manifest_path(owner.path(ctx), owner.name)
+                if not _same_path(expected_manifest, manifest_path):
+                    entry = classify(GCCategory.PROTECTED_STALE, f"current request resolves to {registry.describe_artifact_path(owner.path(ctx))}")
+                elif revalidate:
+                    try:
+                        valid = owner.is_valid(ctx)
+                    except Exception as error:
+                        report.errors.append((manifest_path, repr(error)))
+                        entry = classify(GCCategory.UNVERIFIABLE, f"cannot validate ({error})")
+                    else:
+                        if not valid:
+                            entry = classify(GCCategory.PROTECTED_STALE, 'input no longer matches its recorded provenance')
             elif not registry.is_cache_artifact(ctx.artifact_path):
                 entry = classify(GCCategory.UNVERIFIABLE, 'unexpected file next to an external-artifact mirror manifest')
             elif not _same_path(ctx.artifact_path, artifact_path):
@@ -368,6 +385,21 @@ def _classify_manifest(
         ctx, failure = reconstruct()
         if ctx is None:
             entry = classify(GCCategory.UNVERIFIABLE, failure)
+        elif isinstance(owner, Input):
+            expected_manifest = registry.manifest_path(owner.path(ctx), owner.name)
+            if not _same_path(expected_manifest, manifest_path):
+                entry = classify(GCCategory.ORPHAN_MIRROR, 'manifest no longer corresponds to the current input request')
+            elif not owner.path(ctx).exists():
+                entry = classify(GCCategory.ORPHAN_MIRROR, f"input {registry.describe_artifact_path(owner.path(ctx))} is missing")
+            elif revalidate:
+                try:
+                    valid = owner.is_valid(ctx)
+                except Exception as error:
+                    report.errors.append((manifest_path, repr(error)))
+                    entry = classify(GCCategory.UNVERIFIABLE, f"cannot validate ({error})")
+                else:
+                    if not valid:
+                        entry = classify(GCCategory.PROTECTED_STALE, 'input no longer matches its recorded provenance')
         elif registry.is_cache_artifact(ctx.artifact_path):
             entry = classify(GCCategory.ORPHAN_MANIFEST, 'artifact is missing')
         elif not _same_path(ctx.manifest_path, manifest_path):

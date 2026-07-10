@@ -428,6 +428,10 @@ def test_sample(samples_experiment):
     ica_path = e.make_ica(raw='ica')
     ica_manifest = e._derivatives.manifest_path(ica_path, ica_input_name('ica'))
     assert exists(ica_manifest)
+    ica_manifest_data = json.loads(Path(ica_manifest).read_text())
+    assert ica_manifest_data['resolve_state'] == {'subject': 'R0000', 'session': ''}
+    assert ica_manifest_data['resolve_options'] == {}
+    assert not [entry for entry in e._derivatives.scan_cache().entries if entry.manifest_path == Path(ica_manifest)]
 
     class ChangedExperiment(Experiment):
         raw = {

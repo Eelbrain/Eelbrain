@@ -689,6 +689,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             ctx: Request,
             value: mne.preprocessing.ICA,
     ) -> ArtifactManifest:
+        resolve_state, resolve_options = ctx._resolve_context()
         return ArtifactManifest(
             schema_version=MANIFEST_SCHEMA_VERSION,
             derivative=self.name,
@@ -698,6 +699,8 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             dependencies=ctx.registry.dependency_fingerprints(ctx),
             cache_policy='external',
             software={'eelbrain_cache_schema': str(MANIFEST_SCHEMA_VERSION), 'mne': mne.__version__},
+            resolve_state=resolve_state,
+            resolve_options=resolve_options,
         )
 
     def is_valid(self, ctx: Request) -> bool:
