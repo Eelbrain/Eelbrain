@@ -84,6 +84,23 @@ PMinArg = Literal['tfce'] | float | None
 SubjectArg = str | Literal[1, -1]
 
 
+def _session_log_file(log_dir: Path, name: str, initialized: datetime) -> Path:
+    """Determine the log-file name for a new pipeline session."""
+    date = initialized.strftime('%Y-%m-%d')
+    prefix = f'{name}-{date}-'
+    sessions = []
+    if log_dir.exists():
+        for path in log_dir.iterdir():
+            if path.suffix != '.log' or not path.stem.startswith(prefix):
+                continue
+            session, separator, time = path.stem[len(prefix):].partition('-')
+            if separator and session.isdecimal() and len(time) == 4 and time.isdecimal():
+                sessions.append(int(session))
+    session = max(sessions, default=0) + 1
+    time = initialized.strftime('%H%M')
+    return log_dir / f'{prefix}{session}-{time}.log'
+
+
 class Pipeline(StateModel):
     """Analyze an MEG or EEG experiment
 
@@ -318,7 +335,8 @@ class Pipeline(StateModel):
         # even for two live experiments on the same root. ``parent`` is None, so records
         # never propagate to the root logger (no double-logging via host configuration).
         self._log = log = logging.Logger(self.__class__.__name__, logging.DEBUG)
-        log_file = root / LOG_DIR / f'{self.__class__.__name__}.log'
+        initialized = datetime.now()
+        log_file = _session_log_file(root / LOG_DIR, self.__class__.__name__, initialized)
         os.makedirs(log_file.parent, exist_ok=True)
         handler = logging.FileHandler(log_file)
         formatter = StructuredFormatter("%(levelname)-8s %(asctime)s %(message)s", "%m-%d %H:%M")
@@ -469,7 +487,7 @@ class Pipeline(StateModel):
         ##########
         # log package versions
         from .. import __version__
-        log.info("*** %s initialized with root %s on %s ***", self.__class__.__name__, root, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        log.info("*** %s initialized with root %s on %s ***", self.__class__.__name__, root, initialized.strftime('%Y-%m-%d %H:%M:%S'))
         level = logging.DEBUG if any('dev' in v for v in (__version__, mne.__version__)) else logging.INFO
         log.log(level, "Using eelbrain %s, mne %s.", __version__, mne.__version__)
         # Legend for the tab-separated columns appended to cache-event log lines (DEBUG, file only).
