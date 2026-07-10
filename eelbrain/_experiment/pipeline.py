@@ -34,7 +34,7 @@ from .._types import PathArg
 from .._utils import ask, keydefaultdict, log_level, ScreenHandler
 from .._utils.mne_utils import is_fake_mri
 from .covariance import CovDerivative, EpochCovariance, RawCovariance
-from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, DerivativeRegistry, ProtectedArtifactError, Request
+from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, GC_KEPT_CATEGORIES, DerivativeRegistry, ProtectedArtifactError, Request, _format_size
 from .configuration import Configuration, ConfigurationDict, sequence_arg
 from .epochs import (
     EpochBase, EpochsDerivative, RecordingEpochsDerivative, EvokedDerivative,
@@ -603,6 +603,73 @@ class Pipeline(StateModel):
         if not redo and ctx.is_valid():
             return None
         return ctx.load(view=view)
+
+    def clean_cache(
+            self,
+            dry_run: bool = False,
+            confirm: bool = True,
+            revalidate: bool = True,
+    ) -> fmtxt.Table:
+        """Report and delete invalid or stale cache files (garbage collection).
+
+        Scans the cache directory and classifies every file. Deletable
+        categories cover definitively-invalid files (artifacts of removed
+        nodes, outdated manifest schemas or derivative versions, orphaned
+        manifests and sidecars, superseded key variants, leftover temporary
+        files) and stale artifacts: files whose cache key is still current but
+        whose configuration changed since they were built, including
+        transitively through their recorded dependencies. Files that cannot be
+        verified are reported but never deleted.
+
+        Parameters
+        ----------
+        dry_run
+            Only scan and report; delete nothing.
+        confirm
+            Ask for confirmation before deleting (set to ``False`` for
+            non-interactive use; every deleted file is logged at DEBUG level
+            either way).
+        revalidate
+            Detect stale artifacts by re-validating each cached request
+            against the current pipeline configuration. Set to ``False`` for a
+            faster scan restricted to structurally invalid files.
+
+        Returns
+        -------
+        report_table
+            Per-category summary of the scan (file counts and sizes).
+        """
+        report = self._derivatives.scan_cache(revalidate=revalidate)
+        table = fmtxt.Table('lrr')
+        table.cells('Category', 'Files', 'Size')
+        table.midrule()
+        for category, entries in report.by_category().items():
+            label = category.value
+            if category in GC_KEPT_CATEGORIES:
+                label += ' (kept)'
+            table.cells(label, len(entries), _format_size(sum(entry.size for entry in entries)))
+        deletable = report.deletable()
+        total_size = report.total_size()
+        if deletable:
+            table.midrule()
+            table.cells('Total deletable', len(deletable), _format_size(total_size))
+        else:
+            table.caption("Nothing to delete.")
+        if report.errors:
+            self._log.debug("Cache scan errors:\n%s", '\n'.join(f"{path}: {error}" for path, error in report.errors))
+        print(table)
+        if dry_run or not deletable:
+            return table
+        if confirm:
+            command = ask(
+                f"Delete {len(deletable)} cache files ({_format_size(total_size)})?",
+                {'delete': 'permanently delete the listed files', 'abort': 'keep everything'},
+                help="Deleted artifacts are rebuilt automatically when they are requested again. Files categorized as unverifiable or unknown are always kept.",
+            )
+            if command != 'delete':
+                return table
+        self._derivatives.collect(report)
+        return table
 
     def __iter__(self):
         "Iterate state through subjects and yield each subject name."

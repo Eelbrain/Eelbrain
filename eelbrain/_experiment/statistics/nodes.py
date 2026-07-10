@@ -23,8 +23,8 @@ from ..._exceptions import ConfigurationError
 from ..._io.pickle import update_subjects_dir
 from ..._text import enumeration
 from ..._stats.testnd import _MergedTemporalClusterDist
-from ..data import DataSpec
-from ..derivative_cache import Dependency, Derivative, Request, UncachedDerivative
+from ..data import DataSpec, normalize_data_option
+from ..derivative_cache import Dependency, Derivative, OptionSpec, Request, UncachedDerivative
 from ..pathing import (
     MRI_SDIR,
     join_stem_parts,
@@ -40,7 +40,9 @@ T = TypeVar('T')
 USE_CTX = object()
 RESULT_OPTION_DEFAULTS = {
     'samples': None,
-    'data': None,
+    # normalize so that a request reconstructed from a manifest (offline
+    # revalidation) re-parses the canonical dict form into a DataSpec
+    'data': OptionSpec(None, normalize=normalize_data_option),
     'test': None,
     'tstart': None,
     'tstop': None,
@@ -470,7 +472,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
     """
     name = 'evoked-test-data'
     key_options = {
-        'data': None,
+        'data': OptionSpec(None, normalize=normalize_data_option),
         'test': None,
         'baseline': None,
         'src_baseline': None,

@@ -682,7 +682,7 @@ The following is an example for EEG using band-pass filter and ICA::
 
 
 .. note::
-    Continuous files take up a lot of hard drive space. By default, files for most pre-processing steps are cached. This can be controlled with the ``cache`` parameter: set ``cache=False`` to avoid caching. Cached files are stored under the pipeline's cache directory (``{root}/derivatives/eelbrain/cache``) and can be deleted manually to reclaim disk space; they are regenerated on demand.
+    Continuous files take up a lot of hard drive space. By default, files for pre-processing steps that take non-trivial compute time are cached. This can be controlled with the ``cache`` parameter: set ``cache=False`` to avoid caching. Cached files are stored under the pipeline's cache directory (``{root}/derivatives/eelbrain/cache``) and are regenerated on demand. Files that are no longer valid — because a definition changed, or a node was removed — are not deleted automatically; use :meth:`Pipeline.clean_cache` to review and reclaim that space (call it with ``dry_run=True`` first to see what would be removed).
 
 
 Events

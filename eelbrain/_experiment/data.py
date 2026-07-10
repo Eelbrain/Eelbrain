@@ -83,8 +83,15 @@ class DataSpec:
                 return obj
             else:
                 return cls(obj.string, time, morph)
+        elif isinstance(obj, dict):
+            # canonical form from _cache_form_(); complete, so time/morph args are ignored
+            return cls(obj['string'], obj.get('time', True), obj.get('morph', False))
         else:
             return cls(obj, time, morph)
+
+    def _cache_form_(self) -> dict:
+        """Simple canonical form for cache keys/fingerprints/manifests (see :meth:`~.derivative_cache.DerivativeRegistry.canonicalize`); :func:`normalize_data_option` parses it back."""
+        return {'string': self.string, 'time': self.time, 'morph': self.morph if self.source else False}
 
     def __repr__(self):
         args = [repr(self.string)]
@@ -116,3 +123,18 @@ class DataSpec:
             return info.get_channel_types(unique=True, only_data_chs=True)
         else:
             return self._to_ndvar
+
+
+def normalize_data_option(ctx, value) -> DataSpec:
+    """:class:`~.derivative_cache.OptionSpec` normalizer for ``data`` options holding a :class:`DataSpec`.
+
+    Accepts a :class:`DataSpec` (returned unchanged — unlike
+    :meth:`DataSpec.coerce`, whose ``time``/``morph`` arguments are
+    authoritative and would rebuild the spec), its canonical dict form from
+    :meth:`DataSpec._cache_form_` (an offline-reconstructed request), or a
+    plain data string. Idempotent, as :class:`~.derivative_cache.OptionSpec`
+    requires.
+    """
+    if isinstance(value, DataSpec):
+        return value
+    return DataSpec.coerce(value)

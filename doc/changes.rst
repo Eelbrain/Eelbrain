@@ -46,6 +46,9 @@ New in 0.43
   - Temporal response function analyses can be managed directly by the
     pipeline with predictors, estimators, and :meth:`pipeline.Pipeline.load_trf`
     / :meth:`pipeline.Pipeline.load_trfs`.
+  - New :meth:`pipeline.Pipeline.clean_cache` reviews and deletes invalid or
+    stale cache files, including artifacts whose configuration changed since
+    they were built and everything downstream of them.
 
 
 New in 0.42
