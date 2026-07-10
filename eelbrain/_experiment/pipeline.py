@@ -34,7 +34,7 @@ from .._types import PathArg
 from .._utils import ask, keydefaultdict, log_level, ScreenHandler
 from .._utils.mne_utils import is_fake_mri
 from .covariance import CovDerivative, EpochCovariance, RawCovariance
-from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, GC_KEPT_CATEGORIES, DerivativeRegistry, ProtectedArtifactError, Request, _format_size
+from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, DerivativeRegistry, ProtectedArtifactError, Request, _format_size
 from .configuration import Configuration, ConfigurationDict, sequence_arg
 from .epochs import (
     EpochBase, EpochsDerivative, RecordingEpochsDerivative, EvokedDerivative,
@@ -609,7 +609,7 @@ class Pipeline(StateModel):
             dry_run: bool = False,
             confirm: bool = True,
             revalidate: bool = True,
-    ) -> fmtxt.Table:
+    ) -> fmtxt.Table | None:
         """Report and delete invalid or stale cache files (garbage collection).
 
         Scans the cache directory and classifies every file. Deletable
@@ -640,26 +640,14 @@ class Pipeline(StateModel):
             Per-category summary of the scan (file counts and sizes).
         """
         report = self._derivatives.scan_cache(revalidate=revalidate)
-        table = fmtxt.Table('lrr')
-        table.cells('Category', 'Files', 'Size')
-        table.midrule()
-        for category, entries in report.by_category().items():
-            label = category.value
-            if category in GC_KEPT_CATEGORIES:
-                label += ' (kept)'
-            table.cells(label, len(entries), _format_size(sum(entry.size for entry in entries)))
         deletable = report.deletable()
         total_size = report.total_size()
-        if deletable:
-            table.midrule()
-            table.cells('Total deletable', len(deletable), _format_size(total_size))
-        else:
-            table.caption("Nothing to delete.")
+        table = report.summary()
         if report.errors:
             self._log.debug("Cache scan errors:\n%s", '\n'.join(f"{path}: {error}" for path, error in report.errors))
-        print(table)
         if dry_run or not deletable:
             return table
+        print(table)
         if confirm:
             command = ask(
                 f"Delete {len(deletable)} cache files ({_format_size(total_size)})?",
@@ -667,9 +655,9 @@ class Pipeline(StateModel):
                 help="Deleted artifacts are rebuilt automatically when they are requested again. Files categorized as unverifiable or unknown are always kept.",
             )
             if command != 'delete':
-                return table
+                return None
         self._derivatives.collect(report)
-        return table
+        return None
 
     def __iter__(self):
         "Iterate state through subjects and yield each subject name."

@@ -1947,6 +1947,12 @@ def test_gc_tmp_and_unknown_files():
     report = registry.scan_cache()
     assert _single_entry(report, GCCategory.TMP).path == tmp_file
     assert _single_entry(report, GCCategory.UNKNOWN).path == stray_file
+    file_table = str(report.file_table())
+    assert 'Filename' in file_table
+    assert tmp_file.relative_to(registry.cache_dir).as_posix() in file_table
+    assert stray_file.relative_to(registry.cache_dir).as_posix() in file_table
+    assert 'tmp' in file_table
+    assert 'unknown' in file_table
     registry.collect(report)
     assert not tmp_file.exists()
     assert stray_file.exists()  # unknown files are never deleted

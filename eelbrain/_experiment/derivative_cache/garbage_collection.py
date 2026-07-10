@@ -30,6 +30,7 @@ import shutil
 from typing import Any
 import warnings
 
+from ... import fmtxt
 from .base import CACHE_DISAMBIGUATION_SUFFIX, MANIFEST_SCHEMA_VERSION, MANIFEST_SUFFIX, ArtifactManifest, CachePolicy, DependencyNode, Derivative, DerivativeRegistry, Request, VersionedInput, _disambiguated_cache_artifact_path
 
 
@@ -78,6 +79,7 @@ class GCReport:
     scanned_manifests: int = 0
     errors: list[tuple[Path, str]] = field(default_factory=list)  # scan-time exceptions (never raised)
     disambiguation_sidecars: list[Path] = field(default_factory=list)  # all sidecars seen, for post-deletion pruning
+    cache_dir: Path | None = None
 
     def deletable(self) -> list[GCEntry]:
         """The entries that :meth:`DerivativeRegistry.collect` will delete."""
@@ -93,6 +95,44 @@ class GCReport:
     def total_size(self, deletable_only: bool = True) -> int:
         entries = self.deletable() if deletable_only else self.entries
         return sum(entry.size for entry in entries)
+
+    def summary(self) -> fmtxt.Table:
+        table = fmtxt.Table('lrr')
+        table.cells('Category', 'Files', 'Size')
+        table.midrule()
+        for category, entries in self.by_category().items():
+            label = category.value
+            if category in GC_KEPT_CATEGORIES:
+                label += ' (kept)'
+            table.cells(label, len(entries), _format_size(sum(entry.size for entry in entries)))
+        deletable = self.deletable()
+        total_size = self.total_size()
+        caption = []
+        if deletable:
+            table.midrule()
+            table.cells('Total deletable', len(deletable), _format_size(total_size))
+        else:
+            caption.append("Nothing to delete.")
+        if self.errors:
+            caption.append(f"* {len(self.errors)} errors*")
+        if caption:
+            table.caption(' '.join(caption))
+        return table
+
+    def file_table(self) -> fmtxt.Table:
+        """Table listing the individual files flagged by the scan."""
+        table = fmtxt.Table('lrl')
+        table.cells('Filename', 'Size', 'Category')
+        table.midrule()
+        for entry in self.entries:
+            path = entry.path
+            if self.cache_dir is not None:
+                try:
+                    path = path.relative_to(self.cache_dir)
+                except ValueError:
+                    pass
+            table.cells(str(path), _format_size(entry.size), entry.category.value)
+        return table
 
 
 @dataclass
@@ -154,7 +194,7 @@ def _same_path(a: Path, b: Path) -> bool:
 
 def scan_cache(registry: DerivativeRegistry, revalidate: bool = True) -> GCReport:
     """Implementation of :meth:`DerivativeRegistry.scan_cache`."""
-    report = GCReport()
+    report = GCReport(cache_dir=registry.cache_dir)
     if not registry.cache_dir.exists():
         return report
     scanned: dict[str, _ScannedManifest] = {}
