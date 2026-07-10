@@ -200,7 +200,9 @@ def scan_cache(registry: DerivativeRegistry, revalidate: bool = True) -> GCRepor
     scanned: dict[str, _ScannedManifest] = {}
     with registry._readonly_context():
         for child in sorted(registry.cache_dir.iterdir()):
-            if child.name.endswith('.tmp'):
+            if child.name == '.DS_Store':
+                continue
+            elif child.name.endswith('.tmp'):
                 report.entries.append(GCEntry(child, GCCategory.TMP, size=_path_size(child)))
             elif not child.is_dir():
                 report.entries.append(GCEntry(child, GCCategory.UNKNOWN, size=_path_size(child)))
@@ -237,7 +239,9 @@ def _scan_node_dir(
             keep, stale_references = set(), {}
         for name in sorted(set(filenames) - set(manifest_names) - artifact_names - keep):
             path = directory / name
-            if name.endswith('.tmp'):
+            if name == '.DS_Store':
+                continue
+            elif name.endswith('.tmp'):
                 report.entries.append(GCEntry(path, GCCategory.TMP, node=node.name, size=_path_size(path)))
             elif name.endswith(CACHE_DISAMBIGUATION_SUFFIX):
                 _scan_disambiguation_sidecar(registry, node, path, report)
