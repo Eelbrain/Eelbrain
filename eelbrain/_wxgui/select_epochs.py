@@ -940,9 +940,9 @@ class Frame(NavigableFrame, FileFrame):
 
         if not read_only:
             # --> Bad Channels
-            button = wx.Button(tb, ID.SET_BAD_CHANNELS, "Bad Channels")
-            button.Bind(wx.EVT_BUTTON, self.OnSetBadChannels)
-            tb.AddControl(button)
+            # button = wx.Button(tb, ID.SET_BAD_CHANNELS, "Bad Channels")
+            # button.Bind(wx.EVT_BUTTON, self.OnSetBadChannels)
+            # tb.AddControl(button)
 
             # --> Thresholding
             button = wx.Button(tb, ID.THRESHOLD, "Threshold")
