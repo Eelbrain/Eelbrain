@@ -215,11 +215,11 @@ def test_sample(samples_experiment):
     ds_ind = combine(sds, dim_intersection=True)
 
     ds = e.load_evoked('all')
-    ds['meg'] = ds['meg'].sub(sensor=ds['meg'].sensor.index(exclude='MEG 0331'))  # load_evoked interpolates bad channel
+    ds['mag'] = ds['mag'].sub(sensor=ds['mag'].sensor.index(exclude='MEG 0331'))  # load_evoked interpolates bad channel
     assert_dataobj_equal(ds_ind, ds, decimal=19)  # make vs load evoked
 
     # sensor space tests
-    megs = [e.load_evoked(cat='auditory', baseline=False, model='modality', interpolate_bads=True)['meg'] for _ in e]
+    megs = [e.load_evoked(cat='auditory', baseline=False, model='modality', interpolate_bads=True)['mag'] for _ in e]
     res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False, make=True)
     test_manifest = _test_result_manifest_path(e, 'a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', baseline=False)
     assert exists(test_manifest)
@@ -296,10 +296,10 @@ def test_sample(samples_experiment):
     # compare against epochs (baseline correction on epoch level rather than evoked for smaller numerical error)
     ep = e.load_epochs(baseline=True, epoch='visual', epoch_rejection='').aggregate('side')
     evs = e.load_evoked(baseline=True, epoch='visual-s', epoch_rejection='', model='side')
-    tstart = ep['meg'].time.tmin - shift
-    assert_dataobj_equal(evs[0, 'meg'], ep[0, 'meg'].sub(time=(tstart, None)), decimal=19)
-    tstop = ep['meg'].time.tstop + shift
-    assert_almost_equal(evs[1, 'meg'].x, ep[1, 'meg'].sub(time=(None, tstop)).x, decimal=19)
+    tstart = ep['mag'].time.tmin - shift
+    assert_dataobj_equal(evs[0, 'mag'], ep[0, 'mag'].sub(time=(tstart, None)), decimal=19)
+    tstop = ep['mag'].time.tstop + shift
+    assert_almost_equal(evs[1, 'mag'].x, ep[1, 'mag'].sub(time=(None, tstop)).x, decimal=19)
     # baseline correction can not be deferred/disabled for post_baseline_trigger_shift epochs
     with pytest.raises(NotImplementedError):
         e.load_epochs(baseline=False, epoch='visual-s', epoch_rejection='')
@@ -328,11 +328,11 @@ def test_sample(samples_experiment):
     e = Experiment(root)
     events = e.load_selected_events(epoch='av_shift')
     ds = e.load_epochs(baseline=True, epoch='av_shift')
-    v = ds.sub("epoch=='visual'", 'meg')
-    v_target = e.load_epochs(baseline=True, epoch='visual')['meg'].sub(time=(-0.1, v.time.tstop))
+    v = ds.sub("epoch=='visual'", 'mag')
+    v_target = e.load_epochs(baseline=True, epoch='visual')['mag'].sub(time=(-0.1, v.time.tstop))
     assert_almost_equal(v.x, v_target.x)
-    a = ds.sub("epoch=='auditory'", 'meg').sub(time=(-0.1, 0.099))
-    a_target = e.load_epochs(baseline=True, epoch='auditory')['meg'].sub(time=(0, 0.199))
+    a = ds.sub("epoch=='auditory'", 'mag').sub(time=(-0.1, 0.099))
+    a_target = e.load_epochs(baseline=True, epoch='auditory')['mag'].sub(time=(0, 0.199))
     assert_almost_equal(a.x, a_target.x, decimal=20)
 
     # duplicate subject
@@ -462,7 +462,7 @@ def test_sample(samples_experiment):
     ica.exclude = [0, 1, 2]
     ica.save(ica_path, overwrite=True)
     ds2 = e.load_evoked(raw='ica1-40')
-    assert not np.allclose(ds1['meg'].x, ds2['meg'].x, atol=1e-20), "ICA change ignored"
+    assert not np.allclose(ds1['mag'].x, ds2['mag'].x, atol=1e-20), "ICA change ignored"
     # apply-ICA
     with catch_warnings():
         filterwarnings('ignore', "The measurement information indicates a low-pass frequency", RuntimeWarning)
@@ -686,7 +686,7 @@ def test_sample_tasks(samples_experiment):
     ds1 = e.load_epochs(epoch='target1')
     ds2 = e.load_epochs(epoch='target2')
     ds_super = e.load_epochs(epoch='super')
-    assert_dataobj_equal(ds_super['meg'], combine((ds1['meg'], ds2['meg'])))
+    assert_dataobj_equal(ds_super['mag'], combine((ds1['mag'], ds2['mag'])))
     # SuperEpoch should depend on the same sub-epoch request as direct loading.
     super_dependencies = e._resolve_derivative('epochs').dependency_fingerprints()
     with e._temporary_state:
@@ -831,9 +831,9 @@ def test_interpolate_bads(samples_experiment):
     assert_array_equal(data_true, data_keep)
 
     # the interpolated channel is included in NDVar output only for True
-    assert bad not in e.load_epochs(interpolate_bads=False)['meg'].sensor.names
-    assert bad not in e.load_epochs(interpolate_bads='keep')['meg'].sensor.names
-    assert bad in e.load_epochs(interpolate_bads=True)['meg'].sensor.names
+    assert bad not in e.load_epochs(interpolate_bads=False)['mag'].sensor.names
+    assert bad not in e.load_epochs(interpolate_bads='keep')['mag'].sensor.names
+    assert bad in e.load_epochs(interpolate_bads=True)['mag'].sensor.names
 
 
 @requires_mne_sample_data
@@ -893,9 +893,9 @@ def test_variable_length_epochs(samples_experiment):
     n = ds.n_cases
     assert n > 0
     # each epoch becomes its own NDVar because the epochs have different lengths
-    assert isinstance(ds['meg'], Datalist)
-    assert len(ds['meg']) == n
-    n_times = {y.time.nsamples for y in ds['meg']}
+    assert isinstance(ds['mag'], Datalist)
+    assert len(ds['mag']) == n
+    n_times = {y.time.nsamples for y in ds['mag']}
     assert len(n_times) == 2  # two distinct epoch lengths
     assert 'epochs' not in ds
 
@@ -907,7 +907,7 @@ def test_variable_length_epochs(samples_experiment):
     # keep_mne keeps both the MNE epochs and the NDVars
     ds_both = e.load_epochs(keep_mne=True)
     assert isinstance(ds_both['epochs'], Datalist)
-    assert isinstance(ds_both['meg'], Datalist)
+    assert isinstance(ds_both['mag'], Datalist)
 
 
 @requires_mne_sample_data
@@ -1691,7 +1691,7 @@ def test_primary_epoch_run(samples_experiment):
     # Epochs can be loaded from combine-all epoch
     e.set(epoch='target')
     ds_epochs = e.load_epochs()
-    assert 'meg' in ds_epochs
+    assert 'mag' in ds_epochs
     assert ds_epochs.n_cases == ds_all.n_cases
 
     # A secondary epoch based on a combine-all primary should load epochs from
@@ -1776,7 +1776,7 @@ def test_predictor_subset_fingerprint(samples_experiment):
     root = samples_experiment(n_subjects=1, n_segments=4)
     e = SampleTRF(root)
     e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40', inv='')
-    samplingrate = 1 / e.load_epochs(reject=False)['meg'].time.tstep
+    samplingrate = 1 / e.load_epochs(reject=False)['mag'].time.tstep
 
     pdir = Path(root) / 'derivatives' / 'predictors'
     pdir.mkdir(parents=True, exist_ok=True)
@@ -1870,7 +1870,7 @@ def test_load_trf_filepredictor(samples_experiment):
 
     # match the predictor sampling to the data's natural (decimated) rate so the
     # samplingrate is an integer ratio of the raw rate and needs no resampling
-    tstep = e.load_epochs(reject=False)['meg'].time.tstep
+    tstep = e.load_epochs(reject=False)['mag'].time.tstep
     samplingrate = 1 / tstep
 
     # write a predictor file per stimulus (one for each 'modality' cell)

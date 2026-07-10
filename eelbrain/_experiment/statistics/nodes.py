@@ -472,7 +472,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
     """
     name = 'evoked-test-data'
     key_options = {
-        'data': OptionSpec(None, normalize=DataSpec.coerce),
+        'data': OptionSpec(None, DataSpec, normalize=DataSpec.coerce),
         'test': None,
         'baseline': None,
         'src_baseline': None,
@@ -545,7 +545,8 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
             ds = ctx.load('evoked-stc-group-dataset')
             ds = _apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string)
             if smooth := ctx.options['smooth']:
-                ds[data.y_name] = ds[data.y_name].smooth('source', smooth, 'gaussian')
+                y = data.response_key(ds)
+                ds[y] = ds[y].smooth('source', smooth, 'gaussian')
             return ds
 
         dss = []
@@ -591,7 +592,7 @@ class TestResultDerivative(ResultOutputDerivative):
         if data.sensor and len(data_value.info['sensor_types']) > 1:
             desc = ', '.join(data_value.info['sensor_types'])
             raise RuntimeError(f"Data contains more than one sensor type ({desc}). Mass-univariate tests are not designed for multiple sensor types. Use the data argument to perform test on one sensor type.")
-        return test_spec.make_result(self, test_spec.data.y_name, data_value, test_obj)
+        return test_spec.make_result(self, test_spec.data.response_key(data_value), data_value, test_obj)
 
     def load(
             self,

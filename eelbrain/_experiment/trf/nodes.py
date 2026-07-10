@@ -7,6 +7,7 @@ from ..._mne import morph_source_space
 from ..._ndvar.uts import pad
 from ..._utils.mne_utils import is_fake_mri
 from ..configuration import Configuration
+from ..data import DataSpec
 from ..derivative_cache import Dependency, Derivative, OptionSpec, Request, UncachedDerivative, VersionedInput, file_fingerprint
 from ..epochs.config import EpochCollection
 from ..pathing import MRI_SDIR, mri_dir
@@ -126,10 +127,6 @@ class PredictorInput(VersionedInput[NDVar]):
         return predictor._relevant_data(contents, term)
 
 
-# Response NDVar keys in the loaded Dataset, ordered by preference
-_Y_NAMES = ('src', 'meg', 'eeg')
-
-
 class TRFDerivative(Derivative[object]):
     """Fit and cache a TRF for one subject
 
@@ -156,7 +153,7 @@ class TRFDerivative(Derivative[object]):
         'tstart': 0.0,
         'tstop': 0.5,
         'estimator': 'boosting',
-        'data': None,
+        'data': OptionSpec(None, DataSpec, normalize=DataSpec.coerce),
         'mask': None,
         'samplingrate': None,
         'decim': None,
@@ -261,12 +258,7 @@ class TRFDerivative(Derivative[object]):
             tstart = ctx.options['tstart']
             tstop = ctx.options['tstop']
             ds = ctx.load('response')
-            for y_name in _Y_NAMES:
-                if y_name in ds:
-                    break
-            else:
-                raise RuntimeError(f"No response NDVar in loaded data (keys: {', '.join(ds.keys())})")
-            y = ds[y_name]
+            y = ds[ctx.options['data'].response_key(ds)]
             xs = [self._load_predictor(ctx, ds, term, y) for term in model.terms]
             fwd = cov = None
             if 'fwd' in est.extra_inputs:
@@ -330,7 +322,7 @@ _TRF_DATASET_OPTIONS = {
     'tstart': 0.0,
     'tstop': 0.5,
     'estimator': 'boosting',
-    'data': None,
+    'data': OptionSpec(None, DataSpec, normalize=DataSpec.coerce),
     'mask': None,
     'samplingrate': None,
     'decim': None,

@@ -69,7 +69,7 @@ from .source import (
     InverseSolution, MinimumNormInverseSolution, _drop_unknown_labels, _source_parc, eval_src,
 )
 from .statistics import EvokedTestDataDerivative, TestResultDerivative, TwoStageDataDerivative, TwoStageLevel1Derivative, TwoStageLevel2Derivative, TwoStageTest
-from .statistics.config import Test, guess_y, validate_tests
+from .statistics.config import Test, validate_tests
 from .trf import Boosting, Estimator, Model, NUTSPredictor, PredictorInput, TRFDatasetDerivative, TRFDerivative, TRFGroupDatasetDerivative, TRFJob, TRFJobSpec, UTSPredictor, filter_predictor
 from .trf.model import parse_term
 from .variable_def import Variables, apply_vardef, label_groups as label_groups_var
@@ -1084,8 +1084,8 @@ class Pipeline(StateModel):
             baseline correction.
         ndvar
             Data to convert to :class:`NDVar`. ``True`` (default) converts all
-            sensor types (with keys ``'meg'``/``'eeg'`` …); a sensor type
-            (``'meg'``/``'mag'``/``'grad'``/``'eeg'``), optionally aggregated
+            sensor types (with keys ``'mag'``/``'grad'``/``'eeg'`` …); a sensor
+            type (``'meg'``/``'mag'``/``'grad'``/``'eeg'``), optionally aggregated
             (e.g. ``'eeg.rms'``/``'eeg.mean'``), returns a single :class:`NDVar`;
             ``False`` returns :class:`mne.Epochs` with key ``'epochs'``. In source
             space (``inv`` set) the source estimates are returned as ``'src'``.
@@ -1528,8 +1528,8 @@ class Pipeline(StateModel):
             baseline correction.
         ndvar
             Data to convert to :class:`NDVar`. ``True`` (default) converts all
-            sensor types (with keys ``'meg'``/``'eeg'`` …); a sensor type
-            (``'meg'``/``'mag'``/``'grad'``/``'eeg'``), optionally aggregated
+            sensor types (with keys ``'mag'``/``'grad'``/``'eeg'`` …); a sensor
+            type (``'meg'``/``'mag'``/``'grad'``/``'eeg'``), optionally aggregated
             (e.g. ``'eeg.rms'``/``'eeg.mean'``), returns a single :class:`NDVar`;
             ``False`` returns the :class:`mne.Evoked` objects as ``'evoked'``. In
             source space (``inv`` set) the source estimates are returned as
@@ -1924,7 +1924,7 @@ class Pipeline(StateModel):
         if ndvar:
             source_pipe = self._raw.root_source_pipe(raw_name)
             data = DataSpec('sensor')
-            data_kind = data.data_to_ndvar(raw.info)[0]
+            data_kind = data.find_ndvar_channel_types(raw.info)[0]
             sysname = source_pipe._get_sysname(raw.info, self.get('subject'), data_kind)
             adjacency = source_pipe._get_adjacency(data_kind)
             raw = load.mne.raw_ndvar(raw, sysname=sysname, adjacency=adjacency)
@@ -2443,7 +2443,7 @@ class Pipeline(StateModel):
             decim = None
             display_data = ds
         data = DataSpec('sensor')
-        data_kind = data.data_to_ndvar(info)[0]
+        data_kind = data.find_ndvar_channel_types(info)[0]
         source_pipe = self._raw.root_source_pipe(ica_name)
         sysname = source_pipe._get_sysname(info, subject, data_kind)
         adjacency = source_pipe._get_adjacency(data_kind)
@@ -2492,7 +2492,7 @@ class Pipeline(StateModel):
         events = self._load_derivative('labeled-events')
         # Sensor system info
         source_pipe = self._raw.root_source_pipe(raw_name)
-        data_kind = DataSpec('sensor').data_to_ndvar(raw_data.info)[0]
+        data_kind = DataSpec('sensor').find_ndvar_channel_types(raw_data.info)[0]
         sysname = source_pipe._get_sysname(raw_data.info, subject, data_kind)
         adjacency = source_pipe._get_adjacency(data_kind)
         return gui.select_channels(raw_data, channels_path, events=events, sysname=sysname, adjacency=adjacency)
@@ -3490,6 +3490,8 @@ class Pipeline(StateModel):
             sns, src = bool(data.sensor), bool(data.source)
             if src and not source_inv:
                 raise ValueError(f"data={data.string!r}: no inverse is configured (inv=''); set inv to plot source estimates")
+        # response NDVar key(s) for the sensor plots are named by a DataSpec
+        sensor_data = data if isinstance(data, DataSpec) else DataSpec('sensor')
         model = self._eval_model(model)
         epoch = self.get('epoch')
         if model:
@@ -3510,7 +3512,7 @@ class Pipeline(StateModel):
             vlim = []
             for subject in self.iter(group=group):
                 ds = self.load_evoked(baseline=baseline, model=model)
-                y = guess_y(ds)
+                y = sensor_data.response_key(ds)
                 title = f"{subject} {epoch} {model_name}"
                 p = plot.TopoButterfly(y, model or None, data=ds, axh=h, name=title, run=False)
                 plots.append(p)
@@ -3554,7 +3556,7 @@ class Pipeline(StateModel):
             out = [ds]
             right_of = None
         if sns:
-            key = 'meg' if 'meg' in ds else 'eeg'
+            key = sensor_data.response_key(ds)
             p = plot.TopoButterfly(key, model or None, data=ds, axh=h, w=2.5 * h, name=title, right_of=right_of, run=run)
             if right_of:
                 p.link_time_axis(right_of)

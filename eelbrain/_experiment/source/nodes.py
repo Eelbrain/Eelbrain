@@ -690,18 +690,17 @@ class EpochsStcDerivative(UncachedDerivative[Dataset]):
             epochs_value = ds['epochs']
             epochs_list = epochs_value if isinstance(epochs_value, Datalist) else [epochs_value]
             info = epochs_list[0].info
-            sensor_types = DataSpec.coerce('sensor').data_to_ndvar(info)
+            sensor_types = DataSpec('sensor').find_ndvar_channel_types(info)
             ds.info['sensor_types'] = sensor_types
             raw_pipe = self.raw.root_source_pipe(ctx.state['raw'])
             for data_kind in sensor_types:
                 sysname = raw_pipe._get_sysname(info, ds.info['subject'], data_kind)
                 adjacency = raw_pipe._get_adjacency(data_kind)
-                name = 'meg' if data_kind == 'mag' and 'grad' not in sensor_types else data_kind
                 if isinstance(epochs_value, Datalist):
                     ys = [load.mne.epochs_ndvar(value, data=data_kind, sysname=sysname, adjacency=adjacency, name=data_kind)[0] for value in epochs_value]
                 else:
                     ys = load.mne.epochs_ndvar(epochs_value, data=data_kind, sysname=sysname, adjacency=adjacency)
-                ds[name] = ys
+                ds[data_kind] = ys
             if keep_epochs == 'ndvar':
                 del ds['epochs']
         elif not keep_epochs:
@@ -807,12 +806,11 @@ class EvokedStcDerivative(UncachedDerivative[Dataset]):
             evoked = ds['evoked']
             pipe = self.raw.root_source_pipe(ctx.state['raw'])
             info = evoked[0].info
-            sensor_types = ds.info['sensor_types'] = DataSpec.coerce('sensor').data_to_ndvar(info)
+            sensor_types = ds.info['sensor_types'] = DataSpec('sensor').find_ndvar_channel_types(info)
             for sensor_type in sensor_types:
                 sysname = pipe._get_sysname(info, ctx.state['subject'], sensor_type)
                 adjacency = pipe._get_adjacency(sensor_type)
-                name = 'meg' if sensor_type == 'mag' and 'grad' not in sensor_types else sensor_type
-                ds[name] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
+                ds[sensor_type] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
             del ds['evoked']
         elif not keep_evoked:
             del ds['evoked']

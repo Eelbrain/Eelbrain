@@ -131,7 +131,8 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
 
         if data.source and not data.aggregate:
             if ctx.options['smooth']:
-                ds[data.y_name] = ds[data.y_name].smooth('source', ctx.options['smooth'], 'gaussian')
+                y = data.response_key(ds)
+                ds[y] = ds[y].smooth('source', ctx.options['smooth'], 'gaussian')
             return ds
 
         return ds
@@ -170,7 +171,7 @@ class TwoStageLevel1Derivative(Derivative[Any]):
         subject = ctx.state['subject']
         ds = ctx.load('two-stage-data')
         if data.source and not data.aggregate:
-            return test_obj.make_stage_1(data.y_name, ds, subject)
+            return test_obj.make_stage_1(data.response_key(ds), ds, subject)
         if data.sensor:
             raise NotImplementedError(f"Two-stage test with data={data.string!r}")
         roi_data = roi_data_from_subject_datasets([ds], data.aggregate)

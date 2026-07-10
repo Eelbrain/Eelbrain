@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
 import mne
+
+if TYPE_CHECKING:
+    from .._data_obj import Dataset
 
 
 class DataSpec:
@@ -21,6 +25,14 @@ class DataSpec:
         Internal string describing the data: ``'sensor'``/``'source'`` (or a
         specific sensor type ``'meg'``/``'mag'``/``'grad'``/``'eeg'``), with an
         optional ``.mean``/``.rms`` aggregation suffix.
+
+    Notes
+    -----
+    ``DataSpec`` is the single source of truth for the keys under which response
+    NDVars are stored in loaded :class:`Dataset`\\ s. Sensor NDVars are keyed by
+    their MNE channel type (``'mag'``/``'grad'``/``'eeg'``) and source estimates
+    by ``'src'``. Consumers retrieve the response NDVar key from a loaded dataset
+    via :meth:`response_key`.
     """
     RE = re.compile(r"^(source|sensor|meg|mag|grad|eeg)(?:\.(mean|rms))?$")
     source = False
@@ -31,33 +43,14 @@ class DataSpec:
         m = self.RE.match(string)
         if m is None:
             raise ValueError(f"data={string!r}: invalid data description")
-        dim, self.aggregate = m.groups()
-        if dim in ('meg', 'mag'):
-            self._to_ndvar = ('mag',)
-            self.y_name = 'meg'  # mag NDVars are keyed 'meg' (see .load_epochs())
-            self.sensor = True
-        elif dim in ('grad', 'eeg'):
-            self._to_ndvar = (dim,)
-            self.y_name = dim
-            self.sensor = True
-        elif dim == 'sensor':
-            self._to_ndvar = None
-            self.y_name = 'meg'
-            self.sensor = True
-        elif dim == 'source':
-            self._to_ndvar = None
-            self.y_name = 'src'
-            self.source = True
-        else:
-            raise RuntimeError(f"{string=} ({dim=})")
+        self.space, self.aggregate = m.groups()
+        self.source = self.space == 'source'
+        self.sensor = not self.source
 
     @classmethod
     def coerce(cls, obj):
         if isinstance(obj, cls):
             return obj
-        elif isinstance(obj, dict):
-            # canonical form from _cache_form_()
-            return cls(obj['string'])
         else:
             return cls(obj)
 
@@ -78,9 +71,40 @@ class DataSpec:
             raise TypeError(f"{disconnect_labels=}: invalid for data={self.string!r}")
         return None
 
-    def data_to_ndvar(self, info: mne.Info) -> list[str]:
+    def find_ndvar_channel_types(self, info: mne.Info) -> list[str]:
+        """NDVar keys for the sensor data in ``info``.
+
+        Sensor NDVars are keyed by their MNE channel type
+        (``'mag'``/``'grad'``/``'eeg'``), so these are both the channel types
+        passed to the loader and the keys under which the NDVars are stored.
+        """
         assert self.sensor
-        if self._to_ndvar is None:
-            return info.get_channel_types(unique=True, only_data_chs=True)
-        else:
-            return self._to_ndvar
+        if self.space in ('eeg', 'mag', 'grad'):
+            return [self.space]
+        channel_types = info.get_channel_types(unique=True, only_data_chs=True)
+        if self.space == 'sensor':
+            return channel_types
+        elif self.space == 'meg':
+            return [ch_type for ch_type in ('mag', 'grad') if ch_type in channel_types]
+        raise RuntimeError(f"{self} with {channel_types=}")
+
+    def response_key(self, ds: Dataset) -> str:
+        """Key of the response NDVar in a loaded dataset ``ds``.
+
+        Source data is keyed ``'src'`` and a specific sensor type by its channel
+        type; only the all-sensor description is resolved against the data,
+        preferring ``'mag'`` when several sensor types are present.
+
+        Parameters
+        ----------
+        ds
+            Loaded dataset carrying the response NDVar(s). Only used to
+            disambiguate the all-sensor description, which needs the loaded
+            channel types in ``ds.info['sensor_types']``.
+        """
+        if self.source:
+            return 'src'
+        elif self.space in ('eeg', 'mag', 'grad'):
+            return self.space
+        types = ds.info['sensor_types']
+        return 'mag' if 'mag' in types else types[0]
