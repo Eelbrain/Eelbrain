@@ -1492,8 +1492,6 @@ class Request(Generic[T]):
         if isinstance(self.node, Derivative) and self.node.cache_policy != CachePolicy.NEVER:
             out['kind'] = 'derivative'
             out['key'] = self.key()
-            # Stored relative to the cache dir (all manifests, including external
-            # mirrors, live there) so the graph survives a moved project root.
             out['manifest'] = self.manifest_path.relative_to(self.registry.cache_dir).as_posix()
         else:
             out['kind'] = 'input'
@@ -1585,10 +1583,7 @@ class Request(Generic[T]):
         if reason is None and not self.registry._readonly and (current.dependencies != manifest.dependencies or manifest.resolve_state is None):
             # A quick fingerprint drifted while the full fingerprint still
             # matched (e.g. a touched file). Persist the refreshed dependency
-            # entries so future checks take the quick path again instead of
-            # paying for the full fingerprint walk on every validation. The
-            # same write opportunistically backfills the resolve context on
-            # manifests that predate it.
+            # entries so future checks take the quick path again.
             current.software = manifest.software
             current.artifact_metadata = manifest.artifact_metadata
             self.registry.write_manifest(self.manifest_path, current)
@@ -2576,6 +2571,8 @@ class DerivativeRegistry:
         reconstructed from a stored manifest (offline revalidation) re-parses
         the value into the rich object.
         """
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
         cache_form = getattr(value, '_cache_form_', None)
         if cache_form is not None:
             return DerivativeRegistry.canonicalize(cache_form())
@@ -2602,8 +2599,6 @@ class DerivativeRegistry:
                 return value.item()
             except Exception:
                 return repr(value)
-        if isinstance(value, (str, int, float, bool)) or value is None:
-            return value
         return repr(value)
 
 
