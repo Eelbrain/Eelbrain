@@ -677,12 +677,14 @@ The following is an example for EEG using band-pass filter and ICA::
             # Use the same ICA, but with a high pass filter with a lower cutoff frequency:
             '0.2-20': RawFilter('raw', 0.2, 20, cache=False),
             '0.2-20ica': RawApplyICA('0.2-20', 'ica'),
-            '0.2reref': RawReReference('0.2-20ica', ['A1', 'A2'], 'A2'),
         }
 
 
 .. note::
-    Continuous files take up a lot of hard drive space. By default, files for pre-processing steps that take non-trivial compute time are cached. This can be controlled with the ``cache`` parameter: set ``cache=False`` to avoid caching. Cached files are stored under the pipeline's cache directory (``{root}/derivatives/eelbrain/cache``) and are regenerated on demand. Files that are no longer valid — because a definition changed, or a node was removed — are not deleted automatically; use :meth:`Pipeline.clean_cache` to review and reclaim that space (call it with ``dry_run=True`` first to see what would be removed).
+    Continuous files take up a lot of hard drive space.
+    By default, files for many pre-processing steps are cached.
+    This can be controlled with the ``cache`` parameter: set ``cache=False`` to avoid caching.
+    To remove files that have already been cached, set ``cache=False`` and then use :meth:`Pipeline.clean_cache`.
 
 
 Events
