@@ -595,7 +595,7 @@ def test_sample_source(samples_experiment):
     subject_dep = two_stage_manifest_data['dependencies']['R0000']
     with open(e._derivatives.cache_dir / subject_dep['manifest']) as fid:
         level_1_manifest_data = json.load(fid)
-    assert level_1_manifest_data['dependencies']['two-stage-data']['dependencies']['R0000']['name'] == 'evoked-stc'
+    assert level_1_manifest_data['dependencies']['two-stage-data']['dependencies']['data']['name'] == 'evoked-stc'
     ds_return, _ = e.load_test('twostage', 0.05, 0.2, 0.05, samples=8, return_data=True, make=True)
     assert isinstance(ds_return, Dataset)
     assert 'subject' in ds_return
