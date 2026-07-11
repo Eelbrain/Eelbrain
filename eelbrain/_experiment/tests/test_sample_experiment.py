@@ -192,7 +192,7 @@ def test_sample(samples_experiment):
     movie_tree = e.show_dependencies(
         'movie-ttest',
         options={
-            'data': DataSpec.coerce('source'),
+            'data': DataSpec('source'),
             'single_subject': False,
             'subject': None,
             'baseline': False,
@@ -569,8 +569,9 @@ def test_sample_source(samples_experiment):
     assert source_manifest_data['key']['parc'] == 'ac'
     assert 'dependencies' not in source_manifest_data['fingerprint']
     assert 'evoked-test-data' in source_manifest_data['dependencies']
-    assert 'evoked-stc-group-dataset' in source_manifest_data['dependencies']['evoked-test-data']['dependencies']
-    assert set(source_manifest_data['dependencies']['evoked-test-data']['dependencies']['evoked-stc-group-dataset']['dependencies']) == {'R0000', 'R0001', 'R0002'}
+    source_data_deps = source_manifest_data['dependencies']['evoked-test-data']['dependencies']
+    assert source_data_deps['dataset']['name'] == 'evoked-stc-group-dataset'
+    assert set(source_data_deps['dataset']['dependencies']) == {'R0000', 'R0001', 'R0002'}
     assert source_manifest_data['key']['options']['disconnect_labels'] is False
     assert disconnected_manifest_data['key']['options']['disconnect_labels'] is True
     assert_dataobj_equal(res.t, res_labels.t)
@@ -581,10 +582,12 @@ def test_sample_source(samples_experiment):
         roi_manifest_data = json.load(fid)
     assert 'evoked-test-data' in roi_manifest_data['dependencies']
     roi_deps = roi_manifest_data['dependencies']['evoked-test-data']['dependencies']
-    assert set(roi_deps) == {'evoked-stc-group-dataset'}
-    group_deps = roi_deps['evoked-stc-group-dataset']['dependencies']
+    assert set(roi_deps) == {'dataset'}
+    assert roi_deps['dataset']['name'] == 'evoked-stc-group-dataset'
+    group_deps = roi_deps['dataset']['dependencies']
     assert set(group_deps) == {'R0000', 'R0001', 'R0002'}
     assert all(group_deps[subject]['name'] == 'evoked-stc' for subject in group_deps)
+    assert all('source-morph' not in group_deps[subject]['dependencies'] for subject in group_deps)
     res = ress.res['transversetemporal-lh']
     assert res.p.min() == 1 / 7
     with pytest.raises(TypeError, match='disconnect_labels'):

@@ -40,7 +40,7 @@ import numpy as np
 
 from ... import load
 from ..._data_obj import Datalist, Dataset, combine
-from ..._exceptions import ConfigurationError, DimensionMismatchError
+from ..._exceptions import ConfigurationError
 from ..._info import BAD_CHANNELS, INTERPOLATE_CHANNELS, INTERPOLATE_WINDOWS, INTERPOLATE_WINDOWS_MAX
 from ..._mne import shift_mne_epoch_trigger
 from ..._text import n_of
@@ -730,20 +730,12 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
     def build(self, ctx: Request) -> Dataset:
         dss = [ctx.load(subject) for subject in self.groups[ctx.state['group']]]
         data = ctx.options['data']
-        ndvar = False if data.aggregate else ctx.options['ndvar']
         ds = combine(dss, incomplete='drop')
-        if not ndvar and not data.aggregate:
-            lens = [len(evoked.times) for evoked in ds['evoked']]
-            ulens = set(lens)
-            if len(ulens) > 1:
-                err = ["Unequal time axis sampling (len):"]
-                alens = np.array(lens)
-                for length in ulens:
-                    subjects = ', '.join(ds[alens == length, 'subject'].cells)
-                    err.append(f"{length}: {subjects}")
-                raise DimensionMismatchError('\n'.join(err))
+        if data.aggregate:
+            # EvokedDerivative.apply_view_options() already aggregates each subject
             return ds
-        if ndvar and not data.aggregate:
+
+        if ctx.options['ndvar']:
             evoked = ds['evoked']
             del ds['evoked']
             info = evoked[0].info
@@ -754,6 +746,5 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
                 sysname = source_pipe._get_sysname(info, subject, sensor_type)
                 adjacency = source_pipe._get_adjacency(sensor_type)
                 ds[sensor_type] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
-                if sensor_type != 'eog' and data.aggregate:
-                    ds[sensor_type] = getattr(ds[sensor_type], data.aggregate)('sensor')
+
         return ds

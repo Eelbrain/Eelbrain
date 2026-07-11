@@ -27,7 +27,7 @@ from scipy import sparse
 
 from ... import load
 from ..._data_obj import Dataset, Datalist, NDVar, combine
-from ..derivative_cache import CachePolicy, Dependency, Derivative, ExternalArtifactDerivative, Request, Input, UncachedDerivative, file_fingerprint
+from ..derivative_cache import CachePolicy, Dependency, Derivative, ExternalArtifactDerivative, OptionSpec, Request, Input, UncachedDerivative, file_fingerprint
 from ..pathing import (
     MRI_SDIR, bem_dir, bem_file_path, mri_dir, src_file_path, trans_file_path,
 )
@@ -818,7 +818,13 @@ class EvokedStcDerivative(UncachedDerivative[Dataset]):
         return ds
 
 
-class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
+@dataclass
+class ROIData:
+    label_data: dict[str, Dataset]
+    n_trials_ds: Dataset
+
+
+class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset | ROIData]):
     """Group-level dataset assembled from subject ``evoked-stc`` datasets.
 
     Options
@@ -834,6 +840,7 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
     key_options = {
         **EvokedStcDerivative.key_options,
         **EvokedStcDerivative.view_options,
+        'data': OptionSpec('source', DataSpec, normalize=DataSpec.coerce),
         'morph': True,
     }
 
@@ -852,14 +859,32 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         options = ctx.options_for('evoked-stc', *EvokedStcDerivative.key_options, *EvokedStcDerivative.view_options)
+        data = ctx.options['data']
+        if data.aggregate:
+            assert not ctx.options['morph']
         return tuple(
             Dependency('evoked-stc', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects), options=options)
             for subject in self.groups[ctx.state['group']]
         )
 
-    def build(self, ctx: Request) -> Dataset:
-        dss = [ctx.load(subject) for subject in self.groups[ctx.state['group']]]
-        return combine(dss, to_list=True)
+    def build(self, ctx: Request) -> Dataset | ROIData:
+        data = ctx.options['data']
+        subjects = self.groups[ctx.state['group']]
+        if data is not None and data.aggregate:
+            label_dss = {}
+            n_trials_dss = []
+            for subject in subjects:
+                ds = ctx.load(subject)
+                roi_data = roi_data_from_dataset(ds, data.aggregate)
+                for label, label_ds in roi_data.label_data.items():
+                    label_dss.setdefault(label, []).append(label_ds)
+                n_trials_dss.append(roi_data.n_trials_ds)
+            label_data = {label: combine(label_ds, incomplete='drop') for label, label_ds in label_dss.items()}
+            n_trials_ds = combine(n_trials_dss, incomplete='drop')
+            return ROIData(label_data, n_trials_ds)
+        else:
+            dss = [ctx.load(subject) for subject in subjects]
+            return combine(dss, to_list=True)
 
 
 def roi_data_from_dataset(
@@ -871,40 +896,18 @@ def roi_data_from_dataset(
     Parameters
     ----------
     ds
-        Dataset containing source estimates in ``src``. The ``src`` column can
-        be an NDVar on a common source space or a list of per-case NDVars on
-        different source spaces. This function removes ``src`` from ``ds``.
+        Dataset containing source estimates in ``src``.
+        This function removes ``src`` from ``ds``.
     reducer
         NDVar method used to reduce each parcellation label (``'mean'`` or
         ``'rms'``).
     """
     src = ds.pop('src')
-    if isinstance(src, NDVar):
-        label_data = {}
-        for label in src.source.parc.cells:
-            if label.startswith('unknown-'):
-                continue
-            label_ds = ds.copy()
-            label_ds['label_tc'] = getattr(src, reducer)(source=label)
-            label_data[label] = label_ds
-    else:
-        label_indices = {}
-        label_values = {}
-        for i, src_i in enumerate(src):
-            for label in src_i.source.parc.cells:
-                if label.startswith('unknown-'):
-                    continue
-                label_indices.setdefault(label, []).append(i)
-                label_values.setdefault(label, []).append(getattr(src_i, reducer)(source=label))
-        label_data = {}
-        for label, index in label_indices.items():
-            label_ds = ds.sub(index)
-            label_ds['label_tc'] = combine(label_values[label])
-            label_data[label] = label_ds
+    label_data = {}
+    for label in src.source.parc.cells:
+        if label.startswith('unknown-'):
+            continue
+        label_ds = ds.copy()
+        label_ds['label_tc'] = getattr(src, reducer)(source=label)
+        label_data[label] = label_ds
     return ROIData(label_data, ds)
-
-
-@dataclass
-class ROIData:
-    label_data: dict[str, Dataset]
-    n_trials_ds: Dataset

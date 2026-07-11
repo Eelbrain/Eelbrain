@@ -32,7 +32,7 @@ from ..pathing import (
     test_basename,
     time_window_str,
 )
-from ..source import ROIData, roi_data_from_dataset
+from ..source import ROIData
 from ..variable_def import apply_vardef
 from .config import ResolvedTestNDSpec, Test
 
@@ -385,11 +385,8 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
             return Dependency('evoked-group-dataset', options=options, label='dataset'),
 
         assert data.source
-        if data.aggregate:
-            options = ctx.options_for('evoked-stc-group-dataset', 'baseline', 'src_baseline', 'samplingrate', 'decim', ndvar=True, model=model, morph=False, cat=test_obj.cat)
-            return Dependency('evoked-stc-group-dataset', options=options, label='dataset'),
-
-        options = ctx.options_for('evoked-stc-group-dataset', 'baseline', 'src_baseline', 'samplingrate', 'decim', ndvar=True, model=model, morph=True, cat=test_obj.cat)
+        morph = not data.aggregate
+        options = ctx.options_for('evoked-stc-group-dataset', 'baseline', 'src_baseline', 'samplingrate', 'decim', 'data', ndvar=True, model=model, morph=morph, cat=test_obj.cat)
         return Dependency('evoked-stc-group-dataset', options=options, label='dataset'),
 
     def build(self, ctx: Request) -> Dataset | ROIData:
@@ -397,14 +394,19 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         test_obj = self.tests[ctx.options['test']]
         ds = ctx.load('dataset')
 
-        apply_vardef(ds, test_obj.vars, self.tests, self.groups)
+        if data.source and data.aggregate:
+            assert isinstance(ds, ROIData)
+            apply_vardef(ds.n_trials_ds, test_obj.vars, self.tests, self.groups)
+            for label_ds in ds.label_data.values():
+                apply_vardef(label_ds, test_obj.vars, self.tests, self.groups)
+            return ds
 
+        assert isinstance(ds, Dataset)
+        apply_vardef(ds, test_obj.vars, self.tests, self.groups)
         if data.sensor:
             return ds
 
-        if data.aggregate:
-            return roi_data_from_dataset(ds, data.aggregate)
-        elif smooth := ctx.options['smooth']:
+        if smooth := ctx.options['smooth']:
             y = data.response_key(ds)
             ds[y] = ds[y].smooth('source', smooth, 'gaussian')
         return ds
