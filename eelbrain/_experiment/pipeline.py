@@ -1598,14 +1598,15 @@ class Pipeline(StateModel):
             self,
             surf_ori: bool = True,
             ndvar: bool = False,
-            **state):
+            **state,
+    ) -> mne.forward.Forward | NDVar:
         """Load the forward solution
 
         Parameters
         ----------
         surf_ori
             Force surface orientation (default True; only applies if
-            ``ndvar=False``, :class:`NDVar` forward operators are alsways
+            ``ndvar=False``, :class:`NDVar` forward operators are always
             surface based).
         ndvar
             Return forward solution as :class:`NDVar` (default is
@@ -1618,23 +1619,20 @@ class Pipeline(StateModel):
         forward_operator : mne.forward.Forward | NDVar
             Forward operator.
         """
-        with self._temporary_state:
-            if state:
-                self.set(**state)
-            fwd = self._load_derivative('fwd')
-            fwd_file = self._resolve_derivative('fwd').artifact_path
+        self.set(**state)
+        fwd = self._load_derivative('fwd')
+        if ndvar:
             src = self.get('src')
-            if ndvar:
-                parc = self._current_source_parc()
-                if parc:
-                    self.make_annot()
-                fwd = load.mne.forward_operator(fwd_file, src, self.root / MRI_SDIR, parc, adjacency=False)
-                if parc:
-                    fwd = _drop_unknown_labels(fwd)
-                return fwd
-            if surf_ori:
-                mne.convert_forward_solution(fwd, surf_ori, copy=False)
+            parc = self._current_source_parc()
+            if parc:
+                self.make_annot()
+            fwd = load.mne.forward_operator(fwd, src, self.root / MRI_SDIR, parc, adjacency=False)
+            if parc:
+                fwd = _drop_unknown_labels(fwd)
             return fwd
+        if surf_ori:
+            mne.convert_forward_solution(fwd, surf_ori, copy=False)
+        return fwd
 
     def load_ica(
             self,
