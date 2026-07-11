@@ -1457,25 +1457,12 @@ class Pipeline(StateModel):
         """
         subject, group = self._process_subject_arg(subjects, state)
         trf_options = self._trf_options(x, tstart, tstop, estimator, data, mask, samplingrate, filter_x)
-        options = {**trf_options, 'scale': scale, 'trfs': trfs}
+        options = {**trf_options, 'scale': scale, 'smooth': smooth, 'trfs': trfs}
         if group is not None:
             ds = self._load_derivative('trf-group-dataset', options=options)
         else:
             ds = self._load_derivative('trf-dataset', options=options)
-        is_source = bool(self.get('inv'))
-        self._smooth_trfs(ds, smooth, is_source)
         return ds
-
-    @staticmethod
-    def _smooth_trfs(ds: Dataset, smooth: float, is_source: bool) -> None:
-        "Spatially smooth the TRF kernels and metric maps in ``ds`` in place"
-        if not smooth:
-            return
-        if not is_source:
-            raise ValueError(f"{smooth=}: smoothing is only available for source-space data")
-        for key in (*ds.info['xs'], *ds.info['metrics']):
-            if key in ds and isinstance(ds[key], NDVar) and ds[key].has_dim('source'):
-                ds[key] = ds[key].smooth('source', smooth, 'gaussian')
 
     def load_evoked(
             self,
