@@ -12,7 +12,7 @@ from ..._data_obj import Dataset, combine
 from ..._io.pickle import update_subjects_dir
 from ..derivative_cache import Dependency, Derivative, Request, UncachedDerivative
 from ..pathing import MRI_SDIR
-from ..source import ROIData, roi_data_from_subject_datasets
+from ..source import ROIData, roi_data_from_dataset
 from ..variable_def import apply_vardef
 from .config import ResolvedTestNDSpec, Test, TwoStageTest
 from .nodes import RESULT_OPTION_DEFAULTS, RESULT_SOURCE_GROUP_KEY_FIELDS, ROITestResult, ResultOutputDerivative
@@ -173,7 +173,7 @@ class TwoStageLevel1Derivative(Derivative[Any]):
             return test_obj.make_stage_1(data.response_key(ds), ds, subject)
         if data.sensor:
             raise NotImplementedError(f"Two-stage test with data={data.string!r}")
-        roi_data = roi_data_from_subject_datasets([ds], data.aggregate)
+        roi_data = roi_data_from_dataset(ds, data.aggregate)
         return SubjectROILMResult(
             {label: test_obj.make_stage_1('label_tc', label_ds, subject) for label, label_ds in roi_data.label_data.items()},
             roi_data.n_trials_ds,

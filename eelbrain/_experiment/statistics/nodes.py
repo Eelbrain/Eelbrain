@@ -32,7 +32,7 @@ from ..pathing import (
     test_basename,
     time_window_str,
 )
-from ..source import ROIData, roi_data_from_subject_datasets
+from ..source import ROIData, roi_data_from_dataset
 from ..variable_def import apply_vardef
 from .config import ResolvedTestNDSpec, Test
 
@@ -104,26 +104,13 @@ def _test_result_options(
     return out
 
 
-def _validate_post_aggregation_test_vars(test_obj: Test, data_desc: str):
+def _validate_post_aggregation_test_vars(test_obj: Test):
+    """Make sure user is not trying to base aggregation on test-specific vars"""
     model_vars = set(filter(None, (test_obj.model or '').split('%')))
-    missing_model_vars = sorted(model_vars.intersection(test_obj.vars.vars))
+    missing_model_vars = model_vars.intersection(test_obj.vars.vars)
     if missing_model_vars:
-        vars_desc = enumeration(missing_model_vars)
-        raise ConfigurationError(
-            f"For evoked-backed {data_desc} tests, Test.vars must be computable from the post-aggregation dataset. "
-            f"Model variable {vars_desc} can not be provided through Test.vars. Use TwoStageTest or Pipeline.variables instead."
-        )
-
-
-def _apply_post_aggregation_test_vars(ds, test_obj: Test, tests, groups, data_desc: str):
-    if not test_obj.vars:
-        return ds
-    _validate_post_aggregation_test_vars(test_obj, data_desc)
-    try:
-        apply_vardef(ds, test_obj.vars, tests, groups)
-    except Exception as error:
-        raise ConfigurationError(f"For evoked-backed {data_desc} tests, Test.vars must be computable from the post-aggregation dataset. Use TwoStageTest or Pipeline.variables for trial-level variables ({error}).") from None
-    return ds
+        vars_desc = enumeration(sorted(missing_model_vars))
+        raise ConfigurationError(f"For evoked tests, Test.vars are computed after averaging. Model variable {vars_desc} can not be provided through Test.vars. Use TwoStageTest or Pipeline.variables instead.")
 
 
 def sampled_artifact_path(path: str | Path, samples: int | None) -> Path:
@@ -382,7 +369,8 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
         model = test_obj.model or ''
-        subjects = self.groups[ctx.state['group']]
+        if test_obj.vars:
+            _validate_post_aggregation_test_vars(test_obj)
 
         if ctx.options['smooth']:
             if data.sensor:
@@ -394,42 +382,32 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
             if ctx.options['src_baseline']:
                 raise TypeError(f"src_baseline={ctx.options['src_baseline']!r} for sensor tests")
             options = ctx.options_for('evoked', 'baseline', 'samplingrate', 'decim', 'data', model=model, cat=test_obj.cat, ndvar=True)
-            return Dependency('evoked-group-dataset', options=options),
+            return Dependency('evoked-group-dataset', options=options, label='dataset'),
+
         assert data.source
         if data.aggregate:
-            options = ctx.options_for('evoked-stc', 'baseline', 'src_baseline', 'samplingrate', 'decim', ndvar=True, model=model, morph=False, cat=test_obj.cat)
-            # TODO: go through evoked-stc-group-dataset
-            return tuple(
-                Dependency('evoked-stc', label=subject, state={'subject': subject}, options=options)
-                for subject in subjects
-            )
+            options = ctx.options_for('evoked-stc-group-dataset', 'baseline', 'src_baseline', 'samplingrate', 'decim', ndvar=True, model=model, morph=False, cat=test_obj.cat)
+            return Dependency('evoked-stc-group-dataset', options=options, label='dataset'),
+
         options = ctx.options_for('evoked-stc-group-dataset', 'baseline', 'src_baseline', 'samplingrate', 'decim', ndvar=True, model=model, morph=True, cat=test_obj.cat)
-        return Dependency('evoked-stc-group-dataset', options=options),
+        return Dependency('evoked-stc-group-dataset', options=options, label='dataset'),
 
     def build(self, ctx: Request) -> Dataset | ROIData:
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
-        subjects = self.groups[ctx.state['group']]
-        if test_obj.vars:
-            _validate_post_aggregation_test_vars(test_obj, data.string)
+        ds = ctx.load('dataset')
+
+        apply_vardef(ds, test_obj.vars, self.tests, self.groups)
 
         if data.sensor:
-            ds = ctx.load('evoked-group-dataset')
-            return _apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string)
-
-        if data.source and not data.aggregate:
-            ds = ctx.load('evoked-stc-group-dataset')
-            ds = _apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string)
-            if smooth := ctx.options['smooth']:
-                y = data.response_key(ds)
-                ds[y] = ds[y].smooth('source', smooth, 'gaussian')
             return ds
 
-        dss = []
-        for subject in subjects:
-            ds = ctx.load(subject)
-            dss.append(_apply_post_aggregation_test_vars(ds, test_obj, self.tests, self.groups, data.string))
-        return roi_data_from_subject_datasets(dss, data.aggregate)
+        if data.aggregate:
+            return roi_data_from_dataset(ds, data.aggregate)
+        elif smooth := ctx.options['smooth']:
+            y = data.response_key(ds)
+            ds[y] = ds[y].smooth('source', smooth, 'gaussian')
+        return ds
 
 
 class TestResultDerivative(ResultOutputDerivative):

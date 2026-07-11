@@ -18,7 +18,6 @@ from itertools import product
 import os
 from pathlib import Path
 from typing import Any
-from collections.abc import Sequence
 
 import mne
 import numpy as np
@@ -828,8 +827,8 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
 
     Notes
     -----
-    ``ndvar=True`` requires morphing to a common brain,
-    and ``morph`` defaults to ``True`` when omitted in that case.
+    ``morph`` defaults to ``True``. With ``ndvar=True, morph=False``, source
+    NDVars from different brains are retained as a list in the ``src`` column.
     """
     name = 'evoked-stc-group-dataset'
     key_options = {
@@ -852,8 +851,6 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
         return {'subjects': tuple(self.groups[ctx.state['group']])}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        if ctx.options['ndvar'] and not ctx.options['morph']:
-            raise ValueError("ndvar=True, morph=False with multiple subjects: Can't create ndvars with data from different brains")
         options = ctx.options_for('evoked-stc', *EvokedStcDerivative.key_options, *EvokedStcDerivative.view_options)
         return tuple(
             Dependency('evoked-stc', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects), options=options)
@@ -862,23 +859,49 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
 
     def build(self, ctx: Request) -> Dataset:
         dss = [ctx.load(subject) for subject in self.groups[ctx.state['group']]]
-        return combine(dss)
+        return combine(dss, to_list=True)
 
 
-def roi_data_from_subject_datasets(dss: Sequence[Dataset], reducer: str) -> ROIData:
-    """Extract ROI time course; mutates ``dss``"""
-    n_trials_dss = []
-    label_dss = {}
-    for ds in dss:
-        src = ds.pop('src')
-        n_trials_dss.append(ds)
+def roi_data_from_dataset(
+        ds: Dataset,
+        reducer: str,
+) -> ROIData:
+    """Extract ROI time courses from a group or subject dataset.
+
+    Parameters
+    ----------
+    ds
+        Dataset containing source estimates in ``src``. The ``src`` column can
+        be an NDVar on a common source space or a list of per-case NDVars on
+        different source spaces. This function removes ``src`` from ``ds``.
+    reducer
+        NDVar method used to reduce each parcellation label (``'mean'`` or
+        ``'rms'``).
+    """
+    src = ds.pop('src')
+    if isinstance(src, NDVar):
+        label_data = {}
         for label in src.source.parc.cells:
             if label.startswith('unknown-'):
                 continue
             label_ds = ds.copy()
             label_ds['label_tc'] = getattr(src, reducer)(source=label)
-            label_dss.setdefault(label, []).append(label_ds)
-    return ROIData({label: combine(label_ds, incomplete='drop') for label, label_ds in label_dss.items()}, combine(n_trials_dss, incomplete='drop'))
+            label_data[label] = label_ds
+    else:
+        label_indices = {}
+        label_values = {}
+        for i, src_i in enumerate(src):
+            for label in src_i.source.parc.cells:
+                if label.startswith('unknown-'):
+                    continue
+                label_indices.setdefault(label, []).append(i)
+                label_values.setdefault(label, []).append(getattr(src_i, reducer)(source=label))
+        label_data = {}
+        for label, index in label_indices.items():
+            label_ds = ds.sub(index)
+            label_ds['label_tc'] = combine(label_values[label])
+            label_data[label] = label_ds
+    return ROIData(label_data, ds)
 
 
 @dataclass

@@ -229,7 +229,6 @@ def test_sample(samples_experiment):
     assert test_manifest_data['fingerprint']['epoch']['tmax'] == 0.3
     assert 'dependencies' not in test_manifest_data['fingerprint']
     assert 'evoked-test-data' in test_manifest_data['dependencies']
-    assert 'evoked-group-dataset' in test_manifest_data['dependencies']['evoked-test-data']['dependencies']
     remove(test_manifest)
     with pytest.raises(IOError):
         e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False)
@@ -582,8 +581,10 @@ def test_sample_source(samples_experiment):
         roi_manifest_data = json.load(fid)
     assert 'evoked-test-data' in roi_manifest_data['dependencies']
     roi_deps = roi_manifest_data['dependencies']['evoked-test-data']['dependencies']
-    assert set(roi_deps) == {'R0000', 'R0001', 'R0002'}
-    assert all(roi_deps[subject]['name'] == 'evoked-stc' for subject in roi_deps)
+    assert set(roi_deps) == {'evoked-stc-group-dataset'}
+    group_deps = roi_deps['evoked-stc-group-dataset']['dependencies']
+    assert set(group_deps) == {'R0000', 'R0001', 'R0002'}
+    assert all(group_deps[subject]['name'] == 'evoked-stc' for subject in group_deps)
     res = ress.res['transversetemporal-lh']
     assert res.p.min() == 1 / 7
     with pytest.raises(TypeError, match='disconnect_labels'):
@@ -1085,7 +1086,7 @@ def test_evoked_backed_test_vars_are_post_aggregation_only(samples_experiment):
     ds = e._resolve_derivative('evoked-test-data', options=options).load()
     assert 'modality_num' in ds
 
-    with pytest.raises(ConfigurationError, match='post-aggregation dataset'):
+    with pytest.raises(ConfigurationError, match='For evoked tests'):
         e._resolve_derivative('evoked-test-data', options={**options, 'test': 'anova-bad'}).load()
 
 
