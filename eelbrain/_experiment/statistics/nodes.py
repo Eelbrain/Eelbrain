@@ -441,7 +441,7 @@ class TestResultDerivative(ResultOutputDerivative):
     def build(self, ctx: Request):
         test_obj = self.tests[ctx.options['test']]
         data = ctx.options['data']
-        test_spec = ResolvedTestNDSpec.from_request(ctx, data)
+        test_spec = ResolvedTestNDSpec.from_request(ctx)
         data_value = ctx.load('evoked-test-data')
         if isinstance(data_value, ROIData):
             subjects = list(self.groups[ctx.state['group']])

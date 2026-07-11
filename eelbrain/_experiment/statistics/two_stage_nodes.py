@@ -213,7 +213,7 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
         if not isinstance(test_obj, TwoStageTest):
             raise RuntimeError(f"{self.name!r} requires a TwoStageTest")
         data = ctx.options['data']
-        test_spec = ResolvedTestNDSpec.from_request(ctx, data)
+        test_spec = ResolvedTestNDSpec.from_request(ctx)
         subjects = self.groups[ctx.state['group']]
         if not data.source:
             raise NotImplementedError(f"Two-stage test with data={data.string!r}")

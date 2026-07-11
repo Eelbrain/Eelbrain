@@ -401,7 +401,7 @@ class EEGSensorsReportDerivative(ResultOutputDerivative[Path]):
         sensor_map.mark_sensors(sensors)
         info_section.add_figure("Sensor map", sensor_map)
         sensor_map.close()
-        test_spec = ResolvedTestNDSpec.from_request(ctx, ctx.options['data'])
+        test_spec = ResolvedTestNDSpec.from_request(ctx)
         results = [test_spec.make_result(self, eeg.sub(sensor=sensor), ds, test_obj) for sensor in sensors]
         colors = plot.colors_for_categorial(ds.eval(results[0]._plot_model()))
         for sensor, res in zip(sensors, results):

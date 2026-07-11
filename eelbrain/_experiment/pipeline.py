@@ -17,7 +17,7 @@ from mne.minimum_norm import apply_inverse_raw
 import mne_bids
 from mne_bids import find_matching_paths, get_entity_vals
 
-from .. import fmtxt
+from .. import fmtxt, NDTest
 from .. import gui
 from .. import load
 from .. import plot
@@ -46,6 +46,7 @@ from .events import EpochEventsDerivative, EventsDerivative, EventsInput, Labele
 from .exceptions import FileMissingError, ICAChannelsChangedError
 from .logging import CACHE_EVENT_COLUMNS, StructuredFormatter
 from .state_model import StateModel
+from .statistics.nodes import ROITestResult
 from .groups import assemble_groups
 from .pathing import (
     LOG_DIR, MRI_SDIR, RESULTS_DIR, bids_path, join_stem_parts, mri_dir, raw_basename,
@@ -1693,8 +1694,7 @@ class Pipeline(StateModel):
              - :ref:`state-inv`: inverse solution
 
         """
-        if state:
-            self.set(**state)
+        self.set(**state)
         inv = self._load_derivative('inv')
 
         if ndvar:
@@ -1737,7 +1737,7 @@ class Pipeline(StateModel):
         Parameters
         ----------
         label : str
-            Name of the label. If the label name does not end in '-bh' or '-rh'
+            Name of the label. If the label name does not end in '-lh' or '-rh'
             the combination of the labels ``label + '-lh'`` and
             ``label + '-rh'`` is returned.
         ...
@@ -1774,8 +1774,7 @@ class Pipeline(StateModel):
         method still returns a trivial identity :class:`mne.SourceMorph` for
         compatibility with public STC-based workflows.
         """
-        if state:
-            self.set(**state)
+        self.set(**state)
         return self._load_derivative('source-morph')
 
     def load_neighbor_correlation(
@@ -2017,12 +2016,11 @@ class Pipeline(StateModel):
             mlab.points3d(*src.coordinates.T)
             mlab.show()
         """
-        if state:
-            self.set(**state)
+        self.set(**state)
         src_spaces = self._load_derivative('src')
         if ndvar:
             src = self.get('src')
-            subjects_dir = str(self.root / MRI_SDIR)
+            subjects_dir = self.root / MRI_SDIR
             mri_subject = self.get('mrisubject')
             if src.startswith('vol'):
                 return VolumeSourceSpace.from_file(subjects_dir, mri_subject, src)
@@ -2046,9 +2044,8 @@ class Pipeline(StateModel):
             src_baseline: BaselineArg = None,
             samplingrate: int = None,
             return_data: bool = False,
-            make: bool = False,
             **state,
-    ):
+    ) -> NDTest | ROITestResult | tuple[Dataset | ROIData, NDTest | ROITestResult]:
         """Create and load spatio-temporal cluster test results
 
         Parameters
@@ -2099,22 +2096,13 @@ class Pipeline(StateModel):
             definition).
         return_data
             Return the data along with the test result (see below).
-
-            .. Warning::
-                Single trial data (i.e., two-stage tests) take up a lot of
-                memory and it might not be possible to load all data at once.
-                Instead, loop through subjects and collect summary statistics.
-
-        make
-            If the target file does not exist, create it (could take a long
-            time depending on the test; if False, raise an IOError).
         ...
             State parameters (Use the ``group`` state parameter to select the
             subject group for which to perform the test).
 
         Returns
         -------
-        ds : Dataset | dict (if return_data==True)
+        ds : Dataset | ROIData
             Data that forms the basis of the test (for ROI tests, a
             ``{roi: dataset}`` dictionary).
         res : NDTest | ROITestResult
@@ -2126,7 +2114,6 @@ class Pipeline(StateModel):
         data = self._resolve_data(data)
         if data.source:
             self._current_source_parc()
-        data._testnd_parc(disconnect_labels)
         options = {
             'data': data,
             'samples': samples,
@@ -2141,32 +2128,14 @@ class Pipeline(StateModel):
             'samplingrate': samplingrate,
         }
         result_node = 'two-stage-level-2' if isinstance(test_obj, TwoStageTest) else 'test-result'
-        data_node = 'two-stage-data' if isinstance(test_obj, TwoStageTest) else 'evoked-test-data'
-        handle = self._resolve_derivative(result_node, options=options)
-        dst = handle.artifact_path
-        desc = self._derivatives.describe_artifact_path(dst)
-
-        if handle.is_valid():
-            res = handle.load()
-            if not return_data:
-                return res
-        elif not make and dst.exists():
-            raise OSError(f"The requested test is outdated: {desc}. Set make=True to perform the test.")
-        else:
-            res = None
-
-        if res is None and not make:
-            raise OSError(f"The requested test is not cached: {desc}. Set make=True to perform the test.")
-        if res is None:
-            res = handle.load()
-            if not return_data:
-                return res
-
+        result = self._load_derivative(result_node, options=options)
+        if not return_data:
+            return result
+        elif isinstance(test_obj, TwoStageTest):
+            raise NotImplementedError("Data for two-stage test")
         data_options = {key: value for key, value in options.items() if key != 'disconnect_labels'}
-        res_data = self._resolve_derivative(data_node, options=data_options).load()
-        if isinstance(res_data, ROIData):
-            res_data = res_data.label_data
-        return res_data, res
+        data = self._load_derivative('evoked-test-data', options=data_options)
+        return data, result
 
     def make_annot(self, **state) -> None:
         """Ensure that annot files for the current parcellation exist."""
