@@ -15,7 +15,7 @@ from ..pathing import MRI_SDIR
 from ..source import ROIData, roi_data_from_subject_datasets
 from ..variable_def import apply_vardef
 from .config import ResolvedTestNDSpec, Test, TwoStageTest
-from .nodes import RESULT_OPTION_DEFAULTS, ROITestResult, ResultOutputDerivative, _epochs_stc_options, _evoked_stc_options
+from .nodes import RESULT_OPTION_DEFAULTS, RESULT_SOURCE_GROUP_KEY_FIELDS, ROITestResult, ResultOutputDerivative, _epochs_stc_options, _evoked_stc_options
 
 
 class ROI2StageResult(ROITestResult):
@@ -193,6 +193,7 @@ class TwoStageLevel1Derivative(Derivative[Any]):
 class TwoStageLevel2Derivative(ResultOutputDerivative):
     """Cached second-stage group result for two-stage tests."""
     name = 'two-stage-level-2'
+    key_fields = RESULT_SOURCE_GROUP_KEY_FIELDS
     cache_suffix = '.pickle'
     path = Derivative.path
     key_options = {**RESULT_OPTION_DEFAULTS, 'disconnect_labels': False}

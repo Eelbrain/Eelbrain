@@ -889,24 +889,11 @@ class Derivative(DependencyNode[T]):
     def key(self, ctx: Request) -> dict[str, Any]:
         """The key used to generate a unique path for this artifact.
 
-        This is the framework assembler and rarely needs overriding: it takes
-        the identity state fields (from :meth:`override_key_fields`, else the
-        static :attr:`key_fields`) and the identity options (the names from
-        :meth:`override_key_options`, else all of :attr:`key_options`, at
-        their request values) and combines them. To make either piece
-        request-dependent, override the corresponding hook rather than this
-        method; override :meth:`key` itself only when the identity is not a
-        state-subset-plus-options at all.
-
+        This is the framework assembler and should not need overriding.
         The key is used to resolve the artifact path and should stay focused
         on cache address/identity. It is narrower than :meth:`fingerprint`,
         which records the fuller set of non-dependency request
         state/options/definitions that make an existing artifact stale.
-
-        The returned mapping is passed through
-        :meth:`~DerivativeRegistry.canonicalize` by the registry, so
-        implementations can include arbitrary supported values without
-        pre-serializing them.
         """
         fields = self._get_key_fields(ctx)
         key = canonical_state_subset(ctx.state, fields)
@@ -1860,8 +1847,6 @@ class DerivativeRegistry:
         parent = ctx.node
         parent_fields = parent._get_key_fields(ctx)
         coverage = set(parent_fields) | set(parent.fixed_state)
-        if isinstance(parent, Derivative) and parent.cache_policy is not CachePolicy.NEVER:
-            coverage |= set(ctx.key())  # FIXME: custom .key()
         missing = fields.difference(pinned | coverage)
         if missing:
             raise RuntimeError(f"{parent.name!r} depends on {child.name!r}, whose output depends on state field(s) {missing}, but {parent.name!r} neither keys or pins these on this edge. Fix by adding {missing} to {parent.name!r}.key_fields, or pin it via Dependency({child.name!r}, state=...).")

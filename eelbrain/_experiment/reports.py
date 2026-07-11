@@ -31,6 +31,9 @@ from .source import _subject_state
 from .statistics.config import ResolvedTestNDSpec, TwoStageTest
 from .statistics.nodes import (
     RESULT_OPTION_DEFAULTS,
+    RESULT_SENSOR_GROUP_KEY_FIELDS,
+    RESULT_SOURCE_GROUP_KEY_FIELDS,
+    RESULT_SOURCE_SUBJECT_KEY_FIELDS,
     TEST_DATA_OPTION_NAMES,
     ResultOutputDerivative,
     _test_result_options,
@@ -213,8 +216,11 @@ class SourceReportDerivative(BrainReportDerivative):
     sampled_path = True
     key_options = {**RESULT_OPTION_DEFAULTS, 'disconnect_labels': False, 'include': None}
 
-    def _identity_extra(self, ctx: Request) -> dict[str, Any]:
-        return {'include': ctx.options['include']}
+    def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
+        fields = (*RESULT_SOURCE_GROUP_KEY_FIELDS, 'reference')
+        if isinstance(self.tests[ctx.options['test']], TwoStageTest):
+            return ('subject', *fields)
+        return fields
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if isinstance(self.tests[ctx.options['test']], TwoStageTest):
@@ -275,6 +281,7 @@ class ROIReportDerivative(BrainReportDerivative):
     """
     name = 'roi-report'
     sampled_path = True
+    key_fields = (*RESULT_SOURCE_GROUP_KEY_FIELDS, 'reference')
     key_options = RESULT_OPTION_DEFAULTS
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
@@ -331,10 +338,8 @@ class EEGReportDerivative(ResultOutputDerivative[Path]):
     """
     name = 'eeg-report'
     sampled_path = True
+    key_fields = RESULT_SENSOR_GROUP_KEY_FIELDS
     key_options = {**RESULT_OPTION_DEFAULTS, 'include': None}
-
-    def _identity_extra(self, ctx: Request) -> dict[str, Any]:
-        return {'include': ctx.options['include']}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if isinstance(self.tests[ctx.options['test']], TwoStageTest):
@@ -370,10 +375,8 @@ class EEGSensorsReportDerivative(ResultOutputDerivative[Path]):
     """
     name = 'eeg-sensors-report'
     sampled_path = True
+    key_fields = RESULT_SENSOR_GROUP_KEY_FIELDS
     key_options = {**RESULT_OPTION_DEFAULTS, 'sensors': ()}
-
-    def _identity_extra(self, ctx: Request) -> dict[str, Any]:
-        return {'sensors': tuple(ctx.options['sensors'])}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         self.tests[ctx.options['test']]
@@ -413,6 +416,7 @@ class LMReportDerivative(BrainReportDerivative):
     name = 'lm-report'
     single_subject = True
     sampled_path = True
+    key_fields = RESULT_SOURCE_SUBJECT_KEY_FIELDS
 
     def _level_1_options(self, ctx: Request) -> dict[str, Any]:
         return ctx.options_for('two-stage-level-1', *RESULT_OPTION_DEFAULTS, data=DataSpec.coerce('source'), smooth=None)
