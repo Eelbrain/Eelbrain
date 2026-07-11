@@ -840,7 +840,7 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset | ROIData]):
     key_options = {
         **EvokedStcDerivative.key_options,
         **EvokedStcDerivative.view_options,
-        'data': OptionSpec('source', DataSpec, normalize=DataSpec.coerce),
+        'data': OptionSpec(DataSpec('source'), DataSpec, normalize=DataSpec.coerce),
         'morph': True,
     }
 
