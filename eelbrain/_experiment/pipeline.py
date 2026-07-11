@@ -17,7 +17,7 @@ from mne.minimum_norm import apply_inverse_raw
 import mne_bids
 from mne_bids import find_matching_paths, get_entity_vals
 
-from .. import fmtxt, NDTest
+from .. import fmtxt
 from .. import gui
 from .. import load
 from .. import plot
@@ -29,6 +29,7 @@ from .._meeg import new_rejection_ds
 from .._mne import find_source_subject, label_from_annot
 from ..mne_fixes import suppress_mne_warning
 from .._ndvar import concatenate, neighbor_correlation
+from .._stats.testnd import NDTest
 from .._text import enumeration
 from .._types import PathArg
 from .._utils import ask, keydefaultdict, log_level, ScreenHandler
@@ -2139,8 +2140,7 @@ class Pipeline(StateModel):
 
     def make_annot(self, **state) -> None:
         """Ensure that annot files for the current parcellation exist."""
-        if state:
-            self.set(**state)
+        self.set(**state)
         self._load_derivative('annot')
 
     def make_bad_channels(
@@ -2173,7 +2173,6 @@ class Pipeline(StateModel):
         --------
         make_bad_channels_auto : find bad channels automatically
         load_bad_channels : load the current bad_channels file
-        merge_bad_channels : merge bad channel definitions for all tasks
         """
         raw_name = self.get('raw', **kwargs)
         source_name = self._raw.root_source_name(raw_name)
@@ -2716,44 +2715,39 @@ class Pipeline(StateModel):
         ...
             State parameters.
         """
-        with self._temporary_state:
-            if state:
-                self.set(**state)
-            if is_fake_mri(self.root / mri_dir(self._fields)):
-                self.set(mrisubject=self.get('common_brain'), match=False)
+        self.set(**state)
+        if is_fake_mri(self.root / mri_dir(self._fields)):
+            self.set(mrisubject=self.get('common_brain'))
 
-            export_state = self._fields
-            stem = join_stem_parts(
-                f"parc-{export_state['parc']}",
-                f"mrisubject-{export_state['mrisubject']}",
-                f"surf-{surf}",
-            )
-            dst = self.root / RESULTS_DIR / 'source-annot' / f'{stem}.png'
-            if not redo and dst.exists():
-                return
-            dst.parent.mkdir(parents=True, exist_ok=True)
+        stem = join_stem_parts(
+            f"parc-{self._fields['parc']}",
+            f"mrisubject-{self._fields['mrisubject']}",
+            f"surf-{surf}",
+        )
+        dst = self.root / RESULTS_DIR / 'source-annot' / f'{stem}.png'
+        if not redo and dst.exists():
+            return
+        dst.parent.mkdir(parents=True, exist_ok=True)
 
-            brain = self.plot_annot(surf=surf, axw=600)
-            brain.save_image(dst, 'rgba', True)
-            legend = brain.plot_legend(show=False)
-            legend.save(dst.with_suffix('.pdf'), facecolor="none")
-            brain.close()
-            legend.close()
+        brain = self.plot_annot(surf=surf, axw=600)
+        brain.save_image(dst, 'rgba', True)
+        legend = brain.plot_legend(show=False)
+        legend.save(dst.with_suffix('.pdf'), facecolor="none")
+        brain.close()
+        legend.close()
 
     def make_plot_label(self, label, surf='inflated', redo=False, **state):
-        with self._temporary_state:
-            if state:
-                self.set(**state)
-            if is_fake_mri(self.root / mri_dir(self._fields)):
-                self.set(mrisubject=self.get('common_brain'), match=False)
+        self.set(**state)
+        if is_fake_mri(self.root / mri_dir(self._fields)):
+            self.set(mrisubject=self.get('common_brain'), match=False)
 
-            dst = self._make_plot_label_dst(surf, label)
-            if not redo and dst.exists():
-                return
-            dst.parent.mkdir(parents=True, exist_ok=True)
+        dst = self._make_plot_label_dst(surf, label)
+        if not redo and dst.exists():
+            return
+        dst.parent.mkdir(parents=True, exist_ok=True)
 
-            brain = self.plot_label(label, surf=surf)
-            brain.save_image(dst, 'rgba', True)
+        brain = self.plot_label(label, surf=surf)
+        brain.save_image(dst, 'rgba', True)
 
     def make_plots_labels(self, surf='inflated', redo=False, **state):
         self.set(**state)
@@ -2783,11 +2777,12 @@ class Pipeline(StateModel):
 
     def make_epoch_rejection(
             self,
-            samplingrate: int = None,
-            auto: float | dict = None,
-            overwrite: bool = None,
-            decim: int = None,
-            **state):
+            samplingrate: int | None = None,
+            auto: float | dict | None = None,
+            overwrite: bool | None = None,
+            decim: int | None = None,
+            **state,
+    ):
         """Open :func:`gui.select_epochs` for the current epoch rejection
 
         For a :class:`ManualRejection` the GUI is opened for editing (with the
@@ -3072,55 +3067,12 @@ class Pipeline(StateModel):
             controls={ALLOW_PROTECTED_OVERWRITE},
         )
 
-    def make_src(self, **state) -> None:
-        """Make the source space
-
-        Parameters
-        ----------
-        ...
-            State parameters.
-        """
-        if state:
-            self.set(**state)
-        self._load_derivative('src')
-
-    def merge_bad_channels(self):
-        """Merge bad channel definitions for different tasks
-
-        Load the bad channel definitions for all tasks of the current
-        subject and save the union for all tasks.
-
-        See Also
-        --------
-        make_bad_channels : set bad channels for a single task
-        """
-        n_chars = max(map(len, self._tasks))
-        # collect bad channels
-        bads = set()
-        tasks = []
-        with self._temporary_state:
-            # ICARaw merges bad channels dynamically, so explicit merge needs to
-            # be performed lower in the hierarchy
-            self.set(raw='raw')
-            source_name = self._raw.root_source_name('raw')
-            for task in self.iter('task'):
-                file_ctx = self._resolve_derivative(raw_input_name(source_name), options={'noise': False})
-                if file_ctx.exists():
-                    bads.update(self._load_derivative(raw_node_name(source_name), options={'noise': False}, view='bads'))
-                    tasks.append(task)
-                else:
-                    print("%%-%is: skipping, raw file missing" % n_chars % task)
-            # update bad channel files
-            for task in tasks:
-                print(task.ljust(n_chars), end=': ')
-                self.make_bad_channels(bads, task=task)
-
-    def next(self, field='subject'):
+    def next(self, field: str | Sequence[str] = 'subject'):
         """Change field to the next value
 
         Parameters
         ----------
-        field : str | list of str
+        field
             The field for which the value should be changed (default 'subject').
             Can also contain multiple fields, e.g. ``['subject', 'session']``.
 
@@ -3521,6 +3473,10 @@ class Pipeline(StateModel):
             recorded with DC offset).
         ...
             State parameters.
+
+        See Also
+        --------
+        make_bad_channels_selection : interactive plor for raw data
         """
         raw = self.load_raw(ndvar=True, decim=decim, **state)
         state_ = self._fields
@@ -3845,7 +3801,7 @@ class Pipeline(StateModel):
                 t.cells(subject, ', '.join(bad_channels[subject]))
         return t
 
-    def show_dependencies(
+    def _show_dependencies(
             self,
             name: str,
             options: dict[str, Any] | None = None,
@@ -3871,10 +3827,8 @@ class Pipeline(StateModel):
         ...
             State parameters for resolving the requested node.
         """
-        if state:
-            self.set(**state)
-        options_ = {} if options is None else dict(options)
-        tree = self._derivatives.dependency_tree(name, state=self.state, options=options_, max_line_length=max_line_length)
+        self.set(**state)
+        tree = self._derivatives.dependency_tree(name, state=self.state, options=options, max_line_length=max_line_length)
         if return_str:
             return tree
         print(tree)
@@ -4146,37 +4100,32 @@ class Pipeline(StateModel):
 
             return table
 
-    def show_reg_params(self, asds=False, **kwargs):
+    def show_reg_params(self, **state):
         """Show the covariance matrix regularization parameters
 
         Parameters
         ----------
-        asds : bool
-            Return a dataset with the parameters (default False).
         ...
             State parameters.
         """
-        if kwargs:
-            self.set(**kwargs)
-        subjects = []
-        reg = []
+        cov = self.get('cov', **state)
+        cov_config = self._covs[cov]
+        if not isinstance(cov_config, EpochCovariance):
+            raise ValueError(f"{cov=}: not an EpochCovariance")
+
+        rows = []
         for subject in self:
             handle = self._resolve_derivative('cov')
             path = handle.artifact_path.with_suffix('.info.txt')
             if exists(path):
                 with open(path) as fid:
                     text = fid.read()
-                reg.append(float(text.strip()))
+                reg = float(text.strip())
             else:
-                reg.append(float('nan'))
-            subjects.append(subject)
-        ds = Dataset()
-        ds['subject'] = Factor(subjects)
-        ds['reg'] = Var(reg)
-        if asds:
-            return ds
-        else:
-            print(ds)
+                reg = float('nan')
+            rows.append((subject, reg))
+        ds = Dataset.from_caselist(['subject', 'reg'], rows)
+        return ds
 
     def show_rej_info(self, flagp=None, asds=False, bads=False, **state):
         """Information about artifact rejection

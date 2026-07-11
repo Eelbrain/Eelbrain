@@ -115,11 +115,11 @@ def test_sample(samples_experiment):
     assert e._raw['raw'].name == 'raw'
     assert e._parcs['ac'].name == 'ac'
     assert e._parcs['lobes'].name == 'lobes'
-    tree = e.show_dependencies('evoked', return_str=True)
+    tree = e._show_dependencies('evoked', return_str=True)
     assert 'evoked [derivative]' in tree
     # epochs are not cached by default (Pipeline.cache_epochs)
     assert 'epochs [uncached]' in tree
-    wrapped_tree = e.show_dependencies('evoked', max_line_length=60, return_str=True)
+    wrapped_tree = e._show_dependencies('evoked', max_line_length=60, return_str=True)
     assert all(len(line) <= 60 for line in wrapped_tree.splitlines())
 
     # wildcard formatting
@@ -171,7 +171,7 @@ def test_sample(samples_experiment):
     assert ds[0, 'evoked'].info['bads'] == ['MEG 0331']
 
     e.set(epoch_rejection='manual')
-    test_tree = e.show_dependencies(
+    test_tree = e._show_dependencies(
         'test-result',
         options={
             'data': DataSpec.coerce('meg.rms'),
@@ -189,7 +189,7 @@ def test_sample(samples_experiment):
     )
     assert 'evoked-test-data [uncached]' in test_tree
     assert 'evoked-group-dataset [uncached]' in test_tree
-    movie_tree = e.show_dependencies(
+    movie_tree = e._show_dependencies(
         'movie-ttest',
         options={
             'data': DataSpec('source'),
@@ -220,7 +220,7 @@ def test_sample(samples_experiment):
 
     # sensor space tests
     megs = [e.load_evoked(cat='auditory', baseline=False, model='modality', interpolate_bads=True)['mag'] for _ in e]
-    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False, make=True)
+    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False)
     test_manifest = _test_result_manifest_path(e, 'a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', baseline=False)
     assert exists(test_manifest)
     with open(test_manifest) as fid:
@@ -230,9 +230,7 @@ def test_sample(samples_experiment):
     assert 'dependencies' not in test_manifest_data['fingerprint']
     assert 'evoked-test-data' in test_manifest_data['dependencies']
     remove(test_manifest)
-    with pytest.raises(IOError):
-        e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False)
-    _ = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False, make=True)
+    _ = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False)
     assert exists(test_manifest)
 
     class ChangedTestExperiment(SampleExperiment):
@@ -255,12 +253,12 @@ def test_sample(samples_experiment):
 
     meg_rms = combine(meg.rms('sensor') for meg in megs).mean('case', name='auditory')
     assert_dataobj_equal(res.c1_mean, meg_rms, decimal=21)
-    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.mean', inv='', baseline=False, make=True)
+    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.mean', inv='', baseline=False)
     meg_mean = combine(meg.mean('sensor') for meg in megs).mean('case', name='auditory')
     assert_dataobj_equal(res.c1_mean, meg_mean, decimal=21)
     with pytest.raises(IOError):
         e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, inv='', baseline=False)
-    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, inv='', baseline=False, make=True)
+    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, inv='', baseline=False)
     assert res.p.min() == pytest.approx(.143, abs=.001)
     assert res.difference.max() == pytest.approx(4.47e-13, 1e-15)
     # plot (skip to avoid using framework build)
@@ -490,7 +488,7 @@ def test_sample(samples_experiment):
     # assert e.get('raw') == '1-40'
     # with pytest.raises(IOError):
     #     e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False)
-    # res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False, make=True)
+    # res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False)
     # assert res.df == 2
     # assert res.p.min() == pytest.approx(.143, abs=.001)
     # assert res.difference.max() == pytest.approx(4.47e-13, 1e-15)
@@ -550,8 +548,8 @@ def test_sample_source(samples_experiment):
     morph = e.load_source_morph(subject='R0000')
     assert isinstance(morph, mne.SourceMorph)
     assert exists(e._resolve_derivative('source-morph').manifest_path)
-    res = e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, make=True)
-    res_labels = e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, disconnect_labels=True, make=True)
+    res = e.load_test('left=right', 0.05, 0.2, 0.05, samples=8)
+    res_labels = e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, disconnect_labels=True)
     assert exists(e._resolve_derivative('src').manifest_path)
     assert exists(e._resolve_derivative('fwd').manifest_path)
     assert exists(e._resolve_derivative('inv').manifest_path)
@@ -577,7 +575,7 @@ def test_sample_source(samples_experiment):
     assert_dataobj_equal(res.t, res_labels.t)
     # ROI tests
     e.set(epoch='target')
-    ress = e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, data='source.rms', make=True)
+    ress = e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, data='source.rms')
     with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=8, data='source.rms')) as fid:
         roi_manifest_data = json.load(fid)
     assert 'evoked-test-data' in roi_manifest_data['dependencies']
@@ -592,7 +590,7 @@ def test_sample_source(samples_experiment):
     assert res.p.min() == 1 / 7
     with pytest.raises(TypeError, match='disconnect_labels'):
         e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, data='source.rms', disconnect_labels=True)
-    ress = e.load_test('twostage', 0.05, 0.2, 0.05, samples=8, data='source.rms', make=True)
+    ress = e.load_test('twostage', 0.05, 0.2, 0.05, samples=8, data='source.rms')
     with open(_test_result_manifest_path(e, 'twostage', 0.05, 0.2, 0.05, node='two-stage-level-2', samples=8, data='source.rms')) as fid:
         two_stage_manifest_data = json.load(fid)
     assert 'two-stage-level-1' in {dep['name'] for dep in two_stage_manifest_data['dependencies'].values()}
@@ -600,7 +598,7 @@ def test_sample_source(samples_experiment):
     with open(e._derivatives.cache_dir / subject_dep['manifest']) as fid:
         level_1_manifest_data = json.load(fid)
     assert level_1_manifest_data['dependencies']['two-stage-data']['dependencies']['data']['name'] == 'evoked-stc'
-    ds_return, _ = e.load_test('twostage', 0.05, 0.2, 0.05, samples=8, return_data=True, make=True)
+    ds_return, _ = e.load_test('twostage', 0.05, 0.2, 0.05, samples=8, return_data=True)
     assert isinstance(ds_return, Dataset)
     assert 'subject' in ds_return
     res = ress.res['transversetemporal-lh']
@@ -609,7 +607,7 @@ def test_sample_source(samples_experiment):
 
     # Parc needs to be set
     with pytest.raises(ValueError, match='state parc'):
-        e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, parc='', make=True)
+        e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, parc='')
 
     # Outdated test requires make=True
     class ChangedParcExperiment(SampleExperiment):
@@ -674,9 +672,6 @@ def test_sample_tasks(samples_experiment):
     e.make_bad_channels('MEG 0121')
     assert e.load_bad_channels(raw='ica') == ['MEG 0111', 'MEG 0121']
     e.set(raw='raw')
-    # merge_bad_channels
-    e.merge_bad_channels()
-    assert e.load_bad_channels(task='sample2') == ['MEG 0111', 'MEG 0121']
     e.show_bad_channels()
 
     # rejection
@@ -691,9 +686,9 @@ def test_sample_tasks(samples_experiment):
     assert_dataobj_equal(ds2, ds, decimal=19)
 
     # super-epoch
-    ds1 = e.load_epochs(epoch='target1')
-    ds2 = e.load_epochs(epoch='target2')
-    ds_super = e.load_epochs(epoch='super')
+    ds1 = e.load_epochs(epoch='target1', interpolate_bads=True)
+    ds2 = e.load_epochs(epoch='target2', interpolate_bads=True)
+    ds_super = e.load_epochs(epoch='super', interpolate_bads=True)
     assert_dataobj_equal(ds_super['mag'], combine((ds1['mag'], ds2['mag'])))
     # SuperEpoch should depend on the same sub-epoch request as direct loading.
     super_dependencies = e._resolve_derivative('epochs').dependency_fingerprints()
