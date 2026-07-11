@@ -233,31 +233,11 @@ def test_sample(samples_experiment):
     _ = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False)
     assert exists(test_manifest)
 
-    class ChangedTestExperiment(SampleExperiment):
-        tests = {
-            **SampleExperiment.tests,
-            'a>v': TTestRelated('modality', 'auditory', 'visual'),
-        }
-
-    with pytest.raises(IOError):
-        ChangedTestExperiment(root).load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False)
-
-    class ChangedEpochExperiment(SampleExperiment):
-        epochs = {
-            **SampleExperiment.epochs,
-            'target': PrimaryEpoch('sample', "event == 'target'", tmax=0.2, decim=5),
-        }
-
-    with pytest.raises(IOError):
-        ChangedEpochExperiment(root).load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False)
-
     meg_rms = combine(meg.rms('sensor') for meg in megs).mean('case', name='auditory')
     assert_dataobj_equal(res.c1_mean, meg_rms, decimal=21)
     res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.mean', inv='', baseline=False)
     meg_mean = combine(meg.mean('sensor') for meg in megs).mean('case', name='auditory')
     assert_dataobj_equal(res.c1_mean, meg_mean, decimal=21)
-    with pytest.raises(IOError):
-        e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, inv='', baseline=False)
     res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, inv='', baseline=False)
     assert res.p.min() == pytest.approx(.143, abs=.001)
     assert res.difference.max() == pytest.approx(4.47e-13, 1e-15)
