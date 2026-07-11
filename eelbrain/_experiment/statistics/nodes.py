@@ -104,63 +104,6 @@ def _test_result_options(
     return out
 
 
-def _evoked_stc_options(
-        ctx: Request,
-        model: str = '',
-        baseline=USE_CTX,
-        src_baseline=USE_CTX,
-        morph: bool = False,
-        cat=None,
-        samplingrate: int | None = None,
-        decim: int | None = None,
-        ndvar: bool = True,
-) -> dict[str, Any]:
-    if baseline is USE_CTX:
-        baseline = ctx.options['baseline']
-    if src_baseline is USE_CTX:
-        src_baseline = ctx.options['src_baseline']
-    return ctx.options_for(
-        'evoked-stc',
-        model=model,
-        baseline=baseline,
-        src_baseline=src_baseline,
-        morph=morph,
-        cat=cat,
-        samplingrate=samplingrate,
-        decim=decim,
-        ndvar=ndvar,
-        keep_evoked=False,
-    )
-
-
-def _epochs_stc_options(
-        ctx: Request,
-        baseline=USE_CTX,
-        src_baseline=USE_CTX,
-        keep_epochs: bool | str = False,
-        morph: bool | None = None,
-        samplingrate: int | None = None,
-        decim: int | None = None,
-        ndvar: bool = True,
-        reject: bool | str = True,
-) -> dict[str, Any]:
-    if baseline is USE_CTX:
-        baseline = ctx.options['baseline']
-    if src_baseline is USE_CTX:
-        src_baseline = ctx.options['src_baseline']
-    return ctx.options_for(
-        'epochs-stc',
-        baseline=baseline,
-        src_baseline=src_baseline,
-        keep_epochs=keep_epochs,
-        morph=morph,
-        samplingrate=samplingrate,
-        decim=decim,
-        ndvar=ndvar,
-        reject=reject,
-    )
-
-
 def _validate_post_aggregation_test_vars(test_obj: Test, data_desc: str):
     model_vars = set(filter(None, (test_obj.model or '').split('%')))
     missing_model_vars = sorted(model_vars.intersection(test_obj.vars.vars))

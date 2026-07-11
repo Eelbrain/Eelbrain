@@ -16,7 +16,7 @@ from .. import testnd
 from .._stats.stats import ttest_t
 from .derivative_cache import Dependency, Request
 from .pathing import epoch_basename, join_stem_parts, movie_export_path
-from .statistics.nodes import RESULT_OPTION_DEFAULTS, RESULT_SOURCE_GROUP_KEY_FIELDS, ResultOutputDerivative, _epochs_stc_options, _evoked_stc_options
+from .statistics.nodes import RESULT_OPTION_DEFAULTS, RESULT_SOURCE_GROUP_KEY_FIELDS, ResultOutputDerivative
 
 _MOVIE_OPTION_DEFAULTS = {
     'time_dilation': 1.0,
@@ -65,8 +65,10 @@ class DSPMMovieDerivative(ResultOutputDerivative[Path]):
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if ctx.options['single_subject']:
-            return (Dependency('evoked-stc', state={'subject': ctx.options['subject']}, options=_evoked_stc_options(ctx)),)
-        return (Dependency('evoked-stc-group-dataset', options=_evoked_stc_options(ctx, morph=True)),)
+            options = ctx.options_for('evoked-stc', 'baseline', 'src_baseline')
+            return (Dependency('evoked-stc', state={'subject': ctx.options['subject']}, options=options),)
+        options = ctx.options_for('evoked-stc-group-dataset', 'baseline', 'src_baseline')
+        return (Dependency('evoked-stc-group-dataset', options=options),)
 
     def build(self, ctx: Request) -> Path:
         dst = self.path(ctx)
@@ -147,8 +149,10 @@ class TTestMovieDerivative(ResultOutputDerivative[Path]):
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if ctx.options['single_subject']:
-            return (Dependency('epochs-stc', state={'subject': ctx.options['subject']}, options=_epochs_stc_options(ctx)),)
-        return (Dependency('evoked-stc-group-dataset', options=_evoked_stc_options(ctx, model=ctx.options['model'], morph=True, cat=ctx.options['cat'])),)
+            options = ctx.options_for('epochs-stc', 'baseline', 'src_baseline')
+            return (Dependency('epochs-stc', state={'subject': ctx.options['subject']}, options=options),)
+        options = ctx.options_for('evoked-stc-group-dataset', 'model', 'baseline', 'src_baseline', 'cat')
+        return (Dependency('evoked-stc-group-dataset', options=options),)
 
     def build(self, ctx: Request) -> Path:
         dst = self.path(ctx)

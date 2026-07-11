@@ -15,7 +15,7 @@ from ..pathing import MRI_SDIR
 from ..source import ROIData, roi_data_from_subject_datasets
 from ..variable_def import apply_vardef
 from .config import ResolvedTestNDSpec, Test, TwoStageTest
-from .nodes import RESULT_OPTION_DEFAULTS, RESULT_SOURCE_GROUP_KEY_FIELDS, ROITestResult, ResultOutputDerivative, _epochs_stc_options, _evoked_stc_options
+from .nodes import RESULT_OPTION_DEFAULTS, RESULT_SOURCE_GROUP_KEY_FIELDS, ROITestResult, ResultOutputDerivative
 
 
 class ROI2StageResult(ROITestResult):
@@ -86,7 +86,6 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
-        samplingrate = ctx.options['samplingrate']
         if not isinstance(test_obj, TwoStageTest):
             raise RuntimeError(f"{self.name!r} requires a TwoStageTest")
         if data.sensor:
@@ -96,13 +95,13 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
                 dependency = Dependency(
                     'evoked-stc',
                     label='data',
-                    options=_evoked_stc_options(ctx, model=test_obj.model, morph=True, samplingrate=samplingrate),
+                    options=ctx.options_for('evoked-stc', 'baseline', 'src_baseline', 'samplingrate', model=test_obj.model, morph=True),
                 )
             else:
                 dependency = Dependency(
                     'epochs-stc',
                     label='data',
-                    options=_epochs_stc_options(ctx, morph=True, samplingrate=samplingrate),
+                    options=ctx.options_for('epochs-stc', 'baseline', 'src_baseline', 'samplingrate', morph=True),
                 )
         else:
             if ctx.options['smooth']:
@@ -111,13 +110,13 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
                 dependency = Dependency(
                     'evoked-stc',
                     label='data',
-                    options=_evoked_stc_options(ctx, model=test_obj.model, morph=False, cat=None, samplingrate=samplingrate),
+                    options=ctx.options_for('evoked-stc', 'baseline', 'src_baseline', 'samplingrate', model=test_obj.model),
                 )
             else:
                 dependency = Dependency(
                     'epochs-stc',
                     label='data',
-                    options=_epochs_stc_options(ctx, morph=None, samplingrate=samplingrate),
+                    options=ctx.options_for('epochs-stc', 'baseline', 'src_baseline', 'samplingrate'),
                 )
         return dependency,
 
