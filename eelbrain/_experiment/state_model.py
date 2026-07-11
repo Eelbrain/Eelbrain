@@ -306,15 +306,13 @@ class StateModel:
         self._slave_handlers[key] = handler
         self._fields[key] = handler(self._fields)
 
-    def format(self, string: str, vmatch: bool = True, **kwargs) -> str:
+    def format(self, string: str, **kwargs) -> str:
         """Format a string with the current state values.
 
         Parameters
         ----------
         string
             Template string.
-        vmatch
-            For fields with known names, only allow existing field names.
         ...
             State parameters.
 
@@ -323,7 +321,7 @@ class StateModel:
         str
             ``string`` formatted with current state values.
         """
-        self.set(match=vmatch, **kwargs)
+        self.set(**kwargs)
         return string.format(**self._fields)
 
     def get(self, key, **state):
