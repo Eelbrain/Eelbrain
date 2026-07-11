@@ -117,7 +117,7 @@ def test_sample(samples_experiment):
     assert e._parcs['lobes'].name == 'lobes'
     tree = e._show_dependencies('evoked', return_str=True)
     assert 'evoked [derivative]' in tree
-    # epochs are not cached by default (Pipeline.cache_epochs)
+    # Dataset assembly is always uncached
     assert 'epochs [uncached]' in tree
     wrapped_tree = e._show_dependencies('evoked', max_line_length=60, return_str=True)
     assert all(len(line) <= 60 for line in wrapped_tree.splitlines())
@@ -623,7 +623,7 @@ def test_sample_source(samples_experiment):
 
 
 @requires_mne_sample_data
-def test_sample_tasks(samples_experiment):
+def test_sample_tasks(monkeypatch, samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
 
@@ -688,17 +688,30 @@ def test_sample_tasks(samples_experiment):
     # super-epoch
     ds1 = e.load_epochs(epoch='target1', interpolate_bads=True)
     ds2 = e.load_epochs(epoch='target2', interpolate_bads=True)
+    recording_epochs_node = e._derivatives._get_node('recording-epochs')
+    recording_epochs_build = recording_epochs_node.build
+    recording_epochs_builds = []
+
+    def count_recording_epochs_builds(ctx):
+        recording_epochs_builds.append(ctx.state['epoch'])
+        return recording_epochs_build(ctx)
+
+    monkeypatch.setattr(recording_epochs_node, 'build', count_recording_epochs_builds)
     ds_super = e.load_epochs(epoch='super', interpolate_bads=True)
+    assert recording_epochs_builds == ['target1', 'target2']
     assert_dataobj_equal(ds_super['mag'], combine((ds1['mag'], ds2['mag'])))
     # SuperEpoch should depend on the same sub-epoch request as direct loading.
-    super_dependencies = e._resolve_derivative('epochs').dependency_fingerprints()
+    super_handle = e._resolve_derivative('epochs')
+    super_dependencies = super_handle.dependency_fingerprints()
+    target2_dependency = next(dep for dep in super_handle.node.dependencies(super_handle) if dep.label == 'target2')
     with e._temporary_state:
         e.set(epoch='target2')
-        target2_entry = e._resolve_derivative('epochs').describe_dependency()
+        target2_entry = e._resolve_derivative('epochs', options=target2_dependency.options).describe_dependency()
     assert super_dependencies['target2'] == target2_entry
     # evoked
     dse_super = e.load_evoked(epoch='super', model='modality%side')
-    target = ds_super.aggregate('modality%side', drop=('sample', 't_edf', 'onset', 'index', 'value', 'task', 'interpolate_channels', 'epoch'))
+    ds_super_keep = e.load_epochs(epoch='super', interpolate_bads='keep')
+    target = ds_super_keep.aggregate('modality%side', drop=('sample', 't_edf', 'onset', 'index', 'value', 'task', 'interpolate_channels', 'epoch'))
     assert_dataobj_equal(dse_super, target, 19)
 
     # conflicting task and epoch settings
@@ -1305,14 +1318,14 @@ def test_evoked_cache_stales_on_model_change(samples_experiment):
 
 
 @requires_mne_sample_data
-def test_epochs_dependency_views_distinguish_model_sensitivity(samples_experiment):
+def test_epochs_dependency_distinguishes_model_sensitivity(samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
     root = samples_experiment(n_subjects=1, n_segments=2, mris=False)
 
     class CachedEpochsExperiment(SampleExperiment):
-        cache_epochs = 2
+        cache_epochs = True
 
     e = CachedEpochsExperiment(root)
     e.set(subject='R0000', epoch='target', epoch_rejection='')
@@ -1320,11 +1333,9 @@ def test_epochs_dependency_views_distinguish_model_sensitivity(samples_experimen
     epochs_dep = next(dep for dep in evoked_handle.node.dependencies(evoked_handle) if dep.name == 'epochs')
     epochs_handle = e._resolve_derivative('epochs', options=epochs_dep.options)
 
-    # Build the epochs cache explicitly. The current model labels should not
-    # matter for this artifact because epoch extraction only needs event timing
-    # and rejection-related event metadata.
-    epochs_handle.load()
-    assert epochs_handle.is_valid()
+    # Current model labels should not affect the epochs dependency because
+    # epoch extraction only needs event timing and rejection-related metadata.
+    epochs_dependency = epochs_handle.describe_dependency()
 
     # Build evoked once. Unlike epochs, evoked depends on the labels of the
     # current model because it stores one averaged response per model cell.
@@ -1344,9 +1355,7 @@ def test_epochs_dependency_views_distinguish_model_sensitivity(samples_experimen
     evoked_handle_changed = e_changed._resolve_derivative('evoked', options={'model': 'modality'})
     epochs_handle_changed = e_changed._resolve_derivative('epochs', options=epochs_dep.options)
 
-    # Changing the labels for the current model still does not affect epoch
-    # extraction, so the cached epochs artifact should remain valid.
-    assert epochs_handle_changed.is_valid()
+    assert epochs_handle_changed.describe_dependency() == epochs_dependency
     # The evoked artifact aggregates by model cells, so the same change should
     # invalidate evoked and rebuild it with the current labels.
     assert not evoked_handle_changed.is_valid()
@@ -1356,12 +1365,12 @@ def test_epochs_dependency_views_distinguish_model_sensitivity(samples_experimen
 
 
 @requires_mne_sample_data
-def test_epochs_cache_uses_fif(samples_experiment):
+def test_recording_epochs_cache_uses_fif(samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
 
     class CachedEpochsExperiment(SampleExperiment):
-        cache_epochs = 2
+        cache_epochs = True
 
     root = samples_experiment(1, 2, 1)
     e = CachedEpochsExperiment(root)
@@ -1380,37 +1389,35 @@ def test_epochs_cache_uses_fif(samples_experiment):
         'ndvar': False,
         'data': 'sensor',
     }
-    handle = e._resolve_derivative('epochs', options=options)
-    ds = handle.load()
-    epochs = handle.node.load(handle, handle.artifact_path)
+    epochs_handle = e._resolve_derivative('epochs', options=options)
+    assert not epochs_handle.is_valid()
+    dep = next(dep for dep in epochs_handle.node.dependencies(epochs_handle) if dep.name == 'recording-epochs')
+    handle = e._derivatives.resolve(dep.name, state={**e.state, **dep.state}, options=dep.options)
+    epochs = handle.load()
 
-    assert isinstance(ds['epochs'], mne.BaseEpochs)
     assert isinstance(epochs, mne.BaseEpochs)
     assert handle.artifact_path.is_dir()
     assert list(handle.artifact_path.glob('*-epo.fif'))
     manifest = json.loads(handle.manifest_path.read_text())
     assert manifest['artifact_metadata']['kind'] == 'single'
     assert manifest['artifact_metadata']['file'] == 'epochs-0000-epo.fif'
-    epoch_events_dependency = manifest['dependencies']['epoch-events']
-    assert 'view' not in epoch_events_dependency
-    assert 'quick_fingerprint' not in epoch_events_dependency
-    assert 'dependencies' not in epoch_events_dependency
+    assert set(manifest['dependencies']) == {'raw', 'selected-events'}
 
     mtimes_1 = tuple(path.stat().st_mtime_ns for path in sorted(handle.artifact_path.iterdir()))
-    ds_cached = handle.load()
+    epochs_cached = handle.load()
     mtimes_2 = tuple(path.stat().st_mtime_ns for path in sorted(handle.artifact_path.iterdir()))
 
-    assert isinstance(ds_cached['epochs'], mne.BaseEpochs)
+    assert isinstance(epochs_cached, mne.BaseEpochs)
     assert mtimes_1 == mtimes_2
 
 
 @requires_mne_sample_data
-def test_epochs_cached_load_uses_current_selected_events(samples_experiment):
+def test_epochs_with_cached_recording_use_current_selected_events(samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
 
     class CachedEpochsExperiment(SampleExperiment):
-        cache_epochs = 2
+        cache_epochs = True
 
     root = samples_experiment(1, 2, 1)
     e = CachedEpochsExperiment(root)
@@ -1430,12 +1437,14 @@ def test_epochs_cached_load_uses_current_selected_events(samples_experiment):
         'data': 'sensor',
     }
     handle = e._resolve_derivative('epochs', options=options)
+    dep = next(dep for dep in handle.node.dependencies(handle) if dep.name == 'recording-epochs')
+    recording_handle = e._derivatives.resolve(dep.name, state={**e.state, **dep.state}, options=dep.options)
 
-    # Compute epochs once to create the cached FIF artifact.
+    # Compute epochs once to create the recording-level FIF artifact.
     ds = handle.load()
     assert isinstance(ds['epochs'], mne.BaseEpochs)
     assert 'marker' not in ds
-    mtimes_1 = tuple(path.stat().st_mtime_ns for path in sorted(handle.artifact_path.iterdir()))
+    mtimes_1 = tuple(path.stat().st_mtime_ns for path in sorted(recording_handle.artifact_path.iterdir()))
 
     # Change selected-events in a way that affects the returned event shell but
     # not the epochs artifact stored on disk.
@@ -1450,9 +1459,11 @@ def test_epochs_cached_load_uses_current_selected_events(samples_experiment):
     e_changed = ChangedExperiment(root)
     e_changed.set(subject='R0000', epoch='target1', epoch_rejection='')
     handle_changed = e_changed._resolve_derivative('epochs', options=options)
-    assert handle_changed.artifact_path == handle.artifact_path
+    dep_changed = next(dep for dep in handle_changed.node.dependencies(handle_changed) if dep.name == 'recording-epochs')
+    recording_handle_changed = e_changed._derivatives.resolve(dep_changed.name, state={**e_changed.state, **dep_changed.state}, options=dep_changed.options)
+    assert recording_handle_changed.artifact_path == recording_handle.artifact_path
     ds_cached = handle_changed.load()
-    mtimes_2 = tuple(path.stat().st_mtime_ns for path in sorted(handle.artifact_path.iterdir()))
+    mtimes_2 = tuple(path.stat().st_mtime_ns for path in sorted(recording_handle.artifact_path.iterdir()))
 
     assert isinstance(ds_cached['epochs'], mne.BaseEpochs)
     assert 'marker' in ds_cached

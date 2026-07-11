@@ -280,7 +280,7 @@ class RecordingEpochsDerivative(Derivative[Any]):
         return _epochs_artifact_metadata(value)
 
 
-class EpochsDerivative(Derivative[Any]):
+class EpochsDerivative(UncachedDerivative[Dataset]):
     """Epoch dataset aggregating across runs and sub-epochs.
 
     For single-run :class:`PrimaryEpoch` and :class:`ContinuousEpoch`, wraps
@@ -292,7 +292,7 @@ class EpochsDerivative(Derivative[Any]):
     Options
     -------
     baseline
-        Baseline correction to apply at load time (view option, not cached).
+        Baseline correction to apply.
     ndvar
         Whether to convert epoch data to NDVars (``True | False | 'both'``).
     data
@@ -304,7 +304,6 @@ class EpochsDerivative(Derivative[Any]):
     """
     name = 'epochs'
     key_fields = ('subject', 'session', 'raw', 'epoch', 'epoch_rejection', 'reference')
-    cache_suffix = '.epochs'
     key_options = {
         'samplingrate': None,
         'decim': None,
@@ -314,20 +313,16 @@ class EpochsDerivative(Derivative[Any]):
         'tstop': None,
         'interpolate_bads': OptionSpec(False, bool),
         'reject': True,
-    }
-    view_options = {
         'baseline': False,
         'ndvar': True,
         'data': OptionSpec(DataSpec('sensor'), DataSpec),
         'reset_bads': OptionSpec(True, bool),
     }
 
-    def __init__(self, raw, epochs: dict[str, Any], runs_for: dict[tuple[str, str, str], tuple[str, ...]], cache: bool = False):
+    def __init__(self, raw, epochs: dict[str, Any], runs_for: dict[tuple[str, str, str], tuple[str, ...]]):
         self.raw = raw
         self.epochs = epochs
         self._runs_for = runs_for
-        if not cache:
-            self.cache_policy = CachePolicy.NEVER
 
     def _find_runs(self, ctx: Request, epoch) -> tuple[str, ...]:
         """Runs to aggregate over"""
@@ -349,7 +344,7 @@ class EpochsDerivative(Derivative[Any]):
             # Inject explicitly-overridden INHERITED_PARAMS as direct options so sub-epochs
             # are loaded with the SuperEpoch's window/decim rather than their own.
             epoch_overrides = {k: getattr(epoch, k) for k in epoch._explicit_params if k in epoch.INHERITED_PARAMS}
-            forward_keys = [k for k in self.key_options if k not in epoch_overrides]
+            forward_keys = [k for k in (*EPOCH_EXTRACT_OPTIONS, 'interpolate_bads', 'reject') if k not in epoch_overrides]
             # Keep bad channels marked on the sub-epochs; the SuperEpoch applies reset_bads once, after aggregation.
             overrides = {'ndvar': False, 'data': 'sensor', 'reset_bads': False, **epoch_overrides}
             # post_baseline_trigger_shift needs baseline applied (on the sub-epochs) before
@@ -362,7 +357,7 @@ class EpochsDerivative(Derivative[Any]):
                 for sub_epoch in epoch.sub_epochs
             )
         runs = self._find_runs(ctx, epoch)
-        rec_options = ctx.options_for('recording-epochs', *self.key_options)
+        rec_options = ctx.options_for('recording-epochs', *RecordingEpochsDerivative.key_options)
         sel_options = ctx.options_for('epoch-events', 'reject', *EPOCH_EXTRACT_OPTIONS)
         state = {'task': epoch.task}
         if runs:
@@ -391,15 +386,25 @@ class EpochsDerivative(Derivative[Any]):
         return out
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {'epoch': self.epochs[ctx.state['epoch']]}
+        return {
+            'epoch': self.epochs[ctx.state['epoch']],
+            'options': ctx.options,
+        }
 
-    def build(self, ctx: Request):
+    def build(self, ctx: Request) -> Dataset:
         epoch = self.epochs[ctx.state['epoch']]
+        data = ctx.options['data']
+        if not data.sensor:
+            raise ValueError(f"data={data.string!r}; load_evoked is for loading sensor data")
+        if data.aggregate and not ctx.options['ndvar']:
+            raise ValueError(f"data={data.string!r} with ndvar=False")
+
         if isinstance(epoch, SuperEpoch):
+            dss = []
             epochs_list = []
             for sub_epoch in epoch.sub_epochs:
                 ds = ctx.load(sub_epoch)
-                epoch_value = ds['epochs']
+                epoch_value = ds.pop('epochs')
                 if epoch.post_baseline_trigger_shift:
                     # SuperEpoch shifts trigger after baseline from original epochs has been applied
                     if isinstance(epoch_value, Datalist):
@@ -410,46 +415,27 @@ class EpochsDerivative(Derivative[Any]):
                     epochs_list.extend(epoch_value)
                 else:
                     epochs_list.append(epoch_value)
-            return Datalist(epochs_list, 'epochs')
-        runs = self._find_runs(ctx, epoch)
-        if runs:
-            return Datalist([ctx.load(f'epochs-{run}') for run in runs], 'epochs')
-        return ctx.load('recording-epochs')
-
-    def load(self, ctx: Request, path: Path):
-        return _load_epochs(path, ctx.artifact_metadata)
-
-    def save(self, ctx: Request, path: Path, value) -> None:
-        _save_epochs(path, value)
-
-    def artifact_metadata(self, ctx: Request, value) -> dict[str, Any]:
-        return _epochs_artifact_metadata(value)
-
-    def apply_view_options(self, ctx: Request, epoch_value):
-        epoch = self.epochs[ctx.state['epoch']]
-        data = ctx.view_options['data']
-        if not data.sensor:
-            raise ValueError(f"data={data.string!r}; load_evoked is for loading sensor data")
-        if data.aggregate and not ctx.view_options['ndvar']:
-            raise ValueError(f"data={data.string!r} with ndvar=False")
-
-        if isinstance(epoch, SuperEpoch):
-            dss = []
-            for sub_epoch in epoch.sub_epochs:
-                ds = ctx.load(sub_epoch)
                 ds[:, 'epoch'] = sub_epoch
                 dss.append(ds)
             ds = combine(dss)
         else:
             ds = ctx.load('epoch-events')
+            runs = self._find_runs(ctx, epoch)
+            if runs:
+                epoch_value = Datalist([ctx.load(f'epochs-{run}') for run in runs], 'epochs')
+            else:
+                epoch_value = ctx.load('recording-epochs')
+            epochs_list = _flatten_epochs(epoch_value)
 
-        # Flatten to a list of MNE Epochs (variable-length epochs are stored as
-        # single-trial Epochs and can be nested when aggregating across runs).
-        epochs_list = _flatten_epochs(epoch_value)
-
-        if ctx.view_options['reset_bads'] and ctx.options['interpolate_bads']:
+        # MNE requires matching bad-channel lists for concatenation. Apply the
+        # aggregate reset/keep policy once across all recordings/sub-epochs.
+        if ctx.options['interpolate_bads']:
+            if ctx.options['reset_bads']:
+                bads = []
+            else:
+                bads = sorted({channel for epochs in epochs_list for channel in epochs.info['bads']})
             for epochs in epochs_list:
-                epochs.info['bads'] = []
+                epochs.info['bads'] = bads
 
         # Variable-length epochs have differing numbers of samples and cannot be
         # concatenated into a single Epochs object.
@@ -460,7 +446,7 @@ class EpochsDerivative(Derivative[Any]):
             ds['epochs'] = combine(epochs_list)
 
         # Baseline correction (for post_baseline_trigger_shift epochs it was already applied)
-        baseline = ctx.view_options['baseline']
+        baseline = ctx.options['baseline']
         if epoch.post_baseline_trigger_shift:
             if baseline is not True and baseline != epoch.baseline:
                 raise NotImplementedError(f"{baseline=} for epoch {epoch.name!r}: baseline correction is applied before the post_baseline_trigger_shift and can not be changed at load time; use baseline=True")
@@ -476,7 +462,7 @@ class EpochsDerivative(Derivative[Any]):
                 else:
                     ds['epochs'].apply_baseline(baseline)
 
-        ndvar = ctx.view_options['ndvar']
+        ndvar = ctx.options['ndvar']
         if ndvar:
             info = epochs_list[0].info
             sensor_types = data.find_ndvar_channel_types(info)

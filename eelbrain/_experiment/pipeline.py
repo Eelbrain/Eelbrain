@@ -128,11 +128,8 @@ class Pipeline(StateModel):
     cache_inv: bool = True  # Whether to cache inverse solution
     # moderate speed gain for loading source estimates (34 subjects: 20 vs 70 s)
     # hard drive space ~ 100 mb/file
-    # Whether to persist sensor-space epochs to disk.
-    # 0 (default): No caching because epochs are cheap to re-extract
-    # 1: cache epochs per recording
-    # 2: also cache combined epochs
-    cache_epochs: int = 0
+    # Whether to persist sensor-space epochs per recording to disk
+    cache_epochs: bool = False
 
     # datatype and extension are usually inferred from a BIDS dataset; override here if needed
     datatype: str = None
@@ -564,8 +561,8 @@ class Pipeline(StateModel):
         ))
         self._derivatives.register(SelectedEventsDerivative(self._epochs, self._epoch_rejection))
         self._derivatives.register(EpochEventsDerivative(self._epochs, self._runs_for))
-        self._derivatives.register(RecordingEpochsDerivative(self._raw, self._epochs, self._references, self.cache_epochs > 0))
-        self._derivatives.register(EpochsDerivative(self._raw, self._epochs, self._runs_for, self.cache_epochs > 1))
+        self._derivatives.register(RecordingEpochsDerivative(self._raw, self._epochs, self._references, self.cache_epochs))
+        self._derivatives.register(EpochsDerivative(self._raw, self._epochs, self._runs_for))
         self._derivatives.register(EvokedDerivative(self._raw, self._epochs))
         self._derivatives.register(EvokedGroupDatasetDerivative(self._raw, self._groups))
 
