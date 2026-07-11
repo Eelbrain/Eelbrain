@@ -1122,13 +1122,14 @@ def test_option_spec_validates_and_fills_defaults():
     handle = registry.resolve('spec-optioned', state=DEFAULT_STATE)
     assert handle.options == {'flag': False, 'mode': None, 'label': ''}
 
-    # type=bool is strict: 1 == True, but 1 is not a bool
-    with pytest.raises(TypeError, match="expected bool"):
-        registry.resolve('spec-optioned', state=DEFAULT_STATE, options={'flag': 1})
+    # type=bool coerce 1 -> True
+    request = registry.resolve('spec-optioned', state=DEFAULT_STATE, options={'flag': 1})
+    assert request.options['flag'] is True
     # literal matching is type-strict: 1 == True, but does not match literal True
     with pytest.raises(ValueError, match="must be one of"):
         registry.resolve('spec-optioned', state=DEFAULT_STATE, options={'mode': 1})
-    assert registry.resolve('spec-optioned', state=DEFAULT_STATE, options={'mode': True}).options['mode'] is True
+    request = registry.resolve('spec-optioned', state=DEFAULT_STATE, options={'mode': True})
+    assert request.options['mode'] is True
     with pytest.raises(ValueError, match="must be one of"):
         registry.resolve('spec-optioned', state=DEFAULT_STATE, options={'mode': 'c'})
 

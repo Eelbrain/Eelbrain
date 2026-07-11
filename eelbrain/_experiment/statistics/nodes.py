@@ -42,7 +42,7 @@ RESULT_OPTION_DEFAULTS = {
     'samples': None,
     # normalize so that a request reconstructed from a manifest (offline
     # revalidation) re-parses the canonical dict form into a DataSpec
-    'data': OptionSpec(None, DataSpec, normalize=DataSpec.coerce),
+    'data': OptionSpec(None, DataSpec),
     'test': None,
     'tstart': None,
     'tstop': None,
@@ -333,7 +333,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
     """
     name = 'evoked-test-data'
     key_options = {
-        'data': OptionSpec(None, DataSpec, normalize=DataSpec.coerce),
+        'data': OptionSpec(None, DataSpec),
         'test': None,
         'baseline': None,
         'src_baseline': None,

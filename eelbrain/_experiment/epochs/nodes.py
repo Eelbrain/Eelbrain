@@ -318,7 +318,7 @@ class EpochsDerivative(Derivative[Any]):
     view_options = {
         'baseline': False,
         'ndvar': True,
-        'data': OptionSpec(DataSpec('sensor'), DataSpec, normalize=DataSpec.coerce),
+        'data': OptionSpec(DataSpec('sensor'), DataSpec),
         'reset_bads': OptionSpec(True, bool),
     }
 
@@ -534,7 +534,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         'ndvar': False,
         'cat': None,
         'interpolate_bads': OptionSpec(False, bool),
-        'data': OptionSpec(DataSpec('sensor'), DataSpec, normalize=DataSpec.coerce),
+        'data': OptionSpec(DataSpec('sensor'), DataSpec),
     }
 
     def __init__(self, raw, epochs: dict[str, Any]):
@@ -706,7 +706,7 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
         'samplingrate': None,
         'decim': None,
         'interpolate_bads': OptionSpec(True, bool),
-        'data': OptionSpec(DataSpec('sensor'), DataSpec, normalize=DataSpec.coerce),
+        'data': OptionSpec(DataSpec('sensor'), DataSpec),
     }
     view_options = {
         'baseline': False,

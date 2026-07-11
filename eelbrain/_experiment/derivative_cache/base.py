@@ -297,18 +297,24 @@ class OptionSpec:
 
     def validated(self, ctx: Request, name: str, value: Any) -> Any:
         """Normalize and validate one option value for ``ctx``."""
-        if value is self.default:
+        if value is None and self.default is None:
             return value
-        if self.normalize is not None:
+        elif self.type and isinstance(value, self.type):
+            return value
+        elif self.normalize:
             value = self.normalize(value)
-        if self.type is not None:
-            types = self.type if isinstance(self.type, tuple) else (self.type,)
+            if self.type:
+                assert isinstance(value, self.type)
+            return value
+        elif self.type:
+            if not isinstance(self.type, tuple):
+                return self.type(value)
             # bool subclasses int; require an explicit bool declaration so that 1 does not pass as True
-            valid = bool in types if isinstance(value, bool) else isinstance(value, types)
+            valid = bool in self.type if isinstance(value, bool) else isinstance(value, self.type)
             if not valid:
-                expected = ' | '.join(t.__name__ for t in types)
+                expected = ' | '.join(t.__name__ for t in self.type)
                 raise TypeError(f"{ctx.node.name!r} option {name}={value!r}: expected {expected}, got {type(value).__name__}")
-        if self.literal is not None:
+        elif self.literal is not None:
             if not any(value is allowed or (type(value) is type(allowed) and value == allowed) for allowed in self.literal):
                 raise ValueError(f"{ctx.node.name!r} option {name}={value!r}: must be one of {self.literal}")
         return value
