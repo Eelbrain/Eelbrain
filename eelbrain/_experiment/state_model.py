@@ -326,13 +326,10 @@ class StateModel:
         self.set(match=vmatch, **kwargs)
         return string.format(**self._fields)
 
-    def get(self, key, vmatch: bool = True, **state):
+    def get(self, key, **state):
         if state:
-            self.set(match=vmatch, **state)
-        value = self._fields[key]
-        if isinstance(value, str) and '{' in value:
-            return value.format(**self._fields)
-        return value
+            self.set(**state)
+        return self._fields[key]
 
     def get_field_values(
             self,
@@ -472,17 +469,19 @@ class StateModel:
         """
         self._restore_state(0, False)
 
-    def set(self, match=True, **state):
+    def set(self, **state):
         """Set the value of one or more fields.
 
         Parameters
         ----------
-        match : bool
-            For fields with pre-defined values, only allow valid values (default
-            ``True``).
         ... :
             Fields and values to set. Invalid fields raise a KeyError. Unless
             match == False, Invalid values raise a ValueError.
+
+        See Also
+        --------
+        .get : retrieve a field value
+        .show_fields : show valid field values
         """
         if not state:
             return
@@ -504,21 +503,17 @@ class StateModel:
             eval_handlers = self._eval_handlers[k]
             if eval_handlers:
                 for handler in eval_handlers:
-                    try:
-                        v = handler(v)
-                    except ValueError:
-                        if match:
-                            raise
+                    v = handler(v)
                     if not isinstance(v, str):
                         raise RuntimeError(f"Invalid conversion from handler {handler}: {k}={v!r}")
                     state[k] = v
-            elif match and k in self._field_values and v not in self._field_values[k]:
+            elif k in self._field_values and v not in self._field_values[k]:
                 matches = difflib.get_close_matches(v, self._field_values[k], 1)
                 if matches:
                     alt = f"Did you mean {matches[0]!r}? "
                 else:
                     alt = ''
-                raise ValueError(f"{k}={v!r}. {alt}To see all valid values use e.show_fields(); To set a non-existent value, use e.set({k}={v!r}, match=False).")
+                raise ValueError(f"{k}={v!r}. {alt}To see all valid values use e.show_fields().")
 
         self._fields.update(state)
 

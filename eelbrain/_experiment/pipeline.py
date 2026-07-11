@@ -674,20 +674,6 @@ class Pipeline(StateModel):
         "Iterate state through subjects and yield each subject name."
         return self.iter()
 
-    def get(
-            self,
-            temp: str,
-            vmatch: bool = True,
-            match: bool = True,
-            mkdir: bool = False,
-            **state,
-    ):
-        if not match:
-            vmatch = False
-        if mkdir:
-            raise TypeError("Pipeline.get(..., mkdir=True) is no longer supported; create directories at the explicit path site")
-        return StateModel.get(self, temp, vmatch=vmatch, **state)
-
     def _process_subject_arg(
             self,
             subjects: SubjectArg | None,
@@ -3601,7 +3587,7 @@ class Pipeline(StateModel):
             raw -= raw.mean('time')
         return plot.TopoButterfly(raw, w=0, h=3, xlim=xlim, vmax=vmax, name=name)
 
-    def set(self, subject: str = None, match: bool = True, **state):
+    def set(self, subject: str = None, **state):
         """
         Set variable values.
 
@@ -3610,11 +3596,8 @@ class Pipeline(StateModel):
         subject
             Set the `subject` value. The corresponding `mrisubject` is
             automatically set to the corresponding mri subject.
-        match
-            For fields with pre-defined values, only allow valid values (default
-            ``True``).
         ...
-            State parameters.
+            Other state parameters.
         """
         if subject is not None:
             if 'group' not in state:
@@ -3625,9 +3608,9 @@ class Pipeline(StateModel):
                 else:
                     state['subject'] = subject
                     subject = None
-        StateModel.set(self, match, **state)
+        StateModel.set(self, **state)
         if subject is not None:
-            StateModel.set(self, match, subject=subject)
+            StateModel.set(self, subject=subject)
 
     def _post_set_group(self, _: str, group: str) -> None:
         if group == '*' or group not in self._groups:
