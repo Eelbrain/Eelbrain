@@ -1,7 +1,7 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Pipeline class to manage data from an experiment"""
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 import copy
 from datetime import datetime
 from itertools import product
@@ -72,7 +72,7 @@ from .statistics import EvokedTestDataDerivative, TestResultDerivative, TwoStage
 from .statistics.config import Test, validate_tests
 from .trf import Boosting, Estimator, Model, NUTSPredictor, PredictorInput, TRFDatasetDerivative, TRFDerivative, TRFGroupDatasetDerivative, TRFJob, TRFJobSpec, UTSPredictor, filter_predictor
 from .trf.model import parse_term
-from .variable_def import Variables, apply_vardef, label_groups as label_groups_var
+from .variable_def import Variables, apply_vardef, label_groups
 
 
 # Allowable parameters
@@ -781,21 +781,26 @@ class Pipeline(StateModel):
         """
         return StateModel.iter(self, fields, exclude, values, progress_bar, **state)
 
-    def iter_range(self, start=None, stop=None, field='subject'):
+    def iter_range(
+            self,
+            start: str | None = None,
+            stop: str | None = None,
+            field: str = 'subject',
+    ) -> Iterator[str]:
         """Iterate through a range on a field with ordered values.
 
         Parameters
         ----------
-        start : None | str
+        start
             Start value (inclusive). With ``None``, begin at the first value.
-        stop : None | str
+        stop
             Stop value (inclusive). With ``None``, end with the last value.
-        field : str
+        field
             Name of the field.
 
         Returns
         -------
-        iterator over value : str
+        Iterator[str]
             Current field value.
         """
         values = self.get_field_values(field)
@@ -960,7 +965,7 @@ class Pipeline(StateModel):
         group : Factor
             A :class:`Factor` that labels the group for each subject.
         """
-        return label_groups_var(subject, groups, self._groups)
+        return label_groups(subject, groups, self._groups)
 
     def load_annot(self, **state):
         """Load a parcellation (from an annot file)
@@ -1165,11 +1170,7 @@ class Pipeline(StateModel):
         }
         return self._load_derivative('epochs', options=options)
 
-    def load_events(
-            self,
-            subject: str = None,
-            **kwargs,
-    ) -> Dataset:
+    def load_events(self, **state) -> Dataset:
         """
         Load events from a raw file.
 
@@ -1178,9 +1179,6 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        subject
-            Subject for which to load events (default is the current subject
-            in the experiment's state).
         ...
             Applicable :ref:`state-parameters`:
 
@@ -1188,10 +1186,7 @@ class Pipeline(StateModel):
              - :ref:`state-epoch`: which events to use and time window
 
         """
-        if subject is not None:
-            kwargs['subject'] = subject
-        if kwargs:
-            self.set(**kwargs)
+        self.set(**state)
         return self._load_derivative('labeled-events')
 
     def load_predictor(
@@ -1240,8 +1235,7 @@ class Pipeline(StateModel):
         ...
             State parameters.
         """
-        if state:
-            self.set(**state)
+        self.set(**state)
         term = parse_term(code)
         predictor = self.predictors[term.predictor_key]
         if not isinstance(predictor, (UTSPredictor, NUTSPredictor)):
