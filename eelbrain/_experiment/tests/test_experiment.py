@@ -9,21 +9,20 @@ class State(StateModel):
         StateModel.__init__(self)
         self._register_field('afield', ('a1', 'a2', 'a3'))
         self._register_field('field2', ('', 'value'), allow_empty=True)
-        self._register_constant('apath', '/{afield}/')
         self._store_state()
 
 
 def test_tree():
     "Test simple formatting in the tree"
     tree = State()
-    assert tree.get('apath') == '/a1/'
+    assert tree.format('/{afield}/') == '/a1/'
     vs = []
     for v in tree.iter('afield'):
         vs.append(v)
-        assert tree.get('apath') == f'/{v}/'
+        assert tree.format('/{afield}/') == f'/{v}/'
         tree.set(afield='a3')
         assert tree.get('afield') == 'a3'
-        assert tree.get('apath') == '/a3/'
+        assert tree.format('/{afield}/') == '/a3/'
 
     assert vs == ['a1', 'a2', 'a3']
     assert tree.get('afield') == 'a1'
@@ -45,7 +44,6 @@ class DependentState(StateModel):
         self._register_field('a', a_seq)
         self._register_field('b', b_seq, allow_empty=True)
         self._register_field('c', c_seq)
-        self._register_constant('path', '{a}_{b}_{s}_{s_a}_{s_b}')
         self._register_slave_field('s', 'a', lambda f: f['a'].upper())
         self._register_field('s_a', a_seq, depends_on='c', slave_handler=self._update_sa)
         self._register_field('s_b', b_seq, depends_on='c', slave_handler=self._update_sb, allow_empty=True)
@@ -71,6 +69,7 @@ def test_slave_tree():
     b_seq = ['b1', 'b2', '']
     c_seq = ['c1', 'c2']
     tree = DependentState(a_seq, b_seq, c_seq)
+    path = '{a}_{b}_{s}_{s_a}_{s_b}'
 
     # set
     assert tree.get('a') == 'a1'
@@ -81,9 +80,9 @@ def test_slave_tree():
     assert tree.get('b') == 'b2'
 
     tree.reset()
-    assert tree.get('path') == 'a1_b1_A1_a1_b1'
+    assert tree.format(path) == 'a1_b1_A1_a1_b1'
     tree.set(a='a2')
-    assert tree.get('path') == 'a2_b1_A2_a1_b1'
+    assert tree.format(path) == 'a2_b1_A2_a1_b1'
 
     tree.set(c='c2')
     assert tree.get('s_a') == 'a2'

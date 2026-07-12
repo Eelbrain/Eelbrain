@@ -12,10 +12,10 @@ from ..._data_obj import Dataset, combine
 from ..._io.pickle import update_subjects_dir
 from ..derivative_cache import Dependency, Derivative, Request, UncachedDerivative
 from ..pathing import MRI_SDIR
-from ..source import ROIData, roi_data_from_subject_datasets
+from ..source import ROIData, roi_data_from_dataset
 from ..variable_def import apply_vardef
 from .config import ResolvedTestNDSpec, Test, TwoStageTest
-from .nodes import RESULT_OPTION_DEFAULTS, ROITestResult, ResultOutputDerivative, _epochs_stc_options, _evoked_stc_options
+from .nodes import RESULT_OPTION_DEFAULTS, RESULT_SOURCE_GROUP_KEY_FIELDS, ROITestResult, ResultOutputDerivative
 
 
 class ROI2StageResult(ROITestResult):
@@ -86,7 +86,6 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
-        samplingrate = ctx.options['samplingrate']
         if not isinstance(test_obj, TwoStageTest):
             raise RuntimeError(f"{self.name!r} requires a TwoStageTest")
         if data.sensor:
@@ -96,13 +95,13 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
                 dependency = Dependency(
                     'evoked-stc',
                     label='data',
-                    options=_evoked_stc_options(ctx, model=test_obj.model, morph=True, samplingrate=samplingrate),
+                    options=ctx.options_for('evoked-stc', 'baseline', 'src_baseline', 'samplingrate', model=test_obj.model, morph=True),
                 )
             else:
                 dependency = Dependency(
                     'epochs-stc',
                     label='data',
-                    options=_epochs_stc_options(ctx, morph=True, samplingrate=samplingrate),
+                    options=ctx.options_for('epochs-stc', 'baseline', 'src_baseline', 'samplingrate', morph=True),
                 )
         else:
             if ctx.options['smooth']:
@@ -111,13 +110,13 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
                 dependency = Dependency(
                     'evoked-stc',
                     label='data',
-                    options=_evoked_stc_options(ctx, model=test_obj.model, morph=False, cat=None, samplingrate=samplingrate),
+                    options=ctx.options_for('evoked-stc', 'baseline', 'src_baseline', 'samplingrate', model=test_obj.model),
                 )
             else:
                 dependency = Dependency(
                     'epochs-stc',
                     label='data',
-                    options=_epochs_stc_options(ctx, morph=None, samplingrate=samplingrate),
+                    options=ctx.options_for('epochs-stc', 'baseline', 'src_baseline', 'samplingrate'),
                 )
         return dependency,
 
@@ -174,7 +173,7 @@ class TwoStageLevel1Derivative(Derivative[Any]):
             return test_obj.make_stage_1(data.response_key(ds), ds, subject)
         if data.sensor:
             raise NotImplementedError(f"Two-stage test with data={data.string!r}")
-        roi_data = roi_data_from_subject_datasets([ds], data.aggregate)
+        roi_data = roi_data_from_dataset(ds, data.aggregate)
         return SubjectROILMResult(
             {label: test_obj.make_stage_1('label_tc', label_ds, subject) for label, label_ds in roi_data.label_data.items()},
             roi_data.n_trials_ds,
@@ -193,6 +192,7 @@ class TwoStageLevel1Derivative(Derivative[Any]):
 class TwoStageLevel2Derivative(ResultOutputDerivative):
     """Cached second-stage group result for two-stage tests."""
     name = 'two-stage-level-2'
+    key_fields = RESULT_SOURCE_GROUP_KEY_FIELDS
     cache_suffix = '.pickle'
     path = Derivative.path
     key_options = {**RESULT_OPTION_DEFAULTS, 'disconnect_labels': False}
@@ -213,7 +213,7 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
         if not isinstance(test_obj, TwoStageTest):
             raise RuntimeError(f"{self.name!r} requires a TwoStageTest")
         data = ctx.options['data']
-        test_spec = ResolvedTestNDSpec.from_request(ctx, data)
+        test_spec = ResolvedTestNDSpec.from_request(ctx)
         subjects = self.groups[ctx.state['group']]
         if not data.source:
             raise NotImplementedError(f"Two-stage test with data={data.string!r}")

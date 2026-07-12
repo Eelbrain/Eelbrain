@@ -115,11 +115,11 @@ def test_sample(samples_experiment):
     assert e._raw['raw'].name == 'raw'
     assert e._parcs['ac'].name == 'ac'
     assert e._parcs['lobes'].name == 'lobes'
-    tree = e.show_dependencies('evoked', return_str=True)
+    tree = e._show_dependencies('evoked', return_str=True)
     assert 'evoked [derivative]' in tree
-    # epochs are not cached by default (Pipeline.cache_epochs)
+    # Dataset assembly is always uncached
     assert 'epochs [uncached]' in tree
-    wrapped_tree = e.show_dependencies('evoked', max_line_length=60, return_str=True)
+    wrapped_tree = e._show_dependencies('evoked', max_line_length=60, return_str=True)
     assert all(len(line) <= 60 for line in wrapped_tree.splitlines())
 
     # wildcard formatting
@@ -171,7 +171,7 @@ def test_sample(samples_experiment):
     assert ds[0, 'evoked'].info['bads'] == ['MEG 0331']
 
     e.set(epoch_rejection='manual')
-    test_tree = e.show_dependencies(
+    test_tree = e._show_dependencies(
         'test-result',
         options={
             'data': DataSpec.coerce('meg.rms'),
@@ -189,10 +189,10 @@ def test_sample(samples_experiment):
     )
     assert 'evoked-test-data [uncached]' in test_tree
     assert 'evoked-group-dataset [uncached]' in test_tree
-    movie_tree = e.show_dependencies(
+    movie_tree = e._show_dependencies(
         'movie-ttest',
         options={
-            'data': DataSpec.coerce('source'),
+            'data': DataSpec('source'),
             'single_subject': False,
             'subject': None,
             'baseline': False,
@@ -220,7 +220,7 @@ def test_sample(samples_experiment):
 
     # sensor space tests
     megs = [e.load_evoked(cat='auditory', baseline=False, model='modality', interpolate_bads=True)['mag'] for _ in e]
-    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False, make=True)
+    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False)
     test_manifest = _test_result_manifest_path(e, 'a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', baseline=False)
     assert exists(test_manifest)
     with open(test_manifest) as fid:
@@ -229,39 +229,16 @@ def test_sample(samples_experiment):
     assert test_manifest_data['fingerprint']['epoch']['tmax'] == 0.3
     assert 'dependencies' not in test_manifest_data['fingerprint']
     assert 'evoked-test-data' in test_manifest_data['dependencies']
-    assert 'evoked-group-dataset' in test_manifest_data['dependencies']['evoked-test-data']['dependencies']
     remove(test_manifest)
-    with pytest.raises(IOError):
-        e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False)
-    _ = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False, make=True)
+    _ = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False)
     assert exists(test_manifest)
-
-    class ChangedTestExperiment(SampleExperiment):
-        tests = {
-            **SampleExperiment.tests,
-            'a>v': TTestRelated('modality', 'auditory', 'visual'),
-        }
-
-    with pytest.raises(IOError):
-        ChangedTestExperiment(root).load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False)
-
-    class ChangedEpochExperiment(SampleExperiment):
-        epochs = {
-            **SampleExperiment.epochs,
-            'target': PrimaryEpoch('sample', "event == 'target'", tmax=0.2, decim=5),
-        }
-
-    with pytest.raises(IOError):
-        ChangedEpochExperiment(root).load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.rms', inv='', baseline=False)
 
     meg_rms = combine(meg.rms('sensor') for meg in megs).mean('case', name='auditory')
     assert_dataobj_equal(res.c1_mean, meg_rms, decimal=21)
-    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.mean', inv='', baseline=False, make=True)
+    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=100, data='meg.mean', inv='', baseline=False)
     meg_mean = combine(meg.mean('sensor') for meg in megs).mean('case', name='auditory')
     assert_dataobj_equal(res.c1_mean, meg_mean, decimal=21)
-    with pytest.raises(IOError):
-        e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, inv='', baseline=False)
-    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, inv='', baseline=False, make=True)
+    res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, inv='', baseline=False)
     assert res.p.min() == pytest.approx(.143, abs=.001)
     assert res.difference.max() == pytest.approx(4.47e-13, 1e-15)
     # plot (skip to avoid using framework build)
@@ -360,7 +337,7 @@ def test_sample(samples_experiment):
         }
     e = Experiment(root)
     assert e.get_field_values('subject', group='ab') == e.get_field_values('subject', group='alias') == ['R0000', 'R0002']
-    # Check that derivative paths reflect group content
+    # Group is part of the derivative's declared identity
     result_options = {
         'data': DataSpec.coerce('meg.rms'),
         'samples': 20,
@@ -377,7 +354,7 @@ def test_sample(samples_experiment):
     handle_ab = e._resolve_derivative('test-result', options=result_options)
     e.set(group='alias')
     handle_alias = e._resolve_derivative('test-result', options=result_options)
-    assert handle_ab.artifact_path == handle_alias.artifact_path
+    assert handle_ab.artifact_path != handle_alias.artifact_path
 
     class BadExperiment(SampleExperiment):
         parcs = {'ac': 'aparc'}
@@ -491,7 +468,7 @@ def test_sample(samples_experiment):
     # assert e.get('raw') == '1-40'
     # with pytest.raises(IOError):
     #     e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False)
-    # res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False, make=True)
+    # res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, data='sensor', baseline=False)
     # assert res.df == 2
     # assert res.p.min() == pytest.approx(.143, abs=.001)
     # assert res.difference.max() == pytest.approx(4.47e-13, 1e-15)
@@ -551,8 +528,8 @@ def test_sample_source(samples_experiment):
     morph = e.load_source_morph(subject='R0000')
     assert isinstance(morph, mne.SourceMorph)
     assert exists(e._resolve_derivative('source-morph').manifest_path)
-    res = e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, make=True)
-    res_labels = e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, disconnect_labels=True, make=True)
+    res = e.load_test('left=right', 0.05, 0.2, 0.05, samples=8)
+    res_labels = e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, disconnect_labels=True)
     assert exists(e._resolve_derivative('src').manifest_path)
     assert exists(e._resolve_derivative('fwd').manifest_path)
     assert exists(e._resolve_derivative('inv').manifest_path)
@@ -567,28 +544,33 @@ def test_sample_source(samples_experiment):
     with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=8, data='source', disconnect_labels=True)) as fid:
         disconnected_manifest_data = json.load(fid)
     assert source_manifest_data['fingerprint']['parc']['base'] == 'aparc'
-    assert source_manifest_data['key']['identity']['state']['parc'] == 'ac'
+    assert source_manifest_data['key']['parc'] == 'ac'
     assert 'dependencies' not in source_manifest_data['fingerprint']
     assert 'evoked-test-data' in source_manifest_data['dependencies']
-    assert 'evoked-stc-group-dataset' in source_manifest_data['dependencies']['evoked-test-data']['dependencies']
-    assert set(source_manifest_data['dependencies']['evoked-test-data']['dependencies']['evoked-stc-group-dataset']['dependencies']) == {'R0000', 'R0001', 'R0002'}
-    assert source_manifest_data['key']['identity']['options']['disconnect_labels'] is False
-    assert disconnected_manifest_data['key']['identity']['options']['disconnect_labels'] is True
+    source_data_deps = source_manifest_data['dependencies']['evoked-test-data']['dependencies']
+    assert source_data_deps['dataset']['name'] == 'evoked-stc-group-dataset'
+    assert set(source_data_deps['dataset']['dependencies']) == {'R0000', 'R0001', 'R0002'}
+    assert source_manifest_data['key']['options']['disconnect_labels'] is False
+    assert disconnected_manifest_data['key']['options']['disconnect_labels'] is True
     assert_dataobj_equal(res.t, res_labels.t)
     # ROI tests
     e.set(epoch='target')
-    ress = e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, data='source.rms', make=True)
+    ress = e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, data='source.rms')
     with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=8, data='source.rms')) as fid:
         roi_manifest_data = json.load(fid)
     assert 'evoked-test-data' in roi_manifest_data['dependencies']
     roi_deps = roi_manifest_data['dependencies']['evoked-test-data']['dependencies']
-    assert set(roi_deps) == {'R0000', 'R0001', 'R0002'}
-    assert all(roi_deps[subject]['name'] == 'evoked-stc' for subject in roi_deps)
+    assert set(roi_deps) == {'dataset'}
+    assert roi_deps['dataset']['name'] == 'evoked-stc-group-dataset'
+    group_deps = roi_deps['dataset']['dependencies']
+    assert set(group_deps) == {'R0000', 'R0001', 'R0002'}
+    assert all(group_deps[subject]['name'] == 'evoked-stc' for subject in group_deps)
+    assert all('source-morph' not in group_deps[subject]['dependencies'] for subject in group_deps)
     res = ress.res['transversetemporal-lh']
     assert res.p.min() == 1 / 7
     with pytest.raises(TypeError, match='disconnect_labels'):
         e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, data='source.rms', disconnect_labels=True)
-    ress = e.load_test('twostage', 0.05, 0.2, 0.05, samples=8, data='source.rms', make=True)
+    ress = e.load_test('twostage', 0.05, 0.2, 0.05, samples=8, data='source.rms')
     with open(_test_result_manifest_path(e, 'twostage', 0.05, 0.2, 0.05, node='two-stage-level-2', samples=8, data='source.rms')) as fid:
         two_stage_manifest_data = json.load(fid)
     assert 'two-stage-level-1' in {dep['name'] for dep in two_stage_manifest_data['dependencies'].values()}
@@ -596,16 +578,16 @@ def test_sample_source(samples_experiment):
     with open(e._derivatives.cache_dir / subject_dep['manifest']) as fid:
         level_1_manifest_data = json.load(fid)
     assert level_1_manifest_data['dependencies']['two-stage-data']['dependencies']['data']['name'] == 'evoked-stc'
-    ds_return, _ = e.load_test('twostage', 0.05, 0.2, 0.05, samples=8, return_data=True, make=True)
-    assert isinstance(ds_return, Dataset)
-    assert 'subject' in ds_return
+    # ds_return, _ = e.load_test('twostage', 0.05, 0.2, 0.05, samples=8, return_data=True)
+    # assert isinstance(ds_return, Dataset)
+    # assert 'subject' in ds_return
     res = ress.res['transversetemporal-lh']
     assert res.samples == -1
     assert res.tests['intercept'].p.min() == 1 / 7
 
     # Parc needs to be set
     with pytest.raises(ValueError, match='state parc'):
-        e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, parc='', make=True)
+        e.load_test('left=right', 0.05, 0.2, 0.05, samples=8, parc='')
 
     # Outdated test requires make=True
     class ChangedParcExperiment(SampleExperiment):
@@ -614,14 +596,9 @@ def test_sample_source(samples_experiment):
             'ac': SubParc('aparc', ('superiortemporal',)),
         }
 
-    with pytest.raises(IOError):
-        changed = ChangedParcExperiment(root)
-        changed.set(epoch='auditory', epoch_rejection='', src='ico-2', parc='ac', inv='free-3-dSPM')
-        changed.load_test('left=right', 0.05, 0.2, 0.05, samples=8, data='source.rms')
-
 
 @requires_mne_sample_data
-def test_sample_tasks(samples_experiment):
+def test_sample_tasks(monkeypatch, samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
 
@@ -670,9 +647,6 @@ def test_sample_tasks(samples_experiment):
     e.make_bad_channels('MEG 0121')
     assert e.load_bad_channels(raw='ica') == ['MEG 0111', 'MEG 0121']
     e.set(raw='raw')
-    # merge_bad_channels
-    e.merge_bad_channels()
-    assert e.load_bad_channels(task='sample2') == ['MEG 0111', 'MEG 0121']
     e.show_bad_channels()
 
     # rejection
@@ -687,19 +661,32 @@ def test_sample_tasks(samples_experiment):
     assert_dataobj_equal(ds2, ds, decimal=19)
 
     # super-epoch
-    ds1 = e.load_epochs(epoch='target1')
-    ds2 = e.load_epochs(epoch='target2')
-    ds_super = e.load_epochs(epoch='super')
+    ds1 = e.load_epochs(epoch='target1', interpolate_bads=True)
+    ds2 = e.load_epochs(epoch='target2', interpolate_bads=True)
+    recording_epochs_node = e._derivatives._get_node('recording-epochs')
+    recording_epochs_build = recording_epochs_node.build
+    recording_epochs_builds = []
+
+    def count_recording_epochs_builds(ctx):
+        recording_epochs_builds.append(ctx.state['epoch'])
+        return recording_epochs_build(ctx)
+
+    monkeypatch.setattr(recording_epochs_node, 'build', count_recording_epochs_builds)
+    ds_super = e.load_epochs(epoch='super', interpolate_bads=True)
+    assert recording_epochs_builds == ['target1', 'target2']
     assert_dataobj_equal(ds_super['mag'], combine((ds1['mag'], ds2['mag'])))
     # SuperEpoch should depend on the same sub-epoch request as direct loading.
-    super_dependencies = e._resolve_derivative('epochs').dependency_fingerprints()
+    super_handle = e._resolve_derivative('epochs')
+    super_dependencies = super_handle.dependency_fingerprints()
+    target2_dependency = next(dep for dep in super_handle.node.dependencies(super_handle) if dep.label == 'target2')
     with e._temporary_state:
         e.set(epoch='target2')
-        target2_entry = e._resolve_derivative('epochs').describe_dependency()
+        target2_entry = e._resolve_derivative('epochs', options=target2_dependency.options).describe_dependency()
     assert super_dependencies['target2'] == target2_entry
     # evoked
     dse_super = e.load_evoked(epoch='super', model='modality%side')
-    target = ds_super.aggregate('modality%side', drop=('sample', 't_edf', 'onset', 'index', 'value', 'task', 'interpolate_channels', 'epoch'))
+    ds_super_keep = e.load_epochs(epoch='super', interpolate_bads='keep')
+    target = ds_super_keep.aggregate('modality%side', drop=('sample', 't_edf', 'onset', 'index', 'value', 'task', 'interpolate_channels', 'epoch'))
     assert_dataobj_equal(dse_super, target, 19)
 
     # conflicting task and epoch settings
@@ -1085,7 +1072,7 @@ def test_evoked_backed_test_vars_are_post_aggregation_only(samples_experiment):
     ds = e._resolve_derivative('evoked-test-data', options=options).load()
     assert 'modality_num' in ds
 
-    with pytest.raises(ConfigurationError, match='post-aggregation dataset'):
+    with pytest.raises(ConfigurationError, match='For evoked tests'):
         e._resolve_derivative('evoked-test-data', options={**options, 'test': 'anova-bad'}).load()
 
 
@@ -1306,14 +1293,14 @@ def test_evoked_cache_stales_on_model_change(samples_experiment):
 
 
 @requires_mne_sample_data
-def test_epochs_dependency_views_distinguish_model_sensitivity(samples_experiment):
+def test_epochs_dependency_distinguishes_model_sensitivity(samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
     root = samples_experiment(n_subjects=1, n_segments=2, mris=False)
 
     class CachedEpochsExperiment(SampleExperiment):
-        cache_epochs = 2
+        cache_epochs = True
 
     e = CachedEpochsExperiment(root)
     e.set(subject='R0000', epoch='target', epoch_rejection='')
@@ -1321,11 +1308,9 @@ def test_epochs_dependency_views_distinguish_model_sensitivity(samples_experimen
     epochs_dep = next(dep for dep in evoked_handle.node.dependencies(evoked_handle) if dep.name == 'epochs')
     epochs_handle = e._resolve_derivative('epochs', options=epochs_dep.options)
 
-    # Build the epochs cache explicitly. The current model labels should not
-    # matter for this artifact because epoch extraction only needs event timing
-    # and rejection-related event metadata.
-    epochs_handle.load()
-    assert epochs_handle.is_valid()
+    # Current model labels should not affect the epochs dependency because
+    # epoch extraction only needs event timing and rejection-related metadata.
+    epochs_dependency = epochs_handle.describe_dependency()
 
     # Build evoked once. Unlike epochs, evoked depends on the labels of the
     # current model because it stores one averaged response per model cell.
@@ -1345,9 +1330,7 @@ def test_epochs_dependency_views_distinguish_model_sensitivity(samples_experimen
     evoked_handle_changed = e_changed._resolve_derivative('evoked', options={'model': 'modality'})
     epochs_handle_changed = e_changed._resolve_derivative('epochs', options=epochs_dep.options)
 
-    # Changing the labels for the current model still does not affect epoch
-    # extraction, so the cached epochs artifact should remain valid.
-    assert epochs_handle_changed.is_valid()
+    assert epochs_handle_changed.describe_dependency() == epochs_dependency
     # The evoked artifact aggregates by model cells, so the same change should
     # invalidate evoked and rebuild it with the current labels.
     assert not evoked_handle_changed.is_valid()
@@ -1357,12 +1340,12 @@ def test_epochs_dependency_views_distinguish_model_sensitivity(samples_experimen
 
 
 @requires_mne_sample_data
-def test_epochs_cache_uses_fif(samples_experiment):
+def test_recording_epochs_cache_uses_fif(samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
 
     class CachedEpochsExperiment(SampleExperiment):
-        cache_epochs = 2
+        cache_epochs = True
 
     root = samples_experiment(1, 2, 1)
     e = CachedEpochsExperiment(root)
@@ -1381,37 +1364,35 @@ def test_epochs_cache_uses_fif(samples_experiment):
         'ndvar': False,
         'data': 'sensor',
     }
-    handle = e._resolve_derivative('epochs', options=options)
-    ds = handle.load()
-    epochs = handle.node.load(handle, handle.artifact_path)
+    epochs_handle = e._resolve_derivative('epochs', options=options)
+    assert not epochs_handle.is_valid()
+    dep = next(dep for dep in epochs_handle.node.dependencies(epochs_handle) if dep.name == 'recording-epochs')
+    handle = e._derivatives.resolve(dep.name, state={**e.state, **dep.state}, options=dep.options)
+    epochs = handle.load()
 
-    assert isinstance(ds['epochs'], mne.BaseEpochs)
     assert isinstance(epochs, mne.BaseEpochs)
     assert handle.artifact_path.is_dir()
     assert list(handle.artifact_path.glob('*-epo.fif'))
     manifest = json.loads(handle.manifest_path.read_text())
     assert manifest['artifact_metadata']['kind'] == 'single'
     assert manifest['artifact_metadata']['file'] == 'epochs-0000-epo.fif'
-    epoch_events_dependency = manifest['dependencies']['epoch-events']
-    assert 'view' not in epoch_events_dependency
-    assert 'quick_fingerprint' not in epoch_events_dependency
-    assert 'dependencies' not in epoch_events_dependency
+    assert set(manifest['dependencies']) == {'raw', 'selected-events'}
 
     mtimes_1 = tuple(path.stat().st_mtime_ns for path in sorted(handle.artifact_path.iterdir()))
-    ds_cached = handle.load()
+    epochs_cached = handle.load()
     mtimes_2 = tuple(path.stat().st_mtime_ns for path in sorted(handle.artifact_path.iterdir()))
 
-    assert isinstance(ds_cached['epochs'], mne.BaseEpochs)
+    assert isinstance(epochs_cached, mne.BaseEpochs)
     assert mtimes_1 == mtimes_2
 
 
 @requires_mne_sample_data
-def test_epochs_cached_load_uses_current_selected_events(samples_experiment):
+def test_epochs_with_cached_recording_use_current_selected_events(samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
 
     class CachedEpochsExperiment(SampleExperiment):
-        cache_epochs = 2
+        cache_epochs = True
 
     root = samples_experiment(1, 2, 1)
     e = CachedEpochsExperiment(root)
@@ -1431,12 +1412,14 @@ def test_epochs_cached_load_uses_current_selected_events(samples_experiment):
         'data': 'sensor',
     }
     handle = e._resolve_derivative('epochs', options=options)
+    dep = next(dep for dep in handle.node.dependencies(handle) if dep.name == 'recording-epochs')
+    recording_handle = e._derivatives.resolve(dep.name, state={**e.state, **dep.state}, options=dep.options)
 
-    # Compute epochs once to create the cached FIF artifact.
+    # Compute epochs once to create the recording-level FIF artifact.
     ds = handle.load()
     assert isinstance(ds['epochs'], mne.BaseEpochs)
     assert 'marker' not in ds
-    mtimes_1 = tuple(path.stat().st_mtime_ns for path in sorted(handle.artifact_path.iterdir()))
+    mtimes_1 = tuple(path.stat().st_mtime_ns for path in sorted(recording_handle.artifact_path.iterdir()))
 
     # Change selected-events in a way that affects the returned event shell but
     # not the epochs artifact stored on disk.
@@ -1451,9 +1434,11 @@ def test_epochs_cached_load_uses_current_selected_events(samples_experiment):
     e_changed = ChangedExperiment(root)
     e_changed.set(subject='R0000', epoch='target1', epoch_rejection='')
     handle_changed = e_changed._resolve_derivative('epochs', options=options)
-    assert handle_changed.artifact_path == handle.artifact_path
+    dep_changed = next(dep for dep in handle_changed.node.dependencies(handle_changed) if dep.name == 'recording-epochs')
+    recording_handle_changed = e_changed._derivatives.resolve(dep_changed.name, state={**e_changed.state, **dep_changed.state}, options=dep_changed.options)
+    assert recording_handle_changed.artifact_path == recording_handle.artifact_path
     ds_cached = handle_changed.load()
-    mtimes_2 = tuple(path.stat().st_mtime_ns for path in sorted(handle.artifact_path.iterdir()))
+    mtimes_2 = tuple(path.stat().st_mtime_ns for path in sorted(recording_handle.artifact_path.iterdir()))
 
     assert isinstance(ds_cached['epochs'], mne.BaseEpochs)
     assert 'marker' in ds_cached

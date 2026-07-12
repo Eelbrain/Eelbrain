@@ -1,7 +1,7 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Pipeline class to manage data from an experiment"""
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 import copy
 from datetime import datetime
 from itertools import product
@@ -29,6 +29,7 @@ from .._meeg import new_rejection_ds
 from .._mne import find_source_subject, label_from_annot
 from ..mne_fixes import suppress_mne_warning
 from .._ndvar import concatenate, neighbor_correlation
+from .._stats.testnd import NDTest
 from .._text import enumeration
 from .._types import PathArg
 from .._utils import ask, keydefaultdict, log_level, ScreenHandler
@@ -46,6 +47,7 @@ from .events import EpochEventsDerivative, EventsDerivative, EventsInput, Labele
 from .exceptions import FileMissingError, ICAChannelsChangedError
 from .logging import CACHE_EVENT_COLUMNS, StructuredFormatter
 from .state_model import StateModel
+from .statistics.nodes import ROITestResult
 from .groups import assemble_groups
 from .pathing import (
     LOG_DIR, MRI_SDIR, RESULTS_DIR, bids_path, join_stem_parts, mri_dir, raw_basename,
@@ -72,7 +74,7 @@ from .statistics import EvokedTestDataDerivative, TestResultDerivative, TwoStage
 from .statistics.config import Test, validate_tests
 from .trf import Boosting, Estimator, Model, NUTSPredictor, PredictorInput, TRFDatasetDerivative, TRFDerivative, TRFGroupDatasetDerivative, TRFJob, TRFJobSpec, UTSPredictor, filter_predictor
 from .trf.model import parse_term
-from .variable_def import Variables, apply_vardef, label_groups as label_groups_var
+from .variable_def import Variables, apply_vardef, label_groups
 
 
 # Allowable parameters
@@ -82,6 +84,23 @@ BaselineArg = bool | tuple[float | None, float | None]
 DataArg = str | DataSpec
 PMinArg = Literal['tfce'] | float | None
 SubjectArg = str | Literal[1, -1]
+
+
+def _session_log_file(log_dir: Path, name: str, initialized: datetime) -> Path:
+    """Determine the log-file name for a new pipeline session."""
+    date = initialized.strftime('%Y-%m-%d')
+    prefix = f'{name}-{date}-'
+    sessions = []
+    if log_dir.exists():
+        for path in log_dir.iterdir():
+            if path.suffix != '.log' or not path.stem.startswith(prefix):
+                continue
+            session, separator, time = path.stem[len(prefix):].partition('-')
+            if separator and session.isdecimal() and len(time) == 4 and time.isdecimal():
+                sessions.append(int(session))
+    session = max(sessions, default=0) + 1
+    time = initialized.strftime('%H%M')
+    return log_dir / f'{prefix}{session}-{time}.log'
 
 
 class Pipeline(StateModel):
@@ -109,11 +128,8 @@ class Pipeline(StateModel):
     cache_inv: bool = True  # Whether to cache inverse solution
     # moderate speed gain for loading source estimates (34 subjects: 20 vs 70 s)
     # hard drive space ~ 100 mb/file
-    # Whether to persist sensor-space epochs to disk.
-    # 0 (default): No caching because epochs are cheap to re-extract
-    # 1: cache epochs per recording
-    # 2: also cache combined epochs
-    cache_epochs: int = 0
+    # Whether to persist sensor-space epochs per recording to disk
+    cache_epochs: bool = False
 
     # datatype and extension are usually inferred from a BIDS dataset; override here if needed
     datatype: str = None
@@ -318,7 +334,8 @@ class Pipeline(StateModel):
         # even for two live experiments on the same root. ``parent`` is None, so records
         # never propagate to the root logger (no double-logging via host configuration).
         self._log = log = logging.Logger(self.__class__.__name__, logging.DEBUG)
-        log_file = root / LOG_DIR / f'{self.__class__.__name__}.log'
+        initialized = datetime.now()
+        log_file = _session_log_file(root / LOG_DIR, self.__class__.__name__, initialized)
         os.makedirs(log_file.parent, exist_ok=True)
         handler = logging.FileHandler(log_file)
         formatter = StructuredFormatter("%(levelname)-8s %(asctime)s %(message)s", "%m-%d %H:%M")
@@ -469,7 +486,7 @@ class Pipeline(StateModel):
         ##########
         # log package versions
         from .. import __version__
-        log.info("*** %s initialized with root %s on %s ***", self.__class__.__name__, root, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        log.info("*** %s initialized with root %s on %s ***", self.__class__.__name__, root, initialized.strftime('%Y-%m-%d %H:%M:%S'))
         level = logging.DEBUG if any('dev' in v for v in (__version__, mne.__version__)) else logging.INFO
         log.log(level, "Using eelbrain %s, mne %s.", __version__, mne.__version__)
         # Legend for the tab-separated columns appended to cache-event log lines (DEBUG, file only).
@@ -544,8 +561,8 @@ class Pipeline(StateModel):
         ))
         self._derivatives.register(SelectedEventsDerivative(self._epochs, self._epoch_rejection))
         self._derivatives.register(EpochEventsDerivative(self._epochs, self._runs_for))
-        self._derivatives.register(RecordingEpochsDerivative(self._raw, self._epochs, self._references, self.cache_epochs > 0))
-        self._derivatives.register(EpochsDerivative(self._raw, self._epochs, self._runs_for, self.cache_epochs > 1))
+        self._derivatives.register(RecordingEpochsDerivative(self._raw, self._epochs, self._references, self.cache_epochs))
+        self._derivatives.register(EpochsDerivative(self._raw, self._epochs, self._runs_for))
         self._derivatives.register(EvokedDerivative(self._raw, self._epochs))
         self._derivatives.register(EvokedGroupDatasetDerivative(self._raw, self._groups))
 
@@ -656,20 +673,6 @@ class Pipeline(StateModel):
         "Iterate state through subjects and yield each subject name."
         return self.iter()
 
-    def get(
-            self,
-            temp: str,
-            vmatch: bool = True,
-            match: bool = True,
-            mkdir: bool = False,
-            **state,
-    ):
-        if not match:
-            vmatch = False
-        if mkdir:
-            raise TypeError("Pipeline.get(..., mkdir=True) is no longer supported; create directories at the explicit path site")
-        return StateModel.get(self, temp, vmatch=vmatch, **state)
-
     def _process_subject_arg(
             self,
             subjects: SubjectArg | None,
@@ -777,21 +780,26 @@ class Pipeline(StateModel):
         """
         return StateModel.iter(self, fields, exclude, values, progress_bar, **state)
 
-    def iter_range(self, start=None, stop=None, field='subject'):
+    def iter_range(
+            self,
+            start: str | None = None,
+            stop: str | None = None,
+            field: str = 'subject',
+    ) -> Iterator[str]:
         """Iterate through a range on a field with ordered values.
 
         Parameters
         ----------
-        start : None | str
+        start
             Start value (inclusive). With ``None``, begin at the first value.
-        stop : None | str
+        stop
             Stop value (inclusive). With ``None``, end with the last value.
-        field : str
+        field
             Name of the field.
 
         Returns
         -------
-        iterator over value : str
+        Iterator[str]
             Current field value.
         """
         values = self.get_field_values(field)
@@ -956,7 +964,7 @@ class Pipeline(StateModel):
         group : Factor
             A :class:`Factor` that labels the group for each subject.
         """
-        return label_groups_var(subject, groups, self._groups)
+        return label_groups(subject, groups, self._groups)
 
     def load_annot(self, **state):
         """Load a parcellation (from an annot file)
@@ -1161,11 +1169,7 @@ class Pipeline(StateModel):
         }
         return self._load_derivative('epochs', options=options)
 
-    def load_events(
-            self,
-            subject: str = None,
-            **kwargs,
-    ) -> Dataset:
+    def load_events(self, **state) -> Dataset:
         """
         Load events from a raw file.
 
@@ -1174,9 +1178,6 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        subject
-            Subject for which to load events (default is the current subject
-            in the experiment's state).
         ...
             Applicable :ref:`state-parameters`:
 
@@ -1184,10 +1185,7 @@ class Pipeline(StateModel):
              - :ref:`state-epoch`: which events to use and time window
 
         """
-        if subject is not None:
-            kwargs['subject'] = subject
-        if kwargs:
-            self.set(**kwargs)
+        self.set(**state)
         return self._load_derivative('labeled-events')
 
     def load_predictor(
@@ -1236,8 +1234,7 @@ class Pipeline(StateModel):
         ...
             State parameters.
         """
-        if state:
-            self.set(**state)
+        self.set(**state)
         term = parse_term(code)
         predictor = self.predictors[term.predictor_key]
         if not isinstance(predictor, (UTSPredictor, NUTSPredictor)):
@@ -1459,25 +1456,12 @@ class Pipeline(StateModel):
         """
         subject, group = self._process_subject_arg(subjects, state)
         trf_options = self._trf_options(x, tstart, tstop, estimator, data, mask, samplingrate, filter_x)
-        options = {**trf_options, 'scale': scale, 'trfs': trfs}
+        options = {**trf_options, 'scale': scale, 'smooth': smooth, 'trfs': trfs}
         if group is not None:
             ds = self._load_derivative('trf-group-dataset', options=options)
         else:
             ds = self._load_derivative('trf-dataset', options=options)
-        is_source = bool(self.get('inv'))
-        self._smooth_trfs(ds, smooth, is_source)
         return ds
-
-    @staticmethod
-    def _smooth_trfs(ds: Dataset, smooth: float, is_source: bool) -> None:
-        "Spatially smooth the TRF kernels and metric maps in ``ds`` in place"
-        if not smooth:
-            return
-        if not is_source:
-            raise ValueError(f"{smooth=}: smoothing is only available for source-space data")
-        for key in (*ds.info['xs'], *ds.info['metrics']):
-            if key in ds and isinstance(ds[key], NDVar) and ds[key].has_dim('source'):
-                ds[key] = ds[key].smooth('source', smooth, 'gaussian')
 
     def load_evoked(
             self,
@@ -1613,14 +1597,15 @@ class Pipeline(StateModel):
             self,
             surf_ori: bool = True,
             ndvar: bool = False,
-            **state):
+            **state,
+    ) -> mne.forward.Forward | NDVar:
         """Load the forward solution
 
         Parameters
         ----------
         surf_ori
             Force surface orientation (default True; only applies if
-            ``ndvar=False``, :class:`NDVar` forward operators are alsways
+            ``ndvar=False``, :class:`NDVar` forward operators are always
             surface based).
         ndvar
             Return forward solution as :class:`NDVar` (default is
@@ -1633,23 +1618,20 @@ class Pipeline(StateModel):
         forward_operator : mne.forward.Forward | NDVar
             Forward operator.
         """
-        with self._temporary_state:
-            if state:
-                self.set(**state)
-            fwd = self._load_derivative('fwd')
-            fwd_file = self._resolve_derivative('fwd').artifact_path
+        self.set(**state)
+        fwd = self._load_derivative('fwd')
+        if ndvar:
             src = self.get('src')
-            if ndvar:
-                parc = self._current_source_parc()
-                if parc:
-                    self.make_annot()
-                fwd = load.mne.forward_operator(fwd_file, src, self.root / MRI_SDIR, parc, adjacency=False)
-                if parc:
-                    fwd = _drop_unknown_labels(fwd)
-                return fwd
-            if surf_ori:
-                mne.convert_forward_solution(fwd, surf_ori, copy=False)
+            parc = self._current_source_parc()
+            if parc:
+                self.make_annot()
+            fwd = load.mne.forward_operator(fwd, src, self.root / MRI_SDIR, parc, adjacency=False)
+            if parc:
+                fwd = _drop_unknown_labels(fwd)
             return fwd
+        if surf_ori:
+            mne.convert_forward_solution(fwd, surf_ori, copy=False)
+        return fwd
 
     def load_ica(
             self,
@@ -1710,8 +1692,7 @@ class Pipeline(StateModel):
              - :ref:`state-inv`: inverse solution
 
         """
-        if state:
-            self.set(**state)
+        self.set(**state)
         inv = self._load_derivative('inv')
 
         if ndvar:
@@ -1754,7 +1735,7 @@ class Pipeline(StateModel):
         Parameters
         ----------
         label : str
-            Name of the label. If the label name does not end in '-bh' or '-rh'
+            Name of the label. If the label name does not end in '-lh' or '-rh'
             the combination of the labels ``label + '-lh'`` and
             ``label + '-rh'`` is returned.
         ...
@@ -1791,8 +1772,7 @@ class Pipeline(StateModel):
         method still returns a trivial identity :class:`mne.SourceMorph` for
         compatibility with public STC-based workflows.
         """
-        if state:
-            self.set(**state)
+        self.set(**state)
         return self._load_derivative('source-morph')
 
     def load_neighbor_correlation(
@@ -2034,12 +2014,11 @@ class Pipeline(StateModel):
             mlab.points3d(*src.coordinates.T)
             mlab.show()
         """
-        if state:
-            self.set(**state)
+        self.set(**state)
         src_spaces = self._load_derivative('src')
         if ndvar:
             src = self.get('src')
-            subjects_dir = str(self.root / MRI_SDIR)
+            subjects_dir = self.root / MRI_SDIR
             mri_subject = self.get('mrisubject')
             if src.startswith('vol'):
                 return VolumeSourceSpace.from_file(subjects_dir, mri_subject, src)
@@ -2063,9 +2042,8 @@ class Pipeline(StateModel):
             src_baseline: BaselineArg = None,
             samplingrate: int = None,
             return_data: bool = False,
-            make: bool = False,
             **state,
-    ):
+    ) -> NDTest | ROITestResult | tuple[Dataset | ROIData, NDTest | ROITestResult]:
         """Create and load spatio-temporal cluster test results
 
         Parameters
@@ -2116,22 +2094,13 @@ class Pipeline(StateModel):
             definition).
         return_data
             Return the data along with the test result (see below).
-
-            .. Warning::
-                Single trial data (i.e., two-stage tests) take up a lot of
-                memory and it might not be possible to load all data at once.
-                Instead, loop through subjects and collect summary statistics.
-
-        make
-            If the target file does not exist, create it (could take a long
-            time depending on the test; if False, raise an IOError).
         ...
             State parameters (Use the ``group`` state parameter to select the
             subject group for which to perform the test).
 
         Returns
         -------
-        ds : Dataset | dict (if return_data==True)
+        ds : Dataset | ROIData
             Data that forms the basis of the test (for ROI tests, a
             ``{roi: dataset}`` dictionary).
         res : NDTest | ROITestResult
@@ -2143,7 +2112,6 @@ class Pipeline(StateModel):
         data = self._resolve_data(data)
         if data.source:
             self._current_source_parc()
-        data._testnd_parc(disconnect_labels)
         options = {
             'data': data,
             'samples': samples,
@@ -2158,37 +2126,18 @@ class Pipeline(StateModel):
             'samplingrate': samplingrate,
         }
         result_node = 'two-stage-level-2' if isinstance(test_obj, TwoStageTest) else 'test-result'
-        data_node = 'two-stage-data' if isinstance(test_obj, TwoStageTest) else 'evoked-test-data'
-        handle = self._resolve_derivative(result_node, options=options)
-        dst = handle.artifact_path
-        desc = self._derivatives.describe_artifact_path(dst)
-
-        if handle.is_valid():
-            res = handle.load()
-            if not return_data:
-                return res
-        elif not make and dst.exists():
-            raise OSError(f"The requested test is outdated: {desc}. Set make=True to perform the test.")
-        else:
-            res = None
-
-        if res is None and not make:
-            raise OSError(f"The requested test is not cached: {desc}. Set make=True to perform the test.")
-        if res is None:
-            res = handle.load()
-            if not return_data:
-                return res
-
+        result = self._load_derivative(result_node, options=options)
+        if not return_data:
+            return result
+        elif isinstance(test_obj, TwoStageTest):
+            raise NotImplementedError("Data for two-stage test")
         data_options = {key: value for key, value in options.items() if key != 'disconnect_labels'}
-        res_data = self._resolve_derivative(data_node, options=data_options).load()
-        if isinstance(res_data, ROIData):
-            res_data = res_data.label_data
-        return res_data, res
+        data = self._load_derivative('evoked-test-data', options=data_options)
+        return data, result
 
     def make_annot(self, **state) -> None:
         """Ensure that annot files for the current parcellation exist."""
-        if state:
-            self.set(**state)
+        self.set(**state)
         self._load_derivative('annot')
 
     def make_bad_channels(
@@ -2221,7 +2170,6 @@ class Pipeline(StateModel):
         --------
         make_bad_channels_auto : find bad channels automatically
         load_bad_channels : load the current bad_channels file
-        merge_bad_channels : merge bad channel definitions for all tasks
         """
         raw_name = self.get('raw', **kwargs)
         source_name = self._raw.root_source_name(raw_name)
@@ -2764,44 +2712,39 @@ class Pipeline(StateModel):
         ...
             State parameters.
         """
-        with self._temporary_state:
-            if state:
-                self.set(**state)
-            if is_fake_mri(self.root / mri_dir(self._fields)):
-                self.set(mrisubject=self.get('common_brain'), match=False)
+        self.set(**state)
+        if is_fake_mri(self.root / mri_dir(self._fields)):
+            self.set(mrisubject=self.get('common_brain'))
 
-            export_state = self._fields
-            stem = join_stem_parts(
-                f"parc-{export_state['parc']}",
-                f"mrisubject-{export_state['mrisubject']}",
-                f"surf-{surf}",
-            )
-            dst = self.root / RESULTS_DIR / 'source-annot' / f'{stem}.png'
-            if not redo and dst.exists():
-                return
-            dst.parent.mkdir(parents=True, exist_ok=True)
+        stem = join_stem_parts(
+            f"parc-{self._fields['parc']}",
+            f"mrisubject-{self._fields['mrisubject']}",
+            f"surf-{surf}",
+        )
+        dst = self.root / RESULTS_DIR / 'source-annot' / f'{stem}.png'
+        if not redo and dst.exists():
+            return
+        dst.parent.mkdir(parents=True, exist_ok=True)
 
-            brain = self.plot_annot(surf=surf, axw=600)
-            brain.save_image(dst, 'rgba', True)
-            legend = brain.plot_legend(show=False)
-            legend.save(dst.with_suffix('.pdf'), facecolor="none")
-            brain.close()
-            legend.close()
+        brain = self.plot_annot(surf=surf, axw=600)
+        brain.save_image(dst, 'rgba', True)
+        legend = brain.plot_legend(show=False)
+        legend.save(dst.with_suffix('.pdf'), facecolor="none")
+        brain.close()
+        legend.close()
 
     def make_plot_label(self, label, surf='inflated', redo=False, **state):
-        with self._temporary_state:
-            if state:
-                self.set(**state)
-            if is_fake_mri(self.root / mri_dir(self._fields)):
-                self.set(mrisubject=self.get('common_brain'), match=False)
+        self.set(**state)
+        if is_fake_mri(self.root / mri_dir(self._fields)):
+            self.set(mrisubject=self.get('common_brain'), match=False)
 
-            dst = self._make_plot_label_dst(surf, label)
-            if not redo and dst.exists():
-                return
-            dst.parent.mkdir(parents=True, exist_ok=True)
+        dst = self._make_plot_label_dst(surf, label)
+        if not redo and dst.exists():
+            return
+        dst.parent.mkdir(parents=True, exist_ok=True)
 
-            brain = self.plot_label(label, surf=surf)
-            brain.save_image(dst, 'rgba', True)
+        brain = self.plot_label(label, surf=surf)
+        brain.save_image(dst, 'rgba', True)
 
     def make_plots_labels(self, surf='inflated', redo=False, **state):
         self.set(**state)
@@ -2831,11 +2774,12 @@ class Pipeline(StateModel):
 
     def make_epoch_rejection(
             self,
-            samplingrate: int = None,
-            auto: float | dict = None,
-            overwrite: bool = None,
-            decim: int = None,
-            **state):
+            samplingrate: int | None = None,
+            auto: float | dict | None = None,
+            overwrite: bool | None = None,
+            decim: int | None = None,
+            **state,
+    ):
         """Open :func:`gui.select_epochs` for the current epoch rejection
 
         For a :class:`ManualRejection` the GUI is opened for editing (with the
@@ -3120,55 +3064,12 @@ class Pipeline(StateModel):
             controls={ALLOW_PROTECTED_OVERWRITE},
         )
 
-    def make_src(self, **state) -> None:
-        """Make the source space
-
-        Parameters
-        ----------
-        ...
-            State parameters.
-        """
-        if state:
-            self.set(**state)
-        self._load_derivative('src')
-
-    def merge_bad_channels(self):
-        """Merge bad channel definitions for different tasks
-
-        Load the bad channel definitions for all tasks of the current
-        subject and save the union for all tasks.
-
-        See Also
-        --------
-        make_bad_channels : set bad channels for a single task
-        """
-        n_chars = max(map(len, self._tasks))
-        # collect bad channels
-        bads = set()
-        tasks = []
-        with self._temporary_state:
-            # ICARaw merges bad channels dynamically, so explicit merge needs to
-            # be performed lower in the hierarchy
-            self.set(raw='raw')
-            source_name = self._raw.root_source_name('raw')
-            for task in self.iter('task'):
-                file_ctx = self._resolve_derivative(raw_input_name(source_name), options={'noise': False})
-                if file_ctx.exists():
-                    bads.update(self._load_derivative(raw_node_name(source_name), options={'noise': False}, view='bads'))
-                    tasks.append(task)
-                else:
-                    print("%%-%is: skipping, raw file missing" % n_chars % task)
-            # update bad channel files
-            for task in tasks:
-                print(task.ljust(n_chars), end=': ')
-                self.make_bad_channels(bads, task=task)
-
-    def next(self, field='subject'):
+    def next(self, field: str | Sequence[str] = 'subject'):
         """Change field to the next value
 
         Parameters
         ----------
-        field : str | list of str
+        field
             The field for which the value should be changed (default 'subject').
             Can also contain multiple fields, e.g. ``['subject', 'session']``.
 
@@ -3569,6 +3470,10 @@ class Pipeline(StateModel):
             recorded with DC offset).
         ...
             State parameters.
+
+        See Also
+        --------
+        make_bad_channels_selection : interactive plor for raw data
         """
         raw = self.load_raw(ndvar=True, decim=decim, **state)
         state_ = self._fields
@@ -3583,7 +3488,7 @@ class Pipeline(StateModel):
             raw -= raw.mean('time')
         return plot.TopoButterfly(raw, w=0, h=3, xlim=xlim, vmax=vmax, name=name)
 
-    def set(self, subject: str = None, match: bool = True, **state):
+    def set(self, subject: str = None, **state):
         """
         Set variable values.
 
@@ -3592,11 +3497,8 @@ class Pipeline(StateModel):
         subject
             Set the `subject` value. The corresponding `mrisubject` is
             automatically set to the corresponding mri subject.
-        match
-            For fields with pre-defined values, only allow valid values (default
-            ``True``).
         ...
-            State parameters.
+            Other state parameters.
         """
         if subject is not None:
             if 'group' not in state:
@@ -3607,9 +3509,9 @@ class Pipeline(StateModel):
                 else:
                     state['subject'] = subject
                     subject = None
-        StateModel.set(self, match, **state)
+        StateModel.set(self, **state)
         if subject is not None:
-            StateModel.set(self, match, subject=subject)
+            StateModel.set(self, subject=subject)
 
     def _post_set_group(self, _: str, group: str) -> None:
         if group == '*' or group not in self._groups:
@@ -3896,7 +3798,7 @@ class Pipeline(StateModel):
                 t.cells(subject, ', '.join(bad_channels[subject]))
         return t
 
-    def show_dependencies(
+    def _show_dependencies(
             self,
             name: str,
             options: dict[str, Any] | None = None,
@@ -3922,10 +3824,8 @@ class Pipeline(StateModel):
         ...
             State parameters for resolving the requested node.
         """
-        if state:
-            self.set(**state)
-        options_ = {} if options is None else dict(options)
-        tree = self._derivatives.dependency_tree(name, state=self.state, options=options_, max_line_length=max_line_length)
+        self.set(**state)
+        tree = self._derivatives.dependency_tree(name, state=self.state, options=options, max_line_length=max_line_length)
         if return_str:
             return tree
         print(tree)
@@ -4197,37 +4097,32 @@ class Pipeline(StateModel):
 
             return table
 
-    def show_reg_params(self, asds=False, **kwargs):
+    def show_reg_params(self, **state):
         """Show the covariance matrix regularization parameters
 
         Parameters
         ----------
-        asds : bool
-            Return a dataset with the parameters (default False).
         ...
             State parameters.
         """
-        if kwargs:
-            self.set(**kwargs)
-        subjects = []
-        reg = []
+        cov = self.get('cov', **state)
+        cov_config = self._covs[cov]
+        if not isinstance(cov_config, EpochCovariance):
+            raise ValueError(f"{cov=}: not an EpochCovariance")
+
+        rows = []
         for subject in self:
             handle = self._resolve_derivative('cov')
             path = handle.artifact_path.with_suffix('.info.txt')
             if exists(path):
                 with open(path) as fid:
                     text = fid.read()
-                reg.append(float(text.strip()))
+                reg = float(text.strip())
             else:
-                reg.append(float('nan'))
-            subjects.append(subject)
-        ds = Dataset()
-        ds['subject'] = Factor(subjects)
-        ds['reg'] = Var(reg)
-        if asds:
-            return ds
-        else:
-            print(ds)
+                reg = float('nan')
+            rows.append((subject, reg))
+        ds = Dataset.from_caselist(['subject', 'reg'], rows)
+        return ds
 
     def show_rej_info(self, flagp=None, asds=False, bads=False, **state):
         """Information about artifact rejection

@@ -1,6 +1,8 @@
 from pathlib import Path
 import warnings
 
+import mne
+
 from ... import load, save
 from ..._data_obj import Dataset, Datalist, Factor, NDVar, combine
 from ..._mne import morph_source_space
@@ -44,6 +46,26 @@ def filter_predictor(x: NDVar, raw: dict[str, RawPipe], raw_name: str, filter_x:
             for pipe in filter_pipes(raw, raw_name):
                 x = pipe._filter_ndvar(x, pad='edge')
     return x
+
+
+def _post_process_trfs(
+        ds: Dataset,
+        smooth: float | None,
+        common_brain: str | None = None,
+        source_morph: mne.SourceMorph | None = None,
+) -> None:
+    """Prepare TRFs for statistical analysis (morphing and smoothing)"""
+    # should_morph = common_brain is not None or source_morph is not None
+    if not smooth and not common_brain:
+        return
+    keys = [key for key in (*ds.info['xs'], *ds.info['metrics']) if isinstance(ds[key], NDVar) and ds[key].has_dim('source')]
+    for key in keys:
+        # if should_morph:
+        if common_brain:
+            ds[key] = morph_source_space(ds[key], common_brain, morph=source_morph)
+        if smooth:
+            # OPT: pre-compute smoothing matrix
+            ds[key] = ds[key].smooth('source', smooth, 'gaussian')
 
 
 class PredictorInput(VersionedInput[NDVar]):
@@ -153,7 +175,7 @@ class TRFDerivative(Derivative[object]):
         'tstart': 0.0,
         'tstop': 0.5,
         'estimator': 'boosting',
-        'data': OptionSpec(None, DataSpec, normalize=DataSpec.coerce),
+        'data': OptionSpec(DataSpec('sensor'), DataSpec),
         'mask': None,
         'samplingrate': None,
         'decim': None,
@@ -316,18 +338,19 @@ class TRFDerivative(Derivative[object]):
 
 
 # Options shared by the TRF-dataset nodes: the :class:`TRFDerivative` options that
-# select the fit, plus the dataset-shaping ``scale`` and ``trfs``.
+# select the fit, plus the dataset-shaping ``scale``, ``smooth``, and ``trfs``.
 _TRF_DATASET_OPTIONS = {
     'x': OptionSpec(None, Model, normalize=Model.coerce),
     'tstart': 0.0,
     'tstop': 0.5,
     'estimator': 'boosting',
-    'data': OptionSpec(None, DataSpec, normalize=DataSpec.coerce),
+    'data': OptionSpec(None, DataSpec),
     'mask': None,
     'samplingrate': None,
     'decim': None,
     'filter_x': False,
     'scale': None,
+    'smooth': None,
     'trfs': True,
 }
 
@@ -383,8 +406,11 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         trf_options = ctx.options_for('trf', 'x', 'tstart', 'tstop', 'estimator', 'data', 'mask', 'samplingrate', 'decim', 'filter_x')
         deps = [Dependency('trf', label=epoch, state={'epoch': epoch}, options=trf_options) for epoch in self._epoch_names(ctx)]
-        if ctx.state['inv'] and not is_fake_mri(self.root / mri_dir(ctx.state)):
-            deps.append(Dependency('source-morph'))
+        if ctx.state['inv']:
+            if not is_fake_mri(self.root / mri_dir(ctx.state)):
+                deps.append(Dependency('source-morph'))
+        elif smooth := ctx.options['smooth']:
+            raise ValueError(f"{smooth=}: smoothing is only available for source-space data")
         return tuple(deps)
 
     def build(self, ctx: Request) -> Dataset:
@@ -392,24 +418,22 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
         scale = ctx.options['scale']
         trfs = ctx.options['trfs']
         subject = ctx.state['subject']
-        common_brain = source_morph = None
-        if ctx.state['inv']:
-            common_brain = ctx.state['common_brain']
-            if not is_fake_mri(self.root / mri_dir(ctx.state)):
-                source_morph = ctx.load('source-morph')
         dss = []
         for epoch in self._epoch_names(ctx):
             res = ctx.load(epoch)
             ds = est._result_dataset(res, scale=scale, trfs=trfs)
-            ds['subject'] = Factor([subject], random=True)
             ds[:, 'epoch'] = epoch
-            if ctx.state['inv']:
-                for key in (*ds.info['xs'], *ds.info['metrics']):
-                    if key in ds and isinstance(ds[key], NDVar):
-                        ds[key] = morph_source_space(ds[key], common_brain, morph=source_morph)
             dss.append(ds)
-        ds = combine(dss)
-        ds.name = ctx.options['x'].name
+        ds = combine(dss, name=ctx.options['x'].name)
+        ds['subject'] = Factor([subject], repeat=ds.n_cases, random=True)
+        # Morphing/smoothing
+        if ctx.state['inv']:
+            common_brain = ctx.state['common_brain']
+            if is_fake_mri(self.root / mri_dir(ctx.state)):
+                source_morph = None
+            else:
+                source_morph = ctx.load('source-morph')
+            _post_process_trfs(ds, ctx.options['smooth'], common_brain, source_morph)
         return ds
 
 
@@ -446,7 +470,12 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
         return {'subjects': tuple(self.groups[ctx.state['group']])}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        options = ctx.options_for('trf-dataset', *self.key_options)
+        if not ctx.state['inv']:
+            if smooth := ctx.options['smooth']:
+                raise ValueError(f"{smooth=}: smoothing is only available for source-space data")
+        # Smooth the combined dataset so that the source smoothing matrix is calculated only once
+        subject_options = tuple(key for key in self.key_options if key != 'smooth')
+        options = ctx.options_for('trf-dataset', *subject_options, smooth=None)
         return tuple(
             Dependency('trf-dataset', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects), options=options)
             for subject in self.groups[ctx.state['group']]
@@ -454,4 +483,6 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
 
     def build(self, ctx: Request) -> Dataset:
         dss = [ctx.load(subject) for subject in self.groups[ctx.state['group']]]
-        return combine(dss, to_list=True)
+        ds = combine(dss, to_list=True)
+        _post_process_trfs(ds, ctx.options['smooth'])
+        return ds

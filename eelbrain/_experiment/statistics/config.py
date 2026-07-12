@@ -447,8 +447,8 @@ class ResolvedTestNDSpec:
     def from_request(
             cls,
             ctx: Request,
-            data: DataSpec,
     ) -> ResolvedTestNDSpec:
+        data = ctx.options['data']
         pmin = ctx.options['pmin']
         kwargs = {
             'samples': ctx.options['samples'],

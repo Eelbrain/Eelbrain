@@ -297,18 +297,24 @@ class OptionSpec:
 
     def validated(self, ctx: Request, name: str, value: Any) -> Any:
         """Normalize and validate one option value for ``ctx``."""
-        if value is self.default:
+        if value is None and self.default is None:
             return value
-        if self.normalize is not None:
+        elif self.type and isinstance(value, self.type):
+            return value
+        elif self.normalize:
             value = self.normalize(value)
-        if self.type is not None:
-            types = self.type if isinstance(self.type, tuple) else (self.type,)
+            if self.type:
+                assert isinstance(value, self.type)
+            return value
+        elif self.type:
+            if not isinstance(self.type, tuple):
+                return self.type(value)
             # bool subclasses int; require an explicit bool declaration so that 1 does not pass as True
-            valid = bool in types if isinstance(value, bool) else isinstance(value, types)
+            valid = bool in self.type if isinstance(value, bool) else isinstance(value, self.type)
             if not valid:
-                expected = ' | '.join(t.__name__ for t in types)
+                expected = ' | '.join(t.__name__ for t in self.type)
                 raise TypeError(f"{ctx.node.name!r} option {name}={value!r}: expected {expected}, got {type(value).__name__}")
-        if self.literal is not None:
+        elif self.literal is not None:
             if not any(value is allowed or (type(value) is type(allowed) and value == allowed) for allowed in self.literal):
                 raise ValueError(f"{ctx.node.name!r} option {name}={value!r}: must be one of {self.literal}")
         return value
@@ -889,24 +895,11 @@ class Derivative(DependencyNode[T]):
     def key(self, ctx: Request) -> dict[str, Any]:
         """The key used to generate a unique path for this artifact.
 
-        This is the framework assembler and rarely needs overriding: it takes
-        the identity state fields (from :meth:`override_key_fields`, else the
-        static :attr:`key_fields`) and the identity options (the names from
-        :meth:`override_key_options`, else all of :attr:`key_options`, at
-        their request values) and combines them. To make either piece
-        request-dependent, override the corresponding hook rather than this
-        method; override :meth:`key` itself only when the identity is not a
-        state-subset-plus-options at all.
-
+        This is the framework assembler and should not need overriding.
         The key is used to resolve the artifact path and should stay focused
         on cache address/identity. It is narrower than :meth:`fingerprint`,
         which records the fuller set of non-dependency request
         state/options/definitions that make an existing artifact stale.
-
-        The returned mapping is passed through
-        :meth:`~DerivativeRegistry.canonicalize` by the registry, so
-        implementations can include arbitrary supported values without
-        pre-serializing them.
         """
         fields = self._get_key_fields(ctx)
         key = canonical_state_subset(ctx.state, fields)
@@ -1860,8 +1853,6 @@ class DerivativeRegistry:
         parent = ctx.node
         parent_fields = parent._get_key_fields(ctx)
         coverage = set(parent_fields) | set(parent.fixed_state)
-        if isinstance(parent, Derivative) and parent.cache_policy is not CachePolicy.NEVER:
-            coverage |= set(ctx.key())  # FIXME: custom .key()
         missing = fields.difference(pinned | coverage)
         if missing:
             raise RuntimeError(f"{parent.name!r} depends on {child.name!r}, whose output depends on state field(s) {missing}, but {parent.name!r} neither keys or pins these on this edge. Fix by adding {missing} to {parent.name!r}.key_fields, or pin it via Dependency({child.name!r}, state=...).")

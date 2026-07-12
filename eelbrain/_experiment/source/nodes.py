@@ -18,7 +18,6 @@ from itertools import product
 import os
 from pathlib import Path
 from typing import Any
-from collections.abc import Sequence
 
 import mne
 import numpy as np
@@ -28,7 +27,7 @@ from scipy import sparse
 
 from ... import load
 from ..._data_obj import Dataset, Datalist, NDVar, combine
-from ..derivative_cache import CachePolicy, Dependency, Derivative, ExternalArtifactDerivative, Request, Input, UncachedDerivative, file_fingerprint
+from ..derivative_cache import CachePolicy, Dependency, Derivative, ExternalArtifactDerivative, OptionSpec, Request, Input, UncachedDerivative, file_fingerprint
 from ..pathing import (
     MRI_SDIR, bem_dir, bem_file_path, mri_dir, src_file_path, trans_file_path,
 )
@@ -819,7 +818,13 @@ class EvokedStcDerivative(UncachedDerivative[Dataset]):
         return ds
 
 
-class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
+@dataclass
+class ROIData:
+    label_data: dict[str, Dataset]
+    n_trials_ds: Dataset
+
+
+class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset | ROIData]):
     """Group-level dataset assembled from subject ``evoked-stc`` datasets.
 
     Options
@@ -828,13 +833,14 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
 
     Notes
     -----
-    ``ndvar=True`` requires morphing to a common brain,
-    and ``morph`` defaults to ``True`` when omitted in that case.
+    ``morph`` defaults to ``True``. With ``ndvar=True, morph=False``, source
+    NDVars from different brains are retained as a list in the ``src`` column.
     """
     name = 'evoked-stc-group-dataset'
     key_options = {
         **EvokedStcDerivative.key_options,
         **EvokedStcDerivative.view_options,
+        'data': OptionSpec(DataSpec('source'), DataSpec),
         'morph': True,
     }
 
@@ -852,36 +858,56 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset]):
         return {'subjects': tuple(self.groups[ctx.state['group']])}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        if ctx.options['ndvar'] and not ctx.options['morph']:
-            raise ValueError("ndvar=True, morph=False with multiple subjects: Can't create ndvars with data from different brains")
         options = ctx.options_for('evoked-stc', *EvokedStcDerivative.key_options, *EvokedStcDerivative.view_options)
+        data = ctx.options['data']
+        if data.aggregate:
+            assert not ctx.options['morph']
         return tuple(
             Dependency('evoked-stc', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects), options=options)
             for subject in self.groups[ctx.state['group']]
         )
 
-    def build(self, ctx: Request) -> Dataset:
-        dss = [ctx.load(subject) for subject in self.groups[ctx.state['group']]]
-        return combine(dss)
+    def build(self, ctx: Request) -> Dataset | ROIData:
+        data = ctx.options['data']
+        subjects = self.groups[ctx.state['group']]
+        if data is not None and data.aggregate:
+            label_dss = {}
+            n_trials_dss = []
+            for subject in subjects:
+                ds = ctx.load(subject)
+                roi_data = roi_data_from_dataset(ds, data.aggregate)
+                for label, label_ds in roi_data.label_data.items():
+                    label_dss.setdefault(label, []).append(label_ds)
+                n_trials_dss.append(roi_data.n_trials_ds)
+            label_data = {label: combine(label_ds, incomplete='drop') for label, label_ds in label_dss.items()}
+            n_trials_ds = combine(n_trials_dss, incomplete='drop')
+            return ROIData(label_data, n_trials_ds)
+        else:
+            dss = [ctx.load(subject) for subject in subjects]
+            return combine(dss, to_list=True)
 
 
-def roi_data_from_subject_datasets(dss: Sequence[Dataset], reducer: str) -> ROIData:
-    """Extract ROI time course; mutates ``dss``"""
-    n_trials_dss = []
-    label_dss = {}
-    for ds in dss:
-        src = ds.pop('src')
-        n_trials_dss.append(ds)
-        for label in src.source.parc.cells:
-            if label.startswith('unknown-'):
-                continue
-            label_ds = ds.copy()
-            label_ds['label_tc'] = getattr(src, reducer)(source=label)
-            label_dss.setdefault(label, []).append(label_ds)
-    return ROIData({label: combine(label_ds, incomplete='drop') for label, label_ds in label_dss.items()}, combine(n_trials_dss, incomplete='drop'))
+def roi_data_from_dataset(
+        ds: Dataset,
+        reducer: str,
+) -> ROIData:
+    """Extract ROI time courses from a group or subject dataset.
 
-
-@dataclass
-class ROIData:
-    label_data: dict[str, Dataset]
-    n_trials_ds: Dataset
+    Parameters
+    ----------
+    ds
+        Dataset containing source estimates in ``src``.
+        This function removes ``src`` from ``ds``.
+    reducer
+        NDVar method used to reduce each parcellation label (``'mean'`` or
+        ``'rms'``).
+    """
+    src = ds.pop('src')
+    label_data = {}
+    for label in src.source.parc.cells:
+        if label.startswith('unknown-'):
+            continue
+        label_ds = ds.copy()
+        label_ds['label_tc'] = getattr(src, reducer)(source=label)
+        label_data[label] = label_ds
+    return ROIData(label_data, ds)

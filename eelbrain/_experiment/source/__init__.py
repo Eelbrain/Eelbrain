@@ -28,7 +28,7 @@ from .nodes import (
     SourceProjection,
     SrcDerivative,
     TransInput,
-    roi_data_from_subject_datasets,
+    roi_data_from_dataset,
     _drop_unknown_labels,
     _source_parc,
     _subject_state,

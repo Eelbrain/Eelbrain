@@ -65,6 +65,7 @@ class DataSpec:
         return isinstance(other, DataSpec) and self.string == other.string
 
     def _testnd_parc(self, disconnect_labels: bool) -> str | None:
+        """parc parameter for testnd test"""
         if self.source and not self.aggregate:
             return 'source' if disconnect_labels else None
         if disconnect_labels:
