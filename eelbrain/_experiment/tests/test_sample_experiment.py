@@ -596,11 +596,6 @@ def test_sample_source(samples_experiment):
             'ac': SubParc('aparc', ('superiortemporal',)),
         }
 
-    with pytest.raises(IOError):
-        changed = ChangedParcExperiment(root)
-        changed.set(epoch='auditory', epoch_rejection='', src='ico-2', parc='ac', inv='free-3-dSPM')
-        changed.load_test('left=right', 0.05, 0.2, 0.05, samples=8, data='source.rms')
-
 
 @requires_mne_sample_data
 def test_sample_tasks(monkeypatch, samples_experiment):

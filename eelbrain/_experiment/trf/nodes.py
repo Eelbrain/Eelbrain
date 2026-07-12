@@ -55,11 +55,13 @@ def _post_process_trfs(
         source_morph: mne.SourceMorph | None = None,
 ) -> None:
     """Prepare TRFs for statistical analysis (morphing and smoothing)"""
-    if not smooth and not source_morph:
+    # should_morph = common_brain is not None or source_morph is not None
+    if not smooth and not common_brain:
         return
     keys = [key for key in (*ds.info['xs'], *ds.info['metrics']) if isinstance(ds[key], NDVar) and ds[key].has_dim('source')]
     for key in keys:
-        if source_morph:
+        # if should_morph:
+        if common_brain:
             ds[key] = morph_source_space(ds[key], common_brain, morph=source_morph)
         if smooth:
             # OPT: pre-compute smoothing matrix
@@ -427,10 +429,10 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
         # Morphing/smoothing
         if ctx.state['inv']:
             common_brain = ctx.state['common_brain']
-            if not is_fake_mri(self.root / mri_dir(ctx.state)):
-                source_morph = ctx.load('source-morph')
-            else:
+            if is_fake_mri(self.root / mri_dir(ctx.state)):
                 source_morph = None
+            else:
+                source_morph = ctx.load('source-morph')
             _post_process_trfs(ds, ctx.options['smooth'], common_brain, source_morph)
         return ds
 
