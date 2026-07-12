@@ -22,7 +22,6 @@ from eelbrain._exceptions import ConfigurationError
 from eelbrain._experiment.derivative_cache import ProtectedArtifactError
 from eelbrain._experiment.pathing import LOG_DIR, ica_file_path
 from eelbrain._experiment.preprocessing import RawFilterElliptic, ica_input_name, raw_node_name
-from eelbrain._experiment.reports import _report_subject_info
 from eelbrain._experiment.data import DataSpec
 from eelbrain._experiment.variable_def import EvalVar, LabelVar, Variables
 from eelbrain.testing import assert_dataobj_equal, requires_mne_sample_data
@@ -189,25 +188,6 @@ def test_sample(samples_experiment):
     )
     assert 'evoked-test-data [uncached]' in test_tree
     assert 'evoked-group-dataset [uncached]' in test_tree
-    movie_tree = e._show_dependencies(
-        'movie-ttest',
-        options={
-            'data': DataSpec('source'),
-            'single_subject': False,
-            'subject': None,
-            'baseline': False,
-            'src_baseline': None,
-            'cat': None,
-            'p': 0.05,
-            'pmin': 0.001,
-            'pmid': 0.01,
-            'surf': 'inflated',
-            'time_dilation': 4.0,
-            'cluster_state': {},
-        },
-        return_str=True,
-    )
-    assert 'evoked-stc-group-dataset [uncached]' in movie_tree
     sds = []
     for _ in e:
         e.make_epoch_rejection(auto=2.5e-12)
@@ -243,13 +223,6 @@ def test_sample(samples_experiment):
     assert res.difference.max() == pytest.approx(4.47e-13, 1e-15)
     # plot (skip to avoid using framework build)
     # e.plot_evoked(1, epoch='target', model='')
-
-    # e._report_subject_info() broke with non-alphabetic subject order
-    subjects = e.get_field_values('subject')
-    ds = Dataset()
-    ds['subject'] = Factor(reversed(subjects))
-    ds['n'] = Var(range(3))
-    _ = _report_subject_info(e.state, tuple(subjects), ds, '')
 
     # post_baseline_trigger_shift
     # use multiple of tstep to shift by even number of samples
@@ -1590,21 +1563,6 @@ def test_selected_events_vardef_is_local(samples_experiment):
     ds_changed = e.load_selected_events(vardef=changed)
     assert set(ds_compact['grouped'].cells) == {'', 'target'}
     assert 'nontarget' in ds_changed['grouped'].cells
-
-
-@requires_mne_sample_data
-def test_coreg_report_dependencies_are_explicit(samples_experiment):
-    set_log_level('warning', 'mne')
-    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
-
-    root = samples_experiment(n_subjects=2, n_segments=2, mris=True)
-
-    e = SampleExperiment(root)
-    handle = e._resolve_derivative('coreg-report', options={'dst': None})
-
-    assert 'dependencies' not in handle.current_fingerprint()
-    dependencies = handle.dependency_fingerprints()
-    assert set(dependencies) == {'raw', 'trans'}
 
 
 @requires_mne_sample_data

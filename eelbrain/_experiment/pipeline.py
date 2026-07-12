@@ -13,7 +13,6 @@ from typing import Any, Literal
 
 import numpy as np
 import mne
-from mne.minimum_norm import apply_inverse_raw
 import mne_bids
 from mne_bids import find_matching_paths, get_entity_vals
 
@@ -26,7 +25,6 @@ from .._data_obj import CellArg, Datalist, Dataset, Factor, Var, NDVar, SourceSp
 from .._exceptions import ConfigurationError, DimensionMismatchError
 from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS
 from .._meeg import new_rejection_ds
-from .._mne import find_source_subject, label_from_annot
 from ..mne_fixes import suppress_mne_warning
 from .._ndvar import concatenate, neighbor_correlation
 from .._stats.testnd import NDTest
@@ -35,7 +33,7 @@ from .._types import PathArg
 from .._utils import ask, keydefaultdict, log_level, ScreenHandler
 from .._utils.mne_utils import is_fake_mri
 from .covariance import CovDerivative, EpochCovariance, RawCovariance
-from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, DerivativeRegistry, ProtectedArtifactError, Request, _format_size
+from .derivative_cache import DerivativeRegistry, ProtectedArtifactError, Request, _format_size
 from .configuration import Configuration, ConfigurationDict, sequence_arg
 from .epochs import (
     EpochBase, EpochsDerivative, RecordingEpochsDerivative, EvokedDerivative,
@@ -50,7 +48,7 @@ from .state_model import StateModel
 from .statistics.nodes import ROITestResult
 from .groups import assemble_groups
 from .pathing import (
-    LOG_DIR, MRI_SDIR, RESULTS_DIR, bids_path, join_stem_parts, mri_dir, raw_basename,
+    LOG_DIR, MRI_SDIR, bids_path, join_stem_parts, mri_dir, raw_basename,
     src_file_path, trans_file_path,
 )
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, _resolve_parc
@@ -58,17 +56,12 @@ from .preprocessing import (
     CachedRawPipe, ICAInput, MaxwellCalibrationInput, MaxwellCrosstalkInput, CanonicalHeadPositionDerivative, RawBadChannelsInput, RawDerivative, RawHeadPositionDerivative, RawPipe, RawSource, RawSourceDerivative, RawSourceInput, RawICA, RawMaxwell, Reference,
     REINDEX_ICA, assemble_raw_pipes, ica_input_name, raw_bad_channels_input_name, raw_node_name, raw_input_name,
 )
-from .reports import (
-    CoregReportDerivative, EEGReportDerivative, EEGSensorsReportDerivative,
-    LMReportDerivative, ROIReportDerivative, SourceReportDerivative,
-)
 from .data import DataSpec
-from .results import DSPMMovieDerivative, TTestMovieDerivative
 from .source import (
     BemInput, EpochsStcDerivative,
     EvokedStcDerivative, EvokedStcGroupDatasetDerivative, FwdDerivative,
     InvDerivative, ROIData, SourceMorphDerivative, SrcDerivative, TransInput,
-    InverseSolution, MinimumNormInverseSolution, _drop_unknown_labels, _source_parc, eval_src,
+    MinimumNormInverseSolution, _drop_unknown_labels, _source_parc, eval_src,
 )
 from .statistics import EvokedTestDataDerivative, TestResultDerivative, TwoStageDataDerivative, TwoStageLevel1Derivative, TwoStageLevel2Derivative, TwoStageTest
 from .statistics.config import Test, validate_tests
@@ -356,9 +349,6 @@ class Pipeline(StateModel):
         # groups
         self._groups = ConfigurationDict('group', assemble_groups(self.groups, set(self._subjects)))
 
-        # mri_subjects
-        self._mri_subjects = self.mri_subjects.copy()
-
         # preprocessing
         self._raw = assemble_raw_pipes({'raw': RawSource(), **self.raw}, self._tasks)
 
@@ -397,6 +387,16 @@ class Pipeline(StateModel):
                     raise ConfigurationError(f"references[{name!r}]={reference!r}: the standard average reference can not drop channels")
             references[name] = reference
         self._references = ConfigurationDict('reference', references)
+
+        # mri_subjects
+        self._mri_subjects = self.mri_subjects.copy()
+
+        # Sensor noise covariance estimates
+        self._covs = ConfigurationDict('covariance', self._covs)
+        for name, cov in self._covs.items():
+            if not isinstance(cov, (RawCovariance, EpochCovariance)):
+                raise TypeError(f"_covs[{name!r}]={cov!r}: need RawCovariance or EpochCovariance")
+            cov._store_name(name)
 
         # parcellations
         # make : can be made if non-existent
@@ -507,8 +507,6 @@ class Pipeline(StateModel):
             self._parcs,
             self._groups,
         )
-        brain_report_args = (*result_args, self._mri_subjects, {**self._brain_plot_defaults, **self.brain_plot_defaults})
-
         # --- Inputs (externally managed files) and preprocessing ---
         maxwell_registered = False
         for raw_name, pipe in self._raw.items():
@@ -567,9 +565,6 @@ class Pipeline(StateModel):
         self._derivatives.register(EvokedGroupDatasetDerivative(self._raw, self._groups))
 
         # --- Source-space infrastructure ---
-        self._covs = ConfigurationDict('covariance', self._covs)
-        for cov_name, cov in self._covs.items():
-            cov._store_name(cov_name)
         self._derivatives.register(CovDerivative(self._covs, self._raw, self._references, self._recordings))
         self._derivatives.register(SrcDerivative())
         self._derivatives.register(SourceMorphDerivative())
@@ -588,16 +583,6 @@ class Pipeline(StateModel):
         self._derivatives.register(TwoStageLevel1Derivative(self.tests))
         self._derivatives.register(TestResultDerivative(*result_args))
         self._derivatives.register(TwoStageLevel2Derivative(*result_args))
-
-        # --- Reports and exports ---
-        self._derivatives.register(SourceReportDerivative(*brain_report_args))
-        self._derivatives.register(ROIReportDerivative(*brain_report_args))
-        self._derivatives.register(EEGReportDerivative(*result_args))
-        self._derivatives.register(EEGSensorsReportDerivative(*result_args))
-        self._derivatives.register(LMReportDerivative(*brain_report_args))
-        self._derivatives.register(CoregReportDerivative(self._raw))
-        self._derivatives.register(DSPMMovieDerivative(*result_args))
-        self._derivatives.register(TTestMovieDerivative(*result_args))
 
     def _resolve_derivative(
             self,
@@ -1702,29 +1687,6 @@ class Pipeline(StateModel):
                 inv = _drop_unknown_labels(inv)
         return inv
 
-    def _prepare_inv(
-            self,
-            morph: bool,
-    ):
-        """Prepare for local MNE source localization"""
-        # make sure annotation exists
-        parc = self._current_source_parc()
-        if parc:
-            self.make_annot()
-
-        inv = self.load_inv()
-
-        # determine whether initial source-space can be restricted
-        subjects_dir = str(self.root / MRI_SDIR)
-        mrisubject = self.get('mrisubject')
-        is_scaled = find_source_subject(mrisubject, subjects_dir)
-        if parc and (is_scaled or not morph):
-            label = label_from_annot(inv['src'], mrisubject, subjects_dir, parc)
-        else:
-            label = None
-
-        return inv, label, subjects_dir, mrisubject, is_scaled, parc
-
     def load_label(
             self,
             label: str,
@@ -1895,49 +1857,6 @@ class Pipeline(StateModel):
     def _current_source_parc(self) -> str:
         """Ensure valid parc setting in state"""
         return _source_parc(self.state)
-
-    def load_raw_stc(
-            self,
-            morph: bool = False,
-            ndvar: bool = True,
-            samplingrate: int = None,
-            tstart: float = None,
-            tstop: float = None,
-            **kwargs,
-    ) -> mne.SourceEstimate | mne.VectorSourceEstimate | mne.VolSourceEstimate | NDVar:
-        """
-        Apply the inverse solution to the raw signal and return source estimates.
-
-        Parameters
-        ----------
-        morph
-            Morph the source estimates to the common_brain (default False).
-        ndvar
-            Return as :class:`NDVar` instead of an MNE source estimate object
-            (default ``True``).
-        samplingrate
-            Samplingrate in Hz for the analysis.
-        tstart
-            Crop the raw data. After cropping the time axis will be reset, i.e.,
-            the ``tstart`` will be set to ``t = 0``.
-        tstop
-            Crop the raw data.
-        ...
-            Applicable :ref:`state-parameters`:
-
-             - :ref:`state-session`: from which session to load raw data
-             - :ref:`state-raw`: preprocessing pipeline
-        """
-        raw = self.load_raw(samplingrate=samplingrate, tstart=tstart, tstop=tstop, **kwargs)
-        inv, label, mri_sdir, mrisubject, is_scaled, parc = self._prepare_inv(morph)
-        solution = InverseSolution._coerce(self.get('inv'))
-        stc = apply_inverse_raw(raw, inv, label=label, **solution._apply_kw)
-
-        if ndvar:
-            src = self.get('src')
-            return solution._to_ndvar(stc, mrisubject, src, mri_sdir, parc=parc, adjacency=self.get('adjacency'))
-        else:
-            return stc
 
     def load_selected_events(
             self,
@@ -2483,295 +2402,6 @@ class Pipeline(StateModel):
                 raise RuntimeError("User aborted ICA overwrite")
         return self._raw[ica_raw_name].path(ctx)
 
-    def make_movie_dspm(
-            self,
-            subjects: SubjectArg | None = None,
-            baseline: BaselineArg = True,
-            src_baseline: BaselineArg = False,
-            fmin: float = 2,
-            surf: str | None = None,
-            views: str | tuple[str, ...] | None = None,
-            hemi: str | None = None,
-            time_dilation: float = 4.,
-            foreground=None,
-            background=None,
-            smoothing_steps: int | None = None,
-            dst: PathArg | None = None,
-            redo: bool = False,
-            **state,
-    ) -> None:
-        """Make a grand average movie from dSPM values (requires PySurfer 0.6)
-
-        Parameters
-        ----------
-        subjects
-            Subject(s) for which to load data. Can be a single subject
-            name or a group name such as ``'all'``. ``1`` to use the current
-            subject; ``-1`` for the current group. Default is current subject
-            (or group if ``group`` is specified).
-        baseline
-            Apply baseline correction using this period in sensor space.
-            True to use the epoch's baseline specification (default).
-        src_baseline
-            Apply baseline correction using this period in source space.
-            True to use the epoch's baseline specification. The default is to
-            not apply baseline correction.
-        fmin
-            Minimum dSPM value to draw (default 2). fmax is 3 * fmin.
-        surf
-            Surface on which to plot data.
-        views
-            View(s) of the brain to include in the movie.
-        hemi : 'lh' | 'rh' | 'both' | 'split'
-            Which hemispheres to plot.
-        time_dilation
-            Factor by which to slow the passage of time. For example, with
-            ``time_dilation=4`` (the default) a segment of data for 500 ms will
-            last 2 s.
-        foreground : mayavi color
-            Figure foreground color (i.e., the text color).
-        background : mayavi color
-            Figure background color.
-        smoothing_steps
-            Number of smoothing steps if data is spatially undersampled (pysurfer
-            ``Brain.add_data()`` argument).
-        dst
-            Path to save the movie. The default is a file in the results
-            folder with a name determined based on the input data. Plotting
-            parameters (``view`` and all subsequent parameters) are not
-            included in the filename. "~" is expanded to the user's home
-            folder.
-        redo
-            Make the movie even if the target file exists already.
-        ...
-            State parameters.
-        """
-        subject, group = self._process_subject_arg(subjects, state)
-        data = DataSpec("source")
-        brain_kwargs = self._surfer_plot_kwargs(surf, views, foreground, background, smoothing_steps, hemi)
-        self.set(equalize_evoked_count='')
-
-        if dst is not None:
-            dst = os.path.expanduser(dst)
-
-        options = {
-            'dst': dst,
-            'data': data,
-            'single_subject': group is None,
-            'subject': subject,
-            'baseline': baseline,
-            'src_baseline': src_baseline,
-            'fmin': fmin,
-            'brain_kwargs': brain_kwargs,
-            'time_dilation': time_dilation,
-        }
-        self._load_derivative('movie-dspm', options=options, redo=redo, controls={ALLOW_PROTECTED_OVERWRITE})
-
-    def make_movie_ttest(
-            self,
-            subjects: SubjectArg | None = None,
-            model: str = '',
-            c1: str | tuple | None = None,
-            c0: str | tuple | float | None = None,
-            p: float = 0.05,
-            baseline: BaselineArg = True,
-            src_baseline: BaselineArg = False,
-            disconnect_labels: bool = False,
-            surf: str | None = None,
-            views: str | tuple[str, ...] | None = None,
-            hemi: str | None = None,
-            time_dilation: float = 4.,
-            foreground=None,
-            background=None,
-            smoothing_steps: int | None = None,
-            dst: PathArg | None = None,
-            redo: bool = False,
-            **state,
-    ) -> None:
-        """Make a t-test movie (requires PySurfer 0.6)
-
-        Parameters
-        ----------
-        subjects
-            Subject(s) for which to load data. Can be a single subject
-            name or a group name such as ``'all'``. ``1`` to use the current
-            subject; ``-1`` for the current group. Default is current subject
-            (or group if ``group`` is specified).
-        model
-            Model on which the conditions ``c1`` and ``c0`` are defined.
-            The default (``''``) is to plot the grand average.
-        c1
-            Test condition (cell in model). If None, the grand average is
-            used and c0 has to be a scalar.
-        c0
-            Control condition (cell on model) or scalar against which to
-            compare c1.
-        p
-            Maximum p value to draw.
-        baseline
-            Apply baseline correction using this period in sensor space.
-            True to use the epoch's baseline specification (default).
-        src_baseline
-            Apply baseline correction using this period in source space.
-            True to use the epoch's baseline specification. The default is to
-            not apply baseline correction.
-        disconnect_labels
-            Disconnect cluster adjacency across labels from the current
-            ``parc`` state.
-        surf
-            Surface on which to plot data.
-        views
-            View(s) of the brain to include in the movie.
-        hemi : 'lh' | 'rh' | 'both' | 'split'
-            Which hemispheres to plot.
-        time_dilation
-            Factor by which to slow the passage of time. For example, with
-            ``time_dilation=4`` (the default) a segment of data for 500 ms will
-            last 2 s.
-        foreground : mayavi color
-            Figure foreground color (i.e., the text color).
-        background : mayavi color
-            Figure background color.
-        smoothing_steps
-            Number of smoothing steps if data is spatially undersampled (pysurfer
-            ``Brain.add_data()`` argument).
-        dst
-            Path to save the movie. The default is a file in the results
-            folder with a name determined based on the input data. Plotting
-            parameters (``view`` and all subsequent parameters) are not
-            included in the filename. "~" is expanded to the user's home
-            folder.
-        redo
-            Make the movie even if the target file exists already.
-        ...
-            State parameters.
-        """
-        if p == 0.1:
-            pmid = 0.05
-            pmin = 0.01
-        elif p == 0.05:
-            pmid = 0.01
-            pmin = 0.001
-        elif p == 0.01:
-            pmid = 0.001
-            pmin = 0.001
-        elif p == 0.001:
-            pmid = 0.0001
-            pmin = 0.00001
-        else:
-            raise ValueError(f"{p=}")
-
-        data = DataSpec("source")
-        brain_kwargs = self._surfer_plot_kwargs(surf, views, foreground, background, smoothing_steps, hemi)
-        surf = brain_kwargs['surf']
-        if model:
-            if not c1:
-                raise ValueError(f"{c1=}: If x is specified, c1 needs to be specified")
-            elif c0:
-                cat = (c1, c0)
-            else:
-                cat = (c1,)
-        elif c1 or c0:
-            raise ValueError(f"{c1=}, {c0=}: If x is not specified, c1 and c0 should not be specified either")
-        else:
-            cat = None
-
-        subject, group = self._process_subject_arg(subjects, state)
-        if dst is not None:
-            dst = Path(dst).expanduser()
-
-        options = {
-            'dst': dst,
-            'data': data,
-            'model': self._eval_model(model),
-            'single_subject': group is None,
-            'subject': subject,
-            'group': group,
-            'baseline': baseline,
-            'src_baseline': src_baseline,
-            'disconnect_labels': disconnect_labels,
-            'cat': cat,
-            'p': p,
-            'pmin': pmin,
-            'pmid': pmid,
-            'surf': surf,
-            'time_dilation': time_dilation,
-            'cluster_state': state,
-        }
-        self._load_derivative('movie-ttest', options=options, redo=redo, controls={ALLOW_PROTECTED_OVERWRITE})
-
-    def make_plot_annot(self, surf='inflated', redo=False, **state):
-        """Create a figure for the contents of an annotation file
-
-        Parameters
-        ----------
-        surf : str
-            FreeSurfer surface on which to plot the annotation.
-        redo : bool
-            If the target file already exists, overwrite it.
-        ...
-            State parameters.
-        """
-        self.set(**state)
-        if is_fake_mri(self.root / mri_dir(self._fields)):
-            self.set(mrisubject=self.get('common_brain'))
-
-        stem = join_stem_parts(
-            f"parc-{self._fields['parc']}",
-            f"mrisubject-{self._fields['mrisubject']}",
-            f"surf-{surf}",
-        )
-        dst = self.root / RESULTS_DIR / 'source-annot' / f'{stem}.png'
-        if not redo and dst.exists():
-            return
-        dst.parent.mkdir(parents=True, exist_ok=True)
-
-        brain = self.plot_annot(surf=surf, axw=600)
-        brain.save_image(dst, 'rgba', True)
-        legend = brain.plot_legend(show=False)
-        legend.save(dst.with_suffix('.pdf'), facecolor="none")
-        brain.close()
-        legend.close()
-
-    def make_plot_label(self, label, surf='inflated', redo=False, **state):
-        self.set(**state)
-        if is_fake_mri(self.root / mri_dir(self._fields)):
-            self.set(mrisubject=self.get('common_brain'), match=False)
-
-        dst = self._make_plot_label_dst(surf, label)
-        if not redo and dst.exists():
-            return
-        dst.parent.mkdir(parents=True, exist_ok=True)
-
-        brain = self.plot_label(label, surf=surf)
-        brain.save_image(dst, 'rgba', True)
-
-    def make_plots_labels(self, surf='inflated', redo=False, **state):
-        self.set(**state)
-        with self._temporary_state:
-            if is_fake_mri(self.root / mri_dir(self._fields)):
-                self.set(mrisubject=self.get('common_brain'), match=False)
-
-            labels = tuple(self._load_labels().values())
-            dsts = [self._make_plot_label_dst(surf, label.name) for label in labels]
-        if not redo and all(exists(dst) for dst in dsts):
-            return
-
-        brain = self.plot_brain(hemi='split', surf=surf, views=['lat', 'med'], w=1200)
-        for label, dst in zip(labels, dsts):
-            brain.add_label(label)
-            brain.save_image(dst, 'rgba', True)
-            brain.remove_labels(hemi='lh')
-
-    def _make_plot_label_dst(self, surf, label):
-        state = self._fields
-        directory = self.root / RESULTS_DIR / 'source-labels' / join_stem_parts(
-            f"parc-{state['parc']}",
-            f"mrisubject-{state['mrisubject']}",
-            f"surf-{surf}",
-        )
-        return directory / f'{join_stem_parts(label)}.png'
-
     def make_epoch_rejection(
             self,
             samplingrate: int | None = None,
@@ -2900,169 +2530,6 @@ class Pipeline(StateModel):
         # bad_channels = self.load_bad_channels()
         # eog_sns = [c for c in eog_sns if c not in bad_channels]
         return gui.select_epochs(ds, 'epochs', trigger='value', path=path)
-
-    def make_report(
-            self,
-            test: str,
-            disconnect_labels: bool = False,
-            pmin: str = None,
-            tstart: float = None,
-            tstop: float = None,
-            samples: int = 10000,
-            baseline: BaselineArg = True,
-            src_baseline: BaselineArg = None,
-            include: float = 0.2,
-            redo: bool = False,
-            **state,
-    ):
-        """Create an HTML report on spatio-temporal clusters
-
-        Parameters
-        ----------
-        test
-            Test for which to create a report (entry in Pipeline.tests).
-        disconnect_labels
-            Disconnect source-space cluster adjacency across labels from the
-            current ``parc`` state instead of running one masked whole-brain
-            source test.
-        pmin
-            Equivalent p-value for cluster threshold, or 'tfce' for
-            threshold-free cluster enhancement.
-        tstart
-            Beginning of the time window for the test in seconds
-            (default is the beginning of the epoch).
-        tstop
-            End of the time window for the test in seconds
-            (default is the end of the epoch).
-        samples
-            Number of samples used to determine cluster p values for spatio-
-            temporal clusters (default 10,000).
-        baseline
-            Apply baseline correction using this period in sensor space.
-            True to use the epoch's baseline specification (default).
-        src_baseline
-            Apply baseline correction using this period in source space.
-            True to use the epoch's baseline specification. The default is to
-            not apply baseline correction.
-        include : 0 < scalar <= 1
-            Create plots for all clusters with p-values smaller or equal this value.
-        redo
-            If the target file already exists, delete and recreate it. This
-            only applies to the HTML result file, not to the test.
-        ...
-            State parameters.
-
-        See Also
-        --------
-        load_test : load corresponding data and tests
-        """
-        if samples < 1:
-            raise ValueError(f"{samples=}: needs to be > 0")
-        elif include <= 0 or include > 1:
-            raise ValueError(f"{include=}: needs to be 0 < include <= 1")
-
-        self.set(**state)
-        self._current_source_parc()
-        data = DataSpec('source')
-        options = {
-            'data': data,
-            'samples': samples,
-            'test': test,
-            'baseline': baseline,
-            'src_baseline': src_baseline,
-            'disconnect_labels': disconnect_labels,
-            'pmin': pmin,
-            'tstart': tstart,
-            'tstop': tstop,
-            'include': include,
-        }
-        self._load_derivative('source-report', options=options, redo=redo, controls={ALLOW_PROTECTED_OVERWRITE})
-
-    def make_report_rois(
-            self,
-            test: str,
-            pmin: PMinArg = None,
-            tstart: float = None,
-            tstop: float = None,
-            samples: int = 10000,
-            baseline: BaselineArg = True,
-            src_baseline: BaselineArg = False,
-            redo: bool = False,
-            **state,
-    ):
-        """Create an HTML report on ROI time courses
-
-        Parameters
-        ----------
-        test
-            Test for which to create a report (entry in Pipeline.tests).
-        pmin
-            Equivalent p-value for cluster threshold, or 'tfce' for
-            threshold-free cluster enhancement.
-        tstart
-            Beginning of the time window for the test in seconds
-            (default is the beginning of the epoch).
-        tstop
-            End of the time window for the test in seconds
-            (default is the end of the epoch).
-        samples
-            Number of samples used to determine cluster p values for spatio-
-            temporal clusters.
-        baseline
-            Apply baseline correction using this period in sensor space.
-            True to use the epoch's baseline specification (default).
-        src_baseline
-            Apply baseline correction using this period in source space.
-            True to use the epoch's baseline specification. The default is to
-            not apply baseline correction.
-        redo
-            If the target file already exists, delete and recreate it.
-        ...
-            State parameters.
-
-        See Also
-        --------
-        load_test : load corresponding data and tests (use ``data="source.mean"``)
-        """
-        test_obj = self.tests[test]
-        self.set(**state)
-        if samples < 1:
-            raise ValueError("Need samples > 0 to run permutation test.")
-        elif isinstance(test_obj, TwoStageTest):
-            raise NotImplementedError("ROI analysis not implemented for two-stage tests")
-
-        self._current_source_parc()
-        data = DataSpec('source.mean')
-        options = {
-            'data': data,
-            'samples': samples,
-            'test': test,
-            'baseline': baseline,
-            'src_baseline': src_baseline,
-            'pmin': pmin,
-            'tstart': tstart,
-            'tstop': tstop,
-        }
-        self._load_derivative('roi-report', options=options, redo=redo, controls={ALLOW_PROTECTED_OVERWRITE})
-
-    def make_report_coreg(self, file_name=None, **state):
-        """Create HTML report with plots of the MEG/MRI coregistration
-
-        Parameters
-        ----------
-        file_name : str
-            Where to save the report (default is in the root/methods director).
-        ...
-            State parameters.
-        """
-        self.set(**state)
-        if file_name is not None:
-            file_name = os.path.expanduser(file_name)
-        self._load_derivative(
-            'coreg-report',
-            options={'dst': file_name},
-            controls={ALLOW_PROTECTED_OVERWRITE},
-        )
 
     def next(self, field: str | Sequence[str] = 'subject'):
         """Change field to the next value

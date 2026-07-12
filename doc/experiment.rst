@@ -459,22 +459,6 @@ Many statistical comparisons can also be specified in the
 will be cached automatically and, once computed, can be loaded very quickly.
 However, these definitions are not quite as flexible as writing a custom script.
 
-Finally, for tests defined in :attr:`Pipeline.tests`, the
-:class:`Pipeline` can generate HTML report files. These are generated with
-the :meth:`Pipeline.make_report` and :meth:`Pipeline.make_report_rois`
-methods.
-
-.. Warning::
-    If source files are changed (raw files, epoch rejection or bad channel
-    files, ...) reports are not updated automatically unless the corresponding
-    :meth:`Pipeline.make_report` function is called again. For this reason
-    it is useful to have a script to generate all desired reports. Running the
-    script ensures that all reports are up-to-date, and will only take seconds
-    if nothing has to be recomputed (for an example see ``make-reports.py`` in
-    the `example experiment folder
-    <https://github.com/Eelbrain/Eelbrain/tree/master/examples/mouse>`_).
-
-
 .. _Pipeline-example:
 
 Example
@@ -522,10 +506,10 @@ has finished executing or run into an error, for example::
 
     >>> e = MyExperiment()
     >>> with e.notification:
-    ...     e.make_report('mytest', tstart=0.1, tstop=0.3)
+    ...     result = e.load_test('mytest', samples=10000)
     ...
 
-will send you an email as soon as the report is finished (or the program
+will send you an email as soon as the test is finished (or the program
 encountered an error)
 
 :class:`Pipeline` caches intermediate results and validates them when they are
@@ -533,8 +517,8 @@ loaded. Most stale intermediate cache entries are recomputed on demand. Files
 stored outside ``cache-dir`` are treated as user-managed outputs and are not
 overwritten automatically when they become stale; the corresponding error or GUI
 dialog explains whether to recompute, delete, or explicitly accept the existing
-file. Cached tests and reports are likewise not overwritten silently; use the
-corresponding ``make`` or ``redo`` option to regenerate them.
+file. Cached tests are likewise not overwritten silently; use the corresponding
+``make`` or ``redo`` option to regenerate them.
 
 .. py:attribute:: Pipeline.screen_log_level
    :type: str
@@ -976,8 +960,7 @@ Visualization defaults
 .. py:attribute:: Pipeline.brain_plot_defaults
 
 The :attr:`Pipeline.brain_plot_defaults` dictionary can contain options
-that changes defaults for brain plots (for reports and movies). The following
-options are available:
+that change defaults for brain plots. The following options are available:
 
 surf : 'inflated' | 'pial' | 'smoothwm' | 'sphere' | 'white'
     Freesurfer surface to use as brain geometry.
