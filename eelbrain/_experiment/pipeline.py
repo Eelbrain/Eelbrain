@@ -349,9 +349,6 @@ class Pipeline(StateModel):
         # groups
         self._groups = ConfigurationDict('group', assemble_groups(self.groups, set(self._subjects)))
 
-        # mri_subjects
-        self._mri_subjects = self.mri_subjects.copy()
-
         # preprocessing
         self._raw = assemble_raw_pipes({'raw': RawSource(), **self.raw}, self._tasks)
 
@@ -390,6 +387,16 @@ class Pipeline(StateModel):
                     raise ConfigurationError(f"references[{name!r}]={reference!r}: the standard average reference can not drop channels")
             references[name] = reference
         self._references = ConfigurationDict('reference', references)
+
+        # mri_subjects
+        self._mri_subjects = self.mri_subjects.copy()
+
+        # Sensor noise covariance estimates
+        self._covs = ConfigurationDict('covariance', self._covs)
+        for name, cov in self._covs.items():
+            if not isinstance(cov, (RawCovariance, EpochCovariance)):
+                raise TypeError(f"_covs[{name!r}]={cov!r}: need RawCovariance or EpochCovariance")
+            cov._store_name(name)
 
         # parcellations
         # make : can be made if non-existent
@@ -558,9 +565,6 @@ class Pipeline(StateModel):
         self._derivatives.register(EvokedGroupDatasetDerivative(self._raw, self._groups))
 
         # --- Source-space infrastructure ---
-        self._covs = ConfigurationDict('covariance', self._covs)
-        for cov_name, cov in self._covs.items():
-            cov._store_name(cov_name)
         self._derivatives.register(CovDerivative(self._covs, self._raw, self._references, self._recordings))
         self._derivatives.register(SrcDerivative())
         self._derivatives.register(SourceMorphDerivative())
