@@ -10,7 +10,7 @@ clean-py:
 doc:
 	sphinx-build -b html doc doc-build
 
-test: style-check
+test:
 	pytest eelbrain
 
 testw:
