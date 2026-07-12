@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import mne
 import numpy as np
@@ -30,8 +31,8 @@ def test_acquisition_derivative_paths():
         'epoch': 'test',
         'epoch_rejection': 'manual',
     }
-    assert str(ica_file_path(state, 'ica', datatype='meg')) == 'derivatives/mne/sub-01/meg/sub-01_acq-highres_run-1_desc-ica_ica.fif'
-    assert str(rej_file_path(state, datatype='meg')) == 'derivatives/mne/sub-01/meg/sub-01_acq-highres_run-1_raw-ica_epoch-test_rej-manual_epoch.pickle'
+    assert ica_file_path(state, 'ica', datatype='meg') == Path('derivatives/mne/sub-01/meg/sub-01_acq-highres_run-1_desc-ica_ica.fif')
+    assert rej_file_path(state, datatype='meg') == Path('derivatives/mne/sub-01/meg/sub-01_acq-highres_run-1_raw-ica_epoch-test_rej-manual_epoch.pickle')
     assert result_basename(state, datatype='meg') == 'acq-highres_run-1_meg'
 
 
