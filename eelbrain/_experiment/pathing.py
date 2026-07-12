@@ -8,11 +8,12 @@ from typing import Any
 from mne_bids import BIDSPath
 
 
-BIDS_ENTITY_KEYS = ('subject', 'session', 'task', 'run')
+BIDS_ENTITY_KEYS = ('subject', 'session', 'task', 'acquisition', 'run')
 BIDS_ENTITY_PREFIX_MAP = {
     'subject': 'sub',
     'session': 'ses',
     'task': 'task',
+    'acquisition': 'acq',
     'run': 'run',
 }
 DERIV_DIR = Path('derivatives')
@@ -65,15 +66,15 @@ def bids_path(root: Path, state: dict[str, Any], extension: str, *, datatype: st
 
 
 def raw_basename(state: dict[str, Any], *, datatype: str) -> str:
-    return _bids_name(state, ('subject', 'session', 'task', 'run'), datatype=datatype)
+    return _bids_name(state, ('subject', 'session', 'task', 'acquisition', 'run'), datatype=datatype)
 
 
 def epoch_basename(state: dict[str, Any], *, datatype: str) -> str:
-    return _bids_name(state, ('subject', 'session', 'run'), datatype=datatype)
+    return _bids_name(state, ('subject', 'session', 'acquisition', 'run'), datatype=datatype)
 
 
 def test_basename(state: dict[str, Any], *, datatype: str) -> str:
-    return _bids_name(state, ('session', 'run'), datatype=datatype)
+    return _bids_name(state, ('session', 'acquisition', 'run'), datatype=datatype)
 
 
 def raw_dir(state: dict[str, Any], *, datatype: str) -> Path:
@@ -85,9 +86,9 @@ def raw_dir(state: dict[str, Any], *, datatype: str) -> Path:
 
 def ica_file_path(state: dict[str, Any], raw: str, concatenate_runs: bool = False, *, datatype: str) -> Path:
     if concatenate_runs:
-        entity_keys = ('subject', 'session')
+        entity_keys = ('subject', 'session', 'acquisition')
     else:
-        entity_keys = ('subject', 'session', 'run')
+        entity_keys = ('subject', 'session', 'acquisition', 'run')
     basename = _bids_name(state, entity_keys, suffix='', datatype=datatype)
     return DERIV_DIR / 'mne' / raw_dir(state, datatype=datatype) / f"{basename}_desc-{raw}_ica.fif"
 
@@ -100,7 +101,7 @@ def trans_file_path(state: dict[str, Any], *, datatype: str) -> Path:
 def rej_file_path(state: dict[str, Any], epoch: str | None = None, epoch_rejection: str | None = None, *, datatype: str) -> Path:
     epoch_name = state['epoch'] if epoch is None else epoch
     rej_name = state['epoch_rejection'] if epoch_rejection is None else epoch_rejection
-    basename = _bids_name(state, ('subject', 'session', 'run'), suffix='', datatype=datatype)
+    basename = _bids_name(state, ('subject', 'session', 'acquisition', 'run'), suffix='', datatype=datatype)
     return DERIV_DIR / 'mne' / raw_dir(state, datatype=datatype) / f"{basename}_raw-{state['raw']}_epoch-{epoch_name}_rej-{rej_name}_epoch.pickle"
 
 

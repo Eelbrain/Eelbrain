@@ -449,7 +449,7 @@ class RawICA(CachedRawPipe):
 
     When the ICA step occurs after a :class:`RawMaxwell` step, ``task`` can be
     omitted even with multiple tasks: all tasks and runs available for each
-    subject/session are concatenated for the fit. This is safe because Maxwell
+    subject/session/acquisition are concatenated for the fit. This is safe because Maxwell
     filtering maps every recording to a common head position. Run concatenation
     applies to any ICA step after a :class:`RawMaxwell` step (also with an
     explicit ``task``); without a preceding :class:`RawMaxwell` step a single
@@ -483,7 +483,7 @@ class RawICA(CachedRawPipe):
     DICT_ATTRS = CachedRawPipe.DICT_ATTRS + ('task', 'kwargs', 'fit_kwargs')
 
     run: str | Sequence[str] = None
-    # Whether to concatenate all runs per subject/session for the ICA fit.
+    # Whether to concatenate all runs per subject/session/acquisition for the ICA fit.
     # Resolved during pipeline assembly (True when the step is after RawMaxwell).
     _concatenate_runs: bool = False
 

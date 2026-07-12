@@ -70,7 +70,7 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
         # Match TwoStageLevel1Derivative
         data = ctx.options['data']
-        fields = ['subject', 'session', 'epoch', 'epoch_rejection', 'raw']
+        fields = ['subject', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'raw']
         if data.source:
             fields += ['equalize_evoked_count', 'inv', 'cov', 'src', 'parc', 'mrisubject', 'adjacency']
             if not data.aggregate:
@@ -151,7 +151,7 @@ class TwoStageLevel1Derivative(Derivative[Any]):
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
         # ``data`` is ``None`` until resolved, in which case the source superset is used (the artifact is never built for an unresolved request)
         data = ctx.options['data']
-        fields = ['subject', 'session', 'epoch', 'raw', 'epoch_rejection']
+        fields = ['subject', 'session', 'acquisition', 'epoch', 'raw', 'epoch_rejection']
         if data is None or data.source:
             fields += ['equalize_evoked_count', 'cov', 'inv', 'src', 'mri', 'mrisubject', 'parc', 'common_brain', 'adjacency']
         return tuple(fields)

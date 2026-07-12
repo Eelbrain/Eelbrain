@@ -149,7 +149,7 @@ class RecordingEpochsDerivative(Derivative[Any]):
         Whether to apply per-epoch rejection state.
     """
     name = 'recording-epochs'
-    key_fields = ('subject', 'session', 'run', 'raw', 'epoch', 'epoch_rejection', 'reference')
+    key_fields = ('subject', 'session', 'acquisition', 'run', 'raw', 'epoch', 'epoch_rejection', 'reference')
     cache_suffix = '.epochs'
     key_options = {
         'samplingrate': None,
@@ -303,7 +303,7 @@ class EpochsDerivative(UncachedDerivative[Dataset]):
         (remaining options forwarded to :class:`RecordingEpochsDerivative`)
     """
     name = 'epochs'
-    key_fields = ('subject', 'session', 'raw', 'epoch', 'epoch_rejection', 'reference')
+    key_fields = ('subject', 'session', 'acquisition', 'raw', 'epoch', 'epoch_rejection', 'reference')
     key_options = {
         'samplingrate': None,
         'decim': None,
@@ -319,7 +319,7 @@ class EpochsDerivative(UncachedDerivative[Dataset]):
         'reset_bads': OptionSpec(True, bool),
     }
 
-    def __init__(self, raw, epochs: dict[str, Any], runs_for: dict[tuple[str, str, str], tuple[str, ...]]):
+    def __init__(self, raw, epochs: dict[str, Any], runs_for: dict[tuple[str, str, str, str], tuple[str, ...]]):
         self.raw = raw
         self.epochs = epochs
         self._runs_for = runs_for
@@ -328,7 +328,7 @@ class EpochsDerivative(UncachedDerivative[Dataset]):
         """Runs to aggregate over"""
         if isinstance(epoch, PrimaryEpoch):
             if epoch.run is None:
-                key = (ctx.state['subject'], ctx.state['session'], epoch.task)
+                key = (ctx.state['subject'], ctx.state['session'], epoch.task, ctx.state['acquisition'])
                 if key in self._runs_for:
                     return self._runs_for[key]
             return ()
@@ -506,7 +506,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
     """
     name = 'evoked'
     key_fields = (
-        'subject', 'session', 'raw',
+        'subject', 'session', 'acquisition', 'raw',
         'epoch', 'epoch_rejection', 'reference', 'equalize_evoked_count',
     )
     cache_suffix = '-ave.fif'
@@ -685,7 +685,7 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
         Sensor representation to return.
     """
     name = 'evoked-group-dataset'
-    key_fields = ('group', 'raw', 'session', 'epoch', 'epoch_rejection', 'reference', 'equalize_evoked_count')
+    key_fields = ('group', 'raw', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'reference', 'equalize_evoked_count')
     key_options = {
         'model': '',
         'ndvar': True,

@@ -64,7 +64,7 @@ TEST_DATA_OPTION_NAMES = (
 )
 
 _RESULT_COMMON_KEY_FIELDS = (
-    'session', 'run', 'epoch', 'raw', 'epoch_rejection',
+    'session', 'acquisition', 'run', 'epoch', 'raw', 'epoch_rejection',
     'equalize_evoked_count',
 )
 RESULT_SENSOR_GROUP_KEY_FIELDS = (
@@ -345,7 +345,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
         # Source-space fields identify the artifact only for source/ROI analyses
         # (see dependencies); a sensor test uses only evoked-group-dataset.
-        fields = ('group', 'epoch', 'raw', 'session', 'epoch_rejection', 'equalize_evoked_count')
+        fields = ('group', 'epoch', 'raw', 'session', 'acquisition', 'epoch_rejection', 'equalize_evoked_count')
         data = ctx.options['data']
         if data is None or data.source:
             fields += ('mri', 'cov', 'inv', 'src', 'parc', 'mrisubject', 'common_brain', 'adjacency')

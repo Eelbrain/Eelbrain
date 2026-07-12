@@ -93,7 +93,7 @@ def _find_datatype(root: Path, entities: dict[str, str]) -> str | None:
         sub_dir /= f"ses-{entities['ses']}"
     if not sub_dir.is_dir():
         return None
-    prefix = _new_basename(entities, 'sub', 'ses', 'task', 'run') + '_'
+    prefix = _new_basename(entities, 'sub', 'ses', 'task', 'acq', 'run') + '_'
     for datatype_dir in sorted(p for p in sub_dir.iterdir() if p.is_dir()):
         if any(f.name.startswith(prefix) for f in datatype_dir.iterdir()):
             return datatype_dir.name
@@ -103,7 +103,7 @@ def _find_datatype(root: Path, entities: dict[str, str]) -> str | None:
 def _new_ica_path(root: Path, old_path: Path) -> Path:
     entities, datatype, trailing = _parse_legacy_stem(old_path.stem)
     raw = trailing[0].partition('-')[2]  # 'raw-<raw>' -> '<raw>'
-    basename = _new_basename(entities, 'sub', 'ses', 'run')
+    basename = _new_basename(entities, 'sub', 'ses', 'acq', 'run')
     return _new_dir(root, entities, datatype) / f"{basename}_desc-{raw}_ica.fif"
 
 
@@ -123,7 +123,7 @@ def _new_bad_channels_path(root: Path, old_path: Path) -> Path | None:
 
 def _new_rej_path(root: Path, old_path: Path) -> Path:
     entities, datatype, trailing = _parse_legacy_stem(old_path.stem)
-    basename = _new_basename(entities, 'sub', 'ses', 'run')
+    basename = _new_basename(entities, 'sub', 'ses', 'acq', 'run')
     stem = '_'.join([basename, *trailing])
     return _new_dir(root, entities, datatype) / f"{stem}{old_path.suffix}"
 

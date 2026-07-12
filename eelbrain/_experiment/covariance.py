@@ -72,7 +72,7 @@ class CovDerivative(Derivative[mne.Covariance]):
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
         # ``epoch_rejection`` only affects an epoch-based covariance (which loads
         # rejected epochs); a noise (raw) covariance does not depend on it.
-        fields = ['subject', 'session', 'raw', 'cov']
+        fields = ['subject', 'session', 'acquisition', 'raw', 'cov']
         if isinstance(self._covs[ctx.state['cov']], EpochCovariance):
             fields.append('epoch_rejection')
         return tuple(fields)
@@ -81,7 +81,7 @@ class CovDerivative(Derivative[mne.Covariance]):
     # Declared on both the Dependency edge and the build() load call so that
     # cache validation and the actual load request stay in sync.
 
-    def __init__(self, covs: dict[str, RawCovariance | EpochCovariance], raw, references: dict[str, Reference | None], recordings: frozenset[tuple[str, str, str, str]]):
+    def __init__(self, covs: dict[str, RawCovariance | EpochCovariance], raw, references: dict[str, Reference | None], recordings: frozenset[tuple[str, str, str, str, str]]):
         self._covs = covs
         self.raw = raw
         self._references = references
@@ -94,7 +94,7 @@ class CovDerivative(Derivative[mne.Covariance]):
         elif isinstance(cov, RawCovariance):
             # Only the noise recording's sensor data is used; pin a canonical
             # recording so identity does not depend on the ambient task/run.
-            recording = canonical_recording(self._recordings, ctx.state['subject'], ctx.state.get('session'))
+            recording = canonical_recording(self._recordings, ctx.state['subject'], ctx.state.get('session'), ctx.state.get('acquisition'))
             raw_state = {'task': recording[0], 'run': recording[1]} if recording else None
             return (Dependency(raw_node_name(ctx.state['raw']), options={'noise': True}, label='raw', state=raw_state),)
         raise NotImplementedError(f"{cov=}")

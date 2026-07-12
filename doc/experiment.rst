@@ -112,14 +112,14 @@ The pipeline expects input dataset in `BIDS (Brain Imaging Data Structure) <http
     subject folder                       /sub-{subject}
     session folder                          /ses-{session}
     datatype folder                            /{datatype}
-    raw data file                                 /sub-{subject}_ses-{session}_task-{task}_run-{run}_{datatype}.fif
+    raw data file                                 /sub-{subject}_ses-{session}_task-{task}_acq-{acquisition}_run-{run}_{datatype}.fif
     derivatives root                     /derivatives
     MNE derivatives                         /mne
     subject folder                             /sub-{subject}
     session folder                                /ses-{session}
     datatype folder                                  /{datatype}
     trans file                                          /sub-{subject}_ses-{session}_trans.fif
-    ICA decomposition                                   /sub-{subject}_ses-{session}_run-{run}_desc-{raw}_ica.fif
+    ICA decomposition                                   /sub-{subject}_ses-{session}_acq-{acquisition}_run-{run}_desc-{raw}_ica.fif
     FreeSurfer SUBJECTS_DIR                 /freesurfer
     mri for each subject                       /sub-{subject}
     mri for template brain                     /fsaverage
@@ -130,7 +130,7 @@ The pipeline expects input dataset in `BIDS (Brain Imaging Data Structure) <http
     In BIDS specification, ``{root}/derivatives`` is for files that do not fit into the BIDS structure, such as FreeSurfer MRIs and Eelbrain-generated files.
 
 
-``{subject}``, ``{session}``, ``{task}`` and ``{run}`` are `BIDS entities <https://bids-specification.readthedocs.io/en/stable/appendices/entities.html>`_. ``{session}`` and ``{run}`` are optional. ``{datatype}`` is inferred by the pipeline from the data files, and can be ``'meg'`` or ``'eeg'``. Apart from the common entities shown above, there can be other ones depending on your dataset, such as `acquisition <https://bids-specification.readthedocs.io/en/stable/appendices/entities.html#acq>`_ or `split <https://bids-specification.readthedocs.io/en/stable/appendices/entities.html#split>`_.
+``{subject}``, ``{session}``, ``{task}``, ``{acquisition}``, and ``{run}`` are `BIDS entities <https://bids-specification.readthedocs.io/en/stable/appendices/entities.html>`_. ``{session}``, ``{acquisition}``, and ``{run}`` are optional. ``{datatype}`` is inferred by the pipeline from the data files, and can be ``'meg'`` or ``'eeg'``. There can be other entities depending on the dataset, such as `split <https://bids-specification.readthedocs.io/en/stable/appendices/entities.html#split>`_.
 
 
 ``MRI`` files (including ``trans-file``) are optional and only needed for source localization. The ``{root}/derivatives/freesurfer`` directory is `FreeSurfer <https://surfer.nmr.mgh.harvard.edu>`_ subject directory. They either contain the files created by FreeSurfer's `recon-all <https://surfer.nmr.mgh.harvard.edu/fswiki/recon-all>`_ command, or are created by the MNE-Python coregistration utility for scaled template brains. An ``fsaverage`` folder can be used to store the template brain. Note that the pipeline doesn't use the NIfTI format that BIDS specifies. A corresponding ``trans-file`` is created with the MNE-Python coregistration utility in either case (see more information on using `structural MRIs <https://github.com/Eelbrain/Eelbrain/wiki/Coregistration%3A-Structural-MRI>`_ or the `fsaverage template brain <https://github.com/Eelbrain/Eelbrain/wiki/Coregistration%3A-Template-Brain>`_).
@@ -312,7 +312,7 @@ tested with::
     >>> print(data.sub("event == 'value'"))
 
 For datasets with a ``run`` entity, :class:`PrimaryEpoch` combines all runs for
-the selected subject/session/task by default. To analyze a single run, set the
+the selected subject/session/task/acquisition by default. To analyze a single run, set the
 epoch's ``run`` parameter, for example ``PrimaryEpoch('task', run='1')``.
 
 
@@ -1011,6 +1011,17 @@ Which session to work with.
 Which task to work with (usually set automatically when :ref:`state-epoch` is set).
 
 
+.. _state-acquisition:
+
+``acquisition``
+---------------
+
+Which BIDS acquisition parameter set to analyze. Acquisitions are independent
+analysis branches and are never combined by the pipeline. Run aggregation is
+restricted to runs belonging to the selected acquisition. For datasets without
+an ``acq-`` entity, this state is the empty string.
+
+
 .. _state-run:
 
 ``run``
@@ -1018,7 +1029,7 @@ Which task to work with (usually set automatically when :ref:`state-epoch` is se
 
 Which run to work with. For :class:`PrimaryEpoch` definitions without an
 explicit ``run`` parameter, events and epochs are combined across all available
-runs for the current subject/session/task.
+runs for the current subject/session/task/acquisition.
 
 
 .. _state-raw:

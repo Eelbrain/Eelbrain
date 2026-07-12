@@ -379,7 +379,7 @@ def test_sample(samples_experiment):
     ica_manifest = e._derivatives.manifest_path(ica_path, ica_input_name('ica'))
     assert exists(ica_manifest)
     ica_manifest_data = json.loads(Path(ica_manifest).read_text())
-    assert ica_manifest_data['resolve_state'] == {'subject': 'R0000', 'session': ''}
+    assert ica_manifest_data['resolve_state'] == {'subject': 'R0000', 'session': '', 'acquisition': ''}
     assert ica_manifest_data['resolve_options'] == {}
     assert not [entry for entry in e._derivatives.scan_cache().entries if entry.manifest_path == Path(ica_manifest)]
 
@@ -680,7 +680,7 @@ def test_sample_tasks(monkeypatch, samples_experiment):
 
 @requires_mne_sample_data
 def test_ica_all_tasks_after_maxwell(samples_experiment):
-    "task=None ICA after RawMaxwell uses all tasks and runs per subject/session"
+    "task=None ICA after RawMaxwell uses all tasks and runs per subject/session/acquisition"
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
 
@@ -704,7 +704,7 @@ def test_ica_all_tasks_after_maxwell(samples_experiment):
     assert e._raw['ica']._concatenate_runs is True
 
     e.set('R0000', raw='ica')
-    # the ICA spans all tasks/runs, so the file is per subject/session (no task/run entity)
+    # the ICA spans all tasks/runs, so the file is per subject/session/acquisition (no task/run entity)
     assert str(ica_file_path(e.state, 'ica', concatenate_runs=True, datatype='meg')) == join('derivatives', 'mne', 'sub-R0000', 'meg', 'sub-R0000_desc-ica_ica.fif')
     with catch_warnings():
         filterwarnings('ignore', "FastICA did not converge", UserWarning)

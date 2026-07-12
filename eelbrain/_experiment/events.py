@@ -107,7 +107,7 @@ class EventsInput(Input[Dataset]):
 
     """
     name = 'events-input'
-    key_fields = ('subject', 'session', 'task', 'run')
+    key_fields = ('subject', 'session', 'task', 'acquisition', 'run')
 
     def __init__(
             self,
@@ -149,7 +149,7 @@ def _check_ds(ds: Dataset, source: str, info: dict[str, Any]) -> Dataset:
 class EventsDerivative(Derivative[Dataset]):
     """Extract events form M/EEG data files"""
     name = 'events'
-    key_fields = ('subject', 'session', 'task', 'run', 'raw')
+    key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'raw')
     cache_suffix = '.pickle'
 
     def __init__(
@@ -244,7 +244,7 @@ class LabeledEventsDerivative(Derivative[Dataset]):
     cannot be detected without executing the hook.
     """
     name = 'labeled-events'
-    key_fields = ('subject', 'session', 'task', 'run', 'raw')
+    key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'raw')
     cache_suffix = '.pickle'
 
     def __init__(
@@ -327,7 +327,7 @@ class SelectedEventsDerivative(UncachedDerivative[Dataset]):
     handled by :class:`EpochEventsDerivative`.
     """
     name = 'selected-events'
-    key_fields = ('subject', 'session', 'run', 'raw', 'epoch', 'epoch_rejection')
+    key_fields = ('subject', 'session', 'acquisition', 'run', 'raw', 'epoch', 'epoch_rejection')
     key_options = {
         'reject': True,
         'samplingrate': None,
@@ -452,7 +452,7 @@ class EpochEventsDerivative(UncachedDerivative[Dataset]):
         Whether to apply artifact rejection (``True``, ``False``, or ``'keep'``).
     """
     name = 'epoch-events'
-    key_fields = ('subject', 'session', 'epoch', 'raw', 'epoch_rejection')
+    key_fields = ('subject', 'session', 'acquisition', 'epoch', 'raw', 'epoch_rejection')
     key_options = {
         'reject': True,
         'samplingrate': None,
@@ -466,7 +466,7 @@ class EpochEventsDerivative(UncachedDerivative[Dataset]):
     def __init__(
             self,
             epochs: dict[str, Any],
-            runs_for: dict[tuple[str, str, str], tuple[str, ...]],
+            runs_for: dict[tuple[str, str, str, str], tuple[str, ...]],
     ):
         self.epochs = epochs
         self._runs_for = runs_for
@@ -475,7 +475,7 @@ class EpochEventsDerivative(UncachedDerivative[Dataset]):
         """Runs to aggregate over"""
         if isinstance(epoch, PrimaryEpoch):
             if epoch.run is None:
-                key = (ctx.state['subject'], ctx.state['session'], epoch.task)
+                key = (ctx.state['subject'], ctx.state['session'], epoch.task, ctx.state['acquisition'])
                 if key in self._runs_for:
                     return self._runs_for[key]
             return ()

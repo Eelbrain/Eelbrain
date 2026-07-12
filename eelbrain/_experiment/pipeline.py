@@ -297,24 +297,32 @@ class Pipeline(StateModel):
         self._raw_extension = extensions[0]
         self._datatype = datatype
 
-        # Recordings index: existing (subject, session, task, run) combinations of source
+        acquisitions = tuple(get_entity_vals(root, 'acquisition', **ignore_entities))
+        matching_paths = tuple(
+            path
+            for path in find_matching_paths(root, subjects=self._subjects, sessions=self._sessions, tasks=self._tasks, datatypes=datatype, suffixes=datatype, extensions=extensions, ignore_nosub=True)
+            if not path.acquisition or path.acquisition in acquisitions
+        )
+        self._acquisitions = tuple(sorted({path.acquisition or '' for path in matching_paths}))
+
+        # Recordings index: existing (subject, session, task, acquisition, run) combinations of source
         # recordings, from a single find_matching_paths scan. Scoped to the raw datatype /
         # suffix / extension and to ``sub-*`` directories (ignore_nosub) so it never
         # descends into ``derivatives`` / ``sourcedata`` (where non-BIDS names would fail
         # to parse). Absent entities are recorded as ''. Snapshot at init time; used for
         # recording-existence checks in preprocessing nodes and for the
-        # per-(subject, session, task) run lists below.
-        self._recordings: frozenset[tuple[str, str, str, str]] = frozenset(
-            (path.subject or '', path.session or '', path.task or '', path.run or '')
-            for path in find_matching_paths(root, subjects=self._subjects, sessions=self._sessions, tasks=self._tasks, datatypes=datatype, suffixes=datatype, extensions=extensions, ignore_nosub=True)
+        # per-(subject, session, task, acquisition) run lists below.
+        self._recordings: frozenset[tuple[str, str, str, str, str]] = frozenset(
+            (path.subject or '', path.session or '', path.task or '', path.acquisition or '', path.run or '')
+            for path in matching_paths
         )
-        # Per-(subject, session, task) run lists; used for combine-all epoch aggregation.
+        # Per-(subject, session, task, acquisition) run lists; used for combine-all epoch aggregation.
         # Runs can vary by subject.
-        runs_seen: dict[tuple[str, str, str], set[str]] = defaultdict(set)
+        runs_seen: dict[tuple[str, str, str, str], set[str]] = defaultdict(set)
         if self._runs:
-            for subject, session, task, run in self._recordings:
-                runs_seen[(subject, session, task)].add(run)
-        self._runs_for: dict[tuple[str, str, str], list[str]] = {key: sorted(runs) for key, runs in runs_seen.items()}
+            for subject, session, task, acquisition, run in self._recordings:
+                runs_seen[(subject, session, task, acquisition)].add(run)
+        self._runs_for: dict[tuple[str, str, str, str], list[str]] = {key: sorted(runs) for key, runs in runs_seen.items()}
 
         StateModel.__init__(self)
 
@@ -446,7 +454,8 @@ class Pipeline(StateModel):
         self._register_field('subject', self._subjects, repr=True)
         self._register_field('session', self._sessions or None, repr=True)
         self._register_field('task', self._tasks, depends_on=('epoch',), slave_handler=self._update_task, repr=True)
-        self._register_field('run', self._runs, repr=True, depends_on=('epoch', 'subject', 'session', 'task'), slave_handler=self._update_run)
+        self._register_field('acquisition', self._acquisitions, repr=True, allow_empty=True, depends_on=('epoch', 'subject', 'session', 'task'), slave_handler=self._update_acquisition)
+        self._register_field('run', self._runs, repr=True, depends_on=('epoch', 'subject', 'session', 'task', 'acquisition'), slave_handler=self._update_run)
         self._register_field('equalize_evoked_count', ('', 'eq'), allow_empty=True)
         self._register_field('common_brain', ('fsaverage',))
 
@@ -3148,16 +3157,19 @@ class Pipeline(StateModel):
     def _update_run(self, fields: dict) -> str | None:
         if not self._runs:
             return None
+        acquisition = self._update_acquisition(fields)
+        if acquisition is None:
+            acquisition = fields.get('acquisition', '')
         epoch_name = fields['epoch']
         if epoch_name not in self._epochs:
             # No epoch set: constrain run to what's valid for the current task
             task = fields.get('task', '')
-            runs = self._runs_for.get((fields['subject'], fields.get('session', ''), task), ())
+            runs = self._runs_for.get((fields['subject'], fields.get('session', ''), task, acquisition), ())
         else:
             epoch = self._epochs[epoch_name]
             if not isinstance(epoch, PrimaryEpoch):
                 return None
-            runs = self._runs_for.get((fields['subject'], fields.get('session', ''), epoch.task), ())
+            runs = self._runs_for.get((fields['subject'], fields.get('session', ''), epoch.task, acquisition), ())
             if epoch.run is not None:
                 # Subject may lack run tags entirely (single untagged recording);
                 # epoch.run='01' should then resolve to '' rather than a missing file.
@@ -3168,6 +3180,17 @@ class Pipeline(StateModel):
         if runs and fields.get('run') not in runs:
             return runs[0]  # current run invalid for this subject/session/task; reset
         return None  # don't force run
+
+    def _update_acquisition(self, fields: dict) -> str | None:
+        subject = fields.get('subject', '')
+        session = fields.get('session', '')
+        task = fields.get('task', '')
+        acquisitions = sorted({acquisition for subject_, session_, task_, acquisition, _ in self._recordings if (subject_, session_, task_) == (subject, session, task)})
+        if len(acquisitions) == 1:
+            return acquisitions[0]
+        if acquisitions and fields.get('acquisition') not in acquisitions:
+            return acquisitions[0]
+        return None
 
     def _eval_parc(self, parc: str) -> str:
         if not parc:
@@ -3352,7 +3375,7 @@ class Pipeline(StateModel):
         MISSING_MARK = '—'
         CHL_MARK = '†'
 
-        # Collect dev_head_t for every (subject, session, task, run).
+        # Collect dev_head_t for every (subject, session, task, run) in the selected acquisition.
         # session is '' when the dataset has no BIDS sessions, run is '' when no runs exist.
         source_name = self._raw.root_source_name('raw')
         node_name = raw_input_name(source_name)

@@ -209,7 +209,7 @@ class TRFDerivative(Derivative[object]):
         # source vs sensor space changes which fields identify the artifact.
         # This is also the read-enforcement set, so it must cover every state
         # field the build may read: 'inv' is always read (to pick the space).
-        fields = ('subject', 'session', 'raw', 'epoch', 'epoch_rejection', 'inv')
+        fields = ('subject', 'session', 'acquisition', 'raw', 'epoch', 'epoch_rejection', 'inv')
         if ctx.state['inv']:  # non-empty inverse → source space
             fields += ('cov', 'mrisubject', 'src', 'parc')
         elif self._estimator(ctx).extra_inputs:  # NCRF: sensor data + forward solution
@@ -386,7 +386,7 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
         self.epochs = epochs
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
-        fields = ['subject', 'session', 'epoch', 'epoch_rejection', 'reference', 'raw', 'inv']
+        fields = ['subject', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'reference', 'raw', 'inv']
         if ctx.state['inv']:
             fields += ['cov', 'src', 'parc', 'adjacency', 'mrisubject', 'common_brain']
         return tuple(fields)
@@ -461,7 +461,7 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
         self.groups = groups
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
-        fields = ['group', 'mri', 'session', 'epoch', 'epoch_rejection', 'reference', 'raw', 'inv']
+        fields = ['group', 'mri', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'reference', 'raw', 'inv']
         if ctx.state['inv']:
             fields += ['cov', 'src', 'parc', 'adjacency', 'mrisubject', 'common_brain']
         return tuple(fields)

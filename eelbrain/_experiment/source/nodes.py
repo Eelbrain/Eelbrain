@@ -301,10 +301,10 @@ def _eeg_channel_names(info: mne.Info) -> set[str]:
 
 class FwdDerivative(Derivative[mne.Forward]):
     name = 'fwd'
-    key_fields = ('subject', 'session', 'mrisubject', 'src')
+    key_fields = ('subject', 'session', 'acquisition', 'mrisubject', 'src')
     cache_suffix = '-fwd.fif'
 
-    def __init__(self, raw, references: dict[str, Reference | None], recordings: frozenset[tuple[str, str, str, str]]):
+    def __init__(self, raw, references: dict[str, Reference | None], recordings: frozenset[tuple[str, str, str, str, str]]):
         self.raw = raw
         self._references = references
         self._recordings = recordings
@@ -313,7 +313,7 @@ class FwdDerivative(Derivative[mne.Forward]):
         # The forward solution only needs the raw sensor info (shared across a
         # subject's recordings), so pin a canonical recording rather than key
         # on the ambient task/run.
-        recording = canonical_recording(self._recordings, ctx.state['subject'], ctx.state.get('session'))
+        recording = canonical_recording(self._recordings, ctx.state['subject'], ctx.state.get('session'), ctx.state.get('acquisition'))
         raw_state = {'task': recording[0], 'run': recording[1]} if recording else None
         deps = [
             Dependency(raw_node_name('raw'), state=raw_state),
@@ -378,10 +378,10 @@ class FwdDerivative(Derivative[mne.Forward]):
 
 class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
     name = 'inv'
-    key_fields = ('subject', 'session', 'raw', 'epoch', 'epoch_rejection', 'cov', 'mrisubject', 'src', 'inv')
+    key_fields = ('subject', 'session', 'acquisition', 'raw', 'epoch', 'epoch_rejection', 'cov', 'mrisubject', 'src', 'inv')
     cache_suffix = '-inv.fif'
 
-    def __init__(self, raw, references: dict[str, Reference | None], recordings: frozenset[tuple[str, str, str, str]], cache: bool = True):
+    def __init__(self, raw, references: dict[str, Reference | None], recordings: frozenset[tuple[str, str, str, str, str]], cache: bool = True):
         self.raw = raw
         self._references = references
         self._recordings = recordings
@@ -391,7 +391,7 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         # Only the raw sensor info is used (see build), so pin a canonical
         # recording rather than key on the ambient task/run.
-        recording = canonical_recording(self._recordings, ctx.state['subject'], ctx.state.get('session'))
+        recording = canonical_recording(self._recordings, ctx.state['subject'], ctx.state.get('session'), ctx.state.get('acquisition'))
         raw_state = {'task': recording[0], 'run': recording[1]} if recording else None
         return (
             Dependency(raw_node_name(ctx.state['raw']), label='raw', state=raw_state),
@@ -627,7 +627,7 @@ class EpochsStcDerivative(UncachedDerivative[Dataset]):
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
         # ``common_brain`` is only used when morphing the estimate to it
-        fields = ('subject', 'session', 'epoch', 'epoch_rejection', 'inv', 'cov', 'raw', 'src', 'parc', 'mrisubject', 'adjacency')
+        fields = ('subject', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'inv', 'cov', 'raw', 'src', 'parc', 'mrisubject', 'adjacency')
         if ctx.options['morph']:
             fields += ('common_brain',)
         return fields
@@ -750,7 +750,7 @@ class EvokedStcDerivative(UncachedDerivative[Dataset]):
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
         # ``common_brain`` is only used when morphing the estimate to it
-        fields = ('subject', 'session', 'epoch', 'epoch_rejection', 'inv', 'cov', 'raw', 'src', 'parc', 'mrisubject', 'adjacency', 'equalize_evoked_count')
+        fields = ('subject', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'inv', 'cov', 'raw', 'src', 'parc', 'mrisubject', 'adjacency', 'equalize_evoked_count')
         if ctx.options['morph']:
             fields += ('common_brain',)
         return fields
@@ -849,7 +849,7 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset | ROIData]):
         self.groups = groups
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...] | None:
-        fields = ('group', 'mri', 'session', 'epoch', 'epoch_rejection', 'equalize_evoked_count', 'inv', 'cov', 'raw', 'src', 'parc', 'mrisubject', 'adjacency')
+        fields = ('group', 'mri', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'equalize_evoked_count', 'inv', 'cov', 'raw', 'src', 'parc', 'mrisubject', 'adjacency')
         if ctx.options['morph']:
             fields += ('common_brain',)
         return fields

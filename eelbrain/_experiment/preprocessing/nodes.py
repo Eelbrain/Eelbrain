@@ -73,8 +73,8 @@ BIDS_TO_MNE_CHANNEL_TYPES = {
 }
 
 
-def canonical_recording(recordings: frozenset[tuple[str, str, str, str]], subject: str, session: str | None) -> tuple[str, str] | None:
-    """Return a deterministic ``(task, run)`` recording for one subject/session.
+def canonical_recording(recordings: frozenset[tuple[str, str, str, str, str]], subject: str, session: str | None, acquisition: str | None) -> tuple[str, str] | None:
+    """Return a deterministic ``(task, run)`` recording for one subject/session/acquisition.
 
     Used to pin an info-only raw load (forward/inverse/covariance) to a single
     representative recording, so the derivative's identity does not depend on the
@@ -84,18 +84,20 @@ def canonical_recording(recordings: frozenset[tuple[str, str, str, str]], subjec
     Parameters
     ----------
     recordings
-        Existing ``(subject, session, task, run)`` recordings.
+        Existing ``(subject, session, task, acquisition, run)`` recordings.
     subject
         Subject to select a recording for.
     session
         Session to select a recording for (``None`` is treated as ``''``).
+    acquisition
+        Acquisition to select a recording for (``None`` is treated as ``''``).
 
     Returns
     -------
-    The first ``(task, run)`` in sorted order for the subject/session, or
+    The first ``(task, run)`` in sorted order for the subject/session/acquisition, or
     ``None`` when no recording exists.
     """
-    matches = sorted((task, run) for subject_, session_, task, run in recordings if subject_ == subject and session_ == (session or ''))
+    matches = sorted((task, run) for subject_, session_, task, acquisition_, run in recordings if subject_ == subject and session_ == (session or '') and acquisition_ == (acquisition or ''))
     return matches[0] if matches else None
 
 
@@ -105,7 +107,7 @@ class RawBadChannelsInput(Input[list[str]]):
     User-specified bad channels are stored in an Eelbrain-specific  ``channels.tsv`` file under the ``derivatives/mne/`` hierarchy  rather than in the BIDS source dataset, so that re-downloading the dataset does not overwrite them.
     The BIDS source ``channels.tsv`` is used as seed when the derivatives file is first written.
     """
-    key_fields = ('subject', 'session', 'task', 'run')
+    key_fields = ('subject', 'session', 'task', 'acquisition', 'run')
     key_options = {'noise': False}
 
     def __init__(
@@ -236,7 +238,7 @@ class RawBadChannelsInput(Input[list[str]]):
 
 
 class RawSourceInput(Input[mne.io.BaseRaw]):
-    key_fields = ('subject', 'session', 'task', 'run')
+    key_fields = ('subject', 'session', 'task', 'acquisition', 'run')
     key_options = {'noise': False}
     view_options = {'preload': False}
 
@@ -430,7 +432,7 @@ class RawSourceDerivative(UncachedDerivative[mne.io.BaseRaw]):
     :class:`RawSourceInput`) before delegating the actual sidecar write to
     :class:`RawBadChannelsInput`.
     """
-    key_fields = ('subject', 'session', 'task', 'run')
+    key_fields = ('subject', 'session', 'task', 'acquisition', 'run')
     key_options = {'noise': False}
     view_options = {'preload': False}
 
@@ -500,14 +502,14 @@ class RawSourceDerivative(UncachedDerivative[mne.io.BaseRaw]):
 
 
 class ICAInput(Input[mne.preprocessing.ICA]):
-    key_fields = ('subject', 'session', 'run')
+    key_fields = ('subject', 'session', 'acquisition', 'run')
     version = 1
 
     def __init__(
             self,
             raw_name: str,
             pipe: RawICA,
-            recordings: frozenset[tuple[str, str, str, str]],
+            recordings: frozenset[tuple[str, str, str, str, str]],
             runs: Sequence[str],
     ):
         self.name = ica_input_name(raw_name)
@@ -517,9 +519,9 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         self._recordings = recordings
         self._runs = runs or ['']
         # When runs are concatenated, the ICA spans every run, so it is cached
-        # per subject/session rather than per run.
+        # per subject/session/acquisition rather than per run.
         if pipe._concatenate_runs:
-            self.key_fields = ('subject', 'session')
+            self.key_fields = ('subject', 'session', 'acquisition')
 
     def path(self, ctx: Request) -> Path:
         return self.pipe.path(ctx)
@@ -534,16 +536,17 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         return self.pipe._load_ica(ctx)
 
     def _source_states(self, ctx: Request, tasks: Sequence[str]) -> list[dict[str, str]]:
-        """Existing source ``{'task', 'run'}`` states for the current subject/session.
+        """Existing source ``{'task', 'run'}`` states for the current subject/session/acquisition.
 
         Runs are included only when the ICA step concatenates runs (after
         :class:`RawMaxwell`); otherwise the current run is used. Combinations
-        without a recording for the current subject/session are skipped.
+        without a recording for the current subject/session/acquisition are skipped.
         """
         subject = ctx.state['subject']
         session = ctx.state.get('session') or ''
+        acquisition = ctx.state.get('acquisition') or ''
         if self.pipe._concatenate_runs:
-            # Spans every run, so identity is keyed on subject/session only; the
+            # Spans every run, so identity is keyed on subject/session/acquisition only; the
             # ambient run must not be read (it is not in key_fields here).
             runs = self._runs
         else:
@@ -551,7 +554,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         states = []
         for task in tasks:
             for run in runs:
-                if (subject, session, task, run) in self._recordings:
+                if (subject, session, task, acquisition, run) in self._recordings:
                     states.append({'task': task, 'run': run})
         return states
 
@@ -834,7 +837,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         Whether to resolve the corresponding empty-room recording instead of
         the subject recording.
     """
-    key_fields = ('subject', 'session', 'task', 'run')
+    key_fields = ('subject', 'session', 'task', 'acquisition', 'run')
     cache_suffix = '-raw.fif'
     key_options = {'noise': False}
     view_options = {'preload': False}
@@ -1051,7 +1054,7 @@ class RawHeadPositionDerivative(UncachedDerivative[numpy.ndarray]):
     """
 
     name = 'raw-head-position'
-    key_fields = ('subject', 'session', 'task', 'run')
+    key_fields = ('subject', 'session', 'task', 'acquisition', 'run')
 
     def __init__(self, raw_input_name: str):
         self._raw_input_name = raw_input_name
@@ -1081,7 +1084,7 @@ class CanonicalHeadPositionDerivative(Derivative):
     """Canonical head position for Maxwell filtering across tasks and runs.
 
     Computes a single representative head-to-device transform for a given
-    subject and session, suitable as the ``destination`` parameter of
+    subject, session, and acquisition, suitable as the ``destination`` parameter of
     :func:`mne.preprocessing.maxwell_filter`.
 
     The rotation is the Fréchet mean on SO(3) computed via
@@ -1096,7 +1099,7 @@ class CanonicalHeadPositionDerivative(Derivative):
     Parameters
     ----------
     recordings
-        Existing ``(subject, session, task, run)`` recordings, used for
+        Existing ``(subject, session, task, acquisition, run)`` recordings, used for
         existence checks in :meth:`dependencies`.
     tasks
         All task names defined in the experiment.
@@ -1106,12 +1109,12 @@ class CanonicalHeadPositionDerivative(Derivative):
     """
 
     name = 'canonical-head-position'
-    key_fields = ('subject', 'session')
+    key_fields = ('subject', 'session', 'acquisition')
     cache_suffix = '.fif'
 
     def __init__(
             self,
-            recordings: frozenset[tuple[str, str, str, str]],
+            recordings: frozenset[tuple[str, str, str, str, str]],
             tasks: Sequence[str],
             runs: Sequence[str],
     ):
@@ -1122,9 +1125,10 @@ class CanonicalHeadPositionDerivative(Derivative):
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         subject = ctx.state['subject']
         session = ctx.state.get('session') or ''
+        acquisition = ctx.state.get('acquisition') or ''
         deps = []
         for task, run in itertools.product(self._tasks, self._runs):
-            if (subject, session, task, run) in self._recordings:
+            if (subject, session, task, acquisition, run) in self._recordings:
                 deps.append(Dependency(
                     name='raw-head-position',
                     label=f'task-{task}_run-{run}' if run else f'task-{task}',
