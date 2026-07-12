@@ -137,7 +137,11 @@ _MIGRATIONS = (
 )
 
 
-def migrate_derivatives(root: Path | str, dry_run: bool = False) -> list[tuple[Path, Path]]:
+def migrate_derivatives(
+        root: Path | str,
+        dry_run: bool = False,
+        overwrite: bool = False,
+) -> list[tuple[Path, Path]]:
     """Move legacy derivative files to the current BIDS-style ``mne`` layout.
 
     Migrates ICA, coregistration, bad-channels and epoch-rejection files.
@@ -148,6 +152,9 @@ def migrate_derivatives(root: Path | str, dry_run: bool = False) -> list[tuple[P
         Experiment root directory.
     dry_run
         Only report the moves that would be made, without touching any files.
+    overwrite
+        Replace files that already exist in the current layout. By default,
+        an existing destination raises :exc:`FileExistsError`.
 
     Returns
     -------
@@ -165,10 +172,24 @@ def migrate_derivatives(root: Path | str, dry_run: bool = False) -> list[tuple[P
             new_path = new_path_func(root, old_path)
             if new_path is None:
                 continue
+            if new_path.exists() and not overwrite:
+                raise FileExistsError(f"Migration target already exists: {new_path}; pass overwrite=True to replace it")
             moved.append((old_path, new_path))
-            if not dry_run:
-                new_path.parent.mkdir(parents=True, exist_ok=True)
-                old_path.rename(new_path)
-        if not dry_run and not any(old_dir.iterdir()):
+
+    if dry_run:
+        return moved
+
+    for old_path, new_path in moved:
+        new_path.parent.mkdir(parents=True, exist_ok=True)
+        if overwrite:
+            old_path.replace(new_path)
+        else:
+            if new_path.exists():
+                raise FileExistsError(f"Migration target already exists: {new_path}; pass overwrite=True to replace it")
+            old_path.rename(new_path)
+
+    for legacy_subdir, _, _ in _MIGRATIONS:
+        old_dir = root / legacy_subdir
+        if old_dir.is_dir() and not any(old_dir.iterdir()):
             old_dir.rmdir()
     return moved
