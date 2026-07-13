@@ -36,7 +36,7 @@ from .._utils.parse import FLOAT_PATTERN, POS_FLOAT_PATTERN
 from .._utils.system import IS_OSX
 from ..plot._base import AxisData, DataLayer, PlotType
 from ..plot._topo import AxTopomap
-from ._ch_types import CH_TYPE_PICK_KWARGS, CH_TYPE_COLORS, ch_type_scale
+from ._ch_types import CH_TYPE_PICK_KWARGS, CH_TYPE_COLORS, CH_TYPE_DEFAULT_VLIM_SI, ch_type_scale
 from .frame import EelbrainDialog
 from .frame import NavigableFrame
 from .history import Action, FileDocument, FileModel, FileFrame, FileFrameChild
@@ -232,12 +232,11 @@ class Document(FileDocument):
         else:
             global_mean = np.dot(linalg.pinv(ica.pre_whitener_), ica.pca_mean_)
         self.global_mean = NDVar(global_mean[picks], (self.epochs_ndvar.sensor,))
-        # pre-ICA signal range
-        self.pre_ica_min = self.epochs_ndvar.min('sensor')
-        self.pre_ica_max = self.epochs_ndvar.max('sensor')
-        self.pre_ica_range_scale = (self.pre_ica_max.mean() - self.pre_ica_min.mean())
-        self.pre_ica_min /= self.pre_ica_range_scale
-        self.pre_ica_max /= self.pre_ica_range_scale
+        # pre-ICA signal range, normalized so it displays at a fixed scale.
+        primary_ch_type = components_by_type[0][0]
+        self.pre_ica_range_scale = 2 * CH_TYPE_DEFAULT_VLIM_SI[primary_ch_type]
+        self.pre_ica_min = self.epochs_ndvar.min('sensor') / self.pre_ica_range_scale
+        self.pre_ica_max = self.epochs_ndvar.max('sensor') / self.pre_ica_range_scale
 
         # publisher
         self.callbacks.register_key('case_change')
