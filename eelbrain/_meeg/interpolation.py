@@ -279,9 +279,9 @@ def _interpolate_bad_windows_eeg(
         for a, b, key in _window_intervals(windows, epochs):
             if len(key) > max_interpolate:
                 # too many bad channels to interpolate reliably: zero them out
-                # picks_bad = mne.pick_channels(epochs.ch_names, key)
-                # epochs._data[i, picks_bad, a:b] = 0
-                epochs._data[i, :, a:b] = 0
+                picks_bad = mne.pick_channels(epochs.ch_names, key)
+                epochs._data[i, picks_bad, a:b] = 0
+                # epochs._data[i, :, a:b] = 0
                 continue
             if key in interp_cache:
                 goods_idx, bads_idx, interpolation = interp_cache[key]
