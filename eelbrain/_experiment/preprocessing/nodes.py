@@ -35,7 +35,7 @@ from ..derivative_cache import (
     canonical_state_subset, compare_manifests, file_fingerprint,
 )
 from ..logging import find_difference, format_difference_path
-from ..exceptions import FileMissingError
+from ..exceptions import FileMissingError, ICAMissingError
 from ..pathing import bids_path, DERIV_DIR
 from .config import (
     MNE_VERBOSITY, RawPipeGraph, RawSource, CachedRawPipe, RawICA, RawApplyICA, RawMaxwell,
@@ -745,7 +745,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
     def load(self, ctx: Request) -> mne.preprocessing.ICA:
         path = self.path(ctx)
         if not path.exists():
-            raise FileMissingError(f"ICA file {path.name} does not exist. Run e.make_ica() to create it.")
+            raise ICAMissingError(f"ICA file {path.name} does not exist. Run e.make_ica() to create it.")
         value, current = self._current_value_manifest(ctx)
         previous = self._manifest(ctx)
         if not self._manifest_matches(previous, current):

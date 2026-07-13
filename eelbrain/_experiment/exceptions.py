@@ -2,11 +2,15 @@
 
 
 class FileMissingError(Exception):
-    "An input file is missing"
+    """An input file is missing"""
+
+
+class ICAMissingError(FileMissingError):
+    """An ICA input file is missing"""
 
 
 class FileDeficientError(Exception):
-    "An input file is deficient"
+    """An input file is deficient"""
 
 
 class ICAChannelsChangedError(Exception):

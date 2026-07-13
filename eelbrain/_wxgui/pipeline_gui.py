@@ -14,7 +14,7 @@ from .._exceptions import ConfigurationError, DataError
 from .._experiment.derivative_cache import ProtectedArtifactError
 from .._experiment.epoch_rejection import ChannelModelRejection, ManualRejection
 from .._experiment.epochs import PrimaryEpoch
-from .._experiment.exceptions import FileMissingError, ICAChannelsChangedError
+from .._experiment.exceptions import FileMissingError, ICAChannelsChangedError, ICAMissingError
 from .._experiment.pathing import MRI_SDIR
 from .._experiment.preprocessing import RawICA, RawSource, ica_input_name, raw_bad_channels_input_name, raw_input_name
 from .._utils.mne_utils import is_fake_mri
@@ -50,6 +50,8 @@ _USER_ERROR_TYPES = (ConfigurationError, DataError, FileMissingError, FileNotFou
 
 def _format_user_error(error: Exception) -> tuple[str, str] | None:
     """Return a dialog title/message for expected pipeline failures."""
+    if isinstance(error, ICAMissingError):
+        return "ICA not computed", f"The ICA has not been computed yet, so the requested data is not available.\n\n{error}"
     if isinstance(error, FileMissingError):
         return "Missing input", f"A required input file is missing.\n\n{error}"
     if isinstance(error, FileNotFoundError):
@@ -455,6 +457,10 @@ class PipelineFrame(EelbrainFrame):
         while True:
             try:
                 self._activate_item(idx, subject, task_type, task_key)
+            except ICAMissingError:
+                dlg = wx.MessageDialog(self, f"The ICA for {subject} has not been computed yet, so raw data at the ICA stage cannot be displayed. Compute the ICA first (Make ICA in the ICA task).", "ICA Not Computed", wx.OK | wx.ICON_INFORMATION)
+                dlg.ShowModal()
+                dlg.Destroy()
             except _USER_ERROR_TYPES as error:
                 self._show_error(*_error_dialog_args(error))
             except ICAChannelsChangedError as error:

@@ -30,7 +30,7 @@ from ..._text import enumeration
 from ..._utils import user_activity
 from ..derivative_cache import Request
 from ..configuration import Configuration, ConfigurationDict, sequence_arg, typed_arg
-from ..exceptions import FileMissingError
+from ..exceptions import ICAMissingError
 from ..pathing import ica_file_path
 
 MNE_VERBOSITY = 'WARNING'
@@ -513,7 +513,7 @@ class RawICA(CachedRawPipe):
     ) -> mne.preprocessing.ICA:
         ica_path = self.path(ctx)
         if not ica_path.exists():
-            raise FileMissingError(f"ICA file {ica_path.name} does not exist for raw={self.name!r}. Run e.make_ica() to create it.")
+            raise ICAMissingError(f"ICA file {ica_path.name} does not exist for raw={self.name!r}. Run e.make_ica() to create it.")
         return mne.preprocessing.read_ica(ica_path)
 
     @staticmethod
