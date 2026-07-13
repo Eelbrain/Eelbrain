@@ -12,7 +12,7 @@ from pathlib import Path
 import pickle
 from collections.abc import Callable, Sequence
 
-from pyparsing import ParseException, Literal, Optional, Word, alphanums, delimitedList, oneOf
+from pyparsing import DelimitedList, ParseException, Literal, Optional, Word, alphanums, one_of
 
 from ..._data_obj import Dataset
 from ... import fmtxt
@@ -166,7 +166,7 @@ class Model:
     @classmethod
     def from_string(cls, string: str):
         try:
-            return model.parseString(string, True)[0]
+            return model.parse_string(string, True)[0]
         except ParseException:
             raise TRFModelError(f"{string!r}: invalid Model")
 
@@ -256,7 +256,7 @@ class ModelExpression:
             string: str,
     ) -> ModelExpression:
         try:
-            return model_expr.parseString(string, True)[0]
+            return model_expr.parse_string(string, True)[0]
         except ParseException:
             raise TRFModelError(f"{string!r}: invalid Model")
 
@@ -482,34 +482,34 @@ class Comparison:
 # term
 name = Word(alphanums + '_')
 stimulus = Word(alphanums + '_', alphanums + '_-')
-stimulus_prefix = stimulus + Literal('~').suppress().leaveWhitespace()
-term = Optional(stimulus_prefix, '') + delimitedList(name, '-', combine=True, min=1)
-term.addParseAction(lambda s, l, t: Term(t[0] or None, t[1]))
+stimulus_prefix = stimulus + Literal('~').suppress().leave_whitespace()
+term = Optional(stimulus_prefix, '') + DelimitedList(name, '-', combine=True, min=1)
+term.add_parse_action(lambda s, l, t: Term(t[0] or None, t[1]))
 
 # model
-model = delimitedList(term, '+').addParseAction(lambda s, l, t: Model(tuple(t)))
+model = DelimitedList(term, '+').add_parse_action(lambda s, l, t: Model(tuple(t)))
 subtract_term = Literal('-').suppress() + term
 model_expr = model + Optional(subtract_term)
-model_expr.addParseAction(lambda s, l, t: ModelExpression(*t))
-null_model = Literal('0').addParseAction(lambda s, l, t: Model(()))
+model_expr.add_parse_action(lambda s, l, t: ModelExpression(*t))
+null_model = Literal('0').add_parse_action(lambda s, l, t: Model(()))
 
 # comparison
-direct_comparison = model + oneOf('= < >') + (model ^ null_model)
-direct_comparison.addParseAction(lambda s, l, t: DirectComparison(*t))
+direct_comparison = model + one_of('= < >') + (model ^ null_model)
+direct_comparison.add_parse_action(lambda s, l, t: DirectComparison(*t))
 omit_comparison = model + Literal('@').suppress() + model
-omit_comparison.addParseAction(lambda s, l, t: OmitComparison(*t))
+omit_comparison.add_parse_action(lambda s, l, t: OmitComparison(*t))
 omit2_comparison = model + Literal('@').suppress() + direct_comparison
-omit2_comparison.addParseAction(lambda s, l, t: Omit2Comparison(t[0], t[1].x, t[1].operator, t[1].x0))
+omit2_comparison.add_parse_action(lambda s, l, t: Omit2Comparison(t[0], t[1].x, t[1].operator, t[1].x0))
 add_comparison = model + Literal('+@').suppress() + model
-add_comparison.addParseAction(lambda s, l, t: AddComparison(*t))
+add_comparison.add_parse_action(lambda s, l, t: AddComparison(*t))
 add2_comparison = model + Literal('+@').suppress() + direct_comparison
-add2_comparison.addParseAction(lambda s, l, t: Add2Comparison(t[0], t[1].x, t[1].operator, t[1].x0))
+add2_comparison.add_parse_action(lambda s, l, t: Add2Comparison(t[0], t[1].x, t[1].operator, t[1].x0))
 comparison = direct_comparison ^ omit_comparison ^ omit2_comparison ^ add_comparison ^ add2_comparison
 
 
 def parse_term(string: str) -> Term:
     try:
-        parse = term.parseString(string, True)
+        parse = term.parse_string(string, True)
     except ParseException:
         raise TRFModelError(f"{string!r}: invalid term")
     return parse[0]
@@ -517,7 +517,7 @@ def parse_term(string: str) -> Term:
 
 def parse_model(string: str) -> Model:
     try:
-        parse = model.parseString(string, True)
+        parse = model.parse_string(string, True)
     except ParseException:
         raise TRFModelError(f"{string!r}: invalid model")
     return parse[0]
@@ -525,7 +525,7 @@ def parse_model(string: str) -> Model:
 
 def parse_comparison(string: str) -> ComparisonSpec:
     try:
-        parse = comparison.parseString(string, True)
+        parse = comparison.parse_string(string, True)
     except ParseException:
         raise TRFModelError(f"{string!r}: invalid comparison")
     return parse[0]
