@@ -48,7 +48,8 @@ Garbage collection
 
 Stale artifacts left behind by changed definitions or removed nodes are found
 and removed by :mod:`.garbage_collection`; the entry points are
-:meth:`DerivativeRegistry.scan_cache` and :meth:`DerivativeRegistry.collect`.
+:meth:`DerivativeRegistry.scan_cache` and
+:meth:`~eelbrain._experiment.derivative_cache.garbage_collection.GCReport.collect`.
 """
 
 from __future__ import annotations
@@ -2087,31 +2088,10 @@ class DerivativeRegistry:
 
         See Also
         --------
-        collect : delete the files a scan flags
+        GCReport.collect : delete the files a scan flags
         """
         from .garbage_collection import scan_cache
         return scan_cache(self, revalidate)
-
-    def collect(
-            self,
-            report: GCReport | None = None,
-            revalidate: bool = True,
-    ) -> GCReport:
-        """Delete the cache files flagged by a garbage-collection scan.
-
-        Parameters
-        ----------
-        report
-            Scan result to act on; scans first when omitted.
-        revalidate
-            Passed to :meth:`scan_cache` when scanning here.
-
-        See Also
-        --------
-        scan_cache : the scan and the classification categories
-        """
-        from .garbage_collection import collect
-        return collect(self, report, revalidate)
 
     @staticmethod
     def canonicalize(value: Any) -> Any:

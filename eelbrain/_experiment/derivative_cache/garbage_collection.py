@@ -4,7 +4,7 @@ Stale files are rebuilt in place only when they are re-requested, so a changed
 definition or a removed node leaves orphaned artifacts behind. The cache is
 never pruned automatically. :meth:`DerivativeRegistry.scan_cache` classifies
 every file under ``cache-dir`` (see :class:`GCCategory`) and
-:meth:`DerivativeRegistry.collect` deletes the ones that are safe to remove;
+:meth:`GCReport.collect` deletes the ones that are safe to remove;
 :meth:`~eelbrain.Pipeline.clean_cache` is the user-facing entry point.
 
 Two kinds of staleness are detected. *Structural* invalidity (dead node
@@ -53,9 +53,9 @@ class GCCategory(str, Enum):
     UNKNOWN = 'unknown'                            # unclassified file — kept, reported only
 
 
-# Categories that scan_cache reports but collect() never deletes.
+# Categories that scan_cache reports but GCReport.collect() never deletes.
 GC_KEPT_CATEGORIES = frozenset({GCCategory.PROTECTED_STALE, GCCategory.UNVERIFIABLE, GCCategory.UNKNOWN})
-# Deletion phases for collect(): plain files, artifact+manifest pairs, sidecar maintenance, whole dead trees.
+# Deletion phases for GCReport.collect(): plain files, artifact+manifest pairs, sidecar maintenance, whole dead trees.
 _GC_DELETE_PHASE = {GCCategory.TMP: 0, GCCategory.STALE_REFERENCE: 0, GCCategory.STALE_DISAMBIGUATION: 2, GCCategory.DEAD_NODE_DIR: 3}
 
 
@@ -76,14 +76,18 @@ class GCEntry:
 class GCReport:
     """Result of one cache garbage-collection scan."""
 
+    registry: DerivativeRegistry = field(repr=False)
     entries: list[GCEntry] = field(default_factory=list)
     scanned_manifests: int = 0
     errors: list[tuple[Path, str]] = field(default_factory=list)  # scan-time exceptions (never raised)
     disambiguation_sidecars: list[Path] = field(default_factory=list)  # all sidecars seen, for post-deletion pruning
-    cache_dir: Path | None = None
+
+    def collect(self) -> None:
+        """Delete the cache files flagged by this scan."""
+        _collect(self)
 
     def deletable(self) -> list[GCEntry]:
-        """The entries that :meth:`DerivativeRegistry.collect` will delete."""
+        """The entries that :meth:`collect` will delete."""
         return [entry for entry in self.entries if entry.category not in GC_KEPT_CATEGORIES]
 
     def by_category(self) -> dict[GCCategory, list[GCEntry]]:
@@ -127,11 +131,10 @@ class GCReport:
         table.midrule()
         for entry in self.entries:
             path = entry.path
-            if self.cache_dir is not None:
-                try:
-                    path = path.relative_to(self.cache_dir)
-                except ValueError:
-                    pass
+            try:
+                path = path.relative_to(self.registry.cache_dir)
+            except ValueError:
+                pass
             table.cells(str(path), _format_size(entry.size), entry.category.value)
         return table
 
@@ -195,7 +198,7 @@ def _same_path(a: Path, b: Path) -> bool:
 
 def scan_cache(registry: DerivativeRegistry, revalidate: bool = True) -> GCReport:
     """Implementation of :meth:`DerivativeRegistry.scan_cache`."""
-    report = GCReport(cache_dir=registry.cache_dir)
+    report = GCReport(registry)
     if not registry.cache_dir.exists():
         return report
     scanned: dict[str, _ScannedManifest] = {}
@@ -490,14 +493,9 @@ def _gc_remove_path(registry: DerivativeRegistry, path: Path) -> bool:
         return False
 
 
-def collect(
-        registry: DerivativeRegistry,
-        report: GCReport | None = None,
-        revalidate: bool = True,
-) -> GCReport:
-    """Implementation of :meth:`DerivativeRegistry.collect`."""
-    if report is None:
-        report = scan_cache(registry, revalidate=revalidate)
+def _collect(report: GCReport) -> None:
+    """Delete the cache files flagged in a garbage-collection report."""
+    registry = report.registry
     touched_dirs: set[Path] = set()
     n_removed = 0
     counts: dict[str, int] = {}
@@ -542,4 +540,3 @@ def collect(
         registry.log.info("Cache GC: removed %i files (%s): %s", n_removed, _format_size(report.total_size()), summary)
     else:
         registry.log.info("Cache GC: nothing to remove")
-    return report

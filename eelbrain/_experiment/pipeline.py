@@ -660,7 +660,7 @@ class Pipeline(StateModel):
                 delete = True
             else:
                 return None
-        self._derivatives.collect(report)
+        report.collect()
         return None
 
     def __iter__(self):
