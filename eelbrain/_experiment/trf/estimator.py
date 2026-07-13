@@ -136,8 +136,6 @@ class Boosting(Estimator):
 
     Parameters
     ----------
-    tstart
-        Not set here; see :meth:`Pipeline.load_trf`.
     basis
         Width of the basis window for the response function in seconds.
     basis_window
