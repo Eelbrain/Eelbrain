@@ -56,6 +56,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
 import hashlib
@@ -1485,7 +1486,7 @@ class Request(Generic[T]):
         manifest = self._manifest()
         if manifest is None or not self.artifact_path.exists():
             return False
-        return self._check_valid(manifest) is None
+        return self.registry._validation_reason(self, manifest) is None
 
     def _dependency_map(self) -> dict[str, Dependency]:
         """Declared dependencies keyed by label, rejecting duplicate labels."""
@@ -1521,7 +1522,7 @@ class Request(Generic[T]):
             elif not artifact_exists:
                 reason = CacheInvalidation('missing_artifact')
             else:
-                reason = self._check_valid(manifest)
+                reason = self.registry._validation_reason(self, manifest)
             if manifest is not None and artifact_exists and reason is None:
                 self._artifact_metadata = manifest.artifact_metadata
                 derivative.log_cache_hit(self, self.artifact_path)
@@ -1569,6 +1570,7 @@ class Request(Generic[T]):
             resolve_options=resolve_options,
         )
         self.registry.write_manifest(self.manifest_path, manifest)
+        self.registry._record_valid(self)
         self._artifact_metadata = manifest.artifact_metadata
         return derivative.load(self, self.artifact_path)
 
@@ -1617,6 +1619,18 @@ class Request(Generic[T]):
         ``view`` is accepted; passing ``state``, ``options``, or ``controls``
         raises :class:`TypeError`.
         """
+        with self.registry._load_context():
+            return self._load(name, state, options, view=view, controls=controls)
+
+    def _load(
+            self,
+            name: str | None = None,
+            state: dict[str, Any] | None = None,
+            options: dict[str, Any] | None = None,
+            *,
+            view: str | None = None,
+            controls: frozenset[str] | set[str] | tuple[str, ...] = (),
+    ):
         if isinstance(name, str):
             if self._build_deps is not None:
                 if name not in self._build_deps:
@@ -1668,6 +1682,40 @@ class DerivativeRegistry:
         # refresh, no disambiguation sidecars, no VersionedInput references).
         # Set by _readonly_context() during a garbage-collection scan.
         self._readonly = False
+        # Reuse cache-validity results within one top-level Request.load().
+        # Artifacts themselves are not shared because callers can mutate them.
+        self._validation_cache: ContextVar[dict[tuple[str, str], CacheInvalidation | None] | None] = ContextVar(f'{type(self).__name__}-{id(self)}-validation-cache', default=None)
+
+    @contextmanager
+    def _load_context(self):
+        """Share cache-validity results across one nested request load."""
+        if self._validation_cache.get() is not None:
+            yield
+            return
+        token = self._validation_cache.set({})
+        try:
+            yield
+        finally:
+            self._validation_cache.reset(token)
+
+    @staticmethod
+    def _validation_key(ctx: Request) -> tuple[str, str]:
+        return ctx.node.name, _full_cache_key_digest(ctx.key())
+
+    def _validation_reason(self, ctx: Request, manifest: ArtifactManifest) -> CacheInvalidation | None:
+        """Validate once per artifact during a nested request load."""
+        cache = self._validation_cache.get()
+        if cache is None:
+            return ctx._check_valid(manifest)
+        key = self._validation_key(ctx)
+        if key not in cache:
+            cache[key] = ctx._check_valid(manifest)
+        return cache[key]
+
+    def _record_valid(self, ctx: Request) -> None:
+        """Record a manifest written during the current load as valid."""
+        if (cache := self._validation_cache.get()) is not None:
+            cache[self._validation_key(ctx)] = None
 
     @contextmanager
     def _readonly_context(self):

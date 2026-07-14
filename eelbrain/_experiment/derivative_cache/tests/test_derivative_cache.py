@@ -681,6 +681,79 @@ def test_registry_load_caches_derivative_and_writes_manifest():
     assert value.build_calls == 1
 
 
+def test_nested_load_reuses_cached_derivative_validation():
+    """Repeated artifact loads share validation work, but not loaded values."""
+    root, registry = make_empty_registry()
+
+    class CountingSource(Input[str]):
+        name = 'counting-source'
+        key_fields = ()
+
+        def __init__(self):
+            self.fingerprint_calls = 0
+            self.source_path = Path(root) / 'source.txt'
+
+        def path(self, ctx: Request) -> Path:
+            return self.source_path
+
+        def fingerprint(self, ctx: Request) -> dict[str, str]:
+            self.fingerprint_calls += 1
+            return {'value': self.source_path.read_text()}
+
+        def load(self, ctx: Request) -> str:
+            return self.source_path.read_text()
+
+    class SharedDerivative(Derivative[str]):
+        name = 'shared'
+        key_fields = ()
+        cache_suffix = '.txt'
+
+        def __init__(self):
+            self.load_calls = 0
+
+        def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+            return (Dependency('counting-source'),)
+
+        def build(self, ctx: Request) -> str:
+            return ctx.load('counting-source')
+
+        def load(self, ctx: Request, path: Path) -> str:
+            self.load_calls += 1
+            return path.read_text()
+
+        def save(self, ctx: Request, path: Path, value: str) -> None:
+            path.write_text(value)
+
+    class PairDerivative(UncachedDerivative[tuple[str, str]]):
+        name = 'pair'
+        key_fields = ()
+
+        def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+            return Dependency('shared', label='first'), Dependency('shared', label='second')
+
+        def build(self, ctx: Request) -> tuple[str, str]:
+            return ctx.load('first'), ctx.load('second')
+
+    source = CountingSource()
+    shared = SharedDerivative()
+    registry.register(source)
+    registry.register(shared)
+    registry.register(PairDerivative())
+    source.source_path.write_text('alpha')
+    registry.resolve('shared').load()  # warm the cache
+
+    source.fingerprint_calls = 0
+    shared.load_calls = 0
+    assert registry.resolve('pair').load() == ('alpha', 'alpha')
+    assert source.fingerprint_calls == 1
+    assert shared.load_calls == 2  # mutable loaded values are not shared
+
+    # The validation result is scoped to one top-level load: a later source
+    # change still invalidates and rebuilds the shared derivative.
+    source.source_path.write_text('beta')
+    assert registry.resolve('pair').load() == ('beta', 'beta')
+
+
 def test_restricted_state_get_is_checked():
     root, registry, _ = make_source_registry()
 
