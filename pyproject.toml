@@ -33,6 +33,7 @@ dependencies = [
   'pillow',
   'psutils',
   'pymatreader',
+  'pyparsing >= 3',
   'scipy >= 1.5',
   'seaborn',
   'mne-bids',

@@ -31,6 +31,7 @@ dependencies:
 - ipdb
 - ipython
 - colormath >= 2.1
+- pyparsing >= 3
 - tqdm >= 4.40
 - keyring >= 5
 - wxpython >= 4.0.3, != 4.1.0  # double install of libraries

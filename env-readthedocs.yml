@@ -20,6 +20,7 @@ dependencies:
 - pip
 - pooch  # for mne dataset downloading
 - pymatreader
+- pyparsing >=3
 - sphinx_rtd_theme
 - sphinx >=3
 - sphinx-gallery
