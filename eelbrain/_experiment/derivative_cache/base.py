@@ -2117,8 +2117,6 @@ class DerivativeRegistry:
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(manifest_path, json.dumps(manifest.to_dict(), sort_keys=True, indent=2))
 
-    # --- Garbage collection -------------------------------------------------
-
     def scan_cache(self, revalidate: bool = True) -> GCReport:
         """Classify every file in the cache directory without modifying anything.
 
