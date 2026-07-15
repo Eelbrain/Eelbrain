@@ -32,10 +32,7 @@ class AnnotDerivative(ExternalArtifactDerivative[list[mne.Label]]):
     def __init__(self, parcs: dict[str, Parcellation]):
         self.parcs = parcs
 
-    def annot_file_paths(self, state: dict[str, Any]) -> list[Path]:
-        return [annot_file_path(state, hemi) for hemi in ('lh', 'rh')]
-
-    def annot_file_fingerprints(self, ctx: Request) -> list[dict[str, Any]]:
+    def _annot_file_fingerprints(self, ctx: Request) -> list[dict[str, Any]]:
         return [
             file_fingerprint(
                 ctx.root,
@@ -45,7 +42,7 @@ class AnnotDerivative(ExternalArtifactDerivative[list[mne.Label]]):
             for hemi in ('lh', 'rh')
         ]
 
-    def label_file_fingerprints(self, ctx: Request, parc_def: LabelParc) -> list[dict[str, Any]]:
+    def _label_file_fingerprints(self, ctx: Request, parc_def: LabelParc) -> list[dict[str, Any]]:
         hemis = ('lh.', 'rh.')
         pattern = os.path.join(str(ctx.root / label_dir(ctx.state)), '%s.label')
         labels = []
@@ -59,39 +56,12 @@ class AnnotDerivative(ExternalArtifactDerivative[list[mne.Label]]):
             for label in labels
         ]
 
-    def annot_labels(self, ctx: Request) -> list[mne.Label]:
-        return mne.read_labels_from_annot(ctx.state['mrisubject'], ctx.state['parc'], 'both', subjects_dir=ctx.root / MRI_SDIR)
-
-    def managed_annot(self, state: dict[str, Any], parc_def: Parcellation) -> bool:
+    def _is_managed_annot(self, state: dict[str, Any], parc_def: Parcellation) -> bool:
         if isinstance(parc_def, FreeSurferParc):
             return False
         if isinstance(parc_def, FSAverageParc):
             return state['mrisubject'] != 'fsaverage'
         return True
-
-    def load_annot(
-            self,
-            ctx: Request,
-            *,
-            parc: str | None = None,
-            mrisubject: str | None = None,
-    ) -> list[mne.Label]:
-        state = {}
-        if parc is not None:
-            state['parc'] = parc
-        if mrisubject is not None:
-            state['mrisubject'] = mrisubject
-        return ctx.load('annot', state=state)
-
-    def make_parcellation(
-            self,
-            ctx: Request,
-            parc: str,
-            parc_def: Parcellation,
-    ) -> list[mne.Label]:
-        labels = parc_def._make(ctx, self, parc)
-        write_labels_to_annot(labels, ctx.state['mrisubject'], parc, True, ctx.root / MRI_SDIR)
-        return labels
 
     def path(
             self,
@@ -130,17 +100,17 @@ class AnnotDerivative(ExternalArtifactDerivative[list[mne.Label]]):
             'parc': parc,
             'definition': parc_def,
         }
-        if not self.managed_annot(ctx.state, parc_def):
-            fingerprint['files'] = self.annot_file_fingerprints(ctx)
+        if not self._is_managed_annot(ctx.state, parc_def):
+            fingerprint['files'] = self._annot_file_fingerprints(ctx)
         elif isinstance(parc_def, LabelParc):
-            fingerprint['labels'] = self.label_file_fingerprints(ctx, parc_def)
+            fingerprint['labels'] = self._label_file_fingerprints(ctx, parc_def)
         return fingerprint
 
     def build(self, ctx: Request) -> None:
         parc, parc_def = _resolve_parc(self.parcs, ctx.state['parc'])
         if parc_def is None or isinstance(parc_def, VolumeParc):
             return
-        if not self.managed_annot(ctx.state, parc_def):
+        if not self._is_managed_annot(ctx.state, parc_def):
             return  # annot files are externally managed; load() reads them
 
         mrisubject = ctx.state['mrisubject']
@@ -168,10 +138,12 @@ class AnnotDerivative(ExternalArtifactDerivative[list[mne.Label]]):
                     subp.run_freesurfer_command(cmd, subjects_dir)
                 fix_annot_names(mrisubject, parc, source_subject, subjects_dir=subjects_dir)
         else:
-            self.make_parcellation(ctx, parc, parc_def)
+            labels = parc_def._make(ctx, self, parc)
+            write_labels_to_annot(labels, ctx.state['mrisubject'], parc, True, ctx.root / MRI_SDIR)
 
     def load(
             self,
             ctx: Request,
-            path: Path) -> list[mne.Label]:
-        return self.annot_labels(ctx)
+            path: Path,
+    ) -> list[mne.Label]:
+        return mne.read_labels_from_annot(ctx.state['mrisubject'], ctx.state['parc'], 'both', subjects_dir=ctx.root / MRI_SDIR)
