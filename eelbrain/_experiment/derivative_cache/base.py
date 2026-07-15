@@ -2065,14 +2065,7 @@ class DerivativeRegistry:
         return '\n'.join(lines)
 
     def is_cache_artifact(self, path: str | Path) -> bool:
-        cache_dir = self.cache_dir.resolve()
-        artifact_path = Path(path).resolve()
-        try:
-            artifact_path.relative_to(cache_dir)
-        except ValueError:
-            return False
-        else:
-            return True
+        return Path(path).is_relative_to(self.cache_dir)
 
     def manifest_path(self, artifact_path: Path, node_name: str | None = None) -> Path:
         if self.is_cache_artifact(artifact_path):
