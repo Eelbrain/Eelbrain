@@ -24,18 +24,15 @@ from . import ui
 
 # environment variables that can hold the path to this tool
 _env_vars = {'mne': 'MNE_ROOT',
-             'freesurfer': 'FREESURFER_HOME',
-             'edfapi': 'EYELINK_HOME'}
+             'freesurfer': 'FREESURFER_HOME'}
 
 # bin directory relative to tool location
 _bin_dirs = {'mne': 'bin',
-             'freesurfer': 'bin',
-             'edfapi': ''}
+             'freesurfer': 'bin'}
 
 # binaries to look for to test whether the tool directory is set correctly
 _test_bins = {'mne': ('mne_add_patch_info', 'mne_analyze'),
-              'freesurfer': ('mri_annotation2label',),
-              'edfapi': ('edf2asc',)}
+              'freesurfer': ('mri_annotation2label',)}
 
 
 def get_root(package):
@@ -73,7 +70,7 @@ def _ask_user_for_bin_dir(package):
     ----------
     package : str
         Binary package for which to set the directory. One from:
-        ``['mne', 'freesurfer', 'edfapi']``
+        ``['mne', 'freesurfer']``
     """
     title = f"Select {package} Directory"
     message = f"Please select the directory of the {package} package."

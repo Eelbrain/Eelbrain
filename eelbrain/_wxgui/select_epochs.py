@@ -321,14 +321,6 @@ class Document(FileDocument):
         if isinstance(blink, str):
             if ds is not None:
                 blink = ds.get(blink, None)
-        elif blink is True:
-            if 'edf' in ds.info:
-                tmin = data.time.tmin
-                tmax = data.time.tmax
-                _, blink = load.eyelink.artifact_epochs(ds, tmin, tmax, esacc=False)
-            else:
-                wx.MessageBox("No eye tracker data was found in ds.info['edf']. Use load.eyelink.add_edf(ds) to add an eye tracker file to a Dataset ds.", "Eye Tracker Data Not Found")
-                blink = None
         elif blink is not None:
             raise TypeError("blink needs to be a string or None")
 
