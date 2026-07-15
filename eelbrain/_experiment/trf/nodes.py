@@ -240,8 +240,7 @@ class TRFDerivative(Derivative[object]):
         for extra in est.extra_inputs:
             deps.append(Dependency(extra))
 
-        # one predictor-file edge per (file-predictor term, stimulus); the stimuli
-        # are data-derived, so enumerate them from the (lightweight) epoch events
+        # one predictor-file edge per
         edges: dict[str, Dependency] = {}
         events = None
         for term in ctx.options['x'].terms:
@@ -249,7 +248,8 @@ class TRFDerivative(Derivative[object]):
             if not isinstance(predictor, (UTSPredictor, NUTSPredictor)):
                 continue
             if events is None:
-                events = ctx.load('epoch-events')
+                options = ctx.options_for('epoch-events', 'samplingrate', 'decim')
+                events = ctx.load('epoch-events', options=options)
             if stim_var not in events:
                 raise TRFModelError(f"{term.string}: stimulus variable {stim_var!r} not in the events")
             for stim in events[stim_var].cells:
