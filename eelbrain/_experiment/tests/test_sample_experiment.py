@@ -8,6 +8,7 @@ from os import remove
 from pathlib import Path
 import shutil
 import tomllib
+from unittest.mock import patch
 import pytest
 import warnings
 from warnings import catch_warnings, filterwarnings
@@ -20,6 +21,7 @@ from eelbrain import *
 from eelbrain.pipeline import *
 from eelbrain._exceptions import ConfigurationError
 from eelbrain._experiment.derivative_cache import ProtectedArtifactError
+from eelbrain._experiment.parc.nodes import AnnotDerivative
 from eelbrain._experiment.pathing import LOG_DIR, ica_file_path
 from eelbrain._experiment.preprocessing import RawFilterElliptic, ica_input_name, raw_node_name
 from eelbrain._experiment.data import DataSpec
@@ -475,6 +477,11 @@ def test_sample(samples_experiment):
     assert len(labels) == 4
     annot_handle = e._resolve_derivative('annot')
     assert exists(annot_handle.manifest_path)
+    # make_annot() only materializes the annot files; it does not read the labels back
+    assert annot_handle.is_valid()
+    with patch.object(AnnotDerivative, 'load', autospec=True) as annot_load:
+        e.make_annot(parc='ac', mrisubject='fsaverage')
+    annot_load.assert_not_called()
     # change parc definition
 
     class Experiment(SampleExperiment):

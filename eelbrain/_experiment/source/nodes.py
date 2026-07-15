@@ -513,7 +513,7 @@ def _prepare_source_projection(
     target_subject = ctx.state['common_brain'] if morph else mrisubject
     parc = _source_parc(ctx.state)
     if parc:
-        ctx.load('annot')
+        ctx.ensure('annot')
 
     operator = ctx.load('inv')
     if parc and (is_scaled or not morph):

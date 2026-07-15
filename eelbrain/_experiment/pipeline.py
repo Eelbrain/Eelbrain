@@ -607,13 +607,9 @@ class Pipeline(StateModel):
             options: dict[str, Any] | None = None,
             view: str | None = None,
             *,
-            redo: bool = True,  # When False, skip the load if the artifact is already up to date.
             controls: frozenset[str] | set[str] | tuple[str, ...] = (),
     ) -> Any:
-        ctx = self._resolve_derivative(name, options=options, controls=controls)
-        if not redo and ctx.is_valid():
-            return None
-        return ctx.load(view=view)
+        return self._resolve_derivative(name, options=options, controls=controls).load(view=view)
 
     def clean_cache(
             self,
@@ -971,8 +967,7 @@ class Pipeline(StateModel):
         ...
             State parameters.
         """
-        if state:
-            self.set(**state)
+        self.set(**state)
         return self._load_derivative('annot')
 
     def load_bad_channels(self, noise: bool = False, **kwargs):
@@ -1712,20 +1707,14 @@ class Pipeline(StateModel):
         ...
             State parameters.
         """
-        labels = self._load_labels(label, **kwargs)
+        labels = self.load_annot(**kwargs)
+        labels = {label.name: label for label in labels}
         if label in labels:
             return labels[label]
         elif not label.endswith(('-lh', '-rh')):
             return labels[label + '-lh'] + labels[label + '-rh']
         else:
             raise ValueError(f"Label {label!r} could not be found in parc {self.get('parc')!r}.")
-
-    def _load_labels(self, regexp=None, **kwargs):
-        """Load labels from an annotation file."""
-        self.make_annot(**kwargs)
-        subjects_dir = str(self.root / MRI_SDIR)
-        labels = mne.read_labels_from_annot(self.get('mrisubject'), self.get('parc'), regexp=regexp, subjects_dir=subjects_dir)
-        return {label.name: label for label in labels}
 
     def load_source_morph(self, **state):
         """Load the source morph from mrisubject to common_brain
@@ -2066,7 +2055,7 @@ class Pipeline(StateModel):
     def make_annot(self, **state) -> None:
         """Ensure that annot files for the current parcellation exist."""
         self.set(**state)
-        self._load_derivative('annot')
+        self._resolve_derivative('annot').ensure()
 
     def make_bad_channels(
         self,

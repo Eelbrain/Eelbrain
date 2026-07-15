@@ -83,15 +83,6 @@ class AnnotDerivative(ExternalArtifactDerivative[list[mne.Label]]):
             state['mrisubject'] = mrisubject
         return ctx.load('annot', state=state)
 
-    def ensure_annot(
-            self,
-            ctx: Request,
-            *,
-            parc: str | None = None,
-            mrisubject: str | None = None,
-    ) -> None:
-        self.load_annot(ctx, parc=parc, mrisubject=mrisubject)
-
     def make_parcellation(
             self,
             ctx: Request,

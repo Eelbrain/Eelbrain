@@ -1170,8 +1170,9 @@ class Request(Generic[T]):
     Notes
     -----
     Derivative-only members such as :meth:`key`, :attr:`artifact_path`,
-    :attr:`manifest_path`, and :meth:`is_valid` are available on the same
-    object. They raise :class:`TypeError` when the request targets an input.
+    :attr:`manifest_path`, :meth:`is_valid`, and :meth:`ensure` are available
+    on the same object. They raise :class:`TypeError` when the request targets
+    an input.
     """
 
     def __init__(
@@ -1626,6 +1627,44 @@ class Request(Generic[T]):
         with self.registry._load_context():
             return self._load(name, state, options, view=view, controls=controls)
 
+    def _resolve_target(
+            self,
+            name: str,
+            state: dict[str, Any] | None,
+            options: dict[str, Any] | None,
+            controls: frozenset[str] | set[str] | tuple[str, ...],
+            view: str | None,
+            caller: str,  # Method name for error messages ('load' or 'ensure').
+    ) -> tuple[Request, str | None]:
+        """Resolve a named dependency to its request and the view to apply to it.
+
+        Inside :meth:`Derivative.build` the target must be a declared
+        dependency and its view, state, and options come from that
+        :class:`Dependency` rather than from the call site; outside a build the
+        caller supplies them.
+        """
+        if self._build_deps is not None:
+            if name not in self._build_deps:
+                declared = sorted(self._build_deps)
+                raise RuntimeError(f"{self.node.name!r} called ctx.{caller}({name!r}) which is not a declared dependency. Declared: {declared}")
+            if view is not None or state is not None or options is not None or controls:
+                raise TypeError(f"{self.node.name!r} passed overrides to ctx.{caller}({name!r}); declare view, state, and options on the Dependency instead, and do not override controls here")
+            dep = self._build_deps[name]
+            child = self.registry.resolve(
+                name=dep.name,
+                state={**self._state, **dep.state} if dep.state else self._state,
+                options=dep.options,
+            )
+            self.registry._check_edge_key_coverage(self, dep, child)
+            return child, dep.view
+        child = self.registry.resolve(
+            name,
+            state={**self._state, **(state or {})},
+            options=options,
+            controls=controls,
+        )
+        return child, view
+
     def _load(
             self,
             name: str | None = None,
@@ -1636,26 +1675,8 @@ class Request(Generic[T]):
             controls: frozenset[str] | set[str] | tuple[str, ...] = (),
     ):
         if isinstance(name, str):
-            if self._build_deps is not None:
-                if name not in self._build_deps:
-                    declared = sorted(self._build_deps)
-                    raise RuntimeError(f"{self.node.name!r} called ctx.load({name!r}) which is not a declared dependency. Declared: {declared}")
-                if view is not None or state is not None or options is not None or controls:
-                    raise TypeError(f"{self.node.name!r} passed overrides to ctx.load({name!r}); declare view, state, and options on the Dependency instead, and do not override controls here")
-                dep = self._build_deps[name]
-                child = self.registry.resolve(
-                    name=dep.name,
-                    state={**self._state, **dep.state} if dep.state else self._state,
-                    options=dep.options,
-                )
-                self.registry._check_edge_key_coverage(self, dep, child)
-                return child.load(view=dep.view)
-            return self.registry.resolve(
-                name,
-                state={**self._state, **(state or {})},
-                options=options,
-                controls=controls,
-            ).load(view=view)
+            child, child_view = self._resolve_target(name, state, options, controls, view, 'load')
+            return child.load(view=child_view)
 
         if state is not None or options is not None or controls:
             raise TypeError("Request.load() without a dependency name only accepts a view override")
@@ -1670,6 +1691,67 @@ class Request(Generic[T]):
         with self._build_deps_context():
             artifact = self.load_artifact()
             return derivative.apply_view_options(self, artifact)
+
+    def ensure(
+            self,
+            name: str | None = None,
+            state: dict[str, Any] | None = None,
+            options: dict[str, Any] | None = None,
+            *,
+            controls: frozenset[str] | set[str] | tuple[str, ...] = (),
+    ) -> None:
+        """Make sure this request's artifact exists, without loading its value.
+
+        Use this instead of discarding the result of :meth:`load` when only the
+        artifact on disk is needed, for example when handing its path to an
+        external tool. A valid artifact is left untouched, so unlike
+        :meth:`load` this does not pay :meth:`Derivative.load` on a cache hit.
+
+        Parameters
+        ----------
+        name
+            Registered node name to ensure as a dependency. When omitted or
+            ``None``, the current request itself is materialized.
+        state
+            State overrides merged on top of the current request's state
+            before resolving the dependency. Only valid when ``name`` is
+            given.
+        options
+            Option overrides for the target node. Only valid when ``name`` is
+            given.
+        controls
+            Explicit execution controls forwarded to the nested request. Only
+            valid when ``name`` is given.
+
+        Notes
+        -----
+        This is a derivative-only operation; it raises :class:`TypeError` when
+        the target is an :class:`Input`, which has no artifact to materialize.
+        Views are irrelevant here and are ignored: they shape a loaded value,
+        not the artifact this builds.
+        """
+        with self.registry._load_context():
+            self._ensure(name, state, options, controls=controls)
+
+    def _ensure(
+            self,
+            name: str | None = None,
+            state: dict[str, Any] | None = None,
+            options: dict[str, Any] | None = None,
+            *,
+            controls: frozenset[str] | set[str] | tuple[str, ...] = (),
+    ) -> None:
+        if isinstance(name, str):
+            child, _ = self._resolve_target(name, state, options, controls, None, 'ensure')
+            child._ensure()
+            return
+
+        if state is not None or options is not None or controls:
+            raise TypeError("Request.ensure() without a dependency name takes no overrides")
+        if self.is_valid():
+            return
+        with self._build_deps_context():
+            self.load_artifact()
 
 
 class DerivativeRegistry:
