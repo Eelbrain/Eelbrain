@@ -352,12 +352,11 @@ def _cache_entity_dir(key: dict[str, Any]) -> Path:
     return Path(*(CACHE_PATH_UNSAFE.sub(CACHE_PATH_UNSAFE_REPLACEMENT, part) for part in parts))
 
 
-def _cache_disambiguation_path(path: str | Path) -> Path:
-    return Path(f"{Path(path)}{CACHE_DISAMBIGUATION_SUFFIX}")
+def _cache_disambiguation_path(path: Path) -> Path:
+    return Path(f"{path}{CACHE_DISAMBIGUATION_SUFFIX}")
 
 
-def _disambiguated_cache_artifact_path(path: str | Path, suffix: str) -> Path:
-    path = Path(path)
+def _disambiguated_cache_artifact_path(path: Path, suffix: str) -> Path:
     if path.suffix:
         return path.with_name(f"{path.stem}{suffix}{path.suffix}")
     return path.with_name(f"{path.name}{suffix}")
@@ -606,7 +605,12 @@ class DependencyNode(Generic[T]):
         return None
 
     def path(self, ctx: Request) -> Path:
-        """Path to the artifact."""
+        """Path to the artifact.
+
+        Should be built from ``ctx.root`` or ``ctx.registry.cache_dir``, so
+        that it shares the root's spelling (see
+        :meth:`DerivativeRegistry.is_cache_artifact`).
+        """
         raise NotImplementedError
 
     def load_view(
@@ -1226,9 +1230,9 @@ class Request(Generic[T]):
             # only became canonical through the manifest JSON round-trip would
             # never equal its stored form and silently recompute on every run.
             self._key = registry.canonicalize(node.key(self))
-            self._base_artifact_path = Path(node.path(self))
-            self._artifact_path = Path(self.registry.resolve_cache_artifact_path(self._base_artifact_path, self._key))
-            self._manifest_path = Path(self.registry.manifest_path(self._artifact_path, self.node.name))
+            self._base_artifact_path = node.path(self)
+            self._artifact_path = self.registry.resolve_cache_artifact_path(self._base_artifact_path, self._key)
+            self._manifest_path = self.registry.manifest_path(self._artifact_path, self.node.name)
             self._warn_inert_key_options()
 
     def _warn_inert_key_options(self) -> None:
@@ -1820,7 +1824,7 @@ class DerivativeRegistry:
         except ValueError:
             return str(artifact_path)
 
-    def _read_cache_disambiguation(self, path: str | Path) -> dict[str, str]:
+    def _read_cache_disambiguation(self, path: Path) -> dict[str, str]:
         sidecar_path = _cache_disambiguation_path(path)
         if not sidecar_path.exists():
             return {}
@@ -1833,17 +1837,16 @@ class DerivativeRegistry:
             return {}
         return {str(key): value for key, value in data.items() if isinstance(value, str)}
 
-    def _write_cache_disambiguation(self, path: str | Path, data: dict[str, str]) -> None:
+    def _write_cache_disambiguation(self, path: Path, data: dict[str, str]) -> None:
         sidecar_path = _cache_disambiguation_path(path)
         sidecar_path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(sidecar_path, json.dumps(data, sort_keys=True, indent=2))
 
     def resolve_cache_artifact_path(
             self,
-            path: str | Path,
+            artifact_path: Path,
             key: dict[str, Any],  # Canonical derivative key (see Request.key()).
     ) -> Path:
-        artifact_path = Path(path)
         if not self.is_cache_artifact(artifact_path):
             return artifact_path
 
@@ -2064,8 +2067,8 @@ class DerivativeRegistry:
         append_node(root, None, '', True)
         return '\n'.join(lines)
 
-    def is_cache_artifact(self, path: str | Path) -> bool:
-        return Path(path).is_relative_to(self.cache_dir)
+    def is_cache_artifact(self, path: Path) -> bool:
+        return path.is_relative_to(self.cache_dir)
 
     def manifest_path(self, artifact_path: Path, node_name: str | None = None) -> Path:
         if self.is_cache_artifact(artifact_path):

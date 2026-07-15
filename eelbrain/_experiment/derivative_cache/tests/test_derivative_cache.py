@@ -538,8 +538,8 @@ class ProtectedDerivative(Derivative[str]):
     def __init__(self, root: str | Path):
         self.root = Path(root)
 
-    def path(self, ctx: Request) -> str:
-        return str(self.root / 'derivatives' / 'mne' / ctx.state['subject'] / 'protected.txt')
+    def path(self, ctx: Request) -> Path:
+        return self.root / 'derivatives' / 'mne' / ctx.state['subject'] / 'protected.txt'
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (Dependency('source'),)
