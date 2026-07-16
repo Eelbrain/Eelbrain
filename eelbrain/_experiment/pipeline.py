@@ -1191,8 +1191,11 @@ class Pipeline(StateModel):
 
         Reads the predictor file's relevant data and shapes it into a predictor
         on the requested time axis. Only file predictors
-        (:class:`UTSPredictor`, :class:`NUTSPredictor`) can be loaded directly;
-        an :class:`EventPredictor` is generated from the data and is only
+        (:class:`UTSPredictor`, :class:`NUTSPredictor`,
+        :class:`SubjectUTSPredictor`) can be loaded directly; for a
+        :class:`SubjectUTSPredictor` the ``subject`` (and ``session``,
+        ``acquisition``) state selects the file. An :class:`EventPredictor` is
+        generated from the data and is only
         available through :meth:`load_trf`.
 
         Parameters

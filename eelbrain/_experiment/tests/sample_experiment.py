@@ -52,6 +52,8 @@ class SampleExperiment(Pipeline):
         'av': SuperEpoch(('auditory', 'visual')),
         # noise covariance
         'cov': SecondaryEpoch('target', tmax=0),
+        # continuous stretches of target events (for continuous predictors)
+        'cont': ContinuousEpoch('sample', "event == 'target'", pad_start=0.1, pad_end=0.1, split=0.5),
     }
 
     epoch_rejection = {
@@ -83,6 +85,8 @@ class SampleTRF(SampleExperiment):
         'imp': EventPredictor(),
         'env': UTSPredictor(),
         'word': NUTSPredictor(),
+        'envseq': SubjectUTSPredictor(),
+        'envp': SubjectUTSPredictor(per_event=True),
     }
     # the 'modality' event variable ('auditory'/'visual') identifies the stimulus
     stim_var = 'modality'

@@ -1,9 +1,12 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+import mne
+import numpy as np
 import pytest
 
 from eelbrain._exceptions import ConfigurationError
 from eelbrain._experiment.epochs import assemble_epochs
-from eelbrain._data_obj import Dataset, Var
+from eelbrain._experiment.epochs.nodes import _epochs_artifact_metadata, _load_epochs, _save_epochs
+from eelbrain._data_obj import Datalist, Dataset, Var
 from eelbrain.pipeline import PrimaryEpoch, SecondaryEpoch, SuperEpoch, EpochCollection, ContinuousEpoch
 
 
@@ -33,7 +36,26 @@ def test_prepare_continuous_epoch_dataset():
     assert tstop is None
     assert decim == 5
     assert variable_tmax is True
-    assert 'T_relative' in ds[0, 'events']
+    assert list(ds['epoch_time']) == pytest.approx([0.0, 1.0])
+    assert list(ds[0, 'events']['epoch_time']) == pytest.approx([0.0, 0.1, 0.2])
+    assert list(ds[1, 'events']['epoch_time']) == pytest.approx([1.0, 1.1])
+
+
+def test_shifted_epoch_time_serialization(tmp_path):
+    "Shifted MNE epoch time axes survive the recording-epochs cache."
+    info = mne.create_info(['EEG 001'], 100, 'eeg')
+    data = np.zeros((1, 1, 50))
+    epochs_0 = mne.EpochsArray(data, info, tmin=-0.1, verbose=False)
+    epochs_1 = mne.EpochsArray(data, info, tmin=-0.1, verbose=False).shift_time(2.0)
+    epochs = Datalist([epochs_0, epochs_1], 'epochs')
+    path = tmp_path / 'epochs'
+
+    _save_epochs(path, epochs)
+    loaded = _load_epochs(path, _epochs_artifact_metadata(epochs))
+
+    assert isinstance(loaded, Datalist)
+    assert loaded[0].times[[0, -1]] == pytest.approx(epochs_0.times[[0, -1]])
+    assert loaded[1].times[[0, -1]] == pytest.approx(epochs_1.times[[0, -1]])
 
 
 def test_assemble_epochs_requires_epoch_objects():

@@ -1,16 +1,17 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+from collections.abc import Mapping
 from itertools import chain
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import numpy
 
-from ... import load
 from ..._data_obj import Categorial, Dataset, Factor, NDVar, UTS, Var, combine
-from ..._ndvar import resample, set_tmin
+from ..._ndvar import resample
 from ..._ndvar.uts import pad
 from ..._trf._predictors import epoch_impulse_predictor, event_impulse_predictor
 from ..configuration import Configuration, typed_arg
+from ..pathing import PREDICTOR_DIR, subject_predictor_path
 from .model import Term, TRFModelError
 
 
@@ -65,11 +66,12 @@ class EventPredictor(Configuration):
             raise NotImplementedError
         return epoch_impulse_predictor((ds.n_cases, uts), self.value, self.latency, term.code, ds)
 
-    def _generate_continuous(self, uts: UTS, ds: Dataset, term: Term):
+    def _generate_continuous(self, uts: UTS, events: Dataset, term: Term) -> NDVar:
+        "Impulse for each event in one ContinuousEpoch segment, placed at ``epoch_time``"
         assert term.stimulus is None
         if self.sel:
-            ds = ds.sub(self.sel)
-        return event_impulse_predictor(uts, 'T_relative', self.value, self.latency, term.code, ds)
+            events = events.sub(self.sel)
+        return event_impulse_predictor(uts, 'epoch_time', self.value, self.latency, term.code, events)
 
 
 class FilePredictorBase(Configuration):
@@ -108,6 +110,8 @@ class FilePredictorBase(Configuration):
     used the old data are invalidated and rebuilt when requested.
     """
     DICT_ATTRS = ('resample', 'sampling')
+    # State fields that select the predictor file (stimulus-based by default)
+    _key_fields: tuple[str, ...] = ()
 
     def __init__(
             self,
@@ -117,6 +121,10 @@ class FilePredictorBase(Configuration):
         assert resample in (None, 'bin', 'resample')
         self.resample = resample
         self.sampling = sampling
+
+    def _path(self, term: Term, state: Mapping[str, Any], root: Path) -> Path:
+        "Absolute path of the predictor file backing ``term``"
+        return root / PREDICTOR_DIR / f"{self._file_stem(term)}.pickle"
 
     def _resample(self, x: NDVar, tstep: float = None):
         if tstep is None or x.time.tstep == tstep:
@@ -154,10 +162,6 @@ class FilePredictorBase(Configuration):
                 raise RuntimeError(f'{nuts_method=}')
         else:
             return self.sampling
-
-    def _load(self, tstep: float, filename: str, directory: Path) -> NDVar | Dataset:
-        raise NotImplementedError  # Used in _generate_continuous
-        # return self._prepare(load.unpickle(directory / f'{filename}.pickle'), tstep)
 
 
 def _arrays_equal(a: numpy.ndarray, b: numpy.ndarray) -> bool:
@@ -211,7 +215,7 @@ class UTSPredictor(FilePredictorBase):
         "File name (without extension) of the predictor file backing ``term``"
         return term.uts_file_name
 
-    def _reference_stem(self, term: Term) -> str:
+    def _reference_stem(self, term: Term, state: Mapping[str, Any]) -> str:
         "Identifier for the cache-internal reference copy of ``term``'s relevant data"
         return self._file_stem(term)
 
@@ -240,27 +244,26 @@ class UTSPredictor(FilePredictorBase):
         x.info['sampling'] = self._sampling('uts')
         return x
 
-    def _generate_continuous(
-            self,
-            uts: UTS,  # time axis for the output
-            ds: Dataset,  # events
-            stim_var: str,
-            term: Term,
-            directory: Path,
-    ) -> NDVar:
-        # place multiple input files into a continuous predictor
-        cache = {stim: self._load(uts.tstep, self._file_stem(term.with_stimulus(stim)), directory) for stim in ds[stim_var].cells}
-        v = cache[ds[0, stim_var]]
+    def _prepare_stimulus(self, contents: NDVar, tstep: float) -> NDVar:
+        "One stimulus' relevant data, resampled to ``tstep`` for continuous placement"
+        return self._prepare(contents, tstep)
+
+    def _generate_continuous(self, uts: UTS, events: Dataset, stim_var: str, term: Term, cache: dict) -> NDVar:
+        "Place per-stimulus predictors into a continuous segment at their ``epoch_time``"
+        if term.nuts_method:
+            raise TRFModelError(f"{term.string}: suffix {term.nuts_method} reserved for non-uniform time series predictors")
+        v = cache[events[0, stim_var]]
         dimnames = v.get_dimnames(first='time')
         dims = (uts, *v.get_dims(dimnames[1:]))
         x = NDVar.zeros(dims, term.key)
-        for t, stim in ds.zip('T_relative', stim_var):
+        for t, stim in events.zip('epoch_time', stim_var):
             x_stim = cache[stim]
             i_start = uts._array_index(t + x_stim.time.tmin)
             i_stop = i_start + len(x_stim.time)
             if i_stop > len(uts):
                 raise ValueError(f"{term.string} for {stim} is longer than the data")
             x.x[i_start:i_stop] = x_stim.get_data(dimnames)
+        x.info['sampling'] = self._sampling('uts')
         return x
 
 
@@ -316,7 +319,7 @@ class NUTSPredictor(FilePredictorBase):
         "File name (without extension) of the predictor file backing ``term``"
         return term.nuts_file_name
 
-    def _reference_stem(self, term: Term) -> str:
+    def _reference_stem(self, term: Term, state: Mapping[str, Any]) -> str:
         "Identifier for the cache-internal reference copy of ``term``'s relevant data"
         # stimulus~file-column[-mask]
         return term.string_without_nuts_method
@@ -360,25 +363,22 @@ class NUTSPredictor(FilePredictorBase):
         x.info['sampling'] = self._sampling('nuts', term.nuts_method)
         return x
 
-    def _generate_continuous(
-            self,
-            uts: UTS,  # time axis for the output
-            ds: Dataset,  # events
-            stim_var: str,
-            term: Term,
-            directory: Path,
-    ) -> NDVar:
-        # place multiple input files into a continuous predictor
-        cache = {stim: self._load(uts.tstep, self._file_stem(term.with_stimulus(stim)), directory) for stim in ds[stim_var].cells}
+    def _prepare_stimulus(self, contents: Dataset, tstep: float) -> Dataset:
+        "One stimulus' relevant data (resampling happens later at the segment's ``uts``)"
+        return contents
+
+    def _generate_continuous(self, uts: UTS, events: Dataset, stim_var: str, term: Term, cache: dict) -> NDVar:
+        "Place per-stimulus event tables into a continuous segment at their ``epoch_time``"
         dss = []
-        for t, stim in ds.zip('T_relative', stim_var):
+        for t, stim in events.zip('epoch_time', stim_var):
             x = cache[stim].copy()
             x['time'] += t
             dss.append(x)
             if term.nuts_method:
-                x_stop_ds = t_stop_ds(x, t)
-                dss.append(x_stop_ds)
-        return self._ds_to_ndvar(combine(dss), uts, term)
+                dss.append(t_stop_ds(x, t))
+        x = self._ds_to_ndvar(combine(dss), uts, term)
+        x.info['sampling'] = self._sampling('nuts', term.nuts_method)
+        return x
 
     def _ds_to_ndvar(self, ds: Dataset, uts: UTS, term: Term):
         column_key, mask_key = term.nuts_columns
@@ -426,80 +426,64 @@ class NUTSPredictor(FilePredictorBase):
         return x
 
 
-class SessionPredictor(FilePredictorBase):
-    """Predictor with time axis corresponding to experiment time
-
-    .. warning::
-       Not BIDS compatible yet
+class SubjectUTSPredictor(UTSPredictor):
+    """Uniform time series predictor with a separate file for each recording
 
     Parameters
     ----------
     resample
-        See :class:`FilePredictorBase`.
+        See :class:`UTSPredictor`.
     sampling
-        See :class:`FilePredictorBase`.
+        See :class:`UTSPredictor`.
+    per_event
+        How to model a :class:`ContinuousEpoch` that contains multiple events:
+
+         - ``False`` (default): the predictor is a single time series spanning
+           the whole recording (one file per recording), modeling the
+           subject-specific response to the entire *sequence*. For a
+           :class:`ContinuousEpoch`, the predictor time axis matches
+           ``epoch_time`` (zero at the first selected event), and each segment
+           is cut out directly at its position on that axis.
+         - ``True``: the predictor is placed per event, exactly like a
+           :class:`UTSPredictor`, but from subject-specific files (one file per
+           recording and stimulus). Use this to model responses to individual
+           items with per-subject predictors.
 
     Notes
     -----
-    In contrast to a :class:`UTSPredictor` or :class:`NUTSPredictor`, which
-    represent a specific stimulus, a :class:`SessionPredictor` represents a
-    whole recording session for a specific subject.
+    In contrast to a :class:`UTSPredictor`, which represents a specific stimulus
+    and is shared across subjects, a :class:`SubjectUTSPredictor` provides a
+    separate predictor file for each recording. This is useful when the stimulus
+    timeline differs between subjects. Files are identified by the ``subject``,
+    ``session``, and ``acquisition`` BIDS entities (the entities that
+    distinguish recordings, other than the ``task`` and ``run`` entities
+    consumed by epoching).
 
-    Session-predictors need to provide a different predictor file for each
-    subject, because the experiment timeline may differ between subjects.
+    With ``per_event=False`` the file for a term is expected at::
 
-    Predictors should be saved as ``{subject} {session}~{code}.pickle``.
+        {root}/derivatives/subject-predictors/sub-{subject}[/ses-{session}]/sub-{subject}[_ses-{session}][_acq-{acquisition}]_desc-{code}.pickle
+
+    and the term cannot be combined with a stimulus. With ``per_event=True`` the
+    file for each stimulus is expected at::
+
+        {root}/derivatives/subject-predictors/sub-{subject}[/ses-{session}]/sub-{subject}[_ses-{session}][_acq-{acquisition}]_desc-{stimulus}~{code}.pickle
     """
+    DICT_ATTRS = ('resample', 'sampling', 'per_event')
+    _key_fields = ('subject', 'session', 'acquisition')
 
-    def _load(self, tstep: float | None, filename: str, directory: Path) -> NDVar:
-        path = directory / f'{filename}.pickle'
-        x = load.unpickle(path)
-        x = self._resample(x, tstep)
-        return x
-
-    def _generate(
+    def __init__(
             self,
-            tmin: float,
-            tstep: float,
-            n_samples: int,
-            term: Term,
-            directory: Path,
-            subject: str,
-            recording: str,
+            resample: Literal['bin', 'resample'] = None,
+            sampling: Literal['continuous', 'discrete'] = None,
+            per_event: bool = False,
     ):
-        "predictor for one recording"
-        if term.stimulus is not None:
-            raise TRFModelError(f"{term.string}: {self.__class__.__name__} cannot have stimulus")
-        elif term.nuts_method:
-            raise TRFModelError(f"{term.string}: suffix {term.nuts_method} reserved for non-uniform time series predictors")
-        file_name = f"{subject} {recording}~{term.string}"
-        x = self._load(tstep, file_name, directory)
-        x = pad(x, tmin, nsamples=n_samples, set_tmin=True)
-        x.info['sampling'] = self._sampling('uts')
-        return x
+        super().__init__(resample, sampling)
+        self.per_event = per_event
 
-    def _epoch_for_data(
-            self,
-            x: NDVar,
-            utss: list[UTS],
-            onset_times: list[float],  # onset of utss in x (relative to first uts)
-    ) -> list[NDVar]:
-        out = []
-        for uts, t0 in zip(utss, onset_times):
-            # align x to uts
-            if t0:
-                t0 = x.time.tstep * round(t0 / x.time.tstep)
-                new_tmin = x.time.tmin - t0  # set x t=0 to uts t=0
-                x_shifted = set_tmin(x, new_tmin)
-            else:
-                x_shifted = x
-            # resample
-            if x_shifted.time.tstep == uts.tstep:
-                x_resampled = x_shifted
-            else:
-                x_cropped = pad(x_shifted, uts.tmin - 2, uts.tstop + 2)
-                x_resampled = self._resample(x_cropped, uts.tstep)
-            x_matching = pad(x_resampled, uts.tmin, uts.tstop, set_tmin=True)
-            assert x_matching.time == uts
-            out.append(x_matching)
-        return out
+    def _path(self, term: Term, state: Mapping[str, Any], root: Path) -> Path:
+        # term.string is the bare code (per_event=False) or {stimulus}~{code} (per_event=True)
+        return root / subject_predictor_path(state, term.string)
+
+    def _reference_stem(self, term: Term, state: Mapping[str, Any]) -> str:
+        # sub-{subject}[_ses-{session}][_acq-{acquisition}]_desc-{code|stimulus~code}
+        return self._path(term, state, Path()).stem

@@ -7,5 +7,5 @@ from ._experiment.epoch_rejection import ChannelModelRejection, EpochRejection, 
 from ._experiment.groups import Group, SubGroup
 from ._experiment.parc import SubParc, CombinationParc, FreeSurferParc, FSAverageParc, SeededParc, IndividualSeededParc
 from ._experiment.statistics import ANOVA, TTestOneSample, TTestIndependent, TTestRelated, TContrastRelated, ROITestResult, ROI2StageResult, TwoStageTest
-from ._experiment.trf import Boosting, EventPredictor, NCRF, NUTSPredictor, UTSPredictor
+from ._experiment.trf import Boosting, EventPredictor, NCRF, NUTSPredictor, SubjectUTSPredictor, UTSPredictor
 from ._experiment.variable_def import EvalVar, GroupVar, LabelVar

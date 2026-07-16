@@ -229,6 +229,10 @@ class RecordingEpochsDerivative(Derivative[Any]):
             epoch_value = epochs
             epochs_list = [epoch_value]
 
+        if isinstance(epoch, ContinuousEpoch):
+            for epochs, epoch_time in zip(epochs_list, ds['epoch_time']):
+                epochs.shift_time(epoch_time)
+
         # Interpolation happens here (rather than in the aggregating EpochsDerivative) because it must precede the EEG re-referencing below. Bad channels are always kept marked
         data_types = DataSpec('sensor').find_ndvar_channel_types(epochs_list[0].info)
         if ds.info.get(INTERPOLATE_WINDOWS, False) and any(ds[INTERPOLATE_WINDOWS]):
@@ -437,10 +441,12 @@ class EpochsDerivative(UncachedDerivative[Dataset]):
             for epochs in epochs_list:
                 epochs.info['bads'] = bads
 
-        # Variable-length epochs have differing numbers of samples and cannot be
-        # concatenated into a single Epochs object.
-        variable_tmax = len({epochs.times.size for epochs in epochs_list}) > 1
-        if variable_tmax:
+        # ContinuousEpoch segments have distinct positions on the shared epoch
+        # clock and always remain separate, even when they have equal lengths.
+        # Other epochs need to remain separate whenever their time axes differ.
+        time_0 = epochs_list[0].times
+        variable_time = isinstance(epoch, ContinuousEpoch) or any(not np.array_equal(epochs.times, time_0) for epochs in epochs_list[1:])
+        if variable_time:
             ds['epochs'] = Datalist(epochs_list, 'epochs')
         else:
             ds['epochs'] = combine(epochs_list)
@@ -456,7 +462,7 @@ class EpochsDerivative(UncachedDerivative[Dataset]):
             if baseline:
                 if ds.info.get(INTERPOLATE_WINDOWS, False):
                     raise NotImplementedError(f"Baseline correction together with ChannelModelRejection for epoch {epoch.name!r}: time-windowed interpolation sets data segments with too many bad channels to zero before baseline correction, and baseline correction would assign these segments non-zero values; load with baseline=False")
-                if variable_tmax:
+                if variable_time:
                     for epochs in epochs_list:
                         epochs.apply_baseline(baseline)
                 else:
@@ -471,7 +477,7 @@ class EpochsDerivative(UncachedDerivative[Dataset]):
             for data_kind in sensor_types:
                 sysname = source_pipe._get_sysname(info, ds.info['subject'], data_kind)
                 adjacency = source_pipe._get_adjacency(data_kind)
-                if variable_tmax:
+                if variable_time:
                     ys = Datalist([load.mne.epochs_ndvar(epochs, data=data_kind, sysname=sysname, adjacency=adjacency, name=data_kind)[0] for epochs in epochs_list])
                     if data.aggregate:
                         ys = Datalist([getattr(y, data.aggregate)('sensor') for y in ys])

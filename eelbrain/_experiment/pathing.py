@@ -22,6 +22,8 @@ LOG_DIR = DERIV_DIR / 'eelbrain' / 'logs'
 RESULTS_DIR = DERIV_DIR / 'eelbrain' / 'results'
 METHODS_DIR = DERIV_DIR / 'eelbrain' / 'methods'
 MRI_SDIR = DERIV_DIR / 'freesurfer'
+PREDICTOR_DIR = DERIV_DIR / 'predictors'
+SUBJECT_PREDICTOR_DIR = DERIV_DIR / 'subject-predictors'
 
 
 def _state_value(state: dict[str, Any], key: str) -> str | None:
@@ -34,7 +36,7 @@ def _bids_name(
         entity_keys: tuple[str, ...],
         suffix: str | None = None,
         *,
-        datatype: str,
+        datatype: str = None,
 ) -> str:
     parts = []
     for key in BIDS_ENTITY_KEYS:
@@ -103,6 +105,14 @@ def rej_file_path(state: dict[str, Any], epoch: str | None = None, epoch_rejecti
     rej_name = state['epoch_rejection'] if epoch_rejection is None else epoch_rejection
     basename = _bids_name(state, ('subject', 'session', 'acquisition', 'run'), suffix='', datatype=datatype)
     return DERIV_DIR / 'mne' / raw_dir(state, datatype=datatype) / f"{basename}_raw-{state['raw']}_epoch-{epoch_name}_rej-{rej_name}_epoch.pickle"
+
+
+def subject_predictor_path(state: dict[str, Any], code: str) -> Path:
+    path = Path(f"sub-{state['subject']}")
+    if _state_value(state, 'session'):
+        path /= f"ses-{state['session']}"
+    basename = _bids_name(state, ('subject', 'session', 'acquisition'), suffix='')
+    return SUBJECT_PREDICTOR_DIR / path / f"{basename}_desc-{code}.pickle"
 
 
 def mri_dir(state: dict[str, Any]) -> Path:

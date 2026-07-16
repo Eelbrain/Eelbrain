@@ -1818,8 +1818,6 @@ class DerivativeRegistry:
             raise RuntimeError(f"Dependency node {node.name!r} already registered")
         if not isinstance(node, (Derivative, Input)):
             raise TypeError(f"Unsupported node type: {type(node)!r}")
-        if isinstance(node, Input) and node.key_fields is UNSET:
-            raise TypeError(f"Input {node.name!r} must declare key_fields (state fields that determine its content); use an empty tuple () only if its identity is fully option-based.")
         self._nodes[node.name] = node
 
     def _get_node(self, name: str) -> DependencyNode[Any]:
