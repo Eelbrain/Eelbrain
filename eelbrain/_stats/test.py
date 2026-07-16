@@ -192,7 +192,8 @@ def lilliefors(data, formatted=False, **kwargs):
     # perform Kolmogorov-Smirnov with estimated mean and std
     m = np.mean(data)
     s = np.std(data, ddof=1)
-    d, ks_p = scipy.stats.kstest(data, 'norm', args=(m, s), **kwargs)
+    # SciPy 1.18.0 maps the 'norm' string to ndtr, which does not accept loc and scale (scipy/scipy#25448).
+    d, ks_p = scipy.stats.kstest(data, scipy.stats.norm.cdf, args=(m, s), **kwargs)
     # approximate p (Dallal)
     if n > 100:
         d *= (n / 100) ** .49
