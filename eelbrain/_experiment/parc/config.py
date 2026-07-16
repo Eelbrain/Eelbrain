@@ -290,10 +290,6 @@ class FreeSurferParc(Parcellation):
     """
     kind = 'subject_parc'
 
-    def _make(self, ctx: Request, annot: AnnotDerivative, parc: str):
-        subject = ctx.state['mrisubject']
-        raise FileNotFoundError(f"At least one annot file for the parcellation {parc} is missing for {subject}")
-
 
 class FSAverageParc(Parcellation):
     """Fsaverage parcellation that is morphed to individual subjects
@@ -316,11 +312,6 @@ class FSAverageParc(Parcellation):
     """
     kind = 'fsaverage_parc'
     morph_from_fsaverage = True
-
-    def _make(self, ctx: Request, annot: AnnotDerivative, parc: str):
-        common_brain = ctx.state['common_brain']
-        assert ctx.state['mrisubject'] == common_brain
-        raise FileNotFoundError(f"At least one annot file for the parcellation {parc} is missing for {common_brain}")
 
 
 class LabelParc(Parcellation):

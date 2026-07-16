@@ -110,8 +110,12 @@ class AnnotDerivative(ExternalArtifactDerivative[list[mne.Label]]):
         parc, parc_def = _resolve_parc(self.parcs, ctx.state['parc'])
         if parc_def is None or isinstance(parc_def, VolumeParc):
             return
-        if not self._is_managed_annot(ctx.state, parc_def):
-            return  # annot files are externally managed; load() reads them
+        elif not self._is_managed_annot(ctx.state, parc_def):
+            # The annot files are externally managed, make sure they exist
+            missing = [path for hemi in ('lh', 'rh') if not (path := ctx.root / annot_file_path(ctx.state, hemi)).exists()]
+            if missing:
+                raise FileNotFoundError(f"At least one annot file for the parcellation {parc} is missing for {ctx.state['mrisubject']}: {', '.join(map(str, missing))}")
+            return
 
         mrisubject = ctx.state['mrisubject']
         if 'source-subject' in ctx.declared_dependencies:
