@@ -693,11 +693,11 @@ class VersionedInput(Input[T]):
 
     def _source_fingerprint(self, ctx: Request) -> dict[str, Any]:
         """Cheap fingerprint of the source (e.g. :func:`file_fingerprint`); the data is only compared when it drifts."""
-        raise NotImplementedError
+        return file_fingerprint(ctx.root, self.path(ctx))
 
     def _current_data(self, ctx: Request) -> Any:
         """Load the tracked data from the source."""
-        raise NotImplementedError
+        return self.load(ctx)
 
     def _data_equal(self, ctx: Request, stored: Any, current: Any) -> bool:
         """Exact comparison between the reference copy and the current data."""

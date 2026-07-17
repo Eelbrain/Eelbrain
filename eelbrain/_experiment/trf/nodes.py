@@ -131,6 +131,7 @@ class PredictorInput(VersionedInput[NDVar]):
         return predictor._path(term, ctx.state, self.root)
 
     def dependency_fingerprint_quick(self, ctx: Request, view: str | None = None) -> dict:
+        """Quickest comparison, avoiding reference .json read"""
         term, predictor = self._resolve(ctx)
         return {
             'config': predictor,
@@ -142,14 +143,9 @@ class PredictorInput(VersionedInput[NDVar]):
         return {'config': predictor, 'version': self.reference_version(ctx)}
 
     def _reference_stem(self, ctx: Request) -> str:
+        """Identifies the data relevant for this term"""
         term, predictor = self._resolve(ctx)
         return predictor._reference_stem(term, ctx.state)
-
-    def _source_fingerprint(self, ctx: Request) -> dict:
-        return file_fingerprint(self.root, self.path(ctx))
-
-    def _current_data(self, ctx: Request):
-        return self.load(ctx)
 
     def _data_equal(self, ctx: Request, stored, current) -> bool:
         term, predictor = self._resolve(ctx)
