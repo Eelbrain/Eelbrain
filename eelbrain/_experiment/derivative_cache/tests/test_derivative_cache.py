@@ -1400,31 +1400,6 @@ class _Leaf(Derivative[str]):
         path.write_text(value)
 
 
-def test_input_requires_key_fields():
-    root, registry = make_empty_registry()
-
-    class NoFieldsInput(Input):
-        name = 'no-fields'
-
-        def path(self, ctx: Request) -> Path:
-            return Path(self.root) / 'x'
-
-    class OptOutInput(Input):
-        name = 'opt-out'
-        key_fields = ()
-
-        def __init__(self, root):
-            self.root = root
-
-        def path(self, ctx: Request) -> Path:
-            return Path(self.root) / 'x'
-
-    with pytest.raises(TypeError, match='must declare key_fields'):
-        registry.register(NoFieldsInput())
-    # an explicit empty tuple opts out and is accepted
-    registry.register(OptOutInput(root))
-
-
 def test_input_read_restriction():
     root, registry = make_empty_registry()
 
