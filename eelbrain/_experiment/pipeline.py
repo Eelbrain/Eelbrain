@@ -1231,7 +1231,7 @@ class Pipeline(StateModel):
         predictor = self.predictors[term.predictor_key]
         if not isinstance(predictor, (UTSPredictor, NUTSPredictor)):
             raise NotImplementedError(f"{term.string}: load_predictor only supports file predictors; load {type(predictor).__name__} through load_trf")
-        contents = self._load_derivative('predictor', options={'code': code})
+        contents = self._load_derivative('predictor', options={'term': term})
         x = predictor._generate(contents, tmin, tstep, n_samples, term)
         x = filter_predictor(x, self._raw, self.get('raw'), filter_x)
         x.name = term.string if name is None else name

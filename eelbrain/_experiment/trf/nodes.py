@@ -18,7 +18,7 @@ from ..preprocessing import RawFilter, RawPipe, RawSource
 from ..source.nodes import _subject_state
 from .estimator import Estimator
 from .job import TRFJob
-from .model import Model, Term, TRFModelError, parse_term
+from .model import Model, Term, TRFModelError
 from .predictor import EventPredictor, NUTSPredictor, SubjectUTSPredictor, UTSPredictor
 
 
@@ -81,7 +81,7 @@ class PredictorInput(VersionedInput[NDVar]):
 
     The predictor definition owns its file identity: a stimulus-based predictor
     (:class:`UTSPredictor`, :class:`NUTSPredictor`) resolves to one file per
-    stimulus, keyed entirely by the predictor ``code``, whereas a
+    stimulus, keyed entirely by the ``term``, whereas a
     :class:`SubjectUTSPredictor` resolves to one file per recording, keyed by
     the BIDS entities it declares in ``_key_fields``.
 
@@ -101,7 +101,7 @@ class PredictorInput(VersionedInput[NDVar]):
     """
     name = 'predictor'
     key_options = {
-        'code': None,
+        'term': OptionSpec(None, Term, normalize=Term._coerce),
     }
 
     def __init__(
@@ -113,7 +113,7 @@ class PredictorInput(VersionedInput[NDVar]):
         self.predictors = predictors
 
     def _resolve(self, ctx: Request) -> tuple[Term, UTSPredictor | NUTSPredictor]:
-        term = parse_term(ctx.options['code'])
+        term = ctx.options['term']
         predictor = self.predictors[term.predictor_key]
         if isinstance(predictor, SubjectUTSPredictor):
             if term.stimulus and not predictor.per_event:
@@ -261,7 +261,7 @@ class TRFDerivative(Derivative[object]):
         for term in ctx.options['x'].terms:
             predictor, stim_var = self._term_predictor(term)
             if isinstance(predictor, SubjectUTSPredictor) and not predictor.per_event:
-                edges[term.string] = Dependency('predictor', label=term.string, options={'code': term.string})
+                edges[term.string] = Dependency('predictor', label=term.string, options={'term': term})
                 continue
             if not isinstance(predictor, (UTSPredictor, NUTSPredictor)):
                 continue  # EventPredictor generates from the events, no file edge
@@ -276,8 +276,8 @@ class TRFDerivative(Derivative[object]):
             else:
                 raise TRFModelError(f"{term.string}: stimulus variable {stim_var!r} not in the events")
             for stim in stims:
-                code = term.with_stimulus(stim).string
-                edges[code] = Dependency('predictor', label=code, options={'code': code})
+                stim_term = term.with_stimulus(stim)
+                edges[stim_term.string] = Dependency('predictor', label=stim_term.string, options={'term': stim_term})
         deps.extend(edges.values())
         return tuple(deps)
 

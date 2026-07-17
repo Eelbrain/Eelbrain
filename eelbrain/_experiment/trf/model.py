@@ -103,9 +103,11 @@ class Term:
             return x
         elif isinstance(x, str):
             return parse_term(x)
-        # elif isinstance(x, tuple):
-        #     return cls._coerce(*x)
         raise TypeError(x)
+
+    def _cache_form_(self) -> str:
+        """Canonical form for cache keys/fingerprints/manifests"""
+        return self.string
 
     def __repr__(self):
         return f"<Term: {self.string}>"
