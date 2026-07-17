@@ -436,14 +436,14 @@ class DependencyNode(Generic[T]):
         under that name.
     key_fields
         State fields whose values determine this node's output. Reading any
-        state field outside ``key_fields`` / ``fixed_state`` during
-        :meth:`~Derivative.build`, :meth:`fingerprint`, or
-        :meth:`dependencies` raises :class:`RuntimeError`. Use
+        state field outside ``key_fields`` / ``fixed_state`` while determining
+        or shaping the node's value raises :class:`RuntimeError` (see
+        :meth:`Request._state_check_context` for the methods this covers). Use
         :meth:`override_key_fields` when a node's key depends on the state
-        dynamically. An explicit empty tuple opts out (the
+        dynamically; a node that does need not also declare a static
+        ``key_fields``. An explicit empty tuple opts out (the
         node manages its own identity via a :meth:`Derivative.key` override).
-        Mandatory for :class:`Input` nodes (only ``()`` opts out). ``key_fields``
-        also feeds the edge-coverage check (see
+        ``key_fields`` also feeds the edge-coverage check (see
         :meth:`DerivativeRegistry._check_edge_key_coverage`): every field a
         dependency keys on must be pinned on the edge or covered by the parent's
         key fields.
@@ -1046,10 +1046,9 @@ class ExternalArtifactDerivative(Derivative[T]):
 class _RestrictedStateView(Mapping):
     """State view that enforces access only to declared key fields.
 
-    Used during :meth:`Derivative.build`, :meth:`~DependencyNode.fingerprint`,
-    :meth:`~DependencyNode.dependency_fingerprint`, and
-    :meth:`~DependencyNode.dependencies` to ensure every state field that
-    affects the artifact is declared in :attr:`~DependencyNode.key_fields` or
+    Used during the methods that determine or shape a node's value (see
+    :meth:`Request._state_check_context`) to ensure every state field that
+    affects it is declared in :attr:`~DependencyNode.key_fields` or
     :attr:`~DependencyNode.fixed_state`.
 
     This is a :class:`~collections.abc.Mapping`, not a :class:`dict`, so that
@@ -1217,9 +1216,7 @@ class Request(Generic[T]):
         # node that keys dynamically need not also declare a redundant static
         # key_fields. A node that declares neither (e.g. a result node that
         # overrides key() and manages its own identity, or an Input with
-        # key_fields=()) is not read-restricted. Inputs are restricted only in
-        # their cache-affecting methods (fingerprint/dependencies); load() etc.
-        # run outside the check context and may read arbitrary state.
+        # key_fields=()) is not read-restricted.
         self._restricted_state: _RestrictedStateView | None = None
         if isinstance(node, (Derivative, Input)):
             read_fields = node._get_key_fields(self)
@@ -1260,7 +1257,7 @@ class Request(Generic[T]):
 
     @contextmanager
     def _state_check_context(self):
-        """Restrict ``ctx.state`` to declared key_fields during cache-affecting calls.
+        """Restrict ``ctx.state`` to declared key_fields during calls that shape a node's value.
 
         When active, any access to a state field not listed in
         :attr:`~Derivative.key_fields` or :attr:`~DependencyNode.fixed_state`
@@ -1531,7 +1528,8 @@ class Request(Generic[T]):
             if manifest is not None and artifact_exists and reason is None:
                 self._artifact_metadata = manifest.artifact_metadata
                 derivative.log_cache_hit(self, self.artifact_path)
-                return derivative.load(self, self.artifact_path)
+                with self._state_check_context():
+                    return derivative.load(self, self.artifact_path)
             if artifact_exists and not self.registry.is_cache_artifact(self.artifact_path) and not self.has_control(ALLOW_PROTECTED_OVERWRITE):
                 raise ProtectedArtifactError(derivative.name, self.artifact_path)
             if reason is None:
@@ -1577,7 +1575,8 @@ class Request(Generic[T]):
         self.registry.write_manifest(self.manifest_path, manifest)
         self.registry._record_valid(self)
         self._artifact_metadata = manifest.artifact_metadata
-        return derivative.load(self, self.artifact_path)
+        with self._state_check_context():
+            return derivative.load(self, self.artifact_path)
 
     def load(
             self,
@@ -1681,16 +1680,17 @@ class Request(Generic[T]):
         if state is not None or options is not None or controls:
             raise TypeError("Request.load() without a dependency name only accepts a view override")
         if view is not None:
-            with self.registry._node_warning_context(self):
+            with self.registry._node_warning_context(self), self._state_check_context():
                 return self.node.load_view(self, view)
         if isinstance(self.node, Input):
-            with self.registry._node_warning_context(self):
+            with self.registry._node_warning_context(self), self._state_check_context():
                 return self.node.load(self)
 
         derivative = self._require_derivative()
         with self._build_deps_context():
             artifact = self.load_artifact()
-            return derivative.apply_view_options(self, artifact)
+            with self._state_check_context():
+                return derivative.apply_view_options(self, artifact)
 
     def ensure(
             self,
