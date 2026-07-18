@@ -368,6 +368,7 @@ class TRFDerivative(Derivative[object]):
     def _continuous_sequence_predictor(self, ctx: Request, predictor: SubjectUTSPredictor, term: Term, y: Datalist, filter_x: bool | str) -> Datalist:
         "Crop a recording-long predictor into ContinuousEpoch segments on their shared time axis"
         x_full = predictor._prepare(ctx.load(term.string), y[0].time.tstep)
+        x_full.info['sampling'] = predictor._sampling('uts')
         x_full = filter_predictor(x_full, self.raw, ctx.state['raw'], filter_x)  # filter the whole series once
         xs = [pad(x_full, yi.time.tmin, nsamples=yi.time.nsamples, set_tmin=True) for yi in y]
         for x in xs:
@@ -378,6 +379,7 @@ class TRFDerivative(Derivative[object]):
         "Cut a recording-long predictor into event-relative epochs"
         tstep = (y[0] if isinstance(y, Datalist) else y).time.tstep
         x_full = predictor._prepare(ctx.load(term.string), tstep)
+        x_full.info['sampling'] = predictor._sampling('uts')
         x_full = filter_predictor(x_full, self.raw, ctx.state['raw'], filter_x)  # filter the whole series once
         sfreq = ds.info['raw.samplingrate']
         sample_0 = ds[0, 'sample']

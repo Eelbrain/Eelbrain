@@ -1929,6 +1929,7 @@ def test_load_trf_subject_predictor(samples_experiment):
     # in this dataset, so no ses-/acq- entities in the path)
     predictor_ndvars = {s: NDVar(rng.normal(size=n_samples), uts, name='envseq') for s in subjects}
     for subject, ndvar in predictor_ndvars.items():
+        assert 'sampling' not in ndvar.info
         save.pickle(ndvar, _subject_predictor_path(root, subject, 'envseq'))
 
     # load_predictor returns each subject's own file (it bypasses the assembly path)
@@ -1941,6 +1942,11 @@ def test_load_trf_subject_predictor(samples_experiment):
     # a term with a stimulus is rejected in sequence mode
     with pytest.raises(TRFModelError):
         e.load_predictor('auditory~envseq', tstep, subject='R0000')
+
+    # filter_x='continuous' determines whether to filter from metadata supplied
+    # by the predictor configuration, not from the raw predictor file
+    job = e.load_trf_job('envseq', 0, 0.1, samplingrate=samplingrate, filter_x='continuous', subject='R0000')
+    assert job.xs[0].info['sampling'] == 'continuous'
 
     # compute per subject; the (stimulus-free) predictor edge is in the manifest
     options = e._trf_options('envseq', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
@@ -2029,7 +2035,8 @@ def test_load_trf_continuous_predictor(samples_experiment):
     save.pickle(NDVar(rng.normal(size=n_samples), UTS(-0.5, tstep, n_samples), name='envseq'), _subject_predictor_path(root, 'R0000', 'envseq'))
     res = e.load_trf('envseq', 0, 0.1, samplingrate=samplingrate)
     assert isinstance(res, BoostingResult)
-    job = e.load_trf_job('envseq', 0, 0.1, samplingrate=samplingrate)
+    job = e.load_trf_job('envseq', 0, 0.1, samplingrate=samplingrate, filter_x='continuous')
+    assert all(x_i.info['sampling'] == 'continuous' for x_i in job.xs[0])
     assert all(x_i.time == y_i.time for x_i, y_i in zip(job.xs[0], job.y))
 
 
