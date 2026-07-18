@@ -64,7 +64,7 @@ class EventPredictor(Configuration):
         assert term.stimulus is None
         if self.sel:
             raise NotImplementedError
-        return epoch_impulse_predictor((ds.n_cases, uts), self.value, self.latency, term.code, ds)
+        return epoch_impulse_predictor((ds.n_cases, uts), self.value, self.latency, term.string, ds)
 
     def _generate_continuous(self, uts: UTS, events: Dataset, term: Term) -> NDVar:
         "Impulse for each event in one ContinuousEpoch segment, placed at ``epoch_time``"
@@ -80,47 +80,10 @@ class FilePredictorBase(Configuration):
     Use :class:`UTSPredictor` for predictors stored as uniform time series
     (:class:`NDVar`) and :class:`NUTSPredictor` for predictors stored as
     non-uniform time series (:class:`Dataset`).
-
-    Parameters
-    ----------
-    resample
-        How to resample the predictor when an analysis is done at a lower
-        sampling rate than the stored data:
-
-         - ``bin``: averaging the values in time bins
-         - ``resample``: use appropriate filter followed by decimation
-
-        For predictors with non-continuous information, such as impulses,
-        binning is more appropriate.
-    sampling
-        Whether the predictor is continuous or discrete. Used to decide
-        whether to filter this predictor with ``filter_x='continuous'``.
-
-    Notes
-    -----
-    Predictor files are expected for each stimulus at::
-
-        {root}/derivatives/predictors/{stimulus}~{key}[-...].pickle
-
-    Where ``stimulus`` refers to the name provided by ``stim_var`` and ``key``
-    refers to the predictor's name (the key used in
-    :attr:`TRFExperiment.predictors`).
-
-    Changes to predictor files are detected automatically: cached results that
-    used the old data are invalidated and rebuilt when requested.
     """
     DICT_ATTRS = ('resample', 'sampling')
     # State fields that select the predictor file (stimulus-based by default)
     _key_fields: tuple[str, ...] = ()
-
-    def __init__(
-            self,
-            resample: Literal['bin', 'resample'] = None,
-            sampling: Literal['continuous', 'discrete'] = None,
-    ):
-        assert resample in (None, 'bin', 'resample')
-        self.resample = resample
-        self.sampling = sampling
 
     def _path(self, term: Term, state: Mapping[str, Any], root: Path) -> Path:
         "Absolute path of the predictor file backing ``term``"
@@ -143,25 +106,6 @@ class FilePredictorBase(Configuration):
         else:
             raise RuntimeError(f"{self.resample=}")
         return x
-
-    def _sampling(
-            self,
-            data_type: Literal['nuts', 'uts'] = None,
-            nuts_method: str = None,
-    ):
-        if data_type == 'uts':
-            return self.sampling or 'continuous'
-        elif data_type == 'nuts' or nuts_method:
-            if nuts_method == 'step':
-                return 'continuous'
-            elif nuts_method == 'is':
-                return None
-            elif nuts_method is None:
-                return 'discrete'
-            else:
-                raise RuntimeError(f'{nuts_method=}')
-        else:
-            return self.sampling
 
 
 def _arrays_equal(a: numpy.ndarray, b: numpy.ndarray) -> bool:
@@ -203,13 +147,30 @@ class UTSPredictor(FilePredictorBase):
 
     Notes
     -----
-    UTS predictors are stored as :class:`NDVar` objects with time dimension
-    matching the data (see :class:`FilePredictorBase` for the file location).
-    The file name after ``{key}`` can be extended freely
-    (``{stimulus}~{key}-{variant}``) to manage multiple predictor variants with
-    the same :class:`UTSPredictor` instance.
+    UTS predictors are stored as :class:`NDVar` objects with time axis
+    matching the data.
+
+    Predictor files are expected for each stimulus at::
+
+        {root}/derivatives/predictors/{stimulus}~{key}[-...].pickle
+
+    Where ``stimulus`` refers to the name provided by ``stim_var`` and ``key``
+    refers to the predictor's name (the key used in
+    :attr:`TRFExperiment.predictors`). Tags starting with a dash (``-``)
+    following the ``key`` can be used to distinguish different versions of
+    a given preditor (``{stimulus}~{key}-{variant}``).
     """
     DICT_ATTRS = ('resample', 'sampling')
+
+    def __init__(
+            self,
+            resample: Literal['bin', 'resample'] = None,
+            sampling: Literal['continuous', 'discrete'] = 'continuous',
+    ):
+        assert resample in (None, 'bin', 'resample')
+        assert sampling in ('continuous', 'discrete')
+        self.resample = resample
+        self.sampling = sampling
 
     def _file_stem(self, term: Term) -> str:
         "File name (without extension) of the predictor file backing ``term``"
@@ -241,7 +202,7 @@ class UTSPredictor(FilePredictorBase):
         if term.nuts_method:
             raise TRFModelError(f"{term.string}: suffix {term.nuts_method} reserved for non-uniform time series predictors")
         x = pad(x, tmin, nsamples=n_samples, set_tmin=True)
-        x.info['sampling'] = self._sampling('uts')
+        x.info['sampling'] = self.sampling
         return x
 
     def _prepare_stimulus(self, contents: NDVar, tstep: float) -> NDVar:
@@ -263,7 +224,7 @@ class UTSPredictor(FilePredictorBase):
             if i_stop > len(uts):
                 raise ValueError(f"{term.string} for {stim} is longer than the data")
             x.x[i_start:i_stop] = x_stim.get_data(dimnames)
-        x.info['sampling'] = self._sampling('uts')
+        x.info['sampling'] = self.sampling
         return x
 
 
@@ -312,9 +273,6 @@ class NUTSPredictor(FilePredictorBase):
     """
     DICT_ATTRS = ()
 
-    def __init__(self):
-        super().__init__()
-
     def _file_stem(self, term: Term) -> str:
         "File name (without extension) of the predictor file backing ``term``"
         return term.nuts_file_name
@@ -323,6 +281,16 @@ class NUTSPredictor(FilePredictorBase):
         "Identifier for the cache-internal reference copy of ``term``'s relevant data"
         # stimulus~file-column[-mask]
         return term.string_without_nuts_method
+
+    def _sampling(self, nuts_method: str = None) -> Literal['continuous', 'discrete'] | None:
+        if nuts_method == 'step':
+            return 'continuous'
+        elif nuts_method == 'is':
+            return None
+        elif nuts_method is None:
+            return 'discrete'
+        else:
+            raise RuntimeError(f'{nuts_method=}')
 
     def _relevant_data(self, contents: Dataset, term: Term) -> Dataset:
         "The subset of the file contents that actually feeds the predictor"
@@ -360,7 +328,7 @@ class NUTSPredictor(FilePredictorBase):
             n_samples = int((tstop - tmin) // tstep)
         uts = UTS(tmin, tstep, n_samples)
         x = self._ds_to_ndvar(x, uts, term)
-        x.info['sampling'] = self._sampling('nuts', term.nuts_method)
+        x.info['sampling'] = self._sampling(term.nuts_method)
         return x
 
     def _prepare_stimulus(self, contents: Dataset, tstep: float) -> Dataset:
@@ -377,7 +345,7 @@ class NUTSPredictor(FilePredictorBase):
             if term.nuts_method:
                 dss.append(t_stop_ds(x, t))
         x = self._ds_to_ndvar(combine(dss), uts, term)
-        x.info['sampling'] = self._sampling('nuts', term.nuts_method)
+        x.info['sampling'] = self._sampling(term.nuts_method)
         return x
 
     def _ds_to_ndvar(self, ds: Dataset, uts: UTS, term: Term):
@@ -474,11 +442,19 @@ class SubjectUTSPredictor(UTSPredictor):
     def __init__(
             self,
             resample: Literal['bin', 'resample'] = None,
-            sampling: Literal['continuous', 'discrete'] = None,
+            sampling: Literal['continuous', 'discrete'] = 'continuous',
             per_event: bool = False,
     ):
         super().__init__(resample, sampling)
         self.per_event = per_event
+
+    def _prepare_sequence(self, x: NDVar, tstep: float, term: Term) -> NDVar:
+        "Prepare a recording-long sequence predictor"
+        if term.nuts_method:
+            raise TRFModelError(f"{term.string}: suffix {term.nuts_method} reserved for non-uniform time series predictors")
+        x = self._prepare(x, tstep)
+        x.info['sampling'] = self.sampling
+        return x
 
     def _path(self, term: Term, state: Mapping[str, Any], root: Path) -> Path:
         # term.string is the bare code (per_event=False) or {stimulus}~{code} (per_event=True)

@@ -204,9 +204,6 @@ class TRFDerivative(Derivative[object]):
         self.stim_var = stim_var
         self.raw = raw
 
-    def _estimator(self, ctx: Request) -> Estimator:
-        return self.estimators[ctx.options['estimator']]
-
     def _term_predictor(self, term: Term) -> tuple[Configuration, str]:
         """The ``(predictor_definition, stimulus_column)`` for a model term"""
         predictor = self.predictors[term.predictor_key]
@@ -218,19 +215,20 @@ class TRFDerivative(Derivative[object]):
         # This is also the read-enforcement set, so it must cover every state
         # field the build may read: 'inv' is always read (to pick the space).
         fields = ('subject', 'session', 'acquisition', 'raw', 'epoch', 'epoch_rejection', 'inv')
+        est = self.estimators[ctx.options['estimator']]
         if ctx.state['inv']:  # non-empty inverse → source space
             fields += ('cov', 'mrisubject', 'src', 'parc')
-        elif self._estimator(ctx).extra_inputs:  # NCRF: sensor data + forward solution
-            fields += ('cov', 'mrisubject', 'src')
+        if est.extra_input_fields:
+            fields += est.extra_input_fields
         else:
             fields += ('reference',)
         return tuple(fields)
 
     def fingerprint(self, ctx: Request) -> dict[str, object]:
-        return {'estimator': self._estimator(ctx)}
+        return {'estimator': self.estimators[ctx.options['estimator']]}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        est = self._estimator(ctx)
+        est = self.estimators[ctx.options['estimator']]
 
         # M/EEG response: sensor (inv='') vs source space
         if ctx.state['inv']:  # source space
@@ -292,7 +290,7 @@ class TRFDerivative(Derivative[object]):
         # requires the build-deps context; it is re-entrant, so this is safe both
         # from build() (already inside it) and from TRFJobSpec.make_job() (fresh).
         with ctx._build_deps_context():
-            est = self._estimator(ctx)
+            est = self.estimators[ctx.options['estimator']]
             model = ctx.options['x']
             if not model.terms:
                 raise TRFModelError(f"{ctx.options['x']!r}: empty model")
@@ -313,35 +311,33 @@ class TRFDerivative(Derivative[object]):
         "Assemble one model term's predictor, shaped to the response time axis"
         predictor, stim_var = self._term_predictor(term)
         is_variable_time = isinstance(y, Datalist)
-        nested = ds.info.get('nested_events')  # 'events' for a ContinuousEpoch
+        is_nested = ds.info.get('nested_events')  # 'events' for a ContinuousEpoch
         filter_x = ctx.options['filter_x']
 
         if isinstance(predictor, EventPredictor):
             if filter_x:
                 raise ValueError(f"filter_x: not available for {type(predictor).__name__}")
-            if nested:
-                return Datalist([predictor._generate_continuous(yi.time, ds[i, nested], term) for i, yi in enumerate(y)])
+            if is_nested:
+                return Datalist([predictor._generate_continuous(yi.time, ds[i, is_nested], term) for i, yi in enumerate(y)])
             if is_variable_time:
                 raise NotImplementedError(f"{type(predictor).__name__} for variable-length epochs")
-            x = predictor._generate(y.time, ds, term)
-            x.name = term.string
-            return x
+            return predictor._generate(y.time, ds, term)
         elif not isinstance(predictor, (UTSPredictor, NUTSPredictor)):
             raise NotImplementedError(f"{term.string}: loading {type(predictor).__name__} is not supported")
 
         # per-subject sequence predictor: one recording-long file, cut per case
         if isinstance(predictor, SubjectUTSPredictor) and not predictor.per_event:
-            if nested:
-                return self._continuous_sequence_predictor(ctx, predictor, term, y, filter_x)
-            return self._sequence_predictor(ctx, predictor, term, ds, y, filter_x)
+            if is_nested:
+                return self._load_subject_predictor_nested(ctx, predictor, term, y, filter_x)
+            return self._load_subject_predictor(ctx, predictor, term, ds, y, filter_x)
 
-        # ContinuousEpoch: assemble each segment from its per-event predictors
-        if nested:
-            return self._continuous_predictor(ctx, predictor, term, stim_var, ds, y, nested, filter_x)
-
-        # single-event epoch: one stimulus per case, aligned to the response
         if stim_var not in ds:
             raise TRFModelError(f"{term.string}: stimulus variable {stim_var!r} not in the data")
+
+        if is_nested:
+            return self._load_predictor_nested(ctx, predictor, term, stim_var, ds, y, is_nested, filter_x)
+
+        # single-event epoch: one stimulus per case, aligned to the response
         stim_factor = ds[stim_var]
         if is_variable_time:
             xs = [self._aligned_predictor(ctx, predictor, term, s, yi.time, filter_x) for s, yi in zip(stim_factor, y)]
@@ -352,7 +348,7 @@ class TRFDerivative(Derivative[object]):
         x.name = term.string
         return x
 
-    def _continuous_predictor(self, ctx: Request, predictor: UTSPredictor | NUTSPredictor, term: Term, stim_var: str, ds, y: Datalist, nested: str, filter_x: bool | str) -> Datalist:
+    def _load_predictor_nested(self, ctx: Request, predictor: UTSPredictor | NUTSPredictor, term: Term, stim_var: str, ds, y: Datalist, nested: str, filter_x: bool | str) -> Datalist:
         "Assemble a per-event (ContinuousEpoch) predictor on the shared ``epoch_time`` axis"
         tstep = y[0].time.tstep
         stims = {stim for i in range(ds.n_cases) for stim in ds[i, nested][stim_var].cells}
@@ -365,21 +361,19 @@ class TRFDerivative(Derivative[object]):
             xs.append(x)
         return Datalist(xs)
 
-    def _continuous_sequence_predictor(self, ctx: Request, predictor: SubjectUTSPredictor, term: Term, y: Datalist, filter_x: bool | str) -> Datalist:
+    def _load_subject_predictor_nested(self, ctx: Request, predictor: SubjectUTSPredictor, term: Term, y: Datalist, filter_x: bool | str) -> Datalist:
         "Crop a recording-long predictor into ContinuousEpoch segments on their shared time axis"
-        x_full = predictor._prepare(ctx.load(term.string), y[0].time.tstep)
-        x_full.info['sampling'] = predictor._sampling('uts')
+        x_full = predictor._prepare_sequence(ctx.load(term.string), y[0].time.tstep, term)
         x_full = filter_predictor(x_full, self.raw, ctx.state['raw'], filter_x)  # filter the whole series once
         xs = [pad(x_full, yi.time.tmin, nsamples=yi.time.nsamples, set_tmin=True) for yi in y]
         for x in xs:
             x.name = term.string
         return Datalist(xs)
 
-    def _sequence_predictor(self, ctx: Request, predictor: SubjectUTSPredictor, term: Term, ds, y, filter_x: bool | str) -> NDVar | Datalist:
+    def _load_subject_predictor(self, ctx: Request, predictor: SubjectUTSPredictor, term: Term, ds, y, filter_x: bool | str) -> NDVar | Datalist:
         "Cut a recording-long predictor into event-relative epochs"
         tstep = (y[0] if isinstance(y, Datalist) else y).time.tstep
-        x_full = predictor._prepare(ctx.load(term.string), tstep)
-        x_full.info['sampling'] = predictor._sampling('uts')
+        x_full = predictor._prepare_sequence(ctx.load(term.string), tstep, term)
         x_full = filter_predictor(x_full, self.raw, ctx.state['raw'], filter_x)  # filter the whole series once
         sfreq = ds.info['raw.samplingrate']
         sample_0 = ds[0, 'sample']
@@ -468,9 +462,6 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
             fields += ['cov', 'src', 'parc', 'adjacency', 'mrisubject', 'common_brain']
         return tuple(fields)
 
-    def _estimator(self, ctx: Request) -> Estimator:
-        return self.estimators[ctx.options['estimator']]
-
     def _epoch_names(self, ctx: Request) -> list[str]:
         epoch = self.epochs[ctx.state['epoch']]
         if isinstance(epoch, EpochCollection):
@@ -491,7 +482,7 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
         return tuple(deps)
 
     def build(self, ctx: Request) -> Dataset:
-        est = self._estimator(ctx)
+        est = self.estimators[ctx.options['estimator']]
         scale = ctx.options['scale']
         trfs = ctx.options['trfs']
         subject = ctx.state['subject']

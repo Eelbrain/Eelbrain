@@ -3,8 +3,25 @@ from numpy.testing import assert_array_equal
 import pytest
 
 from eelbrain import Dataset, Factor, NDVar, UTS, Var
-from eelbrain._experiment.trf.model import parse_term
+from eelbrain._experiment.trf.model import TRFModelError, parse_term
 from eelbrain._experiment.trf.predictor import EventPredictor, NUTSPredictor, SubjectUTSPredictor, UTSPredictor
+
+
+def test_predictor_sampling():
+    assert UTSPredictor().sampling == 'continuous'
+    uts_predictor = UTSPredictor(sampling='discrete')
+    assert uts_predictor.sampling == 'discrete'
+    sequence_predictor = SubjectUTSPredictor(sampling='discrete')
+    contents = NDVar(np.zeros(2), UTS(0, 0.1, 2))
+    x = sequence_predictor._prepare_sequence(contents, 0.1, parse_term('envseq'))
+    assert x.info['sampling'] == 'discrete'
+    with pytest.raises(TRFModelError):
+        sequence_predictor._prepare_sequence(contents, 0.1, parse_term('envseq-value-step'))
+
+    predictor = NUTSPredictor()
+    assert predictor._sampling() == 'discrete'
+    assert predictor._sampling('step') == 'continuous'
+    assert predictor._sampling('is') is None
 
 
 def test_subject_uts_predictor_identity():
@@ -15,7 +32,7 @@ def test_subject_uts_predictor_identity():
     p = SubjectUTSPredictor()
     assert p.per_event is False
     assert p._key_fields == ('subject', 'session', 'acquisition')
-    assert p._as_dict() == {'type': 'SubjectUTSPredictor', 'resample': None, 'sampling': None, 'per_event': False}
+    assert p._as_dict() == {'type': 'SubjectUTSPredictor', 'resample': None, 'sampling': 'continuous', 'per_event': False}
     term = parse_term('envseq')
     state = {'subject': 'R0001', 'session': '', 'acquisition': ''}
     assert p._path(term, state, Path('/root')) == Path('/root/derivatives/subject-predictors/sub-R0001/sub-R0001_desc-envseq.pickle')

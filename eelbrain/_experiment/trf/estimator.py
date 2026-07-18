@@ -35,6 +35,7 @@ class Estimator(Configuration):
     # Dependencies (registered derivative names) that :meth:`_fit` needs beyond
     # the response, loaded by the TRF node and passed as keyword arguments.
     extra_inputs: tuple[str, ...] = ()
+    extra_input_fields: tuple[str, ...] = ()
     # Whether the estimator requires sensor-space data (inv=''; e.g., NCRF)
     requires_sensor_space: bool = False
     # Fit-quality metric columns this estimator contributes to the TRFs Dataset.
@@ -264,6 +265,7 @@ class NCRF(Estimator):
         Standard deviation of the temporal basis (in seconds).
     """
     extra_inputs = ('fwd', 'cov')
+    extra_input_fields = ('cov', 'mrisubject', 'src')
     requires_sensor_space = True
     DICT_ATTRS = ('mu', 'nlevels', 'n_iter', 'n_iterc', 'n_iterf', 'n_splits', 'tol', 'use_ES', 'basis_std')
     metric_keys = ('mu',)
