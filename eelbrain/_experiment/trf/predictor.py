@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 import numpy
 
-from ..._data_obj import Categorial, Dataset, Factor, NDVar, UTS, Var, combine
+from ..._data_obj import Dataset, Factor, NDVar, UTS, Var, combine
 from ..._ndvar import resample
 from ..._ndvar.uts import pad
 from ..._trf._predictors import epoch_impulse_predictor, event_impulse_predictor
@@ -285,8 +285,6 @@ class NUTSPredictor(FilePredictorBase):
     def _sampling(self, nuts_method: str = None) -> Literal['continuous', 'discrete'] | None:
         if nuts_method == 'step':
             return 'continuous'
-        elif nuts_method == 'is':
-            return None
         elif nuts_method is None:
             return 'discrete'
         else:
@@ -364,33 +362,24 @@ class NUTSPredictor(FilePredictorBase):
             ds[column_key] *= mask
 
         # prepare output NDVar
-        if term.nuts_method == 'is':
-            dim = Categorial('representation', ('step', 'impulse'))
-            x = NDVar.zeros((dim, uts), name=term.key)
-            x_step, x_impulse = x
-        else:
-            x = NDVar.zeros(uts, name=term.key)
-            if term.nuts_method == 'step':
-                x_step, x_impulse = x, None
-            elif not term.nuts_method:
-                x_step, x_impulse = None, x
-            else:
-                raise TRFModelError(f"{term.string}: NUTS-method={term.nuts_method!r}")
+        x = NDVar.zeros(uts, name=term.key)
 
         # fill in values
         dt = uts.tstep / 2
         ds = ds[(ds['time'] > uts.tmin - dt) & (ds['time'] < uts.tmax + dt)]
-        if x_impulse is not None:
+        if term.nuts_method is None:
             for t, v in ds.zip('time', column_key):
-                x_impulse[t] += v
-        if x_step is not None:
+                x[t] += v
+        elif term.nuts_method == 'step':
             t_stops = ds[1:, 'time']
             if ds[-1, column_key] != 0:
                 if 'tstop' not in ds.info:
                     raise TRFModelError(f"{term.string}: for step representation, the predictor datasets needs to contain ds.info['tstop'] to determine the end of the last step")
                 t_stops = chain(t_stops, [ds.info['tstop']])
             for t0, t1, v in zip(ds['time'], t_stops, ds[column_key]):
-                x_step[t0:t1] = v
+                x[t0:t1] = v
+        else:
+            raise TRFModelError(f"{term.string}: NUTS-method={term.nuts_method!r}")
         return x
 
 

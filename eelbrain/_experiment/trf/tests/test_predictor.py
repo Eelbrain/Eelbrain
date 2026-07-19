@@ -21,7 +21,6 @@ def test_predictor_sampling():
     predictor = NUTSPredictor()
     assert predictor._sampling() == 'discrete'
     assert predictor._sampling('step') == 'continuous'
-    assert predictor._sampling('is') is None
 
 
 def test_subject_uts_predictor_identity():

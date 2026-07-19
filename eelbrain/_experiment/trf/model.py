@@ -20,7 +20,7 @@ from ... import fmtxt
 
 COMP = {1: '>', 0: '=', -1: '<'}
 TAIL = {'>': 1, '=': 0, '<': -1}
-NUTS_METHODS = ('step', 'is')
+NUTS_METHODS = ('step',)
 
 
 class TRFModelError(Exception):
