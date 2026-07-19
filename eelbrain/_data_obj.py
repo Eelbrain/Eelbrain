@@ -1071,6 +1071,7 @@ def combine(
         incomplete: Literal['raise', 'drop', 'fill in'] = 'raise',
         dim_intersection: bool = False,
         to_list: bool = False,
+        info: dict = None,
 ):
     """Combine a list of items of the same type into one item.
 
@@ -1103,6 +1104,8 @@ def combine(
         have mismatching dimensions, a :exc:`DimensionMismatchError` is raised.
         With ``to_list=True``, the :class:`NDVar` are added as :class:`list` of
         :class:`NDVar` instead.
+    info
+        Info dict (when combining :class:`Dataset`)
 
     Notes
     -----
@@ -1142,7 +1145,9 @@ def combine(
 
     # combine objects
     if stype is Dataset:
-        out = Dataset(name=name, info=_info.merge_info(items))
+        if info is None:
+            info = _info.merge_info(items)
+        out = Dataset(name=name, info=info)
         if incomplete == 'fill in':
             # find all keys and data types
             keys = list(first_item.keys())

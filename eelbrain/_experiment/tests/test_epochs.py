@@ -6,13 +6,16 @@ import pytest
 from eelbrain._exceptions import ConfigurationError
 from eelbrain._experiment.epochs import assemble_epochs
 from eelbrain._experiment.epochs.nodes import _epochs_artifact_metadata, _load_epochs, _save_epochs
-from eelbrain._data_obj import Datalist, Dataset, Var
+from eelbrain._experiment.events import _combine_event_datasets
+from eelbrain._data_obj import Datalist, Dataset, Factor, Var
 from eelbrain.pipeline import PrimaryEpoch, SecondaryEpoch, SuperEpoch, EpochCollection, ContinuousEpoch
 
 
 def test_prepare_continuous_epoch_dataset():
-    epoch = ContinuousEpoch('task', 'stim == 1', pad_start=0.1, pad_end=0.2, split=0.5, samplingrate=200)
+    epoch = ContinuousEpoch('task', 'stim == 1', pad_start=0.1, pad_end=0.2, split=0.5, samplingrate=200, run='2')
     assert 'name' not in epoch._as_dict()
+    assert epoch.run == '2'
+    assert epoch._as_dict()['run'] == '2'
     ds = Dataset({
         'onset': Var([0.0, 0.1, 0.2, 1.0, 1.1]),
         'sample': Var([0, 100, 200, 1000, 1100]),
@@ -39,6 +42,20 @@ def test_prepare_continuous_epoch_dataset():
     assert list(ds['epoch_time']) == pytest.approx([0.0, 1.0])
     assert list(ds[0, 'events']['epoch_time']) == pytest.approx([0.0, 0.1, 0.2])
     assert list(ds[1, 'events']['epoch_time']) == pytest.approx([1.0, 1.1])
+
+
+def test_combine_event_dataset_bids_entities():
+    "Varying BIDS entities become columns; invariant entities remain in info"
+    info = {'subject': 'R0001', 'session': '', 'acquisition': ''}
+    ds_1 = Dataset({'value': Var([1, 2])}, info={**info, 'task': 'story', 'run': '1'})
+    ds_2 = Dataset({'value': Var([3]), 'run': Factor(['2'])}, info={**info, 'task': 'rest', 'run': '2'})
+    ds = _combine_event_datasets([ds_1, ds_2])
+
+    assert tuple(ds['task']) == ('story', 'story', 'rest')
+    assert tuple(ds['run']) == ('1', '1', '2')
+    assert 'task' not in ds.info
+    assert 'run' not in ds.info
+    assert all(ds.info[key] == value for key, value in info.items())
 
 
 def test_shifted_epoch_time_serialization(tmp_path):

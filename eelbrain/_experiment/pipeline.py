@@ -23,7 +23,7 @@ from .. import plot
 from .. import save
 from .._data_obj import CellArg, Datalist, Dataset, Factor, Var, NDVar, SourceSpace, VolumeSourceSpace, assert_is_legal_dataset_key, combine
 from .._exceptions import ConfigurationError, DimensionMismatchError
-from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS
+from .._info import INTERPOLATE_CHANNELS
 from .._meeg import new_rejection_ds
 from ..mne_fixes import suppress_mne_warning
 from .._ndvar import concatenate, neighbor_correlation
@@ -36,7 +36,7 @@ from .covariance import CovDerivative, EpochCovariance, RawCovariance
 from .derivative_cache import DerivativeRegistry, ProtectedArtifactError, Request, _format_size
 from .configuration import Configuration, ConfigurationDict, sequence_arg
 from .epochs import (
-    EpochBase, EpochsDerivative, RecordingEpochsDerivative, EvokedDerivative,
+    ContinuousEpoch, EpochBase, EpochsDerivative, RecordingEpochsDerivative, EvokedDerivative,
     EvokedGroupDatasetDerivative, PrimaryEpoch, SecondaryEpoch,
     SuperEpoch, assemble_epochs, decim_param,
 )
@@ -970,7 +970,7 @@ class Pipeline(StateModel):
         self.set(**state)
         return self._load_derivative('annot')
 
-    def load_bad_channels(self, noise: bool = False, **kwargs):
+    def load_bad_channels(self, noise: bool = False, **kwargs) -> list[str]:
         """Load bad channels
 
         Parameters
@@ -982,7 +982,7 @@ class Pipeline(StateModel):
 
         Returns
         -------
-        bad_chs : list of str
+        bad_chs
             Bad channels.
         """
         raw_name = self.get('raw', **kwargs)
@@ -1193,9 +1193,10 @@ class Pipeline(StateModel):
         on the requested time axis. Only file predictors
         (:class:`UTSPredictor`, :class:`NUTSPredictor`,
         :class:`SubjectUTSPredictor`) can be loaded directly; for a
-        :class:`SubjectUTSPredictor` the ``subject`` (and ``session``,
-        ``acquisition``) state selects the file. An :class:`EventPredictor` is
-        generated from the data and is only
+        :class:`SubjectUTSPredictor` the ``subject``, ``session``, and
+        ``acquisition`` state selects the file; in sequence mode, ``task`` and
+        ``run`` also select the file. An :class:`EventPredictor` is generated
+        from the data and is only
         available through :meth:`load_trf`.
 
         Parameters
@@ -3159,7 +3160,7 @@ class Pipeline(StateModel):
             runs = self._runs_for.get((fields['subject'], fields.get('session', ''), task, acquisition), ())
         else:
             epoch = self._epochs[epoch_name]
-            if not isinstance(epoch, PrimaryEpoch):
+            if not isinstance(epoch, (PrimaryEpoch, ContinuousEpoch)):
                 return None
             runs = self._runs_for.get((fields['subject'], fields.get('session', ''), epoch.task, acquisition), ())
             if epoch.run is not None:
@@ -3635,11 +3636,10 @@ class Pipeline(StateModel):
 
         # format bad channels
         if bads:
-            bads_fmt = ', '.join
+            def bads_fmt(ch_names: list[str]) -> str: return ', '.join(ch_names)
         else:
-            bads_fmt = len
+            def bads_fmt(ch_names: list[str]) -> str: return str(len(ch_names))
 
-        bads_in_rej = False
         subjects = []
         n_events = []
         n_good = []
@@ -3650,28 +3650,25 @@ class Pipeline(StateModel):
             try:
                 bads_raw = self.load_bad_channels()
             except FileMissingError:  # raw file is missing
-                bad_chs.append(('NaN', 'NaN'))
+                bad_chs.append('NaN')
                 if has_epoch_rejection:
                     n_good.append(float('nan'))
                 if has_interp:
                     n_interp.append(float('nan'))
                 n_events.append(np.nan)
                 continue
+            else:
+                bad_chs.append(bads_fmt(bads_raw))
 
             try:
                 ds = self.load_selected_events(reject='keep')
             except FileMissingError:  # rejection file is missing
                 ds = self.load_selected_events(reject=False)
-                bad_chs.append((bads_fmt(bads_raw), 'NaN'))
                 if has_epoch_rejection:
                     n_good.append(float('nan'))
                 if has_interp:
                     n_interp.append(float('nan'))
             else:
-                bads_rej = set(ds.info[BAD_CHANNELS]).difference(bads_raw)
-                if bads_rej:
-                    bads_in_rej = True
-                bad_chs.append((bads_fmt(bads_raw), bads_fmt(bads_rej)))
                 if has_epoch_rejection:
                     n_good.append(ds['accept'].sum())
                 if has_interp:
@@ -3679,15 +3676,6 @@ class Pipeline(StateModel):
             n_events.append(ds.n_cases)
         has_interp = has_interp and any(n_interp)
         caption = f"Rejection info for raw={raw_name}, epoch={epoch_name}, rej={rej_name}. Percent is rounded to one decimal."
-
-        if bads_in_rej:
-            caption += " Bad channels: defined in bad_channels file and in epoch-rejection file."
-            bad_chs = [f'{bads_raw} + {bads_rej}' for bads_raw, bads_rej in bad_chs]
-        else:
-            bad_chs = [f'{bads_raw}' for bads_raw, bads_rej in bad_chs]
-
-        if bads:
-            bad_chs = [s.replace('MEG ', '') for s in bad_chs]
 
         if has_interp:
             caption += " ch_interp: average number of channels interpolated per epoch, rounded to one decimal."

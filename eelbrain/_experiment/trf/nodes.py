@@ -1,3 +1,5 @@
+from dataclasses import dataclass, asdict
+from itertools import repeat
 from pathlib import Path
 import warnings
 
@@ -13,13 +15,41 @@ from ..configuration import Configuration
 from ..data import DataSpec
 from ..derivative_cache import Dependency, Derivative, OptionSpec, Request, UncachedDerivative, VersionedInput, file_fingerprint
 from ..epochs.config import EpochCollection
-from ..pathing import MRI_SDIR, mri_dir
+from ..pathing import BIDS_ENTITY_KEYS, MRI_SDIR, mri_dir
 from ..preprocessing import RawFilter, RawPipe, RawSource
 from ..source.nodes import _subject_state
 from .estimator import Estimator
 from .job import TRFJob
 from .model import Model, Term, TRFModelError
 from .predictor import EventPredictor, NUTSPredictor, SubjectUTSPredictor, UTSPredictor
+
+
+@dataclass(frozen=True)
+class Recording:
+    """BIDS entities identifying one recording"""
+    subject: str
+    session: str
+    task: str
+    acquisition: str
+    run: str
+
+    def dependency_label(self, term: Term):
+        """Dependency label for a predictor file tied to this recording"""
+        suffix = f'task-{self.task}'
+        if self.run:
+            suffix += f'_run-{self.run}'
+        return f'{term.string}@{suffix}'
+
+
+def find_bids_recordings(ds: Dataset) -> list[Recording]:
+    """Move BIDS entities into dataset columns"""
+    values = []
+    for key in BIDS_ENTITY_KEYS:
+        if key in ds:
+            values.append(ds[key])
+        else:
+            values.append(repeat(ds.info[key], ds.n_cases))
+    return [Recording(*case) for case in zip(*values)]
 
 
 def filter_pipes(raw: dict[str, RawPipe], raw_name: str) -> list[RawFilter]:
@@ -81,9 +111,10 @@ class PredictorInput(VersionedInput[NDVar]):
 
     The predictor definition owns its file identity: a stimulus-based predictor
     (:class:`UTSPredictor`, :class:`NUTSPredictor`) resolves to one file per
-    stimulus, keyed entirely by the ``term``, whereas a
-    :class:`SubjectUTSPredictor` resolves to one file per recording, keyed by
-    the BIDS entities it declares in ``_key_fields``.
+    stimulus, keyed entirely by the ``term``. A
+    :class:`SubjectUTSPredictor` additionally uses the BIDS entities declared
+    by its ``_key_fields``; these depend on whether it represents a recording
+    sequence or per-event stimuli.
 
     Because the relevant data can be large, dependent manifests do not embed
     it; they store a small version identity backed by one canonical reference
@@ -246,24 +277,30 @@ class TRFDerivative(Derivative[object]):
         for extra in est.extra_inputs:
             deps.append(Dependency(extra))
 
-        # one predictor-file edge per stimulus; for a ContinuousEpoch the
-        # stimuli are enumerated from the nested per-event Datasets. A
-        # SubjectUTSPredictor in sequence mode (per_event=False) has a single
-        # stimulus-free file per recording.
+        # One predictor-file edge per input. Stimulus predictors, including
+        # per-event SubjectUTSPredictors, are shared across recordings;
+        # sequence-mode SubjectUTSPredictors have one edge per recording.
         edges: dict[str, Dependency] = {}
-        events = None
+        events = nested = recordings = None
         for term in ctx.options['x'].terms:
             predictor, stim_var = self._term_predictor(term)
-            if isinstance(predictor, SubjectUTSPredictor) and not predictor.per_event:
-                edges[term.string] = Dependency('predictor', label=term.string, options={'term': term})
-                continue
-            if not isinstance(predictor, (UTSPredictor, NUTSPredictor)):
+            if isinstance(predictor, EventPredictor):
                 continue  # EventPredictor generates from the events, no file edge
+            elif not isinstance(predictor, (UTSPredictor, NUTSPredictor)):
+                raise RuntimeError(f"{predictor=}")
+            # Lazy load events
             if events is None:
                 options = ctx.options_for('epoch-events', 'samplingrate', 'decim')
                 events = ctx.load('epoch-events', options=options)
-            nested = events.info.get('nested_events')
-            if nested:
+                nested = events.info.get('nested_events')
+            if isinstance(predictor, SubjectUTSPredictor) and not predictor.per_event:
+                if recordings is None:
+                    recordings = find_bids_recordings(events)
+                for recording in dict.fromkeys(recordings):  # ordered set
+                    label = recording.dependency_label(term)
+                    edges[label] = Dependency('predictor', label=label, state=asdict(recording), options={'term': term})
+                continue
+            elif nested:
                 stims = {stim for i in range(events.n_cases) for stim in events[i, nested][stim_var].cells}
             elif stim_var in events:
                 stims = set(events[stim_var].cells)
@@ -327,9 +364,7 @@ class TRFDerivative(Derivative[object]):
 
         # per-subject sequence predictor: one recording-long file, cut per case
         if isinstance(predictor, SubjectUTSPredictor) and not predictor.per_event:
-            if is_nested:
-                return self._load_subject_predictor_nested(ctx, predictor, term, y, filter_x)
-            return self._load_subject_predictor(ctx, predictor, term, ds, y, filter_x)
+            return self._load_subject_predictor(ctx, predictor, term, ds, y, filter_x, is_nested)
 
         if stim_var not in ds:
             raise TRFModelError(f"{term.string}: stimulus variable {stim_var!r} not in the data")
@@ -361,40 +396,45 @@ class TRFDerivative(Derivative[object]):
             xs.append(x)
         return Datalist(xs)
 
-    def _load_subject_predictor_nested(self, ctx: Request, predictor: SubjectUTSPredictor, term: Term, y: Datalist, filter_x: bool | str) -> Datalist:
-        "Crop a recording-long predictor into ContinuousEpoch segments on their shared time axis"
-        x_full = predictor._prepare_sequence(ctx.load(term.string), y[0].time.tstep, term)
-        x_full = filter_predictor(x_full, self.raw, ctx.state['raw'], filter_x)  # filter the whole series once
-        xs = [pad(x_full, yi.time.tmin, nsamples=yi.time.nsamples, set_tmin=True) for yi in y]
-        for x in xs:
-            x.name = term.string
-        return Datalist(xs)
+    def _load_subject_predictor(self, ctx: Request, predictor: SubjectUTSPredictor, term: Term, ds, y, filter_x: bool | str, is_nested: bool) -> NDVar | Datalist:
+        "Cut recording-long predictors into response cases"
+        times = [yi.time for yi in y] if isinstance(y, Datalist) else [y.time] * ds.n_cases
+        recordings = find_bids_recordings(ds)
+        x_fulls = {}
+        for recording in set(recordings):
+            label = recording.dependency_label(term)
+            x_full = predictor._prepare_sequence(ctx.load(label), times[0].tstep, term)
+            x_fulls[recording] = filter_predictor(x_full, self.raw, ctx.state['raw'], filter_x)
 
-    def _load_subject_predictor(self, ctx: Request, predictor: SubjectUTSPredictor, term: Term, ds, y, filter_x: bool | str) -> NDVar | Datalist:
-        "Cut a recording-long predictor into event-relative epochs"
-        tstep = (y[0] if isinstance(y, Datalist) else y).time.tstep
-        x_full = predictor._prepare_sequence(ctx.load(term.string), tstep, term)
-        x_full = filter_predictor(x_full, self.raw, ctx.state['raw'], filter_x)  # filter the whole series once
-        sfreq = ds.info['raw.samplingrate']
-        sample_0 = ds[0, 'sample']
+        if is_nested:
+            offsets = [0.] * ds.n_cases
+        else:
+            sfreq = ds.info['raw.samplingrate']
+            sample_0 = {}
+            for recording, sample_i in zip(recordings, ds['sample']):
+                if recording not in sample_0:
+                    sample_0[recording] = sample_i
+            offsets = [(sample_i - sample_0[recording]) / sfreq for recording, sample_i in zip(recordings, ds['sample'])]
 
-        def chunk(time, sample_i):
-            t0 = (sample_i - sample_0) / sfreq
-            t0 = x_full.time.tstep * round(t0 / x_full.time.tstep)  # snap to the predictor's sample grid
-            x = set_tmin(x_full, x_full.time.tmin - t0) if t0 else x_full  # global time t0 -> local 0
+        def chunk(time, recording, offset):
+            x_full = x_fulls[recording]
+            offset = x_full.time.tstep * round(offset / x_full.time.tstep)  # snap to the predictor's sample grid
+            x = set_tmin(x_full, x_full.time.tmin - offset) if offset else x_full  # global time offset -> local 0
             x = pad(x, time.tmin, nsamples=time.nsamples, set_tmin=True)  # crop to the segment
             x.name = term.string
             return x
 
+        xs = [chunk(time, recording, offset) for time, recording, offset in zip(times, recordings, offsets)]
         if isinstance(y, Datalist):
-            return Datalist([chunk(yi.time, ds[i, 'sample']) for i, yi in enumerate(y)])
-        x = combine([chunk(y.time, ds[i, 'sample']) for i in range(ds.n_cases)])
+            return Datalist(xs)
+        x = combine(xs)
         x.name = term.string
         return x
 
     def _aligned_predictor(self, ctx: Request, predictor: UTSPredictor | NUTSPredictor, term: Term, stim: str | None, time, filter_x: bool | str) -> NDVar:
         "Build one stimulus' predictor from its file data and align it to ``time``"
-        subset = ctx.load(term.with_stimulus(stim).string)
+        stim_term = term.with_stimulus(stim)
+        subset = ctx.load(stim_term.string)
         x = predictor._generate(subset, None, time.tstep, None, term)
         x = filter_predictor(x, self.raw, ctx.state['raw'], filter_x)
         x = pad(x, time.tmin, nsamples=time.nsamples, set_tmin=True)

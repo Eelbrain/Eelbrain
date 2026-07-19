@@ -384,7 +384,7 @@ class NUTSPredictor(FilePredictorBase):
 
 
 class SubjectUTSPredictor(UTSPredictor):
-    """Uniform time series predictor with a separate file for each recording
+    """Subject-specific uniform time series predictor
 
     Parameters
     ----------
@@ -402,31 +402,29 @@ class SubjectUTSPredictor(UTSPredictor):
            ``epoch_time`` (zero at the first selected event), and each segment
            is cut out directly at its position on that axis.
          - ``True``: the predictor is placed per event, exactly like a
-           :class:`UTSPredictor`, but from subject-specific files (one file per
-           recording and stimulus). Use this to model responses to individual
-           items with per-subject predictors.
+           :class:`UTSPredictor`, but from subject-specific files. These files
+           are keyed by subject, session, acquisition, and stimulus and are
+           shared across task/run recordings.
 
     Notes
     -----
     In contrast to a :class:`UTSPredictor`, which represents a specific stimulus
     and is shared across subjects, a :class:`SubjectUTSPredictor` provides a
-    separate predictor file for each recording. This is useful when the stimulus
-    timeline differs between subjects. Files are identified by the ``subject``,
-    ``session``, and ``acquisition`` BIDS entities (the entities that
-    distinguish recordings, other than the ``task`` and ``run`` entities
-    consumed by epoching).
+    separate predictor file for each recording in sequence mode. These files
+    are identified by the ``subject``, ``session``, ``task``, ``acquisition``,
+    and ``run`` BIDS entities.
 
     With ``per_event=False`` the file for a term is expected at::
 
-        {root}/derivatives/subject-predictors/sub-{subject}[/ses-{session}]/sub-{subject}[_ses-{session}][_acq-{acquisition}]_desc-{code}.pickle
+        {root}/derivatives/subject-predictors/sub-{subject}[/ses-{session}]/sub-{subject}[_ses-{session}]_task-{task}[_acq-{acquisition}][_run-{run}]_desc-{code}.pickle
 
-    and the term cannot be combined with a stimulus. With ``per_event=True`` the
-    file for each stimulus is expected at::
+    and the term cannot be combined with a stimulus. With ``per_event=True``,
+    task and run do not select the predictor file, and the file for each
+    stimulus is expected at::
 
         {root}/derivatives/subject-predictors/sub-{subject}[/ses-{session}]/sub-{subject}[_ses-{session}][_acq-{acquisition}]_desc-{stimulus}~{code}.pickle
     """
     DICT_ATTRS = ('resample', 'sampling', 'per_event')
-    _key_fields = ('subject', 'session', 'acquisition')
 
     def __init__(
             self,
@@ -436,6 +434,10 @@ class SubjectUTSPredictor(UTSPredictor):
     ):
         super().__init__(resample, sampling)
         self.per_event = per_event
+        if per_event:
+            self._key_fields = ('subject', 'session', 'acquisition')
+        else:
+            self._key_fields = ('subject', 'session', 'task', 'acquisition', 'run')
 
     def _prepare_sequence(self, x: NDVar, tstep: float, term: Term) -> NDVar:
         "Prepare a recording-long sequence predictor"
@@ -447,8 +449,8 @@ class SubjectUTSPredictor(UTSPredictor):
 
     def _path(self, term: Term, state: Mapping[str, Any], root: Path) -> Path:
         # term.string is the bare code (per_event=False) or {stimulus}~{code} (per_event=True)
-        return root / subject_predictor_path(state, term.string)
+        return root / subject_predictor_path(state, term.string, self._key_fields)
 
     def _reference_stem(self, term: Term, state: Mapping[str, Any]) -> str:
-        # sub-{subject}[_ses-{session}][_acq-{acquisition}]_desc-{code|stimulus~code}
+        # BIDS entities in _key_fields followed by desc-{code|stimulus~code}
         return self._path(term, state, Path()).stem

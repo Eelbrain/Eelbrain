@@ -4,6 +4,7 @@ import pytest
 
 from eelbrain import Dataset, Factor, NDVar, UTS, Var
 from eelbrain._experiment.trf.model import TRFModelError, parse_term
+from eelbrain._experiment.trf.nodes import Recording, find_bids_recordings
 from eelbrain._experiment.trf.predictor import EventPredictor, NUTSPredictor, SubjectUTSPredictor, UTSPredictor
 
 
@@ -24,31 +25,47 @@ def test_predictor_sampling():
 
 
 def test_subject_uts_predictor_identity():
-    "SubjectUTSPredictor file identity: per-recording (and per-stimulus when per_event)"
+    "SubjectUTSPredictor file identity depends on sequence versus per-event mode"
     from pathlib import Path
 
     # per_event=False: bare code, no stimulus allowed
     p = SubjectUTSPredictor()
     assert p.per_event is False
-    assert p._key_fields == ('subject', 'session', 'acquisition')
+    assert p._key_fields == ('subject', 'session', 'task', 'acquisition', 'run')
     assert p._as_dict() == {'type': 'SubjectUTSPredictor', 'resample': None, 'sampling': 'continuous', 'per_event': False}
     term = parse_term('envseq')
-    state = {'subject': 'R0001', 'session': '', 'acquisition': ''}
-    assert p._path(term, state, Path('/root')) == Path('/root/derivatives/subject-predictors/sub-R0001/sub-R0001_desc-envseq.pickle')
-    assert p._reference_stem(term, state) == 'sub-R0001_desc-envseq'
+    state = {'subject': 'R0001', 'session': '', 'task': 'sample', 'acquisition': '', 'run': ''}
+    assert p._path(term, state, Path('/root')) == Path('/root/derivatives/subject-predictors/sub-R0001/sub-R0001_task-sample_desc-envseq.pickle')
+    assert p._reference_stem(term, state) == 'sub-R0001_task-sample_desc-envseq'
 
-    # session + acquisition add entities to path and stem
-    state2 = {'subject': 'R0001', 'session': '02', 'acquisition': 'hi'}
-    assert p._reference_stem(term, state2) == 'sub-R0001_ses-02_acq-hi_desc-envseq'
+    # session + acquisition + run add entities in canonical BIDS order
+    state2 = {'subject': 'R0001', 'session': '02', 'task': 'story', 'acquisition': 'hi', 'run': '3'}
+    assert p._reference_stem(term, state2) == 'sub-R0001_ses-02_task-story_acq-hi_run-3_desc-envseq'
 
     # per_event=True: the stimulus becomes part of the file identity
     pe = SubjectUTSPredictor(per_event=True)
     assert pe.per_event is True
+    assert pe._key_fields == ('subject', 'session', 'acquisition')
     stim_term = parse_term('auditory~envp')
     assert pe._path(stim_term, state, Path('/root')).name == 'sub-R0001_desc-auditory~envp.pickle'
     assert pe._reference_stem(stim_term, state) == 'sub-R0001_desc-auditory~envp'
+    assert pe._reference_stem(stim_term, state2) == 'sub-R0001_ses-02_acq-hi_desc-auditory~envp'
     # distinct stimuli map to distinct reference copies
     assert pe._reference_stem(parse_term('visual~envp'), state) != pe._reference_stem(stim_term, state)
+
+
+def test_case_recordings():
+    "BIDS entities varying by case are columns; invariant entities are in info"
+    ds = Dataset(
+        {'run': Factor(['1', '2'])},
+        info=dict(subject='R0001', session='', task='sample', acquisition=''),
+    )
+    recordings = find_bids_recordings(ds)
+    assert recordings[0] == Recording('R0001', '', 'sample', '', '1')
+    assert recordings[1] == Recording('R0001', '', 'sample', '', '2')
+    del ds.info['task']
+    with pytest.raises(KeyError):
+        find_bids_recordings(ds)
 
 
 def _continuous_events(stim_var='stimulus'):

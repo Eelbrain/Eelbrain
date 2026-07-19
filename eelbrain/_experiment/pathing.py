@@ -107,11 +107,15 @@ def rej_file_path(state: dict[str, Any], epoch: str | None = None, epoch_rejecti
     return DERIV_DIR / 'mne' / raw_dir(state, datatype=datatype) / f"{basename}_raw-{state['raw']}_epoch-{epoch_name}_rej-{rej_name}_epoch.pickle"
 
 
-def subject_predictor_path(state: dict[str, Any], code: str) -> Path:
+def subject_predictor_path(
+        state: dict[str, Any],
+        code: str,
+        entity_keys: tuple[str, ...] = BIDS_ENTITY_KEYS,
+) -> Path:
     path = Path(f"sub-{state['subject']}")
     if _state_value(state, 'session'):
         path /= f"ses-{state['session']}"
-    basename = _bids_name(state, ('subject', 'session', 'acquisition'), suffix='')
+    basename = _bids_name(state, entity_keys, suffix='')
     return SUBJECT_PREDICTOR_DIR / path / f"{basename}_desc-{code}.pickle"
 
 

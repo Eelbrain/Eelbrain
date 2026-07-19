@@ -4,13 +4,13 @@
 Dependency structure:
 
     epochs
-    ├── PrimaryEpoch (single run) / ContinuousEpoch / SecondaryEpoch
+    ├── PrimaryEpoch / ContinuousEpoch (single run) / SecondaryEpoch
     │     ├── epoch-events               (trial metadata, see events tree)
     │     └── recording-epochs
     │           ├── selected-events      (same epoch, provides trial timings)
     │           └── raw
     │
-    ├── PrimaryEpoch (combine runs)
+    ├── PrimaryEpoch / ContinuousEpoch (combine runs)
     │     ├── epoch-events               (aggregated across all runs)
     │     └── recording-epochs  ×N      (one per run)
     │           ├── selected-events      (for that run)
@@ -41,7 +41,7 @@ import numpy as np
 from ... import load
 from ..._data_obj import Datalist, Dataset, combine
 from ..._exceptions import ConfigurationError
-from ..._info import BAD_CHANNELS, INTERPOLATE_CHANNELS, INTERPOLATE_WINDOWS, INTERPOLATE_WINDOWS_MAX
+from ..._info import INTERPOLATE_CHANNELS, INTERPOLATE_WINDOWS, INTERPOLATE_WINDOWS_MAX
 from ..._mne import shift_mne_epoch_trigger
 from ..._text import n_of
 from ..._meeg.interpolation import _interpolate_bads_eeg, _interpolate_bads_meg, _interpolate_bad_windows_eeg, _interpolate_bad_windows_meg
@@ -186,7 +186,7 @@ class RecordingEpochsDerivative(Derivative[Any]):
             return None
         epoch = self.epochs[ctx.state['epoch']]
         ds = ctx.load('selected-events')
-        out = {'sample': ds['sample'], 'bad_channels': ds.info[BAD_CHANNELS]}
+        out = {'sample': ds['sample']}
         for attr in epoch._eval_attrs():
             out[attr] = getattr(epoch, attr)
         if ds.info.get(INTERPOLATE_CHANNELS, False) and INTERPOLATE_CHANNELS in ds:
@@ -205,8 +205,6 @@ class RecordingEpochsDerivative(Derivative[Any]):
         epoch = self.epochs[ctx.state['epoch']]
         ds = ctx.load('selected-events')
         raw = ctx.load('raw')
-        if ds.info[BAD_CHANNELS]:
-            raw.info['bads'] = sorted(set(raw.info['bads'] + ds.info[BAD_CHANNELS]))
         ds.info['raw'] = raw
         tmin, tmax, tstop, decim, variable_tmax = epoch._extraction_parameters(ds, ctx.options)
         # Baseline correction is deferred to a view operation and must not enter the cache,
@@ -288,8 +286,8 @@ class EpochsDerivative(UncachedDerivative[Dataset]):
     """Epoch dataset aggregating across runs and sub-epochs.
 
     For single-run :class:`PrimaryEpoch` and :class:`ContinuousEpoch`, wraps
-    :class:`RecordingEpochsDerivative` directly.  For combine-all
-    :class:`PrimaryEpoch` epochs, concatenates per-run
+    :class:`RecordingEpochsDerivative` directly. For combine-all primary and
+    continuous epochs, concatenates per-run
     :class:`RecordingEpochsDerivative` results.  For :class:`SuperEpoch`,
     concatenates sub-epoch :class:`EpochsDerivative` results.
 
@@ -330,7 +328,7 @@ class EpochsDerivative(UncachedDerivative[Dataset]):
 
     def _find_runs(self, ctx: Request, epoch) -> tuple[str, ...]:
         """Runs to aggregate over"""
-        if isinstance(epoch, PrimaryEpoch):
+        if isinstance(epoch, (PrimaryEpoch, ContinuousEpoch)):
             if epoch.run is None:
                 key = (ctx.state['subject'], ctx.state['session'], epoch.task, ctx.state['acquisition'])
                 if key in self._runs_for:
@@ -380,7 +378,7 @@ class EpochsDerivative(UncachedDerivative[Dataset]):
             return None
         epoch = self.epochs[ctx.state['epoch']]
         ds = ctx.load(dep.label or dep.name)
-        out = {'sample': ds['sample'], 'bad_channels': ds.info[BAD_CHANNELS]}
+        out = {'sample': ds['sample']}
         for attr in epoch._eval_attrs():
             out[attr] = getattr(epoch, attr)
         if ds.info.get(INTERPOLATE_CHANNELS, False) and INTERPOLATE_CHANNELS in ds:
@@ -489,6 +487,7 @@ class EpochsDerivative(UncachedDerivative[Dataset]):
             if ndvar != 'both':
                 del ds['epochs']
 
+        ds.info['epoch'] = ctx.state['epoch']
         return ds
 
 

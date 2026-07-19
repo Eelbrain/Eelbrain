@@ -575,8 +575,9 @@ class ContinuousEpoch(EpochBase):
 
     When using :meth:`Pipeline.load_epochs`, each row of the returned
     :class:`Dataset` will contain the events in the epoch alongside the data.
-    All segments share an ``epoch_time`` coordinate whose zero is the first
-    selected event; later segments retain their position on this common clock.
+    Within each recording, all segments share an ``epoch_time`` coordinate
+    whose zero is the first selected event; later segments retain their
+    position on that recording's clock.
 
     Parameters
     ----------
@@ -600,8 +601,11 @@ class ContinuousEpoch(EpochBase):
         Target samplingrate. Needs to divide data samplingrate evenly (e.g.
         ``200`` for data sampled at 1000 Hz; by default, use the raw data
         samplingrate).
+    run
+        Restrict the epoch to a specific run. By default (``None``), events are
+        combined across all available runs for the given task.
     """
-    DICT_ATTRS = ('task', 'sel', 'pad_start', 'pad_end', 'split', 'samplingrate')
+    DICT_ATTRS = ('task', 'sel', 'pad_start', 'pad_end', 'split', 'samplingrate', 'run')
     _rej_file_epochs_from_name = True
     _needs_task = True
 
@@ -613,6 +617,7 @@ class ContinuousEpoch(EpochBase):
             pad_end: float = 1.000,
             split: float = 10,
             samplingrate: float = None,
+            run: str | None = None,
     ):
         self.task = typed_arg(task, str)
         self.sel = typed_arg(sel, str)
@@ -620,6 +625,7 @@ class ContinuousEpoch(EpochBase):
         self.pad_end = typed_arg(pad_end, float)
         self.split = typed_arg(split, float)
         self.samplingrate = typed_arg(samplingrate, float, int)
+        self.run = typed_arg(run, str)
 
     def _prepare_selected_events(
             self,
@@ -693,8 +699,9 @@ def single_recording_run(epochs: Mapping[str, EpochBase], epoch: EpochBase) -> s
     Used to pin the ``run`` of a per-recording dependency when an aggregating
     node (``epochs``/``epoch-events``) is not combining across multiple runs, so
     the pinned value comes from the epoch definition rather than ambient state.
-    Returns the :class:`PrimaryEpoch` ``run`` (following ``SecondaryEpoch``
-    bases), or ``''`` when the experiment has no run entity.
+    Returns the primary/continuous epoch's ``run`` (following
+    :class:`SecondaryEpoch` bases), or ``''`` when the experiment has no run
+    entity.
 
     Parameters
     ----------

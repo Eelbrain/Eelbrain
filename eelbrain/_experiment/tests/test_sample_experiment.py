@@ -22,7 +22,7 @@ from eelbrain.pipeline import *
 from eelbrain._exceptions import ConfigurationError
 from eelbrain._experiment.derivative_cache import ProtectedArtifactError
 from eelbrain._experiment.parc.nodes import AnnotDerivative
-from eelbrain._experiment.pathing import LOG_DIR, ica_file_path
+from eelbrain._experiment.pathing import BIDS_ENTITY_KEYS, LOG_DIR, ica_file_path
 from eelbrain._experiment.preprocessing import RawFilterElliptic, ica_input_name, raw_node_name
 from eelbrain._experiment.data import DataSpec
 from eelbrain._experiment.variable_def import EvalVar, LabelVar, Variables
@@ -654,6 +654,7 @@ def test_sample_tasks(monkeypatch, samples_experiment):
     monkeypatch.setattr(recording_epochs_node, 'build', count_recording_epochs_builds)
     ds_super = e.load_epochs(epoch='super', interpolate_bads=True)
     assert recording_epochs_builds == ['target1', 'target2']
+    assert ds_super.info['epoch'] == 'super'
     assert_dataobj_equal(ds_super['mag'], combine((ds1['mag'], ds2['mag'])))
     # SuperEpoch should depend on the same sub-epoch request as direct loading.
     super_handle = e._resolve_derivative('epochs')
@@ -1623,8 +1624,8 @@ def test_sample_neuromag(samples_experiment):
 
 
 @requires_mne_sample_data
-def test_primary_epoch_run(samples_experiment):
-    """Test PrimaryEpoch.run parameter: combine-all and explicit-run modes."""
+def test_epoch_run(samples_experiment):
+    """Test run aggregation for PrimaryEpoch and ContinuousEpoch."""
     set_log_level('warning', 'mne')
 
     root = samples_experiment(n_subjects=2, n_segments=2, n_runs=2)
@@ -1642,6 +1643,9 @@ def test_primary_epoch_run(samples_experiment):
             'target-copy': SecondaryEpoch('target'),
             'target-r1': PrimaryEpoch('sample', "event == 'target'", tmax=0.3, decim=5, run='1'),
             'target-r2': PrimaryEpoch('sample', "event == 'target'", tmax=0.3, decim=5, run='2'),
+            'cont': ContinuousEpoch('sample', "event == 'target'", pad_start=0.1, pad_end=0.1, split=0.5),
+            'cont-r1': ContinuousEpoch('sample', "event == 'target'", pad_start=0.1, pad_end=0.1, split=0.5, run='1'),
+            'cont-r2': ContinuousEpoch('sample', "event == 'target'", pad_start=0.1, pad_end=0.1, split=0.5, run='2'),
         }
 
     e = MultiRunExperiment(root)
@@ -1679,6 +1683,33 @@ def test_primary_epoch_run(samples_experiment):
     assert ds_secondary.n_cases == ds_all.n_cases
     ds_secondary_epochs = e.load_epochs()
     assert ds_secondary_epochs.n_cases == ds_secondary.n_cases
+
+    # Continuous epochs are prepared independently in each recording, then
+    # combined as segments carrying their run identity.
+    e.set(epoch='cont-r1', epoch_rejection='')
+    assert e.get('run') == '1'
+    cont_r1 = e.load_selected_events()
+    e.set(epoch='cont-r2')
+    assert e.get('run') == '2'
+    cont_r2 = e.load_selected_events()
+    e.set(epoch='cont')
+    cont_all = e.load_selected_events()
+    assert cont_all.n_cases == cont_r1.n_cases + cont_r2.n_cases
+    assert cont_all['run'].cells == ('1', '2')
+    for entity in BIDS_ENTITY_KEYS:
+        if entity in cont_all and len(set(cont_all[entity])) > 1:
+            assert entity not in cont_all.info
+        else:
+            assert entity in cont_all.info
+    for run in cont_all['run'].cells:
+        run_ds = cont_all.sub(cont_all['run'] == run)
+        assert run_ds[0, 'epoch_time'] == pytest.approx(0.0)
+        assert run_ds[0, 'events'][0, 'epoch_time'] == pytest.approx(0.0)
+
+    cont_epochs = e.load_epochs()
+    assert isinstance(cont_epochs['mag'], Datalist)
+    assert cont_epochs.n_cases == cont_all.n_cases
+    assert all(events[0, 'epoch_time'] == pytest.approx(y.time.tmin + 0.1, abs=0.002) for events, y in cont_epochs.zip('events', 'mag'))
 
 
 @requires_mne_sample_data
@@ -1894,8 +1925,13 @@ def test_load_trf_filepredictor(samples_experiment):
     assert not e._resolve_derivative('trf', options=options).is_valid()
 
 
-def _subject_predictor_path(root, subject, desc):
-    path = Path(root) / 'derivatives' / 'subject-predictors' / f'sub-{subject}' / f'sub-{subject}_desc-{desc}.pickle'
+def _subject_predictor_path(root, subject, desc, task='sample', run='', per_event=False):
+    entities = f'sub-{subject}'
+    if not per_event:
+        entities += f'_task-{task}'
+        if run:
+            entities += f'_run-{run}'
+    path = Path(root) / 'derivatives' / 'subject-predictors' / f'sub-{subject}' / f'{entities}_desc-{desc}.pickle'
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -1956,7 +1992,7 @@ def test_load_trf_subject_predictor(samples_experiment):
         assert isinstance(res, BoostingResult)
         ctx = e._resolve_derivative('trf', options=options)
         assert ctx.is_valid()
-        assert 'envseq' in set(ctx._manifest().dependencies)
+        assert 'envseq@task-sample' in set(ctx._manifest().dependencies)
 
     # editing R0000's file invalidates only R0000's TRF; R0001 stays valid
     save.pickle(NDVar(rng.normal(size=n_samples), uts, name='envseq'), _subject_predictor_path(root, 'R0000', 'envseq'))
@@ -2016,9 +2052,9 @@ def test_load_trf_continuous_predictor(samples_experiment):
     deps = set(e._resolve_derivative('trf', options=options)._manifest().dependencies)
     assert {'auditory~env', 'visual~env'} <= deps
 
-    # per-event SubjectUTSPredictor: per-(recording, stimulus) files
+    # per-event SubjectUTSPredictor: one subject-specific file per stimulus
     for stim in stimuli:
-        save.pickle(NDVar(rng.normal(size=stim_uts.nsamples), stim_uts, name='envp'), _subject_predictor_path(root, 'R0000', f'{stim}~envp'))
+        save.pickle(NDVar(rng.normal(size=stim_uts.nsamples), stim_uts, name='envp'), _subject_predictor_path(root, 'R0000', f'{stim}~envp', per_event=True))
     res = e.load_trf('envp', 0, 0.1, samplingrate=samplingrate)
     assert isinstance(res, BoostingResult)
     job = e.load_trf_job('envp', 0, 0.1, samplingrate=samplingrate)
@@ -2038,6 +2074,92 @@ def test_load_trf_continuous_predictor(samples_experiment):
     job = e.load_trf_job('envseq', 0, 0.1, samplingrate=samplingrate, filter_x='continuous')
     assert all(x_i.info['sampling'] == 'continuous' for x_i in job.xs[0])
     assert all(x_i.time == y_i.time for x_i, y_i in zip(job.xs[0], job.y))
+
+
+@requires_mne_sample_data
+def test_load_trf_continuous_predictor_multiple_runs(samples_experiment):
+    "Pooled ContinuousEpoch TRFs load each run's SubjectUTSPredictor files"
+    from eelbrain import BoostingResult, NDVar, UTS, save
+    from eelbrain._experiment.tests.sample_experiment import SampleTRF
+
+    set_log_level('warning', 'mne')
+    root = samples_experiment(n_subjects=1, n_segments=4, n_runs=2)
+    e = SampleTRF(root)
+    e.set(subject='R0000', epoch='cont', epoch_rejection='', raw='1-40', inv='')
+
+    ds = e.load_epochs(reject=False, decim=5)
+    assert ds['run'].cells == ('1', '2')
+    assert isinstance(ds['mag'], Datalist)
+    tstep = ds['mag'][0].time.tstep
+    samplingrate = 1 / tstep
+    rng = np.random.RandomState(1)
+
+    # Sequence predictors use a separate recording-long file for each run.
+    tmax = max(y.time.tmax for y in ds['mag']) + 1
+    sequence_uts = UTS(-0.5, tstep, int(np.ceil((tmax + 0.5) / tstep)))
+    sequences = {}
+    for run in ds['run'].cells:
+        sequence = NDVar(rng.normal(size=sequence_uts.nsamples), sequence_uts, name='envseq')
+        sequences[run] = sequence
+        save.pickle(sequence, _subject_predictor_path(root, 'R0000', 'envseq', run=run))
+
+    sequence_job = e.load_trf_job('envseq', 0, 0.1, samplingrate=samplingrate)
+    assert isinstance(sequence_job.y, Datalist)
+    assert isinstance(sequence_job.xs[0], Datalist)
+    for run, x_i, y_i in zip(ds['run'], sequence_job.xs[0], sequence_job.y):
+        sequence = sequences[run]
+        i_start = sequence.time._array_index(y_i.time.tmin)
+        assert_array_equal(x_i.x, sequence.x[i_start:i_start + y_i.time.nsamples])
+        assert x_i.time == y_i.time
+
+    sequence_result = e.load_trf('envseq', 0, 0.1, samplingrate=samplingrate)
+    assert isinstance(sequence_result, BoostingResult)
+    sequence_options = e._trf_options('envseq', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
+    sequence_ctx = e._resolve_derivative('trf', options=sequence_options)
+    sequence_deps = set(sequence_ctx._manifest().dependencies)
+    assert {'envseq@task-sample_run-1', 'envseq@task-sample_run-2'} <= sequence_deps
+
+    # Per-event predictors are subject/stimulus-specific and shared across runs.
+    stimuli = ('auditory', 'visual')
+    stimulus_uts = UTS(0, tstep, 10)
+    per_event = {}
+    for stim in stimuli:
+        predictor = NDVar(rng.normal(size=stimulus_uts.nsamples), stimulus_uts, name='envp')
+        per_event[stim] = predictor
+        save.pickle(predictor, _subject_predictor_path(root, 'R0000', f'{stim}~envp', per_event=True))
+
+    per_event_job = e.load_trf_job('envp', 0, 0.1, samplingrate=samplingrate)
+    for events, x_i, y_i in zip(ds['events'], per_event_job.xs[0], per_event_job.y):
+        stim = events[0, 'modality']
+        predictor = per_event[stim]
+        i_start = x_i.time._array_index(events[0, 'epoch_time'])
+        assert_array_equal(x_i.x[i_start:i_start + predictor.time.nsamples], predictor.x)
+        assert x_i.time == y_i.time
+
+    per_event_result = e.load_trf('envp', 0, 0.1, samplingrate=samplingrate)
+    assert isinstance(per_event_result, BoostingResult)
+    per_event_options = e._trf_options('envp', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
+    per_event_deps = set(e._resolve_derivative('trf', options=per_event_options)._manifest().dependencies)
+    assert {'auditory~envp', 'visual~envp'} <= per_event_deps
+
+    # Fixed-length pooled epochs likewise compute sequence offsets separately
+    # within each run rather than from one global sample origin.
+    e.set(epoch='target')
+    target_ds = e.load_epochs(reject=False)
+    target_job = e.load_trf_job('envseq', 0, 0.1, samplingrate=samplingrate)
+    sample_0 = {run: target_ds[target_ds['run'] == run, 'sample'][0] for run in target_ds['run'].cells}
+    sfreq = target_ds.info['raw.samplingrate']
+    for i, (run, sample_i) in enumerate(target_ds.zip('run', 'sample')):
+        sequence = sequences[run]
+        offset = (sample_i - sample_0[run]) / sfreq
+        offset = tstep * round(offset / tstep)
+        i_start = sequence.time._array_index(offset + target_job.y.time.tmin)
+        assert_array_equal(target_job.xs[0].x[i], sequence.x[i_start:i_start + target_job.y.time.nsamples])
+
+    # Any constituent recording changing invalidates the pooled ContinuousEpoch fit.
+    e.set(epoch='cont')
+    save.pickle(NDVar(rng.normal(size=sequence_uts.nsamples), sequence_uts, name='envseq'), _subject_predictor_path(root, 'R0000', 'envseq', run='1'))
+    assert not e._resolve_derivative('trf', options=sequence_options).is_valid()
 
 
 @requires_mne_sample_data
