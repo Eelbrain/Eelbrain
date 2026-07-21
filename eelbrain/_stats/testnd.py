@@ -2332,11 +2332,12 @@ class VectorDifferenceIndependent(Vector):
     def _vector_perm(y, n1, out, seed, use_norm):
         assert use_norm
         n_cases, n_dims, n_tests = y.shape
+        rng = np.random.RandomState(seed)
         # randomize directions
         rotation = rand_rotation_matrices(n_cases, seed, n_dims)
         # randomize groups
         cases = np.arange(n_cases)
-        np.random.shuffle(cases)
+        rng.shuffle(cases)
         # group 1
         mean_1 = np.zeros((n_dims, n_tests))
         for case in cases[:n1]:
