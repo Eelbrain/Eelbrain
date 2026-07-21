@@ -743,7 +743,8 @@ class RawMaxwell(CachedRawPipe):
 
         with user_activity:
             # find bad channels
-            noisy_chs, flat_chs = mne.preprocessing.find_bad_channels_maxwell(raw, calibration=calibration, cross_talk=cross_talk, bad_condition=self.bad_condition, coord_frame=coord_frame)
+            find_bads_kwargs = {key: self.kwargs[key] for key in ['origin', 'regularize', 'ignore_ref', 'mag_scale', 'skip_by_annotation', 'mc_interp'] if key in self.kwargs}
+            noisy_chs, flat_chs = mne.preprocessing.find_bad_channels_maxwell(raw, calibration=calibration, cross_talk=cross_talk, bad_condition=self.bad_condition, coord_frame=coord_frame, **find_bads_kwargs)
             raw.info['bads'] = sorted(raw.info['bads'] + noisy_chs + flat_chs)
             # Maxwell filter
             kwargs = self.kwargs
