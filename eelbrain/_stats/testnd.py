@@ -98,7 +98,7 @@ class NDTest:
     p: NDVar
     tfce_map: NDVar
 
-    _state_common = ('y', 'match', 'sub', 'samples', 'tfce', 'pmin', '_cdist', 'tstart', 'tstop', '_dims')
+    _state_common = ('y', 'match', 'sub', 'samples', 'tfce', 'tfce_e', 'tfce_h', 'pmin', '_cdist', 'tstart', 'tstop', '_dims')
     _state_specific = ()
     _statistic = None
     _statistic_tail = 0
@@ -107,12 +107,14 @@ class NDTest:
     def _attributes(self):
         return self._state_common + self._state_specific
 
-    def __init__(self, y, match, sub, samples, tfce, pmin, cdist, tstart, tstop):
+    def __init__(self, y, match, sub, samples, tfce, pmin, cdist, tstart, tstop, tfce_e=0.5, tfce_h=2.0):
         self.y = dataobj_repr(y)
         self.match = dataobj_repr(match, True)
         self.sub = sub
         self.samples = samples
         self.tfce = tfce
+        self.tfce_e = tfce_e
+        self.tfce_h = tfce_h
         self.pmin = pmin
         self._cdist = cdist
         self.tstart = tstart
@@ -128,6 +130,10 @@ class NDTest:
             state['y'] = state.pop('Y')
         if 'X' in state:
             state['x'] = state.pop('X')
+        if 'tfce_e' not in state:
+            state['tfce_e'] = 0.5
+        if 'tfce_h' not in state:
+            state['tfce_h'] = 2.0
 
         for name in self._attributes:
             setattr(self, name, state.get(name))
@@ -480,7 +486,15 @@ class TContrastRelated(NDTest):
     tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
+<<<<<<< HEAD
     tstart
+=======
+    tfce_e : scalar
+        TFCE extent exponent (default 0.5, as in Smith & Nichols, 2009).
+    tfce_h : scalar
+        TFCE height exponent (default 2.0, as in Smith & Nichols, 2009).
+    tstart : scalar
+>>>>>>> ebb2b0da (ENH allow specifying TFCE extent/height exponents (tfce_e/tfce_h))
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
     tstop
@@ -552,6 +566,8 @@ class TContrastRelated(NDTest):
             pmin: float = None,
             tmin: float = None,
             tfce: float | bool = False,
+            tfce_e: float = 0.5,
+            tfce_h: float = 2.0,
             tstart: float = None,
             tstop: float = None,
             parc: str = None,
@@ -585,7 +601,7 @@ class TContrastRelated(NDTest):
 
             cdist = NDPermutationDistribution(
                 ct.y, samples, threshold, tfce, tail, 't', "t-contrast",
-                tstart, tstop, criteria, parc, force_permutation)
+                tstart, tstop, criteria, parc, force_permutation, tfce_e, tfce_h)
             cdist.add_original(tmap)
             if cdist.do_permutation:
                 iterator = permute_order(len(ct.y), samples, unit=ct.match)
@@ -597,7 +613,7 @@ class TContrastRelated(NDTest):
 
         # store attributes
         NDTest.__init__(self, ct.y, ct.match, sub, samples, tfce, pmin, cdist,
-                        tstart, tstop)
+                        tstart, tstop, tfce_e, tfce_h)
         self.x = ('%'.join(ct.x.base_names) if isinstance(ct.x, Interaction) else
                   ct.x.name)
         self.contrast = contrast
@@ -651,7 +667,15 @@ class Correlation(NDTest):
     tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
+<<<<<<< HEAD
     tstart
+=======
+    tfce_e : scalar
+        TFCE extent exponent (default 0.5, as in Smith & Nichols, 2009).
+    tfce_h : scalar
+        TFCE height exponent (default 2.0, as in Smith & Nichols, 2009).
+    tstart : scalar
+>>>>>>> ebb2b0da (ENH allow specifying TFCE extent/height exponents (tfce_e/tfce_h))
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
     tstop
@@ -710,6 +734,8 @@ class Correlation(NDTest):
             pmin: float = None,
             rmin: float = None,
             tfce: float | bool = False,
+            tfce_e: float = 0.5,
+            tfce_h: float = 2.0,
             tstart: float = None,
             tstop: float = None,
             match: CategorialArg = None,
@@ -763,7 +789,7 @@ class Correlation(NDTest):
 
             cdist = NDPermutationDistribution(
                 y, samples, threshold, tfce, 0, 'r', name,
-                tstart, tstop, criteria, parc)
+                tstart, tstop, criteria, parc, tfce_e=tfce_e, tfce_h=tfce_h)
             cdist.add_original(rmap)
             if cdist.do_permutation:
                 iterator = permute_order(n, samples, unit=match)
@@ -774,7 +800,7 @@ class Correlation(NDTest):
         r = NDVar(rmap, y.dims[1:], name, info)
 
         # store attributes
-        NDTest.__init__(self, y, match, sub, samples, tfce, pmin, cdist, tstart, tstop)
+        NDTest.__init__(self, y, match, sub, samples, tfce, pmin, cdist, tstart, tstop, tfce_e, tfce_h)
         self.norm = None if norm is None else norm.name
         self.rmin = rmin
         self.n = n
@@ -901,7 +927,15 @@ class TTestOneSample(NDDifferenceTest):
     tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
+<<<<<<< HEAD
     tstart
+=======
+    tfce_e : scalar
+        TFCE extent exponent (default 0.5, as in Smith & Nichols, 2009).
+    tfce_h : scalar
+        TFCE height exponent (default 2.0, as in Smith & Nichols, 2009).
+    tstart : scalar
+>>>>>>> ebb2b0da (ENH allow specifying TFCE extent/height exponents (tfce_e/tfce_h))
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
     tstop
@@ -970,6 +1004,8 @@ class TTestOneSample(NDDifferenceTest):
             pmin: float = None,
             tmin: float = None,
             tfce: float | bool = False,
+            tfce_e: float = 0.5,
+            tfce_h: float = 2.0,
             tstart: float = None,
             tstop: float = None,
             parc: str = None,
@@ -1013,7 +1049,7 @@ class TTestOneSample(NDDifferenceTest):
             n_samples, samples = _resample_params(len(y_perm), samples)
             cdist = NDPermutationDistribution(
                 y_perm, n_samples, threshold, tfce, tail, 't', '1-Sample t-Test',
-                tstart, tstop, criteria, parc, force_permutation)
+                tstart, tstop, criteria, parc, force_permutation, tfce_e, tfce_h)
             cdist.add_original(tmap)
             if cdist.do_permutation:
                 iterator = permute_sign_flip(n, samples)
@@ -1024,7 +1060,7 @@ class TTestOneSample(NDDifferenceTest):
         t = NDVar(tmap, ct.y.dims[1:], 't', info)
 
         # store attributes
-        NDDifferenceTest.__init__(self, ct.y, ct.match, sub, samples, tfce, pmin, cdist, tstart, tstop)
+        NDDifferenceTest.__init__(self, ct.y, ct.match, sub, samples, tfce, pmin, cdist, tstart, tstop, tfce_e, tfce_h)
         self.popmean = popmean
         self.n = n
         self.df = df
@@ -1116,7 +1152,15 @@ class TTestIndependent(NDDifferenceTest):
     tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
+<<<<<<< HEAD
     tstart
+=======
+    tfce_e : scalar
+        TFCE extent exponent (default 0.5, as in Smith & Nichols, 2009).
+    tfce_h : scalar
+        TFCE height exponent (default 2.0, as in Smith & Nichols, 2009).
+    tstart : scalar
+>>>>>>> ebb2b0da (ENH allow specifying TFCE extent/height exponents (tfce_e/tfce_h))
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
     tstop
@@ -1191,6 +1235,8 @@ class TTestIndependent(NDDifferenceTest):
             pmin: float = None,
             tmin: float = None,
             tfce: float | bool = False,
+            tfce_e: float = 0.5,
+            tfce_h: float = 2.0,
             tstart: float = None,
             tstop: float = None,
             parc: str = None,
@@ -1223,14 +1269,14 @@ class TTestIndependent(NDDifferenceTest):
             else:
                 threshold = None
 
-            cdist = NDPermutationDistribution(y, samples, threshold, tfce, tail, 't', 'Independent Samples t-Test', tstart, tstop, criteria, parc, force_permutation)
+            cdist = NDPermutationDistribution(y, samples, threshold, tfce, tail, 't', 'Independent Samples t-Test', tstart, tstop, criteria, parc, force_permutation, tfce_e, tfce_h)
             cdist.add_original(tmap)
             if cdist.do_permutation:
                 iterator = permute_order(n, samples)
                 run_permutation(stats.t_ind, cdist, iterator, groups)
 
         # store attributes
-        NDDifferenceTest.__init__(self, y, match, sub, samples, tfce, pmin, cdist, tstart, tstop)
+        NDDifferenceTest.__init__(self, y, match, sub, samples, tfce, pmin, cdist, tstart, tstop, tfce_e, tfce_h)
         self.x = x_name
         self.c0 = c0
         self.c1 = c1
@@ -1347,6 +1393,10 @@ class TTestRelated(NDMaskedC1Mixin, NDDifferenceTest):
     tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
+    tfce_e
+        TFCE extent exponent (default 0.5, as in Smith & Nichols, 2009).
+    tfce_h
+        TFCE height exponent (default 2.0, as in Smith & Nichols, 2009).
     tstart
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
@@ -1432,6 +1482,8 @@ class TTestRelated(NDMaskedC1Mixin, NDDifferenceTest):
             pmin: float = None,
             tmin: float = None,
             tfce: float | bool = False,
+            tfce_e: float = 0.5,
+            tfce_h: float = 2.0,
             tstart: float = None,
             tstop: float = None,
             parc: str = None,
@@ -1462,7 +1514,7 @@ class TTestRelated(NDMaskedC1Mixin, NDDifferenceTest):
             n_samples, samples = _resample_params(len(diff), samples)
             cdist = NDPermutationDistribution(
                 diff, n_samples, threshold, tfce, tail, 't', 'Related Samples t-Test',
-                tstart, tstop, criteria, parc, force_permutation)
+                tstart, tstop, criteria, parc, force_permutation, tfce_e, tfce_h)
             cdist.add_original(tmap)
             if cdist.do_permutation:
                 iterator = permute_sign_flip(n, samples)
@@ -1473,7 +1525,7 @@ class TTestRelated(NDMaskedC1Mixin, NDDifferenceTest):
         t = NDVar(tmap, y1.dims[1:], 't', info)
 
         # store attributes
-        NDDifferenceTest.__init__(self, y1, match, sub, samples, tfce, pmin, cdist, tstart, tstop)
+        NDDifferenceTest.__init__(self, y1, match, sub, samples, tfce, pmin, cdist, tstart, tstop, tfce_e, tfce_h)
         self.x = x_name
         self.c0 = c0
         self.c1 = c1
@@ -1556,8 +1608,9 @@ class MultiEffectNDTest(NDTest):
             x: str,
             effects: Iterable[str],
             *args,
+            **kwargs,
     ):
-        NDTest.__init__(self, *args)
+        NDTest.__init__(self, *args, **kwargs)
         self.x = x
         self.effects = tuple(effects)
 
@@ -1789,7 +1842,15 @@ class ANOVA(MultiEffectNDTest):
     tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
+<<<<<<< HEAD
     tstart
+=======
+    tfce_e : scalar
+        TFCE extent exponent (default 0.5, as in Smith & Nichols, 2009).
+    tfce_h : scalar
+        TFCE height exponent (default 2.0, as in Smith & Nichols, 2009).
+    tstart : scalar
+>>>>>>> ebb2b0da (ENH allow specifying TFCE extent/height exponents (tfce_e/tfce_h))
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
     tstop
@@ -1860,6 +1921,8 @@ class ANOVA(MultiEffectNDTest):
             pmin: float = None,
             fmin: float = None,
             tfce: float | bool = False,
+            tfce_e: float = 0.5,
+            tfce_h: float = 2.0,
             tstart: float = None,
             tstop: float = None,
             match: CategorialArg | bool = None,
@@ -1903,7 +1966,7 @@ class ANOVA(MultiEffectNDTest):
             else:
                 thresholds = tuple(repeat(None, len(effects)))
 
-            cdists = [NDPermutationDistribution(y, samples, thresh, tfce, 1, 'f', e.name, tstart, tstop, criteria, parc, force_permutation) for e, thresh in zip(effects, thresholds)]
+            cdists = [NDPermutationDistribution(y, samples, thresh, tfce, 1, 'f', e.name, tstart, tstop, criteria, parc, force_permutation, tfce_e, tfce_h) for e, thresh in zip(effects, thresholds)]
 
             # Find clusters in the actual data
             do_permutation = 0
@@ -1925,7 +1988,7 @@ class ANOVA(MultiEffectNDTest):
         # store attributes
         x_desc = x_arg if isinstance(x_arg, str) else x.name  # TODO: x.name should use * when appropriate
         effect_names = (e.name for e in effects)
-        MultiEffectNDTest.__init__(self, x_desc, effect_names, y, match, sub_arg, samples, tfce, pmin, cdists, tstart, tstop)
+        MultiEffectNDTest.__init__(self, x_desc, effect_names, y, match, sub_arg, samples, tfce, pmin, cdists, tstart, tstop, tfce_e, tfce_h)
         self._effects = effects
         self._dfs_denom = dfs_denom
         self.f = f
@@ -2079,7 +2142,15 @@ class Vector(NDDifferenceTest):
     tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
+<<<<<<< HEAD
     tstart
+=======
+    tfce_e : scalar
+        TFCE extent exponent (default 0.5, as in Smith & Nichols, 2009).
+    tfce_h : scalar
+        TFCE height exponent (default 2.0, as in Smith & Nichols, 2009).
+    tstart : scalar
+>>>>>>> ebb2b0da (ENH allow specifying TFCE extent/height exponents (tfce_e/tfce_h))
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
     tstop
@@ -2155,6 +2226,8 @@ class Vector(NDDifferenceTest):
             samples: int = 10000,
             tmin: float = None,
             tfce: float | bool = False,
+            tfce_e: float = 0.5,
+            tfce_h: float = 2.0,
             tstart: float = None,
             tstop: float = None,
             parc: str = None,
@@ -2165,7 +2238,7 @@ class Vector(NDDifferenceTest):
         ct = Celltable(y, match=match, sub=sub, data=data, coercion=asndvar, dtype=np.float64)
 
         n = len(ct.y)
-        cdist = NDPermutationDistribution(ct.y, samples, tmin, tfce, 1, 'norm', 'Vector test', tstart, tstop, criteria, parc, force_permutation)
+        cdist = NDPermutationDistribution(ct.y, samples, tmin, tfce, 1, 'norm', 'Vector test', tstart, tstop, criteria, parc, force_permutation, tfce_e, tfce_h)
 
         v_dim = ct.y.dimnames[cdist._vector_ax + 1]
         v_mean = ct.y.mean('case')
@@ -2187,7 +2260,7 @@ class Vector(NDDifferenceTest):
             run_permutation(vector_perm, cdist, iterator)
 
         # store attributes
-        NDTest.__init__(self, ct.y, ct.match, sub, samples, tfce, None, cdist, tstart, tstop)
+        NDTest.__init__(self, ct.y, ct.match, sub, samples, tfce, None, cdist, tstart, tstop, tfce_e, tfce_h)
         self.difference = v_mean
         self._v_dim = v_dim
         self.n = n
@@ -2269,6 +2342,10 @@ class VectorDifferenceIndependent(Vector):
     tfce : bool | scalar
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
+    tfce_e : scalar
+        TFCE extent exponent (default 0.5, as in Smith & Nichols, 2009).
+    tfce_h : scalar
+        TFCE height exponent (default 2.0, as in Smith & Nichols, 2009).
     tstart : scalar
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
@@ -2335,6 +2412,8 @@ class VectorDifferenceIndependent(Vector):
             samples: int = 10000,
             tmin: float = None,
             tfce: bool = False,
+            tfce_e: float = 0.5,
+            tfce_h: float = 2.0,
             tstart: float = None,
             tstop: float = None,
             parc: str = None,
@@ -2347,7 +2426,7 @@ class VectorDifferenceIndependent(Vector):
         self.n0 = len(y0)
         self.n = len(y)
 
-        cdist = NDPermutationDistribution(y, samples, tmin, tfce, 1, 'norm', 'Vector test (independent)', tstart, tstop, criteria, parc, force_permutation)
+        cdist = NDPermutationDistribution(y, samples, tmin, tfce, 1, 'norm', 'Vector test (independent)', tstart, tstop, criteria, parc, force_permutation, tfce_e, tfce_h)
 
         self._v_dim = v_dim = y.dimnames[cdist._vector_ax + 1]
         self.c1_mean = y1.mean('case', name=cellname(c1_name))
@@ -2366,7 +2445,7 @@ class VectorDifferenceIndependent(Vector):
             vector_perm = partial(self._vector_perm, use_norm=use_norm)
             run_permutation(vector_perm, cdist, iterator, self.n1)
 
-        NDTest.__init__(self, y, match, sub, samples, tfce, None, cdist, tstart, tstop)
+        NDTest.__init__(self, y, match, sub, samples, tfce, None, cdist, tstart, tstop, tfce_e, tfce_h)
         self._expand_state()
 
     def _name(self):
@@ -2435,7 +2514,15 @@ class VectorDifferenceRelated(NDMaskedC1Mixin, Vector):
     tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
+<<<<<<< HEAD
     tstart
+=======
+    tfce_e : scalar
+        TFCE extent exponent (default 0.5, as in Smith & Nichols, 2009).
+    tfce_h : scalar
+        TFCE height exponent (default 2.0, as in Smith & Nichols, 2009).
+    tstart : scalar
+>>>>>>> ebb2b0da (ENH allow specifying TFCE extent/height exponents (tfce_e/tfce_h))
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
     tstop
@@ -2506,6 +2593,8 @@ class VectorDifferenceRelated(NDMaskedC1Mixin, Vector):
             samples: int = 10000,
             tmin: float = None,
             tfce: bool = False,
+            tfce_e: float = 0.5,
+            tfce_h: float = 2.0,
             tstart: float = None,
             tstop: float = None,
             parc: str = None,
@@ -2518,7 +2607,7 @@ class VectorDifferenceRelated(NDMaskedC1Mixin, Vector):
         difference.name = 'difference'
 
         n_samples, samples = _resample_params(n, samples)
-        cdist = NDPermutationDistribution(difference, n_samples, tmin, tfce, 1, 'norm', 'Vector test (related)', tstart, tstop, criteria, parc, force_permutation)
+        cdist = NDPermutationDistribution(difference, n_samples, tmin, tfce, 1, 'norm', 'Vector test (related)', tstart, tstop, criteria, parc, force_permutation, tfce_e, tfce_h)
 
         v_dim = difference.dimnames[cdist._vector_ax + 1]
         v_mean = difference.mean('case')
@@ -2540,7 +2629,7 @@ class VectorDifferenceRelated(NDMaskedC1Mixin, Vector):
             run_permutation(vector_perm, cdist, iterator)
 
         # store attributes
-        NDTest.__init__(self, difference, match, sub, samples, tfce, None, cdist, tstart, tstop)
+        NDTest.__init__(self, difference, match, sub, samples, tfce, None, cdist, tstart, tstop, tfce_e, tfce_h)
         self.difference = v_mean
         self.c1_mean = y1.mean('case', name=cellname(c1_name))
         self.c0_mean = y0.mean('case', name=cellname(c0_name))
@@ -2751,7 +2840,7 @@ def _label_clusters_binary(bin_map, cmap, cmap_flat, adjacency, criteria):
     return cids
 
 
-def tfce(stat_map, tail, adjacency, dh=0.1):
+def tfce(stat_map, tail, adjacency, dh=0.1, e=0.5, h=2.0):
     tfce_im = np.empty(stat_map.shape, np.float64)
     tfce_im_1d = flatten_1d(tfce_im)
     bin_buff = np.empty(stat_map.shape, bool)
@@ -2759,7 +2848,7 @@ def tfce(stat_map, tail, adjacency, dh=0.1):
     int_buff_flat = flatten(int_buff, adjacency)
     int_buff_1d = flatten_1d(int_buff)
     return _tfce(stat_map, tail, adjacency, tfce_im, tfce_im_1d, bin_buff, int_buff,
-                 int_buff_flat, int_buff_1d, dh)
+                 int_buff_flat, int_buff_1d, dh, e, h)
 
 
 def _tfce(stat_map, tail, conn, out, out_1d, bin_buff, int_buff,
@@ -2817,11 +2906,13 @@ class StatMapProcessor:
 
 class TFCEProcessor(StatMapProcessor):
 
-    def __init__(self, tail, max_axes, parc, shape, adjacency, dh):
+    def __init__(self, tail, max_axes, parc, shape, adjacency, dh, e=0.5, h=2.0):
         StatMapProcessor.__init__(self, tail, max_axes, parc)
         self.shape = shape
         self.adjacency = adjacency
         self.dh = dh
+        self.e = e
+        self.h = h
 
         # Pre-allocate memory buffers used for cluster processing
         self._bin_buff = np.empty(shape, bool)
@@ -2835,7 +2926,7 @@ class TFCEProcessor(StatMapProcessor):
         v = _tfce(
             stat_map, self.tail, self.adjacency, self._tfce_im, self._tfce_im_1d,
             self._bin_buff, self._int_buff, self._int_buff_flat, self._int_buff_1d,
-            self.dh,
+            self.dh, self.e, self.h,
         ).max(self.max_axes)
         if self.parc is None:
             return v
@@ -2914,6 +3005,10 @@ class NDPermutationDistribution:
         Threshold-based clustering.
     tfce : bool | scalar
         Threshold-free cluster enhancement.
+    tfce_e : scalar
+        TFCE extent exponent (default 0.5, as in Smith & Nichols, 2009).
+    tfce_h : scalar
+        TFCE height exponent (default 2.0, as in Smith & Nichols, 2009).
     tail : 1 | 0 | -1
         Which tail(s) of the distribution to consider. 0 is two-tailed,
         whereas 1 only considers positive values and -1 only considers
@@ -2955,7 +3050,7 @@ class NDPermutationDistribution:
     dist = None
     tfce_warning = None
 
-    def __init__(self, y, samples, threshold, tfce=False, tail=0, meas='?', name=None, tstart=None, tstop=None, criteria={}, parc=None, force_permutation=False):
+    def __init__(self, y, samples, threshold, tfce=False, tail=0, meas='?', name=None, tstart=None, tstop=None, criteria={}, parc=None, force_permutation=False, tfce_e=0.5, tfce_h=2.0):
         assert y.has_case
         assert parc is None or isinstance(parc, str)
         if tfce and threshold:
@@ -3079,7 +3174,7 @@ class NDPermutationDistribution:
             map_args = (kind, tail, max_axes, parc_indexes)
         elif kind == 'tfce':
             dh = 0.1 if tfce is True else tfce
-            map_args = (kind, tail, max_axes, parc_indexes, shape, adjacency, dh)
+            map_args = (kind, tail, max_axes, parc_indexes, shape, adjacency, dh, tfce_e, tfce_h)
         else:
             map_args = (kind, tail, max_axes, parc_indexes, shape, adjacency, threshold, criteria_)
 
@@ -3094,6 +3189,8 @@ class NDPermutationDistribution:
         self._max_axes = max_axes
         self.threshold = threshold
         self.tfce = tfce
+        self.tfce_e = tfce_e
+        self.tfce_h = tfce_h
         self.tail = tail
         self._nad_ax = nad_ax
         self._vector_ax = vector_ax
@@ -3168,7 +3265,7 @@ class NDPermutationDistribution:
             if n_steps > 10000:
                 raise RuntimeError(f"TFCE requested with {n_steps:.0f} steps; currently 10000 is set as limit to avoid excessive computation times. Consider setting the tfce parameter to a larger step size.")
             self.tfce_warning = n_steps < 1
-            cmap = tfce(stat_map, self.tail, self._adjacency, dh)
+            cmap = tfce(stat_map, self.tail, self._adjacency, dh, self.tfce_e, self.tfce_h)
             cids = None
             n_clusters = True
         elif self.kind == 'cluster':
@@ -3242,14 +3339,14 @@ class NDPermutationDistribution:
             name: getattr(self, name) for name in (
                 'name', 'meas', '_version', '_host', '_init_time',
                 # settings ...
-                'kind', 'threshold', 'tfce', 'tail', 'criteria', 'samples', 'tstart', 'tstop', 'parc',
+                'kind', 'threshold', 'tfce', 'tfce_e', 'tfce_h', 'tail', 'criteria', 'samples', 'tstart', 'tstop', 'parc',
                 # data properties ...
                 'dims', 'shape', '_nad_ax', '_vector_ax', '_criteria',
                 # results ...
                 'dt_original', 'dt_perm', 'n_clusters', '_dist_dims', 'dist', '_original_param_map', '_original_cluster_map', '_cids',
             )}
         state['_connectivity'] = self._adjacency
-        state['version'] = 3
+        state['version'] = 4
         return state
 
     def __setstate__(self, state):
@@ -3291,6 +3388,9 @@ class NDPermutationDistribution:
             state['_vector_ax'] = None
         if version < 3:
             state['tfce'] = ['kind'] == 'tfce'
+        if version < 4:
+            state['tfce_e'] = 0.5
+            state['tfce_h'] = 2.0
 
         self._adjacency = state.pop('_connectivity')
         for k, v in state.items():
@@ -3305,6 +3405,8 @@ class NDPermutationDistribution:
             args.append(f"{pmin=}")
         elif self.kind == 'tfce':
             arg = f"tfce={self.tfce!r}"
+            if self.tfce_e != 0.5 or self.tfce_h != 2.0:
+                arg = f"{arg}, tfce_e={self.tfce_e!r}, tfce_h={self.tfce_h!r}"
             if self.tfce_warning:
                 arg = f"{arg} [WARNING: The TFCE step is larger than the largest value in the data]"
             args.append(arg)
