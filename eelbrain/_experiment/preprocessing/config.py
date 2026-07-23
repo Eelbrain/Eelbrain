@@ -689,10 +689,14 @@ class RawMaxwell(CachedRawPipe):
         Set to ``'warning'`` to proceed anyways.
     cache
         Cache the resulting raw files (default ``True``).
-    flat
-        Threshold for marking flat channels as bad (default 1e-14).
     ...
-        :func:`mne.preprocessing.maxwell_filter` parameters.
+        Supported :func:`mne.preprocessing.maxwell_filter` parameters are
+        ``origin``, ``int_order``, ``ext_order``, ``regularize``,
+        ``ignore_ref``, ``mag_scale``, ``skip_by_annotation``,
+        ``extended_proj``, ``st_duration``, ``st_correlation``, ``st_only``,
+        ``st_fixed``, and ``st_overlap``. The ``limit``, ``duration``,
+        ``min_count``, and ``h_freq`` parameters configure
+        :func:`mne.preprocessing.find_bad_channels_maxwell`.
 
     See Also
     --------
@@ -701,24 +705,34 @@ class RawMaxwell(CachedRawPipe):
     Notes
     -----
     For empty room recordings, there is no ``dev_head_t`` information, ``coord_frame = 'meg'`` will be used automatically.
-    Flat channels are automatically marked as bad with a threshold of parameter ``flat``.
+    Flat channels are automatically marked as bad by :func:`mne.preprocessing.find_bad_channels_maxwell`.
     """
 
     _bad_chs_affect_cache = True
-    DICT_ATTRS = CachedRawPipe.DICT_ATTRS + ('bad_condition', 'flat', 'kwargs')
+    DICT_ATTRS = CachedRawPipe.DICT_ATTRS + ('bad_condition', 'kwargs')
+    _shared_kwargs = frozenset((
+        'origin', 'int_order', 'ext_order', 'regularize', 'ignore_ref',
+        'mag_scale', 'skip_by_annotation', 'extended_proj',
+    ))
+    _detector_only_kwargs = frozenset(('limit', 'duration', 'min_count', 'h_freq'))
+    _maxwell_filter_only_kwargs = frozenset((
+        'st_duration', 'st_correlation', 'st_fixed', 'st_only', 'st_overlap',
+    ))
+    _valid_kwargs = _shared_kwargs | _detector_only_kwargs | _maxwell_filter_only_kwargs
 
     def __init__(
         self,
         source: str,
         bad_condition: str = 'error',
         cache: bool = True,
-        flat: float = 1e-14,
         **kwargs,
     ):
         CachedRawPipe.__init__(self, source, cache)
+        invalid_kwargs = sorted(set(kwargs).difference(self._valid_kwargs))
+        if invalid_kwargs:
+            raise TypeError(f"Invalid RawMaxwell keyword argument{'' if len(invalid_kwargs) == 1 else 's'}: {enumeration(invalid_kwargs)}")
         self.kwargs = kwargs
         self.bad_condition = bad_condition
-        self.flat = flat
 
     def _make(
             self,
@@ -742,19 +756,22 @@ class RawMaxwell(CachedRawPipe):
             coord_frame = 'head'
 
         with user_activity:
+            shared_kwargs = {key: value for key, value in self.kwargs.items() if key in self._shared_kwargs}
+            shared_kwargs.update(calibration=calibration, cross_talk=cross_talk, bad_condition=self.bad_condition, coord_frame=coord_frame)
             # find bad channels
-            find_bads_kwargs = {key: self.kwargs[key] for key in ['origin', 'regularize', 'ignore_ref', 'mag_scale', 'skip_by_annotation', 'mc_interp'] if key in self.kwargs}
-            noisy_chs, flat_chs = mne.preprocessing.find_bad_channels_maxwell(raw, calibration=calibration, cross_talk=cross_talk, bad_condition=self.bad_condition, coord_frame=coord_frame, **find_bads_kwargs)
+            detector_kwargs = {key: value for key, value in self.kwargs.items() if key in self._detector_only_kwargs}
+            noisy_chs, flat_chs = mne.preprocessing.find_bad_channels_maxwell(raw, verbose=MNE_VERBOSITY, **shared_kwargs, **detector_kwargs)
             raw.info['bads'] = sorted(raw.info['bads'] + noisy_chs + flat_chs)
             # Maxwell filter
-            kwargs = self.kwargs
+            kwargs = {key: value for key, value in self.kwargs.items() if key in self._maxwell_filter_only_kwargs}
+            kwargs.update(shared_kwargs)
             st_duration = kwargs.get('st_duration')
             if st_duration is not None and kwargs.get('st_overlap', True):
                 # MNE's overlapping tSSS uses a Hann window of round(st_duration * sfreq) samples with 50% overlap, which only satisfies the constant-overlap-add constraint for an even sample count; nudge st_duration up by one sample when it would be odd
                 n_samples = int(round(st_duration * raw.info['sfreq']))
                 if n_samples % 2:
                     kwargs = {**kwargs, 'st_duration': (n_samples + 1) / raw.info['sfreq']}
-            return mne.preprocessing.maxwell_filter(raw, calibration=calibration, cross_talk=cross_talk, destination=destination, bad_condition=self.bad_condition, coord_frame=coord_frame, verbose=MNE_VERBOSITY, **kwargs)
+            return mne.preprocessing.maxwell_filter(raw, destination=destination, verbose=MNE_VERBOSITY, **kwargs)
 
     def _make_info(
             self,
