@@ -525,8 +525,15 @@ def test_tfce_e_h():
     ds = datasets.get_uts(True)
     dss = ds.sub("A == 'a0'")
 
-    # defaults match Smith & Nichols (2009)
+    # without tfce, tfce_e/tfce_h stay unset (None), not the Smith & Nichols defaults
+    res_no_tfce = testnd.TTestOneSample('utsnd', data=dss, samples=0)
+    assert res_no_tfce.tfce_e is None
+    assert res_no_tfce.tfce_h is None
+
+    # defaults match Smith & Nichols (2009) once tfce is actually used
     res_default = testnd.TTestOneSample('utsnd', data=dss, tfce=True, samples=0)
+    assert res_default.tfce_e == 0.5
+    assert res_default.tfce_h == 2.0
     assert res_default._cdist.tfce_e == 0.5
     assert res_default._cdist.tfce_h == 2.0
     assert repr(res_default) == "<TTestOneSample 'utsnd', samples=0, tfce=True>"

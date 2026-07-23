@@ -107,14 +107,22 @@ class NDTest:
     def _attributes(self):
         return self._state_common + self._state_specific
 
-    def __init__(self, y, match, sub, samples, tfce, pmin, cdist, tstart, tstop, tfce_e=0.5, tfce_h=2.0):
+    def __init__(self, y, match, sub, samples, tfce, pmin, cdist, tstart, tstop, tfce_e=None, tfce_h=None):
         self.y = dataobj_repr(y)
         self.match = dataobj_repr(match, True)
         self.sub = sub
         self.samples = samples
         self.tfce = tfce
-        self.tfce_e = tfce_e
-        self.tfce_h = tfce_h
+        # cdist (or cdist[0], for MultiEffectNDTest) resolves None to the
+        # Smith & Nichols (2009) defaults when tfce is used; otherwise these
+        # stay at whatever was passed (typically None, since tfce is unused).
+        first_cdist = cdist[0] if isinstance(cdist, list) else cdist
+        if first_cdist is not None:
+            self.tfce_e = first_cdist.tfce_e
+            self.tfce_h = first_cdist.tfce_h
+        else:
+            self.tfce_e = tfce_e
+            self.tfce_h = tfce_h
         self.pmin = pmin
         self._cdist = cdist
         self.tstart = tstart
@@ -131,9 +139,9 @@ class NDTest:
         if 'X' in state:
             state['x'] = state.pop('X')
         if 'tfce_e' not in state:
-            state['tfce_e'] = 0.5
+            state['tfce_e'] = 0.5 if state.get('tfce') else None
         if 'tfce_h' not in state:
-            state['tfce_h'] = 2.0
+            state['tfce_h'] = 2.0 if state.get('tfce') else None
 
         for name in self._attributes:
             setattr(self, name, state.get(name))
@@ -566,8 +574,8 @@ class TContrastRelated(NDTest):
             pmin: float = None,
             tmin: float = None,
             tfce: float | bool = False,
-            tfce_e: float = 0.5,
-            tfce_h: float = 2.0,
+            tfce_e: float = None,
+            tfce_h: float = None,
             tstart: float = None,
             tstop: float = None,
             parc: str = None,
@@ -734,8 +742,8 @@ class Correlation(NDTest):
             pmin: float = None,
             rmin: float = None,
             tfce: float | bool = False,
-            tfce_e: float = 0.5,
-            tfce_h: float = 2.0,
+            tfce_e: float = None,
+            tfce_h: float = None,
             tstart: float = None,
             tstop: float = None,
             match: CategorialArg = None,
@@ -1004,8 +1012,8 @@ class TTestOneSample(NDDifferenceTest):
             pmin: float = None,
             tmin: float = None,
             tfce: float | bool = False,
-            tfce_e: float = 0.5,
-            tfce_h: float = 2.0,
+            tfce_e: float = None,
+            tfce_h: float = None,
             tstart: float = None,
             tstop: float = None,
             parc: str = None,
@@ -1235,8 +1243,8 @@ class TTestIndependent(NDDifferenceTest):
             pmin: float = None,
             tmin: float = None,
             tfce: float | bool = False,
-            tfce_e: float = 0.5,
-            tfce_h: float = 2.0,
+            tfce_e: float = None,
+            tfce_h: float = None,
             tstart: float = None,
             tstop: float = None,
             parc: str = None,
@@ -1482,8 +1490,8 @@ class TTestRelated(NDMaskedC1Mixin, NDDifferenceTest):
             pmin: float = None,
             tmin: float = None,
             tfce: float | bool = False,
-            tfce_e: float = 0.5,
-            tfce_h: float = 2.0,
+            tfce_e: float = None,
+            tfce_h: float = None,
             tstart: float = None,
             tstop: float = None,
             parc: str = None,
@@ -1921,8 +1929,8 @@ class ANOVA(MultiEffectNDTest):
             pmin: float = None,
             fmin: float = None,
             tfce: float | bool = False,
-            tfce_e: float = 0.5,
-            tfce_h: float = 2.0,
+            tfce_e: float = None,
+            tfce_h: float = None,
             tstart: float = None,
             tstop: float = None,
             match: CategorialArg | bool = None,
@@ -2226,8 +2234,8 @@ class Vector(NDDifferenceTest):
             samples: int = 10000,
             tmin: float = None,
             tfce: float | bool = False,
-            tfce_e: float = 0.5,
-            tfce_h: float = 2.0,
+            tfce_e: float = None,
+            tfce_h: float = None,
             tstart: float = None,
             tstop: float = None,
             parc: str = None,
@@ -2412,8 +2420,8 @@ class VectorDifferenceIndependent(Vector):
             samples: int = 10000,
             tmin: float = None,
             tfce: bool = False,
-            tfce_e: float = 0.5,
-            tfce_h: float = 2.0,
+            tfce_e: float = None,
+            tfce_h: float = None,
             tstart: float = None,
             tstop: float = None,
             parc: str = None,
@@ -2593,8 +2601,8 @@ class VectorDifferenceRelated(NDMaskedC1Mixin, Vector):
             samples: int = 10000,
             tmin: float = None,
             tfce: bool = False,
-            tfce_e: float = 0.5,
-            tfce_h: float = 2.0,
+            tfce_e: float = None,
+            tfce_h: float = None,
             tstart: float = None,
             tstop: float = None,
             parc: str = None,
@@ -3006,9 +3014,11 @@ class NDPermutationDistribution:
     tfce : bool | scalar
         Threshold-free cluster enhancement.
     tfce_e : scalar
-        TFCE extent exponent (default 0.5, as in Smith & Nichols, 2009).
+        TFCE extent exponent (default 0.5, as in Smith & Nichols, 2009, when
+        ``tfce`` is used).
     tfce_h : scalar
-        TFCE height exponent (default 2.0, as in Smith & Nichols, 2009).
+        TFCE height exponent (default 2.0, as in Smith & Nichols, 2009, when
+        ``tfce`` is used).
     tail : 1 | 0 | -1
         Which tail(s) of the distribution to consider. 0 is two-tailed,
         whereas 1 only considers positive values and -1 only considers
@@ -3050,7 +3060,7 @@ class NDPermutationDistribution:
     dist = None
     tfce_warning = None
 
-    def __init__(self, y, samples, threshold, tfce=False, tail=0, meas='?', name=None, tstart=None, tstop=None, criteria={}, parc=None, force_permutation=False, tfce_e=0.5, tfce_h=2.0):
+    def __init__(self, y, samples, threshold, tfce=False, tail=0, meas='?', name=None, tstart=None, tstop=None, criteria={}, parc=None, force_permutation=False, tfce_e=None, tfce_h=None):
         assert y.has_case
         assert parc is None or isinstance(parc, str)
         if tfce and threshold:
@@ -3059,6 +3069,10 @@ class NDPermutationDistribution:
             if tfce is not True:
                 tfce = abs(tfce)
             kind = 'tfce'
+            if tfce_e is None:
+                tfce_e = 0.5
+            if tfce_h is None:
+                tfce_h = 2.0
         elif threshold:
             threshold = float(threshold)
             kind = 'cluster'
@@ -3389,8 +3403,8 @@ class NDPermutationDistribution:
         if version < 3:
             state['tfce'] = ['kind'] == 'tfce'
         if version < 4:
-            state['tfce_e'] = 0.5
-            state['tfce_h'] = 2.0
+            state['tfce_e'] = 0.5 if state.get('kind') == 'tfce' else None
+            state['tfce_h'] = 2.0 if state.get('kind') == 'tfce' else None
 
         self._adjacency = state.pop('_connectivity')
         for k, v in state.items():
