@@ -1,3 +1,4 @@
+# skip test: flaky Mayavi implementation
 # requires: mayavi
 # dataset: mne_sample
 """Create a HTML report file for a permutation test of source space data"""
