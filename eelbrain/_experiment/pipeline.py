@@ -66,7 +66,7 @@ from .source import (
 from .statistics import EvokedTestDataDerivative, TestResultDerivative, TwoStageDataDerivative, TwoStageLevel1Derivative, TwoStageLevel2Derivative, TwoStageTest
 from .statistics.config import Test, validate_tests
 from .trf import Boosting, Estimator, Model, NUTSPredictor, PredictorInput, TRFDatasetDerivative, TRFDerivative, TRFGroupDatasetDerivative, TRFJob, TRFJobSpec, UTSPredictor, filter_predictor
-from .trf.model import parse_term
+from .trf.model import Comparison, parse_term
 from .variable_def import Variables, apply_vardef, label_groups
 
 
@@ -3532,6 +3532,20 @@ class Pipeline(StateModel):
             sub = section.add_section(f"Session: {session}")
             sub.append(_make_table(session))
         return section
+
+    def show_model_terms(self, x: str) -> fmtxt.Table:
+        """Table showing terms in a TRF model or comparison
+
+        Parameters
+        ----------
+        x
+            Model or comparison for which to show terms.
+        """
+        if any(operator in x for operator in ('@', '=', '<', '>')):
+            obj = Comparison.coerce(x, self._named_models)
+        else:
+            obj = Model.coerce(x).initialize(self._named_models)
+        return obj.term_table()
 
     def show_raw_info(self, **state) -> fmtxt.Table | None:
         """Display the selected pipeline for raw processing

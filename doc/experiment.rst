@@ -847,6 +847,8 @@ to change its parameters.
 
 Named model strings can be defined as abbreviations and reused in
 :meth:`Pipeline.load_trf` and :meth:`Pipeline.load_trfs`.
+Use :meth:`Pipeline.show_model_terms` to display the expanded terms in a model
+or comparison.
 
 .. py:attribute:: Pipeline.stim_var
 
