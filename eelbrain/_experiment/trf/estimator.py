@@ -3,7 +3,7 @@
 
 An :class:`Estimator` is a :class:`Configuration` that both selects a fitting
 algorithm (boosting or NCRF) and carries the algorithm-specific parameters.
-TRF-general parameters (model, ``tstart``, ``tstop``, ``data``, ``mask``,
+TRF-general parameters (model, ``tstart``, ``tstop``, ``data``,
 ``samplingrate``) stay on :meth:`Pipeline.load_trf`; estimator-specific
 parameters (``basis``, ``delta``, ``mu``, …) live on the estimator.
 """

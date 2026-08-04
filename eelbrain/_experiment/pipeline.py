@@ -1245,7 +1245,6 @@ class Pipeline(StateModel):
             tstop: float,
             estimator: str,
             data: str | None,
-            mask: str | None,
             samplingrate: int | None,
             filter_x: bool | str,
             state: dict[str, Any] | None = None,
@@ -1253,8 +1252,6 @@ class Pipeline(StateModel):
         """Normalize parameters for TRF nodes"""
         if state:
             self.set(**state)
-        if mask is not None:
-            raise NotImplementedError(f"{mask=}: source-space masking is not implemented yet")
         # Resolve the data kind against the analysis space (inv state) and the estimator.
         est = self._estimators[estimator]
         if est.requires_sensor_space:
@@ -1266,7 +1263,7 @@ class Pipeline(StateModel):
         else:
             data_string = self._resolve_data(data).string
         model = Model.coerce(x).initialize(self._named_models).sorted()
-        return {'x': model, 'tstart': float(tstart), 'tstop': float(tstop), 'estimator': estimator, 'data': data_string, 'mask': mask, 'samplingrate': samplingrate, 'filter_x': filter_x}
+        return {'x': model, 'tstart': float(tstart), 'tstop': float(tstop), 'estimator': estimator, 'data': data_string, 'samplingrate': samplingrate, 'filter_x': filter_x}
 
     def load_trf(
             self,
@@ -1276,7 +1273,6 @@ class Pipeline(StateModel):
             *,
             estimator: str = 'boosting',
             data: str = None,
-            mask: str = None,
             samplingrate: int = None,
             filter_x: bool | Literal['continuous'] = False,
             path_only: bool = False,
@@ -1303,9 +1299,9 @@ class Pipeline(StateModel):
             :attr:`default_data`. The analysis *space* is set by the ``inv``
             state (``inv=''`` for sensor space; a non-empty inverse for source
             space); in source space leave ``data`` unset. NCRF requires
-            ``inv=''`` and leaves ``data`` unset.
-        mask
-            Parcellation to mask source-space data (not implemented yet).
+            ``inv=''`` and leaves ``data`` unset. In source space, the ``parc``
+            state masks the source space: sources labeled ``"unknown"`` are
+            excluded.
         samplingrate
             Samplingrate in Hz for the analysis.
         filter_x
@@ -1315,7 +1311,7 @@ class Pipeline(StateModel):
         ...
             State parameters.
         """
-        options = self._trf_options(x, tstart, tstop, estimator, data, mask, samplingrate, filter_x, state)
+        options = self._trf_options(x, tstart, tstop, estimator, data, samplingrate, filter_x, state)
         ctx = self._resolve_derivative('trf', options=options)
         if path_only:
             return ctx.artifact_path
@@ -1329,13 +1325,12 @@ class Pipeline(StateModel):
             *,
             estimator: str = 'boosting',
             data: str = None,
-            mask: str = None,
             samplingrate: int = None,
             filter_x: bool | Literal['continuous'] = False,
             **state,
     ) -> TRFJobSpec:
         "Host-side handle for one TRF fit (generate job, check whether done, save result)"
-        options = self._trf_options(x, tstart, tstop, estimator, data, mask, samplingrate, filter_x, state)
+        options = self._trf_options(x, tstart, tstop, estimator, data, samplingrate, filter_x, state)
         ctx = self._resolve_derivative('trf', options=options)
         return TRFJobSpec(ctx)
 
@@ -1347,7 +1342,6 @@ class Pipeline(StateModel):
             *,
             estimator: str = 'boosting',
             data: str = None,
-            mask: str = None,
             samplingrate: int = None,
             filter_x: bool | Literal['continuous'] = False,
             **state,
@@ -1371,8 +1365,6 @@ class Pipeline(StateModel):
             Name of the estimator in :attr:`estimators` (default ``'boosting'``).
         data
             Sensor-space data *kind* to fit (see :meth:`load_trf`).
-        mask
-            Parcellation to mask source-space data (not implemented yet).
         samplingrate
             Samplingrate in Hz for the analysis.
         filter_x
@@ -1380,7 +1372,7 @@ class Pipeline(StateModel):
         ...
             State parameters.
         """
-        return self._trf_job_spec(x, tstart, tstop, estimator=estimator, data=data, mask=mask, samplingrate=samplingrate, filter_x=filter_x, **state).make_job()
+        return self._trf_job_spec(x, tstart, tstop, estimator=estimator, data=data, samplingrate=samplingrate, filter_x=filter_x, **state).make_job()
 
     def load_trfs(
             self,
@@ -1391,7 +1383,6 @@ class Pipeline(StateModel):
             *,
             estimator: str = 'boosting',
             data: str = None,
-            mask: str = None,
             samplingrate: int = None,
             filter_x: bool | Literal['continuous'] = False,
             scale: Literal['original'] = None,
@@ -1423,8 +1414,6 @@ class Pipeline(StateModel):
             Name of the estimator in :attr:`estimators` (default ``'boosting'``).
         data
             Response data to fit (see :meth:`load_trf`).
-        mask
-            Parcellation to mask source-space data (not implemented yet).
         samplingrate
             Samplingrate in Hz for the analysis.
         filter_x
@@ -1448,7 +1437,7 @@ class Pipeline(StateModel):
             TRF component keys.
         """
         subject, group = self._process_subject_arg(subjects, state)
-        trf_options = self._trf_options(x, tstart, tstop, estimator, data, mask, samplingrate, filter_x)
+        trf_options = self._trf_options(x, tstart, tstop, estimator, data, samplingrate, filter_x)
         options = {**trf_options, 'scale': scale, 'smooth': smooth, 'trfs': trfs}
         if group is not None:
             ds = self._load_derivative('trf-group-dataset', options=options)

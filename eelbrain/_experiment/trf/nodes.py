@@ -215,7 +215,6 @@ class TRFDerivative(Derivative[object]):
         'tstop': 0.5,
         'estimator': 'boosting',
         'data': OptionSpec(DataSpec('sensor'), DataSpec),
-        'mask': None,
         'samplingrate': None,
         'decim': None,
         'filter_x': False,
@@ -456,7 +455,6 @@ _TRF_DATASET_OPTIONS = {
     'tstop': 0.5,
     'estimator': 'boosting',
     'data': OptionSpec(None, DataSpec),
-    'mask': None,
     'samplingrate': None,
     'decim': None,
     'filter_x': False,
@@ -512,7 +510,7 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
         return {}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        trf_options = ctx.options_for('trf', 'x', 'tstart', 'tstop', 'estimator', 'data', 'mask', 'samplingrate', 'decim', 'filter_x')
+        trf_options = ctx.options_for('trf', 'x', 'tstart', 'tstop', 'estimator', 'data', 'samplingrate', 'decim', 'filter_x')
         deps = [Dependency('trf', label=epoch, state={'epoch': epoch}, options=trf_options) for epoch in self._epoch_names(ctx)]
         if ctx.state['inv']:
             if not is_fake_mri(self.root / mri_dir(ctx.state)):

@@ -1748,7 +1748,7 @@ def test_load_trf(samples_experiment):
     assert isinstance(res, BoostingResult)
 
     # cache hit
-    options = e._trf_options('imp', 0., 0.1, 'boosting', None, None, None, False, {})
+    options = e._trf_options('imp', 0., 0.1, 'boosting', None, None, False, {})
     assert e._resolve_derivative('trf', options=options).is_valid()
 
     # path
@@ -1813,7 +1813,7 @@ def test_predictor_subset_fingerprint(samples_experiment):
 
     res = e.load_trf('word-value-mask', 0, 0.1, samplingrate=samplingrate)
     assert isinstance(res, BoostingResult)
-    options = e._trf_options('word-value-mask', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
+    options = e._trf_options('word-value-mask', 0., 0.1, 'boosting', None, samplingrate, False, {})
     ctx = e._resolve_derivative('trf', options=options)
     assert ctx.is_valid()
 
@@ -1863,7 +1863,7 @@ def test_load_trf_source(samples_experiment):
     e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40', src='ico-2', parc='ac')
     res = e.load_trf('imp', 0, 0.1)
     assert isinstance(res, BoostingResult)
-    assert e._resolve_derivative('trf', options=e._trf_options('imp', 0., 0.1, 'boosting', None, None, None, False, {})).is_valid()
+    assert e._resolve_derivative('trf', options=e._trf_options('imp', 0., 0.1, 'boosting', None, None, False, {})).is_valid()
 
 
 @requires_mne_sample_data
@@ -1902,7 +1902,7 @@ def test_load_trf_filepredictor(samples_experiment):
     assert isinstance(res, BoostingResult)
 
     # the per-stimulus predictor file edges are recorded in the manifest
-    options = e._trf_options('env', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
+    options = e._trf_options('env', 0., 0.1, 'boosting', None, samplingrate, False, {})
     ctx = e._resolve_derivative('trf', options=options)
     assert ctx.is_valid()
     assert {'auditory~env', 'visual~env'} <= set(ctx._manifest().dependencies)
@@ -1985,7 +1985,7 @@ def test_load_trf_subject_predictor(samples_experiment):
     assert job.xs[0].info['sampling'] == 'continuous'
 
     # compute per subject; the (stimulus-free) predictor edge is in the manifest
-    options = e._trf_options('envseq', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
+    options = e._trf_options('envseq', 0., 0.1, 'boosting', None, samplingrate, False, {})
     for subject in subjects:
         e.set(subject=subject)
         res = e.load_trf('envseq', 0, 0.1, samplingrate=samplingrate)
@@ -2048,7 +2048,7 @@ def test_load_trf_continuous_predictor(samples_experiment):
     assert isinstance(job.xs[0], Datalist)
     assert all(x_i.time == y_i.time for x_i, y_i in zip(job.xs[0], job.y))
     # one predictor-file edge per stimulus, enumerated from the nested events
-    options = e._trf_options('env', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
+    options = e._trf_options('env', 0., 0.1, 'boosting', None, samplingrate, False, {})
     deps = set(e._resolve_derivative('trf', options=options)._manifest().dependencies)
     assert {'auditory~env', 'visual~env'} <= deps
 
@@ -2059,7 +2059,7 @@ def test_load_trf_continuous_predictor(samples_experiment):
     assert isinstance(res, BoostingResult)
     job = e.load_trf_job('envp', 0, 0.1, samplingrate=samplingrate)
     assert all(x_i.time == y_i.time for x_i, y_i in zip(job.xs[0], job.y))
-    options = e._trf_options('envp', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
+    options = e._trf_options('envp', 0., 0.1, 'boosting', None, samplingrate, False, {})
     deps = set(e._resolve_derivative('trf', options=options)._manifest().dependencies)
     assert {'auditory~envp', 'visual~envp'} <= deps
 
@@ -2114,7 +2114,7 @@ def test_load_trf_continuous_predictor_multiple_runs(samples_experiment):
 
     sequence_result = e.load_trf('envseq', 0, 0.1, samplingrate=samplingrate)
     assert isinstance(sequence_result, BoostingResult)
-    sequence_options = e._trf_options('envseq', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
+    sequence_options = e._trf_options('envseq', 0., 0.1, 'boosting', None, samplingrate, False, {})
     sequence_ctx = e._resolve_derivative('trf', options=sequence_options)
     sequence_deps = set(sequence_ctx._manifest().dependencies)
     assert {'envseq@task-sample_run-1', 'envseq@task-sample_run-2'} <= sequence_deps
@@ -2138,7 +2138,7 @@ def test_load_trf_continuous_predictor_multiple_runs(samples_experiment):
 
     per_event_result = e.load_trf('envp', 0, 0.1, samplingrate=samplingrate)
     assert isinstance(per_event_result, BoostingResult)
-    per_event_options = e._trf_options('envp', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
+    per_event_options = e._trf_options('envp', 0., 0.1, 'boosting', None, samplingrate, False, {})
     per_event_deps = set(e._resolve_derivative('trf', options=per_event_options)._manifest().dependencies)
     assert {'auditory~envp', 'visual~envp'} <= per_event_deps
 
