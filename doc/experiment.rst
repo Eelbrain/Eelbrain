@@ -207,8 +207,8 @@ For advanced Python workflows, you can also import the class directly::
 
 .. _pipeline-gui:
 
-The pipeline GUI: ``eelbrain-gui``
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+The pipeline GUI
+^^^^^^^^^^^^^^^^
 
 The pipeline GUI is the recommended tool for all data-preparation steps.
 Launch it from the command line by pointing it at the project directory (or any path accepted by :func:`eelbrain.load_pipeline`)::
