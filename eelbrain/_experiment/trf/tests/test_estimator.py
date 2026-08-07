@@ -43,7 +43,8 @@ def test_boosting_result_dataset():
 
     out = est._result_dataset(res, scale=None, trfs=True)
     assert out.n_cases == 1
-    assert out.info['metrics'] == ['r', 'z', 'residual', 'det']  # no vector r1/z1
+    assert out.info['metrics'] == ['r', 'z', 'residual', 'ev']  # no vector r1/z1
+    assert 'det' not in out
     assert out.info['xs'] == ['uts']
     assert isinstance(out['r'], NDVar)
     assert isinstance(out['uts'], NDVar)

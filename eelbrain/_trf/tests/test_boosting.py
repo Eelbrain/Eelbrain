@@ -214,6 +214,9 @@ def test_boosting_object():
 
     res_part = model.evaluate_fit(partition_results=True)
     assert len(res_part.partition_results) == 4
+    partition_data = res_part.partition_result_data()
+    assert 'ev' in partition_data
+    assert 'det' not in partition_data
     # h with basis
     h_part = combine([res.h for res in res_part.partition_results])
     assert len(h_part) == 4

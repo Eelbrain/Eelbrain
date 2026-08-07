@@ -526,7 +526,7 @@ class BoostingResult(PickleableDataClass):
             xs = [self.x]
         else:
             xs = [f'x_{i}' if x is None else x for i, x in enumerate(self.x)]
-        return Dataset.from_caselist(['i_test', 'r', 'det', *xs], rows)
+        return Dataset.from_caselist(['i_test', 'r', 'ev', *xs], rows)
 
     @cached_property
     def proportion_explained(self):

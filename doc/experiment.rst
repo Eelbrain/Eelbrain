@@ -813,6 +813,8 @@ Pipeline-managed TRF analyses are configured through predictors, estimators,
 and optional named models.
 Use :meth:`Pipeline.load_trf` to compute or load a single subject's TRF and
 :meth:`Pipeline.load_trfs` to assemble TRFs and fit metrics for a subject group.
+Use :meth:`Pipeline.load_model_test` to compare predictive power between two
+models with a cache-managed statistical test.
 
 .. py:attribute:: Pipeline.predictors
 
@@ -845,10 +847,9 @@ to change its parameters.
 
 .. py:attribute:: Pipeline.models
 
-Named model strings can be defined as abbreviations and reused in
-:meth:`Pipeline.load_trf` and :meth:`Pipeline.load_trfs`.
-Use :meth:`Pipeline.show_model_terms` to display the expanded terms in a model
-or comparison.
+Named model strings can be defined as abbreviations and reused when
+specifying TRF models (:meth:`Pipeline.load_trf`, :meth:`Pipeline.load_model_test`, ...).
+Use :meth:`Pipeline.show_model_terms` to display the expanded terms in a model or comparison.
 
 .. py:attribute:: Pipeline.stim_var
 
@@ -1181,13 +1182,13 @@ Additional parcellation can be defined in the :attr:`Pipeline.parcs`
 attribute. Parcellations are used in different contexts:
 
 - When loading source space data, the current ``parc`` state determines the parcellation of the source space (change the state parameter with ``e.set(parc='aparc')``).
-- When loading tests, setting the ``parc`` parameter treats each label as a
-  separate ROI. For spatial cluster-based tests that means that no clusters can
-  cross the boundary between two labels. On the other hand, using the ``mask``
-  parameter treats all named labels as connected surface, but discards any
-  sources labeled as ``"unknown"``. For example, loading a test with
-  ``mask='PALS_B12_Lobes'`` will perform a whole-brain test on the cortex, while
-  discarding subcortical sources.
+- When loading tests, the ``parc`` state masks the source space: all named
+  labels are treated as one connected surface, and any sources labeled as
+  ``"unknown"`` are discarded. For example, loading a test with
+  ``parc='PALS_B12_Lobes'`` will perform a whole-brain test on the cortex, while
+  discarding subcortical sources. Setting ``disconnect_labels=True`` instead
+  treats each label as a separate ROI, so that for spatial cluster-based tests
+  no clusters can cross the boundary between two labels.
 
 Parcellations are set with their name, with the exception of
 :class:`SeededParc`: for those, the name is followed by the radius in mm, for

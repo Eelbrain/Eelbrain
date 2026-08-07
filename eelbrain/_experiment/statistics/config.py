@@ -452,10 +452,11 @@ class ResolvedTestNDSpec:
         pmin = ctx.options['pmin']
         kwargs = {
             'samples': ctx.options['samples'],
-            'tstart': ctx.options['tstart'],
-            'tstop': ctx.options['tstop'],
             'parc': data._testnd_parc(ctx.options.get('disconnect_labels', False)),
         }
+        for arg in ['tstart', 'tstop']:
+            if arg in ctx.options:
+                kwargs[arg] = ctx.options[arg]
         if pmin == 'tfce':
             kwargs['tfce'] = True
         elif pmin is not None:

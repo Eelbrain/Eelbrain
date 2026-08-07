@@ -65,7 +65,7 @@ from .source import (
 )
 from .statistics import EvokedTestDataDerivative, TestResultDerivative, TwoStageDataDerivative, TwoStageLevel1Derivative, TwoStageLevel2Derivative, TwoStageTest
 from .statistics.config import Test, validate_tests
-from .trf import Boosting, Estimator, Model, NUTSPredictor, PredictorInput, TRFDatasetDerivative, TRFDerivative, TRFGroupDatasetDerivative, TRFJob, TRFJobSpec, UTSPredictor, filter_predictor
+from .trf import Boosting, Estimator, Model, NUTSPredictor, PredictorInput, TRFDatasetDerivative, TRFDerivative, TRFGroupDatasetDerivative, TRFJob, TRFJobSpec, TRFModelTestDerivative, UTSPredictor, filter_predictor
 from .trf.model import Comparison, parse_term
 from .variable_def import Variables, apply_vardef, label_groups
 
@@ -546,6 +546,7 @@ class Pipeline(StateModel):
         self._derivatives.register(TRFDerivative(self.root, self._estimators, self.predictors, self.stim_var, self._raw))
         self._derivatives.register(TRFDatasetDerivative(self.root, self._estimators, self._epochs))
         self._derivatives.register(TRFGroupDatasetDerivative(self._mri_subjects, self._groups))
+        self._derivatives.register(TRFModelTestDerivative(self.tests, self._variables, self._groups))
 
         # --- Sensor-space: events → epochs → evoked ---
         self._derivatives.register(EventsInput(self._raw_extension))
@@ -1262,8 +1263,8 @@ class Pipeline(StateModel):
             data_string = 'sensor'
         else:
             data_string = self._resolve_data(data).string
-        model = Model.coerce(x).initialize(self._named_models).sorted()
-        return {'x': model, 'tstart': float(tstart), 'tstop': float(tstop), 'estimator': estimator, 'data': data_string, 'samplingrate': samplingrate, 'filter_x': filter_x}
+        x_ = self._eval_trf_x(x).sorted()
+        return {'x': x_, 'tstart': float(tstart), 'tstop': float(tstop), 'estimator': estimator, 'data': data_string, 'samplingrate': samplingrate, 'filter_x': filter_x}
 
     def load_trf(
             self,
@@ -1444,6 +1445,100 @@ class Pipeline(StateModel):
         else:
             ds = self._load_derivative('trf-dataset', options=options)
         return ds
+
+    def load_model_test(
+            self,
+            x: str | Comparison,
+            tstart: float = 0.,
+            tstop: float = 0.5,
+            *,
+            estimator: str = 'boosting',
+            data: str = None,
+            samplingrate: int = None,
+            filter_x: bool | Literal['continuous'] = False,
+            metric: str = 'ev',
+            smooth: float = None,
+            test: str = None,
+            pmin: PMinArg = 'tfce',
+            samples: int = 10000,
+            return_data: bool = False,
+            **state,
+    ) -> Any:
+        """Test a difference in predictive power between two TRF models
+
+        Parameters
+        ----------
+        x
+            Model comparison, such as ``'acoustic + lexical > acoustic'`` or
+            ``'acoustic + lexical @ lexical'``. Comparisons against ``0`` test
+            one model's predictive power against zero.
+        tstart
+            Start of the TRF in seconds.
+        tstop
+            Stop of the TRF in seconds.
+        estimator
+            Name of the estimator in :attr:`estimators` (default ``'boosting'``).
+        data
+            Response data to fit (see :meth:`load_trf`).
+        samplingrate
+            Samplingrate in Hz for the analysis.
+        filter_x
+            Filter predictors like the M/EEG data (see :meth:`load_predictor`).
+        metric
+            Fit metric to test. The default, ``'ev'``, is explained variance.
+            Append ``'.sum'``, ``'.mean'``, or ``'.max'`` to reduce the metric
+            across sensors or sources before testing.
+        smooth
+            Smooth source-space metric maps before testing (Gaussian standard
+            deviation in meters).
+        test
+            Name of a test in :attr:`tests`. By default, use a one-sample test
+            for comparisons against zero and a related-measures test otherwise,
+            with the tail specified by the comparison.
+        pmin
+            Cluster-forming threshold or ``'tfce'``.
+        samples
+            Number of permutations used to determine cluster p-values.
+        return_data
+            Return the :class:`Dataset` used for the test together with the
+            statistical result.
+        ...
+            State parameters. Use ``group`` to select the subjects.
+
+        Returns
+        -------
+        result
+            Statistical test result.
+        data, result
+            With ``return_data=True``, the data used for the test and the
+            statistical result.
+        """
+        self.set(**state)
+        trf_options = self._trf_options(x, tstart, tstop, estimator, data, samplingrate, filter_x)
+
+        metric_parts = metric.rsplit('.', 1)
+        metric_key = metric_parts[0]
+        if len(metric_parts) == 2 and metric_parts[1] not in ('sum', 'mean', 'max'):
+            raise ValueError(f"metric reducer {metric_parts[1]!r}: expected 'sum', 'mean', or 'max'")
+        estimator_obj = self._estimators[estimator]
+        if metric_key not in estimator_obj.metric_keys:
+            available = ', '.join(estimator_obj.metric_keys)
+            raise ValueError(f"{metric=}: estimator {estimator!r} provides {available}")
+        if test is not None:
+            if not isinstance(test, str):
+                raise TypeError(f"{test=}: expected a test name or None")
+            self.tests[test]  #
+
+        options = {
+            **trf_options,
+            'metric': metric,
+            'smooth': smooth,
+            'test': test,
+            'pmin': pmin,
+            'samples': samples,
+            'return_data': return_data,
+        }
+        return self._load_derivative('trf-model-test', options=options)
 
     def load_evoked(
             self,
@@ -3117,6 +3212,12 @@ class Pipeline(StateModel):
             model.extend(unordered_factors)
         return '%'.join(model)
 
+    def _eval_trf_x(self, x: str) -> Model | Comparison:
+        if any(operator in x for operator in ('@', '=', '<', '>')):
+            return Comparison.coerce(x, self._named_models)
+        else:
+            return Model.coerce(x).initialize(self._named_models)
+
     def _update_mrisubject(self, fields: dict) -> str:
         subject = fields['subject']
         mri = fields['mri']
@@ -3530,11 +3631,7 @@ class Pipeline(StateModel):
         x
             Model or comparison for which to show terms.
         """
-        if any(operator in x for operator in ('@', '=', '<', '>')):
-            obj = Comparison.coerce(x, self._named_models)
-        else:
-            obj = Model.coerce(x).initialize(self._named_models)
-        return obj.term_table()
+        return self._eval_trf_x(x).term_table()
 
     def show_raw_info(self, **state) -> fmtxt.Table | None:
         """Display the selected pipeline for raw processing

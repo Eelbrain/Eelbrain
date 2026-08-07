@@ -2179,8 +2179,9 @@ def test_load_trfs(samples_experiment):
     assert ds[0, 'subject'] == 'R0000'
     assert ds[0, 'epoch'] == 'target'
     assert ds.info['xs'] == ['imp']
-    for key in ('r', 'z', 'residual', 'det', 'imp'):
+    for key in ('r', 'z', 'residual', 'ev', 'imp'):
         assert isinstance(ds[key], NDVar)
+    assert 'det' not in ds
 
     # group -> one case per subject
     ds_all = e.load_trfs('all', 'imp', 0, 0.1)
@@ -2196,6 +2197,75 @@ def test_load_trfs(samples_experiment):
     assert ds_metrics.info['xs'] == []
     assert 'imp' not in ds_metrics
     assert isinstance(ds_metrics['r'], NDVar)
+
+
+@requires_mne_sample_data
+def test_load_model_test(samples_experiment):
+    """load_model_test: model data assembly, result caching, and named tests"""
+    from eelbrain._experiment.tests.sample_experiment import SampleTRF
+
+    class ModelTestTRF(SampleTRF):
+        predictors = {**SampleTRF.predictors, 'modality_imp': EventPredictor("modality == 'auditory'")}
+        models = {
+            'base': 'imp',
+            'full': 'imp + modality_imp',
+        }
+        tests = {**SampleTRF.tests, 'trf-one-sample': TTestOneSample()}
+
+    set_log_level('warning', 'mne')
+    root = samples_experiment(n_subjects=3, n_segments=4)
+    e = ModelTestTRF(root)
+    e.set(epoch='target', epoch_rejection='', raw='1-40', inv='')
+
+    # Default non-null comparison: paired model values, reduced only for the test
+    ds, res = e.load_model_test('full > base', 0, 0.1, metric='ev.mean', pmin=None, samples=0, return_data=True)
+    assert ds.n_cases == 6
+    assert ds['model'].cells == ('test', 'baseline')
+    assert isinstance(ds['ev'], NDVar)
+    assert 'det' not in ds
+    assert hasattr(res, 'p')
+
+    cache_dir = Path(root) / 'derivatives' / 'eelbrain' / 'cache' / 'trf-model-test'
+    artifacts = list(cache_dir.rglob('*.pickle'))
+    assert len(artifacts) == 1
+    artifact = artifacts[0]
+    mtime = artifact.stat().st_mtime_ns
+    manifest = json.loads(Path(f'{artifact}.manifest.json').read_text())
+    assert set(manifest['dependencies']) == {'x1', 'x0'}
+
+    # Expanded spelling and return_data view resolve to the same artifact
+    res_cached = e.load_model_test('imp + modality_imp > imp', 0, 0.1, metric='ev.mean', pmin=None, samples=0)
+    assert hasattr(res_cached, 'p')
+    assert artifact.stat().st_mtime_ns == mtime
+    assert list(cache_dir.rglob('*.pickle')) == artifacts
+
+    # Statistical options have distinct cache identities
+    e.load_model_test('full > base', 0, 0.1, metric='ev.mean', pmin=None, samples=1)
+    e.load_model_test('full > base', 0, 0.1, metric='ev.mean', pmin=0.05, samples=0)
+    assert len(list(cache_dir.rglob('*.pickle'))) == 3
+
+    # A named test operates on one difference value per subject
+    ds_diff, named_res = e.load_model_test('full > base', 0, 0.1, metric='ev.mean', test='trf-one-sample', pmin=None, samples=0, return_data=True)
+    assert ds_diff.n_cases == 3
+    assert 'model' not in ds_diff
+    assert hasattr(named_res, 'p')
+
+    # Comparison against zero has only one model dependency
+    ds_zero, zero_res = e.load_model_test('base > 0', 0, 0.1, pmin=None, samples=0, return_data=True)
+    assert ds_zero.n_cases == 3
+    assert 'model' not in ds_zero
+    assert hasattr(zero_res, 'p')
+    manifests = [json.loads(path.read_text()) for path in cache_dir.rglob('*.manifest.json')]
+    assert any(set(manifest['dependencies']) == {'x1'} for manifest in manifests)
+
+    with pytest.raises(TypeError, match='need a model comparison'):
+        e.load_model_test('base', 0, 0.1)
+    with pytest.raises(ValueError, match="metric='det'"):
+        e.load_model_test('base > 0', 0, 0.1, metric='det')
+    with pytest.raises(ValueError, match='metric reducer'):
+        e.load_model_test('base > 0', 0, 0.1, metric='ev.median')
+    with pytest.raises(ValueError, match='available metrics'):
+        e.load_model_test('base > 0', 0, 0.1, metric='r1.mean', pmin=None, samples=0)
 
 
 @requires_mne_sample_data
