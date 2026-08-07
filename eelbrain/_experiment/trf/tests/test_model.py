@@ -129,6 +129,10 @@ def test_comparison_parser():
     with pytest.raises(TRFModelError):
         Comparison.coerce('model @ whot$shift', named_models)
 
+    for x0 in ('0foo', '01foo', '0-foo', '0~foo'):
+        comparison = Comparison.coerce(f'x > {x0}')
+        assert comparison.x0.name == x0
+
 
 def test_comparison_cache_form():
     named = Comparison.coerce('x-ab < x-cd', named_models).sorted()

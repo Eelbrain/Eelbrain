@@ -12,7 +12,7 @@ from pathlib import Path
 import pickle
 from collections.abc import Callable, Sequence
 
-from pyparsing import DelimitedList, ParseException, Literal, Optional, Word, alphanums, one_of
+from pyparsing import DelimitedList, Keyword, ParseException, Literal, Optional, Word, alphanums, one_of
 
 from ..._data_obj import Dataset
 from ... import fmtxt
@@ -512,7 +512,7 @@ model = DelimitedList(term, '+').add_parse_action(lambda s, l, t: Model(tuple(t)
 subtract_term = Literal('-').suppress() + term
 model_expr = model + Optional(subtract_term)
 model_expr.add_parse_action(lambda s, l, t: ModelExpression(*t))
-null_model = Literal('0').add_parse_action(lambda s, l, t: Model(()))
+null_model = Keyword('0', ident_chars=alphanums + '_-~').add_parse_action(lambda s, l, t: Model(()))
 
 # comparison
 direct_comparison = model + one_of('= < >') + (null_model | model)
