@@ -745,7 +745,7 @@ class TRFModelTestDerivative(Derivative[Any]):
 
     def build(self, ctx: Request) -> Any:
         ds, y, test_obj = self._test_data(ctx)
-        test_spec = ResolvedTestNDSpec.from_request(ctx)
+        test_spec = ResolvedTestNDSpec.from_request(ctx, time=False)
         return test_spec.make_result(self, y, ds, test_obj)
 
     def apply_view_options(self, ctx: Request, value: Any) -> Any:

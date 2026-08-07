@@ -447,6 +447,7 @@ class ResolvedTestNDSpec:
     def from_request(
             cls,
             ctx: Request,
+            time: bool = True,
     ) -> ResolvedTestNDSpec:
         data = ctx.options['data']
         pmin = ctx.options['pmin']
@@ -454,9 +455,9 @@ class ResolvedTestNDSpec:
             'samples': ctx.options['samples'],
             'parc': data._testnd_parc(ctx.options.get('disconnect_labels', False)),
         }
-        for arg in ['tstart', 'tstop']:
-            if arg in ctx.options:
-                kwargs[arg] = ctx.options[arg]
+        if time:
+            kwargs['tstart'] = ctx.options['tstart']
+            kwargs['tstop'] = ctx.options['tstop']
         if pmin == 'tfce':
             kwargs['tfce'] = True
         elif pmin is not None:
