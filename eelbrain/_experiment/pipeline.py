@@ -1448,7 +1448,7 @@ class Pipeline(StateModel):
 
     def load_model_test(
             self,
-            x: str | Comparison,
+            x: str,
             tstart: float = 0.,
             tstop: float = 0.5,
             *,

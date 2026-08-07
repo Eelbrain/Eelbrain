@@ -315,7 +315,7 @@ class ComparisonSpec:
     def initialize(
             self,
             named_models: dict[str, Model],
-    ) -> Comparison | Model:
+    ) -> Comparison:
         raise NotImplementedError
 
 
