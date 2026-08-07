@@ -359,11 +359,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         self.groups = groups
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {
-            'test': self.tests[ctx.options['test']],
-            'epoch': self.epochs[ctx.state['epoch']],
-            'subjects': tuple(self.groups[ctx.state['group']]),
-        }
+        return {'test': self.tests[ctx.options['test']]}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         data = ctx.options['data']
