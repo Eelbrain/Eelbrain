@@ -189,6 +189,24 @@ def test_resolve():
     assert list(aggregated) == ['subject', 'value', 'age', 'is_g0']  # 'side' is not recomputed from the cell means
 
 
+def test_resolve_overwrite():
+    "A variable never replaces a column the data already provides"
+    groups = {'g0': ('R0000',), 'g1': ('R0001',)}
+    variables = Variables({'r': GroupVar(['g0', 'g1'])})
+    # a TRF dataset provides its fit metrics, which no blacklist can enumerate
+    trfs = Dataset({'subject': Factor(['R0000', 'R0001']), 'r': Var([0.1, 0.2])})
+    with pytest.raises(ConfigurationError, match="'r'"):
+        variables.resolve(trfs, groups)
+    assert list(trfs['r']) == [0.1, 0.2]
+    # the same name is fine where it is not a column
+    evoked = Dataset({'subject': Factor(['R0000', 'R0001'])})
+    variables.resolve(evoked, groups)
+    assert list(evoked['r']) == ['g0', 'g1']
+    # a variable that does not apply to the data is skipped rather than reported
+    variables = Variables({'r': GroupVar(['g0', 'g1'], task='b')})
+    variables.resolve(Dataset({'subject': Factor(['R0000']), 'r': Var([0.1])}, info={'task': 'a'}), groups)
+
+
 def test_resolve_require_inputs():
     "Where the events are labeled, a variable that can not be computed is an error, not a later stage"
     variables = Variables({'side': LabelVar('valu', {1: 'left', 2: 'right'})})  # typo in the source column

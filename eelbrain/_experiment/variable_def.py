@@ -62,7 +62,11 @@ from .configuration import Configuration, ConfigurationError
 from .pathing import BIDS_ENTITY_KEYS
 
 
-# Event columns that are written by the pipeline itself, and would be silently overwritten by a user variable
+# Event columns that are written by the pipeline itself, and would be silently overwritten by a user
+# variable. Only names that are present regardless of configuration belong here; the general guarantee
+# that a variable never replaces a column is enforced in :meth:`Variables.resolve`, which is what covers
+# the names that follow from a call rather than from the definitions (TRF metrics and kernels, the
+# evoked response). This list is the subset that can be reported when the pipeline is constructed.
 RESERVED_VAR_KEYS = (
     *BIDS_ENTITY_KEYS,  # promoted from ds.info to a column where recordings are combined
     'sample', 'value', 'onset', 'index', 'epoch', 'accept',  # event columns the pipeline reads by name
@@ -413,6 +417,14 @@ class Variables(Configuration):
         -------
         values
             The resolved column for each of ``names``; empty without ``names``.
+
+        Notes
+        -----
+        A variable never replaces a column that ``data`` already provides, since that
+        column could be the analysis data itself (a TRF metric or kernel, the evoked
+        response) or another variable's. Which names are at stake depends on the data
+        rather than on the definitions, so this is checked here rather than against
+        ``RESERVED_VAR_KEYS``, which only covers the names that are known up front.
         """
         for name, vdef in (self.across_subject_vars if across_subject_only else self.vars).items():
             if groups is None and name in self.across_subject_vars:
@@ -424,6 +436,8 @@ class Variables(Configuration):
                 continue
             elif not vdef._applies_to_task(data):
                 continue
+            elif name in data:
+                raise ConfigurationError(f"Variable {name!r}: {vdef} would overwrite the {name!r} column that the data already provides; rename the variable")
             data[name] = vdef._apply(data, groups)
         if names is None:
             return {}
