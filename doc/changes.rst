@@ -43,17 +43,22 @@ New in 0.43
   - EEG data can be re-referenced after epoching and channel interpolation
     through :attr:`pipeline.Pipeline.references` and the ``reference`` state.
     This is generally preferable to re-referencing before epoching.
-  - Temporal response function analyses can be managed directly by the
-    pipeline with predictors, estimators, and :meth:`pipeline.Pipeline.load_trf`
-    / :meth:`pipeline.Pipeline.load_trfs`.
+  - Temporal response function analyses: :meth:`pipeline.Pipeline.load_trf`,
+    :meth:`pipeline.Pipeline.load_trfs`, :meth:`pipeline.Pipeline.load_model_test`
   - New :meth:`pipeline.Pipeline.clean_cache` reviews and deletes invalid or
     stale cache files, including artifacts whose configuration changed since
     they were built and everything downstream of them.
   - API change: the list of names reserved for :attr:`pipeline.Pipeline.variables`
     (and ``Test`` ``vars``) now covers all the columns that the pipeline writes
-    itself, instead of only ``subject``, ``session``, ``task`` and ``run``. Such
-    a variable used to be silently overwritten, and now raises an error; the
-    full list is documented with :attr:`pipeline.Pipeline.variables`.
+    itself, instead of only ``subject``, ``task`` and ``visit``. Such a variable
+    used to be silently overwritten, and now raises an error; the full list is
+    documented with :attr:`pipeline.Pipeline.variables`.
+
+* Boosting:
+
+  - API change: the proportion of explained variance is now called ``ev``
+    instead of ``det``, in the :class:`Dataset` returned by
+    :meth:`BoostingResult.partition_result_data`
 
 
 New in 0.42

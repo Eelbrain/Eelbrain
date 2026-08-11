@@ -1255,8 +1255,16 @@ class Pipeline(StateModel):
             samplingrate: int | None,
             filter_x: bool | str,
             state: dict[str, Any] | None = None,
+            *,
+            comparison: bool = False,
     ) -> dict[str, Any]:
-        """Normalize parameters for TRF nodes"""
+        """Normalize parameters for TRF nodes
+
+        Parameters
+        ----------
+        comparison
+            Whether ``x`` is a model comparison rather than a single model.
+        """
         if state:
             self.set(**state)
         # Resolve the data kind against the analysis space (inv state) and the estimator.
@@ -1269,7 +1277,7 @@ class Pipeline(StateModel):
             data_string = 'sensor'
         else:
             data_string = self._resolve_data(data).string
-        x_ = self._eval_trf_x(x).sorted()
+        x_ = self._eval_trf_x(x, comparison).sorted()
         return {'x': x_, 'tstart': float(tstart), 'tstop': float(tstop), 'estimator': estimator, 'data': data_string, 'samplingrate': samplingrate, 'filter_x': filter_x}
 
     def load_trf(
@@ -1520,12 +1528,10 @@ class Pipeline(StateModel):
             statistical result.
         """
         self.set(**state)
-        trf_options = self._trf_options(x, tstart, tstop, estimator, data, samplingrate, filter_x)
+        trf_options = self._trf_options(x, tstart, tstop, estimator, data, samplingrate, filter_x, comparison=True)
 
-        metric_parts = metric.rsplit('.', 1)
-        metric_key = metric_parts[0]
-        if len(metric_parts) == 2 and metric_parts[1] not in ('sum', 'mean', 'max'):
-            raise ValueError(f"metric reducer {metric_parts[1]!r}: expected 'sum', 'mean', or 'max'")
+        # Fail before loading anything; which metrics a given result actually provides is checked in the node
+        metric_key, _ = TRFModelTestDerivative._metric_parts(metric)
         estimator_obj = self._estimators[estimator]
         if metric_key not in estimator_obj.metric_keys:
             available = ', '.join(estimator_obj.metric_keys)
@@ -1533,7 +1539,7 @@ class Pipeline(StateModel):
         if test is not None:
             if not isinstance(test, str):
                 raise TypeError(f"{test=}: expected a test name or None")
-            self.tests[test]  #
+            self.tests[test]  # raise for an undefined test name
 
         options = {
             **trf_options,
@@ -1993,8 +1999,8 @@ class Pipeline(StateModel):
         if isinstance(vardef, str):
             vardef = self.tests[vardef].vars
         if group is not None:
-            ds = combine([self.load_selected_events(subjects=subject_, reject=reject, vardef=vardef, **state) for subject_ in self.iter(group=group)])
-            # across-subject variables are only defined once subjects are combined
+            # vardef is applied once, to the combined data, where its across-subject variables are also defined
+            ds = combine([self.load_selected_events(subjects=subject_, reject=reject, **state) for subject_ in self.iter(group=group)])
             self._variables.resolve(ds, self._groups, across_subject_only=True)
             if vardef:
                 vardef.resolve(ds, self._groups)
@@ -3231,11 +3237,32 @@ class Pipeline(StateModel):
             model.extend(unordered_factors)
         return '%'.join(model)
 
-    def _eval_trf_x(self, x: str) -> Model | Comparison:
+    def _eval_trf_x(
+            self,
+            x: str,
+            comparison: bool | None = None,
+    ) -> Model | Comparison:
+        """Evaluate a TRF model or model-comparison expression
+
+        Parameters
+        ----------
+        x
+            Model (``'a + b'``) or comparison (``'a + b > a'``) expression.
+        comparison
+            Require a comparison (``True``) or a single model (``False``); by
+            default (``None``) accept either.
+        """
+        if not isinstance(x, str):
+            raise TypeError(f"{x=}: need a model expression as a string")
         if any(operator in x for operator in ('@', '=', '<', '>')):
-            return Comparison.coerce(x, self._named_models)
+            out = Comparison.coerce(x, self._named_models)
         else:
-            return Model.coerce(x).initialize(self._named_models)
+            out = Model.coerce(x).initialize(self._named_models)
+        if comparison and not isinstance(out, Comparison):
+            raise TypeError(f"{x=}: need a model comparison, such as 'a + b > a'")
+        elif comparison is False and isinstance(out, Comparison):
+            raise TypeError(f"{x=}: need a single model, not a comparison")
+        return out
 
     def _update_mrisubject(self, fields: dict) -> str:
         subject = fields['subject']

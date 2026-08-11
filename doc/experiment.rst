@@ -727,7 +727,7 @@ Variables come in two kinds, which differ in where they are added:
   derived from either, such as ``EvalVar("group == 'patient'")``.
 
 An across-subject variable is thus only present in data that spans subjects
-(e.g. ``e.load_selected_events('all')``, but not ``e.load_selected_events('01)``), and
+(e.g. ``e.load_selected_events('all')``, but not ``e.load_selected_events('01')``), and
 can not be used where data is processed one subject at a time, such as in an
 epoch ``sel`` expression or as an evoked ``model``. Use a :class:`GroupVar` to
 compare groups through :class:`TTestIndependent` or through an

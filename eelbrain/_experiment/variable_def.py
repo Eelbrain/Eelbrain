@@ -163,7 +163,10 @@ class LabelVar(VarDef):
     -----
     With ``source='subject'`` the definition spans subjects (it lists a value
     for each of them), which defers it to the point where different subjects'
-    data are combined; see :class:`GroupVar` for the implications.
+    data are combined; see :class:`GroupVar` for the implications. Only that
+    exact source is deferred: a ``source`` that merely involves the subject,
+    such as ``'subject%value'``, is applied per subject like any other event
+    variable, and so any subject's entry invalidates every subject's events.
     """
     DICT_ATTRS = ('task', 'source', 'labels', 'is_factor', 'default', 'fnmatch')
 
@@ -234,7 +237,7 @@ class GroupVar(VarDef):
         Groups to label. A sequence of group names to label each subject with
         the group it belongs to (subjects must not be members of more than one
         group). Alternatively, a ``{group: label}`` dictionary can be used to
-        assign a label different form the group name.
+        assign a label different from the group name.
     task
         Only apply the variable to events from this task.
 
@@ -375,6 +378,7 @@ class Variables(Configuration):
             groups: dict[str, tuple[str, ...]] = None,
             names: Collection[str] = None,
             across_subject_only: bool = False,
+            require_inputs: bool = False,
     ) -> dict[str, Any]:
         """Add variables to ``data``, in place
 
@@ -399,6 +403,11 @@ class Variables(Configuration):
             present, applied per subject: re-deriving them from columns that have
             been averaged would not reproduce them. Not for :attr:`Test.vars`,
             which are applied to the combined data in full.
+        require_inputs
+            ``data`` holds every column that will ever be available, so a
+            variable whose inputs are missing is a definition error rather than
+            one that belongs to a later stage. For the events, where the
+            variables are first applied.
 
         Returns
         -------
@@ -408,8 +417,11 @@ class Variables(Configuration):
         for name, vdef in (self.across_subject_vars if across_subject_only else self.vars).items():
             if groups is None and name in self.across_subject_vars:
                 continue
-            elif not set(vdef._input_vars()).issubset(data):
-                continue  # before the task check, so that a variable that can not be computed anyway does not raise
+            elif missing := [key for key in vdef._input_vars() if key not in data]:
+                # before the task check, so that a variable that can not be computed anyway does not raise
+                if require_inputs and vdef._applies_to_task(data):
+                    raise ConfigurationError(f"Variable {name!r}: {vdef} is computed from {enumeration([repr(key) for key in missing])}, which {'are' if len(missing) > 1 else 'is'} not among the event columns {enumeration([repr(key) for key in data])}")
+                continue
             elif not vdef._applies_to_task(data):
                 continue
             data[name] = vdef._apply(data, groups)

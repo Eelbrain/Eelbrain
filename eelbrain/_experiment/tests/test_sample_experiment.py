@@ -1985,6 +1985,12 @@ def test_load_trf(samples_experiment):
     assert spec.is_done
     assert path.exists()
 
+    # a single TRF is fit for one model; a comparison belongs to load_model_test
+    with pytest.raises(TypeError, match='not a comparison'):
+        e.load_trf('imp > 0', 0, 0.1)
+    with pytest.raises(TypeError, match='not a comparison'):
+        e.load_trfs('R0000', 'imp > 0', 0, 0.1)
+
 
 @requires_mne_sample_data
 def test_predictor_subset_fingerprint(samples_experiment):
@@ -2452,7 +2458,7 @@ def test_trf_subject_variable(samples_experiment):
 
     def test_variables(pipeline, test):
         "The values the test reads, as recorded in the event-shell dependency"
-        options = {**pipeline._trf_options('full > base', 0, 0.1, 'boosting', None, None, False), 'test': test}
+        options = {**pipeline._trf_options('full > base', 0, 0.1, 'boosting', None, None, False, comparison=True), 'test': test}
         handle = pipeline._resolve_derivative('trf-model-test', options=options)
         return handle.dependency_fingerprints()['events']['fingerprint']
 
@@ -2540,7 +2546,7 @@ def test_load_model_test(samples_experiment):
         e.load_model_test('base', 0, 0.1)
     with pytest.raises(ValueError, match="metric='det'"):
         e.load_model_test('base > 0', 0, 0.1, metric='det')
-    with pytest.raises(ValueError, match='metric reducer'):
+    with pytest.raises(ValueError, match="expected 'sum', 'mean', or 'max'"):
         e.load_model_test('base > 0', 0, 0.1, metric='ev.median')
     with pytest.raises(ValueError, match='available metrics'):
         e.load_model_test('base > 0', 0, 0.1, metric='r1.mean', pmin=None, samples=0)

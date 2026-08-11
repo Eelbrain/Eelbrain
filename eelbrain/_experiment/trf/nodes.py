@@ -687,11 +687,20 @@ class TRFModelTestDerivative(Derivative[Any]):
             fields += ['cov', 'src', 'parc', 'adjacency', 'mrisubject', 'common_brain']
         return tuple(fields)
 
+    def _test_obj(self, ctx: Request) -> Test | None:
+        "The named test, or ``None`` for the default incremental model test"
+        test_name = ctx.options['test']
+        if test_name is None:
+            return None
+        test_obj = self.tests[test_name]
+        if isinstance(test_obj, TwoStageTest):
+            raise NotImplementedError(f"test={test_name!r}: TwoStageTest not implemented for TRF model tests")
+        return test_obj
+
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        test = ctx.options['test']
-        if test is None:
-            return {}
-        return {'test': self.tests[test]._as_dict_without_vars()}
+        if test_obj := self._test_obj(ctx):
+            return {'test': test_obj._as_dict_without_vars()}
+        return {}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         comparison = ctx.options['x']
@@ -701,7 +710,7 @@ class TRFModelTestDerivative(Derivative[Any]):
         if comparison.x0:
             options = ctx.options_for('trf-group-dataset', *option_names, x=comparison.x0, scale=None, trfs=False)
             deps.append(Dependency('trf-group-dataset', label='x0', options=options))
-        test_obj = self.tests[ctx.options['test']]
+        test_obj = self._test_obj(ctx)
         if test_obj and test_obj._test_vars:
             # The same dataset's shell to fingerprint the columns used by the test's variables
             deps.append(Dependency('trf-group-dataset', label='events', view='shell', options=x1_options))
@@ -715,7 +724,7 @@ class TRFModelTestDerivative(Derivative[Any]):
         """
         if dep.label != 'events':
             return None
-        test_obj = self.tests[ctx.options['test']]
+        test_obj = self._test_obj(ctx)
         ds = ctx.load(dep.label)
         return test_obj.vars.resolve(ds, self.groups, names=test_obj._test_vars)
 
@@ -746,13 +755,7 @@ class TRFModelTestDerivative(Derivative[Any]):
     ) -> tuple[Dataset, Var | NDVar, Test]:
         comparison = ctx.options['x']
         metric, reducer = self._metric_parts(ctx.options['metric'])
-        test_name = ctx.options['test']
-        if test_name is None:
-            test_obj = None  # basic incremental model test
-        else:
-            test_obj = self.tests[test_name]
-            if isinstance(test_obj, TwoStageTest):
-                raise NotImplementedError(f"test={test_name!r}: TwoStageTest not implemented for TRF model tests")
+        test_obj = self._test_obj(ctx)
         ds1 = ctx.load('x1')
         if metric not in ds1:
             available = ', '.join(ds1.info.get('metrics', ()))

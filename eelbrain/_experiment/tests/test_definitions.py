@@ -189,6 +189,22 @@ def test_resolve():
     assert list(aggregated) == ['subject', 'value', 'age', 'is_g0']  # 'side' is not recomputed from the cell means
 
 
+def test_resolve_require_inputs():
+    "Where the events are labeled, a variable that can not be computed is an error, not a later stage"
+    variables = Variables({'side': LabelVar('valu', {1: 'left', 2: 'right'})})  # typo in the source column
+    events = Dataset({'subject': Factor(['R0000', 'R0000']), 'value': Var([1, 2])})
+    with pytest.raises(ConfigurationError, match="'valu'"):
+        variables.resolve(events, require_inputs=True)
+    # a variable for a different task is skipped rather than reported, since its inputs may be absent
+    variables = Variables({'side': LabelVar('other', {1: 'left'}, task='b')})
+    variables.resolve(Dataset({'value': Var([1, 2])}, info={'task': 'a'}), require_inputs=True)
+    # and so are across-subject variables, which belong to a later stage
+    variables = Variables({'age': GroupVar(['g0', 'g1']), 'is_g0': EvalVar("age == 'g0'")})
+    events = Dataset({'subject': Factor(['R0000', 'R0000'])})
+    variables.resolve(events, require_inputs=True)
+    assert list(events) == ['subject']
+
+
 def test_resolve_task():
     "A task-restricted variable follows ds.info, or the task column where subjects are combined"
     variables = Variables({'side': LabelVar('value', {1: 'left', 2: 'right'}, task='a')})
