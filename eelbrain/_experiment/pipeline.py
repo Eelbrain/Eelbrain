@@ -67,7 +67,7 @@ from .statistics import EvokedTestDataDerivative, TestResultDerivative, TwoStage
 from .statistics.config import Test, validate_tests
 from .trf import Boosting, Estimator, Model, NUTSPredictor, PredictorInput, TRFDatasetDerivative, TRFDerivative, TRFGroupDatasetDerivative, TRFJob, TRFJobSpec, TRFModelTestDerivative, UTSPredictor, filter_predictor
 from .trf.model import Comparison, parse_term
-from .variable_def import Variables, apply_vardef, label_groups
+from .variable_def import Variables, label_groups
 
 
 # Allowable parameters
@@ -363,6 +363,7 @@ class Pipeline(StateModel):
         # variables
         self._variables = Variables(self.variables)
         self._variables._check_trigger_vars()
+        self._variables._check_group_vars(self._groups, 'Pipeline.variables')
 
         # epochs
         self._epochs = ConfigurationDict('epoch', assemble_epochs(self.epochs, self._tasks))
@@ -419,7 +420,13 @@ class Pipeline(StateModel):
 
         # tests
         validate_tests(self.tests)
-        for test_obj in self.tests.values():
+        for name, test_obj in self.tests.items():
+            test_obj.vars._check_group_vars(self._groups, f"tests[{name!r}] vars")
+            # stage 1 fits one subject at a time, where an across-subject variable is constant
+            if isinstance(test_obj, TwoStageTest):
+                across_subject = {**self._variables.across_subject_vars, **test_obj.vars._find_across_subject_vars(self._variables.across_subject_vars)}
+                if across := [v for v in test_obj._test_vars if v in across_subject]:
+                    raise ConfigurationError(f"tests[{name!r}]: two-stage tests fit each subject separately, so across-subject variable {enumeration([repr(v) for v in across])} can not be used. Use Pipeline.variables with TTestIndependent or ANOVA to compare groups.")
             if test_obj.model:
                 test_obj.model = self._eval_model(test_obj.model)
         self.tests = ConfigurationDict('test', self.tests)
@@ -545,8 +552,8 @@ class Pipeline(StateModel):
         self._derivatives.register(PredictorInput(self.root, self.predictors))
         self._derivatives.register(TRFDerivative(self.root, self._estimators, self.predictors, self.stim_var, self._raw))
         self._derivatives.register(TRFDatasetDerivative(self.root, self._estimators, self._epochs))
-        self._derivatives.register(TRFGroupDatasetDerivative(self._mri_subjects, self._groups))
-        self._derivatives.register(TRFModelTestDerivative(self.tests, self._variables, self._groups))
+        self._derivatives.register(TRFGroupDatasetDerivative(self._mri_subjects, self._variables, self._groups, self._epochs))
+        self._derivatives.register(TRFModelTestDerivative(self.tests, self._groups))
 
         # --- Sensor-space: events → epochs → evoked ---
         self._derivatives.register(EventsInput(self._raw_extension))
@@ -564,7 +571,6 @@ class Pipeline(StateModel):
             len(self._tasks) > 1,
             len(self._sessions) > 1,
             self._variables,
-            self._groups,
             self.cache_event_labels,
         ))
         self._derivatives.register(SelectedEventsDerivative(self._epochs, self._epoch_rejection))
@@ -572,7 +578,7 @@ class Pipeline(StateModel):
         self._derivatives.register(RecordingEpochsDerivative(self._raw, self._epochs, self._references, self.cache_epochs))
         self._derivatives.register(EpochsDerivative(self._raw, self._epochs, self._runs_for))
         self._derivatives.register(EvokedDerivative(self._raw, self._epochs))
-        self._derivatives.register(EvokedGroupDatasetDerivative(self._raw, self._groups))
+        self._derivatives.register(EvokedGroupDatasetDerivative(self._raw, self._variables, self._groups))
 
         # --- Source-space infrastructure ---
         self._derivatives.register(CovDerivative(self._covs, self._raw, self._references, self._recordings))
@@ -585,11 +591,11 @@ class Pipeline(StateModel):
         # --- Source-space: epochs/evoked projected to source space ---
         self._derivatives.register(EpochsStcDerivative(self._raw, self._epochs, self._references))
         self._derivatives.register(EvokedStcDerivative(self._raw, self._epochs, self._references))
-        self._derivatives.register(EvokedStcGroupDatasetDerivative(self._mri_subjects, self._groups))
+        self._derivatives.register(EvokedStcGroupDatasetDerivative(self._mri_subjects, self._variables, self._groups))
 
         # --- Statistical tests ---
         self._derivatives.register(EvokedTestDataDerivative(self.tests, self._epochs, self._groups))
-        self._derivatives.register(TwoStageDataDerivative(self.tests, self._epochs, self._groups))
+        self._derivatives.register(TwoStageDataDerivative(self.tests, self._epochs))
         self._derivatives.register(TwoStageLevel1Derivative(self.tests))
         self._derivatives.register(TestResultDerivative(*result_args))
         self._derivatives.register(TwoStageLevel2Derivative(*result_args))
@@ -1948,7 +1954,7 @@ class Pipeline(StateModel):
             self,
             subjects: SubjectArg = None,
             reject: bool | Literal['keep'] = True,
-            vardef: str = None,
+            vardef: str | Variables = None,
             **kwargs,
     ) -> Dataset:
         """
@@ -1967,8 +1973,10 @@ class Pipeline(StateModel):
             Set ``reject='keep'`` to load the rejection (added it to the events
             as ``'accept'`` variable), but keep bad trails.
         vardef
-            Name of a test defining additional variables to add to the returned
-            Dataset.
+            Additional variables to add to the returned Dataset, as
+            :class:`Variables` or the name of a test defining them.
+            Across-subject variables are only added when loading data for a
+            group.
         ...
             State parameters.
 
@@ -1982,14 +1990,22 @@ class Pipeline(StateModel):
         state = dict(kwargs)
         subject, group = self._process_subject_arg(subjects, state)
 
+        if isinstance(vardef, str):
+            vardef = self.tests[vardef].vars
         if group is not None:
-            return combine([self.load_selected_events(subjects=subject_, reject=reject, vardef=vardef, **state) for subject_ in self.iter(group=group)])
+            ds = combine([self.load_selected_events(subjects=subject_, reject=reject, vardef=vardef, **state) for subject_ in self.iter(group=group)])
+            # across-subject variables are only defined once subjects are combined
+            self._variables.resolve(ds, self._groups, across_subject_only=True)
+            if vardef:
+                vardef.resolve(ds, self._groups)
+            return ds
         elif subject is None:
             raise RuntimeError(f"{subject=}, {group=}")
 
         options = {'reject': reject}
         ds = self._load_derivative('epoch-events', options=options)
-        apply_vardef(ds, vardef, self.tests, self._groups)
+        if vardef:
+            vardef.resolve(ds)
         return ds
 
     def load_src(
@@ -3195,6 +3211,9 @@ class Pipeline(StateModel):
             raise ValueError(f"{model=}; To specify interactions, use '%' instead of '*'")
 
         factors = [v.strip() for v in model.split('%')]
+        # a model groups trials within subject, which happens before across-subject variables exist
+        if across := [factor for factor in factors if factor in self._variables.across_subject_vars]:
+            raise ConfigurationError(f"{model=}: {enumeration([repr(factor) for factor in across])} is an across-subject variable, which is only added after subjects are combined and can thus not be used to group trials. To compare groups, use TTestIndependent or ANOVA with subject nested in the group variable.")
 
         # find order value for each factor
         ordered_factors = {}

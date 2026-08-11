@@ -707,6 +707,57 @@ trigger 166 and 167 have the value ``"prime"``.
 The "prediction" variable only labels triggers 162 and 163.
 Unmentioned trigger values are assigned the empty string (``''``).
 
+Some column names are reserved, because the pipeline writes them itself and a
+variable of the same name would be overwritten: the BIDS entities (``subject``,
+``session``, ``task``, ``acquisition``, ``run``), the event columns ``sample``,
+``value``, ``onset``, ``index``, ``epoch``, ``accept``,
+``interpolate_channels`` and ``interpolate_windows``, the data columns
+``epochs``, ``evoked``, ``src``, ``stc``, ``label_tc`` and ``model``, and
+``epoch_time``, ``events`` and ``tmax`` (used by
+:class:`ContinuousEpoch`). Using one of these as a variable name raises an
+error.
+
+Variables come in two kinds, which differ in where they are added:
+
+- *Event* variables are computed from the events themselves, and are present in
+  all data. This covers :class:`EvalVar` and most :class:`LabelVar` definitions.
+- *Across-subject* variables have definitions that span subjects, and are only
+  added where different subjects' data are combined. This covers
+  :class:`GroupVar`, a :class:`LabelVar` on ``'subject'``, and any variable
+  derived from either, such as ``EvalVar("group == 'patient'")``.
+
+An across-subject variable is thus only present in data that spans subjects
+(e.g. ``e.load_selected_events('all')``, but not ``e.load_selected_events('01)``), and
+can not be used where data is processed one subject at a time, such as in an
+epoch ``sel`` expression or as an evoked ``model``. Use a :class:`GroupVar` to
+compare groups through :class:`TTestIndependent` or through an
+:class:`ANOVA` with subject nested in the group variable::
+
+    class MyExperiment(Pipeline):
+
+        groups = {
+            'patient': Group(['S001', 'S002']),
+            'control': Group(['S011', 'S012']),
+        }
+        variables = {
+            'group': GroupVar(['patient', 'control']),
+        }
+        tests = {
+            'patient=control': TTestIndependent('group', 'patient', 'control'),
+        }
+
+Where subjects are combined, each variable is added if the combined data still
+provides what it is computed from. A variable keyed on the subject, such as a
+behavioral score, therefore reaches group analyses even where the individual
+events are no longer present::
+
+    variables = {
+        'score': LabelVar('subject', {'S001': 3.2, 'S002': 4.5}),
+    }
+
+Variables are applied in the order they are defined, so a variable that builds
+on another has to come after it.
+
 
 Epochs
 ------

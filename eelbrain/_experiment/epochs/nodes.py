@@ -48,6 +48,7 @@ from ..._meeg.interpolation import _interpolate_bads_eeg, _interpolate_bads_meg,
 from ..derivative_cache import CachePolicy, Dependency, Derivative, OptionSpec, Request, UncachedDerivative
 from ..preprocessing import RawPipeGraph, Reference, raw_node_name
 from ..data import DataSpec
+from ..variable_def import Variables
 from .config import EPOCH_EXTRACT_OPTIONS, ContinuousEpoch, EpochBase, EpochCollection, PrimaryEpoch, SecondaryEpoch, SuperEpoch, single_recording_run
 
 
@@ -550,14 +551,21 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         return {}
 
     def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, Any] | None:
+        """Depend on the aggregated event values this evoked is built from, not their definitions
+
+        The averaged data is determined by the model cells, so recording their values
+        keeps a definition change that does not reach the retained events, such as a
+        label for a trigger the epoch excludes, from invalidating the artifact. What a
+        *consumer* reads is not recorded here: this artifact is shared between them,
+        and its manifest must not vary with the request that happens to build it.
+        """
         if dep.name != 'epoch-events':
             return None
         model = ctx.options['model']
-        if model:
-            ds = ctx.load(dep.label or dep.name)
-            ds = self._aggregate(ds, ctx)
-            return {'model': ds.eval(model)}
-        return {}
+        if not model:
+            return {}
+        ds = self._aggregate(ctx.load(dep.label or dep.name), ctx)
+        return {'model': ds.eval(model)}
 
     def build(self, ctx: Request) -> list[mne.Evoked]:
         model = ctx.options['model']
@@ -572,6 +580,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
 
     @staticmethod
     def _aggregate(data: Dataset, ctx: Request) -> Dataset:
+        "Average trials within each cell of the model; also describes the ``shell`` view"
         return data.aggregate(
             ctx.options['model'],
             never_drop=('epochs',),
@@ -688,6 +697,15 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
         Decimation override for the underlying evoked artifact.
     data
         Sensor representation to return.
+
+    Notes
+    -----
+    Across-subject variables are added here, because this is where subjects are
+    combined; which of them the combined data supports depends on what survives
+    averaging. They are added in :meth:`apply_view_options`, i.e. they are part
+    of the returned data but not of this node's fingerprint; a cached consumer
+    that reads them is responsible for recording their values (see
+    :meth:`~eelbrain._experiment.variable_def.Variables.resolve`).
     """
     name = 'evoked-group-dataset'
     key_fields = ('group', 'raw', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'reference', 'equalize_evoked_count')
@@ -704,8 +722,9 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
         'cat': None,
     }
 
-    def __init__(self, raw, groups):
+    def __init__(self, raw, variables: Variables, groups):
         self.raw = raw
+        self.variables = variables
         self.groups = groups
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
@@ -738,4 +757,25 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
                 adjacency = source_pipe._get_adjacency(sensor_type)
                 ds[sensor_type] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
 
+        return ds
+
+    def apply_view_options(self, ctx: Request, value: Dataset) -> Dataset:
+        self.variables.resolve(value, self.groups, across_subject_only=True)
+        return value
+
+    def load_view(self, ctx: Request, view: str):
+        """The ``shell`` view: the non-data columns of this dataset, without loading data
+
+        Built the same way as the data, from the subjects' evoked shells, so that a
+        consumer can fingerprint the variables it reads (see
+        :meth:`~eelbrain._experiment.variable_def.Variables.resolve`) against exactly
+        the columns it will get. ``cat`` is not applied; recording all model cells is a
+        superset, and matches what ``evoked`` records for its model.
+        """
+        if view != 'shell':
+            return super().load_view(ctx, view)
+        options = ctx.options_for('evoked', 'model', 'samplingrate', 'decim')
+        dss = [ctx.load('evoked', state={'subject': subject}, options=options, view='shell') for subject in self.groups[ctx.state['group']]]
+        ds = combine(dss, incomplete='drop')
+        self.variables.resolve(ds, self.groups, across_subject_only=True)
         return ds

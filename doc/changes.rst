@@ -49,6 +49,11 @@ New in 0.43
   - New :meth:`pipeline.Pipeline.clean_cache` reviews and deletes invalid or
     stale cache files, including artifacts whose configuration changed since
     they were built and everything downstream of them.
+  - API change: the list of names reserved for :attr:`pipeline.Pipeline.variables`
+    (and ``Test`` ``vars``) now covers all the columns that the pipeline writes
+    itself, instead of only ``subject``, ``session``, ``task`` and ``run``. Such
+    a variable used to be silently overwritten, and now raises an error; the
+    full list is documented with :attr:`pipeline.Pipeline.variables`.
 
 
 New in 0.42

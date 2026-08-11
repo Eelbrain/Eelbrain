@@ -13,7 +13,6 @@ from ..._io.pickle import update_subjects_dir
 from ..derivative_cache import Dependency, Derivative, Request, UncachedDerivative
 from ..pathing import MRI_SDIR
 from ..source import ROIData, roi_data_from_dataset
-from ..variable_def import apply_vardef
 from .config import ResolvedTestNDSpec, Test, TwoStageTest
 from .nodes import RESULT_OPTION_DEFAULTS, RESULT_SOURCE_GROUP_KEY_FIELDS, ROITestResult, ResultOutputDerivative
 
@@ -62,10 +61,13 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         **RESULT_OPTION_DEFAULTS,
     }
 
-    def __init__(self, tests: dict[str, Test], epochs: dict[str, Any], groups: dict[str, Any]):
+    def __init__(
+            self,
+            tests: dict[str, Test],
+            epochs: dict[str, Any],
+    ):
         self.tests = tests
         self.epochs = epochs
-        self.groups = groups
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
         # Match TwoStageLevel1Derivative
@@ -79,7 +81,7 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {
-            'test': self.tests[ctx.options['test']],
+            'model': self.tests[ctx.options['test']].model,
             'epoch': self.epochs[ctx.state['epoch']],
         }
 
@@ -118,15 +120,31 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
                     label='data',
                     options=ctx.options_for('epochs-stc', 'baseline', 'src_baseline', 'samplingrate'),
                 )
-        return dependency,
+        # The shell the stage-1 predictors are resolved against, describing the same
+        # cases as the data: the evoked event shell with a model, the events themselves
+        # for single-trial data. ``reference`` matches EvokedStcDerivative.fixed_state.
+        if test_obj.model:
+            options = ctx.options_for('evoked', 'samplingrate', 'decim', model=test_obj.model)
+            events = Dependency('evoked', label='events', view='shell', state={'reference': ''}, options=options)
+        else:
+            options = ctx.options_for('epoch-events', 'samplingrate', 'decim')
+            events = Dependency('epoch-events', label='events', options=options)
+        return dependency, events
+
+    def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, Any] | None:
+        """Depend on the events that the stage-1 model reads, not the definitions behind them"""
+        if dep.label == 'events':
+            test_obj = self.tests[ctx.options['test']]
+            ds = ctx.load(dep.label)
+            return test_obj.vars.resolve(ds, names=test_obj._test_vars)
+        return None
 
     def build(self, ctx: Request) -> Dataset | ROIData:
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
 
         ds = ctx.load('data')
-        if test_obj.vars:
-            apply_vardef(ds, test_obj.vars, self.tests, self.groups)
+        test_obj.vars.resolve(ds, names=test_obj.vars.vars)
 
         if data.source and not data.aggregate:
             if ctx.options['smooth']:
@@ -157,7 +175,8 @@ class TwoStageLevel1Derivative(Derivative[Any]):
         return tuple(fields)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {'test': self.tests[ctx.options['test']]}
+        # two-stage-data records the values the stage-1 model reads
+        return {'test': self.tests[ctx.options['test']]._as_dict_without_vars()}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (Dependency('two-stage-data', options=ctx.options_for('two-stage-data', *RESULT_OPTION_DEFAULTS)),)

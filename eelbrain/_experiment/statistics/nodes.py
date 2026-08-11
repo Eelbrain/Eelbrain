@@ -33,7 +33,6 @@ from ..pathing import (
     time_window_str,
 )
 from ..source import ROIData
-from ..variable_def import apply_vardef
 from .config import ResolvedTestNDSpec, Test
 
 T = TypeVar('T')
@@ -280,7 +279,7 @@ class ResultOutputDerivative(Derivative[T]):
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         out = {
-            'test': self.tests[ctx.options['test']],
+            'test': self.tests[ctx.options['test']]._as_dict_without_vars(),
             'epoch': self.epochs[ctx.state['epoch']],
             'single_subject': self.single_subject,
         }
@@ -353,13 +352,18 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
             fields += ('reference',)
         return fields
 
-    def __init__(self, tests: dict[str, Test], epochs: dict[str, Any], groups: dict[str, tuple[str, ...] | list[str]]):
+    def __init__(
+            self,
+            tests: dict[str, Test],
+            epochs: dict[str, Any],
+            groups: dict[str, tuple[str, ...] | list[str]],
+    ):
         self.tests = tests
         self.epochs = epochs
         self.groups = groups
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {'test': self.tests[ctx.options['test']]}
+        return {'test': self.tests[ctx.options['test']]._as_dict_without_vars()}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         data = ctx.options['data']
@@ -377,13 +381,38 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         if data.sensor:
             if ctx.options['src_baseline']:
                 raise TypeError(f"src_baseline={ctx.options['src_baseline']!r} for sensor tests")
+            name = 'evoked-group-dataset'
             options = ctx.options_for('evoked', 'baseline', 'samplingrate', 'decim', 'data', model=model, cat=test_obj.cat, ndvar=True)
-            return Dependency('evoked-group-dataset', options=options, label='dataset'),
+            shell_state = {}
+        else:
+            assert data.source
+            name = 'evoked-stc-group-dataset'
+            morph = not data.aggregate
+            options = ctx.options_for('evoked-stc-group-dataset', 'baseline', 'src_baseline', 'samplingrate', 'decim', 'data', ndvar=True, model=model, morph=morph, cat=test_obj.cat)
+            shell_state = {'reference': ''}  # source localization handles referencing internally (EvokedStcDerivative.fixed_state)
+        # The columns the test's variables are resolved against, without loading any
+        # data. Source localization is per case, so the shell is the sensor-space one
+        # either way.
+        shell_options = ctx.options_for('evoked-group-dataset', 'samplingrate', 'decim', model=model)
+        return (
+            Dependency(name, label='dataset', options=options),
+            Dependency('evoked-group-dataset', label='events', view='shell', state=shell_state, options=shell_options),
+        )
 
-        assert data.source
-        morph = not data.aggregate
-        options = ctx.options_for('evoked-stc-group-dataset', 'baseline', 'src_baseline', 'samplingrate', 'decim', 'data', ndvar=True, model=model, morph=morph, cat=test_obj.cat)
-        return Dependency('evoked-stc-group-dataset', options=options, label='dataset'),
+    def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, Any] | None:
+        """Depend on the values the test reads, not the definitions behind them
+
+        Recording values keeps a label change that does not reach the retained events
+        from invalidating the result, and restricting them to the subjects that are
+        analyzed keeps a group membership change involving other subjects from doing
+        so. The shell already carries :attr:`Pipeline.variables`; only the test's own
+        are applied on top, exactly as in :meth:`build`.
+        """
+        if dep.label != 'events':
+            return None
+        test_obj = self.tests[ctx.options['test']]
+        ds = ctx.load(dep.label)
+        return test_obj.vars.resolve(ds, self.groups, names=test_obj._test_vars)
 
     def build(self, ctx: Request) -> Dataset | ROIData:
         data = ctx.options['data']
@@ -392,13 +421,13 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
 
         if data.source and data.aggregate:
             assert isinstance(ds, ROIData)
-            apply_vardef(ds.n_trials_ds, test_obj.vars, self.tests, self.groups)
+            test_obj.vars.resolve(ds.n_trials_ds, self.groups, names=test_obj.vars.vars)
             for label_ds in ds.label_data.values():
-                apply_vardef(label_ds, test_obj.vars, self.tests, self.groups)
+                test_obj.vars.resolve(label_ds, self.groups, names=test_obj.vars.vars)
             return ds
 
         assert isinstance(ds, Dataset)
-        apply_vardef(ds, test_obj.vars, self.tests, self.groups)
+        test_obj.vars.resolve(ds, self.groups, names=test_obj.vars.vars)
         if data.sensor:
             return ds
 

@@ -70,17 +70,14 @@ class Test(Configuration):
             raise ConfigurationError(f"{vars=} ({error})")
         self._test_vars.extend(depend_on)
 
-    def _find_test_vars(self):
-        "Find variables and groups used in a test definition"
-        vs = set(self._test_vars)
-        groups = set()
-        for name, variable in self.vars.vars.items():
-            if name in vs:
-                vs.remove(name)
-                vs.update(variable._input_vars())
-                if isinstance(variable, GroupVar):
-                    groups.update(variable.groups)
-        return vs, groups
+    def _as_dict_without_vars(self) -> dict[str, Any]:
+        """The definition without :attr:`vars`
+
+        A node that fingerprints the event shell for a test does not need to
+        record the variable definitions producing the event labels (see
+        :meth:`~eelbrain._experiment.variable_def.Variables.resolve`).
+        """
+        return {key: value for key, value in self._as_dict().items() if key != 'vars'}
 
     def _make(self, y, ds, force_permutation, kwargs):
         raise NotImplementedError(f"For {self.__class__.__name__}")

@@ -3,7 +3,7 @@ import logging
 
 import pytest
 
-from eelbrain._data_obj import Factor, Interaction, Var
+from eelbrain._data_obj import Dataset, Factor, Interaction, Var
 from eelbrain._experiment.configuration import Configuration, ConfigurationError, find_dependent_epochs, find_epoch_vars, find_epochs_vars, sequence_arg
 from eelbrain._experiment.derivative_cache import DerivativeRegistry
 from eelbrain._experiment.preprocessing import RawApplyICA, RawFilter, RawICA, RawMaxwell, RawPipeGraph, RawReReference, RawSource, assemble_raw_pipes
@@ -109,6 +109,111 @@ def test_vardef_semantic_identity():
     expanded = LabelVar('value', {1: 'target', 2: 'target'}, task='task-a')
     assert compact == expanded
     assert compact != LabelVar('value', {1: 'target', 2: 'target'}, task='task-b')
+
+
+def test_reserved_variable_names():
+    "Variables can not shadow event columns that the pipeline writes itself"
+    for name in ['subject', 'acquisition', 'sample', 'value', 'index', 'epoch', 'accept', 'interpolate_channels', 'epochs', 'evoked', 'src', 'model', 'tmax']:
+        with pytest.raises(ConfigurationError):
+            Variables({name: EvalVar('a + b')})
+    # a name that only resembles a reserved one is fine
+    Variables({'epoch_index': EvalVar('a + b'), 'value_shifted': EvalVar('a + b')})
+
+
+def test_variable_stages():
+    "Partition into event and across-subject variables"
+    variables = Variables({
+        'side': LabelVar('value', {(1, 3): 'left', (2, 4): 'right'}),
+        'score': LabelVar('subject', {'R0000': 1., 'R0001': 2.}),  # definition spans subjects
+        'group': GroupVar(['g0', 'g1']),
+        'is_g0': EvalVar("group == 'g0'"),  # derived from an across-subject variable
+        'group_by_side': EvalVar("group % side"),  # mixes an across-subject and a trial-level input
+    })
+    assert list(variables.event_vars) == ['side']
+    assert list(variables.across_subject_vars) == ['score', 'group', 'is_g0', 'group_by_side']
+    # a variable keyed on the subject in some other way is not across-subject
+    variables = Variables({'first': EvalVar("subject == 'R0000'")})
+    assert list(variables.event_vars) == ['first']
+
+    # variables are applied in definition order, so an input has to be defined first
+    with pytest.raises(ConfigurationError, match='defined later'):
+        Variables({
+            'is_g0': EvalVar("group == 'g0'"),
+            'group': GroupVar(['g0', 'g1']),
+        })
+
+    # variables from an enclosing scope (Test.vars nested in Pipeline.variables)
+    test_vars = Variables({'is_g0': EvalVar("group == 'g0'"), 'target': EvalVar("value == 1")})
+    assert list(test_vars.event_vars) == ['is_g0', 'target']
+    assert list(test_vars._find_across_subject_vars({'group'})) == ['is_g0']
+
+
+def test_resolve():
+    "Variables.resolve: add what the data supports, and report what it does not"
+    groups = {'g0': ('R0000',), 'g1': ('R0001', 'R0002'), 'all': ('R0000', 'R0001', 'R0002')}
+    variables = Variables({
+        'side': LabelVar('value', {(1, 3): 'left', (2, 4): 'right'}),
+        'age': GroupVar(['g0', 'g1']),
+        'is_g0': EvalVar("age == 'g0'"),
+    })
+
+    # full events: everything resolves
+    events = Dataset({'subject': Factor(['R0000', 'R0000']), 'value': Var([1, 2])})
+    assert variables.resolve(events, groups) == {}
+    assert list(events['side']) == ['left', 'right']
+    assert list(events['age']) == ['g0', 'g0']
+    assert list(events['is_g0']) == [True, True]
+
+    # an event shell: only what is computable from `subject` is added, silently
+    shell = Dataset({'subject': Factor(['R0000', 'R0001'])})
+    variables.resolve(shell, groups)
+    assert list(shell) == ['subject', 'age', 'is_g0']
+
+    # ... unless the caller says what it needs
+    shell = Dataset({'subject': Factor(['R0000', 'R0001'])})
+    assert list(variables.resolve(shell, groups, names=['age'])['age']) == ['g0', 'g1']
+    with pytest.raises(NotImplementedError, match="'side'"):
+        variables.resolve(Dataset({'subject': Factor(['R0000'])}), groups, names=['side'])
+
+    # without groups the data is from a single subject, where across-subject variables are absent
+    events = Dataset({'subject': Factor(['R0000', 'R0000']), 'value': Var([1, 2])})
+    variables.resolve(events)
+    assert list(events) == ['subject', 'value', 'side']
+
+    # the nodes that combine subjects get only the deferred definitions, so an event
+    # variable is not re-derived from aggregated columns (Pipeline._across_subject_variables)
+    deferred = Variables(variables.across_subject_vars)
+    assert list(deferred.vars) == ['age', 'is_g0']
+    aggregated = Dataset({'subject': Factor(['R0000', 'R0001']), 'value': Var([1.5, 2.5])})
+    deferred.resolve(aggregated, groups)
+    assert list(aggregated) == ['subject', 'value', 'age', 'is_g0']  # 'side' is not recomputed from the cell means
+
+
+def test_resolve_task():
+    "A task-restricted variable follows ds.info, or the task column where subjects are combined"
+    variables = Variables({'side': LabelVar('value', {1: 'left', 2: 'right'}, task='a')})
+
+    ds = Dataset({'value': Var([1, 2])}, info={'task': 'a'})
+    variables.resolve(ds)
+    assert list(ds['side']) == ['left', 'right']
+
+    ds = Dataset({'value': Var([1, 2])}, info={'task': 'b'})
+    variables.resolve(ds)
+    assert 'side' not in ds
+
+    # combined recordings carry the task in a column instead
+    ds = Dataset({'value': Var([1, 2]), 'task': Factor(['a', 'a'])})
+    variables.resolve(ds)
+    assert list(ds['side']) == ['left', 'right']
+
+    ds = Dataset({'value': Var([1, 2]), 'task': Factor(['b', 'b'])})
+    variables.resolve(ds)
+    assert 'side' not in ds
+
+    # a task-restricted variable has no single answer for data that combines tasks
+    ds = Dataset({'value': Var([1, 2]), 'task': Factor(['a', 'b'])})
+    with pytest.raises(NotImplementedError, match='combines several tasks'):
+        variables.resolve(ds)
 
 
 def test_raw_pipe_semantic_dict():

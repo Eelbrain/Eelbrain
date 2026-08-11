@@ -22,7 +22,7 @@ from ..pathing import BIDS_ENTITY_KEYS, MRI_SDIR, mri_dir
 from ..preprocessing import RawFilter, RawPipe, RawSource
 from ..source.nodes import _subject_state
 from ..statistics.config import ResolvedTestNDSpec, TTestOneSample, TTestRelated, Test, TwoStageTest
-from ..variable_def import Variables, apply_vardef
+from ..variable_def import Variables
 from .estimator import Estimator
 from .job import TRFJob
 from .model import Comparison, Model, Term, TRFModelError
@@ -557,8 +557,20 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
         Mapping of ``mri`` value to subject→MRI-subject (for per-subject state).
     common_brain
         Common-brain MRI subject (morph target for source data).
+    variables
+        Global pipeline variable definitions; the across-subject ones are added
+        here.
     groups
         Mapping of group name to the sequence of member subjects.
+
+    Notes
+    -----
+    Across-subject variables are added here, because this is where subjects are
+    combined. A TRF dataset carries no event columns, so only a variable keyed on
+    ``subject`` applies. They are added in :meth:`apply_view_options`, i.e. they
+    are part of the returned data but not of this node's fingerprint; a cached
+    consumer that reads them is responsible for recording their values (see
+    :meth:`~eelbrain._experiment.variable_def.Variables.resolve`).
     """
     name = 'trf-group-dataset'
     key_options = _TRF_DATASET_OPTIONS
@@ -566,10 +578,14 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
     def __init__(
             self,
             mri_subjects: dict[str, dict[str, str]],
+            variables: Variables,
             groups: dict[str, tuple[str, ...]],
+            epochs: dict[str, Any],
     ):
         self.mri_subjects = mri_subjects
+        self.variables = variables
         self.groups = groups
+        self.epochs = epochs
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
         fields = ['group', 'mri', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'reference', 'raw', 'inv']
@@ -598,6 +614,29 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
         _post_process_trfs(ds, ctx.options['smooth'])
         return ds
 
+    def apply_view_options(self, ctx: Request, value: Dataset) -> Dataset:
+        self.variables.resolve(value, self.groups, across_subject_only=True)
+        return value
+
+    def load_view(self, ctx: Request, view: str):
+        """The ``shell`` view: the non-data columns of this dataset, without loading data
+
+        A TRF dataset carries no event columns: :class:`TRFDatasetDerivative`
+        contributes one case per epoch and adds ``subject``, and this node combines
+        those subject-major. The whole shell therefore follows from the group and the
+        epoch definition, which makes it cheap enough for a cache-validity check.
+        """
+        if view != 'shell':
+            return super().load_view(ctx, view)
+        subjects = self.groups[ctx.state['group']]
+        epoch = self.epochs[ctx.state['epoch']]
+        epoch_names = list(epoch.collect) if isinstance(epoch, EpochCollection) else [ctx.state['epoch']]
+        ds = Dataset({
+            'subject': Factor(subjects, repeat=len(epoch_names), random=True),
+            'epoch': Factor(epoch_names, tile=len(subjects)),
+        })
+        return self.apply_view_options(ctx, ds)
+
 
 class TRFModelTestDerivative(Derivative[Any]):
     """Cache a statistical comparison of TRF model-fit metrics.
@@ -611,8 +650,6 @@ class TRFModelTestDerivative(Derivative[Any]):
     ----------
     tests
         Configured :attr:`Pipeline.tests` definitions.
-    variables
-        Global pipeline variable definitions, used to add group variables.
     groups
         Mapping of group names to their member subjects.
     """
@@ -639,11 +676,9 @@ class TRFModelTestDerivative(Derivative[Any]):
     def __init__(
             self,
             tests: dict[str, Test],
-            variables: Variables,
             groups: dict[str, tuple[str, ...]],
     ):
         self.tests = tests
-        self.variables = variables
         self.groups = groups
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
@@ -654,19 +689,35 @@ class TRFModelTestDerivative(Derivative[Any]):
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         test = ctx.options['test']
-        if test is not None:
-            return {'test': self.tests[test]}
-        return {}
+        if test is None:
+            return {}
+        return {'test': self.tests[test]._as_dict_without_vars()}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         comparison = ctx.options['x']
         option_names = ('tstart', 'tstop', 'estimator', 'data', 'samplingrate', 'filter_x', 'smooth')
-        options = ctx.options_for('trf-group-dataset', *option_names, x=comparison.x1, scale=None, trfs=False)
-        deps = [Dependency('trf-group-dataset', label='x1', options=options)]
+        x1_options = ctx.options_for('trf-group-dataset', *option_names, x=comparison.x1, scale=None, trfs=False)
+        deps = [Dependency('trf-group-dataset', label='x1', options=x1_options)]
         if comparison.x0:
             options = ctx.options_for('trf-group-dataset', *option_names, x=comparison.x0, scale=None, trfs=False)
             deps.append(Dependency('trf-group-dataset', label='x0', options=options))
+        test_obj = self.tests[ctx.options['test']]
+        if test_obj and test_obj._test_vars:
+            # The same dataset's shell to fingerprint the columns used by the test's variables
+            deps.append(Dependency('trf-group-dataset', label='events', view='shell', options=x1_options))
         return tuple(deps)
+
+    def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, Any] | None:
+        """Depend on the values the test reads, not the definitions behind them
+
+        The shell already carries the across-subject :attr:`Pipeline.variables`; only
+        the test's own are applied on top, exactly as in :meth:`build`.
+        """
+        if dep.label != 'events':
+            return None
+        test_obj = self.tests[ctx.options['test']]
+        ds = ctx.load(dep.label)
+        return test_obj.vars.resolve(ds, self.groups, names=test_obj._test_vars)
 
     @staticmethod
     def _metric_parts(metric: str) -> tuple[str, str | None]:
@@ -728,7 +779,7 @@ class TRFModelTestDerivative(Derivative[Any]):
             if test_obj is None:
                 test_obj = TTestOneSample(comparison.tail)
 
-        apply_vardef(ds, test_obj.vars, self.tests, self.groups)
+        test_obj.vars.resolve(ds, self.groups, names=test_obj.vars.vars)
         y = ds[metric]
         if reducer is None:
             if isinstance(y, Datalist):

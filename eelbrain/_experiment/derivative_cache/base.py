@@ -979,6 +979,8 @@ class Derivative(DependencyNode[T]):
         without changing cache identity. The default implementation returns
         ``value`` unchanged. Any data loaded through ``ctx.load(...)`` must be
         declared in :meth:`dependencies`, just as for :meth:`build`.
+
+        Does not apply in :meth:`load_view`.
         """
         return value
 
