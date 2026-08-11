@@ -61,6 +61,12 @@ def _test_result_manifest_path(
     return e._derivatives.resolve(node, state=e.state, options=options).manifest_path
 
 
+def _trf_group_shell(e, x: str, tstart: float, tstop: float) -> Dataset:
+    "The trf-group-dataset ``shell`` view for the pipeline's current state"
+    options = {**e._trf_options(x, tstart, tstop, 'boosting', None, None, False), 'scale': None, 'smooth': None, 'trfs': True}
+    return e._load_derivative('trf-group-dataset', options=options, view='shell')
+
+
 @pytest.fixture(scope='session')
 def _samples_templates(tmp_path_factory):
     "Per-session cache of sample-experiment templates, keyed by setup configuration"
@@ -2396,6 +2402,7 @@ def test_load_trfs(samples_experiment):
     assert ds.n_cases == 1
     assert ds[0, 'subject'] == 'R0000'
     assert ds[0, 'epoch'] == 'target'
+    assert ds[0, 'task'] == 'sample'
     assert ds.info['xs'] == ['imp']
     for key in ('r', 'z', 'residual', 'ev', 'imp'):
         assert isinstance(ds[key], NDVar)
@@ -2405,6 +2412,12 @@ def test_load_trfs(samples_experiment):
     ds_all = e.load_trfs('all', 'imp', 0, 0.1)
     assert ds_all.n_cases == 2
     assert sorted(ds_all['subject'].cells) == ['R0000', 'R0001']
+    assert ds_all['task'].cells == ('sample',)
+
+    # the shell describes those columns without loading data
+    shell = _trf_group_shell(e, 'imp', 0, 0.1)
+    assert list(shell) == ['epoch', 'task', 'subject']
+    assert all(list(shell[key]) == list(ds_all[key]) for key in shell)
 
     # scale='original' rescales the kernel
     ds_scaled = e.load_trfs('R0000', 'imp', 0, 0.1, scale='original')
@@ -2438,6 +2451,8 @@ def test_trf_subject_variable(samples_experiment):
                 **SampleExperiment.variables,
                 'score': LabelVar('subject', scores),
                 'score_bin': LabelVar('score', {1.: 'low', 2.: 'high', 3.: 'high'}),  # derived, hence also across-subject
+                'score_task': LabelVar('subject', scores, task='sample'),  # the epoch's task
+                'score_other_task': LabelVar('subject', scores, task='other'),
             }
             tests = {
                 **SampleExperiment.tests,
@@ -2451,6 +2466,9 @@ def test_trf_subject_variable(samples_experiment):
     ds = e.load_trfs('all', 'imp', 0, 0.1)
     assert 'score' in ds
     assert list(ds['score']) == [1., 2., 3.]
+    # the task column allows applying task-restricted variables
+    assert list(ds['score_task']) == [1., 2., 3.]
+    assert 'score_other_task' not in ds
     # a variable whose source columns are absent is skipped rather than raising
     assert 'modality' not in ds
     # ... and it is absent from single-subject data, since its definition spans subjects
@@ -2570,6 +2588,14 @@ def test_load_trfs_collection(samples_experiment):
     assert sorted(ds['epoch'].cells) == ['auditory', 'visual']
     assert ds.info['xs'] == ['imp']
     assert all(s == 'R0000' for s in ds['subject'])
+    # the task of each member epoch
+    assert ds['task'].cells == ('sample',)
+
+    # the shell describes the member epochs without loading data
+    ds_all = e.load_trfs('all', 'imp', 0, 0.1)
+    shell = _trf_group_shell(e, 'imp', 0, 0.1)
+    assert list(shell) == ['epoch', 'task', 'subject']
+    assert all(list(shell[key]) == list(ds_all[key]) for key in shell)
 
 
 @requires_mne_sample_data

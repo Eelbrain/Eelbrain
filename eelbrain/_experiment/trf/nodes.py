@@ -17,7 +17,7 @@ from ..._utils.mne_utils import is_fake_mri
 from ..configuration import Configuration
 from ..data import DataSpec
 from ..derivative_cache import Dependency, Derivative, OptionSpec, Request, UncachedDerivative, VersionedInput, file_fingerprint
-from ..epochs.config import EpochCollection
+from ..epochs.config import EpochBase
 from ..pathing import BIDS_ENTITY_KEYS, MRI_SDIR, mri_dir
 from ..preprocessing import RawFilter, RawPipe, RawSource
 from ..source.nodes import _subject_state
@@ -484,7 +484,7 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
     estimators
         Mapping of estimator name to :class:`Estimator` definition.
     epochs
-        Assembled epoch definitions (for :class:`EpochCollection` expansion).
+        Assembled epoch definitions.
     """
     name = 'trf-dataset'
     key_options = _TRF_DATASET_OPTIONS
@@ -493,7 +493,7 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
             self,
             root: str | Path,
             estimators: dict[str, Estimator],
-            epochs: dict[str, object],
+            epochs: dict[str, EpochBase],
     ):
         self.root = Path(root)
         self.estimators = estimators
@@ -505,18 +505,13 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
             fields += ['cov', 'src', 'parc', 'adjacency', 'mrisubject', 'common_brain']
         return tuple(fields)
 
-    def _epoch_names(self, ctx: Request) -> list[str]:
-        epoch = self.epochs[ctx.state['epoch']]
-        if isinstance(epoch, EpochCollection):
-            return list(epoch.collect)
-        return [ctx.state['epoch']]
-
     def fingerprint(self, ctx: Request) -> dict[str, object]:
         return {}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         trf_options = ctx.options_for('trf', 'x', 'tstart', 'tstop', 'estimator', 'data', 'samplingrate', 'decim', 'filter_x')
-        deps = [Dependency('trf', label=epoch, state={'epoch': epoch}, options=trf_options) for epoch in self._epoch_names(ctx)]
+        epoch_def = self.epochs[ctx.state['epoch']]
+        deps = [Dependency('trf', label=epoch, state={'epoch': epoch}, options=trf_options) for epoch in epoch_def.collected_epochs]
         if ctx.state['inv']:
             if not is_fake_mri(self.root / mri_dir(ctx.state)):
                 deps.append(Dependency('source-morph'))
@@ -528,15 +523,9 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
         est = self.estimators[ctx.options['estimator']]
         scale = ctx.options['scale']
         trfs = ctx.options['trfs']
-        subject = ctx.state['subject']
-        dss = []
-        for epoch in self._epoch_names(ctx):
-            res = ctx.load(epoch)
-            ds = est._result_dataset(res, scale=scale, trfs=trfs)
-            ds[:, 'epoch'] = epoch
-            dss.append(ds)
+        epoch_def = self.epochs[ctx.state['epoch']]
+        dss = [est._result_dataset(ctx.load(epoch), scale=scale, trfs=trfs) for epoch in epoch_def.collected_epochs]
         ds = combine(dss, name=ctx.options['x'].name)
-        ds['subject'] = Factor([subject], repeat=ds.n_cases, random=True)
         # Morphing/smoothing
         if ctx.state['inv']:
             common_brain = ctx.state['common_brain']
@@ -546,6 +535,31 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
                 source_morph = ctx.load('source-morph')
             _post_process_trfs(ds, ctx.options['smooth'], common_brain, source_morph)
         return ds
+
+    def apply_view_options(self, ctx: Request, value: Dataset) -> Dataset:
+        """Add the columns identifying the cases, which :meth:`build` does not
+
+        One case per collected epoch, so these follow from the epoch definition and
+        the subject alone; :meth:`load_view` produces them without loading data.
+        ``task`` is added for all cases or for none, since the cases are combined
+        across subjects.
+        """
+        epoch_def = self.epochs[ctx.state['epoch']]
+        value['epoch'] = Factor(epoch_def.collected_epochs)
+        if tasks := epoch_def.collected_tasks:
+            value['task'] = Factor(tasks)
+        value['subject'] = Factor([ctx.state['subject']], repeat=value.n_cases, random=True)
+        return value
+
+    def load_view(self, ctx: Request, view: str):
+        """The ``shell`` view: the non-data columns of this dataset, without loading data
+
+        A TRF dataset carries no event columns, so the shell is what
+        :meth:`apply_view_options` adds, and nothing else.
+        """
+        if view != 'shell':
+            return super().load_view(ctx, view)
+        return self.apply_view_options(ctx, Dataset())
 
 
 class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
@@ -567,9 +581,11 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
     -----
     Across-subject variables are added here, because this is where subjects are
     combined. A TRF dataset carries no event columns, so only a variable keyed on
-    ``subject`` applies. They are added in :meth:`apply_view_options`, i.e. they
-    are part of the returned data but not of this node's fingerprint; a cached
-    consumer that reads them is responsible for recording their values (see
+    ``subject`` applies (a ``task`` restriction is honored through the ``task``
+    column added by :class:`TRFDatasetDerivative`). They are added in
+    :meth:`apply_view_options`, i.e. they are part of the returned data but not of
+    this node's fingerprint; a cached consumer that reads them is responsible for
+    recording their values (see
     :meth:`~eelbrain._experiment.variable_def.Variables.resolve`).
     """
     name = 'trf-group-dataset'
@@ -580,12 +596,10 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
             mri_subjects: dict[str, dict[str, str]],
             variables: Variables,
             groups: dict[str, tuple[str, ...]],
-            epochs: dict[str, Any],
     ):
         self.mri_subjects = mri_subjects
         self.variables = variables
         self.groups = groups
-        self.epochs = epochs
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
         fields = ['group', 'mri', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'reference', 'raw', 'inv']
@@ -596,13 +610,16 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
     def fingerprint(self, ctx: Request) -> dict[str, object]:
         return {'subjects': self.groups[ctx.state['group']]}
 
+    def _subject_options(self, ctx: Request) -> dict[str, Any]:
+        "Options for the per-subject datasets: smoothing is applied to the combined dataset instead, so that the source smoothing matrix is calculated only once"
+        subject_options = [key for key in self.key_options if key != 'smooth']
+        return ctx.options_for('trf-dataset', *subject_options, smooth=None)
+
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         if not ctx.state['inv']:
             if smooth := ctx.options['smooth']:
                 raise ValueError(f"{smooth=}: smoothing is only available for source-space data")
-        # Smooth the combined dataset so that the source smoothing matrix is calculated only once
-        subject_options = [key for key in self.key_options if key != 'smooth']
-        options = ctx.options_for('trf-dataset', *subject_options, smooth=None)
+        options = self._subject_options(ctx)
         return tuple(
             Dependency('trf-dataset', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects), options=options)
             for subject in self.groups[ctx.state['group']]
@@ -621,21 +638,18 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
     def load_view(self, ctx: Request, view: str):
         """The ``shell`` view: the non-data columns of this dataset, without loading data
 
-        A TRF dataset carries no event columns: :class:`TRFDatasetDerivative`
-        contributes one case per epoch and adds ``subject``, and this node combines
-        those subject-major. The whole shell therefore follows from the group and the
-        epoch definition, which makes it cheap enough for a cache-validity check.
+        Assembled like the data in :meth:`build`, from the subjects' shells, so that
+        a consumer can fingerprint the variables it reads (see
+        :meth:`~eelbrain._experiment.variable_def.Variables.resolve`) against exactly
+        the columns it will get. A TRF dataset carries no event columns, so those
+        shells need no data of their own, which makes this cheap enough for a
+        cache-validity check.
         """
         if view != 'shell':
             return super().load_view(ctx, view)
-        subjects = self.groups[ctx.state['group']]
-        epoch = self.epochs[ctx.state['epoch']]
-        epoch_names = list(epoch.collect) if isinstance(epoch, EpochCollection) else [ctx.state['epoch']]
-        ds = Dataset({
-            'subject': Factor(subjects, repeat=len(epoch_names), random=True),
-            'epoch': Factor(epoch_names, tile=len(subjects)),
-        })
-        return self.apply_view_options(ctx, ds)
+        options = self._subject_options(ctx)
+        dss = [ctx.load('trf-dataset', state=_subject_state(ctx.state, subject, self.mri_subjects), options=options, view='shell') for subject in self.groups[ctx.state['group']]]
+        return self.apply_view_options(ctx, combine(dss))
 
 
 class TRFModelTestDerivative(Derivative[Any]):

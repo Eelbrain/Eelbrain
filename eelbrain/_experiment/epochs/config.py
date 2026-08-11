@@ -9,16 +9,16 @@ corresponding sensor data live in :mod:`._experiment.epochs.nodes`.
 
 from __future__ import annotations
 
-from typing import Any, Literal
 from collections.abc import Iterator, Mapping, Sequence
 import math
+from typing import Any, Literal
 
 import numpy as np
 
 from ..._data_obj import Dataset, Var
 from ..._exceptions import ConfigurationError
 from ..._text import enumeration
-from ..configuration import Configuration, typed_arg
+from ..configuration import Configuration, sequence_arg, typed_arg
 
 
 EpochBaselineArg = Literal[False] | tuple[float | None, float | None] | None
@@ -192,6 +192,24 @@ class EpochBase(Configuration):
         if self._tasks:
             return self._tasks
         return (self.task,)
+
+    @property
+    def collected_epochs(self) -> tuple[str, ...]:
+        """The epochs that are loaded separately to make up this epoch's data
+
+        Only an :class:`EpochCollection` is composed of separately loaded
+        epochs; any other epoch is loaded as a whole, i.e. as itself.
+        """
+        return (self.name,)
+
+    @property
+    def collected_tasks(self) -> tuple[str, ...] | None:
+        """The task of each of :attr:`collected_epochs`
+
+        ``None`` if any of them combines several tasks, i.e. if the data can not
+        be attributed to a single task throughout.
+        """
+        return self.tasks if len(self.tasks) == 1 else None
 
 
 class Epoch(EpochBase):
@@ -552,14 +570,27 @@ class EpochCollection(EpochBase):
     DICT_ATTRS = ('collect',)
 
     def __init__(self, collect: Sequence[str]):
-        self.collect = collect
+        self.collect = sequence_arg('collect', collect)
 
     def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase], tasks: Sequence[str]) -> None:
         sub_epochs = [epochs[sub_epoch] for sub_epoch in self.collect]
         for param, value in _shared_sub_epoch_parameters(self.name, sub_epochs, SuperEpoch.INHERITED_PARAMS).items():
             setattr(self, param, value)
-        self._tasks = tuple(sorted({task for sub_epoch in sub_epochs for task in sub_epoch.tasks}))
+        sub_tasks = [sub_epoch.tasks for sub_epoch in sub_epochs]
+        self._tasks = tuple(sorted({task for epoch_tasks in sub_tasks for task in epoch_tasks}))
+        if all(len(epoch_tasks) == 1 for epoch_tasks in sub_tasks):
+            self._collected_tasks = tuple(epoch_tasks[0] for epoch_tasks in sub_tasks)
+        else:
+            self._collected_tasks = None
         self.rej_file_epochs = sorted({epoch_name for sub_epoch in sub_epochs for epoch_name in sub_epoch.rej_file_epochs})
+
+    @property
+    def collected_epochs(self) -> tuple[str, ...]:
+        return self.collect
+
+    @property
+    def collected_tasks(self) -> tuple[str, ...] | None:
+        return self._collected_tasks
 
 
 class ContinuousEpoch(EpochBase):

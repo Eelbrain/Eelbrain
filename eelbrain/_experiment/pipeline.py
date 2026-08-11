@@ -552,7 +552,7 @@ class Pipeline(StateModel):
         self._derivatives.register(PredictorInput(self.root, self.predictors))
         self._derivatives.register(TRFDerivative(self.root, self._estimators, self.predictors, self.stim_var, self._raw))
         self._derivatives.register(TRFDatasetDerivative(self.root, self._estimators, self._epochs))
-        self._derivatives.register(TRFGroupDatasetDerivative(self._mri_subjects, self._variables, self._groups, self._epochs))
+        self._derivatives.register(TRFGroupDatasetDerivative(self._mri_subjects, self._variables, self._groups))
         self._derivatives.register(TRFModelTestDerivative(self.tests, self._groups))
 
         # --- Sensor-space: events → epochs → evoked ---
@@ -1447,8 +1447,9 @@ class Pipeline(StateModel):
         Returns
         -------
         trf_ds
-            Dataset with ``subject``, ``epoch``, the estimator's fit metrics, and
-            one :class:`NDVar` per TRF component. ``trf_ds.info['xs']`` lists the
+            Dataset with ``subject``, ``epoch``, ``task`` (unless an epoch
+            combines several tasks), the estimator's fit metrics, and one
+            :class:`NDVar` per TRF component. ``trf_ds.info['xs']`` lists the
             TRF component keys.
         """
         subject, group = self._process_subject_arg(subjects, state)
