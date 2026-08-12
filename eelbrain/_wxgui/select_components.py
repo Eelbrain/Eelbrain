@@ -336,12 +336,6 @@ class SharedToolsMenu:  # Frame mixin
     last_model = ""
 
     def AddToolbarButtons(self, tb):
-        button = wx.Button(tb, label="Rare Events")
-        button.Bind(wx.EVT_BUTTON, self.OnFindRareEvents)
-        tb.AddControl(button)
-        button = wx.Button(tb, label="Noisy Epochs")
-        button.Bind(wx.EVT_BUTTON, self.OnFindNoisyEpochs)
-        tb.AddControl(button)
         button = wx.Button(tb, label="PSD")
         button.Bind(wx.EVT_BUTTON, self.OnPlotPSD)
         tb.AddControl(button)
@@ -350,12 +344,12 @@ class SharedToolsMenu:  # Frame mixin
         app = wx.GetApp()
 
         # Artifact detection helpers
-        item = menu.Append(wx.ID_ANY, "Find Rare Events", "Find components with major loading on a small number of epochs")
-        app.Bind(wx.EVT_MENU, self.OnFindRareEvents, item)
-        item = menu.Append(wx.ID_ANY, "Find Noisy Epochs", "Find epochs with strong signal")
-        app.Bind(wx.EVT_MENU, self.OnFindNoisyEpochs, item)
         item = menu.Append(wx.ID_ANY, "Find Bad Channels", "Find channels that are missing from component maps, and components that are likely due to bad channels")
         app.Bind(wx.EVT_MENU, self.OnFindBadChannels, item)
+        item = menu.Append(wx.ID_ANY, "Find Noisy Epochs", "Find epochs with strong signal")
+        app.Bind(wx.EVT_MENU, self.OnFindNoisyEpochs, item)
+        item = menu.Append(wx.ID_ANY, "Find Rare Events", "Find components with major loading on a small number of epochs")
+        app.Bind(wx.EVT_MENU, self.OnFindRareEvents, item)
         menu.AppendSeparator()
 
         # plotting
