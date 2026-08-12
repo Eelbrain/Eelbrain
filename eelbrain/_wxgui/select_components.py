@@ -1922,7 +1922,7 @@ class FindBadChannelsDialog(EelbrainDialog):
         config = parent.config
 
         sizer = wx.BoxSizer(wx.VERTICAL)
-        sizer.Add(wx.StaticText(self, label="Find channels that are missing from component maps:"), flag=wx.ALL, border=5)
+        sizer.Add(wx.StaticText(self, label="Find channels that are missing from component maps.\nSensor type and smoothness required to use component:"), flag=wx.ALL, border=5)
 
         # One row per channel type: [checkbox] [type] [smoothness]
         grid = wx.FlexGridSizer(rows=len(ch_types), cols=3, vgap=3, hgap=5)
