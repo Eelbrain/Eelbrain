@@ -89,6 +89,16 @@ def test_find_channel_gaps():
     assert result.solid[:-1].mean() > 0.8
 
 
+def test_find_channel_gaps_polarity_inverted():
+    "A channel whose polarity is reversed relative to its neighbors counts as a gap"
+    sensor = _sensor()
+    maps = _dipole_maps(sensor, 15)
+    maps[:, sensor.names.index('Pz')] *= -1
+    result = find_channel_gaps(_components(sensor, maps), smoothness=SMOOTHNESS, ch_type='eeg')
+    assert [channel.name for channel in result.channels] == ['Pz']
+    assert result.channels[0].gap < 0
+
+
 def test_find_channel_gaps_partial_evidence():
     "Components with and without a gap are reported separately"
     sensor = _sensor()

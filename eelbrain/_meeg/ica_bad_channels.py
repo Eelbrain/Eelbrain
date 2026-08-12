@@ -47,7 +47,9 @@ class ChannelGap:
     consistency
         ``n_evidence / n_testable``.
     gap
-        Median ``|w| / mean(|w[neighbors]|)`` over the testable components.
+        Median relative weight over the testable components, i.e. the channel's weight in the
+        polarity of its neighborhood divided by the average absolute neighbor weight: ~1 for a
+        normal channel, < ~0 for a noise channel.
     gap_components
         Components in which the channel is a gap, smallest gap first.
     no_gap_components
@@ -185,9 +187,11 @@ def find_channel_gaps(
         Minimum correlation between a component map and its neighbor mean for the component
         to be considered solid (see :data:`SMOOTHNESS_DEFAULT` for values by channel type).
     gap_ratio
-        Maximum ``|w| / mean(|w[neighbors]|)`` for a channel to count as a gap. This is also
-        the sensitivity floor: a channel whose gain is attenuated to more than ~0.2-0.3 of
-        normal is not detected.
+        Maximum relative weight for a channel to count as a gap (see :class:`ChannelGap`).
+        Since the relative weight is signed, this detects channels that record nothing (~0) as
+        well as channels whose polarity is reversed relative to all their neighbors (< 0).
+        This is also the sensitivity floor: a channel whose gain is merely attenuated, to more
+        than ~0.2-0.3 of normal, is not detected.
     min_components
         Minimum number of components in which a channel needs to be a gap.
     min_consistency
@@ -245,7 +249,9 @@ def find_channel_gaps(
     salient = neighbor_abs >= _SALIENCE * peak  # neighborhood carries a real field
     uniform = np.abs(neighbor_mean) >= _SIGN_CONSISTENCY * neighbor_abs  # no polarity reversal
     testable = salient & uniform & (degree >= _MIN_NEIGHBORS)
-    gap = abs_ws / np.where(neighbor_abs > 0, neighbor_abs, 1.)
+    # Weight in the polarity of the neighborhood: ~1 for a channel that follows the field,
+    # ≤ ~0 for a channel that records noise
+    gap = np.sign(neighbor_mean) * ws / np.where(neighbor_abs > 0, neighbor_abs, 1.)
     evidence = testable & (gap <= gap_ratio)
 
     n_testable[:] = testable.sum(0)
