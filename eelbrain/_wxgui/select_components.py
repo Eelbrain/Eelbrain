@@ -682,20 +682,23 @@ class SharedToolsMenu:  # Frame mixin
             names.extend(channel.name for channel in result.channels)
             if len(result.channels) > _GAP_MAX_ROWS:
                 sub_section.add_paragraph(f"Showing the {_GAP_MAX_ROWS} strongest of {len(result.channels)} channels.")
-            table = fmtxt.Table('lll', rules=False)
+            table = fmtxt.Table('ll', rules=False)
             sub_section.add_paragraph(table)
             for channel in result.channels[:_GAP_MAX_ROWS]:
                 # Component with the clearest gap
                 figure = matplotlib.figure.Figure(figsize=(1, 1))
                 canvas = FigureCanvasAgg(figure)
                 axes = figure.add_subplot()
-                plot.Topomap(components[channel.components[0]], axes=axes, mark=[channel.name], mcolor='yellow', **TOPO_ARGS)
+                plot.Topomap(components[channel.gap_components[0]], axes=axes, mark=[channel.name], mcolor='yellow', **TOPO_ARGS)
                 image = fmtxt.Image(channel.name, 'jpg')
                 canvas.print_jpeg(image)
-                # Text desc
-                desc = fmtxt.FMText([channel.name, fmtxt.linebreak, f"{channel.n_evidence} of {channel.n_testable} components", fmtxt.linebreak, f"gap {channel.gap:.2f}"])
-                links = fmtxt.delim_list(fmtxt.Link(f"#{component}", f'component:{component}') for component in channel.components)
-                table.cells(image, desc, links)
+                # Text desc: which components show the gap, and which don't
+                n_gaps = len(channel.gap_components)
+                desc = [channel.name, f" (gap {channel.gap:.2f})", fmtxt.linebreak]
+                desc += [f"{n_gaps} gap{'s' if n_gaps > 1 else ''}: ", _component_links(channel.gap_components), fmtxt.linebreak]
+                if channel.no_gap_components:
+                    desc += [f"{len(channel.no_gap_components)} no gap: ", _component_links(channel.no_gap_components)]
+                table.cells(image, fmtxt.FMText(desc))
 
         if names:
             section.add_paragraph("To exclude these channels, mark them as bad and re-compute the ICA decomposition:")
@@ -1964,10 +1967,16 @@ class FindBadChannelsDialog(EelbrainDialog):
         sizer.Add(grid, flag=wx.ALL, border=5)
 
         # Parameters
-        grid = wx.FlexGridSizer(rows=4, cols=2, vgap=3, hgap=5)
+        grid = wx.FlexGridSizer(rows=3, cols=2, vgap=3, hgap=5)
         self.gap_ratio = self._AddParameter(grid, 'gap_ratio', config.ReadFloat("FindBadChannels/gap_ratio", GAP_RATIO_DEFAULT))
         self.min_components = self._AddParameter(grid, 'min_components', config.ReadInt("FindBadChannels/min_components", MIN_COMPONENTS_DEFAULT))
         self.min_consistency = self._AddParameter(grid, 'min_consistency', config.ReadFloat("FindBadChannels/min_consistency", CONSISTENCY_DEFAULT))
+        sizer.Add(grid, flag=wx.ALL, border=5)
+
+        # Second, unrelated algorithm
+        sizer.Add(wx.StaticLine(self), flag=wx.EXPAND | wx.LEFT | wx.RIGHT, border=5)
+        sizer.Add(wx.StaticText(self, label="Find components loading on a single channel:"), flag=wx.ALL, border=5)
+        grid = wx.FlexGridSizer(rows=1, cols=2, vgap=3, hgap=5)
         self.channel_ratio = self._AddParameter(grid, 'channel_ratio', config.ReadFloat("FindBadChannels/channel_ratio", _CHANNEL_RATIO_DEFAULT))
         sizer.Add(grid, flag=wx.ALL, border=5)
 
@@ -2038,6 +2047,11 @@ class FindBadChannelsDialog(EelbrainDialog):
         config.WriteFloat("FindBadChannels/min_consistency", float(self.min_consistency.GetValue()))
         config.WriteFloat("FindBadChannels/channel_ratio", float(self.channel_ratio.GetValue()))
         config.Flush()
+
+
+def _component_links(components: Sequence) -> fmtxt.FMText:
+    "Comma-separated links to components in the report"
+    return fmtxt.delim_list(fmtxt.Link(f"#{component}", f'component:{component}') for component in components)
 
 
 def _find_bad_channels_help() -> fmtxt.Section:

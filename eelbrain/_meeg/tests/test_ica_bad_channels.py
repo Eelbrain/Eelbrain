@@ -89,6 +89,22 @@ def test_find_channel_gaps():
     assert result.solid[:-1].mean() > 0.8
 
 
+def test_find_channel_gaps_partial_evidence():
+    "Components with and without a gap are reported separately"
+    sensor = _sensor()
+    maps = _dipole_maps(sensor, 15)
+    i = sensor.names.index('Pz')
+    maps[:10, i] = 0  # gap in some components only
+    # min_consistency=0 so that the channel is reported despite the components without a gap
+    result = find_channel_gaps(_components(sensor, maps), smoothness=SMOOTHNESS, min_consistency=0, ch_type='eeg')
+    channel = next(channel for channel in result.channels if channel.name == 'Pz')
+    assert channel.gap_components
+    assert channel.no_gap_components
+    assert len(channel.gap_components) == channel.n_evidence
+    assert len(channel.gap_components) + len(channel.no_gap_components) == channel.n_testable
+    assert not set(channel.gap_components) & set(channel.no_gap_components)
+
+
 def test_find_channel_gaps_polarity_reversal():
     "A channel on the null line of every component is not flagged"
     sensor = _sensor()

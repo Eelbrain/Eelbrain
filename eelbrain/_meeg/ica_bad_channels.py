@@ -48,8 +48,11 @@ class ChannelGap:
         ``n_evidence / n_testable``.
     gap
         Median ``|w| / mean(|w[neighbors]|)`` over the testable components.
-    components
+    gap_components
         Components in which the channel is a gap, smallest gap first.
+    no_gap_components
+        Components in which the channel could be evaluated but is not a gap, smallest gap
+        first.
     """
     index: int
     name: str
@@ -57,7 +60,8 @@ class ChannelGap:
     n_testable: int
     consistency: float
     gap: float
-    components: list[int]
+    gap_components: list[int]
+    no_gap_components: list[int]
 
 
 @dataclass
@@ -252,7 +256,9 @@ def find_channel_gaps(
     solid_components = np.flatnonzero(solid)
     for i in np.flatnonzero(flagged):
         gap_index = np.flatnonzero(evidence[:, i])
+        no_gap_index = np.flatnonzero(testable[:, i] & ~evidence[:, i])
         gap_index = gap_index[np.argsort(gap[gap_index, i])]
+        no_gap_index = no_gap_index[np.argsort(gap[no_gap_index, i])]
         channels.append(ChannelGap(
             index=int(i),
             name=sensor.names[i],
@@ -260,7 +266,8 @@ def find_channel_gaps(
             n_testable=int(n_testable[i]),
             consistency=float(consistency[i]),
             gap=float(np.median(gap[testable[:, i], i])),
-            components=[int(c) for c in solid_components[gap_index]],
+            gap_components=[int(c) for c in solid_components[gap_index]],
+            no_gap_components=[int(c) for c in solid_components[no_gap_index]],
         ))
     channels.sort(key=lambda channel: (channel.consistency, channel.n_evidence), reverse=True)
     return result
