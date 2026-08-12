@@ -24,6 +24,7 @@ import numpy as np
 from scipy import linalg
 import seaborn
 import wx
+import wx.html
 from wx.lib.scrolledpanel import ScrolledPanel
 
 from .. import load, plot, fmtxt
@@ -70,6 +71,18 @@ _GAP_MAX_ROWS = 20
 # ComponentMapDialog: size of each component map, and initial dialog size, in pixels
 _COMPONENT_MAP_SIZE = 90
 _COMPONENT_DIALOG_SIZE = (700, 600)
+_HELP_DIALOG_SIZE = (520, 620)
+# FindBadChannelsDialog settings: {setting: (label, description)}. Used both for the hover
+# help of the individual controls and for the help dialog, in the order listed here.
+_FIND_BAD_CHANNELS_HELP = {
+    'ch_type': ("Sensor type", "Each sensor type is analyzed separately, using its own component maps and sensor adjacency. Gradiometers are disabled by default: gradiometer maps are spatial derivatives and are not spatially smooth, and each planar gradiometer is adjacent to its co-located partner, which measures an orthogonal gradient. Both properties make this analysis unreliable for gradiometers."),
+    'smoothness': ("Smoothness", "Minimum spatial smoothness for a component to be used, measured as the correlation between the component map and its own neighbor average. Realistic field patterns are spatially smooth, whereas components that reflect channel noise are not. Raise this value to use fewer, cleaner components."),
+    'show': ("Show", "Display all component maps for the sensor type, ranked by smoothness, to find an appropriate smoothness threshold."),
+    'gap_ratio': ("Gap ratio", "Maximum ratio between a channel's weight and the average weight of its neighbors for the channel to count as a gap. This is also the sensitivity limit: a channel whose gain is merely attenuated, to more than about a fifth of normal, is not detected."),
+    'min_components': ("Min. components", "Minimum number of components in which a channel needs to be a gap. A single gap is not diagnostic."),
+    'min_consistency': ("Min. consistency", "Minimum fraction of the components in which a channel could be evaluated in which it needs to be a gap. A channel can only be evaluated in components in which its neighbors carry a strong field of uniform polarity; a defective channel is a gap in almost all of them."),
+    'channel_ratio': ("Single channel ratio", "For finding components that load on a single channel: the minimum ratio between the largest and the second largest channel weight in the component map. Such components usually reflect a noisy channel rather than a field pattern."),
+}
 
 # For unit-tests
 TEST_MODE = False
@@ -1935,18 +1948,16 @@ class FindBadChannelsDialog(EelbrainDialog):
             smoothness = config.ReadFloat(f"FindBadChannels/smoothness_{ch_type}", SMOOTHNESS_DEFAULT.get(ch_type, 0.9))
             enabled_ctrl = wx.CheckBox(self, label='')
             enabled_ctrl.SetValue(enabled)
+            enabled_ctrl.SetToolTip(_FIND_BAD_CHANNELS_HELP['ch_type'][1])
             grid.Add(enabled_ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
             grid.Add(wx.StaticText(self, label=ch_type), flag=wx.ALIGN_CENTER_VERTICAL)
             validator = REValidator(POS_FLOAT_PATTERN, "Invalid entry: {value}. Please specify a number > 0.", False)
             smoothness_ctrl = wx.TextCtrl(self, value=f'{smoothness:g}', validator=validator, style=wx.TE_RIGHT)
-            if ch_type == 'grad':
-                help_text = "Minimum spatial smoothness of a component map. Gradiometer maps are spatial derivatives and are not smooth with respect to the sensor adjacency graph, which makes this analysis unreliable for gradiometers."
-            else:
-                help_text = "Minimum spatial smoothness (correlation between a component map and its neighbor average) for a component to reflect a realistic field pattern"
-            smoothness_ctrl.SetHelpText(help_text)
+            smoothness_ctrl.SetToolTip(_FIND_BAD_CHANNELS_HELP['smoothness'][1])
             grid.Add(smoothness_ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
-            button = wx.Button(self, label="Show", style=wx.BU_EXACTFIT)
-            button.SetHelpText(f"Show all {ch_type} component maps ranked by smoothness, to find an appropriate threshold")
+            label, help_text = _FIND_BAD_CHANNELS_HELP['show']
+            button = wx.Button(self, label=label, style=wx.BU_EXACTFIT)
+            button.SetToolTip(help_text)
             button.Bind(wx.EVT_BUTTON, partial(self.OnShowComponents, ch_type, components))
             grid.Add(button, flag=wx.ALIGN_CENTER_VERTICAL)
             self.type_rows.append((ch_type, enabled_ctrl, smoothness_ctrl))
@@ -1954,10 +1965,10 @@ class FindBadChannelsDialog(EelbrainDialog):
 
         # Parameters
         grid = wx.FlexGridSizer(rows=4, cols=2, vgap=3, hgap=5)
-        self.gap_ratio = self._AddParameter(grid, "Gap ratio: ", config.ReadFloat("FindBadChannels/gap_ratio", GAP_RATIO_DEFAULT), "Maximum ratio between a channel's weight and the average weight of its neighbors for the channel to count as a gap")
-        self.min_components = self._AddParameter(grid, "Min. components: ", config.ReadInt("FindBadChannels/min_components", MIN_COMPONENTS_DEFAULT), "Minimum number of components in which a channel needs to be a gap")
-        self.min_consistency = self._AddParameter(grid, "Min. consistency: ", config.ReadFloat("FindBadChannels/min_consistency", CONSISTENCY_DEFAULT), "Minimum fraction of the components in which a channel could be evaluated in which it needs to be a gap")
-        self.channel_ratio = self._AddParameter(grid, "Single channel ratio: ", config.ReadFloat("FindBadChannels/channel_ratio", _CHANNEL_RATIO_DEFAULT), "Find components loading on a single channel: minimum ratio between the largest and the second largest channel weight")
+        self.gap_ratio = self._AddParameter(grid, 'gap_ratio', config.ReadFloat("FindBadChannels/gap_ratio", GAP_RATIO_DEFAULT))
+        self.min_components = self._AddParameter(grid, 'min_components', config.ReadInt("FindBadChannels/min_components", MIN_COMPONENTS_DEFAULT))
+        self.min_consistency = self._AddParameter(grid, 'min_consistency', config.ReadFloat("FindBadChannels/min_consistency", CONSISTENCY_DEFAULT))
+        self.channel_ratio = self._AddParameter(grid, 'channel_ratio', config.ReadFloat("FindBadChannels/channel_ratio", _CHANNEL_RATIO_DEFAULT))
         sizer.Add(grid, flag=wx.ALL, border=5)
 
         # default button
@@ -1967,6 +1978,9 @@ class FindBadChannelsDialog(EelbrainDialog):
 
         # buttons
         button_sizer = wx.StdDialogButtonSizer()
+        btn = wx.Button(self, wx.ID_HELP)
+        btn.Bind(wx.EVT_BUTTON, self.OnHelp)
+        button_sizer.AddButton(btn)
         btn = wx.Button(self, wx.ID_OK)
         btn.SetDefault()
         button_sizer.AddButton(btn)
@@ -1978,11 +1992,17 @@ class FindBadChannelsDialog(EelbrainDialog):
         self.SetSizer(sizer)
         sizer.Fit(self)
 
-    def _AddParameter(self, grid, label: str, value: float, help_text: str):
-        grid.Add(wx.StaticText(self, label=label), flag=wx.ALIGN_CENTER_VERTICAL)
+    def OnHelp(self, event):
+        dlg = HelpDialog(self, "Find Bad Channels", _find_bad_channels_help())
+        dlg.ShowModal()
+        dlg.Destroy()
+
+    def _AddParameter(self, grid, setting: str, value: float):
+        label, help_text = _FIND_BAD_CHANNELS_HELP[setting]
+        grid.Add(wx.StaticText(self, label=f'{label}: '), flag=wx.ALIGN_CENTER_VERTICAL)
         validator = REValidator(POS_FLOAT_PATTERN, "Invalid entry: {value}. Please specify a number > 0.", False)
         ctrl = wx.TextCtrl(self, value=f'{value:g}', validator=validator, style=wx.TE_RIGHT)
-        ctrl.SetHelpText(help_text)
+        ctrl.SetToolTip(help_text)
         grid.Add(ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
         return ctrl
 
@@ -2018,6 +2038,41 @@ class FindBadChannelsDialog(EelbrainDialog):
         config.WriteFloat("FindBadChannels/min_consistency", float(self.min_consistency.GetValue()))
         config.WriteFloat("FindBadChannels/channel_ratio", float(self.channel_ratio.GetValue()))
         config.Flush()
+
+
+def _find_bad_channels_help() -> fmtxt.Section:
+    "Help text for FindBadChannelsDialog (hover help is unreliable on some platforms)"
+    doc = fmtxt.Section("Find Bad Channels")
+    doc.add_paragraph("This tool looks for bad channels in two ways: channels that are missing from the ICA component maps, and components that load on a single channel.")
+
+    section = doc.add_section("Channels missing from component maps")
+    section.add_paragraph("A channel that does not record any signal appears as a gap in the component maps: its weight is ~0 where the surrounding channels carry a strong field. A weight of ~0 in a single component is not diagnostic, because the channel could be located on the null line of a polarity reversal. Two properties make it diagnostic: the weight is ~0 in multiple components that reflect realistic field patterns, and it is ~0 while the surrounding channels all have the same polarity.")
+    section.add_paragraph("A channel that is already excluded as bad is not part of the ICA decomposition and can not be evaluated. An empty result does therefore not imply that all previously excluded channels were rightly excluded. Conversely, acting on a result means marking the channel as bad and re-computing the ICA decomposition.")
+
+    section = doc.add_section("Settings")
+    for label, description in _FIND_BAD_CHANNELS_HELP.values():
+        section.add_paragraph([fmtxt.FMTextElement(label, r'\textbf'), f": {description}"])
+    return doc
+
+
+class HelpDialog(EelbrainDialog):
+    "Modal window with formatted help text"
+
+    def __init__(self, parent, title: str, doc: fmtxt.FMTextElement, **kwargs):
+        style = wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER
+        super().__init__(parent, wx.ID_ANY, title, style=style, **kwargs)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        html = wx.html.HtmlWindow(self, style=wx.VSCROLL)
+        html.SetPage(fmtxt.make_html_doc(doc))
+        sizer.Add(html, 1, wx.EXPAND | wx.ALL, 5)
+        button_sizer = wx.StdDialogButtonSizer()
+        btn = wx.Button(self, wx.ID_OK, "Close")
+        btn.SetDefault()
+        button_sizer.AddButton(btn)
+        button_sizer.Realize()
+        sizer.Add(button_sizer, flag=wx.ALL, border=5)
+        self.SetSizer(sizer)
+        self.SetSize(_HELP_DIALOG_SIZE)
 
 
 def _topomap_bitmap(component: NDVar, size: int = _COMPONENT_MAP_SIZE, dpi: float = 100.) -> wx.Bitmap:

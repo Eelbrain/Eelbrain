@@ -6,7 +6,7 @@ import mne
 from eelbrain import gui, load
 from eelbrain.testing import gui_test, TempDir, requires_mne_testing_data
 from eelbrain._wxgui import ID
-from eelbrain._wxgui.select_components import ComponentMapDialog, FindBadChannelsDialog
+from eelbrain._wxgui.select_components import ComponentMapDialog, FindBadChannelsDialog, HelpDialog, _FIND_BAD_CHANNELS_HELP, _find_bad_channels_help
 
 
 @gui_test
@@ -45,6 +45,12 @@ def test_select_components():
     ch_type, components = frame.doc.components_by_type[0]
     map_dlg = ComponentMapDialog(dlg, ch_type, components)
     map_dlg.Destroy()
+    help_dlg = HelpDialog(dlg, "Find Bad Channels", _find_bad_channels_help())
+    help_dlg.Destroy()
+    # tooltips and the help dialog use the same strings
+    assert dlg.gap_ratio.GetToolTipText() == _FIND_BAD_CHANNELS_HELP['gap_ratio'][1]
+    help_doc = str(_find_bad_channels_help())
+    assert all(label in help_doc for label, _ in _FIND_BAD_CHANNELS_HELP.values())
     dlg.Destroy()
 
     # plotting
