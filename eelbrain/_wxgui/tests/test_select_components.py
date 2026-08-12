@@ -6,6 +6,7 @@ import mne
 from eelbrain import gui, load
 from eelbrain.testing import gui_test, TempDir, requires_mne_testing_data
 from eelbrain._wxgui import ID
+from eelbrain._wxgui.select_components import ComponentMapDialog, FindBadChannelsDialog
 
 
 @gui_test
@@ -39,6 +40,12 @@ def test_select_components():
 
     # tools
     frame.ShowBadChannels()
+    dlg = FindBadChannelsDialog(frame, frame.doc.components_by_type)
+    assert [ch_type for ch_type, _, _ in dlg.type_rows] == [ch_type for ch_type, _ in frame.doc.components_by_type]
+    ch_type, components = frame.doc.components_by_type[0]
+    map_dlg = ComponentMapDialog(dlg, ch_type, components)
+    map_dlg.Destroy()
+    dlg.Destroy()
 
     # plotting
     for i in [ID.BASELINE_NONE, ID.BASELINE_GLOABL_MEAN, ID.BASELINE_CUSTOM]:

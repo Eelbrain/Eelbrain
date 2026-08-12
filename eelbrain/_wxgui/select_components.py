@@ -9,6 +9,7 @@
 #  - listens to Document changes
 #  - issues commands to Model
 from collections import defaultdict
+from functools import partial
 from itertools import repeat
 from math import ceil
 from operator import itemgetter
@@ -29,7 +30,7 @@ from .. import load, plot, fmtxt
 from .._colorspaces import UNAMBIGUOUS_COLORS
 from .._data_obj import Dataset, Factor, NDVar, Categorial, Scalar, combine
 from .._io.fiff import _picks, sensor_dim
-from .._meeg.ica_bad_channels import CH_TYPE_DEFAULT, CONSISTENCY_DEFAULT, GAP_RATIO_DEFAULT, MIN_COMPONENTS_DEFAULT, SMOOTHNESS_DEFAULT, find_channel_gaps
+from .._meeg.ica_bad_channels import CH_TYPE_DEFAULT, CONSISTENCY_DEFAULT, GAP_RATIO_DEFAULT, MIN_COMPONENTS_DEFAULT, SMOOTHNESS_DEFAULT, _map_smoothness, _neighbor_matrix, find_channel_gaps
 from .._ndvar import concatenate, neighbor_correlation
 from .._types import PathArg
 from .._utils.numpy_utils import INT_TYPES
@@ -66,6 +67,9 @@ _THRESHOLD_DEFAULT_SI = {
 _CHANNEL_RATIO_DEFAULT = 3.
 # Maximum number of defective channels listed with a topomap
 _GAP_MAX_ROWS = 20
+# ComponentMapDialog: size of each component map, and initial dialog size, in pixels
+_COMPONENT_MAP_SIZE = 90
+_COMPONENT_DIALOG_SIZE = (700, 600)
 
 # For unit-tests
 TEST_MODE = False
@@ -509,8 +513,7 @@ class SharedToolsMenu:  # Frame mixin
         InfoFrame(self, "Rare Events", doc, 500)
 
     def OnFindBadChannels(self, event):
-        ch_types = [ch_type for ch_type, _ in self.doc.components_by_type]
-        dlg = FindBadChannelsDialog(self, ch_types)
+        dlg = FindBadChannelsDialog(self, self.doc.components_by_type)
         rcode = dlg.ShowModal()
         if rcode != wx.ID_OK:
             dlg.Destroy()
@@ -1917,17 +1920,17 @@ class FindNoisyEpochsDialog(EelbrainDialog):
 
 class FindBadChannelsDialog(EelbrainDialog):
 
-    def __init__(self, parent, ch_types: Sequence, **kwargs):
+    def __init__(self, parent, components_by_type: Sequence, **kwargs):
         super().__init__(parent, wx.ID_ANY, "Find Bad Channels", **kwargs)
         config = parent.config
 
         sizer = wx.BoxSizer(wx.VERTICAL)
         sizer.Add(wx.StaticText(self, label="Find channels that are missing from component maps.\nSensor type and smoothness required to use component:"), flag=wx.ALL, border=5)
 
-        # One row per channel type: [checkbox] [type] [smoothness]
-        grid = wx.FlexGridSizer(rows=len(ch_types), cols=3, vgap=3, hgap=5)
+        # One row per channel type: [checkbox] [type] [smoothness] [show]
+        grid = wx.FlexGridSizer(rows=len(components_by_type), cols=4, vgap=3, hgap=5)
         self.type_rows = []  # [(ch_type, enabled_ctrl, smoothness_ctrl), ...]
-        for ch_type in ch_types:
+        for ch_type, components in components_by_type:
             enabled = config.ReadBool(f"FindBadChannels/enabled_{ch_type}", CH_TYPE_DEFAULT.get(ch_type, False))
             smoothness = config.ReadFloat(f"FindBadChannels/smoothness_{ch_type}", SMOOTHNESS_DEFAULT.get(ch_type, 0.9))
             enabled_ctrl = wx.CheckBox(self, label='')
@@ -1942,6 +1945,10 @@ class FindBadChannelsDialog(EelbrainDialog):
                 help_text = "Minimum spatial smoothness (correlation between a component map and its neighbor average) for a component to reflect a realistic field pattern"
             smoothness_ctrl.SetHelpText(help_text)
             grid.Add(smoothness_ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
+            button = wx.Button(self, label="Show", style=wx.BU_EXACTFIT)
+            button.SetHelpText(f"Show all {ch_type} component maps ranked by smoothness, to find an appropriate threshold")
+            button.Bind(wx.EVT_BUTTON, partial(self.OnShowComponents, ch_type, components))
+            grid.Add(button, flag=wx.ALIGN_CENTER_VERTICAL)
             self.type_rows.append((ch_type, enabled_ctrl, smoothness_ctrl))
         sizer.Add(grid, flag=wx.ALL, border=5)
 
@@ -1979,6 +1986,15 @@ class FindBadChannelsDialog(EelbrainDialog):
         grid.Add(ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
         return ctrl
 
+    def OnShowComponents(self, ch_type: str, components: NDVar, event):
+        try:
+            dlg = ComponentMapDialog(self, ch_type, components)
+        except RuntimeError as error:  # sensor adjacency undefined
+            wx.MessageBox(str(error), "Sensor Adjacency Undefined", style=wx.ICON_ERROR)
+            return
+        dlg.ShowModal()
+        dlg.Destroy()
+
     def get_smoothness(self):
         """Return ``{ch_type: smoothness}`` for all enabled channel types."""
         return {ch_type: float(smoothness_ctrl.GetValue()) for ch_type, enabled_ctrl, smoothness_ctrl in self.type_rows if enabled_ctrl.GetValue()}
@@ -2002,6 +2018,71 @@ class FindBadChannelsDialog(EelbrainDialog):
         config.WriteFloat("FindBadChannels/min_consistency", float(self.min_consistency.GetValue()))
         config.WriteFloat("FindBadChannels/channel_ratio", float(self.channel_ratio.GetValue()))
         config.Flush()
+
+
+def _topomap_bitmap(component: NDVar, size: int = _COMPONENT_MAP_SIZE, dpi: float = 100.) -> wx.Bitmap:
+    "Render a component map for display in a dialog"
+    figure = matplotlib.figure.Figure(figsize=(size / dpi, size / dpi), dpi=dpi)
+    canvas = FigureCanvasAgg(figure)
+    axes = figure.add_axes((0, 0, 1, 1))
+    plot.Topomap(component, axes=axes, axtitle=False, **TOPO_ARGS)
+    canvas.draw()
+    width, height = canvas.get_width_height()
+    return wx.Bitmap.FromBufferRGBA(width, height, canvas.buffer_rgba())
+
+
+class ComponentMapDialog(EelbrainDialog):
+    """All component maps for one channel type, ranked by spatial smoothness
+
+    The maps reflow to fill the window width, so that resizing the dialog changes the
+    number of maps per row.
+    """
+
+    def __init__(self, parent, ch_type: str, components: NDVar, **kwargs):
+        matrix, degree = _neighbor_matrix(components.get_dim('sensor'))
+        smoothness = _map_smoothness(components.get_data(('component', 'sensor')), matrix, np.where(degree > 0, degree, 1.))
+        style = wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER
+        super().__init__(parent, wx.ID_ANY, f"{ch_type} Components", style=style, **kwargs)
+
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        label = wx.StaticText(self, label="Components ranked by spatial smoothness, i.e. the correlation between the component map and its neighbor average. Components at or above the smoothness threshold are used to find gaps.")
+        label.Wrap(_COMPONENT_DIALOG_SIZE[0] - 20)
+        sizer.Add(label, flag=wx.ALL, border=5)
+
+        self.panel = panel = ScrolledPanel(self, style=wx.VSCROLL)
+        self.wrap_sizer = wrap_sizer = wx.WrapSizer(wx.HORIZONTAL)
+        for i in np.argsort(smoothness)[::-1]:
+            item = wx.Panel(panel)
+            item_sizer = wx.BoxSizer(wx.VERTICAL)
+            bitmap = _topomap_bitmap(components[int(i)])
+            item_sizer.Add(wx.StaticBitmap(item, bitmap=bitmap), flag=wx.ALIGN_CENTER)
+            item_sizer.Add(wx.StaticText(item, label=f"#{i}   {smoothness[i]:.2f}"), flag=wx.ALIGN_CENTER)
+            item.SetSizer(item_sizer)
+            item_sizer.Fit(item)
+            wrap_sizer.Add(item, flag=wx.ALL, border=4)
+        panel.SetSizer(wrap_sizer)
+        panel.SetupScrolling(scroll_x=False)
+        panel.Bind(wx.EVT_SIZE, self.OnPanelSize)
+        sizer.Add(panel, 1, wx.EXPAND | wx.ALL, 5)
+
+        button_sizer = wx.StdDialogButtonSizer()
+        btn = wx.Button(self, wx.ID_OK, "Close")
+        btn.SetDefault()
+        button_sizer.AddButton(btn)
+        button_sizer.Realize()
+        sizer.Add(button_sizer, flag=wx.ALL, border=5)
+
+        self.SetSizer(sizer)
+        self.SetSize(_COMPONENT_DIALOG_SIZE)
+
+    def OnPanelSize(self, event):
+        # A WrapSizer only re-wraps when it is explicitly given the new width; without this,
+        # making the dialog narrower keeps the previous number of maps per row and adds a
+        # horizontal scrollbar instead of re-wrapping.
+        width = self.panel.GetClientSize().width
+        self.wrap_sizer.SetDimension(0, 0, width, self.wrap_sizer.ComputeFittingClientSize(self.panel).height)
+        self.panel.SetVirtualSize((width, self.wrap_sizer.GetMinSize().height))
+        event.Skip()
 
 
 class FindRareEventsDialog(EelbrainDialog):
