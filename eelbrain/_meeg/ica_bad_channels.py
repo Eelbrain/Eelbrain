@@ -18,11 +18,11 @@ from .._data_obj import NDVar, Sensor
 # only 47% of edges connect sensors with the same gradient orientation); gradiometers are
 # therefore disabled by default, and their threshold is set just below the maximum that
 # occurs in practice so that enabling them errs towards finding no solid component.
-SMOOTHNESS_DEFAULT = {'mag': 0.90, 'grad': 0.60, 'eeg': 0.80}
+SMOOTHNESS_DEFAULT = {'mag': 0.85, 'grad': 0.60, 'eeg': 0.80}
 CH_TYPE_DEFAULT = {'mag': True, 'grad': False, 'eeg': True}
-GAP_RATIO_DEFAULT = 0.2  # |w[c]| <= this * mean(|w[neighbors]|)
+GAP_RATIO_DEFAULT = 0.5  # |w[c]| <= this * mean(|w[neighbors]|)
 MIN_COMPONENTS_DEFAULT = 2  # number of components that need to show the gap
-CONSISTENCY_DEFAULT = 0.6  # n_evidence / n_testable
+CONSISTENCY_DEFAULT = 0.5  # n_evidence / n_testable
 _SALIENCE = 0.25  # mean(|w[neighbors]|) >= this * max(|w|)
 _SIGN_CONSISTENCY = 0.8  # |mean(w[neighbors])| >= this * mean(|w[neighbors]|)
 _MIN_VARIANCE = 0.001  # relative variance contribution floor
