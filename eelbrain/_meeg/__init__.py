@@ -1,5 +1,6 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 from ._channel_model import ChannelModel
+from .ica_bad_channels import ChannelGap, ChannelGapResult, find_channel_gaps
 from .base import (
     BadChannelWindow,
     channel_listlist_to_dict,

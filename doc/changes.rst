@@ -50,6 +50,12 @@ New in 0.43
     stale cache files, including artifacts whose configuration changed since
     they were built and everything downstream of them.
 
+* ICA-GUI (:func:`gui.select_components`): The *Find Bad Channels* tool now also
+  detects defective channels through gaps in the component maps — channels whose
+  weight is ~0 in multiple components with a realistic field pattern, while the
+  surrounding channels share the same polarity. Detection parameters are set
+  through a new dialog.
+
 
 New in 0.42
 -----------

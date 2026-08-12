@@ -37,6 +37,9 @@ def test_select_components():
     ica = mne.preprocessing.read_ica(path)
     assert ica.exclude == []
 
+    # tools
+    frame.ShowBadChannels()
+
     # plotting
     for i in [ID.BASELINE_NONE, ID.BASELINE_GLOABL_MEAN, ID.BASELINE_CUSTOM]:
         frame.butterfly_baseline = i

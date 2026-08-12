@@ -29,6 +29,7 @@ from .. import load, plot, fmtxt
 from .._colorspaces import UNAMBIGUOUS_COLORS
 from .._data_obj import Dataset, Factor, NDVar, Categorial, Scalar, combine
 from .._io.fiff import _picks, sensor_dim
+from .._meeg.ica_bad_channels import CH_TYPE_DEFAULT, CONSISTENCY_DEFAULT, GAP_RATIO_DEFAULT, MIN_COMPONENTS_DEFAULT, SMOOTHNESS_DEFAULT, find_channel_gaps
 from .._ndvar import concatenate, neighbor_correlation
 from .._types import PathArg
 from .._utils.numpy_utils import INT_TYPES
@@ -60,6 +61,11 @@ _THRESHOLD_DEFAULT_SI = {
     'grad': 1000e-15,   # 10 fT/cm
     'eeg':  100e-6,     # 100 µV
 }
+# Find Bad Channels: a component loads on a single channel if the largest channel weight
+# exceeds the second largest by this factor
+_CHANNEL_RATIO_DEFAULT = 3.
+# Maximum number of defective channels listed with a topomap
+_GAP_MAX_ROWS = 20
 
 # For unit-tests
 TEST_MODE = False
@@ -331,7 +337,7 @@ class SharedToolsMenu:  # Frame mixin
         app.Bind(wx.EVT_MENU, self.OnFindRareEvents, item)
         item = menu.Append(wx.ID_ANY, "Find Noisy Epochs", "Find epochs with strong signal")
         app.Bind(wx.EVT_MENU, self.OnFindNoisyEpochs, item)
-        item = menu.Append(wx.ID_ANY, "Find Bad Channels", "Find components that are likely due to bad channels")
+        item = menu.Append(wx.ID_ANY, "Find Bad Channels", "Find channels that are missing from component maps, and components that are likely due to bad channels")
         app.Bind(wx.EVT_MENU, self.OnFindBadChannels, item)
         menu.AppendSeparator()
 
@@ -503,6 +509,34 @@ class SharedToolsMenu:  # Frame mixin
         InfoFrame(self, "Rare Events", doc, 500)
 
     def OnFindBadChannels(self, event):
+        ch_types = [ch_type for ch_type, _ in self.doc.components_by_type]
+        dlg = FindBadChannelsDialog(self, ch_types)
+        rcode = dlg.ShowModal()
+        if rcode != wx.ID_OK:
+            dlg.Destroy()
+            return
+        smoothness = dlg.get_smoothness()
+        parameters = dict(
+            gap_ratio=float(dlg.gap_ratio.GetValue()),
+            min_components=int(float(dlg.min_components.GetValue())),
+            min_consistency=float(dlg.min_consistency.GetValue()),
+            channel_ratio=float(dlg.channel_ratio.GetValue()),
+        )
+        dlg.StoreConfig()
+        dlg.Destroy()
+        self.ShowBadChannels(smoothness, **parameters)
+
+    def ShowBadChannels(
+            self,
+            smoothness: dict = None,  # {ch_type: threshold} for channel types to analyze
+            gap_ratio: float = GAP_RATIO_DEFAULT,
+            min_components: int = MIN_COMPONENTS_DEFAULT,
+            min_consistency: float = CONSISTENCY_DEFAULT,
+            channel_ratio: float = _CHANNEL_RATIO_DEFAULT,
+    ):
+        "Find and display bad channels (separate from the dialog for testing)"
+        if smoothness is None:
+            smoothness = {ch_type: SMOOTHNESS_DEFAULT[ch_type] for ch_type, _ in self.doc.components_by_type if CH_TYPE_DEFAULT.get(ch_type)}
         nc_before = neighbor_correlation(concatenate(self.doc.epochs_ndvar))
         if self.doc.accept.all():
             nc_after = None
@@ -510,12 +544,28 @@ class SharedToolsMenu:  # Frame mixin
             epochs = self.doc.as_ndvar(self.doc.apply(self.doc.epochs))
             nc_after = neighbor_correlation(concatenate(epochs))
 
+        # Find channels that are missing from component maps
+        source_variance = self.doc.sources.x.var(axis=(0, 2))
+        gap_results = []  # [(components, result), ...]
+        skipped = []  # [(ch_type, reason), ...]
+        for ch_type, components in self.doc.components_by_type:
+            if ch_type not in smoothness:
+                reason = "not selected; gradiometer maps are spatial derivatives and are not spatially smooth" if ch_type == 'grad' else "not selected"
+                skipped.append((ch_type, reason))
+                continue
+            try:
+                result = find_channel_gaps(components, source_variance, smoothness[ch_type], gap_ratio, min_components, min_consistency, ch_type)
+            except RuntimeError as error:  # sensor adjacency undefined
+                skipped.append((ch_type, str(error)))
+            else:
+                gap_results.append((components, result))
+
         # Find ICA components that load on a single channel
         candidates = []
         for i, component_map in enumerate(self.doc.components):
             abs_comp = abs(component_map.x)
             argsort = np.argsort(abs_comp)
-            if abs_comp[argsort[-1]] > abs_comp[argsort[-2]] * 3:
+            if abs_comp[argsort[-1]] > abs_comp[argsort[-2]] * channel_ratio:
                 ch_name = self.doc.epochs_ndvar.sensor.names[argsort[-1]]
                 # Explained variance
                 explained_desc = self.doc.explained_variance(i, format=True)
@@ -530,6 +580,8 @@ class SharedToolsMenu:  # Frame mixin
         doc = fmtxt.Section("Bad Channels")
 
         # Neighbor correlation map
+        section = doc.add_section("Neighbor correlation")
+        section.add_paragraph("Correlation of each channel with the average of its neighbors. A channel that does not record brain signal stands out as a local minimum.")
         for nc, desc in [[nc_before, 'raw data'], [nc_after, 'cleaned']]:
             if nc is None:
                 continue
@@ -540,10 +592,15 @@ class SharedToolsMenu:  # Frame mixin
             image = fmtxt.Image(f'Neighbor correlation {desc}', 'jpg')
             canvas = FigureCanvasAgg(figure)
             canvas.print_jpeg(image)
-            doc.append(image)
+            section.append(image)
+
+        # Channels missing from component maps
+        self._AddChannelGapSection(doc, gap_results, skipped, gap_ratio, min_components, min_consistency)
 
         # Candidate components
-        for component, ch_name, max_loadings, explained_variance, _ in candidates:
+        section = doc.add_section("Components loading on a single channel")
+        section.add_paragraph(f"Components whose largest channel weight exceeds the second largest by a factor of {channel_ratio:g}, ranked by explained variance. The histogram shows the distribution across epochs of the component's peak loading: a permanently defective channel loads on every epoch, whereas an intermittent artifact concentrates near zero with a few large outliers and is better addressed through epoch rejection.")
+        for component, ch_name, max_loadings, explained_desc, _ in candidates:
             # plot component map
             figure = matplotlib.figure.Figure(figsize=(1, 1))
             canvas = FigureCanvasAgg(figure)
@@ -554,9 +611,9 @@ class SharedToolsMenu:  # Frame mixin
 
             # Text desc
             component_link = fmtxt.Link(f"#{component}", f'component:{component}')
-            desc = fmtxt.FMText([ch_name, fmtxt.linebreak, component_link, fmtxt.linebreak, explained_variance])
+            desc = fmtxt.FMText([ch_name, fmtxt.linebreak, component_link, fmtxt.linebreak, explained_desc])
             table = fmtxt.Table('lll', rules=False)
-            doc.add_paragraph(table)
+            section.add_paragraph(table)
 
             # Loadings
             binrange = [0, max_loadings.max()]
@@ -570,6 +627,63 @@ class SharedToolsMenu:  # Frame mixin
             table.cells(image, desc, histogram)
 
         InfoFrame(self, "Bad Channels", doc, 500)
+
+    def _AddChannelGapSection(self, doc, gap_results, skipped, gap_ratio, min_components, min_consistency):
+        "Report channels whose weight is ~0 in multiple components with a uniform neighborhood"
+        section = doc.add_section("Channels missing from component maps")
+        section.add_paragraph(f"A channel that does not record signal appears as a gap in component maps: its weight is ~0 (less than {gap_ratio:g} times the average of its neighbors) where its neighbors carry a strong field of uniform polarity. Channels listed here show such a gap in at least {min_components} components with a realistic field pattern, and in at least {min_consistency:.0%} of the components in which they could be evaluated.")
+        section.add_paragraph("Channels that are already excluded as bad are not part of the decomposition and can not be evaluated here.")
+        if skipped:
+            section.add_paragraph(f"Not analyzed: {'; '.join(f'{ch_type} ({reason})' for ch_type, reason in skipped)}.")
+
+        names = []
+        for components, result in gap_results:
+            n_solid = result.solid.sum()
+            sub_section = section.add_section(f"{result.ch_type}: {n_solid} of {len(result.solid)} components with a realistic field pattern")
+            if not n_solid:
+                sub_section.add_paragraph("No component qualifies; lower the smoothness threshold to analyze this channel type.")
+                continue
+            sensor = components.get_dim('sensor')
+            marks = [channel.name for channel in result.channels]
+
+            # Overview: fraction of testable components in which each channel is a gap
+            figure = matplotlib.figure.Figure(figsize=(4, 3))
+            axes = figure.add_axes((0.1, 0.1, .7, 0.8))
+            consistency = NDVar(result.consistency, (sensor,), 'consistency')
+            p = plot.Topomap(consistency, axes=axes, vmin=0, vmax=1, mark=marks, mcolor='yellow', **TOPO_ARGS)
+            p.plot_colorbar(right_of=axes, ticks=3)
+            image = fmtxt.Image(f'Gaps {result.ch_type}', 'jpg')
+            canvas = FigureCanvasAgg(figure)
+            canvas.print_jpeg(image)
+            sub_section.append(image)
+
+            n_never_testable = np.sum(result.n_testable == 0)
+            if n_never_testable:
+                sub_section.add_paragraph(f"{n_never_testable} channels could not be evaluated (no component with a salient neighborhood of uniform polarity).")
+            if not result.channels:
+                sub_section.add_paragraph("No channel is missing from the component maps.")
+                continue
+            names.extend(channel.name for channel in result.channels)
+            if len(result.channels) > _GAP_MAX_ROWS:
+                sub_section.add_paragraph(f"Showing the {_GAP_MAX_ROWS} strongest of {len(result.channels)} channels.")
+            table = fmtxt.Table('lll', rules=False)
+            sub_section.add_paragraph(table)
+            for channel in result.channels[:_GAP_MAX_ROWS]:
+                # Component with the clearest gap
+                figure = matplotlib.figure.Figure(figsize=(1, 1))
+                canvas = FigureCanvasAgg(figure)
+                axes = figure.add_subplot()
+                plot.Topomap(components[channel.components[0]], axes=axes, mark=[channel.name], mcolor='yellow', **TOPO_ARGS)
+                image = fmtxt.Image(channel.name, 'jpg')
+                canvas.print_jpeg(image)
+                # Text desc
+                desc = fmtxt.FMText([channel.name, fmtxt.linebreak, f"{channel.n_evidence} of {channel.n_testable} components", fmtxt.linebreak, f"gap {channel.gap:.2f}"])
+                links = fmtxt.delim_list(fmtxt.Link(f"#{component}", f'component:{component}') for component in channel.components)
+                table.cells(image, desc, links)
+
+        if names:
+            section.add_paragraph("To exclude these channels, mark them as bad and re-compute the ICA decomposition:")
+            section.add_paragraph(', '.join(names))
 
     def OnPlotButterfly(self, event):
         self.PlotConditionAverages(self)
@@ -1798,6 +1912,95 @@ class FindNoisyEpochsDialog(EelbrainDialog):
         config.WriteBool("FindNoisyEpochsDialog/apply_rejection", self.apply_rejection.GetValue())
         config.WriteBool("FindNoisyEpochsDialog/sort_by_component", self.sort_by_component.GetValue())
         config.Write("FindNoisyEpochsDialog/max_ch_ratio", self.max_ch_ratio.GetValue())
+        config.Flush()
+
+
+class FindBadChannelsDialog(EelbrainDialog):
+
+    def __init__(self, parent, ch_types: Sequence, **kwargs):
+        super().__init__(parent, wx.ID_ANY, "Find Bad Channels", **kwargs)
+        config = parent.config
+
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(wx.StaticText(self, label="Find channels that are missing from component maps:"), flag=wx.ALL, border=5)
+
+        # One row per channel type: [checkbox] [type] [smoothness]
+        grid = wx.FlexGridSizer(rows=len(ch_types), cols=3, vgap=3, hgap=5)
+        self.type_rows = []  # [(ch_type, enabled_ctrl, smoothness_ctrl), ...]
+        for ch_type in ch_types:
+            enabled = config.ReadBool(f"FindBadChannels/enabled_{ch_type}", CH_TYPE_DEFAULT.get(ch_type, False))
+            smoothness = config.ReadFloat(f"FindBadChannels/smoothness_{ch_type}", SMOOTHNESS_DEFAULT.get(ch_type, 0.9))
+            enabled_ctrl = wx.CheckBox(self, label='')
+            enabled_ctrl.SetValue(enabled)
+            grid.Add(enabled_ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
+            grid.Add(wx.StaticText(self, label=ch_type), flag=wx.ALIGN_CENTER_VERTICAL)
+            validator = REValidator(POS_FLOAT_PATTERN, "Invalid entry: {value}. Please specify a number > 0.", False)
+            smoothness_ctrl = wx.TextCtrl(self, value=f'{smoothness:g}', validator=validator, style=wx.TE_RIGHT)
+            if ch_type == 'grad':
+                help_text = "Minimum spatial smoothness of a component map. Gradiometer maps are spatial derivatives and are not smooth with respect to the sensor adjacency graph, which makes this analysis unreliable for gradiometers."
+            else:
+                help_text = "Minimum spatial smoothness (correlation between a component map and its neighbor average) for a component to reflect a realistic field pattern"
+            smoothness_ctrl.SetHelpText(help_text)
+            grid.Add(smoothness_ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
+            self.type_rows.append((ch_type, enabled_ctrl, smoothness_ctrl))
+        sizer.Add(grid, flag=wx.ALL, border=5)
+
+        # Parameters
+        grid = wx.FlexGridSizer(rows=4, cols=2, vgap=3, hgap=5)
+        self.gap_ratio = self._AddParameter(grid, "Gap ratio: ", config.ReadFloat("FindBadChannels/gap_ratio", GAP_RATIO_DEFAULT), "Maximum ratio between a channel's weight and the average weight of its neighbors for the channel to count as a gap")
+        self.min_components = self._AddParameter(grid, "Min. components: ", config.ReadInt("FindBadChannels/min_components", MIN_COMPONENTS_DEFAULT), "Minimum number of components in which a channel needs to be a gap")
+        self.min_consistency = self._AddParameter(grid, "Min. consistency: ", config.ReadFloat("FindBadChannels/min_consistency", CONSISTENCY_DEFAULT), "Minimum fraction of the components in which a channel could be evaluated in which it needs to be a gap")
+        self.channel_ratio = self._AddParameter(grid, "Single channel ratio: ", config.ReadFloat("FindBadChannels/channel_ratio", _CHANNEL_RATIO_DEFAULT), "Find components loading on a single channel: minimum ratio between the largest and the second largest channel weight")
+        sizer.Add(grid, flag=wx.ALL, border=5)
+
+        # default button
+        btn = wx.Button(self, wx.ID_DEFAULT, "Default Settings")
+        sizer.Add(btn, border=2)
+        btn.Bind(wx.EVT_BUTTON, self.OnSetDefault)
+
+        # buttons
+        button_sizer = wx.StdDialogButtonSizer()
+        btn = wx.Button(self, wx.ID_OK)
+        btn.SetDefault()
+        button_sizer.AddButton(btn)
+        btn = wx.Button(self, wx.ID_CANCEL)
+        button_sizer.AddButton(btn)
+        button_sizer.Realize()
+        sizer.Add(button_sizer)
+
+        self.SetSizer(sizer)
+        sizer.Fit(self)
+
+    def _AddParameter(self, grid, label: str, value: float, help_text: str):
+        grid.Add(wx.StaticText(self, label=label), flag=wx.ALIGN_CENTER_VERTICAL)
+        validator = REValidator(POS_FLOAT_PATTERN, "Invalid entry: {value}. Please specify a number > 0.", False)
+        ctrl = wx.TextCtrl(self, value=f'{value:g}', validator=validator, style=wx.TE_RIGHT)
+        ctrl.SetHelpText(help_text)
+        grid.Add(ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
+        return ctrl
+
+    def get_smoothness(self):
+        """Return ``{ch_type: smoothness}`` for all enabled channel types."""
+        return {ch_type: float(smoothness_ctrl.GetValue()) for ch_type, enabled_ctrl, smoothness_ctrl in self.type_rows if enabled_ctrl.GetValue()}
+
+    def OnSetDefault(self, event):
+        for ch_type, enabled_ctrl, smoothness_ctrl in self.type_rows:
+            enabled_ctrl.SetValue(CH_TYPE_DEFAULT.get(ch_type, False))
+            smoothness_ctrl.SetValue(f'{SMOOTHNESS_DEFAULT.get(ch_type, 0.9):g}')
+        self.gap_ratio.SetValue(f'{GAP_RATIO_DEFAULT:g}')
+        self.min_components.SetValue(f'{MIN_COMPONENTS_DEFAULT:g}')
+        self.min_consistency.SetValue(f'{CONSISTENCY_DEFAULT:g}')
+        self.channel_ratio.SetValue(f'{_CHANNEL_RATIO_DEFAULT:g}')
+
+    def StoreConfig(self):
+        config = self.Parent.config
+        for ch_type, enabled_ctrl, smoothness_ctrl in self.type_rows:
+            config.WriteBool(f"FindBadChannels/enabled_{ch_type}", enabled_ctrl.GetValue())
+            config.WriteFloat(f"FindBadChannels/smoothness_{ch_type}", float(smoothness_ctrl.GetValue()))
+        config.WriteFloat("FindBadChannels/gap_ratio", float(self.gap_ratio.GetValue()))
+        config.WriteInt("FindBadChannels/min_components", int(self.min_components.GetValue()))
+        config.WriteFloat("FindBadChannels/min_consistency", float(self.min_consistency.GetValue()))
+        config.WriteFloat("FindBadChannels/channel_ratio", float(self.channel_ratio.GetValue()))
         config.Flush()
 
 
