@@ -6,7 +6,7 @@ import mne
 from eelbrain import gui, load
 from eelbrain.testing import gui_test, TempDir, requires_mne_testing_data
 from eelbrain._wxgui import ID
-from eelbrain._wxgui.select_components import AddBadChannelsDialog, ComponentMapDialog, FindBadChannelsDialog, HelpDialog, _FIND_BAD_CHANNELS_HELP, _find_bad_channels_help
+from eelbrain._wxgui.select_components import AddBadChannelsDialog, ComponentMapDialog, FindBadChannelsDialog, HelpDialog, YScaleDialog, _FIND_BAD_CHANNELS_HELP, _find_bad_channels_help
 
 
 @gui_test
@@ -52,6 +52,11 @@ def test_select_components():
     help_doc = str(_find_bad_channels_help())
     assert all(label in help_doc for label, _ in _FIND_BAD_CHANNELS_HELP.values())
     dlg.Destroy()
+
+    # y-axis scale: one text box per scale
+    scale_dlg = YScaleDialog(frame, 2., 3.)
+    assert scale_dlg.GetScales() == (2., 3.)
+    scale_dlg.Destroy()
 
     # adding bad channels is only offered when a host application can write them
     assert frame.doc.bad_channels_callback is None

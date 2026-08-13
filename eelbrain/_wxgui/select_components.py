@@ -56,6 +56,8 @@ TOPO_ARGS = {
     'interpolation': 'linear',  # interpolation that does not assume continuity
     'clip': 'even',
 }
+# The source time-course axes uses row units (one row has height 1); at ``source_scale = 1``, this many source-data units span one row
+SOURCE_UNITS_PER_ROW = 10
 # Default peak amplitude thresholds for FindNoisyEpochsDialog, in SI units.
 # Peak amplitudes from mne_epochs.get_data() are in SI: T for mag, T/m for grad, V for eeg.
 _THRESHOLD_DEFAULT_SI = {
@@ -245,6 +247,8 @@ class Document(FileDocument):
         # sources
         data = ica.get_sources(epochs).get_data(copy=False)
         self.sources = NDVar(data, ('case', ic_dim, self.epochs_ndvar.time), 'sources', {'meas': 'component', 'cmap': 'xpolar'})
+        # zero-point for plotting sources; scaling around it keeps each source time course aligned with its topography
+        self.source_mean = self.sources.mean(('case', 'time')).x
 
         # find unique epoch labels
         if 'index' in ds:
@@ -930,7 +934,8 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
         self.i_first_epoch = 0
         self.pad_time = 0
         self.n_epochs_in_data = len(self.doc.sources)
-        self.y_scale = self.config.ReadFloat('y_scale', 10)
+        self.source_scale = self.config.ReadFloat('source_scale', 1)
+        self.range_scale = self.config.ReadFloat('range_scale', 1)
         self._marked_component_i = None
         self._marked_component_h = None
         self._marked_epoch_i = None
@@ -988,11 +993,12 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
         epoch_index = slice(self.i_first_epoch, self.i_first_epoch + self.n_epochs)
         data = self.doc.sources.sub(case=epoch_index, component=slice(self.i_first, self.i_first + n_comp))
         y = data.get_data(('component', 'case', 'time')).reshape((n_comp_actual, -1))
-        if y.base is not None and data.x.base is not None:
-            y = y.copy()
+        # scale around the source mean (arithmetic always creates a new array), then offset by row
+        mean = self.doc.source_mean[self.i_first: self.i_first + n_comp_actual, None]
+        y = (y - mean) * (self.source_scale / SOURCE_UNITS_PER_ROW)
         start = n_comp - 1 + self.show_range
         stop = -1 + (n_comp - n_comp_actual) + self.show_range
-        y += np.arange(start * self.y_scale, stop * self.y_scale, -self.y_scale)[:, None]
+        y += np.arange(start, stop, -1)[:, None]
         # pad epoch labels for x-axis
         epoch_labels = self.doc.epoch_labels[epoch_index]
         if len(epoch_labels) < self.n_epochs:
@@ -1008,8 +1014,8 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
 
     def _get_raw_range(self):
         epoch_index = slice(self.i_first_epoch, self.i_first_epoch + self.n_epochs)
-        y_min = self._pad(self.doc.pre_ica_min[epoch_index].x.ravel())
-        y_max = self._pad(self.doc.pre_ica_max[epoch_index].x.ravel())
+        y_min = self._pad(self.doc.pre_ica_min[epoch_index].x.ravel() * self.range_scale)
+        y_max = self._pad(self.doc.pre_ica_max[epoch_index].x.ravel() * self.range_scale)
         return y_min, y_max
 
     def _get_clean_range(self):
@@ -1018,8 +1024,9 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
         y_clean = self.doc.as_ndvar(self.doc.apply(epochs))
         y_min = y_clean.min('sensor').x.ravel()
         y_max = y_clean.max('sensor').x.ravel()
-        y_min /= self.doc.pre_ica_range_scale
-        y_max /= self.doc.pre_ica_range_scale
+        scale = self.range_scale / self.doc.pre_ica_range_scale
+        y_min *= scale
+        y_max *= scale
         return self._pad(y_min), self._pad(y_max)
 
     def _plot(self):
@@ -1097,8 +1104,8 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
             # cleaned
             ys_clean = self._get_clean_range()
             self.y_range_post_lines = [ax.plot(yi, color=post_color, clip_on=False)[0] for yi in ys_clean]
-        # axes limits
-        self.ax_tc_ylim = (-0.5 * self.y_scale, (n_rows - 0.5) * self.y_scale)
+        # axes limits: one row per component (and one for the range), independent of the scales
+        self.ax_tc_ylim = (-0.5, n_rows - 0.5)
         ax.set_ylim(self.ax_tc_ylim)
         ax.set_xlim((0, y.shape[1]))
         # epoch / second demarcation
@@ -1155,8 +1162,8 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
         elen = len(self.doc.sources.time)
         x_max = self.n_epochs * elen
         # confine markers to the bottom range row
-        y0 = -0.5 * self.y_scale
-        height = self.y_scale
+        y0 = -0.5
+        height = 1
         times = events[self._t_column].x
         has_duration = 'duration' in events
         colorby = self._events_colorby
@@ -1189,7 +1196,7 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
     def _event_i_comp(self, event):
         if event.inaxes:
             if event.inaxes.i_comp is None:
-                i_in_axes = ceil(event.ydata / self.y_scale + 0.5)
+                i_in_axes = ceil(event.ydata + 0.5)
                 if i_in_axes == 1 and self.show_range:
                     return
                 i_comp = int(self.i_first + self.n_comp + self.show_range - i_in_axes)
@@ -1337,7 +1344,8 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
             self.doc.callbacks.remove('case_change', self.CaseChanged)
             self.config.WriteInt('layout_n_comp', self.n_comp)
             self.config.WriteInt('layout_n_epochs', self.n_epochs)
-            self.config.WriteFloat('y_scale', self.y_scale)
+            self.config.WriteFloat('source_scale', self.source_scale)
+            self.config.WriteFloat('range_scale', self.range_scale)
             self.config.Flush()
 
     def OnDown(self, event):
@@ -1435,31 +1443,12 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
         self._plot()
 
     def OnSetVLim(self, event):
-        dlg = wx.TextEntryDialog(self, "Y-axis scale:", "Y-Axis Scale",
-                                 f"{10. / self.y_scale:g}")
-        value = None
-        while True:
-            if dlg.ShowModal() != wx.ID_OK:
-                break
-            error = None
-            try:
-                value = float(dlg.GetValue())
-                if value <= 0:
-                    error = f"{value}: must be > 0"
-            except Exception as exception:
-                error = str(exception)
-
-            if error:
-                msg = wx.MessageDialog(self, error, "Invalid Entry", wx.OK | wx.ICON_ERROR)
-                msg.ShowModal()
-                msg.Destroy()
-            else:
-                break
-        dlg.Destroy()
-        if value is not None:
-            self.y_scale = 10. / value
+        dlg = YScaleDialog(self, self.source_scale, self.range_scale)
+        if dlg.ShowModal() == wx.ID_OK:
+            self.source_scale, self.range_scale = dlg.GetScales()
             # redraw
             self.SetFirstEpoch(self.i_first_epoch)
+        dlg.Destroy()
 
     def OnShowTopos(self, event):
         self.ShowTopos()
@@ -1499,8 +1488,8 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
             i_from_top = self._marked_component_i - i_first
             i_from_bottom = n_rows - 1 - i_from_top
             if 0 <= i_from_bottom < n_rows:
-                bottom = (i_from_bottom - 0.5) * self.y_scale
-                self._marked_component_h = self.ax_tc.axhspan(bottom, bottom + self.y_scale, edgecolor='yellow', facecolor='yellow')
+                bottom = i_from_bottom - 0.5
+                self._marked_component_h = self.ax_tc.axhspan(bottom, bottom + 1, edgecolor='yellow', facecolor='yellow')
 
         n_comp_actual = min(self.n_comp_in_ica - i_first, self.n_comp)
         for i in range(n_comp_actual):
@@ -1538,8 +1527,8 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
             i = self._marked_epoch_i - i_first_epoch
             if 0 <= i < self.n_epochs:
                 elen = len(self.doc.sources.time)
-                bottom = -0.5 * self.y_scale
-                height = (self.n_comp + self.show_range) * self.y_scale
+                bottom = -0.5
+                height = self.n_comp + self.show_range
                 self._marked_epoch_h = Rectangle((i * elen, bottom), elen, height, edgecolor='yellow', facecolor='yellow')
                 self.ax_tc.add_patch(self._marked_epoch_h)
 
@@ -1859,6 +1848,45 @@ class TopoFrame(SharedToolsMenu, FileFrameChild):
         item = menu.Append(wx.ID_ANY, "Plot Source FFT")
         self.Bind(wx.EVT_MENU, self.OnPlotCompFFT, item)
         return menu
+
+
+class YScaleDialog(EelbrainDialog):
+
+    def __init__(self, parent, source_scale: float, range_scale: float, **kwargs):
+        super().__init__(parent, wx.ID_ANY, "Y-Axis Scale", **kwargs)
+        validator = REValidator(POS_FLOAT_PATTERN, "Invalid entry: {value}. Please specify a number > 0.", False)
+
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(wx.StaticText(self, label="Time-course display scale"), flag=wx.ALL, border=5)
+        grid = wx.FlexGridSizer(rows=2, cols=2, vgap=3, hgap=5)
+        grid.Add(wx.StaticText(self, label="Components:"), flag=wx.ALIGN_CENTER_VERTICAL)
+        self.source_scale = ctrl = wx.TextCtrl(self, value=f'{source_scale:g}', validator=validator, style=wx.TE_RIGHT)
+        ctrl.SetHelpText("Scale for the component source time courses")
+        ctrl.SelectAll()
+        ctrl.SetFocus()
+        grid.Add(ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(wx.StaticText(self, label="Data range:"), flag=wx.ALIGN_CENTER_VERTICAL)
+        self.range_scale = ctrl = wx.TextCtrl(self, value=f'{range_scale:g}', validator=validator, style=wx.TE_RIGHT)
+        ctrl.SetHelpText("Scale for the raw and cleaned data range at the bottom")
+        grid.Add(ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
+        sizer.Add(grid, flag=wx.ALL, border=5)
+
+        # buttons
+        button_sizer = wx.StdDialogButtonSizer()
+        btn = wx.Button(self, wx.ID_OK)
+        btn.SetDefault()
+        button_sizer.AddButton(btn)
+        btn = wx.Button(self, wx.ID_CANCEL)
+        button_sizer.AddButton(btn)
+        button_sizer.Realize()
+        sizer.Add(button_sizer)
+
+        self.SetSizer(sizer)
+        sizer.Fit(self)
+
+    def GetScales(self) -> tuple[float, float]:
+        "Return ``(source_scale, range_scale)``"
+        return float(self.source_scale.GetValue()), float(self.range_scale.GetValue())
 
 
 class FindNoisyEpochsDialog(EelbrainDialog):
