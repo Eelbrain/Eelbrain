@@ -6,7 +6,7 @@ import mne
 from eelbrain import gui, load
 from eelbrain.testing import gui_test, TempDir, requires_mne_testing_data
 from eelbrain._wxgui import ID
-from eelbrain._wxgui.select_components import ComponentMapDialog, FindBadChannelsDialog, HelpDialog, _FIND_BAD_CHANNELS_HELP, _find_bad_channels_help
+from eelbrain._wxgui.select_components import AddBadChannelsDialog, ComponentMapDialog, FindBadChannelsDialog, HelpDialog, _FIND_BAD_CHANNELS_HELP, _find_bad_channels_help
 
 
 @gui_test
@@ -52,6 +52,13 @@ def test_select_components():
     help_doc = str(_find_bad_channels_help())
     assert all(label in help_doc for label, _ in _FIND_BAD_CHANNELS_HELP.values())
     dlg.Destroy()
+
+    # adding bad channels is only offered when a host application can write them
+    assert frame.doc.bad_channels_callback is None
+    frame.AddBadChannels(['MEG 0113'])  # no-op without a callback
+    bad_dlg = AddBadChannelsDialog(frame, ['MEG 0113'])
+    assert bad_dlg.recompute.GetValue()
+    bad_dlg.Destroy()
 
     # plotting
     for i in [ID.BASELINE_NONE, ID.BASELINE_GLOABL_MEAN, ID.BASELINE_CUSTOM]:

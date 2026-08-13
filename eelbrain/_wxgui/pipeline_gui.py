@@ -4,6 +4,7 @@ import sys
 import threading
 import traceback
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 
 import mne
@@ -132,6 +133,12 @@ class PipelineFrame(EelbrainFrame):
         self._pipeline = pipeline
         self._refresh_token = None  # replaced each refresh; threads compare identity
         self._compute_token = None  # replaced each make-ICA run; threads compare identity
+        self._compute_kind = None  # 'ica' or 'rejection', to interpret the progress display
+        # ICA computation queue: recordings are computed sequentially by a single worker
+        # thread, so that only one thread at a time uses the pipeline
+        self._ica_queue = []  # [(raw_name, combo), ...] waiting to be computed
+        self._ica_queue_lock = threading.Lock()
+        self._ica_n_done = self._ica_n_total = 0  # progress of the current run
         self._tasks = []  # list of (task_type, task_key)
         self._bad_chs_iter_fields: list[str] = []  # session/task/run columns for bad_chs
         self._ica_iter_fields: list[str] = []  # session/run columns for ica
@@ -509,6 +516,8 @@ class PipelineFrame(EelbrainFrame):
                 frame = self._pipeline.make_ica_selection(raw=raw_name, **state)
                 if frame is not None:
                     doc = frame.model.doc
+                    # enables the ICA GUI to add bad channels it finds
+                    doc.bad_channels_callback = partial(self._on_ica_bad_channels, raw_name, state, combo, doc)
                     doc.callbacks.subscribe(
                         'saved',
                         lambda: wx.CallAfter(self._update_ica_row, combo, doc),
@@ -533,6 +542,19 @@ class PipelineFrame(EelbrainFrame):
                 self._on_coreg_activated(idx)
         finally:
             wx.EndBusyCursor()
+
+    def _on_ica_bad_channels(self, raw_name: str, state: dict, combo: tuple, doc, names: list, recompute: bool):
+        """Add bad channels found in the ICA GUI.
+
+        The ICA was estimated with these channels included, so it is deleted; the ICA GUI
+        closes itself after invoking this.
+        """
+        self._pipeline.make_bad_channels(names, raw=raw_name, **state)
+        Path(doc.path).unlink(missing_ok=True)
+        if recompute:
+            wx.CallAfter(self._queue_make_ica, raw_name, [combo])
+        else:
+            wx.CallAfter(self._start_refresh)
 
     def _on_mri_activated(self, row_idx: int, subject: str):
         """Handle double-click on an MRI row."""
@@ -819,20 +841,59 @@ class PipelineFrame(EelbrainFrame):
         ]
         if not combos:
             return
+        self._queue_make_ica(raw_name, combos)
 
+    def _queue_make_ica(self, raw_name: str, combos: list) -> None:
+        """Add recordings to the ICA computation queue
+
+        ICAs are computed sequentially by a single worker thread. When a computation is
+        already running the recordings are appended to the queue instead of starting a
+        second thread, so that only one thread at a time uses the pipeline.
+        """
+        with self._ica_queue_lock:
+            queued = {combo for _, combo in self._ica_queue}
+            new = [(raw_name, combo) for combo in combos if combo not in queued]
+            if not new:
+                return
+            self._ica_queue.extend(new)
+            self._ica_n_total += len(new)
+        # show the recordings as waiting: their ICA is gone (or was never made)
+        if self._current_task()[0] == 'ica':
+            status_col = self._ica_status_col()
+            for _, combo in new:
+                i = self._find_row(combo)
+                if i != -1:
+                    self._list.SetItem(i, status_col, 'queued')
+                    self._list.SetItem(i, status_col + 1, '—')
+                    self._list.SetItem(i, status_col + 2, '—')
+        if self._compute_token is None:
+            self._start_make_ica()
+        elif self._compute_kind == 'ica':
+            self._update_ica_progress()  # the running worker picks the recordings up
+        # else: a different computation is running; the queue is drained when it finishes
+
+    def _update_ica_progress(self) -> None:
+        """Show the progress of the ICA queue, whose total grows as recordings are added."""
+        self._progress_gauge.SetRange(max(self._ica_n_total, 1))
+        self._progress_gauge.SetValue(self._ica_n_done)
+        self._progress_label.SetLabel(f"{self._ica_n_done} / {self._ica_n_total}")
+
+    def _start_make_ica(self) -> None:
+        """Start the worker thread that computes the queued ICAs."""
         # Invalidate any running refresh so both threads don't touch the
         # pipeline concurrently.
         self._refresh_token = object()
 
         token = object()
         self._compute_token = token
-        n_total = len(combos)
+        self._compute_kind = 'ica'
+        self._ica_n_done = 0
+        with self._ica_queue_lock:
+            self._ica_n_total = len(self._ica_queue)
 
         self._make_ica_btn.SetLabel("Stop")
-        self._progress_gauge.SetRange(n_total)
-        self._progress_gauge.SetValue(0)
+        self._update_ica_progress()
         self._progress_gauge.Show()
-        self._progress_label.SetLabel(f"0 / {n_total}")
         self._progress_label.Show()
         self._refresh_btn.Disable()
         self._task_choice.Disable()
@@ -840,7 +901,7 @@ class PipelineFrame(EelbrainFrame):
 
         threading.Thread(
             target=self._make_ica_thread,
-            args=(token, raw_name, combos, tuple(self._ica_iter_fields)),
+            args=(token, tuple(self._ica_iter_fields)),
             daemon=True,
         ).start()
 
@@ -858,23 +919,27 @@ class PipelineFrame(EelbrainFrame):
         """Cancel a running compute thread and immediately restore the UI."""
         if self._compute_token is None:
             return
-        self._compute_token = None
+        self._compute_token = self._compute_kind = None
+        with self._ica_queue_lock:
+            self._ica_queue.clear()
         task_type, _ = self._current_task()
         missing = 'no ICA' if task_type == 'ica' else 'missing'
         status_col = self._status_col()
         for i in range(self._list.GetItemCount()):
-            if self._list.GetItemText(i, status_col) == '⟳':
+            if self._list.GetItemText(i, status_col) in ('⟳', 'queued'):
                 self._list.SetItem(i, status_col, missing)
         self._finish_compute_ui()
 
-    def _make_ica_thread(self, token, raw_name, combos, extra):
+    def _make_ica_thread(self, token, extra):
         pipeline = self._pipeline
         fields = ('subject',) + extra
-        n_done = 0
-        n_total = len(combos)
-        for combo in combos:
+        while True:
             if token is not self._compute_token:
                 break
+            with self._ica_queue_lock:
+                if not self._ica_queue:
+                    break
+                raw_name, combo = self._ica_queue.pop(0)
             state = dict(zip(fields, combo))
             wx.CallAfter(self._on_subject_computing, token, combo)
             try:
@@ -883,15 +948,11 @@ class PipelineFrame(EelbrainFrame):
                 pipeline.make_ica(raw=raw_name, **state)
                 ctx = pipeline._resolve_derivative(ica_input_name(raw_name))
                 ica = ctx.load()
-                n_done += 1
-                wx.CallAfter(
-                    self._on_subject_computed, token, combo,
-                    str(ica.n_components_), str(len(ica.exclude)),
-                    n_done, n_total,
-                )
+                self._ica_n_done += 1
+                wx.CallAfter(self._on_subject_computed, token, combo, str(ica.n_components_), str(len(ica.exclude)))
             except Exception as error:
-                n_done += 1
-                wx.CallAfter(self._on_subject_error, token, combo, *_error_dialog_args(error), n_done, n_total)
+                self._ica_n_done += 1
+                wx.CallAfter(self._on_subject_error, token, combo, *_error_dialog_args(error), self._ica_n_done, self._ica_n_total)
         wx.CallAfter(self._on_make_ica_done, token)
 
     def _on_subject_computing(self, token, combo):
@@ -908,7 +969,7 @@ class PipelineFrame(EelbrainFrame):
         if i != -1:
             self._list.SetItem(i, self._status_col(), '⟳')
 
-    def _on_subject_computed(self, token, combo, n_comp, n_excl, n_done, n_total):
+    def _on_subject_computed(self, token, combo, n_comp, n_excl):
         """Update a row after successful ICA computation."""
         if token is not self._compute_token:
             return
@@ -921,8 +982,7 @@ class PipelineFrame(EelbrainFrame):
             colour = (wx.RED if n_excl == '0'
                       else wx.SystemSettings.GetColour(wx.SYS_COLOUR_LISTBOXTEXT))
             self._list.SetItemTextColour(i, colour)
-        self._progress_gauge.SetValue(n_done)
-        self._progress_label.SetLabel(f"{n_done} / {n_total}")
+        self._update_ica_progress()
         self._refresh_status_bar()
 
     def _on_subject_error(self, token, combo, tb, title, message, n_done, n_total):
@@ -938,17 +998,30 @@ class PipelineFrame(EelbrainFrame):
         i = self._find_row(combo)
         if i != -1:
             self._list.SetItem(i, self._status_col(), 'error')
-        self._progress_gauge.SetValue(n_done)
-        self._progress_label.SetLabel(f"{n_done} / {n_total}")
+        if self._compute_kind == 'ica':
+            self._update_ica_progress()  # the ICA total grows as recordings are queued
+        else:
+            self._progress_gauge.SetValue(n_done)
+            self._progress_label.SetLabel(f"{n_done} / {n_total}")
         self._show_error(tb, f"{title}: {' '.join(combo)}", message)
 
     def _on_make_ica_done(self, token):
         """Called when the make-ICA thread exits (finished or cancelled)."""
         if token is not self._compute_token:
             return  # _stop_compute already cleaned up
-        self._compute_token = None
+        self._compute_token = self._compute_kind = None
         self._finish_compute_ui()
         self._refresh_status_bar()
+        self._drain_ica_queue()
+
+    def _drain_ica_queue(self) -> None:
+        """Start the ICA worker if recordings were queued while it was not running."""
+        if self._compute_token is not None:
+            return
+        with self._ica_queue_lock:
+            pending = bool(self._ica_queue)
+        if pending:
+            self._start_make_ica()
 
     # ------------------------------------------------------------------
     # Compute-rejection background computation (automatic rejection)
@@ -978,6 +1051,7 @@ class PipelineFrame(EelbrainFrame):
         self._refresh_token = object()
         token = object()
         self._compute_token = token
+        self._compute_kind = 'rejection'
         n_total = len(subjects)
 
         self._make_rej_btn.SetLabel("Stop")
@@ -1034,9 +1108,10 @@ class PipelineFrame(EelbrainFrame):
         """Called when the compute-rejection thread exits (finished or cancelled)."""
         if token is not self._compute_token:
             return  # _stop_compute already cleaned up
-        self._compute_token = None
+        self._compute_token = self._compute_kind = None
         self._finish_compute_ui()
         self._refresh_status_bar()
+        self._drain_ica_queue()
 
     def _ask_stale_ica(self, subject: str, error: ProtectedArtifactError, allow_apply_to_all: bool = False) -> tuple[str | None, bool]:
         """Show StaleICADialog and return ``(choice, apply_to_all)``.

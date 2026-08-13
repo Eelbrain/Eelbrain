@@ -72,6 +72,9 @@ _GAP_MAX_ROWS = 20
 _COMPONENT_MAP_SIZE = 90
 _COMPONENT_DIALOG_SIZE = (700, 600)
 _HELP_DIALOG_SIZE = (520, 620)
+# InfoFrame link scheme for adding channels to the bad channels
+_BAD_CHANNELS_URL = 'bad-channels:'
+_BAD_CHANNELS_DIALOG_WIDTH = 400
 # FindBadChannelsDialog settings: {setting: (label, description)}. Used both for the hover
 # help of the individual controls and for the help dialog, in the order listed here.
 _FIND_BAD_CHANNELS_HELP = {
@@ -163,6 +166,10 @@ class Document(FileDocument):
         self._ndvar_args = dict(sysname=sysname, adjacency=adjacency)
         self.saved = True
         self._explained_variance = {}
+        # Set by a host application that can add bad channels (the pipeline GUI); called as
+        # ``bad_channels_callback(names, recompute)``. While it is None, the GUI does not
+        # offer to add bad channels, because it has no way to write them.
+        self.bad_channels_callback = None
 
         self.continuous = isinstance(data, mne.io.BaseRaw)
         if self.continuous:
@@ -697,6 +704,29 @@ class SharedToolsMenu:  # Frame mixin
         if names:
             section.add_paragraph("To exclude these channels, mark them as bad and re-compute the ICA decomposition:")
             section.add_paragraph(', '.join(names))
+            if self.doc.bad_channels_callback is not None:
+                section.add_paragraph(fmtxt.Link(f"Add {len(names)} channel{'s' if len(names) > 1 else ''} to bad channels…", f"{_BAD_CHANNELS_URL}{','.join(names)}"))
+
+    def AddBadChannels(self, names: Sequence):
+        """Add channels to the bad channels of the host application
+
+        Only available when the GUI was opened by an application that can write bad channels
+        (i.e., when :attr:`Document.bad_channels_callback` is set). Since the ICA was computed
+        with these channels included, it is invalidated by this and the GUI is closed.
+        """
+        callback = self.doc.bad_channels_callback
+        if callback is None:
+            return
+        dlg = AddBadChannelsDialog(self, names)
+        confirmed = dlg.ShowModal() == wx.ID_OK
+        recompute = dlg.recompute.GetValue()
+        dlg.Destroy()
+        if not confirmed:
+            return
+        callback(list(names), recompute)
+        # force close: the ICA is invalid, so saving component selection would be pointless
+        frame = self if self.owns_file else self.Parent
+        frame.Close(True)
 
     def OnPlotButterfly(self, event):
         self.PlotConditionAverages(self)
@@ -2094,6 +2124,33 @@ def _topomap_bitmap(component: NDVar, size: int = _COMPONENT_MAP_SIZE, dpi: floa
     return wx.Bitmap.FromBufferRGBA(width, height, canvas.buffer_rgba())
 
 
+class AddBadChannelsDialog(EelbrainDialog):
+    "Confirm adding channels to the bad channels, which invalidates the ICA"
+
+    def __init__(self, parent, names: Sequence, **kwargs):
+        super().__init__(parent, wx.ID_ANY, "Add Bad Channels", **kwargs)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        label = wx.StaticText(self, label=f"Add to the bad channels: {', '.join(names)}?\n\nThe ICA was computed with these channels included, so it will be deleted, along with the current component selection. This window will close.")
+        label.Wrap(_BAD_CHANNELS_DIALOG_WIDTH)
+        sizer.Add(label, flag=wx.ALL, border=10)
+
+        self.recompute = ctrl = wx.CheckBox(self, label="Re-compute the ICA now")
+        ctrl.SetValue(True)
+        ctrl.SetToolTip("Start computing the new ICA decomposition right away; otherwise it needs to be computed before component selection can continue")
+        sizer.Add(ctrl, flag=wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
+
+        button_sizer = wx.StdDialogButtonSizer()
+        btn = wx.Button(self, wx.ID_OK, "Add Bad Channels")
+        btn.SetDefault()
+        button_sizer.AddButton(btn)
+        button_sizer.AddButton(wx.Button(self, wx.ID_CANCEL))
+        button_sizer.Realize()
+        sizer.Add(button_sizer, flag=wx.ALL, border=10)
+
+        self.SetSizer(sizer)
+        sizer.Fit(self)
+
+
 class ComponentMapDialog(EelbrainDialog):
     """All component maps for one channel type, ranked by spatial smoothness
 
@@ -2219,6 +2276,9 @@ class InfoFrame(HTMLFrame):
         return pos, (w, h)
 
     def OpenURL(self, url):
+        if url.startswith(_BAD_CHANNELS_URL):
+            self.Parent.AddBadChannels(url[len(_BAD_CHANNELS_URL):].split(','))
+            return
         component = epoch = None
         for part in url.split():
             m = re.match(r'^epoch:(\d+)$', part)
