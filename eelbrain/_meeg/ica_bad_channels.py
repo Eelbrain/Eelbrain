@@ -23,7 +23,8 @@ CH_TYPE_DEFAULT = {'mag': True, 'grad': False, 'eeg': True}
 GAP_RATIO_DEFAULT = 0.5  # |w[c]| <= this * mean(|w[neighbors]|)
 MIN_COMPONENTS_DEFAULT = 2  # number of components that need to show the gap
 CONSISTENCY_DEFAULT = 0.5  # n_evidence / n_testable
-_SALIENCE = 0.25  # mean(|w[neighbors]|) >= this * max(|w|)
+_SALIENCE = 0.15  # min(|w[neighbors]|) >= this * max(|w|); applies to every neighbor, so it
+# is a stronger requirement than the same value applied to the neighborhood mean would be
 _SIGN_CONSISTENCY = 0.8  # |mean(w[neighbors])| >= this * mean(|w[neighbors]|)
 _MIN_VARIANCE = 0.001  # relative variance contribution floor
 _MIN_NEIGHBORS = 3
@@ -42,8 +43,8 @@ class ChannelGap:
     n_evidence
         Number of components in which the channel is a gap.
     n_testable
-        Number of components in which the channel could be evaluated, i.e. in which its
-        neighborhood carries a salient field of consistent polarity.
+        Number of components in which the channel could be evaluated, i.e. in which every one
+        of its neighbors carries a salient field, of consistent polarity.
     consistency
         ``n_evidence / n_testable``.
     gap
@@ -246,7 +247,14 @@ def find_channel_gaps(
     neighbor_abs = (abs_ws @ matrix) / safe_degree  # magnitude: reference level
     peak = abs_ws.max(1, keepdims=True)
 
-    salient = neighbor_abs >= _SALIENCE * peak  # neighborhood carries a real field
+    # Every neighbor needs to carry a strong field, not just the neighborhood on average:
+    # at the edge of the sensor layout, where neighbors lie on one side only, their mean is
+    # a biased reference.
+    neighbor_min = np.zeros_like(abs_ws)
+    for j in np.flatnonzero(degree):
+        neighbor_min[:, j] = abs_ws[:, matrix[j] > 0].min(1)
+
+    salient = neighbor_min >= _SALIENCE * peak  # neighborhood carries a real field
     uniform = np.abs(neighbor_mean) >= _SIGN_CONSISTENCY * neighbor_abs  # no polarity reversal
     testable = salient & uniform & (degree >= _MIN_NEIGHBORS)
     # Weight in the polarity of the neighborhood: ~1 for a channel that follows the field,

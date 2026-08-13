@@ -139,13 +139,11 @@ def test_find_channel_gaps_partial():
     "gap_ratio is the sensitivity floor for partially attenuated channels"
     sensor = _sensor()
     i = sensor.names.index('Pz')
-    # only Pz is checked: rim channels of this montage can be flagged independently of the
-    # attenuation, since their neighborhood is one-sided
-    for gain, detected in [(0.3, True), (0.8, False)]:
+    for gain, expected in [(0.3, ['Pz']), (0.8, [])]:
         maps = _dipole_maps(sensor, 15)
         maps[:, i] *= gain
         result = find_channel_gaps(_components(sensor, maps), smoothness=SMOOTHNESS, ch_type='eeg')
-        assert ('Pz' in [channel.name for channel in result.channels]) is detected
+        assert [channel.name for channel in result.channels] == expected
 
 
 def test_find_channel_gaps_variance():
