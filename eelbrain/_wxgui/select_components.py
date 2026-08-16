@@ -35,7 +35,7 @@ from .._meeg.ica_bad_channels import CH_TYPE_DEFAULT, CONSISTENCY_DEFAULT, GAP_R
 from .._ndvar import concatenate, neighbor_correlation
 from .._types import PathArg
 from .._utils.numpy_utils import INT_TYPES
-from .._utils.parse import FLOAT_PATTERN, POS_FLOAT_PATTERN
+from .._utils.parse import FLOAT_PATTERN, POS_FLOAT_PATTERN, POS_INT_PATTERN
 from .._utils.system import IS_OSX
 from ..plot._base import AxisData, DataLayer, PlotType
 from ..plot._topo import AxTopomap
@@ -1414,41 +1414,19 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
         self.PopupMenu(menu, event.Position)
         menu.Destroy()
 
-    def OnSetLayout(self, event):
-        caption = "Set ICA Source Layout"
-        if self.doc.continuous:
-            msg = "Number of components and seconds per page (e.g., '10 20')"
-        else:
-            msg = "Number of components and epochs (e.g., '10 20')"
-        default = '%i %i' % (self.n_comp, self.n_epochs)
-        dlg = wx.TextEntryDialog(self, msg, caption, default)
-        while True:
-            if dlg.ShowModal() == wx.ID_OK:
-                value = dlg.GetValue()
-                try:
-                    n_comp, n_epochs = map(int, value.split())
-                except Exception:
-                    wx.MessageBox("Invalid entry: %r. Need two integers \n"
-                                  "(e.g., '10 20').", "Invalid Entry",
-                                  wx.OK | wx.ICON_ERROR)
-                else:
-                    dlg.Destroy()
-                    break
-            else:
-                dlg.Destroy()
-                return
-
-        self.n_comp = n_comp
-        self.n_epochs = n_epochs
-        self._plot()
-
     def OnSetVLim(self, event):
-        dlg = YScaleDialog(self, self.source_scale, self.range_scale)
+        dlg = YScaleDialog(self, self.n_comp, self.n_epochs, self.source_scale, self.range_scale, self.doc.continuous)
         if dlg.ShowModal() == wx.ID_OK:
-            self.source_scale, self.range_scale = dlg.GetScales()
-            # redraw
-            self.SetFirstEpoch(self.i_first_epoch)
+            n_comp, n_epochs, self.source_scale, self.range_scale = dlg.GetValues()
+            if n_comp == self.n_comp and n_epochs == self.n_epochs:
+                self.SetFirstEpoch(self.i_first_epoch)  # redraw with the new scales
+            else:
+                self.n_comp = n_comp
+                self.n_epochs = n_epochs
+                self._plot()
         dlg.Destroy()
+
+    OnSetLayout = OnSetVLim  # "Set Layout" and "Set Axis Limits" open the same dialog
 
     def OnShowTopos(self, event):
         self.ShowTopos()
@@ -1517,6 +1495,8 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
         self.SetFirstEpoch(self.i_first_epoch)
 
     def SetFirstEpoch(self, i_first_epoch):
+        # a partial page at the start would scroll past the beginning of the data
+        i_first_epoch = max(0, i_first_epoch)
         self.i_first_epoch = i_first_epoch
 
         # marked epoch
@@ -1852,21 +1832,44 @@ class TopoFrame(SharedToolsMenu, FileFrameChild):
 
 class YScaleDialog(EelbrainDialog):
 
-    def __init__(self, parent, source_scale: float, range_scale: float, **kwargs):
-        super().__init__(parent, wx.ID_ANY, "Y-Axis Scale", **kwargs)
-        validator = REValidator(POS_FLOAT_PATTERN, "Invalid entry: {value}. Please specify a number > 0.", False)
+    def __init__(
+            self,
+            parent,
+            n_comp: int,
+            n_epochs: int,
+            source_scale: float,
+            range_scale: float,
+            continuous: bool,
+            **kwargs,
+    ):
+        super().__init__(parent, wx.ID_ANY, "Display Layout and Scale", **kwargs)
+        int_validator = REValidator(POS_INT_PATTERN, "Invalid entry: {value}. Please specify an integer > 0.", False)
+        float_validator = REValidator(POS_FLOAT_PATTERN, "Invalid entry: {value}. Please specify a number > 0.", False)
+        epoch_desc = "seconds" if continuous else "epochs"
 
         sizer = wx.BoxSizer(wx.VERTICAL)
-        sizer.Add(wx.StaticText(self, label="Time-course display scale"), flag=wx.ALL, border=5)
+        sizer.Add(wx.StaticText(self, label="Page layout"), flag=wx.ALL, border=5)
         grid = wx.FlexGridSizer(rows=2, cols=2, vgap=3, hgap=5)
         grid.Add(wx.StaticText(self, label="Components:"), flag=wx.ALIGN_CENTER_VERTICAL)
-        self.source_scale = ctrl = wx.TextCtrl(self, value=f'{source_scale:g}', validator=validator, style=wx.TE_RIGHT)
-        ctrl.SetHelpText("Scale for the component source time courses")
+        self.n_comp = ctrl = wx.TextCtrl(self, value=f'{n_comp}', validator=int_validator, style=wx.TE_RIGHT)
+        ctrl.SetHelpText("Number of components (rows) per page")
         ctrl.SelectAll()
         ctrl.SetFocus()
         grid.Add(ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(wx.StaticText(self, label=f"{epoch_desc.capitalize()}:"), flag=wx.ALIGN_CENTER_VERTICAL)
+        self.n_epochs = ctrl = wx.TextCtrl(self, value=f'{n_epochs}', validator=int_validator, style=wx.TE_RIGHT)
+        ctrl.SetHelpText(f"Number of {epoch_desc} per page")
+        grid.Add(ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
+        sizer.Add(grid, flag=wx.ALL, border=5)
+
+        sizer.Add(wx.StaticText(self, label="Time-course display scale"), flag=wx.ALL, border=5)
+        grid = wx.FlexGridSizer(rows=2, cols=2, vgap=3, hgap=5)
+        grid.Add(wx.StaticText(self, label="Components:"), flag=wx.ALIGN_CENTER_VERTICAL)
+        self.source_scale = ctrl = wx.TextCtrl(self, value=f'{source_scale:g}', validator=float_validator, style=wx.TE_RIGHT)
+        ctrl.SetHelpText("Scale for the component source time courses")
+        grid.Add(ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
         grid.Add(wx.StaticText(self, label="Data range:"), flag=wx.ALIGN_CENTER_VERTICAL)
-        self.range_scale = ctrl = wx.TextCtrl(self, value=f'{range_scale:g}', validator=validator, style=wx.TE_RIGHT)
+        self.range_scale = ctrl = wx.TextCtrl(self, value=f'{range_scale:g}', validator=float_validator, style=wx.TE_RIGHT)
         ctrl.SetHelpText("Scale for the raw and cleaned data range at the bottom")
         grid.Add(ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
         sizer.Add(grid, flag=wx.ALL, border=5)
@@ -1884,9 +1887,9 @@ class YScaleDialog(EelbrainDialog):
         self.SetSizer(sizer)
         sizer.Fit(self)
 
-    def GetScales(self) -> tuple[float, float]:
-        "Return ``(source_scale, range_scale)``"
-        return float(self.source_scale.GetValue()), float(self.range_scale.GetValue())
+    def GetValues(self) -> tuple[int, int, float, float]:
+        "Return ``(n_comp, n_epochs, source_scale, range_scale)``"
+        return int(self.n_comp.GetValue()), int(self.n_epochs.GetValue()), float(self.source_scale.GetValue()), float(self.range_scale.GetValue())
 
 
 class FindNoisyEpochsDialog(EelbrainDialog):

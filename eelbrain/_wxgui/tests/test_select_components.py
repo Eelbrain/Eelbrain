@@ -53,9 +53,9 @@ def test_select_components():
     assert all(label in help_doc for label, _ in _FIND_BAD_CHANNELS_HELP.values())
     dlg.Destroy()
 
-    # y-axis scale: one text box per scale
-    scale_dlg = YScaleDialog(frame, 2., 3.)
-    assert scale_dlg.GetScales() == (2., 3.)
+    # layout and scale: one text box per value
+    scale_dlg = YScaleDialog(frame, 5, 8, 2., 3., frame.doc.continuous)
+    assert scale_dlg.GetValues() == (5, 8, 2., 3.)
     scale_dlg.Destroy()
 
     # adding bad channels is only offered when a host application can write them
