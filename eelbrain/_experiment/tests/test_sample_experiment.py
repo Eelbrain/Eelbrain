@@ -3,7 +3,7 @@
 import itertools
 import json
 import logging
-from os.path import join, exists
+from os.path import join, exists, relpath
 from os import remove
 from pathlib import Path
 import shutil
@@ -20,7 +20,7 @@ from numpy.testing import assert_almost_equal, assert_array_equal
 from eelbrain import *
 from eelbrain.pipeline import *
 from eelbrain._exceptions import ConfigurationError
-from eelbrain._experiment.derivative_cache import ProtectedArtifactError
+from eelbrain._experiment.derivative_cache import ALLOW_PROTECTED_OVERWRITE, ProtectedArtifactError
 from eelbrain._experiment.parc.nodes import AnnotDerivative
 from eelbrain._experiment.pathing import BIDS_ENTITY_KEYS, LOG_DIR, ica_file_path
 from eelbrain._experiment.preprocessing import RawFilterElliptic, ica_input_name, raw_node_name
@@ -687,6 +687,79 @@ def test_sample_tasks(monkeypatch, samples_experiment):
 
 
 @requires_mne_sample_data
+def test_make_ica_job(samples_experiment):
+    "The separable, picklable ICAJob and its cache integration"
+    import pickle
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    set_log_level('warning', 'mne')
+    root = samples_experiment(n_subjects=1, n_segments=2)
+
+    class Experiment(SampleExperiment):
+        raw = {
+            **SampleExperiment.raw,
+            'ica': RawICA('1-40', 'sample', method='fastica', n_components=0.95),
+        }
+    e = Experiment(root)
+    e.set('R0000', raw='ica')
+
+    spec = e._job_spec(ica_input_name('ica'))
+    assert not spec.is_done
+
+    # data-carrying, picklable job computed "off-host"
+    with catch_warnings():
+        filterwarnings('ignore', "FastICA did not converge", UserWarning)
+        job = pickle.loads(pickle.dumps(spec.make_job()))
+        assert job.raw.preload
+        assert job.key == spec.key
+        ica = spec.save_result(job())
+    assert isinstance(ica, mne.preprocessing.ICA)
+    assert spec.is_done
+    assert Path(spec.path).exists()
+    assert exists(e._derivatives.manifest_path(spec.path, ica_input_name('ica')))
+    # make_ica sees the cached ICA and does not recompute it
+    assert e.make_ica() == spec.path
+
+    # a stale ICA file is protected: make_job() raises before loading any data
+    class ChangedExperiment(Experiment):
+        raw = {
+            **Experiment.raw,
+            '1-40': RawFilter('tsss', 1, 41),
+            'ica': RawICA('1-40', 'sample', method='fastica', n_components=0.95),
+        }
+    e_changed = ChangedExperiment(root)
+    e_changed.set('R0000', raw='ica')
+    stale_spec = e_changed._job_spec(ica_input_name('ica'))
+    assert not stale_spec.is_done
+    with pytest.raises(ProtectedArtifactError):
+        stale_spec.make_job()
+
+    # an ICA file that appears while the fit is running is not clobbered by the result:
+    # it was never the file the overwrite was authorized for
+    race_spec = stale_spec.with_controls(ALLOW_PROTECTED_OVERWRITE)
+    with catch_warnings():
+        filterwarnings('ignore', "FastICA did not converge", UserWarning)
+        race_job = race_spec.make_job()
+    ica.save(race_spec.path, overwrite=True)  # another session writes it meanwhile
+    with pytest.raises(ProtectedArtifactError, match="while this ICA was being computed"):
+        race_spec.save_result(race_job())
+
+    # ... and recomputes once the overwrite is authorized, with the cache reporting the
+    # build to the experiment's own logger (which does not propagate to the root logger)
+    records = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    e_changed._log.addHandler(handler)
+    with catch_warnings():
+        filterwarnings('ignore', "FastICA did not converge", UserWarning)
+        overwrite_spec = stale_spec.with_controls(ALLOW_PROTECTED_OVERWRITE)
+        overwrite_spec.save_result(overwrite_spec.make_job()())
+    assert stale_spec.is_done
+    # at INFO, so it reaches the terminal during the minutes-long fit
+    assert [(record.levelno, record.getMessage()) for record in records if record.getMessage().startswith('Build ica-input@ica:')] == [(logging.INFO, f"Build ica-input@ica: {relpath(stale_spec.path, root)}")]
+
+
+@requires_mne_sample_data
 def test_ica_all_tasks_after_maxwell(samples_experiment):
     "task=None ICA after RawMaxwell uses all tasks and runs per subject/session/acquisition"
     set_log_level('warning', 'mne')
@@ -909,6 +982,8 @@ def test_variable_length_epochs(samples_experiment):
 @requires_mne_sample_data
 def test_channel_model_rejection(samples_experiment):
     "Automatic epoch rejection via ChannelModel (the 'epoch_rejection' state)"
+    import pickle
+
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
     from eelbrain._info import INTERPOLATE_CHANNELS
@@ -942,6 +1017,13 @@ def test_channel_model_rejection(samples_experiment):
     assert ds.n_cases == n_total - n_rejected
     # second resolve is a cache hit (no rebuild)
     assert e._resolve_derivative('epoch-rejection-channel-model').is_valid()
+
+    # the separable job reproduces build(): a picklable job carrying its data
+    spec = e._job_spec('epoch-rejection-channel-model')
+    assert spec.is_done
+    job = pickle.loads(pickle.dumps(spec.make_job()))
+    assert job.key == spec.key
+    assert_dataobj_equal(job(), rej_ds)
 
     # MEG-only data: ChannelModelRejection has no EEG to model -> raises
     meg_root = samples_experiment(1, 1, pick='mag')
@@ -1758,7 +1840,7 @@ def test_load_trf(samples_experiment):
     # data-carrying, picklable job reproduces the result
     job = e.load_trf_job('imp', 0, 0.1)
     job = pickle.loads(pickle.dumps(job))
-    res2 = job.fit()
+    res2 = job()
     assert isinstance(res2, BoostingResult)
 
     # external execution re-incorporated into the cache
@@ -1768,7 +1850,7 @@ def test_load_trf(samples_experiment):
     path.unlink()
     spec.ctx.manifest_path.unlink(missing_ok=True)
     assert not spec.is_done
-    result = pickle.loads(pickle.dumps(spec.make_job())).fit()  # "off-host"
+    result = pickle.loads(pickle.dumps(spec.make_job()))()  # "off-host"
     spec.save_result(result)
     assert spec.is_done
     assert path.exists()

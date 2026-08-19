@@ -537,24 +537,27 @@ class RawICA(CachedRawPipe):
         else:
             return raw_ch_names == ica.ch_names
 
-    def _fit_ica(
-            self,
-            raw: mne.io.BaseRaw,
-            subject: str,
-            raw_name: str,
-    ) -> mne.preprocessing.ICA:
-        LOG.info("Raw %s: computing ICA decomposition for %s", raw_name, subject)
+    def _ica_kwargs(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Resolved arguments for :class:`mne.preprocessing.ICA` and :meth:`mne.preprocessing.ICA.fit`
+
+        Returns
+        -------
+        kwargs
+            Constructor arguments, with ``max_iter`` defaulted and
+            ``'extended-infomax'`` expanded to ``method='infomax'`` plus
+            ``fit_params``.
+        fit_kwargs
+            Fitting arguments, with the default artifact-rejection thresholds.
+        """
+        # Copy: self.kwargs is in DICT_ATTRS and thus fingerprinted, so resolving in
+        # place would invalidate every existing ICA manifest.
         kwargs = self.kwargs.copy()
         kwargs.setdefault('max_iter', 256)
         if kwargs['method'] == 'extended-infomax':
             kwargs['method'] = 'infomax'
             kwargs['fit_params'] = {'extended': True}
-
-        ica = mne.preprocessing.ICA(**kwargs)
         fit_kwargs = {'reject': {'mag': 5e-12, 'grad': 5000e-13, 'eeg': 300e-6}, **self.fit_kwargs}
-        with user_activity:
-            ica.fit(raw, **fit_kwargs)
-        return ica
+        return kwargs, fit_kwargs
 
     def _apply_ica(
             self,

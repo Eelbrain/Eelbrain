@@ -12,12 +12,12 @@ import wx
 
 from .. import load
 from .._exceptions import ConfigurationError, DataError
-from .._experiment.derivative_cache import ProtectedArtifactError
+from .._experiment.derivative_cache import ALLOW_PROTECTED_OVERWRITE, JobSpec, ProtectedArtifactError
 from .._experiment.epoch_rejection import ChannelModelRejection, ManualRejection
 from .._experiment.epochs import PrimaryEpoch
 from .._experiment.exceptions import FileMissingError, ICAChannelsChangedError, ICAMissingError
 from .._experiment.pathing import MRI_SDIR
-from .._experiment.preprocessing import RawICA, RawSource, ica_input_name, raw_bad_channels_input_name, raw_input_name
+from .._experiment.preprocessing import REINDEX_ICA, RawICA, RawSource, ica_input_name, raw_bad_channels_input_name, raw_input_name
 from .._utils.mne_utils import is_fake_mri
 from .frame import EelbrainFrame
 from .select_components import Document as ICADocument
@@ -133,13 +133,22 @@ class PipelineFrame(EelbrainFrame):
         super().__init__(parent=None, title=f"Pipeline: {pipeline.root}")
         self._pipeline = pipeline
         self._refresh_token = None  # replaced each refresh; threads compare identity
-        self._compute_token = None  # replaced each make-ICA run; threads compare identity
-        self._compute_kind = None  # 'ica' or 'rejection', to interpret the progress display
-        # ICA computation queue: recordings are computed sequentially by a single worker
-        # thread, so that only one thread at a time uses the pipeline
-        self._ica_queue = []  # [(raw_name, combo), ...] waiting to be computed
-        self._ica_queue_lock = threading.Lock()
-        self._ica_n_done = self._ica_n_total = 0  # progress of the current run
+        self._compute_token = None  # replaced each compute run; threads compare identity
+        # One job queue for every computable task: jobs are computed sequentially by a
+        # single worker thread, so that only one thread at a time uses the pipeline.
+        # Entries carry their own kind, because the user can switch tasks and queue more
+        # rows while a batch is running.
+        self._job_queue = []  # [(kind, combo, spec), ...] waiting to be computed
+        self._job_queue_lock = threading.Lock()
+        self._n_done = self._n_total = 0  # progress of the current run
+        # Job specs for the rows currently displayed, keyed by (kind, combo). Minted
+        # during refresh (where pipeline.iter() sets the state) and replaced wholesale
+        # by _populate_table; the kind is part of the key because a combo is only unique
+        # within one task's table, and a lookup can outlive the table it was minted for
+        # (_on_ica_bad_channels runs when a separate window closes). A spec holds no
+        # data, only the state it was resolved with, so it stays usable after the inputs
+        # change: make_job() re-resolves dependencies live at that point.
+        self._job_specs: dict[tuple[str, tuple], JobSpec] = {}
         self._tasks = []  # list of (task_type, task_key)
         self._bad_chs_iter_fields: list[str] = []  # session/task/run columns for bad_chs
         self._ica_iter_fields: list[str] = []  # session/run columns for ica
@@ -512,7 +521,7 @@ class PipelineFrame(EelbrainFrame):
                     )
             elif task_type == 'ica':
                 raw_name = self._raw_choice.GetStringSelection()
-                combo = self._ica_row_combo(idx)
+                combo = self._row_combo(idx)
                 state = dict(zip(('subject',) + tuple(self._ica_iter_fields), combo))
                 frame = self._pipeline.make_ica_selection(raw=raw_name, **state)
                 if frame is not None:
@@ -553,7 +562,11 @@ class PipelineFrame(EelbrainFrame):
         self._pipeline.make_bad_channels(names, raw=raw_name, **state)
         Path(doc.path).unlink(missing_ok=True)
         if recompute:
-            wx.CallAfter(self._queue_make_ica, raw_name, [combo])
+            # Mint the spec here rather than looking the row up in _job_specs: this runs
+            # when a separate window closes, by which time the table may show a different
+            # raw pipe or task. make_bad_channels() just set the state for this recording.
+            spec = self._pipeline._job_spec(ica_input_name(raw_name))
+            wx.CallAfter(self._queue_jobs, 'ica', [(combo, spec)])
         else:
             wx.CallAfter(self._start_refresh)
 
@@ -646,10 +659,9 @@ class PipelineFrame(EelbrainFrame):
         """Column index of the ICA Status column (after subject + key fields)."""
         return 1 + len(self._ica_iter_fields)
 
-    def _ica_row_combo(self, idx: int) -> tuple:
-        """Leading key-field column values (subject + session/run) of a row."""
-        n = 1 + len(self._ica_iter_fields)
-        return tuple(self._list.GetItemText(idx, c) for c in range(n))
+    def _row_combo(self, idx: int) -> tuple:
+        """Leading key-field column values of a row (everything before Status)."""
+        return tuple(self._list.GetItemText(idx, c) for c in range(self._status_col()))
 
     def _find_row(self, combo: tuple) -> int:
         """Row index whose leading columns match ``combo``, or -1."""
@@ -659,13 +671,20 @@ class PipelineFrame(EelbrainFrame):
         return -1
 
     def _status_col(self) -> int:
-        """Column index of the Status column for the current task."""
+        """Column index of the Status column for the current task.
+
+        Also the number of leading key-field columns, i.e. the width of a row
+        ``combo`` (``(subject,)`` for tasks without extra key fields).
+        """
         task_type, _ = self._current_task()
         return self._ica_status_col() if task_type == 'ica' else 1
 
-    def _populate_table(self, rows: list[tuple[str, ...]], token: object) -> None:
+    def _populate_table(self, rows: list[tuple[str, ...]], specs: dict[tuple, JobSpec], token: object) -> None:
         if token is not self._refresh_token:
             return
+        # Only writer of _job_specs, on the main thread and behind the token guard, so a
+        # raw/task switch can never leave a spec from the previous table behind.
+        self._job_specs = specs
         task_type, _ = self._current_task()
         self._list.DeleteAllItems()
         grey = wx.Colour(150, 150, 150)
@@ -790,13 +809,13 @@ class PipelineFrame(EelbrainFrame):
             raw_name: str | None,
     ) -> None:
         try:
-            rows = self._compute_rows(token, task_type, task_key, epoch_name, raw_name)
+            rows, specs = self._compute_rows(token, task_type, task_key, epoch_name, raw_name)
         except _AbortRequested:
             return  # app exit already scheduled
         except Exception as error:
             wx.CallAfter(self._show_error, *_error_dialog_args(error))
             return
-        wx.CallAfter(self._populate_table, rows, token)
+        wx.CallAfter(self._populate_table, rows, specs, token)
 
     def _show_error(self, tb: str, title: str = "Error", message: str | None = None):
         self.SetStatusText("Error")
@@ -808,10 +827,10 @@ class PipelineFrame(EelbrainFrame):
         if self._compute_token is not None:
             dlg = wx.MessageDialog(
                 self,
-                "ICA computation is in progress. "
-                "Closing this window will cancel it and the current subject's "
+                "A computation is in progress. "
+                "Closing this window will cancel it and the current job's "
                 "progress will be lost.\n\nClose anyway?",
-                "Cancel ICA computation?",
+                "Cancel computation?",
                 wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING,
             )
             confirmed = dlg.ShowModal() == wx.ID_YES
@@ -823,89 +842,123 @@ class PipelineFrame(EelbrainFrame):
         event.Skip()  # proceed with normal close
 
     # ------------------------------------------------------------------
-    # Make-ICA background computation
+    # Background computation (one queue for every computable task)
+
+    # Per-task label for a row whose artifact has not been computed yet
+    _MISSING_STATUS = {'ica': 'no ICA', 'epoch_rej': 'missing'}
+    # Per-task label for a row whose artifact is available
+    _DONE_STATUS = {'ica': 'selected', 'epoch_rej': 'done'}
+
+    @staticmethod
+    def _result_columns(kind: str, result) -> tuple[str, ...]:
+        """Detail-column values (after Status) describing a computed artifact."""
+        if kind == 'ica':
+            return str(result.n_components_), str(len(result.exclude))
+        elif kind == 'epoch_rej':
+            return str(result.n_cases), str(int((~result['accept']).sum()))
+        raise RuntimeError(f"{kind=}")
 
     def _on_make_ica(self, event):
         if self._compute_token is not None:
             self._stop_compute()
             return
-
         task_type, _ = self._current_task()
         if task_type != 'ica':
             return
-        raw_name = self._raw_choice.GetStringSelection()
+        self._queue_jobs('ica', self._missing_jobs('ica'))
 
-        status_col = self._ica_status_col()
-        combos = [
-            self._ica_row_combo(i)
-            for i in range(self._list.GetItemCount())
-            if self._list.GetItemText(i, status_col) == 'no ICA'
-        ]
-        if not combos:
+    def _on_make_rejection(self, event):
+        if self._compute_token is not None:
+            self._stop_compute()
             return
-        self._queue_make_ica(raw_name, combos)
+        task_type, _ = self._current_task()
+        name = self._current_epoch_rejection()
+        if task_type != 'epoch_rej' or name is None:
+            return
+        if not isinstance(self._pipeline._epoch_rejection[name], ChannelModelRejection):
+            return
+        self._queue_jobs('epoch_rej', self._missing_jobs('epoch_rej'))
 
-    def _queue_make_ica(self, raw_name: str, combos: list) -> None:
-        """Add recordings to the ICA computation queue
+    def _missing_jobs(self, kind: str) -> list[tuple[tuple, JobSpec]]:
+        """``(combo, spec)`` for the displayed rows whose artifact has not been computed yet.
 
-        ICAs are computed sequentially by a single worker thread. When a computation is
-        already running the recordings are appended to the queue instead of starting a
-        second thread, so that only one thread at a time uses the pipeline.
+        Rows without a job spec (not computable) are skipped.
         """
-        with self._ica_queue_lock:
-            queued = {combo for _, combo in self._ica_queue}
-            new = [(raw_name, combo) for combo in combos if combo not in queued]
+        status_col = self._status_col()
+        missing = self._MISSING_STATUS[kind]
+        combos = [self._row_combo(i) for i in range(self._list.GetItemCount()) if self._list.GetItemText(i, status_col) == missing]
+        return [(combo, self._job_specs[kind, combo]) for combo in combos if (kind, combo) in self._job_specs]
+
+    def _queue_jobs(self, kind: str, jobs: list[tuple[tuple, JobSpec]]) -> None:
+        """Add rows to the computation queue
+
+        Jobs are computed sequentially by a single worker thread. When a computation is
+        already running the jobs are appended to the queue instead of starting a second
+        thread, so that only one thread at a time uses the pipeline.
+
+        Parameters
+        ----------
+        kind
+            Task type the rows belong to (``'ica'`` or ``'epoch_rej'``).
+        jobs
+            ``(row combo, job spec)`` pairs to compute. The caller supplies the
+            spec, because the row it belongs to is not always the row currently
+            displayed under that combo.
+        """
+        new = [(kind, combo, spec) for combo, spec in jobs]
+        if not new:
+            return
+        with self._job_queue_lock:
+            # A combo is only unique within one task's table, so dedupe on both.
+            queued = {(entry[0], entry[1]) for entry in self._job_queue}
+            new = [entry for entry in new if (entry[0], entry[1]) not in queued]
             if not new:
                 return
-            self._ica_queue.extend(new)
-            self._ica_n_total += len(new)
-        # show the recordings as waiting: their ICA is gone (or was never made)
-        if self._current_task()[0] == 'ica':
-            status_col = self._ica_status_col()
-            for _, combo in new:
+            self._job_queue.extend(new)
+            self._n_total += len(new)
+        # show the rows as waiting: their artifact is gone (or was never made)
+        if self._current_task()[0] == kind:
+            status_col = self._status_col()
+            n_detail = self._list.GetColumnCount() - status_col - 1
+            for _, combo, _ in new:
                 i = self._find_row(combo)
                 if i != -1:
                     self._list.SetItem(i, status_col, 'queued')
-                    self._list.SetItem(i, status_col + 1, '—')
-                    self._list.SetItem(i, status_col + 2, '—')
+                    for col in range(status_col + 1, status_col + 1 + n_detail):
+                        self._list.SetItem(i, col, '—')
         if self._compute_token is None:
-            self._start_make_ica()
-        elif self._compute_kind == 'ica':
-            self._update_ica_progress()  # the running worker picks the recordings up
-        # else: a different computation is running; the queue is drained when it finishes
+            self._start_compute()
+        else:
+            self._update_progress()  # the running worker picks the new jobs up
 
-    def _update_ica_progress(self) -> None:
-        """Show the progress of the ICA queue, whose total grows as recordings are added."""
-        self._progress_gauge.SetRange(max(self._ica_n_total, 1))
-        self._progress_gauge.SetValue(self._ica_n_done)
-        self._progress_label.SetLabel(f"{self._ica_n_done} / {self._ica_n_total}")
+    def _update_progress(self) -> None:
+        """Show the progress of the queue, whose total grows as jobs are added."""
+        self._progress_gauge.SetRange(max(self._n_total, 1))
+        self._progress_gauge.SetValue(self._n_done)
+        self._progress_label.SetLabel(f"{self._n_done} / {self._n_total}")
 
-    def _start_make_ica(self) -> None:
-        """Start the worker thread that computes the queued ICAs."""
+    def _start_compute(self) -> None:
+        """Start the worker thread that computes the queued jobs."""
         # Invalidate any running refresh so both threads don't touch the
         # pipeline concurrently.
         self._refresh_token = object()
 
         token = object()
         self._compute_token = token
-        self._compute_kind = 'ica'
-        self._ica_n_done = 0
-        with self._ica_queue_lock:
-            self._ica_n_total = len(self._ica_queue)
+        self._n_done = 0
+        with self._job_queue_lock:
+            self._n_total = len(self._job_queue)
 
         self._make_ica_btn.SetLabel("Stop")
-        self._update_ica_progress()
+        self._make_rej_btn.SetLabel("Stop")
+        self._update_progress()
         self._progress_gauge.Show()
         self._progress_label.Show()
         self._refresh_btn.Disable()
         self._task_choice.Disable()
         self._panel.Layout()
 
-        threading.Thread(
-            target=self._make_ica_thread,
-            args=(token, tuple(self._ica_iter_fields)),
-            daemon=True,
-        ).start()
+        threading.Thread(target=self._compute_thread, args=(token,), daemon=True).start()
 
     def _finish_compute_ui(self):
         """Restore toolbar controls after computation ends or is cancelled."""
@@ -921,199 +974,157 @@ class PipelineFrame(EelbrainFrame):
         """Cancel a running compute thread and immediately restore the UI."""
         if self._compute_token is None:
             return
-        self._compute_token = self._compute_kind = None
-        with self._ica_queue_lock:
-            self._ica_queue.clear()
+        self._compute_token = None
+        with self._job_queue_lock:
+            self._job_queue.clear()
         task_type, _ = self._current_task()
-        missing = 'no ICA' if task_type == 'ica' else 'missing'
+        missing = self._MISSING_STATUS.get(task_type, 'missing')
         status_col = self._status_col()
         for i in range(self._list.GetItemCount()):
             if self._list.GetItemText(i, status_col) in ('⟳', 'queued'):
                 self._list.SetItem(i, status_col, missing)
         self._finish_compute_ui()
 
-    def _make_ica_thread(self, token, extra):
-        pipeline = self._pipeline
-        fields = ('subject',) + extra
+    def _compute_thread(self, token):
         while True:
             if token is not self._compute_token:
                 break
-            with self._ica_queue_lock:
-                if not self._ica_queue:
+            with self._job_queue_lock:
+                if not self._job_queue:
                     break
-                raw_name, combo = self._ica_queue.pop(0)
-            state = dict(zip(fields, combo))
-            wx.CallAfter(self._on_subject_computing, token, combo)
+                kind, combo, spec = self._job_queue.pop(0)
+            wx.CallAfter(self._on_job_computing, token, kind, combo)
             try:
-                # make_ica computes and saves the ICA file; it also leaves the
-                # pipeline context set to this recording so ctx.load() works below.
-                pipeline.make_ica(raw=raw_name, **state)
-                ctx = pipeline._resolve_derivative(ica_input_name(raw_name))
-                ica = ctx.load()
-                self._ica_n_done += 1
-                wx.CallAfter(self._on_subject_computed, token, combo, str(ica.n_components_), str(len(ica.exclude)))
+                result = self._compute_job(kind, spec, combo)
+                # Compute the columns before counting the job as done, so that a
+                # failure here goes through the error branch exactly once.
+                values = None if result is None else self._result_columns(kind, result)
+                self._n_done += 1
+                if values is None:  # user declined; the artifact is still missing
+                    wx.CallAfter(self._on_job_skipped, token, kind, combo)
+                else:
+                    wx.CallAfter(self._on_job_computed, token, kind, combo, values)
+            except _AbortRequested:
+                break
             except Exception as error:
-                self._ica_n_done += 1
-                wx.CallAfter(self._on_subject_error, token, combo, *_error_dialog_args(error), self._ica_n_done, self._ica_n_total)
-        wx.CallAfter(self._on_make_ica_done, token)
+                self._n_done += 1
+                wx.CallAfter(self._on_job_error, token, kind, combo, *_error_dialog_args(error))
+        wx.CallAfter(self._on_compute_done, token)
 
-    def _on_subject_computing(self, token, combo):
-        """Mark a recording's row with ⟳ while its artifact step is computed.
+    def _compute_job(self, kind: str, spec: JobSpec, combo: tuple):
+        """Compute and cache one job, or ``None`` when the user declined (worker thread).
 
-        Shared by the make-ICA and compute-rejection flows; ``combo`` is the
-        leading key-field tuple (``(subject,)`` for rejection).
+        A stale ICA file may hold manual component selections, so it is never
+        overwritten silently: ``make_job()`` raises and the user decides here. Only
+        the ICA task prompts; another task can surface the same error from a nested
+        ICA dependency, which re-resolving *its* request cannot fix, so that is
+        reported as a plain error instead.
+
+        Parameters
+        ----------
+        kind
+            Task type the job belongs to.
+        spec
+            Host-side handle for the artifact.
+        combo
+            Row combo, used to name the recording in the stale-ICA dialog.
         """
+        try:
+            job = spec.make_job()
+        except ProtectedArtifactError as error:
+            if kind != 'ica':
+                raise
+            choice, _ = self._ask_stale_ica(combo[0], error)
+            if choice == StaleICADialog.ABORT:
+                wx.CallAfter(wx.GetApp().ExitMainLoop)
+                raise _AbortRequested()
+            elif choice == StaleICADialog.INCORPORATE:
+                return spec.with_controls(REINDEX_ICA).ctx.load()
+            elif choice != StaleICADialog.DELETE:
+                return None  # IGNORE, or dialog dismissed: leave the file alone
+            Path(error.path).unlink()
+            spec = spec.with_controls(ALLOW_PROTECTED_OVERWRITE)
+            job = spec.make_job()
+        return spec.save_result(job())
+
+    def _displayed_row(self, kind: str, combo: tuple) -> int:
+        """Row index for a job, or -1 when its task is not the one on display.
+
+        The same combo can name a row in more than one task's table, so the kind
+        has to match before a row is touched.
+        """
+        if self._current_task()[0] != kind:
+            return -1
+        return self._find_row(combo)
+
+    def _on_job_computing(self, token, kind, combo):
+        """Mark a row with ⟳ while its artifact is computed."""
         if token is not self._compute_token:
             return
-        if isinstance(combo, str):
-            combo = (combo,)
-        i = self._find_row(combo)
+        i = self._displayed_row(kind, combo)
         if i != -1:
             self._list.SetItem(i, self._status_col(), '⟳')
 
-    def _on_subject_computed(self, token, combo, n_comp, n_excl):
-        """Update a row after successful ICA computation."""
-        if token is not self._compute_token:
-            return
-        i = self._find_row(combo)
-        if i != -1:
-            status_col = self._ica_status_col()
-            self._list.SetItem(i, status_col, 'selected')
-            self._list.SetItem(i, status_col + 1, n_comp)
-            self._list.SetItem(i, status_col + 2, n_excl)
-            colour = (wx.RED if n_excl == '0'
-                      else wx.SystemSettings.GetColour(wx.SYS_COLOUR_LISTBOXTEXT))
-            self._list.SetItemTextColour(i, colour)
-        self._update_ica_progress()
-        self._refresh_status_bar()
+    def _on_job_skipped(self, token, kind, combo):
+        """Restore a row after the user declined to compute it.
 
-    def _on_subject_error(self, token, combo, tb, title, message, n_done, n_total):
-        """Mark a row as errored and show the error dialog, then continue.
-
-        Shared by the make-ICA and compute-rejection flows; ``combo`` is the
-        leading key-field tuple (``(subject,)`` for rejection).
+        Only the ICA task can get here (only its :exc:`ProtectedArtifactError` is
+        offered to the user), and only by leaving the existing file alone, so the
+        row ends up as it would after a refresh: ``'stale'``, with the detail
+        columns left at the placeholder ``_queue_jobs`` wrote.
         """
         if token is not self._compute_token:
             return
-        if isinstance(combo, str):
-            combo = (combo,)
-        i = self._find_row(combo)
+        i = self._displayed_row(kind, combo)
+        if i != -1:
+            self._list.SetItem(i, self._status_col(), 'stale')
+        self._update_progress()
+        self._refresh_status_bar()
+
+    def _on_job_computed(self, token, kind, combo, values):
+        """Update a row after a successful computation."""
+        if token is not self._compute_token:
+            return
+        i = self._displayed_row(kind, combo)
+        if i != -1:
+            status_col = self._status_col()
+            self._list.SetItem(i, status_col, self._DONE_STATUS[kind])
+            for col, value in enumerate(values, status_col + 1):
+                self._list.SetItem(i, col, value)
+            if kind == 'ica':
+                colour = (wx.RED if values[-1] == '0'
+                          else wx.SystemSettings.GetColour(wx.SYS_COLOUR_LISTBOXTEXT))
+                self._list.SetItemTextColour(i, colour)
+        self._update_progress()
+        self._refresh_status_bar()
+
+    def _on_job_error(self, token, kind, combo, tb, title, message):
+        """Mark a row as errored and show the error dialog, then continue."""
+        if token is not self._compute_token:
+            return
+        i = self._displayed_row(kind, combo)
         if i != -1:
             self._list.SetItem(i, self._status_col(), 'error')
-        if self._compute_kind == 'ica':
-            self._update_ica_progress()  # the ICA total grows as recordings are queued
-        else:
-            self._progress_gauge.SetValue(n_done)
-            self._progress_label.SetLabel(f"{n_done} / {n_total}")
+        self._update_progress()
         self._show_error(tb, f"{title}: {' '.join(combo)}", message)
 
-    def _on_make_ica_done(self, token):
-        """Called when the make-ICA thread exits (finished or cancelled)."""
+    def _on_compute_done(self, token):
+        """Called when the compute thread exits (finished or cancelled)."""
         if token is not self._compute_token:
             return  # _stop_compute already cleaned up
-        self._compute_token = self._compute_kind = None
+        self._compute_token = None
         self._finish_compute_ui()
         self._refresh_status_bar()
-        self._drain_ica_queue()
+        self._drain_queue()
 
-    def _drain_ica_queue(self) -> None:
-        """Start the ICA worker if recordings were queued while it was not running."""
+    def _drain_queue(self) -> None:
+        """Start the worker if jobs were queued in the window before it exited."""
         if self._compute_token is not None:
             return
-        with self._ica_queue_lock:
-            pending = bool(self._ica_queue)
+        with self._job_queue_lock:
+            pending = bool(self._job_queue)
         if pending:
-            self._start_make_ica()
-
-    # ------------------------------------------------------------------
-    # Compute-rejection background computation (automatic rejection)
-
-    def _on_make_rejection(self, event):
-        if self._compute_token is not None:
-            self._stop_compute()
-            return
-
-        task_type, _ = self._current_task()
-        name = self._current_epoch_rejection()
-        if task_type != 'epoch_rej' or name is None:
-            return
-        if not isinstance(self._pipeline._epoch_rejection[name], ChannelModelRejection):
-            return
-
-        epoch_name = self._epoch_choice.GetStringSelection()
-        raw_name = self._raw_choice.GetStringSelection()
-        subjects = [
-            self._list.GetItemText(i, 0)
-            for i in range(self._list.GetItemCount())
-            if self._list.GetItemText(i, 1) == 'missing'
-        ]
-        if not subjects:
-            return
-
-        self._refresh_token = object()
-        token = object()
-        self._compute_token = token
-        self._compute_kind = 'rejection'
-        n_total = len(subjects)
-
-        self._make_rej_btn.SetLabel("Stop")
-        self._progress_gauge.SetRange(n_total)
-        self._progress_gauge.SetValue(0)
-        self._progress_gauge.Show()
-        self._progress_label.SetLabel(f"0 / {n_total}")
-        self._progress_label.Show()
-        self._refresh_btn.Disable()
-        self._task_choice.Disable()
-        self._panel.Layout()
-
-        threading.Thread(
-            target=self._make_rejection_thread,
-            args=(token, name, epoch_name, raw_name, subjects),
-            daemon=True,
-        ).start()
-
-    def _make_rejection_thread(self, token, name, epoch_name, raw_name, subjects):
-        pipeline = self._pipeline
-        n_done = 0
-        n_total = len(subjects)
-        for subject in subjects:
-            if token is not self._compute_token:
-                break
-            wx.CallAfter(self._on_subject_computing, token, subject)
-            try:
-                pipeline.set(subject=subject, epoch_rejection=name, epoch=epoch_name, raw=raw_name)
-                ctx = pipeline._resolve_derivative('epoch-rejection-channel-model')
-                rej_ds = ctx.load()
-                n_rej = int((~rej_ds['accept']).sum())
-                n_done += 1
-                wx.CallAfter(self._on_subject_rejection_computed, token, subject, str(rej_ds.n_cases), str(n_rej), n_done, n_total)
-            except Exception as error:
-                n_done += 1
-                wx.CallAfter(self._on_subject_error, token, subject, *_error_dialog_args(error), n_done, n_total)
-        wx.CallAfter(self._on_make_rejection_done, token)
-
-    def _on_subject_rejection_computed(self, token, subject, n_epochs, n_rej, n_done, n_total):
-        """Update a row after a successful rejection computation."""
-        if token is not self._compute_token:
-            return
-        for i in range(self._list.GetItemCount()):
-            if self._list.GetItemText(i, 0) == subject:
-                self._list.SetItem(i, 1, 'done')
-                self._list.SetItem(i, 2, n_epochs)
-                self._list.SetItem(i, 3, n_rej)
-                break
-        self._progress_gauge.SetValue(n_done)
-        self._progress_label.SetLabel(f"{n_done} / {n_total}")
-        self._refresh_status_bar()
-
-    def _on_make_rejection_done(self, token):
-        """Called when the compute-rejection thread exits (finished or cancelled)."""
-        if token is not self._compute_token:
-            return  # _stop_compute already cleaned up
-        self._compute_token = self._compute_kind = None
-        self._finish_compute_ui()
-        self._refresh_status_bar()
-        self._drain_ica_queue()
+            self._start_compute()
 
     def _ask_stale_ica(self, subject: str, error: ProtectedArtifactError, allow_apply_to_all: bool = False) -> tuple[str | None, bool]:
         """Show StaleICADialog and return ``(choice, apply_to_all)``.
@@ -1230,9 +1241,10 @@ class PipelineFrame(EelbrainFrame):
             task_key: str,
             epoch_name: str | None,
             raw_name: str | None,
-    ) -> list[tuple[str, ...]]:
+    ) -> tuple[list[tuple[str, ...]], dict[tuple[str, tuple], JobSpec]]:
         pipeline = self._pipeline
         rows = []
+        specs: dict[tuple[str, tuple], JobSpec] = {}
 
         if task_type == 'bad_chs':
             source_name = pipeline._raw.root_source_name(raw_name)
@@ -1269,6 +1281,7 @@ class PipelineFrame(EelbrainFrame):
                     combo = (combo,)
                 subject = combo[0]
                 ctx = pipeline._resolve_derivative(ica_input_name(raw_name))
+                specs['ica', combo] = JobSpec(ctx)
                 status = ctx.load(view='status')
                 if status == 'ok':
                     try:
@@ -1296,7 +1309,13 @@ class PipelineFrame(EelbrainFrame):
                 if token is not self._refresh_token:
                     break
                 rej_ctx = pipeline._resolve_derivative(node_name)
-                path = rej_ctx.node.path(rej_ctx)
+                if isinstance(rej, ManualRejection):
+                    path = rej_ctx.node.path(rej_ctx)  # an input, with no resolved artifact path
+                else:
+                    spec = specs['epoch_rej', (subject,)] = JobSpec(rej_ctx)
+                    # Existence, not spec.is_done: validating (or rebuilding) every
+                    # subject's rejection file on each refresh would be far too expensive.
+                    path = spec.path
                 if path.exists():
                     ds = load.unpickle(path)
                     n_rej = int((~ds['accept']).sum())
@@ -1336,4 +1355,4 @@ class PipelineFrame(EelbrainFrame):
                 has_trans = trans_ctx.node.exists(trans_ctx)
                 rows.append((subject, session, mrisubject, 'ok' if has_trans else 'missing'))
 
-        return rows
+        return rows, specs

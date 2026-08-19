@@ -33,7 +33,7 @@ from .._types import PathArg
 from .._utils import ask, keydefaultdict, log_level, ScreenHandler
 from .._utils.mne_utils import is_fake_mri
 from .covariance import CovDerivative, EpochCovariance, RawCovariance
-from .derivative_cache import DerivativeRegistry, ProtectedArtifactError, Request, _format_size
+from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, DerivativeRegistry, JobSpec, ProtectedArtifactError, Request, _format_size
 from .configuration import Configuration, ConfigurationDict, sequence_arg
 from .epochs import (
     ContinuousEpoch, EpochBase, EpochsDerivative, RecordingEpochsDerivative, EvokedDerivative,
@@ -65,7 +65,7 @@ from .source import (
 )
 from .statistics import EvokedTestDataDerivative, TestResultDerivative, TwoStageDataDerivative, TwoStageLevel1Derivative, TwoStageLevel2Derivative, TwoStageTest
 from .statistics.config import Test, validate_tests
-from .trf import Boosting, Estimator, Model, NUTSPredictor, PredictorInput, TRFDatasetDerivative, TRFDerivative, TRFGroupDatasetDerivative, TRFJob, TRFJobSpec, UTSPredictor, filter_predictor
+from .trf import Boosting, Estimator, Model, NUTSPredictor, PredictorInput, TRFDatasetDerivative, TRFDerivative, TRFGroupDatasetDerivative, TRFJob, UTSPredictor, filter_predictor
 from .trf.model import parse_term
 from .variable_def import Variables, apply_vardef, label_groups
 
@@ -610,6 +610,15 @@ class Pipeline(StateModel):
             controls: frozenset[str] | set[str] | tuple[str, ...] = (),
     ) -> Any:
         return self._resolve_derivative(name, options=options, controls=controls).load(view=view)
+
+    def _job_spec(
+            self,
+            name: str,  # Registered node name.
+            options: dict[str, Any] | None = None,
+            controls: frozenset[str] | set[str] | tuple[str, ...] = (),
+    ) -> JobSpec:
+        "Host-side handle for computing one artifact (generate job, check whether done, save result)"
+        return JobSpec(self._resolve_derivative(name, options=options, controls=controls))
 
     def clean_cache(
             self,
@@ -1333,11 +1342,10 @@ class Pipeline(StateModel):
             samplingrate: int = None,
             filter_x: bool | Literal['continuous'] = False,
             **state,
-    ) -> TRFJobSpec:
+    ) -> JobSpec:
         "Host-side handle for one TRF fit (generate job, check whether done, save result)"
         options = self._trf_options(x, tstart, tstop, estimator, data, mask, samplingrate, filter_x, state)
-        ctx = self._resolve_derivative('trf', options=options)
-        return TRFJobSpec(ctx)
+        return self._job_spec('trf', options=options)
 
     def load_trf_job(
             self,
@@ -2381,9 +2389,11 @@ class Pipeline(StateModel):
         if ica_raw_name != raw_name:
             self.set(raw=ica_raw_name)
             print(f"raw: {raw_name} -> {ica_raw_name}")
-        ctx = self._resolve_derivative(ica_input_name(ica_raw_name))
+        spec = self._job_spec(ica_input_name(ica_raw_name))
+        if spec.is_done:
+            return spec.path
         try:
-            ctx.node.materialize(ctx)
+            job = spec.make_job()
         except ProtectedArtifactError as error:
             command = ask(
                 f"ICA file {Path(error.path).name} is stale. How should it be handled?",
@@ -2395,14 +2405,17 @@ class Pipeline(StateModel):
                 help="This ICA file may contain manual component selections, so Eelbrain does not replace it automatically when the current data and settings no longer match.",
             )
             if command == 'overwrite':
-                ctx.node.materialize(ctx, allow_protected_overwrite=True)
+                spec = spec.with_controls(ALLOW_PROTECTED_OVERWRITE)
+                job = spec.make_job()
             elif command == 'incorporate':
-                ctx.node.materialize(ctx, allow_protected_reindex=True)
+                self.load_ica(raw=ica_raw_name, accept_stale=True)
+                return spec.path
             elif command != 'abort':
                 raise RuntimeError(f"{command=}")
             else:
                 raise RuntimeError("User aborted ICA overwrite")
-        return self._raw[ica_raw_name].path(ctx)
+        spec.save_result(job())
+        return spec.path
 
     def make_epoch_rejection(
             self,

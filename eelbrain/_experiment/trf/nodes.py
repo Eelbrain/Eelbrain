@@ -313,7 +313,7 @@ class TRFDerivative(Derivative[object]):
         return tuple(deps)
 
     def build(self, ctx: Request) -> object:
-        return self.make_job(ctx).fit()
+        return self.make_job(ctx)()
 
     def make_job(self, ctx: Request) -> TRFJob:
         """Load the data and assemble a picklable :class:`TRFJob` (the fit deferred).
@@ -325,7 +325,7 @@ class TRFDerivative(Derivative[object]):
         """
         # ctx.load('response'/<predictor code>) resolves dependency labels, which
         # requires the build-deps context; it is re-entrant, so this is safe both
-        # from build() (already inside it) and from TRFJobSpec.make_job() (fresh).
+        # from build() (already inside it) and from JobSpec.make_job() (fresh).
         with ctx._build_deps_context():
             est = self.estimators[ctx.options['estimator']]
             model = ctx.options['x']

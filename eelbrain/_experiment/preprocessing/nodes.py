@@ -30,13 +30,14 @@ from scipy.spatial.transform import Rotation
 
 from ..._exceptions import DataError
 from ..derivative_cache import (
-    ArtifactManifest, CachePolicy, Dependency, Derivative, UncachedDerivative,
+    ALLOW_PROTECTED_OVERWRITE, ArtifactManifest, CachePolicy, Dependency, Derivative, UncachedDerivative,
     Request, Input, MANIFEST_SCHEMA_VERSION, ProtectedArtifactError,
-    canonical_state_subset, compare_manifests, file_fingerprint,
+    compare_manifests, file_fingerprint,
 )
 from ..logging import find_difference, format_difference_path
 from ..exceptions import FileMissingError, ICAMissingError
 from ..pathing import bids_path, DERIV_DIR
+from .job import ICAJob
 from .config import (
     MNE_VERBOSITY, RawPipeGraph, RawSource, CachedRawPipe, RawICA, RawApplyICA, RawMaxwell,
     raw_node_name, raw_bad_channels_input_name, raw_input_name, ica_input_name,
@@ -502,6 +503,12 @@ class RawSourceDerivative(UncachedDerivative[mne.io.BaseRaw]):
 
 
 class ICAInput(Input[mne.preprocessing.ICA]):
+    # The ICA file is user-owned (it may carry manual component selections), so the
+    # cache only mirrors a provenance manifest for it and never overwrites it silently.
+    cache_policy = CachePolicy.EXTERNAL
+    # Fitting an ICA takes minutes, and the cache-build message is the only progress
+    # report make_ica() gives, so it belongs on the terminal rather than in the log file.
+    cache_log_level = logging.INFO
     key_fields = ('subject', 'session', 'acquisition', 'run')
     version = 1
 
@@ -525,12 +532,6 @@ class ICAInput(Input[mne.preprocessing.ICA]):
 
     def path(self, ctx: Request) -> Path:
         return self.pipe.path(ctx)
-
-    def _key(self, ctx: Request) -> dict[str, Any]:
-        return canonical_state_subset({**ctx.state, 'raw': self.raw_name}, self.key_fields)
-
-    def _manifest(self, ctx: Request) -> ArtifactManifest | None:
-        return ctx.registry.read_manifest(ctx.registry.manifest_path(self.path(ctx), self.name))
 
     def _load_value(self, ctx: Request) -> mne.preprocessing.ICA:
         return self.pipe._load_ica(ctx)
@@ -583,8 +584,9 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         return raw
 
     def _reindex_existing(self, ctx: Request) -> mne.preprocessing.ICA:
+        "Keep the existing ICA file but rewrite its manifest to the current pipeline state"
         value = self._load_value(ctx)
-        ctx.registry.write_manifest(ctx.registry.manifest_path(self.path(ctx), self.name), self._build_manifest(ctx, value))
+        ctx.registry.write_manifest(ctx.manifest_path, self._build_manifest(ctx, value))
         return value
 
     @staticmethod
@@ -697,10 +699,10 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             schema_version=MANIFEST_SCHEMA_VERSION,
             derivative=self.name,
             derivative_version=self.version,
-            key=self._key(ctx),
+            key=ctx.key(),
             fingerprint=ctx.registry.canonicalize(self.fingerprint(ctx)),
-            dependencies=ctx.registry.dependency_fingerprints(ctx),
-            cache_policy='external',
+            dependencies=ctx.job_dependency_fingerprints(),
+            cache_policy=self.cache_policy.value,
             software={'eelbrain_cache_schema': str(MANIFEST_SCHEMA_VERSION), 'mne': mne.__version__},
             resolve_state=resolve_state,
             resolve_options=resolve_options,
@@ -710,7 +712,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         path = self.path(ctx)
         if not path.exists():
             return False
-        return self._manifest_matches(self._manifest(ctx), self._current_value_manifest(ctx)[1])
+        return self._manifest_matches(ctx._manifest(), self._current_value_manifest(ctx)[1])
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         deps = []
@@ -747,11 +749,10 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         if not path.exists():
             raise ICAMissingError(f"ICA file {path.name} does not exist. Run e.make_ica() to create it.")
         value, current = self._current_value_manifest(ctx)
-        previous = self._manifest(ctx)
+        previous = ctx._manifest()
         if not self._manifest_matches(previous, current):
             if ctx.has_control(REINDEX_ICA):
-                ctx.registry.write_manifest(ctx.registry.manifest_path(path, self.name), current)
-                return value
+                return self._reindex_existing(ctx)
             reason = self._stale_reason(previous, current)
             raise ProtectedArtifactError(self.name, path, message=f"Existing ICA file {path.name!r} no longer matches the current data and ICA settings.", reason=reason, instructions=f"{reason}\nTo make this ICA match the current pipeline again, revert the raw pipeline change or recompute the ICA. To keep using this existing ICA anyway, call e.load_ica(raw={self.raw_name!r}, accept_stale=True) once or run e.make_ica(raw={self.raw_name!r}) and choose 'incorporate'. To recompute it from the current data, run e.make_ica(raw={self.raw_name!r}) and choose 'overwrite'.")
         return value
@@ -774,55 +775,71 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             return 'missing-raw'
         return super().load_view(ctx, view)
 
-    def materialize(
-            self,
-            ctx: Request,
-            allow_protected_overwrite: bool = False,
-            allow_protected_reindex: bool = False,
-    ) -> mne.preprocessing.ICA:
-        """Build and save the ICA, or load it if already up-to-date.
+    def _check_protected(self, ctx: Request) -> None:
+        """Raise :exc:`ProtectedArtifactError` when recomputing would replace a stale ICA file.
 
-        Unlike a standard :class:`Derivative`, ICA files may contain manual
+        Unlike a standard :class:`Derivative`, an ICA file may contain manual
         component-rejection decisions and must not be silently overwritten when
-        they are stale. This method therefore raises
-        :exc:`ProtectedArtifactError` instead of rebuilding automatically.
-
-        The caller (``make_ica``) catches that error, prompts the user for a
-        choice, and calls this method again with the appropriate flag set:
-
-        - ``allow_protected_overwrite=True`` — recompute ICA and overwrite the
-          existing file.
-        - ``allow_protected_reindex=True`` — keep the existing file and rewrite
-          its manifest to match the current pipeline state (``incorporate``).
+        it goes stale. The caller (``make_ica``, or the pipeline GUI) catches the
+        error, asks the user, and then either re-resolves the request with
+        ``ALLOW_PROTECTED_OVERWRITE`` to recompute, or loads the existing file
+        with ``REINDEX_ICA`` to keep it and rewrite its manifest.
 
         Parameters
         ----------
         ctx
             Bound request for the current ICA input.
-        allow_protected_overwrite
-            If ``True``, recompute ICA even when an existing file is stale.
-        allow_protected_reindex
-            If ``True``, keep the existing ICA file but update its manifest so
-            it is no longer considered stale.
         """
-        path = self.path(ctx)
-        previous = self._manifest(ctx)
-        if path.exists():
-            value, current = self._current_value_manifest(ctx)
-            if self._manifest_matches(previous, current):
-                return value
-            elif allow_protected_reindex:
-                assert current is not None
-                ctx.registry.write_manifest(ctx.registry.manifest_path(path, self.name), current)
-                return value
-            elif not allow_protected_overwrite:
-                reason = self._stale_reason(previous, current)
-                raise ProtectedArtifactError(self.name, path, message=f"Existing ICA file {path.name!r} no longer matches the current data and ICA settings.", instructions=f"{reason}\nUse allow_protected_reindex=True to keep this ICA file and rewrite its manifest, or allow_protected_overwrite=True to recompute it.")
+        # Existence first: for the common batch case (no ICA file yet) this costs one
+        # stat, with no ICA read and no dependency-fingerprint walk.
+        if not self.path(ctx).exists() or ctx.has_control(ALLOW_PROTECTED_OVERWRITE):
+            return
+        previous = ctx._manifest()
+        current = self._current_value_manifest(ctx)[1]
+        if self._manifest_matches(previous, current):
+            return
+        reason = self._stale_reason(previous, current)
+        raise ProtectedArtifactError(self.name, self.path(ctx), message=f"Existing ICA file {self.path(ctx).name!r} no longer matches the current data and ICA settings.", reason=reason, instructions=f"{reason}\nRe-resolve the request with ALLOW_PROTECTED_OVERWRITE to recompute this ICA, or load it with REINDEX_ICA to keep the existing file and rewrite its manifest.")
+
+    def make_job(self, ctx: Request) -> ICAJob:
+        """Load the source data and assemble a picklable :class:`ICAJob` (the fit deferred).
+
+        Parameters
+        ----------
+        ctx
+            Resolved request for this ICA.
+        """
+        self._check_protected(ctx)
         raw = self.load_concatenated_source_raw(ctx, self.pipe.task)
-        value = self.pipe._fit_ica(raw, ctx.state['subject'], self.raw_name)
+        kwargs, fit_kwargs = self.pipe._ica_kwargs()
+        return ICAJob(raw, kwargs, fit_kwargs, self.raw_name, key=ctx.key())
+
+    def _check_not_replaced(self, ctx: Request) -> None:
+        """Raise :exc:`ProtectedArtifactError` when the ICA file changed while the fit ran.
+
+        :meth:`_check_protected` authorized replacing one specific file (or no
+        file at all), but the fit that follows can take hours, and another
+        session may write or edit that path in the meantime. Such a file was
+        never offered to the user, so ``ALLOW_PROTECTED_OVERWRITE`` does not
+        cover it and this check applies regardless of the request's controls.
+        """
+        provenance = ctx._job_provenance
+        if provenance is None:
+            return  # not computed through a job: nothing happened in between
+        path = self.path(ctx)
+        current = file_fingerprint(ctx.root, path) if path.exists() else None
+        if current == provenance.artifact:
+            return
+        verb = 'replaced' if provenance.artifact is None else 'changed'
+        raise ProtectedArtifactError(self.name, path, message=f"ICA file {path.name!r} was {verb} while this ICA was being computed.", reason=f"The file at {path.name} is not the one this computation was authorized to overwrite.", instructions=f"Another session or tool wrote this ICA file after the fit started, so the newly computed result was not saved. Inspect the existing file, and run e.make_ica(raw={self.raw_name!r}) again if you want to replace it.")
+
+    def save_result(self, ctx: Request, result: mne.preprocessing.ICA) -> mne.preprocessing.ICA:
+        "Save the ICA file, mirror its provenance manifest, and return the reloaded ICA"
+        self._check_not_replaced(ctx)
+        path = self.path(ctx)
         path.parent.mkdir(parents=True, exist_ok=True)
-        value.save(path, overwrite=True)
-        ctx.registry.write_manifest(ctx.registry.manifest_path(path, self.name), self._build_manifest(ctx, value))
+        result.save(path, overwrite=True)
+        ctx.registry.write_manifest(ctx.manifest_path, self._build_manifest(ctx, result))
         return self.load(ctx)
 
 

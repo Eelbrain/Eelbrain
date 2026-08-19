@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import pickle
+import warnings
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -14,6 +17,8 @@ from eelbrain._experiment.derivative_cache import (
     Dependency,
     Derivative,
     GCCategory,
+    Job,
+    JobSpec,
     OptionSpec,
     Request,
     DerivativeRegistry,
@@ -132,6 +137,41 @@ class SourceInput(Input):
         if view != 'echo':
             return super().load_view(ctx, view)
         return f"source:{self.load(ctx)}"
+
+
+@dataclass(frozen=True)
+class _EchoJob(Job):
+    "Trivial data-carrying job: the input is already loaded, so it needs no registry."
+    text: str
+
+    def __call__(self) -> str:
+        return self.text.upper()
+
+
+class JobDerivative(Derivative[str]):
+    "Derivative whose build is expressed as make_job()(), like TRF and epoch rejection."
+    name = 'job'
+    key_fields = ('subject',)
+    cache_suffix = '.txt'
+
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        return (Dependency('source'),)
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {'subject': ctx.state['subject']}
+
+    def build(self, ctx: Request) -> str:
+        return self.make_job(ctx)()
+
+    def make_job(self, ctx: Request) -> _EchoJob:
+        with ctx._build_deps_context():
+            return _EchoJob(ctx.load('source'), key=ctx.key())
+
+    def load(self, ctx: Request, path: str) -> str:
+        return Path(path).read_text()
+
+    def save(self, ctx: Request, path: str, value: str) -> None:
+        Path(path).write_text(value)
 
 
 class ValueDerivative(Derivative[str]):
@@ -2099,3 +2139,139 @@ def test_pipeline_clean_cache(monkeypatch):
     experiment.clean_cache(delete=True)
     assert not ctx.artifact_path.exists()
     assert registry.scan_cache().entries == []
+
+
+def test_job_spec_round_trip():
+    "A job computed off-host is re-united with its cache entry through JobSpec"
+    root, registry, _source = make_source_registry()
+    registry.register(JobDerivative())
+
+    spec = JobSpec(registry.resolve('job', state=DEFAULT_STATE))
+    assert not spec.is_done
+    assert spec.key == {'subject': 's1'}
+
+    job = pickle.loads(pickle.dumps(spec.make_job()))  # "off-host"
+    assert job.key == spec.key
+    assert spec.save_result(job()) == 'ALPHA'
+    assert spec.is_done
+    assert Path(spec.path).read_text() == 'ALPHA'
+    assert Path(spec.ctx.manifest_path).exists()
+
+    # a fresh spec sees the cached artifact and reads it back
+    assert JobSpec(registry.resolve('job', state=DEFAULT_STATE)).is_done
+    assert registry.resolve('job', state=DEFAULT_STATE).load() == 'ALPHA'
+
+
+def test_job_cache_logging():
+    "The cache reports the build, whether the artifact is built in place or through a spec"
+    root = TempDir()
+    # As Pipeline builds it: a private instance with parent=None, so records only
+    # reach these handlers via the registry the node was resolved through.
+    log = logging.Logger('TestExperiment', logging.DEBUG)
+    records = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    log.addHandler(handler)
+    registry = DerivativeRegistry(root, log)
+    source = SourceInput(root)
+    source.source_path('s1').write_text('alpha')
+    registry.register(source)
+    registry.register(JobDerivative())
+
+    # built in place: Request.load_artifact emits it
+    assert registry.resolve('job', state=DEFAULT_STATE).load() == 'ALPHA'
+    messages = [record.getMessage() for record in records]
+    assert sum(message.startswith('Build job:') for message in messages) == 1
+
+    # computed through a spec: JobSpec.make_job emits it, exactly once
+    Path(registry.resolve('job', state=DEFAULT_STATE).artifact_path).unlink()
+    records.clear()
+    spec = JobSpec(registry.resolve('job', state=DEFAULT_STATE))
+    spec.save_result(spec.make_job()())
+    messages = [record.getMessage() for record in records]
+    assert sum(message.startswith('Build job:') for message in messages) == 1
+
+
+def test_job_result_records_make_time_inputs():
+    "A result that comes back after its inputs changed is stale, not wrongly valid"
+    root, registry, source = make_source_registry()
+    registry.register(JobDerivative())
+
+    spec = JobSpec(registry.resolve('job', state=DEFAULT_STATE))
+    job = spec.make_job()  # reads 'alpha'
+    source.source_path('s1').write_text('changed')  # ... while the job is computed off-host
+    spec.save_result(job())
+
+    # the artifact is kept, and filed under the input it was computed from
+    assert Path(spec.path).read_text() == 'ALPHA'
+    assert JobSpec(registry.resolve('job', state=DEFAULT_STATE)).is_done is False
+    assert registry.resolve('job', state=DEFAULT_STATE).load() == 'CHANGED'
+
+    # a job whose inputs held still is valid, as before
+    spec = JobSpec(registry.resolve('job', state=DEFAULT_STATE))
+    spec.save_result(spec.make_job()())
+    assert JobSpec(registry.resolve('job', state=DEFAULT_STATE)).is_done is True
+
+
+def test_job_provenance_does_not_leak_into_a_build():
+    "A build in place records current inputs, even on a request that made a job earlier"
+    root, registry, source = make_source_registry()
+    registry.register(JobDerivative())
+
+    ctx = registry.resolve('job', state=DEFAULT_STATE)
+    JobSpec(ctx).make_job()  # captures 'alpha'
+    source.source_path('s1').write_text('changed')
+
+    assert ctx.load() == 'CHANGED'  # built here and now, from the current input
+    assert JobSpec(registry.resolve('job', state=DEFAULT_STATE)).is_done is True
+
+
+def test_job_spec_with_controls():
+    "with_controls() adds controls and carries everything else over unchanged"
+    root, registry = make_empty_registry()
+    registry.register(NarrowingDerivative(root))
+
+    spec = JobSpec(registry.resolve('narrowing', state={'subject': 's1', 'mode': 'narrow'}, options={'alpha': 1}))
+    with_control = spec.with_controls('a-control')
+
+    assert with_control.ctx.controls == frozenset({'a-control'})
+    assert spec.ctx.controls == frozenset()  # the original is untouched
+    assert with_control.key == spec.key
+    assert with_control.path == spec.path
+    # the copy does not re-derive which options the caller provided, so the
+    # inert-option warning does not fire again for the defaulted 'beta'
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        spec.with_controls('another')
+
+
+def test_external_input_has_artifact_members():
+    "An Input with CachePolicy.EXTERNAL exposes key/artifact_path/manifest_path"
+    _, registry, source, _, _, _, ephemeral, _, root = make_registry()
+
+    handle = registry.resolve('source', state=DEFAULT_STATE)
+    with pytest.raises(TypeError, match="input 'source'"):
+        _ = handle.artifact_path
+    with pytest.raises(TypeError, match="input 'source'"):
+        handle.key()
+    # ... including is_valid(), which the node itself has to answer
+    with pytest.raises(TypeError, match="input 'source'"):
+        handle.is_valid()
+
+    source.cache_policy = CachePolicy.EXTERNAL
+    try:
+        handle = registry.resolve('source', state=DEFAULT_STATE)
+        assert handle.key() == {'subject': 's1'}
+        assert handle.artifact_path == source.source_path('s1')
+        # The mirrored manifest is addressed relative to the derivatives dir, so an
+        # EXTERNAL artifact has to live there (real ones, e.g. ICA files, do).
+        with pytest.raises(ValueError):
+            _ = handle.manifest_path
+    finally:
+        source.cache_policy = CachePolicy.NEVER
+
+    # an uncached derivative still has neither, but knows it can never be valid
+    handle = registry.resolve('ephemeral', state=DEFAULT_STATE)
+    with pytest.raises(TypeError, match="uncached derivative 'ephemeral'"):
+        handle.key()
+    assert handle.is_valid() is False
