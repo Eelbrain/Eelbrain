@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .base import CachePolicy, Request, file_fingerprint
+from .base import CachePolicy, Derivative, Request, file_fingerprint
 
 
 @dataclass(frozen=True)
@@ -173,7 +173,16 @@ class JobSpec:
         artifact = None
         if ctx.node.cache_policy is CachePolicy.EXTERNAL and self.path.exists():
             artifact = file_fingerprint(ctx.root, self.path)
-        job = ctx.node.make_job(ctx)
+        # For a derivative, the same contexts load_artifact wraps build() in, so its
+        # loads are restricted to declared dependencies and key fields, and its
+        # warnings are recorded, whether the artifact is computed in place or through
+        # a job. An input has no in-place build to mirror, and may load beyond its
+        # declared dependency edges (ICA loads bad channels and per-run source raws).
+        if isinstance(ctx.node, Derivative):
+            with ctx._build_deps_context(), ctx.registry._node_warning_context(ctx), ctx._state_check_context():
+                job = ctx.node.make_job(ctx)
+        else:
+            job = ctx.node.make_job(ctx)
         ctx.node.log_cache_build(ctx, self.path)
         ctx._job_provenance = JobProvenance(ctx.dependency_fingerprints(), ctx.current_fingerprint(), artifact)
         return job

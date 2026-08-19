@@ -174,6 +174,14 @@ class JobDerivative(Derivative[str]):
         Path(path).write_text(value)
 
 
+class ProtectedJobDerivative(JobDerivative):
+    "Job derivative whose artifact lives outside cache-dir (user-visible, like the 'protected' node)"
+    name = 'protected-job'
+
+    def path(self, ctx: Request) -> Path:
+        return ctx.registry.deriv_dir / 'mne' / f"{ctx.state['subject']}_protected-job.txt"
+
+
 class FingerprintJobDerivative(Derivative[str]):
     "Job derivative whose own fingerprint (not its dependencies) tracks mutable state, like ICA bad channels"
     name = 'fingerprint-job'
@@ -2271,6 +2279,24 @@ def test_job_save_result_requires_snapshot():
     assert spec.save_result(result) == 'ALPHA'
     with pytest.raises(RuntimeError, match="make_job"):
         spec.save_result(result)
+
+
+def test_job_result_does_not_clobber_protected_artifact():
+    "save_result() refuses to overwrite a non-cache artifact without authorization, like load() does"
+    root, registry, _source = make_source_registry()
+    registry.register(ProtectedJobDerivative())
+
+    spec = JobSpec(registry.resolve('protected-job', state=DEFAULT_STATE))
+    result = spec.make_job()()
+    # a user-owned file appears at the external path while the job computes
+    Path(spec.path).parent.mkdir(parents=True, exist_ok=True)
+    Path(spec.path).write_text('user data')
+    with pytest.raises(ProtectedArtifactError):
+        spec.save_result(result)
+    assert Path(spec.path).read_text() == 'user data'
+
+    spec = JobSpec(registry.resolve('protected-job', state=DEFAULT_STATE, controls={ALLOW_PROTECTED_OVERWRITE}))
+    assert spec.save_result(spec.make_job()()) == 'ALPHA'
 
 
 def test_job_provenance_does_not_leak_into_a_build():
