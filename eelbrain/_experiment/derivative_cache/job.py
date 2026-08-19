@@ -26,9 +26,9 @@ with, so a spec stays bound to the state it was created in)::
         if not spec.is_done:
             spec.save_result(spec.make_job()())
 
-Collecting the specs is free, but :attr:`JobSpec.is_done` is not: for an
-artifact whose validity depends on its contents (an ICA file, whose manifest is
-rebuilt from the saved object) it reads the artifact.
+Collecting the specs is free, but :attr:`JobSpec.is_done` is not: it re-derives
+the current manifest, which walks the dependency fingerprints (file stats, bad
+channels, ...).
 
 Nodes participate by implementing :meth:`DependencyNode.make_job` (and, for
 nodes that do not write through :meth:`Request.save_artifact`,
@@ -174,8 +174,21 @@ class JobSpec:
         return job
 
     def save_result(self, result) -> object:
-        "Incorporate an externally computed result into the cache (artifact + manifest)"
-        return self.ctx.node.save_result(self.ctx, result)
+        """Incorporate an externally computed result into the cache (artifact + manifest)
+
+        Requires the :class:`JobProvenance` snapshot that :meth:`make_job` left
+        on the request, so the result is filed under the inputs it was computed
+        from; calling this without a preceding :meth:`make_job` on the same spec
+        raises. A successful save consumes the snapshot (so a result cannot be
+        filed twice, and the request answers validity questions from current
+        inputs again).
+        """
+        ctx = self.ctx
+        if ctx._job_provenance is None:
+            raise RuntimeError(f"{ctx.node.name!r}: save_result() without a make_job() snapshot on this request -- the result cannot be filed under the inputs it was computed from")
+        artifact = ctx.node.save_result(ctx, result)
+        ctx._job_provenance = None
+        return artifact
 
     def with_controls(self, *controls: str) -> JobSpec:
         """Copy of the same request with additional controls

@@ -2213,6 +2213,22 @@ def test_job_result_records_make_time_inputs():
     assert JobSpec(registry.resolve('job', state=DEFAULT_STATE)).is_done is True
 
 
+def test_job_save_result_requires_snapshot():
+    "save_result() refuses to file a result without a make_job() snapshot"
+    root, registry, _source = make_source_registry()
+    registry.register(JobDerivative())
+
+    spec = JobSpec(registry.resolve('job', state=DEFAULT_STATE))
+    with pytest.raises(RuntimeError, match="make_job"):
+        spec.save_result('ALPHA')
+
+    # a successful save consumes the snapshot, so a result cannot be filed twice
+    result = spec.make_job()()
+    assert spec.save_result(result) == 'ALPHA'
+    with pytest.raises(RuntimeError, match="make_job"):
+        spec.save_result(result)
+
+
 def test_job_provenance_does_not_leak_into_a_build():
     "A build in place records current inputs, even on a request that made a job earlier"
     root, registry, source = make_source_registry()

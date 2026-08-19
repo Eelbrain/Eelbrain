@@ -585,9 +585,8 @@ class ICAInput(Input[mne.preprocessing.ICA]):
 
     def _reindex_existing(self, ctx: Request) -> mne.preprocessing.ICA:
         "Keep the existing ICA file but rewrite its manifest to the current pipeline state"
-        value = self._load_value(ctx)
-        ctx.registry.write_manifest(ctx.manifest_path, self._build_manifest(ctx, value))
-        return value
+        ctx.registry.write_manifest(ctx.manifest_path, self._build_manifest(ctx, ctx.dependency_fingerprints()))
+        return self._load_value(ctx)
 
     @staticmethod
     def _manifest_matches(
@@ -682,18 +681,18 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             parts = parts[1:] or [parts[0]]
         return format_difference_path(tuple(parts))
 
-    def _current_value_manifest(
-            self,
-            ctx: Request,
-    ) -> tuple[mne.preprocessing.ICA, ArtifactManifest]:
-        value = self._load_value(ctx)
-        return value, self._build_manifest(ctx, value)
-
     def _build_manifest(
             self,
             ctx: Request,
-            value: mne.preprocessing.ICA,
+            dependencies: dict[str, Any],
     ) -> ArtifactManifest:
+        """Manifest for this request with the given dependency fingerprints.
+
+        Validity checks pass the current fingerprints (``ctx.dependency_fingerprints()``)
+        to compare against the stored manifest; :meth:`save_result` passes the
+        :meth:`JobSpec.make_job` snapshot so the result is filed under the
+        inputs it was computed from.
+        """
         resolve_state, resolve_options = ctx._resolve_context()
         return ArtifactManifest(
             schema_version=MANIFEST_SCHEMA_VERSION,
@@ -701,7 +700,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             derivative_version=self.version,
             key=ctx.key(),
             fingerprint=ctx.registry.canonicalize(self.fingerprint(ctx)),
-            dependencies=ctx.job_dependency_fingerprints(),
+            dependencies=dependencies,
             cache_policy=self.cache_policy.value,
             software={'eelbrain_cache_schema': str(MANIFEST_SCHEMA_VERSION), 'mne': mne.__version__},
             resolve_state=resolve_state,
@@ -709,10 +708,9 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         )
 
     def is_valid(self, ctx: Request) -> bool:
-        path = self.path(ctx)
-        if not path.exists():
+        if not self.path(ctx).exists():
             return False
-        return self._manifest_matches(ctx._manifest(), self._current_value_manifest(ctx)[1])
+        return self._manifest_matches(ctx._manifest(), self._build_manifest(ctx, ctx.dependency_fingerprints()))
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         deps = []
@@ -748,7 +746,8 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         path = self.path(ctx)
         if not path.exists():
             raise ICAMissingError(f"ICA file {path.name} does not exist. Run e.make_ica() to create it.")
-        value, current = self._current_value_manifest(ctx)
+        value = self._load_value(ctx)
+        current = self._build_manifest(ctx, ctx.dependency_fingerprints())
         previous = ctx._manifest()
         if not self._manifest_matches(previous, current):
             if ctx.has_control(REINDEX_ICA):
@@ -791,11 +790,11 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             Bound request for the current ICA input.
         """
         # Existence first: for the common batch case (no ICA file yet) this costs one
-        # stat, with no ICA read and no dependency-fingerprint walk.
+        # stat, with no dependency-fingerprint walk.
         if not self.path(ctx).exists() or ctx.has_control(ALLOW_PROTECTED_OVERWRITE):
             return
         previous = ctx._manifest()
-        current = self._current_value_manifest(ctx)[1]
+        current = self._build_manifest(ctx, ctx.dependency_fingerprints())
         if self._manifest_matches(previous, current):
             return
         reason = self._stale_reason(previous, current)
@@ -823,9 +822,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         never offered to the user, so ``ALLOW_PROTECTED_OVERWRITE`` does not
         cover it and this check applies regardless of the request's controls.
         """
-        provenance = ctx._job_provenance
-        if provenance is None:
-            return  # not computed through a job: nothing happened in between
+        provenance = ctx._job_provenance  # save_result already required the snapshot
         path = self.path(ctx)
         current = file_fingerprint(ctx.root, path) if path.exists() else None
         if current == provenance.artifact:
@@ -835,12 +832,15 @@ class ICAInput(Input[mne.preprocessing.ICA]):
 
     def save_result(self, ctx: Request, result: mne.preprocessing.ICA) -> mne.preprocessing.ICA:
         "Save the ICA file, mirror its provenance manifest, and return the reloaded ICA"
+        dependencies = ctx.job_dependency_fingerprints()  # raises without a make_job() snapshot
         self._check_not_replaced(ctx)
         path = self.path(ctx)
         path.parent.mkdir(parents=True, exist_ok=True)
         result.save(path, overwrite=True)
-        ctx.registry.write_manifest(ctx.manifest_path, self._build_manifest(ctx, result))
-        return self.load(ctx)
+        ctx.registry.write_manifest(ctx.manifest_path, self._build_manifest(ctx, dependencies))
+        # Reload without the validity check of load(): when the inputs changed during
+        # the fit, the manifest just written is deliberately stale by current inputs.
+        return self._load_value(ctx)
 
 
 class RawDerivative(Derivative[mne.io.BaseRaw]):

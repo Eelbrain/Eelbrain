@@ -1389,16 +1389,16 @@ class Request(Generic[T]):
         return self.registry.dependency_fingerprints(self, stored)
 
     def job_dependency_fingerprints(self) -> dict[str, Any]:
-        """Dependency fingerprints to record for an artifact that is being written.
+        """Dependency fingerprints captured by :meth:`JobSpec.make_job` on this request.
 
-        The fingerprints captured by :meth:`JobSpec.make_job` when this request
-        computed through a job, so that a result which came back after its
-        inputs changed is filed under the inputs it was computed from; the
-        current ones otherwise, which is the same thing for an artifact built in
-        place.
+        Recorded so that a result which comes back after its inputs changed is
+        filed under the inputs it was computed from (see :class:`JobProvenance`).
+        A result must never be filed under fingerprints it was not computed
+        from, so a missing snapshot raises :class:`RuntimeError` rather than
+        falling back to the current fingerprints, which may have moved on.
         """
         if self._job_provenance is None:
-            return self.dependency_fingerprints()
+            raise RuntimeError(f"{self.node.name!r}: no job snapshot on this request -- the result being saved did not come from make_job() on this request")
         return self._job_provenance.dependencies
 
     def current_fingerprint(self) -> dict[str, Any]:
@@ -1636,6 +1636,13 @@ class Request(Generic[T]):
         :meth:`~eelbrain._experiment.derivative_cache.job.JobSpec.save_result`).
         """
         derivative = self._require_derivative()
+        # A result computed through a job is filed under the inputs it was computed
+        # from (see JobProvenance); an artifact built in place records the current
+        # inputs, which the build just read.
+        if self._job_provenance is not None:
+            dependencies = self._job_provenance.dependencies
+        else:
+            dependencies = self.dependency_fingerprints()
         artifact_metadata = self.registry.canonicalize(derivative.artifact_metadata(self, artifact))
         self.artifact_path.parent.mkdir(parents=True, exist_ok=True)
         derivative.save(self, self.artifact_path, artifact)
@@ -1646,7 +1653,7 @@ class Request(Generic[T]):
             derivative_version=derivative.version,
             key=self.key(),
             fingerprint=self.current_fingerprint(),
-            dependencies=self.job_dependency_fingerprints(),
+            dependencies=dependencies,
             cache_policy=derivative.cache_policy.value,
             software={
                 'eelbrain_cache_schema': str(MANIFEST_SCHEMA_VERSION),
