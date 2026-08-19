@@ -51,6 +51,11 @@ def test_select_components():
     assert dlg.gap_ratio.GetToolTipText() == _FIND_BAD_CHANNELS_HELP['gap_ratio'][1]
     help_doc = str(_find_bad_channels_help())
     assert all(label in help_doc for label, _ in _FIND_BAD_CHANNELS_HELP.values())
+    # min_components is a count: 0 and fractions would crash the report
+    pattern = dlg.min_components.GetValidator().pattern
+    assert pattern.match('2')
+    assert not pattern.match('0')
+    assert not pattern.match('2.5')
     dlg.Destroy()
 
     # layout and scale: one text box per value

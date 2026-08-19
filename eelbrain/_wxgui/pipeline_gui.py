@@ -20,6 +20,7 @@ from .._experiment.pathing import MRI_SDIR
 from .._experiment.preprocessing import RawICA, RawSource, ica_input_name, raw_bad_channels_input_name, raw_input_name
 from .._utils.mne_utils import is_fake_mri
 from .frame import EelbrainFrame
+from .select_components import Document as ICADocument
 from .utils import StaleICADialog, TracebackDialog
 
 
@@ -543,7 +544,7 @@ class PipelineFrame(EelbrainFrame):
         finally:
             wx.EndBusyCursor()
 
-    def _on_ica_bad_channels(self, raw_name: str, state: dict, combo: tuple, doc, names: list, recompute: bool):
+    def _on_ica_bad_channels(self, raw_name: str, state: dict, combo: tuple, doc: ICADocument, names: list, recompute: bool):
         """Add bad channels found in the ICA GUI.
 
         The ICA was estimated with these channels included, so it is deleted; the ICA GUI
@@ -719,7 +720,8 @@ class PipelineFrame(EelbrainFrame):
         if task_type == 'ica':
             status_col = self._ica_status_col()
             n_ok = sum(1 for i in range(n) if self._list.GetItemText(i, status_col) == 'selected')
-            n_missing = sum(1 for i in range(n) if self._list.GetItemText(i, status_col) == 'no ICA')
+            # queued and computing recordings have no ICA file either
+            n_missing = sum(1 for i in range(n) if self._list.GetItemText(i, status_col) in ('no ICA', 'queued', '⟳'))
             unit = 'recordings' if self._ica_iter_fields else 'subjects'
             msg = f"{n_ok} / {n} {unit} · ICA selected"
             if n_missing:

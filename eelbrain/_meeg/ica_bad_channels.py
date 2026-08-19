@@ -50,7 +50,8 @@ class ChannelGap:
     gap
         Median relative weight over the testable components, i.e. the channel's weight in the
         polarity of its neighborhood divided by the average absolute neighbor weight: ~1 for a
-        normal channel, < ~0 for a noise channel.
+        normal channel, ~0 for a channel that records nothing, and < 0 for a channel whose
+        polarity is reversed relative to its neighbors.
     gap_components
         Components in which the channel is a gap, smallest gap first.
     no_gap_components
@@ -97,7 +98,7 @@ class ChannelGapResult:
     consistency: np.ndarray
 
 
-def _neighbor_matrix(sensor: Sensor) -> tuple[np.ndarray, np.ndarray]:
+def neighbor_matrix(sensor: Sensor) -> tuple[np.ndarray, np.ndarray]:
     """Dense neighbor matrix and degree vector for a sensor dimension
 
     Parameters
@@ -126,7 +127,7 @@ def _neighbor_matrix(sensor: Sensor) -> tuple[np.ndarray, np.ndarray]:
     return matrix, matrix.sum(1)
 
 
-def _map_smoothness(
+def map_smoothness(
         w: np.ndarray,
         matrix: np.ndarray,
         degree: np.ndarray,
@@ -138,7 +139,7 @@ def _map_smoothness(
     w
         Component maps ``(n_component, n_sensor)``.
     matrix
-        Neighbor matrix from :func:`_neighbor_matrix`.
+        Neighbor matrix from :func:`neighbor_matrix`.
     degree
         Number of neighbors per sensor (0 replaced by 1 to avoid division by zero).
 
@@ -194,7 +195,8 @@ def find_channel_gaps(
         This is also the sensitivity floor: a channel whose gain is merely attenuated, to more
         than ~0.2-0.3 of normal, is not detected.
     min_components
-        Minimum number of components in which a channel needs to be a gap.
+        Minimum number of components in which a channel needs to be a gap (at least 1: a
+        channel that is a gap in no component is not evidence of anything).
     min_consistency
         Minimum fraction of the testable components in which a channel needs to be a gap.
     ch_type
@@ -216,13 +218,15 @@ def find_channel_gaps(
     hence can not be evaluated; an empty result does not imply that all excluded channels
     were rightly excluded.
     """
+    if min_components < 1:
+        raise ValueError(f"{min_components=}: a channel needs to be a gap in at least one component")
     w = components.get_data(('component', 'sensor')).astype(np.float64)
     sensor = components.get_dim('sensor')
-    matrix, degree = _neighbor_matrix(sensor)
+    matrix, degree = neighbor_matrix(sensor)
     safe_degree = np.where(degree > 0, degree, 1.)
 
     # solid components: realistic field patterns rather than channel noise
-    smoothness_by_component = _map_smoothness(w, matrix, safe_degree)
+    smoothness_by_component = map_smoothness(w, matrix, safe_degree)
     scale = np.sqrt((w ** 2).mean(1))  # arbitrary per-component scale
     solid = (smoothness_by_component >= smoothness) & (scale > 0)
     if source_variance is not None:

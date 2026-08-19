@@ -31,7 +31,7 @@ from .. import load, plot, fmtxt
 from .._colorspaces import UNAMBIGUOUS_COLORS
 from .._data_obj import Dataset, Factor, NDVar, Categorial, Scalar, combine
 from .._io.fiff import _picks, sensor_dim
-from .._meeg.ica_bad_channels import CH_TYPE_DEFAULT, CONSISTENCY_DEFAULT, GAP_RATIO_DEFAULT, MIN_COMPONENTS_DEFAULT, SMOOTHNESS_DEFAULT, _map_smoothness, _neighbor_matrix, find_channel_gaps
+from .._meeg.ica_bad_channels import CH_TYPE_DEFAULT, CONSISTENCY_DEFAULT, GAP_RATIO_DEFAULT, MIN_COMPONENTS_DEFAULT, SMOOTHNESS_DEFAULT, ChannelGapResult, find_channel_gaps, map_smoothness, neighbor_matrix
 from .._ndvar import concatenate, neighbor_correlation
 from .._types import PathArg
 from .._utils.numpy_utils import INT_TYPES
@@ -539,7 +539,7 @@ class SharedToolsMenu:  # Frame mixin
         smoothness = dlg.get_smoothness()
         parameters = dict(
             gap_ratio=float(dlg.gap_ratio.GetValue()),
-            min_components=int(float(dlg.min_components.GetValue())),
+            min_components=int(dlg.min_components.GetValue()),
             min_consistency=float(dlg.min_consistency.GetValue()),
             channel_ratio=float(dlg.channel_ratio.GetValue()),
         )
@@ -549,13 +549,30 @@ class SharedToolsMenu:  # Frame mixin
 
     def ShowBadChannels(
             self,
-            smoothness: dict = None,  # {ch_type: threshold} for channel types to analyze
+            smoothness: dict[str, float] = None,
             gap_ratio: float = GAP_RATIO_DEFAULT,
             min_components: int = MIN_COMPONENTS_DEFAULT,
             min_consistency: float = CONSISTENCY_DEFAULT,
             channel_ratio: float = _CHANNEL_RATIO_DEFAULT,
     ):
-        "Find and display bad channels (separate from the dialog for testing)"
+        """Find and display bad channels (separate from :class:`FindBadChannelsDialog` for testing)
+
+        Parameters
+        ----------
+        smoothness
+            ``{ch_type: threshold}`` for the channel types to analyze; channel types that are
+            missing are skipped. If unspecified, the default types and thresholds are used.
+        gap_ratio
+            Maximum relative weight for a channel to count as a gap (see
+            :func:`find_channel_gaps`).
+        min_components
+            Minimum number of components in which a channel needs to be a gap.
+        min_consistency
+            Minimum fraction of the testable components in which a channel needs to be a gap.
+        channel_ratio
+            For the unrelated screen for components loading on a single channel: minimum ratio
+            between the largest and the second largest channel weight in a component map.
+        """
         if smoothness is None:
             smoothness = {ch_type: SMOOTHNESS_DEFAULT[ch_type] for ch_type, _ in self.doc.components_by_type if CH_TYPE_DEFAULT.get(ch_type)}
         nc_before = neighbor_correlation(concatenate(self.doc.epochs_ndvar))
@@ -649,8 +666,32 @@ class SharedToolsMenu:  # Frame mixin
 
         InfoFrame(self, "Bad Channels", doc, 500)
 
-    def _AddChannelGapSection(self, doc, gap_results, skipped, gap_ratio, min_components, min_consistency):
-        "Report channels whose weight is ~0 in multiple components with a uniform neighborhood"
+    def _AddChannelGapSection(
+            self,
+            doc: fmtxt.Section,
+            gap_results: Sequence[tuple[NDVar, ChannelGapResult]],
+            skipped: Sequence[tuple[str, str]],
+            gap_ratio: float,
+            min_components: int,
+            min_consistency: float,
+    ):
+        """Report channels whose weight is ~0 in multiple components with a uniform neighborhood
+
+        Parameters
+        ----------
+        doc
+            Report to add the section to.
+        gap_results
+            ``(components, result)`` for each channel type that was analyzed.
+        skipped
+            ``(ch_type, reason)`` for each channel type that was not analyzed.
+        gap_ratio
+            Gap ratio that was used, for describing the analysis.
+        min_components
+            Minimum number of components that was used, for describing the analysis.
+        min_consistency
+            Minimum consistency that was used, for describing the analysis.
+        """
         section = doc.add_section("Channels missing from component maps")
         section.add_paragraph(f"A channel that does not record signal appears as a gap in component maps: its weight is ≤ ~0 (less than {gap_ratio:g} times the average of its neighbors) where its neighbors carry a strong field of uniform polarity. Channels listed here show such a gap in at least {min_components} components with a realistic field pattern, and in at least {min_consistency:.0%} of the components in which they could be evaluated.")
         section.add_paragraph("Channels that are already excluded as bad are not part of the decomposition and can not be evaluated here.")
@@ -711,7 +752,7 @@ class SharedToolsMenu:  # Frame mixin
             if self.doc.bad_channels_callback is not None:
                 section.add_paragraph(fmtxt.Link(f"Add {len(names)} channel{'s' if len(names) > 1 else ''} to bad channels…", f"{_BAD_CHANNELS_URL}{','.join(names)}"))
 
-    def AddBadChannels(self, names: Sequence):
+    def AddBadChannels(self, names: Sequence[str]):
         """Add channels to the bad channels of the host application
 
         Only available when the GUI was opened by an application that can write bad channels
@@ -1991,7 +2032,7 @@ class FindNoisyEpochsDialog(EelbrainDialog):
 
 class FindBadChannelsDialog(EelbrainDialog):
 
-    def __init__(self, parent, components_by_type: Sequence, **kwargs):
+    def __init__(self, parent, components_by_type: Sequence[tuple[str, NDVar]], **kwargs):
         super().__init__(parent, wx.ID_ANY, "Find Bad Channels", **kwargs)
         config = parent.config
 
@@ -2024,7 +2065,7 @@ class FindBadChannelsDialog(EelbrainDialog):
         # Parameters
         grid = wx.FlexGridSizer(rows=3, cols=2, vgap=3, hgap=5)
         self.gap_ratio = self._AddParameter(grid, 'gap_ratio', config.ReadFloat("FindBadChannels/gap_ratio", GAP_RATIO_DEFAULT))
-        self.min_components = self._AddParameter(grid, 'min_components', config.ReadInt("FindBadChannels/min_components", MIN_COMPONENTS_DEFAULT))
+        self.min_components = self._AddParameter(grid, 'min_components', config.ReadInt("FindBadChannels/min_components", MIN_COMPONENTS_DEFAULT), integer=True)
         self.min_consistency = self._AddParameter(grid, 'min_consistency', config.ReadFloat("FindBadChannels/min_consistency", CONSISTENCY_DEFAULT))
         sizer.Add(grid, flag=wx.ALL, border=5)
 
@@ -2061,10 +2102,13 @@ class FindBadChannelsDialog(EelbrainDialog):
         dlg.ShowModal()
         dlg.Destroy()
 
-    def _AddParameter(self, grid, setting: str, value: float):
+    def _AddParameter(self, grid: wx.FlexGridSizer, setting: str, value: float, integer: bool = False) -> wx.TextCtrl:
         label, help_text = _FIND_BAD_CHANNELS_HELP[setting]
         grid.Add(wx.StaticText(self, label=f'{label}: '), flag=wx.ALIGN_CENTER_VERTICAL)
-        validator = REValidator(POS_FLOAT_PATTERN, "Invalid entry: {value}. Please specify a number > 0.", False)
+        if integer:
+            validator = REValidator(POS_INT_PATTERN, "Invalid entry: {value}. Please specify an integer > 0.", False)
+        else:
+            validator = REValidator(POS_FLOAT_PATTERN, "Invalid entry: {value}. Please specify a number > 0.", False)
         ctrl = wx.TextCtrl(self, value=f'{value:g}', validator=validator, style=wx.TE_RIGHT)
         ctrl.SetToolTip(help_text)
         grid.Add(ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
@@ -2079,7 +2123,7 @@ class FindBadChannelsDialog(EelbrainDialog):
         dlg.ShowModal()
         dlg.Destroy()
 
-    def get_smoothness(self):
+    def get_smoothness(self) -> dict[str, float]:
         """Return ``{ch_type: smoothness}`` for all enabled channel types."""
         return {ch_type: float(smoothness_ctrl.GetValue()) for ch_type, enabled_ctrl, smoothness_ctrl in self.type_rows if enabled_ctrl.GetValue()}
 
@@ -2104,7 +2148,7 @@ class FindBadChannelsDialog(EelbrainDialog):
         config.Flush()
 
 
-def _component_links(components: Sequence) -> fmtxt.FMText:
+def _component_links(components: Sequence[int]) -> fmtxt.FMText:
     "Comma-separated links to components in the report"
     return fmtxt.delim_list(fmtxt.Link(f"#{component}", f'component:{component}') for component in components)
 
@@ -2158,7 +2202,7 @@ def _topomap_bitmap(component: NDVar, size: int = _COMPONENT_MAP_SIZE, dpi: floa
 class AddBadChannelsDialog(EelbrainDialog):
     "Confirm adding channels to the bad channels, which invalidates the ICA"
 
-    def __init__(self, parent, names: Sequence, **kwargs):
+    def __init__(self, parent, names: Sequence[str], **kwargs):
         super().__init__(parent, wx.ID_ANY, "Add Bad Channels", **kwargs)
         sizer = wx.BoxSizer(wx.VERTICAL)
         label = wx.StaticText(self, label=f"Add to the bad channels: {', '.join(names)}?\n\nThe ICA was computed with these channels included, so it will be deleted, along with the current component selection. This window will close.")
@@ -2190,8 +2234,8 @@ class ComponentMapDialog(EelbrainDialog):
     """
 
     def __init__(self, parent, ch_type: str, components: NDVar, **kwargs):
-        matrix, degree = _neighbor_matrix(components.get_dim('sensor'))
-        smoothness = _map_smoothness(components.get_data(('component', 'sensor')), matrix, np.where(degree > 0, degree, 1.))
+        matrix, degree = neighbor_matrix(components.get_dim('sensor'))
+        smoothness = map_smoothness(components.get_data(('component', 'sensor')), matrix, np.where(degree > 0, degree, 1.))
         style = wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER
         super().__init__(parent, wx.ID_ANY, f"{ch_type} Components", style=style, **kwargs)
 

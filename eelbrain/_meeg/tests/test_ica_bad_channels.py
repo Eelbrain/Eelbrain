@@ -5,7 +5,7 @@ import pytest
 
 from eelbrain import NDVar, Scalar, Sensor
 from eelbrain._meeg import find_channel_gaps
-from eelbrain._meeg.ica_bad_channels import SMOOTHNESS_DEFAULT, _map_smoothness, _neighbor_matrix
+from eelbrain._meeg.ica_bad_channels import SMOOTHNESS_DEFAULT, map_smoothness, neighbor_matrix
 
 
 SMOOTHNESS = SMOOTHNESS_DEFAULT['eeg']
@@ -52,7 +52,7 @@ def _components(sensor: Sensor, maps: np.ndarray, seed: int = 0) -> NDVar:
 def test_neighbor_matrix():
     "Neighbor matrix is symmetric and consistent with the adjacency graph"
     sensor = _sensor()
-    matrix, degree = _neighbor_matrix(sensor)
+    matrix, degree = neighbor_matrix(sensor)
     edges = sensor.adjacency()
     assert np.array_equal(matrix, matrix.T)
     assert matrix.diagonal().sum() == 0
@@ -63,13 +63,13 @@ def test_neighbor_matrix():
 def test_map_smoothness():
     "Smoothness separates field patterns from single-channel noise"
     sensor = _sensor()
-    matrix, degree = _neighbor_matrix(sensor)
-    r = _map_smoothness(_dipole_maps(sensor, 15), matrix, degree)
+    matrix, degree = neighbor_matrix(sensor)
+    r = map_smoothness(_dipole_maps(sensor, 15), matrix, degree)
     assert r.min() > SMOOTHNESS
-    r = _map_smoothness(_spike_map(sensor, 'Pz')[None], matrix, degree)
+    r = map_smoothness(_spike_map(sensor, 'Pz')[None], matrix, degree)
     assert abs(r[0]) < 0.2
     # constant map -> 0 rather than nan
-    r = _map_smoothness(np.ones((1, len(sensor))), matrix, degree)
+    r = map_smoothness(np.ones((1, len(sensor))), matrix, degree)
     assert r[0] == 0
 
 
@@ -167,3 +167,19 @@ def test_find_channel_gaps_no_adjacency():
     components = _components(sensor, _dipole_maps(sensor, 5))
     with pytest.raises(RuntimeError):
         find_channel_gaps(components)
+
+
+def test_find_channel_gaps_min_components():
+    "Every flagged channel is a gap in at least one component"
+    sensor = _sensor()
+    maps = _dipole_maps(sensor, 15)
+    maps[:, sensor.names.index('Pz')] = 0
+    components = _components(sensor, maps)
+    with pytest.raises(ValueError):
+        find_channel_gaps(components, smoothness=SMOOTHNESS, min_components=0, min_consistency=0)
+    # min_components=1 is the weakest setting that is still meaningful
+    result = find_channel_gaps(components, smoothness=SMOOTHNESS, min_components=1, min_consistency=0, ch_type='eeg')
+    assert 'Pz' in [channel.name for channel in result.channels]
+    for channel in result.channels:
+        assert channel.gap_components  # the report plots gap_components[0]
+        assert not np.isnan(channel.gap)
