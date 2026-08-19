@@ -69,10 +69,12 @@ class JobProvenance:
         node's own ``fingerprint`` is definitions and state, which the request
         holds fixed anyway.
     artifact
-        Fingerprint of the target artifact as of the load, or ``None`` when
-        there was no file. Only recorded for :attr:`CachePolicy.EXTERNAL`, whose
-        artifact the cache does not own and must not clobber; a cache-owned
-        artifact is always safe to overwrite.
+        Fingerprint of the target artifact as of the start of
+        :meth:`JobSpec.make_job` -- before the inputs are loaded, i.e. as close
+        as possible to the moment the node authorizes replacing that specific
+        file -- or ``None`` when there was no file. Only recorded for
+        :attr:`CachePolicy.EXTERNAL`, whose artifact the cache does not own and
+        must not clobber; a cache-owned artifact is always safe to overwrite.
     """
     dependencies: dict[str, Any]
     artifact: dict[str, Any] | None = None
@@ -156,11 +158,15 @@ class JobSpec:
         fingerprints instead of walking the dependencies a second time.
         """
         ctx = self.ctx
-        ctx.node.log_cache_build(ctx, self.path)
-        job = ctx.node.make_job(ctx)
+        # Fingerprint the EXTERNAL artifact before loading the inputs: the node's own
+        # protection check runs at the start of its make_job, and a file another
+        # session writes during the (potentially long) load was never covered by that
+        # check, so it must not become the baseline that save_result may overwrite.
         artifact = None
         if ctx.node.cache_policy is CachePolicy.EXTERNAL and self.path.exists():
             artifact = file_fingerprint(ctx.root, self.path)
+        ctx.node.log_cache_build(ctx, self.path)
+        job = ctx.node.make_job(ctx)
         ctx._job_provenance = JobProvenance(ctx.dependency_fingerprints(), artifact)
         return job
 
