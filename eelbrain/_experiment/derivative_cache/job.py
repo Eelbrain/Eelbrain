@@ -65,9 +65,13 @@ class JobProvenance:
     ----------
     dependencies
         Dependency fingerprints as of the load. Everything a job is computed
-        from is loaded through ``ctx.load(...)``, so this covers all of it; the
-        node's own ``fingerprint`` is definitions and state, which the request
-        holds fixed anyway.
+        from is loaded through ``ctx.load(...)``, so this covers all of it.
+    fingerprint
+        The node's own fingerprint as of the load. Mostly definitions and
+        state, which the request holds fixed -- but a node may fingerprint
+        mutable state outside its dependencies (e.g. ICA bad channels), and the
+        manifest must record what the job was computed from, not what that
+        state became by the time the result was saved.
     artifact
         Fingerprint of the target artifact as of the start of
         :meth:`JobSpec.make_job` -- before the inputs are loaded, i.e. as close
@@ -77,6 +81,7 @@ class JobProvenance:
         must not clobber; a cache-owned artifact is always safe to overwrite.
     """
     dependencies: dict[str, Any]
+    fingerprint: dict[str, Any]
     artifact: dict[str, Any] | None = None
 
 
@@ -170,7 +175,7 @@ class JobSpec:
             artifact = file_fingerprint(ctx.root, self.path)
         job = ctx.node.make_job(ctx)
         ctx.node.log_cache_build(ctx, self.path)
-        ctx._job_provenance = JobProvenance(ctx.dependency_fingerprints(), artifact)
+        ctx._job_provenance = JobProvenance(ctx.dependency_fingerprints(), ctx.current_fingerprint(), artifact)
         return job
 
     def save_result(self, result) -> object:

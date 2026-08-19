@@ -31,7 +31,7 @@ from scipy.spatial.transform import Rotation
 from ..._exceptions import DataError
 from ..derivative_cache import (
     ALLOW_PROTECTED_OVERWRITE, ArtifactManifest, CachePolicy, Dependency, Derivative, UncachedDerivative,
-    Request, Input, MANIFEST_SCHEMA_VERSION, ProtectedArtifactError,
+    JobProvenance, Request, Input, MANIFEST_SCHEMA_VERSION, ProtectedArtifactError,
     compare_manifests, file_fingerprint,
 )
 from ..logging import find_difference, format_difference_path
@@ -685,13 +685,16 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             self,
             ctx: Request,
             dependencies: dict[str, Any],
+            fingerprint: dict[str, Any] | None = None,
     ) -> ArtifactManifest:
-        """Manifest for this request with the given dependency fingerprints.
+        """Manifest for this request with the given fingerprints.
 
-        Validity checks pass the current fingerprints (``ctx.dependency_fingerprints()``)
-        to compare against the stored manifest; :meth:`save_result` passes the
-        :meth:`JobSpec.make_job` snapshot so the result is filed under the
-        inputs it was computed from.
+        Validity checks pass the current dependency fingerprints
+        (``ctx.dependency_fingerprints()``) to compare against the stored
+        manifest; :meth:`save_result` passes the :meth:`JobSpec.make_job`
+        snapshot so the result is filed under the inputs it was computed from.
+        The node ``fingerprint`` defaults to the current one, with the same
+        snapshot override for :meth:`save_result`.
         """
         resolve_state, resolve_options = ctx._resolve_context()
         return ArtifactManifest(
@@ -699,7 +702,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             derivative=self.name,
             derivative_version=self.version,
             key=ctx.key(),
-            fingerprint=ctx.registry.canonicalize(self.fingerprint(ctx)),
+            fingerprint=ctx.registry.canonicalize(self.fingerprint(ctx)) if fingerprint is None else fingerprint,
             dependencies=dependencies,
             cache_policy=self.cache_policy.value,
             software={'eelbrain_cache_schema': str(MANIFEST_SCHEMA_VERSION), 'mne': mne.__version__},
@@ -813,7 +816,11 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         kwargs, fit_kwargs = self.pipe._ica_kwargs()
         return ICAJob(raw, kwargs, fit_kwargs, self.raw_name, key=ctx.key())
 
-    def _check_not_replaced(self, ctx: Request) -> None:
+    def _check_not_replaced(
+            self,
+            ctx: Request,
+            provenance: JobProvenance,
+    ) -> None:
         """Raise :exc:`ProtectedArtifactError` when the ICA file changed while the fit ran.
 
         :meth:`_check_protected` authorized replacing one specific file (or no
@@ -822,7 +829,6 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         never offered to the user, so ``ALLOW_PROTECTED_OVERWRITE`` does not
         cover it and this check applies regardless of the request's controls.
         """
-        provenance = ctx._job_provenance  # save_result already required the snapshot
         path = self.path(ctx)
         current = file_fingerprint(ctx.root, path) if path.exists() else None
         if current == provenance.artifact:
@@ -832,12 +838,15 @@ class ICAInput(Input[mne.preprocessing.ICA]):
 
     def save_result(self, ctx: Request, result: mne.preprocessing.ICA) -> mne.preprocessing.ICA:
         "Save the ICA file, mirror its provenance manifest, and return the reloaded ICA"
-        dependencies = ctx.job_dependency_fingerprints()  # raises without a make_job() snapshot
-        self._check_not_replaced(ctx)
+        provenance = ctx.job_provenance()  # raises without a make_job() snapshot
+        self._check_not_replaced(ctx, provenance)
         path = self.path(ctx)
         path.parent.mkdir(parents=True, exist_ok=True)
         result.save(path, overwrite=True)
-        ctx.registry.write_manifest(ctx.manifest_path, self._build_manifest(ctx, dependencies))
+        # The fit ran on the snapshot inputs, so the manifest records the snapshot
+        # fingerprint; 'exists' describes the artifact itself, just written.
+        fingerprint = {**provenance.fingerprint, 'exists': True}
+        ctx.registry.write_manifest(ctx.manifest_path, self._build_manifest(ctx, provenance.dependencies, fingerprint))
         # Reload without the validity check of load(): when the inputs changed during
         # the fit, the manifest just written is deliberately stale by current inputs.
         return self._load_value(ctx)

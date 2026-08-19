@@ -1388,18 +1388,18 @@ class Request(Generic[T]):
         """
         return self.registry.dependency_fingerprints(self, stored)
 
-    def job_dependency_fingerprints(self) -> dict[str, Any]:
-        """Dependency fingerprints captured by :meth:`JobSpec.make_job` on this request.
+    def job_provenance(self) -> JobProvenance:
+        """The :class:`JobProvenance` snapshot left by :meth:`JobSpec.make_job` on this request.
 
         Recorded so that a result which comes back after its inputs changed is
-        filed under the inputs it was computed from (see :class:`JobProvenance`).
-        A result must never be filed under fingerprints it was not computed
-        from, so a missing snapshot raises :class:`RuntimeError` rather than
-        falling back to the current fingerprints, which may have moved on.
+        filed under the inputs it was computed from. A result must never be
+        filed under fingerprints it was not computed from, so a missing
+        snapshot raises :class:`RuntimeError` rather than falling back to the
+        current fingerprints, which may have moved on.
         """
         if self._job_provenance is None:
             raise RuntimeError(f"{self.node.name!r}: no job snapshot on this request -- the result being saved did not come from make_job() on this request")
-        return self._job_provenance.dependencies
+        return self._job_provenance
 
     def current_fingerprint(self) -> dict[str, Any]:
         """Return the canonical current fingerprint for this node request."""
@@ -1641,8 +1641,10 @@ class Request(Generic[T]):
         # inputs, which the build just read.
         if self._job_provenance is not None:
             dependencies = self._job_provenance.dependencies
+            fingerprint = self._job_provenance.fingerprint
         else:
             dependencies = self.dependency_fingerprints()
+            fingerprint = self.current_fingerprint()
         artifact_metadata = self.registry.canonicalize(derivative.artifact_metadata(self, artifact))
         self.artifact_path.parent.mkdir(parents=True, exist_ok=True)
         derivative.save(self, self.artifact_path, artifact)
@@ -1652,7 +1654,7 @@ class Request(Generic[T]):
             derivative=derivative.name,
             derivative_version=derivative.version,
             key=self.key(),
-            fingerprint=self.current_fingerprint(),
+            fingerprint=fingerprint,
             dependencies=dependencies,
             cache_policy=derivative.cache_policy.value,
             software={

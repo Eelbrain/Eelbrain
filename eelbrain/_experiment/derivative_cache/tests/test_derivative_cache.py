@@ -174,6 +174,34 @@ class JobDerivative(Derivative[str]):
         Path(path).write_text(value)
 
 
+class FingerprintJobDerivative(Derivative[str]):
+    "Job derivative whose own fingerprint (not its dependencies) tracks mutable state, like ICA bad channels"
+    name = 'fingerprint-job'
+    key_fields = ('subject',)
+    cache_suffix = '.txt'
+
+    def __init__(self, source: SourceInput):
+        self._source = source
+
+    def _source_text(self, ctx: Request) -> str:
+        return self._source.source_path(ctx.state['subject']).read_text()
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {'text': self._source_text(ctx)}
+
+    def build(self, ctx: Request) -> str:
+        return self.make_job(ctx)()
+
+    def make_job(self, ctx: Request) -> _EchoJob:
+        return _EchoJob(self._source_text(ctx), key=ctx.key())
+
+    def load(self, ctx: Request, path: str) -> str:
+        return Path(path).read_text()
+
+    def save(self, ctx: Request, path: str, value: str) -> None:
+        Path(path).write_text(value)
+
+
 class ValueDerivative(Derivative[str]):
     name = 'value'
     key_fields = ('subject',)
@@ -2211,6 +2239,22 @@ def test_job_result_records_make_time_inputs():
     spec = JobSpec(registry.resolve('job', state=DEFAULT_STATE))
     spec.save_result(spec.make_job()())
     assert JobSpec(registry.resolve('job', state=DEFAULT_STATE)).is_done is True
+
+
+def test_job_result_records_make_time_fingerprint():
+    "The node's own fingerprint over mutable state is recorded as of make_job(), not save time"
+    root, registry, source = make_source_registry()
+    registry.register(FingerprintJobDerivative(source))
+
+    spec = JobSpec(registry.resolve('fingerprint-job', state=DEFAULT_STATE))
+    job = spec.make_job()  # fingerprints 'alpha'
+    source.source_path('s1').write_text('changed')  # ... while the job is computed off-host
+    spec.save_result(job())
+
+    # filed under the fingerprint it was computed from, so it is stale, not wrongly valid
+    assert Path(spec.path).read_text() == 'ALPHA'
+    assert JobSpec(registry.resolve('fingerprint-job', state=DEFAULT_STATE)).is_done is False
+    assert registry.resolve('fingerprint-job', state=DEFAULT_STATE).load() == 'CHANGED'
 
 
 def test_job_save_result_requires_snapshot():
