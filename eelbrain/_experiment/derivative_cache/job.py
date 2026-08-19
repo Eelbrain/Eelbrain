@@ -217,26 +217,14 @@ class JobSpec:
         return artifact
 
     def with_controls(self, *controls: str) -> JobSpec:
-        """Copy of the same request with additional controls
+        """Spec for a copy of the same request with additional controls
 
         Used to authorize an operation that the plain request refuses, such as
-        recomputing a protected artifact, without going through mutable
-        pipeline state. The request is copied rather than re-resolved, so
-        already normalized options (and which of them the caller actually
-        provided) carry over unchanged.
+        recomputing a protected artifact (see :meth:`Request.with_controls`).
 
         Parameters
         ----------
         controls
             Request controls to add to those the current request carries.
         """
-        ctx = self.ctx
-        return JobSpec(Request(
-            node=ctx.node,
-            registry=ctx.registry,
-            state=ctx._state,
-            options=dict(ctx.options),
-            view_options=dict(ctx.view_options),
-            controls=ctx.controls.union(controls),
-            provided_key_options=ctx._provided_key_options,
-        ))
+        return JobSpec(self.ctx.with_controls(*controls))

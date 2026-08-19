@@ -1324,6 +1324,31 @@ class Request(Generic[T]):
         """Return whether this request includes one explicit execution control."""
         return control in self.controls
 
+    def with_controls(self, *controls: str) -> Request[T]:
+        """Copy of this request with additional execution controls.
+
+        Used to authorize an operation that the plain request refuses, such as
+        recomputing a protected artifact, without going through mutable
+        pipeline state. The request is copied rather than re-resolved, so
+        which options the caller actually provided carries over unchanged;
+        option values are re-validated by the constructor, which is idempotent
+        for already-canonical values.
+
+        Parameters
+        ----------
+        controls
+            Request controls to add to those this request carries.
+        """
+        return Request(
+            node=self.node,
+            registry=self.registry,
+            state=self._state,
+            options=dict(self.options),
+            view_options=dict(self.view_options),
+            controls=self.controls.union(controls),
+            provided_key_options=self._provided_key_options,
+        )
+
     @contextmanager
     def _state_check_context(self):
         """Restrict ``ctx.state`` to declared key_fields during calls that shape a node's value.
