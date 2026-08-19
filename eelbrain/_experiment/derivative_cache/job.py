@@ -146,10 +146,13 @@ class JobSpec:
     def make_job(self) -> Job:
         """Load the data on the host and build a picklable :class:`Job`
 
-        Loading the inputs is the host committing to computing this artifact, so
-        this is where the cache-build message is emitted for a spec-driven
+        A job in hand is the host committing to computing this artifact, so this
+        is where the cache-build message is emitted for a spec-driven
         computation -- the counterpart to :meth:`Request.load_artifact` emitting
-        it for an artifact built in place.
+        it for an artifact built in place. It is emitted only once
+        :meth:`DependencyNode.make_job` has succeeded, so a refused job (e.g. a
+        protected artifact) does not announce a build that never happens, and a
+        retry with added controls does not announce it twice.
 
         The inputs as of this moment are recorded on the request as a
         :class:`JobProvenance`, so that :meth:`save_result` files the result
@@ -165,8 +168,8 @@ class JobSpec:
         artifact = None
         if ctx.node.cache_policy is CachePolicy.EXTERNAL and self.path.exists():
             artifact = file_fingerprint(ctx.root, self.path)
-        ctx.node.log_cache_build(ctx, self.path)
         job = ctx.node.make_job(ctx)
+        ctx.node.log_cache_build(ctx, self.path)
         ctx._job_provenance = JobProvenance(ctx.dependency_fingerprints(), artifact)
         return job
 
