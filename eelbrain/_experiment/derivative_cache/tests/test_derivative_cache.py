@@ -165,7 +165,7 @@ class JobDerivative(Derivative[str]):
 
     def make_job(self, ctx: Request) -> _EchoJob:
         with ctx._build_deps_context():
-            return _EchoJob(ctx.load('source'), key=ctx.key())
+            return _EchoJob(ctx.load('source'))
 
     def load(self, ctx: Request, path: str) -> str:
         return Path(path).read_text()
@@ -201,7 +201,7 @@ class FingerprintJobDerivative(Derivative[str]):
         return self.make_job(ctx)()
 
     def make_job(self, ctx: Request) -> _EchoJob:
-        return _EchoJob(self._source_text(ctx), key=ctx.key())
+        return _EchoJob(self._source_text(ctx))
 
     def load(self, ctx: Request, path: str) -> str:
         return Path(path).read_text()
@@ -2188,6 +2188,7 @@ def test_job_spec_round_trip():
 
     job = pickle.loads(pickle.dumps(spec.make_job()))  # "off-host"
     assert job.key == spec.key
+    assert job.node == 'job'
     assert spec.save_result(job()) == 'ALPHA'
     assert spec.is_done
     assert Path(spec.path).read_text() == 'ALPHA'

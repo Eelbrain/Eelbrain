@@ -814,7 +814,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         self._check_protected(ctx)
         raw = self.load_concatenated_source_raw(ctx, self.pipe.task)
         kwargs, fit_kwargs = self.pipe._ica_kwargs()
-        return ICAJob(raw, kwargs, fit_kwargs, self.raw_name, key=ctx.key())
+        return ICAJob(raw, kwargs, fit_kwargs)
 
     def _check_not_replaced(
             self,

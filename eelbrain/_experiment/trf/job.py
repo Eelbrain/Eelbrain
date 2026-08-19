@@ -46,9 +46,6 @@ class TRFJob(Job):
         Forward solution (NCRF only).
     cov
         Noise covariance (NCRF only).
-    key
-        Cache key identifying the corresponding artifact, for matching the
-        result back to a :class:`JobSpec`.
     """
     estimator: Estimator
     y: NDVar | Datalist

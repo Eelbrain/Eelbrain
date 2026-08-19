@@ -38,7 +38,7 @@ path.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -98,12 +98,23 @@ class Job:
     Parameters
     ----------
     key
-        Cache key of the artifact this job computes; correlates a result with
-        the :class:`JobSpec` that generated the job. Keyword-only, so
-        subclasses can declare positional fields of their own and still inherit
-        it.
+        Cache key of the artifact this job computes. A key is only unique
+        within one node's cache namespace (two ICA steps over the same
+        recording share one key), so correlating a result with the
+        :class:`JobSpec` that generated the job takes ``(node, key)``.
+    node
+        Name of the registered node the job computes an artifact for.
+
+    Notes
+    -----
+    Both fields are stamped by :meth:`JobSpec.make_job`, not by the node's
+    ``make_job`` implementation (and stay ``None`` on a job made for an
+    in-place build, which never leaves its request). Keyword-only, so
+    subclasses can declare positional fields of their own and still inherit
+    them.
     """
     key: dict[str, Any] | None = field(default=None, kw_only=True)
+    node: str | None = field(default=None, kw_only=True)
 
     def __call__(self):
         """Compute and return the artifact.
@@ -183,6 +194,7 @@ class JobSpec:
                 job = ctx.node.make_job(ctx)
         else:
             job = ctx.node.make_job(ctx)
+        job = replace(job, key=self.key, node=ctx.node.name)
         ctx.node.log_cache_build(ctx, self.path)
         ctx._job_provenance = JobProvenance(ctx.dependency_fingerprints(), ctx.current_fingerprint(), artifact)
         return job

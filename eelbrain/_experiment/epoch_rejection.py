@@ -185,9 +185,6 @@ class ChannelModelRejectionJob(Job):
     fit_eeg
         EEG data to fit the channel model on; the same data as
         ``score_ds['eeg']`` unless the settings name a separate ``raw``.
-    key
-        Cache key identifying the corresponding artifact, for matching the
-        result back to a :class:`JobSpec`.
     """
     rej: ChannelModelRejection
     score_ds: Dataset
@@ -283,7 +280,7 @@ class ChannelModelRejectionDerivative(Derivative[Dataset]):
                 fit_eeg = ctx.load('fit-epochs')['eeg']
             else:
                 fit_eeg = score_ds['eeg']
-        return ChannelModelRejectionJob(self.epoch_rejection[ctx.state['epoch_rejection']], score_ds, fit_eeg, key=ctx.key())
+        return ChannelModelRejectionJob(self.epoch_rejection[ctx.state['epoch_rejection']], score_ds, fit_eeg)
 
     def load(self, ctx: Request, path: Path) -> Dataset:
         return load.unpickle(path)

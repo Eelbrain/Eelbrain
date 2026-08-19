@@ -37,18 +37,16 @@ class ICAJob(Job):
         Resolved arguments for :class:`mne.preprocessing.ICA`.
     fit_kwargs
         Resolved arguments for :meth:`mne.preprocessing.ICA.fit`.
-    raw_name
-        Name of the :class:`RawICA` step this decomposition belongs to. Part of
-        the job because ``key`` does not distinguish two ICA steps over the same
-        recording (the ICA file path does).
-    key
-        Cache key identifying the corresponding artifact, for matching the
-        result back to a :class:`JobSpec`.
+
+    Notes
+    -----
+    ``key`` alone does not distinguish two ICA steps over the same recording;
+    the inherited ``node`` field does (each :class:`RawICA` step registers its
+    own :class:`ICAInput`).
     """
     raw: mne.io.BaseRaw
     kwargs: dict[str, Any]
     fit_kwargs: dict[str, Any]
-    raw_name: str
 
     def __call__(self) -> mne.preprocessing.ICA:
         "Fit the ICA and return the :class:`mne.preprocessing.ICA` object."

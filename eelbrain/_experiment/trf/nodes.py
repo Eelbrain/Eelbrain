@@ -342,7 +342,7 @@ class TRFDerivative(Derivative[object]):
                 fwd = load.mne.forward_operator(fwd, ctx.state['src'], self.root / MRI_SDIR, None)
             if 'cov' in est.extra_inputs:
                 cov = ctx.load('cov')
-        return TRFJob(est, y, xs, tstart, tstop, fwd, cov, key=ctx.key())
+        return TRFJob(est, y, xs, tstart, tstop, fwd, cov)
 
     def _load_predictor(self, ctx: Request, ds, term: Term, y) -> NDVar | Datalist:
         "Assemble one model term's predictor, shaped to the response time axis"
