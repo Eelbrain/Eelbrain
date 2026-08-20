@@ -1045,7 +1045,7 @@ class PipelineFrame(EelbrainFrame):
             Path(error.path).unlink()
             spec = spec.with_controls(ALLOW_PROTECTED_OVERWRITE)
             job = spec.make_job()
-        return spec.save_result(job())
+        return spec.save_result(job, job())
 
     def _displayed_row(self, kind: str, combo: tuple) -> int:
         """Row index for a job, or -1 when its task is not the one on display.

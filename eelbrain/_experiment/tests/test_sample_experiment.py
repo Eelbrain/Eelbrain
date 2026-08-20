@@ -712,7 +712,8 @@ def test_make_ica_job(samples_experiment):
         job = pickle.loads(pickle.dumps(spec.make_job()))
         assert job.raw.preload
         assert job.key == spec.key
-        ica = spec.save_result(job())
+        assert job.provenance is not None  # travels with the data through the round trip
+        ica = spec.save_result(job, job())
     assert isinstance(ica, mne.preprocessing.ICA)
     assert spec.is_done
     assert Path(spec.path).exists()
@@ -742,7 +743,7 @@ def test_make_ica_job(samples_experiment):
         race_job = race_spec.make_job()
     ica.save(race_spec.path, overwrite=True)  # another session writes it meanwhile
     with pytest.raises(ProtectedArtifactError, match="while this ICA was being computed"):
-        race_spec.save_result(race_job())
+        race_spec.save_result(race_job, race_job())
 
     # ... and recomputes once the overwrite is authorized, with the cache reporting the
     # build to the experiment's own logger (which does not propagate to the root logger)
@@ -753,7 +754,8 @@ def test_make_ica_job(samples_experiment):
     with catch_warnings():
         filterwarnings('ignore', "FastICA did not converge", UserWarning)
         overwrite_spec = stale_spec.with_controls(ALLOW_PROTECTED_OVERWRITE)
-        overwrite_spec.save_result(overwrite_spec.make_job()())
+        overwrite_job = overwrite_spec.make_job()
+        overwrite_spec.save_result(overwrite_job, overwrite_job())
     assert stale_spec.is_done
     # at INFO, so it reaches the terminal during the minutes-long fit
     assert [(record.levelno, record.getMessage()) for record in records if record.getMessage().startswith('Build ica-input@ica:')] == [(logging.INFO, f"Build ica-input@ica: {relpath(stale_spec.path, root)}")]
@@ -1850,8 +1852,8 @@ def test_load_trf(samples_experiment):
     path.unlink()
     spec.ctx.manifest_path.unlink(missing_ok=True)
     assert not spec.is_done
-    result = pickle.loads(pickle.dumps(spec.make_job()))()  # "off-host"
-    spec.save_result(result)
+    job = pickle.loads(pickle.dumps(spec.make_job()))  # "off-host"
+    spec.save_result(job, job())
     assert spec.is_done
     assert path.exists()
 

@@ -2414,7 +2414,7 @@ class Pipeline(StateModel):
                 raise RuntimeError(f"{command=}")
             else:
                 raise RuntimeError("User aborted ICA overwrite")
-        spec.save_result(job())
+        spec.save_result(job, job())
         return spec.path
 
     def make_epoch_rejection(

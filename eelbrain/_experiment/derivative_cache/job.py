@@ -24,7 +24,8 @@ with, so a spec stays bound to the state it was created in)::
         specs.append(pipeline._job_spec(ica_input_name('ica')))
     for spec in specs:
         if not spec.is_done:
-            spec.save_result(spec.make_job()())
+            job = spec.make_job()
+            spec.save_result(job, job())
 
 Collecting the specs is free, but :attr:`JobSpec.is_done` is not: it re-derives
 the current manifest, which walks the dependency fingerprints (file stats, bad
@@ -42,19 +43,21 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from .base import CachePolicy, Derivative, Request, file_fingerprint
+from ..logging import find_difference, format_difference_path
+from .base import CachePolicy, Derivative, JobInputsChangedError, Request, file_fingerprint
 
 
 @dataclass(frozen=True)
 class JobProvenance:
-    """What a job's inputs and target looked like when its data was loaded
+    """What a job's inputs and target looked like when its data was read
 
     A job is computed from a snapshot: :meth:`DependencyNode.make_job` reads the
     inputs, and the result comes back an unbounded time later, by which point
     those inputs may have moved on. Writing the manifest from the *current*
     inputs would file the result under data it was not computed from, and the
     cache would then report the stale artifact as valid forever. So
-    :meth:`JobSpec.make_job` records this, and the manifest is written from it.
+    :meth:`JobSpec.make_job` records this on the job it returns, and the
+    manifest is written from it when that job's result is saved.
 
     The recorded artifact is then correctly stale rather than wrongly valid: the
     ordinary validity check sees the recorded inputs differ from the current ones
@@ -64,14 +67,15 @@ class JobProvenance:
     Attributes
     ----------
     dependencies
-        Dependency fingerprints as of the load. Everything a job is computed
-        from is loaded through ``ctx.load(...)``, so this covers all of it.
+        Dependency fingerprints as of before the load, verified unchanged after
+        it. Everything a job is computed from is loaded through
+        ``ctx.load(...)``, so this covers all of it.
     fingerprint
-        The node's own fingerprint as of the load. Mostly definitions and
-        state, which the request holds fixed -- but a node may fingerprint
-        mutable state outside its dependencies (e.g. ICA bad channels), and the
-        manifest must record what the job was computed from, not what that
-        state became by the time the result was saved.
+        The node's own fingerprint, taken and verified the same way. Mostly
+        definitions and state, which the request holds fixed -- but a node may
+        fingerprint mutable state outside its dependencies (e.g. ICA bad
+        channels), and the manifest must record what the job was computed from,
+        not what that state became by the time the result was saved.
     artifact
         Fingerprint of the target artifact as of the start of
         :meth:`JobSpec.make_job` -- before the inputs are loaded, i.e. as close
@@ -104,10 +108,12 @@ class Job:
         :class:`JobSpec` that generated the job takes ``(node, key)``.
     node
         Name of the registered node the job computes an artifact for.
+    provenance
+        What the inputs looked like when this job's data was read.
 
     Notes
     -----
-    Both fields are stamped by :meth:`JobSpec.make_job`, not by the node's
+    All three fields are stamped by :meth:`JobSpec.make_job`, not by the node's
     ``make_job`` implementation (and stay ``None`` on a job made for an
     in-place build, which never leaves its request). Keyword-only, so
     subclasses can declare positional fields of their own and still inherit
@@ -115,6 +121,7 @@ class Job:
     """
     key: dict[str, Any] | None = field(default=None, kw_only=True)
     node: str | None = field(default=None, kw_only=True)
+    provenance: JobProvenance | None = field(default=None, kw_only=True)
 
     def __call__(self):
         """Compute and return the artifact.
@@ -160,22 +167,7 @@ class JobSpec:
         return self.ctx.is_valid()
 
     def make_job(self) -> Job:
-        """Load the data on the host and build a picklable :class:`Job`
-
-        A job in hand is the host committing to computing this artifact, so this
-        is where the cache-build message is emitted for a spec-driven
-        computation -- the counterpart to :meth:`Request.load_artifact` emitting
-        it for an artifact built in place. It is emitted only once
-        :meth:`DependencyNode.make_job` has succeeded, so a refused job (e.g. a
-        protected artifact) does not announce a build that never happens, and a
-        retry with added controls does not announce it twice.
-
-        The inputs as of this moment are recorded on the request as a
-        :class:`JobProvenance`, so that :meth:`save_result` files the result
-        under the data it was computed from however long it takes to come back.
-        Recording is free overall: the manifest is written from these
-        fingerprints instead of walking the dependencies a second time.
-        """
+        """Load the data on the host and build a picklable :class:`Job`"""
         ctx = self.ctx
         # Fingerprint the EXTERNAL artifact before loading the inputs: the node's own
         # protection check runs at the start of its make_job, and a file another
@@ -184,6 +176,11 @@ class JobSpec:
         artifact = None
         if ctx.node.cache_policy is CachePolicy.EXTERNAL and self.path.exists():
             artifact = file_fingerprint(ctx.root, self.path)
+        # Fingerprint the inputs before they are read, and check afterward that they
+        # held still: the job carries data read during the load, so fingerprints taken
+        # after it would describe data the job does not hold -- and being equal to the
+        # current state, they would mark that artifact valid rather than stale.
+        provenance = JobProvenance(ctx.dependency_fingerprints(), ctx.current_fingerprint(), artifact)
         # For a derivative, the same contexts load_artifact wraps build() in, so its
         # loads are restricted to declared dependencies and key fields, and its
         # warnings are recorded, whether the artifact is computed in place or through
@@ -194,27 +191,39 @@ class JobSpec:
                 job = ctx.node.make_job(ctx)
         else:
             job = ctx.node.make_job(ctx)
-        job = replace(job, key=self.key, node=ctx.node.name)
+        # Check that the inputs are unchanged
+        for before, after in ((provenance.dependencies, ctx.dependency_fingerprints()), (provenance.fingerprint, ctx.current_fingerprint())):
+            difference = find_difference(before, after)
+            if difference is not None:
+                path, old, new = difference
+                raise JobInputsChangedError(ctx.node.name, format_difference_path(path), old, new)
+        # Finalize
         ctx.node.log_cache_build(ctx, self.path)
-        ctx._job_provenance = JobProvenance(ctx.dependency_fingerprints(), ctx.current_fingerprint(), artifact)
-        return job
+        return replace(job, key=self.key, node=ctx.node.name, provenance=provenance)
 
-    def save_result(self, result) -> object:
+    def save_result(self, job: Job, result: Any) -> object:
         """Incorporate an externally computed result into the cache (artifact + manifest)
 
-        Requires the :class:`JobProvenance` snapshot that :meth:`make_job` left
-        on the request, so the result is filed under the inputs it was computed
-        from; calling this without a preceding :meth:`make_job` on the same spec
-        raises. A successful save consumes the snapshot (so a result cannot be
-        filed twice, and the request answers validity questions from current
-        inputs again).
+        Both halves are required: ``result`` is what came back, and ``job`` is
+        what computed it, carrying the :class:`JobProvenance` the result is
+        filed under. Pairing them here is what makes a late result safe -- the
+        snapshot comes from the job that holds the data, so it stays right
+        however many jobs this spec has made in the meantime, and a result can
+        be filed long after the request has moved on.
+
+        Parameters
+        ----------
+        job
+            The job that produced ``result``, as returned by :meth:`make_job`.
+        result
+            The computed artifact value, i.e. ``job()``.
         """
         ctx = self.ctx
-        if ctx._job_provenance is None:
-            raise RuntimeError(f"{ctx.node.name!r}: save_result() without a make_job() snapshot on this request -- the result cannot be filed under the inputs it was computed from")
-        artifact = ctx.node.save_result(ctx, result)
-        ctx._job_provenance = None
-        return artifact
+        if job.provenance is None:
+            raise RuntimeError(f"{ctx.node.name!r}: this job carries no provenance -- only a job from JobSpec.make_job() can be saved")
+        if (job.node, job.key) != (ctx.node.name, self.key):
+            raise RuntimeError(f"job computes {job.node!r} {job.key} but this spec is for {ctx.node.name!r} {self.key}")
+        return ctx.node.save_result(ctx, result, job.provenance)
 
     def with_controls(self, *controls: str) -> JobSpec:
         """Spec for a copy of the same request with additional controls

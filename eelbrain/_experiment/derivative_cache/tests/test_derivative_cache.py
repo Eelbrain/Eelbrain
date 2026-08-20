@@ -24,6 +24,7 @@ from eelbrain._experiment.derivative_cache import (
     Request,
     DerivativeRegistry,
     Input,
+    JobInputsChangedError,
     ProtectedArtifactError,
     UncachedDerivative,
     VersionedInput,
@@ -181,6 +182,22 @@ class ProtectedJobDerivative(JobDerivative):
 
     def path(self, ctx: Request) -> Path:
         return ctx.registry.deriv_dir / 'mne' / f"{ctx.state['subject']}_protected-job.txt"
+
+
+class RacyJobDerivative(JobDerivative):
+    "Job derivative whose input is changed by another session while make_job reads it"
+    name = 'racy-job'
+
+    def __init__(self, source: SourceInput):
+        self._source = source
+        self.interrupt = None  # text another session writes mid-load, set per test
+
+    def make_job(self, ctx: Request) -> _EchoJob:
+        with ctx._build_deps_context():
+            job = _EchoJob(ctx.load('source'))
+        if self.interrupt is not None:
+            self._source.source_path(ctx.state['subject']).write_text(self.interrupt)
+        return job
 
 
 class ExternalWriterDerivative(ExternalArtifactDerivative[str]):
@@ -2211,7 +2228,8 @@ def test_job_spec_round_trip():
     job = pickle.loads(pickle.dumps(spec.make_job()))  # "off-host"
     assert job.key == spec.key
     assert job.node == 'job'
-    assert spec.save_result(job()) == 'ALPHA'
+    assert job.provenance is not None  # travels with the data, so it survives the round trip
+    assert spec.save_result(job, job()) == 'ALPHA'
     assert spec.is_done
     assert Path(spec.path).read_text() == 'ALPHA'
     assert Path(spec.ctx.manifest_path).exists()
@@ -2246,7 +2264,8 @@ def test_job_cache_logging():
     Path(registry.resolve('job', state=DEFAULT_STATE).artifact_path).unlink()
     records.clear()
     spec = JobSpec(registry.resolve('job', state=DEFAULT_STATE))
-    spec.save_result(spec.make_job()())
+    job = spec.make_job()
+    spec.save_result(job, job())
     messages = [record.getMessage() for record in records]
     assert sum(message.startswith('Build job:') for message in messages) == 1
 
@@ -2259,7 +2278,7 @@ def test_job_result_records_make_time_inputs():
     spec = JobSpec(registry.resolve('job', state=DEFAULT_STATE))
     job = spec.make_job()  # reads 'alpha'
     source.source_path('s1').write_text('changed')  # ... while the job is computed off-host
-    spec.save_result(job())
+    spec.save_result(job, job())
 
     # the artifact is kept, and filed under the input it was computed from
     assert Path(spec.path).read_text() == 'ALPHA'
@@ -2268,7 +2287,8 @@ def test_job_result_records_make_time_inputs():
 
     # a job whose inputs held still is valid, as before
     spec = JobSpec(registry.resolve('job', state=DEFAULT_STATE))
-    spec.save_result(spec.make_job()())
+    job = spec.make_job()
+    spec.save_result(job, job())
     assert JobSpec(registry.resolve('job', state=DEFAULT_STATE)).is_done is True
 
 
@@ -2280,7 +2300,7 @@ def test_job_result_records_make_time_fingerprint():
     spec = JobSpec(registry.resolve('fingerprint-job', state=DEFAULT_STATE))
     job = spec.make_job()  # fingerprints 'alpha'
     source.source_path('s1').write_text('changed')  # ... while the job is computed off-host
-    spec.save_result(job())
+    spec.save_result(job, job())
 
     # filed under the fingerprint it was computed from, so it is stale, not wrongly valid
     assert Path(spec.path).read_text() == 'ALPHA'
@@ -2288,20 +2308,45 @@ def test_job_result_records_make_time_fingerprint():
     assert registry.resolve('fingerprint-job', state=DEFAULT_STATE).load() == 'CHANGED'
 
 
-def test_job_save_result_requires_snapshot():
-    "save_result() refuses to file a result without a make_job() snapshot"
+def test_job_refuses_inputs_that_change_during_the_load():
+    "An input that changes while make_job reads it makes the job refuse, before anything is computed"
+    root, registry, source = make_source_registry()
+    node = RacyJobDerivative(source)
+    registry.register(node)
+
+    node.interrupt = 'changed'
+    spec = JobSpec(registry.resolve('racy-job', state=DEFAULT_STATE))
+    with pytest.raises(JobInputsChangedError):
+        spec.make_job()
+    # no job was returned, so nothing can be filed, and the spec can be retried
+    assert not Path(spec.path).exists()
+
+    node.interrupt = None
+    job = spec.make_job()
+    assert spec.save_result(job, job()) == 'CHANGED'
+    assert JobSpec(registry.resolve('racy-job', state=DEFAULT_STATE)).is_done
+
+
+def test_job_save_result_requires_a_matching_job():
+    "save_result() files a result only against the job that computed it"
     root, registry, _source = make_source_registry()
     registry.register(JobDerivative())
+    registry.register(FingerprintJobDerivative(_source))
 
     spec = JobSpec(registry.resolve('job', state=DEFAULT_STATE))
-    with pytest.raises(RuntimeError, match="make_job"):
-        spec.save_result('ALPHA')
+    # a job the spec did not make carries no provenance to file the result under
+    with pytest.raises(RuntimeError, match="provenance"):
+        spec.save_result(_EchoJob('alpha'), 'ALPHA')
 
-    # a successful save consumes the snapshot, so a result cannot be filed twice
-    result = spec.make_job()()
-    assert spec.save_result(result) == 'ALPHA'
-    with pytest.raises(RuntimeError, match="make_job"):
-        spec.save_result(result)
+    # ... nor one made for a different node, whose key may well be identical
+    other = JobSpec(registry.resolve('fingerprint-job', state=DEFAULT_STATE))
+    other_job = other.make_job()
+    assert other_job.key == spec.key
+    with pytest.raises(RuntimeError, match="but this spec is for"):
+        spec.save_result(other_job, other_job())
+
+    job = spec.make_job()
+    assert spec.save_result(job, job()) == 'ALPHA'
 
 
 def test_external_writer_build_is_not_self_protected():
@@ -2324,19 +2369,21 @@ def test_job_result_does_not_clobber_protected_artifact():
     registry.register(ProtectedJobDerivative())
 
     spec = JobSpec(registry.resolve('protected-job', state=DEFAULT_STATE))
-    result = spec.make_job()()
+    job = spec.make_job()
+    result = job()
     # a user-owned file appears at the external path while the job computes
     Path(spec.path).parent.mkdir(parents=True, exist_ok=True)
     Path(spec.path).write_text('user data')
     with pytest.raises(ProtectedArtifactError):
-        spec.save_result(result)
+        spec.save_result(job, result)
     assert Path(spec.path).read_text() == 'user data'
 
     spec = JobSpec(registry.resolve('protected-job', state=DEFAULT_STATE, controls={ALLOW_PROTECTED_OVERWRITE}))
-    assert spec.save_result(spec.make_job()()) == 'ALPHA'
+    job = spec.make_job()
+    assert spec.save_result(job, job()) == 'ALPHA'
 
 
-def test_job_provenance_does_not_leak_into_a_build():
+def test_build_after_make_job_records_current_inputs():
     "A build in place records current inputs, even on a request that made a job earlier"
     root, registry, source = make_source_registry()
     registry.register(JobDerivative())
@@ -2347,6 +2394,27 @@ def test_job_provenance_does_not_leak_into_a_build():
 
     assert ctx.load() == 'CHANGED'  # built here and now, from the current input
     assert JobSpec(registry.resolve('job', state=DEFAULT_STATE)).is_done is True
+
+
+def test_job_result_is_filed_under_its_own_job():
+    "One spec can make several jobs; each result is filed under the data its own job holds"
+    root, registry, source = make_source_registry()
+    registry.register(JobDerivative())
+
+    spec = JobSpec(registry.resolve('job', state=DEFAULT_STATE))
+    first = spec.make_job()  # holds 'alpha'
+    source.source_path('s1').write_text('changed')
+    second = spec.make_job()  # holds 'changed'
+
+    # the second result files under 'changed' and is valid
+    assert spec.save_result(second, second()) == 'CHANGED'
+    assert JobSpec(registry.resolve('job', state=DEFAULT_STATE)).is_done is True
+
+    # re-sending the first job (which still holds 'alpha') files it under 'alpha',
+    # so the artifact reads as stale rather than as a current result
+    assert spec.save_result(first, first()) == 'ALPHA'
+    assert JobSpec(registry.resolve('job', state=DEFAULT_STATE)).is_done is False
+    assert registry.resolve('job', state=DEFAULT_STATE).load() == 'CHANGED'
 
 
 def test_job_spec_with_controls():

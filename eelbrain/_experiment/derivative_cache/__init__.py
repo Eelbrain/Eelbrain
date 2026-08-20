@@ -18,6 +18,7 @@ from .base import (
     DerivativeRegistry,
     ExternalArtifactDerivative,
     Input,
+    JobInputsChangedError,
     OptionSpec,
     ProtectedArtifactError,
     Request,

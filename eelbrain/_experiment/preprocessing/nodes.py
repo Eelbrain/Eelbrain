@@ -816,31 +816,20 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         kwargs, fit_kwargs = self.pipe._ica_kwargs()
         return ICAJob(raw, kwargs, fit_kwargs)
 
-    def _check_not_replaced(
+    def save_result(
             self,
             ctx: Request,
+            result: mne.preprocessing.ICA,
             provenance: JobProvenance,
-    ) -> None:
-        """Raise :exc:`ProtectedArtifactError` when the ICA file changed while the fit ran.
-
-        :meth:`_check_protected` authorized replacing one specific file (or no
-        file at all), but the fit that follows can take hours, and another
-        session may write or edit that path in the meantime. Such a file was
-        never offered to the user, so ``ALLOW_PROTECTED_OVERWRITE`` does not
-        cover it and this check applies regardless of the request's controls.
-        """
+    ) -> mne.preprocessing.ICA:
+        """Save the ICA file, mirror its provenance manifest, and return the reloaded ICA"""
         path = self.path(ctx)
+        # Check whether the ICA file changed while the fit ran
         current = file_fingerprint(ctx.root, path) if path.exists() else None
-        if current == provenance.artifact:
-            return
-        verb = 'replaced' if provenance.artifact is None else 'changed'
-        raise ProtectedArtifactError(self.name, path, message=f"ICA file {path.name!r} was {verb} while this ICA was being computed.", reason=f"The file at {path.name} is not the one this computation was authorized to overwrite.", instructions=f"Another session or tool wrote this ICA file after the fit started, so the newly computed result was not saved. Inspect the existing file, and run e.make_ica(raw={self.raw_name!r}) again if you want to replace it.")
-
-    def save_result(self, ctx: Request, result: mne.preprocessing.ICA) -> mne.preprocessing.ICA:
-        "Save the ICA file, mirror its provenance manifest, and return the reloaded ICA"
-        provenance = ctx.job_provenance()  # raises without a make_job() snapshot
-        self._check_not_replaced(ctx, provenance)
-        path = self.path(ctx)
+        if current != provenance.artifact:
+            verb = 'replaced' if provenance.artifact is None else 'changed'
+            raise ProtectedArtifactError(self.name, path, message=f"ICA file {path.name!r} was {verb} while this ICA was being computed.", reason=f"The file at {path.name} is not the one this computation was authorized to overwrite.", instructions=f"Another session or tool wrote this ICA file after the fit started, so the newly computed result was not saved. Inspect the existing file, and run e.make_ica(raw={self.raw_name!r}) again if you want to replace it.")
+        # Save the new file
         path.parent.mkdir(parents=True, exist_ok=True)
         result.save(path, overwrite=True)
         # The fit ran on the snapshot inputs, so the manifest records the snapshot

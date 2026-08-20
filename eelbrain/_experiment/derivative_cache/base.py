@@ -247,6 +247,29 @@ class ProtectedArtifactError(RuntimeError):
         super().__init__(text)
 
 
+class JobInputsChangedError(RuntimeError):
+    """Refuse to compute a job whose inputs moved while its data was being loaded.
+
+    A job carries data read during :meth:`DependencyNode.make_job`, so inputs
+    that change during that load would leave the job holding data the manifest
+    does not describe. Nothing is protected here and nothing expensive has been
+    computed yet -- the job is simply not worth computing, and re-requesting it
+    reads the current data.
+    """
+
+    def __init__(
+            self,
+            node: str,
+            field: str | None = None,
+            old: Any = None,
+            new: Any = None,
+    ):
+        self.node = node
+        self.field = field
+        detail = f" ({field}: {old!r} -> {new!r})" if field is not None else ""
+        super().__init__(f"Inputs for {node!r} changed while its data was being loaded{detail}. The job would compute an artifact from data that is already out of date, so it was not created; request it again to compute from the current data.")
+
+
 def _simple_cache_label(key: dict[str, Any]) -> str | None:
     parts = []
     for name, value in key.items():
@@ -736,8 +759,24 @@ class DependencyNode(Generic[T]):
         """
         raise NotImplementedError
 
-    def save_result(self, ctx: Request, result: T) -> T:
-        """Persist an externally computed ``result`` with its provenance record, and return the reloaded artifact."""
+    def save_result(
+            self,
+            ctx: Request,
+            result: T,
+            provenance: JobProvenance,
+    ) -> T:
+        """Persist an externally computed ``result`` and return the reloaded artifact.
+
+        Parameters
+        ----------
+        ctx
+            Resolved request for the artifact.
+        result
+            The value computed by the job.
+        provenance
+            What the job's inputs looked like when it read them; the artifact
+            is filed under these (see :class:`JobProvenance`).
+        """
         raise NotImplementedError
 
 
@@ -974,8 +1013,13 @@ class Derivative(DependencyNode[T]):
             return False
         return ctx.registry._validation_reason(ctx, manifest) is None
 
-    def save_result(self, ctx: Request, result: T) -> T:
-        return ctx.save_artifact(result)
+    def save_result(
+            self,
+            ctx: Request,
+            result: T,
+            provenance: JobProvenance,
+    ) -> T:
+        return ctx.save_artifact(result, provenance)
 
     def build(self, ctx: Request) -> T:
         """Compute the artifact value for this request.
@@ -1270,12 +1314,6 @@ class Request(Generic[T]):
         self._artifact_path: Path | None = None
         self._manifest_path: Path | None = None
         self._artifact_metadata: dict[str, Any] | None = None
-        # Inputs as of the last JobSpec.make_job() on this request, consumed when the
-        # result is filed (see JobProvenance). It lives here rather than on the spec
-        # because the request is what spans the two stages and what every consumer --
-        # save_artifact, and node save_result implementations -- is reached through.
-        # Cleared by load_artifact, so a build in place always records current inputs.
-        self._job_provenance: JobProvenance | None = None
         # Populated while derivative methods are constrained to declared dependencies.
         self._build_deps: dict[str, Dependency] | None = None
         self._build_deps_depth = 0
@@ -1412,19 +1450,6 @@ class Request(Generic[T]):
         so cache-validity checks skip the expensive recomputation.
         """
         return self.registry.dependency_fingerprints(self, stored)
-
-    def job_provenance(self) -> JobProvenance:
-        """The :class:`JobProvenance` snapshot left by :meth:`JobSpec.make_job` on this request.
-
-        Recorded so that a result which comes back after its inputs changed is
-        filed under the inputs it was computed from. A result must never be
-        filed under fingerprints it was not computed from, so a missing
-        snapshot raises :class:`RuntimeError` rather than falling back to the
-        current fingerprints, which may have moved on.
-        """
-        if self._job_provenance is None:
-            raise RuntimeError(f"{self.node.name!r}: no job snapshot on this request -- the result being saved did not come from make_job() on this request")
-        return self._job_provenance
 
     def current_fingerprint(self) -> dict[str, Any]:
         """Return the canonical current fingerprint for this node request."""
@@ -1642,10 +1667,6 @@ class Request(Generic[T]):
             else:
                 derivative.log_cache_recompute(self, self.artifact_path, reason)
 
-        # Building here and now supersedes any earlier make_job() snapshot on this
-        # request: these inputs are being read now, so the current fingerprints are the
-        # truthful ones and a leftover snapshot would file a fresh artifact as stale.
-        self._job_provenance = None
         with self._build_deps_context(), self.registry._node_warning_context(self), self._state_check_context():
             artifact = derivative.build(self)
         if not use_cache:
@@ -1653,19 +1674,27 @@ class Request(Generic[T]):
             return artifact
         return self.save_artifact(artifact)
 
-    def save_artifact(self, artifact: T) -> T:
+    def save_artifact(self, artifact: T, provenance: JobProvenance | None = None) -> T:
         """Persist a built artifact and write its manifest; return the reloaded artifact.
 
         Shared by :meth:`load_artifact` and by off-host execution (an externally
         computed result re-united with its cache entry, e.g. via
         :meth:`~eelbrain._experiment.derivative_cache.job.JobSpec.save_result`).
+
+        Parameters
+        ----------
+        artifact
+            The value to persist.
+        provenance
+            What the inputs looked like when a job read them, for a result
+            computed off-host; the artifact is filed under these rather than
+            under the current inputs, which may have moved on. Omitted for an
+            artifact built in place, which records the inputs the build just
+            read.
         """
         derivative = self._require_derivative()
-        # A result computed through a job is filed under the inputs it was computed
-        # from (see JobProvenance); an artifact built in place records the current
-        # inputs, which the build just read.
-        if self._job_provenance is not None:
-            # A job result also reaches here without passing through load_artifact's
+        if provenance is not None:
+            # A job result reaches here without passing through load_artifact's
             # protected check, so repeat it: an artifact outside cache-dir is
             # user-visible and never overwritten without explicit authorization. Only
             # on this path -- an in-place build was already checked before building,
@@ -1673,8 +1702,8 @@ class Request(Generic[T]):
             # build() just wrote it.
             if self.artifact_path.exists() and not self.registry.is_cache_artifact(self.artifact_path) and not self.has_control(ALLOW_PROTECTED_OVERWRITE):
                 raise ProtectedArtifactError(derivative.name, self.artifact_path)
-            dependencies = self._job_provenance.dependencies
-            fingerprint = self._job_provenance.fingerprint
+            dependencies = provenance.dependencies
+            fingerprint = provenance.fingerprint
         else:
             dependencies = self.dependency_fingerprints()
             fingerprint = self.current_fingerprint()
