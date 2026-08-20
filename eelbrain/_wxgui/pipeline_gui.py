@@ -559,13 +559,14 @@ class PipelineFrame(EelbrainFrame):
         The ICA was estimated with these channels included, so it is deleted; the ICA GUI
         closes itself after invoking this.
         """
-        self._pipeline.make_bad_channels(names, raw=raw_name, **state)
+        self._pipeline.set(raw=raw_name, **state)
+        spec = self._pipeline._job_spec(ica_input_name(raw_name))
+        # ICA combines bad channels across tasks/runs
+        node = spec.ctx.node
+        for source_state in node._source_states(spec.ctx, node.pipe.task):
+            self._pipeline.make_bad_channels(names, raw=raw_name, **{**state, **source_state})
         Path(doc.path).unlink(missing_ok=True)
         if recompute:
-            # Mint the spec here rather than looking the row up in _job_specs: this runs
-            # when a separate window closes, by which time the table may show a different
-            # raw pipe or task. make_bad_channels() just set the state for this recording.
-            spec = self._pipeline._job_spec(ica_input_name(raw_name))
             wx.CallAfter(self._queue_jobs, 'ica', [(combo, spec)])
         else:
             wx.CallAfter(self._start_refresh)

@@ -583,11 +583,6 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             raw.append(raw_)
         return raw
 
-    def _reindex_existing(self, ctx: Request) -> mne.preprocessing.ICA:
-        "Keep the existing ICA file but rewrite its manifest to the current pipeline state"
-        ctx.registry.write_manifest(ctx.manifest_path, self._build_manifest(ctx, ctx.dependency_fingerprints()))
-        return self._load_value(ctx)
-
     @staticmethod
     def _manifest_matches(
             previous: ArtifactManifest | None,
@@ -754,7 +749,9 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         previous = ctx._manifest()
         if not self._manifest_matches(previous, current):
             if ctx.has_control(REINDEX_ICA):
-                return self._reindex_existing(ctx)
+                # Keep the existing ICA file, but rewrite its manifest
+                ctx.registry.write_manifest(ctx.manifest_path, current)
+                return value
             reason = self._stale_reason(previous, current)
             raise ProtectedArtifactError(self.name, path, message=f"Existing ICA file {path.name!r} no longer matches the current data and ICA settings.", reason=reason, instructions=f"{reason}\nTo make this ICA match the current pipeline again, revert the raw pipeline change or recompute the ICA. To keep using this existing ICA anyway, call e.load_ica(raw={self.raw_name!r}, accept_stale=True) once or run e.make_ica(raw={self.raw_name!r}) and choose 'incorporate'. To recompute it from the current data, run e.make_ica(raw={self.raw_name!r}) and choose 'overwrite'.")
         return value
@@ -827,7 +824,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         # Check whether the ICA file changed while the fit ran
         current = file_fingerprint(ctx.root, path) if path.exists() else None
         if current != provenance.artifact:
-            verb = 'replaced' if provenance.artifact is None else 'changed'
+            verb = 'created' if provenance.artifact is None else 'changed'
             raise ProtectedArtifactError(self.name, path, message=f"ICA file {path.name!r} was {verb} while this ICA was being computed.", reason=f"The file at {path.name} is not the one this computation was authorized to overwrite.", instructions=f"Another session or tool wrote this ICA file after the fit started, so the newly computed result was not saved. Inspect the existing file, and run e.make_ica(raw={self.raw_name!r}) again if you want to replace it.")
         # Save the new file
         path.parent.mkdir(parents=True, exist_ok=True)
