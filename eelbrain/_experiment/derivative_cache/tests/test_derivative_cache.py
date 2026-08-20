@@ -16,6 +16,7 @@ from eelbrain._experiment.derivative_cache import (
     CachePolicy,
     Dependency,
     Derivative,
+    ExternalArtifactDerivative,
     GCCategory,
     Job,
     JobSpec,
@@ -180,6 +181,27 @@ class ProtectedJobDerivative(JobDerivative):
 
     def path(self, ctx: Request) -> Path:
         return ctx.registry.deriv_dir / 'mne' / f"{ctx.state['subject']}_protected-job.txt"
+
+
+class ExternalWriterDerivative(ExternalArtifactDerivative[str]):
+    "Derivative whose build() writes the real artifact outside cache-dir, like 'src'"
+    name = 'external-writer'
+    key_fields = ('subject',)
+
+    def path(self, ctx: Request) -> Path:
+        return ctx.registry.deriv_dir / 'freesurfer' / f"{ctx.state['subject']}-external.txt"
+
+    def fingerprint(self, ctx: Request) -> dict[str, object]:
+        return {'subject': ctx.state['subject']}
+
+    def build(self, ctx: Request) -> str:
+        path = self.path(ctx)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('built')
+        return 'built'
+
+    def load(self, ctx: Request, path: str) -> str:
+        return Path(path).read_text()
 
 
 class FingerprintJobDerivative(Derivative[str]):
@@ -2280,6 +2302,20 @@ def test_job_save_result_requires_snapshot():
     assert spec.save_result(result) == 'ALPHA'
     with pytest.raises(RuntimeError, match="make_job"):
         spec.save_result(result)
+
+
+def test_external_writer_build_is_not_self_protected():
+    "A build that writes its own external artifact is not blocked by the protected check"
+    root, registry, _source = make_source_registry()
+    registry.register(ExternalWriterDerivative())
+
+    # first build: build() writes the external file, so it exists by the time the
+    # manifest is written -- that must not read as an unauthorized overwrite
+    ctx = registry.resolve('external-writer', state=DEFAULT_STATE)
+    assert ctx.load() == 'built'
+    assert Path(ctx.artifact_path).exists()
+    assert Path(ctx.manifest_path).exists()
+    assert registry.resolve('external-writer', state=DEFAULT_STATE).is_valid()
 
 
 def test_job_result_does_not_clobber_protected_artifact():

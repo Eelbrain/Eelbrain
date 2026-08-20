@@ -40,7 +40,7 @@ class ICAJob(Job):
 
     Notes
     -----
-    ``key`` alone does not distinguish two ICA steps over the same recording;
+    ``key`` alone does not distinguish two :class:`RawICA` pipes over the same recording;
     the inherited ``node`` field does (each :class:`RawICA` step registers its
     own :class:`ICAInput`).
     """

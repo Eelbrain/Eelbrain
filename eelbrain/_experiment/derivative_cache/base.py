@@ -1661,15 +1661,18 @@ class Request(Generic[T]):
         :meth:`~eelbrain._experiment.derivative_cache.job.JobSpec.save_result`).
         """
         derivative = self._require_derivative()
-        # Off-host execution reaches here without passing through load_artifact's
-        # protected check, so repeat it: an artifact outside cache-dir is
-        # user-visible and never overwritten without explicit authorization.
-        if self.artifact_path.exists() and not self.registry.is_cache_artifact(self.artifact_path) and not self.has_control(ALLOW_PROTECTED_OVERWRITE):
-            raise ProtectedArtifactError(derivative.name, self.artifact_path)
         # A result computed through a job is filed under the inputs it was computed
         # from (see JobProvenance); an artifact built in place records the current
         # inputs, which the build just read.
         if self._job_provenance is not None:
+            # A job result also reaches here without passing through load_artifact's
+            # protected check, so repeat it: an artifact outside cache-dir is
+            # user-visible and never overwritten without explicit authorization. Only
+            # on this path -- an in-place build was already checked before building,
+            # and for an ExternalArtifactDerivative the file existing here means
+            # build() just wrote it.
+            if self.artifact_path.exists() and not self.registry.is_cache_artifact(self.artifact_path) and not self.has_control(ALLOW_PROTECTED_OVERWRITE):
+                raise ProtectedArtifactError(derivative.name, self.artifact_path)
             dependencies = self._job_provenance.dependencies
             fingerprint = self._job_provenance.fingerprint
         else:
