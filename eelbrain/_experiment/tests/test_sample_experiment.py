@@ -885,7 +885,7 @@ def test_sample_tasks(monkeypatch, samples_experiment):
     # evoked
     dse_super = e.load_evoked(epoch='super', model='modality%side')
     ds_super_keep = e.load_epochs(epoch='super', interpolate_bads='keep')
-    target = ds_super_keep.aggregate('modality%side', drop=('sample', 't_edf', 'onset', 'index', 'value', 'task', 'interpolate_channels', 'epoch'))
+    target = ds_super_keep.aggregate('modality%side', drop=('sample', 'onset', 'index', 'value', 'task', 'interpolate_channels', 'epoch'))
     assert_dataobj_equal(dse_super, target, 19)
 
     # conflicting task and epoch settings
@@ -1513,6 +1513,20 @@ def test_evoked_cache_stales_on_model_change(samples_experiment):
     assert not handle.is_valid()
     ds = e_changed.load_evoked(ndvar=False, model='modality')
     assert set(ds['modality'].cells) == {'auditory_changed', 'visual'}
+
+    # reassigning the same events to the same cells changes the averages, so it has to
+    # invalidate the artifact as well
+    class ReassignedExperiment(SampleExperiment):
+        variables = {
+            **SampleExperiment.variables,
+            'modality': LabelVar('value', {(1, 3): 'auditory_changed', (2, 4): 'visual'}),
+        }
+
+    e_reassigned = ReassignedExperiment(root)
+    e_reassigned.set(subject='R0000', epoch='target', epoch_rejection='')
+    assert not e_reassigned._resolve_derivative('evoked', options={'model': 'modality'}).is_valid()
+    ds_reassigned = e_reassigned.load_evoked(ndvar=False, model='modality')
+    assert set(ds_reassigned['modality'].cells) == set(ds['modality'].cells)  # the cells are unchanged; only their contents differ
 
 
 @requires_mne_sample_data

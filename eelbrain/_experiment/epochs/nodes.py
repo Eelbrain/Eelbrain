@@ -551,20 +551,13 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         return {}
 
     def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, Any] | None:
-        """Depend on the aggregated event values this evoked is built from, not their definitions
-
-        The averaged data is determined by the model cells, so recording their values
-        keeps a definition change that does not reach the retained events, such as a
-        label for a trigger the epoch excludes, from invalidating the artifact. What a
-        *consumer* reads is not recorded here: this artifact is shared between them,
-        and its manifest must not vary with the request that happens to build it.
-        """
+        """Depend on the event values this evoked is built from"""
         if dep.name != 'epoch-events':
             return None
         model = ctx.options['model']
         if not model:
             return {}
-        ds = self._aggregate(ctx.load(dep.label or dep.name), ctx)
+        ds = ctx.load(dep.label or dep.name)
         return {'model': ds.eval(model)}
 
     def build(self, ctx: Request) -> list[mne.Evoked]:
@@ -586,7 +579,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
             never_drop=('epochs',),
             drop_bad=True,
             equal_count=ctx.state['equalize_evoked_count'] == 'eq',
-            drop=('sample', 't_edf', 'onset', 'index', 'value'),
+            drop=('sample', 'onset', 'index', 'value'),
         )
 
     def load(self, ctx: Request, path: Path) -> list[mne.Evoked]:
@@ -594,13 +587,6 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
 
     def save(self, ctx: Request, path: Path, value: list[mne.Evoked]) -> None:
         mne.write_evokeds(path, value, overwrite=True)
-
-    def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
-        if view is None:
-            return self.fingerprint(ctx)
-        if view != 'shell':
-            raise ValueError(f"{self.name!r} does not define dependency view {view!r}")
-        return self.fingerprint(ctx)
 
     def load_view(self, ctx: Request, view: str):
         if view != 'shell':
