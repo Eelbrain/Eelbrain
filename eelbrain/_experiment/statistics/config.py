@@ -11,9 +11,10 @@ from ... import testnd
 from ... import test
 from ..._data_obj import CellArg, Dataset, NDVar, Var, combine
 from ..._exceptions import ConfigurationError
+from ..._utils.parse import find_variables
 from ..configuration import Configuration
 from ..data import DataSpec
-from ..variable_def import Variables, VarDef, GroupVar, find_columns
+from ..variable_def import Variables, VarDef, GroupVar
 
 if TYPE_CHECKING:
     from ..derivative_cache import Request
@@ -410,7 +411,7 @@ class TwoStageTest(Test):
     DICT_ATTRS = Test.DICT_ATTRS + ('stage_1',)
 
     def __init__(self, stage_1: str, vars: dict = None, model: str = None):
-        Test.__init__(self, stage_1, model, vars=vars, depend_on=find_columns(stage_1))
+        Test.__init__(self, stage_1, model, vars=vars, depend_on=find_variables(stage_1))
         self.stage_1 = stage_1
 
     def make_stage_1(self, y, data, subject, sub=None):
