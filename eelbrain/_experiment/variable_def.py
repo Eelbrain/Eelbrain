@@ -486,6 +486,6 @@ def label_groups(
     problems = [s for s, g in labels.items() if len(g) != 1]
     if problems:
         desc = (', '.join(labels[s]) if labels[s] else 'no group' for s in problems)
-        msg = ', '.join('%s (%s)' % pair for pair in zip(problems, desc))
+        msg = ', '.join(f'{p} ({d})' for p, d in zip(problems, desc))
         raise ValueError(f"Groups {groups} are not unique for subjects: {msg}")
     return Factor(subject, labels={s: g[0] for s, g in labels.items()})

@@ -341,12 +341,26 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         'smooth': None,
     }
 
+    def validate_options(self, ctx: Request) -> None:
+        data = ctx.options['data']
+        assert data.sensor + data.source == 1
+        if smooth := ctx.options['smooth']:
+            if data.sensor:
+                raise TypeError(f"{smooth=} for sensor tests")
+            elif data.aggregate:
+                raise TypeError(f"{smooth=} for ROI tests")
+        if data.sensor and (src_baseline := ctx.options['src_baseline']):
+            raise TypeError(f"{src_baseline=} for sensor tests")
+        test_obj = self.tests[ctx.options['test']]
+        if test_obj.vars:
+            _validate_post_aggregation_test_vars(test_obj)
+
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
         # Source-space fields identify the artifact only for source/ROI analyses
         # (see dependencies); a sensor test uses only evoked-group-dataset.
         fields = ('group', 'epoch', 'raw', 'session', 'acquisition', 'epoch_rejection', 'equalize_evoked_count')
         data = ctx.options['data']
-        if data is None or data.source:
+        if data.source:
             fields += ('mri', 'cov', 'inv', 'src', 'parc', 'mrisubject', 'common_brain', 'adjacency')
         else:
             fields += ('reference',)
@@ -364,20 +378,6 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {'test': self.tests[ctx.options['test']]._as_dict_without_vars()}
-
-    def validate_options(self, ctx: Request) -> None:
-        data = ctx.options['data']
-        assert data.sensor + data.source == 1
-        if smooth := ctx.options['smooth']:
-            if data.sensor:
-                raise TypeError(f"{smooth=} for sensor tests")
-            elif data.aggregate:
-                raise TypeError(f"{smooth=} for ROI tests")
-        if data.sensor and (src_baseline := ctx.options['src_baseline']):
-            raise TypeError(f"{src_baseline=} for sensor tests")
-        test_obj = self.tests[ctx.options['test']]
-        if test_obj.vars:
-            _validate_post_aggregation_test_vars(test_obj)
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         data = ctx.options['data']

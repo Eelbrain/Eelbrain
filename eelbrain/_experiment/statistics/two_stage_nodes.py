@@ -41,7 +41,11 @@ class SubjectROILMResult:
     n_trials_ds: Dataset
 
 
-def _validate_two_stage_options(name: str, test_obj: Test, data: DataSpec) -> None:
+def _validate_two_stage_options(
+        name: str,
+        test_obj: Test,
+        data: DataSpec,
+) -> None:
     """Requirements shared by every node in the two-stage chain."""
     if not isinstance(test_obj, TwoStageTest):
         raise RuntimeError(f"{name!r} requires a TwoStageTest")
@@ -155,13 +159,10 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
 
         ds = ctx.load('data')
         test_obj._resolve_vars(ds)
-
         if data.source and not data.aggregate:
             if ctx.options['smooth']:
                 y = data.response_key(ds)
                 ds[y] = ds[y].smooth('source', ctx.options['smooth'], 'gaussian')
-            return ds
-
         return ds
 
 
