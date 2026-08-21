@@ -49,11 +49,12 @@ epoch ``sel`` expression or an evoked ``model``.
 """
 from __future__ import annotations
 
+import builtins
 from typing import Any
 from fnmatch import fnmatch as fnmatch_func
 from collections.abc import Collection, Sequence
 
-from .._data_obj import Dataset, Factor, Var, asuv, assert_is_legal_dataset_key
+from .._data_obj import Dataset, EVAL_CONTEXT, Factor, Var, asuv, assert_is_legal_dataset_key
 from .._info import INTERPOLATE_CHANNELS, INTERPOLATE_WINDOWS
 from .._text import enumeration
 from .._utils.numpy_utils import INT_TYPES
@@ -74,6 +75,16 @@ RESERVED_VAR_KEYS = (
     'epochs', 'evoked', 'src', 'stc', 'label_tc', 'model',  # data columns added downstream
     'epoch_time', 'events', 'tmax',  # ContinuousEpoch
 )
+
+
+def find_columns(expression: str) -> set[str]:
+    """The data columns that ``expression`` reads
+
+    :func:`find_variables` returns every name in the expression, but
+    :meth:`Dataset.eval` resolves names from its own namespace too, so a name like
+    ``abs`` in ``EvalVar('abs(value)')`` is a function rather than a column.
+    """
+    return {name for name in find_variables(expression) if name not in EVAL_CONTEXT and not hasattr(builtins, name)}
 
 
 class VarDef(Configuration):
@@ -136,7 +147,7 @@ class EvalVar(VarDef):
         return asuv(self.code, data=ds)
 
     def _input_vars(self):
-        return find_variables(self.code)
+        return find_columns(self.code)
 
 
 class LabelVar(VarDef):
@@ -229,7 +240,7 @@ class LabelVar(VarDef):
             return Var.from_dict(source, labels, default=self.default)
 
     def _input_vars(self):
-        return find_variables(self.source)
+        return find_columns(self.source)
 
 
 class GroupVar(VarDef):

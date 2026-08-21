@@ -120,6 +120,20 @@ def test_reserved_variable_names():
     Variables({'epoch_index': EvalVar('a + b'), 'value_shifted': EvalVar('a + b')})
 
 
+def test_variable_input_columns():
+    "Only names that Dataset.eval can not resolve itself are input columns"
+    assert EvalVar('value > 1')._input_vars() == {'value'}
+    # functions, builtins and modules are resolved by Dataset.eval, not read from the data
+    assert EvalVar('abs(value)')._input_vars() == {'value'}
+    assert EvalVar('numpy.log(value)')._input_vars() == {'value'}
+    assert EvalVar('Var(value.x.astype(int))')._input_vars() == {'value'}
+    assert LabelVar('abs(value)', {1: 'a'})._input_vars() == {'value'}
+    # such a variable is applied like any other, rather than reported as uncomputable
+    events = Dataset({'value': Var([-1., 2.])})
+    Variables({'absval': EvalVar('abs(value)')}).resolve(events, require_inputs=True)
+    assert list(events['absval']) == [1., 2.]
+
+
 def test_variable_stages():
     "Partition into event and across-subject variables"
     variables = Variables({
