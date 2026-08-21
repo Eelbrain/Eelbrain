@@ -70,6 +70,32 @@ class Test(Configuration):
             raise ConfigurationError(f"{vars=} ({error})")
         self._test_vars.extend(depend_on)
 
+    def _resolve_vars(
+            self,
+            data: Dataset,
+            groups: dict[str, tuple[str, ...]] = None,
+    ) -> dict[str, Any]:
+        """Add the variables this test reads to ``data``, and return their values
+
+        The same call serves both consumers of a test's variables: the node that
+        builds the data adds them, and the node that validates a cached result
+        resolves them against the event *shell* and records the returned values.
+        Recording values rather than the definitions behind them keeps a label
+        change that does not reach the retained events from invalidating the
+        result; passing :attr:`_test_vars` as ``names`` makes the coverage checked
+        rather than assumed (see
+        :meth:`~eelbrain._experiment.variable_def.Variables.resolve`).
+
+        Parameters
+        ----------
+        data
+            The events, or an event shell describing them.
+        groups
+            Members of each group, from :attr:`Pipeline.groups`. ``None`` for data
+            from a single subject, where across-subject variables are absent.
+        """
+        return self.vars.resolve(data, groups, names=self._test_vars)
+
     def _as_dict_without_vars(self) -> dict[str, Any]:
         """The definition without :attr:`vars`
 

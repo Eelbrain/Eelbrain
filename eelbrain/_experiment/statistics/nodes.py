@@ -399,17 +399,14 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
     def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, Any] | None:
         """Depend on the values the test reads, not the definitions behind them
 
-        Recording values keeps a label change that does not reach the retained events
-        from invalidating the result, and restricting them to the subjects that are
-        analyzed keeps a group membership change involving other subjects from doing
-        so. The shell already carries :attr:`Pipeline.variables`; only the test's own
-        are applied on top, exactly as in :meth:`build`.
+        Restricting them to the subjects that are analyzed keeps a group membership
+        change involving other subjects from invalidating the result. The shell
+        already carries :attr:`Pipeline.variables`; only the test's own are applied
+        on top, exactly as in :meth:`build` (see :meth:`Test._resolve_vars`).
         """
         if dep.label != 'events':
             return None
-        test_obj = self.tests[ctx.options['test']]
-        ds = ctx.load(dep.label)
-        return test_obj.vars.resolve(ds, self.groups, names=test_obj._test_vars)
+        return self.tests[ctx.options['test']]._resolve_vars(ctx.load(dep.label), self.groups)
 
     def build(self, ctx: Request) -> Dataset | ROIData:
         data = ctx.options['data']
@@ -418,13 +415,13 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
 
         if data.source and data.aggregate:
             assert isinstance(ds, ROIData)
-            test_obj.vars.resolve(ds.n_trials_ds, self.groups, names=test_obj._test_vars)
+            test_obj._resolve_vars(ds.n_trials_ds, self.groups)
             for label_ds in ds.label_data.values():
-                test_obj.vars.resolve(label_ds, self.groups, names=test_obj._test_vars)
+                test_obj._resolve_vars(label_ds, self.groups)
             return ds
 
         assert isinstance(ds, Dataset)
-        test_obj.vars.resolve(ds, self.groups, names=test_obj._test_vars)
+        test_obj._resolve_vars(ds, self.groups)
         if data.sensor:
             return ds
 

@@ -732,13 +732,12 @@ class TRFModelTestDerivative(Derivative[Any]):
         """Depend on the values the test reads, not the definitions behind them
 
         The shell already carries the across-subject :attr:`Pipeline.variables`; only
-        the test's own are applied on top, exactly as in :meth:`build`.
+        the test's own are applied on top, exactly as in :meth:`build` (see
+        :meth:`Test._resolve_vars`).
         """
         if dep.label != 'events':
             return None
-        test_obj = self._test_obj(ctx)
-        ds = ctx.load(dep.label)
-        return test_obj.vars.resolve(ds, self.groups, names=test_obj._test_vars)
+        return self._test_obj(ctx)._resolve_vars(ctx.load(dep.label), self.groups)
 
     @staticmethod
     def _metric_parts(metric: str) -> tuple[str, str | None]:
@@ -794,7 +793,7 @@ class TRFModelTestDerivative(Derivative[Any]):
             if test_obj is None:
                 test_obj = TTestOneSample(comparison.tail)
 
-        test_obj.vars.resolve(ds, self.groups, names=test_obj._test_vars)
+        test_obj._resolve_vars(ds, self.groups)
         y = ds[metric]
         if reducer is None:
             if isinstance(y, Datalist):

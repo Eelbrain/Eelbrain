@@ -134,19 +134,18 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         return dependency, events
 
     def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, Any] | None:
-        """Depend on the events that the stage-1 model reads, not the definitions behind them"""
-        if dep.label == 'events':
-            test_obj = self.tests[ctx.options['test']]
-            ds = ctx.load(dep.label)
-            return test_obj.vars.resolve(ds, names=test_obj._test_vars)
-        return None
+        """Depend on the events that the stage-1 model reads, not the definitions behind them (see :meth:`Test._resolve_vars`)"""
+        if dep.label != 'events':
+            return None
+        # Stage 1 fits one subject at a time, so there are no groups to resolve against
+        return self.tests[ctx.options['test']]._resolve_vars(ctx.load(dep.label))
 
     def build(self, ctx: Request) -> Dataset | ROIData:
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
 
         ds = ctx.load('data')
-        test_obj.vars.resolve(ds, names=test_obj._test_vars)
+        test_obj._resolve_vars(ds)
 
         if data.source and not data.aggregate:
             if ctx.options['smooth']:
