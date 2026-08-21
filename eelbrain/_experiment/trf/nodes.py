@@ -569,8 +569,6 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
     ----------
     mri_subjects
         Mapping of ``mri`` value to subject→MRI-subject (for per-subject state).
-    common_brain
-        Common-brain MRI subject (morph target for source data).
     variables
         Global pipeline variable definitions; the across-subject ones are added
         here.
