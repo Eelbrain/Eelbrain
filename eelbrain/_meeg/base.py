@@ -53,6 +53,15 @@ def new_rejection_ds(ds: Dataset, interpolation: bool = False, windows: bool = F
     """
     out = Dataset(info={BAD_CHANNELS: [], 'epochs.selection': ds.info.get('epochs.selection')})
     out['value'] = ds['value']
+    if 'run' in ds:
+        # Present when `ds` was assembled by combining per-run event
+        # Datasets (e.g. scoring data for a combine-all-runs epoch).
+        # Kept, together with 'sample' below, so a per-run consumer can
+        # later slice this rejection Dataset back down to a single run;
+        # see SelectedEventsDerivative.build().
+        out['run'] = ds['run']
+    if 'sample' in ds:
+        out['sample'] = ds['sample']
     out[:, 'accept'] = True
     out[:, 'rej_tag'] = ''
     if interpolation:

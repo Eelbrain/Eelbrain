@@ -2,12 +2,13 @@
 """Tests for per-epoch and time-windowed bad-channel interpolation."""
 import numpy as np
 from numpy.testing import assert_array_equal, assert_array_almost_equal
+import pytest
 
 import mne
 
 from eelbrain import datasets
 from eelbrain._meeg import BadChannelWindow
-from eelbrain._meeg.interpolation import _interpolate_bads_eeg, _interpolate_bads_meg, _interpolate_bad_windows_eeg
+from eelbrain._meeg.interpolation import _interpolate_bads_eeg, _interpolate_bads_meg, _interpolate_bad_windows_eeg, bad_intervals_to_windows
 from eelbrain.testing import requires_mne_sample_data
 
 
@@ -116,3 +117,36 @@ def test_interpolate_bad_windows_eeg_zeroes_when_too_many_bad():
     # outside the interval, data are unchanged
     assert np.array_equal(d[0, :, :10], data[0, :, :10])
     assert np.array_equal(d[0, :, 30:], data[0, :, 30:])
+
+
+def test_bad_intervals_to_windows():
+    "bad_intervals_to_windows converts raw-absolute intervals to epoch-relative BadChannelWindow lists"
+    sample, sfreq = 1000, 100.  # event at t=10.0 s
+    tmin, tmax = -0.2, 0.8  # epoch spans absolute [9.8, 10.8)
+
+    # full overlap: interval covers the whole epoch
+    windows = bad_intervals_to_windows([('A', 9.0, 11.0), ('B', 9.0, 11.0)], sample, sfreq, tmin, tmax)
+    assert len(windows) == 2
+    assert all(w.tmin == tmin and w.tmax == tmax for w in windows)
+    assert {w.channel for w in windows} == {'A', 'B'}
+
+    # partial overlap: clipped to the epoch's own bounds
+    windows = bad_intervals_to_windows([('A', 10.5, 12.0)], sample, sfreq, tmin, tmax)
+    assert len(windows) == 1
+    assert windows[0].channel == 'A'
+    assert windows[0].tmin == 0.5 and windows[0].tmax == tmax
+
+    # no overlap -> empty
+    windows = bad_intervals_to_windows([('A', 20.0, 21.0)], sample, sfreq, tmin, tmax)
+    assert windows == []
+
+    # multiple intervals: only the overlapping one contributes
+    windows = bad_intervals_to_windows([('A', 0.0, 1.0), ('A', 10.0, 10.5)], sample, sfreq, tmin, tmax)
+    assert len(windows) == 1
+    assert windows[0].tmin == 0.0 and windows[0].tmax == 0.5
+
+    # different channels can have different (non-overlapping) bad intervals
+    windows = bad_intervals_to_windows([('A', 10.0, 10.3), ('B', 10.4, 10.6)], sample, sfreq, tmin, tmax)
+    by_channel = {w.channel: (w.tmin, w.tmax) for w in windows}
+    assert by_channel['A'] == pytest.approx((0.0, 0.3))
+    assert by_channel['B'] == pytest.approx((0.4, 0.6))

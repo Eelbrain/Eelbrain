@@ -208,6 +208,48 @@ def make_interpolators(
         interp_cache[bads, key] = picks_good, picks_bad, interpolation
 
 
+def bad_intervals_to_windows(
+        bad_intervals: list[tuple[str, float, float]],
+        sample: int,
+        sfreq: float,
+        tmin: float,
+        tmax: float,
+) -> list[BadChannelWindow]:
+    """Convert raw-absolute bad intervals to one epoch's :class:`BadChannelWindow` list
+
+    Parameters
+    ----------
+    bad_intervals
+        ``(channel, tmin, tmax)`` per-channel bad-time intervals in
+        raw-absolute-sample-clock seconds (as produced by
+        :class:`~eelbrain._experiment.preprocessing.nodes.CleanWindowsDerivative`,
+        i.e. already including ``raw.first_samp``), ``tmax`` exclusive.
+    sample
+        This epoch's trigger sample, in the same absolute-sample-clock
+        convention as ``bad_intervals`` (matches a ``Dataset['sample']`` entry).
+    sfreq
+        Sampling rate in Hz.
+    tmin
+        Epoch start time relative to the trigger, in seconds.
+    tmax
+        Epoch stop time relative to the trigger, in seconds (exclusive).
+
+    Returns
+    -------
+    windows
+        One :class:`BadChannelWindow` per overlapping interval, clipped to
+        ``[tmin, tmax)``. Empty if no interval overlaps the epoch.
+    """
+    event_time = sample / sfreq
+    out = []
+    for ch, t0, t1 in bad_intervals:
+        clipped_tmin = max(t0 - event_time, tmin)
+        clipped_tmax = min(t1 - event_time, tmax)
+        if clipped_tmax > clipped_tmin:
+            out.append(BadChannelWindow(ch, clipped_tmin, clipped_tmax))
+    return out
+
+
 def _window_intervals(
         windows: list[BadChannelWindow],
         epochs: mne.Epochs,

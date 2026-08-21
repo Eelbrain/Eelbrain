@@ -459,7 +459,7 @@ class EpochsDerivative(UncachedDerivative[Dataset]):
                 baseline = epoch.baseline
             if baseline:
                 if ds.info.get(INTERPOLATE_WINDOWS, False):
-                    raise NotImplementedError(f"Baseline correction together with ChannelModelRejection for epoch {epoch.name!r}: time-windowed interpolation sets data segments with too many bad channels to zero before baseline correction, and baseline correction would assign these segments non-zero values; load with baseline=False")
+                    raise NotImplementedError(f"Baseline correction together with time-windowed epoch rejection (e.g. ChannelModelRejection, BadWindowsRejection) for epoch {epoch.name!r}: time-windowed interpolation sets data segments with too many bad channels to zero before baseline correction, and baseline correction would assign these segments non-zero values; load with baseline=False")
                 if variable_time:
                     for epochs in epochs_list:
                         epochs.apply_baseline(baseline)
@@ -567,7 +567,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         model_vars = model.split('%') if model else ()
         for evoked, *cell in data.zip('evoked', *model_vars):
             evoked.info['description'] = "Eelbrain"
-            evoked.comment = ' | '.join(cell)
+            evoked.comment = ' | '.join(str(c) for c in cell)
         return data['evoked']
 
     @staticmethod
@@ -623,7 +623,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
 
         # Unpack evoked objects and map them to the ds rows
         model_vars = model.split('%') if model else ()
-        cells = [' | '.join(cell) or 'No comment' for cell in ds.zip(*model_vars)] if model_vars else ['No comment']
+        cells = [' | '.join(str(c) for c in cell) or 'No comment' for cell in ds.zip(*model_vars)] if model_vars else ['No comment']
         evoked_by_cell = dict(zip(_evoked_comments(evoked), evoked))
         if len(evoked_by_cell) != len(evoked):
             raise RuntimeError(f"Cached evoked data contains duplicate comments: {_evoked_comments(evoked)!r}")
@@ -647,7 +647,7 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
                 baseline = epoch.baseline
             if baseline:
                 if ds.info.get(INTERPOLATE_WINDOWS, False):
-                    raise NotImplementedError(f"Baseline correction together with ChannelModelRejection for epoch {epoch.name!r}: time-windowed interpolation sets data segments with too many bad channels to zero before baseline correction, and baseline correction would assign these segments non-zero values; load with baseline=False")
+                    raise NotImplementedError(f"Baseline correction together with time-windowed epoch rejection (e.g. ChannelModelRejection, BadWindowsRejection) for epoch {epoch.name!r}: time-windowed interpolation sets data segments with too many bad channels to zero before baseline correction, and baseline correction would assign these segments non-zero values; load with baseline=False")
                 for evoked_i in evoked:
                     evoked_i.apply_baseline(epoch.baseline)
 

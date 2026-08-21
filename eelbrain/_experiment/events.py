@@ -9,7 +9,8 @@ Dependency structure:
     │           ├── labeled-events
     │           │     ├── events-input   (BIDS sidecar, preferred when present)
     │           │     └── events         (trigger-based fallback)
-    │           └── rejection            (epoch-rejection-input | epoch-rejection-channel-model;
+    │           └── rejection            (epoch-rejection-input | epoch-rejection-channel-model |
+    │                                      epoch-rejection-bad-windows | epoch-rejection-ransac;
     │                                      only when epoch_rejection is set and reject != False)
     │
     ├── PrimaryEpoch / ContinuousEpoch (combine runs)
@@ -45,10 +46,12 @@ Dependency structure:
     Applies epoch-specific trial selection (``sel`` predicate), artifact
     rejection, and bad-channel annotations for a single raw recording file.
     Always restricted to one task/run combination.  Adds the rejection node
-    (``epoch-rejection-input`` for a manual rejection, or
-    ``epoch-rejection-channel-model`` for an automatic one) as a dependency when
-    epoch rejection is active (``epoch_rejection`` is set and ``reject`` is not
-    ``False``).
+    (``epoch-rejection-input`` for a manual rejection, ``epoch-rejection-bad-windows``
+    for a :class:`~epoch_rejection.BadWindowsRejection`, ``epoch-rejection-ransac``
+    for a :class:`~epoch_rejection.RANSACRejection` or
+    ``epoch-rejection-channel-model`` for any other automatic rejection) as a
+    dependency when epoch rejection is active (``epoch_rejection`` is set and
+    ``reject`` is not ``False``).
 
 :class:`EpochEventsDerivative` (``'epoch-events'``)
     Epoch-level event aggregation.  For :class:`~epochs.PrimaryEpoch` and
@@ -76,7 +79,7 @@ from .._data_obj import Datalist, Dataset, Factor, Var, combine
 from .._exceptions import ConfigurationError
 from .._info import INTERPOLATE_CHANNELS, INTERPOLATE_WINDOWS, INTERPOLATE_WINDOWS_MAX, merge_info
 from .derivative_cache import CachePolicy, Dependency, Derivative, Input, Request, UncachedDerivative, file_fingerprint
-from .epoch_rejection import EpochRejection, ManualRejection
+from .epoch_rejection import RANSACRejection, BadWindowsRejection, EpochRejection, ManualRejection
 from .epochs import EPOCH_EXTRACT_OPTIONS, EpochCollection, SecondaryEpoch, SuperEpoch, PrimaryEpoch, ContinuousEpoch, single_recording_run
 from .pathing import BIDS_ENTITY_KEYS, bids_path
 from .preprocessing import raw_node_name
@@ -375,7 +378,14 @@ class SelectedEventsDerivative(UncachedDerivative[Dataset]):
                 state['run'] = epoch.run
             deps = [Dependency('labeled-events', state=state)]
             if rejection_params is not None and reject:
-                node = 'epoch-rejection-input' if isinstance(rejection_params, ManualRejection) else 'epoch-rejection-channel-model'
+                if isinstance(rejection_params, ManualRejection):
+                    node = 'epoch-rejection-input'
+                elif isinstance(rejection_params, RANSACRejection):
+                    node = "epoch-rejection-ransac"
+                elif isinstance(rejection_params, BadWindowsRejection):
+                    node = 'epoch-rejection-bad-windows'
+                else:
+                    node = 'epoch-rejection-channel-model'
                 deps.append(Dependency(node, label='rejection', state=state))
             return tuple(deps)
         elif isinstance(epoch, SecondaryEpoch):
@@ -404,6 +414,32 @@ class SelectedEventsDerivative(UncachedDerivative[Dataset]):
             rejection_params = self.epoch_rejection[ctx.state['epoch_rejection']]
             if rejection_params is not None and reject:
                 rejection_ds = ctx.load('rejection')
+
+                # Automatic rejection methods (RANSAC, ChannelModel,
+                # BadWindows) score/fit against the full "epochs" dependency,
+                # which combines all runs when the epoch's own `run` is None
+                # (see EpochEventsDerivative._find_runs) - regardless of
+                # which single run's rejection cache entry is being built.
+                # Such a `rejection_ds` carries 'run' and 'sample' columns
+                # (added by new_rejection_ds when its input was itself a
+                # combined Dataset); use them to recover this run's slice
+                # and align it with `ds` by event identity (not position -
+                # epoch construction may also drop events whose window
+                # extends past this run's own data boundary, so row counts
+                # can differ even for a single run).
+                if rejection_ds.n_cases != ds.n_cases and 'run' in rejection_ds and 'sample' in rejection_ds and 'sample' in ds and ctx.state.get('run') is not None:
+                    # Validate against plain arrays first so the Dataset is
+                    # only ever sliced once, for a match that is already
+                    # confirmed - no discarded intermediate Datasets.
+                    run_mask = np.asarray(rejection_ds['run']) == ctx.state['run']
+                    run_samples = np.asarray(rejection_ds['sample'])[run_mask]
+                    keep = np.isin(ds['sample'], run_samples)
+                    # Order check, not just membership: both sides are
+                    # naturally sample-ordered within a run, but verify
+                    # rather than assume.
+                    if keep.sum() == len(run_samples) and np.array_equal(np.asarray(ds['sample'])[keep], run_samples):
+                        ds = ds[keep]
+                        rejection_ds = rejection_ds[run_mask]
 
                 # Handle event mismatches
                 if rejection_ds.info.get('epochs.selection') is not None:

@@ -725,6 +725,48 @@ def test_ica_all_tasks_after_maxwell(samples_experiment):
 
 
 @requires_mne_sample_data
+def test_ica_explicit_run_concatenation(samples_experiment):
+    "RawICA(run='') concatenates every run for the fit without a RawMaxwell step"
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    root = samples_experiment(n_subjects=1, n_segments=1, n_runs=2, pick='eeg')
+
+    class Experiment(SampleExperiment):
+        raw = {
+            '1-40': RawFilter('raw', 1, 40),
+            'ica-all': RawICA('1-40', method='fastica', max_iter=1, n_components=0.9, run=''),
+        }
+
+    e = Experiment(root)
+    assert e._raw['ica-all']._concatenate_runs is True
+    e.set(subject='R0000', raw='ica-all', run='1')
+    # concatenated across runs -> cached per subject/session/acquisition, no run entity
+    assert str(ica_file_path(e.state, 'ica-all', concatenate_runs=True, datatype='eeg')) == join('derivatives', 'mne', 'sub-R0000', 'eeg', 'sub-R0000_desc-ica-all_ica.fif')
+    with catch_warnings():
+        filterwarnings('ignore', 'FastICA did not converge', UserWarning)
+        ica_path = e.make_ica()
+    assert exists(ica_path)
+    assert isinstance(e.load_ica(), mne.preprocessing.ICA)
+    # run='2' resolves to the same (already-fit) ICA, not a separate per-run fit
+    e.set(run='2')
+    with catch_warnings():
+        filterwarnings('ignore', 'FastICA did not converge', UserWarning)
+        assert e.make_ica() == ica_path
+    assert isinstance(e.load_raw(), mne.io.BaseRaw)
+
+    # without run='', the default (no Maxwell) stays single-run, unaffected
+    class DefaultExperiment(SampleExperiment):
+        raw = {
+            '1-40': RawFilter('raw', 1, 40),
+            'ica-default': RawICA('1-40', method='fastica', max_iter=1, n_components=0.9),
+        }
+
+    e_default = DefaultExperiment(root)
+    assert e_default._raw['ica-default']._concatenate_runs is False
+
+
+@requires_mne_sample_data
 def test_epoch_reference(samples_experiment):
     "EEG re-referencing after channel interpolation (the 'reference' state)"
     set_log_level('warning', 'mne')
@@ -1049,6 +1091,411 @@ def test_channel_model_rejection_variable_length(samples_experiment):
                 changed = True
     assert changed  # flagged windows were actually modified
     assert zeroed_any  # some interval had more than max_interpolate bad channels
+
+
+# RANSACRejection uses small n_resamples/subset_size to keep tests fast; the
+# 'target' epoch is ~0.4 s, so window_len must be shortened for windowed tests.
+RANSAC_REJECTION_KWARGS = dict(
+    corr_threshold=0.8,
+    max_interpolate=2,
+    n_resamples=30,
+    subset_size=0.3,
+    random_seed=1,
+)
+
+
+@requires_mne_sample_data
+def test_ransac_rejection(samples_experiment):
+    "Automatic epoch rejection via ChannelRANSACModel (the 'epoch_rejection' state)"
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+    from eelbrain._info import INTERPOLATE_CHANNELS
+
+    root = samples_experiment(1, 1, pick='')  # keep EEG channels
+
+    class Experiment(SampleExperiment):
+        epoch_rejection = {'auto': RANSACRejection(**RANSAC_REJECTION_KWARGS)}
+
+    e = Experiment(root)
+    e.set(subject='R0000', epoch='target', raw='raw')
+    n_total = e.load_epochs(epoch_rejection='', interpolate_bads=False).n_cases
+
+    # build + cache the automatically generated rejection file
+    e.set(epoch_rejection='auto')
+    ctx = e._resolve_derivative('epoch-rejection-ransac')
+    rej_ds = ctx.load()
+    cache_path = ctx.node.path(ctx)
+    assert exists(str(cache_path))
+    assert 'cache' in cache_path.parts and 'epoch-rejection-ransac' in cache_path.parts
+    assert rej_ds.n_cases == n_total
+    n_rejected = int((~rej_ds['accept']).sum())
+    n_interp = sum(1 for x in rej_ds[INTERPOLATE_CHANNELS] if x)
+    assert n_rejected > 0  # some epochs rejected (> max_interpolate bad channels)
+    assert n_interp > 0  # some epochs have channels marked for interpolation
+    assert max(len(x) for x in rej_ds[INTERPOLATE_CHANNELS]) <= 2  # never exceeds max_interpolate
+    assert set(rej_ds['rej_tag'][~rej_ds['accept'].x]) == {'ransac'}
+
+    # end-to-end: reject=True drops the rejected epochs
+    ds = e.load_epochs(reject=True, interpolate_bads=False)
+    assert ds.n_cases == n_total - n_rejected
+    # second resolve is a cache hit (no rebuild)
+    assert e._resolve_derivative('epoch-rejection-ransac').is_valid()
+
+    # MEG-only data: RANSACRejection has no EEG to model -> raises
+    meg_root = samples_experiment(1, 1, pick='mag')
+    e_meg = Experiment(meg_root)
+    e_meg.set(subject='R0000', epoch='target', raw='raw', epoch_rejection='auto')
+    with pytest.raises(ConfigurationError):
+        e_meg._resolve_derivative('epoch-rejection-ransac').load()
+
+
+@requires_mne_sample_data
+def test_ransac_rejection_continuous(samples_experiment):
+    "RANSACRejection: equal-length epochs longer than ``continuous`` use windowed detection"
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+    from eelbrain._info import INTERPOLATE_CHANNELS, INTERPOLATE_WINDOWS
+
+    root = samples_experiment(1, 1, pick='')  # keep EEG channels
+
+    # ``continuous`` below the (equal) epoch duration -> time-resolved detection;
+    # window_len must fit inside the ~0.4 s epoch
+    class Experiment(SampleExperiment):
+        epoch_rejection = {'auto': RANSACRejection(**RANSAC_REJECTION_KWARGS, continuous=0.1, window_len=0.1)}
+
+    e = Experiment(root)
+    e.set(subject='R0000', epoch='target', raw='raw', epoch_rejection='auto')
+    rej_ds = e._resolve_derivative('epoch-rejection-ransac').load()
+    assert INTERPOLATE_WINDOWS in rej_ds
+    assert INTERPOLATE_CHANNELS not in rej_ds
+    assert rej_ds['accept'].x.all()  # windowed detection never rejects wholesale
+
+    # with the default ``continuous`` (5 s) the same short epoch uses whole-epoch detection
+    class Experiment2(SampleExperiment):
+        epoch_rejection = {'auto': RANSACRejection(**RANSAC_REJECTION_KWARGS)}
+
+    e2 = Experiment2(root)
+    e2.set(subject='R0000', epoch='target', raw='raw', epoch_rejection='auto')
+    rej_ds2 = e2._resolve_derivative('epoch-rejection-ransac').load()
+    assert INTERPOLATE_CHANNELS in rej_ds2
+    assert INTERPOLATE_WINDOWS not in rej_ds2
+
+
+@requires_mne_sample_data
+def test_ransac_rejection_variable_length(samples_experiment):
+    'RANSACRejection on long, variable-length epochs -> time-windowed interpolation'
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+    from eelbrain._info import INTERPOLATE_WINDOWS, INTERPOLATE_WINDOWS_MAX
+    from eelbrain._meeg import BadChannelWindow
+
+    root = samples_experiment(1, 1, pick='')  # keep EEG channels
+
+    class Experiment(SampleExperiment):
+        epochs = {
+            **SampleExperiment.epochs,
+            'varlen': PrimaryEpoch('sample', "event == 'target'", tmin=-0.1, tmax='0.2 + 0.1*(index % 2)'),
+        }
+        epoch_rejection = {'auto': RANSACRejection(**RANSAC_REJECTION_KWARGS, window_len=0.1)}
+
+    e = Experiment(root)
+    e.set(subject='R0000', epoch='varlen', raw='raw', epoch_rejection='auto')
+
+    # the rejection file stores per-epoch BadChannelWindow lists
+    ctx = e._resolve_derivative('epoch-rejection-ransac')
+    rej_ds = ctx.load()
+    assert INTERPOLATE_WINDOWS in rej_ds
+    windows = rej_ds[INTERPOLATE_WINDOWS]
+    assert all(isinstance(w, BadChannelWindow) for epoch_windows in windows for w in epoch_windows)
+    # nothing is rejected wholesale for long epochs
+    assert rej_ds['accept'].x.all()
+    n_windows = sum(len(epoch_windows) for epoch_windows in windows)
+    assert n_windows > 0  # corr_threshold loose enough to flag something
+
+    # end-to-end: interpolation runs and only touches samples inside the windows
+    max_interpolate = rej_ds.info[INTERPOLATE_WINDOWS_MAX]
+    ds0 = e.load_epochs(interpolate_bads=True, baseline=False, epoch_rejection='')
+    ds1 = e.load_epochs(interpolate_bads=True, baseline=False, epoch_rejection='auto')
+    assert isinstance(ds1['eeg'], Datalist)
+    assert len(ds1['eeg']) == len(windows)
+    changed = zeroed_any = False
+    for y0, y1, epoch_windows in zip(ds0['eeg'], ds1['eeg'], windows):
+        bad_by_channel = {}
+        for w in epoch_windows:
+            bad_by_channel.setdefault(w.channel, []).append((w.tmin, w.tmax))
+        # intervals where more than max_interpolate channels are bad are zeroed
+        # across all channels (too few good channels for reliable interpolation)
+        n_bad = np.zeros(y0.time.nsamples, int)
+        for spans in bad_by_channel.values():
+            in_channel = np.zeros(y0.time.nsamples, bool)
+            for tmin, tmax in spans:
+                in_channel |= (y0.time.times >= tmin) & (y0.time.times < tmax)
+            n_bad += in_channel
+        zeroed = n_bad > max_interpolate
+        if zeroed.any():
+            zeroed_any = True
+            assert_array_equal(y1.x[:, zeroed], 0.0)
+        for ci, ch in enumerate(y0.sensor.names):
+            spans = bad_by_channel.get(ch, [])
+            inside = np.zeros(y0.time.nsamples, bool)
+            for tmin, tmax in spans:
+                inside |= (y0.time.times >= tmin) & (y0.time.times < tmax)
+            # samples outside any bad window (and outside zeroed intervals) are unchanged
+            unchanged = ~inside & ~zeroed
+            assert_array_equal(y0.x[ci, unchanged], y1.x[ci, unchanged])
+            # flagged samples are modified, whether interpolated or zeroed
+            if inside.any() and not np.array_equal(y0.x[ci, inside], y1.x[ci, inside]):
+                changed = True
+    assert changed  # flagged windows were actually modified
+    assert zeroed_any  # some interval had more than max_interpolate bad channels
+
+
+@requires_mne_sample_data
+def test_rejection_by_clean_windows(samples_experiment):
+    'BadWindowsRejection: RawCleanWindows raw pipe feeding time-windowed interpolation'
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+    from eelbrain._info import INTERPOLATE_WINDOWS, INTERPOLATE_WINDOWS_MAX
+    from eelbrain._meeg import BadChannelWindow
+
+    root = samples_experiment(1, 1, pick='')  # keep EEG channels
+
+    class Experiment(SampleExperiment):
+        raw = {
+            **SampleExperiment.raw,
+            'windows': RawCleanWindows('raw', window_len=0.5, zthresholds=(-2.0, 2.0)),
+        }
+        epoch_rejection = {'auto': BadWindowsRejection(raw='windows', max_interpolate=2)}
+
+    e = Experiment(root)
+    # the epoch is cut from 'raw', independent of 'windows' (where the bad
+    # windows are detected) -- exercises BadWindowsRejection.raw != epoch raw
+    e.set(subject='R0000', epoch='target', raw='raw', epoch_rejection='auto')
+
+    # the cached RawCleanWindows companion node produces raw-absolute,
+    # per-channel intervals
+    windows_ctx = e._resolve_derivative('clean-windows@windows')
+    bad_intervals = windows_ctx.load()
+    assert len(bad_intervals) > 0
+    assert all(isinstance(ch, str) and t1 > t0 for ch, t0, t1 in bad_intervals)
+
+    ctx = e._resolve_derivative('epoch-rejection-bad-windows')
+    rej_ds = ctx.load()
+    assert INTERPOLATE_WINDOWS in rej_ds
+    windows = rej_ds[INTERPOLATE_WINDOWS]
+    assert all(isinstance(w, BadChannelWindow) for epoch_windows in windows for w in epoch_windows)
+    n_windows = sum(len(epoch_windows) for epoch_windows in windows)
+    assert n_windows > 0  # zthresholds loose enough to flag something
+    assert rej_ds['accept'].x.all()  # windowed detection never rejects wholesale
+    # second resolve is a cache hit (no rebuild)
+    assert e._resolve_derivative('epoch-rejection-bad-windows').is_valid()
+
+    # end-to-end: interpolation runs and only touches samples inside the windows
+    ds0 = e.load_epochs(interpolate_bads=True, baseline=False, epoch_rejection='')
+    ds1 = e.load_epochs(interpolate_bads=True, baseline=False, epoch_rejection='auto')
+    assert ds1.n_cases == ds0.n_cases
+    max_interpolate = rej_ds.info[INTERPOLATE_WINDOWS_MAX]
+    changed = zeroed_any = False
+    for y0, y1, epoch_windows in zip(ds0['eeg'], ds1['eeg'], windows):
+        bad_by_channel = {}
+        for w in epoch_windows:
+            bad_by_channel.setdefault(w.channel, []).append((w.tmin, w.tmax))
+        if not bad_by_channel:
+            assert_array_equal(y0.x, y1.x)
+            continue
+        # match the sample-rounding convention _window_intervals uses internally
+        t0, sfreq = y0.time.times[0], 1. / y0.time.tstep
+
+        def _mask(spans):
+            m = np.zeros(y0.time.nsamples, bool)
+            for tmin, tmax in spans:
+                a = max(0, int(round((tmin - t0) * sfreq)))
+                b = min(y0.time.nsamples, int(round((tmax - t0) * sfreq)))
+                m[a:b] = True
+            return m
+
+        # per-sample count of simultaneously bad channels -> intervals with
+        # more than max_interpolate are zeroed across all channels instead of
+        # spline-interpolated (see _interpolate_bad_windows_eeg)
+        n_bad = np.zeros(y0.time.nsamples, int)
+        for spans in bad_by_channel.values():
+            n_bad += _mask(spans)
+        zeroed = n_bad > max_interpolate
+        if zeroed.any():
+            zeroed_any = True
+            assert_array_equal(y1.x[:, zeroed], 0.)
+        for ci, ch in enumerate(y0.sensor.names):
+            inside = _mask(bad_by_channel.get(ch, []))
+            unchanged = ~inside & ~zeroed
+            assert_array_equal(y0.x[ci, unchanged], y1.x[ci, unchanged])
+            if inside.any() and not np.array_equal(y0.x[ci, inside], y1.x[ci, inside]):
+                changed = True
+    assert changed
+    assert zeroed_any
+
+
+def _check_combine_all_runs_rejection(e, node_name):
+    '''Shared assertions: automatic rejection + a combine-all-runs PrimaryEpoch.
+
+    Regression test for a bug where RANSACRejectionDerivative /
+    ChannelModelRejectionDerivative / BadWindowsRejectionDerivative always
+    scored against the full combine-all-runs epoch dataset (their
+    'score-epochs' dependency does not restrict to a single run - see
+    EpochEventsDerivative._find_runs, which decides whether to combine runs
+    purely from the target epoch's own ``run`` attribute, never from
+    ``ctx.state['run']``), regardless of which single run's rejection cache
+    entry was being computed. SelectedEventsDerivative.build() then compared
+    that multi-run-sized rejection Dataset against a single run's events and
+    raised a RuntimeError on the count mismatch.
+
+    The fix keeps the (statistically preferable) all-runs fit/score
+    behavior, but has ``new_rejection_ds`` carry 'run' and 'sample' columns
+    through so the per-run consumer can recover its own slice by identity.
+    This checks that recovery is both structurally correct (right counts)
+    and correct by event identity (right samples), not just non-crashing.
+    '''
+    e.set(epoch='target', epoch_rejection='auto')
+    rej_ds = e._resolve_derivative(node_name).load()
+    assert set(rej_ds['run'].cells) == {'1', '2'}
+
+    # this used to raise RuntimeError before the fix
+    # (baseline=False: combining runs makes epochs' time axes non-identical
+    # across runs more often, which can push ChannelModel/BadWindows onto
+    # the windowed-detection path; that path is orthogonally incompatible
+    # with baseline correction - see epochs/nodes.py's INTERPOLATE_WINDOWS
+    # check - same as the existing single-run windowed-detection tests)
+    ds = e.load_epochs(reject=True, baseline=False)
+    assert ds.n_cases == int(rej_ds['accept'].sum())
+    assert set(ds['run'].cells) <= {'1', '2'}
+
+    for run in ('1', '2'):
+        rej_run = rej_ds.sub(rej_ds['run'] == run)
+        n_accepted_run = int(rej_run['accept'].sum())
+        ds_run = ds.sub(ds['run'] == run)
+        assert ds_run.n_cases == n_accepted_run
+        # event identity, not just counts, survives the per-run slicing
+        accepted_samples = sorted(rej_run[rej_run['accept'].x]['sample'])
+        assert sorted(ds_run['sample']) == accepted_samples
+
+
+@requires_mne_sample_data
+def test_ransac_rejection_combine_all_runs(samples_experiment):
+    'RANSACRejection + combine-all-runs PrimaryEpoch (see _check_combine_all_runs_rejection)'
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    root = samples_experiment(1, 1, n_runs=2, pick='')  # keep EEG channels
+
+    class Experiment(SampleExperiment):
+        epoch_rejection = {'auto': RANSACRejection(**RANSAC_REJECTION_KWARGS)}
+
+    e = Experiment(root)
+    e.set(subject='R0000', raw='raw')
+    _check_combine_all_runs_rejection(e, 'epoch-rejection-ransac')
+
+
+@requires_mne_sample_data
+def test_channel_model_rejection_combine_all_runs(samples_experiment):
+    'ChannelModelRejection + combine-all-runs PrimaryEpoch (see _check_combine_all_runs_rejection)'
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    root = samples_experiment(1, 1, n_runs=2, pick='')  # keep EEG channels
+
+    # max_interpolate is loose here (unlike test_channel_model_rejection's
+    # tuned value): the point of this test is verifying per-run
+    # slicing/identity survives combine-all-runs scoring, not exercising
+    # rejection thresholds. Scoring against the larger combined dataset
+    # differs from a single run; a tight max_interpolate can end up
+    # rejecting every epoch in one run, tripping the (correct, unrelated)
+    # 'no events left' guard in PrimaryEpoch.
+    class Experiment(SampleExperiment):
+        epoch_rejection = {'auto': ChannelModelRejection(model='ridge', fit_threshold=None, score_threshold=2e-5, max_interpolate=30)}
+
+    e = Experiment(root)
+    e.set(subject='R0000', raw='raw')
+    _check_combine_all_runs_rejection(e, 'epoch-rejection-channel-model')
+
+
+@requires_mne_sample_data
+def test_bad_windows_rejection_combine_all_runs(samples_experiment):
+    'BadWindowsRejection + combine-all-runs PrimaryEpoch (see _check_combine_all_runs_rejection)'
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    root = samples_experiment(1, 1, n_runs=2, pick='')  # keep EEG channels
+
+    class Experiment(SampleExperiment):
+        raw = {
+            **SampleExperiment.raw,
+            'windows': RawCleanWindows('raw', window_len=0.5, zthresholds=(-2.0, 2.0)),
+        }
+        epoch_rejection = {'auto': BadWindowsRejection(raw='windows', max_interpolate=2)}
+
+    e = Experiment(root)
+    e.set(subject='R0000', raw='raw')
+    _check_combine_all_runs_rejection(e, 'epoch-rejection-bad-windows')
+
+
+@requires_mne_sample_data
+def test_ransac_and_channel_model_rejection_dedup_across_runs(samples_experiment, monkeypatch):
+    """RANSAC/ChannelModel rejection is fit once, not once per run, for a
+    combine-all-runs epoch: the underlying 'epochs' dependency already pools
+    every run, so a per-run cache slot would just store N copies of one
+    identical fit/score result. BadWindowsRejection is the counter-check:
+    it has extra per-run dependencies (clean-windows, raw info), so it must
+    keep keying on 'run' -- this guards against "fixing" that one too.
+    """
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+    from eelbrain._meeg import ChannelModel
+    from eelbrain._meeg._channel_model import ChannelRANSACModel
+
+    root = samples_experiment(1, 1, n_runs=2, pick='')  # keep EEG channels
+
+    class Experiment(SampleExperiment):
+        raw = {
+            **SampleExperiment.raw,
+            'windows': RawCleanWindows('raw', window_len=0.5, zthresholds=(-2.0, 2.0)),
+        }
+        epoch_rejection = {
+            'ransac': RANSACRejection(**RANSAC_REJECTION_KWARGS),
+            'channel-model': ChannelModelRejection(model='ridge', fit_threshold=None, score_threshold=2e-5, max_interpolate=30),
+            'bad-windows': BadWindowsRejection(raw='windows', max_interpolate=2),
+        }
+
+    e = Experiment(root)
+    e.set(subject='R0000', raw='raw', epoch='target')
+
+    for rej_name, node_name, fit_cls in (
+            ('ransac', 'epoch-rejection-ransac', ChannelRANSACModel),
+            ('channel-model', 'epoch-rejection-channel-model', ChannelModel),
+    ):
+        calls = []
+        orig_fit = fit_cls.fit
+
+        def counting_fit(self, data, *args, _orig=orig_fit, _calls=calls, **kwargs):
+            _calls.append(1)
+            return _orig(self, data, *args, **kwargs)
+
+        monkeypatch.setattr(fit_cls, 'fit', counting_fit)
+
+        e.set(epoch_rejection=rej_name, run='1')
+        ctx1 = e._resolve_derivative(node_name)
+        ctx1.load()
+        e.set(run='2')
+        ctx2 = e._resolve_derivative(node_name)
+        ctx2.load()
+
+        assert ctx1.node.path(ctx1) == ctx2.node.path(ctx2), f"{rej_name}: run='1'/run='2' should share one cache slot"
+        assert len(calls) == 1, f"{rej_name}: expected 1 fit() call across both runs, got {len(calls)}"
+
+    # counter-check: BadWindowsRejection still gets a distinct slot per run
+    e.set(epoch_rejection='bad-windows', run='1')
+    ctx1 = e._resolve_derivative('epoch-rejection-bad-windows')
+    e.set(run='2')
+    ctx2 = e._resolve_derivative('epoch-rejection-bad-windows')
+    assert ctx1.node.path(ctx1) != ctx2.node.path(ctx2)
 
 
 @requires_mne_sample_data
@@ -1713,6 +2160,48 @@ def test_epoch_run(samples_experiment):
 
 
 @requires_mne_sample_data
+def test_load_evoked_numeric_model(samples_experiment):
+    """load_evoked(model=...) with a numeric (Var), not Factor, grouping variable.
+
+    Regression test: EpochEvokedDerivative.build() and .apply_view_options()
+    (eelbrain/_experiment/epochs/nodes.py) both did ``' | '.join(cell)`` to
+    build a per-condition label/lookup key from the model variable(s)'
+    values, which raised ``TypeError: sequence item 0: expected str
+    instance, numpy.int64 found`` whenever a model variable was numeric
+    rather than a string-valued Factor like the sample experiment's usual
+    'side'/'modality'. Uses a custom numeric ``EvalVar`` (mirroring how
+    'side'/'modality' are registered, just producing a Var instead of a
+    Factor) so the variable reliably survives into the internal Dataset
+    that EpochEvokedDerivative.build() aggregates.
+    """
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    root = samples_experiment(1, 1)
+
+    class Experiment(SampleExperiment):
+        variables = {
+            **SampleExperiment.variables,
+            'value_num': EvalVar('value'),
+        }
+
+    e = Experiment(root)
+    e.set(subject='R0000', epoch='target')
+
+    # first call: exercises build()'s join/comment assignment
+    ds = e.load_evoked(model='value_num', ndvar=False)
+    assert ds.n_cases > 1
+    for value, evoked in ds.zip('value_num', 'evoked'):
+        assert evoked.comment == str(value)
+
+    # second call: cache hit, exercises apply_view_options()'s matching join
+    ds2 = e.load_evoked(model='value_num', ndvar=False)
+    assert list(ds2['value_num']) == list(ds['value_num'])
+    for value, evoked in ds2.zip('value_num', 'evoked'):
+        assert evoked.comment == str(value)
+
+
+@requires_mne_sample_data
 def test_sample_eeg(samples_experiment):
     set_log_level('warning', 'mne')
 
@@ -1902,7 +2391,7 @@ def test_load_trf_filepredictor(samples_experiment):
     assert isinstance(res, BoostingResult)
 
     # the per-stimulus predictor file edges are recorded in the manifest
-    options = e._trf_options('env', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
+    options = e._trf_options('env', 0.0, 0.1, 'boosting', None, None, samplingrate, False, {})
     ctx = e._resolve_derivative('trf', options=options)
     assert ctx.is_valid()
     assert {'auditory~env', 'visual~env'} <= set(ctx._manifest().dependencies)

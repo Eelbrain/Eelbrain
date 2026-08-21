@@ -40,7 +40,7 @@ from .epochs import (
     EvokedGroupDatasetDerivative, PrimaryEpoch, SecondaryEpoch,
     SuperEpoch, assemble_epochs, decim_param,
 )
-from .epoch_rejection import ChannelModelRejection, ChannelModelRejectionDerivative, EpochRejection, ManualRejection, RejectionInput
+from .epoch_rejection import RANSACRejection, RANSACRejectionDerivative, BadWindowsRejectionDerivative, ChannelModelRejection, ChannelModelRejectionDerivative, EpochRejection, ManualRejection, RejectionInput
 from .events import EpochEventsDerivative, EventsDerivative, EventsInput, LabeledEventsDerivative, SelectedEventsDerivative
 from .exceptions import FileMissingError, ICAChannelsChangedError
 from .logging import CACHE_EVENT_COLUMNS, StructuredFormatter
@@ -54,7 +54,7 @@ from .pathing import (
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, _resolve_parc
 from .preprocessing import (
     CachedRawPipe, ICAInput, MaxwellCalibrationInput, MaxwellCrosstalkInput, CanonicalHeadPositionDerivative, RawBadChannelsInput, RawDerivative, RawHeadPositionDerivative, RawPipe, RawSource, RawSourceDerivative, RawSourceInput, RawICA, RawMaxwell, Reference,
-    REINDEX_ICA, assemble_raw_pipes, ica_input_name, raw_bad_channels_input_name, raw_node_name, raw_input_name,
+    RawCleanWindows, CleanWindowsDerivative, REINDEX_ICA, assemble_raw_pipes, ica_input_name, raw_bad_channels_input_name, raw_node_name, raw_input_name,
 )
 from .data import DataSpec
 from .source import (
@@ -264,7 +264,7 @@ class Pipeline(StateModel):
         ignore_entities = copy.deepcopy(self.ignore_entities)
         ignore_tasks = ignore_entities.get('ignore_tasks', [])
         if 'noise' not in ignore_tasks:
-            ignore_entities['ignore_tasks'] = [*ignore_tasks,  'noise']
+            ignore_entities['ignore_tasks'] = [*ignore_tasks, 'noise']
 
         self._subjects = tuple(get_entity_vals(root, 'subject', **ignore_entities))
         self._sessions = tuple(get_entity_vals(root, 'session', **ignore_entities))
@@ -534,12 +534,16 @@ class Pipeline(StateModel):
                     self._derivatives.register(MaxwellCalibrationInput())
                     self._derivatives.register(MaxwellCrosstalkInput())
                     maxwell_registered = True
+                elif isinstance(pipe, RawCleanWindows):
+                    self._derivatives.register(CleanWindowsDerivative(raw_name, pipe))
             else:
                 raise TypeError(f"Unknown raw pipe {pipe}")
         self._derivatives.register(TransInput())
         self._derivatives.register(BemInput())
         self._derivatives.register(RejectionInput(self.root, self._epoch_rejection, self._epochs))
         self._derivatives.register(ChannelModelRejectionDerivative(self._epochs, self._epoch_rejection))
+        self._derivatives.register(RANSACRejectionDerivative(self._epochs, self._epoch_rejection))
+        self._derivatives.register(BadWindowsRejectionDerivative(self._epochs, self._epoch_rejection))
 
         # --- Predictors and TRFs ---
         self._derivatives.register(PredictorInput(self.root, self.predictors))
@@ -557,6 +561,7 @@ class Pipeline(StateModel):
             self.fix_events,
             self.__class__.__name__,
         ))
+
         self._derivatives.register(LabeledEventsDerivative(
             self.label_events,
             self.__class__.__name__,
@@ -1469,7 +1474,8 @@ class Pipeline(StateModel):
             morph: bool = None,
             keep_mne: bool = False,
             model: str = '',
-            **state):
+            **state,
+    ):
         """
         Load a Dataset with condition average responses for each subject.
 
@@ -2265,7 +2271,7 @@ class Pipeline(StateModel):
             # each task's onsets by the same offset used to append the raws
             if task:
                 event_dss = []
-                offset = 0.0  # seconds into the concatenated recording
+                offset = 0.  # seconds into the concatenated recording
                 with self._temporary_state:
                     for state in ctx.node._source_states(ctx, task):
                         ds_t = self.load_events(raw=pipe.source, **state)
@@ -2417,8 +2423,8 @@ class Pipeline(StateModel):
         For a :class:`ManualRejection` the GUI is opened for editing (with the
         correct file name; an existing file is loaded and is the default save
         path). For an automatically generated rejection (e.g.
-        :class:`ChannelModelRejection`) the rejection is computed/cached and the
-        GUI is opened **read-only** for inspection.
+        :class:`ChannelModelRejection`, :class:`RANSACRejection`) the rejection
+        is computed/cached and the GUI is opened **read-only** for inspection.
 
         Parameters
         ----------
@@ -2465,9 +2471,10 @@ class Pipeline(StateModel):
             else:
                 raise ValueError(f"The current epoch {epoch.name!r} is not a primary epoch and inherits selections from other epochs. Generate trial rejection for these epochs.")
 
-        if isinstance(rej_args, ChannelModelRejection):
+        if isinstance(rej_args, (ChannelModelRejection, RANSACRejection)):
             # automatically generated: build+cache the rejection, then inspect read-only
-            rej_ctx = self._resolve_derivative('epoch-rejection-channel-model')
+            node = 'epoch-rejection-ransac' if isinstance(rej_args, RANSACRejection) else 'epoch-rejection-channel-model'
+            rej_ctx = self._resolve_derivative(node)
             rej_ctx.load()
             path = rej_ctx.node.path(rej_ctx)
             ds = self._load_derivative('epochs', options={'reject': False, 'ndvar': False})
@@ -2720,7 +2727,8 @@ class Pipeline(StateModel):
             meg: tuple[str, ...] = ('helmet', 'sensors'),
             dig: bool = True,
             parallel: bool = True,
-            **state):
+            **state
+    ):
         """Plot the coregistration (Head shape and MEG helmet)
 
         Parameters
@@ -2796,7 +2804,8 @@ class Pipeline(StateModel):
             h: float = 2.5,
             run: bool = None,
             model: str = '',
-            **kwargs):
+            **kwargs,
+    ):
         """Plot evoked sensor data
 
         Parameters

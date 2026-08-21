@@ -37,9 +37,10 @@ from ..derivative_cache import (
 from ..logging import find_difference, format_difference_path
 from ..exceptions import FileMissingError, ICAMissingError
 from ..pathing import bids_path, DERIV_DIR
+from ..._meeg._clean_windows import clean_windows
 from .config import (
-    MNE_VERBOSITY, RawPipeGraph, RawSource, CachedRawPipe, RawICA, RawApplyICA, RawMaxwell,
-    raw_node_name, raw_bad_channels_input_name, raw_input_name, ica_input_name,
+    MNE_VERBOSITY, RawPipeGraph, RawSource, CachedRawPipe, RawICA, RawApplyICA, RawMaxwell, RawCleanWindows,
+    raw_node_name, raw_bad_channels_input_name, raw_input_name, ica_input_name, clean_windows_input_name,
 )
 
 LOG = logging.getLogger(__name__)
@@ -972,6 +973,92 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
             value: mne.io.BaseRaw,
     ) -> None:
         value.save(path, overwrite=True, verbose='ERROR')
+
+
+#: JSON sidecar columns for the `*_desc-cleanwindows..._events.tsv` files
+#: written by :class:`CleanWindowsDerivative` (BIDS inheritance principle: one
+#: sidecar at the top of the ``derivatives/eelbrain`` tree covers every
+#: matching file, following the ``desc-autoannotation_events.tsv`` pattern
+#: from the BIDS specification for automatically detected annotations).
+_CLEAN_WINDOWS_EVENTS_JSON = {
+    'onset': {'Description': 'Onset of the bad time window in seconds.'},
+    'duration': {'Description': 'Duration of the bad time window in seconds.'},
+    'channel': {'Description': "Name of the channel that was bad in this window (clean_windows does not score channels jointly, so each channel's bad windows are reported as a separate row)."},
+}
+
+
+class CleanWindowsDerivative(Derivative[list]):
+    """Cached bad time windows from a :class:`~.config.RawCleanWindows` pipe.
+
+    The value is a ``list[(channel, tmin, tmax)]`` of per-channel bad-time
+    intervals, in the same absolute-sample-clock convention as
+    ``Dataset['sample']`` (i.e. ``raw.first_samp`` is already added; see
+    :meth:`build`).
+
+    Stored as a BIDS-style ``*_desc-cleanwindows..._events.tsv`` file under
+    ``derivatives/eelbrain`` (with a ``channel`` column added to the standard
+    ``onset``/``duration`` events columns), so it can be inspected directly.
+    """
+    key_fields = ('subject', 'session', 'task', 'acquisition', 'run')
+
+    def __init__(self, raw_name: str, pipe: RawCleanWindows):
+        self.name = clean_windows_input_name(raw_name)
+        self.raw_name = raw_name
+        self.fixed_state = {'raw': raw_name}
+        self.pipe = pipe
+
+    def _description(self) -> str:
+        # desc- labels are alphanumeric only
+        return 'cleanwindows' + ''.join(c for c in self.raw_name if c.isalnum())
+
+    def path(self, ctx: Request) -> Path:
+        bpath = bids_path(ctx.root, ctx.state, '.tsv', datatype=ctx.datatype, suffix='events')
+        bpath = bpath.update(description=self._description(), root=ctx.root / DERIV_DIR / 'eelbrain', check=False)
+        return bpath.fpath
+
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        source_node = raw_node_name(self.pipe.source)
+        return (Dependency(source_node, options={'noise': False, 'preload': True}),)
+
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        return {'pipe': self.pipe, 'raw': self.raw_name}
+
+    def build(self, ctx: Request) -> list[tuple[str, float, float]]:
+        raw = ctx.load(raw_node_name(self.pipe.source))
+        if not raw.preload:
+            raw.load_data()
+        local_intervals = clean_windows(
+            raw,
+            max_bad_channels=self.pipe.max_bad_channels,
+            zthresholds=self.pipe.zthresholds,
+            window_len=self.pipe.window_len,
+            window_overlap=self.pipe.window_overlap,
+            max_dropout_fraction=self.pipe.max_dropout_fraction,
+            min_clean_fraction=self.pipe.min_clean_fraction,
+            truncate_quant=self.pipe.truncate_quant,
+            step_sizes=self.pipe.step_sizes,
+            picks=self.pipe.picks,
+        )
+        offset = raw.first_samp / raw.info['sfreq']
+        return [(ch, t0 + offset, t1 + offset) for ch, t0, t1 in local_intervals]
+
+    def load(self, ctx: Request, path: Path) -> list[tuple[str, float, float]]:
+        df = pd.read_csv(path, sep='\t')
+        return list(zip(df['channel'], df['onset'], df['onset'] + df['duration']))
+
+    def save(self, ctx: Request, path: Path, value: list[tuple[str, float, float]]) -> None:
+        df = pd.DataFrame({
+            'onset': [t0 for _, t0, _ in value],
+            'duration': [t1 - t0 for _, t0, t1 in value],
+            'channel': [ch for ch, _, _ in value],
+        })
+        path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(path, sep='\t', index=False)
+        # BIDS inheritance principle: one sidecar at the derivatives root covers
+        # every sub-*/..._desc-{...}_events.tsv file
+        json_path = ctx.root / DERIV_DIR / 'eelbrain' / f'desc-{self._description()}_events.json'
+        if not json_path.exists():
+            json_path.write_text(json.dumps(_CLEAN_WINDOWS_EVENTS_JSON, indent=4))
 
 
 class MaxwellCalibrationInput(Input[Path]):
