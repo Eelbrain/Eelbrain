@@ -724,7 +724,7 @@ Variables come in two kinds, which differ in where they are added:
 - *Across-subject* variables have definitions that span subjects, and are only
   added where different subjects' data are combined. This covers
   :class:`GroupVar`, a :class:`LabelVar` on ``'subject'``, and any variable
-  derived from either, such as ``EvalVar("group == 'patient'")``.
+  derived from either, such as ``EvalVar("diagnosis == 'patient'")``.
 
 An across-subject variable is thus only present in data that spans subjects
 (e.g. ``e.load_selected_events('all')``, but not ``e.load_selected_events('01')``), and
@@ -740,11 +740,15 @@ compare groups through :class:`TTestIndependent` or through an
             'control': Group(['S011', 'S012']),
         }
         variables = {
-            'group': GroupVar(['patient', 'control']),
+            'diagnosis': GroupVar(['patient', 'control']),
         }
         tests = {
-            'patient=control': TTestIndependent('group', 'patient', 'control'),
+            'patient=control': TTestIndependent('diagnosis', 'patient', 'control'),
         }
+
+Avoid naming such a variable ``group``: :class:`TTestIndependent` with
+``model='group'`` defines a :class:`GroupVar` of its own, which would collide
+with it.
 
 Where subjects are combined, each variable is added if the combined data still
 provides what it is computed from. A variable keyed on the subject, such as a
