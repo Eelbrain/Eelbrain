@@ -237,6 +237,21 @@ def test_resolve_require_inputs():
     assert list(events) == ['subject']
 
 
+def test_resolve_names_scope():
+    "Only the variables the caller asks for have to resolve"
+    variables = Variables({
+        'side': LabelVar('value', {1: 'left'}, task='a'),
+        'target': EvalVar('value == 1'),
+    })
+    # 'side' is restricted to another task, so it is not added; asking for 'target' alone is fine
+    ds = Dataset({'value': Var([1, 2])}, info={'task': 'b'})
+    assert list(variables.resolve(ds, names=['target'])) == ['target']
+    assert 'side' not in ds
+    # ... and a caller that does need it still gets told
+    with pytest.raises(NotImplementedError, match="'side'"):
+        variables.resolve(Dataset({'value': Var([1, 2])}, info={'task': 'b'}), names=['side', 'target'])
+
+
 def test_resolve_task():
     "A task-restricted variable follows ds.info, or the task column where subjects are combined"
     variables = Variables({'side': LabelVar('value', {1: 'left', 2: 'right'}, task='a')})

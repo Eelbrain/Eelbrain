@@ -796,7 +796,7 @@ class TRFModelTestDerivative(Derivative[Any]):
             if test_obj is None:
                 test_obj = TTestOneSample(comparison.tail)
 
-        test_obj.vars.resolve(ds, self.groups, names=test_obj.vars.vars)
+        test_obj.vars.resolve(ds, self.groups, names=test_obj._test_vars)
         y = ds[metric]
         if reducer is None:
             if isinstance(y, Datalist):

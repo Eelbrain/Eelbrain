@@ -421,13 +421,13 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
 
         if data.source and data.aggregate:
             assert isinstance(ds, ROIData)
-            test_obj.vars.resolve(ds.n_trials_ds, self.groups, names=test_obj.vars.vars)
+            test_obj.vars.resolve(ds.n_trials_ds, self.groups, names=test_obj._test_vars)
             for label_ds in ds.label_data.values():
-                test_obj.vars.resolve(label_ds, self.groups, names=test_obj.vars.vars)
+                test_obj.vars.resolve(label_ds, self.groups, names=test_obj._test_vars)
             return ds
 
         assert isinstance(ds, Dataset)
-        test_obj.vars.resolve(ds, self.groups, names=test_obj.vars.vars)
+        test_obj.vars.resolve(ds, self.groups, names=test_obj._test_vars)
         if data.sensor:
             return ds
 

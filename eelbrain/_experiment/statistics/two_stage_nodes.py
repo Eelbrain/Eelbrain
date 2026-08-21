@@ -144,7 +144,7 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
         test_obj = self.tests[ctx.options['test']]
 
         ds = ctx.load('data')
-        test_obj.vars.resolve(ds, names=test_obj.vars.vars)
+        test_obj.vars.resolve(ds, names=test_obj._test_vars)
 
         if data.source and not data.aggregate:
             if ctx.options['smooth']:
