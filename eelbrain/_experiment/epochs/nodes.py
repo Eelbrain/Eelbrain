@@ -735,7 +735,7 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
         return {'subjects': tuple(self.groups[ctx.state['group']])}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        options = ctx.options_for('evoked', 'model', 'baseline', 'samplingrate', 'decim', 'interpolate_bads', 'data')
+        options = ctx.options_for('evoked', 'model', 'baseline', 'cat', 'samplingrate', 'decim', 'interpolate_bads', 'data')
         return tuple(
             Dependency('evoked', label=subject, state={'subject': subject}, options=options)
             for subject in self.groups[ctx.state['group']]
