@@ -708,7 +708,12 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
         'cat': None,
     }
 
-    def __init__(self, raw, variables: Variables, groups):
+    def __init__(
+            self,
+            raw: RawPipeGraph,
+            variables: Variables,
+            groups: dict[str, tuple[str, ...]],
+    ):
         self.raw = raw
         self.variables = variables
         self.groups = groups
