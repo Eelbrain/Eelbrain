@@ -638,6 +638,11 @@ class EpochsStcDerivative(UncachedDerivative[Dataset]):
         self.epochs = epochs
         self._references = references
 
+    def validate_options(self, ctx: Request) -> None:
+        if src_baseline := ctx.options['src_baseline']:
+            if self.epochs[ctx.state['epoch']].post_baseline_trigger_shift:
+                raise NotImplementedError(f"{src_baseline=}: post_baseline_trigger_shift is not implemented for baseline correction in source space")
+
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         options = ctx.options_for('epochs', 'baseline', 'reject', 'samplingrate', 'decim', 'pad', ndvar=False, data='sensor')
         return _source_dependencies(ctx, Dependency('epochs', options=options))
@@ -659,8 +664,6 @@ class EpochsStcDerivative(UncachedDerivative[Dataset]):
         _check_head_position_alignment(ctx, epoch_list[0].info)
 
         src_baseline = ctx.options['src_baseline']
-        if src_baseline and epoch.post_baseline_trigger_shift:
-            raise NotImplementedError("src_baseline with post_baseline_trigger_shift")
         if src_baseline is True:
             src_baseline = epoch.baseline
         projection = _prepare_source_projection(ctx, ctx.options['morph'], solution)
@@ -761,6 +764,11 @@ class EvokedStcDerivative(UncachedDerivative[Dataset]):
         self.epochs = epochs
         self._references = references
 
+    def validate_options(self, ctx: Request) -> None:
+        if src_baseline := ctx.options['src_baseline']:
+            if self.epochs[ctx.state['epoch']].post_baseline_trigger_shift:
+                raise NotImplementedError(f"{src_baseline=}: post_baseline_trigger_shift is not implemented for baseline correction in source space")
+
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         options = ctx.options_for('evoked', 'model', 'baseline', 'samplingrate', 'decim')
         return _source_dependencies(ctx, Dependency('evoked', options=options))
@@ -779,8 +787,6 @@ class EvokedStcDerivative(UncachedDerivative[Dataset]):
 
         src_baseline = ctx.options['src_baseline']
         epoch = self.epochs[ctx.state['epoch']]
-        if src_baseline and epoch.post_baseline_trigger_shift:
-            raise NotImplementedError(f"{src_baseline=}: post_baseline_trigger_shift is not implemented for baseline correction in source space")
         if src_baseline is True:
             src_baseline = epoch.baseline
         projection = _prepare_source_projection(ctx, ctx.options['morph'], solution)

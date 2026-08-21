@@ -332,7 +332,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
     """
     name = 'evoked-test-data'
     key_options = {
-        'data': OptionSpec(None, DataSpec),
+        'data': OptionSpec(DataSpec('source'), DataSpec),
         'test': None,
         'baseline': None,
         'src_baseline': None,
@@ -365,27 +365,29 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {'test': self.tests[ctx.options['test']]._as_dict_without_vars()}
 
+    def validate_options(self, ctx: Request) -> None:
+        data = ctx.options['data']
+        assert data.sensor + data.source == 1
+        if smooth := ctx.options['smooth']:
+            if data.sensor:
+                raise TypeError(f"{smooth=} for sensor tests")
+            elif data.aggregate:
+                raise TypeError(f"{smooth=} for ROI tests")
+        if data.sensor and (src_baseline := ctx.options['src_baseline']):
+            raise TypeError(f"{src_baseline=} for sensor tests")
+        test_obj = self.tests[ctx.options['test']]
+        if test_obj.vars:
+            _validate_post_aggregation_test_vars(test_obj)
+
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
         model = test_obj.model or ''
-        if test_obj.vars:
-            _validate_post_aggregation_test_vars(test_obj)
-
-        if ctx.options['smooth']:
-            if data.sensor:
-                raise TypeError(f"smooth={ctx.options['smooth']!r} for sensor tests")
-            if data.aggregate:
-                raise TypeError(f"smooth={ctx.options['smooth']!r} for ROI tests")
-
         if data.sensor:
-            if ctx.options['src_baseline']:
-                raise TypeError(f"src_baseline={ctx.options['src_baseline']!r} for sensor tests")
             name = 'evoked-group-dataset'
             options = ctx.options_for('evoked', 'baseline', 'samplingrate', 'decim', 'data', model=model, cat=test_obj.cat, ndvar=True)
             shell_state = {}
         else:
-            assert data.source
             name = 'evoked-stc-group-dataset'
             morph = not data.aggregate
             options = ctx.options_for('evoked-stc-group-dataset', 'baseline', 'src_baseline', 'samplingrate', 'decim', 'data', ndvar=True, model=model, morph=morph, cat=test_obj.cat)

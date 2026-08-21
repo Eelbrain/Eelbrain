@@ -52,6 +52,19 @@ from ..variable_def import Variables
 from .config import EPOCH_EXTRACT_OPTIONS, ContinuousEpoch, EpochBase, EpochCollection, PrimaryEpoch, SecondaryEpoch, SuperEpoch, single_recording_run
 
 
+def _validate_deferred_baseline(
+        epoch: EpochBase,
+        baseline: bool | tuple[float | None, float | None],
+) -> None:
+    """Reject a load-time baseline that a ``post_baseline_trigger_shift`` epoch can not honor.
+
+    Such an epoch is baseline-corrected while it is built, before the trigger
+    shift, so the correction can neither be changed nor undone afterwards.
+    """
+    if epoch.post_baseline_trigger_shift and baseline is not True and baseline != epoch.baseline:
+        raise NotImplementedError(f"{baseline=} for epoch {epoch.name!r}: baseline correction is applied before the post_baseline_trigger_shift and can not be changed at load time; use baseline=True")
+
+
 def _drop_bad_eeg_channels_with_missing_locs(
         epochs_list: Sequence[mne.Epochs],
 ) -> None:
@@ -339,6 +352,14 @@ class EpochsDerivative(UncachedDerivative[Dataset]):
             return self._find_runs(ctx, self.epochs[epoch.sel_epoch])
         return ()
 
+    def validate_options(self, ctx: Request) -> None:
+        data = ctx.options['data']
+        if not data.sensor:
+            raise ValueError(f"data={data.string!r}; load_epochs is for loading sensor data")
+        elif data.aggregate and not ctx.options['ndvar']:
+            raise ValueError(f"data={data.string!r} with ndvar=False")
+        _validate_deferred_baseline(self.epochs[ctx.state['epoch']], ctx.options['baseline'])
+
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         epoch = self.epochs[ctx.state['epoch']]
         if isinstance(epoch, EpochCollection):
@@ -397,11 +418,6 @@ class EpochsDerivative(UncachedDerivative[Dataset]):
     def build(self, ctx: Request) -> Dataset:
         epoch = self.epochs[ctx.state['epoch']]
         data = ctx.options['data']
-        if not data.sensor:
-            raise ValueError(f"data={data.string!r}; load_evoked is for loading sensor data")
-        if data.aggregate and not ctx.options['ndvar']:
-            raise ValueError(f"data={data.string!r} with ndvar=False")
-
         if isinstance(epoch, SuperEpoch):
             dss = []
             epochs_list = []
@@ -451,11 +467,8 @@ class EpochsDerivative(UncachedDerivative[Dataset]):
             ds['epochs'] = combine(epochs_list)
 
         # Baseline correction (for post_baseline_trigger_shift epochs it was already applied)
-        baseline = ctx.options['baseline']
-        if epoch.post_baseline_trigger_shift:
-            if baseline is not True and baseline != epoch.baseline:
-                raise NotImplementedError(f"{baseline=} for epoch {epoch.name!r}: baseline correction is applied before the post_baseline_trigger_shift and can not be changed at load time; use baseline=True")
-        else:
+        if not epoch.post_baseline_trigger_shift:
+            baseline = ctx.options['baseline']
             if baseline is True:
                 baseline = epoch.baseline
             if baseline:
@@ -632,12 +645,12 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
                 evoked_i.info['bads'] = []
 
         # Baseline correction (for post_baseline_trigger_shift epochs it was already applied).
+        # Checked here rather than in validate_options() because ``baseline`` is a view
+        # option: the shell view ignores it and is requested without forwarding it.
         epoch = self.epochs[ctx.state['epoch']]
         baseline = ctx.view_options['baseline']
-        if epoch.post_baseline_trigger_shift:
-            if baseline is not True and baseline != epoch.baseline:
-                raise NotImplementedError(f"baseline={baseline!r} for epoch {epoch.name!r}: baseline correction is applied before the post_baseline_trigger_shift and can not be changed at load time; use baseline=True")
-        else:
+        _validate_deferred_baseline(epoch, baseline)
+        if not epoch.post_baseline_trigger_shift:
             if baseline is True:
                 baseline = epoch.baseline
             if baseline:

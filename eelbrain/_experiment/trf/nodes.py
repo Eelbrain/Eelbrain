@@ -505,6 +505,10 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
             fields += ['cov', 'src', 'parc', 'adjacency', 'mrisubject', 'common_brain']
         return tuple(fields)
 
+    def validate_options(self, ctx: Request) -> None:
+        if not ctx.state['inv'] and (smooth := ctx.options['smooth']):
+            raise ValueError(f"{smooth=}: smoothing is only available for source-space data")
+
     def fingerprint(self, ctx: Request) -> dict[str, object]:
         return {}
 
@@ -512,11 +516,8 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
         trf_options = ctx.options_for('trf', 'x', 'tstart', 'tstop', 'estimator', 'data', 'samplingrate', 'decim', 'filter_x')
         epoch_def = self.epochs[ctx.state['epoch']]
         deps = [Dependency('trf', label=epoch, state={'epoch': epoch}, options=trf_options) for epoch in epoch_def.collected_epochs]
-        if ctx.state['inv']:
-            if not is_fake_mri(self.root / mri_dir(ctx.state)):
-                deps.append(Dependency('source-morph'))
-        elif smooth := ctx.options['smooth']:
-            raise ValueError(f"{smooth=}: smoothing is only available for source-space data")
+        if ctx.state['inv'] and not is_fake_mri(self.root / mri_dir(ctx.state)):
+            deps.append(Dependency('source-morph'))
         return tuple(deps)
 
     def build(self, ctx: Request) -> Dataset:
@@ -613,10 +614,11 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
         subject_options = [key for key in self.key_options if key != 'smooth']
         return ctx.options_for('trf-dataset', *subject_options, smooth=None)
 
+    def validate_options(self, ctx: Request) -> None:
+        if not ctx.state['inv'] and (smooth := ctx.options['smooth']):
+            raise ValueError(f"{smooth=}: smoothing is only available for source-space data")
+
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        if not ctx.state['inv']:
-            if smooth := ctx.options['smooth']:
-                raise ValueError(f"{smooth=}: smoothing is only available for source-space data")
         options = self._subject_options(ctx)
         return tuple(
             Dependency('trf-dataset', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects), options=options)
@@ -698,6 +700,13 @@ class TRFModelTestDerivative(Derivative[Any]):
         if ctx.state['inv']:
             fields += ['cov', 'src', 'parc', 'adjacency', 'mrisubject', 'common_brain']
         return tuple(fields)
+
+    def validate_options(self, ctx: Request) -> None:
+        metric, pmin, samples = ctx.options['metric'], ctx.options['pmin'], ctx.options['samples']
+        _, reducer = self._metric_parts(metric)
+        # A reducer always leaves one value per case; that an unreduced metric is already univariate only the data shows (checked in _test_data)
+        if reducer and (pmin is not None or samples):
+            raise ValueError(f"{metric=} leaves one value per case, which is tested parametrically; {pmin=} and {samples=} do not apply (use pmin=None, samples=0)")
 
     def _test_obj(self, ctx: Request) -> Test | None:
         "The named test, or ``None`` for the default incremental model test"
@@ -806,10 +815,6 @@ class TRFModelTestDerivative(Derivative[Any]):
         else:
             dim = 'sensor' if y.has_dim('sensor') else 'source'
             y = getattr(y, reducer)(dim)
-        if isinstance(y, Var):
-            pmin, samples = ctx.options['pmin'], ctx.options['samples']
-            if pmin is not None or samples:
-                raise ValueError(f"metric={ctx.options['metric']!r} leaves one value per case, which is tested parametrically; {pmin=} and {samples=} do not apply (use pmin=None, samples=0)")
         return ds, y, test_obj
 
     def build(self, ctx: Request) -> Any:

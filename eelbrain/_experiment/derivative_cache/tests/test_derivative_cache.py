@@ -360,10 +360,19 @@ class SpecOptionDerivative(Derivative[str]):
         'mode': OptionSpec(None, literal=('a', 'b', True)),
         'label': OptionSpec('', normalize=lambda value: value.lower()),
     }
+    view_options = {'annotate': False}
 
     def __init__(self, root: str | Path):
         self.root = Path(root)
         self.build_calls = 0
+        self.validate_calls = 0
+
+    def validate_options(self, ctx: Request) -> None:
+        self.validate_calls += 1
+        if ctx.options['flag'] and ctx.options['mode']:
+            raise ValueError(f"mode={ctx.options['mode']!r} does not apply with flag=True")
+        elif ctx.view_options['annotate'] and ctx.options['flag']:
+            raise ValueError("annotate is not available with flag=True")
 
     def fingerprint(self, ctx: Request) -> dict[str, object]:
         return {}
@@ -1205,6 +1214,29 @@ def test_option_spec_validates_and_fills_defaults():
     assert request.options['mode'] is True
     with pytest.raises(ValueError, match="must be one of"):
         registry.resolve('spec-optioned', state=DEFAULT_STATE, options={'mode': 'c'})
+
+
+def test_validate_options_rejects_invalid_combination():
+    root, registry = make_empty_registry()
+    derivative = SpecOptionDerivative(root)
+    registry.register(derivative)
+
+    # the combination is rejected when the request is resolved, before anything is built
+    with pytest.raises(ValueError, match="does not apply"):
+        registry.resolve('spec-optioned', state=DEFAULT_STATE, options={'flag': True, 'mode': 'a'})
+    assert derivative.build_calls == 0
+    # and the node is asked exactly once per request
+    assert derivative.validate_calls == 1
+
+    request = registry.resolve('spec-optioned', state=DEFAULT_STATE, options={'flag': True})
+    assert request.load() == 'flag:True|mode:None|label:'
+    assert derivative.build_calls == 1
+    assert derivative.validate_calls == 2
+
+    # a view option does not enter the cache key, so the check also has to fire on a cache hit
+    with pytest.raises(ValueError, match="annotate"):
+        registry.resolve('spec-optioned', state=DEFAULT_STATE, options={'flag': True, 'annotate': True})
+    assert derivative.build_calls == 1
 
 
 def test_option_spec_normalize_canonicalizes_cache_key():

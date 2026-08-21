@@ -10,6 +10,7 @@ from typing import Any
 from ... import load, save
 from ..._data_obj import Dataset, combine
 from ..._io.pickle import update_subjects_dir
+from ..data import DataSpec
 from ..derivative_cache import Dependency, Derivative, Request, UncachedDerivative
 from ..pathing import MRI_SDIR
 from ..source import ROIData, roi_data_from_dataset
@@ -38,6 +39,14 @@ class ROI2StageResult(ROITestResult):
 class SubjectROILMResult:
     lms: dict[str, Any]
     n_trials_ds: Dataset
+
+
+def _validate_two_stage_options(name: str, test_obj: Test, data: DataSpec) -> None:
+    """Requirements shared by every node in the two-stage chain."""
+    if not isinstance(test_obj, TwoStageTest):
+        raise RuntimeError(f"{name!r} requires a TwoStageTest")
+    if not data.source:
+        raise NotImplementedError(f"Two-stage test with data={data.string!r}")
 
 
 class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
@@ -85,14 +94,16 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
             'epoch': self.epochs[ctx.state['epoch']],
         }
 
+    def validate_options(self, ctx: Request) -> None:
+        data = ctx.options['data']
+        _validate_two_stage_options(self.name, self.tests[ctx.options['test']], data)
+        if data.aggregate and (smooth := ctx.options['smooth']):
+            raise TypeError(f"{smooth=} for ROI two-stage tests")
+
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         data = ctx.options['data']
         test_obj = self.tests[ctx.options['test']]
-        if not isinstance(test_obj, TwoStageTest):
-            raise RuntimeError(f"{self.name!r} requires a TwoStageTest")
-        if data.sensor:
-            raise NotImplementedError(f"Two-stage test with data={data.string!r}")
-        elif data.source and not data.aggregate:
+        if data.source and not data.aggregate:
             if test_obj.model:
                 dependency = Dependency(
                     'evoked-stc',
@@ -106,8 +117,6 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
                     options=ctx.options_for('epochs-stc', 'baseline', 'src_baseline', 'samplingrate', morph=True),
                 )
         else:
-            if ctx.options['smooth']:
-                raise TypeError(f"smooth={ctx.options['smooth']!r} for ROI two-stage tests")
             if test_obj.model:
                 dependency = Dependency(
                     'evoked-stc',
@@ -179,20 +188,19 @@ class TwoStageLevel1Derivative(Derivative[Any]):
         # two-stage-data records the values the stage-1 model reads
         return {'test': self.tests[ctx.options['test']]._as_dict_without_vars()}
 
+    def validate_options(self, ctx: Request) -> None:
+        _validate_two_stage_options(self.name, self.tests[ctx.options['test']], ctx.options['data'])
+
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         return (Dependency('two-stage-data', options=ctx.options_for('two-stage-data', *RESULT_OPTION_DEFAULTS)),)
 
     def build(self, ctx: Request):
         test_obj = self.tests[ctx.options['test']]
-        if not isinstance(test_obj, TwoStageTest):
-            raise RuntimeError(f"{self.name!r} requires a TwoStageTest")
         data = ctx.options['data']
         subject = ctx.state['subject']
         ds = ctx.load('two-stage-data')
-        if data.source and not data.aggregate:
+        if not data.aggregate:
             return test_obj.make_stage_1(data.response_key(ds), ds, subject)
-        if data.sensor:
-            raise NotImplementedError(f"Two-stage test with data={data.string!r}")
         roi_data = roi_data_from_dataset(ds, data.aggregate)
         return SubjectROILMResult(
             {label: test_obj.make_stage_1('label_tc', label_ds, subject) for label, label_ds in roi_data.label_data.items()},
@@ -221,6 +229,9 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
     def cache_label(self, ctx: Request) -> str:
         return self._path_stem(ctx) if ctx.options['samples'] is None else f"{self._path_stem(ctx)}_samples-{ctx.options['samples']}"
 
+    def validate_options(self, ctx: Request) -> None:
+        _validate_two_stage_options(self.name, self.tests[ctx.options['test']], ctx.options['data'])
+
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         subjects = self.groups[ctx.state['group']]
         return tuple(
@@ -230,15 +241,11 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
 
     def build(self, ctx: Request):
         test_obj = self.tests[ctx.options['test']]
-        if not isinstance(test_obj, TwoStageTest):
-            raise RuntimeError(f"{self.name!r} requires a TwoStageTest")
         data = ctx.options['data']
         test_spec = ResolvedTestNDSpec.from_request(ctx)
         subjects = self.groups[ctx.state['group']]
-        if not data.source:
-            raise NotImplementedError(f"Two-stage test with data={data.string!r}")
         subject_results = [ctx.load(subject) for subject in subjects]
-        if data.source and not data.aggregate:
+        if not data.aggregate:
             return test_obj.make_stage_2(subject_results, test_spec.kwargs)
 
         label_lms = {}

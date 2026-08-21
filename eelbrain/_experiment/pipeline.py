@@ -1533,16 +1533,11 @@ class Pipeline(StateModel):
         """
         self.set(**state)
         trf_options = self._trf_options(x, tstart, tstop, estimator, data, samplingrate, filter_x, comparison=True)
-
-        # Fail before loading anything; which metrics a given result actually provides is checked in the node
-        metric_key, reducer = TRFModelTestDerivative._metric_parts(metric)
+        metric_key, _ = TRFModelTestDerivative._metric_parts(metric)
         estimator_obj = self._estimators[estimator]
         if metric_key not in estimator_obj.metric_keys:
             available = ', '.join(estimator_obj.metric_keys)
             raise ValueError(f"{metric=}: estimator {estimator!r} provides {available}")
-        # A reducer always leaves one value per case; an unreduced metric that is already univariate is only known from the data (checked in the node)
-        if reducer and (pmin is not None or samples):
-            raise ValueError(f"{metric=} leaves one value per case, which is tested parametrically; {pmin=} and {samples=} do not apply (use pmin=None, samples=0)")
         if test is not None:
             if not isinstance(test, str):
                 raise TypeError(f"{test=}: expected a test name or None")
