@@ -1511,9 +1511,12 @@ class Pipeline(StateModel):
             for comparisons against zero and a related-measures test otherwise,
             with the tail specified by the comparison.
         pmin
-            Cluster-forming threshold or ``'tfce'``.
+            Cluster-forming threshold or ``'tfce'``. Only applies to an
+            unreduced ``metric``; a reduced one leaves a single value per case,
+            which is tested parametrically (use ``pmin=None, samples=0``).
         samples
-            Number of permutations used to determine cluster p-values.
+            Number of permutations used to determine cluster p-values (see
+            ``pmin``).
         return_data
             Return the :class:`Dataset` used for the test together with the
             statistical result.

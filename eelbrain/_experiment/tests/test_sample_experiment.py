@@ -2561,9 +2561,15 @@ def test_load_model_test(samples_experiment):
     assert list(cache_dir.rglob('*.pickle')) == artifacts
 
     # Statistical options have distinct cache identities
-    e.load_model_test('full > base', 0, 0.1, metric='ev.mean', pmin=None, samples=1)
-    e.load_model_test('full > base', 0, 0.1, metric='ev.mean', pmin=0.05, samples=0)
+    e.load_model_test('full > base', 0, 0.1, metric='ev', pmin=None, samples=1)
+    e.load_model_test('full > base', 0, 0.1, metric='ev', pmin=0.05, samples=0)
     assert len(list(cache_dir.rglob('*.pickle'))) == 3
+
+    # ... but a reduced metric is tested parametrically, so they do not apply
+    with pytest.raises(ValueError, match="metric='ev.mean'"):
+        e.load_model_test('full > base', 0, 0.1, metric='ev.mean')
+    with pytest.raises(ValueError, match='samples=10'):
+        e.load_model_test('full > base', 0, 0.1, metric='ev.mean', pmin=None, samples=10)
 
     # A named test operates on one difference value per subject
     ds_diff, named_res = e.load_model_test('full > base', 0, 0.1, metric='ev.mean', test='trf-one-sample', pmin=None, samples=0, return_data=True)
