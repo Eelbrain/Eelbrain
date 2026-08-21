@@ -129,8 +129,8 @@ class TTestIndependent(Test):
     Parameters
     ----------
     model : str
-        The model which defines the cells that are used in the test. Usually
-        ``"group"``.
+        The model which defines the cells that are used in the test.
+        Can be ``"group"`` to compare two groups defined on the pipeline.
     c1 : str | tuple
         The experimental group. Should be a group name.
     c0 : str | tuple
@@ -148,12 +148,13 @@ class TTestIndependent(Test):
     Sample test definitions, assuming that the experiment has two groups called
     ``'younger'`` and ``'older'``::
 
-        variables = {
-            'age': GroupVar(['younger', 'older']),
+        groups = {
+            'younger': Group(['S001', 'S002']),
+            'older': Group(['S011', 'S012']),
         }
         tests = {
-            'old=young': TTestIndependent('group', 'older', 'younger'),
-            'old>young': TTestIndependent('group', 'older', 'younger', tail=1),
+            'older=younger': TTestIndependent('group', 'older', 'younger'),
+            'older>younger': TTestIndependent('group', 'older', 'younger', tail=1),
         }
     """
     kind = 'ttest_ind'

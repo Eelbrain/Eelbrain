@@ -248,8 +248,9 @@ def test_resolve_names_scope():
     assert list(variables.resolve(ds, names=['target'])) == ['target']
     assert 'side' not in ds
     # ... and a caller that does need it still gets told
+    ds = Dataset({'value': Var([1, 2])}, info={'task': 'b'})
     with pytest.raises(NotImplementedError, match="'side'"):
-        variables.resolve(Dataset({'value': Var([1, 2])}, info={'task': 'b'}), names=['side', 'target'])
+        variables.resolve(ds, names=['side', 'target'])
 
 
 def test_resolve_task():

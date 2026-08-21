@@ -808,9 +808,6 @@ class TRFModelTestDerivative(Derivative[Any]):
             dim = 'sensor' if y.has_dim('sensor') else 'source'
             y = getattr(y, reducer)(dim)
         if isinstance(y, Var):
-            # One value per case leaves nothing to permute over, so ResolvedTestNDSpec
-            # runs a parametric test and drops its kwargs; say so instead of silently
-            # ignoring what the caller asked for
             pmin, samples = ctx.options['pmin'], ctx.options['samples']
             if pmin is not None or samples:
                 raise ValueError(f"metric={ctx.options['metric']!r} leaves one value per case, which is tested parametrically; {pmin=} and {samples=} do not apply (use pmin=None, samples=0)")

@@ -746,9 +746,6 @@ compare groups through :class:`TTestIndependent` or through an
             'patient=control': TTestIndependent('diagnosis', 'patient', 'control'),
         }
 
-Avoid naming such a variable ``group``: :class:`TTestIndependent` with
-``model='group'`` defines a :class:`GroupVar` of its own, which would collide
-with it.
 
 Where subjects are combined, each variable is added if the combined data still
 provides what it is computed from. A variable keyed on the subject, such as a

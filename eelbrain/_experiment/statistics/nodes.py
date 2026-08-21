@@ -392,10 +392,6 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
             shell_state = {'reference': ''}  # source localization handles referencing internally (EvokedStcDerivative.fixed_state)
         deps = [Dependency(name, label='dataset', options=options)]
         if test_obj._test_vars:
-            # The columns the test's variables are resolved against, without loading any
-            # data. Source localization is per case, so the shell is the sensor-space one
-            # either way. A test that reads no variables has nothing to record here, and
-            # the shell is not free: it descends to every subject's events.
             shell_options = ctx.options_for('evoked-group-dataset', 'samplingrate', 'decim', model=model)
             deps.append(Dependency('evoked-group-dataset', label='events', view='shell', state=shell_state, options=shell_options))
         return tuple(deps)
