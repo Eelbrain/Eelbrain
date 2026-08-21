@@ -758,7 +758,7 @@ def test_sample_source(samples_experiment):
         roi_manifest_data = json.load(fid)
     assert 'evoked-test-data' in roi_manifest_data['dependencies']
     roi_deps = roi_manifest_data['dependencies']['evoked-test-data']['dependencies']
-    assert set(roi_deps) == {'dataset'}
+    assert set(roi_deps) == {'dataset', 'events'}  # 'events' is the shell the test's variables are resolved against
     assert roi_deps['dataset']['name'] == 'evoked-stc-group-dataset'
     group_deps = roi_deps['dataset']['dependencies']
     assert set(group_deps) == {'R0000', 'R0001', 'R0002'}
