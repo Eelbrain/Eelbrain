@@ -520,14 +520,17 @@ def test_group_membership_cache_relevance(samples_experiment):
                 'fixed': Group(['R0000', 'R0002']),  # membership unaffected by moving R0001
             }
             variables = {**SampleExperiment.variables, 'age': GroupVar(['g0', 'g1'])}
-            tests = {**SampleExperiment.tests, 'g0=g1': TTestIndependent('age', 'g0', 'g1')}
+            tests = {**SampleExperiment.tests, 'g0=g1': TTestIndependent('age', 'g0', 'g1'), 'one-sample': TTestOneSample()}
         return Experiment(root)
+
+    def test_data_dependencies(e, test, group):
+        e.set(group=group, epoch='target', epoch_rejection='')
+        handle = e._resolve_derivative('evoked-test-data', options={'data': DataSpec.coerce('meg.rms'), 'test': test})
+        return handle.dependency_fingerprints()
 
     def test_data_variables(e, test, group):
         "The values the test reads, as recorded in the event-shell dependency"
-        e.set(group=group, epoch='target', epoch_rejection='')
-        handle = e._resolve_derivative('evoked-test-data', options={'data': DataSpec.coerce('meg.rms'), 'test': test})
-        return handle.dependency_fingerprints()['events']['fingerprint']
+        return test_data_dependencies(e, test, group)['events']['fingerprint']
 
     def events_identity(e):
         e.set(subject='R0002', epoch='target', epoch_rejection='')
@@ -543,6 +546,8 @@ def test_group_membership_cache_relevance(samples_experiment):
     assert test_data_variables(e_moved, 'g0=g1', 'all') != test_data_variables(e, 'g0=g1', 'all')
     # a test that reads no across-subject variable is not
     assert test_data_variables(e_moved, 'a>v', 'all') == test_data_variables(e, 'a>v', 'all')
+    # a test that reads no variable at all does not depend on the events in the first place
+    assert set(test_data_dependencies(e, 'one-sample', 'all')) == {'dataset'}
     # neither is the group test on a group that excludes the subject that moved
     assert test_data_variables(e_moved, 'g0=g1', 'fixed') == test_data_variables(e, 'g0=g1', 'fixed')
 

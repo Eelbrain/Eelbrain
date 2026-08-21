@@ -390,14 +390,15 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
             morph = not data.aggregate
             options = ctx.options_for('evoked-stc-group-dataset', 'baseline', 'src_baseline', 'samplingrate', 'decim', 'data', ndvar=True, model=model, morph=morph, cat=test_obj.cat)
             shell_state = {'reference': ''}  # source localization handles referencing internally (EvokedStcDerivative.fixed_state)
-        # The columns the test's variables are resolved against, without loading any
-        # data. Source localization is per case, so the shell is the sensor-space one
-        # either way.
-        shell_options = ctx.options_for('evoked-group-dataset', 'samplingrate', 'decim', model=model)
-        return (
-            Dependency(name, label='dataset', options=options),
-            Dependency('evoked-group-dataset', label='events', view='shell', state=shell_state, options=shell_options),
-        )
+        deps = [Dependency(name, label='dataset', options=options)]
+        if test_obj._test_vars:
+            # The columns the test's variables are resolved against, without loading any
+            # data. Source localization is per case, so the shell is the sensor-space one
+            # either way. A test that reads no variables has nothing to record here, and
+            # the shell is not free: it descends to every subject's events.
+            shell_options = ctx.options_for('evoked-group-dataset', 'samplingrate', 'decim', model=model)
+            deps.append(Dependency('evoked-group-dataset', label='events', view='shell', state=shell_state, options=shell_options))
+        return tuple(deps)
 
     def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, Any] | None:
         """Depend on the values the test reads, not the definitions behind them
