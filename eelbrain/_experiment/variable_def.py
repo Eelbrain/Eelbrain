@@ -53,7 +53,7 @@ from typing import Any
 from fnmatch import fnmatch as fnmatch_func
 from collections.abc import Collection, Sequence
 
-from .._data_obj import Dataset, Factor, Var, asuv, assert_is_legal_dataset_key
+from .._data_obj import EVAL_CONTEXT_NAMES, Dataset, Factor, Var, asuv, assert_is_legal_dataset_key
 from .._info import INTERPOLATE_CHANNELS, INTERPOLATE_WINDOWS
 from .._text import enumeration
 from .._utils.numpy_utils import INT_TYPES
@@ -76,6 +76,11 @@ RESERVED_VAR_KEYS = (
 )
 
 
+def _find_unresolvable_columns(names: set[str], data: Dataset) -> set[str]:
+    """Which of ``names`` neither ``data`` nor :meth:`Dataset.eval` can supply"""
+    return names.difference(data).difference(EVAL_CONTEXT_NAMES)
+
+
 class VarDef(Configuration):
     """Base class for adding variables to events"""
     # Whether the definition spans subjects, which defers it to the nodes that combine subjects (see module docstring)
@@ -87,7 +92,7 @@ class VarDef(Configuration):
     def _apply(self, ds, groups):
         raise NotImplementedError
 
-    def _input_vars(self):
+    def _input_vars(self) -> set[str]:
         raise NotImplementedError
 
     def _applies_to_task(self, data: Dataset) -> bool:
@@ -135,7 +140,7 @@ class EvalVar(VarDef):
     def _apply(self, ds, groups):
         return asuv(self.code, data=ds)
 
-    def _input_vars(self):
+    def _input_vars(self) -> set[str]:
         return find_variables(self.code)
 
 
@@ -228,7 +233,7 @@ class LabelVar(VarDef):
         else:
             return Var.from_dict(source, labels, default=self.default)
 
-    def _input_vars(self):
+    def _input_vars(self) -> set[str]:
         return find_variables(self.source)
 
 
@@ -284,8 +289,8 @@ class GroupVar(VarDef):
     def _apply(self, ds, groups):
         return label_groups(ds['subject'], self.groups, groups)
 
-    def _input_vars(self):
-        return ('subject',)
+    def _input_vars(self) -> set[str]:
+        return {'subject'}
 
 
 class Variables(Configuration):
@@ -380,7 +385,7 @@ class Variables(Configuration):
             self,
             data: Dataset,
             groups: dict[str, tuple[str, ...]] = None,
-            names: Collection[str] = None,
+            names: set[str] | None = None,
             across_subject_only: bool = False,
             require_inputs: bool = False,
     ) -> dict[str, Any]:
@@ -398,9 +403,9 @@ class Variables(Configuration):
             data from a single subject, where across-subject variables are not
             applied (see the module docstring).
         names
-            Variables the caller needs. Any of these that can not be resolved
-            from ``data`` raises :exc:`NotImplementedError`; without ``names``,
-            a variable that can not be resolved is simply skipped.
+            Variables the caller needs. If any of these can not be resolved
+            in the evaluation context, :exc:`ValueError` is raised.
+            Those ``names`` that ``data`` provides are returned.
         across_subject_only
             Only add the across-subject variables. For :attr:`Pipeline.variables`
             on data that combines subjects, where the event variables are already
@@ -416,34 +421,47 @@ class Variables(Configuration):
         Returns
         -------
         values
-            The resolved column for each of ``names``; empty without ``names``.
+            The column for each of ``names`` that ``data`` provides; empty without
+            ``names``.
 
         Notes
         -----
+        Which names in a definition are input columns follows from ``data`` rather than
+        from the expression, since ``data`` could override a ``builtin`` like ``max``.
+        A definition that fails to evaluate is therefore reported as a configuration
+        error naming the columns it had to work with.
+
         A variable never replaces a column that ``data`` already provides, since that
         column could be the analysis data itself (a TRF metric or kernel, the evoked
         response) or another variable's. Which names are at stake depends on the data
         rather than on the definitions, so this is checked here rather than against
         ``RESERVED_VAR_KEYS``, which only covers the names that are known up front.
         """
-        for name, vdef in (self.across_subject_vars if across_subject_only else self.vars).items():
+        use_vars = self.across_subject_vars if across_subject_only else self.vars
+        for name, vdef in use_vars.items():
             if groups is None and name in self.across_subject_vars:
-                continue
-            elif missing := [key for key in vdef._input_vars() if key not in data]:
-                # before the task check, so that a variable that can not be computed anyway does not raise
-                if require_inputs and vdef._applies_to_task(data):
-                    raise ConfigurationError(f"Variable {name!r}: {vdef} is computed from {enumeration([repr(key) for key in missing])}, which {'are' if len(missing) > 1 else 'is'} not among the event columns {enumeration([repr(key) for key in data])}")
                 continue
             elif not vdef._applies_to_task(data):
                 continue
             elif name in data:
                 raise ConfigurationError(f"Variable {name!r}: {vdef} would overwrite the {name!r} column that the data already provides; rename the variable")
-            data[name] = vdef._apply(data, groups)
+            elif missing := _find_unresolvable_columns(vdef._input_vars(), data):
+                if require_inputs:
+                    raise ConfigurationError(f"Variable {name!r}: {vdef} is computed from {enumeration([repr(key) for key in missing])}, which {'are' if len(missing) > 1 else 'is'} not among the event columns {enumeration([repr(key) for key in data])}")
+                continue
+            try:
+                data[name] = vdef._apply(data, groups)
+            except Exception as error:
+                # An input the data does not provide was resolved from the evaluation context instead, which is the likely cause
+                shadowed = [key for key in vdef._input_vars() if key not in data and key in EVAL_CONTEXT_NAMES]
+                detail = f"; {enumeration([repr(key) for key in shadowed])} {'are' if len(shadowed) > 1 else 'is'} not among them and {'were' if len(shadowed) > 1 else 'was'} resolved from the evaluation context instead" if shadowed else ''
+                raise ConfigurationError(f"Variable {name!r}: {vdef} could not be computed from the columns {enumeration([repr(key) for key in data]) or 'of an empty dataset'} ({error}){detail}") from error
+
         if names is None:
             return {}
-        if missing := [name for name in dict.fromkeys(names) if name not in data]:
-            raise NotImplementedError(f"{enumeration([repr(name) for name in missing])} can not be resolved from {enumeration([repr(key) for key in data]) or 'an empty dataset'}; a variable can only be used where the data provides what it is computed from")
-        return {name: data[name] for name in names}
+        if missing := _find_unresolvable_columns(names, data):
+            raise ValueError(f"{enumeration([repr(name) for name in missing])} can not be resolved from {enumeration([repr(key) for key in data]) or 'an empty dataset'}; a variable can only be used where the data provides what it is computed from")
+        return {name: data[name] for name in names if name in data}
 
 
 def label_groups(

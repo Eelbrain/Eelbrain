@@ -8,7 +8,7 @@ from eelbrain._experiment.configuration import Configuration, ConfigurationError
 from eelbrain._experiment.derivative_cache import DerivativeRegistry
 from eelbrain._experiment.preprocessing import RawApplyICA, RawFilter, RawICA, RawMaxwell, RawPipeGraph, RawReReference, RawSource, assemble_raw_pipes
 from eelbrain._experiment.statistics import config as test_def
-from eelbrain._experiment.variable_def import EvalVar, GroupVar, LabelVar, Variables
+from eelbrain._experiment.variable_def import EvalVar, GroupVar, LabelVar, Variables, _find_unresolvable_columns
 from eelbrain.testing import TempDir
 
 
@@ -121,17 +121,36 @@ def test_reserved_variable_names():
 
 
 def test_variable_input_columns():
-    "Only names that Dataset.eval can not resolve itself are input columns"
-    assert EvalVar('value > 1')._input_vars() == {'value'}
-    # functions, builtins and modules are resolved by Dataset.eval, not read from the data
-    assert EvalVar('abs(value)')._input_vars() == {'value'}
-    assert EvalVar('numpy.log(value)')._input_vars() == {'value'}
-    assert EvalVar('Var(value.x.astype(int))')._input_vars() == {'value'}
-    assert LabelVar('abs(value)', {1: 'a'})._input_vars() == {'value'}
-    # such a variable is applied like any other, rather than reported as uncomputable
+    "Which names in a definition are input columns is decided against the data"
+    # a function, builtin or module is resolved by Dataset.eval, so it is not required
+    # of the data, and such a variable is applied like any other
     events = Dataset({'value': Var([-1., 2.])})
-    Variables({'absval': EvalVar('abs(value)')}).resolve(events, require_inputs=True)
+    Variables({
+        'absval': EvalVar('abs(value)'),
+        'logval': EvalVar('numpy.log(absval)'),
+        'intval': EvalVar('Var(value.x.astype(int))'),
+        'labeled': LabelVar('abs(value)', {1.: 'a'}),
+    }).resolve(events, require_inputs=True)
     assert list(events['absval']) == [1., 2.]
+    assert list(events['labeled']) == ['a', '']
+    assert _find_unresolvable_columns({'abs', 'numpy', 'Var', 'value'}, events) == set()
+
+    # ... but a column of the same name is the data's, since it shadows the context in
+    # Dataset.eval, so it is an input like any other and is tracked as one
+    events = Dataset({'type': Factor(['a', 'b'])})
+    assert EvalVar("type == 'a'")._input_vars() == {'type'}
+    assert _find_unresolvable_columns({"type"}, events) == set()
+    Variables({'is_a': EvalVar("type == 'a'")}).resolve(events, require_inputs=True)
+    assert list(events['is_a']) == [True, False]
+    # and its values reach a consumer that records them for a cache fingerprint
+    assert list(Variables().resolve(events, names={'type'})['type']) == ['a', 'b']
+
+    # where the column is absent, the context supplies the name instead and the
+    # definition fails; that is reported rather than raised from deeper down
+    with pytest.raises(ConfigurationError, match='evaluation context'):
+        Variables({'is_a': EvalVar("type == 'a'")}).resolve(Dataset({'value': Var([1, 2])}), require_inputs=True)
+    # a name that neither can supply is still reported as a missing input
+    assert _find_unresolvable_columns({'type', 'typo'}, events) == {'typo'}
 
 
 def test_variable_stages():
@@ -185,9 +204,9 @@ def test_resolve():
 
     # ... unless the caller says what it needs
     shell = Dataset({'subject': Factor(['R0000', 'R0001'])})
-    assert list(variables.resolve(shell, groups, names=['age'])['age']) == ['g0', 'g1']
-    with pytest.raises(NotImplementedError, match="'side'"):
-        variables.resolve(Dataset({'subject': Factor(['R0000'])}), groups, names=['side'])
+    assert list(variables.resolve(shell, groups, names={'age'})['age']) == ['g0', 'g1']
+    with pytest.raises(ValueError, match="'side'"):
+        variables.resolve(Dataset({'subject': Factor(['R0000'])}), groups, names={'side'})
 
     # without groups the data is from a single subject, where across-subject variables are absent
     events = Dataset({'subject': Factor(['R0000', 'R0000']), 'value': Var([1, 2])})
@@ -245,12 +264,12 @@ def test_resolve_names_scope():
     })
     # 'side' is restricted to another task, so it is not added; asking for 'target' alone is fine
     ds = Dataset({'value': Var([1, 2])}, info={'task': 'b'})
-    assert list(variables.resolve(ds, names=['target'])) == ['target']
+    assert list(variables.resolve(ds, names={'target'})) == ['target']
     assert 'side' not in ds
     # ... and a caller that does need it still gets told
     ds = Dataset({'value': Var([1, 2])}, info={'task': 'b'})
-    with pytest.raises(NotImplementedError, match="'side'"):
-        variables.resolve(ds, names=['side', 'target'])
+    with pytest.raises(ValueError, match="'side'"):
+        variables.resolve(ds, names={'side', 'target'})
 
 
 def test_resolve_task():

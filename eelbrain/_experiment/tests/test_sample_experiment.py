@@ -2507,7 +2507,7 @@ def test_trf_subject_variable(samples_experiment):
     assert test_variables(e_extra, 'high=low') == test_variables(e, 'high=low')
 
     # a test reading an event variable can not be resolved against a TRF dataset
-    with pytest.raises(NotImplementedError, match="'modality'"):
+    with pytest.raises(ValueError, match="'modality'"):
         test_variables(e, 'a>v')
 
     # a subject-keyed variable is deferred, so another subject's entry leaves this

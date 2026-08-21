@@ -56,19 +56,20 @@ class Test(Configuration):
             cat: tuple[CellArg, ...] | None = None,  # cells in model to load
             depend_on: Collection[str] = (),  # non-model variables
     ):
-        self.desc = desc
+        self.desc: str = desc
+        self._test_vars: set[str] = set()
         if model is None:
-            self._test_vars = []
             self.model = None
         else:
-            self._test_vars = [v for v in map(str.strip, model.split('%')) if v]
-            self.model = '%'.join(self._test_vars)
+            model_vars = [v for v in map(str.strip, model.split('%')) if v]
+            self.model = '%'.join(model_vars)
+            self._test_vars.update(model_vars)
         self.cat = cat
         try:
             self.vars = Variables(vars)
         except Exception as error:
             raise ConfigurationError(f"{vars=} ({error})")
-        self._test_vars.extend(depend_on)
+        self._test_vars.update(depend_on)
 
     def _resolve_vars(
             self,
