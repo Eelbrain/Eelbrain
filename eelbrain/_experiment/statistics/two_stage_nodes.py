@@ -120,6 +120,8 @@ class TwoStageDataDerivative(UncachedDerivative[Dataset | ROIData]):
                     label='data',
                     options=ctx.options_for('epochs-stc', 'baseline', 'src_baseline', 'samplingrate'),
                 )
+        if not test_obj._test_vars:
+            return dependency,
         # The shell the stage-1 predictors are resolved against, describing the same
         # cases as the data: the evoked event shell with a model, the events themselves
         # for single-trial data. ``reference`` matches EvokedStcDerivative.fixed_state.
