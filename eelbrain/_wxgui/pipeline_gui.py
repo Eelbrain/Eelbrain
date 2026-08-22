@@ -143,6 +143,7 @@ class PipelineFrame(EelbrainFrame):
         # Entries carry their own kind, because the user can switch tasks and queue more
         # rows while a batch is running.
         self._job_queue = []  # [(kind, combo, spec), ...] waiting to be computed
+        self._job_in_progress = None  # (kind, combo) the worker popped and is computing
         self._job_queue_lock = threading.Lock()
         self._n_done = self._n_total = 0  # progress of the current run
         # Job specs for the rows currently displayed, keyed by (kind, combo). Minted
@@ -914,8 +915,12 @@ class PipelineFrame(EelbrainFrame):
         if not new:
             return
         with self._job_queue_lock:
-            # A combo is only unique within one task's table, so dedupe on both.
-            queued = {(entry[0], entry[1]) for entry in self._job_queue}
+            # A combo is only unique within one task's table, so dedupe on both. The job
+            # the worker is computing right now has left the queue but is not done, so
+            # it has to be counted too, or it gets computed a second time.
+            queued = {(kind_, combo_) for kind_, combo_, _ in self._job_queue}
+            if self._job_in_progress is not None:
+                queued.add(self._job_in_progress)
             new = [entry for entry in new if (entry[0], entry[1]) not in queued]
             if not new:
                 return
@@ -1015,6 +1020,7 @@ class PipelineFrame(EelbrainFrame):
                 if not self._job_queue:
                     break
                 kind, combo, spec = self._job_queue.pop(0)
+                self._job_in_progress = (kind, combo)
             wx.CallAfter(self._on_job_computing, token, kind, combo)
             try:
                 result = self._compute_job(kind, spec, combo)
@@ -1035,6 +1041,9 @@ class PipelineFrame(EelbrainFrame):
             except Exception as error:
                 self._n_done += 1
                 wx.CallAfter(self._on_job_error, token, kind, combo, *_error_dialog_args(error))
+            finally:
+                with self._job_queue_lock:
+                    self._job_in_progress = None
 
     def _compute_job(self, kind: str, spec: JobSpec, combo: tuple):
         """Compute and cache one job, or ``None`` when the user declined (worker thread).
