@@ -2272,7 +2272,7 @@ def test_job_spec_round_trip():
 
 
 def test_job_cache_logging():
-    "The cache reports the build, whether the artifact is built in place or through a spec"
+    "The cache reports the work: a build in place, and generating a job for one computed elsewhere"
     root = TempDir()
     # As Pipeline builds it: a private instance with parent=None, so records only
     # reach these handlers via the registry the node was resolved through.
@@ -2292,14 +2292,16 @@ def test_job_cache_logging():
     messages = [record.getMessage() for record in records]
     assert sum(message.startswith('Build job:') for message in messages) == 1
 
-    # computed through a spec: JobSpec.make_job emits it, exactly once
+    # computed through a spec: JobSpec.make_job reports generating the job, exactly
+    # once, and does not claim a build the cache did not perform
     Path(registry.resolve('job', state=DEFAULT_STATE).artifact_path).unlink()
     records.clear()
     spec = JobSpec(registry.resolve('job', state=DEFAULT_STATE))
     job = spec.make_job()
     spec.save_result(job, job())
     messages = [record.getMessage() for record in records]
-    assert sum(message.startswith('Build job:') for message in messages) == 1
+    assert sum(message.startswith('Generate job for job:') for message in messages) == 1
+    assert not any(message.startswith('Build job:') for message in messages)
 
 
 def test_job_result_records_make_time_inputs():

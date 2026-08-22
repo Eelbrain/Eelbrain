@@ -506,8 +506,8 @@ class ICAInput(Input[mne.preprocessing.ICA]):
     # The ICA file is user-owned (it may carry manual component selections), so the
     # cache only mirrors a provenance manifest for it and never overwrites it silently.
     cache_policy = CachePolicy.EXTERNAL
-    # Fitting an ICA takes minutes, and the cache-build message is the only progress
-    # report make_ica() gives, so it belongs on the terminal rather than in the log file.
+    # Fitting an ICA takes minutes, and the cache messages are the only progress report
+    # make_ica() gives, so they belong on the terminal rather than in the log file.
     cache_log_level = logging.INFO
     key_fields = ('subject', 'session', 'acquisition', 'run')
     version = 1

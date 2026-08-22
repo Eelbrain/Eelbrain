@@ -544,6 +544,14 @@ class DependencyNode(Generic[T]):
         """Emit the cache-recompute message, reporting why the cached artifact was invalid."""
         self._log_cache_event(ctx, path, "Recompute", 'recompute', reason=reason)
 
+    def log_job(self, ctx: Request, path: Path) -> None:
+        """Emit the message for generating a job that will compute this node's artifact.
+
+        Distinct from :meth:`log_cache_build`: the job's data has been read, but
+        whether it is ever computed, and where, is up to whoever holds it.
+        """
+        self._log_cache_event(ctx, path, "Generate job for", 'job')
+
     def _log_cache_event(
             self,
             ctx: Request,

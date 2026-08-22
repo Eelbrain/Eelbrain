@@ -969,7 +969,7 @@ def test_make_ica_job(samples_experiment):
         race_spec.save_result(race_job, race_job())
 
     # ... and recomputes once the overwrite is authorized, with the cache reporting the
-    # build to the experiment's own logger (which does not propagate to the root logger)
+    # job to the experiment's own logger (which does not propagate to the root logger)
     records = []
     handler = logging.Handler()
     handler.emit = records.append
@@ -980,8 +980,8 @@ def test_make_ica_job(samples_experiment):
         overwrite_job = overwrite_spec.make_job()
         overwrite_spec.save_result(overwrite_job, overwrite_job())
     assert stale_spec.is_done
-    # at INFO, so it reaches the terminal during the minutes-long fit
-    assert [(record.levelno, record.getMessage()) for record in records if record.getMessage().startswith('Build ica-input@ica:')] == [(logging.INFO, f"Build ica-input@ica: {relpath(stale_spec.path, root)}")]
+    # at INFO, so it reaches the terminal before the minutes-long fit
+    assert [(record.levelno, record.getMessage()) for record in records if record.getMessage().startswith('Generate job for ica-input@ica:')] == [(logging.INFO, f"Generate job for ica-input@ica: {relpath(stale_spec.path, root)}")]
 
 
 @requires_mne_sample_data

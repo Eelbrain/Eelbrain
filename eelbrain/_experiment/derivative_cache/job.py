@@ -197,8 +197,10 @@ class JobSpec:
             if difference is not None:
                 path, old, new = difference
                 raise JobInputsChangedError(ctx.node.name, format_difference_path(path), old, new)
-        # Finalize
-        ctx.node.log_cache_build(ctx, self.path)
+        # Finalize. Not the cache-build message: nothing has been computed here, and
+        # nothing may ever be -- the caller decides whether and where to run the job.
+        # The data is read by now, so this still lands before the expensive part.
+        ctx.node.log_job(ctx, self.path)
         return replace(job, key=self.key, node=ctx.node.name, provenance=provenance)
 
     def save_result(self, job: Job, result: Any) -> object:
