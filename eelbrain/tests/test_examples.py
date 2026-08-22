@@ -4,6 +4,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import sys
 
 import mne
 import pytest
@@ -41,8 +42,11 @@ def test_example(tmp_path, path: Path):
             importlib.import_module(module)
         except ImportError:
             pytest.skip(f"required module {module} not available")
-    if conftest.SKIP_MAYAVI and 'mayavi' in required_modules:
-        pytest.skip("requires mayavi")
+    if 'mayavi' in required_modules:
+        if conftest.SKIP_MAYAVI:
+            pytest.skip("requires mayavi")
+        elif os.getenv("GITHUB_ACTIONS") == "true" and sys.platform == "darwin":
+            pytest.skip("TODO: Segfaults on macOS GitHub Actions")
     # check for required datasets
     required_datasets = re.findall(r"^# dataset: (\w+)$", text, re.MULTILINE)
     for dataset in required_datasets:
