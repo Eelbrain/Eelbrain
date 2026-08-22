@@ -732,7 +732,6 @@ class ICAInput(Input[mne.preprocessing.ICA]):
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         path = self.path(ctx)
         return {
-            'raw': self.raw_name,
             'pipe': self.pipe,
             'bads': self._load_bad_channels(ctx),
             'ica_path': path.relative_to(ctx.root),
