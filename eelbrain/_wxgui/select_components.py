@@ -2339,8 +2339,7 @@ class InfoFrame(HTMLFrame):
     ):
         pos, size = self.find_pos(w, h)
         style = wx.MINIMIZE_BOX | wx.MAXIMIZE_BOX | wx.RESIZE_BORDER | wx.CAPTION | wx.CLOSE_BOX | wx.FRAME_FLOAT_ON_PARENT | wx.FRAME_TOOL_WINDOW
-        html_doc = fmtxt.make_html_doc(doc)
-        HTMLFrame.__init__(self, parent, title, html_doc, pos=pos, size=size, style=style)
+        HTMLFrame.__init__(self, parent, title, doc, pos=pos, size=size, style=style)
 
     @staticmethod
     def find_pos(w: int, h: int):

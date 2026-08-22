@@ -57,6 +57,7 @@ import time
 from types import MappingProxyType
 from typing import Any
 from collections.abc import Iterable, Sequence
+from urllib.parse import quote
 import webbrowser
 
 import numpy as np
@@ -1954,7 +1955,7 @@ class Image(FMTextElement, BytesIO):
                     i += 1
                     dst = root / resource_dir / f'{name}-{i}{ext}'
             self.save_image(dst)
-            src = dst.relative_to(root)
+            src = quote(dst.relative_to(root).as_posix())  # names like '#3' are not valid in a URL
         alt = html(self._alt)
         return f'<img src="{src}" alt="{alt}">'
 

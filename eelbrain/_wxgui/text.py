@@ -1,9 +1,12 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+from pathlib import Path
+import tempfile
 import urllib.parse
 
 import wx
 import wx.html
 
+from .. import fmtxt
 from .frame import EelbrainFrame
 
 
@@ -36,14 +39,30 @@ class HTMLFrame(EelbrainFrame):
 
 
 class HTML2Frame(EelbrainFrame):
+    """Frame for displaying an FMText document with WebView
 
-    def __init__(self, parent: wx.Window, title: str, text: str, **kwargs) -> None:
-        import wx.html2
+    WebView is missing from wxWidgets builds with ``wxUSE_WEBVIEW=0`` (e.g., conda-forge on Linux). Where it is unavailable, the document is displayed with :mod:`wx.html`, which renders the same document without CSS.
+    """
 
+    def __init__(self, parent: wx.Window, title: str, doc: fmtxt.FMTextElement, **kwargs) -> None:
         EelbrainFrame.__init__(self, parent, title=title, **kwargs)
-        self.webview = wx.html2.WebView.New(self)
-        self.Bind(wx.html2.EVT_WEBVIEW_NAVIGATING, self.OnNavigating, self.webview)
-        self.webview.SetPage(text, 'start-url')
+        try:
+            from wx import html2  # not 'import wx.html2', which shadows wx in this scope
+
+            self.webview = html2.WebView.New(self)
+        except (ImportError, NotImplementedError):
+            self.webview = None
+            self.text = HTMLWindow(self, wx.ID_ANY, style=wx.VSCROLL)
+            # wx.html can not display embedded images, so images are written to files; they are decoded while the page is parsed and the files are not needed afterwards
+            with tempfile.TemporaryDirectory(prefix='eelbrain-report-') as temp_dir:
+                root = Path(temp_dir)
+                (root / 'images').mkdir()
+                path = root / 'report.html'
+                path.write_bytes(fmtxt.make_html_doc(doc, root, 'images').encode('ascii', 'xmlcharrefreplace'))
+                self.text.LoadPage(path.as_uri())
+        else:
+            self.Bind(html2.EVT_WEBVIEW_NAVIGATING, self.OnNavigating, self.webview)
+            self.webview.SetPage(fmtxt.make_html_doc(doc), 'start-url')
         self.Show()
 
     def OnNavigating(self, evt: wx.CommandEvent) -> None:
