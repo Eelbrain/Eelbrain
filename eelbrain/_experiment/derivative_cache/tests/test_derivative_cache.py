@@ -2324,6 +2324,28 @@ def test_job_result_records_make_time_inputs():
     assert JobSpec(registry.resolve('job', state=DEFAULT_STATE)).is_done is True
 
 
+def test_job_result_is_not_memoized_as_valid():
+    "A result filed under a stale snapshot is not recorded as valid for the enclosing load"
+    root, registry, source = make_source_registry()
+    registry.register(JobDerivative())
+
+    spec = JobSpec(registry.resolve('job', state=DEFAULT_STATE))
+    job = spec.make_job()  # reads 'alpha'
+    source.source_path('s1').write_text('changed')  # ... while the job is computed off-host
+    # The validity memo is shared across one nested load; the stale manifest this
+    # writes must not enter it, or the artifact that needs rebuilding reads as valid.
+    with registry._load_context():
+        spec.save_result(job, job())
+        assert registry.resolve('job', state=DEFAULT_STATE).is_valid() is False
+
+    # a job whose inputs held still is memoized as valid, as an in-place build is
+    spec = JobSpec(registry.resolve('job', state=DEFAULT_STATE))
+    job = spec.make_job()
+    with registry._load_context():
+        spec.save_result(job, job())
+        assert registry.resolve('job', state=DEFAULT_STATE).is_valid() is True
+
+
 def test_job_result_records_make_time_fingerprint():
     "The node's own fingerprint over mutable state is recorded as of make_job(), not save time"
     root, registry, source = make_source_registry()

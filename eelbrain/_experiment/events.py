@@ -452,6 +452,7 @@ class SelectedEventsDerivative(UncachedDerivative[Dataset]):
             raise RuntimeError(f"{epoch=}")
 
         ds.info['epoch'] = ctx.state['epoch']
+        # add run?
         return epoch._prepare_selected_events(ds, subject, ctx.options)
 
 
