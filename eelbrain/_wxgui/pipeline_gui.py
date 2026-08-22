@@ -134,6 +134,10 @@ class PipelineFrame(EelbrainFrame):
         self._pipeline = pipeline
         self._refresh_token = None  # replaced each refresh; threads compare identity
         self._compute_token = None  # replaced each compute run; threads compare identity
+        # Whether a worker thread is alive. Distinct from _compute_token, which Stop
+        # clears at once for the UI while the worker keeps going until its current job
+        # returns: during that window no second worker may start.
+        self._worker_active = False
         # One job queue for every computable task: jobs are computed sequentially by a
         # single worker thread, so that only one thread at a time uses the pipeline.
         # Entries carry their own kind, because the user can switch tasks and queue more
@@ -939,7 +943,14 @@ class PipelineFrame(EelbrainFrame):
         self._progress_label.SetLabel(f"{self._n_done} / {self._n_total}")
 
     def _start_compute(self) -> None:
-        """Start the worker thread that computes the queued jobs."""
+        """Start the worker thread that computes the queued jobs.
+
+        A no-op while a worker is still alive: after Stop it keeps running until its
+        current job returns, and a second thread would put two of them on the pipeline
+        at once. Its exit path calls :meth:`_drain_queue`, which starts the queue then.
+        """
+        if self._worker_active:
+            return
         # Invalidate any running refresh so both threads don't touch the
         # pipeline concurrently.
         self._refresh_token = object()
@@ -959,6 +970,7 @@ class PipelineFrame(EelbrainFrame):
         self._task_choice.Disable()
         self._panel.Layout()
 
+        self._worker_active = True
         threading.Thread(target=self._compute_thread, args=(token,), daemon=True).start()
 
     def _finish_compute_ui(self):
@@ -987,6 +999,15 @@ class PipelineFrame(EelbrainFrame):
         self._finish_compute_ui()
 
     def _compute_thread(self, token):
+        try:
+            self._compute_queued_jobs(token)
+        finally:
+            # Before the CallAfter, so _drain_queue sees the worker as gone and is
+            # free to start the next one.
+            self._worker_active = False
+            wx.CallAfter(self._on_compute_done, token)
+
+    def _compute_queued_jobs(self, token) -> None:
         while True:
             if token is not self._compute_token:
                 break
@@ -1014,7 +1035,6 @@ class PipelineFrame(EelbrainFrame):
             except Exception as error:
                 self._n_done += 1
                 wx.CallAfter(self._on_job_error, token, kind, combo, *_error_dialog_args(error))
-        wx.CallAfter(self._on_compute_done, token)
 
     def _compute_job(self, kind: str, spec: JobSpec, combo: tuple):
         """Compute and cache one job, or ``None`` when the user declined (worker thread).
@@ -1115,11 +1135,12 @@ class PipelineFrame(EelbrainFrame):
 
     def _on_compute_done(self, token):
         """Called when the compute thread exits (finished or cancelled)."""
-        if token is not self._compute_token:
-            return  # _stop_compute already cleaned up
-        self._compute_token = None
-        self._finish_compute_ui()
-        self._refresh_status_bar()
+        if token is self._compute_token:
+            self._compute_token = None
+            self._finish_compute_ui()
+            self._refresh_status_bar()
+        # Also for a cancelled worker, whose UI _stop_compute already restored: jobs
+        # queued while it was finishing could not start a thread of their own.
         self._drain_queue()
 
     def _drain_queue(self) -> None:
