@@ -705,10 +705,27 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             resolve_options=resolve_options,
         )
 
+    def _manifests(self, ctx: Request) -> tuple[ArtifactManifest | None, ArtifactManifest]:
+        """The manifest stored for this ICA file and the one the current inputs describe.
+
+        The stored dependency entries are fed back into the walk, so an input whose
+        quick fingerprint still matches is confirmed by that stat instead of being
+        re-derived -- the same shortcut :meth:`Request._check_valid` takes for a
+        derivative. Without it every ICA validity check re-reads the bad channels and
+        re-fingerprints the source data of every task/run the step spans.
+
+        Parameters
+        ----------
+        ctx
+            Resolved request for this ICA.
+        """
+        previous = ctx._manifest()
+        return previous, self._build_manifest(ctx, ctx.dependency_fingerprints(previous.dependencies if previous else None))
+
     def is_valid(self, ctx: Request) -> bool:
         if not self.path(ctx).exists():
             return False
-        return self._manifest_matches(ctx._manifest(), self._build_manifest(ctx, ctx.dependency_fingerprints()))
+        return self._manifest_matches(*self._manifests(ctx))
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         deps = []
@@ -745,8 +762,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         if not path.exists():
             raise ICAMissingError(f"ICA file {path.name} does not exist. Run e.make_ica() to create it.")
         value = self._load_value(ctx)
-        current = self._build_manifest(ctx, ctx.dependency_fingerprints())
-        previous = ctx._manifest()
+        previous, current = self._manifests(ctx)
         if not self._manifest_matches(previous, current):
             if ctx.has_control(REINDEX_ICA):
                 # Keep the existing ICA file, but rewrite its manifest
@@ -793,8 +809,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         # stat, with no dependency-fingerprint walk.
         if not self.path(ctx).exists() or ctx.has_control(ALLOW_PROTECTED_OVERWRITE):
             return
-        previous = ctx._manifest()
-        current = self._build_manifest(ctx, ctx.dependency_fingerprints())
+        previous, current = self._manifests(ctx)
         if self._manifest_matches(previous, current):
             return
         reason = self._stale_reason(previous, current)
