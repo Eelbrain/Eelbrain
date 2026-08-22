@@ -3,7 +3,7 @@ import subprocess
 import sys
 import threading
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from functools import partial
 from pathlib import Path
 
@@ -558,11 +558,35 @@ class PipelineFrame(EelbrainFrame):
         finally:
             wx.EndBusyCursor()
 
-    def _on_ica_bad_channels(self, raw_name: str, state: dict, combo: tuple, doc: ICADocument, names: list, recompute: bool):
+    def _on_ica_bad_channels(
+            self,
+            raw_name: str,
+            state: dict[str, str],
+            combo: tuple,
+            doc: ICADocument,
+            names: Sequence[str],
+            recompute: bool,
+    ):
         """Add bad channels found in the ICA GUI.
 
         The ICA was estimated with these channels included, so it is deleted; the ICA GUI
         closes itself after invoking this.
+
+        Parameters
+        ----------
+        raw_name
+            ICA raw step the decomposition belongs to.
+        state
+            Subject and key fields of the recording, from its row.
+        combo
+            Row combo, for queueing the recompute against the right row.
+        doc
+            Document of the ICA GUI that found the channels; its file is the one
+            invalidated here.
+        names
+            Channels to add to the bad channels.
+        recompute
+            Whether to queue the new ICA decomposition right away.
         """
         self._pipeline.set(raw=raw_name, **state)
         spec = self._pipeline._job_spec(ica_input_name(raw_name))
