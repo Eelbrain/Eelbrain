@@ -6,6 +6,7 @@ import numpy as np
 from eelbrain import Dataset, Var
 from eelbrain._exceptions import ConfigurationError, DataError
 from eelbrain._experiment.exceptions import FileMissingError
+from eelbrain._wxgui import pipeline_gui
 from eelbrain._wxgui.pipeline_gui import PipelineFrame, _format_user_error
 
 
@@ -122,3 +123,43 @@ def test_queue_jobs_dedupes_within_one_scope_only():
     # only the row of the table on display is marked, and only for its own scope
     assert frame._list.GetItemText(0, 1) == 'queued'
     assert started == [True]
+
+
+def test_compute_job_holds_the_pipeline_lock_except_for_the_fit():
+    "Loading and saving are serialized against the refresh walk; the computation is not"
+    held = {}
+
+    class _Job:
+        def __call__(self):
+            held['fit'] = frame._pipeline_lock.locked()
+            return 'RESULT'
+
+    class _Spec:
+        def make_job(self):
+            held['make_job'] = frame._pipeline_lock.locked()
+            return _Job()
+
+        def save_result(self, job, result):
+            held['save_result'] = frame._pipeline_lock.locked()
+            return result
+
+    frame = _frame(_pipeline_lock=threading.Lock())
+    assert frame._compute_job('ica', _Spec(), ('R0000',)) == 'RESULT'
+    # an hour-long fit must not keep the refresh thread out
+    assert held == {'make_job': True, 'fit': False, 'save_result': True}
+    assert not frame._pipeline_lock.locked()
+
+
+def test_refresh_holds_the_pipeline_lock(monkeypatch):
+    "The refresh walk never runs while the worker is loading or saving"
+    monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda *args: posted.append(args))
+    posted = []
+    locked = []
+    frame = _frame(
+        _pipeline_lock=threading.Lock(),
+        _compute_rows=lambda token, scope: locked.append(frame._pipeline_lock.locked()) or ([], {}),
+    )
+    frame._refresh_thread(object(), _ICA_SCOPE)
+    assert locked == [True]
+    assert not frame._pipeline_lock.locked()  # released before the table update is posted
+    assert posted

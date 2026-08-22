@@ -133,6 +133,16 @@ class PipelineFrame(EelbrainFrame):
         super().__init__(parent=None, title=f"Pipeline: {pipeline.root}")
         self._pipeline = pipeline
         self._refresh_token = None  # replaced each refresh; threads compare identity
+        # Serializes the two background threads' use of the pipeline: the refresh walk,
+        # and the worker's data loading and saving. Deliberately not held across job(),
+        # which is the long part and needs no pipeline access, so a refresh never waits
+        # for a fit -- only for a load or a save. A refresh that stops to ask about a
+        # stale ICA does hold it until the user answers, which stalls the worker between
+        # jobs. Never taken on the main thread: that would freeze the window while the
+        # worker loads, and since the worker waits on the main thread for its own
+        # stale-ICA dialog, a main-thread waiter could deadlock. Main-thread pipeline
+        # use (opening a sub-GUI, writing bad channels) is therefore still unguarded.
+        self._pipeline_lock = threading.Lock()
         self._compute_token = None  # replaced each compute run; threads compare identity
         # Whether a worker thread is alive. Distinct from _compute_token, which Stop
         # clears at once for the UI while the worker keeps going until its current job
@@ -734,13 +744,13 @@ class PipelineFrame(EelbrainFrame):
         task_type, _ = self._current_task()
         return self._ica_status_col() if task_type == 'ica' else 1
 
-    def _populate_table(self, rows: list[tuple[str, ...]], specs: dict[tuple, JobSpec], token: object) -> None:
+    def _populate_table(self, rows: list[tuple[str, ...]], specs: dict[tuple, JobSpec], scope: tuple, token: object) -> None:
         if token is not self._refresh_token:
             return
         # Only writer of _job_specs, on the main thread and behind the token guard, so a
         # raw/task switch can never leave a spec from the previous table behind.
         self._job_specs = specs
-        task_type, _ = self._current_task()
+        task_type = scope[0]
         self._list.DeleteAllItems()
         grey = wx.Colour(150, 150, 150)
         for row in rows:
@@ -855,13 +865,14 @@ class PipelineFrame(EelbrainFrame):
             scope: tuple,  # see :meth:`_table_scope`
     ) -> None:
         try:
-            rows, specs = self._compute_rows(token, scope)
+            with self._pipeline_lock:
+                rows, specs = self._compute_rows(token, scope)
         except _AbortRequested:
             return  # app exit already scheduled
         except Exception as error:
             wx.CallAfter(self._show_error, *_error_dialog_args(error))
             return
-        wx.CallAfter(self._populate_table, rows, specs, token)
+        wx.CallAfter(self._populate_table, rows, specs, scope, token)
 
     def _show_error(self, tb: str, title: str = "Error", message: str | None = None):
         self.SetStatusText("Error")
@@ -1095,6 +1106,12 @@ class PipelineFrame(EelbrainFrame):
         ICA dependency, which re-resolving *its* request cannot fix, so that is
         reported as a plain error instead.
 
+        Everything that reaches the pipeline -- loading the job's data, and saving its
+        result -- runs under :attr:`_pipeline_lock`, so it never overlaps a refresh
+        walk. The computation itself does not: a :class:`Job` carries its own data, so
+        the hour a fit takes is time the refresh thread can use. The lock is also
+        dropped for the stale-ICA dialog, which waits on the main thread.
+
         Parameters
         ----------
         kind
@@ -1105,7 +1122,8 @@ class PipelineFrame(EelbrainFrame):
             Row combo, used to name the recording in the stale-ICA dialog.
         """
         try:
-            job = spec.make_job()
+            with self._pipeline_lock:
+                job = spec.make_job()
         except ProtectedArtifactError as error:
             if kind != 'ica':
                 raise
@@ -1114,13 +1132,17 @@ class PipelineFrame(EelbrainFrame):
                 wx.CallAfter(wx.GetApp().ExitMainLoop)
                 raise _AbortRequested()
             elif choice == StaleICADialog.INCORPORATE:
-                return spec.with_controls(REINDEX_ICA).ctx.load()
+                with self._pipeline_lock:
+                    return spec.with_controls(REINDEX_ICA).ctx.load()
             elif choice != StaleICADialog.DELETE:
                 return None  # IGNORE, or dialog dismissed: leave the file alone
             Path(error.path).unlink()
             spec = spec.with_controls(ALLOW_PROTECTED_OVERWRITE)
-            job = spec.make_job()
-        return spec.save_result(job, job())
+            with self._pipeline_lock:
+                job = spec.make_job()
+        result = job()
+        with self._pipeline_lock:
+            return spec.save_result(job, result)
 
     def _displayed_row(self, scope: tuple, combo: tuple) -> int:
         """Row index for a job, or -1 when its table is not the one on display.
