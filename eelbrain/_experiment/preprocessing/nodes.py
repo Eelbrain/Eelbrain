@@ -506,8 +506,6 @@ class ICAInput(Input[mne.preprocessing.ICA]):
     # The ICA file is user-owned (it may carry manual component selections), so the
     # cache only mirrors a provenance manifest for it and never overwrites it silently.
     cache_policy = CachePolicy.EXTERNAL
-    # Fitting an ICA takes minutes, and the cache messages are the only progress report
-    # make_ica() gives, so they belong on the terminal rather than in the log file.
     cache_log_level = logging.INFO
     key_fields = ('subject', 'session', 'acquisition', 'run')
     version = 1
@@ -706,13 +704,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         )
 
     def _manifests(self, ctx: Request) -> tuple[ArtifactManifest | None, ArtifactManifest]:
-        """The manifest stored for this ICA file and the one the current inputs describe.
-
-        The stored dependency entries are fed back into the walk, so an input whose
-        quick fingerprint still matches is confirmed by that stat instead of being
-        re-derived -- the same shortcut :meth:`Request._check_valid` takes for a
-        derivative. Without it every ICA validity check re-reads the bad channels and
-        re-fingerprints the source data of every task/run the step spans.
+        """The manifest stored for this ICA file, and the one the current inputs describe.
 
         Parameters
         ----------

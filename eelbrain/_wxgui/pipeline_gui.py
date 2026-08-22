@@ -1172,7 +1172,7 @@ class PipelineFrame(EelbrainFrame):
             self._compute_token = None
             self._finish_compute_ui()
             self._refresh_status_bar()
-        # Also for a cancelled worker, whose UI _stop_compute already restored: jobs
+        # Also for a canceled worker, whose UI _stop_compute already restored: jobs
         # queued while it was finishing could not start a thread of their own.
         self._drain_queue()
 

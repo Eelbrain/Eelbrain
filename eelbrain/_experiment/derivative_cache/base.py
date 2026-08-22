@@ -1754,11 +1754,7 @@ class Request(Generic[T]):
         )
         self.registry.write_manifest(self.manifest_path, manifest)
         if provenance is None:
-            # Only an in-place build records the inputs it just read, so only its
-            # manifest is valid by construction. A job result is filed under the
-            # snapshot its data was read from, which may already be stale (that is the
-            # point of JobProvenance) -- memoizing it as valid would report exactly the
-            # artifact that needs rebuilding as up to date for the rest of the load.
+            # Only an in-place build is guaranteed to be up-to-date; a job result may already be stale
             self.registry._record_valid(self)
         self._artifact_metadata = manifest.artifact_metadata
         with self._state_check_context():
