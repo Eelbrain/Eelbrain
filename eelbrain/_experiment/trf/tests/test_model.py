@@ -121,8 +121,25 @@ def test_comparison(string: str, x1: str, x0: str, name: str | None):
     assert comparison.x1.name == x1
     assert comparison.x0.name == x0
     assert comparison.name == name
+    if x0 == '0':
+        assert not comparison.x0
 
 
 def test_comparison_parser():
     with pytest.raises(TRFModelError):
         Comparison.coerce('model @ whot$shift', named_models)
+
+    for x0 in ('0foo', '01foo', '0-foo', '0~foo'):
+        comparison = Comparison.coerce(f'x > {x0}')
+        assert comparison.x0.name == x0
+
+
+def test_comparison_cache_form():
+    named = Comparison.coerce('x-ab < x-cd', named_models).sorted()
+    expanded = Comparison._coerce(named._cache_form_())
+    assert expanded.x1 == named.x1
+    assert expanded.x0 == named.x0
+    assert expanded.tail == named.tail
+    assert expanded._cache_form_() == 'x-a + x-b < x-c + x-d'
+    with pytest.raises(TRFModelError, match='invalid comparison'):
+        Comparison._coerce('x + y')

@@ -97,6 +97,7 @@ plot.Scatter('Realname', ..., ds=ds)  # -> 'Realname'
 """
 from __future__ import annotations
 
+import builtins
 from copy import copy, deepcopy
 import fnmatch
 from functools import cached_property, partial
@@ -11367,6 +11368,10 @@ def intersect_dims(dims1, dims2, check_dims: bool = True):
 
 
 EVAL_CONTEXT.update(Var=Var, Factor=Factor, extrema=extrema)
+# Names that Dataset.eval() can resolve on its own. A name in an expression that is not
+# one of these has to come from the data; one that is both is the data's, since the
+# Dataset is eval()'s locals and thus shadows the context (see Dataset.eval).
+EVAL_CONTEXT_NAMES = {*vars(builtins), *EVAL_CONTEXT}
 
 NDVarArg = NDVar | str
 AxisArg = None | str | Sequence[str] | NDVar

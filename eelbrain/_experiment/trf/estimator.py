@@ -3,7 +3,7 @@
 
 An :class:`Estimator` is a :class:`Configuration` that both selects a fitting
 algorithm (boosting or NCRF) and carries the algorithm-specific parameters.
-TRF-general parameters (model, ``tstart``, ``tstop``, ``data``, ``mask``,
+TRF-general parameters (model, ``tstart``, ``tstop``, ``data``,
 ``samplingrate``) stay on :meth:`Pipeline.load_trf`; estimator-specific
 parameters (``basis``, ``delta``, ``mu``, …) live on the estimator.
 """
@@ -165,7 +165,7 @@ class Boosting(Estimator):
         valid with a single-term model.
     """
     DICT_ATTRS = ('basis', 'basis_window', 'error', 'delta', 'mindelta', 'selective_stopping', 'scale_data', 'partitions', 'cv', 'partition_results', 'backward')
-    metric_keys = ('r', 'z', 'residual', 'det', 'r1', 'z1')
+    metric_keys = ('r', 'z', 'residual', 'ev', 'r1', 'z1')
 
     def __init__(
             self,
@@ -220,7 +220,7 @@ class Boosting(Estimator):
 
     def _result_metrics(self, result) -> dict[str, NDVar | float]:
         r = result.r
-        metrics = {'r': r, 'z': arctanh(r), 'residual': result.residual, 'det': result.proportion_explained}
+        metrics = {'r': r, 'z': arctanh(r), 'residual': result.residual, 'ev': result.proportion_explained}
         if result.r_l1 is not None:  # vector data
             r1 = result.r_l1
             metrics['r1'] = r1

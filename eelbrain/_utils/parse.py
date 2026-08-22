@@ -17,7 +17,10 @@ def find_variables(expr: str) -> set[str]:
     Returns
     -------
     variables
-        Variables occurring in expr.
+        Every name occurring in ``expr``. Whether a name is read from the data or
+        resolved by :meth:`Dataset.eval` itself (``abs``, ``numpy``, ...) can not be
+        decided from the expression alone, and is settled against the data by
+        :meth:`~eelbrain._experiment.variable_def.Variables.resolve`.
     """
     try:
         st = ast.parse(expr)

@@ -1,12 +1,15 @@
 from dataclasses import dataclass, asdict
 from itertools import repeat
 from pathlib import Path
+from typing import Any
 import warnings
 
 import mne
+import numpy as np
 
 from ... import load, save
-from ..._data_obj import Dataset, Datalist, Factor, NDVar, combine
+from ..._data_obj import Dataset, Datalist, Factor, NDVar, Var, combine, isuv
+from ..._io.pickle import update_subjects_dir
 from ..._mne import morph_source_space
 from ..._ndvar import set_tmin
 from ..._ndvar.uts import pad
@@ -14,13 +17,15 @@ from ..._utils.mne_utils import is_fake_mri
 from ..configuration import Configuration
 from ..data import DataSpec
 from ..derivative_cache import Dependency, Derivative, OptionSpec, Request, UncachedDerivative, VersionedInput, file_fingerprint
-from ..epochs.config import EpochCollection
+from ..epochs.config import EpochBase
 from ..pathing import BIDS_ENTITY_KEYS, MRI_SDIR, mri_dir
 from ..preprocessing import RawFilter, RawPipe, RawSource
 from ..source.nodes import _subject_state
+from ..statistics.config import ResolvedTestNDSpec, TTestOneSample, TTestRelated, Test, TwoStageTest
+from ..variable_def import Variables
 from .estimator import Estimator
 from .job import TRFJob
-from .model import Model, Term, TRFModelError
+from .model import Comparison, Model, Term, TRFModelError
 from .predictor import EventPredictor, NUTSPredictor, SubjectUTSPredictor, UTSPredictor
 
 
@@ -215,7 +220,6 @@ class TRFDerivative(Derivative[object]):
         'tstop': 0.5,
         'estimator': 'boosting',
         'data': OptionSpec(DataSpec('sensor'), DataSpec),
-        'mask': None,
         'samplingrate': None,
         'decim': None,
         'filter_x': False,
@@ -456,7 +460,6 @@ _TRF_DATASET_OPTIONS = {
     'tstop': 0.5,
     'estimator': 'boosting',
     'data': OptionSpec(None, DataSpec),
-    'mask': None,
     'samplingrate': None,
     'decim': None,
     'filter_x': False,
@@ -481,7 +484,7 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
     estimators
         Mapping of estimator name to :class:`Estimator` definition.
     epochs
-        Assembled epoch definitions (for :class:`EpochCollection` expansion).
+        Assembled epoch definitions.
     """
     name = 'trf-dataset'
     key_options = _TRF_DATASET_OPTIONS
@@ -490,7 +493,7 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
             self,
             root: str | Path,
             estimators: dict[str, Estimator],
-            epochs: dict[str, object],
+            epochs: dict[str, EpochBase],
     ):
         self.root = Path(root)
         self.estimators = estimators
@@ -502,38 +505,28 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
             fields += ['cov', 'src', 'parc', 'adjacency', 'mrisubject', 'common_brain']
         return tuple(fields)
 
-    def _epoch_names(self, ctx: Request) -> list[str]:
-        epoch = self.epochs[ctx.state['epoch']]
-        if isinstance(epoch, EpochCollection):
-            return list(epoch.collect)
-        return [ctx.state['epoch']]
+    def validate_options(self, ctx: Request) -> None:
+        if not ctx.state['inv'] and (smooth := ctx.options['smooth']):
+            raise ValueError(f"{smooth=}: smoothing is only available for source-space data")
 
     def fingerprint(self, ctx: Request) -> dict[str, object]:
         return {}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        trf_options = ctx.options_for('trf', 'x', 'tstart', 'tstop', 'estimator', 'data', 'mask', 'samplingrate', 'decim', 'filter_x')
-        deps = [Dependency('trf', label=epoch, state={'epoch': epoch}, options=trf_options) for epoch in self._epoch_names(ctx)]
-        if ctx.state['inv']:
-            if not is_fake_mri(self.root / mri_dir(ctx.state)):
-                deps.append(Dependency('source-morph'))
-        elif smooth := ctx.options['smooth']:
-            raise ValueError(f"{smooth=}: smoothing is only available for source-space data")
+        trf_options = ctx.options_for('trf', 'x', 'tstart', 'tstop', 'estimator', 'data', 'samplingrate', 'decim', 'filter_x')
+        epoch_def = self.epochs[ctx.state['epoch']]
+        deps = [Dependency('trf', label=epoch, state={'epoch': epoch}, options=trf_options) for epoch in epoch_def.collected_epochs]
+        if ctx.state['inv'] and not is_fake_mri(self.root / mri_dir(ctx.state)):
+            deps.append(Dependency('source-morph'))
         return tuple(deps)
 
     def build(self, ctx: Request) -> Dataset:
         est = self.estimators[ctx.options['estimator']]
         scale = ctx.options['scale']
         trfs = ctx.options['trfs']
-        subject = ctx.state['subject']
-        dss = []
-        for epoch in self._epoch_names(ctx):
-            res = ctx.load(epoch)
-            ds = est._result_dataset(res, scale=scale, trfs=trfs)
-            ds[:, 'epoch'] = epoch
-            dss.append(ds)
+        epoch_def = self.epochs[ctx.state['epoch']]
+        dss = [est._result_dataset(ctx.load(epoch), scale=scale, trfs=trfs) for epoch in epoch_def.collected_epochs]
         ds = combine(dss, name=ctx.options['x'].name)
-        ds['subject'] = Factor([subject], repeat=ds.n_cases, random=True)
         # Morphing/smoothing
         if ctx.state['inv']:
             common_brain = ctx.state['common_brain']
@@ -544,6 +537,31 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
             _post_process_trfs(ds, ctx.options['smooth'], common_brain, source_morph)
         return ds
 
+    def apply_view_options(self, ctx: Request, value: Dataset) -> Dataset:
+        """Add the columns identifying the cases, which :meth:`build` does not
+
+        One case per collected epoch, so these follow from the epoch definition and
+        the subject alone; :meth:`load_view` produces them without loading data.
+        ``task`` is added for all cases or for none, since the cases are combined
+        across subjects.
+        """
+        epoch_def = self.epochs[ctx.state['epoch']]
+        value['epoch'] = Factor(epoch_def.collected_epochs)
+        if tasks := epoch_def.collected_tasks:
+            value['task'] = Factor(tasks)
+        value['subject'] = Factor([ctx.state['subject']], repeat=value.n_cases, random=True)
+        return value
+
+    def load_view(self, ctx: Request, view: str):
+        """The ``shell`` view: the non-data columns of this dataset, without loading data
+
+        A TRF dataset carries no event columns, so the shell is what
+        :meth:`apply_view_options` adds, and nothing else.
+        """
+        if view != 'shell':
+            return super().load_view(ctx, view)
+        return self.apply_view_options(ctx, Dataset())
+
 
 class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
     """Combine per-subject TRF datasets for a group into one :class:`Dataset`
@@ -552,10 +570,22 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
     ----------
     mri_subjects
         Mapping of ``mri`` value to subject→MRI-subject (for per-subject state).
-    common_brain
-        Common-brain MRI subject (morph target for source data).
+    variables
+        Global pipeline variable definitions; the across-subject ones are added
+        here.
     groups
         Mapping of group name to the sequence of member subjects.
+
+    Notes
+    -----
+    Across-subject variables are added here, because this is where subjects are
+    combined. A TRF dataset carries no event columns, so only a variable keyed on
+    ``subject`` applies (a ``task`` restriction is honored through the ``task``
+    column added by :class:`TRFDatasetDerivative`). They are added in
+    :meth:`apply_view_options`, i.e. they are part of the returned data but not of
+    this node's fingerprint; a cached consumer that reads them is responsible for
+    recording their values (see
+    :meth:`~eelbrain._experiment.variable_def.Variables.resolve`).
     """
     name = 'trf-group-dataset'
     key_options = _TRF_DATASET_OPTIONS
@@ -563,9 +593,11 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
     def __init__(
             self,
             mri_subjects: dict[str, dict[str, str]],
+            variables: Variables,
             groups: dict[str, tuple[str, ...]],
     ):
         self.mri_subjects = mri_subjects
+        self.variables = variables
         self.groups = groups
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
@@ -575,15 +607,19 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
         return tuple(fields)
 
     def fingerprint(self, ctx: Request) -> dict[str, object]:
-        return {'subjects': tuple(self.groups[ctx.state['group']])}
+        return {'subjects': self.groups[ctx.state['group']]}
+
+    def _subject_options(self, ctx: Request) -> dict[str, Any]:
+        "Options for the per-subject datasets: smoothing is applied to the combined dataset instead, so that the source smoothing matrix is calculated only once"
+        subject_options = [key for key in self.key_options if key != 'smooth']
+        return ctx.options_for('trf-dataset', *subject_options, smooth=None)
+
+    def validate_options(self, ctx: Request) -> None:
+        if not ctx.state['inv'] and (smooth := ctx.options['smooth']):
+            raise ValueError(f"{smooth=}: smoothing is only available for source-space data")
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        if not ctx.state['inv']:
-            if smooth := ctx.options['smooth']:
-                raise ValueError(f"{smooth=}: smoothing is only available for source-space data")
-        # Smooth the combined dataset so that the source smoothing matrix is calculated only once
-        subject_options = tuple(key for key in self.key_options if key != 'smooth')
-        options = ctx.options_for('trf-dataset', *subject_options, smooth=None)
+        options = self._subject_options(ctx)
         return tuple(
             Dependency('trf-dataset', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects), options=options)
             for subject in self.groups[ctx.state['group']]
@@ -594,3 +630,209 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
         ds = combine(dss, to_list=True)
         _post_process_trfs(ds, ctx.options['smooth'])
         return ds
+
+    def apply_view_options(self, ctx: Request, value: Dataset) -> Dataset:
+        self.variables.resolve(value, self.groups, across_subject_only=True)
+        return value
+
+    def load_view(self, ctx: Request, view: str):
+        """The ``shell`` view: the non-data columns of this dataset, without loading data
+
+        Assembled like the data in :meth:`build`, from the subjects' shells, so that
+        a consumer can fingerprint the variables it reads (see
+        :meth:`~eelbrain._experiment.variable_def.Variables.resolve`) against exactly
+        the columns it will get. A TRF dataset carries no event columns, so those
+        shells need no data of their own, which makes this cheap enough for a
+        cache-validity check.
+        """
+        if view != 'shell':
+            return super().load_view(ctx, view)
+        options = self._subject_options(ctx)
+        dss = [ctx.load('trf-dataset', state=_subject_state(ctx.state, subject, self.mri_subjects), options=options, view='shell') for subject in self.groups[ctx.state['group']]]
+        return self.apply_view_options(ctx, combine(dss))
+
+
+class TRFModelTestDerivative(Derivative[Any]):
+    """Cache a statistical comparison of TRF model-fit metrics.
+
+    The derivative depends on group-level metric datasets for the test and,
+    unless the comparison is against zero, baseline model. The cached artifact
+    contains only the statistical result; ``return_data`` is a view option that
+    reconstructs the uncached input dataset on demand.
+
+    Parameters
+    ----------
+    tests
+        Configured :attr:`Pipeline.tests` definitions.
+    groups
+        Mapping of group names to their member subjects.
+    """
+    name = 'trf-model-test'
+    cache_suffix = '.pickle'
+    key_options = {
+        'x': OptionSpec(None, Comparison, normalize=Comparison._coerce),
+        'tstart': 0.0,
+        'tstop': 0.5,
+        'estimator': 'boosting',
+        'data': OptionSpec(None, DataSpec),
+        'samplingrate': None,
+        'filter_x': False,
+        'metric': 'ev',
+        'smooth': None,
+        'test': None,
+        'pmin': 'tfce',
+        'samples': 10000,
+    }
+    view_options = {
+        'return_data': OptionSpec(False, bool),
+    }
+
+    def __init__(
+            self,
+            tests: dict[str, Test],
+            groups: dict[str, tuple[str, ...]],
+    ):
+        self.tests = tests
+        self.groups = groups
+
+    def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
+        fields = ['group', 'mri', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'reference', 'raw', 'inv']
+        if ctx.state['inv']:
+            fields += ['cov', 'src', 'parc', 'adjacency', 'mrisubject', 'common_brain']
+        return tuple(fields)
+
+    def validate_options(self, ctx: Request) -> None:
+        metric, pmin, samples = ctx.options['metric'], ctx.options['pmin'], ctx.options['samples']
+        _, reducer = self._metric_parts(metric)
+        # A reducer always leaves one value per case; that an unreduced metric is already univariate only the data shows (checked in _test_data)
+        if reducer and (pmin is not None or samples):
+            raise ValueError(f"{metric=} leaves one value per case, which is tested parametrically; {pmin=} and {samples=} do not apply (use pmin=None, samples=0)")
+
+    def _test_obj(self, ctx: Request) -> Test | None:
+        "The named test, or ``None`` for the default incremental model test"
+        test_name = ctx.options['test']
+        if test_name is None:
+            return None
+        test_obj = self.tests[test_name]
+        if isinstance(test_obj, TwoStageTest):
+            raise NotImplementedError(f"test={test_name!r}: TwoStageTest not implemented for TRF model tests")
+        return test_obj
+
+    def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        if test_obj := self._test_obj(ctx):
+            return {'test': test_obj._as_dict_without_vars()}
+        return {}
+
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        comparison = ctx.options['x']
+        option_names = ('tstart', 'tstop', 'estimator', 'data', 'samplingrate', 'filter_x', 'smooth')
+        x1_options = ctx.options_for('trf-group-dataset', *option_names, x=comparison.x1, scale=None, trfs=False)
+        deps = [Dependency('trf-group-dataset', label='x1', options=x1_options)]
+        if comparison.x0:
+            options = ctx.options_for('trf-group-dataset', *option_names, x=comparison.x0, scale=None, trfs=False)
+            deps.append(Dependency('trf-group-dataset', label='x0', options=options))
+        test_obj = self._test_obj(ctx)
+        if test_obj and test_obj._test_vars:
+            # The same dataset's shell to fingerprint the columns used by the test's variables
+            deps.append(Dependency('trf-group-dataset', label='events', view='shell', options=x1_options))
+        return tuple(deps)
+
+    def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, Any] | None:
+        """Depend on the values the test reads, not the definitions behind them
+
+        The shell already carries the across-subject :attr:`Pipeline.variables`; only
+        the test's own are applied on top, exactly as in :meth:`build` (see
+        :meth:`Test._resolve_vars`).
+        """
+        if dep.label != 'events':
+            return None
+        return self._test_obj(ctx)._resolve_vars(ctx.load(dep.label), self.groups)
+
+    @staticmethod
+    def _metric_parts(metric: str) -> tuple[str, str | None]:
+        if '.' not in metric:
+            return metric, None
+        metric_, reducer = metric.rsplit('.', 1)
+        if reducer not in ('sum', 'mean', 'max'):
+            raise ValueError(f"{metric=} with reducer {reducer!r}: expected 'sum', 'mean', or 'max'")
+        return metric_, reducer
+
+    @staticmethod
+    def _assert_aligned(ds1: Dataset, ds0: Dataset) -> None:
+        if ds1.n_cases != ds0.n_cases:
+            desc = "case number"
+        elif not np.all(ds1['subject'] == ds0['subject']):
+            desc = "subject"
+        elif 'epoch' in ds1 and not np.all(ds1['epoch'] == ds0['epoch']):
+            desc = "epoch"
+        else:
+            return
+        raise RuntimeError(f"TRF model datasets are not aligned by {desc}")
+
+    def _test_data(
+            self,
+            ctx: Request,
+    ) -> tuple[Dataset, Var | NDVar, Test]:
+        comparison = ctx.options['x']
+        metric, reducer = self._metric_parts(ctx.options['metric'])
+        test_obj = self._test_obj(ctx)
+        ds1 = ctx.load('x1')
+        if metric not in ds1:
+            available = ', '.join(ds1.info.get('metrics', ()))
+            raise ValueError(f"{metric=} is not available from estimator {ctx.options['estimator']!r}; available metrics: {available}")
+
+        if comparison.x0:
+            ds0 = ctx.load('x0')
+            self._assert_aligned(ds1, ds0)
+            # Only variables that are identical between the datasets should matter for tests
+            keep = tuple([key for key in ds1 if key in ds0 and isuv(ds1[key]) and isuv(ds0[key]) and np.all(ds1[key] == ds0[key])])
+            if test_obj is None:
+                keep += (metric,)
+                ds = combine((ds1[keep], ds0[keep]))
+                ds['model'] = Factor(('test', 'baseline'), repeat=ds1.n_cases)
+                test_obj = TTestRelated('model', 'test', 'baseline', comparison.tail)
+            else:
+                ds = ds1[keep]
+                if isinstance(ds1[metric], Datalist):
+                    ds[metric] = Datalist([value1 - value0 for value1, value0 in zip(ds1[metric], ds0[metric])])
+                else:
+                    ds[metric] = ds1[metric] - ds0[metric]
+        else:
+            ds = ds1
+            if test_obj is None:
+                test_obj = TTestOneSample(comparison.tail)
+
+        test_obj._resolve_vars(ds, self.groups)
+        y = ds[metric]
+        if reducer is None:
+            if isinstance(y, Datalist):
+                raise ValueError(f"{metric=} has inconsistent spatial dimensions across cases; specify a .sum, .mean, or .max reduction")
+        elif isinstance(y, Var):
+            raise ValueError(f"{metric=} is already univariate and can not be reduced with .{reducer}")
+        elif isinstance(y, Datalist):
+            dim = 'sensor' if y[0].has_dim('sensor') else 'source'
+            y = combine([getattr(yi, reducer)(dim) for yi in y])
+        else:
+            dim = 'sensor' if y.has_dim('sensor') else 'source'
+            y = getattr(y, reducer)(dim)
+        return ds, y, test_obj
+
+    def build(self, ctx: Request) -> Any:
+        ds, y, test_obj = self._test_data(ctx)
+        test_spec = ResolvedTestNDSpec.from_request(ctx, time=False)
+        return test_spec.make_result(self, y, ds, test_obj)
+
+    def apply_view_options(self, ctx: Request, value: Any) -> Any:
+        if not ctx.view_options['return_data']:
+            return value
+        ds, _, _ = self._test_data(ctx)
+        return ds, value
+
+    def load(self, ctx: Request, path: Path) -> Any:
+        value = load.unpickle(path)
+        if ctx.options['data'].source:
+            update_subjects_dir(value, ctx.root / MRI_SDIR, 2)
+        return value
+
+    def save(self, ctx: Request, path: Path, value: Any) -> None:
+        save.pickle(value, path)

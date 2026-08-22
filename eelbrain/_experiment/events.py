@@ -254,6 +254,11 @@ class LabeledEventsDerivative(Derivative[Dataset]):
     ``False`` this node is always rebuilt from the cached unlabeled events —
     the correct choice when ``label_events`` reads external files whose changes
     cannot be detected without executing the hook.
+
+    Only the event variables are applied here; across-subject variables
+    (:class:`GroupVar`, :class:`LabelVar` on ``'subject'``, and variables
+    derived from either) are applied where subjects are combined, so that the
+    cached artifact is independent of the other subjects' entries.
     """
     name = 'labeled-events'
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'raw')
@@ -266,7 +271,6 @@ class LabeledEventsDerivative(Derivative[Dataset]):
             multi_task: bool,
             multi_session: bool,
             variables: Variables,
-            groups: dict[str, Any],
             cache: bool,
     ):
         self.label_events_impl = label_events
@@ -274,7 +278,6 @@ class LabeledEventsDerivative(Derivative[Dataset]):
         self.multi_task = multi_task
         self.multi_session = multi_session
         self._variables = variables
-        self._groups = groups
         if not cache:
             self.cache_policy = CachePolicy.NEVER
 
@@ -285,8 +288,10 @@ class LabeledEventsDerivative(Derivative[Dataset]):
         )
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        # Across-subject variables are applied where subjects are combined, so they are
+        # not part of this artifact and another subject's entry does not invalidate it
         return {
-            'variables': self._variables,
+            'variables': self._variables.event_vars,
             'label_events': function_fingerprint(self.label_events_impl),
         }
 
@@ -313,7 +318,7 @@ class LabeledEventsDerivative(Derivative[Dataset]):
             ds[:, 'task'] = ctx.state['task']
         if self.multi_session:
             ds[:, 'session'] = ctx.state['session']
-        self._variables._apply(ds, self._groups)
+        self._variables.resolve(ds, require_inputs=True)
 
         # Apply e.label_events()
         info = ds.info

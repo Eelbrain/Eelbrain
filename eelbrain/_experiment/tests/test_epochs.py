@@ -87,6 +87,7 @@ def test_assemble_epochs_stores_dependent_parameters():
         'a-sub': SecondaryEpoch('a'),
         'ab': SuperEpoch(('a', 'b')),
         'collection': EpochCollection(('a', 'b')),
+        'collection-ab': EpochCollection(('a', 'ab')),
         'cont': ContinuousEpoch('task-c'),
     }, ('task-a', 'task-b', 'task-c'))
 
@@ -94,6 +95,8 @@ def test_assemble_epochs_stores_dependent_parameters():
     assert primary.name == 'a'
     assert primary.task == 'task-a'
     assert primary.tasks == ('task-a',)
+    assert primary.collected_epochs == ('a',)
+    assert primary.collected_tasks == ('task-a',)
     assert primary.rej_file_epochs == ('a',)
     assert 'name' not in primary._as_dict()
 
@@ -101,6 +104,7 @@ def test_assemble_epochs_stores_dependent_parameters():
     assert secondary.name == 'a-sub'
     assert secondary.task == 'task-a'
     assert secondary.tasks == ('task-a',)
+    assert secondary.collected_tasks == ('task-a',)
     assert secondary.rej_file_epochs == ('a',)
     assert 'name' not in secondary._as_dict()
     assert 'task' not in secondary._as_dict()
@@ -110,6 +114,9 @@ def test_assemble_epochs_stores_dependent_parameters():
     super_epoch = epochs['ab']
     assert super_epoch.name == 'ab'
     assert super_epoch.tasks == ('task-a', 'task-b')
+    # loaded as a whole, and its data can not be attributed to a single task
+    assert super_epoch.collected_epochs == ('ab',)
+    assert super_epoch.collected_tasks is None
     assert super_epoch.rej_file_epochs == ['a', 'b']
     assert 'name' not in super_epoch._as_dict()
     # _explicit_params records which kwargs were explicitly provided (empty here)
@@ -119,8 +126,16 @@ def test_assemble_epochs_stores_dependent_parameters():
     collection = epochs['collection']
     assert collection.name == 'collection'
     assert collection.tasks == ('task-a', 'task-b')
+    # loaded as its member epochs, each of which has its own task
+    assert collection.collected_epochs == ('a', 'b')
+    assert collection.collected_tasks == ('task-a', 'task-b')
     assert collection.rej_file_epochs == ['a', 'b']
     assert 'name' not in collection._as_dict()
+
+    # a collected epoch that combines tasks leaves the collection without a task per case
+    collection_ab = epochs['collection-ab']
+    assert collection_ab.collected_epochs == ('a', 'ab')
+    assert collection_ab.collected_tasks is None
 
     continuous = epochs['cont']
     assert continuous.name == 'cont'

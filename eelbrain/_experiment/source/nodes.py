@@ -33,6 +33,7 @@ from ..pathing import (
 )
 from ..preprocessing import Reference, canonical_recording, raw_node_name
 from ..data import DataSpec
+from ..variable_def import Variables
 from ..._text import enumeration, plural
 from ..._utils import subp
 from ..._utils.mne_utils import is_fake_mri
@@ -637,6 +638,11 @@ class EpochsStcDerivative(UncachedDerivative[Dataset]):
         self.epochs = epochs
         self._references = references
 
+    def validate_options(self, ctx: Request) -> None:
+        if src_baseline := ctx.options['src_baseline']:
+            if self.epochs[ctx.state['epoch']].post_baseline_trigger_shift:
+                raise NotImplementedError(f"{src_baseline=}: post_baseline_trigger_shift is not implemented for baseline correction in source space")
+
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         options = ctx.options_for('epochs', 'baseline', 'reject', 'samplingrate', 'decim', 'pad', ndvar=False, data='sensor')
         return _source_dependencies(ctx, Dependency('epochs', options=options))
@@ -658,8 +664,6 @@ class EpochsStcDerivative(UncachedDerivative[Dataset]):
         _check_head_position_alignment(ctx, epoch_list[0].info)
 
         src_baseline = ctx.options['src_baseline']
-        if src_baseline and epoch.post_baseline_trigger_shift:
-            raise NotImplementedError("src_baseline with post_baseline_trigger_shift")
         if src_baseline is True:
             src_baseline = epoch.baseline
         projection = _prepare_source_projection(ctx, ctx.options['morph'], solution)
@@ -760,6 +764,11 @@ class EvokedStcDerivative(UncachedDerivative[Dataset]):
         self.epochs = epochs
         self._references = references
 
+    def validate_options(self, ctx: Request) -> None:
+        if src_baseline := ctx.options['src_baseline']:
+            if self.epochs[ctx.state['epoch']].post_baseline_trigger_shift:
+                raise NotImplementedError(f"{src_baseline=}: post_baseline_trigger_shift is not implemented for baseline correction in source space")
+
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         options = ctx.options_for('evoked', 'model', 'baseline', 'samplingrate', 'decim')
         return _source_dependencies(ctx, Dependency('evoked', options=options))
@@ -778,8 +787,6 @@ class EvokedStcDerivative(UncachedDerivative[Dataset]):
 
         src_baseline = ctx.options['src_baseline']
         epoch = self.epochs[ctx.state['epoch']]
-        if src_baseline and epoch.post_baseline_trigger_shift:
-            raise NotImplementedError(f"{src_baseline=}: post_baseline_trigger_shift is not implemented for baseline correction in source space")
         if src_baseline is True:
             src_baseline = epoch.baseline
         projection = _prepare_source_projection(ctx, ctx.options['morph'], solution)
@@ -835,6 +842,12 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset | ROIData]):
     -----
     ``morph`` defaults to ``True``. With ``ndvar=True, morph=False``, source
     NDVars from different brains are retained as a list in the ``src`` column.
+
+    Across-subject variables are added here, because this is where subjects are
+    combined. They are added in :meth:`apply_view_options`, i.e. they are part
+    of the returned data but not of this node's fingerprint; a cached consumer
+    that reads them is responsible for recording their values (see
+    :meth:`~eelbrain._experiment.variable_def.Variables.resolve`).
     """
     name = 'evoked-stc-group-dataset'
     key_options = {
@@ -844,8 +857,14 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset | ROIData]):
         'morph': True,
     }
 
-    def __init__(self, mri_subjects: dict[str, dict[str, str]], groups: dict[str, tuple[str, ...]]):
+    def __init__(
+            self,
+            mri_subjects: dict[str, dict[str, str]],
+            variables: Variables,
+            groups: dict[str, tuple[str, ...]],
+    ):
         self.mri_subjects = mri_subjects
+        self.variables = variables
         self.groups = groups
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...] | None:
@@ -885,6 +904,15 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset | ROIData]):
         else:
             dss = [ctx.load(subject) for subject in subjects]
             return combine(dss, to_list=True)
+
+    def apply_view_options(self, ctx: Request, value: Dataset | ROIData) -> Dataset | ROIData:
+        if isinstance(value, ROIData):
+            self.variables.resolve(value.n_trials_ds, self.groups, across_subject_only=True)
+            for label_ds in value.label_data.values():
+                self.variables.resolve(label_ds, self.groups, across_subject_only=True)
+        else:
+            self.variables.resolve(value, self.groups, across_subject_only=True)
+        return value
 
 
 def roi_data_from_dataset(

@@ -298,7 +298,9 @@ class OptionSpec:
     :attr:`DependencyNode.view_options` in place of a plain default to
     normalize and validate the option value when a request is resolved. This
     happens before the cache key is computed, so equivalent spellings share
-    one cached artifact and invalid values fail before build.
+    one cached artifact and invalid values fail before build. An
+    :class:`OptionSpec` only sees its own option; a constraint spanning several
+    options belongs in :meth:`DependencyNode.validate_options`.
 
     The declared ``default`` itself is exempt from normalization and
     validation (checked by identity), so a ``None`` placeholder default does
@@ -566,6 +568,17 @@ class DependencyNode(Generic[T]):
     def declared_options(cls) -> set[str]:
         """Return all option names declared by this node."""
         return {*cls.key_options, *cls.view_options}
+
+    def validate_options(self, ctx: Request) -> None:
+        """Reject invalid combinations of option values.
+
+        Called exactly once per request, after :class:`OptionSpec` normalization
+        and before the cache key is computed, so an invalid combination can fail
+        before any expensive work.
+
+        Override this for constraints spanning several options, or options and state
+        (validate individual options in :class:`OptionSpec`).
+        """
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...] | None:
         """Dynamically choose the state fields in the cache key for this request.
@@ -1085,6 +1098,8 @@ class Derivative(DependencyNode[T]):
         without changing cache identity. The default implementation returns
         ``value`` unchanged. Any data loaded through ``ctx.load(...)`` must be
         declared in :meth:`dependencies`, just as for :meth:`build`.
+
+        Does not apply in :meth:`load_view`.
         """
         return value
 
@@ -1330,6 +1345,8 @@ class Request(Generic[T]):
             allowed = frozenset(read_fields) | frozenset(node.fixed_state)
             if allowed:
                 self._restricted_state = _RestrictedStateView(state, allowed)
+        with self._state_check_context():
+            node.validate_options(self)
         if isinstance(node, Derivative) and node.cache_policy != CachePolicy.NEVER:
             # Canonicalize here so key() implementations need not: a key that
             # only became canonical through the manifest JSON round-trip would

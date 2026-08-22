@@ -56,31 +56,55 @@ class Test(Configuration):
             cat: tuple[CellArg, ...] | None = None,  # cells in model to load
             depend_on: Collection[str] = (),  # non-model variables
     ):
-        self.desc = desc
+        self.desc: str = desc
+        self._test_vars: set[str] = set()
         if model is None:
-            self._test_vars = []
             self.model = None
         else:
-            self._test_vars = [v for v in map(str.strip, model.split('%')) if v]
-            self.model = '%'.join(self._test_vars)
+            model_vars = [v for v in map(str.strip, model.split('%')) if v]
+            self.model = '%'.join(model_vars)
+            self._test_vars.update(model_vars)
         self.cat = cat
         try:
             self.vars = Variables(vars)
         except Exception as error:
             raise ConfigurationError(f"{vars=} ({error})")
-        self._test_vars.extend(depend_on)
+        self._test_vars.update(depend_on)
 
-    def _find_test_vars(self):
-        "Find variables and groups used in a test definition"
-        vs = set(self._test_vars)
-        groups = set()
-        for name, variable in self.vars.vars.items():
-            if name in vs:
-                vs.remove(name)
-                vs.update(variable._input_vars())
-                if isinstance(variable, GroupVar):
-                    groups.update(variable.groups)
-        return vs, groups
+    def _resolve_vars(
+            self,
+            data: Dataset,
+            groups: dict[str, tuple[str, ...]] = None,
+    ) -> dict[str, Any]:
+        """Add the variables this test reads to ``data``, and return their values
+
+        The same call serves both consumers of a test's variables: the node that
+        builds the data adds them, and the node that validates a cached result
+        resolves them against the event *shell* and records the returned values.
+        Recording values rather than the definitions behind them keeps a label
+        change that does not reach the retained events from invalidating the
+        result; passing :attr:`_test_vars` as ``names`` makes the coverage checked
+        rather than assumed (see
+        :meth:`~eelbrain._experiment.variable_def.Variables.resolve`).
+
+        Parameters
+        ----------
+        data
+            The events, or an event shell describing them.
+        groups
+            Members of each group, from :attr:`Pipeline.groups`. ``None`` for data
+            from a single subject, where across-subject variables are absent.
+        """
+        return self.vars.resolve(data, groups, names=self._test_vars)
+
+    def _as_dict_without_vars(self) -> dict[str, Any]:
+        """The definition without :attr:`vars`
+
+        A node that fingerprints the event shell for a test does not need to
+        record the variable definitions producing the event labels (see
+        :meth:`~eelbrain._experiment.variable_def.Variables.resolve`).
+        """
+        return {key: value for key, value in self._as_dict().items() if key != 'vars'}
 
     def _make(self, y, ds, force_permutation, kwargs):
         raise NotImplementedError(f"For {self.__class__.__name__}")
@@ -132,8 +156,8 @@ class TTestIndependent(Test):
     Parameters
     ----------
     model : str
-        The model which defines the cells that are used in the test. Usually
-        ``"group"``.
+        The model which defines the cells that are used in the test.
+        Can be ``"group"`` to compare two groups defined on the pipeline.
     c1 : str | tuple
         The experimental group. Should be a group name.
     c0 : str | tuple
@@ -151,12 +175,13 @@ class TTestIndependent(Test):
     Sample test definitions, assuming that the experiment has two groups called
     ``'younger'`` and ``'older'``::
 
-        variables = {
-            'age': GroupVar(['younger', 'older']),
+        groups = {
+            'younger': Group(['S001', 'S002']),
+            'older': Group(['S011', 'S012']),
         }
         tests = {
-            'old=young': TTestIndependent('group', 'older', 'younger'),
-            'old>young': TTestIndependent('group', 'older', 'younger', tail=1),
+            'older=younger': TTestIndependent('group', 'older', 'younger'),
+            'older>younger': TTestIndependent('group', 'older', 'younger', tail=1),
         }
     """
     kind = 'ttest_ind'
@@ -447,15 +472,17 @@ class ResolvedTestNDSpec:
     def from_request(
             cls,
             ctx: Request,
+            time: bool = True,
     ) -> ResolvedTestNDSpec:
         data = ctx.options['data']
         pmin = ctx.options['pmin']
         kwargs = {
             'samples': ctx.options['samples'],
-            'tstart': ctx.options['tstart'],
-            'tstop': ctx.options['tstop'],
             'parc': data._testnd_parc(ctx.options.get('disconnect_labels', False)),
         }
+        if time:
+            kwargs['tstart'] = ctx.options['tstart']
+            kwargs['tstop'] = ctx.options['tstop']
         if pmin == 'tfce':
             kwargs['tfce'] = True
         elif pmin is not None:

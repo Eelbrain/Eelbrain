@@ -12,7 +12,7 @@ from pathlib import Path
 import pickle
 from collections.abc import Callable, Sequence
 
-from pyparsing import DelimitedList, ParseException, Literal, Optional, Word, alphanums, one_of
+from pyparsing import DelimitedList, Keyword, ParseException, Literal, Optional, Word, alphanums, one_of
 
 from ..._data_obj import Dataset
 from ... import fmtxt
@@ -315,7 +315,7 @@ class ComparisonSpec:
     def initialize(
             self,
             named_models: dict[str, Model],
-    ) -> Comparison | Model:
+    ) -> Comparison:
         raise NotImplementedError
 
 
@@ -462,6 +462,14 @@ class Comparison:
             op = self.operator
         return f"{name(self.x1)} {op} {name(self.x0)}"
 
+    def sorted(self) -> Comparison:
+        """Copy with terms in both models sorted for stable cache identity"""
+        return Comparison(self.x1.sorted(), self.x0.sorted(), self.tail, self.public_name)
+
+    def _cache_form_(self) -> str:
+        """Canonical expanded form for cache keys and manifests"""
+        return self.compose_name()
+
     @classmethod
     def coerce(
             cls,
@@ -472,6 +480,17 @@ class Comparison:
             return x
         comp = parse_comparison(x)
         return comp.initialize(named_models)
+
+    @classmethod
+    def _coerce(
+            cls,
+            x,
+    ) -> Comparison:
+        """Coerce ``x`` and require a comparison rather than a bare model"""
+        comparison = cls.coerce(x)
+        if not isinstance(comparison, cls):
+            raise TypeError(f"{x=}: need a model comparison")
+        return comparison
 
     def __repr__(self):
         return f"<Comparison: {self.name}>"
@@ -493,10 +512,10 @@ model = DelimitedList(term, '+').add_parse_action(lambda s, l, t: Model(tuple(t)
 subtract_term = Literal('-').suppress() + term
 model_expr = model + Optional(subtract_term)
 model_expr.add_parse_action(lambda s, l, t: ModelExpression(*t))
-null_model = Literal('0').add_parse_action(lambda s, l, t: Model(()))
+null_model = Keyword('0', ident_chars=alphanums + '_-~').add_parse_action(lambda s, l, t: Model(()))
 
 # comparison
-direct_comparison = model + one_of('= < >') + (model ^ null_model)
+direct_comparison = model + one_of('= < >') + (null_model | model)
 direct_comparison.add_parse_action(lambda s, l, t: DirectComparison(*t))
 omit_comparison = model + Literal('@').suppress() + model
 omit_comparison.add_parse_action(lambda s, l, t: OmitComparison(*t))

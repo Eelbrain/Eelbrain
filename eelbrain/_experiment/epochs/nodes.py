@@ -48,7 +48,21 @@ from ..._meeg.interpolation import _interpolate_bads_eeg, _interpolate_bads_meg,
 from ..derivative_cache import CachePolicy, Dependency, Derivative, OptionSpec, Request, UncachedDerivative
 from ..preprocessing import RawPipeGraph, Reference, raw_node_name
 from ..data import DataSpec
+from ..variable_def import Variables
 from .config import EPOCH_EXTRACT_OPTIONS, ContinuousEpoch, EpochBase, EpochCollection, PrimaryEpoch, SecondaryEpoch, SuperEpoch, single_recording_run
+
+
+def _validate_deferred_baseline(
+        epoch: EpochBase,
+        baseline: bool | tuple[float | None, float | None],
+) -> None:
+    """Reject a load-time baseline that a ``post_baseline_trigger_shift`` epoch can not honor.
+
+    Such an epoch is baseline-corrected while it is built, before the trigger
+    shift, so the correction can neither be changed nor undone afterwards.
+    """
+    if epoch.post_baseline_trigger_shift and baseline is not True and baseline != epoch.baseline:
+        raise NotImplementedError(f"{baseline=} for epoch {epoch.name!r}: baseline correction is applied before the post_baseline_trigger_shift and can not be changed at load time; use baseline=True")
 
 
 def _drop_bad_eeg_channels_with_missing_locs(
@@ -338,6 +352,14 @@ class EpochsDerivative(UncachedDerivative[Dataset]):
             return self._find_runs(ctx, self.epochs[epoch.sel_epoch])
         return ()
 
+    def validate_options(self, ctx: Request) -> None:
+        data = ctx.options['data']
+        if not data.sensor:
+            raise ValueError(f"data={data.string!r}; load_epochs is for loading sensor data")
+        elif data.aggregate and not ctx.options['ndvar']:
+            raise ValueError(f"data={data.string!r} with ndvar=False")
+        _validate_deferred_baseline(self.epochs[ctx.state['epoch']], ctx.options['baseline'])
+
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         epoch = self.epochs[ctx.state['epoch']]
         if isinstance(epoch, EpochCollection):
@@ -396,11 +418,6 @@ class EpochsDerivative(UncachedDerivative[Dataset]):
     def build(self, ctx: Request) -> Dataset:
         epoch = self.epochs[ctx.state['epoch']]
         data = ctx.options['data']
-        if not data.sensor:
-            raise ValueError(f"data={data.string!r}; load_evoked is for loading sensor data")
-        if data.aggregate and not ctx.options['ndvar']:
-            raise ValueError(f"data={data.string!r} with ndvar=False")
-
         if isinstance(epoch, SuperEpoch):
             dss = []
             epochs_list = []
@@ -450,11 +467,8 @@ class EpochsDerivative(UncachedDerivative[Dataset]):
             ds['epochs'] = combine(epochs_list)
 
         # Baseline correction (for post_baseline_trigger_shift epochs it was already applied)
-        baseline = ctx.options['baseline']
-        if epoch.post_baseline_trigger_shift:
-            if baseline is not True and baseline != epoch.baseline:
-                raise NotImplementedError(f"{baseline=} for epoch {epoch.name!r}: baseline correction is applied before the post_baseline_trigger_shift and can not be changed at load time; use baseline=True")
-        else:
+        if not epoch.post_baseline_trigger_shift:
+            baseline = ctx.options['baseline']
             if baseline is True:
                 baseline = epoch.baseline
             if baseline:
@@ -550,14 +564,14 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
         return {}
 
     def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, Any] | None:
+        """Depend on the event values this evoked is built from"""
         if dep.name != 'epoch-events':
             return None
         model = ctx.options['model']
-        if model:
-            ds = ctx.load(dep.label or dep.name)
-            ds = self._aggregate(ds, ctx)
-            return {'model': ds.eval(model)}
-        return {}
+        if not model:
+            return {}
+        ds = ctx.load(dep.label or dep.name)
+        return {'model': ds.eval(model)}
 
     def build(self, ctx: Request) -> list[mne.Evoked]:
         model = ctx.options['model']
@@ -572,12 +586,13 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
 
     @staticmethod
     def _aggregate(data: Dataset, ctx: Request) -> Dataset:
+        "Average trials within each cell of the model; also describes the ``shell`` view"
         return data.aggregate(
             ctx.options['model'],
             never_drop=('epochs',),
             drop_bad=True,
             equal_count=ctx.state['equalize_evoked_count'] == 'eq',
-            drop=('sample', 't_edf', 'onset', 'index', 'value'),
+            drop=('sample', 'onset', 'index', 'value'),
         )
 
     def load(self, ctx: Request, path: Path) -> list[mne.Evoked]:
@@ -585,13 +600,6 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
 
     def save(self, ctx: Request, path: Path, value: list[mne.Evoked]) -> None:
         mne.write_evokeds(path, value, overwrite=True)
-
-    def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
-        if view is None:
-            return self.fingerprint(ctx)
-        if view != 'shell':
-            raise ValueError(f"{self.name!r} does not define dependency view {view!r}")
-        return self.fingerprint(ctx)
 
     def load_view(self, ctx: Request, view: str):
         if view != 'shell':
@@ -637,12 +645,12 @@ class EvokedDerivative(Derivative[list[mne.Evoked]]):
                 evoked_i.info['bads'] = []
 
         # Baseline correction (for post_baseline_trigger_shift epochs it was already applied).
+        # Checked here rather than in validate_options() because ``baseline`` is a view
+        # option: the shell view ignores it and is requested without forwarding it.
         epoch = self.epochs[ctx.state['epoch']]
         baseline = ctx.view_options['baseline']
-        if epoch.post_baseline_trigger_shift:
-            if baseline is not True and baseline != epoch.baseline:
-                raise NotImplementedError(f"baseline={baseline!r} for epoch {epoch.name!r}: baseline correction is applied before the post_baseline_trigger_shift and can not be changed at load time; use baseline=True")
-        else:
+        _validate_deferred_baseline(epoch, baseline)
+        if not epoch.post_baseline_trigger_shift:
             if baseline is True:
                 baseline = epoch.baseline
             if baseline:
@@ -688,6 +696,15 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
         Decimation override for the underlying evoked artifact.
     data
         Sensor representation to return.
+
+    Notes
+    -----
+    Across-subject variables are added here, because this is where subjects are
+    combined; which of them the combined data supports depends on what survives
+    averaging. They are added in :meth:`apply_view_options`, i.e. they are part
+    of the returned data but not of this node's fingerprint; a cached consumer
+    that reads them is responsible for recording their values (see
+    :meth:`~eelbrain._experiment.variable_def.Variables.resolve`).
     """
     name = 'evoked-group-dataset'
     key_fields = ('group', 'raw', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'reference', 'equalize_evoked_count')
@@ -704,15 +721,21 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
         'cat': None,
     }
 
-    def __init__(self, raw, groups):
+    def __init__(
+            self,
+            raw: RawPipeGraph,
+            variables: Variables,
+            groups: dict[str, tuple[str, ...]],
+    ):
         self.raw = raw
+        self.variables = variables
         self.groups = groups
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {'subjects': tuple(self.groups[ctx.state['group']])}
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        options = ctx.options_for('evoked', 'model', 'baseline', 'samplingrate', 'decim', 'interpolate_bads', 'data')
+        options = ctx.options_for('evoked', 'model', 'baseline', 'cat', 'samplingrate', 'decim', 'interpolate_bads', 'data')
         return tuple(
             Dependency('evoked', label=subject, state={'subject': subject}, options=options)
             for subject in self.groups[ctx.state['group']]
@@ -738,4 +761,25 @@ class EvokedGroupDatasetDerivative(UncachedDerivative[Dataset]):
                 adjacency = source_pipe._get_adjacency(sensor_type)
                 ds[sensor_type] = load.mne.evoked_ndvar(evoked, data=sensor_type, sysname=sysname, adjacency=adjacency)
 
+        return ds
+
+    def apply_view_options(self, ctx: Request, value: Dataset) -> Dataset:
+        self.variables.resolve(value, self.groups, across_subject_only=True)
+        return value
+
+    def load_view(self, ctx: Request, view: str):
+        """The ``shell`` view: the non-data columns of this dataset, without loading data
+
+        Built the same way as the data, from the subjects' evoked shells, so that a
+        consumer can fingerprint the variables it reads (see
+        :meth:`~eelbrain._experiment.variable_def.Variables.resolve`) against exactly
+        the columns it will get. ``cat`` is not applied; recording all model cells is a
+        superset, and matches what ``evoked`` records for its model.
+        """
+        if view != 'shell':
+            return super().load_view(ctx, view)
+        options = ctx.options_for('evoked', 'model', 'samplingrate', 'decim')
+        dss = [ctx.load('evoked', state={'subject': subject}, options=options, view='shell') for subject in self.groups[ctx.state['group']]]
+        ds = combine(dss, incomplete='drop')
+        self.variables.resolve(ds, self.groups, across_subject_only=True)
         return ds

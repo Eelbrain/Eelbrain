@@ -61,6 +61,12 @@ def _test_result_manifest_path(
     return e._derivatives.resolve(node, state=e.state, options=options).manifest_path
 
 
+def _trf_group_shell(e, x: str, tstart: float, tstop: float) -> Dataset:
+    "The trf-group-dataset ``shell`` view for the pipeline's current state"
+    options = {**e._trf_options(x, tstart, tstop, 'boosting', None, None, False), 'scale': None, 'smooth': None, 'trfs': True}
+    return e._load_derivative('trf-group-dataset', options=options, view='shell')
+
+
 @pytest.fixture(scope='session')
 def _samples_templates(tmp_path_factory):
     "Per-session cache of sample-experiment templates, keyed by setup configuration"
@@ -494,6 +500,223 @@ def test_sample(samples_experiment):
 
 
 @requires_mne_sample_data
+def test_group_membership_cache_relevance(samples_experiment):
+    """Group membership is cache-relevant only where a test reads it
+
+    ``GroupVar`` is applied where subjects are combined, so per-subject
+    artifacts are independent of it, and a group-level result is only
+    invalidated when the test actually uses the groups that changed.
+    """
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    root = samples_experiment(n_subjects=3, n_segments=2, mris=False)
+
+    def experiment(g0):
+        class Experiment(SampleExperiment):
+            groups = {
+                'g0': Group(g0),
+                'g1': SubGroup('all', g0),
+                'fixed': Group(['R0000', 'R0002']),  # membership unaffected by moving R0001
+            }
+            variables = {**SampleExperiment.variables, 'age': GroupVar(['g0', 'g1'])}
+            tests = {**SampleExperiment.tests, 'g0=g1': TTestIndependent('age', 'g0', 'g1'), 'one-sample': TTestOneSample()}
+        return Experiment(root)
+
+    def test_data_dependencies(e, test, group):
+        e.set(group=group, epoch='target', epoch_rejection='')
+        handle = e._resolve_derivative('evoked-test-data', options={'data': DataSpec.coerce('meg.rms'), 'test': test})
+        return handle.dependency_fingerprints()
+
+    def test_data_variables(e, test, group):
+        "The values the test reads, as recorded in the event-shell dependency"
+        return test_data_dependencies(e, test, group)['events']['fingerprint']
+
+    def events_identity(e):
+        e.set(subject='R0002', epoch='target', epoch_rejection='')
+        handle = e._resolve_derivative('labeled-events')
+        return handle.artifact_path, handle.current_fingerprint()
+
+    e = experiment(['R0000'])
+    e_moved = experiment(['R0000', 'R0001'])  # R0001 moves from g1 to g0
+
+    # per-subject events are independent of group membership
+    assert events_identity(e_moved) == events_identity(e)
+    # a test reading the changed groups is invalidated
+    assert test_data_variables(e_moved, 'g0=g1', 'all') != test_data_variables(e, 'g0=g1', 'all')
+    # a test that reads no across-subject variable is not
+    assert test_data_variables(e_moved, 'a>v', 'all') == test_data_variables(e, 'a>v', 'all')
+    # a test that reads no variable at all does not depend on the events in the first place
+    assert set(test_data_dependencies(e, 'one-sample', 'all')) == {'dataset'}
+    # neither is the group test on a group that excludes the subject that moved
+    assert test_data_variables(e_moved, 'g0=g1', 'fixed') == test_data_variables(e, 'g0=g1', 'fixed')
+
+    # a GroupVar is only present in data that combines subjects
+    e.set(group='all', epoch='target', epoch_rejection='')
+    assert 'age' in e.load_selected_events(-1)
+    assert 'age' not in e.load_selected_events('R0000')
+    assert 'age' not in e.load_events(subject='R0000')
+
+    # a GroupVar can not group trials within subject
+    with pytest.raises(ConfigurationError, match='across-subject variable'):
+        e.load_evoked('R0000', model='age')
+
+    # GroupVar referring to an undefined group, in Pipeline.variables ...
+    class BadExperiment(SampleExperiment):
+        variables = {**SampleExperiment.variables, 'age': GroupVar(['g0', 'g1'])}
+    with pytest.raises(ConfigurationError, match='undefined group'):
+        BadExperiment(root)
+
+    # ... and in the GroupVar that TTestIndependent synthesizes
+    class BadExperiment(SampleExperiment):
+        tests = {'g0=g1': TTestIndependent('group', 'g0', 'g1')}
+    with pytest.raises(ConfigurationError, match='undefined group'):
+        BadExperiment(root)
+
+    # across-subject variables can not be used in a two-stage test
+    class BadExperiment(SampleExperiment):
+        groups = {'g0': Group(['R0000']), 'g1': SubGroup('all', ['R0000'])}
+        variables = {**SampleExperiment.variables, 'age': GroupVar(['g0', 'g1'])}
+        tests = {'twostage-group': TwoStageTest('age_g0', vars={'age_g0': EvalVar("age == 'g0'")})}
+    with pytest.raises(ConfigurationError, match='across-subject variable'):
+        BadExperiment(root)
+
+
+@requires_mne_sample_data
+def test_test_result_tracks_event_variables(samples_experiment):
+    """A result is invalidated by a change to a variable it reads
+
+    The upstream ``evoked`` node narrows its own ``epoch-events`` dependency to the
+    evaluated model, which also truncates that subtree, so nothing below it reports a
+    change in a variable the test reads outside the model. The test-data node resolves
+    those against each subject's events itself.
+    """
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    root = samples_experiment(n_subjects=3, n_segments=2, mris=False)
+
+    def experiment(age_labels):
+        class Experiment(SampleExperiment):
+            variables = {
+                **SampleExperiment.variables,
+                'age': LabelVar('subject', age_labels),  # between-subject, not in the model
+            }
+            tests = {
+                **SampleExperiment.tests,
+                'anova': ANOVA('modality * age * subject(age)'),
+            }
+        return Experiment(root)
+
+    options = {
+        'data': DataSpec.coerce('meg.rms'), 'samples': 20, 'test': 'anova',
+        'tstart': 0.05, 'tstop': 0.2, 'pmin': 0.05, 'baseline': False,
+        'src_baseline': None, 'smooth': None, 'samplingrate': None,
+    }
+
+    e = experiment({'R0000': 'young', 'R0001': 'old', 'R0002': 'old'})
+    e.set(group='all', epoch='target', epoch_rejection='')
+    assert e.tests['anova'].model == 'modality'  # 'age' enters outside the model
+    handle = e._resolve_derivative('test-result', options=options)
+    _ = handle.load()
+    assert handle.is_valid()
+
+    # R0001 moves from 'old' to 'young': the between-subject factor changes
+    e_changed = experiment({'R0000': 'young', 'R0001': 'young', 'R0002': 'old'})
+    e_changed.set(group='all', epoch='target', epoch_rejection='')
+    assert not e_changed._resolve_derivative('test-result', options=options).is_valid()
+
+    # a variable the test does not read leaves it valid
+    class Unrelated(type(e)):
+        variables = {
+            **type(e).variables,
+            'unused': LabelVar('value', {1: 'a', 2: 'b'}),
+        }
+    e_unrelated = Unrelated(root)
+    e_unrelated.set(group='all', epoch='target', epoch_rejection='')
+    assert e_unrelated._resolve_derivative('test-result', options=options).is_valid()
+
+    # what is recorded are the values the test reads, not the definitions producing
+    # them: changing a label that no retained event maps to must not invalidate the
+    # result, even though it changes the definition of a variable the test does read
+    e_extra = experiment({'R0000': 'young', 'R0001': 'old', 'R0002': 'old', 'R9999': 'other'})
+    e_extra.set(group='all', epoch='target', epoch_rejection='')
+    assert e_extra._resolve_derivative('test-result', options=options).is_valid()
+
+    # a pipeline variable the test reads only through one of its own variables is
+    # tracked as well: `score` reaches the test through `age`, and nothing between
+    # the events and the result reports it
+    age_codes = {1.: 'low', 2.: 'low', 3.: 'high', 4.: 'high', 5.: 'high'}
+
+    def indirect(scores, codes=age_codes):
+        class Experiment(SampleExperiment):
+            variables = {**SampleExperiment.variables, 'score': LabelVar('subject', scores)}
+            tests = {**SampleExperiment.tests, 'indirect': ANOVA('modality * age * subject(age)', vars={'age': LabelVar('score', codes)})}
+        pipeline = Experiment(root)
+        pipeline.set(group='all', epoch='target', epoch_rejection='')
+        return pipeline
+
+    indirect_options = {**options, 'test': 'indirect'}
+    e_indirect = indirect({'R0000': 1., 'R0001': 3., 'R0002': 5.})
+    handle = e_indirect._resolve_derivative('test-result', options=indirect_options)
+    _ = handle.load()
+    assert handle.is_valid()
+    # R0001 crosses the threshold, so the between-subject factor changes
+    assert not indirect({'R0000': 1., 'R0001': 1., 'R0002': 5.})._resolve_derivative('test-result', options=indirect_options).is_valid()
+    # a score change that does not cross it leaves the result valid
+    assert indirect({'R0000': 2., 'R0001': 4., 'R0002': 5.})._resolve_derivative('test-result', options=indirect_options).is_valid()
+    # the same holds for the test's own variable: its values are recorded, so a code
+    # that no subject maps to does not invalidate the result
+    assert indirect({'R0000': 1., 'R0001': 3., 'R0002': 5.}, {**age_codes, 6.: 'high'})._resolve_derivative('test-result', options=indirect_options).is_valid()
+
+
+@requires_mne_sample_data
+def test_evoked_artifact_is_consumer_independent(samples_experiment):
+    """The evoked cache is shared between consumers that read different variables
+
+    An ``evoked`` artifact has a single manifest, so what a consumer reads must not
+    enter it; otherwise alternating between two tests rebuilds every subject's data.
+    """
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    root = samples_experiment(n_subjects=3, n_segments=2, mris=False)
+
+    class Experiment(SampleExperiment):
+        variables = {
+            **SampleExperiment.variables,
+            'age': LabelVar('subject', {'R0000': 'young', 'R0001': 'old', 'R0002': 'old'}),
+        }
+        tests = {**SampleExperiment.tests, 'anova': ANOVA('modality * age * subject(age)')}
+
+    e = Experiment(root)
+    e.set(group='all', epoch='target', epoch_rejection='')
+
+    def load_test_data(test):
+        # evoked-test-data is uncached, so it always descends to `evoked`
+        e._load_derivative('evoked-test-data', options={'data': DataSpec.coerce('meg.rms'), 'test': test})
+
+    def evoked_mtime():
+        e.set(subject='R0000')
+        path = e._resolve_derivative('evoked', options={'model': 'modality'}).artifact_path
+        e.set(group='all')
+        return path.stat().st_mtime_ns
+
+    load_test_data('anova')
+    mtime = evoked_mtime()
+    load_test_data('anova')
+    assert evoked_mtime() == mtime
+    # 'a>v' reads 'modality' but not 'age', and must reuse the same artifact
+    load_test_data('a>v')
+    assert evoked_mtime() == mtime
+    load_test_data('anova')
+    assert evoked_mtime() == mtime
+    # ... and so must a plain load_evoked(), which reads no variables at all
+    e.load_evoked('R0000', model='modality')
+    assert evoked_mtime() == mtime
+
+
+@requires_mne_sample_data
 @pytest.mark.slow
 def test_sample_source(samples_experiment):
     set_log_level('warning', 'mne')
@@ -540,7 +763,7 @@ def test_sample_source(samples_experiment):
         roi_manifest_data = json.load(fid)
     assert 'evoked-test-data' in roi_manifest_data['dependencies']
     roi_deps = roi_manifest_data['dependencies']['evoked-test-data']['dependencies']
-    assert set(roi_deps) == {'dataset'}
+    assert set(roi_deps) == {'dataset', 'events'}  # 'events' is the shell the test's variables are resolved against
     assert roi_deps['dataset']['name'] == 'evoked-stc-group-dataset'
     group_deps = roi_deps['dataset']['dependencies']
     assert set(group_deps) == {'R0000', 'R0001', 'R0002'}
@@ -667,7 +890,7 @@ def test_sample_tasks(monkeypatch, samples_experiment):
     # evoked
     dse_super = e.load_evoked(epoch='super', model='modality%side')
     ds_super_keep = e.load_epochs(epoch='super', interpolate_bads='keep')
-    target = ds_super_keep.aggregate('modality%side', drop=('sample', 't_edf', 'onset', 'index', 'value', 'task', 'interpolate_channels', 'epoch'))
+    target = ds_super_keep.aggregate('modality%side', drop=('sample', 'onset', 'index', 'value', 'task', 'interpolate_channels', 'epoch'))
     assert_dataobj_equal(dse_super, target, 19)
 
     # conflicting task and epoch settings
@@ -1380,6 +1603,20 @@ def test_evoked_cache_stales_on_model_change(samples_experiment):
     ds = e_changed.load_evoked(ndvar=False, model='modality')
     assert set(ds['modality'].cells) == {'auditory_changed', 'visual'}
 
+    # reassigning the same events to the same cells changes the averages, so it has to
+    # invalidate the artifact as well
+    class ReassignedExperiment(SampleExperiment):
+        variables = {
+            **SampleExperiment.variables,
+            'modality': LabelVar('value', {(1, 3): 'auditory_changed', (2, 4): 'visual'}),
+        }
+
+    e_reassigned = ReassignedExperiment(root)
+    e_reassigned.set(subject='R0000', epoch='target', epoch_rejection='')
+    assert not e_reassigned._resolve_derivative('evoked', options={'model': 'modality'}).is_valid()
+    ds_reassigned = e_reassigned.load_evoked(ndvar=False, model='modality')
+    assert set(ds_reassigned['modality'].cells) == set(ds['modality'].cells)  # the cells are unchanged; only their contents differ
+
 
 @requires_mne_sample_data
 def test_epochs_dependency_distinguishes_model_sensitivity(samples_experiment):
@@ -1832,7 +2069,7 @@ def test_load_trf(samples_experiment):
     assert isinstance(res, BoostingResult)
 
     # cache hit
-    options = e._trf_options('imp', 0., 0.1, 'boosting', None, None, None, False, {})
+    options = e._trf_options('imp', 0., 0.1, 'boosting', None, None, False, {})
     assert e._resolve_derivative('trf', options=options).is_valid()
 
     # path
@@ -1856,6 +2093,12 @@ def test_load_trf(samples_experiment):
     spec.save_result(job, job())
     assert spec.is_done
     assert path.exists()
+
+    # a single TRF is fit for one model; a comparison belongs to load_model_test
+    with pytest.raises(TypeError, match='not a comparison'):
+        e.load_trf('imp > 0', 0, 0.1)
+    with pytest.raises(TypeError, match='not a comparison'):
+        e.load_trfs('R0000', 'imp > 0', 0, 0.1)
 
 
 @requires_mne_sample_data
@@ -1897,7 +2140,7 @@ def test_predictor_subset_fingerprint(samples_experiment):
 
     res = e.load_trf('word-value-mask', 0, 0.1, samplingrate=samplingrate)
     assert isinstance(res, BoostingResult)
-    options = e._trf_options('word-value-mask', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
+    options = e._trf_options('word-value-mask', 0., 0.1, 'boosting', None, samplingrate, False, {})
     ctx = e._resolve_derivative('trf', options=options)
     assert ctx.is_valid()
 
@@ -1947,7 +2190,7 @@ def test_load_trf_source(samples_experiment):
     e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40', src='ico-2', parc='ac')
     res = e.load_trf('imp', 0, 0.1)
     assert isinstance(res, BoostingResult)
-    assert e._resolve_derivative('trf', options=e._trf_options('imp', 0., 0.1, 'boosting', None, None, None, False, {})).is_valid()
+    assert e._resolve_derivative('trf', options=e._trf_options('imp', 0., 0.1, 'boosting', None, None, False, {})).is_valid()
 
 
 @requires_mne_sample_data
@@ -1986,7 +2229,7 @@ def test_load_trf_filepredictor(samples_experiment):
     assert isinstance(res, BoostingResult)
 
     # the per-stimulus predictor file edges are recorded in the manifest
-    options = e._trf_options('env', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
+    options = e._trf_options('env', 0., 0.1, 'boosting', None, samplingrate, False, {})
     ctx = e._resolve_derivative('trf', options=options)
     assert ctx.is_valid()
     assert {'auditory~env', 'visual~env'} <= set(ctx._manifest().dependencies)
@@ -2069,7 +2312,7 @@ def test_load_trf_subject_predictor(samples_experiment):
     assert job.xs[0].info['sampling'] == 'continuous'
 
     # compute per subject; the (stimulus-free) predictor edge is in the manifest
-    options = e._trf_options('envseq', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
+    options = e._trf_options('envseq', 0., 0.1, 'boosting', None, samplingrate, False, {})
     for subject in subjects:
         e.set(subject=subject)
         res = e.load_trf('envseq', 0, 0.1, samplingrate=samplingrate)
@@ -2132,7 +2375,7 @@ def test_load_trf_continuous_predictor(samples_experiment):
     assert isinstance(job.xs[0], Datalist)
     assert all(x_i.time == y_i.time for x_i, y_i in zip(job.xs[0], job.y))
     # one predictor-file edge per stimulus, enumerated from the nested events
-    options = e._trf_options('env', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
+    options = e._trf_options('env', 0., 0.1, 'boosting', None, samplingrate, False, {})
     deps = set(e._resolve_derivative('trf', options=options)._manifest().dependencies)
     assert {'auditory~env', 'visual~env'} <= deps
 
@@ -2143,7 +2386,7 @@ def test_load_trf_continuous_predictor(samples_experiment):
     assert isinstance(res, BoostingResult)
     job = e.load_trf_job('envp', 0, 0.1, samplingrate=samplingrate)
     assert all(x_i.time == y_i.time for x_i, y_i in zip(job.xs[0], job.y))
-    options = e._trf_options('envp', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
+    options = e._trf_options('envp', 0., 0.1, 'boosting', None, samplingrate, False, {})
     deps = set(e._resolve_derivative('trf', options=options)._manifest().dependencies)
     assert {'auditory~envp', 'visual~envp'} <= deps
 
@@ -2198,7 +2441,7 @@ def test_load_trf_continuous_predictor_multiple_runs(samples_experiment):
 
     sequence_result = e.load_trf('envseq', 0, 0.1, samplingrate=samplingrate)
     assert isinstance(sequence_result, BoostingResult)
-    sequence_options = e._trf_options('envseq', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
+    sequence_options = e._trf_options('envseq', 0., 0.1, 'boosting', None, samplingrate, False, {})
     sequence_ctx = e._resolve_derivative('trf', options=sequence_options)
     sequence_deps = set(sequence_ctx._manifest().dependencies)
     assert {'envseq@task-sample_run-1', 'envseq@task-sample_run-2'} <= sequence_deps
@@ -2222,7 +2465,7 @@ def test_load_trf_continuous_predictor_multiple_runs(samples_experiment):
 
     per_event_result = e.load_trf('envp', 0, 0.1, samplingrate=samplingrate)
     assert isinstance(per_event_result, BoostingResult)
-    per_event_options = e._trf_options('envp', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
+    per_event_options = e._trf_options('envp', 0., 0.1, 'boosting', None, samplingrate, False, {})
     per_event_deps = set(e._resolve_derivative('trf', options=per_event_options)._manifest().dependencies)
     assert {'auditory~envp', 'visual~envp'} <= per_event_deps
 
@@ -2262,14 +2505,22 @@ def test_load_trfs(samples_experiment):
     assert ds.n_cases == 1
     assert ds[0, 'subject'] == 'R0000'
     assert ds[0, 'epoch'] == 'target'
+    assert ds[0, 'task'] == 'sample'
     assert ds.info['xs'] == ['imp']
-    for key in ('r', 'z', 'residual', 'det', 'imp'):
+    for key in ('r', 'z', 'residual', 'ev', 'imp'):
         assert isinstance(ds[key], NDVar)
+    assert 'det' not in ds
 
     # group -> one case per subject
     ds_all = e.load_trfs('all', 'imp', 0, 0.1)
     assert ds_all.n_cases == 2
     assert sorted(ds_all['subject'].cells) == ['R0000', 'R0001']
+    assert ds_all['task'].cells == ('sample',)
+
+    # the shell describes those columns without loading data
+    shell = _trf_group_shell(e, 'imp', 0, 0.1)
+    assert list(shell) == ['epoch', 'task', 'subject']
+    assert all(list(shell[key]) == list(ds_all[key]) for key in shell)
 
     # scale='original' rescales the kernel
     ds_scaled = e.load_trfs('R0000', 'imp', 0, 0.1, scale='original')
@@ -2280,6 +2531,152 @@ def test_load_trfs(samples_experiment):
     assert ds_metrics.info['xs'] == []
     assert 'imp' not in ds_metrics
     assert isinstance(ds_metrics['r'], NDVar)
+
+
+@requires_mne_sample_data
+def test_trf_subject_variable(samples_experiment):
+    """A subject-level variable reaches TRF group data, and the model test tracks its values
+
+    A TRF dataset carries no event columns, so a variable is applied there only when the
+    combined data provides its inputs. ``LabelVar('subject', ...)`` qualifies (a
+    behavioral score, say), while one derived from single-trial columns does not.
+    """
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment, SampleTRF
+
+    set_log_level('warning', 'mne')
+    root = samples_experiment(n_subjects=3, n_segments=4)
+
+    def experiment(scores):
+        class Experiment(SampleTRF):
+            predictors = {**SampleTRF.predictors, 'modality_imp': EventPredictor("modality == 'auditory'")}
+            models = {'base': 'imp', 'full': 'imp + modality_imp'}
+            variables = {
+                **SampleExperiment.variables,
+                'score': LabelVar('subject', scores),
+                'score_bin': LabelVar('score', {1.: 'low', 2.: 'high', 3.: 'high'}),  # derived, hence also across-subject
+                'score_task': LabelVar('subject', scores, task='sample'),  # the epoch's task
+                'score_other_task': LabelVar('subject', scores, task='other'),
+            }
+            tests = {
+                **SampleExperiment.tests,
+                'high=low': TTestIndependent('score_bin', 'high', 'low'),
+            }
+        return Experiment(root)
+
+    e = experiment({'R0000': 1., 'R0001': 2., 'R0002': 3.})
+    e.set(epoch='target', epoch_rejection='', raw='1-40', inv='')
+
+    ds = e.load_trfs('all', 'imp', 0, 0.1)
+    assert 'score' in ds
+    assert list(ds['score']) == [1., 2., 3.]
+    # the task column allows applying task-restricted variables
+    assert list(ds['score_task']) == [1., 2., 3.]
+    assert 'score_other_task' not in ds
+    # a variable whose source columns are absent is skipped rather than raising
+    assert 'modality' not in ds
+    # ... and it is absent from single-subject data, since its definition spans subjects
+    assert 'score' not in e.load_selected_events('R0000')
+
+    def test_variables(pipeline, test):
+        "The values the test reads, as recorded in the event-shell dependency"
+        options = {**pipeline._trf_options('full > base', 0, 0.1, 'boosting', None, None, False, comparison=True), 'test': test}
+        handle = pipeline._resolve_derivative('trf-model-test', options=options)
+        return handle.dependency_fingerprints()['events']['fingerprint']
+
+    # the shell the model test fingerprints resolves the score without loading data
+    assert test_variables(e, 'high=low') == {'score_bin': ['low', 'high', 'high']}
+    # the values, not the definition: adding a subject outside the group changes nothing
+    e_extra = experiment({'R0000': 1., 'R0001': 2., 'R0002': 3., 'R9999': 9.})
+    e_extra.set(epoch='target', epoch_rejection='', raw='1-40', inv='')
+    assert test_variables(e_extra, 'high=low') == test_variables(e, 'high=low')
+
+    # a test reading an event variable can not be resolved against a TRF dataset
+    with pytest.raises(ValueError, match="'modality'"):
+        test_variables(e, 'a>v')
+
+    # a subject-keyed variable is deferred, so another subject's entry leaves this
+    # subject's events untouched
+    def events_identity(pipeline):
+        pipeline.set(subject='R0000')
+        handle = pipeline._resolve_derivative('labeled-events')
+        return handle.artifact_path, handle.current_fingerprint()
+
+    assert events_identity(e_extra) == events_identity(e)
+
+
+@requires_mne_sample_data
+def test_load_model_test(samples_experiment):
+    """load_model_test: model data assembly, result caching, and named tests"""
+    from eelbrain._experiment.tests.sample_experiment import SampleTRF
+
+    class ModelTestTRF(SampleTRF):
+        predictors = {**SampleTRF.predictors, 'modality_imp': EventPredictor("modality == 'auditory'")}
+        models = {
+            'base': 'imp',
+            'full': 'imp + modality_imp',
+        }
+        tests = {**SampleTRF.tests, 'trf-one-sample': TTestOneSample()}
+
+    set_log_level('warning', 'mne')
+    root = samples_experiment(n_subjects=3, n_segments=4)
+    e = ModelTestTRF(root)
+    e.set(epoch='target', epoch_rejection='', raw='1-40', inv='')
+
+    # Default non-null comparison: paired model values, reduced only for the test
+    ds, res = e.load_model_test('full > base', 0, 0.1, metric='ev.mean', pmin=None, samples=0, return_data=True)
+    assert ds.n_cases == 6
+    assert ds['model'].cells == ('test', 'baseline')
+    assert isinstance(ds['ev'], NDVar)
+    assert 'det' not in ds
+    assert hasattr(res, 'p')
+
+    cache_dir = Path(root) / 'derivatives' / 'eelbrain' / 'cache' / 'trf-model-test'
+    artifacts = list(cache_dir.rglob('*.pickle'))
+    assert len(artifacts) == 1
+    artifact = artifacts[0]
+    mtime = artifact.stat().st_mtime_ns
+    manifest = json.loads(Path(f'{artifact}.manifest.json').read_text())
+    assert set(manifest['dependencies']) == {'x1', 'x0'}
+
+    # Expanded spelling and return_data view resolve to the same artifact
+    res_cached = e.load_model_test('imp + modality_imp > imp', 0, 0.1, metric='ev.mean', pmin=None, samples=0)
+    assert hasattr(res_cached, 'p')
+    assert artifact.stat().st_mtime_ns == mtime
+    assert list(cache_dir.rglob('*.pickle')) == artifacts
+
+    # Statistical options have distinct cache identities
+    e.load_model_test('full > base', 0, 0.1, metric='ev', pmin=None, samples=1)
+    e.load_model_test('full > base', 0, 0.1, metric='ev', pmin=0.05, samples=0)
+    assert len(list(cache_dir.rglob('*.pickle'))) == 3
+
+    # ... but a reduced metric is tested parametrically, so they do not apply
+    with pytest.raises(ValueError, match="metric='ev.mean'"):
+        e.load_model_test('full > base', 0, 0.1, metric='ev.mean')
+    with pytest.raises(ValueError, match='samples=10'):
+        e.load_model_test('full > base', 0, 0.1, metric='ev.mean', pmin=None, samples=10)
+
+    # A named test operates on one difference value per subject
+    ds_diff, named_res = e.load_model_test('full > base', 0, 0.1, metric='ev.mean', test='trf-one-sample', pmin=None, samples=0, return_data=True)
+    assert ds_diff.n_cases == 3
+    assert 'model' not in ds_diff
+    assert hasattr(named_res, 'p')
+
+    # Comparison against zero has only one model dependency
+    ds_zero, zero_res = e.load_model_test('base > 0', 0, 0.1, pmin=None, samples=0, return_data=True)
+    assert ds_zero.n_cases == 3
+    assert 'model' not in ds_zero
+    assert hasattr(zero_res, 'p')
+    manifests = [json.loads(path.read_text()) for path in cache_dir.rglob('*.manifest.json')]
+    assert any(set(manifest['dependencies']) == {'x1'} for manifest in manifests)
+
+    with pytest.raises(TypeError, match='need a model comparison'):
+        e.load_model_test('base', 0, 0.1)
+    with pytest.raises(ValueError, match="metric='det'"):
+        e.load_model_test('base > 0', 0, 0.1, metric='det')
+    with pytest.raises(ValueError, match="expected 'sum', 'mean', or 'max'"):
+        e.load_model_test('base > 0', 0, 0.1, metric='ev.median')
+    with pytest.raises(ValueError, match='available metrics'):
+        e.load_model_test('base > 0', 0, 0.1, metric='r1.mean', pmin=None, samples=0)
 
 
 @requires_mne_sample_data
@@ -2300,6 +2697,14 @@ def test_load_trfs_collection(samples_experiment):
     assert sorted(ds['epoch'].cells) == ['auditory', 'visual']
     assert ds.info['xs'] == ['imp']
     assert all(s == 'R0000' for s in ds['subject'])
+    # the task of each member epoch
+    assert ds['task'].cells == ('sample',)
+
+    # the shell describes the member epochs without loading data
+    ds_all = e.load_trfs('all', 'imp', 0, 0.1)
+    shell = _trf_group_shell(e, 'imp', 0, 0.1)
+    assert list(shell) == ['epoch', 'task', 'subject']
+    assert all(list(shell[key]) == list(ds_all[key]) for key in shell)
 
 
 @requires_mne_sample_data
