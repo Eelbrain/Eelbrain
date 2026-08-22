@@ -1006,6 +1006,10 @@ class PipelineFrame(EelbrainFrame):
                 else:
                     wx.CallAfter(self._on_job_computed, token, kind, combo, values)
             except _AbortRequested:
+                # The app is exiting; drop the rest so _drain_queue does not start a
+                # fresh worker on them while the main loop is being torn down.
+                with self._job_queue_lock:
+                    self._job_queue.clear()
                 break
             except Exception as error:
                 self._n_done += 1
