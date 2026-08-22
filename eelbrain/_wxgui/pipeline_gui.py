@@ -140,20 +140,21 @@ class PipelineFrame(EelbrainFrame):
         self._worker_active = False
         # One job queue for every computable task: jobs are computed sequentially by a
         # single worker thread, so that only one thread at a time uses the pipeline.
-        # Entries carry their own kind, because the user can switch tasks and queue more
+        # Entries carry their own scope, because the user can switch tasks and queue more
         # rows while a batch is running.
-        self._job_queue = []  # [(kind, combo, spec), ...] waiting to be computed
-        self._job_in_progress = None  # (kind, combo) the worker popped and is computing
+        self._job_queue = []  # [(scope, combo, spec), ...] waiting to be computed
+        self._job_in_progress = None  # (scope, combo) the worker popped and is computing
         self._job_queue_lock = threading.Lock()
         self._n_done = self._n_total = 0  # progress of the current run
-        # Job specs for the rows currently displayed, keyed by (kind, combo). Minted
+        # Job specs for the rows currently displayed, keyed by (scope, combo). Minted
         # during refresh (where pipeline.iter() sets the state) and replaced wholesale
-        # by _populate_table; the kind is part of the key because a combo is only unique
-        # within one task's table, and a lookup can outlive the table it was minted for
-        # (_on_ica_bad_channels runs when a separate window closes). A spec holds no
-        # data, only the state it was resolved with, so it stays usable after the inputs
-        # change: make_job() re-resolves dependencies live at that point.
-        self._job_specs: dict[tuple[str, tuple], JobSpec] = {}
+        # by _populate_table; the scope is part of the key because a combo only names a
+        # row within one table (see :meth:`_table_scope`), and a lookup can outlive the
+        # table it was minted for (_on_ica_bad_channels runs when a separate window
+        # closes). A spec holds no data, only the state it was resolved with, so it stays
+        # usable after the inputs change: make_job() re-resolves dependencies live at
+        # that point.
+        self._job_specs: dict[tuple[tuple, tuple], JobSpec] = {}
         self._tasks = []  # list of (task_type, task_key)
         self._bad_chs_iter_fields: list[str] = []  # session/task/run columns for bad_chs
         self._ica_iter_fields: list[str] = []  # session/run columns for ica
@@ -290,6 +291,25 @@ class PipelineFrame(EelbrainFrame):
         if idx == wx.NOT_FOUND or idx >= len(self._tasks):
             return None, None
         return self._tasks[idx]
+
+    def _table_scope(self) -> tuple[str | None, str | None, str | None, str | None]:
+        """Identity of the table on display: ``(task_type, task_key, epoch, raw)``.
+
+        Every choice that selects which rows are shown, and the arguments
+        :meth:`_compute_rows` needs to produce them. A row ``combo`` only names a
+        row within one scope, so a job minted for one table is never applied to a
+        row of another: the Raw, Epoch and Epoch-rejection choices stay enabled
+        while a computation runs, and switching one of them (or the number of ICA
+        key-field columns that follows from Raw) leaves the same combo pointing at
+        an unrelated recording.
+        """
+        task_type, task_key = self._current_task()
+        epoch_name = self._epoch_choice.GetStringSelection() if task_type == 'epoch_rej' else None
+        raw_name = self._raw_choice.GetStringSelection() if task_type in ('epoch_rej', 'bad_chs', 'ica') else None
+        if task_type == 'epoch_rej':
+            # carry the selected rejection name through as task_key
+            task_key = self._current_epoch_rejection()
+        return task_type, task_key, epoch_name, raw_name
 
     def _populate_epoch_choices(self):
         previous = self._epoch_choice.GetStringSelection()
@@ -532,7 +552,7 @@ class PipelineFrame(EelbrainFrame):
                 if frame is not None:
                     doc = frame.model.doc
                     # enables the ICA GUI to add bad channels it finds
-                    doc.bad_channels_callback = partial(self._on_ica_bad_channels, raw_name, state, combo, doc)
+                    doc.bad_channels_callback = partial(self._on_ica_bad_channels, raw_name, state, self._table_scope(), combo, doc)
                     doc.callbacks.subscribe(
                         'saved',
                         lambda: wx.CallAfter(self._update_ica_row, combo, doc),
@@ -562,6 +582,7 @@ class PipelineFrame(EelbrainFrame):
             self,
             raw_name: str,
             state: dict[str, str],
+            scope: tuple,
             combo: tuple,
             doc: ICADocument,
             names: Sequence[str],
@@ -578,6 +599,10 @@ class PipelineFrame(EelbrainFrame):
             ICA raw step the decomposition belongs to.
         state
             Subject and key fields of the recording, from its row.
+        scope
+            Table the row belongs to, captured when this ICA GUI was opened: by the
+            time the user gets here the pipeline GUI may show a different one, and
+            ``combo`` would then name an unrelated recording.
         combo
             Row combo, for queueing the recompute against the right row.
         doc
@@ -596,7 +621,7 @@ class PipelineFrame(EelbrainFrame):
             self._pipeline.make_bad_channels(names, raw=raw_name, **{**state, **source_state})
         Path(doc.path).unlink(missing_ok=True)
         if recompute:
-            wx.CallAfter(self._queue_jobs, 'ica', [(combo, spec)])
+            wx.CallAfter(self._queue_jobs, scope, [(combo, spec)])
         else:
             wx.CallAfter(self._start_refresh)
 
@@ -801,7 +826,8 @@ class PipelineFrame(EelbrainFrame):
     # Background status refresh
 
     def _start_refresh(self) -> None:
-        task_type, task_key = self._current_task()
+        scope = self._table_scope()
+        task_type, task_key, epoch_name, _ = scope
         if task_type is None:
             return
         token = object()
@@ -809,14 +835,7 @@ class PipelineFrame(EelbrainFrame):
         self._list.DeleteAllItems()
         self.SetStatusText("Loading…")
 
-        epoch_name = (self._epoch_choice.GetStringSelection()
-                      if task_type == 'epoch_rej' else None)
-        raw_name = (self._raw_choice.GetStringSelection()
-                    if task_type in ('epoch_rej', 'bad_chs', 'ica') else None)
-
         if task_type == 'epoch_rej':
-            # carry the selected rejection name through as task_key
-            task_key = self._current_epoch_rejection()
             if task_key is None:
                 self.SetStatusText("No epoch rejection defined")
                 return
@@ -826,20 +845,17 @@ class PipelineFrame(EelbrainFrame):
 
         threading.Thread(
             target=self._refresh_thread,
-            args=(token, task_type, task_key, epoch_name, raw_name),
+            args=(token, scope),
             daemon=True,
         ).start()
 
     def _refresh_thread(
             self,
             token: object,
-            task_type: str,
-            task_key: str,
-            epoch_name: str | None,
-            raw_name: str | None,
+            scope: tuple,  # see :meth:`_table_scope`
     ) -> None:
         try:
-            rows, specs = self._compute_rows(token, task_type, task_key, epoch_name, raw_name)
+            rows, specs = self._compute_rows(token, scope)
         except _AbortRequested:
             return  # app exit already scheduled
         except Exception as error:
@@ -892,34 +908,34 @@ class PipelineFrame(EelbrainFrame):
         if self._compute_token is not None:
             self._stop_compute()
             return
-        task_type, _ = self._current_task()
-        if task_type != 'ica':
+        scope = self._table_scope()
+        if scope[0] != 'ica':
             return
-        self._queue_jobs('ica', self._missing_jobs('ica'))
+        self._queue_jobs(scope, self._missing_jobs(scope))
 
     def _on_make_rejection(self, event):
         if self._compute_token is not None:
             self._stop_compute()
             return
-        task_type, _ = self._current_task()
+        scope = self._table_scope()
         name = self._current_epoch_rejection()
-        if task_type != 'epoch_rej' or name is None:
+        if scope[0] != 'epoch_rej' or name is None:
             return
         if not isinstance(self._pipeline._epoch_rejection[name], ChannelModelRejection):
             return
-        self._queue_jobs('epoch_rej', self._missing_jobs('epoch_rej'))
+        self._queue_jobs(scope, self._missing_jobs(scope))
 
-    def _missing_jobs(self, kind: str) -> list[tuple[tuple, JobSpec]]:
+    def _missing_jobs(self, scope: tuple) -> list[tuple[tuple, JobSpec]]:
         """``(combo, spec)`` for the displayed rows whose artifact has not been computed yet.
 
         Rows without a job spec (not computable) are skipped.
         """
         status_col = self._status_col()
-        missing = self._MISSING_STATUS[kind]
+        missing = self._MISSING_STATUS[scope[0]]
         combos = [self._row_combo(i) for i in range(self._list.GetItemCount()) if self._list.GetItemText(i, status_col) == missing]
-        return [(combo, self._job_specs[kind, combo]) for combo in combos if (kind, combo) in self._job_specs]
+        return [(combo, self._job_specs[scope, combo]) for combo in combos if (scope, combo) in self._job_specs]
 
-    def _queue_jobs(self, kind: str, jobs: list[tuple[tuple, JobSpec]]) -> None:
+    def _queue_jobs(self, scope: tuple, jobs: list[tuple[tuple, JobSpec]]) -> None:
         """Add rows to the computation queue
 
         Jobs are computed sequentially by a single worker thread. When a computation is
@@ -928,21 +944,21 @@ class PipelineFrame(EelbrainFrame):
 
         Parameters
         ----------
-        kind
-            Task type the rows belong to (``'ica'`` or ``'epoch_rej'``).
+        scope
+            Table the rows belong to (see :meth:`_table_scope`).
         jobs
             ``(row combo, job spec)`` pairs to compute. The caller supplies the
             spec, because the row it belongs to is not always the row currently
             displayed under that combo.
         """
-        new = [(kind, combo, spec) for combo, spec in jobs]
+        new = [(scope, combo, spec) for combo, spec in jobs]
         if not new:
             return
         with self._job_queue_lock:
-            # A combo is only unique within one task's table, so dedupe on both. The job
-            # the worker is computing right now has left the queue but is not done, so
-            # it has to be counted too, or it gets computed a second time.
-            queued = {(kind_, combo_) for kind_, combo_, _ in self._job_queue}
+            # A combo only names a row within one scope, so dedupe on both. The job the
+            # worker is computing right now has left the queue but is not done, so it has
+            # to be counted too, or it gets computed a second time.
+            queued = {(scope_, combo_) for scope_, combo_, _ in self._job_queue}
             if self._job_in_progress is not None:
                 queued.add(self._job_in_progress)
             new = [entry for entry in new if (entry[0], entry[1]) not in queued]
@@ -951,7 +967,7 @@ class PipelineFrame(EelbrainFrame):
             self._job_queue.extend(new)
             self._n_total += len(new)
         # show the rows as waiting: their artifact is gone (or was never made)
-        if self._current_task()[0] == kind:
+        if scope == self._table_scope():
             status_col = self._status_col()
             n_detail = self._list.GetColumnCount() - status_col - 1
             for _, combo, _ in new:
@@ -1043,9 +1059,10 @@ class PipelineFrame(EelbrainFrame):
             with self._job_queue_lock:
                 if not self._job_queue:
                     break
-                kind, combo, spec = self._job_queue.pop(0)
-                self._job_in_progress = (kind, combo)
-            wx.CallAfter(self._on_job_computing, token, kind, combo)
+                scope, combo, spec = self._job_queue.pop(0)
+                self._job_in_progress = (scope, combo)
+            kind = scope[0]
+            wx.CallAfter(self._on_job_computing, token, scope, combo)
             try:
                 result = self._compute_job(kind, spec, combo)
                 # Compute the columns before counting the job as done, so that a
@@ -1053,9 +1070,9 @@ class PipelineFrame(EelbrainFrame):
                 values = None if result is None else self._result_columns(kind, result)
                 self._n_done += 1
                 if values is None:  # user declined; the artifact is still missing
-                    wx.CallAfter(self._on_job_skipped, token, kind, combo)
+                    wx.CallAfter(self._on_job_skipped, token, scope, combo)
                 else:
-                    wx.CallAfter(self._on_job_computed, token, kind, combo, values)
+                    wx.CallAfter(self._on_job_computed, token, scope, combo, values)
             except _AbortRequested:
                 # The app is exiting; drop the rest so _drain_queue does not start a
                 # fresh worker on them while the main loop is being torn down.
@@ -1064,7 +1081,7 @@ class PipelineFrame(EelbrainFrame):
                 break
             except Exception as error:
                 self._n_done += 1
-                wx.CallAfter(self._on_job_error, token, kind, combo, *_error_dialog_args(error))
+                wx.CallAfter(self._on_job_error, token, scope, combo, *_error_dialog_args(error))
             finally:
                 with self._job_queue_lock:
                     self._job_in_progress = None
@@ -1105,25 +1122,25 @@ class PipelineFrame(EelbrainFrame):
             job = spec.make_job()
         return spec.save_result(job, job())
 
-    def _displayed_row(self, kind: str, combo: tuple) -> int:
-        """Row index for a job, or -1 when its task is not the one on display.
+    def _displayed_row(self, scope: tuple, combo: tuple) -> int:
+        """Row index for a job, or -1 when its table is not the one on display.
 
-        The same combo can name a row in more than one task's table, so the kind
-        has to match before a row is touched.
+        The same combo can name a row in more than one table, so the scope has to
+        match before a row is touched (see :meth:`_table_scope`).
         """
-        if self._current_task()[0] != kind:
+        if scope != self._table_scope():
             return -1
         return self._find_row(combo)
 
-    def _on_job_computing(self, token, kind, combo):
+    def _on_job_computing(self, token, scope, combo):
         """Mark a row with ⟳ while its artifact is computed."""
         if token is not self._compute_token:
             return
-        i = self._displayed_row(kind, combo)
+        i = self._displayed_row(scope, combo)
         if i != -1:
             self._list.SetItem(i, self._status_col(), '⟳')
 
-    def _on_job_skipped(self, token, kind, combo):
+    def _on_job_skipped(self, token, scope, combo):
         """Restore a row after the user declined to compute it.
 
         Only the ICA task can get here (only its :exc:`ProtectedArtifactError` is
@@ -1133,34 +1150,34 @@ class PipelineFrame(EelbrainFrame):
         """
         if token is not self._compute_token:
             return
-        i = self._displayed_row(kind, combo)
+        i = self._displayed_row(scope, combo)
         if i != -1:
             self._list.SetItem(i, self._status_col(), 'stale')
         self._update_progress()
         self._refresh_status_bar()
 
-    def _on_job_computed(self, token, kind, combo, values):
+    def _on_job_computed(self, token, scope, combo, values):
         """Update a row after a successful computation."""
         if token is not self._compute_token:
             return
-        i = self._displayed_row(kind, combo)
+        i = self._displayed_row(scope, combo)
         if i != -1:
             status_col = self._status_col()
-            self._list.SetItem(i, status_col, self._DONE_STATUS[kind])
+            self._list.SetItem(i, status_col, self._DONE_STATUS[scope[0]])
             for col, value in enumerate(values, status_col + 1):
                 self._list.SetItem(i, col, value)
-            if kind == 'ica':
+            if scope[0] == 'ica':
                 colour = (wx.RED if values[-1] == '0'
                           else wx.SystemSettings.GetColour(wx.SYS_COLOUR_LISTBOXTEXT))
                 self._list.SetItemTextColour(i, colour)
         self._update_progress()
         self._refresh_status_bar()
 
-    def _on_job_error(self, token, kind, combo, tb, title, message):
+    def _on_job_error(self, token, scope, combo, tb, title, message):
         """Mark a row as errored and show the error dialog, then continue."""
         if token is not self._compute_token:
             return
-        i = self._displayed_row(kind, combo)
+        i = self._displayed_row(scope, combo)
         if i != -1:
             self._list.SetItem(i, self._status_col(), 'error')
         self._update_progress()
@@ -1296,14 +1313,12 @@ class PipelineFrame(EelbrainFrame):
     def _compute_rows(
             self,
             token: object,
-            task_type: str,
-            task_key: str,
-            epoch_name: str | None,
-            raw_name: str | None,
-    ) -> tuple[list[tuple[str, ...]], dict[tuple[str, tuple], JobSpec]]:
+            scope: tuple,  # see :meth:`_table_scope`
+    ) -> tuple[list[tuple[str, ...]], dict[tuple[tuple, tuple], JobSpec]]:
+        task_type, task_key, epoch_name, raw_name = scope
         pipeline = self._pipeline
         rows = []
-        specs: dict[tuple[str, tuple], JobSpec] = {}
+        specs: dict[tuple[tuple, tuple], JobSpec] = {}
 
         if task_type == 'bad_chs':
             source_name = pipeline._raw.root_source_name(raw_name)
@@ -1340,7 +1355,7 @@ class PipelineFrame(EelbrainFrame):
                     combo = (combo,)
                 subject = combo[0]
                 ctx = pipeline._resolve_derivative(ica_input_name(raw_name))
-                specs['ica', combo] = JobSpec(ctx)
+                specs[scope, combo] = JobSpec(ctx)
                 status = ctx.load(view='status')
                 if status == 'ok':
                     try:
@@ -1371,7 +1386,7 @@ class PipelineFrame(EelbrainFrame):
                 if isinstance(rej, ManualRejection):
                     path = rej_ctx.node.path(rej_ctx)  # an input, with no resolved artifact path
                 else:
-                    spec = specs['epoch_rej', (subject,)] = JobSpec(rej_ctx)
+                    spec = specs[scope, (subject,)] = JobSpec(rej_ctx)
                     # Existence, not spec.is_done: validating (or rebuilding) every
                     # subject's rejection file on each refresh would be far too expensive.
                     path = spec.path

@@ -1,3 +1,4 @@
+import threading
 from types import SimpleNamespace
 
 import numpy as np
@@ -41,3 +42,83 @@ def test_result_columns():
     assert PipelineFrame._MISSING_STATUS.keys() == PipelineFrame._DONE_STATUS.keys()
     for kind in PipelineFrame._MISSING_STATUS:
         assert PipelineFrame._result_columns(kind, ica if kind == 'ica' else rej_ds)
+
+
+class _FakeList:
+    "Minimal wx.ListCtrl stand-in recording the cells that were written"
+
+    def __init__(self, rows: list[tuple], n_columns: int = 3):
+        self.rows = rows
+        self.n_columns = n_columns
+        self.written = {}  # {(row, col): value}
+        self.cleared = False
+
+    def GetItemCount(self):
+        return len(self.rows)
+
+    def GetColumnCount(self):
+        return self.n_columns
+
+    def GetItemText(self, row, col):
+        return self.written.get((row, col), self.rows[row][col])
+
+    def SetItem(self, row, col, value):
+        self.written[row, col] = value
+
+    def DeleteAllItems(self):
+        self.cleared = True
+
+
+def _frame(**attrs) -> PipelineFrame:
+    "PipelineFrame with only the attributes a method under test needs (no wx window)"
+    frame = PipelineFrame.__new__(PipelineFrame)
+    frame.__dict__.update(attrs)
+    return frame
+
+
+_ICA_SCOPE = ('ica', 'ica', None, '1-40')
+_OTHER_SCOPE = ('ica', 'ica', None, 'ica-2')
+
+
+def test_displayed_row_requires_a_matching_scope():
+    "A job never writes into a row of the table it was not minted for"
+    frame = _frame(
+        _table_scope=lambda: _ICA_SCOPE,
+        _find_row=lambda combo: 2,
+    )
+    assert frame._displayed_row(_ICA_SCOPE, ('R0000',)) == 2
+    # same combo, but the Raw choice has moved on since the job was queued
+    assert frame._displayed_row(_OTHER_SCOPE, ('R0000',)) == -1
+    assert frame._displayed_row(('epoch_rej', 'man', 'target', '1-40'), ('R0000',)) == -1
+
+
+def test_queue_jobs_dedupes_within_one_scope_only():
+    "The same combo in two tables is two jobs; the same combo in one table is one"
+    started = []
+
+    def start_compute():  # as the real one: a worker is now running
+        started.append(True)
+        frame._compute_token = object()
+
+    frame = _frame(
+        _job_queue=[],
+        _job_in_progress=None,
+        _job_queue_lock=threading.Lock(),
+        _n_total=0,
+        _compute_token=None,
+        _list=_FakeList([('R0000', 'no ICA', '—')]),
+        _table_scope=lambda: _ICA_SCOPE,
+        _status_col=lambda: 1,
+        _find_row=lambda combo: 0,
+        _start_compute=start_compute,
+        _update_progress=lambda: None,
+    )
+    spec = object()
+    frame._queue_jobs(_ICA_SCOPE, [(('R0000',), spec)])
+    frame._queue_jobs(_ICA_SCOPE, [(('R0000',), spec)])  # already queued
+    frame._queue_jobs(_OTHER_SCOPE, [(('R0000',), spec)])  # a different table
+    assert [entry[0] for entry in frame._job_queue] == [_ICA_SCOPE, _OTHER_SCOPE]
+    assert frame._n_total == 2
+    # only the row of the table on display is marked, and only for its own scope
+    assert frame._list.GetItemText(0, 1) == 'queued'
+    assert started == [True]
