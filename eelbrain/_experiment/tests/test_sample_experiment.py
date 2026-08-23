@@ -1713,8 +1713,77 @@ def test_recording_epochs_cache_uses_fif(samples_experiment):
 
 
 @requires_mne_sample_data
-def test_epochs_with_cached_recording_use_current_selected_events(samples_experiment):
+def test_recording_epochs_factor_valued_trigger(samples_experiment):
+    "RecordingEpochsDerivative builds correct epochs when 'value' is a Factor"
     set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+    from eelbrain._data_obj import Factor
+
+    root = samples_experiment(1, 1)
+
+    class BaseExperiment(SampleExperiment):
+        epochs = {
+            **SampleExperiment.epochs,
+            'varlen': PrimaryEpoch(
+                'sample', "event == 'target'",
+                tmin=-0.1, tmax='0.2 + 0.1*(index % 2)',
+            ),
+        }
+
+    class FactorValueExperiment(BaseExperiment):
+        def label_events(self, ds):
+            ds = super().label_events(ds)
+            # a user's label_events (or a `variables` entry) can legally
+            # overwrite 'value' with string labels instead of numbers
+            ds['value'] = Factor(
+                ds['value'],
+                labels={int(v): str(int(v)) for v in set(ds['value'].x)},
+            )
+            return ds
+
+    e_factor = FactorValueExperiment(root)
+    e_baseline = BaseExperiment(root)
+
+    # fixed-length epochs (RecordingEpochsDerivative's non-variable_tmax branch)
+    e_factor.set(subject='R0000', epoch='target', raw='raw', epoch_rejection='')
+    e_baseline.set(subject='R0000', epoch='target', raw='raw', epoch_rejection='')
+    ds_factor = e_factor.load_epochs()
+    ds_baseline = e_baseline.load_epochs()
+    assert ds_factor.n_cases == ds_baseline.n_cases
+    assert_array_equal(ds_factor['mag'].x, ds_baseline['mag'].x)
+
+    epochs_factor = e_factor._resolve_derivative('recording-epochs').load()
+    events = epochs_factor.events
+    assert events.dtype == np.int32
+    assert (events[:, 2] >= 0).all()
+    # event_id preserves the original Factor labels, for code that works
+    # with the raw mne.Epochs independently of the enclosing Dataset
+    assert set(epochs_factor.event_id) == set(ds_factor['value'])
+    for label, code in epochs_factor.event_id.items():
+        assert (events[ds_factor['value'] == label, 2] == code).all()
+
+    # variable-length epochs (the variable_tmax branch)
+    e_factor.set(epoch='varlen')
+    e_baseline.set(epoch='varlen')
+    ds_factor = e_factor.load_epochs()
+    ds_baseline = e_baseline.load_epochs()
+    assert ds_factor.n_cases == ds_baseline.n_cases
+    assert isinstance(ds_factor['mag'], Datalist)
+    for y_factor, y_baseline in zip(ds_factor['mag'], ds_baseline['mag']):
+        assert_array_equal(y_factor.x, y_baseline.x)
+
+    events_list = e_factor._resolve_derivative('recording-epochs').load()
+    assert all(epochs.events.dtype == np.int32 for epochs in events_list)
+    # each single-trial mne.Epochs keeps only the entry for its own label
+    for epochs, label in zip(events_list, ds_factor['value']):
+        assert epochs.event_id == {label: epochs.events[0, 2]}
+
+
+@requires_mne_sample_data
+def test_epochs_with_cached_recording_use_current_selected_events(
+    samples_experiment,
+):
+    set_log_level("warning", "mne")
     from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
 
     class CachedEpochsExperiment(SampleExperiment):
