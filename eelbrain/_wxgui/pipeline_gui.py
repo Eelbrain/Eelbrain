@@ -4,6 +4,7 @@ import sys
 import threading
 import traceback
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 
@@ -122,6 +123,358 @@ class BadChannelsDialog(wx.Dialog):
         return self._parse()
 
 
+# Row standing in for the common brain in the MRI table; not a subject
+COMMON_BRAIN_ROW = '(common brain)'
+# Status of the common brain row without a reconstruction. Distinct from
+# MRITask.missing_status because the row is not a subject: it is neither counted
+# nor coloured like one, and _on_mri_activated offers to download fsaverage for it.
+COMMON_BRAIN_MISSING = 'missing'
+# Statuses written by the compute queue while a row is in flight: the artifact
+# is not there yet, so they count as missing in the status bar
+TRANSIENT_STATUS = ('queued', '⟳')
+# Stands in for a detail column that has no value because the artifact is missing
+PLACEHOLDER = '—'
+GREY = wx.Colour(150, 150, 150)
+
+
+@dataclass(frozen=True)
+class Layout:
+    """Column geometry of the table for one task and Raw selection.
+
+    Resolved once per table by :meth:`Task.layout` and cached by
+    :class:`PipelineFrame`, so that the rows built off the main thread and the
+    columns they are written into can never disagree.
+
+    Attributes
+    ----------
+    key_fields
+        State fields identifying a row; their column values form its ``combo``.
+    columns
+        ``(title, width)`` for every column, in order.
+    status_col
+        Index of the Status column.
+    """
+    key_fields: tuple[str, ...]
+    columns: tuple[tuple[str, int], ...]
+    status_col: int
+
+    @property
+    def iter_arg(self) -> str | list[str]:
+        """``fields`` argument to :meth:`Pipeline.iter` yielding one entry per row."""
+        return self.key_fields[0] if len(self.key_fields) == 1 else list(self.key_fields)
+
+
+class Task:
+    """Per-task presentation rules for the pipeline table.
+
+    One instance per entry in the task dropdown, holding everything that varies
+    between tasks: which toolbar controls apply, the column layout, the status
+    vocabulary, the row colouring and the status-bar summary. Building the rows
+    and acting on a double-click stay in :class:`PipelineFrame`, which
+    dispatches on :attr:`name`.
+
+    Attributes
+    ----------
+    name
+        Internal key; also identifies the task in a job's scope (see
+        :meth:`PipelineFrame._table_scope`).
+    label
+        Entry in the task dropdown.
+    detail_columns
+        ``(title, width)`` for the columns after Status.
+    subject_width
+        Width of the leading Subject column.
+    status_width
+        Width of the Status column.
+    missing_status
+        Status of a row whose artifact has not been made yet.
+    done_status
+        Status of a row whose artifact is available.
+    unit
+        Noun for the status-bar count.
+    recording_unit
+        Noun for the status-bar count when the table has one row per recording
+        rather than per subject, i.e. when a key field beyond ``subject``
+        varies; ``None`` for tasks that always have one row per subject.
+    summary
+        Status-bar phrase after the count.
+    missing_note
+        Noun for the ``(N missing …)`` suffix; ``None`` omits the suffix, ``''``
+        gives a bare ``(N missing)``.
+    shows_raw
+        Whether the Raw dropdown applies.
+    shows_epoch
+        Whether the Epoch and Rejection dropdowns apply.
+    compute_label
+        Label for the compute button; ``None`` for tasks that only inspect.
+    compute_tooltip
+        Tooltip for the compute button.
+    """
+    name: str
+    label: str
+    detail_columns: tuple[tuple[str, int], ...] = ()
+    subject_width: int = 180
+    status_width: int = 110
+    missing_status: str | None = None
+    done_status: str | None = None
+    unit: str = 'subjects'
+    recording_unit: str | None = None
+    summary: str = ''
+    missing_note: str | None = None
+    shows_raw: bool = False
+    shows_epoch: bool = False
+    compute_label: str | None = None
+    compute_tooltip: str | None = None
+
+    def __repr__(self) -> str:
+        return f'<Task {self.name}>'
+
+    # ------------------------------------------------------------------
+    # Availability and toolbar
+
+    @staticmethod
+    def available(pipeline) -> bool:
+        """Whether this task applies to ``pipeline`` at all."""
+        return True
+
+    @staticmethod
+    def raw_choices(pipeline) -> list[str]:
+        """Raw pipes to offer in the Raw dropdown."""
+        return list(pipeline.get_field_values('raw'))
+
+    def computable(self, pipeline, epoch_rejection: str | None) -> bool:
+        """Whether the compute button applies to the current selection."""
+        return self.compute_label is not None
+
+    # ------------------------------------------------------------------
+    # Columns
+
+    def key_fields(self, pipeline, raw_name: str | None) -> tuple[str, ...]:
+        """State fields identifying a row; their column values form its ``combo``."""
+        return ('subject',)
+
+    def extra_columns(self, key_fields: tuple[str, ...]) -> tuple[tuple[str, int], ...]:
+        """``(title, width)`` for the columns between Subject and Status."""
+        return tuple((field.title(), 90) for field in key_fields[1:])
+
+    def layout(self, pipeline, raw_name: str | None) -> Layout:
+        """Resolve the column geometry; the single derivation of all three parts."""
+        key_fields = self.key_fields(pipeline, raw_name)
+        extra = self.extra_columns(key_fields)
+        columns = (('Subject', self.subject_width), *extra, ('Status', self.status_width), *self.detail_columns)
+        return Layout(key_fields, columns, 1 + len(extra))
+
+    # ------------------------------------------------------------------
+    # Row appearance
+
+    def row_colour(self, row: tuple[str, ...], layout: Layout) -> wx.Colour | None:
+        """Text colour for a row, or ``None`` for the default."""
+        return None
+
+    def result_columns(self, result) -> tuple[str, ...]:
+        """Detail-column values describing a freshly computed artifact."""
+        raise NotImplementedError(f"{self.name} is not computable")
+
+    def missing_row(self, combo: tuple[str, ...], layout: Layout, status: str | None = None) -> tuple[str, ...]:
+        """Row for a key combination with no artifact: status plus placeholders.
+
+        Parameters
+        ----------
+        combo
+            Key-field column values the row is prefixed with.
+        layout
+            Column geometry the row has to fit. Any column between the key
+            fields and Status gets a placeholder too, so that the row is as
+            wide as the table even for a task whose leading columns are not all
+            key fields (MRI, Coregistration).
+        status
+            Status to show; defaults to :attr:`missing_status`.
+        """
+        n_lead = layout.status_col - len(combo)
+        n_detail = len(layout.columns) - layout.status_col - 1
+        return (*combo, *(PLACEHOLDER,) * n_lead, self.missing_status if status is None else status, *(PLACEHOLDER,) * n_detail)
+
+    # ------------------------------------------------------------------
+    # Status bar
+
+    def counts_row(self, row: tuple[str, ...]) -> bool:
+        """Whether a row counts towards the status-bar total."""
+        return True
+
+    def counts_done(self, status: str) -> bool:
+        return status == self.done_status
+
+    def counts_missing(self, status: str) -> bool:
+        return status == self.missing_status or (self.compute_label is not None and status in TRANSIENT_STATUS)
+
+    def status_bar(self, rows: list[tuple[str, ...]], layout: Layout) -> str:
+        """Summary of the whole table for the status bar."""
+        rows = [row for row in rows if self.counts_row(row)]
+        n_done = sum(1 for row in rows if self.counts_done(row[layout.status_col]))
+        # a task cached per recording shows one row per key-field combination, so
+        # counting them as subjects would overstate the total
+        unit = self.recording_unit if self.recording_unit and len(layout.key_fields) > 1 else self.unit
+        msg = f"{n_done} / {len(rows)} {unit} · {self.summary}"
+        if self.missing_note is not None:
+            n_missing = sum(1 for row in rows if self.counts_missing(row[layout.status_col]))
+            if n_missing:
+                noun = f" {self.missing_note}" if self.missing_note else ''
+                msg += f"  ({n_missing} missing{noun})"
+        return msg
+
+
+class BadChannelsTask(Task):
+    name = 'bad_chs'
+    label = "Bad channels"
+    detail_columns = (('N bad', 90),)
+    missing_status = 'error'  # loading seeds a missing channels.tsv, so the only failure is bad data
+    done_status = 'done'
+    summary = "bad channels defined"
+    recording_unit = 'recordings'
+    shows_raw = True
+
+    @staticmethod
+    def available(pipeline) -> bool:
+        return any(isinstance(pipe, RawSource) for pipe in pipeline._raw.values())
+
+    def key_fields(self, pipeline, raw_name: str | None) -> tuple[str, ...]:
+        # bad channels are stored per recording; show one row per combination of
+        # the key fields that vary in this experiment
+        fields = ['subject']
+        for field, values in (('session', pipeline._sessions), ('task', pipeline._tasks), ('run', pipeline._runs)):
+            if len(values) > 1:
+                fields.append(field)
+        return tuple(fields)
+
+    def row_colour(self, row: tuple[str, ...], layout: Layout) -> wx.Colour | None:
+        return wx.RED if row[layout.status_col] == self.missing_status else None
+
+    def status_bar(self, rows: list[tuple[str, ...]], layout: Layout) -> str:
+        msg = super().status_bar(rows, layout)
+        n_error = sum(1 for row in rows if row[layout.status_col] == self.missing_status)
+        if n_error:
+            msg += f"  ({n_error} error)"
+        return msg
+
+
+class ICATask(Task):
+    name = 'ica'
+    label = "ICA"
+    detail_columns = (('Components', 110), ('Rejected', 90))
+    missing_status = 'no ICA'
+    done_status = 'selected'
+    summary = "ICA selected"
+    missing_note = 'ICA file'
+    recording_unit = 'recordings'
+    shows_raw = True
+    compute_label = "Make ICA"
+    compute_tooltip = "Compute ICA for all subjects with missing files"
+
+    @staticmethod
+    def available(pipeline) -> bool:
+        return any(isinstance(pipe, RawICA) for pipe in pipeline._raw.values())
+
+    @staticmethod
+    def raw_choices(pipeline) -> list[str]:
+        return [name for name, pipe in pipeline._raw.items() if isinstance(pipe, RawICA)]
+
+    def key_fields(self, pipeline, raw_name: str | None) -> tuple[str, ...]:
+        # ICA is cached per (subject, session[, run]); show one row per
+        # combination of the key fields that vary in this experiment.
+        fields = ['subject']
+        if len(pipeline._sessions) > 1:
+            fields.append('session')
+        if raw_name and not pipeline._raw[raw_name]._concatenate_runs and len(pipeline._runs) > 1:
+            fields.append('run')
+        return tuple(fields)
+
+    def row_colour(self, row: tuple[str, ...], layout: Layout) -> wx.Colour | None:
+        # an ICA without a single rejected component is almost always an oversight
+        if row[layout.status_col] == self.done_status and row[layout.status_col + 2] == '0':
+            return wx.RED
+        return None
+
+    def result_columns(self, ica) -> tuple[str, ...]:
+        return str(ica.n_components_), str(len(ica.exclude))
+
+
+class EpochRejectionTask(Task):
+    name = 'epoch_rej'
+    label = "Epoch rejection"
+    detail_columns = (('N total', 90), ('N rejected', 90))
+    missing_status = 'missing'
+    done_status = 'done'
+    summary = "epoch rejection done"
+    shows_raw = True
+    shows_epoch = True
+    compute_label = "Compute rejection"
+    compute_tooltip = "Compute rejection files for all subjects with missing files"
+
+    @staticmethod
+    def available(pipeline) -> bool:
+        return any(rej is not None for rej in pipeline._epoch_rejection.values())
+
+    def computable(self, pipeline, epoch_rejection: str | None) -> bool:
+        # a ManualRejection is edited in its own GUI, not computed in bulk
+        return isinstance(pipeline._epoch_rejection.get(epoch_rejection), ChannelModelRejection)
+
+    def result_columns(self, ds) -> tuple[str, ...]:
+        return str(ds.n_cases), str(int((~ds['accept']).sum()))
+
+
+class MRITask(Task):
+    name = 'mri'
+    label = "MRI"
+    status_width = 130
+    missing_status = 'no MRI'
+    done_status = 'ok'
+    summary = "MRI available"
+    missing_note = ''
+
+    def extra_columns(self, key_fields: tuple[str, ...]) -> tuple[tuple[str, int], ...]:
+        # display-only, so it is not a key field: a row is still named by subject
+        return (('MRI subject', 170),)
+
+    def counts_row(self, row: tuple[str, ...]) -> bool:
+        return row[0] != COMMON_BRAIN_ROW
+
+    def counts_done(self, status: str) -> bool:
+        return status in (self.done_status, 'template')
+
+    def row_colour(self, row: tuple[str, ...], layout: Layout) -> wx.Colour | None:
+        if row[layout.status_col] == self.missing_status:
+            return wx.RED
+        elif row[0] == COMMON_BRAIN_ROW:
+            return GREY
+        return None
+
+
+class CoregTask(Task):
+    name = 'coreg'
+    label = "Coregistration"
+    subject_width = 140
+    missing_status = 'missing'
+    done_status = 'ok'
+    unit = 'sessions'
+    summary = "coregistration done"
+    missing_note = ''
+
+    def key_fields(self, pipeline, raw_name: str | None) -> tuple[str, ...]:
+        return ('subject', 'session')
+
+    def extra_columns(self, key_fields: tuple[str, ...]) -> tuple[tuple[str, int], ...]:
+        # Session is a key field; MRI subject is display-only
+        return (('Session', 80), ('MRI subject', 140))
+
+    def row_colour(self, row: tuple[str, ...], layout: Layout) -> wx.Colour | None:
+        return wx.RED if row[layout.status_col] == self.missing_status else None
+
+
+# Order determines the task dropdown
+TASKS = (BadChannelsTask(), ICATask(), EpochRejectionTask(), MRITask(), CoregTask())
+TASKS_BY_NAME = {task.name: task for task in TASKS}
+
+
 class PipelineFrame(EelbrainFrame):
     """Top-level window for inspecting and running pipeline setup tasks.
 
@@ -165,15 +518,20 @@ class PipelineFrame(EelbrainFrame):
         # usable after the inputs change: make_job() re-resolves dependencies live at
         # that point.
         self._job_specs: dict[tuple[tuple, tuple], JobSpec] = {}
-        self._tasks = []  # list of (task_type, task_key)
-        self._bad_chs_iter_fields: list[str] = []  # session/task/run columns for bad_chs
-        self._ica_iter_fields: list[str] = []  # session/run columns for ica
+        self._tasks: list[Task] = []  # dropdown entries, in order
+        # Column geometry of the displayed table, read by everything that addresses a
+        # row by column index. Installed by _setup_columns, first through the
+        # _on_task_changed() below and again whenever the task or Raw pipe changes.
+        # Part of a job's scope, so a row built for one layout is never written into
+        # another.
+        self._layout: Layout
 
         self._init_ui()
         self._populate_tasks()
-        if self._task_choice.GetCount():
-            self._task_choice.SetSelection(0)
-            self._on_task_changed(None)
+        # MRI and Coregistration are always offered, so the dropdown is never empty and
+        # a task is selected for the rest of the window's life
+        self._task_choice.SetSelection(0)
+        self._on_task_changed(None)
 
         # Width: fit the widest toolbar
         # Height: fill the usable display (wx.Fit() doesn't help here because the
@@ -227,17 +585,10 @@ class PipelineFrame(EelbrainFrame):
 
         toolbar.AddStretchSpacer()
 
-        # Make ICA button + progress (ICA tasks only)
-        self._make_ica_btn = wx.Button(self._panel, label="Make ICA", style=wx.BU_EXACTFIT)
-        self._make_ica_btn.SetToolTip("Compute ICA for all subjects with missing files")
-        self._make_ica_btn.Bind(wx.EVT_BUTTON, self._on_make_ica)
-        toolbar.Add(self._make_ica_btn, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=6)
-
-        # Compute-rejection button (automatic epoch rejection only)
-        self._make_rej_btn = wx.Button(self._panel, label="Compute rejection", style=wx.BU_EXACTFIT)
-        self._make_rej_btn.SetToolTip("Compute rejection files for all subjects with missing files")
-        self._make_rej_btn.Bind(wx.EVT_BUTTON, self._on_make_rejection)
-        toolbar.Add(self._make_rej_btn, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=6)
+        # Compute button + progress; label and visibility follow the task
+        self._compute_btn = wx.Button(self._panel, label="", style=wx.BU_EXACTFIT)
+        self._compute_btn.Bind(wx.EVT_BUTTON, self._on_compute)
+        toolbar.Add(self._compute_btn, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=6)
 
         self._progress_gauge = wx.Gauge(self._panel, style=wx.GA_HORIZONTAL | wx.GA_SMOOTH)
         self._progress_gauge.SetMinSize((100, -1))
@@ -269,8 +620,7 @@ class PipelineFrame(EelbrainFrame):
         for w in (self._epoch_rejection_label, self._epoch_rejection_choice,
                   self._epoch_label, self._epoch_choice,
                   self._raw_label, self._raw_choice,
-                  self._make_ica_btn, self._make_rej_btn,
-                  self._progress_gauge, self._progress_label):
+                  self._compute_btn, self._progress_gauge, self._progress_label):
             w.Hide()
 
     # ------------------------------------------------------------------
@@ -279,31 +629,24 @@ class PipelineFrame(EelbrainFrame):
     def _populate_tasks(self):
         # The task selects the operation; the raw pipe is chosen separately via
         # the Raw dropdown (filtered to the sources/ICA stages for the task).
-        if any(isinstance(pipe, RawSource) for pipe in self._pipeline._raw.values()):
-            self._tasks.append(('bad_chs', None))
-            self._task_choice.Append("Bad channels")
+        self._tasks = [task for task in TASKS if task.available(self._pipeline)]
+        for task in self._tasks:
+            self._task_choice.Append(task.label)
 
-        if any(isinstance(pipe, RawICA) for pipe in self._pipeline._raw.values()):
-            self._tasks.append(('ica', None))
-            self._task_choice.Append("ICA")
+    def _current_task(self) -> Task:
+        """Task selected in the dropdown; always set (see :meth:`__init__`)."""
+        return self._tasks[self._task_choice.GetSelection()]
 
-        if any(rej is not None for rej in self._pipeline._epoch_rejection.values()):
-            self._tasks.append(('epoch_rej', None))
-            self._task_choice.Append("Epoch rejection")
+    def _raw_name(self) -> str | None:
+        """Raw pipe the current table is for; ``None`` for a task without a Raw dropdown.
 
-        self._tasks.append(('mri', 'mri'))
-        self._task_choice.Append("MRI")
-        self._tasks.append(('coreg', 'coreg'))
-        self._task_choice.Append("Coregistration")
+        The dropdown keeps its selection while hidden, so the task decides whether
+        that selection means anything.
+        """
+        return self._raw_choice.GetStringSelection() if self._current_task().shows_raw else None
 
-    def _current_task(self) -> tuple[str | None, str | None]:
-        idx = self._task_choice.GetSelection()
-        if idx == wx.NOT_FOUND or idx >= len(self._tasks):
-            return None, None
-        return self._tasks[idx]
-
-    def _table_scope(self) -> tuple[str | None, str | None, str | None, str | None]:
-        """Identity of the table on display: ``(task_type, task_key, epoch, raw)``.
+    def _table_scope(self) -> tuple:
+        """Identity of the table on display: ``(task, epoch_rejection, epoch, raw, layout)``.
 
         Every choice that selects which rows are shown, and the arguments
         :meth:`_compute_rows` needs to produce them. A row ``combo`` only names a
@@ -311,15 +654,14 @@ class PipelineFrame(EelbrainFrame):
         row of another: the Raw, Epoch and Epoch-rejection choices stay enabled
         while a computation runs, and switching one of them (or the number of ICA
         key-field columns that follows from Raw) leaves the same combo pointing at
-        an unrelated recording.
+        an unrelated recording. The layout comes from :meth:`_setup_columns` rather
+        than being re-derived off the main thread, so a row can never come back the
+        wrong width.
         """
-        task_type, task_key = self._current_task()
-        epoch_name = self._epoch_choice.GetStringSelection() if task_type == 'epoch_rej' else None
-        raw_name = self._raw_choice.GetStringSelection() if task_type in ('epoch_rej', 'bad_chs', 'ica') else None
-        if task_type == 'epoch_rej':
-            # carry the selected rejection name through as task_key
-            task_key = self._current_epoch_rejection()
-        return task_type, task_key, epoch_name, raw_name
+        task = self._current_task()
+        epoch_rejection = self._current_epoch_rejection() if task.shows_epoch else None
+        epoch_name = self._epoch_choice.GetStringSelection() if task.shows_epoch else None
+        return task, epoch_rejection, epoch_name, self._raw_name(), self._layout
 
     def _populate_epoch_choices(self):
         previous = self._epoch_choice.GetStringSelection()
@@ -329,15 +671,11 @@ class PipelineFrame(EelbrainFrame):
                 self._epoch_choice.Append(name)
         self._restore_selection(self._epoch_choice, previous, 0)
 
-    def _populate_raw_choices(self, task_type: str):
-        """Fill the Raw dropdown with the pipes relevant to ``task_type``."""
+    def _populate_raw_choices(self, task: Task):
+        """Fill the Raw dropdown with the pipes relevant to ``task``."""
         previous = self._raw_choice.GetStringSelection()
         self._raw_choice.Clear()
-        if task_type == 'ica':
-            names = [name for name, pipe in self._pipeline._raw.items() if isinstance(pipe, RawICA)]
-        else:  # bad_chs / epoch_rej: any raw stage (source derived where needed)
-            names = list(self._pipeline.get_field_values('raw'))
-        for name in names:
+        for name in task.raw_choices(self._pipeline):
             self._raw_choice.Append(name)
         default = self._raw_choice.FindString('raw')
         self._restore_selection(self._raw_choice, previous, default if default != wx.NOT_FOUND else 0)
@@ -361,81 +699,48 @@ class PipelineFrame(EelbrainFrame):
     def _current_epoch_rejection(self) -> str | None:
         return self._epoch_rejection_choice.GetStringSelection() or None
 
-    def _update_rejection_button(self):
-        """Show the 'Compute rejection' button only for an automatic rejection."""
-        task_type, _ = self._current_task()
-        name = self._current_epoch_rejection()
-        is_auto = (task_type == 'epoch_rej' and name is not None
-                   and isinstance(self._pipeline._epoch_rejection[name], ChannelModelRejection))
-        self._make_rej_btn.Show(is_auto)
+    def _update_compute_button(self):
+        """Show the compute button, labelled for the task that can use it."""
+        task = self._current_task()
+        computable = task.computable(self._pipeline, self._current_epoch_rejection())
+        if computable:
+            self._compute_btn.SetLabel("Stop" if self._compute_token is not None else task.compute_label)
+            self._compute_btn.SetToolTip(task.compute_tooltip)
+        self._compute_btn.Show(computable)
         self._panel.Layout()
 
     def _on_epoch_rejection_changed(self, event):
-        self._update_rejection_button()
+        self._update_compute_button()
         self._start_refresh()
 
     # ------------------------------------------------------------------
     # Event handlers
 
     def _on_task_changed(self, event):
-        task_type, task_key = self._current_task()
+        task = self._current_task()
+        # Belt and braces: the task dropdown is disabled while a computation runs, so
+        # there is normally nothing to stop, and _setup_columns clears the rows anyway
         self._stop_compute()
-        if task_type == 'bad_chs':
-            p = self._pipeline
-            extra = []
-            if len(p._sessions) > 1:
-                extra.append('session')
-            if len(p._tasks) > 1:
-                extra.append('task')
-            if len(p._runs) > 1:
-                extra.append('run')
-            self._bad_chs_iter_fields = extra
-        show_epoch = task_type == 'epoch_rej'
-        show_raw = task_type in ('epoch_rej', 'bad_chs', 'ica')
-        self._epoch_rejection_label.Show(show_epoch)
-        self._epoch_rejection_choice.Show(show_epoch)
-        self._epoch_label.Show(show_epoch)
-        self._epoch_choice.Show(show_epoch)
-        self._raw_label.Show(show_raw)
-        self._raw_choice.Show(show_raw)
-        if show_epoch:
+        for widget in (self._epoch_rejection_label, self._epoch_rejection_choice, self._epoch_label, self._epoch_choice):
+            widget.Show(task.shows_epoch)
+        self._raw_label.Show(task.shows_raw)
+        self._raw_choice.Show(task.shows_raw)
+        if task.shows_epoch:
             self._populate_epoch_rejection_choices()
             self._populate_epoch_choices()
-        if show_raw:
-            self._populate_raw_choices(task_type)
-        if task_type == 'ica':
-            self._update_ica_iter_fields()
-        self._make_ica_btn.Show(task_type == 'ica')
-        self._update_rejection_button()
-        self._panel.Layout()
-        self._setup_columns(task_type)
+        if task.shows_raw:
+            self._populate_raw_choices(task)
+        self._update_compute_button()
+        self._setup_columns()
         self._start_refresh()
-
-    def _update_ica_iter_fields(self):
-        """Recompute the per-row key fields for the currently selected ICA raw.
-
-        ICA is cached per (subject, session[, run]); show one row per
-        combination of the key fields that vary in this experiment.
-        """
-        p = self._pipeline
-        raw_name = self._raw_choice.GetStringSelection()
-        extra = []
-        if len(p._sessions) > 1:
-            extra.append('session')
-        if raw_name and not p._raw[raw_name]._concatenate_runs and len(p._runs) > 1:
-            extra.append('run')
-        self._ica_iter_fields = extra
 
     def _on_state_changed(self, event):
         self._start_refresh()
 
     def _on_raw_changed(self, event):
-        # Switching the ICA raw pipe can change run concatenation, so recompute
-        # the per-row key fields and columns before refreshing.
-        task_type, _ = self._current_task()
-        if task_type == 'ica':
-            self._update_ica_iter_fields()
-            self._setup_columns(task_type)
+        # Switching the ICA raw pipe can change run concatenation, and with it the
+        # per-row key fields, so reinstall the columns before refreshing.
+        self._setup_columns()
         self._start_refresh()
 
     def _on_refresh(self, event):
@@ -447,8 +752,7 @@ class PipelineFrame(EelbrainFrame):
 
     def _on_item_right_click(self, event):
         """Row right-click: context menu (Bad channels task only)."""
-        task_type, _ = self._current_task()
-        if task_type != 'bad_chs':
+        if self._current_task().name != 'bad_chs':
             return
         idx = event.GetIndex()
         if idx == wx.NOT_FOUND:
@@ -466,10 +770,8 @@ class PipelineFrame(EelbrainFrame):
     def _set_bad_channels_dialog(self, idx: int) -> None:
         """Edit a row's bad channels via a text dialog with live validation."""
         pipeline = self._pipeline
-        raw_name = self._raw_choice.GetStringSelection()
-        state = {'subject': self._list.GetItemText(idx, 0)}
-        for col, field in enumerate(self._bad_chs_iter_fields, start=1):
-            state[field] = self._list.GetItemText(idx, col)
+        raw_name = self._raw_name()
+        state = dict(zip(self._layout.key_fields, self._row_combo(idx)))
         wx.BeginBusyCursor()
         try:
             pipeline.set(raw=raw_name, **state)
@@ -500,15 +802,13 @@ class PipelineFrame(EelbrainFrame):
     def _activate_row(self, idx: int) -> None:
         """Perform the double-click action for the row at ``idx``."""
         subject = self._list.GetItemText(idx, 0)
-        task_type, task_key = self._current_task()
-        if task_type is None:
-            return
+        task = self._current_task()
         # Loop so that after the user incorporates a stale ICA we can retry the
         # action through the same try, keeping the _USER_ERROR_TYPES handler
         # around the retry; every other path falls through to the return.
         while True:
             try:
-                self._activate_item(idx, subject, task_type, task_key)
+                self._activate_item(idx, subject, task)
             except ICAMissingError:
                 dlg = wx.MessageDialog(self, f"The ICA for {subject} has not been computed yet, so raw data at the ICA stage cannot be displayed. Compute the ICA first (Make ICA in the ICA task).", "ICA Not Computed", wx.OK | wx.ICON_INFORMATION)
                 dlg.ShowModal()
@@ -528,7 +828,7 @@ class PipelineFrame(EelbrainFrame):
                 # "Apply to all" is not offered here.
                 choice, _ = self._ask_stale_ica(subject, error)
                 if choice == StaleICADialog.INCORPORATE:
-                    self._pipeline.load_ica(raw=self._raw_choice.GetStringSelection(), accept_stale=True)
+                    self._pipeline.load_ica(raw=self._raw_name(), accept_stale=True)
                     continue  # manifest now matches; retry the action
                 elif choice == StaleICADialog.ABORT:
                     wx.CallAfter(wx.GetApp().ExitMainLoop)
@@ -538,15 +838,13 @@ class PipelineFrame(EelbrainFrame):
                     self._start_refresh()
             return
 
-    def _activate_item(self, idx, subject, task_type, task_key):
+    def _activate_item(self, idx: int, subject: str, task: Task):
         """Perform the action for a double-clicked row."""
         wx.BeginBusyCursor()
         try:
-            if task_type == 'bad_chs':
-                raw_name = self._raw_choice.GetStringSelection()
-                state = {'subject': subject}
-                for col, field in enumerate(self._bad_chs_iter_fields, start=1):
-                    state[field] = self._list.GetItemText(idx, col)
+            if task.name == 'bad_chs':
+                raw_name = self._raw_name()
+                state = dict(zip(self._layout.key_fields, self._row_combo(idx)))
                 frame = self._pipeline.make_bad_channels_selection(raw=raw_name, **state)
                 if frame is not None:
                     doc = frame.model.doc
@@ -554,20 +852,21 @@ class PipelineFrame(EelbrainFrame):
                         'saved',
                         lambda: wx.CallAfter(self._start_refresh),
                     )
-            elif task_type == 'ica':
-                raw_name = self._raw_choice.GetStringSelection()
+            elif task.name == 'ica':
+                raw_name = self._raw_name()
+                scope = self._table_scope()
                 combo = self._row_combo(idx)
-                state = dict(zip(('subject',) + tuple(self._ica_iter_fields), combo))
+                state = dict(zip(self._layout.key_fields, combo))
                 frame = self._pipeline.make_ica_selection(raw=raw_name, **state)
                 if frame is not None:
                     doc = frame.model.doc
                     # enables the ICA GUI to add bad channels it finds
-                    doc.bad_channels_callback = partial(self._on_ica_bad_channels, raw_name, state, self._table_scope(), combo, doc)
+                    doc.bad_channels_callback = partial(self._on_ica_bad_channels, raw_name, state, scope, combo, doc)
                     doc.callbacks.subscribe(
                         'saved',
-                        lambda: wx.CallAfter(self._update_ica_row, combo, doc),
+                        lambda: wx.CallAfter(self._update_ica_row, scope, combo, doc),
                     )
-            elif task_type == 'epoch_rej':
+            elif task.name == 'epoch_rej':
                 name = self._current_epoch_rejection()
                 if name is not None:
                     # opens an editable GUI for ManualRejection, read-only for an
@@ -576,14 +875,14 @@ class PipelineFrame(EelbrainFrame):
                         subject=subject,
                         epoch_rejection=name,
                         epoch=self._epoch_choice.GetStringSelection(),
-                        raw=self._raw_choice.GetStringSelection(),
+                        raw=self._raw_name(),
                     )
                     # Epoch rejection has no in-memory object to read from,
                     # so do a targeted single-subject refresh instead.
                     self._start_refresh()
-            elif task_type == 'mri':
+            elif task.name == 'mri':
                 self._on_mri_activated(idx, subject)
-            elif task_type == 'coreg':
+            elif task.name == 'coreg':
                 self._on_coreg_activated(idx)
         finally:
             wx.EndBusyCursor()
@@ -642,8 +941,8 @@ class PipelineFrame(EelbrainFrame):
         subjects_dir = str(self._pipeline.root / MRI_SDIR)
         common_brain = self._pipeline.get('common_brain')
 
-        if subject == '(common brain)':
-            if status == 'missing':
+        if subject == COMMON_BRAIN_ROW:
+            if status == COMMON_BRAIN_MISSING:
                 if mrisubject == 'fsaverage':
                     dlg = wx.MessageDialog(
                         self,
@@ -661,7 +960,7 @@ class PipelineFrame(EelbrainFrame):
                         "in the FreeSurfer subjects directory.",
                         "MRI not found", wx.OK | wx.ICON_INFORMATION, self,
                     )
-        elif status == 'no MRI':
+        elif status == MRITask.missing_status:
             dlg = wx.MessageDialog(
                 self,
                 f"To create a scaled template brain from {common_brain}, switch to the Coregistration task.",
@@ -699,34 +998,20 @@ class PipelineFrame(EelbrainFrame):
     # ------------------------------------------------------------------
     # Table management
 
-    def _setup_columns(self, task_type):
+    def _setup_columns(self) -> None:
+        """Install the columns for the current task and cache their geometry."""
+        self._layout = self._current_task().layout(self._pipeline, self._raw_name())
         self._list.ClearAll()
-        if task_type == 'bad_chs':
-            cols = [('Subject', 180)]
-            for f in self._bad_chs_iter_fields:
-                cols.append((f.title(), 90))
-            cols += [('Status', 110), ('N bad', 90)]
-        elif task_type == 'ica':
-            cols = [('Subject', 180)]
-            for f in self._ica_iter_fields:
-                cols.append((f.title(), 90))
-            cols += [('Status', 110), ('Components', 110), ('Rejected', 90)]
-        elif task_type == 'mri':
-            cols = [('Subject', 180), ('MRI subject', 170), ('Status', 130)]
-        elif task_type == 'coreg':
-            cols = [('Subject', 140), ('Session', 80), ('MRI subject', 140), ('Status', 110)]
-        else:
-            cols = [('Subject', 180), ('Status', 110), ('N total', 90), ('N rejected', 90)]
-        for i, (label, width) in enumerate(cols):
+        for i, (label, width) in enumerate(self._layout.columns):
             self._list.InsertColumn(i, label, width=width)
 
-    def _ica_status_col(self) -> int:
-        """Column index of the ICA Status column (after subject + key fields)."""
-        return 1 + len(self._ica_iter_fields)
+    def _row(self, idx: int) -> tuple[str, ...]:
+        """All column values of a row."""
+        return tuple(self._list.GetItemText(idx, c) for c in range(len(self._layout.columns)))
 
     def _row_combo(self, idx: int) -> tuple:
-        """Leading key-field column values of a row (everything before Status)."""
-        return tuple(self._list.GetItemText(idx, c) for c in range(self._status_col()))
+        """Key-field column values of a row, identifying it within the task."""
+        return tuple(self._list.GetItemText(idx, c) for c in range(len(self._layout.key_fields)))
 
     def _find_row(self, combo: tuple) -> int:
         """Row index whose leading columns match ``combo``, or -1."""
@@ -735,118 +1020,63 @@ class PipelineFrame(EelbrainFrame):
                 return i
         return -1
 
-    def _status_col(self) -> int:
-        """Column index of the Status column for the current task.
+    def _set_row_colour(self, idx: int, row: tuple[str, ...]) -> None:
+        """Apply the task's colour rule to a row, clearing it when none applies.
 
-        Also the number of leading key-field columns, i.e. the width of a row
-        ``combo`` (``(subject,)`` for tasks without extra key fields).
+        Rows without a rule are left with no explicit colour rather than being
+        painted the default one, so that the list can still invert them when they
+        are selected.
         """
-        task_type, _ = self._current_task()
-        return self._ica_status_col() if task_type == 'ica' else 1
+        colour = self._current_task().row_colour(row, self._layout)
+        self._list.SetItemTextColour(idx, wx.NullColour if colour is None else colour)
 
-    def _populate_table(self, rows: list[tuple[str, ...]], specs: dict[tuple, JobSpec], scope: tuple, token: object) -> None:
+    def _set_row_result(self, idx: int, status: str, values: tuple[str, ...]) -> None:
+        """Write the Status and detail columns of a row, and recolour it."""
+        self._list.SetItem(idx, self._layout.status_col, status)
+        for col, value in enumerate(values, self._layout.status_col + 1):
+            self._list.SetItem(idx, col, value)
+        self._set_row_colour(idx, self._row(idx))
+
+    def _populate_table(self, rows: list[tuple[str, ...]], specs: dict[tuple, JobSpec], token: object) -> None:
         if token is not self._refresh_token:
             return
         # Only writer of _job_specs, on the main thread and behind the token guard, so a
         # raw/task switch can never leave a spec from the previous table behind.
         self._job_specs = specs
-        task_type = scope[0]
         self._list.DeleteAllItems()
-        grey = wx.Colour(150, 150, 150)
         for row in rows:
             idx = self._list.InsertItem(self._list.GetItemCount(), row[0])
             for col, val in enumerate(row[1:], 1):
                 self._list.SetItem(idx, col, val)
-            if task_type == 'bad_chs':
-                status = row[-2]  # status is always second-to-last
-                if status == 'error':
-                    self._list.SetItemTextColour(idx, wx.RED)
-            elif task_type == 'ica':
-                # status is third-to-last, rejected count is last
-                if row[-3] == 'selected' and row[-1] == '0':
-                    self._list.SetItemTextColour(idx, wx.RED)
-            elif task_type == 'mri':
-                if row[2] == 'no MRI':
-                    self._list.SetItemTextColour(idx, wx.RED)
-                elif row[0] == '(common brain)':
-                    self._list.SetItemTextColour(idx, grey)
-            elif task_type == 'coreg':
-                if row[3] == 'missing':
-                    self._list.SetItemTextColour(idx, wx.RED)
+            self._set_row_colour(idx, row)
         self._refresh_status_bar()
 
-    def _update_ica_row(self, combo: tuple, doc) -> None:
+    def _update_ica_row(self, scope: tuple, combo: tuple, doc) -> None:
         """Update a single ICA row from the already-in-memory document (no disk I/O)."""
-        n_comp = doc.ica.n_components_
-        n_excl = len(doc.ica.exclude)
-        i = self._find_row(combo)
+        i = self._displayed_row(scope, combo)
         if i != -1:
-            status_col = self._ica_status_col()
-            self._list.SetItem(i, status_col, 'selected')
-            self._list.SetItem(i, status_col + 1, str(n_comp))
-            self._list.SetItem(i, status_col + 2, str(n_excl))
-            colour = wx.RED if n_excl == 0 else wx.SystemSettings.GetColour(wx.SYS_COLOUR_LISTBOXTEXT)
-            self._list.SetItemTextColour(i, colour)
+            task = scope[0]  # the scope matched, so this is the task on display
+            self._set_row_result(i, task.done_status, task.result_columns(doc.ica))
         self._refresh_status_bar()
 
     def _refresh_status_bar(self):
         """Recompute the status bar summary from the current table contents."""
-        task_type, _ = self._current_task()
-        n = self._list.GetItemCount()
-        if task_type == 'bad_chs':
-            n_done = sum(1 for i in range(n) if self._list.GetItemText(i, 1) == 'done')
-            n_error = sum(1 for i in range(n) if self._list.GetItemText(i, 1) == 'error')
-            msg = f"{n_done} / {n} subjects · bad channels defined"
-            if n_error:
-                msg += f"  ({n_error} error)"
-            self.SetStatusText(msg)
-            return
-        if task_type == 'ica':
-            status_col = self._ica_status_col()
-            n_ok = sum(1 for i in range(n) if self._list.GetItemText(i, status_col) == 'selected')
-            # queued and computing recordings have no ICA file either
-            n_missing = sum(1 for i in range(n) if self._list.GetItemText(i, status_col) in ('no ICA', 'queued', '⟳'))
-            unit = 'recordings' if self._ica_iter_fields else 'subjects'
-            msg = f"{n_ok} / {n} {unit} · ICA selected"
-            if n_missing:
-                msg += f"  ({n_missing} missing ICA file)"
-        elif task_type == 'epoch_rej':
-            n_ok = sum(1 for i in range(n) if self._list.GetItemText(i, 1) == 'done')
-            msg = f"{n_ok} / {n} subjects · epoch rejection done"
-        elif task_type == 'mri':
-            # exclude the common brain row from subject counts
-            subject_rows = [i for i in range(n) if self._list.GetItemText(i, 0) != '(common brain)']
-            n_sub = len(subject_rows)
-            n_ok = sum(1 for i in subject_rows if self._list.GetItemText(i, 2) in ('ok', 'template'))
-            n_missing = sum(1 for i in subject_rows if self._list.GetItemText(i, 2) == 'no MRI')
-            msg = f"{n_ok} / {n_sub} subjects · MRI available"
-            if n_missing:
-                msg += f"  ({n_missing} missing)"
-        elif task_type == 'coreg':
-            n_ok = sum(1 for i in range(n) if self._list.GetItemText(i, 3) == 'ok')
-            n_missing = sum(1 for i in range(n) if self._list.GetItemText(i, 3) == 'missing')
-            msg = f"{n_ok} / {n} sessions · coregistration done"
-            if n_missing:
-                msg += f"  ({n_missing} missing)"
-        else:
-            msg = ""
-        self.SetStatusText(msg)
+        rows = [self._row(i) for i in range(self._list.GetItemCount())]
+        self.SetStatusText(self._current_task().status_bar(rows, self._layout))
 
     # ------------------------------------------------------------------
     # Background status refresh
 
     def _start_refresh(self) -> None:
         scope = self._table_scope()
-        task_type, task_key, epoch_name, _ = scope
-        if task_type is None:
-            return
+        task, epoch_rejection, epoch_name, _, _ = scope
         token = object()
         self._refresh_token = token
         self._list.DeleteAllItems()
         self.SetStatusText("Loading…")
 
-        if task_type == 'epoch_rej':
-            if task_key is None:
+        if task.shows_epoch:
+            if epoch_rejection is None:
                 self.SetStatusText("No epoch rejection defined")
                 return
             if not epoch_name:
@@ -872,7 +1102,7 @@ class PipelineFrame(EelbrainFrame):
         except Exception as error:
             wx.CallAfter(self._show_error, *_error_dialog_args(error))
             return
-        wx.CallAfter(self._populate_table, rows, specs, scope, token)
+        wx.CallAfter(self._populate_table, rows, specs, token)
 
     def _show_error(self, tb: str, title: str = "Error", message: str | None = None):
         self.SetStatusText("Error")
@@ -901,38 +1131,14 @@ class PipelineFrame(EelbrainFrame):
     # ------------------------------------------------------------------
     # Background computation (one queue for every computable task)
 
-    # Per-task label for a row whose artifact has not been computed yet
-    _MISSING_STATUS = {'ica': 'no ICA', 'epoch_rej': 'missing'}
-    # Per-task label for a row whose artifact is available
-    _DONE_STATUS = {'ica': 'selected', 'epoch_rej': 'done'}
-
-    @staticmethod
-    def _result_columns(kind: str, result) -> tuple[str, ...]:
-        """Detail-column values (after Status) describing a computed artifact."""
-        if kind == 'ica':
-            return str(result.n_components_), str(len(result.exclude))
-        elif kind == 'epoch_rej':
-            return str(result.n_cases), str(int((~result['accept']).sum()))
-        raise RuntimeError(f"{kind=}")
-
-    def _on_make_ica(self, event):
+    def _on_compute(self, event):
+        """Compute button: queue every missing row of the current task, or stop."""
         if self._compute_token is not None:
             self._stop_compute()
             return
         scope = self._table_scope()
-        if scope[0] != 'ica':
-            return
-        self._queue_jobs(scope, self._missing_jobs(scope))
-
-    def _on_make_rejection(self, event):
-        if self._compute_token is not None:
-            self._stop_compute()
-            return
-        scope = self._table_scope()
-        name = self._current_epoch_rejection()
-        if scope[0] != 'epoch_rej' or name is None:
-            return
-        if not isinstance(self._pipeline._epoch_rejection[name], ChannelModelRejection):
+        task, epoch_rejection = scope[:2]
+        if not task.computable(self._pipeline, epoch_rejection):
             return
         self._queue_jobs(scope, self._missing_jobs(scope))
 
@@ -941,9 +1147,8 @@ class PipelineFrame(EelbrainFrame):
 
         Rows without a job spec (not computable) are skipped.
         """
-        status_col = self._status_col()
-        missing = self._MISSING_STATUS[scope[0]]
-        combos = [self._row_combo(i) for i in range(self._list.GetItemCount()) if self._list.GetItemText(i, status_col) == missing]
+        missing = scope[0].missing_status
+        combos = [self._row_combo(i) for i in range(self._list.GetItemCount()) if self._list.GetItemText(i, self._layout.status_col) == missing]
         return [(combo, self._job_specs[scope, combo]) for combo in combos if (scope, combo) in self._job_specs]
 
     def _queue_jobs(self, scope: tuple, jobs: list[tuple[tuple, JobSpec]]) -> None:
@@ -978,15 +1183,11 @@ class PipelineFrame(EelbrainFrame):
             self._job_queue.extend(new)
             self._n_total += len(new)
         # show the rows as waiting: their artifact is gone (or was never made)
-        if scope == self._table_scope():
-            status_col = self._status_col()
-            n_detail = self._list.GetColumnCount() - status_col - 1
-            for _, combo, _ in new:
-                i = self._find_row(combo)
-                if i != -1:
-                    self._list.SetItem(i, status_col, 'queued')
-                    for col in range(status_col + 1, status_col + 1 + n_detail):
-                        self._list.SetItem(i, col, '—')
+        n_detail = len(self._layout.columns) - self._layout.status_col - 1
+        for _, combo, _ in new:
+            i = self._displayed_row(scope, combo)
+            if i != -1:
+                self._set_row_result(i, 'queued', (PLACEHOLDER,) * n_detail)
         if self._compute_token is None:
             self._start_compute()
         else:
@@ -1017,8 +1218,7 @@ class PipelineFrame(EelbrainFrame):
         with self._job_queue_lock:
             self._n_total = len(self._job_queue)
 
-        self._make_ica_btn.SetLabel("Stop")
-        self._make_rej_btn.SetLabel("Stop")
+        self._update_compute_button()
         self._update_progress()
         self._progress_gauge.Show()
         self._progress_label.Show()
@@ -1031,8 +1231,7 @@ class PipelineFrame(EelbrainFrame):
 
     def _finish_compute_ui(self):
         """Restore toolbar controls after computation ends or is cancelled."""
-        self._make_ica_btn.SetLabel("Make ICA")
-        self._make_rej_btn.SetLabel("Compute rejection")
+        self._update_compute_button()
         self._progress_gauge.Hide()
         self._progress_label.Hide()
         self._refresh_btn.Enable()
@@ -1046,12 +1245,10 @@ class PipelineFrame(EelbrainFrame):
         self._compute_token = None
         with self._job_queue_lock:
             self._job_queue.clear()
-        task_type, _ = self._current_task()
-        missing = self._MISSING_STATUS.get(task_type, 'missing')
-        status_col = self._status_col()
+        missing = self._current_task().missing_status
         for i in range(self._list.GetItemCount()):
-            if self._list.GetItemText(i, status_col) in ('⟳', 'queued'):
-                self._list.SetItem(i, status_col, missing)
+            if self._list.GetItemText(i, self._layout.status_col) in TRANSIENT_STATUS:
+                self._list.SetItem(i, self._layout.status_col, missing)
         self._finish_compute_ui()
 
     def _compute_thread(self, token):
@@ -1072,13 +1269,13 @@ class PipelineFrame(EelbrainFrame):
                     break
                 scope, combo, spec = self._job_queue.pop(0)
                 self._job_in_progress = (scope, combo)
-            kind = scope[0]
+            task = scope[0]
             wx.CallAfter(self._on_job_computing, token, scope, combo)
             try:
-                result = self._compute_job(kind, spec, combo)
+                result = self._compute_job(task, spec, combo)
                 # Compute the columns before counting the job as done, so that a
                 # failure here goes through the error branch exactly once.
-                values = None if result is None else self._result_columns(kind, result)
+                values = None if result is None else task.result_columns(result)
                 self._n_done += 1
                 if values is None:  # user declined; the artifact is still missing
                     wx.CallAfter(self._on_job_skipped, token, scope, combo)
@@ -1097,7 +1294,7 @@ class PipelineFrame(EelbrainFrame):
                 with self._job_queue_lock:
                     self._job_in_progress = None
 
-    def _compute_job(self, kind: str, spec: JobSpec, combo: tuple):
+    def _compute_job(self, task: Task, spec: JobSpec, combo: tuple):
         """Compute and cache one job, or ``None`` when the user declined (worker thread).
 
         A stale ICA file may hold manual component selections, so it is never
@@ -1114,8 +1311,8 @@ class PipelineFrame(EelbrainFrame):
 
         Parameters
         ----------
-        kind
-            Task type the job belongs to.
+        task
+            Task the job belongs to.
         spec
             Host-side handle for the artifact.
         combo
@@ -1125,7 +1322,7 @@ class PipelineFrame(EelbrainFrame):
             with self._pipeline_lock:
                 job = spec.make_job()
         except ProtectedArtifactError as error:
-            if kind != 'ica':
+            if task.name != 'ica':
                 raise
             choice, _ = self._ask_stale_ica(combo[0], error)
             if choice == StaleICADialog.ABORT:
@@ -1160,7 +1357,7 @@ class PipelineFrame(EelbrainFrame):
             return
         i = self._displayed_row(scope, combo)
         if i != -1:
-            self._list.SetItem(i, self._status_col(), '⟳')
+            self._list.SetItem(i, self._layout.status_col, '⟳')
 
     def _on_job_skipped(self, token, scope, combo):
         """Restore a row after the user declined to compute it.
@@ -1174,7 +1371,7 @@ class PipelineFrame(EelbrainFrame):
             return
         i = self._displayed_row(scope, combo)
         if i != -1:
-            self._list.SetItem(i, self._status_col(), 'stale')
+            self._list.SetItem(i, self._layout.status_col, 'stale')
         self._update_progress()
         self._refresh_status_bar()
 
@@ -1184,14 +1381,7 @@ class PipelineFrame(EelbrainFrame):
             return
         i = self._displayed_row(scope, combo)
         if i != -1:
-            status_col = self._status_col()
-            self._list.SetItem(i, status_col, self._DONE_STATUS[scope[0]])
-            for col, value in enumerate(values, status_col + 1):
-                self._list.SetItem(i, col, value)
-            if scope[0] == 'ica':
-                colour = (wx.RED if values[-1] == '0'
-                          else wx.SystemSettings.GetColour(wx.SYS_COLOUR_LISTBOXTEXT))
-                self._list.SetItemTextColour(i, colour)
+            self._set_row_result(i, scope[0].done_status, values)
         self._update_progress()
         self._refresh_status_bar()
 
@@ -1201,7 +1391,7 @@ class PipelineFrame(EelbrainFrame):
             return
         i = self._displayed_row(scope, combo)
         if i != -1:
-            self._list.SetItem(i, self._status_col(), 'error')
+            self._list.SetItem(i, self._layout.status_col, 'error')
         self._update_progress()
         self._show_error(tb, f"{title}: {' '.join(combo)}", message)
 
@@ -1272,26 +1462,33 @@ class PipelineFrame(EelbrainFrame):
         dlg.Destroy()
         return delete
 
-    def _handle_stale_ica(self, combo: tuple, error: ProtectedArtifactError, choice: str | None, pipeline, raw_name: str) -> tuple:
+    def _handle_stale_ica(
+            self,
+            combo: tuple[str, ...],
+            scope: tuple,  # see :meth:`_table_scope`
+            error: ProtectedArtifactError,
+            choice: str | None,
+    ) -> tuple[str, ...]:
         """Apply a stale-ICA ``choice`` during refresh, returning a table row tuple.
 
         ``combo`` holds the leading key-field columns (subject and any
         session/run columns) that the row is prefixed with.
         """
+        task, _, _, raw_name, layout = scope
         if choice == StaleICADialog.ABORT:
             wx.CallAfter(wx.GetApp().ExitMainLoop)
             raise _AbortRequested()
         elif choice == StaleICADialog.DELETE:
             Path(error.path).unlink()
-            return combo + ('no ICA', '—', '—')
+            return task.missing_row(combo, layout)
         elif choice == StaleICADialog.INCORPORATE:
-            ica = pipeline.load_ica(raw=raw_name, accept_stale=True)
-            return combo + ('selected', str(ica.n_components_), str(len(ica.exclude)))
+            ica = self._pipeline.load_ica(raw=raw_name, accept_stale=True)
+            return (*combo, task.done_status, *task.result_columns(ica))
         elif choice == StaleICADialog.IGNORE:
             ica = mne.preprocessing.read_ica(error.path)
-            return combo + ('stale', str(ica.n_components_), str(len(ica.exclude)))
+            return (*combo, 'stale', *task.result_columns(ica))
         else:  # dialog dismissed without a choice
-            return combo + ('stale', '—', '—')
+            return task.missing_row(combo, layout, 'stale')
 
     def _fetch_fsaverage(self):
         """Download fsaverage to the experiment's FreeSurfer subjects directory in a thread."""
@@ -1337,17 +1534,14 @@ class PipelineFrame(EelbrainFrame):
             token: object,
             scope: tuple,  # see :meth:`_table_scope`
     ) -> tuple[list[tuple[str, ...]], dict[tuple[tuple, tuple], JobSpec]]:
-        task_type, task_key, epoch_name, raw_name = scope
+        task, epoch_rejection, epoch_name, raw_name, layout = scope
         pipeline = self._pipeline
         rows = []
         specs: dict[tuple[tuple, tuple], JobSpec] = {}
 
-        if task_type == 'bad_chs':
+        if task.name == 'bad_chs':
             source_name = pipeline._raw.root_source_name(raw_name)
-            extra = self._bad_chs_iter_fields
-            iter_fields = ('subject',) + tuple(extra)
-            iter_arg = iter_fields[0] if len(iter_fields) == 1 else list(iter_fields)
-            for combo in pipeline.iter(iter_arg):
+            for combo in pipeline.iter(layout.iter_arg):
                 if token is not self._refresh_token:
                     break
                 if isinstance(combo, str):
@@ -1359,16 +1553,13 @@ class PipelineFrame(EelbrainFrame):
                 try:
                     bads = bads_ctx.load()  # seeds a missing derivatives channels.tsv
                 except DataError:  # EEG channels without positions
-                    rows.append(combo + ('error', '—'))
+                    rows.append(task.missing_row(combo, layout))
                 else:
-                    rows.append(combo + ('done', str(len(bads))))
+                    rows.append((*combo, task.done_status, str(len(bads))))
 
-        elif task_type == 'ica':
+        elif task.name == 'ica':
             bulk_choice = None  # set once the user ticks "Apply to all"
-            extra = self._ica_iter_fields
-            iter_fields = ('subject',) + tuple(extra)
-            iter_arg = iter_fields[0] if len(iter_fields) == 1 else list(iter_fields)
-            for combo in pipeline.iter(iter_arg):
+            for combo in pipeline.iter(layout.iter_arg):
                 if token is not self._refresh_token:
                     break
                 if isinstance(combo, str):
@@ -1380,7 +1571,7 @@ class PipelineFrame(EelbrainFrame):
                 if status == 'ok':
                     try:
                         ica = ctx.load()
-                        rows.append(combo + ('selected', str(ica.n_components_), str(len(ica.exclude))))
+                        rows.append((*combo, task.done_status, *task.result_columns(ica)))
                     except ProtectedArtifactError as error:
                         if bulk_choice is None:
                             choice, apply_to_all = self._ask_stale_ica(subject, error, allow_apply_to_all=True)
@@ -1388,18 +1579,17 @@ class PipelineFrame(EelbrainFrame):
                                 bulk_choice = choice
                         else:
                             choice = bulk_choice
-                        row = self._handle_stale_ica(combo, error, choice, pipeline, raw_name)
-                        rows.append(row)
+                        rows.append(self._handle_stale_ica(combo, scope, error, choice))
                 elif status == 'missing-ica':
-                    rows.append(combo + ('no ICA', '—', '—'))
+                    rows.append(task.missing_row(combo, layout))
                 else:
-                    rows.append(combo + ('no data', '—', '—'))
+                    rows.append(task.missing_row(combo, layout, 'no data'))
 
-        elif task_type == 'epoch_rej':
-            rej = pipeline._epoch_rejection[task_key]
+        elif task.name == 'epoch_rej':
+            rej = pipeline._epoch_rejection[epoch_rejection]
             node_name = 'epoch-rejection-input' if isinstance(rej, ManualRejection) else 'epoch-rejection-channel-model'
             for subject in pipeline.iter(
-                    raw=raw_name, epoch=epoch_name, epoch_rejection=task_key):
+                    layout.iter_arg, raw=raw_name, epoch=epoch_name, epoch_rejection=epoch_rejection):
                 if token is not self._refresh_token:
                     break
                 rej_ctx = pipeline._resolve_derivative(node_name)
@@ -1412,33 +1602,31 @@ class PipelineFrame(EelbrainFrame):
                     path = spec.path
                 if path.exists():
                     ds = load.unpickle(path)
-                    n_rej = int((~ds['accept']).sum())
-                    rows.append((subject, 'done',
-                                 str(ds.n_cases), str(n_rej)))
+                    rows.append((subject, task.done_status, *task.result_columns(ds)))
                 else:
-                    rows.append((subject, 'missing', '—', '—'))
+                    rows.append(task.missing_row((subject,), layout))
 
-        elif task_type == 'mri':
+        elif task.name == 'mri':
             subjects_dir = pipeline.root / MRI_SDIR
-            for subject in pipeline:
+            for subject in pipeline.iter(layout.iter_arg):
                 if token is not self._refresh_token:
                     break
                 mrisubject = pipeline.get('mrisubject')
                 has_recon = (subjects_dir / mrisubject / 'surf' / 'lh.pial').exists()
                 if has_recon:
-                    status = 'template' if is_fake_mri(subjects_dir / mrisubject) else 'ok'
+                    status = 'template' if is_fake_mri(subjects_dir / mrisubject) else task.done_status
                 else:
-                    status = 'no MRI'
+                    status = task.missing_status
                 rows.append((subject, mrisubject, status))
             # Common brain row at the bottom
             common_brain = pipeline.get('common_brain')
             if common_brain:
                 has_cb = (subjects_dir / common_brain / 'surf' / 'lh.pial').exists()
-                rows.append(('(common brain)', common_brain, 'ok' if has_cb else 'missing'))
+                rows.append((COMMON_BRAIN_ROW, common_brain, task.done_status if has_cb else COMMON_BRAIN_MISSING))
 
-        elif task_type == 'coreg':
+        elif task.name == 'coreg':
             raw_input = raw_input_name('raw')
-            for subject, session in pipeline.iter(('subject', 'session'), raw='raw'):
+            for subject, session in pipeline.iter(layout.iter_arg, raw='raw'):
                 if token is not self._refresh_token:
                     break
                 raw_ctx = pipeline._resolve_derivative(raw_input)
@@ -1447,6 +1635,6 @@ class PipelineFrame(EelbrainFrame):
                 mrisubject = pipeline.get('mrisubject')
                 trans_ctx = pipeline._resolve_derivative('trans-input')
                 has_trans = trans_ctx.node.exists(trans_ctx)
-                rows.append((subject, session, mrisubject, 'ok' if has_trans else 'missing'))
+                rows.append((subject, session, mrisubject, task.done_status if has_trans else task.missing_status))
 
         return rows, specs
