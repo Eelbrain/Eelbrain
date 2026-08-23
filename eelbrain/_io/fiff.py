@@ -834,7 +834,7 @@ def variable_length_epochs(
         exclude: str | Sequence[str] = 'bads',
         sysname: str = None,
         adjacency: AdjacencyArg = None,
-        tstop: float | Sequence[float] = None,
+        tstop: float | Sequence[float] | str = None,
         name: str = None,
         **kwargs,
 ) -> list[NDVar]:
@@ -857,8 +857,8 @@ def variable_length_epochs(
         the data from the beginning of the epoch up to ``t = 0``). Set to
         ``None`` for no baseline correction (default).
     allow_truncation
-        If a ``tmax`` value falls outside the data available in ``raw``,
-        automatically truncate the epoch (by default this raises a
+        If a ``tmin`` or ``tmax`` value falls outside the data available in
+        ``raw``, automatically truncate the epoch (by default this raises a
         ``ValueError``).
     data
         Which data channels data to include (default based on channels in data).
@@ -889,6 +889,7 @@ def variable_length_epochs(
         For example, at 100 Hz the epoch with ``tmin=-0.1, tmax=0.4`` will have
         51 samples, while the epoch specified with ``tmin=-0.1, tstop=0.4`` will
         have 50 samples.
+        Can be :class:`str` referencing a variable in ``events``.
     name
         Name for the NDVar.
     ...
@@ -903,13 +904,42 @@ def variable_length_epochs(
     return [epochs_ndvar(epoch, name, data, exclude, sysname=sysname, adjacency=adjacency)[0] for epoch in epochs_]
 
 
+def _epoch_times(
+        events: Dataset,
+        value: float | Sequence[float] | str,
+        n: int,
+        name: str,
+) -> np.ndarray:
+    """Evaluate a per-epoch time parameter into one value per event
+
+    Parameters
+    ----------
+    events
+        Dataset with the events, in which ``value`` is evaluated if it is a :class:`str`.
+    value
+        Scalar (applied to all epochs), one value per event, or name of (or expression using) a variable in ``events``.
+    n
+        Number of events.
+    name
+        Name of the parameter, used for error messages.
+    """
+    if isinstance(value, str):
+        value = events.eval(value)
+    if np.isscalar(value):
+        return np.repeat(float(value), n)
+    value = np.asarray(value, float)
+    if value.ndim != 1 or len(value) != n:
+        raise ValueError(f"{name}: needs to be a scalar or provide one value for each of the {n} events, got array of shape {value.shape}")
+    return value
+
+
 def variable_length_mne_epochs(
         events: Dataset,
         tmin: float | Sequence[float] | str,
         tmax: float | Sequence[float] | str = None,
         baseline: BaselineArg = None,
         allow_truncation: bool = False,
-        tstop: float | Sequence[float] = None,
+        tstop: float | Sequence[float] | str = None,
         picks: PicksArg = None,
         decim: int = 1,
         i_start: str = 'i_start',
@@ -938,10 +968,6 @@ def variable_length_mne_epochs(
         If a ``tmin`` or ``tmax`` value falls outside the data available in
         ``raw``, automatically truncate the epoch (by default this raises a
         ``ValueError``).
-    i_start
-        Name of the variable containing the sample index of each event.
-    trigger
-        Name of the variable containing the integer event ID (trigger code).
     tstop
         Alternative to ``tmax``. While ``tmax`` specifies the last samples to
         include, ``tstop`` specifies the sample before which to stop (standard
@@ -949,33 +975,42 @@ def variable_length_mne_epochs(
         For example, at 100 Hz the epoch with ``tmin=-0.1, tmax=0.4`` will have
         51 samples, while the epoch specified with ``tmin=-0.1, tstop=0.4`` will
         have 50 samples.
+        Can be :class:`str` referencing a variable in ``events``.
+    picks
+        Channels to include (:class:`mne.Epochs` parameter). By default, all
+        channels are included; if ``raw`` has bad channels, MEG, EEG and EOG
+        channels are picked without excluding the bad ones.
+    decim
+        Decimate the data by this factor (i.e., only keep every ``decim``'th
+        sample; :class:`mne.Epochs` parameter).
+    i_start
+        Name of the variable containing the sample index of each event.
+    trigger
+        Name of the variable containing the integer event ID (trigger code).
     ...
         :class:`mne.Epochs` parameters.
+
+    Returns
+    -------
+    epochs
+        List with one :class:`mne.Epochs` object, containing a single epoch, for
+        each event in ``events``.
     """
     if baseline is False:
         baseline = None
     raw = events.info['raw']
+    if tmax is None and tstop is None:
+        raise TypeError(f"{tmax=}, {tstop=}: must specify at least one")
+    n = events.n_cases
+    tmin = _epoch_times(events, tmin, n, 'tmin')
     if tmax is None:
-        if tstop is None:
-            raise TypeError(f"{tmax=}, {tstop=}: must specify at least one")
-        if isinstance(tstop, str):
-            tstop = events.eval(tstop)
-        n = len(tstop)
-    else:
-        if isinstance(tmax, str):
-            tmax = events.eval(tmax)
-        n = len(tmax)
-    if np.isscalar(tmin):
-        tmin = np.repeat(tmin, n)
-    else:
-        tmin = np.asarray(tmin)
-    if tmax is None:
+        tstop = _epoch_times(events, tstop, n, 'tstop')
         sfreq = raw.info['sfreq'] / decim
         start_index = np.round(tmin * sfreq).astype(int)
-        stop_index = np.round(np.asarray(tstop) * sfreq).astype(int)
+        stop_index = np.round(tstop * sfreq).astype(int)
         tmax = tmin + (stop_index - start_index - 1) / sfreq
-    elif np.isscalar(tmax):
-        tmax = np.repeat(tmax, n)
+    else:
+        tmax = _epoch_times(events, tmax, n, 'tmax')
     if picks is None and raw.info['bads']:
         picks = mne.pick_types(raw.info, meg=True, eeg=True, eog=True, ref_meg=False, exclude=[])
     events_array = _mne_events(events, i_start=i_start, trigger=trigger)
@@ -987,7 +1022,7 @@ def variable_length_mne_epochs(
             if allow_truncation:
                 tmin_i = (raw.first_samp - events_array[i, 0]) / raw.info['sfreq']
             else:
-                missing = (i_min - raw.first_samp) / raw.info['sfreq']
+                missing = (raw.first_samp - i_min) / raw.info['sfreq']
                 raise ValueError(f"{tmin[i]=} is outside of data range by {missing:g} s")
         i_max = events_array[i, 0] + floor(tmax_i * raw.info['sfreq'])
         if raw.last_samp < i_max:
