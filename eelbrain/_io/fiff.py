@@ -993,8 +993,7 @@ def variable_length_mne_epochs(
     Returns
     -------
     epochs
-        List with one :class:`mne.Epochs` object, containing a single epoch, for
-        each event in ``events``.
+        List with one :class:`mne.Epochs` object for each row in ``events``.
     """
     if baseline is False:
         baseline = None
