@@ -37,7 +37,7 @@ Manual
    reference
    auto_examples/index
    recipes
-   experiment
+   pipeline/index
 
 
 .. seealso::
