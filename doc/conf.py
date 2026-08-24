@@ -42,7 +42,7 @@ needs_sphinx = '1.4.3'
 # coming with Sphinx (named 'sphinx.ext.*') or your custom ones.
 extensions = [
     'sphinx.ext.autodoc', 'sphinx.ext.autosummary',  # default
-    'sphinx.ext.todo', 'sphinx.ext.imgmath',  # default
+    'sphinx.ext.mathjax',
     'sphinx.ext.intersphinx',  # http://sphinx.pocoo.org/ext/intersphinx.html
     'sphinx.ext.linkcode',  # source links to GitHub
     'sphinx.ext.napoleon',  # https://www.sphinx-doc.org/en/master/usage/extensions/napoleon.html
