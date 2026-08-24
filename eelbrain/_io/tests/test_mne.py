@@ -220,13 +220,7 @@ def test_variable_length_mne_epochs():
     epochs = load.mne.variable_length_mne_epochs(ds, -4., 0.2, allow_truncation=True)
     assert first_samples(epochs) == [0, 100]
 
-
-def test_variable_length_mne_epochs_first_samp():
-    "Event indexes are absolute, i.e. they include raw.first_samp"
-    info = mne.create_info(['Fp', 'Cz'], 100., 'eeg')
-    # ramp data, so that each value identifies its own absolute sample index
-    data = np.arange(1000, dtype=float)[None].repeat(2, 0) * 1e-6
-    raw = mne.io.RawArray(data, info, verbose='error')
+    # Event indexes are absolute, i.e. they include raw.first_samp
     raw.crop(5.)  # data now starts 5 s (500 samples) into the recording
     assert raw.first_samp == 500
     ds = Dataset({'i_start': Var([700, 900]), 'trigger': Var([1, 2])}, info={'raw': raw})
