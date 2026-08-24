@@ -206,9 +206,11 @@ def test_variable_length_mne_epochs():
     with pytest.raises(ValueError):
         load.mne.variable_length_mne_epochs(ds, -0.1, [0.2])
 
-    # at least one of tmax/tstop is required
+    # exactly one of tmax/tstop is required
     with pytest.raises(TypeError):
         load.mne.variable_length_mne_epochs(ds, -0.1)
+    with pytest.raises(TypeError):
+        load.mne.variable_length_mne_epochs(ds, -0.1, 0.2, tstop=0.3)
 
     # epochs reaching outside the data raise, reporting how much is missing
     with pytest.raises(ValueError, match='outside of data range by 1 s'):

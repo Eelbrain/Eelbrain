@@ -1000,6 +1000,8 @@ def variable_length_mne_epochs(
     raw = events.info['raw']
     if tmax is None and tstop is None:
         raise TypeError(f"{tmax=}, {tstop=}: must specify at least one")
+    elif tmax is not None and tstop is not None:
+        raise TypeError(f"{tmax=}, {tstop=}: can not specify both")
     n = events.n_cases
     tmin = _epoch_times(events, tmin, n, 'tmin')
     if tmax is None:
