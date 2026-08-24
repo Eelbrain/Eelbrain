@@ -104,8 +104,8 @@ class Estimator(Configuration):
             self,
             y: NDVar | Datalist,
             xs: list[NDVar | Datalist],
-            tstart: float,
-            tstop: float,
+            tstart: float | list[float],
+            tstop: float | list[float],
             *,
             fwd: NDVar = None,
             cov=None,
@@ -121,9 +121,9 @@ class Estimator(Configuration):
             Predictors, one entry per model term (each a :class:`NDVar` or
             :class:`Datalist` matching ``y``).
         tstart
-            Start of the TRF in seconds.
+            Start of the TRF in seconds (or one value per predictor).
         tstop
-            Stop of the TRF in seconds.
+            Stop of the TRF in seconds (or one value per predictor).
         fwd
             Forward solution (NCRF only).
         cov

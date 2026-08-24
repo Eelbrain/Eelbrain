@@ -2102,6 +2102,50 @@ def test_load_trf(samples_experiment):
 
 
 @requires_mne_sample_data
+def test_load_trf_term_lags(samples_experiment):
+    "Per-term lag windows through model-string slice syntax"
+    from eelbrain import BoostingResult
+    from eelbrain._experiment.tests.sample_experiment import SampleTRF
+
+    set_log_level('warning', 'mne')
+    root = samples_experiment(n_subjects=1, n_segments=4)
+    e = SampleTRF(root)
+    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40', inv='')
+    tstep = e.load_epochs(reject=False)['mag'].time.tstep
+    samplingrate = 1 / tstep
+
+    # UTS predictor files
+    pdir = Path(root) / 'derivatives' / 'predictors'
+    pdir.mkdir(parents=True, exist_ok=True)
+    rng = np.random.RandomState(0)
+    for stim in ('auditory', 'visual'):
+        x = NDVar(rng.normal(0, 1, 100), UTS(0, tstep, 100), name='env')
+        save.pickle(x, pdir / f'{stim}~env.pickle')
+
+    # per-term override alongside the model-wide window (terms are fit in sorted order)
+    res = e.load_trf('imp + env[0.02:0.08]', 0, 0.1, samplingrate=samplingrate)
+    assert isinstance(res, BoostingResult)
+    assert res.tstart == (0.02, 0)
+    assert res.tstop == (0.08, 0.1)
+
+    # the same predictor with two lag windows shares one predictor-file dependency
+    res = e.load_trf('env[:0.05] + env[0.02:]', 0, 0.1, samplingrate=samplingrate)
+    assert res.tstart == (0.02, 0)
+    assert res.tstop == (0.1, 0.05)
+    options = e._trf_options('env[:0.05] + env[0.02:]', 0., 0.1, 'boosting', None, samplingrate, False, {})
+    ctx = e._resolve_derivative('trf', options=options)
+    assert ctx.is_valid()
+    dependencies = ctx._manifest().dependencies
+    assert 'auditory~env' in dependencies
+    assert not any('[' in key for key in dependencies)
+
+    # single-term model: scalar lags for the single x
+    res = e.load_trf('env[0.02:0.08]', 0, 0.1, samplingrate=samplingrate)
+    assert res.tstart == 0.02
+    assert res.tstop == 0.08
+
+
+@requires_mne_sample_data
 def test_predictor_subset_fingerprint(samples_experiment):
     "Editing an unused predictor-file column does not invalidate a cached TRF; editing a used one does"
     import os

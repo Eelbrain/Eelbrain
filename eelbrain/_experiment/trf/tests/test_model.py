@@ -48,6 +48,56 @@ def test_term():
         parse_term('stim~word--b')
 
 
+def test_term_lags():
+    # lag-window overrides
+    term = parse_term('gammatone[0.2:]')
+    assert term.tstart == 0.2
+    assert term.tstop is None
+    assert term.string == 'gammatone[0.2:]'
+    assert term.without_lags() == parse_term('gammatone')
+    assert parse_term(term.string) == term
+
+    term = parse_term('word[-0.1:0.8]')
+    assert term.tstart == -0.1
+    assert term.tstop == 0.8
+    assert parse_term(term.string) == term
+
+    term = parse_term('stim~word-frequency[:0.9]')
+    assert term.stimulus == 'stim'
+    assert term.code == 'word-frequency'
+    assert term.nuts_columns == ('frequency', None)
+    assert term.tstart is None
+    assert term.tstop == 0.9
+    assert term.string == 'stim~word-frequency[:0.9]'
+    assert term.with_stimulus('other').string == 'other~word-frequency[:0.9]'
+
+    # empty slice is a no-op
+    assert parse_term('gammatone[:]') == parse_term('gammatone')
+
+    # tstart must be smaller than tstop
+    with pytest.raises(TRFModelError):
+        parse_term('gammatone[0.5:0.2]')
+
+    # same predictor with different lag windows
+    model = Model.coerce('gammatone[0:0.5] + gammatone[0.5:1]')
+    assert model.name == 'gammatone[0:0.5] + gammatone[0.5:1]'
+    with pytest.raises(TRFModelError):
+        Model.coerce('gammatone[0:0.5] + gammatone[0:0.5]')
+
+    # comparison with lags
+    comparison = Comparison.coerce('x + gammatone[0.2:] > x')
+    assert comparison.x1_only.name == 'gammatone[0.2:]'
+
+
+def test_named_model_lags():
+    # lag overrides distribute to member terms; explicit member lags take precedence
+    named = {'ab': Model.coerce('a + b[0.5:1]')}
+    model = Model.coerce('ab[0.2:0.8]').initialize(named)
+    assert model.name == 'a[0.2:0.8] + b[0.5:1]'
+    model = Model.coerce('ab').initialize(named)
+    assert model.name == 'a + b[0.5:1]'
+
+
 models = {
     'x-abcd': 'x-a + x-b + x-c + x-d',
     'x-ab': 'x-a + x-b',

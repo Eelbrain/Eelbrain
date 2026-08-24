@@ -39,9 +39,9 @@ class TRFJob(Job):
     xs
         Predictors, one entry per model term.
     tstart
-        Start of the TRF in seconds.
+        Start of the TRF in seconds (or one value per predictor).
     tstop
-        Stop of the TRF in seconds.
+        Stop of the TRF in seconds (or one value per predictor).
     fwd
         Forward solution (NCRF only).
     cov
@@ -50,8 +50,8 @@ class TRFJob(Job):
     estimator: Estimator
     y: NDVar | Datalist
     xs: list[NDVar | Datalist]
-    tstart: float
-    tstop: float
+    tstart: float | list[float]
+    tstop: float | list[float]
     fwd: NDVar | None = None
     cov: Any | None = None
 

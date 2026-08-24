@@ -12,7 +12,7 @@ from pathlib import Path
 import pickle
 from collections.abc import Callable, Sequence
 
-from pyparsing import DelimitedList, Keyword, ParseException, Literal, Optional, Word, alphanums, one_of
+from pyparsing import DelimitedList, Group, Keyword, ParseException, Literal, Optional, Regex, Word, alphanums, one_of
 
 from ..._data_obj import Dataset
 from ... import fmtxt
@@ -31,12 +31,23 @@ class TRFModelError(Exception):
 class Term:
     stimulus: str | None
     code: str
+    tstart: float | None = None  # lag-window override; None: use the model-wide option
+    tstop: float | None = None
+
+    def __post_init__(self):
+        if self.tstart is not None and self.tstop is not None and self.tstart >= self.tstop:
+            raise TRFModelError(f"{self.string}: tstart must be smaller than tstop")
 
     @cached_property
     def string(self) -> str:
+        string = self.code
         if self.stimulus:
-            return f"{self.stimulus}~{self.code}"
-        return self.code
+            string = f"{self.stimulus}~{string}"
+        if self.tstart is None and self.tstop is None:
+            return string
+        tstart = '' if self.tstart is None else f'{self.tstart:g}'
+        tstop = '' if self.tstop is None else f'{self.tstop:g}'
+        return f"{string}[{tstart}:{tstop}]"
 
     @cached_property
     def key(self) -> str:
@@ -85,7 +96,7 @@ class Term:
     @cached_property
     def uts_file_name(self) -> str:
         """File name (without extension) of the predictor file backing this term"""
-        return self.string
+        return self.without_lags().string
 
     @cached_property
     def nuts_file_name(self) -> str:
@@ -96,6 +107,12 @@ class Term:
     def with_stimulus(self, stimulus: str) -> Term:
         """Copy of the term with a different stimulus"""
         return replace(self, stimulus=stimulus)
+
+    def without_lags(self) -> Term:
+        """Copy of the term without lag-window overrides"""
+        if self.tstart is None and self.tstop is None:
+            return self
+        return replace(self, tstart=None, tstop=None)
 
     @classmethod
     def _coerce(cls, x: Term | str):
@@ -126,7 +143,11 @@ def _expand_term(
         terms = _expand_term(replace(term, code=term.code[:-5]), named_models)
         return tuple([replace(term, code=f'{term.code}-step') for term in terms])
     elif term.code in named_models:
-        return named_models[term.code].terms
+        terms = named_models[term.code].terms
+        if term.tstart is not None or term.tstop is not None:
+            # distribute lag overrides to member terms; explicit member lags take precedence
+            terms = tuple([replace(term_i, tstart=term_i.tstart if term_i.tstart is not None else term.tstart, tstop=term_i.tstop if term_i.tstop is not None else term.tstop) for term_i in terms])
+        return terms
     else:
         return term,
 
@@ -504,8 +525,10 @@ class Comparison:
 name = Word(alphanums + '_')
 stimulus = Word(alphanums + '_', alphanums + '_-')
 stimulus_prefix = stimulus + Literal('~').suppress().leave_whitespace()
-term = Optional(stimulus_prefix, '') + DelimitedList(name, '-', combine=True, min=1)
-term.add_parse_action(lambda s, l, t: Term(t[0] or None, t[1]))
+lag_value = Regex(r'-?(\d+\.?\d*|\.\d+)').add_parse_action(lambda s, l, t: float(t[0]))
+lags = Literal('[').suppress() + Optional(lag_value, None) + Literal(':').suppress() + Optional(lag_value, None) + Literal(']').suppress()
+term = Optional(stimulus_prefix, '') + DelimitedList(name, '-', combine=True, min=1) + Optional(Group(lags), None)
+term.add_parse_action(lambda s, l, t: Term(t[0] or None, t[1], *(t[2] if t[2] is not None else (None, None))))
 
 # model
 model = DelimitedList(term, '+').add_parse_action(lambda s, l, t: Model(tuple(t)))

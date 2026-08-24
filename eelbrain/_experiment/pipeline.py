@@ -1244,7 +1244,7 @@ class Pipeline(StateModel):
             State parameters.
         """
         self.set(**state)
-        term = parse_term(code)
+        term = parse_term(code).without_lags()  # lag overrides do not affect the predictor itself
         predictor = self.predictors[term.predictor_key]
         if not isinstance(predictor, (UTSPredictor, NUTSPredictor)):
             raise NotImplementedError(f"{term.string}: load_predictor only supports file predictors; load {type(predictor).__name__} through load_trf")
@@ -1307,7 +1307,9 @@ class Pipeline(StateModel):
         Parameters
         ----------
         x
-            Model (e.g. ``'gammatone + word'``).
+            Model (e.g. ``'gammatone + word'``). A term can override the lag
+            window with slice syntax, e.g. ``'gammatone[0.2:] + word[-0.1:0.8]'``
+            (an omitted boundary uses ``tstart``/``tstop``).
         tstart
             Start of the TRF in seconds.
         tstop
@@ -1379,7 +1381,9 @@ class Pipeline(StateModel):
         Parameters
         ----------
         x
-            Model (e.g. ``'gammatone + word'``).
+            Model (e.g. ``'gammatone + word'``). A term can override the lag
+            window with slice syntax, e.g. ``'gammatone[0.2:] + word[-0.1:0.8]'``
+            (an omitted boundary uses ``tstart``/``tstop``).
         tstart
             Start of the TRF in seconds.
         tstop
@@ -1428,7 +1432,9 @@ class Pipeline(StateModel):
             group name such as ``'all'``. ``1`` to use the current subject;
             ``-1`` for the current group.
         x
-            Model (e.g. ``'gammatone + word'``).
+            Model (e.g. ``'gammatone + word'``). A term can override the lag
+            window with slice syntax, e.g. ``'gammatone[0.2:] + word[-0.1:0.8]'``
+            (an omitted boundary uses ``tstart``/``tstop``).
         tstart
             Start of the TRF in seconds.
         tstop

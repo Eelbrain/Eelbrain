@@ -297,12 +297,13 @@ class TRFDerivative(Derivative[object]):
                 options = ctx.options_for('epoch-events', 'samplingrate', 'decim')
                 events = ctx.load('epoch-events', options=options)
                 nested = events.info.get('nested_events')
+            file_term = term.without_lags()  # lag overrides do not affect the predictor file
             if isinstance(predictor, SubjectUTSPredictor) and not predictor.per_event:
                 if recordings is None:
                     recordings = find_bids_recordings(events)
                 for recording in dict.fromkeys(recordings):  # ordered set
-                    label = recording.dependency_label(term)
-                    edges[label] = Dependency('predictor', label=label, state=asdict(recording), options={'term': term})
+                    label = recording.dependency_label(file_term)
+                    edges[label] = Dependency('predictor', label=label, state=asdict(recording), options={'term': file_term})
                 continue
             elif nested:
                 stims = {stim for i in range(events.n_cases) for stim in events[i, nested][stim_var].cells}
@@ -311,7 +312,7 @@ class TRFDerivative(Derivative[object]):
             else:
                 raise TRFModelError(f"{term.string}: stimulus variable {stim_var!r} not in the events")
             for stim in stims:
-                stim_term = term.with_stimulus(stim)
+                stim_term = file_term.with_stimulus(stim)
                 edges[stim_term.string] = Dependency('predictor', label=stim_term.string, options={'term': stim_term})
         deps.extend(edges.values())
         return tuple(deps)
@@ -337,6 +338,12 @@ class TRFDerivative(Derivative[object]):
                 raise TRFModelError(f"{ctx.options['x']!r}: empty model")
             tstart = ctx.options['tstart']
             tstop = ctx.options['tstop']
+            if any(term.tstart is not None or term.tstop is not None for term in model.terms):
+                # per-term lag windows: the estimators accept one (tstart, tstop) per predictor
+                tstart = [ctx.options['tstart'] if term.tstart is None else term.tstart for term in model.terms]
+                tstop = [ctx.options['tstop'] if term.tstop is None else term.tstop for term in model.terms]
+                if len(model.terms) == 1:  # a single x is passed to the estimator outside a list
+                    tstart, tstop = tstart[0], tstop[0]
             ds = ctx.load('response')
             y = ds[ctx.options['data'].response_key(ds)]
             xs = [self._load_predictor(ctx, ds, term, y) for term in model.terms]
@@ -391,7 +398,7 @@ class TRFDerivative(Derivative[object]):
         "Assemble a per-event (ContinuousEpoch) predictor on the shared ``epoch_time`` axis"
         tstep = y[0].time.tstep
         stims = {stim for i in range(ds.n_cases) for stim in ds[i, nested][stim_var].cells}
-        cache = {stim: predictor._prepare_stimulus(ctx.load(term.with_stimulus(stim).string), tstep) for stim in stims}
+        cache = {stim: predictor._prepare_stimulus(ctx.load(term.without_lags().with_stimulus(stim).string), tstep) for stim in stims}
         xs = []
         for i, yi in enumerate(y):
             x = predictor._generate_continuous(yi.time, ds[i, nested], stim_var, term, cache)
@@ -406,7 +413,7 @@ class TRFDerivative(Derivative[object]):
         recordings = find_bids_recordings(ds)
         x_fulls = {}
         for recording in set(recordings):
-            label = recording.dependency_label(term)
+            label = recording.dependency_label(term.without_lags())
             x_full = predictor._prepare_sequence(ctx.load(label), times[0].tstep, term)
             x_fulls[recording] = filter_predictor(x_full, self.raw, ctx.state['raw'], filter_x)
 
@@ -437,8 +444,7 @@ class TRFDerivative(Derivative[object]):
 
     def _aligned_predictor(self, ctx: Request, predictor: UTSPredictor | NUTSPredictor, term: Term, stim: str | None, time, filter_x: bool | str) -> NDVar:
         "Build one stimulus' predictor from its file data and align it to ``time``"
-        stim_term = term.with_stimulus(stim)
-        subset = ctx.load(stim_term.string)
+        subset = ctx.load(term.without_lags().with_stimulus(stim).string)
         x = predictor._generate(subset, None, time.tstep, None, term)
         x = filter_predictor(x, self.raw, ctx.state['raw'], filter_x)
         x = pad(x, time.tmin, nsamples=time.nsamples, set_tmin=True)
