@@ -73,6 +73,26 @@ def _samples_templates(tmp_path_factory):
     return tmp_path_factory.mktemp('samples_templates'), {}
 
 
+def _samples_template(
+        template_dir: Path,
+        cache: dict,
+        n_subjects: int = 3,
+        n_tasks: int = 1,
+        n_segments: int = 4,
+        n_runs: int = 1,
+        mris: bool = False,
+        pick: str = 'mag',
+) -> Path:
+    "Session-cached bare dataset template for one setup configuration"
+    key = (n_subjects, n_tasks, n_segments, n_runs, mris, pick)
+    if key not in cache:
+        template = template_dir / f'template-{len(cache)}'
+        template.mkdir()
+        datasets.setup_samples_experiment(template, n_subjects, n_tasks, n_segments, n_runs, mris, pick=pick)
+        cache[key] = template / 'SampleExperiment'
+    return cache[key]
+
+
 @pytest.fixture
 def samples_experiment(_samples_templates, tmp_path):
     """Sample-experiment dataset roots backed by per-configuration templates.
@@ -95,15 +115,59 @@ def samples_experiment(_samples_templates, tmp_path):
     ) -> str:
         if not mne.datasets.has_dataset("sample"):
             pytest.skip("mne sample data unavailable")
-        key = (n_subjects, n_tasks, n_segments, n_runs, mris, pick)
-        if key not in cache:
-            template = template_dir / f'template-{len(cache)}'
-            template.mkdir()
-            datasets.setup_samples_experiment(template, n_subjects, n_tasks, n_segments, n_runs, mris, pick=pick)
-            cache[key] = template / 'SampleExperiment'
+        template = _samples_template(template_dir, cache, n_subjects, n_tasks, n_segments, n_runs, mris, pick)
         root = tmp_path / f'experiment-{next(counter)}' / 'SampleExperiment'
-        shutil.copytree(cache[key], root)
+        shutil.copytree(template, root)
         return str(root)
+
+    return make
+
+
+@pytest.fixture
+def samples_trf_experiment(_samples_templates, tmp_path):
+    """Configured :class:`SampleTRF` experiments backed by a warmed session template.
+
+    Like ``samples_experiment(n_subjects=1, n_segments=4)``, but the
+    session-cached template additionally contains the ``{stim}~env.pickle``
+    UTS predictor files (one 60-sample random time series per ``modality``
+    stimulus, at the epochs' native tstep) and the derived raw/epoch artifacts
+    for the standard TRF test state (subject R0000, epoch 'target', raw
+    '1-40', no rejection, sensor space). The derivative cache is root-relative
+    and ``copytree`` preserves mtimes, so each test's copy starts with cache
+    hits for everything but what the test itself adds (e.g. the fit). Every
+    call returns a fresh :class:`SampleTRF` instance, already set to the
+    standard state, on its own copy of the template.
+    """
+    from eelbrain._experiment.tests.sample_experiment import SampleTRF
+
+    template_dir, cache = _samples_templates
+    counter = itertools.count()
+    state = {'subject': 'R0000', 'epoch': 'target', 'epoch_rejection': '', 'raw': '1-40', 'inv': ''}
+
+    def make():
+        if not mne.datasets.has_dataset("sample"):
+            pytest.skip("mne sample data unavailable")
+        set_log_level('warning', 'mne')
+        if 'trf' not in cache:
+            base = _samples_template(template_dir, cache, n_subjects=1)
+            template = template_dir / f'template-{len(cache)}' / 'SampleExperiment'
+            shutil.copytree(base, template)
+            e = SampleTRF(template)
+            e.set(**state)
+            # warm the raw/epoch derivatives; the native (decimated) tstep is an
+            # integer ratio of the raw rate, so predictors at this tstep need no resampling
+            tstep = e.load_epochs(reject=False)['mag'].time.tstep
+            pdir = template / 'derivatives' / 'predictors'
+            pdir.mkdir(parents=True, exist_ok=True)
+            rng = np.random.RandomState(0)
+            for stim in ('auditory', 'visual'):
+                save.pickle(NDVar(rng.normal(size=60), UTS(0, tstep, 60), name='env'), pdir / f'{stim}~env.pickle')
+            cache['trf'] = template
+        root = tmp_path / f'experiment-{next(counter)}' / 'SampleExperiment'
+        shutil.copytree(cache['trf'], root)
+        e = SampleTRF(root)
+        e.set(**state)
+        return e
 
     return make
 
@@ -2053,16 +2117,12 @@ def test_sample_eeg(samples_experiment):
 
 
 @requires_mne_sample_data
-def test_load_trf(samples_experiment):
+def test_load_trf(samples_trf_experiment):
     "load_trf, caching, and the separable TRFJob"
     import pickle
     from eelbrain import BoostingResult
-    from eelbrain._experiment.tests.sample_experiment import SampleTRF
 
-    set_log_level('warning', 'mne')
-    root = samples_experiment(n_subjects=1, n_segments=4)
-    e = SampleTRF(root)
-    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40', inv='')
+    e = samples_trf_experiment()
 
     # compute
     res = e.load_trf('imp', 0, 0.1)
@@ -2102,37 +2162,23 @@ def test_load_trf(samples_experiment):
 
 
 @requires_mne_sample_data
-def test_load_trf_term_lags(samples_experiment):
+def test_load_trf_term_lags(samples_trf_experiment):
     "Per-term lag windows through model-string slice syntax"
     from eelbrain import BoostingResult
-    from eelbrain._experiment.tests.sample_experiment import SampleTRF
 
-    set_log_level('warning', 'mne')
-    root = samples_experiment(n_subjects=1, n_segments=4)
-    e = SampleTRF(root)
-    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40', inv='')
-    tstep = e.load_epochs(reject=False)['mag'].time.tstep
-    samplingrate = 1 / tstep
-
-    # UTS predictor files
-    pdir = Path(root) / 'derivatives' / 'predictors'
-    pdir.mkdir(parents=True, exist_ok=True)
-    rng = np.random.RandomState(0)
-    for stim in ('auditory', 'visual'):
-        x = NDVar(rng.normal(0, 1, 100), UTS(0, tstep, 100), name='env')
-        save.pickle(x, pdir / f'{stim}~env.pickle')
+    e = samples_trf_experiment()
 
     # per-term override alongside the model-wide window (terms are fit in sorted order)
-    res = e.load_trf('imp + env[0.02:0.08]', 0, 0.1, samplingrate=samplingrate)
+    res = e.load_trf('imp + env[0.02:0.08]', 0, 0.1)
     assert isinstance(res, BoostingResult)
     assert res.tstart == (0.02, 0)
     assert res.tstop == (0.08, 0.1)
 
     # the same predictor with two lag windows shares one predictor-file dependency
-    res = e.load_trf('env[:0.05] + env[0.02:]', 0, 0.1, samplingrate=samplingrate)
+    res = e.load_trf('env[:0.05] + env[0.02:]', 0, 0.1)
     assert res.tstart == (0.02, 0)
     assert res.tstop == (0.1, 0.05)
-    options = e._trf_options('env[:0.05] + env[0.02:]', 0., 0.1, 'boosting', None, samplingrate, False, {})
+    options = e._trf_options('env[:0.05] + env[0.02:]', 0., 0.1, 'boosting', None, None, False, {})
     ctx = e._resolve_derivative('trf', options=options)
     assert ctx.is_valid()
     dependencies = ctx._manifest().dependencies
@@ -2140,27 +2186,22 @@ def test_load_trf_term_lags(samples_experiment):
     assert not any('[' in key for key in dependencies)
 
     # single-term model: scalar lags for the single x
-    res = e.load_trf('env[0.02:0.08]', 0, 0.1, samplingrate=samplingrate)
+    res = e.load_trf('env[0.02:0.08]', 0, 0.1)
     assert res.tstart == 0.02
     assert res.tstop == 0.08
 
 
 @requires_mne_sample_data
-def test_predictor_subset_fingerprint(samples_experiment):
+def test_predictor_subset_fingerprint(samples_trf_experiment):
     "Editing an unused predictor-file column does not invalidate a cached TRF; editing a used one does"
     import os
     from eelbrain import BoostingResult, Dataset, Var, save
-    from eelbrain._experiment.tests.sample_experiment import SampleTRF
 
-    set_log_level('warning', 'mne')
-    root = samples_experiment(n_subjects=1, n_segments=4)
-    e = SampleTRF(root)
-    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40', inv='')
+    e = samples_trf_experiment()
     samplingrate = 1 / e.load_epochs(reject=False)['mag'].time.tstep
 
-    pdir = Path(root) / 'derivatives' / 'predictors'
-    pdir.mkdir(parents=True, exist_ok=True)
-    ref_dir = Path(root) / 'derivatives' / 'eelbrain' / 'cache' / 'predictor'
+    pdir = e.root / 'derivatives' / 'predictors'
+    ref_dir = e.root / 'derivatives' / 'eelbrain' / 'cache' / 'predictor'
     mtime = [1_700_000_000]
 
     def write(stim, value, unused):
@@ -2238,29 +2279,16 @@ def test_load_trf_source(samples_experiment):
 
 
 @requires_mne_sample_data
-def test_load_trf_filepredictor(samples_experiment):
+def test_load_trf_filepredictor(samples_trf_experiment):
     "load_trf with a UTSPredictor: per-stimulus predictor dependency edges"
-    from eelbrain import BoostingResult, NDVar, UTS, save
-    from eelbrain._experiment.tests.sample_experiment import SampleTRF
+    from eelbrain import BoostingResult, NDVar, save
 
-    set_log_level('warning', 'mne')
-    root = samples_experiment(n_subjects=1, n_segments=4)
-    e = SampleTRF(root)
-    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40', inv='')
-
-    # match the predictor sampling to the data's natural (decimated) rate so the
-    # samplingrate is an integer ratio of the raw rate and needs no resampling
+    # the fixture provides a predictor file per stimulus (one for each 'modality' cell)
+    e = samples_trf_experiment()
     tstep = e.load_epochs(reject=False)['mag'].time.tstep
     samplingrate = 1 / tstep
-
-    # write a predictor file per stimulus (one for each 'modality' cell)
-    pdir = Path(root) / 'derivatives' / 'predictors'
-    pdir.mkdir(parents=True, exist_ok=True)
-    uts = UTS(0, tstep, 60)
-    rng = np.random.RandomState(0)
-    predictor_ndvars = {stim: NDVar(rng.normal(size=60), uts, name='env') for stim in ('auditory', 'visual')}
-    for stim, ndvar in predictor_ndvars.items():
-        save.pickle(ndvar, pdir / f'{stim}~env.pickle')
+    pdir = e.root / 'derivatives' / 'predictors'
+    predictor_ndvars = {stim: load.unpickle(pdir / f'{stim}~env.pickle') for stim in ('auditory', 'visual')}
 
     # load_predictor shapes one stimulus' file into an NDVar at the requested tstep
     x = e.load_predictor('auditory~env', tstep)
@@ -2292,7 +2320,9 @@ def test_load_trf_filepredictor(samples_experiment):
     assert e._resolve_derivative('trf', options=options).is_valid()
 
     # editing a predictor file invalidates the cached TRF
-    save.pickle(NDVar(rng.normal(size=60), uts, name='env'), pdir / 'auditory~env.pickle')
+    edited = predictor_ndvars['auditory'] + 1
+    edited.name = 'env'
+    save.pickle(edited, pdir / 'auditory~env.pickle')
     assert not e._resolve_derivative('trf', options=options).is_valid()
 
 
