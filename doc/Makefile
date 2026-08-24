@@ -38,6 +38,8 @@ clean:
 	rm -rf $(BUILDDIR)/doctrees
 	rm -rf $(BUILDDIR)/html
 	rm -rf $(SOURCEDIR)/generated
+	rm -rf $(SOURCEDIR)/auto_examples
+	rm -f $(SOURCEDIR)/sg_execution_times.rst
 
 html:
 	$(SPHINXBUILD) -b html $(ALLSPHINXOPTS) $(BUILDDIR)/html
