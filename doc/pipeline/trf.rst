@@ -259,8 +259,10 @@ Common questions and corresponding comparisons:
    :header-rows: 1
    :widths: 80 20
 
-   * - Is there a brain region that responds to ``a`` after controlling for ``b``?
-     - ``b + a @ a``
+   * - Question
+     - Comparison
+   * - Is there a brain response to ``a`` when controlling for ``b``?
+     - ``a + b @ a``
    * - Is there a brain region that represents ``a`` more than ``b``? E.g., where
        does categorical representation become more important than acoustic information?
      - ``a > b``
