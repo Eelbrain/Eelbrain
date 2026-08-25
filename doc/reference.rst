@@ -723,7 +723,6 @@ Result containers:
 
    ROITestResult
    ROI2StageResult
-   TRFJob
 
 Participant groups:
 
@@ -754,7 +753,6 @@ Event variables:
    EvalVar
    GroupVar
    LabelVar
-   Variables
 
 Epochs:
 

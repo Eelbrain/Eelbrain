@@ -6,6 +6,8 @@
    mrat_data
    dat_file
    dat_set
+   dat_set_paths
+   add_dat_set_epochs
    roi
 
 """
