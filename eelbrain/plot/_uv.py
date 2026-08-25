@@ -241,7 +241,7 @@ class Boxplot(CategorialAxisMixin, YLimMixin, _SimpleFigure):
         i.e. the level on each Factor of ``x`` on a separate line).
     xtick_rotation
         Tick label orientation – ``'vertical'`` ``'horizontal'`` or an angle.
-    colors : bool | sequence | dict of matplitlib colors
+    colors
         Matplotlib colors to use for boxes (True to use the module default;
         default is False, i.e. no colors).
     data
@@ -371,7 +371,7 @@ class Barplot(CategorialAxisMixin, YLimMixin, _SimpleFigure):
         i.e. the level on each Factor of ``x`` on a separate line).
     xtick_rotation
         Tick label orientation – ``'vertical'`` ``'horizontal'`` or an angle.
-    colors : bool | dict | sequence of matplitlib colors
+    colors
         Matplotlib colors to use for boxes (True to use the module default;
         default is False, i.e. no colors).
     pos
@@ -507,7 +507,7 @@ class BarplotHorizontal(XAxisMixin, CategorialAxisMixin, _SimpleFigure):
         Delimiter for x axis category descriptors.
     xtick_rotation
         Tick label orientation – ``'vertical'`` ``'horizontal'`` or an angle.
-    colors : bool | dict | sequence of matplitlib colors
+    colors
         Matplotlib colors to use for boxes (True to use the module default;
         default is False, i.e. no colors).
     pos
@@ -799,9 +799,9 @@ class Timeplot(LegendMixin, YLimMixin, EelFigure):
     data
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables
-    main : numpy function
-        draw lines to connect values across time (default: np.mean).
-        Can be 'bar' for barplots or False.
+    main
+        Draw lines to connect values across time (default: :func:`numpy.mean`).
+        Can also be 'bar' for barplots.
     error
         How to indicate estimate error. For complete within-subject designs,
         the within-subject measures are displayed (see Loftus & Masson, 1994).
@@ -852,7 +852,7 @@ class Timeplot(LegendMixin, YLimMixin, EelFigure):
             sub: IndexArg = None,
             data: Dataset = None,
             # data plotting
-            main: Callable = np.mean,
+            main: Callable | Literal['bar'] | None = np.mean,
             error: str = 'sem',
             x_jitter: bool = False,
             bottom: float = None,

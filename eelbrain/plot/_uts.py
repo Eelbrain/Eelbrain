@@ -102,9 +102,11 @@ class UTSStat(LegendMixin, XAxisMixin, YLimMixin, EelFigure):
         <http://matplotlib.org/api/colors_api.html>`_.
     error_alpha
         Alpha of the error plot (default 0.3).
-    mask : NDVar | {cell: NDVar}
-        Mask certain time points. To control appearance of masked regions, set
-        ``colors`` using :class:`plot.Style`.
+    mask
+        Mask certain time points. A single :class:`NDVar` to set a global mask,
+        or a ``{cell: mask}`` dictionary to control mask by ``cell``.
+        To control appearance of masked regions, set ``colors`` using
+        :class:`plot.Style`.
     clusters
         Clusters to add to the plots. The clusters should be provided as
         Dataset, as stored in test results' :attr:`testnd.NDTest.clusters`.
@@ -343,13 +345,13 @@ class UTS(TimeSlicerEF, LegendMixin, YLimMixin, XAxisMixin, EelFigure):
 
     Parameters
     ----------
-    y : (list of) NDVar
+    y
         UTS data to plot. For a list (``[a, b]``) each item will be plotted
         separately. To combine multiple UTSs in a common axes, use a nested
         list (``[[a, b]]`` would plot ``a`` and ``b`` together in a common axes).
     xax : categorial
         Make separate axes for each category in this categorial model.
-    axtitle : bool | sequence of str
+    axtitle
         Title for the individual axes. The default is to show the names of the
         epochs, but only if multiple axes are plotted.
     data : Dataset
