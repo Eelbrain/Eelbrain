@@ -307,6 +307,7 @@ to change its parameters.
    :toctree: ../generated
    :template: class_nomethods.rst
 
+   Estimator
    Boosting
    NCRF
 

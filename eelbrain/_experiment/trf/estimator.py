@@ -26,12 +26,10 @@ def arctanh(r: NDVar | float) -> NDVar | float:
 
 
 class Estimator(Configuration):
-    """Base class for TRF estimators
+    """Base class for TRF estimators"""
+    # Subclasses select a fitting algorithm and declare its parameters through ``DICT_ATTRS``.
+    # Cross-validation / partitioning is owned by each estimator because the schemes differ between algorithms.
 
-    Subclasses select a fitting algorithm and declare its parameters through
-    :attr:`DICT_ATTRS`. Cross-validation / partitioning is owned by each
-    estimator because the schemes differ between algorithms.
-    """
     # Dependencies (registered derivative names) that :meth:`_fit` needs beyond
     # the response, loaded by the TRF node and passed as keyword arguments.
     extra_inputs: tuple[str, ...] = ()
