@@ -2444,7 +2444,7 @@ class DerivativeRegistry:
 
         The output is suitable for fingerprints, keys, and manifests: dicts are
         sorted by key, sets are sorted, numpy scalars are unwrapped, and
-        :class:`Path` objects become strings. Unrecognized types fall back to
+        :class:`~pathlib.Path` objects become strings. Unrecognized types fall back to
         ``repr()``.
 
         Domain-specific types handled here (:class:`~eelbrain.Var`,

@@ -3800,7 +3800,7 @@ class XAxisMixin:
         axes : int | list of int
             Which axes to mark (default is all axes).
         additonal arguments :
-            Additional arguments for :func:`matplotlib.axvspan`.
+            Additional arguments for :meth:`matplotlib.axes.Axes.axvspan`.
         """
         if axes is None:
             axes = self.__axes

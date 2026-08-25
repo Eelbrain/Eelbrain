@@ -73,7 +73,7 @@ def configure(
     figure_background : bool | matplotlib color
         While :mod:`matplotlib` uses a gray figure background by default,
         Eelbrain uses white. Set this parameter to ``False`` to use the default
-        from :attr:`matplotlib.rcParams`, or set it to a valid matplotblib
+        from :data:`matplotlib.rcParams`, or set it to a valid matplotblib
         color value to use an arbitrary color. ``True`` to revert to the default
         white.
     prompt_toolkit

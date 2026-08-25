@@ -217,7 +217,7 @@ class PltMap2d:
         marker : str
             Marker style (default: ``'o'``).
         ... :
-            Matplotlib :func:`~matplotlib.axes.Axes.scatter` parameters.
+            Matplotlib :meth:`~matplotlib.axes.Axes.scatter` parameters.
         """
         if sensors is None:
             while self._mark_handles:
@@ -404,7 +404,7 @@ class SensorMapMixin:
         marker : str
             Marker style (default: ``'o'``).
         ... :
-            Matplotlib :func:`~matplotlib.axes.Axes.scatter` parameters.
+            Matplotlib :meth:`~matplotlib.axes.Axes.scatter` parameters.
         """
         if axis is None:
             plots = self.__sensor_plots

@@ -77,7 +77,7 @@ def get_source_dim(ndvar):
 
 
 class Brain(TimeSlicer, surfer.Brain):
-    """PySurfer :class:`Brain` subclass returned by :mod:`plot.brain` functions
+    """PySurfer :class:`surfer.Brain` subclass returned by :mod:`plot.brain` functions
 
     PySurfer :class:`surfer.Brain` subclass adding Eelbrain GUI integration and
     methods to visualize data in :class:`NDVar` format.
@@ -175,7 +175,7 @@ class Brain(TimeSlicer, surfer.Brain):
             b.remove_data()
             b.remove_labels()
 
-    For another example see the implementation of :class:`SequencePlotter`.
+    For another example see the implementation of :class:`~plot.brain.SequencePlotter`.
     """
     _display_time_in_frame_title = True
 

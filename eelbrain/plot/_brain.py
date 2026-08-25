@@ -79,7 +79,7 @@ def annot(annot, subject='fsaverage', surf='smoothwm', borders=False, alpha=0.7,
     Notes
     -----
     The ``Brain`` object that is returned has a
-    :meth:`~plot._brain_fixes.plot_legend` method to plot the color legend.
+    :meth:`~plot._brain_object.Brain.plot_legend` method to plot the color legend.
 
     See Also
     --------
@@ -429,7 +429,7 @@ def brain(src, cmap=None, vmin=None, vmax=None, surf='inflated',
           w=None, h=None, axw=None, axh=None, foreground=None, background=None,
           parallel=True, cortex='classic', title=None, smoothing_steps=None,
           mask=True, subjects_dir=None, name=None, pos=None):
-    """Create a :class:`Brain` object with a data layer
+    """Create a :class:`~plot._brain_object.Brain` object with a data layer
 
     Parameters
     ----------
@@ -486,7 +486,7 @@ def brain(src, cmap=None, vmin=None, vmax=None, surf='inflated',
         alpha (e.g., ``(1, 1, 1, 0.5)`` for semi-transparent white). If
         smoothing is enabled through ``smoothing_steps``, the mask is added as
         data layer, otherwise it is added as label. To add a mask independently,
-        use the :meth:`Brain.add_mask` method.
+        use the :meth:`~plot._brain_object.Brain.add_mask` method.
     subjects_dir : None | str
         Override the subjects_dir associated with the source space dimension.
     name : str
@@ -1272,7 +1272,7 @@ class SequencePlotter:
         self._brain_args = {'surf': surf, 'foreground': foreground, 'background': background, 'parallel': parallel, 'cortex': cortex, 'mask': mask}
 
     def set_parallel_view(self, forward=None, up=None, scale=None):
-        "Set view for all plots (see :meth:`~.brain_object.Brain.set_parallel_view`"
+        "Set view for all plots (see :meth:`~plot._brain_object.Brain.set_parallel_view`"
         if forward is not None:
             self._parallel_view['forward'] = forward
         if up is not None:
@@ -1790,7 +1790,7 @@ def butterfly(y, cmap=None, vmin=None, vmax=None, surf='inflated',
     ----------
     y : NDVar  ([case,] time, source)
         Data to plot; if ``y`` has a case dimension, the mean is plotted.
-        ``y`` can also be a :mod:`~eelbrain.testnd` t-test result, in which
+        ``y`` can also be a :mod:`testnd` t-test result, in which
         case a masked parameter map is plotted (p ≤ 0.05).
     cmap : str | array
         Colormap (name of a matplotlib colormap).
@@ -1819,7 +1819,7 @@ def butterfly(y, cmap=None, vmin=None, vmax=None, surf='inflated',
         alpha (e.g., ``(1, 1, 1, 0.5)`` for semi-transparent white). If
         smoothing is enabled through ``smoothing_steps``, the mask is added as
         data layer, otherwise it is added as label. To add a mask independently,
-        use the :meth:`Brain.add_mask` method.
+        use the :meth:`~plot._brain_object.Brain.add_mask` method.
     xlim : scalar | (scalar, scalar)
         Initial x-axis view limits as ``(left, right)`` tuple or as ``length``
         scalar (default is the full x-axis in the data).

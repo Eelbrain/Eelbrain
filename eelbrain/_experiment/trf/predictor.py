@@ -156,7 +156,7 @@ class UTSPredictor(FilePredictorBase):
 
     Where ``stimulus`` refers to the name provided by ``stim_var`` and ``key``
     refers to the predictor's name (the key used in
-    :attr:`TRFExperiment.predictors`). Tags starting with a dash (``-``)
+    :attr:`Pipeline.predictors`). Tags starting with a dash (``-``)
     following the ``key`` can be used to distinguish different versions of
     a given preditor (``{stimulus}~{key}-{variant}``).
     """
@@ -239,10 +239,6 @@ class NUTSPredictor(FilePredictorBase):
     ``{key}-{value-column}-{mask-column}`` (the boolean mask column sets
     ``value`` to zero wherever it is ``False``). The term ``{key}`` alone
     invokes an intercept, i.e. a value of 1 at each time point.
-
-    Notes
-    -----
-    See :class:`FilePredictorBase` for the predictor file location.
 
     Examples
     --------

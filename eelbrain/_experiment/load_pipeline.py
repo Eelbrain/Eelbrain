@@ -1,4 +1,4 @@
-"""Utilities for loading :class:`Pipeline` subclasses from Python files."""
+"""Utilities for loading :class:`~pipeline.Pipeline` subclasses from Python files."""
 from __future__ import annotations
 
 import importlib.util
@@ -90,29 +90,29 @@ def load_pipeline(
         log_level: str | int = None,
         **state,
 ) -> Pipeline:
-    """Load a :class:`Pipeline` subclass from a Python file.
+    """Load a :class:`~pipeline.Pipeline` subclass from a Python file.
 
     Parameters
     ----------
     spec
-        Path to a Python file that defines a :class:`Pipeline` subclass,
+        Path to a Python file that defines a :class:`~pipeline.Pipeline` subclass,
         optionally followed by ``:ClassName``.
         ``spec`` can also be a directory, in which case ``pipeline.py`` is
         tried first and then ``experiment.py``.
         If ``spec`` is omitted, the current working directory is searched.
         When only a file path is provided, the file must define exactly one
-        :class:`Pipeline` subclass.
+        :class:`~pipeline.Pipeline` subclass.
     root
         Root directory for the experiment.
     log_level
-        Override :attr:`Pipeline.screen_log_level` for the loaded pipeline.
+        Override :attr:`~pipeline.Pipeline.screen_log_level` for the loaded pipeline.
     **state
-        Initial state parameters passed to the :class:`Pipeline` constructor.
+        Initial state parameters passed to the :class:`~pipeline.Pipeline` constructor.
 
     Returns
     -------
     pipeline
-        Instantiated :class:`Pipeline`.
+        Instantiated :class:`~pipeline.Pipeline`.
     """
     path, class_name = _split_spec(spec)
     module = _load_module(path)

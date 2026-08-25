@@ -5107,7 +5107,7 @@ class NDVar(Named):
 
         Notes
         -----
-        Like :func:`numpy.sign`.
+        Like :obj:`numpy.sign`.
         """
         return NDVar(np.sign(self.x), self.dims, name or self.name, self.info)
 
@@ -5894,12 +5894,12 @@ class Dataset(dict):
 
     The :class:`Dataset` assumes certain properties of the items that are
     assigned, for example they need to support :mod:`numpy` indexing.
-    When assigning items that are not :mod:`eelbrain` data containers, they are
+    When assigning items that are not ``eelbrain`` data containers, they are
     coerced in the following manner:
 
     - 1-d :class:`numpy.ndarray` are coerced to :class:`Var`; other
       :class:`numpy.ndarray` are assigned as is
-    - Objects conforming to the Python :class:`collections.Sequence` abstract
+    - Objects conforming to the Python :class:`collections.abc.Sequence` abstract
       base class are coerced to :class:`Datalist`
     - :class:`mne.Epochs` are assigned as is
     - For advanced use, additional classes can be assigned as is by extending the

@@ -26,7 +26,7 @@ from eelbrain import *
 # NDVars from arrays
 # ------------------
 # An :class:`NDVar` combines an n-dimensional :class:`numpy.ndarray` with
-# :class:`Dimension` objects that describe what the
+# ``Dimension`` objects that describe what the
 # different data axes mean, and provide meta information that is used, for
 # example, for plotting.
 # Here we start by create a Sensor dimension from a built-in EEG montage

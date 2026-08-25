@@ -1237,7 +1237,7 @@ class Pipeline(StateModel):
             the :class:`RawFilter` pipes of the current ``raw`` pipeline).
             ``True`` to filter all predictors; ``'continuous'`` to filter only
             time-continuous predictors (those with ``sampling='continuous'``,
-            see :class:`FilePredictorBase`).
+            see :class:`UTSPredictor`).
         name
             Reassign the name of the predictor :class:`NDVar`.
         ...
@@ -1707,7 +1707,7 @@ class Pipeline(StateModel):
             surf_ori: bool = True,
             ndvar: bool = False,
             **state,
-    ) -> mne.forward.Forward | NDVar:
+    ) -> mne.Forward | NDVar:
         """Load the forward solution
 
         Parameters
@@ -1718,13 +1718,13 @@ class Pipeline(StateModel):
             surface based).
         ndvar
             Return forward solution as :class:`NDVar` (default is
-            :class:`mne.forward.Forward`).
+            :class:`mne.Forward`).
         ...
             State parameters.
 
         Returns
         -------
-        forward_operator : mne.forward.Forward | NDVar
+        forward_operator : mne.Forward | NDVar
             Forward operator.
         """
         self.set(**state)

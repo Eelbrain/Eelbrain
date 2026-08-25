@@ -575,6 +575,7 @@ Tools with a graphical user interface (GUI):
 .. autosummary::
    :toctree: generated
 
+    gui.select_channels
     gui.select_components
     gui.select_epochs
     gui.load_stcs
@@ -675,7 +676,7 @@ Experiment Pipeline
 The :class:`~pipeline.Pipeline` class provides a template for analyzing EEG and MEG
 data. The objects for specifying the analysis are all in the
 :mod:`pipeline` submodule.
-:func:`load_pipeline` is a helper for loading a :class:`Pipeline` from a Python file:
+:func:`load_pipeline` is a helper for loading a :class:`~pipeline.Pipeline` from a Python file:
 
 .. currentmodule:: eelbrain
 

@@ -1232,11 +1232,11 @@ def epochs_ndvar(
 def evoked_ndvar(evoked, name=None, data=None, exclude='bads', vmax=None,
                  sysname=None, adjacency=None):
     """
-    Convert one or more mne :class:`Evoked` objects to an :class:`NDVar`.
+    Convert one or more mne :class:`mne.Evoked` objects to an :class:`NDVar`.
 
     Parameters
     ----------
-    evoked : str | Evoked | list of Evoked
+    evoked : str | mne.Evoked | list of mne.Evoked
         The Evoked to convert to NDVar. Can be a string designating a file
         path to a evoked fiff file containing only one evoked.
     name : str
@@ -1475,7 +1475,7 @@ def stc_ndvar(
 
     Parameters
     ----------
-    stc : SourceEstimate | list of SourceEstimates | str
+    stc : mne.SourceEstimate | list of mne.SourceEstimate | str
         The source estimate object(s) or a path to an stc file. Volum and vector
         source estimates are supported.
     subject
