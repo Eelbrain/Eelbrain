@@ -346,19 +346,32 @@ def resolve_build_urls(app, docname, source):
     source[0] = source[0].replace(_environment_yml_url_placeholder, environment_yml_url)
 
 
+# Types that are rendered without their module, in type hints (see autodoc_typehints_format) and in docstrings inherited from PySurfer
+QUALIFIED_NAMES = {
+    'BaseEstimator': 'sklearn.base.BaseEstimator',
+    'Label': 'mne.Label',
+    'Path': 'pathlib.Path',
+}
+
+
 def resolve_reference(app, env, node, contnode):
     """Handle Python references that Sphinx could not resolve.
 
     Sphinx only searches the current module (set with ``currentmodule``) and the global namespace, so a reference like ``:class:`plot.SensorMap``` fails wherever the current module is not ``eelbrain``. Retry those in the ``eelbrain`` namespace.
 
     The changelog refers to objects that have since been renamed or removed; leave those as plain text instead of failing the build.
+
+    Connected before intersphinx, so that a target replaced with its qualified name is resolved there.
     """
     if node['refdomain'] != 'py':
         return None
     elif node.get('refdoc') == 'changes':
         return contnode
     target = node['reftarget']
-    if target.startswith('eelbrain.'):
+    if target in QUALIFIED_NAMES:
+        node['reftarget'] = QUALIFIED_NAMES[target]
+        return None
+    elif target.startswith('eelbrain.'):
         return None
     return env.domains['py'].resolve_xref(env, node.get('refdoc', env.docname), app.builder, node['reftype'], f'eelbrain.{target}', node, contnode)
 
@@ -483,7 +496,7 @@ man_pages = [
 def setup(app):
     """Set up the Sphinx app."""
     app.connect('source-read', resolve_build_urls)
-    app.connect('missing-reference', resolve_reference)
+    app.connect('missing-reference', resolve_reference, priority=400)  # before intersphinx (500)
     # ensure we have the data necessary to build examples
     logger.info("Ensuring example data is available")
     mne.datasets.sample.data_path(verbose=True)

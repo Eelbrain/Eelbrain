@@ -19,10 +19,13 @@ Subclasses for specific purposes:
    :toctree: generated
 
    Table
+   Row
+   List
    Image
    Figure
    Section
    Report
+   FMTextConstant
 
 Functions for export:
 
@@ -543,6 +546,7 @@ def asfmtext_or_none(
 
 
 class FMTextConstant:
+    """Element with a fixed representation in each format (e.g. ``fmtxt.linebreak``)"""
 
     def __init__(self, name, html, rtf, tex, text):
         self.name = name

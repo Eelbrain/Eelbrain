@@ -10370,14 +10370,14 @@ class SourceSpaceBase(Dimension):
 
         Parameters
         ----------
-        dim : Source
+        dim : SourceSpace
             Dimension to intersect with.
         check_dims : bool
             Check dimensions for consistency (not applicaple to this subclass).
 
         Returns
         -------
-        intersection : Source
+        intersection : SourceSpace
             The intersection with dim (returns itself if dim and self are
             equal)
         """

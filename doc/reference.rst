@@ -351,6 +351,7 @@ Color tools for plotting:
    plot.ColorBar
    plot.ColorGrid
    plot.ColorList
+   plot.Legend
 
 .. seealso::
     Example with :ref:`exa-colormaps`

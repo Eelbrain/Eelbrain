@@ -707,7 +707,7 @@ class SensorMap(SensorMapMixin, EelFigure):
         Marker for the sensor positions.
     mark : None | list of int
         List of sensor indices to mark.
-    head_radius : scalar | tuple | True
+    head_radius : scalar | tuple | bool
         Radius of the head outline drawn over sensors (on sensor plots with
         normalized positions, 0.45 is the outline of the topomap); 0 to plot no
         outline; tuple for separate (right, anterior) radius. True to be equal

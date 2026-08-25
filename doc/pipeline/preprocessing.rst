@@ -26,12 +26,12 @@ Define a pre-processing pipeline as a series of linked processing steps
    :toctree: ../generated
    :template: class_nomethods.rst
 
+   RawSource
    RawFilter
    RawICA
    RawApplyICA
    RawMaxwell
    RawOversampledTemporalProjection
-   RawSource
    RawReReference
 
 

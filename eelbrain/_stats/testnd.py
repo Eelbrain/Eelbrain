@@ -1762,7 +1762,7 @@ class ANOVA(MultiEffectNDTest):
     tstop : scalar
         Stop of the time window for the permutation test (default is the
         end of ``y``).
-    match : categorial | False
+    match : categorial | bool
         When permuting data, only shuffle the cases within the categories
         of match. By default, ``match`` is determined automatically based on
         the random efects structure of ``x``.

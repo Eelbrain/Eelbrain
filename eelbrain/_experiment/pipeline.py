@@ -2499,7 +2499,7 @@ class Pipeline(StateModel):
 
         Returns
         -------
-        path : Path
+        path : pathlib.Path
             Path to the ICA file.
 
         Notes
