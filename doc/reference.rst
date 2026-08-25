@@ -38,6 +38,7 @@ NDVar dimensions (not usually initialized by themselves but through
 .. autosummary::
    :toctree: generated
 
+   Dimension
    Case
    Categorial
    Scalar
@@ -46,6 +47,14 @@ NDVar dimensions (not usually initialized by themselves but through
    VolumeSourceSpace
    Space
    UTS
+
+
+Exceptions:
+
+.. autosummary::
+   :toctree: generated
+
+   DimensionMismatchError
 
 
 .. _reference-io:
@@ -137,7 +146,9 @@ functions. See also :class:`NDVar` methods.
 .. autosummary::
    :toctree: generated
 
+   BadChannelWindow
    Butterworth
+   ChannelModel
    complete_source_space
    concatenate
    convolve
@@ -178,6 +189,7 @@ Temporal Response Functions
 
    boosting
    BoostingResult
+   Splits
    epoch_impulse_predictor
    event_impulse_predictor
 
@@ -249,6 +261,13 @@ Mass-Univariate Statistics
    testnd.Correlation
    testnd.Vector
    testnd.VectorDifferenceRelated
+
+All results share the attributes of their base class:
+
+.. autosummary::
+   :toctree: generated
+
+   testnd.NDTest
 
 The tests in this module produce maps of statistical parameters, and implement different methods to compute corresponding maps of *p*-values that are corrected for multiple comparison:
 
@@ -703,6 +722,7 @@ Result containers:
 
    ROITestResult
    ROI2StageResult
+   TRFJob
 
 Participant groups:
 
@@ -733,6 +753,7 @@ Event variables:
    EvalVar
    GroupVar
    LabelVar
+   Variables
 
 Epochs:
 
@@ -775,6 +796,13 @@ Brain parcellations:
    FSAverageParc
    SeededParc
    IndividualSeededParc
+
+Exceptions:
+
+.. autosummary::
+   :toctree: generated
+
+   ProtectedArtifactError
 
 
 ^^^^^^^^

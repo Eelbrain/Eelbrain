@@ -55,7 +55,7 @@ class ManualRejection(EpochRejection):
 class ChannelModelRejection(EpochRejection):
     """Automatically generated rejection using a :class:`ChannelModel` (EEG only).
 
-    A :class:`~eelbrain._meeg.ChannelModel` is fit to predict each EEG sensor
+    A :class:`ChannelModel` is fit to predict each EEG sensor
     from the others; in each epoch, channels that are poorly predicted (error
     above ``score_threshold``) are considered bad. An epoch with more than
     ``max_interpolate`` bad channels is rejected; otherwise its bad channels are

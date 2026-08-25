@@ -1,7 +1,7 @@
 :orphan:
 
 ***********************************
-The :class:`Pipeline`
+The :class:`~pipeline.Pipeline`
 ***********************************
 
 This guide has moved and is now organized by analysis stage:

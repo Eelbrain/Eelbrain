@@ -79,12 +79,12 @@ Which will plot a 10 s excerpt and allow scrolling through the rest of the data.
 
 For EEG, make sure the ``montage`` and ``adjacency`` are defined correctly.
 They can customized by adding :class:`RawSource` to :attr:`Pipeline.raw`.
-These can be tested with :class:`.plot.SensorMap`::
+These can be tested with :class:`plot.SensorMap`::
 
     >>> raw = e.load_raw(raw='raw')
     >>> plot.SensorMap(raw, adjacency=True)
 
-:class:`.plot.SensorMap` is also useful for determining sensor names for
+:class:`plot.SensorMap` is also useful for determining sensor names for
 :attr:`Pipeline.references`.
 
 

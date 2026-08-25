@@ -872,7 +872,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         return super().load_view(ctx, view)
 
     def _check_protected(self, ctx: Request) -> None:
-        """Raise :exc:`ProtectedArtifactError` when recomputing would replace a stale ICA file.
+        """Raise :exc:`pipeline.ProtectedArtifactError` when recomputing would replace a stale ICA file.
 
         Unlike a standard :class:`Derivative`, an ICA file may contain manual
         component-rejection decisions and must not be silently overwritten when

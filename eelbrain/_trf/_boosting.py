@@ -154,8 +154,8 @@ class BoostingResult(PickleableDataClass):
         Scale by which ``x`` was divided.
     splits : Splits
         Data splits used for cross-validation.
-        Use :meth:`.splits.plot` to visualize the cross-validation scheme.
-    partition_results : list of BoostingResuls
+        Use :meth:`Splits.plot` to visualize the cross-validation scheme.
+    partition_results : list of BoostingResult
         If :func:`boosting` is called with ``partition_results=True``, this
         attribute contains the results for the individual test paritions.
     algorithm_version : int
@@ -1008,7 +1008,7 @@ def boosting(
         value (when ``error='l1'``). Use ``'inplace'`` to save memory by scaling
         the original objects specified as ``y`` and ``x`` instead of making a
         copy. The data scale is stored in the :class:`BoostingResult:
-        :attr:`.y_mean``, :attr:`.y_scale`, :attr:`.x_mean`, and :attr:`.x_scale`
+        :attr:`BoostingResult.y_mean`, :attr:`BoostingResult.y_scale`, :attr:`BoostingResult.x_mean`, and :attr:`BoostingResult.x_scale`
         attributes.
     delta
         Step for changes in the kernel.

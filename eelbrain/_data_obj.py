@@ -1329,9 +1329,9 @@ class Var(Named):
     -----
     While :py:class:`Var` objects support a few basic operations in a
     :py:mod:`numpy`-like fashion (``+``, ``-``, ``*``, ``/``, ``//``), their
-    :py:attr:`Var.x` attribute provides access to the corresponding
+    :attr:`Var.x` attribute provides access to the corresponding
     :py:class:`numpy.array` which can be used for anything more complicated.
-    :py:attr:`Var.x` can be read and modified, but should not be replaced.
+    :attr:`Var.x` can be read and modified, but should not be replaced.
     """
     df = 1
     ndim = 1
@@ -2363,13 +2363,13 @@ class Factor(_Effect):
 
     Attributes
     ----------
-    .name : None | str
+    name : None | str
         The Factor's name.
-    .cells : tuple of str
+    cells : tuple of str
         Ordered names of all cells. Order is determined 1) by the order of
         cells in the ``labels`` argument, and 2) for cells that do not occur in
         ``labels`` it is determined by first occurrence in ``x``.
-    .random : bool
+    random : bool
         Whether the factor represents a random or fixed effect (for ANOVA).
 
     Examples
@@ -3220,20 +3220,30 @@ class NDVar(Named):
         A dictionary with data properties (can contain arbitrary
         information that will be accessible in the info attribute).
 
+    Attributes
+    ----------
+    x : numpy.ndarray
+        The data.
+    dims : tuple of Dimension
+        The dimensions characterizing the axes of the data.
+    info : dict
+        Data properties.
+    name : None | str
+        The NDVar's name.
 
     Notes
     -----
     An :class:`NDVar` consists of the following components:
 
-    - A :class:`numpy.ndarray`, stored in the :attr:`.x` attribute.
+    - A :class:`numpy.ndarray`, stored in the :attr:`NDVar.x` attribute.
     - Meta-information describing each axis of the array using a
       :class:`Dimension` object (for example, :class:`UTS` for uniform
       time series, or :class:`Sensor` for a sensor array). These
-      dimensions are stored in the :attr:`.dims` attribute, with the ith
-      element of :attr:`.dims` describing the ith axis of :attr:`.x`.
+      dimensions are stored in the :attr:`NDVar.dims` attribute, with the ith
+      element of :attr:`NDVar.dims` describing the ith axis of :attr:`NDVar.x`.
     - A dictionary containing other meta-information stored in the
-      :attr:`.info` attribute.
-    - A name stored in the :attr:`.name` attribute.
+      :attr:`NDVar.info` attribute.
+    - A name stored in the :attr:`NDVar.name` attribute.
 
     :class:`NDVar` objects support the native :func:`abs` and :func:`round`
     functions.
@@ -3246,9 +3256,9 @@ class NDVar(Named):
     ``ndvar.sub(time=0.1)``, regardless of which axis represents the time
     dimension.
 
-    *Shallow copies*: When generating a derived NDVars, :attr:`x` and
-    :attr:`dims` are generated without copying data whenever possible.
-    A shallow copy of :attr:`info` is stored. This means that modifying a
+    *Shallow copies*: When generating a derived NDVars, :attr:`NDVar.x` and
+    :attr:`NDVar.dims` are generated without copying data whenever possible.
+    A shallow copy of :attr:`NDVar.info` is stored. This means that modifying a
     derived NDVar in place can affect the NDVar it was derived from.
     When indexing an NDVar, the new NDVar will contain a view
     on the data whenever possible based on the underlying array (See `NumPy
@@ -10220,8 +10230,9 @@ class SourceSpaceBase(Dimension):
 
         Parameters
         ----------
-        seeds : array_like, (3,) | (n, 3)
-            Seed location(s) around which to build index.
+        seeds : array_like
+            Seed location(s) around which to build index; shape ``(3,)`` for a
+            single seed or ``(n, 3)`` for several.
         extent : float
             Index vertices closer than this (in m in 3d space).
         name : str
@@ -10429,6 +10440,8 @@ class SourceSpace(SourceSpaceBase):
         Orientation (direction) of each source.
     parc : Factor
         Parcellation (one label for each source).
+    subjects_dir : str
+        FreeSurfer subjects directory.
 
     See Also
     --------

@@ -60,7 +60,7 @@ napoleon_google_docstring = False
 napoleon_include_init_with_doc = True
 napoleon_include_special_with_doc = False
 napoleon_use_param = True
-napoleon_use_ivar = True
+napoleon_use_ivar = False  # render attributes as directives, which creates cross-reference targets
 napoleon_use_keyword = True
 napoleon_use_rtype = True
 
@@ -313,9 +313,8 @@ intersphinx_mapping = {
     'nilearn': ('https://nilearn.github.io/stable', None),
     'numpy': ('https://numpy.org/doc/stable', None),
     'pandas': ('https://pandas.pydata.org/docs', None),
-    'rpy2': ('https://rpy2.github.io/doc/latest/html', None),
     'scipy': ('https://docs.scipy.org/doc/scipy', None),
-    'sphinx': ('https://www.sphinx-doc.org/en/master/', None),
+    'sklearn': ('https://scikit-learn.org/stable', None),
     'surfer': ('https://pysurfer.github.io', None),
 }
 # http://sphinx.pocoo.org/ext/intersphinx.html
@@ -345,6 +344,24 @@ _environment_yml_url_placeholder = '{{ environment_yml_url }}'
 def resolve_build_urls(app, docname, source):
     """Resolve URL placeholders that occur inside literal blocks."""
     source[0] = source[0].replace(_environment_yml_url_placeholder, environment_yml_url)
+
+
+def resolve_reference(app, env, node, contnode):
+    """Handle Python references that Sphinx could not resolve.
+
+    Sphinx only searches the current module (set with ``currentmodule``) and the global namespace, so a reference like ``:class:`plot.SensorMap``` fails wherever the current module is not ``eelbrain``. Retry those in the ``eelbrain`` namespace.
+
+    The changelog refers to objects that have since been renamed or removed; leave those as plain text instead of failing the build.
+    """
+    if node['refdomain'] != 'py':
+        return None
+    elif node.get('refdoc') == 'changes':
+        return contnode
+    target = node['reftarget']
+    if target.startswith('eelbrain.'):
+        return None
+    return env.domains['py'].resolve_xref(env, node.get('refdoc', env.docname), app.builder, node['reftype'], f'eelbrain.{target}', node, contnode)
+
 
 # Add any paths that contain custom themes here, relative to this directory.
 # html_theme_path = []
@@ -466,6 +483,7 @@ man_pages = [
 def setup(app):
     """Set up the Sphinx app."""
     app.connect('source-read', resolve_build_urls)
+    app.connect('missing-reference', resolve_reference)
     # ensure we have the data necessary to build examples
     logger.info("Ensuring example data is available")
     mne.datasets.sample.data_path(verbose=True)

@@ -76,8 +76,8 @@ The inverse solution is selected through the :ref:`state-inv` state, most conven
 Once these are set, source-space data is loaded by the same methods that load sensor-space data — for example, :meth:`Pipeline.load_evoked` and :meth:`Pipeline.load_epochs` return source estimates when ``inv`` is set (``src_baseline`` and ``morph`` parameters), and TRFs are fit in source space (see :doc:`trf`).
 
 
-Parcellations (:attr:`parcs`)
-=============================
+Parcellations (:attr:`Pipeline.parcs`)
+======================================
 
 .. py:attribute:: Pipeline.parcs
 
@@ -153,7 +153,7 @@ The method for correcting the sensor covariance.
 'emptyroom'
     Empty room covariance; for required setup, see :ref:`Pipeline-intro-cov`.
 'ad_hoc'
-    Use diagonal covariance based on :func:`mne.cov.make_ad_hoc_cov`.
+    Use diagonal covariance based on :func:`mne.make_ad_hoc_cov`.
 
 
 .. _state-src:

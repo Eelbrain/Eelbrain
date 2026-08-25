@@ -299,7 +299,7 @@ class Variables(Configuration):
     Parameters
     ----------
     arg
-        Dictionary mapping variable names to :class:`VarDef` instances.
+        Dictionary mapping variable names to variable definitions (:class:`EvalVar`, :class:`GroupVar` or :class:`LabelVar`).
 
     Attributes
     ----------
@@ -338,7 +338,7 @@ class Variables(Configuration):
         ----------
         deferred
             Names of across-subject variables from an enclosing scope.
-            :attr:`Test.vars` are applied on top of :attr:`Pipeline.variables`,
+            A test's ``vars`` are applied on top of :attr:`Pipeline.variables`,
             so a test variable can read a global one.
 
         Notes
@@ -367,7 +367,7 @@ class Variables(Configuration):
         """Make sure every :class:`GroupVar` refers to defined groups
 
         Checked by the :class:`Pipeline`, which is what knows the groups: these are
-        also :attr:`Test.vars`, user-defined objects shared between pipelines that may
+        also a test's ``vars``, user-defined objects shared between pipelines that may
         define different groups. Resolving a ``GroupVar`` happens in ``fingerprint()``,
         where a configuration error would surface during a cache-validity check.
         """
@@ -410,7 +410,7 @@ class Variables(Configuration):
             Only add the across-subject variables. For :attr:`Pipeline.variables`
             on data that combines subjects, where the event variables are already
             present, applied per subject: re-deriving them from columns that have
-            been averaged would not reproduce them. Not for :attr:`Test.vars`,
+            been averaged would not reproduce them. Not for a test's ``vars``,
             which are applied to the combined data in full.
         require_inputs
             ``data`` holds every column that will ever be available, so a

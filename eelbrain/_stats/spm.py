@@ -520,7 +520,7 @@ class LMGroup:
         return table
 
     def compute_column_ttests(self, *args, **kwargs):
-        """Compute all tests and store them in :attr:`self.tests`
+        """Compute all tests and store them in :attr:`~testnd.LMGroup.tests`
 
         Parameters like :meth:`.column_ttest`, starting with ``popmean``.
         """

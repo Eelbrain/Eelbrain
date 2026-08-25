@@ -1165,7 +1165,7 @@ class PipelineFrame(EelbrainFrame):
     def _on_job_skipped(self, token, scope, combo):
         """Restore a row after the user declined to compute it.
 
-        Only the ICA task can get here (only its :exc:`ProtectedArtifactError` is
+        Only the ICA task can get here (only its :exc:`pipeline.ProtectedArtifactError` is
         offered to the user), and only by leaving the existing file alone, so the
         row ends up as it would after a refresh: ``'stale'``, with the detail
         columns left at the placeholder ``_queue_jobs`` wrote.

@@ -84,6 +84,9 @@ class NDTest:
 
     Attributes
     ----------
+    clusters : Dataset | None
+        Table of all the clusters found (None if no clusters were found, or if
+        no clustering was performed).
     p : NDVar | None
         Map of p-values corrected for multiple comparison (or None if no
         correction was performed).

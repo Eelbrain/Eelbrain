@@ -23,7 +23,7 @@ Style
 
 In order to produce multiple plots with consistent style it is useful to set
 some :mod:`matplotlib` options globally. One way to do this is by updating
-:attr:`matplotlib.rcParams` at the beginning of a script/notebook, e.g.::
+:data:`matplotlib.rcParams` at the beginning of a script/notebook, e.g.::
 
     from matplotlib import pyplot
 

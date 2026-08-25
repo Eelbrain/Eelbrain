@@ -4,7 +4,7 @@
 A TRF fit is split into two stages so that a single fit can be computed on a
 machine that does not have the raw data; see
 :mod:`eelbrain._experiment.derivative_cache.job` for the generic machinery.
-:class:`TRFJob` is the data-carrying half; the host-side half is the generic
+:class:`pipeline.TRFJob` is the data-carrying half; the host-side half is the generic
 :class:`~eelbrain._experiment.derivative_cache.job.JobSpec`, created by
 :meth:`Pipeline._trf_job_spec`.
 """
@@ -24,15 +24,15 @@ if TYPE_CHECKING:
 class TRFJob(Job):
     """A picklable TRF fitting job carrying its data
 
-    Like a deferred :func:`functools.partial` over :meth:`Estimator._fit`: it
+    Like a deferred :func:`functools.partial` over ``Estimator._fit``: it
     holds the estimator and the already-loaded fitting arguments, so it can be
     pickled, executed on a machine without the raw data, and the result pickled
-    back. Created by :meth:`TRFDerivative.make_job` / :meth:`Pipeline.load_trf_job`.
+    back. Created by ``TRFDerivative.make_job`` / :meth:`Pipeline.load_trf_job`.
 
     Parameters
     ----------
     estimator
-        The :class:`Estimator` that fits the model.
+        The ``Estimator`` that fits the model.
     y
         Response (a single :class:`NDVar`, or a :class:`Datalist` of
         :class:`NDVar` for variable-length epochs).

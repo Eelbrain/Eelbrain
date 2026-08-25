@@ -67,6 +67,7 @@ def merge_segments(
 
 @dataclass(eq=False)
 class Splits(PickleableDataClass, EQMixIn):
+    """The cross-validation scheme used by :func:`boosting` (:attr:`BoostingResult.splits`)"""
     splits: list[Split]
     partitions_arg: int | None
     n_partitions: int
@@ -92,7 +93,7 @@ class Splits(PickleableDataClass, EQMixIn):
         return f"<Splits: {desc} split into {len(self.split_segments)} sections{items}>"
 
     def plot(self, **kwargs):
-        """Plot data splits (see :class:`plot.SplitFigure` for parameters)"""
+        """Plot data splits (see :class:`plot.DataSplit` for parameters)"""
         from ..plot import DataSplit
 
         return DataSplit(self, **kwargs)

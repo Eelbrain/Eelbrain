@@ -107,7 +107,7 @@ class UTSStat(LegendMixin, XAxisMixin, YLimMixin, EelFigure):
         ``colors`` using :class:`plot.Style`.
     clusters
         Clusters to add to the plots. The clusters should be provided as
-        Dataset, as stored in test results' :py:attr:`.clusters`.
+        Dataset, as stored in test results' :attr:`testnd.NDTest.clusters`.
     pmax
         Maximum p-value of clusters to plot as solid.
     ptrend
@@ -296,7 +296,7 @@ class UTSStat(LegendMixin, XAxisMixin, YLimMixin, EelFigure):
         clusters
             A dataset with the clusters to visualize.
             Uses the format of clusters stored in test results'
-            :py:attr:`.clusters`.
+            :attr:`testnd.NDTest.clusters`.
             This should include at least ``tstart`` and ``tstop`` columns.
             It can also optionally contain an ``effect`` column to use different
             ``color`` and ``y`` levels for different types of clusters.

@@ -746,7 +746,7 @@ New in 0.4
 ----------
 
 * Optimized ANOVA evaluation, support for unbalanced fixed effects models.
-* `rpy2 <http://rpy.sourceforge.net>`_ interaction: :meth:`Dataset.from_r` to
+* `rpy2 <https://rpy2.github.io>`_ interaction: :meth:`Dataset.from_r` to
   create a :class:`Dataset` from an R Data Frame, and :meth:`Dataset.to_r` to
   cerate an R Data Frame from a :class:`Dataset`.
 

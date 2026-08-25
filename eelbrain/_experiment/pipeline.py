@@ -1756,7 +1756,7 @@ class Pipeline(StateModel):
             that it was created from the current data and ICA settings, for
             example after changing the raw preprocessing used to estimate the
             ICA. This rewrites the bookkeeping for that file instead of
-            raising :class:`ProtectedArtifactError`. Use this only when you
+            raising :exc:`ProtectedArtifactError`. Use this only when you
             intentionally want to keep the existing file on your own
             responsibility instead of reverting those changes or recomputing
             the ICA. When Eelbrain detects a mismatch, the error message names
@@ -2152,7 +2152,7 @@ class Pipeline(StateModel):
             ``{roi: dataset}`` dictionary).
         res : NDTest | ROITestResult
             Test result for the specified test (for ROIs tests,
-            an :class:`~_experiment.ROITestResult` object).
+            an :class:`ROITestResult` object).
         """
         test_obj = self.tests[test]
         self.set(**state)

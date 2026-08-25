@@ -332,7 +332,7 @@ class TRFDerivative(Derivative[object]):
         return self.make_job(ctx)()
 
     def make_job(self, ctx: Request) -> TRFJob:
-        """Load the data and assemble a picklable :class:`TRFJob` (the fit deferred).
+        """Load the data and assemble a picklable :class:`pipeline.TRFJob` (the fit deferred).
 
         Parameters
         ----------
