@@ -499,7 +499,7 @@ class SuperEpoch(Epoch):
 
     Parameters
     ----------
-    sub_epochs : sequence of str
+    sub_epochs
         Tuple of epoch names. These epochs are combined to form the super-epoch.
         Epochs are merged at the level of events, so the base epochs can not
         contain post-baseline trigger shifts which are applied after loading
@@ -514,7 +514,7 @@ class SuperEpoch(Epoch):
     DICT_ATTRS = Epoch.DICT_ATTRS + ('sub_epochs',)
     INHERITED_PARAMS = ('tmin', 'tmax', 'decim', 'samplingrate', 'baseline')
 
-    def __init__(self, sub_epochs, **kwargs):
+    def __init__(self, sub_epochs: Sequence[str], **kwargs):
         self.sub_epochs = tuple(sub_epochs)
         self._kwargs = kwargs
 

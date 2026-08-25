@@ -616,7 +616,7 @@ class TTestOneSample(TTest):
         names of Dataset variables.
     popmean : float
         Population mean to test against (default 0).
-    tail : 0 | 1 | -1
+    tail
         Which tail of the t-distribution to consider:
         0: both (two-tailed, default);
         1: upper tail (one-tailed);
@@ -647,7 +647,7 @@ class TTestOneSample(TTest):
             sub: IndexArg = None,
             data: Dataset = None,
             popmean: float = 0,
-            tail: int = 0,
+            tail: Literal[-1, 0, 1] = 0,
     ):
         ct = Celltable(y, None, match, sub, data=data, coercion=asvar)
         n = len(ct.y)
@@ -702,7 +702,7 @@ class TTestIndependent(TTest):
     data : Dataset
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
-    tail : 0 | 1 | -1
+    tail
         Which tail of the t-distribution to consider:
         0: both (two-tailed, default);
         1: upper tail (one-tailed);
@@ -731,7 +731,7 @@ class TTestIndependent(TTest):
             match: CategorialArg = None,
             sub: IndexArg = None,
             data: Dataset = None,
-            tail: int = 0,
+            tail: Literal[-1, 0, 1] = 0,
     ):
         y, y1, y0, c1, c0, match, x_name, c1_name, c0_name = _independent_measures_args(y, x, c1, c0, match, data, sub)
 
@@ -807,7 +807,7 @@ class MannWhitneyU:
     data : Dataset
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
-    tail : 0 | 1 | -1
+    tail
         Which tail of the t-distribution to consider:
         0: both (two-tailed, default);
         1: upper tail (one-tailed);
@@ -844,7 +844,7 @@ class MannWhitneyU:
             match: CategorialArg = None,
             sub: IndexArg = None,
             data: Dataset = None,
-            tail: int = 0,
+            tail: Literal[-1, 0, 1] = 0,
             continuity: bool = True,
     ):
         y, y1, y0, c1, c0, match, x_name, c1_name, c0_name = _independent_measures_args(y, x, c1, c0, match, data, sub)
@@ -914,7 +914,7 @@ class TTestRelated(TTest):
     data : Dataset
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
-    tail : 0 | 1 | -1
+    tail
         Which tail of the t-distribution to consider:
         0: both (two-tailed, default);
         1: upper tail (one-tailed);
@@ -955,7 +955,7 @@ class TTestRelated(TTest):
             match: CategorialArg = None,
             sub: IndexArg = None,
             data: Dataset = None,
-            tail: int = 0,
+            tail: Literal[-1, 0, 1] = 0,
     ):
         y1, y0, c1, c0, match, n, x_name, c1_name, c0_name = _related_measures_args(y, x, c1, c0, match, data, sub)
         if n <= 2:
@@ -1024,7 +1024,7 @@ class WilcoxonSignedRank:
     data : Dataset
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
-    tail : 0 | 1 | -1
+    tail
         Which tail of the t-distribution to consider:
         0: both (two-tailed, default);
         1: upper tail (one-tailed);
@@ -1069,7 +1069,7 @@ class WilcoxonSignedRank:
             match: CategorialArg = None,
             sub: IndexArg = None,
             data: Dataset = None,
-            tail: int = 0,
+            tail: Literal[-1, 0, 1] = 0,
             zero_method: str = 'wilcox',
             correction: bool = False,
     ):
@@ -1298,14 +1298,14 @@ def pairwise_correlations(
 
     Parameters
     ----------
-    xs : sequence of Var | NDVar
+    xs
         Variables to correlate.
     sub : index
         Use only a subset of the data
     data : Dataset
         If a Dataset is given, all data-objects can be specified as names of
         Dataset variables.
-    labels : {str: str} dict
+    labels
         Alternative labels for ``xs`` as ``{x.name: label}`` dictionary.
 
     Returns

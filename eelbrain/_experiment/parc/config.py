@@ -143,7 +143,7 @@ class CombinationParc(Parcellation):
     base
         The name of the parcellation that provides the input labels. A common
         ``base`` is the ``'aparc'`` parcellation [1]_.
-    labels : dict  {str: str}
+    labels
         New labels to create in ``{name: expression}`` format. All label names
         should be composed of alphanumeric characters (plus underline) and should
         not contain the -hemi tags. In order to create a given label only on one
@@ -200,7 +200,7 @@ class CombinationParc(Parcellation):
     def __init__(
             self,
             base: str,
-            labels: dict,
+            labels: dict[str, str],
             views: str | Sequence[str] = None,
     ):
         Parcellation.__init__(self, views)

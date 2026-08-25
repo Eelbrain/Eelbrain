@@ -240,7 +240,7 @@ def colors_for_categorial(x, hue_start=0.2, cmap=None):
 
 
 def colors_for_oneway(
-        cells,
+        cells: Sequence[str],
         hue_start: float | Sequence[float] = 0.2,
         light_range: float | tuple[float, float] = 0.5,
         cmap: str = None,
@@ -253,11 +253,11 @@ def colors_for_oneway(
 
     Parameters
     ----------
-    cells : sequence of str
+    cells
         Cells for which to assign colors.
     hue_start
         First hue value (``0 <= hue < 1``) or list of hue values.
-    light_range : scalar | tuple of 2 scalar
+    light_range
         Scalar that specifies the amount of lightness variation (default 0.5).
         If positive, the first color is lightest; if negative, the first color
         is darkest. A tuple can be used to specify exact end-points (e.g.,

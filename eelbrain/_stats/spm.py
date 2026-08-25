@@ -399,7 +399,7 @@ class LMGroup:
         x = np.concatenate([lm._coefficient(term) for lm in self._lms])
         return NDVar(x, (Case,) + self.dims, name=term)
 
-    def coefficients_dataset(self, terms=None, long=False):
+    def coefficients_dataset(self, terms: str | Sequence[str] = None, long: bool = False):
         """Regression coefficients in a :class:`Dataset`
 
         By default, each regression coefficient is assigned as separate column.
@@ -409,9 +409,9 @@ class LMGroup:
 
         Parameters
         ----------
-        terms : str | sequence of str
+        terms
             Terms for which to retrieve coefficients (default is all terms).
-        long : bool
+        long
             Produce a table in long form.
 
         Returns

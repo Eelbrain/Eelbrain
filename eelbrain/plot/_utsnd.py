@@ -394,13 +394,13 @@ class Butterfly(TimeSlicerEF, LegendMixin, TopoMapKey, YLimMixin, XAxisMixin, Ee
 
     Parameters
     ----------
-    y : (list of) NDVar
+    y
         Data to plot.
     xax : None | categorial
         Create a separate plot for each cell in this model.
     sensors: None or list of sensor IDs
         sensors to plot (``None`` = all)
-    axtitle : bool | sequence of str
+    axtitle
         Title for the individual axes. The default is to show the names of the
         epochs, but only if multiple axes are plotted.
     xlabel

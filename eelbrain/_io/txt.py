@@ -46,7 +46,7 @@ def tsv(
     path : str
         Path to the file (if omitted, use a system file dialog). Files ending
         in ``*.gz`` are automatically decompressed.
-    names : Sequence of str | bool
+    names
         Column/variable names.
 
         * ``True`` (default): look for names on the first line of the file
@@ -85,7 +85,7 @@ def tsv(
         by default as ``Factor(['5', '3', ''])``.
         With ``empty=0``, it is read as ``Var([5, 3, 0])``.
         With ``empty='nan'``, it is read as ``Var([5, 3, nan])``.
-    random : str | sequence of str
+    random
         Names of the columns that should be assigned as random factor.
     strip
         Strip white-space from all categorial variables.

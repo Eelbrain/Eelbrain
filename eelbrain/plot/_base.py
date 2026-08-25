@@ -2048,14 +2048,14 @@ class EelFigure(MatplotlibFigure):
         """
         self.figure.savefig(*args, **kwargs)
 
-    def add_hline(self, y, axes=None, *args, **kwargs):
+    def add_hline(self, y: float, axes: int | Sequence[int] = None, *args, **kwargs):
         """Draw a horizontal line on one or more axes
 
         Parameters
         ----------
-        y : scalar
+        y
             Level at which to draw the line.
-        axes : int | list of int
+        axes
             Which axes to mark (default is all axes).
         ...
             :meth:`matplotlib.axes.Axes.axhline` parameters.
@@ -2070,16 +2070,16 @@ class EelFigure(MatplotlibFigure):
             ax.axhline(y, *args, **kwargs)
         self.draw()
 
-    def add_hspan(self, bottom, top, axes=None, *args, **kwargs):
+    def add_hspan(self, bottom: float, top: float, axes: int | Sequence[int] = None, *args, **kwargs):
         """Draw a horizontal bar on one or more axes
 
         Parameters
         ----------
-        bottom : scalar
+        bottom
             Bottom end of the horizontal bar.
-        top : scalar
+        top
             Top end of the horizontal bar.
-        axes : int | list of int
+        axes
             Which axes to mark (default is all axes).
         ...
             :meth:`matplotlib.axes.Axes.axvspan` parameters.
@@ -2094,14 +2094,14 @@ class EelFigure(MatplotlibFigure):
             ax.axhspan(bottom, top, *args, **kwargs)
         self.draw()
 
-    def add_vline(self, x, axes=None, *args, **kwargs):
+    def add_vline(self, x: float, axes: int | Sequence[int] = None, *args, **kwargs):
         """Draw a vertical line on one or more axes
 
         Parameters
         ----------
-        x : scalar
+        x
             Value at which to place the vertical line.
-        axes : int | list of int
+        axes
             Which axes to mark (default is all axes).
         ...
             :meth:`matplotlib.axes.Axes.axvspan` parameters.
@@ -2116,16 +2116,16 @@ class EelFigure(MatplotlibFigure):
             ax.axvline(x, *args, **kwargs)
         self.draw()
 
-    def add_vspan(self, xmin, xmax, axes=None, *args, **kwargs):
+    def add_vspan(self, xmin: float, xmax: float, axes: int | Sequence[int] = None, *args, **kwargs):
         """Draw a vertical bar on one or more axes
 
         Parameters
         ----------
-        xmin : scalar
+        xmin
             Start value on the x-axis.
-        xmax : scalar
+        xmax
             Last value on the x-axis.
-        axes : int | list of int
+        axes
             Which axes to mark (default is all axes).
         ...
             :meth:`matplotlib.axes.Axes.axvspan` parameters.
@@ -2959,14 +2959,14 @@ class ColorMapMixin(ColorBarMixin):
             p.add_contour(meas, level, color)
         self.draw()
 
-    def set_cmap(self, cmap, meas=None):
+    def set_cmap(self, cmap: str | Colormap, meas: str = None):
         """Change the colormap in the array plots
 
         Parameters
         ----------
-        cmap : str | colormap
+        cmap
             New colormap.
-        meas : None | str
+        meas
             Measurement to which to apply the colormap. With None, it is
             applied to all.
         """
@@ -2981,7 +2981,7 @@ class ColorMapMixin(ColorBarMixin):
         else:
             self.draw()
 
-    def set_vlim(self, v=None, vmax=None, meas=None):
+    def set_vlim(self, v: float = None, vmax: float = None, meas: str = None):
         """Change the colormap limits
 
         If the limit is symmetric, use ``set_vlim(vlim)``; if it is not, use
@@ -2989,14 +2989,14 @@ class ColorMapMixin(ColorBarMixin):
 
         Parameters
         ----------
-        v : scalar
+        v
             If this is the only value specified it is interpreted as the upper
             end of the scale, and the lower end is determined based on
             the colormap to be ``-v`` or ``0``. If ``vmax`` is also specified,
             ``v`` specifies the lower end of the scale.
-        vmax : scalar (optional)
+        vmax
             Upper end of the color scale.
-        meas : str (optional)
+        meas
             Measurement type to apply (default is the first one found).
         """
         if meas is None:
@@ -3790,14 +3790,14 @@ class XAxisMixin:
         if draw:
             self.draw()
 
-    def add_vspans(self, intervals, axes=None, *args, **kwargs):
+    def add_vspans(self, intervals: Sequence[tuple[float, float]], axes: int | Sequence[int] = None, *args, **kwargs):
         """Draw vertical bars over axes
 
         Parameters
         ----------
-        intervals : sequence of (start, stop) tuples
+        intervals
             Start and stop positions on the x-axis.
-        axes : int | list of int
+        axes
             Which axes to mark (default is all axes).
         additonal arguments :
             Additional arguments for :meth:`matplotlib.axes.Axes.axvspan`.

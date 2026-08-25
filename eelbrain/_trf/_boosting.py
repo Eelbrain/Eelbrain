@@ -994,13 +994,13 @@ def boosting(
         treated as different trials which share a filter. For correlation fit
         metrics, a :class:`Space` dimension is interpreted as defining a vector
         measure.
-    x : NDVar | sequence of NDVar
+    x
         Signal to use to predict ``y``. Can be sequence of NDVars to include
         multiple predictors. Time dimension must correspond to ``y``.
-    tstart : scalar | sequence of scalar
+    tstart
         Start of the TRF in seconds. A list can be used to specify different
         values for each item in ``x``.
-    tstop : scalar | sequence of scalar
+    tstop
         Stop of the TRF in seconds. Format must match ``tstart``.
     scale_data : bool | 'inplace'
         Scale ``y`` and ``x`` before boosting: subtract the mean and divide by

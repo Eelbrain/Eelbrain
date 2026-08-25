@@ -741,7 +741,7 @@ class Pipeline(StateModel):
         ----------
         field : str
             Field for which to find values.
-        exclude : list of str
+        exclude
             Exclude these values.
         ...
             State parameters.
@@ -2572,7 +2572,7 @@ class Pipeline(StateModel):
         samplingrate
             Samplingrate in Hz for the visualization (set to a lower value to
             improve GUI performance; the default is the epoch setting).
-        auto : scalar (optional)
+        auto
             Perform automatic rejection instead of showing the GUI by supplying
             a an absolute threshold (for example, ``1e-12`` to reject any epoch
             in which the absolute of at least one channel exceeds 1 picotesla).

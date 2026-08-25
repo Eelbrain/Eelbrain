@@ -36,7 +36,7 @@ class UTSStat(LegendMixin, XAxisMixin, YLimMixin, EelFigure):
     data
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
-    main : func | None
+    main
         Measure for the central tendency (function that takes an ``axis``
         argument). The default is numpy.mean.
     error

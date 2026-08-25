@@ -33,6 +33,7 @@ import socket
 from threading import Thread
 from time import time as current_time
 from collections.abc import Iterable
+from typing import Literal
 
 import numpy as np
 import scipy.stats
@@ -384,7 +385,7 @@ class NDTest:
     def _max_statistic_from_map(
             stat_map: NDVar,
             p_map: NDVar,
-            tail: int,
+            tail: Literal[-1, 0, 1],
             mask: NDVar = None,
             return_time: bool = False,
             return_p: bool = False,
@@ -459,7 +460,7 @@ class TContrastRelated(NDTest):
     data : Dataset
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
-    tail : 0 | 1 | -1
+    tail
         Which tail of the t-distribution to consider:
         0: both (two-tailed);
         1: upper tail (one-tailed);
@@ -543,7 +544,7 @@ class TContrastRelated(NDTest):
             match: CategorialArg = None,
             sub: CategorialArg = None,
             data: Dataset = None,
-            tail: int = 0,
+            tail: Literal[-1, 0, 1] = 0,
             samples: int = 10000,
             pmin: float = None,
             tmin: float = None,
@@ -877,7 +878,7 @@ class TTestOneSample(NDDifferenceTest):
     data : Dataset
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables
-    tail : 0 | 1 | -1
+    tail
         Which tail of the t-distribution to consider:
         0: both (two-tailed);
         1: upper tail (one-tailed);
@@ -949,7 +950,7 @@ class TTestOneSample(NDDifferenceTest):
             match: CategorialArg = None,
             sub: IndexArg = None,
             data: Dataset = None,
-            tail: int = 0,
+            tail: Literal[-1, 0, 1] = 0,
             samples: int = 10000,
             pmin: float = None,
             tmin: float = None,
@@ -1085,7 +1086,7 @@ class TTestIndependent(NDDifferenceTest):
     data : Dataset
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
-    tail : 0 | 1 | -1
+    tail
         Which tail of the t-distribution to consider:
         0: both (two-tailed);
         1: upper tail (one-tailed);
@@ -1162,7 +1163,7 @@ class TTestIndependent(NDDifferenceTest):
             match: CategorialArg = None,
             sub: IndexArg = None,
             data: Dataset = None,
-            tail: int = 0,
+            tail: Literal[-1, 0, 1] = 0,
             samples: int = 10000,
             pmin: float = None,
             tmin: float = None,
@@ -1308,7 +1309,7 @@ class TTestRelated(NDMaskedC1Mixin, NDDifferenceTest):
     data : Dataset
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
-    tail : 0 | 1 | -1
+    tail
         Which tail of the t-distribution to consider:
         0: both (two-tailed, default);
         1: upper tail (one-tailed);
@@ -1394,7 +1395,7 @@ class TTestRelated(NDMaskedC1Mixin, NDDifferenceTest):
             match: CategorialArg = None,
             sub: IndexArg = None,
             data: Dataset = None,
-            tail: int = 0,
+            tail: Literal[-1, 0, 1] = 0,
             samples: int = 10000,
             pmin: float = None,
             tmin: float = None,

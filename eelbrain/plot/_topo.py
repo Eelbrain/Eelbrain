@@ -68,7 +68,7 @@ class Topomap(SensorMapMixin, ColorMapMixin, TopoMapKey, EelFigure):
     interpolation
         Method for interpolating topo-map between sensors (default is based on
         mne-python).
-    clip : bool | 'even' | 'circle'
+    clip
         Outline for clipping topomaps: 'even' to clip at a constant distance
         (default), 'circle' to clip using a circle.
     clip_distance
@@ -133,7 +133,7 @@ class Topomap(SensorMapMixin, ColorMapMixin, TopoMapKey, EelFigure):
             proj: str = 'default',
             res: int = None,
             interpolation: InterpolationArg = None,
-            clip: bool | str = 'even',
+            clip: bool | Literal['even', 'circle'] = 'even',
             clip_distance: float = 0.05,
             head_radius: float | tuple[float, float] = None,
             head_pos: float | Sequence[float] = 0,
@@ -224,7 +224,7 @@ class TopomapBins(SensorMapMixin, ColorMapMixin, TopoMapKey, EelFigure):
     interpolation
         Method for interpolating topo-map between sensors (default is based on
         mne-python).
-    clip : bool | 'even' | 'circle'
+    clip
         Outline for clipping topomaps: 'even' to clip at a constant distance
         (default), 'circle' to clip using a circle.
     clip_distance
@@ -286,7 +286,7 @@ class TopomapBins(SensorMapMixin, ColorMapMixin, TopoMapKey, EelFigure):
             proj: str = 'default',
             res: int = None,
             interpolation: InterpolationArg = None,
-            clip: bool | str = 'even',
+            clip: bool | Literal['even', 'circle'] = 'even',
             clip_distance: float = 0.05,
             head_radius: float | tuple[float, float] = None,
             head_pos: float | Sequence[float] = 0,
@@ -394,7 +394,7 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
     interpolation
         Method for interpolating topo-map between sensors (default is based on
         mne-python).
-    clip : bool | 'even' | 'circle'
+    clip
         Outline for clipping topomaps: 'even' to clip at a constant distance
         (default), 'circle' to clip using a circle.
     clip_distance : scalar
@@ -435,7 +435,7 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
         Specify which axes should be annotated with y-axis tick labels.
         Use ``int`` for a single axis, a sequence of ``int`` for multiple
         specific axes, or one of ``'left' | 'bottom' | 'all' | 'none'``.
-    axtitle : bool | sequence of str
+    axtitle
         Title for the individual axes. The default is to show the names of the
         epochs, but only if multiple axes are plotted.
     xlim : scalar | (scalar, scalar)
@@ -489,7 +489,7 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
             proj: str = 'default',
             res: int = None,
             interpolation: InterpolationArg = None,
-            clip: bool | str = 'even',
+            clip: bool | Literal['even', 'circle'] = 'even',
             clip_distance: float = 0.05,
             head_radius: float | tuple[float, float] = None,
             head_pos: float | Sequence[float] = 0,
@@ -954,7 +954,7 @@ class TopoArray(ColorMapMixin, TopoMapKey, XAxisMixin, EelFigure):
     interpolation
         Method for interpolating topo-map between sensors (default is based on
         mne-python).
-    clip : bool | 'even' | 'circle'
+    clip
         Outline for clipping topomaps: 'even' to clip at a constant distance
         (default), 'circle' to clip using a circle.
     clip_distance
@@ -1041,7 +1041,7 @@ class TopoArray(ColorMapMixin, TopoMapKey, XAxisMixin, EelFigure):
             proj: str = 'default',
             res: int = None,
             interpolation: InterpolationArg = None,
-            clip: bool | str = 'even',
+            clip: bool | Literal['even', 'circle'] = 'even',
             clip_distance: float = 0.05,
             head_radius: float | tuple[float, float] = None,
             head_pos: float | Sequence[float] = 0,

@@ -58,7 +58,7 @@ from io import BytesIO, StringIO
 import tempfile
 import time
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal
 from collections.abc import Iterable, Sequence
 from urllib.parse import quote
 import webbrowser
@@ -245,7 +245,7 @@ def save_html(
 
     Parameters
     ----------
-    fmtext : FMText
+    fmtext
         Object to save.
     path
         Destination filename. If unspecified, a file dialog will open to ask
@@ -288,7 +288,7 @@ def save_pdf(
 
     Parameters
     ----------
-    fmtext : FMText
+    fmtext
         Object to save.
     path
         Destination filename. If unspecified, a file dialog will open to ask
@@ -311,7 +311,7 @@ def save_rtf(
 
     Parameters
     ----------
-    fmtext : FMText
+    fmtext
         Object to save.
     path
         Destination filename. If unspecified, a file dialog will open to ask
@@ -333,7 +333,7 @@ def save_tex(
 
     Parameters
     ----------
-    fmtext : FMText
+    fmtext
         Object to save.
     path
         Destination filename. If unspecified, a file dialog will open to ask
@@ -360,7 +360,7 @@ def copy_pdf(fmtext: FMTextLike):
 
     Parameters
     ----------
-    fmtext : FMText
+    fmtext
         Object to copy.
     """
     # save pdf to temp file
@@ -771,7 +771,7 @@ class FMText(FMTextElement):
 
     Parameters
     ----------
-    content : FMTextLike
+    content
         Any item with a string representation (str, FMText, scalar, ...)
         or an object that iterates over such items (e.g. a list of FMText).
     tag : str
@@ -1063,9 +1063,9 @@ class List(FMTextElement):
 
         Parameters
         ----------
-        head : FMTextLike
+        head
             Text for the parent item
-        items : iterable of FMTextLike
+        items
             Subordinate list items.
         ordered : None | bool
             Whether to use the "ol" HTML tag (instead of "ul"). The default is
@@ -1246,19 +1246,19 @@ class Row(list):
             content: FMTextLike = None,
             tag: str = None,
             width: int = 1,
-            just: str = None,
+            just: Literal['l', 'r', 'c'] = None,
     ):
         """Add a cell to the row
 
         Parameters
         ----------
-        content : FMText
+        content
             Cell content.
         tag : str
             Formatting tag.
         width : int
             Width in columns for multicolumn cells.
-        just : 'l' | 'r' | 'c'
+        just
             Justification (default: use column standard).
         """
         cell = Cell(content, tag, width, just)
@@ -1460,19 +1460,19 @@ class Table(FMTextElement):
             content: FMTextLike = None,
             tag: str = None,
             width: int = 1,
-            just: str = None,
+            just: Literal['l', 'r', 'c'] = None,
     ):
         """Add a cell to the table
 
         Parameters
         ----------
-        content : FMText
+        content
             Cell content.
         tag : str
             Formatting tag.
         width : int
             Width in columns for multicolumn cells.
-        just : 'l' | 'r' | 'c'
+        just
             Justification (default: use column standard).
         """
         if self._active_row is None or len(self._active_row) == self.n_columns:
@@ -2069,9 +2069,9 @@ class Section(FMText):
 
     Parameters
     ----------
-    heading : FMTextLike
+    heading
         Section heading.
-    content : FMTextLike
+    content
         Section content. Can also be constructed dynamically through the
         different .add_... methods.
     """
@@ -2094,9 +2094,9 @@ class Section(FMText):
 
         Parameters
         ----------
-        caption : FMTextLike
+        caption
             Figure caption.
-        content : FMTextLike
+        content
             Figure content.
         options : dict
             HTML options for ``<figure>`` tag.
@@ -2181,9 +2181,9 @@ class Section(FMText):
 
         Parameters
         ----------
-        heading : FMTextLike
+        heading
             Heading for the section.
-        content : FMTextLike
+        content
             Content for the section.
 
         Returns
@@ -2249,14 +2249,14 @@ class Report(Section):
 
     Parameters
     ----------
-    title : FMTextLike
+    title
         Document title.
-    author : FMTextLike
+    author
         Document autho.
-    date : bool | FMTextLike
+    date
         Date to print on the report. If True (default), the current day
         (object initialization) is used.
-    content : FMTextLike
+    content
         Report content. Can also be constructed dynamically through the
         different .add_... methods.
     site_title : str

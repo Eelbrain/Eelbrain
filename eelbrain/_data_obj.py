@@ -4557,15 +4557,15 @@ class NDVar(Named):
     def has_dim(self, name):
         return name in self._dim_2_ax
 
-    def label_clusters(self, threshold=0, tail=0, name=None):
+    def label_clusters(self, threshold: float = 0, tail: Literal[-1, 0, 1] = 0, name: str = None):
         """Find and label clusters of values exceeding a threshold
 
         Parameters
         ----------
-        threshold : scalar
+        threshold
             Threshold value for clusters (default 0 to find clusters of
             non-zero values).
-        tail : 0 | -1 | 1
+        tail
             Whether to label cluster smaller than threshold, larger than
             threshold, or both (default).
         name : str
@@ -5496,14 +5496,14 @@ class NDVar(Named):
         """
         return self._aggregate_over_dims(axis, regions, np.sum)
 
-    def threshold(self, v, tail=1, name=None):
+    def threshold(self, v: float, tail: Literal[-1, 0, 1] = 1, name: str = None):
         """Set all values below a threshold to 0.
 
         Parameters
         ----------
-        v : scalar
+        v
             Threshold value.
-        tail : -1 | 0 | 1
+        tail
             Tailedness.
             1: set values below v to 0 (default);
             0: set values between -v and v to 0;
@@ -5607,7 +5607,7 @@ class Datalist(list):
         Content for the Datalist.
     name
         Name of the Datalist.
-    fmt : 'repr' | 'str' | 'strlist'
+    fmt
         How to format items when converting Datasets to tables (default 'repr'
         uses the normal object representation).
 
@@ -5638,7 +5638,7 @@ class Datalist(list):
             self,
             items: Sequence[Any] = None,
             name: str = None,
-            fmt: str = 'repr',
+            fmt: Literal['repr', 'str', 'strlist'] = 'repr',
     ):
         if fmt not in ('repr', 'str', 'strlist'):
             raise ValueError(f"{fmt=}")
