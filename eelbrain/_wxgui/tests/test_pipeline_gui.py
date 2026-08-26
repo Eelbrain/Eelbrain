@@ -1,3 +1,4 @@
+import logging
 import threading
 from types import SimpleNamespace
 
@@ -20,6 +21,7 @@ def pipeline(
 ) -> SimpleNamespace:
     """Minimal stand-in exposing the pipeline attributes the tasks read."""
     return SimpleNamespace(
+        _log=logging.getLogger('pipeline_gui_test'),
         _sessions=[f's{i}' for i in range(sessions)],
         _tasks=[f't{i}' for i in range(tasks)],
         _runs=[f'{i}' for i in range(runs)],
@@ -414,6 +416,7 @@ def test_refresh_holds_the_pipeline_lock(monkeypatch):
     posted = []
     locked = []
     frame = _frame(
+        _pipeline=pipeline(),
         _pipeline_lock=threading.Lock(),
         _compute_rows=lambda token, scope: locked.append(frame._pipeline_lock.locked()) or ([], {}),
     )

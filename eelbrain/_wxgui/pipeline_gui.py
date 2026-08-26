@@ -1,9 +1,11 @@
 """Pipeline supervisor GUI launched by ``eelbrain-gui``."""
+import logging
 import subprocess
 import sys
 import threading
+import time
 import traceback
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -78,6 +80,35 @@ def _error_dialog_args(error: Exception) -> tuple[str, str, str | None]:
     if dialog is None:
         return tb, "Error", None
     return tb, *dialog
+
+
+def _timed_rows(
+        combos: Iterable,
+        log: logging.Logger,
+        label: str,
+) -> Iterator:
+    """Yield ``combos``, logging at DEBUG level how long the consumer spends on each one.
+
+    Every branch of :meth:`PipelineFrame._compute_rows` builds its table by looping over
+    ``Pipeline.iter()``, so the interval between two yields is the work that goes into
+    one table row: wrapping the iterator times all of them without instrumenting each
+    branch separately. Visible on the terminal with ``eelbrain-gui --debug``.
+
+    Parameters
+    ----------
+    combos
+        Key-field combinations from :meth:`Pipeline.iter`, one per table row.
+    log
+        Pipeline logger to write the timings to.
+    label
+        Task name, identifying which table the rows belong to.
+    """
+    t = time.time()
+    for i, combo in enumerate(combos):
+        yield combo
+        now = time.time()
+        log.debug(f"Pipeline GUI {label}: row {i} {combo} in {now - t:.3f} s")
+        t = now
 
 
 class BadChannelsDialog(wx.Dialog):
@@ -1094,14 +1125,20 @@ class PipelineFrame(EelbrainFrame):
             token: object,
             scope: tuple,  # see :meth:`_table_scope`
     ) -> None:
+        log = self._pipeline._log
+        t_start = time.time()
         try:
             with self._pipeline_lock:
+                t_locked = time.time()
                 rows, specs = self._compute_rows(token, scope)
         except _AbortRequested:
             return  # app exit already scheduled
         except Exception as error:
             wx.CallAfter(self._show_error, *_error_dialog_args(error))
             return
+        # A refresh that is queued behind a running computation waits for the lock, so
+        # the two intervals are logged separately (see eelbrain-gui --debug)
+        log.debug(f"Pipeline GUI {scope[0].name}: {len(rows)} rows in {time.time() - t_locked:.3f} s, after waiting {t_locked - t_start:.3f} s for the pipeline")
         wx.CallAfter(self._populate_table, rows, specs, token)
 
     def _show_error(self, tb: str, title: str = "Error", message: str | None = None):
@@ -1536,12 +1573,13 @@ class PipelineFrame(EelbrainFrame):
     ) -> tuple[list[tuple[str, ...]], dict[tuple[tuple, tuple], JobSpec]]:
         task, epoch_rejection, epoch_name, raw_name, layout = scope
         pipeline = self._pipeline
+        log = pipeline._log
         rows = []
         specs: dict[tuple[tuple, tuple], JobSpec] = {}
 
         if task.name == 'bad_chs':
             source_name = pipeline._raw.root_source_name(raw_name)
-            for combo in pipeline.iter(layout.iter_arg):
+            for combo in _timed_rows(pipeline.iter(layout.iter_arg), log, task.name):
                 if token is not self._refresh_token:
                     break
                 if isinstance(combo, str):
@@ -1559,7 +1597,7 @@ class PipelineFrame(EelbrainFrame):
 
         elif task.name == 'ica':
             bulk_choice = None  # set once the user ticks "Apply to all"
-            for combo in pipeline.iter(layout.iter_arg):
+            for combo in _timed_rows(pipeline.iter(layout.iter_arg), log, task.name):
                 if token is not self._refresh_token:
                     break
                 if isinstance(combo, str):
@@ -1588,8 +1626,8 @@ class PipelineFrame(EelbrainFrame):
         elif task.name == 'epoch_rej':
             rej = pipeline._epoch_rejection[epoch_rejection]
             node_name = 'epoch-rejection-input' if isinstance(rej, ManualRejection) else 'epoch-rejection-channel-model'
-            for subject in pipeline.iter(
-                    layout.iter_arg, raw=raw_name, epoch=epoch_name, epoch_rejection=epoch_rejection):
+            combos = pipeline.iter(layout.iter_arg, raw=raw_name, epoch=epoch_name, epoch_rejection=epoch_rejection)
+            for subject in _timed_rows(combos, log, task.name):
                 if token is not self._refresh_token:
                     break
                 rej_ctx = pipeline._resolve_derivative(node_name)
@@ -1608,7 +1646,7 @@ class PipelineFrame(EelbrainFrame):
 
         elif task.name == 'mri':
             subjects_dir = pipeline.root / MRI_SDIR
-            for subject in pipeline.iter(layout.iter_arg):
+            for subject in _timed_rows(pipeline.iter(layout.iter_arg), log, task.name):
                 if token is not self._refresh_token:
                     break
                 mrisubject = pipeline.get('mrisubject')
@@ -1626,7 +1664,7 @@ class PipelineFrame(EelbrainFrame):
 
         elif task.name == 'coreg':
             raw_input = raw_input_name('raw')
-            for subject, session in pipeline.iter(layout.iter_arg, raw='raw'):
+            for subject, session in _timed_rows(pipeline.iter(layout.iter_arg, raw='raw'), log, task.name):
                 if token is not self._refresh_token:
                     break
                 raw_ctx = pipeline._resolve_derivative(raw_input)

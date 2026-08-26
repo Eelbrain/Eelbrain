@@ -27,6 +27,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         help='Determine log level for log messages printed to the terminal; overrides Pipeline.screen_log_level for the loaded pipeline',
     )
     parser.add_argument(
+        '--debug',
+        action='store_true',
+        help='Print debug output, including how long each step of a table refresh takes; shorthand for --log-level debug',
+    )
+    parser.add_argument(
         '--migrate',
         action='store_true',
         help='Migrate legacy derivative files (ICA, trans, bad channels, epoch rejection) to the current BIDS-style layout and exit without opening the GUI',
@@ -42,7 +47,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     from .load_pipeline import load_pipeline
 
-    pipeline = load_pipeline(args.path, log_level=args.log_level)
+    pipeline = load_pipeline(args.path, log_level=args.log_level or ('debug' if args.debug else None))
 
     if args.migrate:
         from .migration import migrate_derivatives
