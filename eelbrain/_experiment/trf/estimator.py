@@ -151,7 +151,7 @@ class Boosting(Estimator):
     selective_stopping
         Stop boosting each predictor separately (see :func:`eelbrain.boosting`).
     scale_data
-        Scale ``y`` and ``x`` before fitting; ``'inplace'`` to save memory.
+        Normalize ``y`` and ``x`` before fitting.
     partitions
         Number of partitions for cross-validation. ``None`` to infer from the
         number of cases; a negative value concatenates the cases and uses
@@ -175,8 +175,8 @@ class Boosting(Estimator):
             delta: float = 0.005,
             mindelta: float = None,
             selective_stopping: int = 0,
-            scale_data: bool | Literal['inplace'] = 'inplace',
-            partitions: int = None,
+            scale_data: bool = True,
+            partitions: int | None = None,
             cv: bool = True,
             partition_results: bool = False,
             backward: bool = False,
@@ -216,7 +216,8 @@ class Boosting(Estimator):
             if len(set(names)) < len(names):
                 raise ValueError(f"Multiple predictors with the same name: {', '.join(names)}")
             x = xs
-        return boosting(y, x, tstart, tstop, self.scale_data, self.delta, self.mindelta, self.error, self.basis, self.basis_window, partitions=partitions, test=int(self.cv), selective_stopping=self.selective_stopping, partition_results=self.partition_results)
+        scale_data = 'inplace' if self.scale_data else False
+        return boosting(y, x, tstart, tstop, scale_data, self.delta, self.mindelta, self.error, self.basis, self.basis_window, partitions=partitions, test=int(self.cv), selective_stopping=self.selective_stopping, partition_results=self.partition_results)
 
     def _result_metrics(self, result) -> dict[str, NDVar | float]:
         r = result.r
