@@ -163,7 +163,8 @@ Coregistration
     Double-clicking opens the MNE coregistration GUI pre-loaded with the subject's raw file and, if one already exists, the current transformation.
     For subjects without a FreeSurfer reconstruction the GUI opens against the template brain so the user can use MNE's "Scale MRI" feature to create a scaled copy.
 
-When a table takes a long time to fill in, ``--debug`` prints the pipeline's debug log, including the time each individual row of the table took to compute::
+A table appears as soon as its rows are known, with each row's status filling in behind it (the status bar counts the rows that are done).
+When that takes a long time, ``--debug`` prints the pipeline's debug log, including the time each individual row took to compute::
 
     $ eelbrain-gui --debug
 

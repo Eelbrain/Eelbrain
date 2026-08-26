@@ -310,17 +310,53 @@ def test_populate_table_fits_the_rows_to_the_columns():
         for combo, n_excluded in [(('R01', 's0'), '2'), (('R02', 's0'), '0'), (('R03', 's1'), None)]
     ]
     frame = _table_frame('ica', sessions=2)
-    frame.__dict__.update(_refresh_token='TOKEN', _job_specs={}, _refresh_status_bar=lambda: None)
-    frame._populate_table(rows, {'specs': True}, 'TOKEN')
+    frame.__dict__.update(_refresh_token='TOKEN', _job_specs={'stale': True}, _refresh_status_bar=lambda: None)
+    frame._populate_table(rows, 'TOKEN')
     assert frame._list.rows == rows
-    assert frame._job_specs == {'specs': True}
+    assert frame._job_specs == {}  # the previous table's specs are gone
     # only the ICA with no rejected component is coloured
     assert frame._list.colours == {0: wx.NullColour, 1: wx.RED, 2: wx.NullColour}
 
-    # a result arriving for a stale token is dropped, specs and all
-    frame._populate_table([], {}, 'OTHER')
+    # a table arriving for a stale token is dropped
+    frame._populate_table([], 'OTHER')
     assert frame._list.rows == rows
-    assert frame._job_specs == {'specs': True}
+
+
+def test_fill_row_writes_one_resolved_row():
+    "The second refresh pass fills a loading row in, addressed by its position"
+    task = TASKS_BY_NAME['ica']
+    layout = _layout('ica')
+    loading = [task.missing_row((subject,), layout, pipeline_gui.LOADING) for subject in ('R01', 'R02')]
+    frame = _table_frame('ica', loading)
+    frame.__dict__.update(_refresh_token='TOKEN', _job_specs={}, _refresh_status_bar=lambda: None, _table_scope=lambda: 'SCOPE')
+    frame._fill_row('TOKEN', 'SCOPE', 1, ('R02',), ('R02', 'selected', '30', '2'), 'SPEC')
+    assert frame._list.rows == [loading[0], ('R02', 'selected', '30', '2')]
+    assert frame._job_specs == {('SCOPE', ('R02',)): 'SPEC'}
+
+    # a row arriving for a stale token, for a row that is gone, or for a combo that no
+    # longer sits at that position is dropped, spec and all
+    for token, index, combo in [('OTHER', 0, ('R01',)), ('TOKEN', 2, ('R03',)), ('TOKEN', 0, ('R03',))]:
+        frame._fill_row(token, 'SCOPE', index, combo, (*combo, 'selected', '30', '9'), 'DROPPED')
+    assert frame._list.rows == [loading[0], ('R02', 'selected', '30', '2')]
+    assert frame._job_specs == {('SCOPE', ('R02',)): 'SPEC'}
+
+
+def test_status_bar_shows_progress_while_rows_load():
+    "A partly filled table reports its progress rather than an undercount"
+    task = TASKS_BY_NAME['ica']
+    layout = _layout('ica')
+    rows = [('R01', 'selected', '30', '2'), *(task.missing_row((subject,), layout, pipeline_gui.LOADING) for subject in ('R02', 'R03'))]
+    frame = _table_frame('ica', rows)
+    texts = []
+    frame.__dict__.update(SetStatusText=texts.append)
+    frame._refresh_status_bar()
+    assert texts == ["Loading… 1 / 3"]
+
+    # once no row is loading any more the task's own summary takes over
+    frame._list.SetItem(1, 1, 'no ICA')
+    frame._list.SetItem(2, 1, 'selected')
+    frame._refresh_status_bar()
+    assert texts[-1] == "2 / 3 subjects · ICA selected  (1 missing ICA file)"
 
 
 def test_set_row_result_writes_status_details_and_colour():
@@ -411,16 +447,48 @@ def test_compute_job_holds_the_pipeline_lock_except_for_the_fit():
 
 
 def test_refresh_holds_the_pipeline_lock(monkeypatch):
-    "The refresh walk never runs while the worker is loading or saving"
+    "Neither refresh pass ever runs while the worker is loading or saving"
     monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda *args: posted.append(args))
     posted = []
     locked = []
+    token = object()
     frame = _frame(
         _pipeline=pipeline(),
         _pipeline_lock=threading.Lock(),
-        _compute_rows=lambda token, scope: locked.append(frame._pipeline_lock.locked()) or ([], {}),
+        _refresh_token=token,
+        _iter_combos=lambda scope: locked.append(frame._pipeline_lock.locked()) or iter([('R01',)]),
+        _iter_rows=lambda token_, scope: locked.append(frame._pipeline_lock.locked()) or iter([(('R01',), ('R01', 'selected', '30', '2'), 'SPEC')]),
     )
-    frame._refresh_thread(object(), _ICA_SCOPE)
-    assert locked == [True]
+    frame._refresh_thread(token, _ICA_SCOPE)
+    assert locked == [True, True]
     assert not frame._pipeline_lock.locked()  # released before the table update is posted
     assert posted
+
+
+def test_refresh_shows_the_rows_before_their_status(monkeypatch):
+    "The table is posted from the first pass, then filled in row by row"
+    monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda *args: posted.append(args))
+    posted = []
+    token = object()
+    task = TASKS_BY_NAME['ica']
+    rows = [(('R01',), ('R01', 'selected', '30', '2'), 'SPEC-1'), (('R02',), ('R02', 'no ICA', PLACEHOLDER, PLACEHOLDER), 'SPEC-2')]
+    frame = _frame(
+        _pipeline=pipeline(),
+        _pipeline_lock=threading.Lock(),
+        _refresh_token=token,
+        _iter_combos=lambda scope: iter([('R01',), ('R02',)]),
+        _iter_rows=lambda token_, scope: iter(rows),
+    )
+    frame._refresh_thread(token, _ICA_SCOPE)
+    # the table goes up first, with every row still loading
+    assert posted[0] == (frame._populate_table, [task.missing_row(combo, _ICA_LAYOUT, pipeline_gui.LOADING) for combo, _, _ in rows], token)
+    # then one update per row, at the position the first pass put it
+    assert posted[1] == (frame._fill_row, token, _ICA_SCOPE, 0, ('R01',), ('R01', 'selected', '30', '2'), 'SPEC-1')
+    assert posted[2] == (frame._fill_row, token, _ICA_SCOPE, 1, ('R02',), ('R02', 'no ICA', PLACEHOLDER, PLACEHOLDER), 'SPEC-2')
+    assert len(posted) == 3
+
+    # a task switch between the two passes drops the table rather than paying for its rows
+    posted.clear()
+    frame._refresh_token = object()
+    frame._refresh_thread(token, _ICA_SCOPE)
+    assert posted == []

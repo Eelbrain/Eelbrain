@@ -89,10 +89,10 @@ def _timed_rows(
 ) -> Iterator:
     """Yield ``combos``, logging at DEBUG level how long the consumer spends on each one.
 
-    Every branch of :meth:`PipelineFrame._compute_rows` builds its table by looping over
-    ``Pipeline.iter()``, so the interval between two yields is the work that goes into
-    one table row: wrapping the iterator times all of them without instrumenting each
-    branch separately. Visible on the terminal with ``eelbrain-gui --debug``.
+    :meth:`PipelineFrame._iter_rows` builds its table by looping over
+    :meth:`PipelineFrame._iter_combos`, so the interval between two yields is the work
+    that goes into one table row, whichever task's branch produced it. Visible on the
+    terminal with ``eelbrain-gui --debug``.
 
     Parameters
     ----------
@@ -163,6 +163,9 @@ COMMON_BRAIN_MISSING = 'missing'
 # Statuses written by the compute queue while a row is in flight: the artifact
 # is not there yet, so they count as missing in the status bar
 TRANSIENT_STATUS = ('queued', '⟳')
+# Status of a row whose artifact has not been looked at yet: the first pass of a
+# refresh lays out the table, the second fills these in (see PipelineFrame._refresh_thread)
+LOADING = '…'
 # Stands in for a detail column that has no value because the artifact is missing
 PLACEHOLDER = '—'
 GREY = wx.Colour(150, 150, 150)
@@ -307,7 +310,10 @@ class Task:
         raise NotImplementedError(f"{self.name} is not computable")
 
     def missing_row(self, combo: tuple[str, ...], layout: Layout, status: str | None = None) -> tuple[str, ...]:
-        """Row for a key combination with no artifact: status plus placeholders.
+        """Row for a key combination with no artifact to show: status plus placeholders.
+
+        Also the row of the first refresh pass, whose status is not known yet
+        (``status=LOADING``; see :meth:`PipelineFrame._refresh_thread`).
 
         Parameters
         ----------
@@ -541,13 +547,13 @@ class PipelineFrame(EelbrainFrame):
         self._job_queue_lock = threading.Lock()
         self._n_done = self._n_total = 0  # progress of the current run
         # Job specs for the rows currently displayed, keyed by (scope, combo). Minted
-        # during refresh (where pipeline.iter() sets the state) and replaced wholesale
-        # by _populate_table; the scope is part of the key because a combo only names a
-        # row within one table (see :meth:`_table_scope`), and a lookup can outlive the
-        # table it was minted for (_on_ica_bad_channels runs when a separate window
-        # closes). A spec holds no data, only the state it was resolved with, so it stays
-        # usable after the inputs change: make_job() re-resolves dependencies live at
-        # that point.
+        # during refresh (where pipeline.iter() sets the state), cleared for the new table
+        # by _populate_table and filled in row by row by _fill_row. The scope is part of
+        # the key because a combo only names a row within one table (see
+        # :meth:`_table_scope`), and a lookup can outlive the table it was minted for
+        # (_on_ica_bad_channels runs when a separate window closes). A spec holds no data,
+        # only the state it was resolved with, so it stays usable after the inputs change:
+        # make_job() re-resolves dependencies live at that point.
         self._job_specs: dict[tuple[tuple, tuple], JobSpec] = {}
         self._tasks: list[Task] = []  # dropdown entries, in order
         # Column geometry of the displayed table, read by everything that addresses a
@@ -680,7 +686,7 @@ class PipelineFrame(EelbrainFrame):
         """Identity of the table on display: ``(task, epoch_rejection, epoch, raw, layout)``.
 
         Every choice that selects which rows are shown, and the arguments
-        :meth:`_compute_rows` needs to produce them. A row ``combo`` only names a
+        :meth:`_iter_combos` and :meth:`_iter_rows` need to produce them. A row ``combo`` only names a
         row within one scope, so a job minted for one table is never applied to a
         row of another: the Raw, Epoch and Epoch-rejection choices stay enabled
         while a computation runs, and switching one of them (or the number of ICA
@@ -1068,18 +1074,47 @@ class PipelineFrame(EelbrainFrame):
             self._list.SetItem(idx, col, value)
         self._set_row_colour(idx, self._row(idx))
 
-    def _populate_table(self, rows: list[tuple[str, ...]], specs: dict[tuple, JobSpec], token: object) -> None:
+    def _populate_table(self, rows: list[tuple[str, ...]], token: object) -> None:
+        """Install the rows of a new table, with their status still to be filled in."""
         if token is not self._refresh_token:
             return
-        # Only writer of _job_specs, on the main thread and behind the token guard, so a
-        # raw/task switch can never leave a spec from the previous table behind.
-        self._job_specs = specs
+        # Clears the specs of the previous table; _fill_row adds this table's as its rows
+        # resolve. Both run on the main thread and behind the token guard, so a raw/task
+        # switch can never leave a spec from the previous table behind.
+        self._job_specs = {}
         self._list.DeleteAllItems()
         for row in rows:
             idx = self._list.InsertItem(self._list.GetItemCount(), row[0])
             for col, val in enumerate(row[1:], 1):
                 self._list.SetItem(idx, col, val)
             self._set_row_colour(idx, row)
+        self._refresh_status_bar()
+
+    def _fill_row(
+            self,
+            token: object,
+            scope: tuple,  # see :meth:`_table_scope`
+            index: int,
+            combo: tuple[str, ...],
+            row: tuple[str, ...],
+            spec: JobSpec | None,
+    ) -> None:
+        """Replace one loading row with the status and details the refresh found for it.
+
+        ``index`` is where :meth:`_populate_table` put the row: both passes of the
+        refresh walk the same combinations in the same order, and ``token`` guarantees
+        the table on display is still the one they were walked for. The combo is
+        verified all the same, so a row can never be given another recording's status.
+        """
+        if token is not self._refresh_token:
+            return
+        if index >= self._list.GetItemCount() or self._row_combo(index) != combo:
+            return
+        if spec is not None:
+            self._job_specs[scope, combo] = spec
+        for col, value in enumerate(row):
+            self._list.SetItem(index, col, value)
+        self._set_row_colour(index, row)
         self._refresh_status_bar()
 
     def _update_ica_row(self, scope: tuple, combo: tuple, doc) -> None:
@@ -1091,9 +1126,17 @@ class PipelineFrame(EelbrainFrame):
         self._refresh_status_bar()
 
     def _refresh_status_bar(self):
-        """Recompute the status bar summary from the current table contents."""
+        """Recompute the status bar summary from the current table contents.
+
+        While the second pass of a refresh is still filling rows in, the summary would
+        undercount, so the progress of that pass is shown instead.
+        """
         rows = [self._row(i) for i in range(self._list.GetItemCount())]
-        self.SetStatusText(self._current_task().status_bar(rows, self._layout))
+        n_loading = sum(1 for row in rows if row[self._layout.status_col] == LOADING)
+        if n_loading:
+            self.SetStatusText(f"Loading… {len(rows) - n_loading} / {len(rows)}")
+        else:
+            self.SetStatusText(self._current_task().status_bar(rows, self._layout))
 
     # ------------------------------------------------------------------
     # Background status refresh
@@ -1125,21 +1168,41 @@ class PipelineFrame(EelbrainFrame):
             token: object,
             scope: tuple,  # see :meth:`_table_scope`
     ) -> None:
+        """Fill the table in two passes: which rows it has, then what is in them.
+
+        The first pass reads only the pipeline's state model and the BIDS dataset, so
+        the table is on screen before any artifact is opened; the second pass posts
+        every row as soon as its status resolves, which for the ICA task takes a raw
+        file read per recording. Both passes hold the pipeline lock, so neither ever
+        walks the pipeline while the compute worker is using it.
+        """
+        task, _, _, _, layout = scope
         log = self._pipeline._log
+        n_filled = 0
         t_start = time.time()
         try:
             with self._pipeline_lock:
                 t_locked = time.time()
-                rows, specs = self._compute_rows(token, scope)
+                combos = list(self._iter_combos(scope))
+            # A refresh that is queued behind a running computation waits for the lock,
+            # so the two intervals are logged separately (see eelbrain-gui --debug)
+            log.debug(f"Pipeline GUI {task.name}: {len(combos)} rows in {time.time() - t_locked:.3f} s, after waiting {t_locked - t_start:.3f} s for the pipeline")
+            if token is not self._refresh_token:
+                return  # the table was replaced while the rows were being determined
+            wx.CallAfter(self._populate_table, [task.missing_row(combo, layout, LOADING) for combo in combos], token)
+
+            t_start = time.time()
+            with self._pipeline_lock:
+                t_locked = time.time()
+                for index, (combo, row, spec) in enumerate(self._iter_rows(token, scope)):
+                    wx.CallAfter(self._fill_row, token, scope, index, combo, row, spec)
+                    n_filled += 1
         except _AbortRequested:
             return  # app exit already scheduled
         except Exception as error:
             wx.CallAfter(self._show_error, *_error_dialog_args(error))
             return
-        # A refresh that is queued behind a running computation waits for the lock, so
-        # the two intervals are logged separately (see eelbrain-gui --debug)
-        log.debug(f"Pipeline GUI {scope[0].name}: {len(rows)} rows in {time.time() - t_locked:.3f} s, after waiting {t_locked - t_start:.3f} s for the pipeline")
-        wx.CallAfter(self._populate_table, rows, specs, token)
+        log.debug(f"Pipeline GUI {task.name}: {n_filled} row details in {time.time() - t_locked:.3f} s, after waiting {t_locked - t_start:.3f} s for the pipeline")
 
     def _show_error(self, tb: str, title: str = "Error", message: str | None = None):
         self.SetStatusText("Error")
@@ -1566,113 +1629,130 @@ class PipelineFrame(EelbrainFrame):
         else:
             self._start_refresh()
 
-    def _compute_rows(
+    def _iter_combos(
             self,
-            token: object,
             scope: tuple,  # see :meth:`_table_scope`
-    ) -> tuple[list[tuple[str, ...]], dict[tuple[tuple, tuple], JobSpec]]:
+    ) -> Iterator[tuple[str, ...]]:
+        """Iterate the table's rows, setting the pipeline state for each one.
+
+        First pass of a refresh: which rows the table has follows from the pipeline's
+        state model and, for the tasks whose rows are recordings, from which files the
+        BIDS dataset actually holds -- neither of which requires opening an artifact.
+        The second pass (:meth:`_iter_rows`) walks the same combinations in the same
+        order, so a row's position identifies it in both.
+        """
         task, epoch_rejection, epoch_name, raw_name, layout = scope
         pipeline = self._pipeline
-        log = pipeline._log
-        rows = []
-        specs: dict[tuple[tuple, tuple], JobSpec] = {}
-
-        if task.name == 'bad_chs':
-            source_name = pipeline._raw.root_source_name(raw_name)
-            for combo in _timed_rows(pipeline.iter(layout.iter_arg), log, task.name):
-                if token is not self._refresh_token:
-                    break
-                if isinstance(combo, str):
-                    combo = (combo,)
+        if task.name == 'epoch_rej':
+            combos = pipeline.iter(layout.iter_arg, raw=raw_name, epoch=epoch_name, epoch_rejection=epoch_rejection)
+        elif task.name == 'coreg':
+            combos = pipeline.iter(layout.iter_arg, raw='raw')
+        else:
+            combos = pipeline.iter(layout.iter_arg)
+        # the tasks that show one row per recording skip recordings that were never acquired
+        source_name = pipeline._raw.root_source_name(raw_name) if task.name == 'bad_chs' else 'raw'
+        skip_missing_recordings = task.name in ('bad_chs', 'coreg')
+        for combo in combos:
+            if isinstance(combo, str):
+                combo = (combo,)
+            if skip_missing_recordings:
                 raw_ctx = pipeline._resolve_derivative(raw_input_name(source_name))
                 if not raw_ctx.node.exists(raw_ctx):
                     continue
+            yield combo
+        # Common brain row at the bottom of the MRI table; not a subject, and outside the
+        # iteration, so the pipeline state is the one it was left in
+        if task.name == 'mri' and pipeline.get('common_brain'):
+            yield (COMMON_BRAIN_ROW,)
+
+    def _iter_rows(
+            self,
+            token: object,
+            scope: tuple,  # see :meth:`_table_scope`
+    ) -> Iterator[tuple[tuple[str, ...], tuple[str, ...], JobSpec | None]]:
+        """Yield ``(combo, row, job spec)`` for every row of the table.
+
+        Second pass of a refresh: this is where a row's artifact is inspected, which for
+        the ICA task means validating it against the raw data it was estimated from --
+        one raw file per recording. Rows are therefore yielded one at a time, so that
+        the caller can show each as soon as it resolves. ``spec`` is ``None`` for a row
+        whose artifact the compute queue cannot make.
+        """
+        task, epoch_rejection, epoch_name, raw_name, layout = scope
+        pipeline = self._pipeline
+        bulk_choice = None  # set once the user ticks "Apply to all" in the stale-ICA dialog
+        for combo in _timed_rows(self._iter_combos(scope), pipeline._log, task.name):
+            if token is not self._refresh_token:
+                return
+            spec = None
+
+            if task.name == 'bad_chs':
+                source_name = pipeline._raw.root_source_name(raw_name)
                 bads_ctx = pipeline._resolve_derivative(raw_bad_channels_input_name(source_name))
                 try:
                     bads = bads_ctx.load()  # seeds a missing derivatives channels.tsv
                 except DataError:  # EEG channels without positions
-                    rows.append(task.missing_row(combo, layout))
+                    row = task.missing_row(combo, layout)
                 else:
-                    rows.append((*combo, task.done_status, str(len(bads))))
+                    row = (*combo, task.done_status, str(len(bads)))
 
-        elif task.name == 'ica':
-            bulk_choice = None  # set once the user ticks "Apply to all"
-            for combo in _timed_rows(pipeline.iter(layout.iter_arg), log, task.name):
-                if token is not self._refresh_token:
-                    break
-                if isinstance(combo, str):
-                    combo = (combo,)
-                subject = combo[0]
+            elif task.name == 'ica':
                 ctx = pipeline._resolve_derivative(ica_input_name(raw_name))
-                specs[scope, combo] = JobSpec(ctx)
+                spec = JobSpec(ctx)
                 status = ctx.load(view='status')
                 if status == 'ok':
                     try:
                         ica = ctx.load()
-                        rows.append((*combo, task.done_status, *task.result_columns(ica)))
+                        row = (*combo, task.done_status, *task.result_columns(ica))
                     except ProtectedArtifactError as error:
                         if bulk_choice is None:
-                            choice, apply_to_all = self._ask_stale_ica(subject, error, allow_apply_to_all=True)
+                            choice, apply_to_all = self._ask_stale_ica(combo[0], error, allow_apply_to_all=True)
                             if apply_to_all:
                                 bulk_choice = choice
                         else:
                             choice = bulk_choice
-                        rows.append(self._handle_stale_ica(combo, scope, error, choice))
+                        row = self._handle_stale_ica(combo, scope, error, choice)
                 elif status == 'missing-ica':
-                    rows.append(task.missing_row(combo, layout))
+                    row = task.missing_row(combo, layout)
                 else:
-                    rows.append(task.missing_row(combo, layout, 'no data'))
+                    row = task.missing_row(combo, layout, 'no data')
 
-        elif task.name == 'epoch_rej':
-            rej = pipeline._epoch_rejection[epoch_rejection]
-            node_name = 'epoch-rejection-input' if isinstance(rej, ManualRejection) else 'epoch-rejection-channel-model'
-            combos = pipeline.iter(layout.iter_arg, raw=raw_name, epoch=epoch_name, epoch_rejection=epoch_rejection)
-            for subject in _timed_rows(combos, log, task.name):
-                if token is not self._refresh_token:
-                    break
+            elif task.name == 'epoch_rej':
+                rej = pipeline._epoch_rejection[epoch_rejection]
+                node_name = 'epoch-rejection-input' if isinstance(rej, ManualRejection) else 'epoch-rejection-channel-model'
                 rej_ctx = pipeline._resolve_derivative(node_name)
                 if isinstance(rej, ManualRejection):
                     path = rej_ctx.node.path(rej_ctx)  # an input, with no resolved artifact path
                 else:
-                    spec = specs[scope, (subject,)] = JobSpec(rej_ctx)
+                    spec = JobSpec(rej_ctx)
                     # Existence, not spec.is_done: validating (or rebuilding) every
                     # subject's rejection file on each refresh would be far too expensive.
                     path = spec.path
                 if path.exists():
                     ds = load.unpickle(path)
-                    rows.append((subject, task.done_status, *task.result_columns(ds)))
+                    row = (*combo, task.done_status, *task.result_columns(ds))
                 else:
-                    rows.append(task.missing_row((subject,), layout))
+                    row = task.missing_row(combo, layout)
 
-        elif task.name == 'mri':
-            subjects_dir = pipeline.root / MRI_SDIR
-            for subject in _timed_rows(pipeline.iter(layout.iter_arg), log, task.name):
-                if token is not self._refresh_token:
-                    break
-                mrisubject = pipeline.get('mrisubject')
-                has_recon = (subjects_dir / mrisubject / 'surf' / 'lh.pial').exists()
-                if has_recon:
-                    status = 'template' if is_fake_mri(subjects_dir / mrisubject) else task.done_status
+            elif task.name == 'mri':
+                subjects_dir = pipeline.root / MRI_SDIR
+                if combo == (COMMON_BRAIN_ROW,):
+                    mrisubject = pipeline.get('common_brain')
+                    has_recon = (subjects_dir / mrisubject / 'surf' / 'lh.pial').exists()
+                    status = task.done_status if has_recon else COMMON_BRAIN_MISSING
                 else:
-                    status = task.missing_status
-                rows.append((subject, mrisubject, status))
-            # Common brain row at the bottom
-            common_brain = pipeline.get('common_brain')
-            if common_brain:
-                has_cb = (subjects_dir / common_brain / 'surf' / 'lh.pial').exists()
-                rows.append((COMMON_BRAIN_ROW, common_brain, task.done_status if has_cb else COMMON_BRAIN_MISSING))
+                    mrisubject = pipeline.get('mrisubject')
+                    has_recon = (subjects_dir / mrisubject / 'surf' / 'lh.pial').exists()
+                    if has_recon:
+                        status = 'template' if is_fake_mri(subjects_dir / mrisubject) else task.done_status
+                    else:
+                        status = task.missing_status
+                row = (*combo, mrisubject, status)
 
-        elif task.name == 'coreg':
-            raw_input = raw_input_name('raw')
-            for subject, session in _timed_rows(pipeline.iter(layout.iter_arg, raw='raw'), log, task.name):
-                if token is not self._refresh_token:
-                    break
-                raw_ctx = pipeline._resolve_derivative(raw_input)
-                if not raw_ctx.node.exists(raw_ctx):
-                    continue
+            elif task.name == 'coreg':
                 mrisubject = pipeline.get('mrisubject')
                 trans_ctx = pipeline._resolve_derivative('trans-input')
                 has_trans = trans_ctx.node.exists(trans_ctx)
-                rows.append((subject, session, mrisubject, task.done_status if has_trans else task.missing_status))
+                row = (*combo, mrisubject, task.done_status if has_trans else task.missing_status)
 
-        return rows, specs
+            yield combo, row, spec
