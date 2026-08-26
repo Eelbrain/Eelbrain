@@ -19,6 +19,7 @@ from .base import (
     ExternalArtifactDerivative,
     Input,
     JobInputsChangedError,
+    LoadProfile,
     OptionSpec,
     ProtectedArtifactError,
     Request,

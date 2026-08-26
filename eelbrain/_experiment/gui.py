@@ -29,7 +29,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument(
         '--debug',
         action='store_true',
-        help='Print debug output, including how long each step of a table refresh takes; shorthand for --log-level debug',
+        help='Print debug output at --log-level debug, and log how long each step of a table refresh takes and which node each artifact load spends its time in',
     )
     parser.add_argument(
         '--migrate',
@@ -48,6 +48,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     from .load_pipeline import load_pipeline
 
     pipeline = load_pipeline(args.path, log_level=args.log_level or ('debug' if args.debug else None))
+    if args.debug:
+        # attribute a slow table row to the node whose load took the time
+        pipeline._derivatives.profile_loads = True
 
     if args.migrate:
         from .migration import migrate_derivatives
