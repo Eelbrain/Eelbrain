@@ -609,7 +609,20 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             if dep.endswith(':raw'):
                 raw_name = self._dependency_raw_name(previous, current, dep)
                 if path[-1] == 'bads':
-                    return f"This ICA was estimated using different bad channels: {old!r} -> {new!r}."
+                    old_set = set(old or [])
+                    new_set = set(new or [])
+                    added = sorted(new_set - old_set)
+                    removed = sorted(old_set - new_set)
+                    if not added and not removed:
+                        return f"This ICA was estimated using different bad channels: {old!r} -> {new!r}."
+                    lines = ["The set of bad channels used for ICA estimation changed."]
+                    if shared := sorted(old_set & new_set):
+                        lines.append(f"  shared: {', '.join(shared)}")
+                    if added:
+                        lines.append(f"  added: {', '.join(added)}")
+                    if removed:
+                        lines.append(f"  removed: {', '.join(removed)}")
+                    return '\n'.join(lines)
                 if any(a == 'fingerprint' and b == 'source' for a, b in zip(path, path[1:])):
                     def _fmt_mtime(v: Any) -> str:
                         t = v if isinstance(v, (int, float)) else (v.get('mtime') if isinstance(v, dict) else None)
@@ -623,20 +636,6 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         diff = find_difference(previous.fingerprint, current.fingerprint)
         if diff is not None:
             path, old, new = diff
-            if path == ('bads',):
-                old_set = set(old or [])
-                new_set = set(new or [])
-                removed = sorted(old_set - new_set)
-                added = sorted(new_set - old_set)
-                shared = sorted(old_set & new_set)
-                lines = ["The set of bad channels used for ICA estimation changed."]
-                if shared:
-                    lines.append(f"  shared: {', '.join(shared)}")
-                if added:
-                    lines.append(f"  added: {', '.join(added)}")
-                if removed:
-                    lines.append(f"  removed: {', '.join(removed)}")
-                return '\n'.join(lines)
             field = format_difference_path(path)
             return f"The recorded ICA settings changed ({field}: {old!r} -> {new!r})."
 
@@ -712,6 +711,8 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             Resolved request for this ICA.
         """
         previous = ctx._manifest()
+        if previous is not None:
+            previous.fingerprint.pop('bads', None)  # backwards compatibility
         return previous, self._build_manifest(ctx, ctx.dependency_fingerprints(previous.dependencies if previous else None))
 
     def is_valid(self, ctx: Request) -> bool:
@@ -733,7 +734,6 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         path = self.path(ctx)
         return {
             'pipe': self.pipe,
-            'bads': self._load_bad_channels(ctx),
             'ica_path': path.relative_to(ctx.root),
             'exists': path.exists(),
         }
