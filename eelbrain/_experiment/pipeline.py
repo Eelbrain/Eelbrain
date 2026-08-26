@@ -54,7 +54,7 @@ from .pathing import (
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, _resolve_parc
 from .preprocessing import (
     CachedRawPipe, ICAInput, MaxwellCalibrationInput, MaxwellCrosstalkInput, CanonicalHeadPositionDerivative, RawBadChannelsInput, RawDerivative, RawHeadPositionDerivative, RawPipe, RawSource, RawSourceDerivative, RawSourceInput, RawICA, RawMaxwell, Reference,
-    REINDEX_ICA, assemble_raw_pipes, ica_input_name, raw_bad_channels_input_name, raw_node_name, raw_input_name,
+    REINDEX_ICA, assemble_raw_pipes, ica_input_name, raw_bad_channels_input_name, raw_node_name, raw_input_name, resolve_raw_bids_path,
 )
 from .data import DataSpec
 from .source import (
@@ -2214,7 +2214,7 @@ class Pipeline(StateModel):
             bad_chs = (bad_chs,)
         raw = self._load_derivative(raw_input_name(source_name), options={'noise': noise})
         bads_ctx = self._resolve_derivative(raw_bad_channels_input_name(source_name), options={'noise': noise})
-        bads_ctx.node.write(bads_ctx, raw, bad_chs, redo, create=True)
+        bads_ctx.node.write(bads_ctx, raw, bad_chs, redo)
 
     def make_bad_channels_auto(
         self,
@@ -2243,13 +2243,13 @@ class Pipeline(StateModel):
             self.set(**state)
         source_name = self._raw.root_source_name('raw')
         pipe = self._raw[source_name]
-        raw_ctx = self._resolve_derivative(raw_input_name(source_name), options={'noise': noise, 'preload': True})
+        raw_ctx = self._resolve_derivative(raw_node_name(source_name), options={'noise': noise, 'preload': True})
         raw = raw_ctx.load()
         bads_ctx = self._resolve_derivative(raw_bad_channels_input_name(source_name), options={'noise': noise})
-        bids_path = raw_ctx.node._resolve_bids_path(raw_ctx)
+        bids_path = resolve_raw_bids_path(raw_ctx, self._raw_extension)
         detected = pipe._detect_flat_channels(bids_path, raw, flat)
         if detected is not None:
-            bads_ctx.node.write(bads_ctx, raw, detected, redo, create=True)
+            bads_ctx.node.write(bads_ctx, raw, detected, redo)
 
     def make_bad_channels_neighbor_correlation(
             self,
@@ -2430,8 +2430,8 @@ class Pipeline(StateModel):
 
         Opens :func:`eelbrain.gui.select_channels` for the current subject.
         The document is the Pipeline-specific ``*_channels.tsv`` file under
-        the ``derivatives/mne/`` hierarchy (seeded from the BIDS source the
-        first time it is written). Events come from labeled-events.
+        the ``derivatives/mne/`` hierarchy (built from the BIDS source when
+        first accessed). Events come from labeled-events.
 
         Parameters
         ----------
@@ -2449,10 +2449,10 @@ class Pipeline(StateModel):
         subject = self.get('subject')
         # Load raw at the requested pipeline stage (unprocessed input if source)
         raw_data = self._load_derivative(raw_node_name(raw_name), options={'preload': False, 'noise': False})
-        # Bad channels are stored in the derivatives/mne hierarchy; ensure the
-        # file exists (seeded from the BIDS source) so the GUI can read/write it
+        # Bad channels are stored in the derivatives/mne hierarchy; loading
+        # builds a missing file (seeded from the BIDS source) so the GUI can read/write it
         bads_ctx = self._resolve_derivative(raw_bad_channels_input_name(source_name))
-        bads_ctx.node.write(bads_ctx, raw_data, [], redo=False, create=True)
+        bads_ctx.load()
         channels_path = bads_ctx.node.path(bads_ctx)
         # Labeled events for the timeline
         events = self._load_derivative('labeled-events')

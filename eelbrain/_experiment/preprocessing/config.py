@@ -91,9 +91,7 @@ class RawSource(RawPipe):
         Used to determine sensor positions (not needed for KIT files, or when a
         montage is specified).
     rename_channels
-        Rename channels based on a ``{from: to}`` dictionary. This happens
-        *after* calling the ``reader``, and *before* applying the ``montage``.
-        Useful to convert system-specific channel names to those of a standard montages.
+        The names the ``montage`` uses for channels in the data, as a ``{data_name: montage_name}`` dictionary. The montage is renamed accordingly before it is applied, so that channel names in the data (as defined by the BIDS dataset) are never modified. Useful when the data uses a naming convention different from a standard montage.
     montage
         Name of a montage that is applied to raw data to set sensor positions
         (see :meth:`mne.io.Raw.set_montage`).
@@ -120,7 +118,7 @@ class RawSource(RawPipe):
             self,
             sysname: str = None,
             rename_channels: dict = None,
-            montage: str = None,
+            montage: str | mne.channels.DigMontage = None,
             adjacency: str | list[tuple[str, str]] | Path = None,
             **kwargs,
     ):
@@ -132,6 +130,14 @@ class RawSource(RawPipe):
             adjacency = read_adjacency(adjacency)
         self.sysname = sysname
         self.rename_channels = typed_arg(rename_channels, dict)
+        if self.rename_channels:
+            if montage is None:
+                raise ConfigurationError(f"RawSource: {rename_channels=} without montage; rename_channels specifies the names the montage uses and requires a montage.")
+            montage = mne.channels.make_standard_montage(montage) if isinstance(montage, str) else montage.copy()
+            missing = [name for name in self.rename_channels.values() if name not in montage.ch_names]
+            if missing:
+                raise ConfigurationError(f"RawSource: rename_channels values missing from the montage: {enumeration(missing)}. Values need to be names the montage uses.")
+            montage.rename_channels({montage_name: data_name for data_name, montage_name in self.rename_channels.items()})
         self.montage = montage
         self.adjacency = adjacency
         self.kwargs = kwargs

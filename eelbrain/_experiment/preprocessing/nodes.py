@@ -74,6 +74,36 @@ BIDS_TO_MNE_CHANNEL_TYPES = {
 }
 
 
+def resolve_raw_bids_path(ctx: Request, extension: str, require: bool = False) -> BIDSPath:
+    """Locate the raw recording file described by ``ctx``.
+
+    Parameters
+    ----------
+    ctx
+        Request describing the recording and the ``noise`` option.
+    extension
+        File extension of the raw data files (e.g. ``'.fif'``).
+    require
+        Raise :exc:`FileMissingError` when no file exists at the expected location
+        (by default, the expected location is returned even when it does not exist).
+    """
+    bids_path_ = bids_path(ctx.root, ctx.state, extension, datatype=ctx.datatype)
+    if ctx.options['noise']:
+        noise_path_ = bids_path_.find_empty_room()
+        if noise_path_ is None:
+            raise FileMissingError(f"Noise file could not be found for {bids_path_.fpath}")
+        bids_path_ = noise_path_
+    if bids_path_.fpath.exists():
+        return bids_path_
+    # Alternative path: split files
+    split_path = bids_path_.copy().update(split='01')
+    if split_path.fpath.exists():
+        return split_path
+    if require:
+        raise FileMissingError(f"Raw input file does not exist at expected location {bids_path_.fpath}")
+    return bids_path_
+
+
 def canonical_recording(recordings: frozenset[tuple[str, str, str, str, str]], subject: str, session: str | None, acquisition: str | None) -> tuple[str, str] | None:
     """Return a deterministic ``(task, run)`` recording for one subject/session/acquisition.
 
@@ -105,8 +135,16 @@ def canonical_recording(recordings: frozenset[tuple[str, str, str, str, str]], s
 class RawBadChannelsInput(Input[list[str]]):
     """Access to Pipeline-specific bad channel definitions.
 
-    User-specified bad channels are stored in an Eelbrain-specific  ``channels.tsv`` file under the ``derivatives/mne/`` hierarchy  rather than in the BIDS source dataset, so that re-downloading the dataset does not overwrite them.
-    The BIDS source ``channels.tsv`` is used as seed when the derivatives file is first written.
+    Bad channels are defined by an Eelbrain-specific ``channels.tsv`` file under the
+    ``derivatives/mne/`` hierarchy rather than in the BIDS source dataset, so that the
+    user can update bad channels without modifying the source dataset, and so that a
+    channel that is marked bad in the BIDS source dataset can be marked good again.
+
+    Like the ICA file (:class:`ICAInput`), the derivatives file is user-owned: the
+    Pipeline creates it when it is missing, but never overwrites user edits, so the file
+    lives outside the cache. Unlike the ICA file, its content is cheap to read and fully
+    describes itself, so no provenance manifest is needed and this remains a plain
+    :class:`Input`.
     """
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run')
     key_options = {'noise': False}
@@ -134,29 +172,65 @@ class RawBadChannelsInput(Input[list[str]]):
         bpath = bids_path(ctx.root, ctx.state, self.extension, datatype=ctx.datatype, noise=ctx.options['noise'])
         return bpath.update(suffix='channels', extension='.tsv')
 
-    def _active_path(self, ctx: Request) -> Path:
-        """The file ``load`` reads from: derivatives file if present, else BIDS source."""
-        path = self.path(ctx)
-        if path.exists():
-            return path
-        return self._bids_path(ctx).fpath
-
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {'bads': self.load(ctx)}
 
     def dependency_fingerprint_quick(self, ctx: Request, view: str | None = None) -> dict[str, Any] | None:
-        return file_fingerprint(ctx.root, self._active_path(ctx))
-
-    def load(self, ctx: Request) -> list[str]:
-        path = self._active_path(ctx)
+        # The derivatives channels.tsv fully determines the bad channels
+        path = self.path(ctx)
         if not path.exists():
-            return []
+            if ctx.registry._readonly:
+                return None  # seeding would write to disk; fall back to the full comparison
+            self.load(ctx)
+        return file_fingerprint(ctx.root, path)
+
+    def _initial_channels_df(self, ctx: Request) -> pd.DataFrame:
+        """Initial content for the derivatives ``channels.tsv`` file"""
+        # BIDS source ``channels.tsv``
+        source_path = self._bids_path(ctx).fpath
+        channels_df = None
+        if source_path.exists():
+            channels_df = pd.read_csv(source_path, sep='\t')
+            if 'name' not in channels_df.columns:
+                raise RuntimeError(f"channels.tsv file at {source_path} is missing required column 'name'.")
+            if 'status' in channels_df.columns:
+                return channels_df
+        # Fall back on bad channels in raw file
+        raw_path = resolve_raw_bids_path(ctx, self.extension, require=True).fpath
+        raw = RawSourceInput._read_raw(raw_path, preload=False)
+        bads = raw.info['bads']
+        if channels_df is None:
+            channels_df = pd.DataFrame({'name': list(raw.ch_names)})
+        channels_df['status'] = ['bad' if ch in bads else 'good' for ch in channels_df['name']]
+        return channels_df
+
+    def _load_df(self, ctx: Request) -> tuple[pd.DataFrame, Path, bool]:
+        """The bad-channel table for ``ctx``, its path, and whether it is backed by a file on disk.
+
+        When the derivatives ``channels.tsv`` file does not exist yet, its initial
+        content is returned without writing it.
+        """
+        path = self.path(ctx)
+        if not path.exists():
+            return self._initial_channels_df(ctx), path, False
         channels_df = pd.read_csv(path, sep='\t')
-        if 'status' not in channels_df.columns:
-            return []
         if 'name' not in channels_df.columns:
             raise RuntimeError(f"channels.tsv file at {path} is missing required column 'name'.")
+        if 'status' not in channels_df.columns:
+            channels_df['status'] = 'good'
+        return channels_df, path, True
+
+    def load(self, ctx: Request) -> list[str]:
+        channels_df, path, exists = self._load_df(ctx)
+        if not exists and not ctx.registry._readonly:
+            LOG.info("Creating bad-channels file at %s.", path)
+            self._write_df(path, channels_df)
         return channels_df.query('status == "bad"')['name'].tolist()
+
+    def _write_df(self, path: Path, df: pd.DataFrame) -> None:
+        """Write ``df`` to the ``path``"""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(path, sep='\t', index=False)
 
     def write(
             self,
@@ -164,17 +238,12 @@ class RawBadChannelsInput(Input[list[str]]):
             raw: mne.io.BaseRaw,
             new_bads: list[str],
             redo: bool,
-            *,
-            create: bool = False,
     ) -> None:
         """Write bad-channel status to the Pipeline-specific ``channels.tsv`` file.
 
         Bad channels are written to the ``derivatives/mne/`` hierarchy so
-        that the BIDS source dataset is never modified. With ``create=True``, a
-        missing file is initialized from the BIDS source ``channels.tsv`` (to
-        preserve any bad channels shipped with the dataset), or from ``raw`` if
-        no source sidecar exists, so the resulting file contains one row for
-        every channel in the recording.
+        that the BIDS source dataset is never modified. A missing file is
+        first initialized like in :meth:`load` (see :meth:`_initial_channels_df`).
         Channel names in ``new_bads`` are normalized against the raw file using
         the associated :class:`RawSource`. By default, new bad channels are
         added to any channels that are already marked bad. With ``redo=True``,
@@ -186,47 +255,19 @@ class RawBadChannelsInput(Input[list[str]]):
         ctx
             Request describing the recording and ``noise`` option.
         raw
-            Raw file used to validate channel names and initialize a missing
-            ``channels.tsv`` file.
+            Raw data used to validate channel names in ``new_bads``.
         new_bads
             Channels to mark bad.
         redo
             Replace existing bad-channel markings instead of adding to them.
-        create
-            Create a missing ``channels.tsv`` file before writing.
         """
-        path = self.path(ctx)
-        if path.exists():
-            channels_df = pd.read_csv(path, sep='\t')
-            if 'name' not in channels_df.columns:
-                raise RuntimeError(f"channels.tsv file at {path} is missing required column 'name'.")
-            if 'status' not in channels_df.columns:
-                channels_df['status'] = 'good'
-            created = False
-        elif create:
-            source_path = self._bids_path(ctx).fpath
-            if source_path.exists():
-                LOG.info("No bad-channels file found at %s, seeding from BIDS source %s.", path, source_path)
-                channels_df = pd.read_csv(source_path, sep='\t')
-                if 'name' not in channels_df.columns:
-                    raise RuntimeError(f"channels.tsv file at {source_path} is missing required column 'name'.")
-                if 'status' not in channels_df.columns:
-                    channels_df['status'] = 'good'
-            else:
-                LOG.info("No bad-channels file found at %s, creating one from raw.", path)
-                ch_status = ['bad' if ch in raw.info['bads'] else 'good' for ch in raw.ch_names]
-                channels_df = pd.DataFrame({'name': raw.ch_names, 'status': ch_status})
-            path.parent.mkdir(parents=True, exist_ok=True)
-            created = True
-        else:
-            raise FileMissingError(f"Bad channels file does not exist at {path}")
-
+        channels_df, path, exists = self._load_df(ctx)
         old_bads = channels_df.query('status == "bad"')['name'].tolist()
         new_bads = self.pipe._normalize_channel_names(raw, new_bads)
         if not redo:
             new_bads = sorted(set(old_bads).union(new_bads))
         LOG.info("Bad channels: %s -> %s for %s", old_bads, new_bads, path)
-        if new_bads == old_bads and not created:
+        if new_bads == old_bads and exists:
             return
 
         missing = [ch for ch in new_bads if ch not in set(channels_df['name'])]
@@ -235,7 +276,7 @@ class RawBadChannelsInput(Input[list[str]]):
         if redo:
             channels_df['status'] = 'good'
         channels_df.loc[channels_df['name'].isin(new_bads), 'status'] = 'bad'
-        channels_df.to_csv(path, sep='\t', index=False)
+        self._write_df(path, channels_df)
 
 
 class RawSourceInput(Input[mne.io.BaseRaw]):
@@ -255,29 +296,14 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         self.pipe = pipe
         self.extension = extension
 
-    def _resolve_bids_path(self, ctx: Request, require: bool = False) -> BIDSPath:
-        """Return the noise-resolved BIDSPath and the actual file path on disk."""
-        bids_path_ = bids_path(ctx.root, ctx.state, self.extension, datatype=ctx.datatype)
-        if ctx.options['noise']:
-            bids_path_ = bids_path_.find_empty_room()
-        if bids_path_.fpath.exists():
-            return bids_path_
-        # Alternative path: split files
-        split_path = bids_path_.copy().update(split='01')
-        if split_path.fpath.exists():
-            return split_path
-        if require:
-            raise FileMissingError(f"Raw input file does not exist at expected location {bids_path_.fpath}")
-        return bids_path_
-
     def path(self, ctx: Request) -> Path:
-        return self._resolve_bids_path(ctx).fpath
+        return resolve_raw_bids_path(ctx, self.extension).fpath
 
     @staticmethod
-    def _read_raw(path: BIDSPath, preload: bool) -> mne.io.BaseRaw:
-        """Read a raw file using the MNE reader appropriate for its BIDS extension."""
+    def _read_raw(path: Path, preload: bool) -> mne.io.BaseRaw:
+        """Read a raw file using the MNE reader appropriate for its extension."""
         kwargs = {'preload': preload, 'verbose': MNE_VERBOSITY}
-        match path.extension:
+        match path.suffix:
             case '.fif':
                 reader = mne.io.read_raw_fif
                 kwargs['allow_maxshield'] = True
@@ -290,11 +316,11 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
             case '.bdf':
                 reader = mne.io.read_raw_bdf
             case _:
-                raise RuntimeError(f"Unrecognized file format: {path.extension}")
-        return reader(path.fpath, **kwargs)
+                raise RuntimeError(f"Unrecognized file format: {path.suffix}")
+        return reader(path, **kwargs)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        path = self._resolve_bids_path(ctx)
+        path = resolve_raw_bids_path(ctx, self.extension)
         fp = {
             'raw': self.raw_name,
             'pipe': self.pipe,
@@ -321,12 +347,9 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         return raw.info
 
     def _load_raw(self, ctx: Request, preload: bool):
-        path = self._resolve_bids_path(ctx, require=True)
-        raw = self._read_raw(path, preload=preload)
+        path = resolve_raw_bids_path(ctx, self.extension, require=True)
+        raw = self._read_raw(path.fpath, preload=preload)
         self._apply_bids_channels(path, raw)
-        if self.pipe.rename_channels:
-            if rename := {k: v for k, v in self.pipe.rename_channels.items() if k in raw.ch_names}:
-                raw.rename_channels(rename)
         if self.pipe.montage:
             raw.set_montage(self.pipe.montage)
         elif path.datatype == 'eeg':
@@ -483,13 +506,16 @@ class RawSourceDerivative(UncachedDerivative[mne.io.BaseRaw]):
         return super().load_view(ctx, view)
 
     def _load_bad_channels(self, ctx: Request) -> list[str]:
-        tsv_bads = ctx.load(raw_bad_channels_input_name(self.raw_name))
-        raw = ctx.load(raw_input_name(self.raw_name))
-        raw_bads = raw.info['bads']
-        all_bads = set(tsv_bads) | set(raw_bads)
+        # The bad-channels input is the only source of bad channels; raw.info['bads'] is
+        # only consulted through it, so that it can be overridden (see RawBadChannelsInput)
+        all_bads = ctx.load(raw_bad_channels_input_name(self.raw_name))
 
         # Detect EEG channels whose positions contain NaN
+        raw = ctx.load(raw_input_name(self.raw_name))
         eeg_picks = mne.pick_types(raw.info, meg=False, eeg=True, exclude=())
+        if len(eeg_picks) == 0:
+            return all_bads
+
         nan_bads = {raw.info['chs'][i]['ch_name'] for i in eeg_picks if numpy.any(numpy.isnan(raw.info['chs'][i]['loc'][:3]))}
         nan_bads.difference_update(all_bads)
         if nan_bads:

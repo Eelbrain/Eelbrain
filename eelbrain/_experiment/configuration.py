@@ -68,7 +68,12 @@ class Configuration:
             value = getattr(self, name)
             if param.default is param.empty:
                 args.append(repr(value))
-            elif value != param.default:
+            else:
+                try:
+                    if value == param.default:
+                        continue
+                except Exception:  # some values raise on comparison
+                    pass
                 args.append(f'{name}={value!r}')
         return args
 

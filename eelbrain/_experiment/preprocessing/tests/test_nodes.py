@@ -32,7 +32,7 @@ def test_read_raw_applies_bids_channels(tmp_path):
     })
     channels.to_csv(channels_path, sep='\t', index=False)
 
-    raw_read = RawSourceInput._read_raw(bids_path, preload=False)
+    raw_read = RawSourceInput._read_raw(bids_path.fpath, preload=False)
     RawSourceInput._apply_bids_channels(bids_path, raw_read)
 
     assert raw_read.get_channel_types(picks=['EOG 001']) == ['eog']
