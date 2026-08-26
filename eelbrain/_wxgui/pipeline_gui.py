@@ -853,7 +853,7 @@ class PipelineFrame(EelbrainFrame):
             except _USER_ERROR_TYPES as error:
                 self._show_error(*_error_dialog_args(error))
             except ICAChannelsChangedError as error:
-                if self._ask_ica_channels_changed():
+                if self._ask_ica_channels_changed(error):
                     Path(error.path).unlink()
                     self._start_refresh()
                 else:
@@ -1546,8 +1546,13 @@ class PipelineFrame(EelbrainFrame):
         ready.wait()
         return result[0]
 
-    def _ask_ica_channels_changed(self) -> bool:
+    def _ask_ica_channels_changed(self, error: ICAChannelsChangedError) -> bool:
         """Prompt when bad channels changed since the ICA was created.
+
+        Parameters
+        ----------
+        error
+            The error, listing the bad channels then and now.
 
         Returns ``True`` to delete the ICA, ``False`` to abort.
         """
@@ -1557,6 +1562,7 @@ class PipelineFrame(EelbrainFrame):
             "Bad channels changed",
             wx.YES_NO | wx.ICON_WARNING,
         )
+        dlg.SetExtendedMessage(f"When the ICA was created: {', '.join(error.bads_before) or 'none'}\nNow: {', '.join(error.bads_after) or 'none'}")
         dlg.SetYesNoLabels("Delete ICA", "Abort")
         delete = dlg.ShowModal() == wx.ID_YES
         dlg.Destroy()
