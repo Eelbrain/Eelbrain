@@ -132,7 +132,7 @@ class BemInput(Input):
             return mne.read_bem_surfaces(self.path(ctx))
         bem_dir_ = ctx.root / bem_dir(ctx.state)
         paths = self._surface_paths(ctx)
-        missing = [surf for surf, path in paths.items() if not paths.exists()]
+        missing = [surf for surf, path in paths.items() if not path.exists()]
         if missing:
             # Test for broken FreeSurfer symlinks
             for surf in missing[:]:
