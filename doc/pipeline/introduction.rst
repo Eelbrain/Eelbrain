@@ -1,7 +1,7 @@
 .. currentmodule:: eelbrain.pipeline
 
 ***********************************
-General Introduction
+Introduction
 ***********************************
 
 This page introduces basic concepts used by the pipeline:

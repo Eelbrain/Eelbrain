@@ -311,16 +311,29 @@ to change its parameters.
    Boosting
    NCRF
 
-The analysis *space* is determined by the :ref:`state-inv` state, exactly as for evoked analysis: with ``inv=''`` the TRF is fit to sensor data, with a non-empty inverse solution it is fit to source-localized data (in source space, the :ref:`state-parc` state masks the source space: sources labeled ``"unknown"`` are excluded).
-The :class:`NCRF` estimator instead fits source currents directly from sensor data and requires ``inv=''``.
+Example definitions::
+
+    class TRFExperiment(Pipeline):
+
+        estimators = {
+            'forward': Boosting(basis=0.050, selective_stopping=1, partitions=5),
+            'backward': Boosting(basis=0, backward=True, partitions=5),
+            'ncrf': NCRF(),
+        }
+
+These definitions can then be invoked like::
+
+    trfs = e.load_trfs(..., estimator='forward')
+
+For :class:`Boosting`, the analysis *space* is determined by the :ref:`state-inv` state, as for evoked analysis:
+with ``inv=''`` the TRF is fit to sensor data, with a non-empty inverse solution it is fit to source-localized data (in source space, the :ref:`state-parc` state masks the source space: sources labeled ``"unknown"`` are excluded).
+The :class:`NCRF` estimator fits source currents directly from sensor data and requires ``inv=''``.
 
 .. py:attribute:: Pipeline.default_data
    :type: str
 
 In sensor space, the ``data`` parameter of the TRF methods selects the sensor type to fit (e.g. ``'meg'``, ``'eeg'``, or an aggregate like ``'eeg.rms'``).
 :attr:`Pipeline.default_data` sets the default (if unset, ``'eeg'`` for EEG datasets and ``'meg'`` otherwise).
-
-The ``samplingrate`` parameter determines the sampling rate at which the TRF is estimated; predictors are resampled to match the response.
 
 
 Group analysis and model tests
