@@ -42,5 +42,4 @@ from .nodes import (
     RawSourceInput,
     load_raw_dependency,
     load_raw_info_dependency,
-    resolve_raw_bids_path,
 )

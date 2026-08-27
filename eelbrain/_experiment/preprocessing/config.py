@@ -164,23 +164,6 @@ class RawSource(RawPipe):
         sensor = load.mne.sensor_dim(raw.info, adjacency=self.adjacency)
         return sensor._normalize_sensor_names(bad_chs)
 
-    def _detect_flat_channels(self, path: BIDSPath, raw: mne.io.BaseRaw, flat: float = None) -> list[str] | None:
-        """Detect flat channels; returns None if the operation should be skipped."""
-        if flat is None:
-            if path.datatype == 'meg':
-                flat = 1e-14
-            elif path.datatype == 'eeg':
-                return None
-            else:
-                raise NotImplementedError(f"{path.datatype=}")
-        elif flat == 0:
-            return None
-        bad_chs = list(raw.info['bads'])
-        sysname = self._get_sysname(raw.info, path.subject, path.datatype)
-        raw_ndvar = load.mne.raw_ndvar(raw, sysname=sysname, adjacency=self.adjacency)
-        bad_chs.extend(raw_ndvar.sensor.names[raw_ndvar.std('time') < flat])
-        return bad_chs
-
     def _as_dict(self) -> dict:
         out = RawPipe._as_dict(self)
         if isinstance(self.montage, mne.channels.DigMontage):

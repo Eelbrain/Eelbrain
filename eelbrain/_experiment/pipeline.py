@@ -54,7 +54,7 @@ from .pathing import (
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, _resolve_parc
 from .preprocessing import (
     CachedRawPipe, ICAInput, MaxwellCalibrationInput, MaxwellCrosstalkInput, CanonicalHeadPositionDerivative, RawBadChannelsInput, RawDerivative, RawHeadPositionDerivative, RawPipe, RawSource, RawSourceDerivative, RawSourceInput, RawICA, RawMaxwell, Reference,
-    REINDEX_ICA, assemble_raw_pipes, ica_input_name, raw_bad_channels_input_name, raw_node_name, raw_input_name, resolve_raw_bids_path,
+    REINDEX_ICA, assemble_raw_pipes, ica_input_name, raw_bad_channels_input_name, raw_node_name, raw_input_name,
 )
 from .data import DataSpec
 from .source import (
@@ -2223,33 +2223,44 @@ class Pipeline(StateModel):
         noise: bool = False,
         **state: Any,
     ) -> None:
-        """Automatically detect bad channels
+        """Automatically detect flat channels and mark them as bad
 
-        Works on ``raw='raw'``
+        Works on ``raw='raw'``. Only implemented for MEG channels.
 
         Parameters
         ----------
         flat
-            Threshold for detecting flat channels: channels with ``std < flat``
-            are considered bad (default 1e-14 for MEG and 0 for EEG).
+            Threshold for detecting flat channels: MEG channels with ``std < flat``
+            are considered bad (default 1e-14; set to 0 to skip detection).
         redo
             If the file already exists, replace it (instead of adding).
         noise
             If True, make bad channels for the empty-room recording instead of the current subject's recording.
         ...
             State parameters.
+
+        Notes
+        -----
+        Pipelines that include :class:`RawMaxwell` do not need this: flat channels
+        are marked as bad automatically by
+        :func:`mne.preprocessing.find_bad_channels_maxwell`.
         """
         if state:
             self.set(**state)
+        if flat == 0:
+            return
+        elif flat is None:
+            flat = 1e-14
         source_name = self._raw.root_source_name('raw')
-        pipe = self._raw[source_name]
         raw_ctx = self._resolve_derivative(raw_node_name(source_name), options={'noise': noise, 'preload': True})
         raw = raw_ctx.load()
+        picks = mne.pick_types(raw.info, meg=True, ref_meg=False)
+        if len(picks) == 0:
+            raise NotImplementedError("make_bad_channels_auto: flat-channel detection is only implemented for MEG channels, and the raw data contains none")
+        data = raw.get_data(picks)
+        detected = [raw.ch_names[pick] for pick in picks[data.std(axis=1) < flat]]
         bads_ctx = self._resolve_derivative(raw_bad_channels_input_name(source_name), options={'noise': noise})
-        bids_path = resolve_raw_bids_path(raw_ctx, self._raw_extension)
-        detected = pipe._detect_flat_channels(bids_path, raw, flat)
-        if detected is not None:
-            bads_ctx.node.write(bads_ctx, raw, detected, redo)
+        bads_ctx.node.write(bads_ctx, raw, detected, redo)
 
     def make_bad_channels_neighbor_correlation(
             self,
