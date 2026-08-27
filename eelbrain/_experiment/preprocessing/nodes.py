@@ -149,17 +149,13 @@ class RawBadChannelsInput(Input[list[str]]):
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run')
     key_options = {'noise': False}
 
-    def __init__(
-            self,
-            raw_name: str,
-            pipe: RawSource,
-            extension: str,
-    ):
-        self.name = raw_bad_channels_input_name(raw_name)
-        self.raw_name = raw_name
-        self.fixed_state = {'raw': raw_name}
-        self.pipe = pipe
-        self.extension = extension
+    def __init__(self, raw_input: RawSourceInput):
+        self.name = raw_bad_channels_input_name(raw_input.raw_name)
+        self.raw_name = raw_input.raw_name
+        self.fixed_state = {'raw': raw_input.raw_name}
+        self.pipe = raw_input.pipe
+        self.extension = raw_input.extension
+        self.raw_input = raw_input
 
     def path(self, ctx: Request) -> Path:
         """Path to the Pipeline-specific bad-channels ``channels.tsv`` file."""
@@ -196,8 +192,7 @@ class RawBadChannelsInput(Input[list[str]]):
             if 'status' in channels_df.columns:
                 return channels_df
         # Fall back on bad channels in raw file
-        raw_path = resolve_raw_bids_path(ctx, self.extension, require=True).fpath
-        raw = RawSourceInput._read_raw(raw_path, preload=False)
+        raw = self.raw_input._load_raw(ctx, preload=False)
         bads = raw.info['bads']
         if channels_df is None:
             channels_df = pd.DataFrame({'name': list(raw.ch_names)})
@@ -223,9 +218,44 @@ class RawBadChannelsInput(Input[list[str]]):
     def load(self, ctx: Request) -> list[str]:
         channels_df, path, exists = self._load_df(ctx)
         if not exists and not ctx.registry._readonly:
+            self._check_eeg_positions(ctx, channels_df, path)
             LOG.info("Creating bad-channels file at %s.", path)
             self._write_df(path, channels_df)
         return channels_df.query('status == "bad"')['name'].tolist()
+
+    def _check_eeg_positions(
+            self,
+            ctx: Request,
+            channels_df: pd.DataFrame,
+            path: Path,
+    ) -> None:
+        """Check EEG channel positions once, before creating the bad-channels file.
+
+        Channels without a position cannot be plotted or interpolated. Rather than
+        marking them as bad silently, a warning recommends marking them as bad in the
+        new bad-channels file.
+
+        Parameters
+        ----------
+        ctx
+            Request identifying the recording.
+        channels_df
+            Initial content for the bad-channels file (see :meth:`_initial_channels_df`).
+        path
+            Path at which the bad-channels file will be created.
+        """
+        raw = self.raw_input._load_raw(ctx, preload=False)
+        eeg_picks = mne.pick_types(raw.info, meg=False, eeg=True, exclude=())
+        if len(eeg_picks) == 0:
+            return
+        nan_chs = {raw.info['chs'][i]['ch_name'] for i in eeg_picks if numpy.isnan(raw.info['chs'][i]['loc'][:3]).any()}
+        if not nan_chs:
+            return
+        if len(nan_chs) == len(eeg_picks):
+            raise DataError("All EEG channel positions are NaN. This usually means that the raw file does not contain electrode positions and a montage needs to be applied. Set the montage parameter in RawSource to supply channel positions.")
+        nan_chs.difference_update(channels_df.query('status == "bad"')['name'])
+        if nan_chs:
+            warnings.warn(f"EEG channels without a position: {', '.join(sorted(nan_chs))}. These channels cannot be plotted or interpolated; consider marking them as bad in {path}.", RuntimeWarning)
 
     def _write_df(self, path: Path, df: pd.DataFrame) -> None:
         """Write ``df`` to the ``path``"""
@@ -346,7 +376,8 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         raw = self._load_raw(ctx, preload=False)
         return raw.info
 
-    def _load_raw(self, ctx: Request, preload: bool):
+    def _load_raw(self, ctx: Request, preload: bool) -> mne.io.BaseRaw:
+        """Load the source raw file with BIDS channel metadata and electrode positions applied."""
         path = resolve_raw_bids_path(ctx, self.extension, require=True)
         raw = self._read_raw(path.fpath, preload=preload)
         self._apply_bids_channels(path, raw)
@@ -508,24 +539,7 @@ class RawSourceDerivative(UncachedDerivative[mne.io.BaseRaw]):
     def _load_bad_channels(self, ctx: Request) -> list[str]:
         # The bad-channels input is the only source of bad channels; raw.info['bads'] is
         # only consulted through it, so that it can be overridden (see RawBadChannelsInput)
-        all_bads = ctx.load(raw_bad_channels_input_name(self.raw_name))
-
-        # Detect EEG channels whose positions contain NaN
-        raw = ctx.load(raw_input_name(self.raw_name))
-        eeg_picks = mne.pick_types(raw.info, meg=False, eeg=True, exclude=())
-        if len(eeg_picks) == 0:
-            return all_bads
-
-        nan_bads = {raw.info['chs'][i]['ch_name'] for i in eeg_picks if numpy.any(numpy.isnan(raw.info['chs'][i]['loc'][:3]))}
-        nan_bads.difference_update(all_bads)
-        if nan_bads:
-            eeg_names = {raw.info['chs'][i]['ch_name'] for i in eeg_picks}
-            if eeg_names and eeg_names.issubset(nan_bads):
-                raise DataError("All EEG channel positions are NaN. This usually means that the raw file does not contain electrode positions and a montage needs to be applied. Set the montage parameter in RawSource to supply channel positions.")
-            warnings.warn(f"Channels with NaN position marked as bad: {', '.join(sorted(nan_bads))}", RuntimeWarning)
-            all_bads |= nan_bads
-
-        return sorted(all_bads)
+        return ctx.load(raw_bad_channels_input_name(self.raw_name))
 
 
 class ICAInput(Input[mne.preprocessing.ICA]):
