@@ -249,13 +249,12 @@ class RawBadChannelsInput(Input[list[str]]):
         if len(eeg_picks) == 0:
             return
         nan_chs = {raw.info['chs'][i]['ch_name'] for i in eeg_picks if numpy.isnan(raw.info['chs'][i]['loc'][:3]).any()}
+        nan_chs.difference_update(channels_df.query('status == "bad"')['name'])
         if not nan_chs:
             return
         if len(nan_chs) == len(eeg_picks):
             raise DataError("All EEG channel positions are NaN. This usually means that the raw file does not contain electrode positions and a montage needs to be applied. Set the montage parameter in RawSource to supply channel positions.")
-        nan_chs.difference_update(channels_df.query('status == "bad"')['name'])
-        if nan_chs:
-            warnings.warn(f"EEG channels without a position: {', '.join(sorted(nan_chs))}. These channels cannot be plotted or interpolated; consider marking them as bad in {path}.", RuntimeWarning)
+        warnings.warn(f"EEG channels without a position: {', '.join(sorted(nan_chs))}. These channels cannot be plotted or interpolated; consider marking them as bad in {path}.", RuntimeWarning)
 
     def _write_df(self, path: Path, df: pd.DataFrame) -> None:
         """Write ``df`` to the ``path``"""
