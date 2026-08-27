@@ -191,9 +191,12 @@ class JobSpec:
                 job = ctx.node.make_job(ctx)
         else:
             job = ctx.node.make_job(ctx)
-        # Check that the inputs are unchanged
+        # Check that the inputs are unchanged. Quick fingerprints are excluded: they
+        # may change spuriously (see DependencyNode.dependency_fingerprint_quick), and
+        # loading itself can move one (e.g. loading bad channels builds a missing
+        # channels.tsv file, relocating the quick fingerprint to the new file).
         for before, after in ((provenance.dependencies, ctx.dependency_fingerprints()), (provenance.fingerprint, ctx.current_fingerprint())):
-            difference = find_difference(before, after)
+            difference = find_difference(before, after, strip_quick=True)
             if difference is not None:
                 path, old, new = difference
                 raise JobInputsChangedError(ctx.node.name, format_difference_path(path), old, new)
