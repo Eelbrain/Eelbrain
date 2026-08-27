@@ -47,9 +47,14 @@ For example::
             'acoustic': 'onset + env',
         }
 
+With the :class:`Pipeline` specification, TRFs can be loaded and analyzed::
+
     e = Experiment("~/Data/Experiment")
-    e.set(epoch='story', raw='1-40', inv='')
+    # Set general parameters
+    e.set(epoch='story', raw='1-40', inv='', estimator='boosting')
+    # Load a single TRF
     trf = e.load_trf('acoustic + word-frequency', -0.1, 0.5)
+    # Load a group dataset with TRFs for all subjects
     trfs = e.load_trfs('all', 'acoustic', -0.1, 0.5)
 
 Like all pipeline results, TRFs are cached: the first call to :meth:`Pipeline.load_trf` fits the model, subsequent calls load the cached result, and results are recomputed automatically when an input (preprocessing, rejection, a predictor file, …) changes.
