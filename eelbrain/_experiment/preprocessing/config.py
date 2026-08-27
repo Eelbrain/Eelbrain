@@ -91,10 +91,16 @@ class RawSource(RawPipe):
         Used to determine sensor positions (not needed for KIT files, or when a
         montage is specified).
     rename_channels
-        The names the ``montage`` uses for channels in the data, as a ``{data_name: montage_name}`` dictionary. The montage is renamed accordingly before it is applied, so that channel names in the data (as defined by the BIDS dataset) are never modified. Useful when the data uses a naming convention different from a standard montage.
+        The names the ``montage`` uses for channels in the data, as a
+        ``{data_name: montage_name}`` dictionary. The montage is renamed
+        accordingly before it is applied, so that channel names in the data
+        (as defined by the BIDS dataset) are never modified. Useful when the
+        data uses a naming convention different from a standard montage.
     montage
-        Name of a montage that is applied to raw data to set sensor positions
-        (see :meth:`mne.io.Raw.set_montage`).
+        Montage that is applied to raw data to set sensor positions (see
+        :meth:`mne.io.Raw.set_montage`), as a standard montage name (see
+        :func:`mne.channels.make_standard_montage`) or
+        :class:`mne.channels.DigMontage` instance.
     adjacency
         Adjacency between sensors. Can be specified as:
 
@@ -133,11 +139,19 @@ class RawSource(RawPipe):
         if self.rename_channels:
             if montage is None:
                 raise ConfigurationError(f"RawSource: {rename_channels=} without montage; rename_channels specifies the names the montage uses and requires a montage.")
-            montage = mne.channels.make_standard_montage(montage) if isinstance(montage, str) else montage.copy()
+            if isinstance(montage, str):
+                montage = mne.channels.make_standard_montage(montage)
+            else:
+                montage = montage.copy()
             missing = [name for name in self.rename_channels.values() if name not in montage.ch_names]
             if missing:
                 raise ConfigurationError(f"RawSource: rename_channels values missing from the montage: {enumeration(missing)}. Values need to be names the montage uses.")
-            montage.rename_channels({montage_name: data_name for data_name, montage_name in self.rename_channels.items()})
+            mapping = {montage_name: data_name for data_name, montage_name in self.rename_channels.items()}
+            # Unused montage channels whose name collides with a target data name are renamed out of the way
+            for data_name in list(mapping.values()):
+                if data_name in montage.ch_names and data_name not in mapping:
+                    mapping[data_name] = f'unused-{data_name}'
+            montage.rename_channels(mapping)
         self.montage = montage
         self.adjacency = adjacency
         self.kwargs = kwargs

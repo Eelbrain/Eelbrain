@@ -7,6 +7,8 @@ from typing import Any
 
 from mne_bids import BIDSPath
 
+from .exceptions import FileMissingError
+
 
 BIDS_ENTITY_KEYS = ('subject', 'session', 'task', 'acquisition', 'run')
 BIDS_ENTITY_PREFIX_MAP = {
@@ -62,9 +64,11 @@ def bids_path(root: Path, state: dict[str, Any], extension: str, *, datatype: st
         **kwargs,
     )
     if noise:
-        return path.find_empty_room()
-    else:
-        return path
+        noise_path = path.find_empty_room()
+        if noise_path is None:
+            raise FileMissingError(f"No empty-room recording found for {path.fpath}")
+        return noise_path
+    return path
 
 
 def raw_basename(state: dict[str, Any], *, datatype: str) -> str:

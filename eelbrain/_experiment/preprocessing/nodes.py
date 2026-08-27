@@ -87,12 +87,7 @@ def resolve_raw_bids_path(ctx: Request, extension: str, require: bool = False) -
         Raise :exc:`FileMissingError` when no file exists at the expected location
         (by default, the expected location is returned even when it does not exist).
     """
-    bids_path_ = bids_path(ctx.root, ctx.state, extension, datatype=ctx.datatype)
-    if ctx.options['noise']:
-        noise_path_ = bids_path_.find_empty_room()
-        if noise_path_ is None:
-            raise FileMissingError(f"Noise file could not be found for {bids_path_.fpath}")
-        bids_path_ = noise_path_
+    bids_path_ = bids_path(ctx.root, ctx.state, extension, datatype=ctx.datatype, noise=ctx.options['noise'])
     if bids_path_.fpath.exists():
         return bids_path_
     # Alternative path: split files
@@ -177,84 +172,87 @@ class RawBadChannelsInput(Input[list[str]]):
         if not path.exists():
             if ctx.registry._readonly:
                 return None  # seeding would write to disk; fall back to the full comparison
-            self.load(ctx)
+            self.load(ctx)  # seed the file here so that it is stable by the time job provenance is recorded
         return file_fingerprint(ctx.root, path)
 
-    def _initial_channels_df(self, ctx: Request) -> pd.DataFrame:
-        """Initial content for the derivatives ``channels.tsv`` file"""
-        # BIDS source ``channels.tsv``
-        source_path = self._bids_path(ctx).fpath
+    def _initial_channels_df(self, ctx: Request) -> tuple[pd.DataFrame, mne.io.BaseRaw | None]:
+        """Initial content for the derivatives ``channels.tsv`` file, and the raw file if it was loaded to determine that content"""
+        # BIDS source ``channels.tsv`` (resolved like in _apply_bids_channels, honoring BIDS inheritance)
+        source_path = RawSourceInput._find_bids_channels(self._bids_path(ctx))
         channels_df = None
-        if source_path.exists():
+        if source_path is not None:
             channels_df = pd.read_csv(source_path, sep='\t')
             if 'name' not in channels_df.columns:
                 raise RuntimeError(f"channels.tsv file at {source_path} is missing required column 'name'.")
             if 'status' in channels_df.columns:
-                return channels_df
+                return channels_df, None
         # Fall back on bad channels in raw file
         raw = self.raw_input._load_raw(ctx, preload=False)
         bads = raw.info['bads']
         if channels_df is None:
             channels_df = pd.DataFrame({'name': list(raw.ch_names)})
         channels_df['status'] = ['bad' if ch in bads else 'good' for ch in channels_df['name']]
-        return channels_df
+        return channels_df, raw
 
-    def _load_df(self, ctx: Request) -> tuple[pd.DataFrame, Path, bool]:
-        """The bad-channel table for ``ctx``, its path, and whether it is backed by a file on disk.
+    def _load_df(self, ctx: Request) -> tuple[pd.DataFrame, Path, bool, mne.io.BaseRaw | None]:
+        """The bad-channel table for ``ctx``, its path, whether it is backed by a file on disk, and the raw file if it was loaded for seeding.
 
         When the derivatives ``channels.tsv`` file does not exist yet, its initial
         content is returned without writing it.
         """
         path = self.path(ctx)
         if not path.exists():
-            return self._initial_channels_df(ctx), path, False
+            channels_df, raw = self._initial_channels_df(ctx)
+            return channels_df, path, False, raw
         channels_df = pd.read_csv(path, sep='\t')
         if 'name' not in channels_df.columns:
             raise RuntimeError(f"channels.tsv file at {path} is missing required column 'name'.")
         if 'status' not in channels_df.columns:
             channels_df['status'] = 'good'
-        return channels_df, path, True
+        return channels_df, path, True, None
 
     def load(self, ctx: Request) -> list[str]:
-        channels_df, path, exists = self._load_df(ctx)
+        channels_df, path, exists, raw = self._load_df(ctx)
         if not exists and not ctx.registry._readonly:
-            self._check_eeg_positions(ctx, channels_df, path)
+            self._check_eeg_positions(ctx, channels_df, raw)
             LOG.info("Creating bad-channels file at %s.", path)
             self._write_df(path, channels_df)
-        return channels_df.query('status == "bad"')['name'].tolist()
+        return sorted(channels_df.query('status == "bad"')['name'])
 
     def _check_eeg_positions(
             self,
             ctx: Request,
             channels_df: pd.DataFrame,
-            path: Path,
+            raw: mne.io.BaseRaw = None,
     ) -> None:
-        """Check EEG channel positions once, before creating the bad-channels file.
+        """Check EEG channel positions before creating the bad-channels file.
 
         Channels without a position cannot be plotted or interpolated. Rather than
-        marking them as bad silently, a warning recommends marking them as bad in the
-        new bad-channels file.
+        marking them as bad silently, an error asks the user to fix the positions or
+        mark the channels as bad explicitly.
 
         Parameters
         ----------
         ctx
             Request identifying the recording.
         channels_df
-            Initial content for the bad-channels file (see :meth:`_initial_channels_df`).
-        path
-            Path at which the bad-channels file will be created.
+            Content for the bad-channels file (see :meth:`_initial_channels_df`).
+        raw
+            The source raw file (loaded if not supplied).
         """
-        raw = self.raw_input._load_raw(ctx, preload=False)
+        if raw is None:
+            raw = self.raw_input._load_raw(ctx, preload=False)
         eeg_picks = mne.pick_types(raw.info, meg=False, eeg=True, exclude=())
         if len(eeg_picks) == 0:
             return
-        nan_chs = {raw.info['chs'][i]['ch_name'] for i in eeg_picks if numpy.isnan(raw.info['chs'][i]['loc'][:3]).any()}
-        nan_chs.difference_update(channels_df.query('status == "bad"')['name'])
+        bad_chs = set(channels_df.query('status == "bad"')['name'])
+        nan_chs = {raw.info['chs'][i]['ch_name'] for i in eeg_picks if numpy.isnan(raw.info['chs'][i]['loc'][:3]).any()} - bad_chs
         if not nan_chs:
             return
-        if len(nan_chs) == len(eeg_picks):
+        eeg_names = {raw.info['chs'][i]['ch_name'] for i in eeg_picks}
+        if nan_chs == eeg_names - bad_chs:
             raise DataError("All EEG channel positions are NaN. This usually means that the raw file does not contain electrode positions and a montage needs to be applied. Set the montage parameter in RawSource to supply channel positions.")
-        warnings.warn(f"EEG channels without a position: {', '.join(sorted(nan_chs))}. These channels cannot be plotted or interpolated; consider marking them as bad in {path}.", RuntimeWarning)
+        raise DataError(f"EEG channels without a position: {', '.join(sorted(nan_chs))}. These channels cannot be plotted or interpolated; mark them as bad (e.g. with make_bad_channels) or fix their positions in the dataset.")
 
     def _write_df(self, path: Path, df: pd.DataFrame) -> None:
         """Write ``df`` to the ``path``"""
@@ -290,7 +288,7 @@ class RawBadChannelsInput(Input[list[str]]):
         redo
             Replace existing bad-channel markings instead of adding to them.
         """
-        channels_df, path, exists = self._load_df(ctx)
+        channels_df, path, exists, seed_raw = self._load_df(ctx)
         old_bads = channels_df.query('status == "bad"')['name'].tolist()
         new_bads = self.pipe._normalize_channel_names(raw, new_bads)
         if not redo:
@@ -305,6 +303,8 @@ class RawBadChannelsInput(Input[list[str]]):
         if redo:
             channels_df['status'] = 'good'
         channels_df.loc[channels_df['name'].isin(new_bads), 'status'] = 'bad'
+        if not exists:
+            self._check_eeg_positions(ctx, channels_df, seed_raw if seed_raw is not None else raw)
         self._write_df(path, channels_df)
 
 

@@ -9239,6 +9239,10 @@ class Sensor(Dimension):
     def __repr__(self):
         return f"<Sensor n={len(self)}, name={self.sysname!r}>"
 
+    def _cache_form_(self) -> dict:
+        """Identity for cache fingerprints (see :meth:`DerivativeRegistry.canonicalize`)"""
+        return {'sysname': self.sysname, 'names': list(self.names), 'locations': self.locations.tolist()}
+
     def __len__(self):
         return len(self.locations)
 
