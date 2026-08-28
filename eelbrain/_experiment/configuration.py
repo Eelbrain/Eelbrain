@@ -72,7 +72,7 @@ class Configuration:
                 try:
                     if value == param.default:
                         continue
-                except Exception:  # some values raise on comparison
+                except (TypeError, ValueError, AttributeError):  # e.g., mne.channels.DigMontage and array-valued attributes raise on comparison
                     pass
                 args.append(f'{name}={value!r}')
         return args

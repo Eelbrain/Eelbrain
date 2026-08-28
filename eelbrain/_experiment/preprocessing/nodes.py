@@ -99,6 +99,20 @@ def resolve_raw_bids_path(ctx: Request, extension: str, require: bool = False) -
     return bids_path_
 
 
+def read_channels_tsv(path: Path) -> pd.DataFrame:
+    """Read a BIDS ``channels.tsv`` file, requiring the ``name`` column.
+
+    Parameters
+    ----------
+    path
+        Path of the ``channels.tsv`` file.
+    """
+    channels_df = pd.read_csv(path, sep='\t')
+    if 'name' not in channels_df.columns:
+        raise RuntimeError(f"channels.tsv file at {path} is missing required column 'name'.")
+    return channels_df
+
+
 def canonical_recording(recordings: frozenset[tuple[str, str, str, str, str]], subject: str, session: str | None, acquisition: str | None) -> tuple[str, str] | None:
     """Return a deterministic ``(task, run)`` recording for one subject/session/acquisition.
 
@@ -148,8 +162,6 @@ class RawBadChannelsInput(Input[list[str]]):
         self.name = raw_bad_channels_input_name(raw_input.raw_name)
         self.raw_name = raw_input.raw_name
         self.fixed_state = {'raw': raw_input.raw_name}
-        self.pipe = raw_input.pipe
-        self.extension = raw_input.extension
         self.raw_input = raw_input
 
     def path(self, ctx: Request) -> Path:
@@ -160,7 +172,7 @@ class RawBadChannelsInput(Input[list[str]]):
 
     def _bids_path(self, ctx: Request) -> BIDSPath:
         """Noise-resolved ``channels.tsv`` :class:`BIDSPath` in the source dataset."""
-        bpath = bids_path(ctx.root, ctx.state, self.extension, datatype=ctx.datatype, noise=ctx.options['noise'])
+        bpath = bids_path(ctx.root, ctx.state, self.raw_input.extension, datatype=ctx.datatype, noise=ctx.options['noise'])
         return bpath.update(suffix='channels', extension='.tsv')
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
@@ -175,38 +187,60 @@ class RawBadChannelsInput(Input[list[str]]):
             self.load(ctx)  # seed the file here so that it is stable by the time job provenance is recorded
         return file_fingerprint(ctx.root, path)
 
-    def _initial_channels_df(self, ctx: Request) -> tuple[pd.DataFrame, mne.io.BaseRaw | None]:
-        """Initial content for the derivatives ``channels.tsv`` file, and the raw file if it was loaded to determine that content"""
+    def _initial_channels_df(
+            self,
+            ctx: Request,
+            raw: mne.io.BaseRaw = None,
+    ) -> tuple[pd.DataFrame, mne.io.BaseRaw | None]:
+        """Initial content for the derivatives ``channels.tsv`` file, and the raw file if one was used to determine that content.
+
+        Parameters
+        ----------
+        ctx
+            Request identifying the recording.
+        raw
+            The source raw file, if the caller has already loaded it (loaded on
+            demand otherwise).
+        """
         # BIDS source ``channels.tsv`` (resolved like in _apply_bids_channels, honoring BIDS inheritance)
         source_path = RawSourceInput._find_bids_channels(self._bids_path(ctx))
         channels_df = None
         if source_path is not None:
-            channels_df = pd.read_csv(source_path, sep='\t')
-            if 'name' not in channels_df.columns:
-                raise RuntimeError(f"channels.tsv file at {source_path} is missing required column 'name'.")
+            channels_df = read_channels_tsv(source_path)
             if 'status' in channels_df.columns:
                 return channels_df, None
         # Fall back on bad channels in raw file
-        raw = self.raw_input._load_raw(ctx, preload=False)
+        if raw is None:
+            raw = self.raw_input._load_raw(ctx, preload=False)
         bads = raw.info['bads']
         if channels_df is None:
             channels_df = pd.DataFrame({'name': list(raw.ch_names)})
         channels_df['status'] = ['bad' if ch in bads else 'good' for ch in channels_df['name']]
         return channels_df, raw
 
-    def _load_df(self, ctx: Request) -> tuple[pd.DataFrame, Path, bool, mne.io.BaseRaw | None]:
-        """The bad-channel table for ``ctx``, its path, whether it is backed by a file on disk, and the raw file if it was loaded for seeding.
+    def _load_df(
+            self,
+            ctx: Request,
+            raw: mne.io.BaseRaw = None,
+    ) -> tuple[pd.DataFrame, Path, bool, mne.io.BaseRaw | None]:
+        """The bad-channel table for ``ctx``, its path, whether it is backed by a file on disk, and the raw file if one was used for seeding.
 
         When the derivatives ``channels.tsv`` file does not exist yet, its initial
         content is returned without writing it.
+
+        Parameters
+        ----------
+        ctx
+            Request identifying the recording.
+        raw
+            The source raw file, if the caller has already loaded it (loaded on
+            demand otherwise).
         """
         path = self.path(ctx)
         if not path.exists():
-            channels_df, raw = self._initial_channels_df(ctx)
+            channels_df, raw = self._initial_channels_df(ctx, raw)
             return channels_df, path, False, raw
-        channels_df = pd.read_csv(path, sep='\t')
-        if 'name' not in channels_df.columns:
-            raise RuntimeError(f"channels.tsv file at {path} is missing required column 'name'.")
+        channels_df = read_channels_tsv(path)
         if 'status' not in channels_df.columns:
             channels_df['status'] = 'good'
         return channels_df, path, True, None
@@ -217,7 +251,7 @@ class RawBadChannelsInput(Input[list[str]]):
             self._check_eeg_positions(ctx, channels_df, raw)
             LOG.info("Creating bad-channels file at %s.", path)
             self._write_df(path, channels_df)
-        return sorted(channels_df.query('status == "bad"')['name'])
+        return sorted(channels_df.loc[channels_df['status'] == 'bad', 'name'])
 
     def _check_eeg_positions(
             self,
@@ -245,7 +279,7 @@ class RawBadChannelsInput(Input[list[str]]):
         eeg_picks = mne.pick_types(raw.info, meg=False, eeg=True, exclude=())
         if len(eeg_picks) == 0:
             return
-        bad_chs = set(channels_df.query('status == "bad"')['name'])
+        bad_chs = set(channels_df.loc[channels_df['status'] == 'bad', 'name'])
         nan_chs = {raw.info['chs'][i]['ch_name'] for i in eeg_picks if numpy.isnan(raw.info['chs'][i]['loc'][:3]).any()} - bad_chs
         if not nan_chs:
             return
@@ -254,8 +288,20 @@ class RawBadChannelsInput(Input[list[str]]):
             raise DataError("All EEG channel positions are NaN. This usually means that the raw file does not contain electrode positions and a montage needs to be applied. Set the montage parameter in RawSource to supply channel positions.")
         raise DataError(f"EEG channels without a position: {', '.join(sorted(nan_chs))}. These channels cannot be plotted or interpolated; mark them as bad (e.g. with make_bad_channels) or fix their positions in the dataset.")
 
-    def _write_df(self, path: Path, df: pd.DataFrame) -> None:
-        """Write ``df`` to the ``path``"""
+    def _write_df(
+            self,
+            path: Path,
+            df: pd.DataFrame,
+    ) -> None:
+        """Write the bad-channel table to the ``channels.tsv`` file.
+
+        Parameters
+        ----------
+        path
+            Path of the ``channels.tsv`` file (parent directories are created).
+        df
+            The bad-channel table.
+        """
         path.parent.mkdir(parents=True, exist_ok=True)
         df.to_csv(path, sep='\t', index=False)
 
@@ -288,9 +334,9 @@ class RawBadChannelsInput(Input[list[str]]):
         redo
             Replace existing bad-channel markings instead of adding to them.
         """
-        channels_df, path, exists, seed_raw = self._load_df(ctx)
-        old_bads = channels_df.query('status == "bad"')['name'].tolist()
-        new_bads = self.pipe._normalize_channel_names(raw, new_bads)
+        channels_df, path, exists, _ = self._load_df(ctx, raw)
+        old_bads = channels_df.loc[channels_df['status'] == 'bad', 'name'].tolist()
+        new_bads = self.raw_input.pipe._normalize_channel_names(raw, new_bads)
         if not redo:
             new_bads = sorted(set(old_bads).union(new_bads))
         LOG.info("Bad channels: %s -> %s for %s", old_bads, new_bads, path)
@@ -304,7 +350,7 @@ class RawBadChannelsInput(Input[list[str]]):
             channels_df['status'] = 'good'
         channels_df.loc[channels_df['name'].isin(new_bads), 'status'] = 'bad'
         if not exists:
-            self._check_eeg_positions(ctx, channels_df, seed_raw if seed_raw is not None else raw)
+            self._check_eeg_positions(ctx, channels_df, raw)
         self._write_df(path, channels_df)
 
 
@@ -376,7 +422,15 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         return raw.info
 
     def _load_raw(self, ctx: Request, preload: bool) -> mne.io.BaseRaw:
-        """Load the source raw file with BIDS channel metadata and electrode positions applied."""
+        """Load the source raw file with BIDS channel metadata and electrode positions applied.
+
+        Parameters
+        ----------
+        ctx
+            Request identifying the recording.
+        preload
+            Load the data into memory (as opposed to only the header).
+        """
         path = resolve_raw_bids_path(ctx, self.extension, require=True)
         raw = self._read_raw(path.fpath, preload=preload)
         self._apply_bids_channels(path, raw)
@@ -398,10 +452,7 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         channels_path = RawSourceInput._find_bids_channels(path)
         if channels_path is None:
             return
-        channels_df = pd.read_csv(channels_path, sep='\t')
-        if 'name' not in channels_df.columns:
-            warnings.warn(f"{channels_path} has no 'name' column; skipping channel metadata.")
-            return
+        channels_df = read_channels_tsv(channels_path)
 
         if 'type' in channels_df.columns:
             channel_types = {}
@@ -652,8 +703,6 @@ class ICAInput(Input[mne.preprocessing.ICA]):
                     new_set = set(new or [])
                     added = sorted(new_set - old_set)
                     removed = sorted(old_set - new_set)
-                    if not added and not removed:
-                        return f"This ICA was estimated using different bad channels: {old!r} -> {new!r}."
                     lines = ["The set of bad channels used for ICA estimation changed."]
                     if shared := sorted(old_set & new_set):
                         lines.append(f"  shared: {', '.join(shared)}")

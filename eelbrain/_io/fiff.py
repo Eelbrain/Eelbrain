@@ -745,7 +745,7 @@ def sensor_dim(
     nan_mask = np.array([np.any(np.isnan(loc)) for loc in ch_locs])
     if np.any(nan_mask):
         nan_ch_names = [name for name, is_nan in zip(ch_names, nan_mask) if is_nan]
-        raise ValueError(f"Channels with NaN position in sensor layout: {', '.join(nan_ch_names)}")
+        raise ValueError(f"Channels with NaN position in sensor layout: {', '.join(nan_ch_names)}. This usually means that no position is available for these channels (e.g., a montage was not applied, or the channels are missing from electrodes.tsv). Supply positions (e.g., through a montage), or exclude the channels from the data (e.g., by marking them as bad).")
 
     # use KIT system ID if available
     sysname = KIT_NEIGHBORS.get(info.get('kit_system_id'), sysname)
