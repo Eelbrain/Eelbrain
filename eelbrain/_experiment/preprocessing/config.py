@@ -94,8 +94,10 @@ class RawSource(RawPipe):
         The names the ``montage`` uses for channels in the data, as a
         ``{data_name: montage_name}`` dictionary. The montage is renamed
         accordingly before it is applied, so that channel names in the data
-        (as defined by the BIDS dataset) are never modified. Useful when the
-        data uses a naming convention different from a standard montage.
+        (as defined by the BIDS dataset) are never modified. If ``adjacency``
+        is a builtin adjacency name, its channels are renamed in the same way.
+        Useful when the data uses a naming convention different from a
+        standard montage.
     montage
         Montage that is applied to raw data to set sensor positions (see
         :meth:`mne.io.Raw.set_montage`), as a standard montage name (see
@@ -152,6 +154,12 @@ class RawSource(RawPipe):
                 if data_name in montage.ch_names and data_name not in mapping:
                     mapping[data_name] = f'unused-{data_name}'
             montage.rename_channels(mapping)
+            # Builtin adjacencies use montage names; resolve to an edge list with data names
+            if isinstance(adjacency, str) and adjacency in mne.channels.get_builtin_ch_adjacencies():
+                c_matrix, adj_ch_names = mne.channels.read_ch_adjacency(adjacency)
+                adj_ch_names = [mapping.get(name, name) for name in adj_ch_names]
+                coo = c_matrix.tocoo()
+                adjacency = sorted({(adj_ch_names[min(i, j)], adj_ch_names[max(i, j)]) for i, j in zip(coo.row, coo.col) if i != j})
         self.montage = montage
         self.adjacency = adjacency
         self.kwargs = kwargs
