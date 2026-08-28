@@ -2218,7 +2218,8 @@ class Pipeline(StateModel):
 
     def make_bad_channels_auto(
         self,
-        flat: float = None,
+        meg: float = 1e-14,
+        eeg: float = 0,
         redo: bool = False,
         noise: bool = False,
         **state: Any,
@@ -2229,9 +2230,11 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        flat
-            Threshold for detecting flat channels: MEG channels with ``std < flat``
+        meg
+            Threshold for detecting flat MEG channels: channels with ``std < flat``
             are considered bad (default 1e-14; set to 0 to skip detection).
+        eeg
+            Threshold for detecting flat EEG channels (default 0).
         redo
             If the file already exists, replace it (instead of adding).
         noise
@@ -2245,20 +2248,22 @@ class Pipeline(StateModel):
         are marked as bad automatically by
         :func:`mne.preprocessing.find_bad_channels_maxwell`.
         """
-        if state:
-            self.set(**state)
-        if flat == 0:
-            return
-        elif flat is None:
-            flat = 1e-14
+        self.set(**state)
+        assert meg or eeg
         source_name = self._raw.root_source_name('raw')
         raw_ctx = self._resolve_derivative(raw_node_name(source_name), options={'noise': noise, 'preload': True})
         raw = raw_ctx.load()
-        picks = mne.pick_types(raw.info, meg=True, ref_meg=False)
-        if len(picks) == 0:
-            raise NotImplementedError("make_bad_channels_auto: flat-channel detection is only implemented for MEG channels, and the raw data contains none")
-        data = raw.get_data(picks)
-        detected = [raw.ch_names[pick] for pick in picks[data.std(axis=1) < flat]]
+        if redo:
+            raw.info['bads'] = []
+        picks_meg = mne.pick_types(raw.info, meg=bool(meg), ref_meg=False)
+        picks_eeg = mne.pick_types(raw.info, eeg=bool(eeg))
+        detected = []
+        for picks, flat in ((picks_meg, meg), (picks_eeg, eeg)):
+            if len(picks) == 0:
+                continue
+            data = raw.get_data(picks)
+            detected.extend([raw.ch_names[pick] for pick in picks[data.std(axis=1) < flat]])
+        # save
         bads_ctx = self._resolve_derivative(raw_bad_channels_input_name(source_name), options={'noise': noise})
         bads_ctx.node.write(bads_ctx, raw, detected, redo)
 
