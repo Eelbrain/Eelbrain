@@ -799,8 +799,6 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             Resolved request for this ICA.
         """
         previous = ctx._manifest()
-        if previous is not None:
-            previous.fingerprint.pop('bads', None)  # backwards compatibility
         return previous, self._build_manifest(ctx, ctx.dependency_fingerprints(previous.dependencies if previous else None))
 
     def is_valid(self, ctx: Request) -> bool:
@@ -825,6 +823,9 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             'ica_path': path.relative_to(ctx.root),
             'exists': path.exists(),
         }
+
+    def normalize_stored_fingerprint(self, fingerprint: dict[str, Any]) -> None:
+        fingerprint.pop('bads', None)  # removed from the fingerprint in 0.43; drop from stored manifests so existing ICA files and dependent caches stay valid
 
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
         fingerprint = self.fingerprint(ctx)

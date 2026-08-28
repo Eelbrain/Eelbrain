@@ -660,6 +660,22 @@ class DependencyNode(Generic[T]):
         """
         return {}
 
+    def normalize_stored_fingerprint(self, fingerprint: dict[str, Any]) -> None:
+        """Update a stored fingerprint of this node to the current schema, in place.
+
+        Called by :meth:`DerivativeRegistry.read_manifest` on every fingerprint
+        of this node read back from disk — both in the node's own manifest and
+        in the copies embedded in dependents' manifests. Override to migrate
+        stored fingerprints after a change to :meth:`fingerprint` /
+        :meth:`dependency_fingerprint` (e.g., drop a removed key) without
+        invalidating existing caches. The default does nothing.
+
+        Parameters
+        ----------
+        fingerprint
+            A stored (canonicalized) fingerprint of this node; modify in place.
+        """
+
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
         """Describe how this node should appear when used as a dependency.
 
@@ -2369,10 +2385,28 @@ class DerivativeRegistry:
             return None
         try:
             data = json.loads(manifest_path.read_text())
-            return ArtifactManifest.from_dict(data)
+            manifest = ArtifactManifest.from_dict(data)
         except (OSError, ValueError, TypeError, AttributeError) as error:
             self.log.debug("Treating unreadable manifest %s as missing (%s)", manifest_path, error)
             return None
+        # Normalize stored fingerprints
+        node = self._nodes.get(manifest.derivative)
+        if node is not None and isinstance(manifest.fingerprint, dict):
+            node.normalize_stored_fingerprint(manifest.fingerprint)
+        self._normalize_dependency_fingerprints(manifest.dependencies)
+        return manifest
+
+    def _normalize_dependency_fingerprints(self, dependencies: dict[str, Any]) -> None:
+        for entry in dependencies.values():
+            if not isinstance(entry, dict):
+                continue
+            node = self._nodes.get(entry.get('name'))
+            fingerprint = entry.get('fingerprint')
+            if node is not None and isinstance(fingerprint, dict):
+                node.normalize_stored_fingerprint(fingerprint)
+            sub = entry.get('dependencies')
+            if isinstance(sub, dict):
+                self._normalize_dependency_fingerprints(sub)
 
     def write_manifest(self, path: str | Path, manifest: ArtifactManifest) -> None:
         manifest_path = Path(path)
