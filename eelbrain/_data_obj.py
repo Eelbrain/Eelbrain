@@ -9682,34 +9682,7 @@ class Sensor(Dimension):
 
     def _normalize_sensor_names(self, names, missing='raise'):
         "Process a user-input list of sensor names"
-        valid_chs = set()
-        missing_chs = set()
-        int_to_name = None
-        for name in names:
-            if name in self.names:
-                valid_chs.add(name)
-                continue
-            elif isinstance(name, Integral) or name.isdigit():
-                key = int(name) if isinstance(name, str) else name
-                if int_to_name is None:
-                    int_to_name = {}
-                    for ch_name in self.names:
-                        if match := re.search(r'\d+', ch_name):
-                            int_to_name[int(match.group())] = ch_name
-
-                if key in int_to_name:
-                    valid_chs.add(int_to_name[key])
-                    continue
-            missing_chs.add(name)
-
-        if missing == 'raise':
-            if missing_chs:
-                raise ValueError(f"The following channels are not in the raw data: {', '.join(sorted(missing_chs))}")
-            return sorted(valid_chs)
-        elif missing == 'return':
-            return sorted(valid_chs), missing_chs
-        else:
-            raise ValueError(f"{missing=}")
+        return normalize_sensor_names(names, self.names, missing)
 
     def intersect(self, dim, check_dims=True):
         """Create a Sensor dimension that is the intersection with dim
@@ -9838,6 +9811,42 @@ def _point_graph(coords, dist_threshold):
         i0 = i1
 
     return graph[dist < dist_threshold]
+
+
+def normalize_sensor_names(
+        names: Sequence[str | int],
+        valid_names: Sequence[str],
+        missing: str = 'raise',
+):
+    "Process a user-input list of sensor names"
+    valid_chs = set()
+    missing_chs = set()
+    int_to_name = None
+    for name in names:
+        if name in valid_names:
+            valid_chs.add(name)
+            continue
+        elif isinstance(name, Integral) or name.isdigit():
+            key = int(name) if isinstance(name, str) else name
+            if int_to_name is None:
+                int_to_name = {}
+                for ch_name in valid_names:
+                    if match := re.search(r'\d+', ch_name):
+                        int_to_name[int(match.group())] = ch_name
+
+            if key in int_to_name:
+                valid_chs.add(int_to_name[key])
+                continue
+        missing_chs.add(name)
+
+    if missing == 'raise':
+        if missing_chs:
+            raise ValueError(f"The following channels are not in the raw data: {', '.join(sorted(missing_chs))}")
+        return sorted(valid_chs)
+    elif missing == 'return':
+        return sorted(valid_chs), missing_chs
+    else:
+        raise ValueError(f"{missing=}")
 
 
 def _matrix_graph(matrix):

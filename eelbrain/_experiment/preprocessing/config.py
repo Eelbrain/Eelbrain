@@ -20,8 +20,7 @@ import mne
 from mne_bids import BIDSPath
 from scipy import signal
 
-from ... import load
-from ..._data_obj import NDVar, Sensor
+from ..._data_obj import NDVar, Sensor, normalize_sensor_names
 from ..._exceptions import ConfigurationError
 from ..._io.fiff import KIT_NEIGHBORS
 from ..._io.txt import read_adjacency
@@ -172,9 +171,9 @@ class RawSource(RawPipe):
         return True
 
     def _normalize_channel_names(self, raw: mne.io.BaseRaw, bad_chs: list[str]) -> list[str]:
-        """Validate and normalize channel names against the raw file's sensor layout."""
-        sensor = load.mne.sensor_dim(raw.info, adjacency=self.adjacency)
-        return sensor._normalize_sensor_names(bad_chs)
+        """Validate and normalize channel names against the raw file's data channels."""
+        picks = mne.pick_types(raw.info, meg=True, eeg=True, ref_meg=False, exclude=())
+        return normalize_sensor_names(bad_chs, [raw.ch_names[i] for i in picks])
 
     def _as_dict(self) -> dict:
         out = RawPipe._as_dict(self)

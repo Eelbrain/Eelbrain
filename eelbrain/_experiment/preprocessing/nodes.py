@@ -340,7 +340,7 @@ class RawBadChannelsInput(Input[list[str]]):
         if not redo:
             new_bads = sorted(set(old_bads).union(new_bads))
         LOG.info("Bad channels: %s -> %s for %s", old_bads, new_bads, path)
-        if new_bads == old_bads and exists:
+        if set(new_bads) == set(old_bads) and exists:
             return
 
         missing = [ch for ch in new_bads if ch not in set(channels_df['name'])]
@@ -822,7 +822,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         }
 
     def normalize_stored_fingerprint(self, fingerprint: dict[str, Any]) -> None:
-        fingerprint.pop('bads', None)  # removed from the fingerprint in 0.43; drop from stored manifests so existing ICA files and dependent caches stay valid
+        fingerprint.pop('bads', None)
 
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
         fingerprint = self.fingerprint(ctx)
