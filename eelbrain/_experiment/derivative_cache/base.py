@@ -2393,7 +2393,8 @@ class DerivativeRegistry:
         node = self._nodes.get(manifest.derivative)
         if node is not None and isinstance(manifest.fingerprint, dict):
             node.normalize_stored_fingerprint(manifest.fingerprint)
-        self._normalize_dependency_fingerprints(manifest.dependencies)
+        if isinstance(manifest.dependencies, dict):
+            self._normalize_dependency_fingerprints(manifest.dependencies)
         return manifest
 
     def _normalize_dependency_fingerprints(self, dependencies: dict[str, Any]) -> None:

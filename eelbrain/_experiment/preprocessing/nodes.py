@@ -567,7 +567,7 @@ class RawSourceDerivative(UncachedDerivative[mne.io.BaseRaw]):
     def build(self, ctx: Request) -> mne.io.BaseRaw:
         source_name = raw_input_name(self.raw_name)
         raw = ctx.load(source_name)
-        raw.info['bads'] = self._load_bad_channels(ctx)
+        raw.info['bads'] = ctx.load(raw_bad_channels_input_name(self.raw_name))
         return raw
 
     def apply_view_options(self, ctx: Request, raw: mne.io.BaseRaw) -> mne.io.BaseRaw:
@@ -587,9 +587,8 @@ class RawSourceDerivative(UncachedDerivative[mne.io.BaseRaw]):
         return super().load_view(ctx, view)
 
     def _load_bad_channels(self, ctx: Request) -> list[str]:
-        # The bad-channels input is the only source of bad channels; raw.info['bads'] is
-        # only consulted through it, so that it can be overridden (see RawBadChannelsInput)
-        return ctx.load(raw_bad_channels_input_name(self.raw_name))
+        bads_name = raw_bad_channels_input_name(self.raw_name)
+        return ctx.load(bads_name, options=ctx.options_for(bads_name, 'noise'))
 
 
 class ICAInput(Input[mne.preprocessing.ICA]):

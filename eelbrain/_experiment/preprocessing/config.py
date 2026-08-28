@@ -118,6 +118,10 @@ class RawSource(RawPipe):
           property checks are disabled to improve efficiency.
 
         If unspecified, it is inferred from ``sysname`` if possible.
+        When using ``rename_channels``, only a builtin adjacency name is
+        translated to data channel names; an adjacency specified as a file or
+        as an explicit list of connections must already use the channel names
+        in the data (edges with unknown channel names are silently dropped).
     ...
     """
     DICT_ATTRS = ('sysname', 'rename_channels', 'montage', 'adjacency', 'kwargs')
