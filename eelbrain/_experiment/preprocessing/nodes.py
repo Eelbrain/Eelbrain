@@ -178,6 +178,10 @@ class RawBadChannelsInput(Input[list[str]]):
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {'bads': self.load(ctx)}
 
+    def normalize_stored_fingerprint(self, fingerprint: dict[str, Any]) -> None:
+        if isinstance(fingerprint.get('bads'), list):  # stored in channels.tsv file order before 0.43; load() now returns them sorted
+            fingerprint['bads'] = sorted(fingerprint['bads'])
+
     def dependency_fingerprint_quick(self, ctx: Request, view: str | None = None) -> dict[str, Any] | None:
         # The derivatives channels.tsv fully determines the bad channels
         path = self.path(ctx)
