@@ -53,6 +53,8 @@ New in 0.43
     itself, instead of only ``subject``, ``task`` and ``visit``. Such a variable
     used to be silently overwritten, and now raises an error; the full list is
     documented with :attr:`pipeline.Pipeline.variables`.
+  - :class:`pipeline.RawSource`: the ``rename_channels`` parameter now renames
+    channels in the montage/adjacency instead of renaming channels in the data.
 
 * Boosting:
 
