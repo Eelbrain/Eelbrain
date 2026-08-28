@@ -759,8 +759,8 @@ class PipelineFrame(EelbrainFrame):
                 self._list.SetItem(idx, col, val)
             if task_type == 'bad_chs':
                 status = row[-2]  # status is always second-to-last
-                if status == 'no file':
-                    self._list.SetItemTextColour(idx, grey)
+                if status == 'error':
+                    self._list.SetItemTextColour(idx, wx.RED)
             elif task_type == 'ica':
                 # status is third-to-last, rejected count is last
                 if row[-3] == 'selected' and row[-1] == '0':
@@ -795,10 +795,10 @@ class PipelineFrame(EelbrainFrame):
         n = self._list.GetItemCount()
         if task_type == 'bad_chs':
             n_done = sum(1 for i in range(n) if self._list.GetItemText(i, 1) == 'done')
-            n_missing = sum(1 for i in range(n) if self._list.GetItemText(i, 1) == 'no file')
+            n_error = sum(1 for i in range(n) if self._list.GetItemText(i, 1) == 'error')
             msg = f"{n_done} / {n} subjects · bad channels defined"
-            if n_missing:
-                msg += f"  ({n_missing} missing channels.tsv)"
+            if n_error:
+                msg += f"  ({n_error} error)"
             self.SetStatusText(msg)
             return
         if task_type == 'ica':
@@ -1356,11 +1356,11 @@ class PipelineFrame(EelbrainFrame):
                 if not raw_ctx.node.exists(raw_ctx):
                     continue
                 bads_ctx = pipeline._resolve_derivative(raw_bad_channels_input_name(source_name))
-                tsv_path = bads_ctx.node.path(bads_ctx)
-                if not tsv_path.exists():
-                    rows.append(combo + ('no file', '—'))
+                try:
+                    bads = bads_ctx.load()  # seeds a missing derivatives channels.tsv
+                except DataError:  # EEG channels without positions
+                    rows.append(combo + ('error', '—'))
                 else:
-                    bads = bads_ctx.load()
                     rows.append(combo + ('done', str(len(bads))))
 
         elif task_type == 'ica':
