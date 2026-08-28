@@ -577,18 +577,16 @@ class RawSourceDerivative(UncachedDerivative[mne.io.BaseRaw]):
 
     def load_view(self, ctx: Request, view: str):
         source_name = raw_input_name(self.raw_name)
+        bads_name = raw_bad_channels_input_name(self.raw_name)
+        bads = ctx.load(bads_name, options=ctx.options_for(bads_name, 'noise'))
         if view == 'bads':
-            return self._load_bad_channels(ctx)
+            return bads
         if view == 'info':
             info = ctx.load(source_name, options=ctx.options_for(source_name, 'noise'), view='info')
             with info._unlock():
-                info['bads'] = self._load_bad_channels(ctx)
+                info['bads'] = bads
             return info
         return super().load_view(ctx, view)
-
-    def _load_bad_channels(self, ctx: Request) -> list[str]:
-        bads_name = raw_bad_channels_input_name(self.raw_name)
-        return ctx.load(bads_name, options=ctx.options_for(bads_name, 'noise'))
 
 
 class ICAInput(Input[mne.preprocessing.ICA]):
