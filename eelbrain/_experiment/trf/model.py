@@ -7,6 +7,7 @@ from collections import abc, Counter
 from dataclasses import dataclass, replace
 from functools import cached_property
 from itertools import chain
+from math import inf
 from operator import attrgetter
 from pathlib import Path
 import pickle
@@ -130,6 +131,41 @@ class Term:
         return f"<Term: {self.string}>"
 
 
+def _windows_overlap(a: Term, b: Term) -> bool:
+    """Whether the lag windows of two terms overlap (open bounds extend to the model-wide window edge, treated as unbounded)"""
+    start = max(a.tstart if a.tstart is not None else -inf, b.tstart if b.tstart is not None else -inf)
+    stop = min(a.tstop if a.tstop is not None else inf, b.tstop if b.tstop is not None else inf)
+    return start < stop
+
+
+def _window_contains(term: Term, omit: Term) -> bool:
+    """Whether the lag window of ``omit`` lies within the window of ``term``
+
+    Open bounds in ``omit`` inherit the corresponding bound of ``term``; bounds that cannot be compared symbolically (numeric vs. open) are assumed to be contained (verified at fit time).
+    """
+    if omit.tstart is not None:
+        if term.tstart is not None and omit.tstart < term.tstart:
+            return False
+        if term.tstop is not None and omit.tstart >= term.tstop:
+            return False
+    if omit.tstop is not None:
+        if term.tstop is not None and omit.tstop > term.tstop:
+            return False
+        if term.tstart is not None and omit.tstop <= term.tstart:
+            return False
+    return True
+
+
+def _window_complement(term: Term, omit: Term) -> list[Term]:
+    """Terms covering the part of ``term``'s lag window that ``omit`` does not cover (0, 1 or 2 terms)"""
+    out = []
+    if omit.tstart is not None and (term.tstart is None or omit.tstart > term.tstart):
+        out.append(replace(term, tstop=omit.tstart))
+    if omit.tstop is not None and (term.tstop is None or omit.tstop < term.tstop):
+        out.append(replace(term, tstart=omit.tstop))
+    return out
+
+
 def _expand_term(
         term: Term,
         named_models: dict[str, Model],
@@ -163,6 +199,14 @@ class Model:
         duplicates = [term for term, count in counts.items() if count > 1]
         if duplicates:
             raise TRFModelError(f"{self.name}: duplicate terms {', '.join(duplicates)}")
+        by_base = {}
+        for term in self.terms:
+            by_base.setdefault((term.stimulus, term.code), []).append(term)
+        for terms in by_base.values():
+            for i, term in enumerate(terms):
+                for other in terms[i + 1:]:
+                    if _windows_overlap(term, other):
+                        raise TRFModelError(f"{self.name}: overlapping lag windows {term.string} and {other.string}")
 
     @cached_property
     def name(self) -> str:
@@ -210,10 +254,24 @@ class Model:
         return Model(self.terms + other.terms)
 
     def __sub__(self, other: Model) -> Model:
-        if not all(term in self.terms for term in other.terms):
-            missing = [term.string for term in other.terms if term not in self.terms]
-            raise ValueError(f"{self.name} - {other.name}:\nMissing terms: {', '.join(missing)}")
-        return Model(tuple([term for term in self.terms if term not in other.terms]))
+        """Remove terms; a term with a lag window removes that window from the matching term, keeping the complement"""
+        terms = list(self.terms)
+        for omit in other.terms:
+            candidates = [term for term in terms if term.stimulus == omit.stimulus and term.code == omit.code]
+            if not candidates:
+                raise TRFModelError(f"{self.name} - {other.name}: no term matching {omit.string}")
+            if omit.tstart is None and omit.tstop is None:
+                for term in candidates:
+                    terms.remove(term)
+                continue
+            containing = [term for term in candidates if _window_contains(term, omit)]
+            if not containing:
+                raise TRFModelError(f"{self.name} - {other.name}: lag window of {omit.string} is not contained in any single term ({', '.join(term.string for term in candidates)})")
+            elif len(containing) > 1:
+                raise TRFModelError(f"{self.name} - {other.name}: lag window of {omit.string} is ambiguous (contained in {', '.join(term.string for term in containing)})")
+            index = terms.index(containing[0])
+            terms[index:index + 1] = _window_complement(containing[0], omit)
+        return Model(tuple(terms))
 
     def __hash__(self):
         return hash(self.name)
@@ -291,12 +349,7 @@ class ModelExpression:
         base = self.base.initialize(named_models)
         if not self.subtract:
             return base
-        # remove subtraction
-        terms = list(base.terms)
-        subtract = _expand_term(self.subtract, named_models)
-        for term_i in subtract:
-            terms.remove(term_i)
-        return Model(tuple(terms))
+        return base - Model(_expand_term(self.subtract, named_models))
 
 
 def model_comparison_table(x1: Model, x0: Model, x1_name: str = 'x1', x0_name: str = 'x0'):

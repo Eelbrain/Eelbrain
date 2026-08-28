@@ -2175,10 +2175,10 @@ def test_load_trf_term_lags(samples_trf_experiment):
     assert res.tstop == (0.08, 0.1)
 
     # the same predictor with two lag windows shares one predictor-file dependency
-    res = e.load_trf('env[:0.05] + env[0.02:]', 0, 0.1)
-    assert res.tstart == (0.02, 0)
+    res = e.load_trf('env[:0.05] + env[0.05:]', 0, 0.1)
+    assert res.tstart == (0.05, 0)
     assert res.tstop == (0.1, 0.05)
-    options = e._trf_options('env[:0.05] + env[0.02:]', 0., 0.1, 'boosting', None, None, False, {})
+    options = e._trf_options('env[:0.05] + env[0.05:]', 0., 0.1, 'boosting', None, None, False, {})
     ctx = e._resolve_derivative('trf', options=options)
     assert ctx.is_valid()
     dependencies = ctx._manifest().dependencies
@@ -2189,6 +2189,11 @@ def test_load_trf_term_lags(samples_trf_experiment):
     res = e.load_trf('env[0.02:0.08]', 0, 0.1)
     assert res.tstart == 0.02
     assert res.tstop == 0.08
+
+    # comparison omitting a lag window resolves to the complement
+    comparison = e._eval_trf_x('imp + env @ env[:0.05]')
+    assert comparison.x1.name == 'imp + env'
+    assert comparison.x0.name == 'imp + env[0.05:]'
 
 
 @requires_mne_sample_data

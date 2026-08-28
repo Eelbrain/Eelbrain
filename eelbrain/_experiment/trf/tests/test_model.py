@@ -83,6 +83,13 @@ def test_term_lags():
     assert model.name == 'gammatone[0:0.5] + gammatone[0.5:1]'
     with pytest.raises(TRFModelError):
         Model.coerce('gammatone[0:0.5] + gammatone[0:0.5]')
+    # overlapping lag windows for the same predictor
+    with pytest.raises(TRFModelError):
+        Model.coerce('gammatone + gammatone[0.2:]')
+    with pytest.raises(TRFModelError):
+        Model.coerce('gammatone[0:0.6] + gammatone[0.5:1]')
+    with pytest.raises(TRFModelError):
+        Model.coerce('gammatone[:0.5] + gammatone[0.2:]')
 
     # comparison with lags
     comparison = Comparison.coerce('x + gammatone[0.2:] > x')
@@ -96,6 +103,62 @@ def test_named_model_lags():
     assert model.name == 'a[0.2:0.8] + b[0.5:1]'
     model = Model.coerce('ab').initialize(named)
     assert model.name == 'a + b[0.5:1]'
+
+
+def test_comparison_lags():
+    # omitting a lag window keeps the complement in the reduced model
+    comparison = Comparison.coerce('a + b @ b[:1]')
+    assert comparison.x1.name == 'a + b'
+    assert comparison.x0.name == 'a + b[1:]'
+    comparison = Comparison.coerce('a + b @ b[1:]')
+    assert comparison.x0.name == 'a + b[:1]'
+    # interior window: two-piece complement
+    comparison = Comparison.coerce('a + b @ b[0.5:1]')
+    assert comparison.x0.name == 'a + b[:0.5] + b[1:]'
+    # complement within the term's own window; open bounds inherit the term's bound
+    comparison = Comparison.coerce('a + b[0:2] @ b[0:1]')
+    assert comparison.x1.name == 'a + b[0:2]'
+    assert comparison.x0.name == 'a + b[1:2]'
+    comparison = Comparison.coerce('a + b[0:2] @ b[:1]')
+    assert comparison.x1.name == 'a + b[0:2]'
+    assert comparison.x0.name == 'a + b[1:2]'
+    # exact match: full removal
+    comparison = Comparison.coerce('a + b[:1] @ b[:1]')
+    assert comparison.x0.name == 'a'
+    # bare term removes all lag windows of that predictor
+    comparison = Comparison.coerce('a + b[:1] @ b')
+    assert comparison.x0.name == 'a'
+    comparison = Comparison.coerce('a + b[:0.5] + b[0.5:] @ b')
+    assert comparison.x0.name == 'a'
+    # two-sided omit: early vs late window
+    comparison = Comparison.coerce('a + b @ b[:1] > b[1:]')
+    assert comparison.x1.name == 'a + b[:1]'
+    assert comparison.x0.name == 'a + b[1:]'
+    assert comparison.name == 'a + b @ b[:1] > b[1:]'
+    # add with lag windows
+    comparison = Comparison.coerce('a +@ b[:1]')
+    assert comparison.x1.name == 'a + b[:1]'
+    assert comparison.x0.name == 'a'
+    comparison = Comparison.coerce('a +@ b[:1] > b[1:]')
+    assert comparison.x1.name == 'a + b[:1]'
+    assert comparison.x0.name == 'a + b[1:]'
+    # named model: window distributes to member terms, then complements per term
+    named = {'ab': Model.coerce('a + b')}
+    comparison = Comparison.coerce('a + b @ ab[:1]', named)
+    assert comparison.x0.name == 'a[1:] + b[1:]'
+    # model expression subtraction with lag window
+    model = ModelExpression.from_string('ab - b[:1]').initialize(named)
+    assert model.name == 'a + b[1:]'
+
+    # errors
+    with pytest.raises(TRFModelError):  # window not contained in the term's window
+        Comparison.coerce('a + b[:1] @ b[1:2]')
+    with pytest.raises(TRFModelError):  # window straddles a split
+        Comparison.coerce('a + b[:1] + b[1:] @ b[0.5:1.5]')
+    with pytest.raises(TRFModelError):  # predictor not in model
+        Comparison.coerce('a + b @ c[:1]')
+    with pytest.raises(TRFModelError):  # add overlapping window
+        Comparison.coerce('a + b +@ b[:1]')
 
 
 models = {
