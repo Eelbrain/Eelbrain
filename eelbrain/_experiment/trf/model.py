@@ -157,11 +157,6 @@ class Term:
             return parse_term(x)
         raise TypeError(x)
 
-    @classmethod
-    def _coerce_and_strip_lags(cls, x: Term | str) -> Term:
-        """Coerce and strip lag-window overrides (which do not affect the predictor file)"""
-        return cls._coerce(x).without_lags()
-
     def _cache_form_(self) -> str:
         """Canonical form for cache keys/fingerprints/manifests"""
         return self.string
@@ -205,13 +200,20 @@ def _window_complement(term: Term, omit: Term) -> list[Term]:
     return out
 
 
-def _extract_uniform_lags(models: Sequence[Model]) -> tuple[list[Model], float, float] | None:
-    """Bare models and their shared window, when all terms in ``models`` share one explicit lag window (else ``None``)"""
+def _shared_window(models: Sequence[Model]) -> tuple[float, float] | None:
+    """The single explicit lag window shared by every term in ``models`` (else ``None``)"""
     windows = {(term.tstart, term.tstop) for model in models for term in model.terms}
     if len(windows) != 1:
         return None
-    (tstart, tstop), = windows
-    return [Model(tuple(term.without_lags() for term in model.terms)) for model in models], tstart, tstop
+    return windows.pop()
+
+
+def _require_bounds(name: str, tstart: float | None, tstop: float | None) -> None:
+    """Validate the model-wide bounds for a model/comparison in which no term has a lag window"""
+    if tstart is None or tstop is None:
+        raise TRFModelError(f"{name}: tstart and tstop are required when no term has a lag window ({tstart=}, {tstop=})")
+    if tstart >= tstop:
+        raise TRFModelError(f"{name}: empty lag window ({tstart=}, {tstop=})")
 
 
 def _expand_term(
@@ -369,6 +371,10 @@ class Model:
             return self
         return Model(terms)
 
+    def without_lags(self) -> Model:
+        """Copy of the model with all lag-window overrides stripped"""
+        return Model(tuple(term.without_lags() for term in self.terms))
+
     def term_table(self) -> fmtxt.Table:
         show_stimulus = any(term.stimulus for term in self.terms)
         show_lags = any(term.tstart is not None or term.tstop is not None for term in self.terms)
@@ -419,17 +425,13 @@ class Model:
         """Canonical ``(model, tstart, tstop)`` for cache identity"""
         # A model without lag overrides keeps the model-wide bounds
         if not any(term.tstart is not None or term.tstop is not None for term in self.terms):
-            if tstart is None or tstop is None:
-                raise TRFModelError(f"{self.name}: tstart and tstop are required for a model without term lag windows ({tstart=}, {tstop=})")
-            if tstart >= tstop:
-                raise TRFModelError(f"{self.name}: empty lag window ({tstart=}, {tstop=})")
+            _require_bounds(self.name, tstart, tstop)
             return self, tstart, tstop
         # With any override present, all windows are resolved
         resolved = self.resolve_lags(tstart, tstop)
-        # Catch tstart/tstop shared by all terms
-        if extracted := _extract_uniform_lags([resolved]):
-            (model,), tstart, tstop = extracted
-            return model, tstart, tstop
+        # A window shared by all terms moves to the model-wide bounds
+        if window := _shared_window([resolved]):
+            return resolved.without_lags(), *window
         return resolved, None, None
 
 
@@ -519,8 +521,7 @@ class Omit2Comparison(ComparisonSpec):
         x = self.x.initialize(named_models)
         x1_omit = self.x1_omit.initialize(named_models)
         x0_omit = self.x0_omit.initialize(named_models)
-        # x - x1_reduced > x - x0_reduced
-        #     x0_reduced > x1_reduced
+        # each side is tested by omitting the *other* side's term: x1 keeps x1_omit by omitting x0_omit, and vice versa
         x1 = x - x0_omit
         x0 = x - x1_omit
         return Comparison(x1, x0, TAIL[self.operator], public_name, omit_base=x, omits=(x0_omit, x1_omit))
@@ -659,15 +660,12 @@ class Comparison:
     ) -> tuple[Comparison, float | None, float | None]:
         """Canonical ``(comparison, tstart, tstop)`` for cache identity"""
         if not any(term.tstart is not None or term.tstop is not None for model in self.models for term in model.terms):
-            if tstart is None or tstop is None:
-                raise TRFModelError(f"{self.name}: tstart and tstop are required for a comparison without term lag windows ({tstart=}, {tstop=})")
-            if tstart >= tstop:
-                raise TRFModelError(f"{self.name}: empty lag window ({tstart=}, {tstop=})")
+            _require_bounds(self.name, tstart, tstop)
             return self, tstart, tstop
         resolved = self.resolve_lags(tstart, tstop)
-        if extracted := _extract_uniform_lags(resolved.models):
-            (x1, x0), tstart, tstop = extracted
-            return replace(resolved, x1=x1, x0=x0), tstart, tstop
+        # A window shared by all terms in both models moves to the model-wide bounds
+        if window := _shared_window(resolved.models):
+            return replace(resolved, x1=resolved.x1.without_lags(), x0=resolved.x0.without_lags()), *window
         return resolved, None, None
 
     def _cache_form_(self) -> str:

@@ -138,7 +138,7 @@ class PredictorInput(VersionedInput[NDVar]):
     """
     name = 'predictor'
     key_options = {
-        'term': OptionSpec(None, Term, normalize=Term._coerce_and_strip_lags),
+        'term': OptionSpec(None, Term, normalize=lambda x: Term._coerce(x).without_lags()),
     }
 
     def __init__(

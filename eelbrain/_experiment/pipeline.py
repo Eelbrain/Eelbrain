@@ -1500,7 +1500,11 @@ class Pipeline(StateModel):
         x
             Model comparison, such as ``'acoustic + lexical > acoustic'`` or
             ``'acoustic + lexical @ lexical'``. Comparisons against ``0`` test
-            one model's predictive power against zero.
+            one model's predictive power against zero. A term can override the
+            lag window with slice syntax, e.g.
+            ``'acoustic + lexical @ lexical[0.2:]'`` tests the contribution of
+            ``lexical`` at lags from 0.2 s to ``tstop`` (an omitted boundary
+            uses ``tstart``/``tstop``).
         tstart
             Start of the TRF in seconds.
         tstop
