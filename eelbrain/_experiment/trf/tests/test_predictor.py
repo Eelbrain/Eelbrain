@@ -106,7 +106,7 @@ def test_uts_predictor_generate_continuous_out_of_bounds():
 def test_event_predictor_generate_continuous():
     "EventPredictor._generate_continuous puts a unit impulse at each event's epoch_time"
     uts = UTS(2, 0.1, 10)
-    x = EventPredictor()._generate_continuous(uts, _continuous_events(), parse_term('imp'), 'imp')
+    x = EventPredictor()._generate_continuous(uts, _continuous_events(), parse_term('imp'))
     assert x.time == uts
     expected = np.zeros(10)
     expected[0] = 1.

@@ -2180,7 +2180,7 @@ def test_load_trf_term_lags(samples_trf_experiment):
     res = e.load_trf('env[:0.05] + env[0.05:]', 0, 0.1)
     assert res.tstart == (0.05, 0)
     assert res.tstop == (0.1, 0.05)
-    assert [h.name for h in res.h] == ['env[0.05:]', 'env[:0.05]']  # lag windows disambiguate a split predictor
+    assert [h.name for h in res.h] == ['env[0.05:0.1]', 'env[0:0.05]']  # lag windows disambiguate a split predictor
     options = e._trf_options('env[:0.05] + env[0.05:]', 0., 0.1, 'boosting', None, None, False, {})
     ctx = e._resolve_derivative('trf', options=options)
     assert ctx.is_valid()
@@ -2188,20 +2188,24 @@ def test_load_trf_term_lags(samples_trf_experiment):
     assert 'auditory~env' in dependencies
     assert not any('[' in key for key in dependencies)
 
-    # single-term model: scalar lags for the single x
+    # a window shared by all terms is normalized to the model-wide bounds (scalar lags)
     res = e.load_trf('env[0.02:0.08]', 0, 0.1)
     assert res.tstart == 0.02
     assert res.tstop == 0.08
-
-    # all terms with complete windows: the unused model-wide bounds are normalized out of the cache key
-    options = e._trf_options('env[0.02:0.08]', 0., 0.1, 'boosting', None, None, False, {})
-    assert options['tstart'] is None
-    assert options['tstop'] is None
+    ctx = e._resolve_derivative('trf', options=e._trf_options('env[0.02:0.08]', 0., 0.1, 'boosting', None, None, False, {}))
+    assert ctx.options['x'].name == 'env'
+    assert ctx.options['tstart'] == 0.02
+    assert ctx.options['tstop'] == 0.08
+    # ...so equivalent spellings share one cached artifact
     assert e.load_trf('env[0.02:0.08]', 0, 0.5, path_only=True) == e.load_trf('env[0.02:0.08]', 0, 0.1, path_only=True)
-    # a partially specified model keeps the bound a term still uses
-    options = e._trf_options('imp[0:] + env[0.02:]', 0., 0.1, 'boosting', None, None, False, {})
-    assert options['tstart'] is None
-    assert options['tstop'] == 0.1
+    assert e.load_trf('env', 0.02, 0.08, path_only=True) == e.load_trf('env[0.02:0.08]', 0, 0.1, path_only=True)
+    assert e.load_trf('imp[0:0.1] + env[0:0.1]', 0, 0.5, path_only=True) == e.load_trf('imp + env', 0, 0.1, path_only=True)
+    # distinct windows: every term explicit, model-wide bounds normalized out of the cache key
+    ctx = e._resolve_derivative('trf', options=e._trf_options('imp[0:] + env[0.02:]', 0., 0.1, 'boosting', None, None, False, {}))
+    assert ctx.options['x'].name == 'env[0.02:0.1] + imp[0:0.1]'
+    assert ctx.options['tstart'] is None
+    assert ctx.options['tstop'] is None
+    assert e.load_trf('imp[0:0.1] + env[0.02:0.1]', 0, 0.5, path_only=True) == e.load_trf('imp[0:] + env[0.02:]', 0, 0.1, path_only=True)
     with pytest.raises(TRFModelError):  # resolved window of env is empty
         e.load_trf('imp + env[0.2:]', 0, 0.1)
 

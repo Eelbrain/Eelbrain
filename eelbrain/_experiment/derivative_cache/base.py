@@ -578,14 +578,19 @@ class DependencyNode(Generic[T]):
         return {*cls.key_options, *cls.view_options}
 
     def validate_options(self, ctx: Request) -> None:
-        """Reject invalid combinations of option values.
+        """Normalize and reject invalid combinations of option values.
 
         Called exactly once per request, after :class:`OptionSpec` normalization
         and before the cache key is computed, so an invalid combination can fail
-        before any expensive work.
+        before any expensive work. Combinations that are canonical only in
+        combination may be normalized by updating ``ctx.options`` in place, so
+        equivalent spellings share one canonical key; such normalization must be
+        idempotent, since child requests are normalized again when they are
+        resolved.
 
-        Override this for constraints spanning several options, or options and state
-        (validate individual options in :class:`OptionSpec`).
+        Override this for constraints or canonicalization spanning several
+        options, or options and state (handle individual options in
+        :class:`OptionSpec`).
         """
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...] | None:

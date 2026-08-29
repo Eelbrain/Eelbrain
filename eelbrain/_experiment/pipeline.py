@@ -434,7 +434,7 @@ class Pipeline(StateModel):
         # TRF: named models, estimators, predictors, stimulus variables
         self._named_models: dict[str, Model] = ConfigurationDict('model')
         for name, value in self.models.items():
-            self._named_models[name] = Model.coerce(value).initialize(self._named_models)
+            self._named_models[name] = Model.coerce(value, self._named_models)
         estimators = {'boosting': Boosting(), **self.estimators}
         for name, estimator in estimators.items():
             if not isinstance(estimator, Estimator):
@@ -1286,16 +1286,8 @@ class Pipeline(StateModel):
             data_string = 'sensor'
         else:
             data_string = self._resolve_data(data).string
-        tstart = float(tstart)
-        tstop = float(tstop)
-        x_ = self._eval_trf_x(x, comparison).resolve_lags(tstart, tstop).sorted()
-        # A model-wide bound enters the fit only where a term leaves it open; normalize unused bounds to None so they do not affect the cache key
-        models = x_.models if isinstance(x_, Comparison) else (x_,)
-        if all(term.tstart is not None for model in models for term in model.terms):
-            tstart = None
-        if all(term.tstop is not None for model in models for term in model.terms):
-            tstop = None
-        return {'x': x_, 'tstart': tstart, 'tstop': tstop, 'estimator': estimator, 'data': data_string, 'samplingrate': samplingrate, 'filter_x': filter_x}
+        x_ = self._eval_trf_x(x, comparison)
+        return {'x': x_, 'tstart': float(tstart), 'tstop': float(tstop), 'estimator': estimator, 'data': data_string, 'samplingrate': samplingrate, 'filter_x': filter_x}
 
     def load_trf(
             self,
@@ -3286,7 +3278,7 @@ class Pipeline(StateModel):
         if any(operator in x for operator in ('@', '=', '<', '>')):
             out = Comparison.coerce(x, self._named_models)
         else:
-            out = Model.coerce(x).initialize(self._named_models)
+            out = Model.coerce(x, self._named_models)
         if comparison and not isinstance(out, Comparison):
             raise TypeError(f"{x=}: need a model comparison, such as 'a + b > a'")
         elif comparison is False and isinstance(out, Comparison):

@@ -194,6 +194,14 @@ class PredictorInput(VersionedInput[NDVar]):
         return predictor._relevant_data(contents, term)
 
 
+def _normalize_trf_options(options: dict) -> None:
+    """Canonicalize the ``(x, tstart, tstop)`` options in place (see :meth:`Model.normalize_lags`), so that equivalent spellings share one cache key"""
+    if options['x'] is None:
+        return
+    x, tstart, tstop = options['x'].normalize_lags(options['tstart'], options['tstop'])
+    options.update(x=x.sorted(), tstart=tstart, tstop=tstop)
+
+
 class TRFDerivative(Derivative[object]):
     """Fit and cache a TRF for one subject
 
@@ -264,7 +272,7 @@ class TRFDerivative(Derivative[object]):
         return {'estimator': self.estimators[ctx.options['estimator']]}
 
     def validate_options(self, ctx: Request) -> None:
-        ctx.options['x'].validate_lags(ctx.options['tstart'], ctx.options['tstop'])
+        _normalize_trf_options(ctx.options)
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         est = self.estimators[ctx.options['estimator']]
@@ -341,18 +349,23 @@ class TRFDerivative(Derivative[object]):
                 raise TRFModelError(f"{ctx.options['x']!r}: empty model")
             tstart = ctx.options['tstart']
             tstop = ctx.options['tstop']
-            if any(term.tstart is not None or term.tstop is not None for term in model.terms):
-                # per-term lag windows: the estimators accept one (tstart, tstop) per predictor
-                resolved = [term.with_default_lags(tstart, tstop) for term in model.terms]
-                tstart = [term.tstart for term in resolved]
-                tstop = [term.tstop for term in resolved]
-                if len(model.terms) == 1:  # a single x is passed to the estimator outside a list
-                    tstart, tstop = tstart[0], tstop[0]
+            if tstart is None:
+                # canonical per-term lag windows (see Model.normalize_lags): every term carries explicit bounds; the estimators accept one (tstart, tstop) per predictor
+                tstart = [term.tstart for term in model.terms]
+                tstop = [term.tstop for term in model.terms]
             ds = ctx.load('response')
             y = ds[ctx.options['data'].response_key(ds)]
             # name predictors by the bare term; the lag window disambiguates a predictor that occurs with several windows
             base_counts = Counter((term.stimulus, term.code) for term in model.terms)
-            xs = [self._load_predictor(ctx, ds, term, y, term.string if base_counts[term.stimulus, term.code] > 1 else term.without_lags().string) for term in model.terms]
+            xs = []
+            for term in model.terms:
+                x = self._load_predictor(ctx, ds, term, y)
+                name = term.string if base_counts[term.stimulus, term.code] > 1 else term.without_lags().string
+                if isinstance(x, Datalist):
+                    for xi in x:
+                        xi.name = name
+                x.name = name
+                xs.append(x)
             fwd = cov = None
             if 'fwd' in est.extra_inputs:
                 fwd = ctx.load('fwd')  # ensure built and tracked as a dependency
@@ -361,8 +374,8 @@ class TRFDerivative(Derivative[object]):
                 cov = ctx.load('cov')
         return TRFJob(est, y, xs, tstart, tstop, fwd, cov)
 
-    def _load_predictor(self, ctx: Request, ds, term: Term, y, name: str) -> NDVar | Datalist:
-        "Assemble one model term's predictor, shaped to the response time axis and named ``name``"
+    def _load_predictor(self, ctx: Request, ds, term: Term, y) -> NDVar | Datalist:
+        "Assemble one model term's predictor, shaped to the response time axis"
         predictor, stim_var = self._term_predictor(term)
         is_variable_time = isinstance(y, Datalist)
         is_nested = ds.info.get('nested_events')  # 'events' for a ContinuousEpoch
@@ -372,35 +385,33 @@ class TRFDerivative(Derivative[object]):
             if filter_x:
                 raise ValueError(f"filter_x: not available for {type(predictor).__name__}")
             if is_nested:
-                return Datalist([predictor._generate_continuous(yi.time, ds[i, is_nested], term, name) for i, yi in enumerate(y)], name=name)
+                return Datalist([predictor._generate_continuous(yi.time, ds[i, is_nested], term) for i, yi in enumerate(y)])
             if is_variable_time:
                 raise NotImplementedError(f"{type(predictor).__name__} for variable-length epochs")
-            return predictor._generate(y.time, ds, term, name)
+            return predictor._generate(y.time, ds, term)
         elif not isinstance(predictor, (UTSPredictor, NUTSPredictor)):
             raise NotImplementedError(f"{term.string}: loading {type(predictor).__name__} is not supported")
 
         # per-subject sequence predictor: one recording-long file, cut per case
         if isinstance(predictor, SubjectUTSPredictor) and not predictor.per_event:
-            return self._load_subject_predictor(ctx, predictor, term, ds, y, filter_x, is_nested, name)
+            return self._load_subject_predictor(ctx, predictor, term, ds, y, filter_x, is_nested)
 
         if stim_var not in ds:
             raise TRFModelError(f"{term.string}: stimulus variable {stim_var!r} not in the data")
 
         if is_nested:
-            return self._load_predictor_nested(ctx, predictor, term, stim_var, ds, y, is_nested, filter_x, name)
+            return self._load_predictor_nested(ctx, predictor, term, stim_var, ds, y, is_nested, filter_x)
 
         # single-event epoch: one stimulus per case, aligned to the response
         stim_factor = ds[stim_var]
         if is_variable_time:
-            xs = [self._aligned_predictor(ctx, predictor, term, s, yi.time, filter_x, name) for s, yi in zip(stim_factor, y)]
-            return Datalist(xs, name=name)
+            xs = [self._aligned_predictor(ctx, predictor, term, s, yi.time, filter_x) for s, yi in zip(stim_factor, y)]
+            return Datalist(xs)
         time = y.time
-        cache = {s: self._aligned_predictor(ctx, predictor, term, s, time, filter_x, name) for s in stim_factor.cells}
-        x = combine([cache[s] for s in stim_factor])
-        x.name = name
-        return x
+        cache = {s: self._aligned_predictor(ctx, predictor, term, s, time, filter_x) for s in stim_factor.cells}
+        return combine([cache[s] for s in stim_factor])
 
-    def _load_predictor_nested(self, ctx: Request, predictor: UTSPredictor | NUTSPredictor, term: Term, stim_var: str, ds, y: Datalist, nested: str, filter_x: bool | str, name: str) -> Datalist:
+    def _load_predictor_nested(self, ctx: Request, predictor: UTSPredictor | NUTSPredictor, term: Term, stim_var: str, ds, y: Datalist, nested: str, filter_x: bool | str) -> Datalist:
         "Assemble a per-event (ContinuousEpoch) predictor on the shared ``epoch_time`` axis"
         tstep = y[0].time.tstep
         stims = {stim for i in range(ds.n_cases) for stim in ds[i, nested][stim_var].cells}
@@ -408,12 +419,10 @@ class TRFDerivative(Derivative[object]):
         xs = []
         for i, yi in enumerate(y):
             x = predictor._generate_continuous(yi.time, ds[i, nested], stim_var, term, cache)
-            x = filter_predictor(x, self.raw, ctx.state['raw'], filter_x)
-            x.name = name
-            xs.append(x)
-        return Datalist(xs, name=name)
+            xs.append(filter_predictor(x, self.raw, ctx.state['raw'], filter_x))
+        return Datalist(xs)
 
-    def _load_subject_predictor(self, ctx: Request, predictor: SubjectUTSPredictor, term: Term, ds, y, filter_x: bool | str, is_nested: bool, name: str) -> NDVar | Datalist:
+    def _load_subject_predictor(self, ctx: Request, predictor: SubjectUTSPredictor, term: Term, ds, y, filter_x: bool | str, is_nested: bool) -> NDVar | Datalist:
         "Cut recording-long predictors into response cases"
         times = [yi.time for yi in y] if isinstance(y, Datalist) else [y.time] * ds.n_cases
         recordings = find_bids_recordings(ds)
@@ -437,25 +446,19 @@ class TRFDerivative(Derivative[object]):
             x_full = x_fulls[recording]
             offset = x_full.time.tstep * round(offset / x_full.time.tstep)  # snap to the predictor's sample grid
             x = set_tmin(x_full, x_full.time.tmin - offset) if offset else x_full  # global time offset -> local 0
-            x = pad(x, time.tmin, nsamples=time.nsamples, set_tmin=True)  # crop to the segment
-            x.name = name
-            return x
+            return pad(x, time.tmin, nsamples=time.nsamples, set_tmin=True)  # crop to the segment
 
         xs = [chunk(time, recording, offset) for time, recording, offset in zip(times, recordings, offsets)]
         if isinstance(y, Datalist):
-            return Datalist(xs, name=name)
-        x = combine(xs)
-        x.name = name
-        return x
+            return Datalist(xs)
+        return combine(xs)
 
-    def _aligned_predictor(self, ctx: Request, predictor: UTSPredictor | NUTSPredictor, term: Term, stim: str | None, time, filter_x: bool | str, name: str) -> NDVar:
+    def _aligned_predictor(self, ctx: Request, predictor: UTSPredictor | NUTSPredictor, term: Term, stim: str | None, time, filter_x: bool | str) -> NDVar:
         "Build one stimulus' predictor from its file data and align it to ``time``"
         subset = ctx.load(term.file_label(stim))
         x = predictor._generate(subset, None, time.tstep, None, term)
         x = filter_predictor(x, self.raw, ctx.state['raw'], filter_x)
-        x = pad(x, time.tmin, nsamples=time.nsamples, set_tmin=True)
-        x.name = name
-        return x
+        return pad(x, time.tmin, nsamples=time.nsamples, set_tmin=True)
 
     def save(self, ctx: Request, path: Path, value: object) -> None:
         save.pickle(value, path)
@@ -518,6 +521,7 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
         return tuple(fields)
 
     def validate_options(self, ctx: Request) -> None:
+        _normalize_trf_options(ctx.options)
         if not ctx.state['inv'] and (smooth := ctx.options['smooth']):
             raise ValueError(f"{smooth=}: smoothing is only available for source-space data")
 
@@ -627,6 +631,7 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
         return ctx.options_for('trf-dataset', *subject_options, smooth=None)
 
     def validate_options(self, ctx: Request) -> None:
+        _normalize_trf_options(ctx.options)
         if not ctx.state['inv'] and (smooth := ctx.options['smooth']):
             raise ValueError(f"{smooth=}: smoothing is only available for source-space data")
 
@@ -714,7 +719,7 @@ class TRFModelTestDerivative(Derivative[Any]):
         return tuple(fields)
 
     def validate_options(self, ctx: Request) -> None:
-        ctx.options['x'].validate_lags(ctx.options['tstart'], ctx.options['tstop'])
+        _normalize_trf_options(ctx.options)
         metric, pmin, samples = ctx.options['metric'], ctx.options['pmin'], ctx.options['samples']
         _, reducer = self._metric_parts(metric)
         # A reducer always leaves one value per case; that an unreduced metric is already univariate only the data shows (checked in _test_data)
