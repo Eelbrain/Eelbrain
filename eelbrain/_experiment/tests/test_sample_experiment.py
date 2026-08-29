@@ -2165,6 +2165,7 @@ def test_load_trf(samples_trf_experiment):
 def test_load_trf_term_lags(samples_trf_experiment):
     "Per-term lag windows through model-string slice syntax"
     from eelbrain import BoostingResult
+    from eelbrain._experiment.trf.model import TRFModelError
 
     e = samples_trf_experiment()
 
@@ -2173,11 +2174,13 @@ def test_load_trf_term_lags(samples_trf_experiment):
     assert isinstance(res, BoostingResult)
     assert res.tstart == (0.02, 0)
     assert res.tstop == (0.08, 0.1)
+    assert [h.name for h in res.h] == ['env', 'imp']  # a unique predictor is named without its lag window
 
     # the same predictor with two lag windows shares one predictor-file dependency
     res = e.load_trf('env[:0.05] + env[0.05:]', 0, 0.1)
     assert res.tstart == (0.05, 0)
     assert res.tstop == (0.1, 0.05)
+    assert [h.name for h in res.h] == ['env[0.05:]', 'env[:0.05]']  # lag windows disambiguate a split predictor
     options = e._trf_options('env[:0.05] + env[0.05:]', 0., 0.1, 'boosting', None, None, False, {})
     ctx = e._resolve_derivative('trf', options=options)
     assert ctx.is_valid()
@@ -2190,10 +2193,24 @@ def test_load_trf_term_lags(samples_trf_experiment):
     assert res.tstart == 0.02
     assert res.tstop == 0.08
 
+    # all terms with complete windows: the unused model-wide bounds are normalized out of the cache key
+    options = e._trf_options('env[0.02:0.08]', 0., 0.1, 'boosting', None, None, False, {})
+    assert options['tstart'] is None
+    assert options['tstop'] is None
+    assert e.load_trf('env[0.02:0.08]', 0, 0.5, path_only=True) == e.load_trf('env[0.02:0.08]', 0, 0.1, path_only=True)
+    # a partially specified model keeps the bound a term still uses
+    options = e._trf_options('imp[0:] + env[0.02:]', 0., 0.1, 'boosting', None, None, False, {})
+    assert options['tstart'] is None
+    assert options['tstop'] == 0.1
+    with pytest.raises(TRFModelError):  # resolved window of env is empty
+        e.load_trf('imp + env[0.2:]', 0, 0.1)
+
     # comparison omitting a lag window resolves to the complement
     comparison = e._eval_trf_x('imp + env @ env[:0.05]')
     assert comparison.x1.name == 'imp + env'
     assert comparison.x0.name == 'imp + env[0.05:]'
+    with pytest.raises(TRFModelError):  # omitted window beyond the model-wide window
+        e.load_model_test('imp + env @ env[0.2:]', 0, 0.1)
 
 
 @requires_mne_sample_data

@@ -1,9 +1,24 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Model specification for TRFs
+
+The specification layer is symbolic: :class:`Term`, :class:`Model` and
+:class:`Comparison` are built by parsing and model algebra alone, without
+knowledge of the model-wide ``tstart``/``tstop``. An open lag bound stands for
+the model-wide default and is treated as unbounded by the algebra (overlap,
+subtraction, complement).
+
+Resolving lag windows against concrete ``tstart``/``tstop`` values is a
+separate semantic step: ``resolve_lags`` verifies that every window is
+complete and non-negative (and, for a comparison, that every omitted window is
+contained in the term it was removed from) and drops terms whose resolved
+window is zero-width; ``validate_lags`` requires resolution to be a no-op (the
+backstop used by derivative nodes, whose options are already resolved).
+Individual terms are resolved for fitting with :meth:`Term.with_default_lags`.
 """
 from __future__ import annotations
 
-from collections import abc, Counter
+from collections import Counter, defaultdict
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from functools import cached_property
 from itertools import chain
@@ -11,7 +26,6 @@ from math import inf
 from operator import attrgetter
 from pathlib import Path
 import pickle
-from collections.abc import Callable, Sequence
 
 from pyparsing import DelimitedList, Group, Keyword, ParseException, Literal, Optional, Regex, Word, alphanums, one_of
 
@@ -36,6 +50,14 @@ class Term:
     tstop: float | None = None
 
     def __post_init__(self):
+        for field in ('tstart', 'tstop'):
+            value = getattr(self, field)
+            if value is None:
+                continue
+            ms = round(value * 1000)
+            if abs(value * 1000 - ms) > 1e-6:
+                raise NotImplementedError(f"{self.string}: lag windows with sub-millisecond precision are not supported")
+            object.__setattr__(self, field, ms / 1000)  # snap to the ms grid so that the string form is lossless
         if self.tstart is not None and self.tstop is not None and self.tstart >= self.tstop:
             raise TRFModelError(f"{self.string}: tstart must be smaller than tstop")
 
@@ -46,8 +68,8 @@ class Term:
             string = f"{self.stimulus}~{string}"
         if self.tstart is None and self.tstop is None:
             return string
-        tstart = '' if self.tstart is None else f'{self.tstart:g}'
-        tstop = '' if self.tstop is None else f'{self.tstop:g}'
+        tstart = '' if self.tstart is None else f'{self.tstart:.10g}'
+        tstop = '' if self.tstop is None else f'{self.tstop:.10g}'
         return f"{string}[{tstart}:{tstop}]"
 
     @cached_property
@@ -115,6 +137,14 @@ class Term:
             return self
         return replace(self, tstart=None, tstop=None)
 
+    def with_default_lags(self, tstart: float | None, tstop: float | None) -> Term:
+        """Copy of the term with open lag bounds filled in from the defaults"""
+        return replace(self, tstart=self.tstart if self.tstart is not None else tstart, tstop=self.tstop if self.tstop is not None else tstop)
+
+    def file_label(self, stimulus: str) -> str:
+        """Dependency label of the predictor file backing this term"""
+        return self.without_lags().with_stimulus(stimulus).string
+
     @classmethod
     def _coerce(cls, x: Term | str):
         if isinstance(x, Term):
@@ -122,6 +152,11 @@ class Term:
         elif isinstance(x, str):
             return parse_term(x)
         raise TypeError(x)
+
+    @classmethod
+    def _coerce_and_strip_lags(cls, x: Term | str) -> Term:
+        """Coerce and strip lag-window overrides (which do not affect the predictor file)"""
+        return cls._coerce(x).without_lags()
 
     def _cache_form_(self) -> str:
         """Canonical form for cache keys/fingerprints/manifests"""
@@ -131,37 +166,37 @@ class Term:
         return f"<Term: {self.string}>"
 
 
+def _window(term: Term, tstart: float = None, tstop: float = None) -> tuple[float, float]:
+    """Resolved ``(tstart, tstop)`` lag window of ``term``, filling open bounds from the model-wide defaults (unbounded where those are unknown)"""
+    tstart = term.tstart if term.tstart is not None else (-inf if tstart is None else tstart)
+    tstop = term.tstop if term.tstop is not None else (inf if tstop is None else tstop)
+    return tstart, tstop
+
+
 def _windows_overlap(a: Term, b: Term) -> bool:
-    """Whether the lag windows of two terms overlap (open bounds extend to the model-wide window edge, treated as unbounded)"""
-    start = max(a.tstart if a.tstart is not None else -inf, b.tstart if b.tstart is not None else -inf)
-    stop = min(a.tstop if a.tstop is not None else inf, b.tstop if b.tstop is not None else inf)
-    return start < stop
+    """Whether the lag windows of two terms overlap (open bounds treated as unbounded)"""
+    (a0, a1), (b0, b1) = _window(a), _window(b)
+    return max(a0, b0) < min(a1, b1)
 
 
-def _window_contains(term: Term, omit: Term) -> bool:
+def _window_contains(term: Term, omit: Term, tstart: float = None, tstop: float = None) -> bool:
     """Whether the lag window of ``omit`` lies within the window of ``term``
 
-    Open bounds in ``omit`` inherit the corresponding bound of ``term``; bounds that cannot be compared symbolically (numeric vs. open) are assumed to be contained (verified at fit time).
+    Open bounds in ``omit`` inherit the corresponding (resolved) bound of ``term``; ``tstart``/``tstop`` resolve open bounds in ``term`` (without them, bounds that cannot be compared are assumed to be contained).
     """
-    if omit.tstart is not None:
-        if term.tstart is not None and omit.tstart < term.tstart:
-            return False
-        if term.tstop is not None and omit.tstart >= term.tstop:
-            return False
-    if omit.tstop is not None:
-        if term.tstop is not None and omit.tstop > term.tstop:
-            return False
-        if term.tstart is not None and omit.tstop <= term.tstart:
-            return False
-    return True
+    t0, t1 = _window(term, tstart, tstop)
+    o0, o1 = _window(omit, t0, t1)
+    return t0 <= o0 < t1 and t0 < o1 <= t1
 
 
-def _window_complement(term: Term, omit: Term) -> list[Term]:
+def _window_complement(term: Term, omit: Term, tstart: float = None, tstop: float = None) -> list[Term]:
     """Terms covering the part of ``term``'s lag window that ``omit`` does not cover (0, 1 or 2 terms)"""
+    t0, t1 = _window(term, tstart, tstop)
+    o0, o1 = _window(omit, t0, t1)
     out = []
-    if omit.tstart is not None and (term.tstart is None or omit.tstart > term.tstart):
+    if t0 < o0 < t1:
         out.append(replace(term, tstop=omit.tstart))
-    if omit.tstop is not None and (term.tstop is None or omit.tstop < term.tstop):
+    if t0 < o1 < t1:
         out.append(replace(term, tstart=omit.tstop))
     return out
 
@@ -182,7 +217,7 @@ def _expand_term(
         terms = named_models[term.code].terms
         if term.tstart is not None or term.tstop is not None:
             # distribute lag overrides to member terms; explicit member lags take precedence
-            terms = tuple([replace(term_i, tstart=term_i.tstart if term_i.tstart is not None else term.tstart, tstop=term_i.tstop if term_i.tstop is not None else term.tstop) for term_i in terms])
+            terms = tuple([term_i.with_default_lags(term.tstart, term.tstop) for term_i in terms])
         return terms
     else:
         return term,
@@ -192,16 +227,17 @@ def _expand_term(
 class Model:
     """Model that can be fit to data"""
     terms: tuple[Term, ...]
-    public_name: str = None
 
     def __post_init__(self):
+        # Check for identical duplicates
         counts = Counter([term.string for term in self.terms])
         duplicates = [term for term, count in counts.items() if count > 1]
         if duplicates:
             raise TRFModelError(f"{self.name}: duplicate terms {', '.join(duplicates)}")
-        by_base = {}
+        # Check for duplicate predictors with overlapping lag windows
+        by_base = defaultdict(list)
         for term in self.terms:
-            by_base.setdefault((term.stimulus, term.code), []).append(term)
+            by_base[term.stimulus, term.code].append(term)
         for terms in by_base.values():
             for i, term in enumerate(terms):
                 for other in terms[i + 1:]:
@@ -214,17 +250,8 @@ class Model:
             return '0'
         return ' + '.join(term.string for term in self.terms)
 
-    @cached_property
-    def sorted_key(self) -> str:
-        return '+'.join(sorted([term.string for term in self.terms]))
-
     def sorted(self) -> Model:
         return Model(tuple(sorted(self.terms, key=attrgetter('string'))))
-
-    @cached_property
-    def dataset_based_key(self):
-        term_keys = [Dataset.as_key(term.string) for term in self.terms]
-        return '+'.join(sorted(term_keys))
 
     @cached_property
     def term_names(self):
@@ -254,7 +281,25 @@ class Model:
         return Model(self.terms + other.terms)
 
     def __sub__(self, other: Model) -> Model:
-        """Remove terms; a term with a lag window removes that window from the matching term, keeping the complement"""
+        return self.subtract(other)
+
+    def subtract(
+            self,
+            other: Model,
+            tstart: float = None,
+            tstop: float = None,
+    ) -> Model:
+        """Remove terms; a term with a lag window removes that window from the matching term, keeping the complement
+
+        Parameters
+        ----------
+        other
+            Terms to remove.
+        tstart
+            Model-wide lag-window start, used to resolve open bounds when verifying that a removed lag window is contained in the term it is removed from.
+        tstop
+            Model-wide lag-window stop (see ``tstart``).
+        """
         terms = list(self.terms)
         for omit in other.terms:
             candidates = [term for term in terms if term.stimulus == omit.stimulus and term.code == omit.code]
@@ -264,13 +309,12 @@ class Model:
                 for term in candidates:
                     terms.remove(term)
                 continue
-            containing = [term for term in candidates if _window_contains(term, omit)]
-            if not containing:
+            # candidate windows are disjoint, so at most one can contain the omitted window
+            containing = next((term for term in candidates if _window_contains(term, omit, tstart, tstop)), None)
+            if containing is None:
                 raise TRFModelError(f"{self.name} - {other.name}: lag window of {omit.string} is not contained in any single term ({', '.join(term.string for term in candidates)})")
-            elif len(containing) > 1:
-                raise TRFModelError(f"{self.name} - {other.name}: lag window of {omit.string} is ambiguous (contained in {', '.join(term.string for term in containing)})")
-            index = terms.index(containing[0])
-            terms[index:index + 1] = _window_complement(containing[0], omit)
+            index = terms.index(containing)
+            terms[index:index + 1] = _window_complement(containing, omit, tstart, tstop)
         return Model(tuple(terms))
 
     def __hash__(self):
@@ -285,16 +329,33 @@ class Model:
             return x
         elif isinstance(x, str):
             return cls.from_string(x)
-        elif isinstance(x, abc.Sequence):
+        elif isinstance(x, Sequence):
             return cls(tuple(Term._coerce(term) for term in x))
         raise TypeError(x)
 
     def difference(self, other: Model) -> Model:
-        terms = [term for term in self.terms if term not in other.terms]
+        """Terms, and parts of lag windows, in ``self`` but not in ``other``"""
+        terms = []
+        for term in self.terms:
+            pieces = [term]
+            for omit in other.terms:
+                if (omit.stimulus, omit.code) != (term.stimulus, term.code):
+                    continue
+                pieces = [piece_i for piece in pieces for piece_i in (_window_complement(piece, omit) if _windows_overlap(piece, omit) else [piece])]
+            terms.extend(pieces)
         return Model(tuple(terms))
 
     def intersection(self, other: Model) -> Model:
-        terms = [term for term in self.terms if term in other.terms]
+        """Terms, and parts of lag windows, in both ``self`` and ``other``"""
+        terms = []
+        for term in self.terms:
+            for shared in other.terms:
+                if (shared.stimulus, shared.code) != (term.stimulus, term.code) or not _windows_overlap(term, shared):
+                    continue
+                (t0, t1), (s0, s1) = _window(term), _window(shared)
+                tstart = None if max(t0, s0) == -inf else max(t0, s0)
+                tstop = None if min(t1, s1) == inf else min(t1, s1)
+                terms.append(replace(term, tstart=tstart, tstop=tstop))
         return Model(tuple(terms))
 
     def initialize(self, named_models: dict[str, Model]) -> Model:
@@ -303,26 +364,57 @@ class Model:
 
     def term_table(self) -> fmtxt.Table:
         show_stimulus = any(term.stimulus for term in self.terms)
-        t = fmtxt.Table('rl' * (1 + show_stimulus))
+        show_lags = any(term.tstart is not None or term.tstop is not None for term in self.terms)
+        t = fmtxt.Table('r' + 'l' * show_stimulus + 'l' + 'rr' * show_lags)
         t.cell('#')
         if show_stimulus:
             t.cell('Stimulus')
         t.cell('Code')
+        if show_lags:
+            t.cells('tstart', 'tstop')
         t.midrule()
         for i, term in enumerate(self.terms):
             t.cell(i)
             if show_stimulus:
                 t.cell(term.stimulus)
             t.cell(term.code)
+            if show_lags:
+                t.cell('' if term.tstart is None else f'{term.tstart:g}')
+                t.cell('' if term.tstop is None else f'{term.tstop:g}')
         return t
 
-    def without(self, term: str) -> Model:
-        terms = list(self.terms)
-        names = [term.string for term in terms]
-        if term not in names:
-            raise ValueError(f"{term}: not in {self.name}")
-        del terms[names.index(term)]
+    def resolve_lags(self, tstart: float | None, tstop: float | None) -> Model:
+        """Resolve the terms' lag windows against the model-wide defaults
+
+        Verifies that every term's lag window is complete and non-negative, and
+        drops terms whose resolved window is zero-width (they cover no lags,
+        e.g. the complement of an omitted window with a bound at the model-wide
+        bound).
+        """
+        terms = []
+        for term in self.terms:
+            if term.tstart is None and tstart is None:
+                raise TRFModelError(f"{self.name}: no tstart for {term.string} (set tstart, or specify it in the term's lag window)")
+            if term.tstop is None and tstop is None:
+                raise TRFModelError(f"{self.name}: no tstop for {term.string} (set tstop, or specify it in the term's lag window)")
+            t0, t1 = _window(term, tstart, tstop)
+            if t0 > t1:
+                raise TRFModelError(f"{self.name}: lag window of {term.string} is empty given {tstart=} and {tstop=}")
+            elif t0 == t1:
+                continue  # zero-width window: covers no lags
+            terms.append(term)
+        if len(terms) == len(self.terms):
+            return self
+        elif not terms:
+            raise TRFModelError(f"{self.name}: no term covers any lags given {tstart=} and {tstop=}")
         return Model(tuple(terms))
+
+    def validate_lags(self, tstart: float | None, tstop: float | None) -> None:
+        """Verify that every term has a complete, non-empty lag window given the model-wide defaults"""
+        resolved = self.resolve_lags(tstart, tstop)
+        if resolved is not self:
+            dropped = [term.string for term in self.terms if term not in resolved.terms]
+            raise TRFModelError(f"{self.name}: lag windows of {', '.join(dropped)} are empty given {tstart=} and {tstop=}")
 
 
 @dataclass
@@ -421,7 +513,7 @@ class OmitComparison(ComparisonSpec):
         x = self.x.initialize(named_models)
         x_omit = self.x_omit.initialize(named_models)
         x0 = x - x_omit
-        return Comparison(x, x0, 1, public_name)
+        return Comparison(x, x0, 1, public_name, ((x, x_omit),))
 
 
 @dataclass
@@ -442,7 +534,7 @@ class Omit2Comparison(ComparisonSpec):
         #     x0_reduced > x1_reduced
         x1 = x - x0_omit
         x0 = x - x1_omit
-        return Comparison(x1, x0, TAIL[self.operator], public_name)
+        return Comparison(x1, x0, TAIL[self.operator], public_name, ((x, x1_omit), (x, x0_omit)))
 
 
 @dataclass
@@ -487,6 +579,7 @@ class Comparison:
     x0: Model
     tail: int = 1
     public_name: str = None
+    subtractions: tuple[tuple[Model, Model], ...] = ()  # (full model, omitted terms) pairs behind reduced models, for validate_lags
 
     @cached_property
     def operator(self) -> str:
@@ -538,7 +631,30 @@ class Comparison:
 
     def sorted(self) -> Comparison:
         """Copy with terms in both models sorted for stable cache identity"""
-        return Comparison(self.x1.sorted(), self.x0.sorted(), self.tail, self.public_name)
+        return Comparison(self.x1.sorted(), self.x0.sorted(), self.tail, self.public_name, self.subtractions)
+
+    def resolve_lags(self, tstart: float | None, tstop: float | None) -> Comparison:
+        """Resolve the models' lag windows against the model-wide defaults
+
+        Verifies that every omitted lag window is contained in the term it was
+        removed from (see :meth:`Model.subtract`), and resolves both models
+        (see :meth:`Model.resolve_lags`), dropping terms whose resolved window
+        is zero-width.
+        """
+        for x, omit in self.subtractions:
+            x.subtract(omit, tstart, tstop)
+        x1 = self.x1.resolve_lags(tstart, tstop)
+        x0 = self.x0.resolve_lags(tstart, tstop)
+        if x1 is self.x1 and x0 is self.x0:
+            return self
+        return replace(self, x1=x1, x0=x0)
+
+    def validate_lags(self, tstart: float | None, tstop: float | None) -> None:
+        """Verify that :meth:`resolve_lags` is a no-op for the model-wide defaults"""
+        resolved = self.resolve_lags(tstart, tstop)
+        if resolved is not self:
+            dropped = [term.string for model, resolved_model in zip(self.models, resolved.models) for term in model.terms if term not in resolved_model.terms]
+            raise TRFModelError(f"{self.name}: lag windows of {', '.join(dropped)} are empty given {tstart=} and {tstop=}")
 
     def _cache_form_(self) -> str:
         """Canonical expanded form for cache keys and manifests"""

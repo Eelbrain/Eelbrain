@@ -1286,8 +1286,16 @@ class Pipeline(StateModel):
             data_string = 'sensor'
         else:
             data_string = self._resolve_data(data).string
-        x_ = self._eval_trf_x(x, comparison).sorted()
-        return {'x': x_, 'tstart': float(tstart), 'tstop': float(tstop), 'estimator': estimator, 'data': data_string, 'samplingrate': samplingrate, 'filter_x': filter_x}
+        tstart = float(tstart)
+        tstop = float(tstop)
+        x_ = self._eval_trf_x(x, comparison).resolve_lags(tstart, tstop).sorted()
+        # A model-wide bound enters the fit only where a term leaves it open; normalize unused bounds to None so they do not affect the cache key
+        models = x_.models if isinstance(x_, Comparison) else (x_,)
+        if all(term.tstart is not None for model in models for term in model.terms):
+            tstart = None
+        if all(term.tstop is not None for model in models for term in model.terms):
+            tstop = None
+        return {'x': x_, 'tstart': tstart, 'tstop': tstop, 'estimator': estimator, 'data': data_string, 'samplingrate': samplingrate, 'filter_x': filter_x}
 
     def load_trf(
             self,

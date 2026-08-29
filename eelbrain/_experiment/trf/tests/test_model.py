@@ -78,6 +78,19 @@ def test_term_lags():
     with pytest.raises(TRFModelError):
         parse_term('gammatone[0.5:0.2]')
 
+    # sub-millisecond precision is not supported; bounds snap to the ms grid
+    with pytest.raises(NotImplementedError):
+        parse_term('gammatone[0.0005:0.1]')
+    from eelbrain._experiment.trf.model import Term
+    assert Term(None, 'gammatone', 0.1 + 0.2, 0.5).tstart == 0.3
+
+    # open lag bounds fill in from model-wide defaults
+    assert parse_term('gammatone[0.2:]').with_default_lags(0, 0.5) == parse_term('gammatone[0.2:0.5]')
+    assert parse_term('gammatone[-0.2:]').with_default_lags(0, 0.5) == parse_term('gammatone[-0.2:0.5]')
+    assert parse_term('gammatone').with_default_lags(0, 0.5) == parse_term('gammatone[0:0.5]')
+    with pytest.raises(TRFModelError):  # resolved window is empty
+        parse_term('gammatone[0.6:]').with_default_lags(0, 0.5)
+
     # same predictor with different lag windows
     model = Model.coerce('gammatone[0:0.5] + gammatone[0.5:1]')
     assert model.name == 'gammatone[0:0.5] + gammatone[0.5:1]'
@@ -150,6 +163,13 @@ def test_comparison_lags():
     model = ModelExpression.from_string('ab - b[:1]').initialize(named)
     assert model.name == 'a + b[1:]'
 
+    # difference/intersection decompose lag windows
+    comparison = Comparison.coerce('a + b @ b[:1]')
+    assert comparison.x1_only.name == 'b[:1]'
+    assert not comparison.x0_only
+    assert comparison.common_base.name == 'a + b[1:]'
+    assert comparison.test_term_name == 'b[:1]'
+
     # errors
     with pytest.raises(TRFModelError):  # window not contained in the term's window
         Comparison.coerce('a + b[:1] @ b[1:2]')
@@ -159,6 +179,61 @@ def test_comparison_lags():
         Comparison.coerce('a + b @ c[:1]')
     with pytest.raises(TRFModelError):  # add overlapping window
         Comparison.coerce('a + b +@ b[:1]')
+
+
+def test_comparison_lags_resolved():
+    "Comparison.resolve_lags resolves open bounds against the model-wide tstart/tstop"
+    # omit window beyond the model-wide window: the reduced model would exceed the full model
+    with pytest.raises(TRFModelError):
+        Comparison.coerce('a + b @ b[0.6:]').resolve_lags(0, 0.5)
+    with pytest.raises(TRFModelError):
+        Comparison.coerce('a + b @ b[:0.6]').resolve_lags(0, 0.5)
+    # within the model-wide window: resolution is a no-op
+    comparison = Comparison.coerce('a + b @ b[0.2:]')
+    assert comparison.resolve_lags(0, 0.5) is comparison
+    assert comparison.x0.name == 'a + b[:0.2]'
+    # two-sided omit: each omitted window is checked against the full model
+    Comparison.coerce('a + b @ b[:0.2] > b[0.2:]').resolve_lags(0, 0.5)
+    with pytest.raises(TRFModelError):
+        Comparison.coerce('a + b @ b[:0.2] > b[0.6:]').resolve_lags(0, 0.5)
+    # direct comparisons carry no omitted windows and only require valid models
+    Comparison.coerce('a + b[:0.6] > a').resolve_lags(0, 0.5)
+    # an omit bound at the model-wide bound: the zero-width complement piece is dropped
+    comparison = Comparison.coerce('a + b @ b[0:0.2]')
+    assert comparison.x0.name == 'a + b[:0] + b[0.2:]'
+    resolved = comparison.resolve_lags(0, 0.5)
+    assert resolved.x0.name == 'a + b[0.2:]'
+    assert resolved.name == 'a + b @ b[0:0.2]'  # display name preserved
+
+
+def test_model_lags_validation():
+    "Model.resolve_lags/validate_lags: complete, non-empty windows given model-wide defaults"
+    model = Model.coerce('a + b[0.1:0.4]')
+    assert model.resolve_lags(0, 0.5) is model
+    model.validate_lags(0, 0.5)
+    # term windows beyond the model-wide window are allowed
+    Model.coerce('a + b[0.6:0.8]').validate_lags(0, 0.5)
+    # if all terms specify complete windows, model-wide defaults are not needed
+    Model.coerce('a[0:0.3] + b[0.1:0.4]').validate_lags(None, None)
+    with pytest.raises(TRFModelError):  # no tstart for a
+        Model.coerce('a + b[0.1:0.4]').validate_lags(None, 0.5)
+    with pytest.raises(TRFModelError):  # no tstop for a
+        Model.coerce('a + b[0.1:0.4]').validate_lags(0, None)
+    with pytest.raises(TRFModelError):  # resolved window of b is negative
+        Model.coerce('a + b[0.6:]').resolve_lags(0, 0.5)
+    # a zero-width window covers no lags: dropped by resolve_lags, rejected by validate_lags
+    assert Model.coerce('a + b[0.5:]').resolve_lags(0, 0.5).name == 'a'
+    with pytest.raises(TRFModelError):
+        Model.coerce('a + b[0.5:]').validate_lags(0, 0.5)
+    with pytest.raises(TRFModelError):  # no term covers any lags
+        Model.coerce('b[0.5:]').resolve_lags(0, 0.5)
+
+
+def test_term_table_lags():
+    table = Model.coerce('a + b[0.1:0.4]').term_table()
+    assert str(table).splitlines()[0].split() == ['#', 'Code', 'tstart', 'tstop']
+    table = Model.coerce('a + b').term_table()
+    assert str(table).splitlines()[0].split() == ['#', 'Code']
 
 
 models = {

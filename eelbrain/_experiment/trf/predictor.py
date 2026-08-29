@@ -60,18 +60,18 @@ class EventPredictor(Configuration):
         self.latency = typed_arg(latency, float, str)
         self.sel = typed_arg(sel, str)
 
-    def _generate(self, uts: UTS, ds: Dataset, term: Term):
+    def _generate(self, uts: UTS, ds: Dataset, term: Term, name: str) -> NDVar:
         assert term.stimulus is None
         if self.sel:
             raise NotImplementedError
-        return epoch_impulse_predictor((ds.n_cases, uts), self.value, self.latency, term.string, ds)
+        return epoch_impulse_predictor((ds.n_cases, uts), self.value, self.latency, name, ds)
 
-    def _generate_continuous(self, uts: UTS, events: Dataset, term: Term) -> NDVar:
+    def _generate_continuous(self, uts: UTS, events: Dataset, term: Term, name: str) -> NDVar:
         "Impulse for each event in one ContinuousEpoch segment, placed at ``epoch_time``"
         assert term.stimulus is None
         if self.sel:
             events = events.sub(self.sel)
-        return event_impulse_predictor(uts, 'epoch_time', self.value, self.latency, term.code, events)
+        return event_impulse_predictor(uts, 'epoch_time', self.value, self.latency, name, events)
 
 
 class FilePredictorBase(Configuration):
