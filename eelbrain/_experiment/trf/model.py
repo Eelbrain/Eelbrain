@@ -308,6 +308,10 @@ class Model:
             containing = next((term for term in candidates if _window_contains(term, omit)), None)
             if containing is None:
                 raise TRFModelError(f"{self.name} - {other.name}: lag window of {omit.string} is not contained in any single term ({', '.join(term.string for term in candidates)})")
+            # an open omit bound inherits the containing term's bound, which must not silently exclude another piece of a split predictor
+            straddled = [term for term in candidates if term is not containing and _windows_overlap(term, omit)]
+            if straddled:
+                raise TRFModelError(f"{self.name} - {other.name}: lag window of {omit.string} overlaps {', '.join(term.string for term in straddled)} in addition to {containing.string}; make the omitted window explicit")
             index = terms.index(containing)
             terms[index:index + 1] = _window_complement(containing, omit)
         return Model(tuple(terms))
@@ -325,7 +329,7 @@ class Model:
             named_models: dict[str, Model] = {},
     ) -> Model:
         if isinstance(x, cls):
-            return x
+            model = x
         elif isinstance(x, str):
             model = cls.from_string(x)
         elif isinstance(x, Sequence):
@@ -360,8 +364,10 @@ class Model:
         return Model(tuple(terms))
 
     def initialize(self, named_models: dict[str, Model]) -> Model:
-        terms = list(chain.from_iterable(_expand_term(term, named_models) for term in self.terms))
-        return Model(tuple(terms))
+        terms = tuple(chain.from_iterable(_expand_term(term, named_models) for term in self.terms))
+        if terms == self.terms:
+            return self
+        return Model(terms)
 
     def term_table(self) -> fmtxt.Table:
         show_stimulus = any(term.stimulus for term in self.terms)
@@ -562,7 +568,7 @@ class Comparison:
     x0: Model
     tail: int = 1
     public_name: str = None
-    # Construction record of an omit comparison, needed because omitted terms treat bounds differently; Example: 'a + b @ b[0.6:]' with tstart=0, tstop=0.5 -> x1 = 'a + b[:0.6]'
+    # Construction record of an omit comparison, needed because omitted terms treat bounds differently; Example: 'a + b @ b[0.6:]' with tstart=0, tstop=0.5 -> x1 = 'a + b[:0.6]'. Cleared by resolve_lags: once every bound is explicit the record has no further job. omits[i] is subtracted from omit_base to produce models[i] (x1, x0).
     omit_base: Model = field(default=None, compare=False)
     omits: tuple[Model | None, Model | None] = field(default=(None, None), compare=False)
 
@@ -643,7 +649,8 @@ class Comparison:
             x1, x0 = (base if omit is None else base - omit for omit in self.omits)
         if x1 == self.x1 and x0 == self.x0:
             return self
-        return replace(self, x1=x1, x0=x0)
+        # With every bound explicit the record has no further job; clearing it keeps re-resolution independent of the original model-wide bounds
+        return replace(self, x1=x1, x0=x0, omit_base=None, omits=(None, None))
 
     def normalize_lags(
             self,

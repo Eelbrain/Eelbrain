@@ -107,6 +107,12 @@ def test_term_lags():
     comparison = Comparison.coerce('x + gammatone[0.2:] > x')
     assert comparison.x1_only.name == 'gammatone[0.2:]'
 
+    # a Term instance passed as a predictor-node option is stripped like a string spelling (the predictor file is lag-independent)
+    from eelbrain._experiment.trf.nodes import PredictorInput
+    spec = PredictorInput.key_options['term']
+    assert spec.validated(None, 'term', parse_term('gammatone[0.2:0.4]')) == parse_term('gammatone')
+    assert spec.validated(None, 'term', 'gammatone[0.2:0.4]') == parse_term('gammatone')
+
 
 def test_named_model_lags():
     # lag overrides distribute to member terms; explicit member lags take precedence
@@ -174,6 +180,10 @@ def test_comparison_lags():
         Comparison.coerce('a + b[:1] @ b[1:2]')
     with pytest.raises(TRFModelError):  # window straddles a split
         Comparison.coerce('a + b[:1] + b[1:] @ b[0.5:1.5]')
+    with pytest.raises(TRFModelError):  # open omit bound extends into another piece
+        Comparison.coerce('a + b[:1] + b[1:2] @ b[0.5:]')
+    with pytest.raises(TRFModelError):
+        Model.coerce('a + b[:1] + b[1:2]') - Model.coerce('b[0.5:]')
     with pytest.raises(TRFModelError):  # predictor not in model
         Comparison.coerce('a + b @ c[:1]')
     with pytest.raises(TRFModelError):  # add overlapping window
@@ -264,6 +274,7 @@ def test_model_lags_normalization():
     assert comparison.x1.name == 'a[0:0.5] + b[0:0.5]'
     assert comparison.x0.name == 'a[0:0.5] + b[0:0.2]'
     assert tstart is None and tstop is None
+    assert comparison.normalize_lags(tstart, tstop) == (comparison, None, None)  # idempotent (omit record cleared on resolution)
 
 
 def test_term_table_lags():
@@ -291,6 +302,9 @@ def test_model():
     assert xy + z == xyz
     assert xyz - z == xy
     assert xy.intersection(yz) == y
+    # coercing a Model instance expands named models too
+    model = Model.coerce('x-ab + z')
+    assert Model.coerce(model, named_models) == Model.coerce('x-a + x-b + z')
     # duplicate term
     with pytest.raises(TRFModelError):
         Model.coerce("term-1 + term-2 + term-2")

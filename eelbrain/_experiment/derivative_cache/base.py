@@ -320,9 +320,10 @@ class OptionSpec:
     normalize
         Called as ``normalize(value)`` before validation; the return
         value replaces the option value for the whole request (key,
-        fingerprint, and build all see the normalized value). Must be
-        idempotent, since child requests are normalized again when they are
-        resolved.
+        fingerprint, and build all see the normalized value). Runs for every
+        non-default value, including values that already have ``type``, so it
+        can canonicalize typed values. Must be idempotent, since child
+        requests are normalized again when they are resolved.
     """
 
     default: Any
@@ -334,12 +335,12 @@ class OptionSpec:
         """Normalize and validate one option value for ``ctx``."""
         if value is None and self.default is None:
             return value
-        elif self.type and isinstance(value, self.type):
-            return value
         elif self.normalize:
             value = self.normalize(value)
             if self.type:
                 assert isinstance(value, self.type)
+            return value
+        elif self.type and isinstance(value, self.type):
             return value
         elif self.type:
             if not isinstance(self.type, tuple):

@@ -1255,6 +1255,12 @@ def test_option_spec_normalize_canonicalizes_cache_key():
     assert derivative.build_calls == 1
 
 
+def test_option_spec_normalize_runs_for_typed_values():
+    # normalize canonicalizes even values that already have the declared type (e.g. a Term object carrying lag windows a predictor request must strip)
+    spec = OptionSpec('', type=str, normalize=str.lower)
+    assert spec.validated(None, 'label', 'ABC') == 'abc'
+
+
 def test_override_key_options_narrows_key():
     root, registry = make_empty_registry()
     registry.register(NarrowingDerivative(root))
