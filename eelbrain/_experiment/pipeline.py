@@ -648,7 +648,7 @@ class Pipeline(StateModel):
 
         Returns
         -------
-        report_table
+        report_table : fmtxt.Table | None
             Per-category summary of the scan (file counts and sizes).
         """
         report = self._derivatives.scan_cache(revalidate=revalidate)
@@ -765,17 +765,24 @@ class Pipeline(StateModel):
         else:
             return StateModel.get_field_values(self, field, exclude)
 
-    def iter(self, fields='subject', exclude=None, values=None, progress_bar=None, **state):
+    def iter(
+            self,
+            fields: str | Sequence[str] = 'subject',
+            exclude: dict = None,
+            values: dict = None,
+            progress_bar: str = None,
+            **state,
+    ):
         """
         Cycle the experiment's state through all values on the given fields
 
         Parameters
         ----------
-        fields : sequence | str
+        fields
             Field(s) over which should be iterated.
-        exclude : dict  {str: iterator over str}
+        exclude
             Exclude values from iteration (``{field: values_to_exclude}``).
-        values : dict  {str: iterator over str}
+        values
             Fields with custom values to iterate over (instead of the
             corresponding field values) with {name: (sequence of values)}
             entries.
@@ -953,15 +960,16 @@ class Pipeline(StateModel):
         for name, subjects in self._groups.items():
             ds[name] = Var(subject.isin(subjects))
 
-    def label_groups(self, subject, groups):
+    def label_groups(self, subject: Factor, groups: Sequence[str] | dict) -> Factor:
         """Generate Factor for group membership
 
         Parameters
         ----------
         subject : Factor
             A Factor with subjects.
-        groups : list of str | {str: str} dict
-            Groups which to label (raises an error if group membership is not
+        groups
+            Groups which to label as ``[group, ...]`` or ``{group: label}``
+            (raises an error if group membership is not
             unique). To use labels other than the group names themselves, use
             a ``{group: label}`` dict.
 
@@ -998,7 +1006,7 @@ class Pipeline(StateModel):
 
         Returns
         -------
-        bad_chs
+        bad_chs : list[str]
             Bad channels.
         """
         raw_name = self.get('raw', **kwargs)
@@ -1427,7 +1435,7 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        subjects : str | 1 | -1
+        subjects
             Subject(s) for which to load data. Can be a single subject name or a
             group name such as ``'all'``. ``1`` to use the current subject;
             ``-1`` for the current group.
@@ -1447,7 +1455,7 @@ class Pipeline(StateModel):
             Samplingrate in Hz for the analysis.
         filter_x
             Filter predictors like the M/EEG data (see :meth:`load_predictor`).
-        scale : 'original'
+        scale
             Rescale the TRFs to the scale of the source data (the default is the
             scale based on normalized predictors and responses).
         smooth
@@ -1460,7 +1468,7 @@ class Pipeline(StateModel):
 
         Returns
         -------
-        trf_ds
+        trf_ds : Dataset
             Dataset with ``subject``, ``epoch``, ``task`` (unless an epoch
             combines several tasks), the estimator's fit metrics, and one
             :class:`NDVar` per TRF component. ``trf_ds.info['xs']`` lists the
@@ -1591,7 +1599,7 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        subjects : str | 1 | -1
+        subjects
             Subject(s) for which to load data. Can be a single subject
             name or a group name such as ``'all'``. ``1`` to use the current
             subject; ``-1`` for the current group. Default is current subject
@@ -2283,7 +2291,7 @@ class Pipeline(StateModel):
             epoch: str = None,
             save: bool = True,
             **state,
-    ) -> (NDVar, list[str]):
+    ) -> tuple[NDVar, list[str]]:
         """Iteratively exclude bad channels based on low average neighbor-correlation
 
         Parameters
@@ -2772,9 +2780,9 @@ class Pipeline(StateModel):
             Alpha of the annotation (1=opaque, 0=transparent, default 0.7).
         axw
             Figure width per hemisphere.
-        foreground : mayavi color
+        foreground
             Figure foreground color (i.e., the text color).
-        background : mayavi color
+        background
             Figure background color.
         seeds
             Plot seeds as points (only applies to seeded parcellations).
@@ -3072,14 +3080,14 @@ class Pipeline(StateModel):
         brain.add_label(label, alpha=0.75)
         return brain
 
-    def plot_raw(self, decim=10, xlim=5, subtract_mean=False, **state):
+    def plot_raw(self, decim: int = 10, xlim: float = 5, subtract_mean: bool = False, **state):
         """Plot raw sensor data
 
         Parameters
         ----------
         decim : int
             Decimate data for faster plotting (default 10).
-        xlim : scalar
+        xlim
             Number of seconds to display (default 5 s).
         subtract_mean : bool
             Subtract the mean from each channel (useful when plotting raw data
@@ -3794,12 +3802,12 @@ class Pipeline(StateModel):
         ds = Dataset.from_caselist(['subject', 'reg'], rows)
         return ds
 
-    def show_rej_info(self, flagp=None, asds=False, bads=False, **state):
+    def show_rej_info(self, flagp: float = None, asds: bool = False, bads: bool = False, **state):
         """Information about artifact rejection
 
         Parameters
         ----------
-        flagp : scalar
+        flagp
             Flag entries whose percentage of good trials is lower than this
             number.
         asds : bool

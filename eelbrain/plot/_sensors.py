@@ -11,7 +11,7 @@ import matplotlib.axes
 import matplotlib.markers
 from matplotlib.lines import Line2D
 
-from .._data_obj import Datalist, Sensor, as_sensor
+from .._data_obj import Datalist, IndexArg, NDVar, Sensor, as_sensor
 from ._base import EelFigure, ImLayout, ColorArg
 
 SENSORMAP_FRAME = 0.1
@@ -388,14 +388,14 @@ class SensorMapMixin:
         color = ['k', 'w', 'b', 'g', 'r', 'c', 'm', 'y'][sel]
         self.set_label_color(color)
 
-    def mark_sensors(self, sensors, axis=None, **kwargs):
+    def mark_sensors(self, sensors: IndexArg, axis: int | Sequence[int] = None, **kwargs):
         """Mark given sensors on the plots
 
         Parameters
         ----------
-        sensors : None | Sensor dimension index
+        sensors
             Sensors which should be marked (None to clear all markings).
-        axis : int | list of int
+        axis
             Which axes to mark (default is all).
         size : scalar | sequence of scalars
             Marker size(s) in points^2 (default 20).
@@ -417,12 +417,12 @@ class SensorMapMixin:
             p.mark_sensors(sensors, **kwargs)
         self.draw()
 
-    def separate_labels(self, pad=10):
+    def separate_labels(self, pad: float = 10):
         """Move overlapping labels apart along the x axis
 
         Parameters
         ----------
-        pad : scalar
+        pad
             Minimum amount of padding between labels (in pixels; default 5).
         """
         for p in self.__sensor_plots:
@@ -472,13 +472,13 @@ class SensorMaps(EelFigure):
         Initial selection.
     proj : str
         Sensor projection for the fourth plot.
-    size : scalar
+    size
         Size for the sensor markers.
-    color : matplotlib color
+    color
         Color for the sensor markers.
-    marker : str
+    marker
         Marker for the sensor positions.
-    frame : scalar
+    frame
         Size of the empty space around sensors in axes.
     ...
         Also accepts :ref:`general-layout-parameters`.
@@ -494,8 +494,17 @@ class SensorMaps(EelFigure):
 
     """
 
-    def __init__(self, sensors, select=[], proj='default', size=1,
-                 color='k', marker='.', frame=0.05, **kwargs):
+    def __init__(
+            self,
+            sensors: Sensor | NDVar,
+            select: Sequence[int] = [],
+            proj: str = 'default',
+            size: float = 1,
+            color: ColorArg = 'k',
+            marker: str = '.',
+            frame: float = 0.05,
+            **kwargs,
+    ):
         sensors = as_sensor(sensors)
 
         # layout figure
@@ -663,13 +672,13 @@ class SensorMaps(EelFigure):
     def _OnClear(self, event):  # noqa
         self.clear()
 
-    def set_selection(self, select):
+    def set_selection(self, select: IndexArg):
         """
         Set the current selection with a list of indices.
 
         Parameters
         ----------
-        select : sensor index
+        select
             Index for sensor dimension, for example array_like of int, or list
             of sensor names.
         """
@@ -699,21 +708,21 @@ class SensorMap(SensorMapMixin, EelFigure):
     proj:
         Transform to apply to 3 dimensional sensor coordinates for plotting
         locations in a plane
-    size : scalar
+    size
         Size for the sensor markers.
-    color : matplotlib color
+    color
         Color for the sensor markers.
     marker : str
         Marker for the sensor positions.
     mark : None | list of int
         List of sensor indices to mark.
-    head_radius : scalar | tuple | bool
+    head_radius
         Radius of the head outline drawn over sensors (on sensor plots with
         normalized positions, 0.45 is the outline of the topomap); 0 to plot no
         outline; tuple for separate (right, anterior) radius. True to be equal
         to :class:`plot.Topomap` with ``method="mne"``.
         The default is determined automatically.
-    head_pos : scalar
+    head_pos
         Head outline position along the anterior axis (0 is the center, 0.5 is
         the top end of the plot).
     adjacency

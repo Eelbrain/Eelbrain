@@ -146,13 +146,13 @@ def select_epochs(
     vlim
         Limit of the epoch plots on the y-axis. If None, a value is
         determined automatically to show all data.
-    color : matplotlib color
+    color
         Color for primary data (default is black).
     lw
         Linewidth for normal sensor plots.
-    mark : None | index for sensor dim
+    mark
         Sensors to plot as individual traces with a separate color.
-    mcolor : matplotlib color
+    mcolor
         Color for marked traces.
     mlw
         Line width for marked sensor plots.

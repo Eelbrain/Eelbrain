@@ -127,7 +127,8 @@ class ChannelModel:
 
         Returns
         -------
-        self
+        model : ChannelModel
+            The model itself, to allow chaining.
         """
         if isinstance(data, list):
             # long epochs: concatenate the good samples of each epoch
@@ -176,7 +177,7 @@ class ChannelModel:
 
         Returns
         -------
-        prediction
+        prediction : NDVar | Datalist
             Data with the same dimensions as ``data``, where each channel is
             predicted from the other channels. For a list of long epochs, a
             :class:`Datalist` with one prediction NDVar per epoch.
@@ -222,7 +223,7 @@ class ChannelModel:
 
         Returns
         -------
-        score
+        score : NDVar | Datalist
             The per-channel error score (``[case x] sensor``). For a list of long
             epochs, a :class:`Datalist` with one score NDVar per epoch.
         """
@@ -283,7 +284,7 @@ class ChannelModel:
 
         Returns
         -------
-        windows
+        windows : Datalist | list
             One list of :class:`BadChannelWindow` per epoch (per case for an
             epoched NDVar; a single list for a continuous NDVar).
 

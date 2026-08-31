@@ -366,12 +366,12 @@ class Celltable:
     def _get_func(self, cell, func):
         return self.data[cell].aggregate(func=func).x
 
-    def get_statistic(self, func=np.mean):
+    def get_statistic(self, func: Callable | str = np.mean):
         """Return a list with ``a * func(data)`` for each data cell.
 
         Parameters
         ----------
-        func : callable | str
+        func
             statistics function that is applied to the data. Can be string,
             such as '[x]sem' or '[x]ci', e.g. '2sem'.
 
@@ -387,12 +387,12 @@ class Celltable:
 
         return [func(self.data[cell].x) for cell in self.cells]
 
-    def get_statistic_dict(self, func=np.mean):
+    def get_statistic_dict(self, func: Callable | str = np.mean):
         """Return a ``{cell: func(data)}`` dictionary.
 
         Parameters
         ----------
-        func : callable | str
+        func
             statistics function that is applied to the data. Can be string,
             such as '[x]sem', '[x]std', or '[x]ci', e.g. '2sem'.
 

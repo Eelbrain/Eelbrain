@@ -55,6 +55,7 @@ import shutil
 import socket
 import sys
 from io import BytesIO, StringIO
+from numpy.typing import ArrayLike
 import tempfile
 import time
 from types import MappingProxyType
@@ -809,12 +810,12 @@ class FMText(FMTextElement):
             content = [asfmtext(content, rasterize=rasterize)]
         FMTextElement.__init__(self, content, tag, options)
 
-    def append(self, content):
+    def append(self, content: FMTextLike):
         """Append content to the FMText item
 
         Parameters
         ----------
-        content : str | object | iterable
+        content
             Any item with a string representation (str, FMText, scalar, ...)
             or an object that iterates over such items (e.g. a list of FMText).
         """
@@ -1027,7 +1028,7 @@ class List(FMTextElement):
 
         Parameters
         ----------
-        head : FMTextLike
+        head
             First line on higher level (no bullet for highest list, or list
             element for subordinate list).
         items : iterable of FMTextLike
@@ -1875,12 +1876,20 @@ class Image(FMTextElement, BytesIO):
         self.width = width
 
     @classmethod
-    def from_array(cls, array, name='array', format='png', alt=None, height=None, width=None):
+    def from_array(
+            cls,
+            array: ArrayLike,
+            name: str = 'array',
+            format: str = 'png',
+            alt: str = None,
+            height: float = None,
+            width: float = None,
+    ):
         """Create an Image object from an array.
 
         Parameters
         ----------
-        array : array_like
+        array
             RGBA image array.
         name : None | str
             Name for the target image.

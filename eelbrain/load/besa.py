@@ -18,7 +18,8 @@ import re
 import numpy as np
 from scipy.io import loadmat
 
-from .._data_obj import Dataset, Factor, NDVar, UTS, Scalar, combine
+from .._data_obj import Dataset, Factor, IndexArg, NDVar, UTS, Scalar, combine
+from .._types import PathArg
 from .._utils import ui
 
 
@@ -228,7 +229,7 @@ def roi(path, adjust_index=True):
 
     Returns
     -------
-    roi : array, shape = (n_sources,)
+    roi : numpy.ndarray
         ROI source indexes.
     """
     mat = loadmat(path)
@@ -293,7 +294,12 @@ def roi_results(path=None, varname=None):
     return ds
 
 
-def mrat_data(path=None, tstart=-0.1, roi=None, varname=None):
+def mrat_data(
+        path: PathArg = None,
+        tstart: float = -0.1,
+        roi: IndexArg = None,
+        varname: str = None,
+):
     """
     Load meg data from a saved mrat dataset object
 
@@ -302,9 +308,9 @@ def mrat_data(path=None, tstart=-0.1, roi=None, varname=None):
     path : str | None
         Path to the ``*.m`` file containing the saved results. If None, a file
         can be selected using a system file dialog.
-    tstart : scalar
+    tstart
         Time value of the first sample in the data.
-    roi : numpy index
+    roi
         Index of the sources to load (Python style indexing, i.e., the first
         source has index 0).
     varname : str | None

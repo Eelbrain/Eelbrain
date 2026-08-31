@@ -52,7 +52,7 @@ def difference(
 
     Returns
     -------
-    diff
+    diff : Dataset
         Dataset with the difference between ``c1`` and ``c0`` on ``y``.
 
     Examples
@@ -469,7 +469,7 @@ def cast_to_ndvar(
 
     Returns
     -------
-    short_ds
+    short_ds : Dataset
         Copy of ``ds``, aggregated over ``dim_values``, and with an
         :class:`NDVar` containing the values from ``data`` and a new dimension
         reflecting ``dim_values``. If ``dim_values`` is a Factor, the new
@@ -598,7 +598,7 @@ def stats(
 
     Returns
     -------
-    table
+    table : Dataset | fmtxt.Table
         Table with statistics.
 
     Examples

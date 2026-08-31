@@ -77,7 +77,7 @@ def complete_source_space(
 
     Returns
     -------
-    completed_ndvar
+    completed_ndvar : NDVar
         Copy of ``ndvar`` with its SourceSpace dimension completed.
     """
     if mask and not isinstance(mask, bool):
@@ -887,7 +887,7 @@ def xhemi(
         mask: bool = None,
         hemi: str = 'lh',
         parc: bool | str = True,
-) -> (NDVar, NDVar):
+) -> tuple[NDVar, NDVar]:
     """Project data from both hemispheres to ``hemi`` of fsaverage_sym
 
     Project data from both hemispheres to the same hemisphere for

@@ -39,7 +39,7 @@ class ColorGrid(EelFigure):
     size
         Size (width and height) of the color squares (the default is to
         scale them to fit the font size).
-    column_label_position : 'top' | 'bottom' | 'none'
+    column_label_position
         Where to place the column labels (default is 'top').
     row_first
         Whether the row cell precedes the column cell in color keys. By
@@ -47,7 +47,7 @@ class ColorGrid(EelFigure):
     labels
         Condition labels that are used instead of the keys in ``row_cells`` and
         ``column_cells``.
-    shape : 'box' | 'line'
+    shape
         Shape for color samples (default 'box').
     ...
         Also accepts :ref:`general-layout-parameters`.
@@ -66,10 +66,10 @@ class ColorGrid(EelFigure):
             column_cells: Sequence[str],
             colors: dict[CellArg, Any],
             size: float = None,
-            column_label_position: str = 'top',
+            column_label_position: Literal['top', 'bottom', 'none'] = 'top',
             row_first: bool = None,
             labels: dict = None,
-            shape: str = 'box',
+            shape: Literal['box', 'line'] = 'box',
             **kwargs):
         row_cells = list(row_cells)
         column_cells = list(column_cells)

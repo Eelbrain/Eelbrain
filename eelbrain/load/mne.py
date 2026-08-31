@@ -69,7 +69,7 @@ Using Threshold Rejection
 In case threshold rejection is used, the number of the epochs returned by
 ``load.mne.epochs(ds, reject=reject_options)`` might not be the same as the
 number of events in ``ds`` (whenever epochs are rejected). For those cases,
-:func:`load.mne.add_epochs`` will automatically resize the :class:`Dataset`::
+:func:`load.mne.add_epochs` will automatically resize the :class:`Dataset`::
 
     >>> epoch_ds = load.mne.add_epochs(ds, -0.1, 0.6, reject=reject_options)
 

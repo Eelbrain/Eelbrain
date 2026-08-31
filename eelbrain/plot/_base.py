@@ -106,6 +106,7 @@ from .._config import CONFIG
 from .._data_obj import Dimension, Dataset, Factor, Interaction, NDVar, Var, Case, UTS, NDVarArg, CategorialArg, IndexArg, CellArg, NDVarTypes, ascategorial, asndvar, assub, isnumeric, isdataobject, combine_cells, cellname
 from .._utils.notebooks import use_inline_backend
 from .._stats import testnd
+from .._types import PathArg
 from .._utils import IS_WINDOWS, intervals, ui
 from .._ndvar import erode, resample
 from .._text import enumeration, ms
@@ -1599,9 +1600,9 @@ class EelFigure(MatplotlibFigure):
 
      - find desired figure properties and then use them to initialize
        the _EelFigure superclass; then use the
-       :py:attr:`_EelFigure.figure` and :py:attr:`_EelFigure.canvas` attributes.
+       :attr:`_EelFigure.figure` and :attr:`_EelFigure.canvas` attributes.
      - end the initialization by calling `_EelFigure._show()`
-     - add the :py:meth:`_fill_toolbar` method
+     - add the :meth:`_fill_toolbar` method
     """
     _default_xlabel_ax = -1
     _default_ylabel_ax = 0
@@ -2145,12 +2146,12 @@ class EelFigure(MatplotlibFigure):
         plot_name = self.__class__.__name__
         self._frame.SetTitle(f'{plot_name}: {name}' if name else plot_name)
 
-    def set_xtick_rotation(self, rotation):
+    def set_xtick_rotation(self, rotation: float):
         """Rotate every x-axis tick-label by an angle (counterclockwise, in degrees)
 
         Parameters
         ----------
-        rotation : scalar
+        rotation
             Counterclockwise rotation angle, in degrees.
         """
         for ax in self.axes:
@@ -2944,9 +2945,9 @@ class ColorMapMixin(ColorBarMixin):
 
         Parameters
         ----------
-        level : scalar
+        level
             The value at which to draw the contour.
-        color : matplotlib color
+        color
             The color of the contour line.
         meas : str
             The measurement for which to add a contour line (default is the
@@ -3106,7 +3107,7 @@ class LegendMixin:
 
         Returns
         -------
-        legend_figure : None | legend
+        legend_figure : matplotlib.figure.Figure | None
             If loc=='fig' the Figure, otherwise None.
 
         Notes
@@ -3364,12 +3365,12 @@ class TimeSlicer:
             self.set_time(t)
         self.set_time(tmax)
 
-    def set_time(self, time):
+    def set_time(self, time: float):
         """Set the time point to display
 
         Parameters
         ----------
-        time : scalar
+        time
             Time to display.
         """
         self._set_time(time, True)
@@ -3464,14 +3465,19 @@ class TimeSlicerEF(TimeSlicer):
         if self.__redraw and redraw and self._frame is not None:
             self.canvas.redraw(self.__axes)
 
-    def save_movie(self, filename=None, time_dilation=4., **kwargs):
+    def save_movie(
+            self,
+            filename: PathArg = None,
+            time_dilation: float = 4.,
+            **kwargs,
+    ):
         """Save the figure with moving time axis as movie
 
         Parameters
         ----------
-        filename : path-like
+        filename
             Filename for the movie (omit to use a GUI).
-        time_dilation : float
+        time_dilation
             Factor by which to stretch time (default 4). Time dilation is
             controlled through the frame-rate; if the ``fps`` keyword argument
             is specified, ``time_dilation`` is ignored.
@@ -3799,7 +3805,7 @@ class XAxisMixin:
             Start and stop positions on the x-axis.
         axes
             Which axes to mark (default is all axes).
-        additonal arguments :
+        **kwargs
             Additional arguments for :meth:`matplotlib.axes.Axes.axvspan`.
         """
         if axes is None:
@@ -3893,14 +3899,14 @@ class YLimMixin:
         vmax = max(p.vmax for p in self.__plots)
         return vmin, vmax
 
-    def set_ylim(self, bottom=None, top=None):
+    def set_ylim(self, bottom: float = None, top: float = None):
         """Set the y-axis limits
 
         Parameters
         ----------
-        bottom : scalar
+        bottom
             Lower y-axis limit.
-        top : scalar
+        top
             Upper y-axis limit.
         """
         if bottom is None and top is None:

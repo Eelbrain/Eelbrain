@@ -7,6 +7,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from .. import _info, fmtxt
+from ..fmtxt import FMTextLike
 from .._data_obj import Dataset, Factor, Var, NDVar, Case, IndexArg, ModelArg, NDVarArg, Parametrization, PermutedParametrization, asmodel, asndvar, assub, combine
 from .._exceptions import DimensionMismatchError
 from .._utils import deprecate_ds_arg
@@ -444,7 +445,14 @@ class LMGroup:
             ds.update(self.subject_variables)
         return ds
 
-    def column_ttest(self, term, return_data=False, popmean=0, *args, **kwargs):
+    def column_ttest(
+            self,
+            term: str,
+            return_data: bool = False,
+            popmean: float = 0,
+            *args,
+            **kwargs,
+    ):
         """One-sample t-test on a single model column
 
         Parameters
@@ -454,7 +462,7 @@ class LMGroup:
         return_data : bool
             Return the individual subjects' coefficients along with test
             results.
-        popmean : scalar
+        popmean
             Value to compare y against (default is 0).
         tail : 0 | 1 | -1
             Which tail of the t-distribution to consider:
@@ -536,14 +544,14 @@ class LMGroup:
             info.add_sublist(effect, [res.info_list()])
         return info
 
-    def table(self, title=None, caption=None):
+    def table(self, title: FMTextLike = None, caption: FMTextLike = None) -> fmtxt.Table:
         """Table listing all terms and corresponding smallest p-values
 
         Parameters
         ----------
-        title : text
+        title
             Title for the table.
-        caption : text
+        caption
             Caption for the table.
 
         Returns

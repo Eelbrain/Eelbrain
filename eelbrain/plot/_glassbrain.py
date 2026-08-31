@@ -34,6 +34,8 @@ OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
 DAMAGE.
 
 """
+from __future__ import annotations
+
 import os
 from typing import Literal
 import warnings
@@ -611,7 +613,7 @@ class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
             xlim: float | tuple[float, float] = None,
             name: str = None,
             **kwargs,
-    ) -> (Butterfly, 'GlassBrain'):
+    ) -> tuple[Butterfly, GlassBrain]:
         """Shortcut for a butterfly-plot with a time-linked glassbrain plot
 
         Parameters

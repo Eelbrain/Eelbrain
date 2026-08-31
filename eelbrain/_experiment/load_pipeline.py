@@ -111,7 +111,7 @@ def load_pipeline(
 
     Returns
     -------
-    pipeline
+    pipeline : Pipeline
         Instantiated :class:`~pipeline.Pipeline`.
     """
     path, class_name = _split_spec(spec)

@@ -52,7 +52,7 @@ class Correlation:
         First variable.
     x : Var | NDVar
         Second variable. Needs to have same type/shape as ``y``.
-    sub : index
+    sub
         Use only a subset of the data
     data : Dataset
         If a Dataset is given, all data-objects can be specified as names of
@@ -144,7 +144,7 @@ class RankCorrelation(Correlation):
         return fmtxt.FMText([fmtxt.eq(self._statistic, self.r), ', ', fmtxt.peq(self.p)])
 
 
-def lilliefors(data, formatted=False, **kwargs):
+def lilliefors(data: np.ndarray, formatted: bool = False, **kwargs):
     """Lilliefors' test for normal distribution
 
     The Lilliefors test is an adaptation of the Kolmogorov-Smirnov test. It
@@ -154,7 +154,7 @@ def lilliefors(data, formatted=False, **kwargs):
 
     Parameters
     ----------
-    data : array_like
+    data
         Data to test.
     formatted : bool
         Return a single string with the results instead of the numbers.
@@ -1300,7 +1300,7 @@ def pairwise_correlations(
     ----------
     xs
         Variables to correlate.
-    sub : index
+    sub : IndexArg
         Use only a subset of the data
     data : Dataset
         If a Dataset is given, all data-objects can be specified as names of
@@ -1336,7 +1336,14 @@ def pairwise_correlations(
     return table
 
 
-def correlations(y, x, cat=None, sub=None, ds=None, asds=False):
+def correlations(
+        y: VarArg,
+        x: VarArg | Sequence[VarArg],
+        cat: CategorialArg = None,
+        sub: IndexArg = None,
+        ds: Dataset = None,
+        asds: bool = False,
+):
     """Correlation with one or more predictors
 
     Parameters

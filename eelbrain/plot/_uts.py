@@ -307,7 +307,7 @@ class UTSStat(LegendMixin, XAxisMixin, YLimMixin, EelFigure):
             Only plot clusters with ``p <= pmax``.
         ptrend
             Maximum p-value of clusters to plot as trend.
-        color : matplotlib color | dict
+        color
             Color for the clusters, or a ``{effect: color}`` dictionary.
         ax : None | int
             Index of the axes to which the clusters are to be added. If None,

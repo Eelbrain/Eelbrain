@@ -32,7 +32,7 @@ def load_wav(
 
     Returns
     -------
-    wav
+    wav : NDVar
         NDVar with the wav file's data. If the file contains a single channel,
         the NDVar dimensions are ``(time,)``; if it contains several channels,
         they are ``(time, channel)``. ``wav.info`` contains entries for

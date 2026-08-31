@@ -40,7 +40,7 @@ import scipy.stats
 from scipy import ndimage
 
 from .. import fmtxt, _info, _text
-from ..fmtxt import FMText
+from ..fmtxt import FMText, FMTextLike
 from .._celltable import Celltable
 from .._config import CONFIG, mpc, tqdm_disable
 from .._data_obj import (
@@ -257,7 +257,7 @@ class NDTest:
 
         Returns
         -------
-        cluster
+        cluster : NDVar
             NDVar of the cluster, 0 outside the cluster.
 
         Notes
@@ -455,7 +455,7 @@ class TContrastRelated(NDTest):
         Contrast specification: see Notes.
     match : Factor
         Match cases for a repeated measures test.
-    sub : index
+    sub
         Perform the test with a subset of the data.
     data : Dataset
         If a Dataset is specified, all data-objects can be specified as
@@ -467,19 +467,20 @@ class TContrastRelated(NDTest):
         -1: lower tail (one-tailed).
     samples : int
         Number of samples for permutation test (default 10,000).
-    pmin : None | scalar (0 < pmin < 1)
-        Threshold for forming clusters:  use a t-value equivalent to an
-        uncorrected p-value for a related samples t-test (with df =
+    pmin
+        Threshold for forming clusters (``0 < pmin < 1``):  use a t-value
+        equivalent to an uncorrected p-value for a related samples t-test
+        (with df =
         len(match.cells) - 1).
-    tmin : scalar
+    tmin
         Threshold for forming clusters as t-value.
-    tfce : bool | scalar
+    tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
-    tstart : scalar
+    tstart
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
-    tstop : scalar
+    tstop
         Stop of the time window for the permutation test (default is the
         end of ``y``).
     parc : str
@@ -629,29 +630,29 @@ class Correlation(NDTest):
     ----------
     y : NDVar
         Dependent variable.
-    x : continuous
+    x
         The continuous predictor variable.
     norm
         Categories in which to normalize (z-score) x.
-    sub : index
+    sub
         Perform the test with a subset of the data.
     data : Dataset
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
     samples : int
         Number of samples for permutation test (default 10,000).
-    pmin : None | scalar (0 < pmin < 1)
-        Threshold for forming clusters:  use an r-value equivalent to an
-        uncorrected p-value.
-    rmin : None | scalar
+    pmin
+        Threshold for forming clusters (``0 < pmin < 1``):  use an r-value
+        equivalent to an uncorrected p-value.
+    rmin
         Threshold for forming clusters.
-    tfce : bool | scalar
+    tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
-    tstart : scalar
+    tstart
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
-    tstop : scalar
+    tstop
         Stop of the time window for the permutation test (default is the
         end of ``y``).
     match
@@ -830,12 +831,12 @@ class NDDifferenceTest(NDTest):
             mask = self.p > p
         return self._cdist.uncrop(mask, self.difference, True)
 
-    def masked_difference(self, p=0.05, name=None):
+    def masked_difference(self, p: float = 0.05, name: str = None) -> NDVar:
         """Difference map masked by significance
 
         Parameters
         ----------
-        p : scalar
+        p
             Threshold p-value for masking (default 0.05). For threshold-based
             cluster tests, ``pmin=1`` includes all clusters regardless of their
             p-value.
@@ -848,12 +849,12 @@ class NDDifferenceTest(NDTest):
 
 class NDMaskedC1Mixin:
 
-    def masked_c1(self, p=0.05):
+    def masked_c1(self, p: float = 0.05) -> NDVar:
         """``c1`` map masked by significance of the ``c1``-``c0`` difference
 
         Parameters
         ----------
-        p : scalar
+        p
             Threshold p-value for masking (default 0.05). For threshold-based
             cluster tests, ``pmin=1`` includes all clusters regardless of their
             p-value.
@@ -869,11 +870,11 @@ class TTestOneSample(NDDifferenceTest):
     ----------
     y : NDVar
         Dependent variable.
-    popmean : scalar
+    popmean
         Value to compare y against (default is 0).
     match
         Combine data for these categories before testing.
-    sub : index
+    sub
         Perform test with a subset of the data.
     data : Dataset
         If a Dataset is specified, all data-objects can be specified as
@@ -885,18 +886,18 @@ class TTestOneSample(NDDifferenceTest):
         -1: lower tail (one-tailed).
     samples : int
         Number of samples for permutation test (default 10,000).
-    pmin : None | scalar (0 < pmin < 1)
-        Threshold for forming clusters:  use a t-value equivalent to an
-        uncorrected p-value.
-    tmin : scalar
+    pmin
+        Threshold for forming clusters (``0 < pmin < 1``):  use a t-value
+        equivalent to an uncorrected p-value.
+    tmin
         Threshold for forming clusters as t-value.
-    tfce : bool | scalar
+    tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
-    tstart : scalar
+    tstart
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
-    tstop : scalar
+    tstop
         Stop of the time window for the permutation test (default is the
         end of ``y``).
     parc : str
@@ -1081,7 +1082,7 @@ class TTestIndependent(NDDifferenceTest):
         Control condition (cell of ``x``).
     match
         Combine cases with the same cell on ``x % match``.
-    sub : index
+    sub
         Perform the test with a subset of the data.
     data : Dataset
         If a Dataset is specified, all data-objects can be specified as
@@ -1093,18 +1094,18 @@ class TTestIndependent(NDDifferenceTest):
         -1: lower tail (one-tailed).
     samples : int
         Number of samples for permutation test (default 10,000).
-    pmin : None | scalar (0 < pmin < 1)
-        Threshold p value for forming clusters. None for threshold-free
-        cluster enhancement.
-    tmin : scalar
+    pmin
+        Threshold p value for forming clusters (``0 < pmin < 1``). None for
+        threshold-free cluster enhancement.
+    tmin
         Threshold for forming clusters as t-value.
-    tfce : bool | scalar
+    tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
-    tstart : scalar
+    tstart
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
-    tstop : scalar
+    tstop
         Stop of the time window for the permutation test (default is the
         end of ``y``).
     parc : str
@@ -1304,7 +1305,7 @@ class TTestRelated(NDMaskedC1Mixin, NDDifferenceTest):
     match
         Units within which measurements are related (e.g. 'subject' in a
         within-subject comparison).
-    sub : index
+    sub
         Perform the test with a subset of the data.
     data : Dataset
         If a Dataset is specified, all data-objects can be specified as
@@ -1742,25 +1743,25 @@ class ANOVA(MultiEffectNDTest):
         Dependent variable.
     x : Model
         Independent variables.
-    sub : index
+    sub
         Perform the test with a subset of the data.
     data : Dataset
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
     samples : int
         Number of samples for permutation test (default 10,000).
-    pmin : None | scalar (0 < pmin < 1)
-        Threshold for forming clusters:  use an f-value equivalent to an
-        uncorrected p-value.
-    fmin : scalar
+    pmin
+        Threshold for forming clusters (``0 < pmin < 1``):  use an f-value
+        equivalent to an uncorrected p-value.
+    fmin
         Threshold for forming clusters as f-value.
-    tfce : bool | scalar
+    tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
-    tstart : scalar
+    tstart
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
-    tstop : scalar
+    tstop
         Stop of the time window for the permutation test (default is the
         end of ``y``).
     match
@@ -1953,14 +1954,14 @@ class ANOVA(MultiEffectNDTest):
         else:
             return self._statistic_map
 
-    def table(self, title=None, caption=None, clusters=False):
+    def table(self, title: FMTextLike = None, caption: FMTextLike = None, clusters: bool | float = False) -> fmtxt.Table:
         """Table listing all effects and corresponding smallest p-values
 
         Parameters
         ----------
-        title : text
+        title
             Title for the table.
-        caption : text
+        caption
             Caption for the table.
         clusters : bool | float
             Include properties of all significant clusters (default ``False``;
@@ -2029,22 +2030,22 @@ class Vector(NDDifferenceTest):
         Dependent variable (needs to include one vector dimension).
     match
         Combine data for these categories before testing.
-    sub : index
+    sub
         Perform test with a subset of the data.
     data : Dataset
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables
     samples : int
         Number of samples for permutation test (default 10000).
-    tmin : scalar
+    tmin
         Threshold value for forming clusters.
-    tfce : bool | scalar
+    tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
-    tstart : scalar
+    tstart
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
-    tstop : scalar
+    tstop
         Stop of the time window for the permutation test (default is the
         end of ``y``).
     parc : str
@@ -2380,22 +2381,22 @@ class VectorDifferenceRelated(NDMaskedC1Mixin, Vector):
     match
         Units within which measurements are related (e.g. 'subject' in a
         within-subject comparison).
-    sub : index
+    sub
         Perform the test with a subset of the data.
     data : Dataset
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
     samples : int
         Number of samples for permutation test (default 10000).
-    tmin : scalar
+    tmin
         Threshold value for forming clusters.
-    tfce : bool | scalar
+    tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
-    tstart : scalar
+    tstart
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
-    tstop : scalar
+    tstop
         Stop of the time window for the permutation test (default is the
         end of ``y``).
     parc : str
