@@ -271,6 +271,11 @@ class TRFDerivative(Derivative[object]):
     def fingerprint(self, ctx: Request) -> dict[str, object]:
         return {'estimator': self.estimators[ctx.options['estimator']]}
 
+    def normalize_stored_fingerprint(self, fingerprint: dict[str, Any]) -> None:
+        est = fingerprint['estimator']
+        if est['type'] == 'Boosting' and est['scale_data'] == 'inplace':
+            est['scale_data'] = True
+
     def validate_options(self, ctx: Request) -> None:
         _normalize_trf_options(ctx.options)
 
