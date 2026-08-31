@@ -259,15 +259,15 @@ class Epoch(EpochBase):
         elif baseline is not False:
             if len(baseline) != 2:
                 raise ValueError(f"{baseline=}: needs to be length 2 tuple")
-            baseline = (typed_arg(baseline[0], float), typed_arg(baseline[1], float))
+            baseline = (typed_arg(baseline[0], float, allow_none=True), typed_arg(baseline[1], float, allow_none=True))
 
         if not isinstance(trigger_shift, (float, str)):
             raise TypeError(f"{trigger_shift=}: needs to be float or str")
 
         self.tmin = typed_arg(tmin, float)
         self.tmax = typed_arg(tmax, float, str)
-        self.samplingrate = typed_arg(samplingrate, float, int)
-        self.decim = typed_arg(decim, int)
+        self.samplingrate = typed_arg(samplingrate, float, int, allow_none=True)
+        self.decim = typed_arg(decim, int, allow_none=True)
         self.baseline = baseline
         self.trigger_shift = trigger_shift
         self.post_baseline_trigger_shift = post_baseline_trigger_shift
@@ -439,9 +439,9 @@ class PrimaryEpoch(Epoch):
     ):
         super().__init__(tmin, tmax, samplingrate, decim, baseline, trigger_shift, post_baseline_trigger_shift, post_baseline_trigger_shift_min, post_baseline_trigger_shift_max)
         self.task = task
-        self.run = typed_arg(run, str)
-        self.sel = typed_arg(sel, str)
-        self.n_cases = typed_arg(n_cases, int)
+        self.run = typed_arg(run, str, allow_none=True)
+        self.sel = typed_arg(sel, str, allow_none=True)
+        self.n_cases = typed_arg(n_cases, int, allow_none=True)
 
 
 class SecondaryEpoch(Epoch):
@@ -479,7 +479,7 @@ class SecondaryEpoch(Epoch):
             **kwargs,
     ):
         self.sel_epoch = base
-        self.sel = typed_arg(sel, str)
+        self.sel = typed_arg(sel, str, allow_none=True)
         self._kwargs = kwargs
 
     def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase], tasks: Sequence[str]) -> None:
@@ -650,13 +650,13 @@ class ContinuousEpoch(EpochBase):
             samplingrate: float = None,
             run: str | None = None,
     ):
-        self.task = typed_arg(task, str)
-        self.sel = typed_arg(sel, str)
+        self.task = typed_arg(task, str, allow_none=True)
+        self.sel = typed_arg(sel, str, allow_none=True)
         self.pad_start = typed_arg(pad_start, float)
         self.pad_end = typed_arg(pad_end, float)
         self.split = typed_arg(split, float)
-        self.samplingrate = typed_arg(samplingrate, float, int)
-        self.run = typed_arg(run, str)
+        self.samplingrate = typed_arg(samplingrate, float, int, allow_none=True)
+        self.run = typed_arg(run, str, allow_none=True)
 
     def _prepare_selected_events(
             self,

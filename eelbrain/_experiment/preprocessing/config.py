@@ -140,7 +140,7 @@ class RawSource(RawPipe):
         if isinstance(adjacency, Path):
             adjacency = read_adjacency(adjacency)
         self.sysname = sysname
-        self.rename_channels = typed_arg(rename_channels, dict)
+        self.rename_channels = typed_arg(rename_channels, dict, allow_none=True)
         if self.rename_channels:
             if montage is None:
                 raise ConfigurationError(f"RawSource: {rename_channels=} without montage; rename_channels specifies the names the montage uses and requires a montage.")

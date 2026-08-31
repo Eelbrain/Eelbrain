@@ -58,7 +58,7 @@ class EventPredictor(Configuration):
     ):
         self.value = typed_arg(value, float, str)
         self.latency = typed_arg(latency, float, str)
-        self.sel = typed_arg(sel, str)
+        self.sel = typed_arg(sel, str, allow_none=True)
 
     def _generate(self, uts: UTS, ds: Dataset, term: Term) -> NDVar:
         assert term.stimulus is None

@@ -185,7 +185,7 @@ class Boosting(Estimator):
         self.basis_window = basis_window
         self.error = error
         self.delta = typed_arg(delta, float)
-        self.mindelta = typed_arg(mindelta, float)
+        self.mindelta = typed_arg(mindelta, float, allow_none=True)
         self.selective_stopping = typed_arg(selective_stopping, int)
         self.scale_data = typed_arg(scale_data, bool)
         self.partitions = partitions
