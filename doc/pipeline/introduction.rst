@@ -41,19 +41,20 @@ An instance of this pipeline then provides access to different analysis stages t
 For example, :meth:`Pipeline.load_test` can be used to directly load a mass-univariate test result, without a need to explicitly load data at any intermediate stage.
 On the other hand, :meth:`Pipeline.load_epochs` can be used to load the corresponding data epochs, for example to perform a different analysis that may not be implemented in the pipeline.
 
-It is recommended to organize analysis scripts in a dedicated folder, for example ``~/Code/MyProject``.
-Version-controlling this folder (e.g., with `Git <https://git-scm.com>`_) makes it easy to track the history of your analysis.
+It is recommended to organize analysis scripts in a dedicated folder, separate from the dataset.
+For example, code in ``~/Code/MyProject`` for a dataset at ``~/Data/MyProject``.
+Version-controlling a separate code folder (e.g., with `Git <https://git-scm.com>`_) makes it easy to track the history of your analysis.
 
 The project folder typically contains:
 
 1. A :class:`Pipeline` subclass that describes the experiment structure — by convention in ``pipeline.py``.
-2. Analysis scripts or Jupyter notebooks that import the pipeline.
+2. Analysis scripts and/or notebooks that import the pipeline.
 
 A minimal ``MyProject/pipeline.py`` looks like this::
 
     from eelbrain.pipeline import *
 
-    ROOT = "~/Data/MyExperiment"
+    ROOT = "~/Data/MyProject"  # Where the data is stored
 
     class MyExperiment(Pipeline):
 
@@ -65,13 +66,13 @@ A minimal ``MyProject/pipeline.py`` looks like this::
 Data preparation
 ----------------
 
-Steps that require visual inspection and human decisions, like bad-channel marking, ICA component selection, trial rejection, and MRI coregistration.
+Data preparation involves steps that require visual inspection and human decisions, like bad-channel marking, ICA component selection, trial rejection, and MRI coregistration.
 The preferred tool for all of these is the pipeline GUI, launched from the command line::
 
     $ cd  ~/Code/MyProject
     $ eelbrain-gui
 
-The GUI shows the preparation status for every subject in a single table and opens the relevant sub-GUI (ICA component browser, epoch rejection viewer, MNE coregistration tool) on double-click.
+The GUI shows the status for every subject in a single table and opens the relevant sub-GUI (ICA component browser, epoch rejection viewer, MNE coregistration tool) on double-click.
 It also lets you compute ICA decompositions for all missing subjects in one click.
 
 The same steps can alternatively be performed programmatically from an interactive Python session (iPython, a Jupyter notebook, or a terminal), which is useful for scripting or automation::
@@ -84,7 +85,7 @@ The same steps can alternatively be performed programmatically from an interacti
 Analysis
 --------
 
-Once data preparation is complete, statistical analysis and visualization are best done in Jupyter notebooks or analysis scripts that can be re-run as needed::
+Once data preparation is complete, statistical analysis and visualization are best done in notebooks or analysis scripts that can be re-run as needed::
 
     import eelbrain
 
@@ -106,9 +107,13 @@ It searches for ``pipeline.py`` (and then ``experiment.py``) when given a direct
     >>> import eelbrain
     >>> e = eelbrain.load_pipeline("~/Code/MyProject")
 
-If you are already working inside the project directory, omit the path entirely::
+If you are already working inside the project directory, omit the path entirely -
+this allows relative imports for analysis scripts in the project directory::
 
+    >>> # from MyProject/my_analysis.py:
     >>> e = eelbrain.load_pipeline()
+    >>> # from MyProject/analysis/my_analysis.py:
+    >>> e = eelbrain.load_pipeline('..')
 
 For advanced Python workflows, you can also import the class directly::
 
@@ -166,16 +171,18 @@ State parameters
 
 A :class:`Pipeline` instance has a state, which determines what data and settings it is currently using.
 Not all settings are always relevant.
-For example, :ref:`state-subject` is relevant for steps applied separately to each subject, like :meth:`~Pipeline.make_ica_selection`, whereas :ref:`state-group` defines the group of subjects in group level analysis, such as in :meth:`~Pipeline.load_test`.
+For example, :ref:`state-subject` is relevant for steps applied separately to each subject, like :meth:`~Pipeline.load_trf`, whereas :ref:`state-group` defines the group of subjects in group level analysis, such as in :meth:`~Pipeline.load_trfs` or :meth:`~Pipeline.load_model_test`.
 
 State parameters can be set after a :class:`Pipeline` has been initialized to affect the analysis, for example::
 
-    >>> my_experiment = Pipeline()
-    >>> my_experiment.set(raw='1-40', cov='noreg')
+    >>> my_experiment = eelbrain.load_pipeline()
+    >>> my_experiment.set(raw='ica', epoch='story')
 
-sets up ``my_experiment`` to use a 1-40 Hz band-pass filter as preprocessing, and to use sensor covariance matrices without regularization. Most methods also accept state parameters, so :meth:`Pipeline.set` does not have to be used separately.
+sets up ``my_experiment`` to use the ``"ica"`` node of the :ref:`Pipeline-preprocessing`, and the ``"story"`` epoch (defined in :attr:`Pipeline.epochs`). Most methods also accept state parameters, so :meth:`Pipeline.set` does not have to be used separately::
 
-Each state parameter is documented in the section of this guide it belongs to:
+    >>> trf = my_experiment.load_trf(..., raw='ica', epoch='story')
+
+Each state parameter is further documented in the section of this guide it belongs to:
 
 .. list-table::
    :header-rows: 1
@@ -240,21 +247,22 @@ Each state parameter is documented in the section of this guide it belongs to:
 Basic configuration
 ===================
 
-.. py:attribute:: Pipeline.owner
-   :type: str
+..
+    .. py:attribute:: Pipeline.owner
+       :type: str
 
-Set :attr:`Pipeline.owner` to your email address if you want to be able to
-receive notifications. Whenever you run a sequence of commands ``with
-Pipeline.notification:`` you will get an email once the respective code
-has finished executing or run into an error, for example::
+    Set :attr:`Pipeline.owner` to your email address if you want to be able to
+    receive notifications. Whenever you run a sequence of commands ``with
+    Pipeline.notification:`` you will get an email once the respective code
+    has finished executing or run into an error, for example::
 
-    >>> e = MyExperiment()
-    >>> with e.notification:
-    ...     result = e.load_test('mytest', samples=10000)
-    ...
+        >>> e = MyExperiment()
+        >>> with e.notification:
+        ...     result = e.load_test('mytest', samples=10000)
+        ...
 
-will send you an email as soon as the test is finished (or the program
-encountered an error)
+    will send you an email as soon as the test is finished (or the program
+    encountered an error)
 
 .. py:attribute:: Pipeline.screen_log_level
    :type: str
@@ -281,18 +289,21 @@ Caching
 =======
 
 :class:`Pipeline` caches intermediate results and validates them when they are
-loaded. Most stale intermediate cache entries are recomputed on demand. Files
+loaded. Stale intermediate cache entries are recomputed on demand. Files
 stored outside ``cache-dir`` are treated as user-managed outputs and are not
 overwritten automatically when they become stale; the corresponding error or GUI
 dialog explains whether to recompute, delete, or explicitly accept the existing
-file. Cached tests are likewise not overwritten silently; use the corresponding
-``make`` or ``redo`` option to regenerate them.
+file.
+
+Cache files become stale when the relevant pipeline definitions or data sources change.
+Such files are not automatically deleted (and can be accessed again by restoring the relevant definitions).
+Use :meth:`Pipeline.clean_cache` to scan the cache and delete files that are stale.
 
 Continuous files take up a lot of hard drive space.
 By default, files for many pre-processing steps are cached.
-This can be controlled with the ``cache`` parameter of the corresponding definition: set ``cache=False`` to avoid caching.
+This can be controlled with the ``cache`` parameter of the corresponding node definition:
+set ``cache=False`` to avoid caching.
 To remove files that have already been cached, set ``cache=False`` and then use :meth:`Pipeline.clean_cache`.
-:meth:`Pipeline.clean_cache` scans the cache and deletes files that are invalid or stale under the current pipeline configuration, for example after removing or renaming a definition.
 
 
 .. _Pipeline-example:

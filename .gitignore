@@ -47,6 +47,7 @@ doc/auto_examples
 .eggs
 
 *.html
+!doc/templates/*.html
 
 doc/scripts/cache-search.json
 

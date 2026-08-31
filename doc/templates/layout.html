@@ -1,0 +1,19 @@
+{% extends "!layout.html" %}
+
+{#- Show the section headings of the current page in the sidebar for the Pipeline guide.
+    The global ``navigation_depth`` has to stay at 2 to keep the autosummary pages out of
+    the sidebar; ``collapse_navigation`` prunes all branches except the current one, so the
+    extra level only expands the page that is being viewed. #}
+{%- block menu %}
+  {%- set depth = 3 if pagename.startswith('pipeline/') else theme_navigation_depth|int %}
+  {%- set toctree = toctree(maxdepth=depth,
+                            collapse=theme_collapse_navigation|tobool,
+                            includehidden=theme_includehidden|tobool,
+                            titles_only=theme_titles_only|tobool) %}
+  {%- if toctree %}
+    {{ toctree }}
+  {%- else %}
+    <!-- Local TOC -->
+    <div class="local-toc">{{ toc }}</div>
+  {%- endif %}
+{%- endblock %}
