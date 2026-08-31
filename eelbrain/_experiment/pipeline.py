@@ -144,6 +144,8 @@ class Pipeline(StateModel):
     merge_triggers: int = None
     # add this value to all trigger times (in seconds); global shift, or {subject: shift, (subject, session): shift} dictionary
     trigger_shift: float | dict[str | tuple[str, str], float] = 0
+    # events.tsv columns to read as categorial (Factor) even when their values look numeric
+    event_factors: str | Sequence[str] = ()
 
     # variables for automatic labeling {name: {trigger: label, triggers: label}}
     variables: dict[str, Any] = {}
@@ -556,7 +558,8 @@ class Pipeline(StateModel):
         self._derivatives.register(TRFModelTestDerivative(self.tests, self._groups))
 
         # --- Sensor-space: events → epochs → evoked ---
-        self._derivatives.register(EventsInput(self._raw_extension))
+        event_factor = sequence_arg(f'{self.__class__.__name__}.event_factors', self.event_factors, allow_none=False)
+        self._derivatives.register(EventsInput(self._raw_extension, event_factor))
         self._derivatives.register(EventsDerivative(
             self.trigger_shift,
             sequence_arg(f'{self.__class__.__name__}.stim_channel', self.stim_channel),

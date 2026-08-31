@@ -55,6 +55,8 @@ New in 0.43
     documented with :attr:`pipeline.Pipeline.variables`.
   - :class:`pipeline.RawSource`: the ``rename_channels`` parameter now renames
     channels in the montage/adjacency instead of renaming channels in the data.
+  - New :attr:`pipeline.Pipeline.event_factors` attribute to read numeric
+    ``events.tsv`` columns as categorial (:class:`Factor`).
 
 * Boosting:
 

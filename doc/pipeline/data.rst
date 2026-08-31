@@ -109,6 +109,11 @@ By default, events are loaded from all stim channels; use this parameter to rest
 
 Use a non-default ``merge`` parameter for :func:`.load.mne.events`.
 
+.. py:attribute:: Pipeline.event_factors
+   :type: str | Sequence[str]
+
+Columns in BIDS ``*_events.tsv`` files that should be read as categorial (:class:`Factor`) even when all their values are numbers. By default, any column whose values can be read as numbers becomes a :class:`Var`; columns listed here are always read as :class:`Factor`, with the values in the file as literal labels (e.g. ``'3'``, ``'n/a'``).
+
 .. py:attribute:: Pipeline.trigger_shift
    :type: float | Dict[str, float]
 

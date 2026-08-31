@@ -115,7 +115,10 @@ class EventsInput(Input[Dataset]):
     columns ``onset`` (seconds), ``sample`` (integer sample index), and
     ``value`` (integer trigger code).  Additional columns are passed through
     to the returned :class:`~eelbrain.Dataset` so that they are available in
-    :meth:`~Pipeline.label_events`.
+    :meth:`~Pipeline.label_events`.  Columns default to :class:`~eelbrain.Var`
+    when their values are numeric; columns listed in
+    :attr:`Pipeline.event_factors` are read as :class:`~eelbrain.Factor`
+    regardless, with the values in the file as literal labels (e.g. ``'3'``, ``'n/a'``).
 
     """
     name = 'events-input'
@@ -124,8 +127,10 @@ class EventsInput(Input[Dataset]):
     def __init__(
             self,
             raw_extension: str,
+            event_factors: tuple[str, ...] = (),
     ):
         self.raw_extension = raw_extension
+        self.event_factors = event_factors
 
     def _resolve_bids_events_path(self, ctx: Request) -> BIDSPath:
         return bids_path(ctx.root, ctx.state, extension='.tsv', datatype=ctx.datatype, suffix='events')
@@ -134,13 +139,15 @@ class EventsInput(Input[Dataset]):
         return self._resolve_bids_events_path(ctx).fpath
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return file_fingerprint(ctx.root, self.path(ctx))
+        # Only include event_factors when set, so that existing manifests remain valid
+        metadata = {'event_factors': self.event_factors} if self.event_factors else None
+        return file_fingerprint(ctx.root, self.path(ctx), metadata=metadata)
 
     def load(self, ctx: Request) -> Dataset | None:
         path = self.path(ctx)
         if not path.exists():
             return None
-        df = pd.read_csv(path, sep='\t')
+        df = pd.read_csv(path, sep='\t', converters=dict.fromkeys(self.event_factors, str))
         entities = {k: ctx.state[k] for k in BIDS_ENTITY_KEYS}
         return Dataset.from_dataframe(df, info=entities)
 
