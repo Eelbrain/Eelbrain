@@ -1377,6 +1377,8 @@ class Pipeline(StateModel):
         pickled and executed on a machine without access to the raw data. This is
         useful for distributed fitting and for inspecting the exact data used to
         estimate a model.
+        Note that calling a :class:`TRFJob` instance (i.e., executing the job) may
+        mutate the data it carries.
 
         Parameters
         ----------
