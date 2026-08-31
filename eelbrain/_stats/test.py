@@ -606,10 +606,10 @@ class TTestOneSample(TTest):
     ----------
     y : Var
         Dependent variable.
-    match : categorial
+    match
         Units within which measurements are related (e.g. 'subject' in a
         within-subject comparison).
-    sub : index-array
+    sub
         Perform the test with a subset of the data.
     data : Dataset
         If a Dataset is specified, all data-objects can be specified as
@@ -686,7 +686,7 @@ class TTestIndependent(TTest):
     ----------
     y : Var
         Dependent variable.
-    x : categorial
+    x
         Model containing the cells which should be compared.
     c1 : str | tuple | None
         Test condition (cell of ``x``). ``c1`` and ``c0`` can be omitted if
@@ -694,10 +694,10 @@ class TTestIndependent(TTest):
         alphabetical order.
     c0 : str | tuple | None
         Control condition (cell of ``x``).
-    match : categorial
+    match
         Units within which measurements are related and should be averaged over
         (e.g. 'subject' in a between-group comparison).
-    sub : index-array
+    sub
         Perform the test with a subset of the data.
     data : Dataset
         If a Dataset is specified, all data-objects can be specified as
@@ -789,7 +789,7 @@ class MannWhitneyU:
     y : Var
         Dependent variable. Alternatively, the first of two variables that are
         compared.
-    x : categorial
+    x
         Model containing the cells which should be compared. Alternatively, the
         second of two varaibles that are compared.
     c1 : str | tuple | None
@@ -798,11 +798,11 @@ class MannWhitneyU:
         alphabetical order.
     c0 : str | tuple | None
         Control condition (cell of ``x``).
-    match : categorial
+    match
         Units within which measurements are related (e.g. 'subject' in a
         within-subject comparison). If match is unspecified, it is assumed that
         ``y`` and ``x`` are two measurements with matched cases.
-    sub : index-array
+    sub
         Perform the test with a subset of the data.
     data : Dataset
         If a Dataset is specified, all data-objects can be specified as
@@ -896,7 +896,7 @@ class TTestRelated(TTest):
     y : Var
         Dependent variable. Alternatively, the first of two variables that are
         compared.
-    x : categorial
+    x
         Model containing the cells which should be compared. Alternatively, the
         second of two varaibles that are compared.
     c1 : str | tuple | None
@@ -905,11 +905,11 @@ class TTestRelated(TTest):
         alphabetical order.
     c0 : str | tuple | None
         Control condition (cell of ``x``).
-    match : categorial
+    match
         Units within which measurements are related (e.g. 'subject' in a
         within-subject comparison). If match is unspecified, it is assumed that
         ``y`` and ``x`` are two measurements with matched cases.
-    sub : index-array
+    sub
         Perform the test with a subset of the data.
     data : Dataset
         If a Dataset is specified, all data-objects can be specified as
@@ -1006,7 +1006,7 @@ class WilcoxonSignedRank:
     y : Var
         Dependent variable. Alternatively, the first of two variables that are
         compared.
-    x : categorial
+    x
         Model containing the cells which should be compared. Alternatively, the
         second of two varaibles that are compared.
     c1 : str | tuple | None
@@ -1015,11 +1015,11 @@ class WilcoxonSignedRank:
         alphabetical order.
     c0 : str | tuple | None
         Control condition (cell of ``x``).
-    match : categorial
+    match
         Units within which measurements are related (e.g. 'subject' in a
         within-subject comparison). If match is unspecified, it is assumed that
         ``y`` and ``x`` are two measurements with matched cases.
-    sub : index-array
+    sub
         Perform the test with a subset of the data.
     data : Dataset
         If a Dataset is specified, all data-objects can be specified as
@@ -1132,11 +1132,11 @@ def pairwise(
     ----------
     y : Var
         Dependent measure.
-    x : categorial
+    x
         Categories to compare.
     match : None | Factor
         Repeated measures factor.
-    sub : index-array
+    sub
         Perform tests with a subset of the data.
     cells
         Cells to include. All entries have to be cells of ``model``. Can be

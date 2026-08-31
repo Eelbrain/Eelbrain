@@ -1326,11 +1326,11 @@ class Histogram(EelFigure):
     ----------
     Y : Var
         Dependent variable.
-    x : categorial
+    x
         Categories for separate histograms.
-    match : None | categorial
+    match
         Match cases for a repeated measures design.
-    sub : index-array
+    sub
         Use a subset of the data.
     ds : Dataset
         If a Dataset is specified, all data-objects can be specified as

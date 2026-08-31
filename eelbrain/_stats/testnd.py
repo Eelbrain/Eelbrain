@@ -449,7 +449,7 @@ class TContrastRelated(NDTest):
     ----------
     y : NDVar
         Dependent variable.
-    x : categorial
+    x
         Model containing the cells which are compared with the contrast.
     contrast : str
         Contrast specification: see Notes.
@@ -631,7 +631,7 @@ class Correlation(NDTest):
         Dependent variable.
     x : continuous
         The continuous predictor variable.
-    norm : None | categorial
+    norm
         Categories in which to normalize (z-score) x.
     sub : index
         Perform the test with a subset of the data.
@@ -654,7 +654,7 @@ class Correlation(NDTest):
     tstop : scalar
         Stop of the time window for the permutation test (default is the
         end of ``y``).
-    match : None | categorial
+    match
         When permuting data, only shuffle the cases within the categories
         of match.
     parc : str
@@ -871,7 +871,7 @@ class TTestOneSample(NDDifferenceTest):
         Dependent variable.
     popmean : scalar
         Value to compare y against (default is 0).
-    match : None | categorial
+    match
         Combine data for these categories before testing.
     sub : index
         Perform test with a subset of the data.
@@ -1069,7 +1069,7 @@ class TTestIndependent(NDDifferenceTest):
     ----------
     y : NDVar
         Dependent variable.
-    x : categorial | NDVar
+    x
         Model containing the cells which should be compared, or NDVar to which
         ``y`` should be compared. In the latter case, the next three parameters
         are ignored.
@@ -1079,7 +1079,7 @@ class TTestIndependent(NDDifferenceTest):
         alphabetical order.
     c0 : str | tuple | None
         Control condition (cell of ``x``).
-    match : categorial
+    match
         Combine cases with the same cell on ``x % match``.
     sub : index
         Perform the test with a subset of the data.
@@ -1291,7 +1291,7 @@ class TTestRelated(NDMaskedC1Mixin, NDDifferenceTest):
     ----------
     y : NDVar
         Dependent variable.
-    x : categorial | NDVar
+    x
         Model containing the cells which should be compared, or NDVar to which
         ``y`` should be compared. In the latter case, the next three parameters
         are ignored.
@@ -1301,7 +1301,7 @@ class TTestRelated(NDMaskedC1Mixin, NDDifferenceTest):
         alphabetical order.
     c0 : str | tuple | None
         Control condition (cell of ``x``).
-    match : categorial
+    match
         Units within which measurements are related (e.g. 'subject' in a
         within-subject comparison).
     sub : index
@@ -1763,7 +1763,7 @@ class ANOVA(MultiEffectNDTest):
     tstop : scalar
         Stop of the time window for the permutation test (default is the
         end of ``y``).
-    match : categorial | bool
+    match
         When permuting data, only shuffle the cases within the categories
         of match. By default, ``match`` is determined automatically based on
         the random efects structure of ``x``.
@@ -2027,7 +2027,7 @@ class Vector(NDDifferenceTest):
     ----------
     y : NDVar
         Dependent variable (needs to include one vector dimension).
-    match : None | categorial
+    match
         Combine data for these categories before testing.
     sub : index
         Perform test with a subset of the data.
@@ -2367,7 +2367,7 @@ class VectorDifferenceRelated(NDMaskedC1Mixin, Vector):
     ----------
     y : NDVar
         Dependent variable.
-    x : categorial | NDVar
+    x
         Model containing the cells which should be compared, or NDVar to which
         ``y`` should be compared. In the latter case, the next three parameters
         are ignored.
@@ -2377,7 +2377,7 @@ class VectorDifferenceRelated(NDMaskedC1Mixin, Vector):
         alphabetical order.
     c0 : str | tuple | None
         Control condition (cell of ``x``).
-    match : categorial
+    match
         Units within which measurements are related (e.g. 'subject' in a
         within-subject comparison).
     sub : index

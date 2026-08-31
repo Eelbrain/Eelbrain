@@ -396,7 +396,7 @@ class Butterfly(TimeSlicerEF, LegendMixin, TopoMapKey, YLimMixin, XAxisMixin, Ee
     ----------
     y
         Data to plot.
-    xax : None | categorial
+    xax
         Create a separate plot for each cell in this model.
     sensors: None or list of sensor IDs
         sensors to plot (``None`` = all)

@@ -349,7 +349,7 @@ class UTS(TimeSlicerEF, LegendMixin, YLimMixin, XAxisMixin, EelFigure):
         UTS data to plot. For a list (``[a, b]``) each item will be plotted
         separately. To combine multiple UTSs in a common axes, use a nested
         list (``[[a, b]]`` would plot ``a`` and ``b`` together in a common axes).
-    xax : categorial
+    xax
         Make separate axes for each category in this categorial model.
     axtitle
         Title for the individual axes. The default is to show the names of the

@@ -118,12 +118,12 @@ def frequencies(
 
     Parameters
     ----------
-    y : univariate
+    y
         Values whose frequencies are of interest.
-    x : categorial
+    x
         Optional model defining cells for which frequencies are displayed
         separately.
-    of : categorial
+    of
         With ``x`` constant within ``of``, only count frequencies for each value
         in ``of`` once. (Compress y and x before calculating frequencies.)
     sub : index
@@ -729,7 +729,7 @@ def repmeas(
         Dependent variable (can be model with several dependents).
     x
         Model defining the cells that should be restructured into variables.
-    match : categorial
+    match
         Model identifying the source of the measurement across repetitions,
         i.e. the model that should be retained.
     sub
