@@ -124,16 +124,20 @@ class ROITestResult:
 
     Attributes
     ----------
-    subjects : tuple of str
+    subjects
         Subjects included in the test.
-    samples : int
+    samples
         ``samples`` parameter used for permutation tests.
-    res : {str: NDTest} dict
-        Test result for each ROI.
-    n_trials_ds : Dataset
+    res
+        Test result (:class:`testnd.NDTest`) for each ROI.
+    n_trials_ds
         Dataset describing how many trials were used in each condition per
         subject.
     """
+    subjects: tuple[str, ...]
+    samples: int
+    res: dict
+    n_trials_ds: Dataset
 
     def __init__(self, subjects, samples, n_trials_ds, merged_dist, res):
         self.subjects = subjects

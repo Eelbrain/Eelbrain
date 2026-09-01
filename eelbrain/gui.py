@@ -7,12 +7,12 @@ from ._data_obj import Dataset
 from ._types import ColorArg, PathArg
 
 
-def run(block=False):
+def run(block: bool = False):
     """Hand over command to the GUI (quit the GUI to return to the terminal)
 
     Parameters
     ----------
-    block : bool
+    block
         Block the Terminal even if the GUI is capable of being run in parallel.
         Control returns to the Terminal when the user quits the GUI application.
         This is also useful to prevent plots from closing at the end of a

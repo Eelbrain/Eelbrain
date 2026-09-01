@@ -143,17 +143,23 @@ def get_mne_evoked(ndvar=False, *, download=False):
         return evoked
 
 
-def get_mne_stc(ndvar=False, src='ico-5', subject='sample', *, download=False):
+def get_mne_stc(
+        ndvar: bool = False,
+        src: Literal['ico-5', 'vol-7', 'oct-4'] = 'ico-5',
+        subject: str = 'sample',
+        *,
+        download: bool = False,
+):
     """MNE-Python SourceEstimate
 
     Parameters
     ----------
-    ndvar : bool
+    ndvar
         Convert to NDVar (default False; src="ico-4" is false, but it works as
         long as the source space is not accessed).
-    src : 'ico-5' | 'vol-7' | 'oct-4
+    src
         Source space to use.
-    download : bool
+    download
         If True, download the dataset if needed.
 
     Notes
@@ -416,18 +422,18 @@ def get_ndvar(case=0, time=100, frequency=8, cat=0, sensor=0, name='ndvar'):
     return NDVar(x, dims, name)
 
 
-def get_uts(utsnd=False, seed=0, nrm=False, vector3d=False):
+def get_uts(utsnd: bool = False, seed: int = 0, nrm: bool = False, vector3d: bool = False):
     """Create a sample Dataset with 60 cases and random data.
 
     Parameters
     ----------
-    utsnd : bool
+    utsnd
         Add a sensor by time NDVar (called 'utsnd').
-    seed : None | int
+    seed
         If not None, call ``numpy.random.seed(seed)`` to ensure replicability.
-    nrm : bool
+    nrm
         Add a nested random effect Factor "nrm" (nested in ``A``).
-    vector3d : bool
+    vector3d
         Add a space x time vector time series as ``v3d``.
 
     Returns
@@ -505,16 +511,16 @@ def get_uts(utsnd=False, seed=0, nrm=False, vector3d=False):
     return ds
 
 
-def get_uv(seed=0, nrm=False, vector=False):
+def get_uv(seed: int = 0, nrm: bool = False, vector: bool = False):
     """Dataset with random univariate data
 
     Parameters
     ----------
-    seed : None | int
+    seed
         Seed the numpy random state before generating random data.
-    nrm : bool
+    nrm
         Add a nested random-effects variable (default False).
-    vector : bool
+    vector
         Add a 3d vector variable as ``ds['v']`` (default ``False``).
     """
     random = np.random if seed is None else np.random.RandomState(seed)

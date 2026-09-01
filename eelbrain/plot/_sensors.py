@@ -2,7 +2,7 @@
 """Plot sensor maps."""
 from math import sin, cos, asin
 import os
-from typing import Any, Literal
+from typing import Literal
 from collections.abc import Sequence
 
 import numpy as np
@@ -237,15 +237,23 @@ class PltMap2d:
         while self._mark_handles:
             self._mark_handles.pop().remove()
 
-    def show_labels(self, labels='name', xpos=0, ypos=0, ha='center', va='bottom', **text_kwargs):
+    def show_labels(
+            self,
+            labels: Literal['none', 'index', 'name', 'fullname'] = 'name',
+            xpos: float = 0,
+            ypos: float = 0,
+            ha: Literal['center', 'left', 'right'] = 'center',
+            va: Literal['center', 'top', 'bottom', 'baseline'] = 'bottom',
+            **text_kwargs,
+    ):
         """Plot labels for the sensors
 
         Parameters
         ----------
-        labels : 'none' | 'index' | 'name' | 'fullname'
+        labels
             Content of the labels. For 'name', any prefix common to all names
             is removed; with 'fullname', the full name is shown.
-        xpos, ypos : scalar
+        xpos, ypos
             The position offset of the labels from the sensor markers.
         text_kwargs : **
             Matplotlib text parameters.
@@ -465,12 +473,12 @@ class SensorMaps(EelFigure):
 
     Parameters
     ----------
-    sensors : Sensor | NDVar
+    sensors
         The :class:`Sensor` dimension, or an :class:`NDVar` with a sensor
         dimension.
-    select : list of int
+    select
         Initial selection.
-    proj : str
+    proj
         Sensor projection for the fourth plot.
     size
         Size for the sensor markers.
@@ -699,7 +707,7 @@ class SensorMap(SensorMapMixin, EelFigure):
 
     Parameters
     ----------
-    sensors : Sensor | NDVar
+    sensors
         The :class:`Sensor` dimension, or an :class:`NDVar` with a sensor
         dimension.
     labels
@@ -712,9 +720,9 @@ class SensorMap(SensorMapMixin, EelFigure):
         Size for the sensor markers.
     color
         Color for the sensor markers.
-    marker : str
+    marker
         Marker for the sensor positions.
-    mark : None | list of int
+    mark
         List of sensor indices to mark.
     head_radius
         Radius of the head outline drawn over sensors (on sensor plots with
@@ -733,13 +741,13 @@ class SensorMap(SensorMapMixin, EelFigure):
 
     def __init__(
             self,
-            sensors: Any,
+            sensors: Sensor | NDVar,
             labels: Literal['none', 'index', 'name', 'fullname'] = 'name',
             proj: str = 'default',
             size: float = 1,
             color: ColorArg = 'k',
             marker: str = '.',
-            mark: Sequence = None,
+            mark: Sequence[int] = None,
             head_radius: float | Sequence[float] = None,
             head_pos: float | Sequence[float] = 0,
             adjacency: bool = False,
@@ -771,12 +779,12 @@ class SensorMap(SensorMapMixin, EelFigure):
             h.remove()
         self.canvas.draw()
 
-    def show_adjacency(self, show=True):
+    def show_adjacency(self, show: bool = True):
         """Show the sensor adjacency as lines connecting sensors.
 
         Parameters
         ----------
-        show : bool
+        show
             Show or hide the sensor adjacency.
         """
         if show:
@@ -792,7 +800,7 @@ class SensorMap3d(EelFigure):
 
     Parameters
     ----------
-    sensors : Sensor | NDVar
+    sensors
         The :class:`Sensor` dimension, or an :class:`NDVar` with a sensor
         dimension.
     labels
@@ -807,7 +815,7 @@ class SensorMap3d(EelFigure):
 
     def __init__(
             self,
-            sensors: Any,
+            sensors: Sensor | NDVar,
             labels: Literal['none', 'index', 'name', 'fullname'] = 'none',
             adjacency: bool = False,
             **kwargs):

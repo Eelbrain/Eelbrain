@@ -367,7 +367,7 @@ class PrimaryEpoch(Epoch):
     decim
         Alternative to ``samplingrate``. Decimate the data by this factor
         (i.e., only keep every ``decim``'th sample).
-    baseline : tuple
+    baseline
         The baseline of the epoch (default ``(None, 0)``; if ``tmin > 0``: no
         baseline; if ``tmax < 0``: the whole interval).
     trigger_shift

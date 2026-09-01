@@ -15,16 +15,16 @@ class LineStack(LegendMixin, XAxisMixin, EelFigure):
 
     Parameters
     ----------
-    y : NDVar
+    y
         Values to plot.
     x
         Variable to aggregate cases into lines (default is to plot each line).
     sub
         Only use a subset of the data provided.
-    ds : Dataset
+    ds
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
-    offset : float | str
+    offset
         The distance between the baseline (y = 0) for the different lines.
         Can be a string expressed as a function of y. For example,
         ``'0.66 * max(y)'`` will offset each line by 0.66 times the maximum
@@ -33,11 +33,11 @@ class LineStack(LegendMixin, XAxisMixin, EelFigure):
     xlim
         Initial x-axis view limits as ``(left, right)`` tuple or as ``length``
         scalar (default is the full x-axis in the data).
-    xlabel : bool | str
+    xlabel
         X-axis label. By default the label is inferred from the data.
-    xticklabels : bool
+    xticklabels
         Print x-axis tick-labels (set to False to suppress them).
-    ylabel : bool | str
+    ylabel
         Y-axis label. By default the label is inferred from the data.
     colors
         Colors for the lines (default is all lines in black).
@@ -46,10 +46,10 @@ class LineStack(LegendMixin, XAxisMixin, EelFigure):
     legend
         Matplotlib figure legend location argument or 'fig' to plot the
         legend in a separate figure.
-    labels : dict
+    labels
         Alternative labels for legend as ``{cell: label}`` dictionary (preserves
         order).
-    clip : bool
+    clip
         Clip lines outside of axes (the default depends on whether ``frame`` is
         closed or open).
     ...

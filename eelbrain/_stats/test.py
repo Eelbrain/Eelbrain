@@ -48,25 +48,29 @@ class Correlation:
 
     Parameters
     ----------
-    y : Var | NDVar
+    y
         First variable.
-    x : Var | NDVar
+    x
         Second variable. Needs to have same type/shape as ``y``.
     sub
         Use only a subset of the data
-    data : Dataset
+    data
         If a Dataset is given, all data-objects can be specified as names of
         Dataset variables.
 
     Attributes
     ----------
-    r : float
+    r
         Pearson correlation coefficient.
-    p : float
+    p
         Two-tailed p-value.
-    df : int
+    df
         Degrees of freedom.
     """
+    r: float
+    p: float
+    df: int
+
     _statistic = 'r'
 
     @deprecate_ds_arg
@@ -130,11 +134,13 @@ class RankCorrelation(Correlation):
 
     Attributes
     ----------
-    r : float
+    r
         Spearman rank correlation coefficient.
-    p : float
+    p
         Two-tailed p-value.
     """
+    r: float
+    p: float
 
     def _corr(self, y: np.ndarray, x: np.ndarray):
         r, p = scipy.stats.spearmanr(y, x)
@@ -156,7 +162,7 @@ def lilliefors(data: np.ndarray, formatted: bool = False, **kwargs):
     ----------
     data
         Data to test.
-    formatted : bool
+    formatted
         Return a single string with the results instead of the numbers.
     kwargs :
         All keyword arguments are forwarded to :func:`scipy.stats.kstest`.
@@ -232,14 +238,14 @@ def _hochberg_threshold(n, alpha=.05):
     return threshold
 
 
-def mcp_adjust(ps, method='Hochberg'):
+def mcp_adjust(ps: Sequence[float], method: Literal['hochberg', 'bonferroni', 'holm'] = 'Hochberg'):
     """Adjust p-values for multiple comparison
 
     Parameters
     ----------
-    ps : sequence of scalar
+    ps
         P-values.
-    method : 'hochberg' | 'bonferroni' | 'holm'
+    method
         Correction method. Default is 'hochberg'.
 
     Returns
@@ -485,7 +491,7 @@ def ttest(
 
     Returns
     -------
-    table : FMText Table
+    table : fmtxt.Table
         Table with results.
     """
     ct = Celltable(y, x, match, sub, data=data, coercion=asvar)
@@ -604,17 +610,17 @@ class TTestOneSample(TTest):
 
     Parameters
     ----------
-    y : Var
+    y
         Dependent variable.
     match
         Units within which measurements are related (e.g. 'subject' in a
         within-subject comparison).
     sub
         Perform the test with a subset of the data.
-    data : Dataset
+    data
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
-    popmean : float
+    popmean
         Population mean to test against (default 0).
     tail
         Which tail of the t-distribution to consider:
@@ -624,21 +630,28 @@ class TTestOneSample(TTest):
 
     Attributes
     ----------
-    mean : float
+    mean
         Mean of ``y``.
-    t : float
+    t
         T-value.
-    p : float
+    p
         P-value.
-    tail : 0 | 1 | -1
-        Tailedness of the p value.
-    df : int
+    tail
+        Tailedness of the p value (0, 1 or -1).
+    df
         Degrees of freedom.
-    d : float
+    d
         Cohen's *d*.
     full : FMText
         Full description of the test result.
     """
+    mean: float
+    t: float
+    p: float
+    tail: int
+    df: int
+    d: float
+
     @deprecate_ds_arg
     def __init__(
             self,
@@ -669,7 +682,7 @@ class TTestOneSample(TTest):
         return f"<{self.__class__.__name__}: {self._y_name} {cmp} {self.popmean}; {self._asfmtext(difference=True)}>"
 
     @cached_property
-    def full(self):
+    def full(self) -> fmtxt.FMText:
         return fmtxt.FMText([fmtxt.eq('M', self.mean), ', ', fmtxt.eq('SD', self._y.std()), ', ', self._asfmtext()])
 
 
@@ -684,22 +697,22 @@ class TTestIndependent(TTest):
 
     Parameters
     ----------
-    y : Var
+    y
         Dependent variable.
     x
         Model containing the cells which should be compared.
-    c1 : str | tuple | None
+    c1
         Test condition (cell of ``x``). ``c1`` and ``c0`` can be omitted if
         ``x`` only contains two cells, in which case cells will be used in
         alphabetical order.
-    c0 : str | tuple | None
+    c0
         Control condition (cell of ``x``).
     match
         Units within which measurements are related and should be averaged over
         (e.g. 'subject' in a between-group comparison).
     sub
         Perform the test with a subset of the data.
-    data : Dataset
+    data
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
     tail
@@ -710,17 +723,22 @@ class TTestIndependent(TTest):
 
     Attributes
     ----------
-    t : float
+    t
         T-value.
-    p : float
+    p
         P-value.
-    tail : 0 | 1 | -1
-        Tailedness of the p value.
-    df : int
+    tail
+        Tailedness of the p value (0, 1 or -1).
+    df
         Degrees of freedom.
     full : FMText
         Full description of the test result.
     """
+    t: float
+    p: float
+    tail: int
+    df: int
+
     @deprecate_ds_arg
     def __init__(
             self,
@@ -768,7 +786,7 @@ class TTestIndependent(TTest):
         return f"<{self.__class__.__name__}: {desc}; {self._asfmtext(difference=True)}>"
 
     @cached_property
-    def full(self):
+    def full(self) -> fmtxt.FMText:
         return fmtxt.FMText([
             self.c1_name, ': ', fmtxt.eq('M', self._y1.mean()), ', ', fmtxt.eq('SD', self._y1.std()), '; ',
             self.c0_name, ': ', fmtxt.eq('M', self._y0.mean()), ', ', fmtxt.eq('SD', self._y0.std()), '; ',
@@ -786,17 +804,17 @@ class MannWhitneyU:
 
     Parameters
     ----------
-    y : Var
+    y
         Dependent variable. Alternatively, the first of two variables that are
         compared.
     x
         Model containing the cells which should be compared. Alternatively, the
         second of two varaibles that are compared.
-    c1 : str | tuple | None
+    c1
         Test condition (cell of ``x``). ``c1`` and ``c0`` can be omitted if
         ``x`` only contains two cells, in which case cells will be used in
         alphabetical order.
-    c0 : str | tuple | None
+    c0
         Control condition (cell of ``x``).
     match
         Units within which measurements are related (e.g. 'subject' in a
@@ -804,7 +822,7 @@ class MannWhitneyU:
         ``y`` and ``x`` are two measurements with matched cases.
     sub
         Perform the test with a subset of the data.
-    data : Dataset
+    data
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
     tail
@@ -812,17 +830,17 @@ class MannWhitneyU:
         0: both (two-tailed, default);
         1: upper tail (one-tailed);
         -1: lower tail (one-tailed).
-    continuity : bool
+    continuity
         Continuity correction (default ``True``).
 
     Attributes
     ----------
-    u : float
+    u
         Mann-Whitney U statistic.
-    p : float
+    p
         P-value.
-    tail : 0 | 1 | -1
-        Tailedness of the p value.
+    tail
+        Tailedness of the p value (0, 1 or -1).
 
     See Also
     --------
@@ -832,6 +850,10 @@ class MannWhitneyU:
     -----
     Based on :func:`scipy.stats.mannwhitneyu`.
     """
+    u: float
+    p: float
+    tail: int
+
     _statistic = 'U'
 
     @deprecate_ds_arg
@@ -893,17 +915,17 @@ class TTestRelated(TTest):
 
     Parameters
     ----------
-    y : Var
+    y
         Dependent variable. Alternatively, the first of two variables that are
         compared.
     x
         Model containing the cells which should be compared. Alternatively, the
         second of two varaibles that are compared.
-    c1 : str | tuple | None
+    c1
         Test condition (cell of ``x``). ``c1`` and ``c0`` can be omitted if
         ``x`` only contains two cells, in which case cells will be used in
         alphabetical order.
-    c0 : str | tuple | None
+    c0
         Control condition (cell of ``x``).
     match
         Units within which measurements are related (e.g. 'subject' in a
@@ -911,7 +933,7 @@ class TTestRelated(TTest):
         ``y`` and ``x`` are two measurements with matched cases.
     sub
         Perform the test with a subset of the data.
-    data : Dataset
+    data
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
     tail
@@ -922,21 +944,21 @@ class TTestRelated(TTest):
 
     Attributes
     ----------
-    t : float
+    t
         T-value.
-    p : float
+    p
         P-value.
-    tail : 0 | 1 | -1
-        Tailedness of the p value.
-    difference : Var
+    tail
+        Tailedness of the p value (0, 1 or -1).
+    difference
         Difference values.
-    df : int
+    df
         Degrees of freedom.
-    c1_mean : float
+    c1_mean
         Mean of condition ``c1``.
-    c0_mean : float
+    c0_mean
         Mean of condition ``c0``.
-    d : float
+    d
         Cohen's *d*.
     full : FMText
         Full description of the test result.
@@ -945,6 +967,15 @@ class TTestRelated(TTest):
     --------
     WilcoxonSignedRank : non-parametric alternative
     """
+    t: float
+    p: float
+    tail: int
+    difference: Var
+    df: int
+    c1_mean: float
+    c0_mean: float
+    d: float
+
     @deprecate_ds_arg
     def __init__(
             self,
@@ -982,7 +1013,7 @@ class TTestRelated(TTest):
         return f"<{self.__class__.__name__}: {desc}; {self._asfmtext(difference=True)}>"
 
     @cached_property
-    def full(self):
+    def full(self) -> fmtxt.FMText:
         return fmtxt.FMText([
             self.c1_name, ': ', fmtxt.eq('M', self.c1_mean), '; ',
             self.c0_name, ': ', fmtxt.eq('M', self.c0_mean), '; ',
@@ -1003,17 +1034,17 @@ class WilcoxonSignedRank:
 
     Parameters
     ----------
-    y : Var
+    y
         Dependent variable. Alternatively, the first of two variables that are
         compared.
     x
         Model containing the cells which should be compared. Alternatively, the
         second of two varaibles that are compared.
-    c1 : str | tuple | None
+    c1
         Test condition (cell of ``x``). ``c1`` and ``c0`` can be omitted if
         ``x`` only contains two cells, in which case cells will be used in
         alphabetical order.
-    c0 : str | tuple | None
+    c0
         Control condition (cell of ``x``).
     match
         Units within which measurements are related (e.g. 'subject' in a
@@ -1021,7 +1052,7 @@ class WilcoxonSignedRank:
         ``y`` and ``x`` are two measurements with matched cases.
     sub
         Perform the test with a subset of the data.
-    data : Dataset
+    data
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
     tail
@@ -1029,24 +1060,24 @@ class WilcoxonSignedRank:
         0: both (two-tailed, default);
         1: upper tail (one-tailed);
         -1: lower tail (one-tailed).
-    zero_method : str
+    zero_method
         How to handle zero differences (see :func:`scipy.stats.wilcoxon`).
-    correction : bool
+    correction
         Continuity correction (default ``False``).
 
     Attributes
     ----------
-    w : float
+    w
         Rank sum statistic.
-    p : float
+    p
         P-value.
-    tail : 0 | 1 | -1
-        Tailedness of the p value.
-    difference : Var
+    tail
+        Tailedness of the p value (0, 1 or -1).
+    difference
         Difference values.
-    c1_mean : float
+    c1_mean
         Mean of condition ``c1``.
-    c0_mean : float
+    c0_mean
         Mean of condition ``c0``.
 
     See Also
@@ -1057,6 +1088,13 @@ class WilcoxonSignedRank:
     -----
     Based on :func:`scipy.stats.wilcoxon`.
     """
+    w: float
+    p: float
+    tail: int
+    difference: Var
+    c1_mean: float
+    c0_mean: float
+
     _statistic = 'W'
 
     @deprecate_ds_arg
@@ -1130,24 +1168,24 @@ def pairwise(
 
     Parameters
     ----------
-    y : Var
+    y
         Dependent measure.
     x
         Categories to compare.
-    match : None | Factor
+    match
         Repeated measures factor.
     sub
         Perform tests with a subset of the data.
     cells
         Cells to include. All entries have to be cells of ``model``. Can be
         used to change the order of cells in the table.
-    data : Dataset
+    data
         If a Dataset is given, all data-objects can be specified as names of
         Dataset variables.
-    par : bool
+    par
         Use parametric test for pairwise comparisons (use non-parametric
         tests if False).
-    corr : None | 'hochberg' | 'bonferroni' | 'holm'
+    corr
         Method for multiple comparison correction.
     trend
         Marker for a trend in pairwise comparisons.
@@ -1160,7 +1198,7 @@ def pairwise(
 
     Returns
     -------
-    table : FMText Table
+    table : fmtxt.Table
         Table with results.
     """
     ct = Celltable(y, x, match, sub, cells, data, coercion=asvar)
@@ -1300,9 +1338,9 @@ def pairwise_correlations(
     ----------
     xs
         Variables to correlate.
-    sub : IndexArg
+    sub
         Use only a subset of the data
-    data : Dataset
+    data
         If a Dataset is given, all data-objects can be specified as names of
         Dataset variables.
     labels
@@ -1348,18 +1386,18 @@ def correlations(
 
     Parameters
     ----------
-    y : Var
+    y
         First variable
-    x : Var | list of Var
+    x
         second variable (or list of variables).
-    cat : categorial
+    cat
         Show correlations separately for different groups in the data.
-    sub : index
+    sub
         Use only a subset of the data
-    ds : Dataset
+    ds
         If a Dataset is given, all data-objects can be specified as names of
         Dataset variables.
-    asds : bool
+    asds
         Return correlations in Dataset instead of Table.
 
     Returns

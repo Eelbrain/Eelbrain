@@ -15,18 +15,18 @@ class DatasetSTCLoader:
 
     Parameters
     ----------
-    data_dir : str
+    data_dir
         Path to directory containing stc files
 
     Attributes
     ----------
-    data_dir : str
+    data_dir
         Path to data directory
-    subjects : tuple of str
+    subjects
         Subject IDs extracted from stc filenames
-    factors : tuple of str
+    factors
         Names of experimental factors
-    levels : tuple of tuple of str
+    levels
         Names of levels of each factor in ``factors``
 
     Notes
@@ -46,8 +46,12 @@ class DatasetSTCLoader:
     --------
     eelbrain.gui.load_stcs : a GUI to load source estimates into a Dataset
     """
+    data_dir: str
+    subjects: tuple[str, ...]
+    factors: tuple[str, ...]
+    levels: tuple[tuple[str, ...], ...]
 
-    def __init__(self, data_dir):
+    def __init__(self, data_dir: str):
         if not os.path.exists(data_dir):
             raise ValueError(f"Directory '{data_dir}' not found.")
         self.data_dir = data_dir
@@ -86,13 +90,13 @@ class DatasetSTCLoader:
         self.levels = tuple(tuple(c) for c in cond_sets)  # list of tuples, not sets
         self._level_lens = [len(lev) for lev in self.levels]
 
-    def set_factor_names(self, factors):
+    def set_factor_names(self, factors: list[str] | tuple[str, ...]):
         """
         Set names of experimental factors
 
         Parameters
         ----------
-        factors : list of str | tuple of str
+        factors
             Factor names. Length must match the number of factors detected
             from stc filenames.
         """
@@ -115,8 +119,8 @@ class DatasetSTCLoader:
             des = f"1 x {des}"
         return des
 
-    def make_dataset(self, load_stcs=True, subject="fsaverage",
-                     src="ico-4", **stc_kwargs):
+    def make_dataset(self, load_stcs: bool = True, subject: str = "fsaverage",
+                     src: str = "ico-4", **stc_kwargs):
         """
         Load stcs into a Dataset with columns for subject and experimental factors
 
@@ -127,13 +131,13 @@ class DatasetSTCLoader:
 
         Parameters
         ----------
-        load_stcs : bool
+        load_stcs
             Whether to include stc data in dataset. Only False when testing
             on unreadable stc files.
-        subject : str
+        subject
             Subject ID of brain to which the source estimates belong;
             default: 'fsaverage'
-        src : str
+        src
             Source space surface decimation; default 'ico-4'
 
         Returns

@@ -822,11 +822,11 @@ class ANOVA:
 
     Attributes
     ----------
-    effects : tuple of str
+    effects
         Names of the tested effects, in the same order as in other attributes.
-    f_tests : tuple
+    f_tests
         F-tests for all effects.
-    residuals : None | tuple
+    residuals
         For fixed effects models, a ``(ss, df, ms)`` tuple; for mixed effects
         models ``None``.
 
@@ -894,6 +894,9 @@ class ANOVA:
         ---------------------------------------------------
         Total      1005.87   29
     """
+    effects: tuple[str, ...]
+    f_tests: tuple
+    residuals: tuple
 
     def __init__(
             self,
@@ -992,9 +995,9 @@ class ANOVA:
 
         Parameters
         ----------
-        title : text
+        title
             Title for the table.
-        caption : text
+        caption
             Caption for the table.
 
         Returns

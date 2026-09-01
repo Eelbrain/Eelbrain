@@ -200,7 +200,7 @@ class Array(TimeSlicerEF, ColorMapMixin, XAxisMixin, EelFigure):
         Specify which axes should be annotated with y-axis tick labels.
         Use ``int`` for a single axis, a sequence of ``int`` for multiple
         specific axes, or one of ``'left' | 'bottom' | 'all' | 'none'``.
-    data : Dataset
+    data
         If a Dataset is provided, ``epochs`` and ``xax`` can be specified
         as strings.
     sub
@@ -398,8 +398,8 @@ class Butterfly(TimeSlicerEF, LegendMixin, TopoMapKey, YLimMixin, XAxisMixin, Ee
         Data to plot.
     xax
         Create a separate plot for each cell in this model.
-    sensors: None or list of sensor IDs
-        sensors to plot (``None`` = all)
+    sensors
+        Sensors to plot (``None`` = all).
     axtitle
         Title for the individual axes. The default is to show the names of the
         epochs, but only if multiple axes are plotted.
@@ -422,12 +422,12 @@ class Butterfly(TimeSlicerEF, LegendMixin, TopoMapKey, YLimMixin, XAxisMixin, Ee
         ``color=True`` to use the matplotlib default.
     linewidth
         Linewidth for plots (defult is to use ``matplotlib.rcParams``).
-    data : Dataset
+    data
         If a Dataset is provided, ``epochs`` and ``xax`` can be specified
         as strings.
     sub
         Specify a subset of the data.
-    x : str
+    x
         Dimension to plot on the x-axis (default 'time').
     vmax
         Top of the y axis (default depends on data).
@@ -436,7 +436,7 @@ class Butterfly(TimeSlicerEF, LegendMixin, TopoMapKey, YLimMixin, XAxisMixin, Ee
     xlim
         Initial x-axis view limits as ``(left, right)`` tuple or as ``length``
         scalar (default is the full x-axis in the data).
-    clip : bool
+    clip
         Clip lines outside of axes (the default depends on whether ``frame`` is
         closed or open).
     tight : bool
@@ -474,7 +474,7 @@ class Butterfly(TimeSlicerEF, LegendMixin, TopoMapKey, YLimMixin, XAxisMixin, Ee
             self,
             y: NDVarArg | Sequence | NDTest,
             xax: CategorialArg = None,
-            sensors: Sequence = None,
+            sensors: IndexArg = None,
             axtitle: bool | Sequence[str] = True,
             xlabel: bool | str = True,
             ylabel: bool | str = True,

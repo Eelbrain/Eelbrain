@@ -408,7 +408,7 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
     head_pos
         Head outline position along the anterior axis (0 is the center, 0.5 is
         the top end of the plot).
-    im_interpolation : str
+    im_interpolation
         Topomap image interpolation (see Matplotlib's
         :meth:`~matplotlib.axes.Axes.imshow`). Matplotlib 1.5.3's SVG output
         can't handle uneven aspect with ``interpolation='none'``, use
@@ -1185,7 +1185,7 @@ class TopoArray(ColorMapMixin, TopoMapKey, XAxisMixin, EelFigure):
         ----------
         cmap
             New colormap.
-        meas : None | str
+        meas
             Measurement to which to apply the colormap. With None, it is
             applied to all.
         """
@@ -1194,15 +1194,15 @@ class TopoArray(ColorMapMixin, TopoMapKey, XAxisMixin, EelFigure):
             p.set_cmap(cmap, meas)
         self.draw()
 
-    def set_topo_t_single(self, topo_id, t):
+    def set_topo_t_single(self, topo_id: int, t: float):
         """
         Set the time for a single topomap.
 
         Parameters
         ----------
-        topo_id : int
+        topo_id
             Index of the topomap (numbered throughout the figure).
-        t : scalar or ``None``
+        t
             time point; ``None`` clears the topomap
         """
         # get window ax
@@ -1214,15 +1214,15 @@ class TopoArray(ColorMapMixin, TopoMapKey, XAxisMixin, EelFigure):
 
         self.canvas.draw()
 
-    def set_topo_t(self, topo_id, t):
+    def set_topo_t(self, topo_id: int, t: float):
         """
         Set the time point for a topo-map (same for all array plots)
 
         Parameters
         ----------
-        topo_id : int
+        topo_id
             Index of the topomap (numberd for each array-plot).
-        t : scalar or ``None``
+        t
             time point; ``None`` clears the topomap
 
         See Also

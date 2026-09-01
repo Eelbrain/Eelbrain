@@ -126,9 +126,9 @@ def frequencies(
     of
         With ``x`` constant within ``of``, only count frequencies for each value
         in ``of`` once. (Compress y and x before calculating frequencies.)
-    sub : index
+    sub
         Only use a subset of the data.
-    data : Dataset
+    data
         If data is specified, other parameters can be strings naming for
         variables in ``data``.
 

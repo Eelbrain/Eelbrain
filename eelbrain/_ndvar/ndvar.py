@@ -226,9 +226,9 @@ def convolve(
         Kernel.
     x
         Data to convolve, corresponding to ``h``.
-    ds : Dataset
+    ds
         If provided, elements of ``x`` can be specified as :class:`str`.
-    name : str
+    name
         Name for output variable.
 
     Returns
@@ -296,19 +296,24 @@ def convolve(
     return NDVar(out, dims, *op_name(x, name=name))
 
 
-def correlation_coefficient(x, y, dim=None, name=None):
+def correlation_coefficient(
+        x: NDVar,
+        y: NDVar,
+        dim: str | tuple[str, ...] = None,
+        name: str = None,
+):
     """Correlation between two NDVars along a specific dimension
 
     Parameters
     ----------
-    x : NDVar
+    x
         First variable.
-    y : NDVar
+    y
         Second variable.
-    dim : str | tuple of str
+    dim
         Dimension over which to compute correlation (by default all shared
         dimensions).
-    name : str
+    name
         Name for output variable.
 
     Returns
@@ -374,7 +379,7 @@ def cross_correlation(in1: NDVarArg, in2: NDVarArg, name: str = None) -> NDVar:
         First NDVar, with a ``time`` dimension.
     in2
         Second NDVar.
-    name : str
+    name
         Name for the new NDVar.
 
     Returns
@@ -483,7 +488,7 @@ def dss(ndvar: NDVarArg) -> tuple[NDVar, NDVar]:
 
     Parameters
     ----------
-    ndvar : NDVar
+    ndvar
         Data to decompose, with dimensions ``(case, dim, time)``. DSS is
         performed over the case and time dimensions.
 
@@ -595,7 +600,7 @@ def find_intervals(ndvar: NDVar, interpolate: bool = False) -> tuple:
     ----------
     ndvar
         Data which to convert to intervals.
-    interpolate : bool
+    interpolate
         By default, ``start`` values reflect the first sample that is ``True``
         and ``stop`` values reflect the first sample that is ``False``. With
         ``interpolate=True``, time points are shifted half a sample to the
@@ -632,12 +637,12 @@ def find_intervals(ndvar: NDVar, interpolate: bool = False) -> tuple:
     return tuple(zip(onsets, offsets))
 
 
-def find_peaks(ndvar):
+def find_peaks(ndvar: NDVar):
     """Find local maxima in an NDVar
 
     Parameters
     ----------
-    ndvar : NDVar
+    ndvar
         Data in which to find peaks.
 
     Returns
@@ -716,7 +721,7 @@ def gaussian(center: float, width: float, time: UTS):
         Center of the window (normalized to the closest sample on ``time``).
     width
         Standard deviation of the window.
-    time : UTS
+    time
         Time dimension.
 
     Returns
@@ -745,25 +750,26 @@ def label_operator(
         exclude: np.ndarray = None,
         weights: NDVar = None,
         dim_name: str = 'label',
-        dim_values: Sequence = None,
+        dim_values: dict = None,
 ) -> NDVar:
     """Convert labeled NDVar into a matrix operation to extract label values
 
     Parameters
     ----------
-    labels : NDVar of int
-        NDVar in which each label corresponds to a unique integer.
+    labels
+        NDVar of :class:`int`, in which each label corresponds to a unique
+        integer.
     operation
         Whether to extract the label mean or sum.
     exclude
         Values to exclude (i.e., use ``exclude=0`` to ignore the area where
         ``labels==0``.
-    weights : NDVar
+    weights
         NDVar with same dimension as ``labels`` to assign weights to label
         elements.
-    dim_name : str
+    dim_name
         Name for the dimension characterized by labels (default ``"label"``).
-    dim_values : dict
+    dim_values
         Dictionary mapping label ids (i.e., values in ``labels``) to values on
         the dimension characterized by labels. If values are strings the new
         dimension will be categorical, if values are scalar it will be Scalar.
@@ -915,7 +921,7 @@ def normalize_in_cells(
         for_dim: str,
         in_cells: CategorialArg = None,
         data: Dataset = None,
-        method: str = 'z-score',
+        method: Literal['z-score', 'range'] = 'z-score',
 ) -> NDVar:
     """Normalize data in cells to make it appropriate for ANOVA [1]_
 
@@ -931,7 +937,7 @@ def normalize_in_cells(
         that will be used as fixed effects in the ANOVA).
     data
         Dataset containing the data.
-    method : 'z-score' | 'range'
+    method
         Method used for normalizing the data:
         ``z-score``: for the data in each cell, subtract the mean and divide by
         the standard deviation (mean and standard deviation are computed after
@@ -1046,11 +1052,11 @@ def psd_welch(
         Lower bound of the frequencies of interest.
     fmax
         Upper bound of the frequencies of interest.
-    n_fft : int
+    n_fft
         Length of the FFT in samples (default 256).
-    n_overlap : int
+    n_overlap
         Overlap between segments in samples (default 0).
-    n_per_seg : int | None
+    n_per_seg
         Length of each Welch segment in samples. Smaller ``n_per_seg`` result
         in smoother PSD estimates (default ``n_fft``).
 
@@ -1467,11 +1473,11 @@ def set_time(
 
     Parameters
     ----------
-    ndvar : NDVar
+    ndvar
         Input :class:`NDVar`.
-    time : UTS | NDVar
+    time
         New time axis, or :class:`NDVar` with time axis to match.
-    mode : str
+    mode
         How to pad ``ndvar``, see :func:`numpy.pad`.
     name
         Name for the new NDVar.

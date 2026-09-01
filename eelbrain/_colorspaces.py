@@ -327,7 +327,7 @@ def two_step_colormap(
         the location specified by ``center``).
     right_max
         Right end of the colormap.
-    name : str
+    name
         Name for the colormap.
 
     Examples

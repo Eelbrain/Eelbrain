@@ -442,7 +442,7 @@ class RawICA(CachedRawPipe):
         :meth:`mne.preprocessing.ICA.fit`. This includes
         ``reject={'mag': 5e-12, 'grad': 5000e-13, 'eeg': 300e-6}`` unless
         a different value for ``reject`` is specified here.
-    cache : bool
+    cache
         Cache the resulting raw files (default ``False``).
     ...
         Additional parameters for :class:`mne.preprocessing.ICA`.

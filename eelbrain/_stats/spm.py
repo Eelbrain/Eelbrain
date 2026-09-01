@@ -310,18 +310,19 @@ class LMGroup:
 
     Parameters
     ----------
-    lms : sequence of LM
+    lms
         A separate :class:`testnd.LM` object for each subject.
 
     Attributes
     ----------
-    column_names : [str]
+    column_names
         Names of the linear model columns.
-    column_keys : [str]
+    column_keys
         Corresponding dataset keys (with invalid characters replaced).
-    tests : None | {str: TTestRelated}
-        Tests computed with :meth:`compute_column_ttests`.
-    samples : None | int
+    tests
+        Tests computed with :meth:`compute_column_ttests`, mapping column name
+        to :class:`test.TTestRelated`.
+    samples
         Number of samples used to compute tests in :attr:`tests`.
 
     See Also
@@ -332,8 +333,12 @@ class LMGroup:
     --------
     See :ref:`exa-two-stage` example.
     """
+    column_names: list[str]
+    column_keys: list[str]
+    tests: dict
+    samples: int
 
-    def __init__(self, lms):
+    def __init__(self, lms: Sequence[LM]):
         # check lms
         lm0 = lms[0]
         n_columns_by_term = lm0._n_columns()
@@ -457,9 +462,9 @@ class LMGroup:
 
         Parameters
         ----------
-        term : str
+        term
             Name of the term to test.
-        return_data : bool
+        return_data
             Return the individual subjects' coefficients along with test
             results.
         popmean

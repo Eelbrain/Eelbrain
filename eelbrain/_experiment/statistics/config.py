@@ -121,7 +121,7 @@ class TTestOneSample(Test):
 
     Parameters
     ----------
-    tail : int
+    tail
         Tailedness of the test. ``0`` for two-tailed (default), ``1`` for upper tail
         and ``-1`` for lower tail.
 
@@ -155,14 +155,14 @@ class TTestIndependent(Test):
 
     Parameters
     ----------
-    model : str
+    model
         The model which defines the cells that are used in the test.
         Can be ``"group"`` to compare two groups defined on the pipeline.
-    c1 : str | tuple
+    c1
         The experimental group. Should be a group name.
-    c0 : str | tuple
+    c0
         The control group, defined like ``c1``.
-    tail : int
+    tail
         Tailedness of the test. ``0`` for two-tailed (default), ``1`` for upper tail
         and ``-1`` for lower tail.
 
@@ -218,18 +218,18 @@ class TTestRelated(Test):
 
     Parameters
     ----------
-    model : str
+    model
         The model which defines the cells that are used in the test. It is
         specified in the ``"x % y"`` format (like interaction definitions) where
         ``x`` and ``y`` are variables in the experiment's events.
-    c1 : str | tuple
+    c1
         The experimental condition. If the ``model`` is a single factor the
         condition is a :class:`str` specifying a value on that factor. If
         ``model`` is composed of several factors the cell is defined as a
         :class:`tuple` of :class:`str`, one value on each of the factors.
-    c0 : str | tuple
+    c0
         The control condition, defined like ``c1``.
-    tail : int
+    tail
         Tailedness of the test. ``0`` for two-tailed (default), ``1`` for upper tail
         and ``-1`` for lower tail.
 
@@ -278,14 +278,14 @@ class TContrastRelated(Test):
 
     Parameters
     ----------
-    model : str
+    model
         The model which defines the cells that are used in the test. It is
         specified in the ``"x % y"`` format (like interaction definitions) where
         ``x`` and ``y`` are variables in the experiment's events.
-    contrast : str
+    contrast
         Contrast specification using cells form the specified model (see
         :class:`eelbrain.testnd.TContrastRelated`)).
-    tail : int
+    tail
         Tailedness of the test. ``0`` for two-tailed (default), ``1`` for upper tail
         and ``-1`` for lower tail.
 
@@ -320,15 +320,15 @@ class ANOVA(Test):
 
     Parameters
     ----------
-    x : str
+    x
         ANOVA model specification, including ``subject`` for participant random
         effect (e.g., ``"x * y * subject"``; see :class:`eelbrain.test.ANOVA`).
-    model : str
+    model
         Model for grouping trials before averaging (by default all fixed effects
         in ``x``). Should be specified in the ``"x % y"`` format (like
         interaction definitions) where ``x`` and ``y`` are variables in the
         experiment's events.
-    vars : tuple | dict
+    vars
         Variables to add dynamically.
 
     See Also
@@ -386,10 +386,10 @@ class TwoStageTest(Test):
 
     Parameters
     ----------
-    stage_1 : str
+    stage_1
         Stage 1 model specification. Coding for categorial predictors uses 0/1 dummy
         coding.
-    vars : dict
+    vars
         Add new variables for the stage 1 model. This is useful for specifying
         coding schemes based on categorial variables.
         Each entry specifies a variable with the following schema:
@@ -398,7 +398,7 @@ class TwoStageTest(Test):
         ``(source_name, {value: code})``-tuple (see example below).
         ``source_name`` can also be an interaction, in which case cells are joined
         with spaces (``"f1_cell f2_cell"``).
-    model : str
+    model
         This parameter can be supplied to perform stage 1 tests on condition
         averages. If ``model`` is not specified, the stage1 model is fit on single
         trial data.

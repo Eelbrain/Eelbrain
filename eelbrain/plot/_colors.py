@@ -9,6 +9,7 @@ from collections.abc import Sequence
 import numpy as np
 import matplotlib
 import matplotlib.axes
+import matplotlib.text
 import matplotlib.cm
 from matplotlib.colors import Colormap, Normalize
 from matplotlib.colorbar import ColorbarBase
@@ -54,11 +55,13 @@ class ColorGrid(EelFigure):
 
     Attributes
     ----------
-    column_labels : list of :class:`matplotlib.text.Text`
+    column_labels
         Column labels.
-    row_labels : list of :class:`matplotlib.text.Text`
+    row_labels
         Row labels.
     """
+    column_labels: list[matplotlib.text.Text]
+    row_labels: list[matplotlib.text.Text]
 
     def __init__(
             self,
@@ -253,9 +256,10 @@ class ColorList(EelFigure):
 
     Attributes
     ----------
-    labels : list of :class:`matplotlib.text.Text`
+    labels
         Color labels.
     """
+    labels: list[matplotlib.text.Text]
 
     def __init__(
             self,
@@ -396,7 +400,7 @@ class ColorBar(EelFigure):
         negative values above ``abs(threshold)``).
     ticklocation
         Where to place ticks and label.
-    background : matplotlib color
+    background
         Background color (for colormaps including transparency).
     ...
         Also accepts :ref:`general-layout-parameters`.

@@ -487,7 +487,7 @@ def add_epochs(
 
     Parameters
     ----------
-    ds : Dataset
+    ds
         Dataset containing a variable which defines epoch cues (i_start) and to
         which the epochs are added.
     tmin
@@ -495,19 +495,19 @@ def add_epochs(
     tmax
         Last sample to include in the epochs in seconds (Default 0.6; use
         ``tstop`` instead to specify index exclusive of last sample).
-    baseline : (float, float) | None
+    baseline
         Time interval for baseline correction. ``(tmin, tmax)`` tuple in
         seconds, or ``None`` to use all the data (e.g., ``(None, 0)`` uses all
         the data from the beginning of the epoch up to ``t = 0``). Set to
         ``None`` for no baseline correction (default).
-    decim : int
+    decim
         Downsample the data by this factor when importing. ``1`` means no
         downsampling. Note that this function does not low-pass filter
         the data. The data is downsampled by picking out every
         n-th sample (see `Wikipedia <http://en.wikipedia.org/wiki/Downsampling>`_).
     mult
         multiply all data by a constant.
-    proj : bool
+    proj
         mne.Epochs kwarg (subtract projections when loading data)
     data
         Which data channels data to include (default based on channels in data).
@@ -518,19 +518,19 @@ def add_epochs(
         Channels to exclude (:func:`mne.pick_types` kwarg).
         If 'bads' (default), exclude channels in info['bads'].
         If empty do not exclude any.
-    info : None | dict
+    info
         Entries for the ndvar's info dict.
-    name : str
+    name
         name for the new NDVar.
     raw
         Raw file providing the data; if ``None``, ``ds.info['raw']`` is used.
-    sensors : None | Sensor
+    sensors
         The default (``None``) reads the sensor locations from the fiff file.
         If the fiff file contains incorrect sensor locations, a different
         Sensor instance can be supplied through this kwarg.
-    i_start : str
+    i_start
         name of the variable containing the index of the events.
-    sysname : str
+    sysname
         Name of the sensor system to load sensor adjacency (e.g. 'neuromag',
         inferred automatically for KIT data converted with a recent version of
         MNE-Python).
@@ -585,7 +585,7 @@ def add_mne_epochs(
 
     Parameters
     ----------
-    ds : Dataset
+    ds
         Dataset with events from a raw fiff file (i.e., created by
         load.mne.events).
     tmin
@@ -593,12 +593,12 @@ def add_mne_epochs(
     tmax
         Last sample to include in the epochs in seconds (Default 0.6; use
         ``tstop`` instead to specify index exclusive of last sample).
-    baseline : (float, float) | None
+    baseline
         Time interval for baseline correction. ``(tmin, tmax)`` tuple in
         seconds, or ``None`` to use all the data (e.g., ``(None, 0)`` uses all
         the data from the beginning of the epoch up to ``t = 0``). Set to
         ``None`` for no baseline correction (default).
-    target : str
+    target
         Name for the Epochs object in the Dataset.
     ...
         See :func:`~eelbrain.load.mne.mne_epochs`.
@@ -647,25 +647,25 @@ def mne_epochs(
 
     Parameters
     ----------
-    ds : Dataset
+    ds
         Dataset containing a variable which defines epoch cues (i_start).
     tmin
         First sample to include in the epochs in seconds (Default is -0.1).
     tmax
         Last sample to include in the epochs in seconds (Default 0.6; use
         ``tstop`` instead to specify index exclusive of last sample).
-    baseline : (float, float) | None
+    baseline
         Time interval for baseline correction. ``(tmin, tmax)`` tuple in
         seconds, or ``None`` to use all the data (e.g., ``(None, 0)`` uses all
         the data from the beginning of the epoch up to ``t = 0``). Set to
         ``None`` for no baseline correction (default).
-    i_start : str
+    i_start
         Name of the variable containing the sample index of each event.
-    trigger : str
+    trigger
         Name of the variable containing the integer event ID (trigger code).
     raw
         If None, ds.info['raw'] is used.
-    drop_bad_chs : bool
+    drop_bad_chs
         Drop all channels in raw.info['bads'] form the Epochs. This argument is
         ignored if the picks argument is specified.
     picks, reject
@@ -742,7 +742,7 @@ def sensor_dim(
         Name of the sensor system to load sensor adjacency (e.g. 'neuromag',
         inferred automatically for KIT data converted with a recent version of
         MNE-Python).
-    adjacency : str | list of (str, str) | array of int, (n_edges, 2)
+    adjacency
         Sensor adjacency (adjacency graph). Can be specified as:
 
         - ``"none"`` for no connections
@@ -904,7 +904,7 @@ def variable_length_epochs(
         Name of the sensor system to load sensor adjacency (e.g. 'neuromag306',
         inferred automatically for KIT data converted with a recent version of
         MNE-Python).
-    adjacency : str | list of (str, str) | array of int, (n_edges, 2)
+    adjacency
         Adjacency between elements. Can be specified as:
 
         - ``"none"`` for no connections
@@ -1216,7 +1216,7 @@ def epochs_ndvar(
         If empty do not exclude any.
     mult
         multiply all data by a constant.
-    info : None | dict
+    info
         Additional contents for the info dictionary of the NDVar.
     sensors
         The default (``None``) reads the sensor locations from the fiff file.
@@ -1228,7 +1228,7 @@ def epochs_ndvar(
         Name of the sensor system to load sensor adjacency (e.g. 'neuromag306',
         inferred automatically for KIT data converted with a recent version of
         MNE-Python).
-    adjacency : str | list of (str, str) | array of int, (n_edges, 2)
+    adjacency
         Adjacency between elements. Can be specified as:
 
         - ``"none"`` for no connections
@@ -1277,10 +1277,10 @@ def evoked_ndvar(
 
     Parameters
     ----------
-    evoked : str | mne.Evoked | list of mne.Evoked
+    evoked
         The Evoked to convert to NDVar. Can be a string designating a file
         path to a evoked fiff file containing only one evoked.
-    name : str
+    name
         Name of the NDVar.
     data
         Which data channels data to include (default based on channels in data).
@@ -1290,11 +1290,11 @@ def evoked_ndvar(
         If empty do not exclude any.
     vmax
         Set a default range for plotting.
-    sysname : str
+    sysname
         Name of the sensor system to load sensor adjacency (e.g. 'neuromag306',
         inferred automatically for KIT data converted with a recent version of
         MNE-Python).
-    adjacency : str | list of (str, str) | array of int, (n_edges, 2)
+    adjacency
         adjacency between elements. Can be specified as:
 
         - ``"none"`` for no connections
@@ -1459,21 +1459,27 @@ def forward_operator(
     return NDVar(x, dims, name)
 
 
-def inverse_operator(inv, src, subjects_dir=None, parc='aparc', name=None):
+def inverse_operator(
+        inv: str | mne.minimum_norm.InverseOperator,
+        src: str,
+        subjects_dir: str = None,
+        parc: str = 'aparc',
+        name: str = None,
+):
     """Load inverse operator as :class:`NDVar`
 
     Parameters
     ----------
-    inv : str | mne.minimum_norm.InverseOperator
+    inv
         MNE inverse operator, or path to inverse operator.
-    src : str
+    src
         Tag describing the source space (e.g., "ico-4").
-    subjects_dir : str
+    subjects_dir
         Location of the MRI subjects directory.
-    parc : str
+    parc
         Parcellation to load (corresponding to existing annot files; default
         'aparc').
-    name : str
+    name
         Name the NDVar (default is the filename if a path is provided,
         otherwise "inv").
 
@@ -1503,12 +1509,12 @@ def stc_ndvar(
         subject: str,
         src: str,
         subjects_dir: PathArg = None,
-        method: str = None,
+        method: Literal['MNE', 'dSPM', 'sLORETA', 'eLORETA'] = None,
         fixed: bool = None,
         name: str = None,
         check: bool = True,
         parc: str | None = '',
-        adjacency: str = None,
+        adjacency: Literal['link-midline'] = None,
         sss_filename: str = '{subject}-{src}-src.fif',
 ):
     """
@@ -1516,7 +1522,7 @@ def stc_ndvar(
 
     Parameters
     ----------
-    stc : mne.SourceEstimate | list of mne.SourceEstimate | str
+    stc
         The source estimate object(s) or a path to an stc file. Volum and vector
         source estimates are supported.
     subject
@@ -1525,7 +1531,7 @@ def stc_ndvar(
         The kind of source space used (e.g., 'ico-4').
     subjects_dir
         The path to the subjects_dir (needed to locate the source space file).
-    method : 'MNE' | 'dSPM' | 'sLORETA' | 'eLORETA'
+    method
         Source estimation method (optional, used for generating info).
     fixed
         Source estimation orientation constraint (optional, used for generating
@@ -1539,7 +1545,7 @@ def stc_ndvar(
         Name of a parcellation to add to the source space. ``None`` to add no
         parcellation. The default is ``aparc`` for surface source-spaces and
         none for volume source spaces.
-    adjacency : 'link-midline'
+    adjacency
         Modify source space adjacency to link medial sources of the two
         hemispheres across the midline.
     sss_filename

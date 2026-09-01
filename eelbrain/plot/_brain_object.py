@@ -1,13 +1,15 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """PySurfer Brain subclass to embed in Eelbrain"""
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
 from functools import cached_property, partial
 import os
-import sys
 import packaging.version
+import sys
 from tempfile import mkdtemp
-from typing import Any, Literal
-from collections.abc import Callable, Sequence
 from time import time, sleep
+from typing import Any, Literal
 from warnings import warn
 
 from matplotlib.colors import ListedColormap, Colormap, to_rgb, to_rgba
@@ -18,6 +20,7 @@ import scipy.ndimage
 
 from .._data_obj import NDVar, SourceSpace, UTS, asndvar
 from .._exceptions import KeysMissing
+from .._stats.testnd import NDTest
 from .._text import ms
 from .._types import ColorArg, PathArg
 from .._utils import IS_OSX
@@ -84,17 +87,17 @@ class Brain(TimeSlicer, surfer.Brain):
 
     Parameters
     ----------
-    subject : str
+    subject
         Subject name.
     hemi
         'both': both hemispheres are shown in the same window;
         'split': hemispheres are displayed side-by-side in different viewing
         panes.
-    surf : str
+    surf
         Freesurfer surface mesh name (ie 'white', 'inflated', etc.).
-    title : str
+    title
         Title for the window.
-    cortex : str, tuple, dict, or None
+    cortex
         Specifies how the cortical surface is rendered. Options:
 
             1. The name of one of the preset cortex styles:
@@ -121,37 +124,37 @@ class Brain(TimeSlicer, surfer.Brain):
         (``0 <= alpha <= 1``).
     background, foreground
         color of the background and foreground of the display window
-    subjects_dir : str | None
+    subjects_dir
         If not None, this directory will be used as the subjects directory
         instead of the value set using the SUBJECTS_DIR environment
         variable.
-    views : list | str
+    views
         views to use
-    offset : bool
+    offset
         If True, aligs origin with medial wall. Useful for viewing inflated
         surface where hemispheres typically overlap (Default: True)
-    show_toolbar : bool
+    show_toolbar
         If True, toolbars will be shown for each view.
-    offscreen : bool
+    offscreen
         If True, rendering will be done offscreen (not shown). Useful
         mostly for generating images or screenshots, but can be buggy.
         Use at your own risk.
-    interaction : str
+    interaction
         Can be "trackball" (default) or "terrain", i.e. a turntable-style
         camera.
-    w, h : int
+    w, h
         Figure width and height.
-    axw, axh : int
+    axw, axh
         Width and height of the individual viewing panes.
-    name : str
+    name
         Window title (alternative to ``title`` for consistency with other
         Eelbrain figures).
-    pos : tuple of int
+    pos
         Position of the new window on the screen.
-    show : bool
+    show
         Currently meaningless due to limitation in VTK that does not allow
         hidden plots.
-    run : bool
+    run
         Run the Eelbrain GUI app (default is True for interactive plotting and
         False in scripts).
 
@@ -335,7 +338,7 @@ class Brain(TimeSlicer, surfer.Brain):
 
         Parameters
         ----------
-        source : SourceSpace
+        source
             SourceSpace.
         color
             Mask color, can include alpha (defauls is black with alpha=0.5:
@@ -345,7 +348,7 @@ class Brain(TimeSlicer, surfer.Brain):
             added as data layer, otherwise it is added as label.
         alpha
             Alpha for the mask (supercedes alpha in ``color``).
-        subjects_dir : str
+        subjects_dir
             Use this directory as the subjects directory.
         """
         source = self._check_source_space(source)
@@ -394,7 +397,7 @@ class Brain(TimeSlicer, surfer.Brain):
 
         Parameters
         ----------
-        ndvar : NDVar
+        ndvar
             NDVar with SourceSpace dimension and optional time dimension, i.e.
             dimensions ``([case,] source[, time])``. If it
             contains a :class:`Case` dimension, the average over cases is
@@ -566,18 +569,19 @@ class Brain(TimeSlicer, surfer.Brain):
 
         Parameters
         ----------
-        ndvar : NDVar of int
-            NDVar in which each unique integer indicates a label. By default,
+        ndvar
+            NDVar of :class:`int`, in which each unique integer indicates a
+            label. By default,
             ``0`` is interpreted as unlabeled, but this can be overridden by
             providing a ``colors`` dictionary that contains an entry for ``0``.
-        colors : dict
+        colors
             Dictionary mapping label IDs to colors.
-        borders : bool | int
+        borders
             Show label borders (instead of solid labels). If int, specify the
             border width.
         alpha
             Opacity of the labels (``0 <= alpha <= 1``; default 1).
-        lighting : bool
+        lighting
             Labels are affected by lights (default True).
         """
         source = self._check_source_space(ndvar)
@@ -662,20 +666,20 @@ class Brain(TimeSlicer, surfer.Brain):
 
         Parameters
         ----------
-        ndvar : NDVar
+        ndvar
             Boolean NDVar.
         color
             anything matplotlib accepts: string, RGB, hex, etc. (default
             "crimson")
-        borders : bool | int
+        borders
             Show only label borders. If int, specify the number of steps
             (away from the true border) along the cortical mesh to include
             as part of the border definition.
-        name : str
+        name
             Name for the label (for display in legend).
         alpha
             Alpha level to control opacity (``0 <= alpha <= 1``).
-        lighting : bool
+        lighting
             Whether label should be affected by lighting (default False).
 
         Notes
@@ -710,7 +714,7 @@ class Brain(TimeSlicer, surfer.Brain):
 
     def add_ndvar_p_map(
             self,
-            p_map: NDVar,
+            p_map: NDVar | NDTest,
             param_map: NDVar = None,
             p0: float = 0.05,
             p1: float = 0.01,
@@ -722,9 +726,9 @@ class Brain(TimeSlicer, surfer.Brain):
 
         Parameters
         ----------
-        p_map : NDVar | NDTest
+        p_map
             Map of p values, or test result.
-        param_map : NDVar
+        param_map
             Statistical parameter covering the same data points as p_map. Only the
             sign is used, for incorporating the directionality of the effect into
             the plot.
@@ -859,20 +863,26 @@ class Brain(TimeSlicer, surfer.Brain):
         tag = 'L' if hemi == 'lh' else 'R'
         print(f'{tag}{vertex}')
 
-    def image(self, name=None, format='png', alt=None, mode='rgb'):
+    def image(
+            self,
+            name: str = None,
+            format: str = 'png',
+            alt: str = None,
+            mode: Literal['rgb', 'rgba'] = 'rgb',
+    ):
         """Create an FMText Image from a screenshot
 
         Parameters
         ----------
-        name : str
+        name
             Name for the file (without extension; default is ``data.name`` or
             'brain').
-        format : str
+        format
             File format (default 'png').
-        alt : None | str
+        alt
             Alternate text, placeholder in case the image can not be found
             (HTML `alt` tag).
-        mode : ``'rgb'`` | ``'rgba'``
+        mode
             ``'rgb'`` to render solid background, or ``'rgba'`` to
             include alpha channel for a transparent background (default).
         """
@@ -914,7 +924,7 @@ class Brain(TimeSlicer, surfer.Brain):
 
         Parameters
         ----------
-        label : str | bool
+        label
             Label for the x-axis (default is based on the data).
         label_position
             Position of the axis label. Valid values depend on orientation.
@@ -933,7 +943,7 @@ class Brain(TimeSlicer, surfer.Brain):
         ticks
             Customize tick-labels on the colormap; either a dictionary with
             tick-locations and labels, or a sequence of tick locations.
-        layer : int
+        layer
             If the brain contains multiple data layers, plot a colorbar for
             only one (int in the order ndvars were added; default is to plot
             colorbars for all layers).
@@ -991,9 +1001,9 @@ class Brain(TimeSlicer, surfer.Brain):
 
         Parameters
         ----------
-        labels : dict (optional)
+        labels : dict
             Alternative (text) label for (brain) labels.
-        h : 'auto' | scalar
+        h : Literal['auto'] | float
             Height of the figure in inches. If 'auto' (default), the height is
             automatically increased to fit all labels.
 
@@ -1063,12 +1073,12 @@ class Brain(TimeSlicer, surfer.Brain):
 
         Parameters
         ----------
-        filename: string
+        filename
             Path to new image file.
-        mode : ``'rgb'`` | ``'rgba'``
+        mode
             ``'rgb'`` to render solid background (default), or ``'rgba'`` to
             include alpha channel for a transparent background.
-        antialiased : bool
+        antialiased
             Antialias the image (see :func:`mayavi.mlab.screenshot`
             for details; default False).
 

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .._data_obj import Datalist, NDVar, NDVarArg, UTS, asndvar
+from .._data_obj import Datalist, NDVar, NDVarArg, Sensor, UTS, asndvar
 from .base import BadChannelWindow
 
 if TYPE_CHECKING:
@@ -59,11 +59,13 @@ class ChannelModel:
 
     Attributes
     ----------
-    sensor : Sensor
+    sensor
         The sensor dimension the model was fit with.
-    estimators_ : list
+    estimators_
         The fitted estimator for each sensor (in the order of ``sensor``).
     """
+    sensor: Sensor
+    estimators_: list
 
     def __init__(
             self,

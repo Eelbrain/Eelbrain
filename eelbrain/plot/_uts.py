@@ -309,7 +309,7 @@ class UTSStat(LegendMixin, XAxisMixin, YLimMixin, EelFigure):
             Maximum p-value of clusters to plot as trend.
         color
             Color for the clusters, or a ``{effect: color}`` dictionary.
-        ax : None | int
+        ax
             Index of the axes to which the clusters are to be added. If None,
             add the clusters to all axes.
         y
@@ -354,7 +354,7 @@ class UTS(TimeSlicerEF, LegendMixin, YLimMixin, XAxisMixin, EelFigure):
     axtitle
         Title for the individual axes. The default is to show the names of the
         epochs, but only if multiple axes are plotted.
-    data : Dataset
+    data
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
     sub

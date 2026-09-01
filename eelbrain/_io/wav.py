@@ -1,6 +1,7 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """I/O for wave files"""
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 
@@ -13,9 +14,9 @@ FILETYPES = [("WAV files", "*.wav")]
 
 
 def load_wav(
-        filename: PathArg = None,
-        name: str = None,
-        backend: str = 'wave',
+        filename: PathArg | None = None,
+        name: str | None = None,
+        backend: Literal['wave', 'scipy', 'librosa'] = 'wave',
 ) -> NDVar:
     """Load a wav file as NDVar
 
@@ -26,7 +27,7 @@ def load_wav(
         shown to select one.
     name
         NDVar name (default is the file name).
-    backend : 'wave' | 'scipy' | 'librosa'
+    backend
         Whether to read the file using the builtin :mod:`wave` module,
         :mod:`scipy.io.wavfile`, or :func:`librosa.load`.
 

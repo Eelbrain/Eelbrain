@@ -809,7 +809,7 @@ class Timeplot(LegendMixin, YLimMixin, EelFigure):
         'box': boxplots;
         '[x]sem': x standard error of the means (e.g. 'sem', '2sem');
         '[x]std': x standard deviations.
-    x_jitter : bool
+    x_jitter
         When plotting error bars, jitter their location on the x-axis to
         increase readability.
     bottom
@@ -828,10 +828,10 @@ class Timeplot(LegendMixin, YLimMixin, EelFigure):
     legend
         Matplotlib figure legend location argument or 'fig' to plot the
         legend in a separate figure.
-    labels : dict
+    labels
         Alternative labels for legend as ``{cell: label}`` dictionary (preserves
         order).
-    colors : str | list | dict
+    colors
         Colors for the categories.
         **str**: A colormap name; cells are mapped onto the colormap in
         regular intervals.
@@ -1335,13 +1335,13 @@ class Histogram(EelFigure):
     ds : Dataset
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables
-    pooled : bool
+    pooled
         Add one plot with all values/differences pooled.
-    density : bool
+    density
         Norm counts to approximate a probability density (default False).
-    test : bool
+    test
         Test for normality.
-    tight : bool
+    tight
         Use matplotlib's tight_layout to expand all axes to fill the figure
         (default True)
     title

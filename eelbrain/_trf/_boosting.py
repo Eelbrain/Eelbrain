@@ -34,7 +34,7 @@ import numpy as np
 from numpy import newaxis
 
 from .._config import CONFIG
-from .._data_obj import Case, Dataset, Dimension, SourceSpaceBase, NDVar, CategorialArg, NDVarArg, dataobj_repr
+from .._data_obj import Case, Dataset, Dimension, SourceSpaceBase, NDVar, CategorialArg, NDVarArg, UTS, dataobj_repr
 from .._exceptions import OldVersionError
 from .._ndvar.ndvar import _concatenate_values, set_adjacency, set_parc
 from .._ndvar._convolve import convolve_1d, convolve_2d
@@ -100,7 +100,7 @@ class BoostingResult(PickleableDataClass):
         source of ``h`` before being convolved with the basis.
     h_time : UTS
         Time dimension of the kernel.
-    r : float | NDVar
+    r
         Correlation between the measured response ``y`` and the predicted
         response ``h * x``. When using cross-validation (calling
         :func:`boosting` with ``test=True``), each partition of ``y`` is
@@ -115,9 +115,9 @@ class BoostingResult(PickleableDataClass):
         consider using ``proportion_explained``.
     r_rank : float | NDVar
         As ``r``, the Spearman rank correlation.
-    t_run : float
+    t_run
         Time it took to run the boosting algorithm (in seconds).
-    error : str
+    error
         The error evaluation method used.
     residual : float | NDVar
         The residual of the final result
@@ -129,11 +129,11 @@ class BoostingResult(PickleableDataClass):
 
         For vector ``y``, the error is defined based on the distance in space
         for each data point.
-    delta : scalar
+    delta
         Kernel modification step used.
-    mindelta : None | scalar
+    mindelta
         Mindelta parameter used.
-    n_samples : int
+    n_samples
         Number of samples in the input data time axis.
     proportion_explained : float | NDVar
         The proportion of the variation in ``y`` that is explained by the model.
@@ -142,23 +142,23 @@ class BoostingResult(PickleableDataClass):
         depending on the ``error`` that was used for model fitting.
         Note that this does not correspond to ``r**2`` even for ``error='l2'``,
         because residuals are not guaranteed to be orthogonal to predictions.
-    scale_data : bool
+    scale_data
         Scale_data parameter used.
-    y_mean : NDVar | scalar
+    y_mean
         Mean that was subtracted from ``y``.
-    y_scale : NDVar | scalar
+    y_scale
         Scale by which ``y`` was divided.
-    x_mean : NDVar | scalar | tuple
+    x_mean
         Mean that was subtracted from ``x``.
-    x_scale : NDVar | scalar | tuple
+    x_scale
         Scale by which ``x`` was divided.
-    splits : Splits
+    splits
         Data splits used for cross-validation.
         Use :meth:`Splits.plot` to visualize the cross-validation scheme.
-    partition_results : list of BoostingResult
+    partition_results
         If :func:`boosting` is called with ``partition_results=True``, this
         attribute contains the results for the individual test paritions.
-    algorithm_version : int
+    algorithm_version
         Version of the algorithm with which the model was estimated
 
           - -1: results from before this attribute was added
@@ -167,7 +167,7 @@ class BoostingResult(PickleableDataClass):
           - 2: Cython multiprocessing implementation (Eelbrain 0.38)
           - 3: Cython based convolution (Eelbrain 0.40)
 
-    execution_context : dict
+    execution_context
         Information on the context in which the model was estimated.
 
 
@@ -195,10 +195,10 @@ class BoostingResult(PickleableDataClass):
     error: str
     selective_stopping: int
     # data properties
-    y_mean: NDVar
-    y_scale: NDVar
-    x_mean: NDVar | tuple[NDVar, ...]
-    x_scale: NDVar | tuple[NDVar, ...]
+    y_mean: NDVar | float
+    y_scale: NDVar | float
+    x_mean: NDVar | float | tuple[NDVar | float, ...]
+    x_scale: NDVar | float | tuple[NDVar | float, ...]
     # results
     _h: NDVar | tuple[NDVar, ...]
     _isnan: np.ndarray
@@ -206,6 +206,7 @@ class BoostingResult(PickleableDataClass):
     # advanced parameters
     basis: float
     basis_window: str
+
     splits: Splits = None
     # advanced data properties
     n_samples: int = None
@@ -318,7 +319,7 @@ class BoostingResult(PickleableDataClass):
             return self._h.smooth('time', self.basis, self.basis_window, 'full')
 
     @cached_property
-    def h_scaled(self):
+    def h_scaled(self) -> NDVar | tuple[NDVar, ...]:
         if self.y_scale is None:
             return self.h
         elif isinstance(self.h, NDVar):
@@ -334,18 +335,18 @@ class BoostingResult(PickleableDataClass):
             return tuple(out)
 
     @cached_property
-    def h_source(self):
+    def h_source(self) -> NDVar | tuple[NDVar, ...]:
         return self._h
 
     @cached_property
-    def h_time(self):
+    def h_time(self) -> UTS:
         if isinstance(self.h, NDVar):
             return self.h.time
         else:
             return self.h[0].time
 
     @cached_property
-    def residual(self):
+    def residual(self) -> float | NDVar:
         return getattr(self, f'{self.error}_residual')
 
     @cached_property
@@ -968,7 +969,7 @@ def boosting(
         x: NDVarArg | Sequence[NDVarArg],
         tstart: float | Sequence[float],
         tstop: float | Sequence[float],
-        scale_data: bool | str = True,  # normalize y and x; can be 'inplace'
+        scale_data: bool | Literal['inplace'] = True,  # normalize y and x
         delta: float = 0.005,  # coordinate search step
         mindelta: float = None,  # narrow search by reducing delta until reaching mindelta
         error: Literal['l1', 'l2'] = 'l2',
@@ -987,7 +988,7 @@ def boosting(
 
     Parameters
     ----------
-    y : NDVar
+    y
         Signal to predict. When ``y`` contains more than one signal (e.g.,
         multiple EEG channels), results for each signal will be computed
         independently. Muiltiple cases along a :class:`Case` dimension are
@@ -1002,12 +1003,12 @@ def boosting(
         values for each item in ``x``.
     tstop
         Stop of the TRF in seconds. Format must match ``tstart``.
-    scale_data : bool | 'inplace'
+    scale_data
         Scale ``y`` and ``x`` before boosting: subtract the mean and divide by
         the standard deviation (when ``error='l2'``) or the mean absolute
         value (when ``error='l1'``). Use ``'inplace'`` to save memory by scaling
         the original objects specified as ``y`` and ``x`` instead of making a
-        copy. The data scale is stored in the :class:`BoostingResult:
+        copy. The data scale is stored in the :class:`BoostingResult`:
         :attr:`BoostingResult.y_mean`, :attr:`BoostingResult.y_scale`, :attr:`BoostingResult.x_mean`, and :attr:`BoostingResult.x_scale`
         attributes.
     delta
@@ -1029,7 +1030,7 @@ def boosting(
     basis
         Use a basis of windows with this length for the kernel (by default,
         impulses are used).
-    basis_window : str | scalar | tuple
+    basis_window
         Basis window (see :func:`scipy.signal.get_window` for options; default
         is ``'hamming'``).
     partitions

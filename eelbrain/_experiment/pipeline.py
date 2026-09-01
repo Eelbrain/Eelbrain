@@ -101,7 +101,7 @@ class Pipeline(StateModel):
 
     Parameters
     ----------
-    root : str | None
+    root
         the root directory for the experiment (usually the directory
         containing the 'meg' and 'mri' directories). The experiment can be
         initialized without the root for testing purposes.
@@ -739,7 +739,7 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        field : str
+        field
             Field for which to find values.
         exclude
             Exclude these values.
@@ -786,7 +786,7 @@ class Pipeline(StateModel):
             Fields with custom values to iterate over (instead of the
             corresponding field values) with {name: (sequence of values)}
             entries.
-        progress_bar : str
+        progress_bar
             Message to show in the progress bar.
         ...
             State parameters.
@@ -833,7 +833,7 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        ds : Dataset
+        ds
             A Dataset containing events (with variables as returned by
             :func:`load.mne.events`).
 
@@ -879,7 +879,7 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        ds : Dataset
+        ds
             A Dataset containing events (with variables as returned by
             :func:`load.mne.events`).
 
@@ -953,7 +953,7 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        ds : Dataset
+        ds
             A Dataset with 'subject' entry.
         """
         subject = ds['subject']
@@ -965,7 +965,7 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        subject : Factor
+        subject
             A Factor with subjects.
         groups
             Groups which to label as ``[group, ...]`` or ``{group: label}``
@@ -1101,7 +1101,7 @@ class Pipeline(StateModel):
             definition).
         decim
             Data decimation factor (alternative to ``samplingrate``).
-        pad : scalar
+        pad
             Pad the epochs with this much time (in seconds; e.g. for spectral
             analysis).
         tmin
@@ -1828,7 +1828,7 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        label : str
+        label
             Name of the label. If the label name does not end in '-lh' or '-rh'
             the combination of the labels ``label + '-lh'`` and
             ``label + '-rh'`` is returned.
@@ -2588,7 +2588,7 @@ class Pipeline(StateModel):
             When working with data from multiple sensor types, use a dictionary
             to set levels for all types,
             e.g. ``{'mag': 2e-12, 'grad': 5e-11, 'eeg': 1.5e-4}``.
-        overwrite : bool
+        overwrite
             If ``auto`` is specified and a rejection file already exists,
             overwrite the old file. The default is to raise an :exc:`IOError` if
             the file exists (``None``). Set to ``False`` to quietly keep the
@@ -2765,13 +2765,13 @@ class Pipeline(StateModel):
         parc
             Parcellation to plot. If None (default), use parc from the current
             state.
-        surf : 'inflated' | 'pial' | 'smoothwm' | 'sphere' | 'white'
+        surf
             Freesurfer surface to use as brain geometry.
         views
             One or several views to show in the figure. The options are:
             ``'lateral', 'medial', 'ventral', 'dorsal', 'rostral', 'parietal',
             'frontal', 'caudal'``.
-        hemi : 'lh' | 'rh' | 'both' | 'split'
+        hemi
             Which hemispheres to plot (default includes hemisphere with more
             than one label in the annot file).
         borders
@@ -2905,16 +2905,16 @@ class Pipeline(StateModel):
             fig.plotter.enable_parallel_projection()
         return fig
 
-    def plot_whitened_gfp(self, s_start=None, s_stop=None, run=None):
+    def plot_whitened_gfp(self, s_start: str = None, s_stop=None, run: bool = None):
         """Plot the GFP of the whitened evoked to evaluate the the covariance matrix
 
         Parameters
         ----------
-        s_start : str
+        s_start
             Subject at which to start (default is the first subject).
         s_stop: str
             Subject at which to stop (default is the last subject).
-        run : bool
+        run
             Run the GUI after plotting (default depends on environment).
         """
         gfps = []
@@ -3085,11 +3085,11 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        decim : int
+        decim
             Decimate data for faster plotting (default 10).
         xlim
             Number of seconds to display (default 5 s).
-        subtract_mean : bool
+        subtract_mean
             Subtract the mean from each channel (useful when plotting raw data
             recorded with DC offset).
         ...
@@ -3150,7 +3150,7 @@ class Pipeline(StateModel):
             self,
             ori: str = 'free',
             snr: float = 3,
-            method: str = 'dSPM',
+            method: Literal['MNE', 'dSPM', 'sLORETA', 'eLORETA'] = 'dSPM',
             depth: float = 0,
             pick_normal: bool = False,
             **state,
@@ -3188,7 +3188,7 @@ class Pipeline(StateModel):
             estimates. 3 is recommended for averaged responses, 1 for raw or
             single trial data. Set to 0 for unregularized inverse solution
             (``λ = 0``).
-        method : 'MNE' | 'dSPM' | 'sLORETA' | 'eLORETA'
+        method
             Noise normalization method. ``MNE`` uses unnormalized current
             estimates. ``dSPM`` [1]_ (default) ``sLORETA`` [2]_ and eLORETA [3]_
             normalize each the estimate at each source with an estimate of the
@@ -3246,7 +3246,7 @@ class Pipeline(StateModel):
     def inv_str(
             ori: str = 'free',
             snr: float = 3,
-            method: str = 'dSPM',
+            method: Literal['MNE', 'dSPM', 'sLORETA', 'eLORETA'] = 'dSPM',
             depth: float = 0,
             pick_normal: bool = False,
     ):
@@ -3810,9 +3810,9 @@ class Pipeline(StateModel):
         flagp
             Flag entries whose percentage of good trials is lower than this
             number.
-        asds : bool
+        asds
             Return a Dataset with the information (default is to print it).
-        bads : bool
+        bads
             Display bad channel names (not just number of bad channels).
 
         See Also

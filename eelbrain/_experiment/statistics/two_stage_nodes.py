@@ -23,16 +23,20 @@ class ROI2StageResult(ROITestResult):
 
     Attributes
     ----------
-    subjects : tuple of str
+    subjects
         Subjects included in the test.
-    samples : int
+    samples
         ``samples`` parameter used for permutation tests.
-    res : {str: LMGroup} dict
-        Test result for each ROI.
-    n_trials_ds : Dataset
+    res
+        Test result (:class:`testnd.LMGroup`) for each ROI.
+    n_trials_ds
         Dataset describing how many trials were used in each condition per
         subject.
     """
+    subjects: tuple[str, ...]
+    samples: int
+    res: dict
+    n_trials_ds: Dataset
 
 
 @dataclass

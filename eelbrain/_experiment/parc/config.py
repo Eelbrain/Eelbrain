@@ -362,12 +362,12 @@ class SeededParc(Parcellation):
 
     Parameters
     ----------
-    seeds : dict
+    seeds
         ``{name: seed(s)}`` dictionary, where names are strings, including
         hemisphere tags (e.g., ``"mylabel-lh"``) and seed(s) are array-like,
         specifying one or more seed coordinate (shape ``(3,)`` or
         ``(n_seeds, 3)``).
-    mask : str
+    mask
         Name of a parcellation to use as mask (i.e., anything that is "unknown"
         in that parcellation is excluded from the new parcellation. For example,
         use ``{'mask': 'lobes'}`` to exclude the subcortical areas around the
@@ -390,7 +390,7 @@ class SeededParc(Parcellation):
     kind = 'seeded'
     make = True
 
-    def __init__(self, seeds, mask=None, surface='white', views=None):
+    def __init__(self, seeds: dict, mask: str = None, surface='white', views=None):
         Parcellation.__init__(self, views)
         self.seeds = seeds
         self.mask = mask

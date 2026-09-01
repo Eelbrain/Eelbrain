@@ -2014,12 +2014,12 @@ class EelFigure(MatplotlibFigure):
         self._frame.canvas.draw()
         self._last_draw_time = time.time() - t0
 
-    def draw_crosshairs(self, enable=True):
+    def draw_crosshairs(self, enable: bool = True):
         """Draw crosshairs under the cursor
 
         Parameters
         ----------
-        enable : bool
+        enable
             Enable drawing crosshairs (default True, set to False to disable).
         """
         self._draw_crosshairs = enable
@@ -2949,7 +2949,7 @@ class ColorMapMixin(ColorBarMixin):
             The value at which to draw the contour.
         color
             The color of the contour line.
-        meas : str
+        meas
             The measurement for which to add a contour line (default is the
             measurement plotted first).
         """
