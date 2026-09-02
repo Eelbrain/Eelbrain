@@ -257,6 +257,30 @@ Use :meth:`Pipeline.show_model_terms` to list the terms in the two models involv
     gammatone-8
     gammatone-on-8   gammatone-on-8
 
+Lag windows in comparisons
+--------------------------
+
+Terms in a comparison can carry lag windows (see `Lag windows`_), which makes it possible to test the contribution of a predictor within a specific range of lags.
+When a term with a lag window is omitted with ``@``, only that window is removed from the matching term, and the reduced model keeps the complement:
+
+- ``a + b @ b[0.2:]`` tests the contribution of ``b`` at late lags (from 0.2 s to ``tstop``); the reduced model is ``a + b[:0.2]``.
+- ``a + b @ b[:0.2]`` tests the contribution of ``b`` at early lags (from ``tstart`` up to 0.2); the reduced model is ``a + b[0.2:]``.
+- ``a + b @ b[:0.2] = b[0.2:]`` compares the contribution of early and late lags of ``b``.
+- ``a +@ b[:0.2]`` tests the effect of adding ``b`` restricted to lags up to 0.2 s.
+
+The omitted window has to lie within the window of a single term of the full model (``a + b[:0.3] @ b[0.2:0.5]`` is an error).
+Open bounds in the omitted window take the bound of the term they are removed from, so ``a + b[0:0.5] @ b[:0.3]`` is equivalent to ``a + b[0:0.5] @ b[0:0.3]``.
+Terms in the reduced model are displayed with open bounds that stand for ``tstart``/``tstop``, e.g.::
+
+    >>> e.show_model_terms('gammatone-8 + word-surprisal @ word-surprisal[0.3:]')
+    x1               x0
+    -------------------------------------
+    gammatone-8      gammatone-8
+    word-surprisal
+                     word-surprisal[:0.3]
+
+Common comparisons
+------------------
 
 Common questions and corresponding comparisons:
 
@@ -268,8 +292,9 @@ Common questions and corresponding comparisons:
      - Comparison
    * - Is there a brain response to ``a`` when controlling for ``b``?
      - ``a + b @ a``
-   * - Is there a brain region that represents ``a`` more than ``b``? E.g., where
-       does categorical representation become more important than acoustic information?
+   * - Is there a brain response to ``a`` within 0.2 s (when controlling for ``b``)?
+     - ``a + b @ a[:0.2]``
+   * - Is there a brain region that represents ``a`` more than ``b``?
      - ``a > b``
 
 
