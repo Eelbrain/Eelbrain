@@ -2905,8 +2905,13 @@ class Pipeline(StateModel):
             fig.plotter.enable_parallel_projection()
         return fig
 
-    def plot_whitened_gfp(self, s_start: str = None, s_stop=None, run: bool = None):
-        """Plot the GFP of the whitened evoked to evaluate the the covariance matrix
+    def plot_whitened_gfp(
+            self,
+            s_start: str | None = None,
+            s_stop: str | None = None,
+            run: bool | None = None,
+    ):
+        """Plot the GFP of the whitened evoked to evaluate the covariance matrix
 
         Parameters
         ----------
@@ -2932,7 +2937,7 @@ class Pipeline(StateModel):
 
         colors = plot.colors_for_oneway(subjects)
         title = f"Whitened Global Field Power ({self.get('cov')})"
-        fig = plot._base.Figure(1, title, h=7, run=run)
+        fig = plot._figure.Figure(1, title, h=7, run=run)
         ax = fig.axes[0]
         for subject, gfp in zip(subjects, gfps):
             ax.plot(whitened_evoked.times, gfp, label=subject, color=colors[subject])

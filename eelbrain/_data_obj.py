@@ -2895,7 +2895,11 @@ class Factor(_Effect):
         values = [v for v in self.cells if v.endswith(substr)]
         return self.isin(values)
 
-    def floodfill(self, regions: np.ndarray | str, empty: str = '') -> NDVar:
+    def floodfill(
+            self,
+            regions: Sequence | Literal['previous'],
+            empty: str = '',
+    ) -> Factor:
         """Fill in empty regions in a Factor from the nearest non-empty value
 
         Parameters
@@ -2918,9 +2922,6 @@ class Factor(_Effect):
         >>> f.floodfill([1, 1, 1, 1, 1, 1, 1, 1])
         Factor(['a', 'a', 'a', 'a', 'a', 'a', 'b', 'b'])
         """
-        if isinstance(regions, str) and regions not in ('previous',):
-            raise ValueError(f"demarcation={regions!r}")
-
         out = self.copy(None)
         if empty not in self._codes:
             return out
@@ -2935,7 +2936,7 @@ class Factor(_Effect):
                 for i in is_empty:
                     x[i] = x[i - 1]
             else:
-                raise RuntimeError(f"demarcation={regions!r}")
+                raise ValueError(f"{regions=}")
         else:
             assert len(regions) == self._n_cases
             i_region_start = 0
