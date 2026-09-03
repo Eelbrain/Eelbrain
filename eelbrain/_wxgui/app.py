@@ -48,10 +48,8 @@ class App(wx.App):
 
             if CONFIG['prompt_toolkit'] == 'eelbrain':
                 import IPython.terminal.pt_inputhooks
-                import IPython.core.pylabtools
 
                 IPython.terminal.pt_inputhooks.register('eelbrain', self.pt_inputhook)
-                IPython.core.pylabtools.backend2gui.clear()  # prevent pylab from initializing event-loop
             shell = IPython.get_ipython()
             if shell is not None:
                 self._pt_thread = self._pt_thread_win if IS_WINDOWS else self._pt_thread_linux
