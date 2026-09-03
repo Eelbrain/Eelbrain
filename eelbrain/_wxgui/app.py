@@ -54,6 +54,11 @@ class App(wx.App):
             if shell is not None:
                 self._pt_thread = self._pt_thread_win if IS_WINDOWS else self._pt_thread_linux
                 try:
+                    # Since IPython 8.18, enable_gui() refuses to replace an active event loop hook. If a hook was installed before the App was created (e.g., by ``%matplotlib`` or ``ipython --matplotlib``), disable it first, so that the GUI gets its own loop.
+                    active = getattr(shell, 'active_eventloop', None)
+                    if active is not None and active != CONFIG['prompt_toolkit']:
+                        getLogger('Eelbrain').info("Replacing active IPython event loop hook %r with %r", active, CONFIG['prompt_toolkit'])
+                        shell.enable_gui(None)
                     shell.enable_gui(CONFIG['prompt_toolkit'])
                 except IPython.core.error.UsageError:
                     print(f"Prompt-toolkit does not seem to be supported by the current IPython shell ({shell.__class__.__name__}); The Eelbrain GUI needs to block Terminal input to work. Use eelbrain.gui.run() to start GUI interaction.")
