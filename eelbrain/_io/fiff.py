@@ -1049,6 +1049,7 @@ def variable_length_mne_epochs(
     if picks is None and raw.info['bads']:
         picks = mne.pick_types(raw.info, meg=True, eeg=True, eog=True, ref_meg=False, exclude=[])
     events_array = _mne_events(events, i_start=i_start, trigger=trigger)
+    events_array[:, 0] = events_array[:, 0] - raw.first_samp
     # Load epochs
     out = []
     for i, (tmin_i, tmax_i) in enumerate(zip(tmin, tmax)):
