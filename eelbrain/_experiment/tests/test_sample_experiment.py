@@ -800,6 +800,14 @@ def test_sample_source(samples_experiment):
     assert exists(e._resolve_derivative('src').manifest_path)
     assert exists(e._resolve_derivative('fwd').manifest_path)
     assert exists(e._resolve_derivative('inv').manifest_path)
+    # Source space files without manifest (e.g. copied with a template brain, or scaled by mne coreg) are regenerated rather than protected
+    subject_src = e._derivatives.resolve('src', state=e.state)
+    fsaverage_src = e._derivatives.resolve('src', state={**e.state, 'mrisubject': 'fsaverage'})
+    for request in (subject_src, fsaverage_src):
+        request.manifest_path.unlink()
+    e.load_src()
+    assert exists(subject_src.manifest_path)
+    assert exists(fsaverage_src.manifest_path)
     # cat is a view option on evoked-stc: subsetting model cells
     ds_all = e.load_evoked(model='side', ndvar=False, inv='free-3-dSPM')
     ds_left = e.load_evoked(model='side', cat=('left',), ndvar=False, inv='free-3-dSPM')

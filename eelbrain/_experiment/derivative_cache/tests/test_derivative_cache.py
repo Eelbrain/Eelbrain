@@ -543,6 +543,7 @@ class FingerprintOverrideDerivative(Derivative[str]):
 class ProtectedDerivative(Derivative[str]):
     name = 'protected'
     key_fields = ('subject',)
+    protected = True
 
     def __init__(self, root: str | Path):
         self.root = Path(root)
@@ -1155,6 +1156,32 @@ def test_protected_artifact_requires_derivative_owned_reindexing():
 
     with pytest.raises(ProtectedArtifactError):
         registry.resolve('protected', state=DEFAULT_STATE, controls={'reindex_anything'}).load()
+
+
+def test_unprotected_external_artifact_is_rebuilt():
+    "A derivative that is not protected replaces an external artifact that lacks a valid manifest"
+    class RegenerableDerivative(ProtectedDerivative):
+        name = 'regenerable'
+        protected = False
+
+        def path(self, ctx: Request) -> Path:
+            return self.root / 'derivatives' / 'mne' / ctx.state['subject'] / 'regenerable.txt'
+
+    pipeline, registry, _, _, _, _, _, _, root = make_registry()
+    registry.register(RegenerableDerivative(root))
+    ctx = registry.resolve('regenerable', state=DEFAULT_STATE)
+    assert not registry.is_cache_artifact(ctx.artifact_path)
+    # A pre-existing file of unknown provenance (no manifest) is rebuilt
+    ctx.artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    ctx.artifact_path.write_text('foreign')
+    assert not ctx.manifest_path.exists()
+    assert ctx.load() == 'alpha'
+    assert ctx.artifact_path.read_text() == 'alpha'
+    assert ctx.manifest_path.exists()
+    # A stale artifact is rebuilt as well
+    pipeline.source_path().write_text('changed')
+    assert registry.resolve('regenerable', state=DEFAULT_STATE).load() == 'changed'
+    assert ctx.artifact_path.read_text() == 'changed'
 
 
 def test_runtime_code_does_not_use_private_get_node():

@@ -192,6 +192,7 @@ class SrcDerivative(ExternalArtifactDerivative[mne.SourceSpaces]):
         if self._source_subject(ctx) is not None:
             ctx.load('source-src')
             ctx.registry.log.info("Scaling %s source space for %s...", src, subject)
+            dst.unlink(missing_ok=True)  # mne.scale_source_space() does not overwrite (e.g. a file previously scaled by mne coreg)
             mne.scale_source_space(subject, f'{{subject}}-{src}-src.fif', subjects_dir=ctx.root / MRI_SDIR, n_jobs=1)
             return
 

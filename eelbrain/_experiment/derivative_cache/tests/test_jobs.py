@@ -70,8 +70,9 @@ class JobDerivative(Derivative[str]):
 
 
 class ProtectedJobDerivative(JobDerivative):
-    "Job derivative whose artifact lives outside cache-dir (user-visible, like the 'protected' node)"
+    "Protected job derivative whose artifact lives outside cache-dir (user-visible, like the 'protected' node)"
     name = 'protected-job'
+    protected = True
 
     def path(self, ctx: Request) -> Path:
         return ctx.registry.deriv_dir / 'mne' / f"{ctx.state['subject']}_protected-job.txt"

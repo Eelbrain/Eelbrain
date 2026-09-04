@@ -1001,6 +1001,16 @@ class Derivative(DependencyNode[T]):
     version
         Derivative-local schema version recorded in manifests. Increment
         when the serialization format changes incompatibly.
+    protected
+        Whether an existing artifact that lacks a valid manifest is protected
+        from being replaced automatically: loading raises
+        :exc:`ProtectedArtifactError` instead of rebuilding, unless the request
+        carries ``ALLOW_PROTECTED_OVERWRITE``. Opt in for derivatives whose
+        artifact may hold work the pipeline cannot reproduce (e.g. manual
+        selections). The default rebuilds, which is appropriate for artifacts
+        that are fully determined by their inputs, including a pre-existing
+        file of unknown provenance such as a source space file copied along
+        with a template brain.
     """
 
     # Whether artifacts of this derivative persist to the cache.
@@ -1009,6 +1019,8 @@ class Derivative(DependencyNode[T]):
     cache_suffix: str | None = None
     # Derivative-local version recorded in manifests for compatibility checks.
     version: int = 1
+    # Whether an existing artifact without a valid manifest is protected from automatic replacement.
+    protected: bool = False
 
     def cache_label(self, ctx: Request) -> str | None:
         """Return an optional readable label for the default cache path.
@@ -1175,8 +1187,13 @@ class ExternalArtifactDerivative(Derivative[T]):
     - a small stamp inside ``cache-dir``, when the real output is multiple
       files, or when a user-provided variant must stay a fingerprinted input
       rather than this node's writable artifact (e.g. parcellation ``*.annot``
-      files, where anchoring on the user files outside ``cache-dir`` would route
-      them through :exc:`pipeline.ProtectedArtifactError`).
+      files, where anchoring on the user files would make them this node's
+      artifact, to be rebuilt whenever they go stale).
+
+    When the anchor is the real file, a pre-existing file of unknown provenance
+    (e.g. copied along with a template brain, or produced by an external tool)
+    is rebuilt like any stale artifact, unless the derivative opts into
+    :attr:`~Derivative.protected`.
 
     The :meth:`save` provided here materializes that stamp when, and only when,
     the anchor lives in ``cache-dir``; when :meth:`path` is the real external
@@ -1707,7 +1724,7 @@ class Request(Generic[T]):
                 derivative.log_cache_hit(self, self.artifact_path)
                 with self._state_check_context():
                     return derivative.load(self, self.artifact_path)
-            if artifact_exists and not self.registry.is_cache_artifact(self.artifact_path) and not self.has_control(ALLOW_PROTECTED_OVERWRITE):
+            if artifact_exists and derivative.protected and not self.has_control(ALLOW_PROTECTED_OVERWRITE):
                 raise ProtectedArtifactError(derivative.name, self.artifact_path)
             if reason is None:
                 derivative.log_cache_build(self, self.artifact_path)
@@ -1742,12 +1759,12 @@ class Request(Generic[T]):
         derivative = self._require_derivative()
         if provenance is not None:
             # A job result reaches here without passing through load_artifact's
-            # protected check, so repeat it: an artifact outside cache-dir is
-            # user-visible and never overwritten without explicit authorization. Only
-            # on this path -- an in-place build was already checked before building,
-            # and for an ExternalArtifactDerivative the file existing here means
-            # build() just wrote it.
-            if self.artifact_path.exists() and not self.registry.is_cache_artifact(self.artifact_path) and not self.has_control(ALLOW_PROTECTED_OVERWRITE):
+            # protected check, so repeat it: a protected artifact is never
+            # overwritten without explicit authorization. Only on this path -- an
+            # in-place build was already checked before building, and for an
+            # ExternalArtifactDerivative the file existing here means build() just
+            # wrote it.
+            if self.artifact_path.exists() and derivative.protected and not self.has_control(ALLOW_PROTECTED_OVERWRITE):
                 raise ProtectedArtifactError(derivative.name, self.artifact_path)
             dependencies = provenance.dependencies
             fingerprint = provenance.fingerprint
