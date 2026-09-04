@@ -10,6 +10,7 @@ from typing import Any
 import mne
 import numpy
 
+from .._data_obj import Datalist
 from .configuration import Configuration
 from .derivative_cache import Dependency, Derivative, Request
 from .preprocessing import Reference, canonical_recording, raw_node_name
@@ -30,14 +31,38 @@ class RawCovariance(Configuration):
 class EpochCovariance(Configuration):
     DICT_ATTRS = ('epoch', 'method', 'keep_sample_mean')
 
-    def __init__(self, epoch: str, method: str = 'empirical', keep_sample_mean: bool = True):
+    def __init__(
+            self,
+            epoch: str,
+            method: str = 'empirical',
+            keep_sample_mean: bool = True,
+    ):
         self.epoch = epoch
         self.method = method
         self.keep_sample_mean = keep_sample_mean
 
-    def make(self, epochs: mne.Epochs, log_path: Path) -> mne.Covariance:
+    def make(self, epochs_list: list[mne.BaseEpochs], log_path: Path) -> mne.Covariance:
+        """Compute the covariance from one or more :class:`mne.Epochs` objects (variable-length epochs arrive as one object per epoch)."""
+        if len(epochs_list) > 1:
+            if not self.keep_sample_mean:
+                raise NotImplementedError(f"cov={self.name!r}: keep_sample_mean=False is not implemented for variable-length epochs (MNE would subtract a separate mean for each epoch)")
+            if self.method == 'best':
+                raise NotImplementedError(f"cov={self.name!r}: method={self.method!r} for variable-length epochs (requires averaging epochs)")
         # MNE expects zero mean data
-        epochs.apply_baseline((None, None))
+        for epochs in epochs_list:
+            epochs.apply_baseline((None, None))
+        info = epochs_list[0].info
+        # We need a single Epochs object
+        if len(epochs_list) == 1:
+            epochs = epochs_list[0]
+        else:
+            for epochs in epochs_list[1:]:
+                if epochs.ch_names != info['ch_names'] or epochs.info['bads'] != info['bads']:
+                    raise ValueError(f"cov={self.name!r}: variable-length epochs must have the same channels and bad channels")
+                if (epochs.info['dev_head_t'] is None) != (info['dev_head_t'] is None) or (info['dev_head_t'] is not None and not numpy.allclose(epochs.info['dev_head_t']['trans'], info['dev_head_t']['trans'])):
+                    raise ValueError(f"cov={self.name!r}: variable-length epochs must have the same head position (dev_head_t)")
+            data = numpy.concatenate([epochs.get_data() for epochs in epochs_list], axis=-1)
+            epochs = mne.EpochsArray(data, info, baseline=None, proj=False, verbose=False)
 
         method = 'empirical' if self.method == 'best' else self.method
         cov = mne.compute_covariance(epochs, self.keep_sample_mean, method=method)
@@ -45,8 +70,6 @@ class EpochCovariance(Configuration):
         if self.method == 'best':
             if mne.pick_types(epochs.info, meg='grad', eeg=True, ref_meg=False).size:
                 raise NotImplementedError(f"cov={self.name!r}: 'best' regularization is not implemented for EEG or gradiometer sensors; use a different setting for cov.")
-            elif epochs is None:
-                raise NotImplementedError(f"cov={self.name!r}: 'best' regularization is not implemented for covariance based on raw data; use a different setting for cov.")
             reg_vs = numpy.arange(0, 0.21, 0.01)
             covs = [mne.cov.regularize(cov, epochs.info, mag=v, rank=None) for v in reg_vs]
 
@@ -113,9 +136,11 @@ class CovDerivative(Derivative[mne.Covariance]):
             cov_path = self.path(ctx)
             cov_path.parent.mkdir(parents=True, exist_ok=True)
             log_path = cov_path.with_suffix('.info.txt')
-            ds = ctx.load('epochs')
-            reference._prepare_source_data(ds['epochs'], montage)
-            return cov.make(ds['epochs'], log_path)
+            epochs_value = ctx.load('epochs')['epochs']
+            epochs_list = list(epochs_value) if isinstance(epochs_value, Datalist) else [epochs_value]
+            for epochs in epochs_list:
+                reference._prepare_source_data(epochs, montage)
+            return cov.make(epochs_list, log_path)
         elif isinstance(cov, RawCovariance):
             raw = ctx.load('raw')
             if reference.add:
