@@ -45,6 +45,7 @@ class App(wx.App):
         # register in IPython
         if CONFIG['prompt_toolkit'] and 'IPython' in sys.modules and packaging.version.parse(sys.modules['IPython'].__version__) >= packaging.version.parse('5'):
             import IPython.core.error
+            import IPython.terminal.interactiveshell
 
             if CONFIG['prompt_toolkit'] == 'eelbrain':
                 import IPython.terminal.pt_inputhooks
@@ -53,19 +54,24 @@ class App(wx.App):
             shell = IPython.get_ipython()
             if shell is not None:
                 self._pt_thread = self._pt_thread_win if IS_WINDOWS else self._pt_thread_linux
-                try:
-                    # Since IPython 8.18, enable_gui() refuses to replace an active event loop hook. If a hook was installed before the App was created (e.g., by ``%matplotlib`` or ``ipython --matplotlib``), disable it first, so that the GUI gets its own loop.
-                    active = getattr(shell, 'active_eventloop', None)
-                    if active is not None and active != CONFIG['prompt_toolkit']:
-                        getLogger('Eelbrain').info("Replacing active IPython event loop hook %r with %r", active, CONFIG['prompt_toolkit'])
-                        shell.enable_gui(None)
-                    shell.enable_gui(CONFIG['prompt_toolkit'])
-                except IPython.core.error.UsageError:
-                    print(f"Prompt-toolkit does not seem to be supported by the current IPython shell ({shell.__class__.__name__}); The Eelbrain GUI needs to block Terminal input to work. Use eelbrain.gui.run() to start GUI interaction.")
+                active = getattr(shell, 'active_eventloop', None)
+                replace = active is not None and active != CONFIG['prompt_toolkit']
+                if replace and not isinstance(shell, IPython.terminal.interactiveshell.TerminalInteractiveShell):
+                    # Only the terminal shell is guaranteed to accept the configured hook (registered above, or built-in 'wx'); other shells (e.g., ipykernel) would accept enable_gui(None) and then reject the hook, leaving no event loop at all
+                    print(f"The IPython shell is already running the {active!r} event loop, which the Eelbrain GUI can not replace in {shell.__class__.__name__}; the GUI needs to block Terminal input to work. Use eelbrain.gui.run() to start GUI interaction.")
                 else:
-                    self.using_prompt_toolkit = True
-                    self._ipython = shell
-                    getLogger('Eelbrain').debug("Initialized prompt_toolkit with %s", CONFIG['prompt_toolkit'])
+                    try:
+                        if replace:
+                            # Since IPython 8.18, the terminal shell refuses to replace an active event loop hook. If a hook was installed before the App was created (e.g., by ``%matplotlib`` or ``ipython --matplotlib``), disable it first, so that the GUI gets its own loop
+                            getLogger('Eelbrain').info("Replacing active IPython event loop hook %r with %r", active, CONFIG['prompt_toolkit'])
+                            shell.enable_gui(None)
+                        shell.enable_gui(CONFIG['prompt_toolkit'])
+                    except IPython.core.error.UsageError:
+                        print(f"Prompt-toolkit does not seem to be supported by the current IPython shell ({shell.__class__.__name__}); The Eelbrain GUI needs to block Terminal input to work. Use eelbrain.gui.run() to start GUI interaction.")
+                    else:
+                        self.using_prompt_toolkit = True
+                        self._ipython = shell
+                        getLogger('Eelbrain').debug("Initialized prompt_toolkit with %s", CONFIG['prompt_toolkit'])
 
         self.SetExitOnFrameDelete(not self.using_prompt_toolkit)
 
