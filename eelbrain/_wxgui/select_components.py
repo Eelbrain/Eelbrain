@@ -22,7 +22,6 @@ from matplotlib.patches import Rectangle
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 import numpy as np
 from scipy import linalg
-import seaborn
 import wx
 import wx.html
 from wx.lib.scrolledpanel import ScrolledPanel
@@ -573,6 +572,8 @@ class SharedToolsMenu:  # Frame mixin
             For the unrelated screen for components loading on a single channel: minimum ratio
             between the largest and the second largest channel weight in a component map.
         """
+        import seaborn  # lazy: pulls in ipywidgets/IPython/statsmodels, ~10% of GUI import time
+
         if smoothness is None:
             smoothness = {ch_type: SMOOTHNESS_DEFAULT[ch_type] for ch_type, _ in self.doc.components_by_type if CH_TYPE_DEFAULT.get(ch_type)}
         nc_before = neighbor_correlation(concatenate(self.doc.epochs_ndvar))
