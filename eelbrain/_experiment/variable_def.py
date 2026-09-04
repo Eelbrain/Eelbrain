@@ -318,9 +318,6 @@ class Variables(Configuration):
                 assert_is_legal_dataset_key(name)
                 if name in RESERVED_VAR_KEYS:
                     raise ConfigurationError(f"Variable {name!r}: reserved name; this column is written by the pipeline itself and a variable of the same name would be overwritten")
-                # variables are applied in definition order, so an input defined here has to come first
-                if late := [v for v in vdef._input_vars() if v not in self.vars and v in arg]:
-                    raise ConfigurationError(f"Variable {name!r}: {vdef} uses {enumeration([repr(v) for v in late])}, which {'are' if len(late) > 1 else 'is'} defined later; variables are applied in the order they are defined, so an input has to be defined first")
                 self.vars[name] = vdef
         self.across_subject_vars = self._find_across_subject_vars()
         self.event_vars = {name: vdef for name, vdef in self.vars.items() if name not in self.across_subject_vars}
@@ -346,8 +343,8 @@ class Variables(Configuration):
         A variable is across-subject when it is one itself, or when *any* of its
         inputs is: a deferred input is only added where subjects are combined,
         and evaluating a variable requires all of its inputs, so it can not be
-        evaluated any earlier. A single forward pass suffices because an input
-        defined here is always defined first (see :meth:`__init__`).
+        evaluated any earlier. A single forward pass mirrors how the variables
+        are applied (see :meth:`resolve`).
         """
         across = set(deferred)
         out = {}
@@ -387,7 +384,7 @@ class Variables(Configuration):
             groups: dict[str, tuple[str, ...]] = None,
             names: set[str] | None = None,
             across_subject_only: bool = False,
-            require_inputs: bool = False,
+            input_events: bool = False,
     ) -> dict[str, Any]:
         """Add variables to ``data``, in place
 
@@ -412,11 +409,13 @@ class Variables(Configuration):
             present, applied per subject: re-deriving them from columns that have
             been averaged would not reproduce them. Not for a test's ``vars``,
             which are applied to the combined data in full.
-        require_inputs
-            ``data`` holds every column that will ever be available, so a
-            variable whose inputs are missing is a definition error rather than
-            one that belongs to a later stage. For the events, where the
-            variables are first applied.
+        input_events
+            ``data`` is the input events, where the variables are first applied.
+            Every column that will ever be available is present, so a variable
+            whose inputs are missing is a definition error rather than one that
+            belongs to a later stage; and the columns are raw input, so a
+            variable may replace one, e.g. to relabel a column read from an
+            events file.
 
         Returns
         -------
@@ -431,11 +430,12 @@ class Variables(Configuration):
         A definition that fails to evaluate is therefore reported as a configuration
         error naming the columns it had to work with.
 
-        A variable never replaces a column that ``data`` already provides, since that
-        column could be the analysis data itself (a TRF metric or kernel, the evoked
-        response) or another variable's. Which names are at stake depends on the data
-        rather than on the definitions, so this is checked here rather than against
-        ``RESERVED_VAR_KEYS``, which only covers the names that are known up front.
+        Variables are applied in definition order, and a name in a definition refers
+        to whatever column the data provides at that point.
+
+        Except for the input events, a variable never replaces a column that ``data``
+        already provides, since that column could be the analysis data itself (a TRF
+        metric or kernel, the evoked response).
         """
         use_vars = self.across_subject_vars if across_subject_only else self.vars
         for name, vdef in use_vars.items():
@@ -443,11 +443,14 @@ class Variables(Configuration):
                 continue
             elif not vdef._applies_to_task(data):
                 continue
-            elif name in data:
+            elif name in data and not input_events:
                 raise ConfigurationError(f"Variable {name!r}: {vdef} would overwrite the {name!r} column that the data already provides; rename the variable")
             elif missing := _find_unresolvable_columns(vdef._input_vars(), data):
-                if require_inputs:
-                    raise ConfigurationError(f"Variable {name!r}: {vdef} is computed from {enumeration([repr(key) for key in missing])}, which {'are' if len(missing) > 1 else 'is'} not among the event columns {enumeration([repr(key) for key in data])}")
+                if input_events:
+                    # A missing input that is itself a variable defined later
+                    unapplied = [key for key in missing if key in self.vars]
+                    detail = f"; {enumeration([repr(key) for key in unapplied])} {'are' if len(unapplied) > 1 else 'is'} defined as a variable but not applied before {name!r} (variables are applied in the order they are defined; an across-subject variable only where subjects are combined; a task-restricted variable only for its task)" if unapplied else ''
+                    raise ConfigurationError(f"Variable {name!r}: {vdef} is computed from {enumeration([repr(key) for key in missing])}, which {'are' if len(missing) > 1 else 'is'} not among the event columns {enumeration([repr(key) for key in data])}{detail}")
                 continue
             try:
                 data[name] = vdef._apply(data, groups)

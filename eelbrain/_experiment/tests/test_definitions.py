@@ -130,7 +130,7 @@ def test_variable_input_columns():
         'logval': EvalVar('numpy.log(absval)'),
         'intval': EvalVar('Var(value.x.astype(int))'),
         'labeled': LabelVar('abs(value)', {1.: 'a'}),
-    }).resolve(events, require_inputs=True)
+    }).resolve(events, input_events=True)
     assert list(events['absval']) == [1., 2.]
     assert list(events['labeled']) == ['a', '']
     assert _find_unresolvable_columns({'abs', 'numpy', 'Var', 'value'}, events) == set()
@@ -140,7 +140,7 @@ def test_variable_input_columns():
     events = Dataset({'type': Factor(['a', 'b'])})
     assert EvalVar("type == 'a'")._input_vars() == {'type'}
     assert _find_unresolvable_columns({"type"}, events) == set()
-    Variables({'is_a': EvalVar("type == 'a'")}).resolve(events, require_inputs=True)
+    Variables({'is_a': EvalVar("type == 'a'")}).resolve(events, input_events=True)
     assert list(events['is_a']) == [True, False]
     # and its values reach a consumer that records them for a cache fingerprint
     assert list(Variables().resolve(events, names={'type'})['type']) == ['a', 'b']
@@ -148,7 +148,7 @@ def test_variable_input_columns():
     # where the column is absent, the context supplies the name instead and the
     # definition fails; that is reported rather than raised from deeper down
     with pytest.raises(ConfigurationError, match='evaluation context'):
-        Variables({'is_a': EvalVar("type == 'a'")}).resolve(Dataset({'value': Var([1, 2])}), require_inputs=True)
+        Variables({'is_a': EvalVar("type == 'a'")}).resolve(Dataset({'value': Var([1, 2])}), input_events=True)
     # a name that neither can supply is still reported as a missing input
     assert _find_unresolvable_columns({'type', 'typo'}, events) == {'typo'}
 
@@ -167,13 +167,6 @@ def test_variable_stages():
     # a variable keyed on the subject in some other way is not across-subject
     variables = Variables({'first': EvalVar("subject == 'R0000'")})
     assert list(variables.event_vars) == ['first']
-
-    # variables are applied in definition order, so an input has to be defined first
-    with pytest.raises(ConfigurationError, match='defined later'):
-        Variables({
-            'is_g0': EvalVar("group == 'g0'"),
-            'group': GroupVar(['g0', 'g1']),
-        })
 
     # variables from an enclosing scope (Test.vars nested in Pipeline.variables)
     test_vars = Variables({'is_g0': EvalVar("group == 'g0'"), 'target': EvalVar("value == 1")})
@@ -240,20 +233,38 @@ def test_resolve_overwrite():
     variables.resolve(Dataset({'subject': Factor(['R0000']), 'r': Var([0.1])}, info={'task': 'a'}), groups)
 
 
-def test_resolve_require_inputs():
+def test_resolve_input_events():
     "Where the events are labeled, a variable that can not be computed is an error, not a later stage"
     variables = Variables({'side': LabelVar('valu', {1: 'left', 2: 'right'})})  # typo in the source column
     events = Dataset({'subject': Factor(['R0000', 'R0000']), 'value': Var([1, 2])})
     with pytest.raises(ConfigurationError, match="'valu'"):
-        variables.resolve(events, require_inputs=True)
+        variables.resolve(events, input_events=True)
     # a variable for a different task is skipped rather than reported, since its inputs may be absent
     variables = Variables({'side': LabelVar('other', {1: 'left'}, task='b')})
-    variables.resolve(Dataset({'value': Var([1, 2])}, info={'task': 'a'}), require_inputs=True)
+    variables.resolve(Dataset({'value': Var([1, 2])}, info={'task': 'a'}), input_events=True)
     # and so are across-subject variables, which belong to a later stage
     variables = Variables({'age': GroupVar(['g0', 'g1']), 'is_g0': EvalVar("age == 'g0'")})
     events = Dataset({'subject': Factor(['R0000', 'R0000'])})
-    variables.resolve(events, require_inputs=True)
+    variables.resolve(events, input_events=True)
     assert list(events) == ['subject']
+    # a variable that names one defined later is an error where the events do not provide that column
+    variables = Variables({'is_g0': EvalVar("age == 'g0'"), 'age': GroupVar(['g0', 'g1'])})
+    events = Dataset({'subject': Factor(['R0000', 'R0000'])})
+    with pytest.raises(ConfigurationError, match="'age' is defined as a variable but not applied before 'is_g0'"):
+        variables.resolve(events, input_events=True)
+    # ... but reads the input column where the events provide it
+    events = Dataset({'subject': Factor(['R0000', 'R0000']), 'age': Factor(['g0', 'g1'])})
+    variables.resolve(events, input_events=True)
+    assert list(events['is_g0']) == [True, False]
+    assert list(events['age']) == ['g0', 'g1']  # the deferred definition is not applied per subject
+    # a variable can be named after an input column to relabel it (housekeeping)
+    variables = Variables({'stimulus': LabelVar('stimulus', {'Clip 0': '0', 'Clip 1': '1'})})
+    events = Dataset({'subject': Factor(['R0000', 'R0000']), 'stimulus': Factor(['Clip 0', 'Clip 1'])})
+    variables.resolve(events, input_events=True)
+    assert list(events['stimulus']) == ['0', '1']
+    # ... but not where the column is not raw input (test_resolve_overwrite)
+    with pytest.raises(ConfigurationError, match='would overwrite'):
+        variables.resolve(Dataset({'stimulus': Factor(['Clip 0', 'Clip 1'])}))
 
 
 def test_resolve_names_scope():

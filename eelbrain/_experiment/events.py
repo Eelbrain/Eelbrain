@@ -318,7 +318,7 @@ class LabeledEventsDerivative(Derivative[Dataset]):
             ds[:, 'task'] = ctx.state['task']
         if self.multi_session:
             ds[:, 'session'] = ctx.state['session']
-        self._variables.resolve(ds, require_inputs=True)
+        self._variables.resolve(ds, input_events=True)
 
         # Apply e.label_events()
         info = ds.info
