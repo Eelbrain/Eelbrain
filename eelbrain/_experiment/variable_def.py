@@ -451,7 +451,7 @@ class Variables(Configuration):
                     unapplied = [key for key in missing if key in self.vars]
                     detail = f"; {enumeration([repr(key) for key in unapplied])} {'are' if len(unapplied) > 1 else 'is'} defined as a variable but not applied before {name!r} (variables are applied in the order they are defined; an across-subject variable only where subjects are combined; a task-restricted variable only for its task)" if unapplied else ''
                     raise ConfigurationError(f"Variable {name!r}: {vdef} is computed from {enumeration([repr(key) for key in missing])}, which {'are' if len(missing) > 1 else 'is'} not among the event columns {enumeration([repr(key) for key in data])}{detail}")
-                continue
+                continue  # skip as resolve runs on data that is not expected to provide every input
             try:
                 data[name] = vdef._apply(data, groups)
             except Exception as error:
