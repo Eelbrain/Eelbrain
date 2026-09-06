@@ -76,6 +76,7 @@ import mne
 import numpy as np
 
 from ..._data_obj import Factor, Interaction, NDVar, Var
+from ..._utils import user_activity
 from ..configuration import Configuration
 from ..logging import CacheInvalidation, diff_invalidation
 from ..pathing import CACHE_DIR, DERIV_DIR, LOG_DIR
@@ -2009,10 +2010,11 @@ class DerivativeRegistry:
             yield
             return
         token = self._validation_cache.set({})
-        try:
-            yield
-        finally:
-            self._validation_cache.reset(token)
+        with user_activity:
+            try:
+                yield
+            finally:
+                self._validation_cache.reset(token)
 
     @staticmethod
     def _validation_key(ctx: Request) -> tuple[str, str]:

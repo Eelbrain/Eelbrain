@@ -27,7 +27,6 @@ from ..._io.fiff import KIT_NEIGHBORS
 from ..._io.txt import read_adjacency
 from ..._ndvar import filter_data
 from ..._text import enumeration
-from ..._utils import user_activity
 from ...mne_fixes._version import MNE_SUPPORTS_HEAD_POS
 from ..derivative_cache import Request
 from ..configuration import Configuration, ConfigurationDict, sequence_arg, typed_arg
@@ -811,32 +810,31 @@ class RawMaxwell(CachedRawPipe):
         else:
             hpi_freqs = ()
 
-        with user_activity:
-            shared_kwargs = {key: value for key, value in self.kwargs.items() if key in self._shared_kwargs}
-            shared_kwargs.update(calibration=calibration, cross_talk=cross_talk, bad_condition=self.bad_condition, coord_frame='head', head_pos=head_pos)
-            # find bad channels
-            detector_kwargs = {key: value for key, value in self.kwargs.items() if key in self._detector_only_kwargs}
-            noisy_chs, flat_chs = mne.preprocessing.find_bad_channels_maxwell(raw, verbose=MNE_VERBOSITY, **shared_kwargs, **detector_kwargs)
-            raw.info['bads'] = sorted(raw.info['bads'] + noisy_chs + flat_chs)
-            # maxwell_filter does not remove the cHPI coil signals from the data; filter_chpi only works for coils driven at known frequencies (Neuromag). filter_chpi also removes line noise, so the empty room (whose header may lack the cHPI frequencies) gets the same line noise treatment as the task recording
-            if len(hpi_freqs):
-                logger.info("Raw %s: removing %s", raw_name, 'line noise' if noise else 'cHPI signals and line noise')
-                mne.chpi.filter_chpi(raw, allow_line_only=noise, verbose=MNE_VERBOSITY)
-            # Maxwell filter
-            kwargs = {key: value for key, value in self.kwargs.items() if key in self._maxwell_filter_only_kwargs}
-            kwargs.update(shared_kwargs)
-            st_duration = kwargs.get('st_duration')
-            if st_duration is not None and kwargs.get('st_overlap', True):
-                # MNE's overlapping tSSS uses a Hann window of round(st_duration * sfreq) samples with 50% overlap, which only satisfies the constant-overlap-add constraint for an even sample count; nudge st_duration up by one sample when it would be odd
-                n_samples = int(round(st_duration * raw.info['sfreq']))
-                if n_samples % 2:
-                    kwargs = {**kwargs, 'st_duration': (n_samples + 1) / raw.info['sfreq']}
-            raw_sss = mne.preprocessing.maxwell_filter(raw, destination=destination, verbose=MNE_VERBOSITY, **kwargs)
-            # drop 'chpi' channels appended by maxwell_filter
-            if head_pos is not None:
-                drop_picks = mne.pick_types(raw_sss.info, meg=False, chpi=True)
-                raw_sss.drop_channels([raw_sss.ch_names[i] for i in drop_picks])
-            return raw_sss
+        shared_kwargs = {key: value for key, value in self.kwargs.items() if key in self._shared_kwargs}
+        shared_kwargs.update(calibration=calibration, cross_talk=cross_talk, bad_condition=self.bad_condition, coord_frame='head', head_pos=head_pos)
+        # find bad channels
+        detector_kwargs = {key: value for key, value in self.kwargs.items() if key in self._detector_only_kwargs}
+        noisy_chs, flat_chs = mne.preprocessing.find_bad_channels_maxwell(raw, verbose=MNE_VERBOSITY, **shared_kwargs, **detector_kwargs)
+        raw.info['bads'] = sorted(raw.info['bads'] + noisy_chs + flat_chs)
+        # maxwell_filter does not remove the cHPI coil signals from the data; filter_chpi only works for coils driven at known frequencies (Neuromag). filter_chpi also removes line noise, so the empty room (whose header may lack the cHPI frequencies) gets the same line noise treatment as the task recording
+        if len(hpi_freqs):
+            logger.info("Raw %s: removing %s", raw_name, 'line noise' if noise else 'cHPI signals and line noise')
+            mne.chpi.filter_chpi(raw, allow_line_only=noise, verbose=MNE_VERBOSITY)
+        # Maxwell filter
+        kwargs = {key: value for key, value in self.kwargs.items() if key in self._maxwell_filter_only_kwargs}
+        kwargs.update(shared_kwargs)
+        st_duration = kwargs.get('st_duration')
+        if st_duration is not None and kwargs.get('st_overlap', True):
+            # MNE's overlapping tSSS uses a Hann window of round(st_duration * sfreq) samples with 50% overlap, which only satisfies the constant-overlap-add constraint for an even sample count; nudge st_duration up by one sample when it would be odd
+            n_samples = int(round(st_duration * raw.info['sfreq']))
+            if n_samples % 2:
+                kwargs = {**kwargs, 'st_duration': (n_samples + 1) / raw.info['sfreq']}
+        raw_sss = mne.preprocessing.maxwell_filter(raw, destination=destination, verbose=MNE_VERBOSITY, **kwargs)
+        # drop 'chpi' channels appended by maxwell_filter
+        if head_pos is not None:
+            drop_picks = mne.pick_types(raw_sss.info, meg=False, chpi=True)
+            raw_sss.drop_channels([raw_sss.ch_names[i] for i in drop_picks])
+        return raw_sss
 
     def _make_info(
             self,
@@ -875,8 +873,7 @@ class RawOversampledTemporalProjection(CachedRawPipe):
     ) -> mne.io.BaseRaw:
         logger = log or LOG
         logger.info("Raw %s: computing oversampled temporal projection for %s", raw_name, path.fpath if not noise else path.find_empty_room().fpath)
-        with user_activity:
-            return mne.preprocessing.oversampled_temporal_projection(raw, self.duration)
+        return mne.preprocessing.oversampled_temporal_projection(raw, self.duration)
 
 
 class Reference(Configuration):

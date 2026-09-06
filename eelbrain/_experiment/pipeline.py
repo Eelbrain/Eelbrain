@@ -30,7 +30,7 @@ from .._ndvar import concatenate, neighbor_correlation
 from .._stats.testnd import NDTest
 from .._text import enumeration
 from .._types import PathArg
-from .._utils import ask, keydefaultdict, log_level, ScreenHandler
+from .._utils import ask, keydefaultdict, log_level, user_activity, ScreenHandler
 from .._utils.mne_utils import is_fake_mri
 from .covariance import CovDerivative, EpochCovariance, RawCovariance
 from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, DerivativeRegistry, JobSpec, ProtectedArtifactError, Request, _format_size
@@ -2585,7 +2585,8 @@ class Pipeline(StateModel):
                 raise RuntimeError(f"{command=}")
             else:
                 raise RuntimeError("User aborted ICA overwrite")
-        spec.save_result(job, job())
+        with user_activity:
+            spec.save_result(job, job())
         return spec.path
 
     def make_epoch_rejection(
