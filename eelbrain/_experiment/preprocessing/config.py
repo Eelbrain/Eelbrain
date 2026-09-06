@@ -17,6 +17,7 @@ import warnings
 from collections.abc import Mapping, Sequence
 
 import mne
+from mne.io.kit.kit import RawKIT
 from mne_bids import BIDSPath
 import numpy
 from scipy import signal
@@ -694,6 +695,39 @@ class RawApplyICA(CachedRawPipe):
         return sorted(bads)
 
 
+def find_chpi(raw: mne.io.BaseRaw) -> str | None:
+    """Determine how a recording tracked head position continuously
+
+    Parameters
+    ----------
+    raw
+        Recording (the data need not be loaded).
+
+    Returns
+    -------
+    method
+        ``'freqs'`` for HPI coils driven at known frequencies (Neuromag, see
+        :func:`mne.chpi.compute_chpi_amplitudes`); ``'ctf'`` for CTF head
+        localization channels (see :func:`mne.chpi.extract_chpi_locs_ctf`);
+        ``'kit'`` for KIT recordings with cHPI in the stim channel (see
+        :func:`mne.chpi.extract_chpi_locs_kit`); ``None`` for recordings without
+        continuous head position information.
+    """
+    hpi_freqs, _, _ = mne.chpi.get_chpi_info(raw.info, on_missing='ignore')
+    if len(hpi_freqs):
+        # Neuromag files define the coil frequencies whether or not the coils were switched on; the stim channel status bits record which coils were active, and a position fit needs at least 3
+        try:
+            n_active = mne.chpi.get_active_chpi(raw, on_missing='ignore')
+        except NotImplementedError:  # not a Neuromag system: trust the header
+            return 'freqs'
+        return 'freqs' if (n_active >= 3).any() else None
+    if len(mne.pick_channels_regexp(raw.ch_names, 'HLC00[123][123].*')) == 9:  # CTF head localization channels (also preserved in FIFF exports), the same pattern extract_chpi_locs_ctf uses
+        return 'ctf'
+    if isinstance(raw, RawKIT) and raw.info['hpi_results'] and 'MISC 064' in raw.ch_names:
+        return 'kit'
+    return None
+
+
 class RawMaxwell(CachedRawPipe):
     """Maxwell filter raw pipe.
 
@@ -709,17 +743,36 @@ class RawMaxwell(CachedRawPipe):
         Cache the resulting raw files (default ``True``).
     head_pos
         Compensate for head movement using continuous HPI (default ``False``).
-        Head positions are estimated with :func:`mne.chpi.compute_head_pos`,
+        Head positions are estimated with :func:`mne.chpi.compute_head_pos`
+        using MNE's default fitting parameters (``gof_limit=0.98``,
+        ``dist_limit=0.005``, ``t_step_min=0.01``, ``t_window='auto'``),
         cached, and can be retrieved with
         :meth:`Pipeline.load_head_position`. This requires ``mne >= 1.13``, and
         has no effect for recordings without continuous HPI or for empty room
-        data. For recordings with HPI coils driven at known frequencies
-        (Neuromag), the cHPI signals and line noise are removed with
-        :func:`mne.chpi.filter_chpi` before Maxwell filtering; the line noise
-        is then also removed from the empty room data, so that the noise
-        covariance matches the data. Incompatible
-        with ``st_only=True``, because movement compensation is applied in the
-        SSS reconstruction that ``st_only`` skips.
+        data. Incompatible with ``st_only=True``, because movement compensation
+        is applied in the SSS reconstruction that ``st_only`` skips.
+    filter_chpi
+        Remove cHPI signals and line noise with :func:`mne.chpi.filter_chpi`
+        before Maxwell filtering (default: same as ``head_pos``). This only
+        applies to recordings with active HPI coils driven at known frequencies
+        (Neuromag); the line noise is then also removed from the corresponding
+        empty room data, so that the noise covariance matches the data. Maxwell
+        filtering does not remove cHPI signals, so ``filter_chpi=True`` is
+        useful even without movement compensation (e.g., with ``st_only=True``)
+        unless the data are low-pass filtered below the coil frequencies later.
+    rotation_velocity_limit
+        Mark segments in which the head rotates faster than this limit (in °/s)
+        with a ``BAD_mov_rotat_vel`` annotation (see
+        :func:`mne.preprocessing.annotate_movement`; requires ``head_pos=True``).
+    translation_velocity_limit
+        Mark segments in which the head moves faster than this limit (in m/s)
+        with a ``BAD_mov_trans_vel`` annotation (requires ``head_pos=True``).
+    mean_distance_limit
+        Mark segments in which any HPI coil is further than this limit (in m)
+        from its position at the compensation target (the canonical head
+        position, or the recording's initial head position) with a
+        ``BAD_mov_dist`` annotation (requires ``head_pos=True`` and the HPI coil
+        locations in the file header).
     ...
         Supported :func:`mne.preprocessing.maxwell_filter` parameters are
         ``origin``, ``int_order``, ``ext_order``, ``regularize``,
@@ -742,8 +795,14 @@ class RawMaxwell(CachedRawPipe):
     """
 
     _bad_chs_affect_cache = True
-    DICT_ATTRS = CachedRawPipe.DICT_ATTRS + ('bad_condition', 'head_pos', 'kwargs')
-    DICT_DEFAULTS = {'head_pos': False}  # omitted from the fingerprint when unset, so caches predating head_pos stay valid
+    DICT_ATTRS = CachedRawPipe.DICT_ATTRS + ('bad_condition', 'head_pos', 'filter_chpi', 'rotation_velocity_limit', 'translation_velocity_limit', 'mean_distance_limit', 'kwargs')
+    DICT_DEFAULTS = {
+        'head_pos': False,
+        'filter_chpi': False,
+        'rotation_velocity_limit': None,
+        'translation_velocity_limit': None,
+        'mean_distance_limit': None,
+    }
     _shared_kwargs = frozenset((
         'origin', 'int_order', 'ext_order', 'regularize', 'ignore_ref',
         'mag_scale', 'skip_by_annotation', 'extended_proj',
@@ -760,6 +819,10 @@ class RawMaxwell(CachedRawPipe):
         bad_condition: str = 'error',
         cache: bool = True,
         head_pos: bool = False,
+        filter_chpi: bool | None = None,
+        rotation_velocity_limit: float | None = None,
+        translation_velocity_limit: float | None = None,
+        mean_distance_limit: float | None = None,
         **kwargs,
     ):
         CachedRawPipe.__init__(self, source, cache)
@@ -773,7 +836,13 @@ class RawMaxwell(CachedRawPipe):
                 raise ConfigurationError("RawMaxwell(head_pos=True, st_only=True): head movement compensation is applied in the SSS reconstruction, which st_only=True skips; the output would not be compensated. Use head_pos=True without st_only.")
             if not MNE_SUPPORTS_HEAD_POS:
                 raise ConfigurationError(f"RawMaxwell(head_pos=True) requires mne >= 1.13 (installed: {mne.__version__})")
+        elif any(limit is not None for limit in (rotation_velocity_limit, translation_velocity_limit, mean_distance_limit)):
+            raise ConfigurationError("RawMaxwell: rotation_velocity_limit, translation_velocity_limit and mean_distance_limit require head_pos=True")
         self.head_pos = head_pos
+        self.filter_chpi = head_pos if filter_chpi is None else filter_chpi
+        self.rotation_velocity_limit = rotation_velocity_limit
+        self.translation_velocity_limit = translation_velocity_limit
+        self.mean_distance_limit = mean_distance_limit
 
     def _make(
             self,
@@ -800,15 +869,10 @@ class RawMaxwell(CachedRawPipe):
         if head_pos is not None and len(head_pos) <= 1:
             logger.warning("Raw %s: head_pos=True, but this recording has no usable continuous HPI (single head position sample); applying Maxwell filter without movement compensation", raw_name)
             head_pos = None
-        # Find cHPI coil signal and line noise frequencies
-        if self.head_pos:
-            info = (reference or raw).info
-            hpi_freqs, _, _ = mne.chpi.get_chpi_info(info, on_missing='ignore')
-            if len(hpi_freqs):
-                if raw.info['line_freq'] is None:
-                    raise DataError(f"{path.fpath}: Power line frequency missing from the header; set PowerLineFrequency in the BIDS MEG sidecar")
-        else:
-            hpi_freqs = ()
+        # maxwell_filter does not remove the cHPI coil signals from the data; filter_chpi only works for coils driven at known frequencies (Neuromag), and is only worthwhile when the coils were active. filter_chpi also removes line noise, so the empty room (whose header may lack the cHPI frequencies) gets the same line noise treatment as the task recording
+        filter_chpi = self.filter_chpi and find_chpi(reference or raw) == 'freqs'
+        if filter_chpi and raw.info['line_freq'] is None:
+            raise DataError(f"{fpath}: Power line frequency missing from the header; set PowerLineFrequency in the BIDS MEG sidecar")
 
         shared_kwargs = {key: value for key, value in self.kwargs.items() if key in self._shared_kwargs}
         shared_kwargs.update(calibration=calibration, cross_talk=cross_talk, bad_condition=self.bad_condition, coord_frame='head', head_pos=head_pos)
@@ -816,8 +880,7 @@ class RawMaxwell(CachedRawPipe):
         detector_kwargs = {key: value for key, value in self.kwargs.items() if key in self._detector_only_kwargs}
         noisy_chs, flat_chs = mne.preprocessing.find_bad_channels_maxwell(raw, verbose=MNE_VERBOSITY, **shared_kwargs, **detector_kwargs)
         raw.info['bads'] = sorted(raw.info['bads'] + noisy_chs + flat_chs)
-        # maxwell_filter does not remove the cHPI coil signals from the data; filter_chpi only works for coils driven at known frequencies (Neuromag). filter_chpi also removes line noise, so the empty room (whose header may lack the cHPI frequencies) gets the same line noise treatment as the task recording
-        if len(hpi_freqs):
+        if filter_chpi:
             logger.info("Raw %s: removing %s", raw_name, 'line noise' if noise else 'cHPI signals and line noise')
             mne.chpi.filter_chpi(raw, allow_line_only=noise, verbose=MNE_VERBOSITY)
         # Maxwell filter
@@ -830,10 +893,16 @@ class RawMaxwell(CachedRawPipe):
             if n_samples % 2:
                 kwargs = {**kwargs, 'st_duration': (n_samples + 1) / raw.info['sfreq']}
         raw_sss = mne.preprocessing.maxwell_filter(raw, destination=destination, verbose=MNE_VERBOSITY, **kwargs)
-        # drop 'chpi' channels appended by maxwell_filter
         if head_pos is not None:
+            # drop 'chpi' channels appended by maxwell_filter
             drop_picks = mne.pick_types(raw_sss.info, meg=False, chpi=True)
             raw_sss.drop_channels([raw_sss.ch_names[i] for i in drop_picks])
+            # mark segments with excessive movement
+            if any(limit is not None for limit in (self.rotation_velocity_limit, self.translation_velocity_limit, self.mean_distance_limit)):
+                logger.info("Raw %s: annotating movement", raw_name)
+                # after maxwell_filter, raw_sss.info['dev_head_t'] is the compensation target (the destination, or the initial head position), so distances are measured from the position the data were compensated to
+                annotations, _ = mne.preprocessing.annotate_movement(raw_sss, head_pos, rotation_velocity_limit=self.rotation_velocity_limit, translation_velocity_limit=self.translation_velocity_limit, mean_distance_limit=self.mean_distance_limit, use_dev_head_trans='info')
+                raw_sss.set_annotations(raw_sss.annotations + annotations)
         return raw_sss
 
     def _make_info(

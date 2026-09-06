@@ -22,7 +22,6 @@ import warnings
 from collections.abc import Sequence
 
 import mne
-from mne.io.kit.kit import RawKIT
 import mne_bids
 from mne_bids import BIDSPath
 import numpy
@@ -39,7 +38,7 @@ from ..exceptions import FileMissingError, ICAMissingError
 from ..pathing import bids_path, DERIV_DIR
 from .job import ICAJob
 from .config import (
-    MNE_VERBOSITY, RawPipeGraph, RawSource, CachedRawPipe, RawICA, RawApplyICA, RawMaxwell,
+    MNE_VERBOSITY, RawPipeGraph, RawSource, CachedRawPipe, RawICA, RawApplyICA, RawMaxwell, find_chpi,
     raw_node_name, raw_bad_channels_input_name, raw_input_name, ica_input_name,
 )
 
@@ -1170,39 +1169,6 @@ class MaxwellCrosstalkInput(Input[Path]):
     def load(self, ctx: Request) -> Path | None:
         path = self.path(ctx)
         return path if path.exists() else None
-
-
-def find_chpi(raw: mne.io.BaseRaw) -> str | None:
-    """Determine how a recording tracked head position continuously
-
-    Parameters
-    ----------
-    raw
-        Recording (the data need not be loaded).
-
-    Returns
-    -------
-    method
-        ``'freqs'`` for HPI coils driven at known frequencies (Neuromag, see
-        :func:`mne.chpi.compute_chpi_amplitudes`); ``'ctf'`` for CTF head
-        localization channels (see :func:`mne.chpi.extract_chpi_locs_ctf`);
-        ``'kit'`` for KIT recordings with cHPI in the stim channel (see
-        :func:`mne.chpi.extract_chpi_locs_kit`); ``None`` for recordings without
-        continuous head position information.
-    """
-    hpi_freqs, _, _ = mne.chpi.get_chpi_info(raw.info, on_missing='ignore')
-    if len(hpi_freqs):
-        # Neuromag files define the coil frequencies whether or not the coils were switched on; the stim channel status bits record which coils were active, and a position fit needs at least 3
-        try:
-            n_active = mne.chpi.get_active_chpi(raw, on_missing='ignore')
-        except NotImplementedError:  # not a Neuromag system: trust the header
-            return 'freqs'
-        return 'freqs' if (n_active >= 3).any() else None
-    if len(mne.pick_channels_regexp(raw.ch_names, 'HLC00[123][123].*')) == 9:  # CTF head localization channels (also preserved in FIFF exports), the same pattern extract_chpi_locs_ctf uses
-        return 'ctf'
-    if isinstance(raw, RawKIT) and raw.info['hpi_results'] and 'MISC 064' in raw.ch_names:
-        return 'kit'
-    return None
 
 
 class RawHeadPositionDerivative(Derivative[numpy.ndarray]):

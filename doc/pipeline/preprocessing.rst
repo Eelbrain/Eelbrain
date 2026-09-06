@@ -62,6 +62,9 @@ Head positions are estimated once per recording with :func:`mne.chpi.compute_hea
 They can be retrieved with :meth:`Pipeline.load_head_position` for inspection with :func:`mne.viz.plot_head_positions`.
 The setting has no effect on recordings without continuous HPI, and empty room data is never affected.
 :meth:`Pipeline.show_head_position_overview` marks recordings with continuous HPI with ``†``.
+For HPI coils driven at known frequencies (Neuromag), the cHPI signals and line noise are removed with :func:`mne.chpi.filter_chpi` before Maxwell filtering.
+This is controlled by the ``filter_chpi`` parameter, which defaults to ``head_pos`` but can also be enabled on its own, e.g. for a ``st_only`` pipeline.
+Segments with excessive movement can be marked with ``BAD_mov_*`` annotations through the ``rotation_velocity_limit``, ``translation_velocity_limit`` and ``mean_distance_limit`` parameters (see :func:`mne.preprocessing.annotate_movement`).
 
 The following is an example for EEG using band-pass filter and ICA::
 
