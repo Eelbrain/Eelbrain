@@ -22,7 +22,7 @@ import numpy
 from scipy import signal
 
 from ..._data_obj import NDVar, Sensor, normalize_sensor_names
-from ..._exceptions import ConfigurationError
+from ..._exceptions import ConfigurationError, DataError
 from ..._io.fiff import KIT_NEIGHBORS
 from ..._io.txt import read_adjacency
 from ..._ndvar import filter_data
@@ -792,7 +792,8 @@ class RawMaxwell(CachedRawPipe):
             reference: mne.io.BaseRaw | None = None,
     ) -> mne.io.BaseRaw:
         logger = log or LOG
-        logger.info("Raw %s: computing Maxwell filter for %s", raw_name, path.fpath if not noise else path.find_empty_room().fpath)
+        fpath = path.find_empty_room().fpath if noise else path.fpath
+        logger.info("Raw %s: computing Maxwell filter for %s", raw_name, fpath)
         if noise:
             # Empty room recordings have no head position. Injecting the task recording's dev_head_t, digitization and bad channels lets maxwell_filter use the same coordinate frame, origin and destination, and keeps the same SSS components (the 'in' regularization selects them from the sensor geometry alone), so that the noise covariance spans the same subspace as the data. The empty room keeps its own annotations.
             raw = mne.preprocessing.maxwell_filter_prepare_emptyroom(raw, raw=reference, bads='union', annotations='keep', verbose=MNE_VERBOSITY)
@@ -816,7 +817,9 @@ class RawMaxwell(CachedRawPipe):
                     info, desc = raw.info, 'cHPI signals and line noise'
                 hpi_freqs, _, _ = mne.chpi.get_chpi_info(info, on_missing='ignore')
                 if len(hpi_freqs):
-                    logger.info("Raw %s: removing %s", raw_name,  desc)
+                    if raw.info['line_freq'] is None:
+                        raise DataError(f"{fpath}: Power line frequency missing from the header; set PowerLineFrequency in the BIDS MEG sidecar")
+                    logger.info("Raw %s: removing %s", raw_name, desc)
                     mne.chpi.filter_chpi(raw, allow_line_only=noise, verbose=MNE_VERBOSITY)
             # Maxwell filter
             kwargs = {key: value for key, value in self.kwargs.items() if key in self._maxwell_filter_only_kwargs}

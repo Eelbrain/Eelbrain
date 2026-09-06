@@ -437,6 +437,7 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         path = resolve_raw_bids_path(ctx, self.extension, require=True)
         raw = self._read_raw(path.fpath, preload=preload)
         self._apply_bids_channels(path, raw)
+        self._apply_bids_line_freq(path, raw)
         if self.pipe.montage:
             raw.set_montage(self.pipe.montage)
         elif path.datatype == 'eeg':
@@ -448,6 +449,18 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         """Find the BIDS channels.tsv sidecar for a recording."""
         channels_path = path.find_matching_sidecar(suffix='channels', extension='.tsv', on_error='ignore')
         return Path(channels_path) if channels_path is not None else None
+
+    @staticmethod
+    def _apply_bids_line_freq(path: BIDSPath, raw: mne.io.BaseRaw) -> None:
+        """Set the power line frequency from the BIDS JSON sidecar when the raw header does not specify it."""
+        if raw.info['line_freq'] is not None:
+            return
+        sidecar_path = path.find_matching_sidecar(suffix=path.datatype, extension='.json', on_error='ignore')
+        if sidecar_path is None:
+            return
+        line_freq = json.loads(Path(sidecar_path).read_text(encoding='utf-8')).get('PowerLineFrequency')
+        if line_freq not in (None, 'n/a'):
+            raw.info['line_freq'] = float(line_freq)
 
     @staticmethod
     def _apply_bids_channels(path: BIDSPath, raw: mne.io.BaseRaw) -> None:

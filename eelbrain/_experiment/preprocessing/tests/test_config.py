@@ -5,7 +5,7 @@ from unittest.mock import patch
 import mne
 import pytest
 
-from eelbrain._exceptions import ConfigurationError
+from eelbrain._exceptions import ConfigurationError, DataError
 from eelbrain._experiment.preprocessing import RawMaxwell, RawSource
 from eelbrain.testing import requires_mne_head_pos, requires_mne_testing_data
 
@@ -100,6 +100,11 @@ def test_maxwell_head_pos_filter_chpi():
         filter_chpi.assert_called_once()
         assert filter_chpi.call_args.args[0] is raw_er
         assert filter_chpi.call_args.kwargs['allow_line_only'] is True
+
+        # line noise removal needs the power line frequency
+        raw_er.info['line_freq'] = None
+        with pytest.raises(DataError, match='PowerLineFrequency'):
+            pipe._make(raw_er, path=path, noise=True, reference=raw)
 
         # recordings without coil frequencies (CTF, KIT) cannot use filter_chpi, and neither can their empty room
         filter_chpi.reset_mock()

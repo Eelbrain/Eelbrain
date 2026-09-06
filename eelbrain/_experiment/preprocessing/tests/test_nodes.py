@@ -44,6 +44,20 @@ def test_read_raw_applies_bids_channels(tmp_path):
     assert raw_read.get_channel_types(picks=['EOG 001']) == ['eog']
     assert raw_read.info['bads'] == []
 
+    # the power line frequency comes from the JSON sidecar when the header lacks it
+    assert raw_read.info['line_freq'] is None
+    sidecar_path = bids_path.copy().update(extension='.json').fpath
+    sidecar_path.write_text('{"PowerLineFrequency": "n/a"}')
+    RawSourceInput._apply_bids_line_freq(bids_path, raw_read)
+    assert raw_read.info['line_freq'] is None
+    sidecar_path.write_text('{"PowerLineFrequency": 50}')
+    RawSourceInput._apply_bids_line_freq(bids_path, raw_read)
+    assert raw_read.info['line_freq'] == 50.
+    # the header takes precedence
+    raw_read.info['line_freq'] = 60.
+    RawSourceInput._apply_bids_line_freq(bids_path, raw_read)
+    assert raw_read.info['line_freq'] == 60.
+
 
 def generate_head_positions(n: int) -> np.ndarray:
     """Synthetic (n, 10) head positions in MaxFilter format"""
