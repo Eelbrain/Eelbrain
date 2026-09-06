@@ -735,7 +735,7 @@ class RawMaxwell(CachedRawPipe):
 
     Notes
     -----
-    For empty room recordings, there is no ``dev_head_t`` information, ``coord_frame = 'meg'`` will be used automatically.
+    Empty room recordings are prepared with :func:`mne.preprocessing.maxwell_filter_prepare_emptyroom` before filtering: the device-to-head transform, digitization and bad channels of the task recording are injected, so that the empty room is filtered in the same coordinate frame, with the same origin and destination, and retains the same SSS components as the task recording (the ``'in'`` regularization selects components from the sensor geometry alone). The noise covariance therefore spans the same subspace as the data. Bad channels are the union of the task recording's and the empty room's own.
     Flat channels are automatically marked as bad by :func:`mne.preprocessing.find_bad_channels_maxwell`.
     :meth:`Pipeline.show_head_position_overview` marks recordings with continuous HPI with ``†``; those are the recordings that benefit from ``head_pos=True``.
     """
@@ -787,23 +787,21 @@ class RawMaxwell(CachedRawPipe):
             cross_talk: Path | None = None,
             destination: mne.transforms.Transform | None = None,
             head_pos: numpy.ndarray | None = None,
+            reference: mne.io.BaseRaw | None = None,
     ) -> mne.io.BaseRaw:
         logger = log or LOG
         logger.info("Raw %s: computing Maxwell filter for %s", raw_name, path.fpath if not noise else path.find_empty_room().fpath)
         if noise:
-            coord_frame = 'meg'
-            destination = None
-        else:
-            coord_frame = 'head'
-        # A single sample is the static dev_head_t, which is what maxwell_filter assumes anyways; passing it would only add the CHPI position channels. Head positions require coord_frame='head', so they are never used for empty room data.
-        if head_pos is not None and (len(head_pos) <= 1 or noise):
-            if not noise:
-                logger.warning("Raw %s: head_pos=True, but this recording has no usable continuous HPI (single head position sample); applying Maxwell filter without movement compensation", raw_name)
+            # Empty room recordings have no head position. Injecting the task recording's dev_head_t, digitization and bad channels lets maxwell_filter use the same coordinate frame, origin and destination, and keeps the same SSS components (the 'in' regularization selects them from the sensor geometry alone), so that the noise covariance spans the same subspace as the data. The empty room keeps its own annotations.
+            raw = mne.preprocessing.maxwell_filter_prepare_emptyroom(raw, raw=reference, bads='union', annotations='keep', verbose=MNE_VERBOSITY)
+        # A single sample is the static dev_head_t, which is what maxwell_filter assumes anyways; passing it would only add the CHPI position channels
+        if head_pos is not None and len(head_pos) <= 1:
+            logger.warning("Raw %s: head_pos=True, but this recording has no usable continuous HPI (single head position sample); applying Maxwell filter without movement compensation", raw_name)
             head_pos = None
 
         with user_activity:
             shared_kwargs = {key: value for key, value in self.kwargs.items() if key in self._shared_kwargs}
-            shared_kwargs.update(calibration=calibration, cross_talk=cross_talk, bad_condition=self.bad_condition, coord_frame=coord_frame, head_pos=head_pos)
+            shared_kwargs.update(calibration=calibration, cross_talk=cross_talk, bad_condition=self.bad_condition, coord_frame='head', head_pos=head_pos)
             # find bad channels
             detector_kwargs = {key: value for key, value in self.kwargs.items() if key in self._detector_only_kwargs}
             noisy_chs, flat_chs = mne.preprocessing.find_bad_channels_maxwell(raw, verbose=MNE_VERBOSITY, **shared_kwargs, **detector_kwargs)

@@ -1038,7 +1038,7 @@ class Pipeline(StateModel):
         self.set(**state)
         return self._load_derivative('raw-head-position')
 
-    def load_cov(self, **kwargs):
+    def load_cov(self, **state) -> mne.Covariance:
         """Load the covariance matrix
 
         Parameters
@@ -1046,7 +1046,8 @@ class Pipeline(StateModel):
         ...
             State parameters.
         """
-        return self._load_derivative('cov', **kwargs)
+        self.set(**state)
+        return self._load_derivative('cov')
 
     def _resolve_data(
             self,

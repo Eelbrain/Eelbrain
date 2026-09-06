@@ -999,12 +999,18 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
             deps.append(Dependency('maxwell-calibration'))
             deps.append(Dependency('maxwell-crosstalk'))
             deps.append(Dependency('canonical-head-position'))
-            if self.pipe.head_pos and not ctx.options['noise']:
+            if ctx.options['noise']:
+                # the task recording whose head frame, digitization and bad channels the empty room takes on
+                deps.append(Dependency(source_node, options={'noise': False, 'preload': False}, label='reference'))
+            elif self.pipe.head_pos:
                 deps.append(Dependency('raw-head-position'))
         return tuple(deps)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {'pipe': self.pipe, 'raw': self.raw_name}
+        fingerprint = {'pipe': self.pipe, 'raw': self.raw_name}
+        if ctx.options['noise'] and isinstance(self.pipe, RawMaxwell):
+            fingerprint['empty_room'] = 'head'  # filtered in the task recording's head frame (previously the device frame)
+        return fingerprint
 
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
         if view == 'bads':
@@ -1043,8 +1049,11 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
             calibration = ctx.load('maxwell-calibration')
             cross_talk = ctx.load('maxwell-crosstalk')
             destination = ctx.load('canonical-head-position')
-            head_pos = ctx.load('raw-head-position') if self.pipe.head_pos and not ctx.options['noise'] else None
-            return self.pipe._make(raw, path=path, noise=ctx.options['noise'], raw_name=self.raw_name, log=ctx.registry.log, source_pipe=source_pipe, calibration=calibration, cross_talk=cross_talk, destination=destination, head_pos=head_pos)
+            if ctx.options['noise']:
+                reference, head_pos = ctx.load('reference'), None
+            else:
+                reference, head_pos = None, ctx.load('raw-head-position') if self.pipe.head_pos else None
+            return self.pipe._make(raw, path=path, noise=ctx.options['noise'], raw_name=self.raw_name, log=ctx.registry.log, source_pipe=source_pipe, calibration=calibration, cross_talk=cross_talk, destination=destination, head_pos=head_pos, reference=reference)
         return self.pipe._make(raw, path=path, noise=ctx.options['noise'], raw_name=self.raw_name, log=ctx.registry.log, source_pipe=source_pipe)
 
     def load(self, ctx: Request, path: Path) -> mne.io.BaseRaw:

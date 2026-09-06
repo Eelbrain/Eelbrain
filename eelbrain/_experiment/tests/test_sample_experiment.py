@@ -15,7 +15,7 @@ from warnings import catch_warnings, filterwarnings
 
 import mne
 import numpy as np
-from numpy.testing import assert_almost_equal, assert_array_equal
+from numpy.testing import assert_allclose, assert_almost_equal, assert_array_equal
 
 from eelbrain import *
 from eelbrain.pipeline import *
@@ -1141,7 +1141,7 @@ def test_ica_all_tasks_after_maxwell(samples_experiment):
 @requires_mne_sample_data
 @requires_mne_head_pos
 def test_head_pos_without_chpi(samples_experiment):
-    "RawMaxwell(head_pos=True) is a no-op for recordings without continuous HPI"
+    "RawMaxwell(head_pos=True) is a no-op for recordings without continuous HPI; the empty room follows the task recording"
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
@@ -1175,6 +1175,17 @@ def test_head_pos_without_chpi(samples_experiment):
     # head_pos still separates the two pipes in the cache
     manifests = {raw: e._derivatives.resolve(raw_node_name(raw), state={**e.state, 'raw': raw}, options={'noise': False}).manifest_path for raw in ('sss', 'sss_hp')}
     assert manifests['sss_hp'] != manifests['sss']
+
+    # the empty room is filtered in the task recording's head frame and retains the same SSS components
+    e.set(raw='sss')
+    raw_noise = e.load_raw(noise=True)
+    assert_allclose(raw_noise.info['dev_head_t']['trans'], raw.info['dev_head_t']['trans'])
+    sss_info, sss_info_noise = (r.info['proc_history'][-1]['max_info']['sss_info'] for r in (raw, raw_noise))
+    assert_array_equal(sss_info_noise['components'], sss_info['components'])
+    assert sss_info_noise['nfree'] == sss_info['nfree']
+    # so the empty room covariance has exactly the rank of the task data, and MNE's header comparison holds
+    cov = e.load_cov(cov='emptyroom')
+    assert mne.compute_rank(cov, info=raw.info) == mne.compute_rank(cov, rank='info', info=raw.info)
 
 
 @requires_mne_sample_data
