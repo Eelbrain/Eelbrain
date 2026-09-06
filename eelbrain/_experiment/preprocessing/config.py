@@ -746,6 +746,7 @@ class RawMaxwell(CachedRawPipe):
         Head positions are estimated with :func:`mne.chpi.compute_head_pos`
         using MNE's default fitting parameters (``gof_limit=0.98``,
         ``dist_limit=0.005``, ``t_step_min=0.01``, ``t_window='auto'``),
+        excluding the bad channels from the source recording's channels file,
         cached, and can be retrieved with
         :meth:`Pipeline.load_head_position`. This requires ``mne >= 1.13``, and
         has no effect for recordings without continuous HPI or for empty room

@@ -1163,7 +1163,11 @@ def test_head_pos_without_chpi(samples_experiment):
     pos_request = e._derivatives.resolve('raw-head-position', state=e.state)
     assert pos_request.artifact_path.suffix == '.pos'
     assert pos_request.artifact_path.exists()
-    assert pos_request.manifest_path.exists()
+    with open(pos_request.manifest_path) as fid:
+        pos_manifest = json.load(fid)
+    # the coil fits exclude the bad channels, so the head positions depend on the raw source node that applies them
+    assert list(pos_manifest['dependencies']) == [raw_node_name('raw')]
+    assert 'bads' in pos_manifest['dependencies'][raw_node_name('raw')]['dependencies']['raw-input-bads@raw']['fingerprint']
 
     # with a single position sample there is nothing to compensate, so the output is unchanged
     raw_hp = e.load_raw(raw='sss_hp', preload=True)
@@ -1208,7 +1212,7 @@ def test_head_pos_movement_compensation(samples_experiment):
 
     def mixed_head_positions(self, ctx):
         "Tracked positions for run 1, only the static transform for run 2"
-        raw = ctx.load(self._raw_input_name)
+        raw = ctx.load(self._source_name)
         trans = raw.info['dev_head_t']['trans']
         quat = mne.transforms.rot_to_quat(trans[:3, :3])
         sample = [*quat, *trans[:3, 3], .99, .001, .01]

@@ -72,7 +72,7 @@ def generate_head_positions(n: int) -> np.ndarray:
 @pytest.mark.parametrize('n', [1, 5])
 def test_head_position_roundtrip(tmp_path, n):
     """RawHeadPositionDerivative save/load preserves the MaxFilter (n, 10) format"""
-    node = RawHeadPositionDerivative('raw-input@raw')
+    node = RawHeadPositionDerivative('raw@raw')
     path = tmp_path / 'test.pos'
     positions = generate_head_positions(n)
     node.save(None, path, positions)
@@ -85,7 +85,7 @@ def test_head_position_roundtrip(tmp_path, n):
 
 def test_head_position_none_roundtrip(tmp_path):
     """RawHeadPositionDerivative encodes None as an empty file"""
-    node = RawHeadPositionDerivative('raw-input@raw')
+    node = RawHeadPositionDerivative('raw@raw')
     path = tmp_path / 'test.pos'
     node.save(None, path, None)
     assert path.stat().st_size == 0

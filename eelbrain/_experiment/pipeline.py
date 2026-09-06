@@ -531,8 +531,8 @@ class Pipeline(StateModel):
                 self._derivatives.register(raw_input)
                 self._derivatives.register(RawBadChannelsInput(raw_input))
                 self._derivatives.register(RawSourceDerivative(raw_name, pipe, self._raw_extension))
-                self._derivatives.register(RawHeadPositionDerivative(raw_input.name))
-                self._derivatives.register(CanonicalHeadPositionDerivative(raw_input.name, self._recordings, self._tasks, self._runs))
+                self._derivatives.register(RawHeadPositionDerivative(raw_node_name(raw_name)))
+                self._derivatives.register(CanonicalHeadPositionDerivative(raw_node_name(raw_name), self._recordings, self._tasks, self._runs))
             elif isinstance(pipe, CachedRawPipe):
                 self._derivatives.register(RawDerivative(raw_name, pipe, self._raw, self._raw_extension))
                 if isinstance(pipe, RawICA):

@@ -1179,20 +1179,27 @@ class RawHeadPositionDerivative(Derivative[numpy.ndarray]):
     :func:`mne.chpi.compute_head_pos`).
     Otherwise, the static ``dev_head_t`` transform as a single sample.
     ``None`` when the file has no head position information at all.
+
+    Parameters
+    ----------
+    source_name
+        Name of the raw source node (see :class:`RawSourceDerivative`). The
+        bad channels it applies are excluded from the cHPI coil fits, so a
+        noisy or flat channel does not degrade the position estimates.
     """
 
     name = 'raw-head-position'
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run')
     cache_suffix = '.pos'
 
-    def __init__(self, raw_input_name: str):
-        self._raw_input_name = raw_input_name
+    def __init__(self, source_name: str):
+        self._source_name = source_name
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        return (Dependency(self._raw_input_name),)
+        return (Dependency(self._source_name),)
 
     def build(self, ctx: Request) -> numpy.ndarray | None:
-        raw = ctx.load(self._raw_input_name)
+        raw = ctx.load(self._source_name)
         info = raw.info
         method = find_chpi(raw)
         chpi_locs = None
@@ -1251,9 +1258,9 @@ class CanonicalHeadPositionDerivative(Derivative):
 
     Parameters
     ----------
-    raw_input_name
-        Name of the raw input node providing the recordings (for their duration
-        and ``BAD`` annotations).
+    source_name
+        Name of the raw source node providing the recordings (for their
+        duration and ``BAD`` annotations).
     recordings
         Existing ``(subject, session, task, acquisition, run)`` recordings, used for
         existence checks in :meth:`dependencies`.
@@ -1270,12 +1277,12 @@ class CanonicalHeadPositionDerivative(Derivative):
 
     def __init__(
             self,
-            raw_input_name: str,
+            source_name: str,
             recordings: frozenset[tuple[str, str, str, str, str]],
             tasks: Sequence[str],
             runs: Sequence[str],
     ):
-        self._raw_input_name = raw_input_name
+        self._source_name = source_name
         self._recordings = recordings
         self._tasks = tasks
         self._runs = runs or ['']
@@ -1290,7 +1297,7 @@ class CanonicalHeadPositionDerivative(Derivative):
                 label = f'task-{task}_run-{run}' if run else f'task-{task}'
                 state = {'task': task, 'run': run}
                 deps.append(Dependency(name='raw-head-position', label=label, state=state))
-                deps.append(Dependency(name=self._raw_input_name, label=f'raw:{label}', state=state))
+                deps.append(Dependency(name=self._source_name, label=f'raw:{label}', state=state))
         return tuple(deps)
 
     def build(self, ctx: Request) -> mne.transforms.Transform | None:
