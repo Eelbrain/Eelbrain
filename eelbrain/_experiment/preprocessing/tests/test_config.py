@@ -77,10 +77,13 @@ def test_maxwell_head_pos_semantic_dict():
         RawMaxwell('raw', st_duration=10., h_freq=None, filter_chpi=True)
 
 
+@requires_mne_head_pos
 def test_maxwell_head_pos_st_only():
-    "Movement compensation happens in the SSS reconstruction, which st_only skips"
-    with pytest.raises(ConfigurationError, match='st_only'):
-        RawMaxwell('raw', st_duration=10., st_only=True, head_pos=True)
+    "Movement compensation happens in the SSS reconstruction, which st_only skips; the head positions still shape the temporal projection basis"
+    with pytest.warns(UserWarning, match='st_only'):
+        pipe = RawMaxwell('raw', st_duration=10., st_only=True, head_pos=True)
+    assert pipe.head_pos is True
+    assert pipe.kwargs['st_only'] is True
 
 
 @requires_mne_head_pos

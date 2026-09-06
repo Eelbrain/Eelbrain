@@ -1150,7 +1150,7 @@ def test_head_pos_without_chpi(samples_experiment):
     class Experiment(SampleExperiment):
         raw = {
             **SampleExperiment.raw,
-            # full SSS: head_pos is incompatible with the st_only=True default pipe
+            # full SSS: with the st_only=True default pipe, head_pos would not compensate the output
             'sss': RawMaxwell('raw', ignore_ref=True),
             'sss_hp': RawMaxwell('raw', ignore_ref=True, head_pos=True),
         }

@@ -774,8 +774,9 @@ class RawMaxwell(CachedRawPipe):
         cached, and can be retrieved with
         :meth:`Pipeline.load_head_position`. This requires ``mne >= 1.13``, and
         has no effect for recordings without continuous HPI or for empty room
-        data. Incompatible with ``st_only=True``, because movement compensation
-        is applied in the SSS reconstruction that ``st_only`` skips.
+        data. With ``st_only=True``, the head positions only enter the temporal
+        projection basis (see :func:`mne.preprocessing.maxwell_filter`) and
+        the output is not compensated; a warning is issued.
     filter_chpi
         Remove cHPI signals and line noise with :func:`mne.chpi.filter_chpi`
         before Maxwell filtering (default: same as ``head_pos``). This only
@@ -860,7 +861,7 @@ class RawMaxwell(CachedRawPipe):
         self.bad_condition = bad_condition
         if head_pos:
             if kwargs.get('st_only'):
-                raise ConfigurationError("RawMaxwell(head_pos=True, st_only=True): head movement compensation is applied in the SSS reconstruction, which st_only=True skips; the output would not be compensated. Use head_pos=True without st_only.")
+                warnings.warn("RawMaxwell(head_pos=True, st_only=True): head movement compensation is applied in the SSS reconstruction, which st_only=True skips; the head positions only enter the temporal projection basis and the output is not compensated", stacklevel=2)
             if not MNE_SUPPORTS_HEAD_POS:
                 raise ConfigurationError(f"RawMaxwell(head_pos=True) requires mne >= 1.13 (installed: {mne.__version__})")
         elif any(limit is not None for limit in (rotation_velocity_limit, translation_velocity_limit, mean_distance_limit)):
@@ -931,7 +932,7 @@ class RawMaxwell(CachedRawPipe):
             # mark segments with excessive movement
             if any(limit is not None for limit in (self.rotation_velocity_limit, self.translation_velocity_limit, self.mean_distance_limit)):
                 logger.info("Raw %s: annotating movement", raw_name)
-                # after maxwell_filter, raw_sss.info['dev_head_t'] is the compensation target (the destination, or the initial head position), so distances are measured from the position the data were compensated to
+                # after maxwell_filter, raw_sss.info['dev_head_t'] is the compensation target (the destination, or the initial head position), so distances are measured from the position the data were compensated to (with st_only, from the initial head position)
                 annotations, _ = mne.preprocessing.annotate_movement(raw_sss, head_pos, rotation_velocity_limit=self.rotation_velocity_limit, translation_velocity_limit=self.translation_velocity_limit, mean_distance_limit=self.mean_distance_limit, use_dev_head_trans='info')
                 raw_sss.set_annotations(raw_sss.annotations + annotations)
         return raw_sss
