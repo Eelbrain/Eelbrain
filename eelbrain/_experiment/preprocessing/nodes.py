@@ -1214,6 +1214,9 @@ class RawHeadPositionDerivative(Derivative[numpy.ndarray]):
             except RuntimeError:  # the stim channel exists but does not carry cHPI data
                 ctx.registry.log.warning("Raw head position: no cHPI data in the KIT stim channel for %s; using the static dev_head_t", ctx.state.get('subject'))
         if chpi_locs is not None:
+            # The weighted fit uses all coils, weighted by goodness of fit and inter-coil distance error, which avoids jumps when coils switch in and out of the best 3-coil subset that the unweighted fit selects. It is only enabled for coils driven at known frequencies, where compute_chpi_locs provides the goodness of fit. CTF has exactly 3 coils, so there is no subset to select. KIT has 5, and extract_chpi_locs_kit reads a goodness of fit from the stim channel, but the weighted fit has not been verified on KIT data yet.
+            if method == 'kit':
+                ctx.registry.log.info("Raw head position: using the unweighted 3-coil fit for KIT recording %s (the weighted fit has not been verified for KIT cHPI data); expect jumps when coils switch in and out of the fit", ctx.state.get('subject'))
             head_pos = mne.chpi.compute_head_pos(info, chpi_locs, weighted=method == 'freqs')
             if len(head_pos):
                 return head_pos
