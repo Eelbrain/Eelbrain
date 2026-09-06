@@ -756,6 +756,15 @@ class RawMaxwell(CachedRawPipe):
         Set to ``'warning'`` to proceed anyway.
     cache
         Cache the resulting raw files (default ``True``).
+    h_freq
+        Low-pass cutoff (in Hz) applied to a copy of the data before automatic
+        bad channel detection with
+        :func:`mne.preprocessing.find_bad_channels_maxwell` (default 40).
+        Bad channels are detected before cHPI signals are removed, so this
+        filter is what keeps cHPI signals and line noise out of the detection.
+        ``None`` (no filter) is only appropriate when the source data are
+        already free of both, and is rejected together with ``head_pos`` or
+        ``filter_chpi``.
     head_pos
         Compensate for head movement using continuous HPI (default ``False``).
         Head positions are estimated with :func:`mne.chpi.compute_head_pos`
@@ -794,8 +803,8 @@ class RawMaxwell(CachedRawPipe):
         ``origin``, ``int_order``, ``ext_order``, ``regularize``,
         ``ignore_ref``, ``mag_scale``, ``skip_by_annotation``,
         ``extended_proj``, ``st_duration``, ``st_correlation``, ``st_only``,
-        ``st_fixed``, and ``st_overlap``. The ``limit``, ``duration``,
-        ``min_count``, and ``h_freq`` parameters configure
+        ``st_fixed``, and ``st_overlap``. The ``limit``, ``duration``, and
+        ``min_count`` parameters configure
         :func:`mne.preprocessing.find_bad_channels_maxwell`.
 
     See Also
@@ -811,8 +820,9 @@ class RawMaxwell(CachedRawPipe):
     """
 
     _bad_chs_affect_cache = True
-    DICT_ATTRS = CachedRawPipe.DICT_ATTRS + ('bad_condition', 'head_pos', 'filter_chpi', 'rotation_velocity_limit', 'translation_velocity_limit', 'mean_distance_limit', 'kwargs')
+    DICT_ATTRS = CachedRawPipe.DICT_ATTRS + ('bad_condition', 'h_freq', 'head_pos', 'filter_chpi', 'rotation_velocity_limit', 'translation_velocity_limit', 'mean_distance_limit', 'kwargs')
     DICT_DEFAULTS = {
+        'h_freq': 40.,
         'head_pos': False,
         'filter_chpi': False,
         'rotation_velocity_limit': None,
@@ -823,7 +833,7 @@ class RawMaxwell(CachedRawPipe):
         'origin', 'int_order', 'ext_order', 'regularize', 'ignore_ref',
         'mag_scale', 'skip_by_annotation', 'extended_proj',
     ))
-    _detector_only_kwargs = frozenset(('limit', 'duration', 'min_count', 'h_freq'))
+    _detector_only_kwargs = frozenset(('limit', 'duration', 'min_count'))
     _maxwell_filter_only_kwargs = frozenset((
         'st_duration', 'st_correlation', 'st_fixed', 'st_only', 'st_overlap',
     ))
@@ -834,6 +844,7 @@ class RawMaxwell(CachedRawPipe):
         source: str,
         bad_condition: str = 'error',
         cache: bool = True,
+        h_freq: float | None = 40.,
         head_pos: bool = False,
         filter_chpi: bool | None = None,
         rotation_velocity_limit: float | None = None,
@@ -854,8 +865,12 @@ class RawMaxwell(CachedRawPipe):
                 raise ConfigurationError(f"RawMaxwell(head_pos=True) requires mne >= 1.13 (installed: {mne.__version__})")
         elif any(limit is not None for limit in (rotation_velocity_limit, translation_velocity_limit, mean_distance_limit)):
             raise ConfigurationError("RawMaxwell: rotation_velocity_limit, translation_velocity_limit and mean_distance_limit require head_pos=True")
+        filter_chpi = head_pos if filter_chpi is None else filter_chpi
+        if h_freq is None and (head_pos or filter_chpi):
+            raise ConfigurationError("RawMaxwell(h_freq=None): bad channels are detected before the cHPI signals are removed, so the low-pass filter is required with head_pos=True or filter_chpi=True")
+        self.h_freq = h_freq
         self.head_pos = head_pos
-        self.filter_chpi = head_pos if filter_chpi is None else filter_chpi
+        self.filter_chpi = filter_chpi
         self.rotation_velocity_limit = rotation_velocity_limit
         self.translation_velocity_limit = translation_velocity_limit
         self.mean_distance_limit = mean_distance_limit
@@ -894,7 +909,7 @@ class RawMaxwell(CachedRawPipe):
         shared_kwargs.update(calibration=calibration, cross_talk=cross_talk, bad_condition=self.bad_condition, coord_frame='head', head_pos=head_pos)
         # find bad channels
         detector_kwargs = {key: value for key, value in self.kwargs.items() if key in self._detector_only_kwargs}
-        noisy_chs, flat_chs = mne.preprocessing.find_bad_channels_maxwell(raw, verbose=MNE_VERBOSITY, **shared_kwargs, **detector_kwargs)
+        noisy_chs, flat_chs = mne.preprocessing.find_bad_channels_maxwell(raw, h_freq=self.h_freq, verbose=MNE_VERBOSITY, **shared_kwargs, **detector_kwargs)
         raw.info['bads'] = sorted(raw.info['bads'] + noisy_chs + flat_chs)
         if filter_chpi:
             logger.info("Raw %s: removing %s", raw_name, 'line noise' if noise else 'cHPI signals and line noise')

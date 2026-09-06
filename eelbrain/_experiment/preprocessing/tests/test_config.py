@@ -1,6 +1,6 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import mne
 import pytest
@@ -65,6 +65,16 @@ def test_maxwell_head_pos_semantic_dict():
     # filter_chpi follows head_pos
     assert movecomp.filter_chpi is True
     assert RawMaxwell('raw', st_duration=10., filter_chpi=True)._as_dict() == {**maxwell._as_dict(), 'filter_chpi': True}
+    # h_freq at its default is omitted, too; it configures bad channel detection, not maxwell_filter
+    assert maxwell.h_freq == 40.
+    assert RawMaxwell('raw', st_duration=10., h_freq=40)._as_dict() == maxwell._as_dict()
+    assert RawMaxwell('raw', st_duration=10., h_freq=30.)._as_dict() == {**maxwell._as_dict(), 'h_freq': 30.}
+    assert RawMaxwell('raw', st_duration=10., h_freq=None)._as_dict() == {**maxwell._as_dict(), 'h_freq': None}
+    # without the low-pass filter, cHPI signals would enter the bad channel detection
+    with pytest.raises(ConfigurationError, match='h_freq=None'):
+        RawMaxwell('raw', st_duration=10., h_freq=None, head_pos=True)
+    with pytest.raises(ConfigurationError, match='h_freq=None'):
+        RawMaxwell('raw', st_duration=10., h_freq=None, filter_chpi=True)
 
 
 def test_maxwell_head_pos_st_only():
@@ -82,12 +92,14 @@ def test_maxwell_head_pos_filter_chpi():
     head_pos = mne.chpi.read_head_pos(sss_dir / 'test_move_anon_raw.pos')
     path = SimpleNamespace(fpath='test_move_anon_raw.fif', find_empty_room=lambda: SimpleNamespace(fpath='test_move_anon_raw.fif'))
     pipe = RawMaxwell('raw', head_pos=True)
-    heavy = {'find_bad_channels_maxwell': lambda raw, **kwargs: ([], []), 'maxwell_filter': lambda raw, **kwargs: raw, 'maxwell_filter_prepare_emptyroom': lambda raw_er, **kwargs: raw_er}
+    heavy = {'find_bad_channels_maxwell': MagicMock(return_value=([], [])), 'maxwell_filter': lambda raw, **kwargs: raw, 'maxwell_filter_prepare_emptyroom': lambda raw_er, **kwargs: raw_er}
     with patch.multiple(mne.preprocessing, **heavy), patch.object(mne.chpi, 'filter_chpi') as filter_chpi:
         pipe._make(raw, path=path, head_pos=head_pos)
         filter_chpi.assert_called_once()
         assert filter_chpi.call_args.args[0] is raw
         assert filter_chpi.call_args.kwargs['allow_line_only'] is False
+        # bad channels are detected on low-passed data, before filter_chpi runs
+        assert heavy['find_bad_channels_maxwell'].call_args.kwargs['h_freq'] == 40.
 
         # a single static sample means no compensation, but the line noise treatment stays the same across recordings
         filter_chpi.reset_mock()
