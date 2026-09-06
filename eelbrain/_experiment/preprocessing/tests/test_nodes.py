@@ -1,6 +1,7 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 import logging
 from types import SimpleNamespace
+from unittest.mock import patch
 from warnings import catch_warnings, filterwarnings
 
 import mne
@@ -9,6 +10,7 @@ import pandas as pd
 import pytest
 from mne_bids import BIDSPath
 
+from eelbrain._experiment.preprocessing.config import CHPI_MIN_ACTIVE_FRACTION
 from eelbrain._experiment.preprocessing.nodes import CanonicalHeadPositionDerivative, RawHeadPositionDerivative, RawSourceInput, find_chpi
 from eelbrain.testing import requires_mne_testing_data
 
@@ -138,6 +140,24 @@ def build_head_position(raw: mne.io.BaseRaw) -> np.ndarray | None:
     "Run RawHeadPositionDerivative.build on one recording"
     ctx = SimpleNamespace(load=lambda name: raw, state={'subject': 'test'}, registry=SimpleNamespace(log=logging.getLogger('test')))
     return RawHeadPositionDerivative('raw').build(ctx)
+
+
+@requires_mne_testing_data
+def test_find_chpi_active_fraction(caplog):
+    """Neuromag recordings count as continuous HPI only if the coils were active for a substantial fraction of the recording"""
+    raw = mne.io.read_raw_fif(mne.datasets.testing.data_path(download=False) / 'SSS' / 'test_move_anon_raw.fif', allow_maxshield='yes', verbose=False)
+    assert find_chpi(raw) == 'freqs'
+    n_times = len(raw.times)
+    n_brief = int(n_times * CHPI_MIN_ACTIVE_FRACTION / 2)
+    with patch.object(mne.chpi, 'get_active_chpi', return_value=np.zeros(n_times)):
+        assert find_chpi(raw) is None
+    brief = np.r_[np.full(n_brief, 5), np.zeros(n_times - n_brief)]
+    with patch.object(mne.chpi, 'get_active_chpi', return_value=brief), caplog.at_level(logging.INFO):
+        assert find_chpi(raw) is None
+    assert 'active during only 5%' in caplog.text
+    longer = np.r_[np.full(3 * n_brief, 5), np.zeros(n_times - 3 * n_brief)]
+    with patch.object(mne.chpi, 'get_active_chpi', return_value=longer):
+        assert find_chpi(raw) == 'freqs'
 
 
 @requires_mne_testing_data

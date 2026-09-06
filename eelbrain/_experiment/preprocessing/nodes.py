@@ -1201,7 +1201,7 @@ class RawHeadPositionDerivative(Derivative[numpy.ndarray]):
     def build(self, ctx: Request) -> numpy.ndarray | None:
         raw = ctx.load(self._source_name)
         info = raw.info
-        method = find_chpi(raw)
+        method = find_chpi(raw, log=ctx.registry.log)
         chpi_locs = None
         if method == 'freqs':
             chpi_amplitudes = mne.chpi.compute_chpi_amplitudes(raw)

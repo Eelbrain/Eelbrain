@@ -695,13 +695,23 @@ class RawApplyICA(CachedRawPipe):
         return sorted(bads)
 
 
-def find_chpi(raw: mne.io.BaseRaw) -> str | None:
+# Minimum fraction of a recording during which at least 3 HPI coils are active for it to count as continuous HPI. Coils that were only switched on briefly (e.g., for the initial head position measurement) would leave most of the recording without position samples, and maxwell_filter would hold the last fitted position for the remainder.
+CHPI_MIN_ACTIVE_FRACTION = 0.1
+
+
+def find_chpi(
+        raw: mne.io.BaseRaw,
+        log: logging.Logger | None = None,
+) -> str | None:
     """Determine how a recording tracked head position continuously
 
     Parameters
     ----------
     raw
         Recording (the data need not be loaded).
+    log
+        Logger for reporting recordings whose HPI coils were only active
+        briefly (default: module logger).
 
     Returns
     -------
@@ -720,7 +730,12 @@ def find_chpi(raw: mne.io.BaseRaw) -> str | None:
             n_active = mne.chpi.get_active_chpi(raw, on_missing='ignore')
         except NotImplementedError:  # not a Neuromag system: trust the header
             return 'freqs'
-        return 'freqs' if (n_active >= 3).any() else None
+        active_fraction = (n_active >= 3).mean()
+        if active_fraction >= CHPI_MIN_ACTIVE_FRACTION:
+            return 'freqs'
+        if active_fraction:
+            (log or LOG).info("cHPI: at least 3 HPI coils were active during only %.0f%% of %s (< %.0f%%); treating the recording as not having continuous HPI", 100 * active_fraction, raw.filenames[0] or 'the recording', 100 * CHPI_MIN_ACTIVE_FRACTION)
+        return None
     if len(mne.pick_channels_regexp(raw.ch_names, 'HLC00[123][123].*')) == 9:  # CTF head localization channels (also preserved in FIFF exports), the same pattern extract_chpi_locs_ctf uses
         return 'ctf'
     if isinstance(raw, RawKIT) and raw.info['hpi_results'] and 'MISC 064' in raw.ch_names:
@@ -871,7 +886,7 @@ class RawMaxwell(CachedRawPipe):
             logger.warning("Raw %s: head_pos=True, but this recording has no usable continuous HPI (single head position sample); applying Maxwell filter without movement compensation", raw_name)
             head_pos = None
         # maxwell_filter does not remove the cHPI coil signals from the data; filter_chpi only works for coils driven at known frequencies (Neuromag), and is only worthwhile when the coils were active. filter_chpi also removes line noise, so the empty room (whose header may lack the cHPI frequencies) gets the same line noise treatment as the task recording
-        filter_chpi = self.filter_chpi and find_chpi(reference or raw) == 'freqs'
+        filter_chpi = self.filter_chpi and find_chpi(reference or raw, log=logger) == 'freqs'
         if filter_chpi and raw.info['line_freq'] is None:
             raise DataError(f"{fpath}: Power line frequency missing from the header; set PowerLineFrequency in the BIDS MEG sidecar")
 
