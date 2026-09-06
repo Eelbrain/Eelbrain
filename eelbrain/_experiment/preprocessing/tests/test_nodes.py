@@ -1,4 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+import logging
 from types import SimpleNamespace
 from warnings import catch_warnings, filterwarnings
 
@@ -8,7 +9,7 @@ import pandas as pd
 import pytest
 from mne_bids import BIDSPath
 
-from eelbrain._experiment.preprocessing.nodes import RawHeadPositionDerivative, RawSourceInput, find_chpi, mean_head_position
+from eelbrain._experiment.preprocessing.nodes import CanonicalHeadPositionDerivative, RawHeadPositionDerivative, RawSourceInput, find_chpi
 from eelbrain.testing import requires_mne_testing_data
 
 
@@ -81,17 +82,27 @@ def test_head_position_none_roundtrip(tmp_path):
     assert node.load(None, path) is None
 
 
-def test_mean_head_position():
-    """mean_head_position weights samples by the time they were held, or returns None without movement"""
+def build_canonical_head_position(raws: list, positions: list) -> mne.transforms.Transform | None:
+    "Run CanonicalHeadPositionDerivative.build on recordings with head positions"
+    artifacts = {}
+    for i, (raw, head_pos) in enumerate(zip(raws, positions)):
+        artifacts[f'task-{i}'] = head_pos
+        artifacts[f'raw:task-{i}'] = raw
+    ctx = SimpleNamespace(declared_dependencies=list(artifacts), load=artifacts.__getitem__)
+    return CanonicalHeadPositionDerivative('raw', frozenset(), [], []).build(ctx)
+
+
+def test_canonical_head_position():
+    """CanonicalHeadPositionDerivative weights samples by the time they were held, or returns None without movement"""
     info = mne.create_info(['MEG 0111'], 100., 'mag')
     raws = [mne.io.RawArray(np.zeros((1, 1000)), info, first_samp=4200, verbose=False) for _ in range(2)]  # 10 s each, starting at t=42 s
     positions = generate_head_positions(5)  # t = 42.00, 42.01, ..., 42.04
     static = positions[:1]
-    assert mean_head_position(raws[:1], [static]) is None
-    assert mean_head_position(raws, [static, static]) is None
+    assert build_canonical_head_position(raws[:1], [positions]) is None  # a single recording keeps its own dev_head_t
+    assert build_canonical_head_position(raws, [static, static]) is None
 
     # a tracked recording with movement and a static recording
-    trans = mean_head_position(raws, [positions, static])
+    trans = build_canonical_head_position(raws, [positions, static])
     assert trans['from'] == mne.io.constants.FIFF.FIFFV_COORD_DEVICE
     assert trans['to'] == mne.io.constants.FIFF.FIFFV_COORD_HEAD
     # each sample counts until the next sample or the end of its recording: 4 x 10 ms, then 9.96 s for the last tracked sample and 10 s for the static one
@@ -104,14 +115,14 @@ def test_mean_head_position():
 
     # BAD segments are excluded: with the static recording marked bad, only the tracked recording contributes
     raws[1].set_annotations(mne.Annotations(0., 10., 'BAD_all'))  # onset relative to the start of the data
-    trans_bad = mean_head_position(raws, [positions, static])
-    trans_tracked = mean_head_position(raws[:1], [positions])
+    trans_bad = build_canonical_head_position(raws, [positions, static])
+    trans_tracked = mne.preprocessing.compute_average_dev_head_t(raws[0], positions)
     assert np.allclose(trans_bad['trans'], trans_tracked['trans'])
 
 
 def build_head_position(raw: mne.io.BaseRaw) -> np.ndarray | None:
     "Run RawHeadPositionDerivative.build on one recording"
-    ctx = SimpleNamespace(load=lambda name: raw, state={'subject': 'test'})
+    ctx = SimpleNamespace(load=lambda name: raw, state={'subject': 'test'}, registry=SimpleNamespace(log=logging.getLogger('test')))
     return RawHeadPositionDerivative('raw').build(ctx)
 
 

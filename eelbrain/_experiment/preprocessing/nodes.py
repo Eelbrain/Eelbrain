@@ -1228,7 +1228,7 @@ class RawHeadPositionDerivative(Derivative[numpy.ndarray]):
             except RuntimeError:  # the stim channel exists but does not carry cHPI data
                 ctx.registry.log.warning("Raw head position: no cHPI data in the KIT stim channel for %s; using the static dev_head_t", ctx.state.get('subject'))
         if chpi_locs is not None:
-            head_pos = mne.chpi.compute_head_pos(info, chpi_locs)
+            head_pos = mne.chpi.compute_head_pos(info, chpi_locs, weighted=method == 'freqs')
             if len(head_pos):
                 return head_pos
             # compute_head_pos returns (0, 10) when every fit is rejected; fall back to the static transform so that consumers always see at least one sample
@@ -1252,44 +1252,6 @@ class RawHeadPositionDerivative(Derivative[numpy.ndarray]):
         return mne.chpi.read_head_pos(path)
 
 
-def mean_head_position(
-        raws: Sequence[mne.io.BaseRaw],
-        positions: Sequence[numpy.ndarray],
-) -> mne.transforms.Transform | None:
-    """Representative device-to-head transform for a set of recordings.
-
-    Wraps :func:`mne.preprocessing.compute_average_dev_head_t`: each head
-    position sample is weighted by the time until the next sample (or the end
-    of the recording), so a recording with a single static position counts
-    with its full duration, and segments with ``BAD`` annotations are excluded.
-
-    Parameters
-    ----------
-    raws
-        One recording per entry in ``positions``; the data need not be loaded.
-    positions
-        ``(n, 10)`` head position arrays in MaxFilter format (see
-        :func:`mne.chpi.compute_head_pos`), one per recording.
-
-    Returns
-    -------
-    transform
-        ``None`` when the recordings do not contain two distinct position
-        samples, in which case each file's own ``dev_head_t`` should be used
-        directly to avoid round-trip conversion noise.
-    """
-    all_positions = numpy.vstack([pos[:, 1:7] for pos in positions])
-    if len(all_positions) <= 1 or numpy.allclose(all_positions[1:], all_positions[0]):
-        return None
-    clipped = []
-    for raw, pos in zip(raws, positions):
-        # The 3-decimal time format of .pos files can round the first sample to before raw.first_time, which compute_average_dev_head_t only tolerates for multi-sample arrays
-        pos = pos.copy()
-        pos[0, 0] = max(pos[0, 0], raw.first_time)
-        clipped.append(pos)
-    return mne.preprocessing.compute_average_dev_head_t(list(raws), clipped)
-
-
 class CanonicalHeadPositionDerivative(Derivative):
     """Canonical head position for Maxwell filtering across tasks and runs.
 
@@ -1298,8 +1260,9 @@ class CanonicalHeadPositionDerivative(Derivative):
     :func:`mne.preprocessing.maxwell_filter`.
 
     All samples from all tasks and runs are averaged with
-    :func:`mean_head_position`, weighting each sample by the time it was held
-    and excluding ``BAD`` segments. ``None`` when only one recording exists, or when
+    :func:`mne.preprocessing.compute_average_dev_head_t`, weighting each sample
+    by the time it was held (a recording with a single static position counts
+    with its full duration) and excluding ``BAD`` segments. ``None`` when only one recording exists, or when
     the recordings do not contain two distinct position samples; each file's own
     ``dev_head_t`` is then used directly, by Maxwell filtering (which also
     compensates head movement towards ``dev_head_t`` when no destination is
@@ -1357,12 +1320,21 @@ class CanonicalHeadPositionDerivative(Derivative):
             if label.startswith('raw:'):
                 continue
             head_pos = ctx.load(label)  # (n, 10) MaxFilter format, or None
-            if head_pos is not None:
-                raws.append(ctx.load(f'raw:{label}'))
-                positions.append(head_pos)
+            if head_pos is None:
+                continue
+            raw = ctx.load(f'raw:{label}')
+            # The 3-decimal time format of .pos files can round the first sample to before raw.first_time, which compute_average_dev_head_t only tolerates for multi-sample arrays
+            head_pos = head_pos.copy()
+            head_pos[0, 0] = max(head_pos[0, 0], raw.first_time)
+            raws.append(raw)
+            positions.append(head_pos)
         if len(positions) <= 1:
             return None
-        return mean_head_position(raws, positions)
+        # Without two distinct positions, each file's own dev_head_t is used directly (no round-trip conversion noise)
+        all_positions = numpy.vstack([pos[:, 1:7] for pos in positions])
+        if numpy.allclose(all_positions[1:], all_positions[0]):
+            return None
+        return mne.preprocessing.compute_average_dev_head_t(raws, positions)
 
     def save(self, ctx: Request, path: Path, value: mne.transforms.Transform | None) -> None:
         if value is None:

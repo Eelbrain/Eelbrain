@@ -715,8 +715,10 @@ class RawMaxwell(CachedRawPipe):
         :meth:`Pipeline.load_head_position`. This requires ``mne >= 1.13``, and
         has no effect for recordings without continuous HPI or for empty room
         data. For recordings with HPI coils driven at known frequencies
-        (Neuromag), the cHPI signals (and line noise) are removed with
-        :func:`mne.chpi.filter_chpi` before Maxwell filtering. Incompatible
+        (Neuromag), the cHPI signals and line noise are removed with
+        :func:`mne.chpi.filter_chpi` before Maxwell filtering; the line noise
+        is then also removed from the empty room data, so that the noise
+        covariance matches the data. Incompatible
         with ``st_only=True``, because movement compensation is applied in the
         SSS reconstruction that ``st_only`` skips.
     ...
@@ -806,10 +808,16 @@ class RawMaxwell(CachedRawPipe):
             detector_kwargs = {key: value for key, value in self.kwargs.items() if key in self._detector_only_kwargs}
             noisy_chs, flat_chs = mne.preprocessing.find_bad_channels_maxwell(raw, verbose=MNE_VERBOSITY, **shared_kwargs, **detector_kwargs)
             raw.info['bads'] = sorted(raw.info['bads'] + noisy_chs + flat_chs)
-            # maxwell_filter does not remove the cHPI coil signals from the data; filter_chpi only works for coils driven at known frequencies (Neuromag), which is what head_pos-based compensation assumes were on
-            if head_pos is not None and len(mne.chpi.get_chpi_info(raw.info, on_missing='ignore')[0]):
-                logger.info("Raw %s: removing cHPI signals", raw_name)
-                mne.chpi.filter_chpi(raw, verbose=MNE_VERBOSITY)
+            # maxwell_filter does not remove the cHPI coil signals from the data; filter_chpi only works for coils driven at known frequencies (Neuromag). filter_chpi also removes line noise, so the empty room (whose header may lack the cHPI frequencies) gets the same line noise treatment as the task recording
+            if self.head_pos:
+                if noise:
+                    info, desc = reference.info, 'line noise'
+                else:
+                    info, desc = raw.info, 'cHPI signals and line noise'
+                hpi_freqs, _, _ = mne.chpi.get_chpi_info(info, on_missing='ignore')
+                if len(hpi_freqs):
+                    logger.info("Raw %s: removing %s", raw_name,  desc)
+                    mne.chpi.filter_chpi(raw, allow_line_only=noise, verbose=MNE_VERBOSITY)
             # Maxwell filter
             kwargs = {key: value for key, value in self.kwargs.items() if key in self._maxwell_filter_only_kwargs}
             kwargs.update(shared_kwargs)
