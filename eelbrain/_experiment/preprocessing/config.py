@@ -801,6 +801,15 @@ class RawMaxwell(CachedRawPipe):
         if head_pos is not None and len(head_pos) <= 1:
             logger.warning("Raw %s: head_pos=True, but this recording has no usable continuous HPI (single head position sample); applying Maxwell filter without movement compensation", raw_name)
             head_pos = None
+        # Find cHPI coil signal and line noise frequencies
+        if self.head_pos:
+            info = (reference or raw).info
+            hpi_freqs, _, _ = mne.chpi.get_chpi_info(info, on_missing='ignore')
+            if len(hpi_freqs):
+                if raw.info['line_freq'] is None:
+                    raise DataError(f"{path.fpath}: Power line frequency missing from the header; set PowerLineFrequency in the BIDS MEG sidecar")
+        else:
+            hpi_freqs = ()
 
         with user_activity:
             shared_kwargs = {key: value for key, value in self.kwargs.items() if key in self._shared_kwargs}
@@ -810,17 +819,9 @@ class RawMaxwell(CachedRawPipe):
             noisy_chs, flat_chs = mne.preprocessing.find_bad_channels_maxwell(raw, verbose=MNE_VERBOSITY, **shared_kwargs, **detector_kwargs)
             raw.info['bads'] = sorted(raw.info['bads'] + noisy_chs + flat_chs)
             # maxwell_filter does not remove the cHPI coil signals from the data; filter_chpi only works for coils driven at known frequencies (Neuromag). filter_chpi also removes line noise, so the empty room (whose header may lack the cHPI frequencies) gets the same line noise treatment as the task recording
-            if self.head_pos:
-                if noise:
-                    info, desc = reference.info, 'line noise'
-                else:
-                    info, desc = raw.info, 'cHPI signals and line noise'
-                hpi_freqs, _, _ = mne.chpi.get_chpi_info(info, on_missing='ignore')
-                if len(hpi_freqs):
-                    if raw.info['line_freq'] is None:
-                        raise DataError(f"{fpath}: Power line frequency missing from the header; set PowerLineFrequency in the BIDS MEG sidecar")
-                    logger.info("Raw %s: removing %s", raw_name, desc)
-                    mne.chpi.filter_chpi(raw, allow_line_only=noise, verbose=MNE_VERBOSITY)
+            if len(hpi_freqs):
+                logger.info("Raw %s: removing %s", raw_name, 'line noise' if noise else 'cHPI signals and line noise')
+                mne.chpi.filter_chpi(raw, allow_line_only=noise, verbose=MNE_VERBOSITY)
             # Maxwell filter
             kwargs = {key: value for key, value in self.kwargs.items() if key in self._maxwell_filter_only_kwargs}
             kwargs.update(shared_kwargs)
