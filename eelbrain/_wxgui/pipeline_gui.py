@@ -192,11 +192,6 @@ class Layout:
     columns: tuple[tuple[str, int], ...]
     status_col: int
 
-    @property
-    def iter_arg(self) -> str | list[str]:
-        """``fields`` argument to :meth:`Pipeline.iter` yielding one entry per row."""
-        return self.key_fields[0] if len(self.key_fields) == 1 else list(self.key_fields)
-
 
 class Task:
     """Per-task presentation rules for the pipeline table.
@@ -1650,17 +1645,15 @@ class PipelineFrame(EelbrainFrame):
         task, epoch_rejection, epoch_name, raw_name, layout = scope
         pipeline = self._pipeline
         if task.name == 'epoch_rej':
-            combos = pipeline.iter(layout.iter_arg, raw=raw_name, epoch=epoch_name, epoch_rejection=epoch_rejection)
+            combos = pipeline.iter(list(layout.key_fields), raw=raw_name, epoch=epoch_name, epoch_rejection=epoch_rejection)
         elif task.name == 'coreg':
-            combos = pipeline.iter(layout.iter_arg, raw='raw')
+            combos = pipeline.iter(list(layout.key_fields), raw='raw')
         else:
-            combos = pipeline.iter(layout.iter_arg)
+            combos = pipeline.iter(list(layout.key_fields))
         # the tasks that show one row per recording skip recordings that were never acquired
         source_name = pipeline._raw.root_source_name(raw_name) if task.name == 'bad_chs' else 'raw'
         skip_missing_recordings = task.name in ('bad_chs', 'coreg')
         for combo in combos:
-            if isinstance(combo, str):
-                combo = (combo,)
             if skip_missing_recordings:
                 raw_ctx = pipeline._resolve_derivative(raw_input_name(source_name))
                 if not raw_ctx.node.exists(raw_ctx):

@@ -74,14 +74,6 @@ def test_task_layout():
     assert TASKS_BY_NAME['ica'].layout(p, 'raw') != TASKS_BY_NAME['ica'].layout(pipeline(sessions=2), 'raw')
 
 
-def test_layout_iter_arg():
-    "Rows are iterated over exactly the key fields the columns were built from"
-    p = pipeline(sessions=2)
-    assert TASKS_BY_NAME['ica'].layout(p, 'raw').iter_arg == ['subject', 'session']
-    assert TASKS_BY_NAME['mri'].layout(p, None).iter_arg == 'subject'
-    assert TASKS_BY_NAME['coreg'].layout(p, None).iter_arg == ['subject', 'session']
-
-
 def test_task_key_fields():
     "Key fields expand with the state fields that vary in the experiment"
     bad_chs, ica, coreg = TASKS_BY_NAME['bad_chs'], TASKS_BY_NAME['ica'], TASKS_BY_NAME['coreg']
