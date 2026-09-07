@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import threading
 from types import SimpleNamespace
@@ -152,6 +153,11 @@ def test_task_row_colour():
     assert TASKS_BY_NAME['coreg'].row_colour(('R01', 's1', 'R01', 'ok'), _layout('coreg')) is None
 
     assert TASKS_BY_NAME['epoch_rej'].row_colour(('R01', 'missing', PLACEHOLDER, PLACEHOLDER), _layout('epoch_rej')) is None
+
+    # a row whose artifact could not be inspected or computed is red for every task
+    frame = _table_frame('epoch_rej', [('R01', pipeline_gui.ERROR, PLACEHOLDER, PLACEHOLDER)])
+    frame._set_row_colour(0, frame._row(0))
+    assert frame._list.colours == {0: wx.RED}
 
 
 def test_task_computable():
@@ -449,7 +455,7 @@ def test_refresh_holds_the_pipeline_lock(monkeypatch):
         _pipeline_lock=threading.Lock(),
         _refresh_token=token,
         _iter_combos=lambda scope: locked.append(frame._pipeline_lock.locked()) or iter([('R01',)]),
-        _iter_rows=lambda token_, scope, combos: locked.append(frame._pipeline_lock.locked()) or iter([(('R01',), ('R01', 'selected', '30', '2'), 'SPEC')]),
+        _iter_rows=lambda token_, scope, combos: locked.append(frame._pipeline_lock.locked()) or iter([(('R01',), ('R01', 'selected', '30', '2'), 'SPEC', None)]),
     )
     frame._refresh_thread(token, _ICA_SCOPE)
     assert locked == [True, True]
@@ -463,7 +469,7 @@ def test_refresh_shows_the_rows_before_their_status(monkeypatch):
     posted = []
     token = object()
     task = TASKS_BY_NAME['ica']
-    rows = [(('R01',), ('R01', 'selected', '30', '2'), 'SPEC-1'), (('R02',), ('R02', 'no ICA', PLACEHOLDER, PLACEHOLDER), 'SPEC-2')]
+    rows = [(('R01',), ('R01', 'selected', '30', '2'), 'SPEC-1', None), (('R02',), ('R02', 'no ICA', PLACEHOLDER, PLACEHOLDER), 'SPEC-2', None)]
     frame = _frame(
         _pipeline=pipeline(),
         _pipeline_lock=threading.Lock(),
@@ -474,7 +480,7 @@ def test_refresh_shows_the_rows_before_their_status(monkeypatch):
     walked = []
     frame._refresh_thread(token, _ICA_SCOPE)
     # the table goes up first, with every row still loading
-    assert posted[0] == (frame._populate_table, [task.missing_row(combo, _ICA_LAYOUT, pipeline_gui.LOADING) for combo, _, _ in rows], token)
+    assert posted[0] == (frame._populate_table, [task.missing_row(combo, _ICA_LAYOUT, pipeline_gui.LOADING) for combo, *_ in rows], token)
     # the second pass resolves the rows the first pass found, rather than walking them again
     assert walked == [[('R01',), ('R02',)]]
     # then one update per row, at the position the first pass put it
@@ -487,3 +493,29 @@ def test_refresh_shows_the_rows_before_their_status(monkeypatch):
     frame._refresh_token = object()
     frame._refresh_thread(token, _ICA_SCOPE)
     assert posted == []
+
+    # rows that failed are still filled in, and the first failure is reported once, at the end
+    frame._refresh_token = token
+    errors = [RuntimeError("first"), RuntimeError("second")]
+    rows[:] = [(('R01',), ('R01', pipeline_gui.ERROR, PLACEHOLDER, PLACEHOLDER), None, errors[0]), (('R02',), ('R02', pipeline_gui.ERROR, PLACEHOLDER, PLACEHOLDER), None, errors[1])]
+    frame._refresh_thread(token, _ICA_SCOPE)
+    assert [args[0] for args in posted] == [frame._populate_table, frame._fill_row, frame._fill_row, frame._show_error]
+    assert 'RuntimeError: first' in posted[-1][1]
+
+
+def test_iter_rows_reports_a_failing_row_and_keeps_going(tmp_path):
+    "A row whose inspection raises is shown as error, without hiding the rest of the table"
+    def get(field):
+        if p._state['subject'] == 'R02':
+            raise RuntimeError("no MRI subject")
+        return p._state['subject']
+
+    p = pipeline()
+    p.__dict__.update(root=tmp_path, _state={}, get=get, set=lambda **state: p._state.update(state), _temporary_state=contextlib.nullcontext())
+    frame = _frame(_pipeline=p, _refresh_token='TOKEN')
+    scope = (TASKS_BY_NAME['mri'], None, None, None, _layout('mri'))
+    rows = list(frame._iter_rows('TOKEN', scope, [('R01',), ('R02',)]))
+    assert rows[0] == (('R01',), ('R01', 'R01', 'no MRI'), None, None)
+    combo, row, spec, error = rows[1]
+    assert (combo, row, spec) == (('R02',), ('R02', PLACEHOLDER, pipeline_gui.ERROR), None)
+    assert str(error) == "no MRI subject"

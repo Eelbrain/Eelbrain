@@ -72,10 +72,10 @@ def _format_user_error(error: Exception) -> tuple[str, str] | None:
 def _error_dialog_args(error: Exception) -> tuple[str, str, str | None]:
     """Return ``(tb, title, message)`` for :meth:`PipelineFrame._show_error`.
 
-    Must be called from the ``except`` block handling ``error``; ``message``
-    is ``None`` for unexpected errors, selecting the bug-report presentation.
+    ``message`` is ``None`` for unexpected errors, selecting the bug-report
+    presentation.
     """
-    tb = traceback.format_exc()
+    tb = ''.join(traceback.format_exception(error))
     dialog = _format_user_error(error)
     if dialog is None:
         return tb, "Error", None
@@ -166,6 +166,8 @@ TRANSIENT_STATUS = ('queued', '⟳')
 # Status of a row whose artifact has not been looked at yet: the first pass of a
 # refresh lays out the table, the second fills these in (see PipelineFrame._refresh_thread)
 LOADING = '…'
+# Status of a row whose artifact could not be inspected or computed; always shown red
+ERROR = 'error'
 # Stands in for a detail column that has no value because the artifact is missing
 PLACEHOLDER = '—'
 GREY = wx.Colour(150, 150, 150)
@@ -359,7 +361,7 @@ class BadChannelsTask(Task):
     name = 'bad_chs'
     label = "Bad channels"
     detail_columns = (('N bad', 90),)
-    missing_status = 'error'  # loading seeds a missing channels.tsv, so the only failure is bad data
+    missing_status = ERROR  # loading seeds a missing channels.tsv, so the only failure is bad data
     done_status = 'done'
     summary = "bad channels defined"
     recording_unit = 'recordings'
@@ -1059,7 +1061,7 @@ class PipelineFrame(EelbrainFrame):
         painted the default one, so that the list can still invert them when they
         are selected.
         """
-        colour = self._current_task().row_colour(row, self._layout)
+        colour = wx.RED if row[self._layout.status_col] == ERROR else self._current_task().row_colour(row, self._layout)
         self._list.SetItemTextColour(idx, wx.NullColour if colour is None else colour)
 
     def _set_row_result(self, idx: int, status: str, values: tuple[str, ...]) -> None:
@@ -1174,6 +1176,7 @@ class PipelineFrame(EelbrainFrame):
         task, _, _, _, layout = scope
         log = self._pipeline._log
         n_filled = 0
+        first_error = None  # shown once the pass is over, so that it does not stall the rest
         t_start = time.time()
         try:
             with self._pipeline_lock:
@@ -1189,15 +1192,19 @@ class PipelineFrame(EelbrainFrame):
             t_start = time.time()
             with self._pipeline_lock:
                 t_locked = time.time()
-                for index, (combo, row, spec) in enumerate(self._iter_rows(token, scope, combos)):
+                for index, (combo, row, spec, error) in enumerate(self._iter_rows(token, scope, combos)):
                     wx.CallAfter(self._fill_row, token, scope, index, combo, row, spec)
                     n_filled += 1
+                    if error is not None and first_error is None:
+                        first_error = error
         except _AbortRequested:
             return  # app exit already scheduled
         except Exception as error:
             wx.CallAfter(self._show_error, *_error_dialog_args(error))
             return
         log.debug(f"Pipeline GUI {task.name}: {n_filled} row details in {time.time() - t_locked:.3f} s, after waiting {t_locked - t_start:.3f} s for the pipeline")
+        if first_error is not None:
+            wx.CallAfter(self._show_error, *_error_dialog_args(first_error))
 
     def _show_error(self, tb: str, title: str = "Error", message: str | None = None):
         self.SetStatusText("Error")
@@ -1486,7 +1493,7 @@ class PipelineFrame(EelbrainFrame):
             return
         i = self._displayed_row(scope, combo)
         if i != -1:
-            self._list.SetItem(i, self._layout.status_col, 'error')
+            self._list.SetItem(i, self._layout.status_col, ERROR)
         self._update_progress()
         self._show_error(tb, f"{title}: {' '.join(combo)}", message)
 
@@ -1672,15 +1679,17 @@ class PipelineFrame(EelbrainFrame):
             token: object,
             scope: tuple,  # see :meth:`_table_scope`
             combos: Sequence[tuple[str, ...]],
-    ) -> Iterator[tuple[tuple[str, ...], tuple[str, ...], JobSpec | None]]:
-        """Yield ``(combo, row, job spec)`` for every row of the table.
+    ) -> Iterator[tuple[tuple[str, ...], tuple[str, ...], JobSpec | None, Exception | None]]:
+        """Yield ``(combo, row, job spec, error)`` for every row of the table.
 
         Second pass of a refresh, over the rows the first pass found: this is where a
         row's artifact is inspected, which for the ICA task means validating it against
         the raw data it was estimated from -- one raw file per recording. Rows are
         therefore yielded one at a time, so that the caller can show each as soon as it
         resolves. ``spec`` is ``None`` for a row whose artifact the compute queue cannot
-        make.
+        make. A row whose inspection raises is yielded with status :data:`ERROR` and the
+        exception as ``error``, so that one broken artifact does not hide the rest of
+        the table; ``error`` is ``None`` otherwise.
 
         Parameters
         ----------
@@ -1701,75 +1710,79 @@ class PipelineFrame(EelbrainFrame):
                     return
                 if combo != (COMMON_BRAIN_ROW,):
                     pipeline.set(**constants, **dict(zip(layout.key_fields, combo)))
-                spec = None
-
-                if task.name == 'bad_chs':
-                    source_name = pipeline._raw.root_source_name(raw_name)
-                    bads_ctx = pipeline._resolve_derivative(raw_bad_channels_input_name(source_name))
-                    try:
-                        bads = bads_ctx.load()  # seeds a missing derivatives channels.tsv
-                    except DataError:  # EEG channels without positions
-                        row = task.missing_row(combo, layout)
-                    else:
-                        row = (*combo, task.done_status, str(len(bads)))
-
-                elif task.name == 'ica':
-                    ctx = pipeline._resolve_derivative(ica_input_name(raw_name))
-                    spec = JobSpec(ctx)
-                    status = ctx.load(view='status')
-                    if status == 'ok':
+                spec = error = None
+                try:
+                    if task.name == 'bad_chs':
+                        source_name = pipeline._raw.root_source_name(raw_name)
+                        bads_ctx = pipeline._resolve_derivative(raw_bad_channels_input_name(source_name))
                         try:
-                            ica = ctx.load()
-                            row = (*combo, task.done_status, *task.result_columns(ica))
-                        except ProtectedArtifactError as error:
-                            if bulk_choice is None:
-                                choice, apply_to_all = self._ask_stale_ica(combo[0], error, allow_apply_to_all=True)
-                                if apply_to_all:
-                                    bulk_choice = choice
-                            else:
-                                choice = bulk_choice
-                            row = self._handle_stale_ica(combo, scope, error, choice)
-                    elif status == 'missing-ica':
-                        row = task.missing_row(combo, layout)
-                    else:
-                        row = task.missing_row(combo, layout, 'no data')
-
-                elif task.name == 'epoch_rej':
-                    rej = pipeline._epoch_rejection[epoch_rejection]
-                    node_name = 'epoch-rejection-input' if isinstance(rej, ManualRejection) else 'epoch-rejection-channel-model'
-                    rej_ctx = pipeline._resolve_derivative(node_name)
-                    if isinstance(rej, ManualRejection):
-                        path = rej_ctx.node.path(rej_ctx)  # an input, with no resolved artifact path
-                    else:
-                        spec = JobSpec(rej_ctx)
-                        # Existence, not spec.is_done: validating (or rebuilding) every
-                        # subject's rejection file on each refresh would be far too expensive.
-                        path = spec.path
-                    if path.exists():
-                        ds = load.unpickle(path)
-                        row = (*combo, task.done_status, *task.result_columns(ds))
-                    else:
-                        row = task.missing_row(combo, layout)
-
-                elif task.name == 'mri':
-                    subjects_dir = pipeline.root / MRI_SDIR
-                    if combo == (COMMON_BRAIN_ROW,):
-                        mrisubject = pipeline.get('common_brain')
-                        has_recon = (subjects_dir / mrisubject / 'surf' / 'lh.pial').exists()
-                        status = task.done_status if has_recon else COMMON_BRAIN_MISSING
-                    else:
-                        mrisubject = pipeline.get('mrisubject')
-                        has_recon = (subjects_dir / mrisubject / 'surf' / 'lh.pial').exists()
-                        if has_recon:
-                            status = 'template' if is_fake_mri(subjects_dir / mrisubject) else task.done_status
+                            bads = bads_ctx.load()  # seeds a missing derivatives channels.tsv
+                        except DataError:  # EEG channels without positions
+                            row = task.missing_row(combo, layout)
                         else:
-                            status = task.missing_status
-                    row = (*combo, mrisubject, status)
+                            row = (*combo, task.done_status, str(len(bads)))
 
-                elif task.name == 'coreg':
-                    mrisubject = pipeline.get('mrisubject')
-                    trans_ctx = pipeline._resolve_derivative('trans-input')
-                    has_trans = trans_ctx.node.exists(trans_ctx)
-                    row = (*combo, mrisubject, task.done_status if has_trans else task.missing_status)
+                    elif task.name == 'ica':
+                        ctx = pipeline._resolve_derivative(ica_input_name(raw_name))
+                        spec = JobSpec(ctx)
+                        status = ctx.load(view='status')
+                        if status == 'ok':
+                            try:
+                                ica = ctx.load()
+                                row = (*combo, task.done_status, *task.result_columns(ica))
+                            except ProtectedArtifactError as error:
+                                if bulk_choice is None:
+                                    choice, apply_to_all = self._ask_stale_ica(combo[0], error, allow_apply_to_all=True)
+                                    if apply_to_all:
+                                        bulk_choice = choice
+                                else:
+                                    choice = bulk_choice
+                                row = self._handle_stale_ica(combo, scope, error, choice)
+                        elif status == 'missing-ica':
+                            row = task.missing_row(combo, layout)
+                        else:
+                            row = task.missing_row(combo, layout, 'no data')
 
-                yield combo, row, spec
+                    elif task.name == 'epoch_rej':
+                        rej = pipeline._epoch_rejection[epoch_rejection]
+                        node_name = 'epoch-rejection-input' if isinstance(rej, ManualRejection) else 'epoch-rejection-channel-model'
+                        rej_ctx = pipeline._resolve_derivative(node_name)
+                        if isinstance(rej, ManualRejection):
+                            path = rej_ctx.node.path(rej_ctx)  # an input, with no resolved artifact path
+                        else:
+                            spec = JobSpec(rej_ctx)
+                            # Existence, not spec.is_done: validating (or rebuilding) every
+                            # subject's rejection file on each refresh would be far too expensive.
+                            path = spec.path
+                        if path.exists():
+                            ds = load.unpickle(path)
+                            row = (*combo, task.done_status, *task.result_columns(ds))
+                        else:
+                            row = task.missing_row(combo, layout)
+
+                    elif task.name == 'mri':
+                        subjects_dir = pipeline.root / MRI_SDIR
+                        if combo == (COMMON_BRAIN_ROW,):
+                            mrisubject = pipeline.get('common_brain')
+                            has_recon = (subjects_dir / mrisubject / 'surf' / 'lh.pial').exists()
+                            status = task.done_status if has_recon else COMMON_BRAIN_MISSING
+                        else:
+                            mrisubject = pipeline.get('mrisubject')
+                            has_recon = (subjects_dir / mrisubject / 'surf' / 'lh.pial').exists()
+                            if has_recon:
+                                status = 'template' if is_fake_mri(subjects_dir / mrisubject) else task.done_status
+                            else:
+                                status = task.missing_status
+                        row = (*combo, mrisubject, status)
+
+                    elif task.name == 'coreg':
+                        mrisubject = pipeline.get('mrisubject')
+                        trans_ctx = pipeline._resolve_derivative('trans-input')
+                        has_trans = trans_ctx.node.exists(trans_ctx)
+                        row = (*combo, mrisubject, task.done_status if has_trans else task.missing_status)
+
+                except _AbortRequested:
+                    raise
+                except Exception as exc:
+                    row, spec, error = task.missing_row(combo, layout, ERROR), None, exc
+                yield combo, row, spec, error
