@@ -20,6 +20,7 @@ from numpy.testing import assert_almost_equal, assert_array_equal
 from eelbrain import *
 from eelbrain.pipeline import *
 from eelbrain._exceptions import ConfigurationError
+from eelbrain._experiment.covariance import EpochCovariance
 from eelbrain._experiment.derivative_cache import ALLOW_PROTECTED_OVERWRITE, ProtectedArtifactError
 from eelbrain._experiment.parc.nodes import AnnotDerivative
 from eelbrain._experiment.pathing import BIDS_ENTITY_KEYS, LOG_DIR, ica_file_path
@@ -1231,9 +1232,25 @@ def test_variable_length_epochs(samples_experiment):
             # every selected event forms an equal-length segment
             'cont-equal': ContinuousEpoch('sample', "event == 'target'", pad_start=0.1, pad_end=0.1, split=0),
         }
+        # covariance from variable-length epochs
+        _covs = {
+            **SampleExperiment._covs,
+            'varlen': EpochCovariance('varlen', 'empirical'),
+            'varlen-mean': EpochCovariance('varlen', 'empirical', keep_sample_mean=False),
+        }
 
     e = Experiment(root)
     e.set(subject='R0000', epoch='varlen', epoch_rejection='', raw='raw')
+
+    # covariance from variable-length epochs
+    e.set(cov='varlen')
+    cov = e._load_derivative('cov')
+    assert isinstance(cov, mne.Covariance)
+    assert cov.nfree > 0
+    e.set(cov='varlen-mean')
+    with pytest.raises(NotImplementedError, match='keep_sample_mean'):
+        e._load_derivative('cov')
+    e.set(cov='noreg')
 
     ds = e.load_epochs()
     n = ds.n_cases
