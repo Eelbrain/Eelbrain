@@ -27,6 +27,15 @@ class ExampleSequenceConfiguration(Configuration):
         self.items = sequence_arg('items', items, str, sequence_type=list)
 
 
+class ExampleDefaultConfiguration(Configuration):
+    DICT_ATTRS = ('a', 'b')
+    DICT_DEFAULTS = {'b': False}
+
+    def __init__(self, a, b=False):
+        self.a = a
+        self.b = b
+
+
 def test_find_epoch_vars():
     assert find_epoch_vars({'sel': "myvar == 'x'"}) == {'myvar'}
     assert find_epoch_vars({'post_baseline_trigger_shift': "myvar"}) == {'myvar'}
@@ -70,6 +79,19 @@ def test_config_base():
     assert config == ExampleConfiguration('x', 1)
     assert config != ExampleConfiguration('x', 2)
     assert config == {'type': 'ExampleConfiguration', 'a': 'x', 'b': 1}
+
+
+def test_config_defaults():
+    "DICT_DEFAULTS entries are omitted from _as_dict() so that adding a field does not invalidate caches"
+    default = ExampleDefaultConfiguration('x')
+    assert default._as_dict() == {'type': 'ExampleDefaultConfiguration', 'a': 'x'}
+    # a config predating the field compares equal to one that leaves it at its default
+    assert default == {'type': 'ExampleDefaultConfiguration', 'a': 'x'}
+    assert default == ExampleDefaultConfiguration('x', False)
+
+    non_default = ExampleDefaultConfiguration('x', True)
+    assert non_default._as_dict() == {'type': 'ExampleDefaultConfiguration', 'a': 'x', 'b': True}
+    assert non_default != default
 
 
 def test_config_normalization():

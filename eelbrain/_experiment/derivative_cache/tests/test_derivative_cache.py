@@ -901,7 +901,7 @@ def test_registry_logs_cache_events(caplog):
     manifest = json.loads(manifest_path.read_text())
     assert manifest['derivative'] == 'value'
     assert manifest['key'] == {'subject': 's1'}
-    assert manifest['dependencies']['source']['kind'] == 'input'
+    assert 'key' not in manifest['dependencies']['source']  # inputs have no artifact
 
 
 def test_recompute_logs_invalidation_reason(caplog):
@@ -1099,20 +1099,33 @@ def test_uncached_derivative_rebuilds_every_time():
         handle.manifest_path
 
 
+def test_dep_entry_matches_after_caching_node():
+    "A dependency recorded while its node was uncached (no key) stays valid once the node is cached"
+    from eelbrain._experiment.derivative_cache.base import _dep_entry_matches
+
+    stored = {'name': 'pos', 'fingerprint': {'a': 1}, 'dependencies': {}}
+    current = {**stored, 'key': {'subject': 's1'}, 'manifest': 'pos/pos.json'}
+    assert _dep_entry_matches(stored, current)
+    assert not _dep_entry_matches(stored, {**current, 'fingerprint': {'a': 2}})
+    # a recorded key still has to match
+    assert not _dep_entry_matches({**stored, 'key': {'subject': 's0'}}, current)
+    assert _dep_entry_matches(current, current)
+
+
 def test_registry_resolve_returns_request_for_input_and_derivative():
     _, registry, _, _, _, _, _, _, _root = make_registry()
 
     handle = registry.resolve('source', state=DEFAULT_STATE)
     assert isinstance(handle, Request)
     assert handle.describe_dependency()['name'] == 'source'
-    assert handle.describe_dependency()['kind'] == 'input'
+    assert 'key' not in handle.describe_dependency()
     with pytest.raises(TypeError, match="input 'source'"):
         _ = handle.artifact_path
 
     value_handle = registry.resolve('value', state=DEFAULT_STATE)
     assert isinstance(value_handle, Request)
     assert value_handle.describe_dependency()['name'] == 'value'
-    assert value_handle.describe_dependency()['kind'] == 'derivative'
+    assert value_handle.describe_dependency()['key'] == value_handle.key()
     # the manifest path is recorded relative to the cache dir (portable across a moved root)
     assert value_handle.describe_dependency()['manifest'] == value_handle.manifest_path.relative_to(registry.cache_dir).as_posix()
 

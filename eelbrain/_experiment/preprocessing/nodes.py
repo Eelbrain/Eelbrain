@@ -26,9 +26,9 @@ import mne_bids
 from mne_bids import BIDSPath
 import numpy
 import pandas as pd
-from scipy.spatial.transform import Rotation
 
 from ..._exceptions import DataError
+from ...mne_fixes._version import MNE_SUPPORTS_HEAD_POS
 from ..derivative_cache import (
     ALLOW_PROTECTED_OVERWRITE, ArtifactManifest, CachePolicy, Dependency, Derivative, UncachedDerivative,
     JobProvenance, Request, Input, MANIFEST_SCHEMA_VERSION, ProtectedArtifactError,
@@ -39,11 +39,10 @@ from ..exceptions import FileMissingError, ICAMissingError
 from ..pathing import bids_path, DERIV_DIR
 from .job import ICAJob
 from .config import (
-    MNE_VERBOSITY, RawPipeGraph, RawSource, CachedRawPipe, RawICA, RawApplyICA, RawMaxwell,
+    MNE_VERBOSITY, RawPipeGraph, RawSource, CachedRawPipe, RawICA, RawApplyICA, RawMaxwell, find_chpi,
     raw_node_name, raw_bad_channels_input_name, raw_input_name, ica_input_name,
 )
 
-LOG = logging.getLogger(__name__)
 REINDEX_ICA = 'reindex_ica'
 # Scaling factors from BIDS coordinate units to metres
 COORD_SCALE = {'mm': 1e-3, 'cm': 1e-2, 'm': 1.0}
@@ -253,7 +252,7 @@ class RawBadChannelsInput(Input[list[str]]):
         channels_df, path, exists, raw = self._load_df(ctx)
         if not exists and not ctx.registry._readonly:
             self._check_eeg_positions(ctx, channels_df, raw)
-            LOG.info("Creating bad-channels file at %s.", path)
+            ctx.registry.log.info("Creating bad-channels file at %s.", path)
             self._write_df(path, channels_df)
         return sorted(channels_df.loc[channels_df['status'] == 'bad', 'name'])
 
@@ -343,7 +342,7 @@ class RawBadChannelsInput(Input[list[str]]):
         new_bads = self.raw_input.pipe._normalize_channel_names(raw, new_bads)
         if not redo:
             new_bads = sorted(set(old_bads).union(new_bads))
-        LOG.info("Bad channels: %s -> %s for %s", old_bads, new_bads, path)
+        ctx.registry.log.info("Bad channels: %s -> %s for %s", old_bads, new_bads, path)
         if set(new_bads) == set(old_bads) and exists:
             return
 
@@ -438,6 +437,7 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         path = resolve_raw_bids_path(ctx, self.extension, require=True)
         raw = self._read_raw(path.fpath, preload=preload)
         self._apply_bids_channels(path, raw)
+        self._apply_bids_line_freq(path, raw)
         if self.pipe.montage:
             raw.set_montage(self.pipe.montage)
         elif path.datatype == 'eeg':
@@ -449,6 +449,18 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         """Find the BIDS channels.tsv sidecar for a recording."""
         channels_path = path.find_matching_sidecar(suffix='channels', extension='.tsv', on_error='ignore')
         return Path(channels_path) if channels_path is not None else None
+
+    @staticmethod
+    def _apply_bids_line_freq(path: BIDSPath, raw: mne.io.BaseRaw) -> None:
+        """Set the power line frequency from the BIDS JSON sidecar when the raw header does not specify it."""
+        if raw.info['line_freq'] is not None:
+            return
+        sidecar_path = path.find_matching_sidecar(suffix=path.datatype, extension='.json', on_error='ignore')
+        if sidecar_path is None:
+            return
+        line_freq = json.loads(Path(sidecar_path).read_text(encoding='utf-8')).get('PowerLineFrequency')
+        if line_freq not in (None, 'n/a'):
+            raw.info['line_freq'] = float(line_freq)
 
     @staticmethod
     def _apply_bids_channels(path: BIDSPath, raw: mne.io.BaseRaw) -> None:
@@ -1000,10 +1012,18 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
             deps.append(Dependency('maxwell-calibration'))
             deps.append(Dependency('maxwell-crosstalk'))
             deps.append(Dependency('canonical-head-position'))
+            if ctx.options['noise']:
+                # the task recording whose head frame, digitization and bad channels the empty room takes on
+                deps.append(Dependency(source_node, options={'noise': False, 'preload': False}, label='reference'))
+            elif self.pipe.head_pos:
+                deps.append(Dependency('raw-head-position'))
         return tuple(deps)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {'pipe': self.pipe, 'raw': self.raw_name}
+        fingerprint = {'pipe': self.pipe, 'raw': self.raw_name}
+        if ctx.options['noise'] and isinstance(self.pipe, RawMaxwell):
+            fingerprint['empty_room'] = 'head'  # filtered in the task recording's head frame (previously the device frame)
+        return fingerprint
 
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
         if view == 'bads':
@@ -1042,7 +1062,11 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
             calibration = ctx.load('maxwell-calibration')
             cross_talk = ctx.load('maxwell-crosstalk')
             destination = ctx.load('canonical-head-position')
-            return self.pipe._make(raw, path=path, noise=ctx.options['noise'], raw_name=self.raw_name, log=ctx.registry.log, source_pipe=source_pipe, calibration=calibration, cross_talk=cross_talk, destination=destination)
+            if ctx.options['noise']:
+                reference, head_pos = ctx.load('reference'), None
+            else:
+                reference, head_pos = None, ctx.load('raw-head-position') if self.pipe.head_pos else None
+            return self.pipe._make(raw, path=path, noise=ctx.options['noise'], raw_name=self.raw_name, log=ctx.registry.log, source_pipe=source_pipe, calibration=calibration, cross_talk=cross_talk, destination=destination, head_pos=head_pos, reference=reference)
         return self.pipe._make(raw, path=path, noise=ctx.options['noise'], raw_name=self.raw_name, log=ctx.registry.log, source_pipe=source_pipe)
 
     def load(self, ctx: Request, path: Path) -> mne.io.BaseRaw:
@@ -1148,44 +1172,76 @@ class MaxwellCrosstalkInput(Input[Path]):
         return path if path.exists() else None
 
 
-class RawHeadPositionDerivative(UncachedDerivative[numpy.ndarray]):
+class RawHeadPositionDerivative(Derivative[numpy.ndarray]):
     """Head position samples extracted from one raw recording.
 
-    For recordings with cHPI active the full tracked position time-series is
-    returned; otherwise the static ``dev_head_t`` transform is returned as a
-    single sample.
+    For recordings with continuous head position information (see
+    :func:`find_chpi`), the tracked position time-series (see
+    :func:`mne.chpi.compute_head_pos`).
+    Otherwise, the static ``dev_head_t`` transform as a single sample.
+    ``None`` when the file has no head position information at all.
 
-    Returns an ``(n, 6)`` float array with columns
-    ``[q1, q2, q3, tx, ty, tz]`` using MNE's compact quaternion convention.
-    An empty ``(0, 6)`` array is returned when no head position information is
-    available in the file.
+    Parameters
+    ----------
+    source_name
+        Name of the raw source node (see :class:`RawSourceDerivative`). The
+        bad channels it applies are excluded from the cHPI coil fits, so a
+        noisy or flat channel does not degrade the position estimates.
     """
 
     name = 'raw-head-position'
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run')
+    cache_suffix = '.pos'
 
-    def __init__(self, raw_input_name: str):
-        self._raw_input_name = raw_input_name
+    def __init__(self, source_name: str):
+        self._source_name = source_name
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        return (Dependency(self._raw_input_name),)
+        return (Dependency(self._source_name),)
 
     def build(self, ctx: Request) -> numpy.ndarray | None:
-        raw = ctx.load(self._raw_input_name)
+        raw = ctx.load(self._source_name)
         info = raw.info
-        hpi_freqs, _, _ = mne.chpi.get_chpi_info(info, on_missing='ignore')
-        if len(hpi_freqs):
+        method = find_chpi(raw, log=ctx.registry.log)
+        if method is not None and not MNE_SUPPORTS_HEAD_POS:
+            raise RuntimeError(f"Estimating head positions from continuous HPI requires mne >= 1.13 (installed: {mne.__version__})")
+        chpi_locs = None
+        if method == 'freqs':
             chpi_amplitudes = mne.chpi.compute_chpi_amplitudes(raw)
             chpi_locs = mne.chpi.compute_chpi_locs(info, chpi_amplitudes)
-            head_pos = mne.chpi.compute_head_pos(info, chpi_locs)
-            # head_pos columns: [t, q1, q2, q3, tx, ty, tz, gof, err, v]
-            return head_pos[:, 1:7]
+        elif method == 'ctf':
+            chpi_locs = mne.chpi.extract_chpi_locs_ctf(raw)
+        elif method == 'kit':
+            try:
+                chpi_locs = mne.chpi.extract_chpi_locs_kit(raw)
+            except RuntimeError:  # the stim channel exists but does not carry cHPI data
+                ctx.registry.log.warning("Raw head position: no cHPI data in the KIT stim channel for %s; using the static dev_head_t", ctx.state.get('subject'))
+        if chpi_locs is not None:
+            # The weighted fit uses all coils, weighted by goodness of fit and inter-coil distance error, which avoids jumps when coils switch in and out of the best 3-coil subset that the unweighted fit selects. It is only enabled for coils driven at known frequencies, where compute_chpi_locs provides the goodness of fit. CTF has exactly 3 coils, so there is no subset to select. KIT has 5, and extract_chpi_locs_kit reads a goodness of fit from the stim channel, but the weighted fit has not been verified on KIT data yet.
+            if method == 'kit':
+                ctx.registry.log.info("Raw head position: using the unweighted 3-coil fit for KIT recording %s (the weighted fit has not been verified for KIT cHPI data); expect jumps when coils switch in and out of the fit", ctx.state.get('subject'))
+            head_pos = mne.chpi.compute_head_pos(info, chpi_locs, weighted=method == 'freqs')
+            if len(head_pos):
+                return head_pos
+            # compute_head_pos returns (0, 10) when every fit is rejected; fall back to the static transform so that consumers always see at least one sample
+            ctx.registry.log.warning("Raw head position: cHPI is active but no head position could be estimated for %s; using the static dev_head_t", ctx.state.get('subject'))
         dev_head_t = info.get('dev_head_t')
         if dev_head_t is None:
             return None
         trans = dev_head_t['trans']
         quat = mne.transforms.rot_to_quat(trans[:3, :3])
-        return numpy.array([[*quat, *trans[:3, 3]]])
+        return numpy.array([[raw.first_time, *quat, *trans[:3, 3], 0., 0., 0.]])
+
+    def save(self, ctx: Request, path: Path, value: numpy.ndarray | None) -> None:
+        if value is None:
+            path.write_bytes(b'')  # artifacts are rebuilt in place, so an earlier non-empty file has to be truncated
+        else:
+            mne.chpi.write_head_pos(path, value)
+
+    def load(self, ctx: Request, path: Path) -> numpy.ndarray | None:
+        if path.stat().st_size == 0:
+            return None
+        return mne.chpi.read_head_pos(path)
 
 
 class CanonicalHeadPositionDerivative(Derivative):
@@ -1195,17 +1251,22 @@ class CanonicalHeadPositionDerivative(Derivative):
     subject, session, and acquisition, suitable as the ``destination`` parameter of
     :func:`mne.preprocessing.maxwell_filter`.
 
-    The rotation is the Fréchet mean on SO(3) computed via
-    :meth:`scipy.spatial.transform.Rotation.mean` (eigenvector method).
-    The translation is the arithmetic mean.  For recordings with cHPI all
-    tracked position samples contribute, not just the starting position.
-
-    Returns ``None`` when only one position sample exists across all
-    tasks/runs, in which case each file's own ``dev_head_t`` is used directly
-    by Maxwell filtering to avoid round-trip conversion noise.
+    All samples from all tasks and runs are averaged with
+    :func:`mne.preprocessing.compute_average_dev_head_t`, weighting each sample
+    by the time it was held (a recording with a single static position counts
+    with its full duration) and excluding ``BAD`` segments. ``None`` when only one recording exists, or when
+    the recordings do not contain two distinct position samples; each file's own
+    ``dev_head_t`` is then used directly, by Maxwell filtering (which also
+    compensates head movement towards ``dev_head_t`` when no destination is
+    given) as well as by the forward solution, avoiding round-trip conversion
+    noise and keeping source estimates for pipelines without Maxwell filtering
+    aligned with the data.
 
     Parameters
     ----------
+    source_name
+        Name of the raw source node providing the recordings (for their
+        duration and ``BAD`` annotations).
     recordings
         Existing ``(subject, session, task, acquisition, run)`` recordings, used for
         existence checks in :meth:`dependencies`.
@@ -1218,14 +1279,16 @@ class CanonicalHeadPositionDerivative(Derivative):
 
     name = 'canonical-head-position'
     key_fields = ('subject', 'session', 'acquisition')
-    cache_suffix = '.fif'
+    cache_suffix = '-trans.fif'  # MNE warns about trans files that do not use this suffix
 
     def __init__(
             self,
+            source_name: str,
             recordings: frozenset[tuple[str, str, str, str, str]],
             tasks: Sequence[str],
             runs: Sequence[str],
     ):
+        self._source_name = source_name
         self._recordings = recordings
         self._tasks = tasks
         self._runs = runs or ['']
@@ -1237,35 +1300,37 @@ class CanonicalHeadPositionDerivative(Derivative):
         deps = []
         for task, run in itertools.product(self._tasks, self._runs):
             if (subject, session, task, acquisition, run) in self._recordings:
-                deps.append(Dependency(
-                    name='raw-head-position',
-                    label=f'task-{task}_run-{run}' if run else f'task-{task}',
-                    state={'task': task, 'run': run},
-                ))
+                label = f'task-{task}_run-{run}' if run else f'task-{task}'
+                state = {'task': task, 'run': run}
+                deps.append(Dependency(name='raw-head-position', label=label, state=state))
+                deps.append(Dependency(name=self._source_name, label=f'raw:{label}', state=state))
         return tuple(deps)
 
     def build(self, ctx: Request) -> mne.transforms.Transform | None:
-        all_positions = []
+        raws, positions = [], []
         for label in ctx.declared_dependencies:
-            positions = ctx.load(label)  # (n, 6): [q1, q2, q3, tx, ty, tz], or None
-            if positions is not None:
-                all_positions.append(positions)
-        if len(all_positions) <= 1:
+            if label.startswith('raw:'):
+                continue
+            head_pos = ctx.load(label)  # (n, 10) MaxFilter format, or None
+            if head_pos is None:
+                continue
+            raw = ctx.load(f'raw:{label}')
+            # The 3-decimal time format of .pos files can round the first sample to before raw.first_time, which compute_average_dev_head_t only tolerates for multi-sample arrays
+            head_pos = head_pos.copy()
+            head_pos[0, 0] = max(head_pos[0, 0], raw.first_time)
+            raws.append(raw)
+            positions.append(head_pos)
+        if len(positions) <= 1:
             return None
-        all_pos = numpy.vstack(all_positions)  # (N, 6): [q1, q2, q3, tx, ty, tz]
-        if numpy.allclose(all_pos[1:], all_pos[0]):
+        # Without two distinct positions, each file's own dev_head_t is used directly (no round-trip conversion noise)
+        all_positions = numpy.vstack([pos[:, 1:7] for pos in positions])
+        if numpy.allclose(all_positions[1:], all_positions[0]):
             return None
-        # MNE compact quaternions [q1, q2, q3] → scipy [x, y, z, w] (scalar last)
-        q = all_pos[:, :3]
-        q0 = numpy.sqrt(numpy.maximum(1.0 - numpy.sum(q ** 2, axis=1), 0.0))
-        trans = numpy.eye(4)
-        trans[:3, :3] = Rotation.from_quat(numpy.column_stack([q, q0])).mean().as_matrix()
-        trans[:3, 3] = numpy.mean(all_pos[:, 3:], axis=0)
-        return mne.transforms.Transform(fro='meg', to='head', trans=trans)
+        return mne.preprocessing.compute_average_dev_head_t(raws, positions)
 
     def save(self, ctx: Request, path: Path, value: mne.transforms.Transform | None) -> None:
         if value is None:
-            path.touch()
+            path.write_bytes(b'')  # artifacts are rebuilt in place, so an earlier non-empty file has to be truncated
         else:
             mne.write_trans(path, value, overwrite=True)
 

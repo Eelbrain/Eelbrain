@@ -67,6 +67,7 @@ import pickle
 import re
 import shutil
 import tomllib
+import traceback
 from typing import Any, Generic, TYPE_CHECKING, TypeVar
 from uuid import uuid4
 import warnings
@@ -75,6 +76,7 @@ import mne
 import numpy as np
 
 from ..._data_obj import Factor, Interaction, NDVar, Var
+from ..._utils import user_activity
 from ..configuration import Configuration
 from ..logging import CacheInvalidation, diff_invalidation
 from ..pathing import CACHE_DIR, DERIV_DIR, LOG_DIR
@@ -116,7 +118,11 @@ def _atomic_write_text(path: Path, text: str) -> None:
     tmp_path.replace(path)
 
 
-def _read_warning_log(path: Path) -> list[dict[str, str]]:
+# Warning log entries: ``item``, ``category`` and ``message`` are required; ``state`` (JSON of the key-field state), ``location`` (``file:line`` the warning was attributed to) and ``stack`` (one line per frame) are optional
+_WARNING_LOG_STRINGS = ('item', 'category', 'message', 'state', 'location')
+
+
+def _read_warning_log(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     try:
@@ -128,28 +134,30 @@ def _read_warning_log(path: Path) -> list[dict[str, str]]:
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        item = entry.get('item')
-        category = entry.get('category')
-        message = entry.get('message')
-        if isinstance(item, str) and isinstance(category, str) and isinstance(message, str):
-            warnings_.append({'item': item, 'category': category, 'message': message})
+        warning = {key: entry[key] for key in _WARNING_LOG_STRINGS if isinstance(entry.get(key), str)}
+        if not all(key in warning for key in ('item', 'category', 'message')):
+            continue
+        stack = entry.get('stack')
+        if isinstance(stack, list) and all(isinstance(line, str) for line in stack):
+            warning['stack'] = stack
+        warnings_.append(warning)
     return warnings_
 
 
-def _write_warning_log(path: Path, header: str, warnings_: list[dict[str, str]]) -> None:
+def _write_warning_log(path: Path, header: str, warnings_: list[dict[str, Any]]) -> None:
     lines = [
         'version = 1',
         f'header = {_toml_string(header.rstrip())}',
         '',
     ]
     for warning in warnings_:
-        lines.extend((
-            '[[warning]]',
-            f'item = {_toml_string(warning["item"])}',
-            f'category = {_toml_string(warning["category"])}',
-            f'message = {_toml_string(warning["message"])}',
-            '',
-        ))
+        lines.append('[[warning]]')
+        lines.extend(f'{key} = {_toml_string(warning[key])}' for key in _WARNING_LOG_STRINGS if key in warning)
+        if 'stack' in warning:
+            lines.append('stack = [')
+            lines.extend(f'    {_toml_string(line)},' for line in warning['stack'])
+            lines.append(']')
+        lines.append('')
     path.write_text('\n'.join(lines))
 
 
@@ -1265,10 +1273,15 @@ def _dep_entry_matches(stored: dict[str, Any], current: dict[str, Any]) -> bool:
     ``key`` participates because fingerprints often describe configuration
     only: a dependency that resolves to a different artifact (different cache
     key) must invalidate the parent even when its fingerprint is unchanged.
+    A stored entry without ``key`` was recorded while the node was not cached;
+    its fingerprint and sub-dependencies validated it then and still do, so
+    caching a node does not invalidate the artifacts depending on it.
     """
-    for key in ('name', 'kind', 'view', 'key'):
+    for key in ('name', 'view'):
         if stored.get(key) != current.get(key):
             return False
+    if 'key' in stored and stored['key'] != current.get('key'):
+        return False
     stored_quick = stored.get('quick_fingerprint')
     current_quick = current.get('quick_fingerprint')
     if stored_quick is not None and current_quick is not None and stored_quick == current_quick:
@@ -1577,11 +1590,8 @@ class Request(Generic[T]):
         if view is not None:
             out['view'] = view
         if isinstance(self.node, Derivative) and self.node.cache_policy != CachePolicy.NEVER:
-            out['kind'] = 'derivative'
             out['key'] = self.key()
             out['manifest'] = self.manifest_path.relative_to(self.registry.cache_dir).as_posix()
-        else:
-            out['kind'] = 'input'
         return out
 
     def _require_derivative(self) -> Derivative[T]:
@@ -2000,10 +2010,11 @@ class DerivativeRegistry:
             yield
             return
         token = self._validation_cache.set({})
-        try:
-            yield
-        finally:
-            self._validation_cache.reset(token)
+        with user_activity:
+            try:
+                yield
+            finally:
+                self._validation_cache.reset(token)
 
     @staticmethod
     def _validation_key(ctx: Request) -> tuple[str, str]:
@@ -2088,25 +2099,39 @@ class DerivativeRegistry:
             item = str(path)
         else:
             item = node.name
-        with warnings.catch_warnings(record=True) as warning_list:
+        warning_list: list[tuple[Warning, str, list[str]]] = []
+        recorded: set[tuple[str, str]] = set()
+
+        def showwarning(message, category, filename, lineno, file=None, line=None):
+            # Only the first occurrence of a warning is kept (see below); a warning issued in a loop must not extract its stack every time
+            if (category.__name__, str(message)) in recorded:
+                return
+            recorded.add((category.__name__, str(message)))
+            # Record the full stack: libraries such as MNE attribute the warning to the first frame outside their own namespace, which hides the path within the library
+            stack = [f'{frame.filename}:{frame.lineno} in {frame.name}' for frame in traceback.extract_stack()[:-1] if frame.filename != warnings.__file__]
+            warning_list.append((message, f'{filename}:{lineno}', stack))
+
+        with warnings.catch_warnings():
             warnings.simplefilter('always')
             warnings.filterwarnings('ignore', r'unclosed file ', ResourceWarning)
+            warnings.showwarning = showwarning
             yield
         if not warning_list:
             return
+        state = json.dumps({key: ctx.state[key] for key in node._get_key_fields(ctx) if key in ctx.state}, default=str)
         details_path = Path(self.root) / LOG_DIR / f'{node.name}-warnings.toml'
         details_path.parent.mkdir(parents=True, exist_ok=True)
         entries = _read_warning_log(details_path)
-        seen = {(entry['item'], entry['category'], entry['message']) for entry in entries}
+        seen = {(entry['item'], entry['category'], entry['message'], entry.get('state', '')) for entry in entries}
         new_entries = []
-        for message in warning_list:
-            category = message.category.__name__
-            text = str(message.message)
-            key = (item, category, text)
+        for message, location, stack in warning_list:
+            category = message.__class__.__name__
+            text = str(message)
+            key = (item, category, text, state)
             if key in seen:
                 continue
             seen.add(key)
-            entry = {'item': item, 'category': category, 'message': text}
+            entry = {'item': item, 'category': category, 'message': text, 'state': state, 'location': location, 'stack': stack}
             entries.append(entry)
             new_entries.append(entry)
         if not new_entries:
@@ -2114,7 +2139,7 @@ class DerivativeRegistry:
         _write_warning_log(details_path, f"Warnings emitted during {node.name}.\n", entries)
         count = len(new_entries)
         noun = 'warning was' if count == 1 else 'warnings were'
-        self.log.warning("%s new %s issued during %s. Full details were written to %s. Previously recorded %s warnings will be suppressed in the terminal for this experiment.", count, noun, node.name, details_path, node.name)
+        self.log.warning("%s new %s issued during %s (%s; first: %s at %s). Full details were written to %s. Previously recorded %s warnings will be suppressed in the terminal for this experiment.", count, noun, node.name, state, new_entries[0]['message'], new_entries[0]['location'], details_path, node.name)
 
     def describe_artifact_path(self, path: str | Path) -> str:
         artifact_path = Path(path)

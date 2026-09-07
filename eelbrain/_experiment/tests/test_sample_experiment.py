@@ -15,7 +15,7 @@ from warnings import catch_warnings, filterwarnings
 
 import mne
 import numpy as np
-from numpy.testing import assert_almost_equal, assert_array_equal
+from numpy.testing import assert_allclose, assert_almost_equal, assert_array_equal
 
 from eelbrain import *
 from eelbrain.pipeline import *
@@ -26,7 +26,7 @@ from eelbrain._experiment.pathing import BIDS_ENTITY_KEYS, LOG_DIR, ica_file_pat
 from eelbrain._experiment.preprocessing import RawFilterElliptic, ica_input_name, raw_node_name
 from eelbrain._experiment.data import DataSpec
 from eelbrain._experiment.variable_def import EvalVar, LabelVar, Variables
-from eelbrain.testing import assert_dataobj_equal, requires_mne_sample_data
+from eelbrain.testing import assert_dataobj_equal, requires_mne_head_pos, requires_mne_sample_data
 
 
 def _test_result_manifest_path(
@@ -787,7 +787,15 @@ def test_sample_source(samples_experiment):
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
     root = samples_experiment(n_subjects=3, n_segments=1, mris=True)  # TODO: use sample MRI which already has forward solution
-    e = SampleExperiment(root)
+
+    class Experiment(SampleExperiment):
+        raw = {
+            **SampleExperiment.raw,
+            # full SSS (the default 'tsss' is tSSS-only), for the inverse operator rank checks below
+            'sss': RawMaxwell('raw', ignore_ref=True),
+            'sss-ica': RawICA('sss', 'sample', method='fastica', max_iter=1, n_components=0.95),
+        }
+    e = Experiment(root)
 
     # source space tests
     # ico-2 (320 vertices/hemi) keeps forward/inverse fast while still covering the transversetemporal ROI
@@ -870,6 +878,36 @@ def test_sample_source(samples_experiment):
             **SampleExperiment.parcs,
             'ac': SubParc('aparc', ('superiortemporal',)),
         }
+
+    # Inverse operator rank after full SSS (reuses the R0000 forward solution)
+    e.set('R0000', raw='sss', cov='noreg', epoch='auditory', epoch_rejection='')
+    inv = e.load_inv()
+    raw = e.load_raw()
+    cov = e._load_derivative('cov')
+    header_rank = mne.compute_rank(cov, rank='info', info=raw.info)['mag']  # the sample experiment keeps magnetometers only
+    n_channels = len(mne.pick_types(raw.info, meg=True, exclude='bads'))
+    assert header_rank < n_channels
+    # the data-driven estimate for an empirical covariance recovers the SSS rank
+    assert mne.minimum_norm.compute_rank_inverse(inv) == header_rank
+    # MNE's comparison of the data-driven rank with the header is suppressed, so it never reaches the warning log
+    warning_log = e.root / LOG_DIR / 'inv-warnings.toml'
+    assert not warning_log.exists() or 'theoretical rank' not in warning_log.read_text()
+
+    # ICA after SSS: each excluded component removes one dimension from the data rank
+    e.set(raw='sss-ica')
+    with catch_warnings():
+        filterwarnings('ignore', "FastICA did not converge", UserWarning)
+        ica_path = e.make_ica()
+    ica = e.load_ica()
+    ica.exclude = [0, 1]
+    ica.save(ica_path, overwrite=True)
+    assert mne.minimum_norm.compute_rank_inverse(e.load_inv()) == header_rank - 2
+    # the inverse operator follows the ICA selection
+    ica.exclude = [0]
+    ica.save(ica_path, overwrite=True)
+    assert mne.minimum_norm.compute_rank_inverse(e.load_inv()) == header_rank - 1
+    # a diagonal (ad hoc) covariance is full rank; imposing the SSS rank on it would zero arbitrary channel directions in the whitener
+    assert mne.minimum_norm.compute_rank_inverse(e.load_inv(cov='ad_hoc')) == n_channels
 
 
 @requires_mne_sample_data
@@ -979,6 +1017,12 @@ def test_sample_tasks(monkeypatch, samples_experiment):
         filterwarnings('ignore', "FastICA did not converge", UserWarning)
         ica_path = e.make_ica()
     assert ica_path == Path(root) / 'derivatives' / 'mne' / 'sub-R0000' / 'meg' / 'sub-R0000_desc-ica_ica.fif'
+
+    # head position overview: recordings with the same dev_head_t share a label
+    ds = e.show_head_position_overview(asds=True)
+    assert ds.n_cases == 4
+    assert set(ds['label']) == {'A'}
+    assert '†' not in str(e.show_head_position_overview())  # the sample raw has an initial HPI measurement, but no continuous HPI
 
 
 @requires_mne_sample_data
@@ -1092,6 +1136,113 @@ def test_ica_all_tasks_after_maxwell(samples_experiment):
     assert isinstance(e.load_ica(), mne.preprocessing.ICA)
     # the ICA can be applied to an individual recording
     assert isinstance(e.load_raw(), mne.io.BaseRaw)
+
+
+@requires_mne_sample_data
+@requires_mne_head_pos
+def test_head_pos_without_chpi(samples_experiment):
+    "RawMaxwell(head_pos=True) is a no-op for recordings without continuous HPI; the empty room follows the task recording"
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    root = samples_experiment(n_subjects=1, n_segments=1)
+
+    class Experiment(SampleExperiment):
+        raw = {
+            **SampleExperiment.raw,
+            # full SSS: with the st_only=True default pipe, head_pos would not compensate the output
+            'sss': RawMaxwell('raw', ignore_ref=True),
+            'sss_hp': RawMaxwell('raw', ignore_ref=True, head_pos=True),
+        }
+    e = Experiment(root)
+    e.set('R0000')
+
+    # the sample data has no cHPI, so the derivative falls back to the static dev_head_t
+    head_pos = e.load_head_position()
+    assert head_pos.shape == (1, 10)
+    pos_request = e._derivatives.resolve('raw-head-position', state=e.state)
+    assert pos_request.artifact_path.suffix == '.pos'
+    assert pos_request.artifact_path.exists()
+    with open(pos_request.manifest_path) as fid:
+        pos_manifest = json.load(fid)
+    # the coil fits exclude the bad channels, so the head positions depend on the raw source node that applies them
+    assert list(pos_manifest['dependencies']) == [raw_node_name('raw')]
+    assert 'bads' in pos_manifest['dependencies'][raw_node_name('raw')]['dependencies']['raw-input-bads@raw']['fingerprint']
+
+    # with a single position sample there is nothing to compensate, so the output is unchanged
+    raw_hp = e.load_raw(raw='sss_hp', preload=True)
+    raw = e.load_raw(raw='sss', preload=True)
+    assert raw_hp.ch_names == raw.ch_names
+    assert 'chpi' not in raw_hp.get_channel_types()
+    assert_array_equal(raw_hp.get_data(), raw.get_data())
+
+    # head_pos still separates the two pipes in the cache
+    manifests = {raw: e._derivatives.resolve(raw_node_name(raw), state={**e.state, 'raw': raw}, options={'noise': False}).manifest_path for raw in ('sss', 'sss_hp')}
+    assert manifests['sss_hp'] != manifests['sss']
+
+    # the empty room is filtered in the task recording's head frame and retains the same SSS components
+    e.set(raw='sss')
+    raw_noise = e.load_raw(noise=True)
+    assert_allclose(raw_noise.info['dev_head_t']['trans'], raw.info['dev_head_t']['trans'])
+    sss_info, sss_info_noise = (r.info['proc_history'][-1]['max_info']['sss_info'] for r in (raw, raw_noise))
+    assert_array_equal(sss_info_noise['components'], sss_info['components'])
+    assert sss_info_noise['nfree'] == sss_info['nfree']
+    # so the empty room covariance has exactly the rank of the task data, and MNE's header comparison holds
+    cov = e.load_cov(cov='emptyroom')
+    assert mne.compute_rank(cov, info=raw.info) == mne.compute_rank(cov, rank='info', info=raw.info)
+
+
+@requires_mne_sample_data
+@requires_mne_head_pos
+def test_head_pos_movement_compensation(samples_experiment):
+    "RawMaxwell(head_pos=True) compensates movement, drops the CHPI channels, and keeps mixed runs concatenable"
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.preprocessing.nodes import RawHeadPositionDerivative
+    from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
+
+    root = samples_experiment(n_subjects=1, n_tasks=2, n_segments=1, n_runs=2)
+
+    class Experiment(SampleExperiment):
+        raw = {
+            'tsss': RawMaxwell('raw', ignore_ref=True, head_pos=True),
+            'tsss_static': RawMaxwell('raw', ignore_ref=True),
+            'ica': RawICA('tsss', method='fastica', max_iter=1, n_components=0.95),
+            **SampleExperiment.raw,
+        }
+
+    def mixed_head_positions(self, ctx):
+        "Tracked positions for run 1, only the static transform for run 2"
+        raw = ctx.load(self._source_name)
+        trans = raw.info['dev_head_t']['trans']
+        quat = mne.transforms.rot_to_quat(trans[:3, :3])
+        sample = [*quat, *trans[:3, 3], .99, .001, .01]
+        if ctx.state['run'] != '1':
+            return np.array([[raw.first_time, *sample]])
+        t = np.linspace(raw.first_time, raw.times[-1] + raw.first_time, 20)
+        out = np.tile([sample], (20, 1))
+        out[:, 3:6] += np.linspace(0, .005, 20)[:, np.newaxis]  # move the head over the recording
+        return np.column_stack([t, out])
+
+    e = Experiment(root)
+    e.set('R0000', task='sample1', run='1')
+    with patch.object(RawHeadPositionDerivative, 'build', mixed_head_positions):
+        assert e.load_head_position().shape == (20, 10)
+        raw_hp = e.load_raw(raw='tsss', preload=True)
+        raw = e.load_raw(raw='tsss_static', preload=True)
+        # movement compensation changed the MEG data ...
+        data, data_hp = raw.get_data(picks='meg'), raw_hp.get_data(picks='meg')
+        assert np.abs(data_hp - data).max() / np.abs(data).max() > 1e-3
+        # ... but not the channel layout: the 'chpi' position channels maxwell_filter appends are removed
+        assert 'chpi' not in raw_hp.get_channel_types()
+        assert raw_hp.ch_names == raw.ch_names
+
+        assert e.load_head_position(run='2').shape == (1, 10)  # run 2 has nothing to compensate
+        e.set(raw='ica')
+        with catch_warnings():
+            filterwarnings('ignore', "FastICA did not converge", UserWarning)
+            # ICA after RawMaxwell concatenates the tracked and the untracked run, which requires matching channels
+            e.make_ica()
+            assert isinstance(e.load_ica(), mne.preprocessing.ICA)
 
 
 @requires_mne_sample_data
@@ -1517,11 +1668,18 @@ def test_raw_reader_warnings_are_summarized(monkeypatch, samples_experiment):
     assert 'Synthetic raw reader warning 2' in text
     data = tomllib.loads(text)
     assert len(data['warning']) == 2
+    # each entry records where the warning was attributed to, the key-field state and the full call stack
+    entry = data['warning'][0]
+    assert entry['location'].endswith(f'{__file__}:{read_raw_fif.__code__.co_firstlineno + 1}')
+    assert json.loads(entry['state'])['subject'] == 'R0000'
+    assert any('read_raw_fif' in line for line in entry['stack'])
+    assert any('load_raw' in line for line in entry['stack'])
 
     log_path = Path(next(handler.baseFilename for handler in e._log.handlers if isinstance(handler, logging.FileHandler)))
     log_text = log_path.read_text()
     assert str(details_path) in log_text
     assert log_text.count('issued during raw-input@raw') == 1
+    assert 'Synthetic raw reader warning 1' in log_text
 
     e.load_raw(raw='raw')
     assert details_path.read_text() == text
