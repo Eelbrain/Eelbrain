@@ -543,6 +543,7 @@ class PipelineFrame(EelbrainFrame):
         self._job_in_progress = None  # (scope, combo) the worker popped and is computing
         self._job_queue_lock = threading.Lock()
         self._n_done = self._n_total = 0  # progress of the current run
+        self._n_loading = 0  # rows of the displayed table whose status is still to be filled in
         # Job specs for the rows currently displayed, keyed by (scope, combo). Minted
         # during refresh (where pipeline.iter() sets the state), cleared for the new table
         # by _populate_table and filled in row by row by _fill_row. The scope is part of
@@ -1080,6 +1081,7 @@ class PipelineFrame(EelbrainFrame):
         # switch can never leave a spec from the previous table behind.
         self._job_specs = {}
         self._list.DeleteAllItems()
+        self._n_loading = len(rows)
         for row in rows:
             idx = self._list.InsertItem(self._list.GetItemCount(), row[0])
             for col, val in enumerate(row[1:], 1):
@@ -1112,6 +1114,7 @@ class PipelineFrame(EelbrainFrame):
         for col, value in enumerate(row):
             self._list.SetItem(index, col, value)
         self._set_row_colour(index, row)
+        self._n_loading -= 1
         self._refresh_status_bar()
 
     def _update_ica_row(self, scope: tuple, combo: tuple, doc) -> None:
@@ -1126,13 +1129,14 @@ class PipelineFrame(EelbrainFrame):
         """Recompute the status bar summary from the current table contents.
 
         While the second pass of a refresh is still filling rows in, the summary would
-        undercount, so the progress of that pass is shown instead.
+        undercount, so the progress of that pass is shown instead; that is called once
+        per row, so it is counted rather than read off the table.
         """
-        rows = [self._row(i) for i in range(self._list.GetItemCount())]
-        n_loading = sum(1 for row in rows if row[self._layout.status_col] == LOADING)
-        if n_loading:
-            self.SetStatusText(f"Loading… {len(rows) - n_loading} / {len(rows)}")
+        n = self._list.GetItemCount()
+        if self._n_loading:
+            self.SetStatusText(f"Loading… {n - self._n_loading} / {n}")
         else:
+            rows = [self._row(i) for i in range(n)]
             self.SetStatusText(self._current_task().status_bar(rows, self._layout))
 
     # ------------------------------------------------------------------
@@ -1144,6 +1148,7 @@ class PipelineFrame(EelbrainFrame):
         token = object()
         self._refresh_token = token
         self._list.DeleteAllItems()
+        self._n_loading = 0
         self.SetStatusText("Loading…")
 
         if task.shows_epoch:

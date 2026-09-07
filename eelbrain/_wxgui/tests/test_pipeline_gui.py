@@ -312,6 +312,7 @@ def test_populate_table_fits_the_rows_to_the_columns():
     frame._populate_table(rows, 'TOKEN')
     assert frame._list.rows == rows
     assert frame._job_specs == {}  # the previous table's specs are gone
+    assert frame._n_loading == 3  # every row is still to be filled in
     # only the ICA with no rejected component is coloured
     assert frame._list.colours == {0: wx.NullColour, 1: wx.RED, 2: wx.NullColour}
 
@@ -326,10 +327,11 @@ def test_fill_row_writes_one_resolved_row():
     layout = _layout('ica')
     loading = [task.missing_row((subject,), layout, pipeline_gui.LOADING) for subject in ('R01', 'R02')]
     frame = _table_frame('ica', loading)
-    frame.__dict__.update(_refresh_token='TOKEN', _job_specs={}, _refresh_status_bar=lambda: None, _table_scope=lambda: 'SCOPE')
+    frame.__dict__.update(_refresh_token='TOKEN', _job_specs={}, _n_loading=2, _refresh_status_bar=lambda: None, _table_scope=lambda: 'SCOPE')
     frame._fill_row('TOKEN', 'SCOPE', 1, ('R02',), ('R02', 'selected', '30', '2'), 'SPEC')
     assert frame._list.rows == [loading[0], ('R02', 'selected', '30', '2')]
     assert frame._job_specs == {('SCOPE', ('R02',)): 'SPEC'}
+    assert frame._n_loading == 1
 
     # a row arriving for a stale token, for a row that is gone, or for a combo that no
     # longer sits at that position is dropped, spec and all
@@ -337,6 +339,7 @@ def test_fill_row_writes_one_resolved_row():
         frame._fill_row(token, 'SCOPE', index, combo, (*combo, 'selected', '30', '9'), 'DROPPED')
     assert frame._list.rows == [loading[0], ('R02', 'selected', '30', '2')]
     assert frame._job_specs == {('SCOPE', ('R02',)): 'SPEC'}
+    assert frame._n_loading == 1
 
 
 def test_status_bar_shows_progress_while_rows_load():
@@ -346,14 +349,15 @@ def test_status_bar_shows_progress_while_rows_load():
     rows = [('R01', 'selected', '30', '2'), *(task.missing_row((subject,), layout, pipeline_gui.LOADING) for subject in ('R02', 'R03'))]
     frame = _table_frame('ica', rows)
     texts = []
-    frame.__dict__.update(SetStatusText=texts.append)
+    frame.__dict__.update(SetStatusText=texts.append, _n_loading=2, _refresh_token='TOKEN', _job_specs={})
     frame._refresh_status_bar()
     assert texts == ["Loading… 1 / 3"]
 
-    # once no row is loading any more the task's own summary takes over
-    frame._list.SetItem(1, 1, 'no ICA')
-    frame._list.SetItem(2, 1, 'selected')
-    frame._refresh_status_bar()
+    # each filled row advances the count without re-reading the table; once no row is
+    # loading any more the task's own summary takes over
+    frame._fill_row('TOKEN', 'SCOPE', 1, ('R02',), ('R02', 'no ICA', PLACEHOLDER, PLACEHOLDER), None)
+    assert texts[-1] == "Loading… 2 / 3"
+    frame._fill_row('TOKEN', 'SCOPE', 2, ('R03',), ('R03', 'selected', '30', '2'), None)
     assert texts[-1] == "2 / 3 subjects · ICA selected  (1 missing ICA file)"
 
 
