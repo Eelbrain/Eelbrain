@@ -1138,6 +1138,7 @@ class PipelineFrame(EelbrainFrame):
         else:
             rows = [self._row(i) for i in range(n)]
             self.SetStatusText(self._current_task().status_bar(rows, self._layout))
+        self._compute_btn.Enable(not self._n_loading)
 
     # ------------------------------------------------------------------
     # Background status refresh
@@ -1150,6 +1151,7 @@ class PipelineFrame(EelbrainFrame):
         self._list.DeleteAllItems()
         self._n_loading = 0
         self.SetStatusText("Loading…")
+        self._compute_btn.Disable()  # until every row is in, so that one click queues every missing row
 
         if task.shows_epoch:
             if epoch_rejection is None:
@@ -1315,10 +1317,6 @@ class PipelineFrame(EelbrainFrame):
         """
         if self._worker_active:
             return
-        # Invalidate any running refresh so both threads don't touch the
-        # pipeline concurrently.
-        self._refresh_token = object()
-
         token = object()
         self._compute_token = token
         self._n_done = 0

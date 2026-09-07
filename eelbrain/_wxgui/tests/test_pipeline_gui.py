@@ -349,7 +349,8 @@ def test_status_bar_shows_progress_while_rows_load():
     rows = [('R01', 'selected', '30', '2'), *(task.missing_row((subject,), layout, pipeline_gui.LOADING) for subject in ('R02', 'R03'))]
     frame = _table_frame('ica', rows)
     texts = []
-    frame.__dict__.update(SetStatusText=texts.append, _n_loading=2, _refresh_token='TOKEN', _job_specs={})
+    enabled = []
+    frame.__dict__.update(SetStatusText=texts.append, _n_loading=2, _refresh_token='TOKEN', _job_specs={}, _compute_btn=SimpleNamespace(Enable=enabled.append))
     frame._refresh_status_bar()
     assert texts == ["Loading… 1 / 3"]
 
@@ -359,6 +360,8 @@ def test_status_bar_shows_progress_while_rows_load():
     assert texts[-1] == "Loading… 2 / 3"
     frame._fill_row('TOKEN', 'SCOPE', 2, ('R03',), ('R03', 'selected', '30', '2'), None)
     assert texts[-1] == "2 / 3 subjects · ICA selected  (1 missing ICA file)"
+    # the compute button waits for the last row, so that one click queues every missing row
+    assert enabled == [False, False, True]
 
 
 def test_set_row_result_writes_status_details_and_colour():
