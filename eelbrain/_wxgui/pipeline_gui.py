@@ -298,7 +298,11 @@ class Task:
     # ------------------------------------------------------------------
     # Row appearance
 
-    def row_colour(self, row: tuple[str, ...], layout: Layout) -> wx.Colour | None:
+    def row_colour(
+            self,
+            row: tuple[str, ...],
+            layout: Layout,
+    ) -> wx.Colour | None:
         """Text colour for a row, or ``None`` for the default."""
         return None
 
@@ -306,7 +310,12 @@ class Task:
         """Detail-column values describing a freshly computed artifact."""
         raise NotImplementedError(f"{self.name} is not computable")
 
-    def missing_row(self, combo: tuple[str, ...], layout: Layout, status: str | None = None) -> tuple[str, ...]:
+    def missing_row(
+            self,
+            combo: tuple[str, ...],
+            layout: Layout,
+            status: str | None = None,
+    ) -> tuple[str, ...]:
         """Row for a key combination with no artifact to show: status plus placeholders.
 
         Also the row of the first refresh pass, whose status is not known yet
@@ -341,7 +350,11 @@ class Task:
     def counts_missing(self, status: str) -> bool:
         return status == self.missing_status or (self.compute_label is not None and status in TRANSIENT_STATUS)
 
-    def status_bar(self, rows: list[tuple[str, ...]], layout: Layout) -> str:
+    def status_bar(
+            self,
+            rows: list[tuple[str, ...]],
+            layout: Layout,
+    ) -> str:
         """Summary of the whole table for the status bar."""
         rows = [row for row in rows if self.counts_row(row)]
         n_done = sum(1 for row in rows if self.counts_done(row[layout.status_col]))
@@ -380,10 +393,18 @@ class BadChannelsTask(Task):
                 fields.append(field)
         return tuple(fields)
 
-    def row_colour(self, row: tuple[str, ...], layout: Layout) -> wx.Colour | None:
+    def row_colour(
+            self,
+            row: tuple[str, ...],
+            layout: Layout,
+    ) -> wx.Colour | None:
         return wx.RED if row[layout.status_col] == self.missing_status else None
 
-    def status_bar(self, rows: list[tuple[str, ...]], layout: Layout) -> str:
+    def status_bar(
+            self,
+            rows: list[tuple[str, ...]],
+            layout: Layout,
+    ) -> str:
         msg = super().status_bar(rows, layout)
         n_error = sum(1 for row in rows if row[layout.status_col] == self.missing_status)
         if n_error:
@@ -422,7 +443,11 @@ class ICATask(Task):
             fields.append('run')
         return tuple(fields)
 
-    def row_colour(self, row: tuple[str, ...], layout: Layout) -> wx.Colour | None:
+    def row_colour(
+            self,
+            row: tuple[str, ...],
+            layout: Layout,
+    ) -> wx.Colour | None:
         # an ICA without a single rejected component is almost always an oversight
         if row[layout.status_col] == self.done_status and row[layout.status_col + 2] == '0':
             return wx.RED
@@ -475,7 +500,11 @@ class MRITask(Task):
     def counts_done(self, status: str) -> bool:
         return status in (self.done_status, 'template')
 
-    def row_colour(self, row: tuple[str, ...], layout: Layout) -> wx.Colour | None:
+    def row_colour(
+            self,
+            row: tuple[str, ...],
+            layout: Layout,
+    ) -> wx.Colour | None:
         if row[layout.status_col] == self.missing_status:
             return wx.RED
         elif row[0] == COMMON_BRAIN_ROW:
@@ -500,7 +529,11 @@ class CoregTask(Task):
         # Session is a key field; MRI subject is display-only
         return (('Session', 80), ('MRI subject', 140))
 
-    def row_colour(self, row: tuple[str, ...], layout: Layout) -> wx.Colour | None:
+    def row_colour(
+            self,
+            row: tuple[str, ...],
+            layout: Layout,
+    ) -> wx.Colour | None:
         return wx.RED if row[layout.status_col] == self.missing_status else None
 
 
@@ -1067,7 +1100,12 @@ class PipelineFrame(EelbrainFrame):
         colour = wx.RED if row[self._layout.status_col] == ERROR else self._current_task().row_colour(row, self._layout)
         self._list.SetItemTextColour(idx, wx.NullColour if colour is None else colour)
 
-    def _set_row_result(self, idx: int, status: str, values: tuple[str, ...]) -> None:
+    def _set_row_result(
+            self,
+            idx: int,
+            status: str,
+            values: tuple[str, ...],
+    ) -> None:
         """Write the Status and detail columns of a row, and recolour it."""
         self._list.SetItem(idx, self._layout.status_col, status)
         for col, value in enumerate(values, self._layout.status_col + 1):
@@ -1106,6 +1144,22 @@ class PipelineFrame(EelbrainFrame):
         refresh resolves the rows the first pass found, in order, and ``token``
         guarantees the table on display is still the one they were found for. The combo
         is verified all the same, so a row can never be given another recording's status.
+
+        Parameters
+        ----------
+        token
+            Refresh the row belongs to; a row of a superseded refresh is dropped.
+        scope
+            Table the row belongs to (see :meth:`_table_scope`); with ``combo``, the
+            key of its job spec.
+        index
+            Position of the row in the table.
+        combo
+            Key-field column values identifying the row.
+        row
+            All column values of the row.
+        spec
+            Job spec for the row's artifact; ``None`` if it can not be computed.
         """
         if token is not self._refresh_token:
             return
@@ -1119,7 +1173,12 @@ class PipelineFrame(EelbrainFrame):
         self._n_loading -= 1
         self._refresh_status_bar()
 
-    def _update_ica_row(self, scope: tuple, combo: tuple, doc) -> None:
+    def _update_ica_row(
+            self,
+            scope: tuple,  # see :meth:`_table_scope`
+            combo: tuple,
+            doc: ICADocument,
+    ) -> None:
         """Update a single ICA row from the already-in-memory document (no disk I/O)."""
         i = self._displayed_row(scope, combo)
         if i != -1:
@@ -1401,7 +1460,12 @@ class PipelineFrame(EelbrainFrame):
                 with self._job_queue_lock:
                     self._job_in_progress = None
 
-    def _compute_job(self, task: Task, spec: JobSpec, combo: tuple):
+    def _compute_job(
+            self,
+            task: Task,
+            spec: JobSpec,
+            combo: tuple,
+    ):
         """Compute and cache one job, or ``None`` when the user declined (worker thread).
 
         A stale ICA file may hold manual component selections, so it is never

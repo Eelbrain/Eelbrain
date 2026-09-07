@@ -10,6 +10,7 @@
 #  - issues commands to Model
 
 import mne
+from matplotlib.axes import Axes
 from matplotlib.collections import LineCollection
 import numpy as np
 import pandas as pd
@@ -709,21 +710,42 @@ class Frame(NavigableFrame, FileFrame):
 
     def _plot_topo(
             self,
-            ax,
+            ax: Axes,
             data: NDVar,
             label: str,
             ch_type: str,
             vlims: dict,
             interpolation: str,
     ) -> AxTopomap:
-        """Plot a topomap on ``ax``, replacing anything previously plotted there."""
+        """Plot a topomap on ``ax``, replacing anything previously plotted there.
+
+        Parameters
+        ----------
+        ax
+            Axes to draw on.
+        data
+            Sensor data to map.
+        label
+            Map title, one of :data:`TOPO_LABELS`.
+        ch_type
+            Channel type, appended to the title.
+        vlims
+            ``{meas: (vmin, vmax)}`` color scale.
+        interpolation
+            Image interpolation, as for :class:`AxTopomap`.
+        """
         ax.clear()
         layers = AxisData([DataLayer(data, PlotType.IMAGE)])
         p = AxTopomap(ax, layers, vlims=vlims, interpolation=interpolation, clip='even')
         ax.text(0.5, 0.0, f"{label} ({ch_type})", transform=ax.transAxes, ha='center', va='bottom', fontsize=7)
         return p
 
-    def _plot_nc_clean(self, ax, ch_type: str, ndvar: NDVar) -> AxTopomap:
+    def _plot_nc_clean(
+            self,
+            ax: Axes,
+            ch_type: str,
+            ndvar: NDVar,
+    ) -> AxTopomap:
         """(Re-)plot the clean neighbor-correlation topomap for ``ch_type`` on ``ax``.
 
         Neighbor correlation is recomputed on good channels only, so the sensor

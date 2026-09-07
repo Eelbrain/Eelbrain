@@ -1343,7 +1343,13 @@ class LoadProfile:
             self.total = elapsed
 
     def summary(self, limit: int = 4) -> str:
-        """The nodes that took the longest, most expensive first."""
+        """The nodes that took the longest, most expensive first.
+
+        Parameters
+        ----------
+        limit
+            Number of nodes to list.
+        """
         ranked = sorted(self.self_time, key=self.self_time.get, reverse=True)
         return ', '.join(f"{name} {self.self_time[name]:.3f} s ({self.calls[name]}x)" for name in ranked[:limit])
 
