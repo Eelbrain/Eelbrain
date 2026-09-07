@@ -762,17 +762,13 @@ class RawMaxwell(CachedRawPipe):
         :func:`mne.preprocessing.find_bad_channels_maxwell` (default 40).
         Bad channels are detected before cHPI signals are removed, so this
         filter is what keeps cHPI signals and line noise out of the detection.
-        ``None`` (no filter) is only appropriate when the source data are
-        already free of both, and is rejected together with ``head_pos`` or
-        ``filter_chpi``.
     head_pos
         Compensate for head movement using continuous HPI (default ``False``).
         Head positions are estimated with :func:`mne.chpi.compute_head_pos`
         using MNE's default fitting parameters (``gof_limit=0.98``,
         ``dist_limit=0.005``, ``t_step_min=0.01``, ``t_window='auto'``),
-        excluding the bad channels from the source recording's channels file,
-        cached, and can be retrieved with
-        :meth:`Pipeline.load_head_position`. This requires ``mne >= 1.13``, and
+        cached, and can be retrieved with :meth:`Pipeline.load_head_position`.
+        This requires ``mne >= 1.13``, and
         has no effect for recordings without continuous HPI or for empty room
         data. With ``st_only=True``, the head positions only enter the temporal
         projection basis (see :func:`mne.preprocessing.maxwell_filter`) and
