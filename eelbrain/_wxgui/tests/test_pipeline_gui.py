@@ -449,7 +449,7 @@ def test_refresh_holds_the_pipeline_lock(monkeypatch):
         _pipeline_lock=threading.Lock(),
         _refresh_token=token,
         _iter_combos=lambda scope: locked.append(frame._pipeline_lock.locked()) or iter([('R01',)]),
-        _iter_rows=lambda token_, scope: locked.append(frame._pipeline_lock.locked()) or iter([(('R01',), ('R01', 'selected', '30', '2'), 'SPEC')]),
+        _iter_rows=lambda token_, scope, combos: locked.append(frame._pipeline_lock.locked()) or iter([(('R01',), ('R01', 'selected', '30', '2'), 'SPEC')]),
     )
     frame._refresh_thread(token, _ICA_SCOPE)
     assert locked == [True, True]
@@ -469,11 +469,14 @@ def test_refresh_shows_the_rows_before_their_status(monkeypatch):
         _pipeline_lock=threading.Lock(),
         _refresh_token=token,
         _iter_combos=lambda scope: iter([('R01',), ('R02',)]),
-        _iter_rows=lambda token_, scope: iter(rows),
+        _iter_rows=lambda token_, scope, combos: walked.append(combos) or iter(rows),
     )
+    walked = []
     frame._refresh_thread(token, _ICA_SCOPE)
     # the table goes up first, with every row still loading
     assert posted[0] == (frame._populate_table, [task.missing_row(combo, _ICA_LAYOUT, pipeline_gui.LOADING) for combo, _, _ in rows], token)
+    # the second pass resolves the rows the first pass found, rather than walking them again
+    assert walked == [[('R01',), ('R02',)]]
     # then one update per row, at the position the first pass put it
     assert posted[1] == (frame._fill_row, token, _ICA_SCOPE, 0, ('R01',), ('R01', 'selected', '30', '2'), 'SPEC-1')
     assert posted[2] == (frame._fill_row, token, _ICA_SCOPE, 1, ('R02',), ('R02', 'no ICA', PLACEHOLDER, PLACEHOLDER), 'SPEC-2')
