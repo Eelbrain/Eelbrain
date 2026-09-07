@@ -558,8 +558,8 @@ class Pipeline(StateModel):
         self._derivatives.register(TRFModelTestDerivative(self.tests, self._groups))
 
         # --- Sensor-space: events → epochs → evoked ---
-        event_factors = sequence_arg(f'{self.__class__.__name__}.event_factors', self.event_factors, allow_none=False)
-        if reserved := set(event_factors).intersection(RESERVED_VAR_KEYS):
+        event_factors = sequence_arg(f'{self.__class__.__name__}.event_factors', self.event_factors, allow_none=False, sequence_type=frozenset)
+        if reserved := event_factors.intersection(RESERVED_VAR_KEYS):
             raise ConfigurationError(f"{self.__class__.__name__}.event_factors={self.event_factors!r}: {sorted(reserved)} are reserved names; these columns are written or read by the pipeline itself")
         self._derivatives.register(EventsInput(self._raw_extension, event_factors))
         self._derivatives.register(EventsDerivative(

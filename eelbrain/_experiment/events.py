@@ -127,7 +127,7 @@ class EventsInput(Input[Dataset]):
     def __init__(
             self,
             raw_extension: str,
-            event_factors: tuple[str, ...] = (),
+            event_factors: frozenset[str],
     ):
         self.raw_extension = raw_extension
         self.event_factors = event_factors
@@ -140,7 +140,11 @@ class EventsInput(Input[Dataset]):
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         # Only include event_factors when set, so that existing manifests remain valid
-        metadata = {'event_factors': self.event_factors} if self.event_factors else None
+        path = self.path(ctx)
+        if path.exists() and self.event_factors:
+            metadata = {'event_factors': self.event_factors}
+        else:
+            metadata = None
         return file_fingerprint(ctx.root, self.path(ctx), metadata=metadata)
 
     def load(self, ctx: Request) -> Dataset | None:
