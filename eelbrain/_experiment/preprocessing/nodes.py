@@ -28,6 +28,7 @@ import numpy
 import pandas as pd
 
 from ..._exceptions import DataError
+from ...mne_fixes._version import MNE_SUPPORTS_HEAD_POS
 from ..derivative_cache import (
     ALLOW_PROTECTED_OVERWRITE, ArtifactManifest, CachePolicy, Dependency, Derivative, UncachedDerivative,
     JobProvenance, Request, Input, MANIFEST_SCHEMA_VERSION, ProtectedArtifactError,
@@ -1202,6 +1203,8 @@ class RawHeadPositionDerivative(Derivative[numpy.ndarray]):
         raw = ctx.load(self._source_name)
         info = raw.info
         method = find_chpi(raw, log=ctx.registry.log)
+        if method is not None and not MNE_SUPPORTS_HEAD_POS:
+            raise RuntimeError(f"Estimating head positions from continuous HPI requires mne >= 1.13 (installed: {mne.__version__})")
         chpi_locs = None
         if method == 'freqs':
             chpi_amplitudes = mne.chpi.compute_chpi_amplitudes(raw)

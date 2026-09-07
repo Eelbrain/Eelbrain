@@ -12,7 +12,7 @@ from mne_bids import BIDSPath
 
 from eelbrain._experiment.preprocessing.config import CHPI_MIN_ACTIVE_FRACTION
 from eelbrain._experiment.preprocessing.nodes import CanonicalHeadPositionDerivative, RawHeadPositionDerivative, RawSourceInput, find_chpi
-from eelbrain.testing import requires_mne_testing_data
+from eelbrain.testing import requires_mne_head_pos, requires_mne_testing_data
 
 
 def test_read_raw_applies_bids_channels(tmp_path):
@@ -160,6 +160,7 @@ def test_find_chpi_active_fraction(caplog):
         assert find_chpi(raw) == 'freqs'
 
 
+@requires_mne_head_pos
 @requires_mne_testing_data
 def test_head_position_ctf():
     """Continuous head localization from CTF HLC channels"""
@@ -177,6 +178,7 @@ def test_head_position_ctf():
         assert np.allclose(head_pos[:, column], np.interp(head_pos[:, 0], reference[:, 0], reference[:, column]), atol=5e-3)
 
 
+@requires_mne_head_pos
 @requires_mne_testing_data
 def test_head_position_kit():
     """cHPI from the KIT stim channel; KIT recordings without cHPI fall back to the static transform"""
