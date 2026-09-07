@@ -364,6 +364,17 @@ def test_status_bar_shows_progress_while_rows_load():
     assert enabled == [False, False, True]
 
 
+def test_activate_row_waits_for_the_row_to_load():
+    "A double-click on a row whose columns are still placeholders does nothing"
+    layout = _layout('coreg')
+    frame = _table_frame('coreg', [TASKS_BY_NAME['coreg'].missing_row(('R01', 's1'), layout, pipeline_gui.LOADING), ('R02', 's1', 'R02', 'missing')])
+    activated = []
+    frame._activate_item = lambda idx, subject, task: activated.append(idx)
+    frame._activate_row(0)
+    frame._activate_row(1)
+    assert activated == [1]
+
+
 def test_set_row_result_writes_status_details_and_colour():
     "One row write for every task, addressed through the cached layout"
     frame = _table_frame('ica', [('R01', 'queued', PLACEHOLDER, PLACEHOLDER)])

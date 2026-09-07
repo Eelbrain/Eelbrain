@@ -836,6 +836,8 @@ class PipelineFrame(EelbrainFrame):
 
     def _activate_row(self, idx: int) -> None:
         """Perform the double-click action for the row at ``idx``."""
+        if self._list.GetItemText(idx, self._layout.status_col) == LOADING:
+            return  # the row's columns are still placeholders (see _refresh_thread)
         subject = self._list.GetItemText(idx, 0)
         task = self._current_task()
         # Loop so that after the user incorporates a stale ICA we can retry the
