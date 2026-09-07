@@ -173,37 +173,25 @@ class JobSpec:
         # protection check runs at the start of its make_job, and a file another
         # session writes during the (potentially long) load was never covered by that
         # check, so it must not become the baseline that save_result may overwrite.
-        artifact = None
         if ctx.node.cache_policy is CachePolicy.EXTERNAL and self.path.exists():
             artifact = file_fingerprint(ctx.root, self.path)
-        # Fingerprint the inputs before they are read, and check afterward that they
-        # held still: the job carries data read during the load, so fingerprints taken
-        # after it would describe data the job does not hold -- and being equal to the
-        # current state, they would mark that artifact valid rather than stale.
-        provenance = JobProvenance(ctx.dependency_fingerprints(), ctx.current_fingerprint(), artifact)
-        # For a derivative, the same contexts load_artifact wraps build() in, so its
-        # loads are restricted to declared dependencies and key fields, and its
-        # warnings are recorded, whether the artifact is computed in place or through
-        # a job. An input has no in-place build to mirror, and may load beyond its
-        # declared dependency edges (ICA loads bad channels and per-run source raws).
+        else:
+            artifact = None
+        # Fingerprint the inputs before they are read to check afterward that they held still
+        dependencies, fingerprint = ctx.dependency_fingerprints(), ctx.current_fingerprint()
+        # For a derivative, the same contexts load_artifact wraps build() in
         if isinstance(ctx.node, Derivative):
             with ctx._build_deps_context(), ctx.registry._node_warning_context(ctx), ctx._state_check_context():
                 job = ctx.node.make_job(ctx)
         else:
             job = ctx.node.make_job(ctx)
-        # Check that the inputs are unchanged. Quick fingerprints are excluded: they
-        # may change spuriously (see DependencyNode.dependency_fingerprint_quick), and
-        # loading itself can move one (a load may refresh the file behind it, as a TRF
-        # predictor's reference file is). The manifest is then filed with the quick
-        # fingerprints as they are after the load, so that validating the artifact can
-        # take the quick path.
-        dependencies, fingerprint = ctx.dependency_fingerprints(), ctx.current_fingerprint()
-        for before, after in ((provenance.dependencies, dependencies), (provenance.fingerprint, fingerprint)):
-            difference = find_difference(before, after, strip_quick=True)
+        # Check that the inputs are unchanged and record most recent quick fingerprints
+        provenance = JobProvenance(ctx.dependency_fingerprints(), ctx.current_fingerprint(), artifact)
+        for before, after in ((dependencies, provenance.dependencies), (fingerprint, provenance.fingerprint)):
+            difference = find_difference(before, after, strip_quick=True)  # Quick fingerprints are excluded as they may change spuriously
             if difference is not None:
                 path, old, new = difference
                 raise JobInputsChangedError(ctx.node.name, format_difference_path(path), old, new)
-        provenance = replace(provenance, dependencies=dependencies, fingerprint=fingerprint)
 
         ctx.node.log_job(ctx, self.path)
         return replace(job, key=self.key, node=ctx.node.name, provenance=provenance)
