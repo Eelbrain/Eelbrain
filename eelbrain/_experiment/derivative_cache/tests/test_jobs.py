@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import pickle
 import warnings
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ from eelbrain._experiment.derivative_cache import (
 )
 from eelbrain._experiment.derivative_cache.tests.test_derivative_cache import (
     DEFAULT_STATE,
+    CountingQuickInput,
     NarrowingDerivative,
     SourceInput,
     make_empty_registry,
@@ -91,6 +93,25 @@ class RacyJobDerivative(JobDerivative):
             job = _EchoJob(ctx.load('source'))
         if self.interrupt is not None:
             self._source.source_path(ctx.state['subject']).write_text(self.interrupt)
+        return job
+
+
+class TouchingJobDerivative(JobDerivative):
+    "Job derivative whose load refreshes its input file, moving the input's quick fingerprint"
+    name = 'touching-job'
+
+    def __init__(self, source: CountingQuickInput):
+        self._source = source
+
+    def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
+        return (Dependency('counting'),)
+
+    def make_job(self, ctx: Request) -> _EchoJob:
+        with ctx._build_deps_context():
+            job = _EchoJob(ctx.load('counting'))
+        path = self._source.path(ctx)
+        mtime_ns = path.stat().st_mtime_ns + 10**9
+        os.utime(path, ns=(mtime_ns, mtime_ns))
         return job
 
 
@@ -280,6 +301,23 @@ def test_job_refuses_inputs_that_change_during_the_load():
     job = spec.make_job()
     assert spec.save_result(job, job()) == 'CHANGED'
     assert JobSpec(registry.resolve('racy-job', state=DEFAULT_STATE)).is_done
+
+
+def test_job_files_the_quick_fingerprints_as_they_are_after_the_load():
+    "A quick fingerprint that moves during the load is not a changed input, and the manifest records where it moved to"
+    root, registry = make_empty_registry()
+    source = CountingQuickInput(root)
+    registry.register(source)
+    registry.register(TouchingJobDerivative(source))
+    source.path(registry.resolve('counting', state=DEFAULT_STATE)).write_text('hello')
+
+    spec = JobSpec(registry.resolve('touching-job', state=DEFAULT_STATE))
+    job = spec.make_job()
+    assert spec.save_result(job, job()) == 'HELLO'
+    # validating the result takes the quick path, rather than recomputing the full fingerprint
+    source.full_calls = 0
+    assert registry.resolve('touching-job', state=DEFAULT_STATE).is_valid()
+    assert source.full_calls == 0
 
 
 def test_job_save_result_requires_a_matching_job():

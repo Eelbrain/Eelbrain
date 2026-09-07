@@ -67,9 +67,9 @@ class JobProvenance:
     Attributes
     ----------
     dependencies
-        Dependency fingerprints as of before the load, verified unchanged after
-        it. Everything a job is computed from is loaded through
-        ``ctx.load(...)``, so this covers all of it.
+        Dependency fingerprints as of the load, verified to be the same before
+        and after it (quick fingerprints aside). Everything a job is computed
+        from is loaded through ``ctx.load(...)``, so this covers all of it.
     fingerprint
         The node's own fingerprint, taken and verified the same way. Mostly
         definitions and state, which the request holds fixed -- but a node may
@@ -193,13 +193,17 @@ class JobSpec:
             job = ctx.node.make_job(ctx)
         # Check that the inputs are unchanged. Quick fingerprints are excluded: they
         # may change spuriously (see DependencyNode.dependency_fingerprint_quick), and
-        # loading itself can move one (e.g. loading bad channels builds a missing
-        # channels.tsv file, relocating the quick fingerprint to the new file).
-        for before, after in ((provenance.dependencies, ctx.dependency_fingerprints()), (provenance.fingerprint, ctx.current_fingerprint())):
+        # loading itself can move one (a load may refresh the file behind it, as a TRF
+        # predictor's reference file is). The manifest is then filed with the quick
+        # fingerprints as they are after the load, so that validating the artifact can
+        # take the quick path.
+        dependencies, fingerprint = ctx.dependency_fingerprints(), ctx.current_fingerprint()
+        for before, after in ((provenance.dependencies, dependencies), (provenance.fingerprint, fingerprint)):
             difference = find_difference(before, after, strip_quick=True)
             if difference is not None:
                 path, old, new = difference
                 raise JobInputsChangedError(ctx.node.name, format_difference_path(path), old, new)
+        provenance = replace(provenance, dependencies=dependencies, fingerprint=fingerprint)
 
         ctx.node.log_job(ctx, self.path)
         return replace(job, key=self.key, node=ctx.node.name, provenance=provenance)
