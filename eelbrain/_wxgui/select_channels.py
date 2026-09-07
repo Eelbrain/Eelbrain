@@ -223,7 +223,8 @@ class Document(FileDocument):
         if static is None:
             return None
         good = [n for n in ndvar.sensor.names if n not in bad]
-        if len(good) == len(ndvar.sensor) or len(good) < 2:
+        # fewer than 4 sensors can not be laid out as a map (the 2-D projection fits a sphere)
+        if len(good) == len(ndvar.sensor) or len(good) < 4:
             return static
         try:
             return neighbor_correlation(ndvar.sub(sensor=good))
