@@ -1925,6 +1925,13 @@ def test_events_input(samples_experiment):
     assert isinstance(ds['condition'], Factor)
     assert set(ds['condition'].cells) == {'n/a', '1', '2'}
 
+    # Column names are validated
+    class ReservedExperiment(SampleExperiment):
+        event_factors = ('condition', 'sample')
+
+    with pytest.raises(ConfigurationError, match="reserved"):
+        ReservedExperiment(root)
+
 
 @requires_mne_sample_data
 def test_raw_cache_identity_ignores_view_options(samples_experiment):
