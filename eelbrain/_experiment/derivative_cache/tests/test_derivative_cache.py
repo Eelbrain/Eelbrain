@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -2200,21 +2200,23 @@ def test_external_input_has_artifact_members():
     assert handle.is_valid() is False
 
 
-def test_load_profile_attributes_time_to_the_node_that_spent_it():
+def test_load_profile_attributes_time_to_the_node_that_spent_it(monkeypatch):
     "A nested load counts towards its own node, not the load that made it"
+    now = [0.]
+    monkeypatch.setattr('eelbrain._experiment.derivative_cache.base.time', SimpleNamespace(perf_counter=lambda: now[0]))
     profile = LoadProfile()
     with profile.measure('outer'):
         with profile.measure('inner'):
-            time.sleep(0.02)
+            now[0] += 0.02
         with profile.measure('inner'):
-            time.sleep(0.02)
-        time.sleep(0.01)
+            now[0] += 0.02
+        now[0] += 0.01
 
     assert profile.calls == {'outer': 1, 'inner': 2}
     # the two nested loads are subtracted from the outer one, so the times sum to the total
-    assert profile.self_time['inner'] == pytest.approx(0.04, abs=0.02)
-    assert profile.self_time['outer'] == pytest.approx(0.01, abs=0.02)
-    assert sum(profile.self_time.values()) == pytest.approx(profile.total, abs=0.001)
+    assert profile.self_time['inner'] == pytest.approx(0.04)
+    assert profile.self_time['outer'] == pytest.approx(0.01)
+    assert sum(profile.self_time.values()) == pytest.approx(profile.total)
     # the summary ranks the nodes by the time they spent, most expensive first
     assert profile.summary().startswith('inner ')
     assert profile.summary(limit=1).count(',') == 0
