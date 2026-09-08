@@ -350,19 +350,34 @@ def test_status_bar_shows_progress_while_rows_load():
     rows = [('R01', 'selected', '30', '2'), *(task.missing_row((subject,), layout, pipeline_gui.LOADING) for subject in ('R02', 'R03'))]
     frame = _table_frame('ica', rows)
     texts = []
-    enabled = []
-    frame.__dict__.update(SetStatusText=texts.append, _n_loading=2, _refresh_token='TOKEN', _job_specs={}, _compute_btn=SimpleNamespace(Enable=enabled.append))
+    updated = []
+    frame.__dict__.update(SetStatusText=texts.append, _n_loading=2, _refresh_token='TOKEN', _job_specs={}, _update_compute_button=lambda: updated.append(frame._n_loading))
     frame._refresh_status_bar()
     assert texts == ["Loading… 1 / 3"]
 
     # each filled row advances the count without re-reading the table; once no row is
-    # loading any more the task's own summary takes over
+    # loading any more the task's own summary takes over, and the compute button follows
     frame._fill_row('TOKEN', 'SCOPE', 1, ('R02',), ('R02', 'no ICA', PLACEHOLDER, PLACEHOLDER), None)
     assert texts[-1] == "Loading… 2 / 3"
     frame._fill_row('TOKEN', 'SCOPE', 2, ('R03',), ('R03', 'selected', '30', '2'), None)
     assert texts[-1] == "2 / 3 subjects · ICA selected  (1 missing ICA file)"
-    # the compute button waits for the last row, so that one click queues every missing row
-    assert enabled == [False, False, True]
+    assert updated == [0]
+
+
+def test_compute_button_waits_for_the_table_but_stop_does_not():
+    "Computing needs every row, so that one click queues every missing row; stopping a run never waits"
+    frame = _table_frame('ica')
+    labels, enabled = [], []
+    button = SimpleNamespace(SetLabel=labels.append, SetToolTip=lambda tip: None, Show=lambda show: None, Enable=enabled.append)
+    frame.__dict__.update(_pipeline=pipeline(), _current_epoch_rejection=lambda: None, _compute_btn=button, _panel=SimpleNamespace(Layout=lambda: None), _compute_token=None, _n_loading=2)
+    frame._update_compute_button()
+    frame._n_loading = 0
+    frame._update_compute_button()
+    frame._n_loading = 2
+    frame._compute_token = object()
+    frame._update_compute_button()
+    assert labels == ["Make ICA", "Make ICA", "Stop"]
+    assert enabled == [False, True, True]
 
 
 def test_activate_row_waits_for_the_row_to_load():

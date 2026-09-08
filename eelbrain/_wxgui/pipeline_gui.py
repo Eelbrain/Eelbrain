@@ -774,6 +774,8 @@ class PipelineFrame(EelbrainFrame):
         if computable:
             self._compute_btn.SetLabel("Stop" if self._compute_token is not None else task.compute_label)
             self._compute_btn.SetToolTip(task.compute_tooltip)
+            # Computing waits until every row is in, so that one click queues every missing row; stopping never waits
+            self._compute_btn.Enable(self._compute_token is not None or not self._n_loading)
         self._compute_btn.Show(computable)
         self._panel.Layout()
 
@@ -1199,7 +1201,7 @@ class PipelineFrame(EelbrainFrame):
         else:
             rows = [self._row(i) for i in range(n)]
             self.SetStatusText(self._current_task().status_bar(rows, self._layout))
-        self._compute_btn.Enable(not self._n_loading)
+            self._update_compute_button()
 
     # ------------------------------------------------------------------
     # Background status refresh
@@ -1212,7 +1214,8 @@ class PipelineFrame(EelbrainFrame):
         self._list.DeleteAllItems()
         self._n_loading = 0
         self.SetStatusText("Loading…")
-        self._compute_btn.Disable()  # until every row is in, so that one click queues every missing row
+        if self._compute_token is None:  # during a computation the button is Stop, which a refresh must not block
+            self._compute_btn.Disable()
 
         if task.shows_epoch:
             if epoch_rejection is None:
