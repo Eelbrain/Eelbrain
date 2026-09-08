@@ -381,13 +381,15 @@ def test_compute_button_waits_for_the_table_but_stop_does_not():
     assert enabled == [False, True, True]
 
 
-def test_activate_row_waits_for_the_row_to_load():
-    "A double-click on a row whose columns are still placeholders does nothing"
+def test_activate_row_waits_for_the_table_to_load():
+    "A double-click does nothing while the refresh thread is still filling rows in, even on a row that is in"
     layout = _layout('coreg')
     frame = _table_frame('coreg', [TASKS_BY_NAME['coreg'].missing_row(('R01', 's1'), layout, pipeline_gui.LOADING), ('R02', 's1', 'R02', 'missing')])
     activated = []
-    frame._activate_item = lambda idx, subject, task: activated.append(idx)
-    frame._activate_row(0)
+    frame.__dict__.update(_activate_item=lambda idx, subject, task: activated.append(idx), _n_loading=1)
+    frame._activate_row(1)
+    assert activated == []
+    frame._n_loading = 0
     frame._activate_row(1)
     assert activated == [1]
 

@@ -842,8 +842,8 @@ class PipelineFrame(EelbrainFrame):
 
     def _on_item_right_click(self, event):
         """Row right-click: context menu (Bad channels task only)."""
-        if self._current_task().name != 'bad_chs':
-            return
+        if self._current_task().name != 'bad_chs' or self._n_loading:
+            return  # while rows are loading, the refresh thread is using the pipeline (see _activate_row)
         idx = event.GetIndex()
         if idx == wx.NOT_FOUND:
             return
@@ -891,8 +891,10 @@ class PipelineFrame(EelbrainFrame):
 
     def _activate_row(self, idx: int) -> None:
         """Perform the double-click action for the row at ``idx``."""
-        if self._list.GetItemText(idx, self._layout.status_col) == LOADING:
-            return  # the row's columns are still placeholders (see _refresh_thread)
+        if self._n_loading:
+            # The refresh thread is still setting the pipeline's state row by row (see
+            # _iter_rows), which an action on the main thread would interleave with
+            return
         subject = self._list.GetItemText(idx, 0)
         task = self._current_task()
         # Loop so that after the user incorporates a stale ICA we can retry the
