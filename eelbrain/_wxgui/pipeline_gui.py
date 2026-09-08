@@ -1870,18 +1870,15 @@ class PipelineFrame(EelbrainFrame):
                             row = task.missing_row(combo, layout)
 
                     elif task.name == 'mri':
-                        subjects_dir = pipeline.root / MRI_SDIR
-                        if combo == (COMMON_BRAIN_ROW,):
-                            mrisubject = pipeline.get('common_brain')
-                            has_recon = (subjects_dir / mrisubject / 'surf' / 'lh.pial').exists()
-                            status = task.done_status if has_recon else COMMON_BRAIN_MISSING
+                        is_common_brain = combo == (COMMON_BRAIN_ROW,)
+                        mrisubject = pipeline.get('common_brain' if is_common_brain else 'mrisubject')
+                        mri_dir = pipeline.root / MRI_SDIR / mrisubject
+                        if not (mri_dir / 'surf' / 'lh.pial').exists():
+                            status = COMMON_BRAIN_MISSING if is_common_brain else task.missing_status
+                        elif not is_common_brain and is_fake_mri(mri_dir):
+                            status = 'template'
                         else:
-                            mrisubject = pipeline.get('mrisubject')
-                            has_recon = (subjects_dir / mrisubject / 'surf' / 'lh.pial').exists()
-                            if has_recon:
-                                status = 'template' if is_fake_mri(subjects_dir / mrisubject) else task.done_status
-                            else:
-                                status = task.missing_status
+                            status = task.done_status
                         row = (*combo, mrisubject, status)
 
                     elif task.name == 'coreg':
