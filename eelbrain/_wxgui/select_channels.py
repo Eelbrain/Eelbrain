@@ -780,7 +780,7 @@ class Frame(NavigableFrame, FileFrame):
         vmin, vmax = cbar.mappable.get_clim()
         cbar.set_ticks([vmin, (vmin + vmax) / 2, vmax])
 
-    def _mark_bad_on_topo(self, topo_plot: AxTopomap):
+    def _mark_bad_on_topo(self, topo_plot: AxTopomap) -> None:
         """Set the red × marks for bad channels on a topomap.
 
         Marks are always resolved against the topomap's own sensor dimension,

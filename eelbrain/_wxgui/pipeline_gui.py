@@ -1,4 +1,6 @@
 """Pipeline supervisor GUI launched by ``eelbrain-gui``."""
+from __future__ import annotations
+
 import logging
 import subprocess
 import sys
@@ -9,11 +11,13 @@ from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import mne
 import wx
 
 from .. import load
+from .._data_obj import Dataset
 from .._exceptions import ConfigurationError, DataError
 from .._experiment.derivative_cache import ALLOW_PROTECTED_OVERWRITE, JobSpec, ProtectedArtifactError
 from .._experiment.epoch_rejection import ChannelModelRejection, ManualRejection
@@ -25,6 +29,9 @@ from .._utils.mne_utils import is_fake_mri
 from .frame import EelbrainFrame
 from .select_components import Document as ICADocument
 from .utils import StaleICADialog, TracebackDialog
+
+if TYPE_CHECKING:
+    from .._experiment.pipeline import Pipeline
 
 
 def _launch_coreg_subprocess(
@@ -265,23 +272,31 @@ class Task:
     # Availability and toolbar
 
     @staticmethod
-    def available(pipeline) -> bool:
+    def available(pipeline: Pipeline) -> bool:
         """Whether this task applies to ``pipeline`` at all."""
         return True
 
     @staticmethod
-    def raw_choices(pipeline) -> list[str]:
+    def raw_choices(pipeline: Pipeline) -> list[str]:
         """Raw pipes to offer in the Raw dropdown."""
         return list(pipeline.get_field_values('raw'))
 
-    def computable(self, pipeline, epoch_rejection: str | None) -> bool:
+    def computable(
+            self,
+            pipeline: Pipeline,
+            epoch_rejection: str | None,
+    ) -> bool:
         """Whether the compute button applies to the current selection."""
         return self.compute_label is not None
 
     # ------------------------------------------------------------------
     # Columns
 
-    def key_fields(self, pipeline, raw_name: str | None) -> tuple[str, ...]:
+    def key_fields(
+            self,
+            pipeline: Pipeline,
+            raw_name: str | None,
+    ) -> tuple[str, ...]:
         """State fields identifying a row; their column values form its ``combo``."""
         return ('subject',)
 
@@ -289,7 +304,11 @@ class Task:
         """``(title, width)`` for the columns between Subject and Status."""
         return tuple((field.title(), 90) for field in key_fields[1:])
 
-    def layout(self, pipeline, raw_name: str | None) -> Layout:
+    def layout(
+            self,
+            pipeline: Pipeline,
+            raw_name: str | None,
+    ) -> Layout:
         """Resolve the column geometry; the single derivation of all three parts."""
         key_fields = self.key_fields(pipeline, raw_name)
         extra = self.extra_columns(key_fields)
@@ -307,7 +326,7 @@ class Task:
         """Text colour for a row, or ``None`` for the default."""
         return None
 
-    def result_columns(self, result) -> tuple[str, ...]:
+    def result_columns(self, result: object) -> tuple[str, ...]:
         """Detail-column values describing a freshly computed artifact."""
         raise NotImplementedError(f"{self.name} is not computable")
 
@@ -384,10 +403,14 @@ class BadChannelsTask(Task):
     shows_raw = True
 
     @staticmethod
-    def available(pipeline) -> bool:
+    def available(pipeline: Pipeline) -> bool:
         return any(isinstance(pipe, RawSource) for pipe in pipeline._raw.values())
 
-    def key_fields(self, pipeline, raw_name: str | None) -> tuple[str, ...]:
+    def key_fields(
+            self,
+            pipeline: Pipeline,
+            raw_name: str | None,
+    ) -> tuple[str, ...]:
         # bad channels are stored per recording; show one row per combination of
         # the key fields that vary in this experiment
         fields = ['subject']
@@ -411,14 +434,18 @@ class ICATask(Task):
     compute_tooltip = "Compute ICA for all subjects with missing files"
 
     @staticmethod
-    def available(pipeline) -> bool:
+    def available(pipeline: Pipeline) -> bool:
         return any(isinstance(pipe, RawICA) for pipe in pipeline._raw.values())
 
     @staticmethod
-    def raw_choices(pipeline) -> list[str]:
+    def raw_choices(pipeline: Pipeline) -> list[str]:
         return [name for name, pipe in pipeline._raw.items() if isinstance(pipe, RawICA)]
 
-    def key_fields(self, pipeline, raw_name: str | None) -> tuple[str, ...]:
+    def key_fields(
+            self,
+            pipeline: Pipeline,
+            raw_name: str | None,
+    ) -> tuple[str, ...]:
         # ICA is cached per (subject, session[, run]); show one row per
         # combination of the key fields that vary in this experiment.
         fields = ['subject']
@@ -438,7 +465,7 @@ class ICATask(Task):
             return wx.RED
         return None
 
-    def result_columns(self, ica) -> tuple[str, ...]:
+    def result_columns(self, ica: mne.preprocessing.ICA) -> tuple[str, ...]:
         return str(ica.n_components_), str(len(ica.exclude))
 
 
@@ -455,14 +482,18 @@ class EpochRejectionTask(Task):
     compute_tooltip = "Compute rejection files for all subjects with missing files"
 
     @staticmethod
-    def available(pipeline) -> bool:
+    def available(pipeline: Pipeline) -> bool:
         return any(rej is not None for rej in pipeline._epoch_rejection.values())
 
-    def computable(self, pipeline, epoch_rejection: str | None) -> bool:
+    def computable(
+            self,
+            pipeline: Pipeline,
+            epoch_rejection: str | None,
+    ) -> bool:
         # a ManualRejection is edited in its own GUI, not computed in bulk
         return isinstance(pipeline._epoch_rejection.get(epoch_rejection), ChannelModelRejection)
 
-    def result_columns(self, ds) -> tuple[str, ...]:
+    def result_columns(self, ds: Dataset) -> tuple[str, ...]:
         return str(ds.n_cases), str(int((~ds['accept']).sum()))
 
 
@@ -507,7 +538,11 @@ class CoregTask(Task):
     summary = "coregistration done"
     missing_note = ''
 
-    def key_fields(self, pipeline, raw_name: str | None) -> tuple[str, ...]:
+    def key_fields(
+            self,
+            pipeline: Pipeline,
+            raw_name: str | None,
+    ) -> tuple[str, ...]:
         return ('subject', 'session')
 
     def extra_columns(self, key_fields: tuple[str, ...]) -> tuple[tuple[str, int], ...]:
@@ -724,7 +759,7 @@ class PipelineFrame(EelbrainFrame):
                 self._epoch_choice.Append(name)
         self._restore_selection(self._epoch_choice, previous, 0)
 
-    def _populate_raw_choices(self, task: Task):
+    def _populate_raw_choices(self, task: Task) -> None:
         """Fill the Raw dropdown with the pipes relevant to ``task``."""
         previous = self._raw_choice.GetStringSelection()
         self._raw_choice.Clear()
@@ -895,7 +930,7 @@ class PipelineFrame(EelbrainFrame):
                     self._start_refresh()
             return
 
-    def _activate_item(self, idx: int, subject: str, task: Task):
+    def _activate_item(self, idx: int, subject: str, task: Task) -> None:
         """Perform the action for a double-clicked row."""
         wx.BeginBusyCursor()
         try:

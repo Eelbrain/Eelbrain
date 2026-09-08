@@ -54,7 +54,7 @@ and removed by :mod:`.garbage_collection`; the entry points are
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field, fields
@@ -1328,7 +1328,7 @@ class LoadProfile:
         self._nested = 0.  # seconds the current load has spent in nested loads
 
     @contextmanager
-    def measure(self, name: str):
+    def measure(self, name: str) -> Iterator[None]:
         """Time one load of node ``name``, excluding the loads nested inside it."""
         outer_nested = self._nested
         self._nested = 0.
@@ -2058,7 +2058,7 @@ class DerivativeRegistry:
             self._validation_cache.reset(token)
 
     @contextmanager
-    def _profile_load(self, ctx: Request):
+    def _profile_load(self, ctx: Request) -> Iterator[None]:
         """Time one load of ``ctx``, and log where the outermost one spent its time.
 
         A no-op unless :attr:`profile_loads` is set; see :class:`LoadProfile`.
