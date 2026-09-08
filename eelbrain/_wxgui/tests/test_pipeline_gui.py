@@ -8,6 +8,7 @@ import wx
 
 from eelbrain import Dataset, Var
 from eelbrain._exceptions import ConfigurationError, DataError
+from eelbrain._experiment.derivative_cache import ProtectedArtifactError
 from eelbrain._experiment.epoch_rejection import ChannelModelRejection, ManualRejection
 from eelbrain._experiment.exceptions import FileMissingError
 from eelbrain._wxgui import pipeline_gui
@@ -519,6 +520,17 @@ def test_refresh_shows_the_rows_before_their_status(monkeypatch):
     frame._refresh_thread(token, _ICA_SCOPE)
     assert [args[0] for args in posted] == [frame._populate_table, frame._fill_row, frame._fill_row, frame._show_error]
     assert 'RuntimeError: first' in posted[-1][1]
+
+
+def test_iter_rows_yields_a_stale_ica_row():
+    "A stale ICA is shown as the user's choice, and does not abort the pass"
+    ctx = SimpleNamespace(load=lambda view=None: 'ok' if view else (_ for _ in ()).throw(ProtectedArtifactError('ica', 'path')))
+    p = pipeline()
+    p.__dict__.update(set=lambda **state: None, _resolve_derivative=lambda name: ctx, _temporary_state=contextlib.nullcontext())
+    frame = _frame(_pipeline=p, _refresh_token='TOKEN', _ask_stale_ica=lambda *args, **kwargs: (None, False))
+    rows = list(frame._iter_rows('TOKEN', _ICA_SCOPE, [('R01',), ('R02',)]))
+    assert [row for _, row, _, _ in rows] == [('R01', 'stale', PLACEHOLDER, PLACEHOLDER), ('R02', 'stale', PLACEHOLDER, PLACEHOLDER)]
+    assert [error for *_, error in rows] == [None, None]
 
 
 def test_iter_rows_reports_a_failing_row_and_keeps_going(tmp_path):

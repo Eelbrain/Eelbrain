@@ -1799,14 +1799,14 @@ class PipelineFrame(EelbrainFrame):
                             try:
                                 ica = ctx.load()
                                 row = (*combo, task.done_status, *task.result_columns(ica))
-                            except ProtectedArtifactError as error:
+                            except ProtectedArtifactError as stale:  # not ``error``: the name is unbound after the block, but yielded below
                                 if bulk_choice is None:
-                                    choice, apply_to_all = self._ask_stale_ica(combo[0], error, allow_apply_to_all=True)
+                                    choice, apply_to_all = self._ask_stale_ica(combo[0], stale, allow_apply_to_all=True)
                                     if apply_to_all:
                                         bulk_choice = choice
                                 else:
                                     choice = bulk_choice
-                                row = self._handle_stale_ica(combo, scope, error, choice)
+                                row = self._handle_stale_ica(combo, scope, stale, choice)
                         elif status == 'missing-ica':
                             row = task.missing_row(combo, layout)
                         else:
