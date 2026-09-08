@@ -2501,7 +2501,7 @@ class DerivativeRegistry:
             return [DerivativeRegistry.canonicalize(v) for v in value]
         if isinstance(value, Path):
             return str(value)
-        if isinstance(value, set):
+        if isinstance(value, (set, frozenset)):
             return sorted(DerivativeRegistry.canonicalize(v) for v in value)
         if hasattr(value, 'item'):
             try:

@@ -67,7 +67,7 @@ from .statistics import EvokedTestDataDerivative, TestResultDerivative, TwoStage
 from .statistics.config import Test, validate_tests
 from .trf import Boosting, Estimator, Model, NUTSPredictor, PredictorInput, TRFDatasetDerivative, TRFDerivative, TRFGroupDatasetDerivative, TRFJob, TRFModelTestDerivative, UTSPredictor, filter_predictor
 from .trf.model import Comparison, parse_term
-from .variable_def import Variables, label_groups
+from .variable_def import RESERVED_VAR_KEYS, Variables, label_groups
 
 
 # Allowable parameters
@@ -144,6 +144,8 @@ class Pipeline(StateModel):
     merge_triggers: int = None
     # add this value to all trigger times (in seconds); global shift, or {subject: shift, (subject, session): shift} dictionary
     trigger_shift: float | dict[str | tuple[str, str], float] = 0
+    # events.tsv columns to read as categorial (Factor) even when their values look numeric
+    event_factors: str | Sequence[str] = ()
 
     # variables for automatic labeling {name: {trigger: label, triggers: label}}
     variables: dict[str, Any] = {}
@@ -556,7 +558,10 @@ class Pipeline(StateModel):
         self._derivatives.register(TRFModelTestDerivative(self.tests, self._groups))
 
         # --- Sensor-space: events → epochs → evoked ---
-        self._derivatives.register(EventsInput(self._raw_extension))
+        event_factors = sequence_arg(f'{self.__class__.__name__}.event_factors', self.event_factors, allow_none=False, sequence_type=frozenset)
+        if reserved := event_factors.intersection(RESERVED_VAR_KEYS):
+            raise ConfigurationError(f"{self.__class__.__name__}.event_factors={self.event_factors!r}: {sorted(reserved)} are reserved names; these columns are written or read by the pipeline itself")
+        self._derivatives.register(EventsInput(self._raw_extension, event_factors))
         self._derivatives.register(EventsDerivative(
             self.trigger_shift,
             sequence_arg(f'{self.__class__.__name__}.stim_channel', self.stim_channel),

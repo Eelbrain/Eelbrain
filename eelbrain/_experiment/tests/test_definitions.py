@@ -50,6 +50,7 @@ def test_sequence_arg():
     assert sequence_arg('sequence', 'a', str) == ('a',)
     assert sequence_arg('sequence', 1, int) == (1,)
     assert sequence_arg('sequence', 1, int, sequence_type=list) == [1]
+    assert sequence_arg('sequence', ('a', 'a', 'b'), sequence_type=frozenset) == frozenset({'a', 'b'})
     # list/tuple
     assert sequence_arg('sequence', ['a', 'b'], str) == ('a', 'b')
     assert sequence_arg('sequence', ('a', 'b'), str) == ('a', 'b')
@@ -98,6 +99,7 @@ def test_canonicalize_data_objects():
 
     assert registry.canonicalize(Var([1, 2])) == [1, 2]
     assert registry.canonicalize(Factor(['a', 'b'], random=True)) == ['a', 'b']
+    assert registry.canonicalize({'x': frozenset({'b', 'a'})}) == {'x': ['a', 'b']}
     assert registry.canonicalize(Interaction([Factor(['a', 'b']), Factor(['x', 'y'])])) == [['a', 'x'], ['b', 'y']]
 
 

@@ -1913,6 +1913,44 @@ def test_labeled_events_sidecar_copies_raw_info_from_raw(samples_experiment):
 
 
 @requires_mne_sample_data
+def test_events_input(samples_experiment):
+    """Test reading events from events.tsv sidecar file"""
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    root = samples_experiment(n_subjects=1, n_segments=2, mris=False)
+
+    # Add a numeric-looking column with n/a values to the events.tsv sidecar
+    path = Path(root) / 'sub-R0000' / 'meg' / 'sub-R0000_task-sample_events.tsv'
+    lines = path.read_text().splitlines()
+    lines[0] += '\tcondition'
+    for i in range(1, len(lines)):
+        lines[i] += '\t' + ('n/a' if i % 3 == 0 else str(i % 2 + 1))
+    path.write_text('\n'.join(lines) + '\n')
+
+    # By default, a column with only numbers and n/a is read as Var
+    e = SampleExperiment(root)
+    ds = e.load_events(subject='R0000')
+    assert isinstance(ds['condition'], Var)
+
+    class FactorExperiment(SampleExperiment):
+        event_factors = 'condition'
+
+    # event_factors also needs to invalidate the cached labeled-events
+    e = FactorExperiment(root)
+    ds = e.load_events(subject='R0000')
+    assert isinstance(ds['condition'], Factor)
+    assert set(ds['condition'].cells) == {'n/a', '1', '2'}
+
+    # Column names are validated
+    class ReservedExperiment(SampleExperiment):
+        event_factors = ('condition', 'sample')
+
+    with pytest.raises(ConfigurationError, match="reserved"):
+        ReservedExperiment(root)
+
+
+@requires_mne_sample_data
 def test_raw_cache_identity_ignores_view_options(samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
