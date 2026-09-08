@@ -55,7 +55,7 @@ and removed by :mod:`.garbage_collection`; the entry points are
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
@@ -1890,7 +1890,9 @@ class Request(Generic[T]):
         ``view`` is accepted; passing ``state``, ``options``, or ``controls``
         raises :class:`TypeError`.
         """
-        with self.registry._load_context(), self.registry._profile_load(self):
+        # A dependency load is profiled by the dependency's own load()
+        profile = self.registry._profile_load(self) if name is None else nullcontext()
+        with self.registry._load_context(), profile:
             return self._load(name, state, options, view=view, controls=controls)
 
     def _resolve_target(

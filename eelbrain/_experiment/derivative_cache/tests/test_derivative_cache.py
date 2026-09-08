@@ -2244,3 +2244,4 @@ def test_profile_loads_logs_where_a_load_spent_its_time(caplog):
     assert len(lines) == 1
     assert lines[0].startswith('Load summary in ')
     assert 'summary ' in lines[0] and 'value ' in lines[0]
+    assert lines[0].count('(1x)') == 2  # loading the dependency does not count as a load of the node that asked for it

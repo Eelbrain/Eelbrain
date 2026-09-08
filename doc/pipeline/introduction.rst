@@ -167,7 +167,7 @@ A table appears as soon as its rows are known, with each row's status filling in
 When that takes a long time, ``--debug`` prints the pipeline's debug log, including the time each individual row took and, for each artifact that was loaded, which pipeline step spent it::
 
     $ eelbrain-gui --debug
-    DEBUG   :  Load ica-input@ica in 3.139 s: raw-input@raw 3.101 s (1x), ica-input@ica 0.032 s (2x)
+    DEBUG   :  Load ica-input@ica in 3.139 s: raw-input@raw 3.101 s (1x), ica-input@ica 0.032 s (1x)
     DEBUG   :  Pipeline GUI ica: row 0 ('01',) in 3.140 s
 
 
