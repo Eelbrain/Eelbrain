@@ -139,3 +139,9 @@ def test_select_channels_nc_topos():
     assert marked(frame._static_nc_topos[0]) == [ch_names[-1]]
     assert marked(frame._cursor_topos[0]) == [ch_names[-1]]
     assert marked(frame._dynamic_nc_topos[0]) == []
+
+    # with fewer than 4 good channels the clean map falls back to the raw map
+    for name in ch_names[3:-1]:
+        frame.model.toggle_bad(name)
+    assert sensor_names(frame._dynamic_nc_topos[0]) == ch_names
+    assert marked(frame._dynamic_nc_topos[0]) == sorted(ch_names[3:])

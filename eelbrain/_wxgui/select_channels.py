@@ -218,7 +218,11 @@ class Document(FileDocument):
         return frozenset(new_bad)
 
     def compute_nc_dynamic(self, ch_type: str, ndvar: NDVar) -> NDVar | None:
-        """NC recomputed with bad channels omitted, for a smooth interpolated map."""
+        """NC recomputed with bad channels omitted, for a smooth interpolated map.
+
+        Falls back to the static map (all channels) when the correlation can not be
+        mapped: without bad channels, with fewer than 4 good channels, or on failure.
+        """
         static = self.nc_static.get(ch_type)
         bad = self.bad_channels
         if static is None:
@@ -275,7 +279,9 @@ class Frame(NavigableFrame, FileFrame):
     * The "Neighbor corr clean" topomap recomputes neighbor correlation after
       each bad-channel change, omitting the bad channels; those channels are
       therefore absent from it (no sensor dot and no ``x`` mark), while the
-      "Neighbor corr raw" map always shows all channels.
+      "Neighbor corr raw" map always shows all channels. With fewer than 4
+      good channels the clean map falls back to the raw map, since fewer
+      sensors can not be laid out as a map.
 
     *Keyboard shortcuts* in addition to the ones in the menu:
 
