@@ -521,6 +521,29 @@ def test_refresh_shows_the_rows_before_their_status(monkeypatch):
     assert [args[0] for args in posted] == [frame._populate_table, frame._fill_row, frame._fill_row, frame._show_error]
     assert 'RuntimeError: first' in posted[-1][1]
 
+    # a second pass that fails outright is reported, and the table is settled afterwards
+    posted.clear()
+    frame._iter_rows = lambda token_, scope, combos: (_ for _ in ()).throw(RuntimeError("no rows"))
+    frame._refresh_thread(token, _ICA_SCOPE)
+    assert [args[0] for args in posted] == [frame._populate_table, frame._show_error, frame._end_refresh]
+    assert posted[-1] == (frame._end_refresh, token)
+
+
+def test_end_refresh_settles_the_rows_a_failed_pass_left_loading():
+    "Rows the second pass never filled in are shown as errors, so the table stops loading"
+    task = TASKS_BY_NAME['ica']
+    layout = _layout('ica')
+    rows = [('R01', 'selected', '30', '2'), task.missing_row(('R02',), layout, pipeline_gui.LOADING)]
+    frame = _table_frame('ica', rows)
+    texts = []
+    frame.__dict__.update(_refresh_token='TOKEN', _n_loading=1, _refresh_status_bar=lambda: texts.append(frame._n_loading))
+    frame._end_refresh('OTHER')  # a superseded refresh leaves the new table alone
+    assert frame._list.rows == rows
+    frame._end_refresh('TOKEN')
+    assert frame._list.rows == [rows[0], ('R02', pipeline_gui.ERROR, PLACEHOLDER, PLACEHOLDER)]
+    assert frame._list.colours == {1: wx.RED}
+    assert texts == [0]
+
 
 def test_iter_rows_yields_a_stale_ica_row():
     "A stale ICA is shown as the user's choice, and does not abort the pass"

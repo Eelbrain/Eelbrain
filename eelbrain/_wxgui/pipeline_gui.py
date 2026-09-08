@@ -1269,10 +1269,27 @@ class PipelineFrame(EelbrainFrame):
             return  # app exit already scheduled
         except Exception as error:
             wx.CallAfter(self._show_error, *_error_dialog_args(error))
+            wx.CallAfter(self._end_refresh, token)
             return
         log.debug(f"Pipeline GUI {task.name}: {n_filled} row details in {time.time() - t_locked:.3f} s, after waiting {t_locked - t_start:.3f} s for the pipeline")
         if first_error is not None:
             wx.CallAfter(self._show_error, *_error_dialog_args(first_error))
+
+    def _end_refresh(self, token: object) -> None:
+        """Settle the table of a refresh whose second pass failed: rows it never filled in are shown as errors.
+
+        Parameters
+        ----------
+        token
+            Refresh that ended; one that was superseded has nothing to settle.
+        """
+        if token is not self._refresh_token or not self._n_loading:
+            return
+        for i in range(self._list.GetItemCount()):
+            if self._list.GetItemText(i, self._layout.status_col) == LOADING:
+                self._set_row_result(i, ERROR, ())
+        self._n_loading = 0
+        self._refresh_status_bar()
 
     def _show_error(self, tb: str, title: str = "Error", message: str | None = None):
         self.SetStatusText("Error")
