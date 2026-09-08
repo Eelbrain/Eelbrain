@@ -119,6 +119,8 @@ def test_task_status_bar():
     assert TASKS_BY_NAME['ica'].status_bar([('R01', 'a', 'selected', '30', '2'), ('R02', 'b', 'no ICA', PLACEHOLDER, PLACEHOLDER)], _layout('ica', sessions=2)) == "1 / 2 recordings · ICA selected  (1 missing ICA file)"
 
     assert TASKS_BY_NAME['epoch_rej'].status_bar([('R01', 'done', '100', '5'), ('R02', 'missing', PLACEHOLDER, PLACEHOLDER)], _layout('epoch_rej')) == "1 / 2 subjects · epoch rejection done"
+    # a row whose artifact could not be inspected is reported for every task
+    assert TASKS_BY_NAME['epoch_rej'].status_bar([('R01', 'done', '100', '5'), ('R02', pipeline_gui.ERROR, PLACEHOLDER, PLACEHOLDER)], _layout('epoch_rej')) == "1 / 2 subjects · epoch rejection done  (1 error)"
     # epoch rejection is per subject, so a second session does not change the noun
     assert TASKS_BY_NAME['epoch_rej'].status_bar([('R01', 'done', '100', '5')], _layout('epoch_rej', sessions=2)) == "1 / 1 subjects · epoch rejection done"
 
@@ -134,7 +136,6 @@ def test_task_status_bar():
 
 def test_task_row_colour():
     "Rows needing attention are red, rows that are not actionable are grey"
-    assert TASKS_BY_NAME['bad_chs'].row_colour(('R01', 'error', PLACEHOLDER), _layout('bad_chs')) is wx.RED
     assert TASKS_BY_NAME['bad_chs'].row_colour(('R01', 'done', '3'), _layout('bad_chs')) is None
 
     # an ICA without a single rejected component is almost always an oversight

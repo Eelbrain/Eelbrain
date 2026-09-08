@@ -218,7 +218,8 @@ class Task:
     status_width
         Width of the Status column.
     missing_status
-        Status of a row whose artifact has not been made yet.
+        Status of a row whose artifact has not been made yet; ``None`` for a
+        task whose artifact always exists.
     done_status
         Status of a row whose artifact is available.
     unit
@@ -367,6 +368,9 @@ class Task:
             if n_missing:
                 noun = f" {self.missing_note}" if self.missing_note else ''
                 msg += f"  ({n_missing} missing{noun})"
+        n_error = sum(1 for row in rows if row[layout.status_col] == ERROR)
+        if n_error:
+            msg += f"  ({n_error} error)"
         return msg
 
 
@@ -374,7 +378,6 @@ class BadChannelsTask(Task):
     name = 'bad_chs'
     label = "Bad channels"
     detail_columns = (('N bad', 90),)
-    missing_status = ERROR  # loading seeds a missing channels.tsv, so the only failure is bad data
     done_status = 'done'
     summary = "bad channels defined"
     recording_unit = 'recordings'
@@ -392,24 +395,6 @@ class BadChannelsTask(Task):
             if len(values) > 1:
                 fields.append(field)
         return tuple(fields)
-
-    def row_colour(
-            self,
-            row: tuple[str, ...],
-            layout: Layout,
-    ) -> wx.Colour | None:
-        return wx.RED if row[layout.status_col] == self.missing_status else None
-
-    def status_bar(
-            self,
-            rows: list[tuple[str, ...]],
-            layout: Layout,
-    ) -> str:
-        msg = super().status_bar(rows, layout)
-        n_error = sum(1 for row in rows if row[layout.status_col] == self.missing_status)
-        if n_error:
-            msg += f"  ({n_error} error)"
-        return msg
 
 
 class ICATask(Task):
@@ -1805,9 +1790,9 @@ class PipelineFrame(EelbrainFrame):
                         source_name = pipeline._raw.root_source_name(raw_name)
                         bads_ctx = pipeline._resolve_derivative(raw_bad_channels_input_name(source_name))
                         try:
-                            bads = bads_ctx.load()  # seeds a missing derivatives channels.tsv
+                            bads = bads_ctx.load()  # seeds a missing derivatives channels.tsv, so the only failure is bad data
                         except DataError:  # EEG channels without positions
-                            row = task.missing_row(combo, layout)
+                            row = task.missing_row(combo, layout, ERROR)
                         else:
                             row = (*combo, task.done_status, str(len(bads)))
 
