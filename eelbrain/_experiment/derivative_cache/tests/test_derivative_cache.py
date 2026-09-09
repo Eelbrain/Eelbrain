@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,6 +19,7 @@ from eelbrain._experiment.derivative_cache import (
     Request,
     DerivativeRegistry,
     Input,
+    LoadProfile,
     ProtectedArtifactError,
     UncachedDerivative,
     VersionedInput,
@@ -2196,3 +2198,50 @@ def test_external_input_has_artifact_members():
     with pytest.raises(TypeError, match="uncached derivative 'ephemeral'"):
         handle.key()
     assert handle.is_valid() is False
+
+
+def test_load_profile_attributes_time_to_the_node_that_spent_it(monkeypatch):
+    "A nested load counts towards its own node, not the load that made it"
+    now = [0.]
+    monkeypatch.setattr('eelbrain._experiment.derivative_cache.base.time', SimpleNamespace(perf_counter=lambda: now[0]))
+    profile = LoadProfile()
+    with profile.measure('outer'):
+        with profile.measure('inner'):
+            now[0] += 0.02
+        with profile.measure('inner'):
+            now[0] += 0.02
+        now[0] += 0.01
+
+    assert profile.calls == {'outer': 1, 'inner': 2}
+    # the two nested loads are subtracted from the outer one, so the times sum to the total
+    assert profile.self_time['inner'] == pytest.approx(0.04)
+    assert profile.self_time['outer'] == pytest.approx(0.01)
+    assert sum(profile.self_time.values()) == pytest.approx(profile.total)
+    # the summary ranks the nodes by the time they spent, most expensive first
+    assert profile.summary().startswith('inner ')
+    assert profile.summary(limit=1).count(',') == 0
+
+
+def _profile_lines(caplog) -> list[str]:
+    "The per-node breakdowns LoadProfile logged, apart from the cache's own Load lines"
+    return [r.message for r in caplog.records if r.message.startswith('Load ') and ' s: ' in r.message]
+
+
+def test_profile_loads_logs_where_a_load_spent_its_time(caplog):
+    "With profiling on, every top-level load reports its per-node breakdown"
+    pipeline, registry, source, value, *_ = make_registry()
+
+    with caplog.at_level(logging.DEBUG, logger=LOG.name):
+        registry.resolve('value', state=DEFAULT_STATE).load()
+    assert _profile_lines(caplog) == []  # off by default
+
+    registry.profile_loads = True
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger=LOG.name):
+        registry.resolve('summary', state=DEFAULT_STATE).load()
+    # one line for the top-level load, naming the dependency it loaded on the way
+    lines = _profile_lines(caplog)
+    assert len(lines) == 1
+    assert lines[0].startswith('Load summary in ')
+    assert 'summary ' in lines[0] and 'value ' in lines[0]
+    assert lines[0].count('(1x)') == 2  # loading the dependency does not count as a load of the node that asked for it

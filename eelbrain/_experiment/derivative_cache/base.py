@@ -54,8 +54,8 @@ and removed by :mod:`.garbage_collection`; the entry points are
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from contextlib import contextmanager
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
@@ -66,6 +66,7 @@ from pathlib import Path
 import pickle
 import re
 import shutil
+import time
 import tomllib
 from typing import Any, Generic, TYPE_CHECKING, TypeVar
 from uuid import uuid4
@@ -1308,6 +1309,51 @@ def compare_manifests(stored: ArtifactManifest | None, current: ArtifactManifest
     return None
 
 
+class LoadProfile:
+    """Time spent per node during one top-level :meth:`Request.load`.
+
+    A load walks the dependency graph, so its total says nothing about where the
+    time went: a slow raw file, a slow rebuild and a slow cache walk all look the
+    same. This attributes the time to the node that spent it, by subtracting each
+    nested load from the load that made it, so the times sum to the total.
+
+    Switched on per experiment with :attr:`DerivativeRegistry.profile_loads`
+    (``eelbrain-gui --debug``); off, no measurement is taken at all.
+    """
+
+    def __init__(self):
+        self.self_time: dict[str, float] = {}  # node name -> seconds spent in it
+        self.calls: dict[str, int] = {}  # node name -> number of loads
+        self.total = 0.  # seconds of the load that finished last, i.e. the outermost one
+        self._nested = 0.  # seconds the current load has spent in nested loads
+
+    @contextmanager
+    def measure(self, name: str) -> Iterator[None]:
+        """Time one load of node ``name``, excluding the loads nested inside it."""
+        outer_nested = self._nested
+        self._nested = 0.
+        t_start = time.perf_counter()
+        try:
+            yield
+        finally:
+            elapsed = time.perf_counter() - t_start
+            self.self_time[name] = self.self_time.get(name, 0.) + elapsed - self._nested
+            self.calls[name] = self.calls.get(name, 0) + 1
+            self._nested = outer_nested + elapsed
+            self.total = elapsed
+
+    def summary(self, limit: int = 4) -> str:
+        """The nodes that took the longest, most expensive first.
+
+        Parameters
+        ----------
+        limit
+            Number of nodes to list.
+        """
+        ranked = sorted(self.self_time, key=self.self_time.get, reverse=True)
+        return ', '.join(f"{name} {self.self_time[name]:.3f} s ({self.calls[name]}x)" for name in ranked[:limit])
+
+
 class Request(Generic[T]):
     """One bound request for data from the dependency graph.
 
@@ -1844,7 +1890,9 @@ class Request(Generic[T]):
         ``view`` is accepted; passing ``state``, ``options``, or ``controls``
         raises :class:`TypeError`.
         """
-        with self.registry._load_context():
+        # A dependency load is profiled by the dependency's own load()
+        profile = self.registry._profile_load(self) if name is None else nullcontext()
+        with self.registry._load_context(), profile:
             return self._load(name, state, options, view=view, controls=controls)
 
     def _resolve_target(
@@ -1992,6 +2040,10 @@ class DerivativeRegistry:
         # Reuse cache-validity results within one top-level Request.load().
         # Artifacts themselves are not shared because callers can mutate them.
         self._validation_cache: ContextVar[dict[tuple[str, str], CacheInvalidation | None] | None] = ContextVar(f'{type(self).__name__}-{id(self)}-validation-cache', default=None)
+        # Log where each top-level load spends its time (see LoadProfile); off by
+        # default, because the measurement is only worth taking when it is read.
+        self.profile_loads = False
+        self._load_profile: ContextVar[LoadProfile | None] = ContextVar(f'{type(self).__name__}-{id(self)}-load-profile', default=None)
 
     @contextmanager
     def _load_context(self):
@@ -2004,6 +2056,28 @@ class DerivativeRegistry:
             yield
         finally:
             self._validation_cache.reset(token)
+
+    @contextmanager
+    def _profile_load(self, ctx: Request) -> Iterator[None]:
+        """Time one load of ``ctx``, and log where the outermost one spent its time.
+
+        A no-op unless :attr:`profile_loads` is set; see :class:`LoadProfile`.
+        """
+        if not self.profile_loads:
+            yield
+            return
+        profile = self._load_profile.get()
+        outermost = profile is None
+        if outermost:
+            profile = LoadProfile()
+            token = self._load_profile.set(profile)
+        try:
+            with profile.measure(ctx.node.name):
+                yield
+        finally:
+            if outermost:
+                self._load_profile.reset(token)
+                self.log.debug(f"Load {ctx.node.name} in {profile.total:.3f} s: {profile.summary()}")
 
     @staticmethod
     def _validation_key(ctx: Request) -> tuple[str, str]:
