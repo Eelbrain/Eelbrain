@@ -1015,13 +1015,27 @@ class PipelineFrame(EelbrainFrame):
             Channels to add to the bad channels.
         recompute
             Whether to queue the new ICA decomposition right away.
+
+        Notes
+        -----
+        Runs on the main thread, like a double-click, but is triggered from another
+        window, so it can arrive while a refresh pass or the compute worker is
+        setting the pipeline's state (see :meth:`_iter_rows`). It is then retried
+        once they are done: waiting for the lock here would deadlock a pass that
+        needs the main thread for a dialog.
         """
-        self._pipeline.set(raw=raw_name, **state)
-        spec = self._pipeline._job_spec(ica_input_name(raw_name))
-        # ICA combines bad channels across tasks/runs
-        node = spec.ctx.node
-        for source_state in node._source_states(spec.ctx, node.pipe.task):
-            self._pipeline.make_bad_channels(names, raw=raw_name, **{**state, **source_state})
+        if not self._pipeline_lock.acquire(blocking=False):
+            wx.CallLater(100, self._on_ica_bad_channels, raw_name, state, scope, combo, doc, names, recompute)
+            return
+        try:
+            self._pipeline.set(raw=raw_name, **state)
+            spec = self._pipeline._job_spec(ica_input_name(raw_name))
+            # ICA combines bad channels across tasks/runs
+            node = spec.ctx.node
+            for source_state in node._source_states(spec.ctx, node.pipe.task):
+                self._pipeline.make_bad_channels(names, raw=raw_name, **{**state, **source_state})
+        finally:
+            self._pipeline_lock.release()
         Path(doc.path).unlink(missing_ok=True)
         if recompute:
             wx.CallAfter(self._queue_jobs, scope, [(combo, spec)])

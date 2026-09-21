@@ -481,6 +481,30 @@ def test_compute_job_holds_the_pipeline_lock_except_for_the_fit():
     assert not frame._pipeline_lock.locked()
 
 
+def test_ica_bad_channels_callback_waits_for_the_pipeline(monkeypatch, tmp_path):
+    "Bad channels found in the ICA window are filed once no other thread is using the pipeline"
+    monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda *args: posted.append(args))
+    monkeypatch.setattr(pipeline_gui.wx, 'CallLater', lambda ms, *args: deferred.append(args))
+    posted, deferred, filed = [], [], []
+    node = SimpleNamespace(_source_states=lambda ctx, task: [{'task': 't0'}], pipe=SimpleNamespace(task='t0'))
+    spec = SimpleNamespace(ctx=SimpleNamespace(node=node))
+    p = SimpleNamespace(set=lambda **state: None, _job_spec=lambda name: spec, make_bad_channels=lambda names, **state: filed.append((names, state)))
+    frame = _frame(_pipeline=p, _pipeline_lock=threading.Lock())
+    doc = SimpleNamespace(path=str(tmp_path / 'ica.fif'))
+    args = ('ica', {'subject': 'R01'}, _ICA_SCOPE, ('R01',), doc, ['MEG 0111'], True)
+
+    # while a refresh pass holds the pipeline, the callback is retried rather than interleaved with it
+    with frame._pipeline_lock:
+        frame._on_ica_bad_channels(*args)
+    assert deferred == [(frame._on_ica_bad_channels, *args)]
+    assert filed == [] and posted == []
+
+    frame._on_ica_bad_channels(*args)
+    assert filed == [(['MEG 0111'], {'raw': 'ica', 'subject': 'R01', 'task': 't0'})]
+    assert posted == [(frame._queue_jobs, _ICA_SCOPE, [(('R01',), spec)])]
+    assert not frame._pipeline_lock.locked()
+
+
 def test_refresh_holds_the_pipeline_lock(monkeypatch):
     "Neither refresh pass ever runs while the worker is loading or saving"
     monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda *args: posted.append(args))
