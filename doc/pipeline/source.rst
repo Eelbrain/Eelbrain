@@ -48,25 +48,55 @@ For subjects without a FreeSurfer reconstruction the GUI opens against the templ
 Noise covariance
 ================
 
+.. py:attribute:: Pipeline.noise_covariance
+
 Source estimation with MNE methods requires an estimate of the sensor noise covariance matrix.
-By default, this is estimated from the data epoch called ``'cov'``, which is defined like any other epoch in :attr:`Pipeline.epochs` (see :doc:`preprocessing`); a common choice is the pre-stimulus baseline::
+How it is estimated is controlled through the :ref:`state-cov` state.
+Two entries are always available: ``'emptyroom'`` (the default), which estimates the covariance from an empty room recording (see :ref:`Pipeline-intro-cov`), and ``'ad_hoc'``, a diagonal covariance with nominal sensor noise levels from :func:`mne.make_ad_hoc_cov`.
+Both bound the condition number of the covariance through the default ``max_condition`` (see :class:`Covariance`).
 
-    epochs = {
-        'picture': PrimaryEpoch('words', "stimulus == 'picture'"),
-        'cov': SecondaryEpoch('picture', tmax=0),
-    }
+Additional noise covariance estimates can be configured in :attr:`Pipeline.noise_covariance` as adictionary of ``{name: covariance_definition}`` entries using:
 
-The regularization applied to the covariance matrix is controlled through the :ref:`state-cov` state.
+.. autosummary::
+   :toctree: ../generated
+   :template: class_nomethods.rst
+
+   RawCovariance
+   EpochCovariance
+
+Defining a noise covariance with a name from an existing definition (``'emptyroom'``, ``'ad_hoc'``) will override that definition.
 
 .. _Pipeline-intro-cov:
 
 Empty room noise covariance
 ---------------------------
 
-To use empty room data for estimating the noise covariance, follow these steps:
+To use empty room data for estimating the noise covariance, set up the empty room data according to the `instruction in BIDS specification <https://bids-specification.readthedocs.io/en/stable/modality-specific-files/magnetoencephalography.html#empty-room-meg-recordings>`_.
+The empty room covariance is then available through ``e.set(cov='emptyroom')``.
+The built-in entry can be overridden to change how it is estimated, for example to regularize the covariance more strongly::
 
-- Set up empty room data according to the `instruction in BIDS specification <https://bids-specification.readthedocs.io/en/stable/modality-specific-files/magnetoencephalography.html#empty-room-meg-recordings>`_.
-- Use the empty room covariance through :ref:`state-cov` with ``e.set(cov='emptyroom')``.
+    noise_covariance = {
+        'emptyroom': RawCovariance(max_condition=1e4),
+    }
+
+
+Noise covariance from epochs
+----------------------------
+
+Alternatively, the covariance can be estimated from a data epoch, most commonly the pre-stimulus baseline.
+The epoch is defined like any other epoch in :attr:`Pipeline.epochs` (see :doc:`preprocessing`), and an :class:`EpochCovariance` entry in :attr:`Pipeline.noise_covariance` refers to it by name::
+
+    epochs = {
+        'picture': PrimaryEpoch('words', "stimulus == 'picture'"),
+        'baseline': SecondaryEpoch('picture', tmax=0),
+    }
+
+    noise_covariance = {
+        'baseline': EpochCovariance('baseline'),
+    }
+
+This covariance is then selected with ``e.set(cov='baseline')``.
+The epochs are subject to the same preprocessing as the data epochs, including the :ref:`state-epoch_rejection` state.
 
 
 Inverse solution
@@ -139,21 +169,13 @@ which each subject uses their own MRI directory.
 ``cov``
 -------
 
-The method for correcting the sensor covariance.
+Selects a noise covariance estimate defined in :attr:`Pipeline.noise_covariance`.
+The following entries are always available (unless overridden):
 
-'noreg'
-    Use raw covariance as estimated from the data (do not regularize).
-'bestreg' (default)
-    Find the regularization parameter that leads to optimal whitening of the
-    baseline.
-'reg'
-    Use the default regularization parameter (0.1).
-'auto'
-    Use automatic selection of the optimal regularization method, as described in :func:`mne.compute_covariance`.
-'emptyroom'
-    Empty room covariance; for required setup, see :ref:`Pipeline-intro-cov`.
+'emptyroom' (default)
+    Empty room covariance (``RawCovariance()``); for required setup, see :ref:`Pipeline-intro-cov`.
 'ad_hoc'
-    Use diagonal covariance based on :func:`mne.make_ad_hoc_cov`.
+    Diagonal covariance based on :func:`mne.make_ad_hoc_cov` (``RawCovariance('ad_hoc')``).
 
 
 .. _state-src:

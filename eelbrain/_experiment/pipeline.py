@@ -30,9 +30,9 @@ from .._ndvar import concatenate, neighbor_correlation
 from .._stats.testnd import NDTest
 from .._text import enumeration
 from .._types import PathArg
-from .._utils import ask, keydefaultdict, log_level, ScreenHandler
+from .._utils import ask, keydefaultdict, log_level, user_activity, ScreenHandler
 from .._utils.mne_utils import is_fake_mri
-from .covariance import CovDerivative, EpochCovariance, RawCovariance
+from .covariance import Covariance, CovDerivative, EpochCovariance, RawCovariance
 from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, DerivativeRegistry, JobSpec, ProtectedArtifactError, Request, _format_size
 from .configuration import Configuration, ConfigurationDict, sequence_arg
 from .epochs import (
@@ -53,7 +53,7 @@ from .pathing import (
 )
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, _resolve_parc
 from .preprocessing import (
-    CachedRawPipe, ICAInput, MaxwellCalibrationInput, MaxwellCrosstalkInput, CanonicalHeadPositionDerivative, RawBadChannelsInput, RawDerivative, RawHeadPositionDerivative, RawPipe, RawSource, RawSourceDerivative, RawSourceInput, RawICA, RawMaxwell, Reference,
+    CachedRawPipe, ICAInput, MaxwellCalibrationInput, MaxwellCrosstalkInput, CanonicalHeadPositionDerivative, RawBadChannelsInput, RawDerivative, RawHeadPositionDerivative, RawPipe, RawSource, RawSourceDerivative, RawSourceInput, RawICA, RawMaxwell, Reference, find_chpi,
     REINDEX_ICA, assemble_raw_pipes, ica_input_name, raw_bad_channels_input_name, raw_node_name, raw_input_name,
 )
 from .data import DataSpec
@@ -70,8 +70,6 @@ from .trf.model import Comparison, parse_term
 from .variable_def import RESERVED_VAR_KEYS, Variables, label_groups
 
 
-# Allowable parameters
-COV_PARAMS = {'epoch', 'method', 'reg', 'keep_sample_mean', 'reg_eval_win_pad'}
 # Argument types
 BaselineArg = bool | tuple[float | None, float | None]
 DataArg = str | DataSpec
@@ -197,15 +195,15 @@ class Pipeline(StateModel):
     # or by exclusion: {'group': {'base': 'all', 'exclude': ('member1', 'member2')}}
     groups = {}
 
-    # kwargs for regularization of the covariance matrix
-    _covs = {
-        'auto': EpochCovariance('cov', 'auto'),
-        'bestreg': EpochCovariance('cov', 'best'),
-        'reg': EpochCovariance('cov', 'diagonal_fixed'),
-        'noreg': EpochCovariance('cov', 'empirical'),
+    # Noise covariance estimates, selected through the 'cov' state
+    _default_covs = {
         'emptyroom': RawCovariance(),
         'ad_hoc': RawCovariance(method='ad_hoc'),
     }
+    # noise_covariance: named RawCovariance/EpochCovariance configurations; the
+    # built-in entries in _default_covs are always available and can be overridden
+    # here (e.g. {'baseline': EpochCovariance('baseline')})
+    noise_covariance: dict[str, Covariance] = {}
 
     # MRI subject names: {subject: mrisubject} mappings
     # selected with e.set(mri=dict_name)
@@ -403,10 +401,15 @@ class Pipeline(StateModel):
         self._mri_subjects = self.mri_subjects.copy()
 
         # Sensor noise covariance estimates
-        self._covs = ConfigurationDict('covariance', self._covs)
+        for name, cov in self.noise_covariance.items():
+            if not isinstance(name, str):
+                raise TypeError(f"noise_covariance[{name!r}]: name must be a string")
+            elif not name:
+                raise ValueError(f"noise_covariance[{name!r}]: name can't be empty")
+            elif not isinstance(cov, (RawCovariance, EpochCovariance)):
+                raise TypeError(f"noise_covariance[{name!r}]={cov!r}: need RawCovariance or EpochCovariance")
+        self._covs = ConfigurationDict('covariance', {**self._default_covs, **self.noise_covariance})
         for name, cov in self._covs.items():
-            if not isinstance(cov, (RawCovariance, EpochCovariance)):
-                raise TypeError(f"_covs[{name!r}]={cov!r}: need RawCovariance or EpochCovariance")
             cov._store_name(name)
 
         # parcellations
@@ -478,7 +481,7 @@ class Pipeline(StateModel):
         self._register_field('reference', self._references.keys(), allow_empty=True)
 
         # cov
-        self._register_field('cov', sorted(self._covs))
+        self._register_field('cov', sorted(self._covs), default='emptyroom')
         # inv determines the analysis space: a non-empty inverse means source space, inv='' means sensor space.
         self._register_field('inv', default='', eval_handler=self._eval_inv, allow_empty=True)
         # default sensor-space data kind for analyses (see .default_data)
@@ -533,8 +536,8 @@ class Pipeline(StateModel):
                 self._derivatives.register(raw_input)
                 self._derivatives.register(RawBadChannelsInput(raw_input))
                 self._derivatives.register(RawSourceDerivative(raw_name, pipe, self._raw_extension))
-                self._derivatives.register(RawHeadPositionDerivative(raw_input.name))
-                self._derivatives.register(CanonicalHeadPositionDerivative(self._recordings, self._tasks, self._runs))
+                self._derivatives.register(RawHeadPositionDerivative(raw_node_name(raw_name)))
+                self._derivatives.register(CanonicalHeadPositionDerivative(raw_node_name(raw_name), self._recordings, self._tasks, self._runs))
             elif isinstance(pipe, CachedRawPipe):
                 self._derivatives.register(RawDerivative(raw_name, pipe, self._raw, self._raw_extension))
                 if isinstance(pipe, RawICA):
@@ -1017,7 +1020,33 @@ class Pipeline(StateModel):
         raw_name = self.get('raw', **kwargs)
         return self._load_derivative(raw_node_name(raw_name), options={'noise': noise}, view='bads')
 
-    def load_cov(self, **kwargs):
+    def load_head_position(self, **state) -> np.ndarray | None:
+        """Load head position samples for a recording
+
+        Parameters
+        ----------
+        ...
+            State parameters.
+
+        Returns
+        -------
+        head_pos
+            ``(n, 10)`` array in MaxFilter format, with columns
+            ``[t, q1, q2, q3, tx, ty, tz, gof, err, v]``, as produced by
+            :func:`mne.chpi.compute_head_pos` and suitable for
+            :func:`mne.viz.plot_head_positions`. For recordings without
+            continuous HPI, the static ``dev_head_t`` is returned as a single
+            sample. ``None`` when the recording has no head position
+            information at all.
+
+        See Also
+        --------
+        pipeline.RawMaxwell : Maxwell filtering with head movement compensation
+        """
+        self.set(**state)
+        return self._load_derivative('raw-head-position')
+
+    def load_cov(self, **state) -> mne.Covariance:
         """Load the covariance matrix
 
         Parameters
@@ -1025,7 +1054,8 @@ class Pipeline(StateModel):
         ...
             State parameters.
         """
-        return self._load_derivative('cov', **kwargs)
+        self.set(**state)
+        return self._load_derivative('cov')
 
     def _resolve_data(
             self,
@@ -2563,7 +2593,8 @@ class Pipeline(StateModel):
                 raise RuntimeError(f"{command=}")
             else:
                 raise RuntimeError("User aborted ICA overwrite")
-        spec.save_result(job, job())
+        with user_activity:
+            spec.save_result(job, job())
         return spec.path
 
     def make_epoch_rejection(
@@ -3513,7 +3544,8 @@ class Pipeline(StateModel):
 
     def show_head_position_overview(
             self,
-            tolerance: float = 1e-3,
+            distance: float = 1.,
+            angle: float = .5,
             asds: bool = False,
             **state,
     ) -> 'fmtxt.Table | fmtxt.Section | Dataset':
@@ -3526,16 +3558,21 @@ class Pipeline(StateModel):
 
         Labels are assigned per subject, starting from A for the first task
         encountered. Tasks with the same label share the same head position
-        within ``tolerance``; labels are not comparable across subjects.
+        within ``distance`` and ``angle``; labels are not comparable across
+        subjects.
 
         Parameters
         ----------
-        tolerance
-            Maximum element-wise absolute difference in the ``dev_head_t``
-            transformation matrix for two recordings to be considered as having
-            the same head position. Default ``1e-3`` corresponds to approximately
-            1 mm for translation (and roughly 0.06° for rotation), which is
-            conservative enough to justify sharing a forward solution.
+        distance
+            Maximum distance (in mm) between the ``dev_head_t`` transforms of two
+            recordings for them to count as the same head position (see
+            :func:`mne.transforms.angle_distance_between_rigid`). The default
+            of 1 mm is conservative enough to justify sharing a forward solution.
+        angle
+            Maximum rotation (in degrees) between the ``dev_head_t`` transforms
+            of two recordings for them to count as the same head position. The
+            default of 0.5° moves a point 10 cm from the center of rotation by
+            less than 1 mm.
         asds
             Return a :class:`Dataset` instead of formatted output.
         ...
@@ -3547,7 +3584,7 @@ class Pipeline(StateModel):
             Table with tasks as rows and subjects as columns. Each cell contains
             a cluster label (A, B, C, ...) indicating the head position group;
             cells with the same label share the same head position within
-            ``tolerance``. Missing recordings are shown as "—". When the
+            ``distance`` and ``angle``. Missing recordings are shown as "—". When the
             experiment has multiple sessions with differing head positions, a
             :class:`fmtxt.Section` with one table per session is returned.
         Dataset
@@ -3579,11 +3616,11 @@ class Pipeline(StateModel):
             if ctx.exists():
                 data.setdefault(session, {}).setdefault(subject, {})[key] = None
                 chl.setdefault(session, {}).setdefault(subject, {})[key] = False
-                info = self._load_derivative(node_name, view='info', options={'noise': False})
-                head_t = info.get('dev_head_t')
+                raw = self._load_derivative(node_name, options={'noise': False})
+                head_t = raw.info.get('dev_head_t')
                 if head_t is not None:
                     data[session][subject][key] = head_t['trans'].copy()
-                chl[session][subject][key] = bool(info.get('hpi_meas'))
+                chl[session][subject][key] = find_chpi(raw) is not None
 
         sessions = sorted(data.keys())
         task_order = {t: i for i, t in enumerate(tasks)}
@@ -3620,7 +3657,8 @@ class Pipeline(StateModel):
                         any_missing = True
                         continue
                     for rep_label, rep_trans in representatives:
-                        if np.allclose(trans, rep_trans, atol=tolerance, rtol=0):
+                        rep_angle, rep_distance = mne.transforms.angle_distance_between_rigid(trans, rep_trans, angle_units='deg', distance_units='mm')
+                        if rep_distance <= distance and rep_angle <= angle:
                             subject_labels[key] = rep_label
                             break
                     else:

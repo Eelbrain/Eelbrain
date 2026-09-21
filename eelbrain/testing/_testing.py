@@ -217,6 +217,15 @@ def requires_mne_testing_data(function):
         return pytest.mark.skip('mne testing data unavailable')(function)
 
 
+def requires_mne_head_pos(function):
+    "Skip tests using RawMaxwell(head_pos=True) unless the installed MNE supports it"
+    from ..mne_fixes._version import MNE_SUPPORTS_HEAD_POS
+    if MNE_SUPPORTS_HEAD_POS:
+        return function
+    else:
+        return pytest.mark.skip(f'head movement compensation requires mne >= 1.13 (installed: {mne.__version__})')(function)
+
+
 def skip_on_windows(function):
     if os.name == 'nt':
         return pytest.mark.skip('Test disabled on Windows')(function)

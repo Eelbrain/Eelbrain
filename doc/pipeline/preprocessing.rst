@@ -50,6 +50,22 @@ For example, the following definition sets up a pipeline for MEG, using TSSS, a 
 To use the ``raw --> TSSS --> 1-40 Hz band-pass`` pipeline, use ``e.set(raw="1-40")``.
 To use ``raw --> TSSS --> 1-40 Hz band-pass --> ICA``, select ``e.set(raw="ica")``.
 
+For data recorded with continuous HPI, :class:`RawMaxwell` can compensate for head movement with ``head_pos=True``::
+
+    class Experiment(Pipeline):
+
+        raw = {
+            'tsss': RawMaxwell('raw', st_duration=10., head_pos=True),
+        }
+
+Head positions are estimated once per recording with :func:`mne.chpi.compute_head_pos`, cached, and used for both bad channel detection and Maxwell filtering.
+They can be retrieved with :meth:`Pipeline.load_head_position` for inspection with :func:`mne.viz.plot_head_positions`.
+The setting has no effect on recordings without continuous HPI, and empty room data is never affected.
+:meth:`Pipeline.show_head_position_overview` marks recordings with continuous HPI with ``†``.
+For HPI coils driven at known frequencies (Neuromag), the cHPI signals and line noise are removed with :func:`mne.chpi.filter_chpi` before Maxwell filtering.
+This is controlled by the ``filter_chpi`` parameter, which defaults to ``head_pos`` but can also be enabled on its own, e.g. for a ``st_only`` pipeline.
+Segments with excessive movement can be marked with ``BAD_mov_*`` annotations through the ``rotation_velocity_limit``, ``translation_velocity_limit`` and ``mean_distance_limit`` parameters (see :func:`mne.preprocessing.annotate_movement`).
+
 The following is an example for EEG using band-pass filter and ICA::
 
     class Experiment(Pipeline):
@@ -288,8 +304,8 @@ Examples::
         # some primary epochs:
         'picture': PrimaryEpoch('words', "stimulus == 'picture'"),
         'word': PrimaryEpoch('words', "stimulus == 'word'"),
-        # use the picture baseline for the sensor covariance estimate
-        'cov': SecondaryEpoch('picture', tmax=0),
+        # the picture baseline (e.g., for the noise covariance estimate)
+        'baseline': SecondaryEpoch('picture', tmax=0),
         # another secondary epoch:
         'animal_words': SecondaryEpoch('noun', sel="word_type == 'animal'"),
         # a superset-epoch:
@@ -310,10 +326,6 @@ selection strings::
 For datasets with a ``run`` entity, :class:`PrimaryEpoch` combines all runs for
 the selected subject/session/task/acquisition by default. To analyze a single run, set the
 epoch's ``run`` parameter, for example ``PrimaryEpoch('task', run='1')``.
-
-There is one special epoch name, ``'cov'``: the
-data epoch that will be used to estimate the sensor noise covariance matrix for
-source estimation (see :doc:`source`).
 
 :class:`ContinuousEpoch` extracts continuous data segments spanning multiple
 events, which is mainly useful for TRF analysis of continuous stimuli

@@ -280,7 +280,7 @@ experiment analysis parameters (see :ref:`state-parameters`), e.g.::
 
     defaults = {
         'epoch': 'my_epoch',
-        'cov': 'noreg',
+        'cov': 'ad_hoc',
         'raw': '1-40',
     }
 

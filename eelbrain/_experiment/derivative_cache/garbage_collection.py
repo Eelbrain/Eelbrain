@@ -435,17 +435,16 @@ def _find_stale_dependency(
     for label, entry in dependencies.items():
         if not isinstance(entry, dict):
             continue
-        if entry.get('kind') == 'derivative':
-            # recorded relative to the cache dir — the same key scanned/deletable use
-            if manifest_path := entry.get('manifest'):
-                if manifest_path in deletable:
-                    return entry.get('name', label)
-                item = scanned.get(manifest_path)
-                if item is not None and entry.get('view') is None and isinstance(entry.get('dependencies'), dict):
-                    child_node = registry._nodes.get(entry.get('name', ''))
-                    if child_node is not None and type(child_node).dependency_fingerprint is DependencyNode.dependency_fingerprint:
-                        if entry.get('key') != item.manifest.key or entry.get('fingerprint') != item.manifest.fingerprint:
-                            return entry.get('name', label)
+        # only cached derivatives record a manifest (relative to the cache dir — the same key scanned/deletable use)
+        if manifest_path := entry.get('manifest'):
+            if manifest_path in deletable:
+                return entry.get('name', label)
+            item = scanned.get(manifest_path)
+            if item is not None and entry.get('view') is None and isinstance(entry.get('dependencies'), dict):
+                child_node = registry._nodes.get(entry.get('name', ''))
+                if child_node is not None and type(child_node).dependency_fingerprint is DependencyNode.dependency_fingerprint:
+                    if entry.get('key') != item.manifest.key or entry.get('fingerprint') != item.manifest.fingerprint:
+                        return entry.get('name', label)
         nested = entry.get('dependencies')
         if isinstance(nested, dict):
             found = _find_stale_dependency(registry, nested, scanned, deletable)

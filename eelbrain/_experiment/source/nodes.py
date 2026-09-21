@@ -18,6 +18,7 @@ from itertools import product
 import os
 from pathlib import Path
 from typing import Any
+import warnings
 
 import mne
 import numpy as np
@@ -419,7 +420,11 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
         reference._prepare_source_data(raw, self.raw.root_source_pipe(ctx.state['raw']).montage)
         if reference.add and _eeg_channel_names(fwd['info']) != _eeg_channel_names(raw.info):
             raise NotImplementedError(f"EEG channels differ between the forward solution and the {ctx.state['raw']!r} raw used for the inverse operator; source localization with a reconstructed reference channel ({reference.add}) requires the inverse raw to keep the same EEG channels as the root 'raw' source used for the forward solution.")
-        return solution._build_operator(raw.info, fwd, ctx.load('cov'))
+        cov = ctx.load('cov')
+        # make_inverse_operator estimates the rank from the covariance and uses that estimate, but warns when it exceeds the SSS rank in the raw.info header
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', 'Something went wrong in the data-driven estimation')
+            return solution._build_operator(raw.info, fwd, cov)
 
     def load(
             self,
@@ -562,10 +567,12 @@ def _apply_source_baseline(stc_value, baseline) -> None:
 
 def _check_head_position_alignment(ctx: Request, info: mne.Info) -> None:
     """Raise if the data's head position doesn't match the canonical session position."""
-    median_head_pos = ctx.load('canonical-head-position')
-    if median_head_pos is not None:
-        if not np.allclose(info['dev_head_t']['trans'], median_head_pos['trans']):
-            raise RuntimeError("The data head position does not match the canonical session head position. Apply Maxwell filtering before computing source estimates.")
+    canonical = ctx.load('canonical-head-position')
+    if canonical is not None:
+        angle, distance = mne.transforms.angle_distance_between_rigid(info['dev_head_t']['trans'], canonical['trans'], angle_units='deg', distance_units='mm')
+        # Maxwell filtering towards the canonical position sets dev_head_t exactly; the tolerance only absorbs the float32 precision of transforms in FIFF files
+        if distance > 0.01 or angle > 0.001:
+            raise RuntimeError(f"The data head position differs from the canonical session head position by {distance:.1f} mm and {angle:.2f}°. Apply Maxwell filtering before computing source estimates.")
 
 
 def _source_dependencies(ctx: Request, sensor_dependency: Dependency) -> tuple[Dependency, ...]:

@@ -43,6 +43,13 @@ New in 0.43
   - EEG data can be re-referenced after epoching and channel interpolation
     through :attr:`pipeline.Pipeline.references` and the ``reference`` state.
     This is generally preferable to re-referencing before epoching.
+  - API change: noise covariance estimation is now configured through
+    :attr:`pipeline.Pipeline.noise_covariance`, with
+    :class:`pipeline.EpochCovariance` and :class:`pipeline.RawCovariance`.
+    Covariances are now regularized by default to bound their condition number
+    (``max_condition``), which keeps whitening stable for Maxwell-filtered data.
+    The built-in ``cov`` options are now ``'emptyroom'`` (the default) and
+    ``'ad_hoc'``; for epoch-based options see :attr:`pipeline.Pipeline.noise_covariance`.
   - Temporal response function analyses: :meth:`pipeline.Pipeline.load_trf`,
     :meth:`pipeline.Pipeline.load_trfs`, :meth:`pipeline.Pipeline.load_model_test`
   - New :meth:`pipeline.Pipeline.clean_cache` reviews and deletes invalid or
@@ -55,6 +62,9 @@ New in 0.43
     documented with :attr:`pipeline.Pipeline.variables`.
   - :class:`pipeline.RawSource`: the ``rename_channels`` parameter now renames
     channels in the montage/adjacency instead of renaming channels in the data.
+  - :class:`pipeline.RawMaxwell` can compensate for head movement in recordings
+    with continuous HPI through the ``head_pos`` parameter. This requires
+    ``mne >= 1.13``.
   - New :attr:`pipeline.Pipeline.event_factors` attribute to read numeric
     ``events.tsv`` columns as categorial (:class:`Factor`).
 

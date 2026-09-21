@@ -20,6 +20,7 @@ from .config import (
     RawPipeGraph,
     RawReReference,
     RawSource,
+    find_chpi,
     Reference,
     assemble_raw_pipes,
     ica_input_name,

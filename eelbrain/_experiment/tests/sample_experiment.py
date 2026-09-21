@@ -60,6 +60,11 @@ class SampleExperiment(Pipeline):
         'manual': ManualRejection(),
     }
 
+    noise_covariance = {
+        # estimated from the pre-stimulus baseline (the 'cov' epoch)
+        'empirical': EpochCovariance('cov'),
+    }
+
     tests = {
         # T-test to compare left-sided vs right-sided stimulation
         'left=right': TTestRelated('side', 'left', 'right'),
