@@ -248,6 +248,70 @@ class CachedRawPipe(RawPipe):
     ) -> list[str]:
         return ctx.load(raw_node_name(self.source), options={'noise': noise}, view='bads')
 
+class RawNotchFilter(CachedRawPipe):
+    """Apply a notch filter to continuous raw data.
+
+    Parameters
+    ----------
+    source
+        Name of the raw pipe to use as input.
+    freqs
+        Frequencies to remove, in Hz. For example, ``60`` or
+        ``(60, 120, 180)``.
+    cache
+        Cache the resulting raw file.
+    n_jobs
+        Number of parallel jobs passed to
+        :meth:`mne.io.Raw.notch_filter`.
+    **kwargs
+        Additional parameters passed to
+        :meth:`mne.io.Raw.notch_filter`.
+    """
+
+    DICT_ATTRS = CachedRawPipe.DICT_ATTRS + (
+        'freqs',
+        'n_jobs',
+        'kwargs',
+    )
+
+    def __init__(
+            self,
+            source: str,
+            freqs: float | Sequence[float],
+            cache: bool = True,
+            n_jobs: str | int | None = 1,
+            **kwargs,
+    ):
+        CachedRawPipe.__init__(self, source, cache)
+        self.freqs = freqs
+        self.n_jobs = n_jobs
+        self.kwargs = kwargs
+
+    def _make(
+            self,
+            raw: mne.io.BaseRaw,
+            *,
+            path: BIDSPath,
+            noise: bool = False,
+            raw_name: str = None,
+            log: logging.Logger | None = None,
+            source_pipe: RawSource | None = None,
+    ) -> mne.io.BaseRaw:
+        logger = log or LOG
+        logger.info(
+            "Raw %s: notch filtering %s Hz for %s...",
+            raw_name,
+            self.freqs,
+            path.fpath if not noise else path.find_empty_room().fpath,
+        )
+
+        raw.notch_filter(
+            freqs=self.freqs,
+            n_jobs=self.n_jobs,
+            verbose=MNE_VERBOSITY,
+            **self.kwargs,
+        )
+        return raw
 
 class RawFilter(CachedRawPipe):
     """Filter raw pipe

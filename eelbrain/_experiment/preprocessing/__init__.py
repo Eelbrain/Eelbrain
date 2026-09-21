@@ -11,6 +11,7 @@ from .config import (
     MNE_VERBOSITY,
     CachedRawPipe,
     RawApplyICA,
+    RawNotchFilter,
     RawFilter,
     RawFilterElliptic,
     RawICA,
