@@ -1313,16 +1313,21 @@ class PipelineFrame(EelbrainFrame):
         log.debug(f"Pipeline GUI {task.name}: {n_filled} row details in {time.time() - t_locked:.3f} s, after waiting {t_locked - t_start:.3f} s for the pipeline")
         if first_error is not None:
             wx.CallAfter(self._show_error, *_error_dialog_args(first_error))
+            wx.CallAfter(self._end_refresh, token)
 
     def _end_refresh(self, token: object) -> None:
-        """Settle the table of a refresh whose second pass failed: rows it never filled in are shown as errors.
+        """Settle the table of a refresh that ended with an error.
+
+        Rows the second pass never filled in are shown as errors, and the status bar
+        shows the table's summary (with its error count) rather than the ``Error`` that
+        :meth:`_show_error` left there.
 
         Parameters
         ----------
         token
             Refresh that ended; one that was superseded has nothing to settle.
         """
-        if token is not self._refresh_token or not self._n_loading:
+        if token is not self._refresh_token:
             return
         for i in range(self._list.GetItemCount()):
             if self._list.GetItemText(i, self._layout.status_col) == LOADING:

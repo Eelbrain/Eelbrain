@@ -560,8 +560,8 @@ def test_refresh_shows_the_rows_before_their_status(monkeypatch):
     errors = [RuntimeError("first"), RuntimeError("second")]
     rows[:] = [(('R01',), ('R01', pipeline_gui.ERROR, PLACEHOLDER, PLACEHOLDER), None, errors[0]), (('R02',), ('R02', pipeline_gui.ERROR, PLACEHOLDER, PLACEHOLDER), None, errors[1])]
     frame._refresh_thread(token, _ICA_SCOPE)
-    assert [args[0] for args in posted] == [frame._populate_table, frame._fill_row, frame._fill_row, frame._show_error]
-    assert 'RuntimeError: first' in posted[-1][1]
+    assert [args[0] for args in posted] == [frame._populate_table, frame._fill_row, frame._fill_row, frame._show_error, frame._end_refresh]
+    assert 'RuntimeError: first' in posted[-2][1]
 
     # a second pass that fails outright is reported, and the table is settled afterwards
     posted.clear()
@@ -585,6 +585,12 @@ def test_end_refresh_settles_the_rows_a_failed_pass_left_loading():
     assert frame._list.rows == [rows[0], ('R02', pipeline_gui.ERROR, PLACEHOLDER, PLACEHOLDER)]
     assert frame._list.colours == {1: wx.RED}
     assert texts == [0]
+
+    # with every row in (a per-row error, or a first pass that failed before any row was
+    # posted), the status bar is still restored from "Error" to the summary
+    frame._end_refresh('TOKEN')
+    assert frame._list.rows == [rows[0], ('R02', pipeline_gui.ERROR, PLACEHOLDER, PLACEHOLDER)]
+    assert texts == [0, 0]
 
 
 def test_iter_rows_yields_a_stale_ica_row():
