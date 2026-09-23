@@ -2073,10 +2073,11 @@ def test_sample_neuromag(samples_experiment):
 
 @requires_mne_sample_data
 def test_epoch_run(samples_experiment):
-    """Test run aggregation for PrimaryEpoch and ContinuousEpoch."""
+    """Test run aggregation for PrimaryEpoch and ContinuousEpoch, including
+    that ignore_runs excludes an ignored run from that aggregation."""
     set_log_level('warning', 'mne')
 
-    root = samples_experiment(n_subjects=2, n_segments=2, n_runs=2)
+    root = samples_experiment(n_subjects=2, n_segments=2, n_runs=3)
 
     class MultiRunExperiment(Pipeline):
         stim_channel = 'STI 014'
@@ -2091,9 +2092,11 @@ def test_epoch_run(samples_experiment):
             'target-copy': SecondaryEpoch('target'),
             'target-r1': PrimaryEpoch('sample', "event == 'target'", tmax=0.3, decim=5, run='1'),
             'target-r2': PrimaryEpoch('sample', "event == 'target'", tmax=0.3, decim=5, run='2'),
+            'target-r3': PrimaryEpoch('sample', "event == 'target'", tmax=0.3, decim=5, run='3'),
             'cont': ContinuousEpoch('sample', "event == 'target'", pad_start=0.1, pad_end=0.1, split=0.5),
             'cont-r1': ContinuousEpoch('sample', "event == 'target'", pad_start=0.1, pad_end=0.1, split=0.5, run='1'),
             'cont-r2': ContinuousEpoch('sample', "event == 'target'", pad_start=0.1, pad_end=0.1, split=0.5, run='2'),
+            'cont-r3': ContinuousEpoch('sample', "event == 'target'", pad_start=0.1, pad_end=0.1, split=0.5, run='3'),
         }
 
     e = MultiRunExperiment(root)
@@ -2115,8 +2118,12 @@ def test_epoch_run(samples_experiment):
     ds_r2 = e.load_selected_events()
     assert ds_r2.n_cases > 0
 
-    # Combined events = run-1 + run-2
-    assert ds_all.n_cases == ds_r1.n_cases + ds_r2.n_cases, f"combine-all ({ds_all.n_cases}) != run-1 ({ds_r1.n_cases}) + run-2 ({ds_r2.n_cases})"
+    e.set(epoch='target-r3', epoch_rejection='')
+    ds_r3 = e.load_selected_events()
+    assert ds_r3.n_cases > 0
+
+    # Combined events = run-1 + run-2 + run-3
+    assert ds_all.n_cases == ds_r1.n_cases + ds_r2.n_cases + ds_r3.n_cases, f"combine-all ({ds_all.n_cases}) != run-1 ({ds_r1.n_cases}) + run-2 ({ds_r2.n_cases}) + run-3 ({ds_r3.n_cases})"
 
     # Epochs can be loaded from combine-all epoch
     e.set(epoch='target')
@@ -2140,10 +2147,13 @@ def test_epoch_run(samples_experiment):
     e.set(epoch='cont-r2')
     assert e.get('run') == '2'
     cont_r2 = e.load_selected_events()
+    e.set(epoch='cont-r3')
+    assert e.get('run') == '3'
+    cont_r3 = e.load_selected_events()
     e.set(epoch='cont')
     cont_all = e.load_selected_events()
-    assert cont_all.n_cases == cont_r1.n_cases + cont_r2.n_cases
-    assert cont_all['run'].cells == ('1', '2')
+    assert cont_all.n_cases == cont_r1.n_cases + cont_r2.n_cases + cont_r3.n_cases
+    assert cont_all['run'].cells == ('1', '2', '3')
     for entity in BIDS_ENTITY_KEYS:
         if entity in cont_all and len(set(cont_all[entity])) > 1:
             assert entity not in cont_all.info
@@ -2158,6 +2168,24 @@ def test_epoch_run(samples_experiment):
     assert isinstance(cont_epochs['mag'], Datalist)
     assert cont_epochs.n_cases == cont_all.n_cases
     assert all(events[0, 'epoch_time'] == pytest.approx(y.time.tmin + 0.1, abs=0.002) for events, y in cont_epochs.zip('events', 'mag'))
+
+    # ignore_runs should exclude the ignored run from the per-(subject,
+    # session, task, acquisition) run lists that the combine-all aggregation
+    # above relies on (events.py EpochEventsDerivative._find_runs reads
+    # exactly Pipeline._runs_for).
+    class IgnoreRunExperiment(MultiRunExperiment):
+        ignore_entities = {'ignore_runs': ('2',)}
+
+    e_ignore = IgnoreRunExperiment(root)
+    assert e_ignore._runs == ('1', '3')
+    assert all('2' not in runs for runs in e_ignore._runs_for.values())
+    e_ignore.set(epoch='target')
+    primary_ignoring_2 = e_ignore.load_epochs()
+    assert primary_ignoring_2['run'].cells == ('1', '3')
+
+    e_ignore.set(epoch='cont')
+    cont_ignoring_2 = e_ignore.load_epochs()
+    assert cont_ignoring_2['run'].cells == ('1', '3')
 
 
 @requires_mne_sample_data

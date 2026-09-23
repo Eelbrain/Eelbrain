@@ -303,7 +303,7 @@ class Pipeline(StateModel):
         matching_paths = tuple(
             path
             for path in find_matching_paths(root, subjects=self._subjects, sessions=self._sessions, tasks=self._tasks, datatypes=datatype, suffixes=datatype, extensions=extensions, ignore_nosub=True)
-            if not path.acquisition or path.acquisition in acquisitions
+            if (not path.acquisition or path.acquisition in acquisitions) and (not path.run or path.run in self._runs)
         )
         self._acquisitions = tuple(sorted({path.acquisition or '' for path in matching_paths}))
 
