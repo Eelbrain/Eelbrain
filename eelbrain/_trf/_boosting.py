@@ -73,14 +73,17 @@ class BoostingResult(PickleableDataClass):
 
     Fit metrics are computed from all time points in ``y``.
 
-    - For models estimated with ``test=False``, the entire ``y_pred`` is
+    - For models estimated with cross-validation (``test=1``, the default),
+      ``y_pred`` in each test segment is predicted from the averaged TRF from
+      the corresponding training runs (each non-test segment used as
+      validation set once), and the different test segments are then
+      concatenated to compute the fit-metrics in comparison with ``y``.
+    - For models estimated with ``test=0``, the entire ``y_pred`` is
       predicted with the averaged TRF from the different runs (with each run
-      corresponding to one validation set).
-    - For models estimated with ``test=True``, ``y_pred`` in each test segment
-      is predicted from the averaged TRF from the corresponding training runs
-      (each non-test segment used as validation set once), and the different
-      test segments are then concatenated to compute the fit-metrics in
-      comparison with ``y``.
+      corresponding to one validation set). Because the same data were used to
+      estimate the TRF, these fit metrics overestimate the model's predictive
+      power and should not be used to compare models (see the ``test``
+      parameter of :func:`boosting`).
 
 
     Attributes
@@ -102,10 +105,11 @@ class BoostingResult(PickleableDataClass):
         Time dimension of the kernel.
     r
         Correlation between the measured response ``y`` and the predicted
-        response ``h * x``. When using cross-validation (calling
-        :func:`boosting` with ``test=True``), each partition of ``y`` is
+        response ``h * x``. With cross-validation (the default,
+        :func:`boosting` with ``test=1``), each partition of ``y`` is
         predicted using the ``h`` estimated from the corresponding training
-        partitions. Otherwise, all of ``y`` is estimated using the average ``h``.
+        partitions. With ``test=0``, all of ``y`` is predicted using the average
+        ``h``, and ``r`` is biased upward (see above).
         For vector data, measured and predicted responses are normalized, and ``r``
         is computed as the average dot product over time.
         The type of ``r`` depends on the ``y`` parameter to :func:`boosting`:
@@ -142,6 +146,8 @@ class BoostingResult(PickleableDataClass):
         depending on the ``error`` that was used for model fitting.
         Note that this does not correspond to ``r**2`` even for ``error='l2'``,
         because residuals are not guaranteed to be orthogonal to predictions.
+        As for ``r``, this is biased upward for models estimated with
+        ``test=0``.
     scale_data
         Scale_data parameter used.
     y_mean
@@ -178,8 +184,8 @@ class BoostingResult(PickleableDataClass):
     for example::
 
         data = datasets._get_continuous()
-        trf_l1 = boosting('y', 'x1', 0, 1, data=data, error='l1', partitions=3, test=1)
-        trf_l2 = boosting('y', 'x1', 0, 1, data=data, error='l2', partitions=3, test=1)
+        trf_l1 = boosting('y', 'x1', 0, 1, data=data, error='l1', partitions=3)
+        trf_l2 = boosting('y', 'x1', 0, 1, data=data, error='l2', partitions=3)
         l1_explained_variance = 1 - (trf_l1.l2_residual / trf_l1.l2_total)
         l2_explained_variance = 1 - (trf_l2.l2_residual / trf_l2.l2_total)
 
@@ -398,7 +404,7 @@ class BoostingResult(PickleableDataClass):
         --------
         Fit a TRF and reproduce the error using the cross-predict function::
 
-            trf = boosting(y, x, 0, 0.5, partitions=5, test=1, partition_results=True)
+            trf = boosting(y, x, 0, 0.5, partitions=5, partition_results=True)
             y_pred = trf.cross_predict(x, scale='normalized')
 
             y_normalized = (y - trf.y_mean) / trf.y_scale
@@ -978,7 +984,7 @@ def boosting(
         partitions: int = None,  # Number of partitionings for cross-validation
         model: CategorialArg = None,
         validate: int = 1,  # Number of segments in validation set
-        test: int = 0,  # Number of segments in test set
+        test: int = 1,  # Number of segments in test set
         data: Dataset = None,
         selective_stopping: int = 0,
         partition_results: bool = False,
@@ -1034,14 +1040,18 @@ def boosting(
         Basis window (see :func:`scipy.signal.get_window` for options; default
         is ``'hamming'``).
     partitions
-        Divide the data into this many ``partitions`` for cross-validation-based
-        early stopping. In each partition, ``n - 1`` segments are used for
-        training, and the remaining segment is used for validation.
+        Divide the data into this many ``partitions`` (*k*) for
+        cross-validation. Each boosting run uses one partition for validation
+        (early stopping), one partition as test set (with ``test=1``), and the
+        remaining partitions for training. With ``test=1``, this requires at
+        least 3 partitions and results in ``k * (k - 1)`` boosting runs
+        (instead of ``k`` runs with ``test=0``).
         If data is continuous, data are divided into contiguous segments of
-        equal length (default 10).
+        equal length (default 5).
         If data has cases, cases are divided with ``[::partitions]`` slices
-        (default ``min(n_cases, 10)``; if ``model`` is specified, ``n_cases``
-        is the lowest number of cases in any cell of the model).
+        (default ``n_cases``, which is only possible with 3 to 10 cases;
+        if ``model`` is specified, all cells need to have the same number of
+        cases, and ``n_cases`` is the number of cases per cell).
         See :ref:`exa-data_split` example.
     model
         If data has cases, divide cases into different categories (division
@@ -1052,23 +1062,36 @@ def boosting(
     validate
         Number of segments in validation dataset (currently has to be 1).
     test
-        By default (``test=0``), the boosting algorithm uses all available data
-        to estimate the kernel. Set ``test=1`` to perform *k*-fold cross-
-        validation instead (with *k* = ``partitions``):
-        Each partition is used as test dataset in turn, while the remaining
-        ``k-1`` partitions are used to estimate the kernel. The resulting model
-        fit metrics reflect the re-combination of all partitions, each one
-        predicted from the corresponding, independent training set.
+        By default (``test=1``), the boosting algorithm performs *k*-fold
+        cross-validation (with *k* = ``partitions``): Each partition is used as
+        test dataset in turn, while the remaining ``k - 1`` partitions are used
+        to estimate the kernel. The fit metrics (e.g.,
+        :attr:`BoostingResult.r` and :attr:`BoostingResult.proportion_explained`)
+        reflect the re-combination of all partitions, each one predicted from
+        the corresponding, independent training set. They thus estimate the
+        model's predictive power for data that were not used to fit it.
+
+        With ``test=0``, the kernel is estimated from all available data. This
+        requires fewer boosting runs for a given number of partitions, and the
+        kernel (:attr:`BoostingResult.h`) is still regularized through early
+        stopping, but the fit metrics are then computed from the same data that
+        were used to estimate the kernel. Such in-sample fit metrics
+        overestimate the model's predictive power: even predictors that are
+        unrelated to ``y`` yield positive fit metrics, and the bias grows with
+        the number of model parameters (predictors and kernel length). They should therefore not be reported as predictive power,
+        or used to compare models. Use ``test=0`` only when the kernel itself
+        is of interest, or when the model will be evaluated on independent
+        data (e.g., using :func:`convolve`).
     selective_stopping
-        By default, the boosting algorithm stops when the testing error stops
-        decreasing. With ``selective_stopping=True``, boosting continues but
+        By default, the boosting algorithm stops when the validation error
+        stops decreasing. With ``selective_stopping=True``, boosting continues but
         excludes the predictor (one time-series in ``x``) that caused the
-        increase in testing error, and continues until all predictors are
+        increase in validation error, and continues until all predictors are
         stopped. The integer value of ``selective_stopping`` determines after
         how many steps with error increases each predictor is excluded.
     partition_results
-        Keep results (TRFs and model evaluation) for each test-partition.
-        This is disabled by default to reduce file size when saving results.
+        Keep results (TRFs and model evaluation) for each test-partition
+        (requires ``test=1``). This is disabled by default to reduce file size when saving results.
     debug
         Add additional attributes to the returned result.
 
@@ -1082,9 +1105,9 @@ def boosting(
 
     In order to predict data, use the :func:`convolve` function::
 
-    >>> ds = datasets.get_uts()
-    >>> data['a1'] = epoch_impulse_predictor('uts', 'A=="a1"', ds=data)
-    >>> data['a0'] = epoch_impulse_predictor('uts', 'A=="a0"', ds=data)
+    >>> data = datasets.get_uts()
+    >>> data['a1'] = epoch_impulse_predictor('uts', 'A=="a1"', data=data)
+    >>> data['a0'] = epoch_impulse_predictor('uts', 'A=="a0"', data=data)
     >>> res = boosting('uts', ['a0', 'a1'], 0, 0.5, partitions=10, model='A', data=data)
     >>> y_pred = convolve(res.h_scaled, ['a0', 'a1'], ds=data)
     >>> y = data['uts']

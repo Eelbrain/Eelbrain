@@ -155,7 +155,12 @@ class Boosting(Estimator):
         number of cases; a negative value concatenates the cases and uses
         ``-partitions`` partitions (``-1`` to let boosting infer them).
     cv
-        Use cross-validation (hold out a test partition).
+        Use cross-validation (hold out a test partition; default). With
+        ``cv=False``, the fit metrics (e.g., ``r`` and ``ev``) are computed
+        from the same data that were used to estimate the TRF. Such in-sample
+        metrics overestimate the model's predictive power, and are not suitable
+        for model comparisons (e.g., :meth:`Pipeline.load_model_test`). See the
+        ``test`` parameter of :func:`eelbrain.boosting` for details.
     partition_results
         Keep the result for each test partition.
     backward

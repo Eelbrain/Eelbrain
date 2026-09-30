@@ -115,7 +115,7 @@ def split_data(
     if int(test) != test:
         raise TypeError(f"{test=}")
     if partitions is not None and partitions <= validate + test:
-        raise ValueError(f"{validate=}, {test=} with {partitions=}")
+        raise ValueError(f"{partitions=}: need at least {validate + test + 1} partitions with {validate=} and {test=}")
     partitions_arg = partitions
     assert validate >= 0
     if validate > 1:
@@ -125,7 +125,7 @@ def split_data(
         raise NotImplementedError
     if len(segments) == 1:
         if partitions is None:
-            partitions = 2 + test + validate if test else 10
+            partitions = 5
         if model is not None:
             raise TypeError(f'model={dataobj_repr(model)!r}: model cannot be specified in unsegmented data')
         n_times = segments[0, 1] - segments[0, 0]

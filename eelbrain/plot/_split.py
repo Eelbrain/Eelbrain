@@ -88,7 +88,7 @@ def preview_partitions(
     partitions: int = None,
     model: CategorialArg = None,
     validate: int = 1,
-    test: int = 0,
+    test: int = 1,
     data: Dataset = None,
     **kwargs,
 ) -> DataSplit:
@@ -112,7 +112,7 @@ def preview_partitions(
         if cases == 0:
             has_case = False
             if partitions is None:
-                partitions = 2 + test + validate if test else 10
+                partitions = 5
             ns = [partitions]
         else:
             has_case = True
