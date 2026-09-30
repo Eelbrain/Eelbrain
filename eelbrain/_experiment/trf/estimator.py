@@ -152,8 +152,8 @@ class Boosting(Estimator):
         Normalize ``y`` and ``x`` before fitting.
     partitions
         Number of partitions for cross-validation. ``None`` to infer from the
-        number of cases; a negative value concatenates the cases and uses
-        ``-partitions`` partitions (``-1`` to let boosting infer them).
+        number of cases; a negative value concatenates the cases and splits them
+        into ``abs(partitions)`` equal length partitions.
     cv
         Use cross-validation (hold out a test partition; default). With
         ``cv=False``, the fit metrics (e.g., ``r`` and ``ev``) are computed
@@ -179,7 +179,7 @@ class Boosting(Estimator):
             mindelta: float = None,
             selective_stopping: int = 0,
             scale_data: bool = True,
-            partitions: int | None = None,
+            partitions: int | None = -5,
             cv: bool = True,
             partition_results: bool = False,
             backward: bool = False,
@@ -191,6 +191,8 @@ class Boosting(Estimator):
         self.mindelta = typed_arg(mindelta, float, allow_none=True)
         self.selective_stopping = typed_arg(selective_stopping, int)
         self.scale_data = typed_arg(scale_data, bool)
+        if partitions is not None and abs(partitions) < 2 + cv:
+            raise ValueError(f"{partitions=}: need at least {2 + cv} partitions with {cv=} (negative values concatenate cases)")
         self.partitions = partitions
         self.cv = cv
         self.partition_results = partition_results
@@ -205,7 +207,7 @@ class Boosting(Estimator):
     def _fit(self, y, xs, tstart, tstop, *, fwd=None, cov=None):
         partitions = self.partitions
         if partitions is not None and partitions < 0:
-            partitions = None if partitions == -1 else -partitions
+            partitions = -partitions
             y = concatenate(y)
             xs = [concatenate(x) for x in xs]
         if len(xs) == 1:

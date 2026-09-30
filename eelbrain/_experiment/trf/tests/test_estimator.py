@@ -18,6 +18,12 @@ def test_boosting():
     # equality / repr
     assert est == Boosting()
     assert est != Boosting(basis=0.1)
+    # partitions
+    with pytest.raises(ValueError):
+        Boosting(partitions=-1)
+    with pytest.raises(ValueError):
+        Boosting(partitions=2)
+    assert Boosting(partitions=2, cv=False).partitions == 2
     assert repr(Boosting(basis=0.1, backward=True)) == "Boosting(basis=0.1, backward=True)"
     # picklable
     assert pickle.loads(pickle.dumps(est)) == est
