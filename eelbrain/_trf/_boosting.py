@@ -953,6 +953,10 @@ class Boosting:
             h_x = hs[0] if len(hs) == 1 else np.mean(hs, 0)
         else:
             h_x = self._get_h(self.split_results)
+            if debug:
+                # in-sample prediction from the averaged kernel
+                self._evaluate((), [(h_x, self.data.segments)], [], True)
+                evaluations['y_pred'] = self.data.package_y_like(self.y_pred, 'y-pred')
         h = self.data.package_kernel(h_x, self.tstart_h)
         # package model parameters
         y_mean, y_scale, x_mean, x_scale = self.data.data_scale_ndvars()

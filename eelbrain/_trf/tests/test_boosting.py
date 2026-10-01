@@ -105,6 +105,7 @@ def test_boosting():
 
     # cross-validation
     res = boosting(y[:7.5], x1[:7.5], 0, 1, scale_data=False, partitions=3, test=0, debug=True)
+    assert_dataobj_equal(res.y_pred, convolve(res.h_scaled, x1[:7.5]), decimal=10, name=False)
     res_cv = boosting(y, x1, 0, 1, scale_data=False, partitions=4, debug=True, partition_results=True)
     assert res_cv.splits.n_test == 1  # cross-validation is the default
     with pytest.raises(ValueError):
