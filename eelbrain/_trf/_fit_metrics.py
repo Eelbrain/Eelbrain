@@ -192,6 +192,38 @@ class VectorL2(Evaluator):
             x[i] = err_i.sum()
 
 
+class VectorL1Total(Evaluator):
+    vector = True
+    attr = 'l1_total'
+    name = 'Vector l1 total'
+
+    def add_y(
+            self,
+            i: int,  # y index (row in data.y)
+            y: np.ndarray,  # actual data
+            y_pred: np.ndarray,  # data predicted by model
+    ):
+        y_norm = norm(y, axis=0)
+        for x, segments in zip(self.xs, self.segments):
+            x[i] = self._crop_y(segments, y_norm).sum()
+
+
+class VectorL2Total(Evaluator):
+    vector = True
+    attr = 'l2_total'
+    name = 'Vector l2 total'
+
+    def add_y(
+            self,
+            i: int,  # y index (row in data.y)
+            y: np.ndarray,  # actual data
+            y_pred: np.ndarray,  # data predicted by model
+    ):
+        y_ss = (y ** 2).sum(0)
+        for x, segments in zip(self.xs, self.segments):
+            x[i] = self._crop_y(segments, y_ss).sum()
+
+
 class VectorCorrelation(Evaluator):
     vector = True
     attr = 'r'
@@ -272,6 +304,8 @@ EVALUATORS = {
     'r_rank': RankCorrelation,
     'vec-l1': VectorL1,
     'vec-l2': VectorL2,
+    'vec-l1-total': VectorL1Total,
+    'vec-l2-total': VectorL2Total,
     'vec-corr': VectorCorrelation,
     'vec-corr-l1': VectorCorrelationL1,
 }

@@ -74,7 +74,7 @@ def test_boosting():
     assert res.h.info['unit'] == 'normalized'
     assert res.h_scaled.name == 'x1'
     assert res.h_scaled.info['unit'] == 'V'
-    assert res.proportion_explained == approx(0.506, abs=0.001)
+    assert res.proportion_explained == approx(0.480, abs=0.001)
     # inplace
     res_ip = boosting(y.copy(), x1.copy(), 0, 1, 'inplace', partitions=10, test=0)
     assert_res_equal(res_ip, res)
@@ -110,7 +110,7 @@ def test_boosting():
 
     res = boosting(y, x2, 0, 1, partitions=10, test=0)
     assert res.r == approx(0.601, abs=0.001)
-    assert res.proportion_explained == approx(0.273, abs=0.001)
+    assert res.proportion_explained == approx(0.234, abs=0.001)
 
     res = boosting(y, x2, 0, 1, error='l1', partitions=10, test=0)
     assert res.r == approx(0.553, abs=0.001)
@@ -118,7 +118,7 @@ def test_boosting():
     assert res.y_scale == (y - y_mean).abs().mean()
     assert_array_equal(res.x_mean.x, x2_mean)
     assert_array_equal(res.x_scale, (x2 - x2_mean).abs().mean('time'))
-    assert res.proportion_explained == approx(0.123, abs=0.001)
+    assert res.proportion_explained == approx(0.065, abs=0.001)
 
     # 2 predictors
     res = boosting(y, [x1, x2], 0, 1, partitions=10, test=0)
@@ -161,6 +161,17 @@ def test_boosting_cross_predict(error):
     else:
         proportion_explained = 1 - ((y_residual ** 2).sum('time') / (y_normalized ** 2).sum('time'))
     assert proportion_explained == pytest.approx(trf.proportion_explained, 1e-16)
+    # Proportion explained in each test partition
+    for res in trf.partition_results:
+        segments = [split.test for split in trf.splits.splits if split.i_test == res.i_test][0]
+        index = np.concatenate([np.arange(start, stop) for start, stop in segments])
+        y_i = y_normalized.x[index]
+        residual_i = y_residual.x[index]
+        if error == 'l1':
+            proportion_explained = 1 - (np.abs(residual_i).sum() / np.abs(y_i).sum())
+        else:
+            proportion_explained = 1 - ((residual_i ** 2).sum() / (y_i ** 2).sum())
+        assert res.proportion_explained == pytest.approx(proportion_explained)
 
     # With scaling: original scale
     y_pred = trf.cross_predict('x1', ds)

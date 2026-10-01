@@ -358,8 +358,12 @@ class BoostingResult(PickleableDataClass):
     @cached_property
     def _variability(self):
         # variability in the data
+        total = getattr(self, f'{self.error}_total')
         if self.y_scale is None:
             raise NotImplementedError("Not implemented for scale_data=False")
+        elif total is not None:
+            # variability in the evaluated segments (e.g., one test partition)
+            return total
         elif self.n_samples is None:
             raise OldVersionError("This is an older result object which did not store some necessary information; refit the model to use this attribute")
         else:
@@ -543,7 +547,7 @@ class BoostingResult(PickleableDataClass):
             return func(obj)
 
         # NDVars
-        for attr in ('_h', 'r', 'r_rank', 'residual', 'y_mean', 'y_scale'):
+        for attr in ('_h', 'r', 'r_rank', 'residual', 'l1_total', 'l2_total', 'y_mean', 'y_scale'):
             setattr(self, attr, sub_func(getattr(self, attr)))
 
         # List of Dimension
@@ -832,7 +836,7 @@ class Boosting:
         # fit evaluation
         if metrics is None:
             if self.data.vector_dim:
-                metrics = [f'vec-{self.error}', 'vec-corr']
+                metrics = [f'vec-{self.error}', f'vec-{self.error}-total', 'vec-corr']
                 if self.error == 'l1':
                     metrics.append('vec-corr-l1')
             else:
