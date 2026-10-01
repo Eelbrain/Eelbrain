@@ -1149,7 +1149,7 @@ def boosting(
     >>> data['a1'] = epoch_impulse_predictor('uts', 'A=="a1"', data=data)
     >>> data['a0'] = epoch_impulse_predictor('uts', 'A=="a0"', data=data)
     >>> res = boosting('uts', ['a0', 'a1'], 0, 0.5, partitions=10, model='A', data=data)
-    >>> y_pred = convolve(res.h_scaled, ['a0', 'a1'], ds=data)
+    >>> y_pred = convolve(res.h_scaled, ['a0', 'a1'], data=data)
     >>> y = data['uts']
     >>> plot.UTS([y-y.mean('time'), y_pred], '.case')
 
