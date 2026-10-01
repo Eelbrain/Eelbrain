@@ -40,7 +40,8 @@ class Split(PickleableDataClass, EQMixIn):
     train: np.ndarray  # (, 2) array of int, segment (start, stop)
     validate: np.ndarray = None
     test: np.ndarray = None
-    i_test: int = 0  # Index (to group splits with the same test segmet)
+    i_test: int = 0  # Index (to group splits with the same test segment)
+    i_validate: int = None  # Index of the validation segment
 
     @cached_property
     def train_and_validate(self):
@@ -208,7 +209,7 @@ def split_data(
                 validate_segments = merge_segments(split_segments[validate_set], soft_splits)
             # create split
             train_segments = merge_segments(split_segments[train_set], soft_splits)
-            splits.append(Split(train_segments, validate_segments, test_segments, i_test))
+            splits.append(Split(train_segments, validate_segments, test_segments, i_test, i_validate))
     return Splits(splits, partitions_arg, partitions, validate, test, model, segments, split_segments)
 
 

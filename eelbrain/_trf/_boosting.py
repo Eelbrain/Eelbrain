@@ -228,6 +228,7 @@ class BoostingResult(PickleableDataClass):
     _y_dims: tuple[Dimension, ...] = None
     # fit metrics
     i_test: int = None  # test partition for fit metrics
+    i_validate: int = None  # validation partition (partition results without test set)
     l1_residual: float | NDVar = None
     l2_residual: float | NDVar = None
     l1_total: float | NDVar = None
@@ -563,7 +564,7 @@ class BoostingResult(PickleableDataClass):
             rows = [[res.i_test, res.r, res.proportion_explained] for res in self.partition_results]
         else:
             keys = ['i_validate', 'r', 'ev', 'train_r', 'train_ev']
-            rows = [[i, res.r, res.proportion_explained, res.train_r, res.train_proportion_explained] for i, res in enumerate(self.partition_results)]
+            rows = [[res.i_validate, res.r, res.proportion_explained, res.train_r, res.train_proportion_explained] for res in self.partition_results]
         h_is_list = isinstance(self._h, tuple)
         for row, res in zip(rows, self.partition_results):
             row.extend(res.h if h_is_list else [res.h])
@@ -983,7 +984,7 @@ class Boosting:
                     self.data.basis, self.data.basis_window, None,
                     self.data.y.shape[1], self.data.y_info, self.data.ydims,
                     algorithm_version=3, execution_context=execution_context,
-                    i_test=i, **evaluations_i)
+                    i_test=i, i_validate=None if cross_fit else partition[0].split.i_validate, **evaluations_i)
                 partition_results_list.append(result)
         else:
             partition_results_list = None
