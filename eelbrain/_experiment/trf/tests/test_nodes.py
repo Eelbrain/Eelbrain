@@ -9,13 +9,18 @@ from eelbrain._experiment.trf.nodes import TRFDerivative, TRFModelTestDerivative
 
 def test_trf_fingerprint_default_partitions():
     "TRFs with partitions inferred by boosting() record the default partitions"
-    estimators = {'default': Boosting(), 'concatenate': Boosting(partitions=-5), 'explicit': Boosting(partitions=5), 'no-cv': Boosting(cv=False)}
+    estimators = {
+        'default': Boosting(),
+        'inferred': Boosting(partitions=None),
+        'inferred-no-cv': Boosting(partitions=None, cv=False),
+        'explicit': Boosting(partitions=5),
+    }
     node = TRFDerivative('.', estimators, {}, 'stimulus', {})
     fingerprints = {key: node.fingerprint(SimpleNamespace(options={'estimator': key})) for key in estimators}
-    assert fingerprints['default']['default_partitions'] == 5
-    assert fingerprints['no-cv']['default_partitions'] == 5
+    assert fingerprints['inferred']['default_partitions'] == 5
+    assert fingerprints['inferred-no-cv']['default_partitions'] == 5
+    assert 'default_partitions' not in fingerprints['default']
     assert 'default_partitions' not in fingerprints['explicit']
-    assert 'default_partitions' not in fingerprints['concatenate']
 
 
 def test_model_test_dataset_alignment():
