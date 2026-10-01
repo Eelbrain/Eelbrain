@@ -237,7 +237,7 @@ def test_boosting_object():
     data = DeconvolutionData('y', 'x2', ds)
     data.apply_basis(0.2, 'hamming')
     data.normalize('l1')
-    data.initialize_cross_validation(4, test=1)
+    data.initialize_cross_validation(4)
     model = Boosting(data)
     model.fit(0, 1, selective_stopping=1, error='l1')
     res_oo = model.evaluate_fit()

@@ -106,7 +106,7 @@ def split_data(
         model: CategorialArg = None,  # sample evenly from cells
         data: Dataset = None,
         validate: int = 1,  # Number of segments in validation set
-        test: int = 0,  # Number of segments in test set
+        test: int = 1,  # Number of segments in test set
 ):
     """Split data segments into train, validate and test segments"""
     if partitions and int(partitions) != partitions:
@@ -569,7 +569,7 @@ class DeconvolutionData:
             model: CategorialArg = None,  # sample evenly from cells
             data: Dataset = None,
             validate: int = 1,  # Number of segments in validation set
-            test: int = 0,  # Number of segments in test set
+            test: int = 1,  # Number of segments in test set
     ):
         """Initialize cross-validation scheme
 

@@ -25,7 +25,7 @@ def test_deconvolution_data_continuous():
     assert abs(data.x).mean() == pytest.approx(1, abs=1e-10)
 
     # partitioning, no testing set
-    data.initialize_cross_validation(4)
+    data.initialize_cross_validation(4, test=0)
     assert len(data.splits.splits) == 4
     assert_array_equal(data.splits.splits[0].validate, [[0, 20]])
     assert_array_equal(data.splits.splits[0].train, [[20, 80]])
@@ -76,7 +76,7 @@ def test_deconvolution_data_trials():
     assert_array_equal(data.segments, [[i * n_times, (i + 1) * n_times] for i in range(60)])
 
     # partitioning
-    data.initialize_cross_validation(3)
+    data.initialize_cross_validation(3, test=0)
     assert len(data.splits.splits) == 3
     arange = np.arange(len(data.segments)) % 3
     for i, split in enumerate(data.splits.splits):
@@ -85,7 +85,7 @@ def test_deconvolution_data_trials():
         assert_array_equal(split.train, data.segments[~validate_index])
 
     # continuoue model
-    data.initialize_cross_validation(3, 'A', ds)
+    data.initialize_cross_validation(3, 'A', ds, test=0)
     assert len(data.splits.splits) == 3
     for i, split in enumerate(data.splits.splits):
         validate_index = arange == i
@@ -94,7 +94,7 @@ def test_deconvolution_data_trials():
 
     # alternating model
     ds['C'] = Factor('abc', tile=20)
-    data.initialize_cross_validation(3, 'C', ds)
+    data.initialize_cross_validation(3, 'C', ds, test=0)
     assert len(data.splits.splits) == 3
     arange = np.repeat(np.arange(20), 3) % 3
     for i, split in enumerate(data.splits.splits):

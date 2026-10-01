@@ -696,7 +696,7 @@ class Boosting:
         data = DeconvolutionData(y, x, ds)
         data.apply_basis(0.05, 'hamming'')
         data.normalize('l1')
-        data.initialize_cross_validation(5, test=1)
+        data.initialize_cross_validation(5)
         model = Boosting(data)
         model.fit(0, 0.500, selective_stopping=1, error='l1')
         result = model.evaluate_fit()
