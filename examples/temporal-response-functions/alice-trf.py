@@ -163,9 +163,6 @@ p = eelbrain.plot.TopoArray(trf.h, t=[0.050, 0.120, 0.150], w=6, h=4, clip='circ
 # and predicted from a TRF estimated on the remaining partitions.
 # The fit metrics of the ``trf`` estimated above, such as ``proportion_explained`` and ``r``,
 # thus estimate how well the model predicts data that were not used to fit it.
-# Note that with ``test=0``, no data are held out for testing,
-# and fit metrics are computed from the same data that were used to estimate the TRF.
-# Such in-sample metrics overestimate predictive power and should not be reported as such.
 #
 # Plot the predictive power across sensors, including the average across all
 # sensors in each figure title.

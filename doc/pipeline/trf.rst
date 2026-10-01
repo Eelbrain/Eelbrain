@@ -381,7 +381,7 @@ The ``metric`` parameter selects the fit metric to test (by default ``'ev'``, th
 Subjects are selected through the :ref:`state-group` state.
 
 Model tests should be based on cross-validated fit metrics, which :class:`Boosting` computes by default.
-With ``Boosting(cv=False)``, the fit metrics are computed from the same data that were used to estimate the TRFs; such in-sample metrics overestimate predictive power and are not suitable for model comparisons.
+With ``Boosting(cv=False)``, fit metrics are not available, because they would be computed from the same data that were used to estimate the TRFs, and overestimate predictive power.
 
 
 Batch estimation and distributed fitting

@@ -27,7 +27,6 @@ import sys
 import time
 from typing import Literal
 from collections.abc import Callable, Sequence
-import warnings
 
 import mne
 import numpy as np
@@ -78,12 +77,12 @@ class BoostingResult(PickleableDataClass):
       the corresponding training runs (each non-test segment used as
       validation set once), and the different test segments are then
       concatenated to compute the fit-metrics in comparison with ``y``.
-    - For models estimated with ``test=0``, the entire ``y_pred`` is
-      predicted with the averaged TRF from the different runs (with each run
-      corresponding to one validation set). Because the same data were used to
-      estimate the TRF, these fit metrics overestimate the model's predictive
-      power and should not be used to compare models (see the ``test``
-      parameter of :func:`boosting`).
+    - For models estimated with ``test=0``, fit metrics are not computed
+      (``None``), because they could only be computed from the same data that
+      were used to estimate the TRF, and would overestimate the model's
+      predictive power (see the ``test`` parameter of :func:`boosting`).
+      With ``partition_results=True``, the fit of each run to its validation
+      and training data is available in :attr:`BoostingResult.partition_results`.
 
 
     Attributes
@@ -108,8 +107,7 @@ class BoostingResult(PickleableDataClass):
         response ``h * x``. With cross-validation (the default,
         :func:`boosting` with ``test=1``), each partition of ``y`` is
         predicted using the ``h`` estimated from the corresponding training
-        partitions. With ``test=0``, all of ``y`` is predicted using the average
-        ``h``, and ``r`` is biased upward (see above).
+        partitions. With ``test=0``, ``r`` is ``None`` (see above).
         For vector data, measured and predicted responses are normalized, and ``r``
         is computed as the average dot product over time.
         The type of ``r`` depends on the ``y`` parameter to :func:`boosting`:
@@ -146,8 +144,7 @@ class BoostingResult(PickleableDataClass):
         depending on the ``error`` that was used for model fitting.
         Note that this does not correspond to ``r**2`` even for ``error='l2'``,
         because residuals are not guaranteed to be orthogonal to predictions.
-        As for ``r``, this is biased upward for models estimated with
-        ``test=0``.
+        As for ``r``, this is ``None`` for models estimated with ``test=0``.
     scale_data
         Scale_data parameter used.
     y_mean
@@ -163,7 +160,18 @@ class BoostingResult(PickleableDataClass):
         Use :meth:`Splits.plot` to visualize the cross-validation scheme.
     partition_results
         If :func:`boosting` is called with ``partition_results=True``, this
-        attribute contains the results for the individual test paritions.
+        attribute contains the results for the individual test partitions
+        (``test=1``), or for the individual validation partitions (``test=0``).
+        For validation partitions, fit metrics (e.g., ``r``) reflect the fit to
+        the validation data, and ``train_*`` attributes the fit to the training
+        data. Note that the fit to the validation data is also biased upward,
+        because the validation data determined when boosting stopped.
+        :meth:`BoostingResult.partition_result_data` combines them in a
+        :class:`Dataset`.
+    train_r, train_r_rank, train_residual, train_proportion_explained
+        Fit to the training data (only for results in
+        :attr:`BoostingResult.partition_results` of models estimated with
+        ``test=0``).
     algorithm_version
         Version of the algorithm with which the model was estimated
 
@@ -227,9 +235,17 @@ class BoostingResult(PickleableDataClass):
     r: float | NDVar = None
     r_rank: float | NDVar = None
     r_l1: NDVar = None
+    # training fit metrics (partition results of models without test set)
+    train_l1_residual: float | NDVar = None
+    train_l2_residual: float | NDVar = None
+    train_l1_total: float | NDVar = None
+    train_l2_total: float | NDVar = None
+    train_r: float | NDVar = None
+    train_r_rank: float | NDVar = None
+    train_r_l1: NDVar = None
     partition_results: list[BoostingResult] = None
     # store the version of the boosting algorithm with which model was fit
-    version: int = 15  # file format (updates when re-saving)
+    version: int = 16  # file format (updates when re-saving)
     algorithm_version: int = -1  # do not change when re-saving
     execution_context: dict[str, str | tuple[str, ...]] = None  # do not change when re-saving
     # debug parameters
@@ -352,8 +368,20 @@ class BoostingResult(PickleableDataClass):
             return self.h[0].time
 
     @cached_property
-    def residual(self) -> float | NDVar:
+    def residual(self) -> float | NDVar | None:
         return getattr(self, f'{self.error}_residual')
+
+    @cached_property
+    def train_residual(self) -> float | NDVar | None:
+        return getattr(self, f'train_{self.error}_residual')
+
+    @cached_property
+    def train_proportion_explained(self) -> float | NDVar | None:
+        if self.train_residual is None:
+            return None
+        elif self.y_scale is None:
+            raise NotImplementedError("Not implemented for scale_data=False")
+        return 1 - (self.train_residual / getattr(self, f'train_{self.error}_total'))
 
     @cached_property
     def _variability(self):
@@ -421,6 +449,8 @@ class BoostingResult(PickleableDataClass):
             raise ValueError(f"{scale=}")
         if not self.partition_results:
             raise ValueError("BoostingResult does not contain partition-specific models; fit with partition_results=True")
+        elif not self.splits.n_test:
+            raise ValueError("Cross-prediction requires a model fit with cross-validation (test=1)")
         # predictors
         x_ = self.x if x is None else x
         x_data = PredictorData(x_, data, copy=True)
@@ -519,22 +549,36 @@ class BoostingResult(PickleableDataClass):
         return y_pred
 
     def partition_result_data(self) -> Dataset:
-        """Results from the different test partitions in a :class:`Dataset`"""
+        """Results from the different partitions in a :class:`Dataset`
+
+        For models estimated with cross-validation (``test=1``), the
+        :class:`Dataset` contains one case per test partition (``i_test``),
+        with fit metrics for that test partition. For models estimated with
+        ``test=0``, it contains one case per validation partition
+        (``i_validate``), with fit metrics for the validation partition
+        (``r``, ``ev``) and for the training data (``train_r``, ``train_ev``).
+        """
+        if self.splits.n_test:
+            keys = ['i_test', 'r', 'ev']
+            rows = [[res.i_test, res.r, res.proportion_explained] for res in self.partition_results]
+        else:
+            keys = ['i_validate', 'r', 'ev', 'train_r', 'train_ev']
+            rows = [[i, res.r, res.proportion_explained, res.train_r, res.train_proportion_explained] for i, res in enumerate(self.partition_results)]
         h_is_list = isinstance(self._h, tuple)
-        rows = []
-        for res in self.partition_results:
-            hs = res.h if h_is_list else [res.h]
-            rows.append([res.i_test, res.r, res.proportion_explained, *hs])
+        for row, res in zip(rows, self.partition_results):
+            row.extend(res.h if h_is_list else [res.h])
         if self.x in (None, (None,)):
             xs = ['x']
         elif isinstance(self.x, str):
             xs = [self.x]
         else:
             xs = [f'x_{i}' if x is None else x for i, x in enumerate(self.x)]
-        return Dataset.from_caselist(['i_test', 'r', 'ev', *xs], rows)
+        return Dataset.from_caselist([*keys, *xs], rows)
 
     @cached_property
-    def proportion_explained(self):
+    def proportion_explained(self) -> float | NDVar | None:
+        if self.residual is None:
+            return None
         return 1 - (self.residual / self._variability)
 
     def _apply_ndvar_transform(self, func: Callable):
@@ -547,7 +591,7 @@ class BoostingResult(PickleableDataClass):
             return func(obj)
 
         # NDVars
-        for attr in ('_h', 'r', 'r_rank', 'residual', 'l1_total', 'l2_total', 'y_mean', 'y_scale'):
+        for attr in ('_h', 'r', 'r_rank', 'residual', 'l1_total', 'l2_total', 'train_r', 'train_r_rank', 'train_residual', 'train_l1_total', 'train_l2_total', 'y_mean', 'y_scale'):
             setattr(self, attr, sub_func(getattr(self, attr)))
 
         # List of Dimension
@@ -639,14 +683,6 @@ class SplitResult:
         self.h = h  # (n_y, n_x, n_times_h)
         self.h_failed = h_failed  # (n_y,)
 
-    def h_with_nan(self):
-        "Set failed TRFs to NaN"
-        if np.any(self.h_failed):
-            h = self.h.copy()
-            h[self.h_failed] = np.nan
-            return h
-        return self.h
-
 
 class Boosting:
     """Object-oriented API for boosting
@@ -678,7 +714,6 @@ class Boosting:
     # fit result
     _i_start = None
     split_results = None
-    n_skip = 0
     # eval result
     y_pred = None
 
@@ -743,9 +778,6 @@ class Boosting:
         if h_n_times_max > shortest_cv_segment_n_times:
             raise ValueError(f"{tstart=}, {tstop=}: the kernel is longer than shortest cross-validation data segment")
 
-        if len(self.data.segments) == 1:
-            self.n_skip = h_n_times - 1
-
         self.t_fit_start = time.time()
 
         # boosting
@@ -762,37 +794,66 @@ class Boosting:
         assert self.data.splits.n_test
         return sorted({split.split.i_test for split in self.split_results})
 
-    def _get_h(
-            self,
-            skip_failed: bool = False,
-            i_test: int = None,  # test partition
-    ):  # kernel and sgements on which to evaluate
-        if i_test is None:
-            split_results = self.split_results
-            segments = self.data.segments
-        else:
-            split_results = [split for split in self.split_results if split.split.i_test == i_test]
-            segments = split_results[0].split.test
+    @staticmethod
+    def _get_h(split_results: list[SplitResult]) -> np.ndarray:
+        "Average kernel, skipping failed kernels (channels that failed in all splits are 0)"
+        hs = np.array([split.h for split in split_results])  # (n_splits, n_y, n_x, n_times_h)
+        ok = ~np.array([split.h_failed for split in split_results])  # (n_splits, n_y)
+        h = np.einsum('sy,syxt->yxt', ok.astype(hs.dtype), hs)
+        h /= np.maximum(ok.sum(0), 1)[:, newaxis, newaxis]
+        return h
 
-        if skip_failed:
-            with warnings.catch_warnings():
-                warnings.filterwarnings('ignore', 'Mean of empty slice', RuntimeWarning)
-                h = np.nanmean([split.h_with_nan() for split in split_results], 0)
-            is_nan = np.isnan(h[:, :, 0])
-            h[is_nan] = 0
-        else:
-            h = np.mean([split.h for split in split_results])
-        return h, segments
-
-    def _get_h_failed(self, i_test: int = None) -> np.ndarray:
-        if i_test is None:
-            split_results = self.split_results
-        else:
-            split_results = [split for split in self.split_results if split.split.i_test == i_test]
+    def _get_h_failed(self, split_results: list[SplitResult]) -> np.ndarray:
         out = np.all([split.h_failed for split in split_results], 0)
         if self.data.vector_dim:
             out = np.all(out.reshape((len(self.data.vector_dim), -1)), 0)
         return out
+
+    def _evaluate(
+            self,
+            metrics: Sequence[str],
+            hs: list[tuple[np.ndarray, np.ndarray]],  # [(h, segments), ...]: segments predicted by h
+            eval_segments: list[np.ndarray],  # segments for each set of fit metrics
+            debug: bool = False,
+    ) -> list:
+        "Predict y and compute fit metrics (see :meth:`Evaluator.get`)"
+        # y dimensions
+        n_y = len(self.data.y)
+        if self.data.vector_dim:
+            n_vec = len(self.data.vector_dim)
+            n_vecs = n_y // n_vec
+        else:
+            n_vec = n_vecs = 0
+
+        # predicted y
+        if debug:
+            self.y_pred = y_pred_iter = y_pred = np.empty(self.data.y.shape)
+        elif n_vecs:
+            y_pred = np.empty((n_vec, *self.data.y.shape[1:]))
+            y_pred_iter = chain.from_iterable(repeat(tuple(y_pred), n_vecs))
+        else:
+            y_pred = np.empty(self.data.y.shape[1:])
+            y_pred_iter = repeat(y_pred, n_y)
+
+        all_evaluators, evaluators_s, evaluators_v = get_evaluators(metrics, self.data, eval_segments)
+
+        # fit and evaluate each y
+        for i_y, y_pred_i in enumerate(y_pred_iter):
+            # for cross-validation, different segments are predicted by different h:
+            for h, segments in hs:
+                convolve_1d(h[i_y], self.data.x, self.data.x_pads, self._i_start, segments, y_pred_i)
+
+            if evaluators_s:
+                for e in evaluators_s:
+                    e.add_y(i_y, self.data.y[i_y], y_pred_i)
+
+            if evaluators_v and i_y % n_vec == n_vec - 1:
+                i_vec = i_y // n_vec
+                i_y_vec = slice(i_y - n_vec + 1, i_y + 1)
+                y_pred_i_vec = y_pred[i_y_vec] if debug else y_pred
+                for e in evaluators_v:
+                    e.add_y(i_vec, self.data.y[i_y_vec], y_pred_i_vec)
+        return all_evaluators
 
     def evaluate_fit(
             self,
@@ -818,9 +879,12 @@ class Boosting:
             If no metrics are needed, ``metrics=()`` is faster.
         cross_fit
             Compute fit metrics from cross-validation (only applies to model
-            with cross-validation; default ``True``).
+            with cross-validation; default ``True``). Without cross-validation,
+            fit metrics are only computed for ``partition_results``.
         partition_results
-            Keep results (TRFs and model evaluation) for each test-partition.
+            Keep results (TRFs and model evaluation) for each test-partition
+            (with ``cross_fit``) or for each validation partition (without
+            test set).
         debug
             Add additional attributes to the returned result.
         """
@@ -830,8 +894,8 @@ class Boosting:
             cross_fit = bool(self.data.splits.n_test)
         elif cross_fit and not self.data.splits.n_test:
             raise ValueError(f"{cross_fit=} for model without cross-validation")
-        if partition_results and not cross_fit:
-            raise ValueError(f"{partition_results=} with {cross_fit=}")
+        if partition_results and not cross_fit and self.data.splits.n_test:
+            raise ValueError(f"{partition_results=} with {cross_fit=} for model with test set")
 
         # fit evaluation
         if metrics is None:
@@ -842,89 +906,53 @@ class Boosting:
             else:
                 metrics = ['l1_residual', 'l2_residual', 'r', 'r_rank', 'l1_total', 'l2_total']
 
-        # test sets to use
+        # partitions: [[SplitResult, ...], ...]
         if cross_fit:
             if i_test is None:
                 i_tests = self._get_i_tests()
             else:
                 i_tests = [i_test]
+            partitions = [[split for split in self.split_results if split.split.i_test == i] for i in i_tests]
         elif i_test is not None:
             raise ValueError(f"{i_test=} without cross_fit")
+        elif partition_results:
+            # without test set, each split has a different validation partition
+            i_tests = [None] * len(self.split_results)
+            partitions = [[split] for split in self.split_results]
         else:
-            i_tests = None
+            i_tests = partitions = []
+        hs = [self._get_h(partition) for partition in partitions]
 
-        # hs: [(h, test_segments), ...]
+        evaluations = {}
+        partition_evaluations = [{} for _ in partitions]
         if cross_fit:
-            hs = [self._get_h(True, i) for i in i_tests]
-            all_segments = np.sort(np.vstack([segments for _, segments in hs]), 0)
-            eval_segments = [merge_segments(all_segments, True)]
-            if partition_results:
-                for _, test_segments in hs:
-                    eval_segments.append(merge_segments(test_segments, True))
-        else:
-            hs = [self._get_h(True)]
-            eval_segments = merge_segments(self.data.segments, True)
-            if self.n_skip:
-                eval_segments[:, 0] += self.n_skip
-                # check for invalid segments (negative duration)
-                valid = eval_segments[:, 1] - eval_segments[:, 0] > 0
-                if not np.all(valid):
-                    eval_segments = eval_segments[valid]
-            eval_segments = [eval_segments]
-
-        if metrics:
-            # y dimensions
-            n_y = len(self.data.y)
-            if self.data.vector_dim:
-                n_vec = len(self.data.vector_dim)
-                n_vecs = n_y // n_vec
-            else:
-                n_vec = n_vecs = 0
-
-            # predicted y
-            if debug:
-                self.y_pred = y_pred_iter = y_pred = np.empty(self.data.y.shape)
-            elif n_vecs:
-                y_pred = np.empty((n_vec, *self.data.y.shape[1:]))
-                y_pred_iter = chain.from_iterable(repeat(tuple(y_pred), n_vecs))
-            else:
-                y_pred = np.empty(self.data.y.shape[1:])
-                y_pred_iter = repeat(y_pred, n_y)
-
-            all_evaluators, evaluators_s, evaluators_v = get_evaluators(metrics, self.data, eval_segments)
-
-            # fit and evaluate each y
-            for i_y, y_pred_i in enumerate(y_pred_iter):
-                # for cross-validation, different segments are predicted by different h:
-                for h, segments in hs:
-                    convolve_1d(h[i_y], self.data.x, self.data.x_pads, self._i_start, segments, y_pred_i)
-
-                if evaluators_s:
-                    for e in evaluators_s:
-                        e.add_y(i_y, self.data.y[i_y], y_pred_i)
-
-                if evaluators_v and i_y % n_vec == n_vec - 1:
-                    i_vec = i_y // n_vec
-                    i_y_vec = slice(i_y - n_vec + 1, i_y + 1)
-                    y_pred_i_vec = y_pred[i_y_vec] if debug else y_pred
-                    for e in evaluators_v:
-                        e.add_y(i_vec, self.data.y[i_y_vec], y_pred_i_vec)
-
-            # Package evaluators
-            evaluations = {e.attr: e.get() for e in all_evaluators}
-            if debug:
-                evaluations['y_pred'] = self.data.package_y_like(y_pred, 'y-pred')
-            if partition_results:
-                partition_evaluations = {i: {e.attr: e.get(i) for e in all_evaluators} for i in i_tests}
-            else:
-                partition_evaluations = None
-        else:
-            evaluations = {}
-            partition_evaluations = {i: {} for i in i_tests}
+            # each test partition is predicted by the h estimated without it
+            test_segments = [partition[0].split.test for partition in partitions]
+            if metrics:
+                all_segments = np.sort(np.vstack(test_segments), 0)
+                eval_segments = [merge_segments(all_segments, True)]
+                if partition_results:
+                    eval_segments.extend(merge_segments(segments, True) for segments in test_segments)
+                evaluators = self._evaluate(metrics, list(zip(hs, test_segments)), eval_segments, debug)
+                evaluations = {e.attr: e.get() for e in evaluators}
+                if debug:
+                    evaluations['y_pred'] = self.data.package_y_like(self.y_pred, 'y-pred')
+                if partition_results:
+                    partition_evaluations = [{e.attr: e.get(i) for e in evaluators} for i in range(len(partitions))]
+        elif metrics:
+            # Without test set, fit metrics would be computed from the data used to estimate h
+            # (overestimating predictive power); only report validation and training fit for each split
+            for h_i, (split_result,), evaluations_i in zip(hs, partitions, partition_evaluations):
+                split = split_result.split
+                evaluators = self._evaluate(metrics, [(h_i, split.train_and_validate)], [split.validate, split.train])
+                evaluations_i.update({e.attr: e.get() for e in evaluators})
+                evaluations_i.update({f'train_{e.attr}': e.get(0) for e in evaluators})
 
         # package h
-        h_xs = [h for h, _ in hs]
-        h_x = h_xs[0] if len(h_xs) == 1 else np.mean(h_xs, 0)
+        if cross_fit:
+            h_x = hs[0] if len(hs) == 1 else np.mean(hs, 0)
+        else:
+            h_x = self._get_h(self.split_results)
         h = self.data.package_kernel(h_x, self.tstart_h)
         # package model parameters
         y_mean, y_scale, x_mean, x_scale = self.data.data_scale_ndvars()
@@ -942,13 +970,12 @@ class Boosting:
         # partition-specific results
         if partition_results:
             partition_results_list = []
-            for i in i_tests:
-                h_i = self.data.package_kernel(h_xs[i], self.tstart_h)
-                evaluations_i = partition_evaluations[i]
+            for i, partition, h_i, evaluations_i in zip(i_tests, partitions, hs, partition_evaluations):
+                h_i = self.data.package_kernel(h_i, self.tstart_h)
                 result = BoostingResult(
                     self.data.y_name, self.data.x_name, self.tstart, self.tstop, bool(self.data.scale_data), self.delta, self.mindelta, self.error, self.selective_stopping,
                     y_mean, y_scale, x_mean, x_scale,
-                    h_i, self._get_h_failed(i), 0,
+                    h_i, self._get_h_failed(partition), 0,
                     self.data.basis, self.data.basis_window, None,
                     self.data.y.shape[1], self.data.y_info, self.data.ydims,
                     algorithm_version=3, execution_context=execution_context,
@@ -962,7 +989,7 @@ class Boosting:
             # data properties
             y_mean, y_scale, x_mean, x_scale,
             # results
-            h, self._get_h_failed(), t_run,
+            h, self._get_h_failed(self.split_results), t_run,
             # advanced parameters
             self.data.basis, self.data.basis_window, self.data.splits,
             # advanced data properties
@@ -1078,14 +1105,16 @@ def boosting(
         With ``test=0``, the kernel is estimated from all available data. This
         requires fewer boosting runs for a given number of partitions, and the
         kernel (:attr:`BoostingResult.h`) is still regularized through early
-        stopping, but the fit metrics are then computed from the same data that
-        were used to estimate the kernel. Such in-sample fit metrics
-        overestimate the model's predictive power: even predictors that are
-        unrelated to ``y`` yield positive fit metrics, and the bias grows with
-        the number of model parameters (predictors and kernel length). They should therefore not be reported as predictive power,
-        or used to compare models. Use ``test=0`` only when the kernel itself
-        is of interest, or when the model will be evaluated on independent
-        data (e.g., using :func:`convolve`).
+        stopping. However, fit metrics could then only be computed from the
+        same data that were used to estimate the kernel. Such in-sample fit
+        metrics overestimate the model's predictive power: even predictors that
+        are unrelated to ``y`` yield positive fit metrics, and the bias grows
+        with the number of model parameters (predictors and kernel length).
+        Fit metrics are therefore not computed (:attr:`BoostingResult.r` etc.
+        are ``None``). Use ``test=0`` only when the kernel itself is of
+        interest, or when the model will be evaluated on independent data
+        (e.g., using :func:`convolve`). To inspect the fit of the individual
+        boosting runs, use ``partition_results=True``.
     selective_stopping
         By default, the boosting algorithm stops when the validation error
         stops decreasing. With ``selective_stopping=True``, boosting continues but
@@ -1094,8 +1123,10 @@ def boosting(
         stopped. The integer value of ``selective_stopping`` determines after
         how many steps with error increases each predictor is excluded.
     partition_results
-        Keep results (TRFs and model evaluation) for each test-partition
-        (requires ``test=1``). This is disabled by default to reduce file size when saving results.
+        Keep results (TRFs and model evaluation) for each test partition, or,
+        with ``test=0``, for each validation partition (including the fit to
+        the training data; see :attr:`BoostingResult.partition_results`).
+        This is disabled by default to reduce file size when saving results.
     debug
         Add additional attributes to the returned result.
 

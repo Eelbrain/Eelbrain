@@ -52,20 +52,20 @@ def test_boosting():
     x2_mean = x2.mean('time')
 
     # test values from running function, not verified independently
-    res = boosting(y, x1 * 2000, 0, 1, scale_data=False, mindelta=0.0025, partitions=10, test=0, debug=True)
-    assert repr(res) == '<BoostingResult y ~ x1, 0 - 1, scale_data=False, mindelta=0.0025, partitions=10, test=0>'
-    assert_allclose(res.h.x, [0, 0, 0, 0.0025, 0, 0, 0, 0, 0, 0.001875], atol=1e-6)
-    assert res.r == approx(0.75, abs=0.001)
+    res = boosting(y, x1 * 2000, 0, 1, scale_data=False, mindelta=0.0025, debug=True)
+    assert repr(res) == '<BoostingResult y ~ x1, 0 - 1, scale_data=False, mindelta=0.0025>'
+    assert_allclose(res.h.x, [0, 0, 0, 0.0025, 0, 0, 0, 0, 0, 0.0025], atol=1e-6)
+    assert res.r == approx(0.688, abs=0.001)
     assert res.y_mean is None
     assert res.h.info['unit'] == 'V'
     assert res.h_scaled.info['unit'] == 'V'
-    assert res.residual == approx(((y[.9:] - res.y_pred[.9:])**2).sum())
+    assert res.residual == approx(((y - res.y_pred)**2).sum())
     with pytest.raises(NotImplementedError):
         _ = res.proportion_explained
 
-    res = boosting(y, x1, 0, 1, partitions=10, test=0)
-    assert repr(res) == '<BoostingResult y ~ x1, 0 - 1, partitions=10, test=0>'
-    assert res.r == approx(0.83, abs=0.001)
+    res = boosting(y, x1, 0, 1)
+    assert repr(res) == '<BoostingResult y ~ x1, 0 - 1>'
+    assert res.r == approx(0.787, abs=0.001)
     assert res.y_mean == y_mean
     assert res.y_scale == y.std()
     assert res.x_mean == x1.mean()
@@ -74,19 +74,34 @@ def test_boosting():
     assert res.h.info['unit'] == 'normalized'
     assert res.h_scaled.name == 'x1'
     assert res.h_scaled.info['unit'] == 'V'
-    assert res.proportion_explained == approx(0.480, abs=0.001)
+    assert res.proportion_explained == approx(0.591, abs=0.001)
     # inplace
-    res_ip = boosting(y.copy(), x1.copy(), 0, 1, 'inplace', partitions=10, test=0)
+    res_ip = boosting(y.copy(), x1.copy(), 0, 1, 'inplace')
     assert_res_equal(res_ip, res)
     # persistence
     res_p = pickle.loads(pickle.dumps(res, pickle.HIGHEST_PROTOCOL))
     assert_res_equal(res_p, res)
 
     # L1 error
-    res = boosting(y, x1 * 2000, 0, 1, error='l1', partitions=10, test=0, debug=True)
-    assert res.residual == approx(((y[.9:] - res.y_mean) / res.y_scale - res.y_pred[.9:]).abs().sum())
-    res_ndb = boosting(y, x1 * 2000, 0, 1, error='l1', partitions=10, test=0)
+    res = boosting(y, x1 * 2000, 0, 1, error='l1', debug=True)
+    assert res.residual == approx(((y - res.y_mean) / res.y_scale - res.y_pred).abs().sum())
+    res_ndb = boosting(y, x1 * 2000, 0, 1, error='l1')
     assert res_ndb.residual == res.residual
+
+    # without cross-validation, fit metrics are only available for the individual runs
+    res = boosting(y, x1, 0, 1, test=0, partition_results=True)
+    assert repr(res) == '<BoostingResult y ~ x1, 0 - 1, test=0, partition_results=True>'
+    assert res.r is None
+    assert res.proportion_explained is None
+    assert list(res.partition_result_data().keys()) == ['i_validate', 'r', 'ev', 'train_r', 'train_ev', 'x1']
+    for res_i, split in zip(res.partition_results, res.splits.splits):
+        for segments, r in ((split.validate, res_i.r), (split.train, res_i.train_r)):
+            y_pred = [convolve(res_i.h_scaled, NDVar(x1.x[i0:i1], UTS(x1.time.times[i0], x1.time.tstep, i1 - i0))) for i0, i1 in segments]
+            y_pred = np.concatenate([y_pred_i.x for y_pred_i in y_pred])
+            y_i = np.concatenate([y.x[i0:i1] for i0, i1 in segments])
+            assert np.corrcoef(y_pred, y_i)[0, 1] == approx(r)
+    res_p = pickle.loads(pickle.dumps(res, pickle.HIGHEST_PROTOCOL))
+    assert res_p.partition_results[0].train_r == res.partition_results[0].train_r
 
     # cross-validation
     res = boosting(y[:7.5], x1[:7.5], 0, 1, scale_data=False, partitions=3, test=0, debug=True)
@@ -108,26 +123,26 @@ def test_boosting():
     y_pred = convolve(res_cv.h_scaled, x1[7.5:])
     assert correlation_coefficient(y_pred, y[7.5:]) == approx(res_cv.r, abs=1e-8)
 
-    res = boosting(y, x2, 0, 1, partitions=10, test=0)
-    assert res.r == approx(0.601, abs=0.001)
-    assert res.proportion_explained == approx(0.234, abs=0.001)
+    res = boosting(y, x2, 0, 1)
+    assert res.r == approx(0.458, abs=0.001)
+    assert res.proportion_explained == approx(0.165, abs=0.001)
 
-    res = boosting(y, x2, 0, 1, error='l1', partitions=10, test=0)
-    assert res.r == approx(0.553, abs=0.001)
+    res = boosting(y, x2, 0, 1, error='l1')
+    assert res.r == approx(0.368, abs=0.001)
     assert res.y_mean == y.mean()
     assert res.y_scale == (y - y_mean).abs().mean()
     assert_array_equal(res.x_mean.x, x2_mean)
     assert_array_equal(res.x_scale, (x2 - x2_mean).abs().mean('time'))
-    assert res.proportion_explained == approx(0.065, abs=0.001)
+    assert res.proportion_explained == approx(0.027, abs=0.001)
 
     # 2 predictors
-    res = boosting(y, [x1, x2], 0, 1, partitions=10, test=0)
-    assert res.r == approx(0.947, abs=0.001)
+    res = boosting(y, [x1, x2], 0, 1)
+    assert res.r == approx(0.931, abs=0.001)
     # selective stopping
-    res = boosting(y, [x1, x2], 0, 1, partitions=10, test=0, selective_stopping=1)
-    assert res.r == approx(0.967, abs=0.001)
-    res = boosting(y, [x1, x2], 0, 1, partitions=10, test=0, selective_stopping=2)
-    assert res.r == approx(0.992, abs=0.001)
+    res = boosting(y, [x1, x2], 0, 1, selective_stopping=1)
+    assert res.r == approx(0.929, abs=0.001)
+    res = boosting(y, [x1, x2], 0, 1, selective_stopping=2)
+    assert res.r == approx(0.940, abs=0.001)
 
     # 2d-y
     res_cv = boosting('ynd', ['x1', 'x2'], 0, 1, data=ds, test=1, partitions=4, partition_results=True)
@@ -188,20 +203,20 @@ def test_boosting_epochs():
     # 1d
     for tstart, basis in product((-0.1, 0.1, 0), (0, 0.05)):
         print(f"{tstart=}, {basis=}")
-        res = boosting('uts', [p0, p1], tstart, 0.6, model='A', data=ds, basis=basis, partitions=3, test=0, debug=True)
-        assert res.r == approx(0.238, abs=2e-3)
-        y = convolve(res.h_scaled, [p0, p1], name='predicted')
+        res = boosting('uts', [p0, p1], tstart, 0.6, model='A', data=ds, basis=basis, partitions=3, partition_results=True, debug=True)
+        assert res.r == approx(0.229, abs=3e-3)
+        y = res.cross_predict([p0, p1], name='predicted')
         assert correlation_coefficient(y, res.y_pred) > .999
         assert y.name == 'predicted'
         r = correlation_coefficient(y, ds['uts'])
         assert res.r == approx(r, abs=1e-3)
         assert res.splits.n_partitions == 3
     # 2d
-    res = boosting('utsnd', [p0, p1], 0, 0.6, model='A', data=ds, partitions=3, test=0)
+    res = boosting('utsnd', [p0, p1], 0, 0.6, model='A', data=ds, partitions=3, partition_results=True)
     assert len(res.h) == 2
     assert res.h[0].shape == (5, 60)
     assert res.h[1].shape == (5, 60)
-    y = convolve(res.h_scaled, [p0, p1])
+    y = res.cross_predict([p0, p1])
     r = correlation_coefficient(y, ds['utsnd'], ('case', 'time'))
     assert_dataobj_equal(res.r, r, decimal=3, name=False)
     # cross-validation
@@ -260,10 +275,10 @@ def test_result():
     y2 += y1.mean() - y2.mean()  # mean can't be reconstructed
     assert_dataobj_equal(y1, y2, decimal=12)
     # reconstruction
-    res = boosting(x1, y, -1, 0, test=0, debug=True)
-    x1r = convolve(res.h_scaled, y)
+    res = boosting(x1, y, -1, 0, partition_results=True, debug=True)
+    x1r = res.cross_predict(y)
     assert correlation_coefficient(res.y_pred, x1r) > .999
-    assert correlation_coefficient(x1r[0.9:], x1[0.9:]) == approx(res.r, abs=1e-3)
+    assert correlation_coefficient(x1r, x1) == approx(res.r, abs=1e-3)
 
     # test NaN checks  (modifies data)
     ds['x2'].x[1, 50] = np.nan

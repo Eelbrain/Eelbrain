@@ -1569,7 +1569,7 @@ class Pipeline(StateModel):
         metric_key, _ = TRFModelTestDerivative._metric_parts(metric)
         estimator_obj = self._estimators[estimator]
         if metric_key not in estimator_obj.metric_keys:
-            available = ', '.join(estimator_obj.metric_keys)
+            available = ', '.join(estimator_obj.metric_keys) or 'no fit metrics'
             raise ValueError(f"{metric=}: estimator {estimator!r} provides {available}")
         if test is not None:
             if not isinstance(test, str):

@@ -63,7 +63,8 @@ New in 0.43
   - API change: :func:`boosting` now performs cross-validation by default
     (``test=1``), so that fit metrics reflect predictive power for held-out
     data. The default number of partitions is now 5 (instead of 10).
-    ``test=0`` and ``partitions=10`` restores the previous behavior.
+    ``test=0`` and ``partitions=10`` restores the previous TRF estimation, but
+    fit metrics are no longer computed because they would overestimate predictive power.
   - API change: the proportion of explained variance is now called ``ev``
     instead of ``det``, in the :class:`Dataset` returned by
     :meth:`BoostingResult.partition_result_data`

@@ -156,19 +156,20 @@ class Boosting(Estimator):
         into ``abs(partitions)`` equal length partitions.
     cv
         Use cross-validation (hold out a test partition; default). With
-        ``cv=False``, the fit metrics (e.g., ``r`` and ``ev``) are computed
-        from the same data that were used to estimate the TRF. Such in-sample
-        metrics overestimate the model's predictive power, and are not suitable
-        for model comparisons (e.g., :meth:`Pipeline.load_model_test`). See the
+        ``cv=False``, TRFs are estimated from all data, and fit metrics (e.g.,
+        ``r`` and ``ev``) are not available, because they would be computed
+        from the same data that were used to estimate the TRF, and
+        overestimate the model's predictive power. Model comparisons (e.g.,
+        :meth:`Pipeline.load_model_test`) thus require ``cv=True``. See the
         ``test`` parameter of :func:`eelbrain.boosting` for details.
     partition_results
-        Keep the result for each test partition.
+        Keep the result for each test partition (or, with ``cv=False``, for
+        each validation partition).
     backward
         Fit a backward model (predict the stimulus from the response). Only
         valid with a single-term model.
     """
     DICT_ATTRS = ('basis', 'basis_window', 'error', 'delta', 'mindelta', 'selective_stopping', 'scale_data', 'partitions', 'cv', 'partition_results', 'backward')
-    metric_keys = ('r', 'z', 'residual', 'ev', 'r1', 'z1')
 
     def __init__(
             self,
@@ -199,6 +200,11 @@ class Boosting(Estimator):
         self.backward = backward
 
     @property
+    def metric_keys(self) -> tuple[str, ...]:
+        # boosting computes fit metrics only with cross-validation
+        return ('r', 'z', 'residual', 'ev', 'r1', 'z1') if self.cv else ()
+
+    @property
     def interpolate_bads(self) -> bool:
         # A forward model predicts the sensor response, so bad channels must be interpolated to
         # a consistent set; a backward model predicts the stimulus and uses the channels as-is.
@@ -225,6 +231,8 @@ class Boosting(Estimator):
         return boosting(y, x, tstart, tstop, scale_data, self.delta, self.mindelta, self.error, self.basis, self.basis_window, partitions=partitions, test=int(self.cv), selective_stopping=self.selective_stopping, partition_results=self.partition_results)
 
     def _result_metrics(self, result) -> dict[str, NDVar | float]:
+        if not self.cv:
+            return {}
         r = result.r
         metrics = {'r': r, 'z': arctanh(r), 'residual': result.residual, 'ev': result.proportion_explained}
         if result.r_l1 is not None:  # vector data
