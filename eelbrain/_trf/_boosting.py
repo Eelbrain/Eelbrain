@@ -481,7 +481,7 @@ class BoostingResult(PickleableDataClass):
                 hs = {h.name: h for h in hs}
                 hs = [hs[x] for x in x_use]
             h_array = []
-            for h, (name, xdims, index) in zip(hs, x_data.x_meta):
+            for h, (_, xdims, _) in zip(hs, x_data.x_meta):
                 dimnames = [*y_dimnames, *[dim.name for dim in xdims], 'time']
                 h_data = h.get_data(dimnames)
                 h_data = h_data.reshape((n_y, -1, h_data.shape[-1]))
