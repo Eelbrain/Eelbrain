@@ -168,7 +168,7 @@ class BoostingResult(PickleableDataClass):
         because the validation data determined when boosting stopped.
         :meth:`BoostingResult.partition_result_data` combines them in a
         :class:`Dataset`.
-    train_r, train_r_rank, train_residual, train_proportion_explained
+    train_r, train_r_rank, train_r_l1, train_residual, train_proportion_explained
         Fit to the training data (only for results in
         :attr:`BoostingResult.partition_results` of models estimated with
         ``test=0``).
