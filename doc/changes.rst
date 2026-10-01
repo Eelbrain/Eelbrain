@@ -68,11 +68,11 @@ New in 0.43
   - API change: the proportion of explained variance is now called ``ev``
     instead of ``det``, in the :class:`Dataset` returned by
     :meth:`BoostingResult.partition_result_data`
-  - Fix: :attr:`BoostingResult.proportion_explained` is now computed relative
+  - Fix: :attr:`BoostingResult.proportion_explained` inside
+    :attr:`BoostingResult.partition_results` is now computed relative
     to the variability in the evaluated data segments. Previously, it was
     computed relative to the variability in all data, which strongly
-    overestimated it for individual partitions
-    (:attr:`BoostingResult.partition_results`).
+    overestimated it.
 
 * ICA-GUI (:func:`gui.select_components`): The *Find Bad Channels* tool now also
   detects defective channels through gaps in the component maps — channels whose
