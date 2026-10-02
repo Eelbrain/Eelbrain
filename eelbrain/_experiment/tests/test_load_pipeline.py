@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -112,8 +113,11 @@ def test_load_pipeline_errors_without_root(tmp_path):
         eelbrain.load_pipeline(path)
 
 
-def test_load_pipeline_from_directory(tmp_path):
-    (tmp_path / 'experiment.py').write_text(PIPELINE.format(name='Experiment', session='test'))
+def test_load_pipeline_from_directory(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, 'path', sys.path.copy())
+    # local import should work (as when running the file as a script)
+    (tmp_path / '_local_pipeline_helpers.py').write_text("SESSION = 'test'\n")
+    (tmp_path / 'experiment.py').write_text("from _local_pipeline_helpers import SESSION\n\n" + PIPELINE.format(name='Experiment', session='test'))
 
     e = eelbrain.load_pipeline(tmp_path, root=tmp_path)
 
