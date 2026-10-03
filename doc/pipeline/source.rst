@@ -55,7 +55,7 @@ How it is estimated is controlled through the :ref:`state-cov` state.
 Two entries are always available: ``'emptyroom'`` (the default), which estimates the covariance from an empty room recording (see :ref:`Pipeline-intro-cov`), and ``'ad_hoc'``, a diagonal covariance with nominal sensor noise levels from :func:`mne.make_ad_hoc_cov`.
 Both bound the condition number of the covariance through the default ``max_condition`` (see :class:`Covariance`).
 
-Additional noise covariance estimates can be configured in :attr:`Pipeline.noise_covariance` as adictionary of ``{name: covariance_definition}`` entries using:
+Additional noise covariance estimates can be configured in :attr:`Pipeline.noise_covariance` as a dictionary of ``{name: covariance_definition}`` entries using:
 
 .. autosummary::
    :toctree: ../generated
