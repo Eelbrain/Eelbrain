@@ -17,7 +17,6 @@ import warnings
 from collections.abc import Mapping, Sequence
 
 import mne
-from mne.io.kit.kit import RawKIT
 from mne_bids import BIDSPath
 import numpy
 from scipy import signal
@@ -737,7 +736,7 @@ def find_chpi(
         return None
     if len(mne.pick_channels_regexp(raw.ch_names, 'HLC00[123][123].*')) == 9:  # CTF head localization channels (also preserved in FIFF exports), the same pattern extract_chpi_locs_ctf uses
         return 'ctf'
-    if isinstance(raw, RawKIT) and raw.info['hpi_results'] and 'MISC 064' in raw.ch_names:
+    if raw.info['kit_system_id'] is not None and raw.info['hpi_results'] and 'MISC 064' in raw.ch_names:
         return 'kit'
     return None
 

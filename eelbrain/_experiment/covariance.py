@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import mne
-from mne._fiff.pick import _picks_by_type
 import numpy
 
 from .._data_obj import Datalist
@@ -26,18 +25,39 @@ from .preprocessing import Reference, canonical_recording, raw_node_name
 CONDITION_INFO = 'eelbrain_condition_info'
 
 
+def _regularization_blocks(info: mne.Info) -> dict[str, numpy.ndarray]:
+    """Channel picks for each block that :func:`mne.cov.regularize` regularizes with ``rank=None``.
+
+    Magnetometers and gradiometers form one block (``'meg'``) after Maxwell filtering,
+    which makes them linearly dependent (MNE detects this from the SSS record in
+    ``info['proc_history']``), and separate blocks otherwise; EEG is its own block.
+
+    Parameters
+    ----------
+    info
+        Measurement info; bad channels are not excluded.
+    """
+    picks = {
+        'mag': mne.pick_types(info, meg='mag', ref_meg=False, exclude=[]),
+        'grad': mne.pick_types(info, meg='grad', ref_meg=False, exclude=[]),
+        'eeg': mne.pick_types(info, meg=False, eeg=True, exclude=[]),
+    }
+    maxwell_filtered = any(record.get('max_info', {}).get('sss_info', {}).get('in_order', 0) for record in info['proc_history'])
+    if maxwell_filtered and len(picks['mag']) and len(picks['grad']):
+        picks = {'meg': numpy.union1d(picks.pop('mag'), picks.pop('grad')), **picks}
+    return {block: block_picks for block, block_picks in picks.items() if len(block_picks)}
+
+
 def _block_spectra(
         cov: mne.Covariance,
         info: mne.Info,
 ) -> dict[str, numpy.ndarray]:
     """Retained eigenvalues per regularization block, in descending order.
 
-    The blocks are the ones :func:`mne.cov.regularize` regularizes with ``rank=None``:
-    magnetometers and gradiometers jointly (``'meg'``) after Maxwell filtering, which
-    makes them linearly dependent, and separately otherwise; EEG on its own. Each block
-    is decomposed on its own through :func:`mne.cov.prepare_noise_cov`, which zeroes
-    the eigenvalues outside the estimated rank, the same way :func:`mne.cov.regularize`
-    finds the subspace it regularizes.
+    Each block (see :func:`_regularization_blocks`) is decomposed on its own through
+    :func:`mne.cov.prepare_noise_cov`, which zeroes the eigenvalues outside the
+    estimated rank, the same way :func:`mne.cov.regularize` finds the subspace it
+    regularizes.
 
     Parameters
     ----------
@@ -47,7 +67,7 @@ def _block_spectra(
         Measurement info, restricted to the channels of ``cov`` and in their order.
     """
     out = {}
-    for block, picks in _picks_by_type(info, meg_combined='auto', ref_meg=False, exclude=[]):
+    for block, picks in _regularization_blocks(info).items():
         block_info = mne.pick_info(info, picks, verbose='error')
         block_cov = mne.pick_channels_cov(cov, block_info['ch_names'], exclude=[], verbose='error')
         eig = mne.cov.prepare_noise_cov(block_cov, block_info, block_info['ch_names'], rank=None, verbose='error')['eig']
