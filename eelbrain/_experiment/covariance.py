@@ -343,6 +343,8 @@ class CovDerivative(Derivative[mne.Covariance]):
     cache_suffix = '-cov.fif'
     # source localization handles EEG referencing internally
     fixed_state = {'reference': ''}
+    # a change in ``max_condition`` does not necessarily invalidate the covariance
+    dependency_fingerprint_from_artifact = True
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
         # ``epoch_rejection`` only affects an epoch-based covariance (which loads
@@ -379,15 +381,6 @@ class CovDerivative(Derivative[mne.Covariance]):
             'cov': self._covs[ctx.state['cov']],
             'source_reference_add': self._references['average'].add,
         }
-
-    # Dependents are affected by the covariance itself, not by the setting that
-    # produced it: a recording whose covariance already satisfies ``max_condition``
-    # is regularized by 0 and comes out identical either way. Reporting the
-    # regularization that was actually applied — rather than ``max_condition`` —
-    # therefore limits invalidation to the recordings whose covariance did change.
-    # Declared so that a cache scan, which can not rebuild the covariance, keeps the
-    # dependents of a stale covariance rather than collecting them.
-    dependency_fingerprint_from_artifact = True
 
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
         cov = {key: value for key, value in self._covs[ctx.state['cov']]._as_dict().items() if key != 'max_condition'}
