@@ -419,8 +419,8 @@ def _find_stale_dependency(
         dependencies: dict[str, Any],
         scanned: dict[str, _ScannedManifest],
         deletable: set[str],
-) -> str | None:
-    """Name of the first recorded dependency that is stale, or ``None``.
+) -> tuple[str, bool] | None:
+    """Find a recorded dependency that is stale.
 
     A dependency is stale when its recorded manifest is itself classified
     for deletion (it will rebuild with a new fingerprint, transitively
@@ -431,26 +431,49 @@ def _find_stale_dependency(
     the fingerprint its own manifest stores); view edges and edges with a
     parent-side fingerprint override rely on the recorded-classification
     rule alone.
+
+    Returns
+    -------
+    found
+        ``(name, definite)`` for the first stale dependency, or ``None``.
+        ``definite`` is ``False`` when the staleness was found at or below an
+        edge to a node declaring
+        :attr:`~DependencyNode.dependency_fingerprint_from_artifact`: whether
+        the parent is affected is only known once that node is rebuilt, which
+        the scan can not do. A definitely stale dependency takes precedence.
     """
+    unverifiable = None
     for label, entry in dependencies.items():
         if not isinstance(entry, dict):
             continue
+        name = entry.get('name', label)
+        child_node = registry._nodes.get(entry.get('name', ''))
+        stale = None
         # only cached derivatives record a manifest (relative to the cache dir — the same key scanned/deletable use)
         if manifest_path := entry.get('manifest'):
             if manifest_path in deletable:
-                return entry.get('name', label)
-            item = scanned.get(manifest_path)
-            if item is not None and entry.get('view') is None and isinstance(entry.get('dependencies'), dict):
-                child_node = registry._nodes.get(entry.get('name', ''))
-                if child_node is not None and type(child_node).dependency_fingerprint is DependencyNode.dependency_fingerprint:
-                    if entry.get('key') != item.manifest.key or entry.get('fingerprint') != item.manifest.fingerprint:
-                        return entry.get('name', label)
-        nested = entry.get('dependencies')
-        if isinstance(nested, dict):
-            found = _find_stale_dependency(registry, nested, scanned, deletable)
-            if found is not None:
-                return found
-    return None
+                stale = name
+            else:
+                item = scanned.get(manifest_path)
+                if item is not None and entry.get('view') is None and isinstance(entry.get('dependencies'), dict):
+                    if child_node is not None and type(child_node).dependency_fingerprint is DependencyNode.dependency_fingerprint:
+                        if entry.get('key') != item.manifest.key or entry.get('fingerprint') != item.manifest.fingerprint:
+                            stale = name
+        definite = True
+        if stale is None:
+            nested = entry.get('dependencies')
+            if isinstance(nested, dict):
+                found = _find_stale_dependency(registry, nested, scanned, deletable)
+                if found is not None:
+                    stale, definite = found
+        if stale is None:
+            continue
+        if child_node is not None and child_node.dependency_fingerprint_from_artifact:
+            definite = False
+        if definite:
+            return stale, True
+        unverifiable = unverifiable or stale
+    return None if unverifiable is None else (unverifiable, False)
 
 
 def _propagate_stale_dependencies(registry: DerivativeRegistry, report: GCReport, scanned: dict[str, _ScannedManifest]) -> None:
@@ -464,8 +487,14 @@ def _propagate_stale_dependencies(registry: DerivativeRegistry, report: GCReport
                 continue  # already collected, or a lone/mirror manifest (never deleted by propagation)
             if item.entry is not None and item.entry.category is not GCCategory.UNVERIFIABLE:
                 continue
-            stale_child = _find_stale_dependency(registry, item.manifest.dependencies, scanned, deletable)
-            if stale_child is None:
+            found = _find_stale_dependency(registry, item.manifest.dependencies, scanned, deletable)
+            if found is None:
+                continue
+            stale_child, definite = found
+            if not definite:
+                if item.entry is None:
+                    item.entry = GCEntry(item.artifact_path, GCCategory.UNVERIFIABLE, node=item.node, size=_path_size(item.artifact_path) + _path_size(item.manifest_path), reason=f"depends on stale {stale_child!r}, whose dependency fingerprint is only known once it is rebuilt", manifest_path=item.manifest_path)
+                    report.entries.append(item.entry)
                 continue
             reason = f"depends on stale {stale_child!r}"
             if item.entry is None:

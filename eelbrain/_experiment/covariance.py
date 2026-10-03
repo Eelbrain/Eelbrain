@@ -380,12 +380,16 @@ class CovDerivative(Derivative[mne.Covariance]):
             'source_reference_add': self._references['average'].add,
         }
 
+    # Dependents are affected by the covariance itself, not by the setting that
+    # produced it: a recording whose covariance already satisfies ``max_condition``
+    # is regularized by 0 and comes out identical either way. Reporting the
+    # regularization that was actually applied — rather than ``max_condition`` —
+    # therefore limits invalidation to the recordings whose covariance did change.
+    # Declared so that a cache scan, which can not rebuild the covariance, keeps the
+    # dependents of a stale covariance rather than collecting them.
+    dependency_fingerprint_from_artifact = True
+
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
-        # Dependents are affected by the covariance itself, not by the setting that
-        # produced it: a recording whose covariance already satisfies ``max_condition``
-        # is regularized by 0 and comes out identical either way. Reporting the
-        # regularization that was actually applied — rather than ``max_condition`` —
-        # therefore limits invalidation to the recordings whose covariance did change.
         cov = {key: value for key, value in self._covs[ctx.state['cov']]._as_dict().items() if key != 'max_condition'}
         fingerprint = {'cov': cov, 'source_reference_add': self._references['average'].add}
         ctx.ensure()  # the stored metadata describes the current covariance only once it is up to date

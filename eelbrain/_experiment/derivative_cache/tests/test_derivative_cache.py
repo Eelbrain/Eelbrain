@@ -1671,6 +1671,18 @@ class DownstreamDerivative(Derivative[str]):
         Path(path).write_text(value)
 
 
+class ArtifactFingerprintDerivative(ConfiguredDerivative):
+    """Dependents see the built artifact's metadata rather than the configuration (like the regularization actually applied to a covariance)."""
+    dependency_fingerprint_from_artifact = True
+
+    def artifact_metadata(self, ctx: Request, value: str) -> dict[str, object]:
+        return {'length': len(value)}
+
+    def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, object]:
+        ctx.ensure()
+        return dict(ctx.artifact_metadata)
+
+
 class DirArtifactDerivative(Derivative[str]):
     """Derivative whose artifact is a directory containing several files."""
     name = 'dir-artifact'
@@ -1999,6 +2011,33 @@ def test_gc_stale_dependency_after_child_rebuild():
     report.collect()
     assert not downstream_ctx.artifact_path.exists()
     assert registry.resolve('configured', state=DEFAULT_STATE).is_valid()
+
+
+def test_gc_stale_artifact_fingerprint_dependency():
+    "Dependents of a stale node whose dependency fingerprint comes from its artifact are kept as unverifiable"
+    root, registry, _ = make_source_registry()
+    configured = ArtifactFingerprintDerivative(root)
+    registry.register(configured)
+    registry.register(DownstreamDerivative(root))
+    downstream_ctx = registry.resolve('downstream', state=DEFAULT_STATE)
+    downstream_ctx.load()
+    configured.config = 'b'  # same artifact length as 'a'
+    report = registry.scan_cache()
+    _single_entry(report, GCCategory.REVALIDATION_STALE)
+    entry = _single_entry(report, GCCategory.UNVERIFIABLE)
+    assert entry.path == downstream_ctx.artifact_path
+    assert 'configured' in entry.reason
+    report.collect()
+    assert downstream_ctx.artifact_path.exists()
+    # rebuilt with the same artifact-level fingerprint, the dependent stays valid
+    registry.resolve('configured', state=DEFAULT_STATE).load()
+    assert registry.scan_cache().entries == []
+    assert downstream_ctx.is_valid()
+    # a rebuild that changes the artifact-level fingerprint invalidates the dependent through normal validation
+    configured.config = 'ccc'
+    registry.resolve('configured', state=DEFAULT_STATE).load()
+    entry = _single_entry(registry.scan_cache(), GCCategory.REVALIDATION_STALE)
+    assert entry.path == downstream_ctx.artifact_path
 
 
 def test_gc_directory_artifact():

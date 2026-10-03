@@ -526,6 +526,14 @@ class DependencyNode(Generic[T]):
         Log level for the standard cache hit/build messages, which are the
         pipeline's progress report for anything expensive. Set to ``None`` to
         suppress them. Only nodes with a tracked artifact emit them.
+    dependency_fingerprint_from_artifact
+        Declare that :meth:`dependency_fingerprint` describes the built
+        artifact (e.g. through :attr:`Request.artifact_metadata`) rather than
+        the configuration, so that rebuilding this node does not necessarily
+        change how it appears to its dependents. A read-only cache scan cannot
+        rebuild the artifact to find out, so it keeps the dependents of a stale
+        instance of such a node as unverifiable instead of collecting them as
+        stale (see :meth:`DerivativeRegistry.scan_cache`).
     """
 
     name: str
@@ -536,6 +544,7 @@ class DependencyNode(Generic[T]):
     cache_policy: CachePolicy = CachePolicy.NEVER
     # Log level for standard cache hit/build messages. Set to None to silence.
     cache_log_level: int | None = logging.DEBUG
+    dependency_fingerprint_from_artifact: bool = False
 
     def cache_log_path(self, ctx: Request, path: Path) -> str:
         """Return the displayed artifact path for cache log messages."""
