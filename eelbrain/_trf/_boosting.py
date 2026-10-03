@@ -136,7 +136,8 @@ class BoostingResult(PickleableDataClass):
     mindelta
         Mindelta parameter used.
     n_samples
-        Number of samples in the input data time axis.
+        Number of samples in the data described by the fit metrics (all data
+        unless only a single test partition was evaluated).
     proportion_explained : float | NDVar
         The proportion of the variation in ``y`` that is explained by the model.
         Calculated as ``1 - (variation(residual) / variation(y))``.
@@ -934,6 +935,7 @@ class Boosting:
         else:
             partitions = []
         hs = [self._get_h(partition) for partition in partitions]
+        n_samples = self.data.y.shape[1]
 
         evaluations = {}
         partition_evaluations = [{} for _ in partitions]
@@ -941,8 +943,9 @@ class Boosting:
             # each test partition is predicted by the h estimated without it
             test_segments = [partition[0].split.test for partition in partitions]
             hs_segments = list(zip(hs, test_segments))
+            all_segments = np.sort(np.vstack(test_segments), 0)
+            n_samples = int(np.sum(all_segments[:, 1] - all_segments[:, 0]))  # all data unless i_test is specified
             if metrics:
-                all_segments = np.sort(np.vstack(test_segments), 0)
                 eval_segments = [merge_segments(all_segments, True)]
                 if partition_results:
                     eval_segments.extend(merge_segments(segments, True) for segments in test_segments)
@@ -1012,7 +1015,7 @@ class Boosting:
             # advanced parameters
             self.data.basis, self.data.basis_window, self.data.splits,
             # advanced data properties
-            self.data.y.shape[1], self.data.y_info, self.data.ydims,
+            n_samples, self.data.y_info, self.data.ydims,
             partition_results=partition_results_list,
             algorithm_version=3, execution_context=execution_context,
             i_test=i_test, **evaluations)
