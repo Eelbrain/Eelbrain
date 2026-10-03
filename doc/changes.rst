@@ -73,8 +73,6 @@ New in 0.43
     to the variability in the evaluated data segments. Previously, it was
     computed relative to the variability in all data, which strongly
     overestimated it.
-  - :attr:`BoostingResult.proportion_explained` is now also available for
-    models estimated with ``scale_data=False``.
 
 * ICA-GUI (:func:`gui.select_components`): The *Find Bad Channels* tool now also
   detects defective channels through gaps in the component maps — channels whose
