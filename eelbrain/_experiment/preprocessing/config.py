@@ -534,22 +534,29 @@ class RawICA(CachedRawPipe):
     def _check_ica_channels(
             ica: mne.preprocessing.ICA,
             info: mne.Info,
-            return_missing: bool = False,  # return channels present in the data but missing from the ICA
-    ) -> bool | tuple:
-        "Check whether `ica` and `info` contain the same channels"
+            strict: bool = True,
+    ) -> set[str]:
+        """Data channels that are missing from the ICA (i.e., were bad when it was fitted)
+
+        Parameters
+        ----------
+        ica
+            The ICA decomposition.
+        info
+            Measurement info of the data the ICA is compared with.
+        strict
+            Raise :class:`RuntimeError` if the ICA contains channels that the data
+            lacks (the ICA can not be applied to such data). Without ``strict``, the
+            channels missing from the ICA are returned regardless.
+        """
         # Compare channel presence, not bad-status (exclude=[]): a currently-bad channel that
         # is still in the data is not "missing" from the ICA.
         picks = mne.pick_types(info, meg=True, eeg=True, ref_meg=False, exclude=[])
-        raw_ch_names = [info.ch_names[i] for i in picks]
-        if return_missing:
-            raw_set = set(raw_ch_names)
-            ica_set = set(ica.ch_names)
-            if ica_set - raw_set:
-                raise RuntimeError(f"ICA contains channels not present in data: {enumeration(sorted(ica_set - raw_set))}")
-            else:
-                return tuple(raw_set - ica_set)
-        else:
-            return raw_ch_names == ica.ch_names
+        raw_set = {info.ch_names[i] for i in picks}
+        ica_set = set(ica.ch_names)
+        if strict and ica_set - raw_set:
+            raise RuntimeError(f"ICA contains channels not present in data: {enumeration(sorted(ica_set - raw_set))}")
+        return raw_set - ica_set
 
     def _ica_kwargs(self) -> tuple[dict[str, Any], dict[str, Any]]:
         """Resolved arguments for :class:`mne.preprocessing.ICA` and :meth:`mne.preprocessing.ICA.fit`
@@ -584,7 +591,7 @@ class RawICA(CachedRawPipe):
         logger = log or LOG
         logger.debug("Raw %s: applying ICA...", raw_name)
         raw.info['bads'] = [ch for ch in bad_channels if ch in raw.ch_names]
-        missing = self._check_ica_channels(ica, raw.info, return_missing=True)
+        missing = self._check_ica_channels(ica, raw.info)
         if missing:
             # Channels excluded from the ICA fit (e.g. bad at fit time) are not in
             # ica.ch_names. Keep them in the data marked as bad — ica.apply leaves them

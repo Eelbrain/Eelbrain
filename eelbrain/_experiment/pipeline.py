@@ -2478,9 +2478,10 @@ class Pipeline(StateModel):
         try:
             frame = gui.select_components(path, display_data, sysname, adjacency, decim, debug, events=labeled_events)
         except DimensionMismatchError as error:
-            # The sensors no longer match those the ICA was estimated on, which
-            # in this context means the bad channels have changed.
-            raise ICAChannelsChangedError(path) from error
+            # The sensors no longer match those the ICA was estimated on. Not strict:
+            # deleting the ICA is the remedy whichever side has the extra channels.
+            bads_before = pipe._check_ica_channels(mne.preprocessing.read_ica(path), info, strict=False)
+            raise ICAChannelsChangedError(path, sorted(bads_before), info['bads']) from error
         return frame
 
     def make_bad_channels_selection(

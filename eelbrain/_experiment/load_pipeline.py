@@ -56,6 +56,9 @@ def _load_module(path: Path) -> ModuleType:
         raise ImportError(f"Could not load pipeline module from {path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
+    # allow local imports, as when running the file as a script
+    if str(path.parent) not in sys.path:
+        sys.path.insert(0, str(path.parent))
     try:
         spec.loader.exec_module(module)
     except Exception:
