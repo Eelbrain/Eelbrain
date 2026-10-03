@@ -249,6 +249,9 @@ def test_boosting_object():
 
     res_part = model.evaluate_fit(partition_results=True)
     assert len(res_part.partition_results) == 4
+    assert model.evaluate_fit(i_test=1).r == res_part.partition_results[1].r
+    with pytest.raises(ValueError, match='i_test=7'):
+        model.evaluate_fit(i_test=7)
     # debug=True stores y_pred even without fit metrics
     res_debug = model.evaluate_fit(metrics=(), debug=True)
     assert res_debug.r is None

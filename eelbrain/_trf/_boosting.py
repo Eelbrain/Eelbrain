@@ -920,9 +920,10 @@ class Boosting:
 
         # partitions: [[SplitResult, ...], ...]
         if cross_fit:
-            if i_test is None:
-                i_tests = self._get_i_tests()
-            else:
+            i_tests = self._get_i_tests()
+            if i_test is not None:
+                if i_test not in i_tests:
+                    raise ValueError(f"{i_test=}: test partitions are {i_tests}")
                 i_tests = [i_test]
             partitions = [[split for split in self.split_results if split.split.i_test == i] for i in i_tests]
         elif i_test is not None:
