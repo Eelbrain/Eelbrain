@@ -170,9 +170,11 @@ class BoostingResult(PickleableDataClass):
         :meth:`BoostingResult.partition_result_data` combines them in a
         :class:`Dataset`.
     i_test
-        For results in :attr:`BoostingResult.partition_results` of models
-        estimated with ``test=1``: index of the test partition (see
-        :attr:`Split.i_test`).
+        Index of the test partition whose data the fit metrics describe (see
+        :attr:`Split.i_test`): set for results in
+        :attr:`BoostingResult.partition_results` of models estimated with
+        ``test=1``, and for results from :meth:`Boosting.evaluate_fit` with
+        ``i_test``. ``None`` when fit metrics pool all test partitions.
     i_validate
         For results in :attr:`BoostingResult.partition_results` of models
         estimated with ``test=0``: index of the validation partition (see
