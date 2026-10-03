@@ -34,7 +34,7 @@ from .._utils import ask, keydefaultdict, log_level, user_activity, ScreenHandle
 from .._utils.mne_utils import is_fake_mri
 from .covariance import Covariance, CovDerivative, EpochCovariance, RawCovariance
 from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, DerivativeRegistry, JobSpec, ProtectedArtifactError, Request, _format_size
-from .configuration import Configuration, ConfigurationDict, sequence_arg
+from .configuration import Configuration, ConfigurationDict, check_names, sequence_arg
 from .epochs import (
     ContinuousEpoch, EpochBase, EpochsDerivative, RecordingEpochsDerivative, EvokedDerivative,
     EvokedGroupDatasetDerivative, PrimaryEpoch, SecondaryEpoch,
@@ -370,24 +370,18 @@ class Pipeline(StateModel):
 
         # epoch rejection; 'manual' is always available, '' selects no rejection
         epoch_rejection: dict[str, EpochRejection | None] = {'': None}
+        check_names(self.epoch_rejection, 'epoch_rejection', allow_empty=False)
         for name, rejection in self.epoch_rejection.items():
-            if not isinstance(name, str):
-                raise TypeError(f"epoch_rejection[{name!r}]: name must be a string")
-            elif not name:
-                raise ValueError(f"epoch_rejection[{name!r}]: name can't be empty")
-            elif not isinstance(rejection, EpochRejection):
+            if not isinstance(rejection, EpochRejection):
                 raise TypeError(f"epoch_rejection[{name!r}]={rejection!r}: need EpochRejection")
             epoch_rejection[name] = rejection
         self._epoch_rejection = ConfigurationDict('epoch_rejection', epoch_rejection)
 
         # epoch re-referencing; 'average' is always available and user-overridable
         references = {'': None, 'average': Reference('average')}
+        check_names(self.references, 'references', allow_empty=False)
         for name, reference in self.references.items():
-            if not isinstance(name, str):
-                raise TypeError(f"references[{name!r}]: name must be a string")
-            elif not name:
-                raise ValueError(f"references[{name!r}]: name can't be empty")
-            elif not isinstance(reference, Reference) or isinstance(reference, RawPipe):
+            if not isinstance(reference, Reference) or isinstance(reference, RawPipe):
                 raise TypeError(f"references[{name!r}]={reference!r}: need Reference")
             elif name == 'average':
                 if reference.reference != 'average':
@@ -401,12 +395,9 @@ class Pipeline(StateModel):
         self._mri_subjects = self.mri_subjects.copy()
 
         # Sensor noise covariance estimates
+        check_names(self.noise_covariance, 'noise_covariance', allow_empty=False)
         for name, cov in self.noise_covariance.items():
-            if not isinstance(name, str):
-                raise TypeError(f"noise_covariance[{name!r}]: name must be a string")
-            elif not name:
-                raise ValueError(f"noise_covariance[{name!r}]: name can't be empty")
-            elif not isinstance(cov, (RawCovariance, EpochCovariance)):
+            if not isinstance(cov, (RawCovariance, EpochCovariance)):
                 raise TypeError(f"noise_covariance[{name!r}]={cov!r}: need RawCovariance or EpochCovariance")
         self._covs = ConfigurationDict('covariance', {**self._default_covs, **self.noise_covariance})
         for name, cov in self._covs.items():
