@@ -249,6 +249,10 @@ def test_boosting_object():
 
     res_part = model.evaluate_fit(partition_results=True)
     assert len(res_part.partition_results) == 4
+    # debug=True stores y_pred even without fit metrics
+    res_debug = model.evaluate_fit(metrics=(), debug=True)
+    assert res_debug.r is None
+    assert_dataobj_equal(res_debug.y_pred, model.evaluate_fit(debug=True).y_pred)
     partition_data = res_part.partition_result_data()
     assert 'ev' in partition_data
     assert 'det' not in partition_data

@@ -939,17 +939,18 @@ class Boosting:
         if cross_fit:
             # each test partition is predicted by the h estimated without it
             test_segments = [partition[0].split.test for partition in partitions]
+            hs_segments = list(zip(hs, test_segments))
             if metrics:
                 all_segments = np.sort(np.vstack(test_segments), 0)
                 eval_segments = [merge_segments(all_segments, True)]
                 if partition_results:
                     eval_segments.extend(merge_segments(segments, True) for segments in test_segments)
-                evaluators = self._evaluate(metrics, list(zip(hs, test_segments)), eval_segments, debug)
+                evaluators = self._evaluate(metrics, hs_segments, eval_segments, debug)
                 evaluations = {e.attr: e.get() for e in evaluators}
-                if debug:
-                    evaluations['y_pred'] = self.data.package_y_like(self.y_pred, 'y-pred')
                 if partition_results:
                     partition_evaluations = [{e.attr: e.get(i) for e in evaluators} for i in range(len(partitions))]
+            elif debug:
+                self._evaluate((), hs_segments, [], True)
         elif metrics:
             # Without test set, fit metrics would be computed from the data used to estimate h
             # (overestimating predictive power); only report validation and training fit for each split
@@ -967,11 +968,11 @@ class Boosting:
             if debug:
                 # in-sample prediction from the averaged kernel
                 self._evaluate((), [(h_x, self.data.segments)], [], True)
-                evaluations['y_pred'] = self.data.package_y_like(self.y_pred, 'y-pred')
         h = self.data.package_kernel(h_x, self.tstart_h)
         # package model parameters
         y_mean, y_scale, x_mean, x_scale = self.data.data_scale_ndvars()
         if debug:
+            evaluations['y_pred'] = self.data.package_y_like(self.y_pred, 'y-pred')
             evaluations['fit'] = self
         t_run = self.t_fit_done - self.t_fit_start
         execution_context = {
