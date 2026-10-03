@@ -296,6 +296,9 @@ class BoostingResult(PickleableDataClass):
             if version < 15:
                 if state.pop('prefit', None):
                     raise OSError('Boosting result used the prefit functionality that has been removed. Use an older version of eelbrain to open this result.')
+            if version < 16 and state.get('i_test') is not None:
+                # n_samples reflects all data, which is wrong for a single test partition
+                state['n_samples'] = None
         PickleableDataClass.__setstate__(self, state)
 
     def __repr__(self):
