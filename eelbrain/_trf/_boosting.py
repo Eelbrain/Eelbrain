@@ -604,8 +604,11 @@ class BoostingResult(PickleableDataClass):
             return func(obj)
 
         # NDVars
-        for attr in ('_h', 'r', 'r_rank', 'residual', 'l1_total', 'l2_total', 'train_r', 'train_r_rank', 'train_residual', 'train_l1_total', 'train_l2_total', 'y_mean', 'y_scale'):
+        for attr in ('_h', 'r', 'r_rank', 'r_l1', 'l1_residual', 'l2_residual', 'l1_total', 'l2_total', 'train_r', 'train_r_rank', 'train_r_l1', 'train_l1_residual', 'train_l2_residual', 'train_l1_total', 'train_l2_total', 'y_mean', 'y_scale'):
             setattr(self, attr, sub_func(getattr(self, attr)))
+        # Invalidate cached properties derived from the transformed NDVars
+        for attr in [name for name, value in vars(type(self)).items() if isinstance(value, cached_property)]:
+            self.__dict__.pop(attr, None)
 
         # List of Dimension
         if self._y_dims is not None:
