@@ -60,8 +60,7 @@ def test_boosting():
     assert res.h.info['unit'] == 'V'
     assert res.h_scaled.info['unit'] == 'V'
     assert res.residual == approx(((y - res.y_pred)**2).sum())
-    with pytest.raises(NotImplementedError):
-        _ = res.proportion_explained
+    assert res.proportion_explained == approx(1 - res.residual / (y**2).sum())
 
     res = boosting(y, x1, 0, 1)
     assert repr(res) == '<BoostingResult y ~ x1, 0 - 1>'

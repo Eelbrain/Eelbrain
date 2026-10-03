@@ -394,19 +394,17 @@ class BoostingResult(PickleableDataClass):
     def train_proportion_explained(self) -> float | NDVar | None:
         if self.train_residual is None:
             return None
-        elif self.y_scale is None:
-            raise NotImplementedError("Not implemented for scale_data=False")
         return 1 - (self.train_residual / getattr(self, f'train_{self.error}_total'))
 
     @cached_property
     def _variability(self):
         # variability in the data
         total = getattr(self, f'{self.error}_total')
-        if self.y_scale is None:
-            raise NotImplementedError("Not implemented for scale_data=False")
-        elif total is not None:
+        if total is not None:
             # variability in the evaluated segments (e.g., one test partition)
             return total
+        elif self.y_scale is None:
+            raise NotImplementedError("Not implemented for scale_data=False")
         elif self.n_samples is None:
             raise OldVersionError("This is an older result object which did not store some necessary information; refit the model to use this attribute")
         else:
