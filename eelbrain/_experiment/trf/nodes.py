@@ -24,7 +24,7 @@ from ..preprocessing import RawFilter, RawPipe, RawSource
 from ..source.nodes import _subject_state
 from ..statistics.config import ResolvedTestNDSpec, TTestOneSample, TTestRelated, Test, TwoStageTest
 from ..variable_def import Variables
-from .estimator import Boosting, Estimator
+from .estimator import Estimator
 from .job import TRFJob
 from .model import Comparison, Model, Term, TRFModelError
 from .predictor import EventPredictor, NUTSPredictor, SubjectUTSPredictor, UTSPredictor
@@ -269,12 +269,7 @@ class TRFDerivative(Derivative[object]):
         return tuple(fields)
 
     def fingerprint(self, ctx: Request) -> dict[str, object]:
-        est = self.estimators[ctx.options['estimator']]
-        out = {'estimator': est}
-        if isinstance(est, Boosting) and est.partitions is None:
-            # default partitions changed in 0.43 pre-release
-            out['default_partitions'] = 5
-        return out
+        return {'estimator': self.estimators[ctx.options['estimator']]}
 
     def normalize_stored_fingerprint(self, fingerprint: dict[str, Any]) -> None:
         est = fingerprint.get('estimator')
