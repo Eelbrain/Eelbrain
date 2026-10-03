@@ -929,10 +929,9 @@ class Boosting:
             raise ValueError(f"{i_test=} without cross_fit")
         elif partition_results:
             # without test set, each split has a different validation partition
-            i_tests = [None] * len(self.split_results)
             partitions = [[split] for split in self.split_results]
         else:
-            i_tests = partitions = []
+            partitions = []
         hs = [self._get_h(partition) for partition in partitions]
 
         evaluations = {}
@@ -986,7 +985,8 @@ class Boosting:
         # partition-specific results
         if partition_results:
             partition_results_list = []
-            for i, partition, h_i, evaluations_i in zip(i_tests, partitions, hs, partition_evaluations):
+            for partition, h_i, evaluations_i in zip(partitions, hs, partition_evaluations):
+                split = partition[0].split
                 h_i = self.data.package_kernel(h_i, self.tstart_h)
                 result = BoostingResult(
                     self.data.y_name, self.data.x_name, self.tstart, self.tstop, bool(self.data.scale_data), self.delta, self.mindelta, self.error, self.selective_stopping,
@@ -995,7 +995,7 @@ class Boosting:
                     self.data.basis, self.data.basis_window, None,
                     self.data.y.shape[1], self.data.y_info, self.data.ydims,
                     algorithm_version=3, execution_context=execution_context,
-                    i_test=i, i_validate=None if cross_fit else partition[0].split.i_validate, **evaluations_i)
+                    i_test=split.i_test, i_validate=None if cross_fit else split.i_validate, **evaluations_i)
                 partition_results_list.append(result)
         else:
             partition_results_list = None
