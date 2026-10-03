@@ -55,8 +55,9 @@ class Evaluator:
     def __repr__(self):
         return f"<{self.__class__.__name__} evaluator>"
 
-    def get(self, i_test: int = -1):
-        return self.data.package_value(self.xs[i_test + 1], self.name, meas=self.meas)
+    def get(self, i: int = 0):
+        "Fit metric for the ``i``-th entry of ``segments``"
+        return self.data.package_value(self.xs[i], self.name, meas=self.meas)
 
 
 class L1(Evaluator):

@@ -955,7 +955,7 @@ class Boosting:
                 evaluators = self._evaluate(metrics, hs_segments, eval_segments, debug)
                 evaluations = {e.attr: e.get() for e in evaluators}
                 if partition_results:
-                    partition_evaluations = [{e.attr: e.get(i) for e in evaluators} for i in range(len(partitions))]
+                    partition_evaluations = [{e.attr: e.get(i + 1) for e in evaluators} for i in range(len(partitions))]
             elif debug:
                 self._evaluate((), hs_segments, [], True)
         elif metrics:
@@ -965,7 +965,7 @@ class Boosting:
                 split = split_result.split
                 evaluators = self._evaluate(metrics, [(h_i, split.train_and_validate)], [split.validate, split.train])
                 evaluations_i.update({e.attr: e.get() for e in evaluators})
-                evaluations_i.update({f'train_{e.attr}': e.get(0) for e in evaluators})
+                evaluations_i.update({f'train_{e.attr}': e.get(1) for e in evaluators})
 
         # package h
         if cross_fit:
