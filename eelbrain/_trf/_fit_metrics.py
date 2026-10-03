@@ -316,7 +316,7 @@ def get_evaluators(
         keys: list[str],
         data: DeconvolutionData,
         segments: list[np.ndarray] = None,  # evaluations for different test-segments
-) -> (list[Evaluator], list[Evaluator], list[Evaluator]):
+) -> tuple[list[Evaluator], list[Evaluator], list[Evaluator]]:
     evaluators = [EVALUATORS[key](data, segments) for key in keys]
     # split into scalar and vector evaluators
     evaluators_s = [e for e in evaluators if not e.vector]
