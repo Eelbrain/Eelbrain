@@ -840,7 +840,7 @@ class Boosting:
 
         # predicted y
         if debug:
-            self.y_pred = y_pred_iter = y_pred = np.empty(self.data.y.shape)
+            self.y_pred = y_pred_iter = y_pred = np.full(self.data.y.shape, np.nan)  # NaN for samples that are not predicted
         elif n_vecs:
             y_pred = np.empty((n_vec, *self.data.y.shape[1:]))
             y_pred_iter = chain.from_iterable(repeat(tuple(y_pred), n_vecs))
