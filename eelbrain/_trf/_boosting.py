@@ -987,13 +987,14 @@ class Boosting:
             partition_results_list = []
             for partition, h_i, evaluations_i in zip(partitions, hs, partition_evaluations):
                 split = partition[0].split
+                eval_segments = split.test if cross_fit else split.validate
                 h_i = self.data.package_kernel(h_i, self.tstart_h)
                 result = BoostingResult(
                     self.data.y_name, self.data.x_name, self.tstart, self.tstop, bool(self.data.scale_data), self.delta, self.mindelta, self.error, self.selective_stopping,
                     y_mean, y_scale, x_mean, x_scale,
                     h_i, self._get_h_failed(partition), 0,
                     self.data.basis, self.data.basis_window, None,
-                    self.data.y.shape[1], self.data.y_info, self.data.ydims,
+                    int(np.sum(eval_segments[:, 1] - eval_segments[:, 0])), self.data.y_info, self.data.ydims,
                     algorithm_version=3, execution_context=execution_context,
                     i_test=split.i_test, i_validate=None if cross_fit else split.i_validate, **evaluations_i)
                 partition_results_list.append(result)

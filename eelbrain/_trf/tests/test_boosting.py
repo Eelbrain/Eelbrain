@@ -97,6 +97,7 @@ def test_boosting():
     assert list(res.partition_result_data()['i_validate']) == list(range(5))
     for res_i, split in zip(res.partition_results, res.splits.splits):
         assert res_i.i_validate == split.i_validate
+        assert res_i.n_samples == np.sum(split.validate[:, 1] - split.validate[:, 0])
         for segments, r in ((split.validate, res_i.r), (split.train, res_i.train_r)):
             y_pred = [convolve(res_i.h_scaled, NDVar(x1.x[i0:i1], UTS(x1.time.times[i0], x1.time.tstep, i1 - i0))) for i0, i1 in segments]
             y_pred = np.concatenate([y_pred_i.x for y_pred_i in y_pred])
@@ -190,6 +191,7 @@ def test_boosting_cross_predict(error):
         else:
             proportion_explained = 1 - ((residual_i ** 2).sum() / (y_i ** 2).sum())
         assert res.proportion_explained == pytest.approx(proportion_explained)
+        assert res.n_samples == len(index)
 
     # With scaling: original scale
     y_pred = trf.cross_predict('x1', ds)
