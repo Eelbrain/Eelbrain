@@ -27,7 +27,7 @@ from eelbrain._experiment.pathing import BIDS_ENTITY_KEYS, LOG_DIR, ica_file_pat
 from eelbrain._experiment.preprocessing import RawFilterElliptic, ica_input_name, raw_node_name
 from eelbrain._experiment.data import DataSpec
 from eelbrain._experiment.variable_def import EvalVar, LabelVar, Variables
-from eelbrain.testing import assert_dataobj_equal, requires_mne_head_pos, requires_mne_sample_data
+from eelbrain.testing import assert_dataobj_equal, requires_mne_sample_data
 
 
 def _test_result_manifest_path(
@@ -1140,7 +1140,6 @@ def test_ica_all_tasks_after_maxwell(samples_experiment):
 
 
 @requires_mne_sample_data
-@requires_mne_head_pos
 def test_head_pos_without_chpi(samples_experiment):
     "RawMaxwell(head_pos=True) is a no-op for recordings without continuous HPI; the empty room follows the task recording"
     set_log_level('warning', 'mne')
@@ -1231,7 +1230,6 @@ def test_covariance_max_condition(samples_experiment):
 
 
 @requires_mne_sample_data
-@requires_mne_head_pos
 def test_head_pos_movement_compensation(samples_experiment):
     "RawMaxwell(head_pos=True) compensates movement, drops the CHPI channels, and keeps mixed runs concatenable"
     set_log_level('warning', 'mne')

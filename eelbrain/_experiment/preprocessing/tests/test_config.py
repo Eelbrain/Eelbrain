@@ -7,7 +7,7 @@ import pytest
 
 from eelbrain._exceptions import ConfigurationError, DataError
 from eelbrain._experiment.preprocessing import RawMaxwell, RawSource
-from eelbrain.testing import requires_mne_head_pos, requires_mne_testing_data
+from eelbrain.testing import requires_mne_testing_data
 
 
 def test_raw_source_rename_channels():
@@ -43,7 +43,6 @@ def test_raw_source_rename_channels():
         RawSource(montage='biosemi16', rename_channels={'A1': 'NoSuchChannel'})
 
 
-@requires_mne_head_pos
 def test_maxwell_head_pos_semantic_dict():
     "head_pos is omitted from the fingerprint when unset, so caches predating it stay valid"
     maxwell = RawMaxwell('raw', st_duration=10.)
@@ -77,7 +76,6 @@ def test_maxwell_head_pos_semantic_dict():
         RawMaxwell('raw', st_duration=10., h_freq=None, filter_chpi=True)
 
 
-@requires_mne_head_pos
 def test_maxwell_head_pos_st_only():
     "Movement compensation happens in the SSS reconstruction, which st_only skips; the head positions still shape the temporal projection basis"
     with pytest.warns(UserWarning, match='st_only'):
@@ -86,7 +84,6 @@ def test_maxwell_head_pos_st_only():
     assert pipe.kwargs['st_only'] is True
 
 
-@requires_mne_head_pos
 @requires_mne_testing_data
 def test_maxwell_head_pos_filter_chpi():
     "cHPI signals and line noise are removed before Maxwell filtering with head_pos=True; the empty room gets the same line noise treatment"
@@ -154,7 +151,6 @@ def test_maxwell_head_pos_filter_chpi():
         filter_chpi.assert_not_called()
 
 
-@requires_mne_head_pos
 @requires_mne_testing_data
 def test_maxwell_movement_annotations():
     "Segments with excessive movement are annotated on the compensated data"

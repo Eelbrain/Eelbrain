@@ -28,7 +28,6 @@ from ..._io.fiff import KIT_NEIGHBORS
 from ..._io.txt import read_adjacency
 from ..._ndvar import filter_data
 from ..._text import enumeration
-from ...mne_fixes._version import MNE_SUPPORTS_HEAD_POS
 from ..derivative_cache import Request
 from ..configuration import Configuration, ConfigurationDict, sequence_arg, typed_arg
 from ..exceptions import ICAMissingError
@@ -768,9 +767,8 @@ class RawMaxwell(CachedRawPipe):
         using MNE's default fitting parameters (``gof_limit=0.98``,
         ``dist_limit=0.005``, ``t_step_min=0.01``, ``t_window='auto'``),
         cached, and can be retrieved with :meth:`Pipeline.load_head_position`.
-        This requires ``mne >= 1.13``, and
-        has no effect for recordings without continuous HPI or for empty room
-        data. With ``st_only=True``, the head positions only enter the temporal
+        This has no effect for recordings without continuous HPI or for empty
+        room data. With ``st_only=True``, the head positions only enter the temporal
         projection basis (see :func:`mne.preprocessing.maxwell_filter`) and
         the output is not compensated; a warning is issued.
     filter_chpi
@@ -858,8 +856,6 @@ class RawMaxwell(CachedRawPipe):
         if head_pos:
             if kwargs.get('st_only'):
                 warnings.warn("RawMaxwell(head_pos=True, st_only=True): head movement compensation is applied in the SSS reconstruction, which st_only=True skips; the head positions only enter the temporal projection basis and the output is not compensated", stacklevel=2)
-            if not MNE_SUPPORTS_HEAD_POS:
-                raise ConfigurationError(f"RawMaxwell(head_pos=True) requires mne >= 1.13 (installed: {mne.__version__})")
         elif any(limit is not None for limit in (rotation_velocity_limit, translation_velocity_limit, mean_distance_limit)):
             raise ConfigurationError("RawMaxwell: rotation_velocity_limit, translation_velocity_limit and mean_distance_limit require head_pos=True")
         filter_chpi = head_pos if filter_chpi is None else filter_chpi

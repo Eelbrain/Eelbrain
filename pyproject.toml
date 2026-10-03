@@ -27,7 +27,7 @@ dependencies = [
   'keyring >= 5',
   'libclang',
   'matplotlib >= 3.6',
-  'mne >= 1',
+  'mne >= 1.13',
   'nibabel >= 2.5',
   'numpy >= 1.20',
   'pillow',

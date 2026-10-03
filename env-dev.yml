@@ -22,7 +22,7 @@ dependencies:
 - appnope
 - psutil
 # mne-python
-- mne >= 1
+- mne >= 1.13
 - h5py
 - pandas
 - statsmodels
