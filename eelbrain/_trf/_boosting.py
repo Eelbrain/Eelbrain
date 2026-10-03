@@ -168,6 +168,14 @@ class BoostingResult(PickleableDataClass):
         because the validation data determined when boosting stopped.
         :meth:`BoostingResult.partition_result_data` combines them in a
         :class:`Dataset`.
+    i_test
+        For results in :attr:`BoostingResult.partition_results` of models
+        estimated with ``test=1``: index of the test partition (see
+        :attr:`Split.i_test`).
+    i_validate
+        For results in :attr:`BoostingResult.partition_results` of models
+        estimated with ``test=0``: index of the validation partition (see
+        :attr:`Split.i_validate`).
     train_r, train_r_rank, train_r_l1, train_residual, train_proportion_explained
         Fit to the training data (only for results in
         :attr:`BoostingResult.partition_results` of models estimated with
