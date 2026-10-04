@@ -1216,7 +1216,7 @@ def test_head_pos_without_chpi(samples_experiment):
     report = e._derivatives.scan_cache()
     categories = {entry.manifest_path: entry.category for entry in report.entries}
     assert categories[manifests['sss']] == GCCategory.UNVERIFIABLE
-    assert manifests['sss'] in {path for path, _ in report.errors}
+    assert not report.errors
     assert e._derivatives.resolve(raw_node_name('sss'), state={**e.state, 'raw': 'sss'}, options={'noise': False}).is_valid()  # a regular load rebuilds the canonical head position and finds the destination unchanged
 
 

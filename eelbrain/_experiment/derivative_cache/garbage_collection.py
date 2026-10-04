@@ -31,7 +31,7 @@ from typing import Any
 import warnings
 
 from ... import fmtxt
-from .base import CACHE_DISAMBIGUATION_SUFFIX, MANIFEST_SCHEMA_VERSION, MANIFEST_SUFFIX, ArtifactManifest, CachePolicy, DependencyNode, Derivative, DerivativeRegistry, Input, Request, VersionedInput, _disambiguated_cache_artifact_path
+from .base import CACHE_DISAMBIGUATION_SUFFIX, MANIFEST_SCHEMA_VERSION, MANIFEST_SUFFIX, ArtifactManifest, CachePolicy, DependencyNode, Derivative, DerivativeRegistry, Input, Request, UnverifiableArtifactError, VersionedInput, _disambiguated_cache_artifact_path
 
 
 class GCCategory(str, Enum):
@@ -378,6 +378,8 @@ def _classify_manifest(
             elif revalidate:
                 try:
                     invalidation = ctx._check_valid(manifest)
+                except UnverifiableArtifactError as error:
+                    entry = classify(GCCategory.UNVERIFIABLE, str(error))
                 except Exception as error:
                     report.errors.append((manifest_path, repr(error)))
                     entry = classify(GCCategory.UNVERIFIABLE, f"cannot validate ({error})")

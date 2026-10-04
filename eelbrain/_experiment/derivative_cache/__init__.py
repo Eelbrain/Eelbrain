@@ -24,6 +24,7 @@ from .base import (
     ProtectedArtifactError,
     Request,
     UncachedDerivative,
+    UnverifiableArtifactError,
     VersionedInput,
     canonical_state_subset,
     compare_manifests,

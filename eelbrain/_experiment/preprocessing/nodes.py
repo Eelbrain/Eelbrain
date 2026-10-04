@@ -30,7 +30,7 @@ import pandas as pd
 from ..._exceptions import DataError
 from ..derivative_cache import (
     ALLOW_PROTECTED_OVERWRITE, ArtifactManifest, CachePolicy, Dependency, Derivative, UncachedDerivative,
-    JobProvenance, Request, Input, MANIFEST_SCHEMA_VERSION, ProtectedArtifactError,
+    JobProvenance, Request, Input, MANIFEST_SCHEMA_VERSION, ProtectedArtifactError, UnverifiableArtifactError,
     compare_manifests, file_fingerprint,
 )
 from ..logging import find_difference, format_difference_path
@@ -1045,7 +1045,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         if ctx.registry._readonly:
             # A read-only cache scan can not build the canonical head position; describe the stored artifact (scan_cache keeps the dependents of a stale canonical head position as unverifiable, see CanonicalHeadPositionDerivative.dependency_fingerprint_from_artifact)
             if not dep_ctx.artifact_path.exists():
-                raise RuntimeError("The canonical head position has not been computed; the destination used for Maxwell filtering can not be verified without building it")
+                raise UnverifiableArtifactError("the canonical head position has not been computed; the destination used for Maxwell filtering is only known once it is built")
             destination = dep_ctx.node.load(dep_ctx, dep_ctx.artifact_path)
         else:
             destination = dep_ctx.load()

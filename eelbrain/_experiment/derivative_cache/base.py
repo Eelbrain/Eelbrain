@@ -256,6 +256,16 @@ class ProtectedArtifactError(RuntimeError):
         super().__init__(text)
 
 
+class UnverifiableArtifactError(RuntimeError):
+    """An artifact's validity can not be determined without building something.
+
+    Raised by node hooks (such as :meth:`DependencyNode.dependency_fingerprint_override`)
+    during read-only validation when the answer would require building a
+    dependency; :meth:`DerivativeRegistry.scan_cache` then keeps the artifact
+    as unverifiable.
+    """
+
+
 class JobInputsChangedError(RuntimeError):
     """Refuse to compute a job whose inputs moved while its data was being loaded.
 
