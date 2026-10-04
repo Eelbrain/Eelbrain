@@ -799,11 +799,17 @@ class RawMaxwell(CachedRawPipe):
         position, or the recording's initial head position) with a
         ``BAD_mov_dist`` annotation (requires ``head_pos=True`` and the HPI coil
         locations in the file header).
+    st_only
+        Only apply the temporal projection (tSSS) and skip the SSS
+        reconstruction (default ``False``; requires ``st_duration``, see
+        :func:`mne.preprocessing.maxwell_filter`). With ``st_only=True``,
+        the data keep their original head position instead of being moved to the
+        canonical head position.
     ...
         Supported :func:`mne.preprocessing.maxwell_filter` parameters are
         ``origin``, ``int_order``, ``ext_order``, ``regularize``,
         ``ignore_ref``, ``mag_scale``, ``skip_by_annotation``,
-        ``extended_proj``, ``st_duration``, ``st_correlation``, ``st_only``,
+        ``extended_proj``, ``st_duration``, ``st_correlation``,
         ``st_fixed``, and ``st_overlap``. The ``limit``, ``duration``, and
         ``min_count`` parameters configure
         :func:`mne.preprocessing.find_bad_channels_maxwell`.
