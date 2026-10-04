@@ -1010,7 +1010,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         elif isinstance(self.pipe, RawMaxwell):
             deps.append(Dependency('maxwell-calibration'))
             deps.append(Dependency('maxwell-crosstalk'))
-            if not self.pipe.kwargs.get('st_only'):  # the destination only enters the SSS reconstruction, which st_only skips
+            if not self.pipe.st_only:  # the destination only enters the SSS reconstruction, which st_only skips
                 deps.append(Dependency('canonical-head-position'))
             if ctx.options['noise']:
                 # the task recording whose head frame, digitization and bad channels the empty room takes on
@@ -1035,14 +1035,20 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         return super().dependency_fingerprint(ctx, view)
 
     def normalize_stored_dependencies(self, dependencies: dict[str, Any]) -> None:
-        if isinstance(self.pipe, RawMaxwell) and self.pipe.kwargs.get('st_only'):
+        if isinstance(self.pipe, RawMaxwell) and self.pipe.st_only:
             dependencies.pop('canonical-head-position', None)  # recorded during 0.43 development although st_only ignores the destination
 
     def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, Any] | None:
         """Record the destination that Maxwell filtering consumes, rather than how it was derived, so that changes to head position tracking only invalidate artifacts whose destination changed"""
         if dep.name != 'canonical-head-position':
             return None
-        destination = ctx.load('canonical-head-position')
+        if ctx.registry._readonly:
+            # A read-only cache scan can not build the canonical head position; describe the stored artifact (scan_cache keeps the dependents of a stale canonical head position as unverifiable, see CanonicalHeadPositionDerivative.dependency_fingerprint_from_artifact)
+            if not dep_ctx.artifact_path.exists():
+                raise RuntimeError("The canonical head position has not been computed; the destination used for Maxwell filtering can not be verified without building it")
+            destination = dep_ctx.node.load(dep_ctx, dep_ctx.artifact_path)
+        else:
+            destination = dep_ctx.load()
         if destination is None:
             return {'destination': None}
         # trans files store single precision; match it so that the fingerprint is the same before and after the artifact round-trip
@@ -1075,7 +1081,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         if isinstance(self.pipe, RawMaxwell):
             calibration = ctx.load('maxwell-calibration')
             cross_talk = ctx.load('maxwell-crosstalk')
-            destination = None if self.pipe.kwargs.get('st_only') else ctx.load('canonical-head-position')
+            destination = None if self.pipe.st_only else ctx.load('canonical-head-position')
             if ctx.options['noise']:
                 reference, head_pos = ctx.load('reference'), None
             else:
@@ -1292,6 +1298,8 @@ class CanonicalHeadPositionDerivative(Derivative):
     name = 'canonical-head-position'
     key_fields = ('subject', 'session', 'acquisition')
     cache_suffix = '-trans.fif'  # MNE warns about trans files that do not use this suffix
+    # Depend on actual computed head position
+    dependency_fingerprint_from_artifact = True
 
     def __init__(
             self,

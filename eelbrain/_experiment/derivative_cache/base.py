@@ -530,11 +530,13 @@ class DependencyNode(Generic[T]):
     dependency_fingerprint_from_artifact
         Declare that :meth:`dependency_fingerprint` describes the built
         artifact (e.g. through :attr:`Request.artifact_metadata`) rather than
-        the configuration, so that rebuilding this node does not necessarily
-        change how it appears to its dependents. A read-only cache scan cannot
-        rebuild the artifact to find out, so it keeps the dependents of a stale
-        instance of such a node as unverifiable instead of collecting them as
-        stale (see :meth:`DerivativeRegistry.scan_cache`).
+        the configuration, or that dependents describe this node by its
+        artifact through :meth:`dependency_fingerprint_override`, so that
+        rebuilding this node does not necessarily change how it appears to its
+        dependents. A read-only cache scan cannot rebuild the artifact to find
+        out, so it keeps the dependents of a stale instance of such a node as
+        unverifiable instead of collecting them as stale (see
+        :meth:`DerivativeRegistry.scan_cache`).
     """
 
     name: str

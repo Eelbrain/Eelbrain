@@ -22,6 +22,7 @@ from eelbrain.pipeline import *
 from eelbrain._exceptions import ConfigurationError
 from eelbrain._experiment.covariance import EpochCovariance
 from eelbrain._experiment.derivative_cache import ALLOW_PROTECTED_OVERWRITE, ProtectedArtifactError
+from eelbrain._experiment.derivative_cache.garbage_collection import GCCategory
 from eelbrain._experiment.parc.nodes import AnnotDerivative
 from eelbrain._experiment.pathing import BIDS_ENTITY_KEYS, LOG_DIR, ica_file_path
 from eelbrain._experiment.preprocessing import RawFilterElliptic, ica_input_name, raw_node_name
@@ -1196,6 +1197,27 @@ def test_head_pos_without_chpi(samples_experiment):
     # so the empty room covariance has exactly the rank of the task data, and MNE's header comparison holds
     cov = e.load_cov(cov='emptyroom')
     assert mne.compute_rank(cov, info=raw.info) == mne.compute_rank(cov, rank='info', info=raw.info)
+
+    # A read-only cache scan does not build the canonical head position; with a stale canonical head position, the Maxwell artifacts are kept as unverifiable (their destination might not change)
+    canonical_manifest_path = e._derivatives.resolve('canonical-head-position', state=e.state).manifest_path
+    canonical_manifest = json.loads(canonical_manifest_path.read_text())
+    canonical_manifest['derivative_version'] += 1
+    canonical_manifest_path.write_text(json.dumps(canonical_manifest))
+    report = e._derivatives.scan_cache()
+    categories = {entry.manifest_path: entry.category for entry in report.entries}
+    assert categories[canonical_manifest_path] == GCCategory.DERIVATIVE_VERSION
+    assert categories[manifests['sss']] == GCCategory.UNVERIFIABLE
+    assert categories[manifests['sss_hp']] == GCCategory.UNVERIFIABLE
+    assert not report.errors
+    assert json.loads(canonical_manifest_path.read_text()) == canonical_manifest  # not rebuilt by the scan
+    # without the stored artifact, the destination can not be verified at all
+    canonical_manifest_path.unlink()
+    e._derivatives.resolve('canonical-head-position', state=e.state).artifact_path.unlink()
+    report = e._derivatives.scan_cache()
+    categories = {entry.manifest_path: entry.category for entry in report.entries}
+    assert categories[manifests['sss']] == GCCategory.UNVERIFIABLE
+    assert manifests['sss'] in {path for path, _ in report.errors}
+    assert e._derivatives.resolve(raw_node_name('sss'), state={**e.state, 'raw': 'sss'}, options={'noise': False}).is_valid()  # a regular load rebuilds the canonical head position and finds the destination unchanged
 
 
 @requires_mne_sample_data

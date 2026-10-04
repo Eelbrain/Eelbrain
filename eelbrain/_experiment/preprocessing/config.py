@@ -852,16 +852,20 @@ class RawMaxwell(CachedRawPipe):
         rotation_velocity_limit: float | None = None,
         translation_velocity_limit: float | None = None,
         mean_distance_limit: float | None = None,
+        st_only: bool = False,
         **kwargs,
     ):
         CachedRawPipe.__init__(self, source, cache)
         invalid_kwargs = sorted(set(kwargs).difference(self._valid_kwargs))
         if invalid_kwargs:
             raise TypeError(f"Invalid RawMaxwell keyword argument{'' if len(invalid_kwargs) == 1 else 's'}: {enumeration(invalid_kwargs)}")
+        if st_only:
+            kwargs['st_only'] = True  # fingerprinted as part of kwargs, as before it became an explicit parameter
         self.kwargs = kwargs
+        self.st_only = st_only
         self.bad_condition = bad_condition
         if head_pos:
-            if kwargs.get('st_only'):
+            if st_only:
                 warnings.warn("RawMaxwell(head_pos=True, st_only=True): head movement compensation is applied in the SSS reconstruction, which st_only=True skips; the head positions only enter the temporal projection basis and the output is not compensated", stacklevel=2)
         elif any(limit is not None for limit in (rotation_velocity_limit, translation_velocity_limit, mean_distance_limit)):
             raise ConfigurationError("RawMaxwell: rotation_velocity_limit, translation_velocity_limit and mean_distance_limit require head_pos=True")
