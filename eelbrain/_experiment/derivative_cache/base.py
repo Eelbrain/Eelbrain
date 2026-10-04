@@ -700,6 +700,23 @@ class DependencyNode(Generic[T]):
             A stored (canonicalized) fingerprint of this node; modify in place.
         """
 
+    def normalize_stored_dependencies(self, dependencies: dict[str, Any]) -> None:
+        """Update the stored dependency manifest of this node to the current schema, in place.
+
+        Called by :meth:`DerivativeRegistry.read_manifest` on every dependency
+        manifest of this node read back from disk — in the node's own manifest
+        and in the copies embedded in dependents' manifests. Override to
+        migrate stored dependency entries after a change to
+        :meth:`dependencies` (e.g., drop an edge that turned out not to affect
+        the artifact) without invalidating existing caches. The default does
+        nothing.
+
+        Parameters
+        ----------
+        dependencies
+            The stored dependency manifest of this node, keyed by edge label; modify in place.
+        """
+
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
         """Describe how this node should appear when used as a dependency.
 
@@ -2528,6 +2545,8 @@ class DerivativeRegistry:
         if node is not None and isinstance(manifest.fingerprint, dict):
             node.normalize_stored_fingerprint(manifest.fingerprint)
         if isinstance(manifest.dependencies, dict):
+            if node is not None:
+                node.normalize_stored_dependencies(manifest.dependencies)
             self._normalize_dependency_fingerprints(manifest.dependencies)
         return manifest
 
@@ -2541,6 +2560,8 @@ class DerivativeRegistry:
                 node.normalize_stored_fingerprint(fingerprint)
             sub = entry.get('dependencies')
             if isinstance(sub, dict):
+                if node is not None:
+                    node.normalize_stored_dependencies(sub)
                 self._normalize_dependency_fingerprints(sub)
 
     def write_manifest(self, path: str | Path, manifest: ArtifactManifest) -> None:

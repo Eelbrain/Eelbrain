@@ -1010,7 +1010,8 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         elif isinstance(self.pipe, RawMaxwell):
             deps.append(Dependency('maxwell-calibration'))
             deps.append(Dependency('maxwell-crosstalk'))
-            deps.append(Dependency('canonical-head-position'))
+            if not self.pipe.kwargs.get('st_only'):  # the destination only enters the SSS reconstruction, which st_only skips
+                deps.append(Dependency('canonical-head-position'))
             if ctx.options['noise']:
                 # the task recording whose head frame, digitization and bad channels the empty room takes on
                 deps.append(Dependency(source_node, options={'noise': False, 'preload': False}, label='reference'))
@@ -1032,6 +1033,20 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
                 'bads': self.pipe._collect_bads(ctx, noise=ctx.options['noise']),
             }
         return super().dependency_fingerprint(ctx, view)
+
+    def normalize_stored_dependencies(self, dependencies: dict[str, Any]) -> None:
+        if isinstance(self.pipe, RawMaxwell) and self.pipe.kwargs.get('st_only'):
+            dependencies.pop('canonical-head-position', None)  # recorded during 0.43 development although st_only ignores the destination
+
+    def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, Any] | None:
+        """Record the destination that Maxwell filtering consumes, rather than how it was derived, so that changes to head position tracking only invalidate artifacts whose destination changed"""
+        if dep.name != 'canonical-head-position':
+            return None
+        destination = ctx.load('canonical-head-position')
+        if destination is None:
+            return {'destination': None}
+        # trans files store single precision; match it so that the fingerprint is the same before and after the artifact round-trip
+        return {'destination': destination['trans'].astype(numpy.float32)}
 
     def build(self, ctx: Request) -> mne.io.BaseRaw:
         source_node = raw_node_name(self.pipe.source)
@@ -1060,7 +1075,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         if isinstance(self.pipe, RawMaxwell):
             calibration = ctx.load('maxwell-calibration')
             cross_talk = ctx.load('maxwell-crosstalk')
-            destination = ctx.load('canonical-head-position')
+            destination = None if self.pipe.kwargs.get('st_only') else ctx.load('canonical-head-position')
             if ctx.options['noise']:
                 reference, head_pos = ctx.load('reference'), None
             else:

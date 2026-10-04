@@ -66,6 +66,10 @@ For HPI coils driven at known frequencies (Neuromag), the cHPI signals and line 
 This is controlled by the ``filter_chpi`` parameter, which defaults to ``head_pos`` but can also be enabled on its own, e.g. for a ``st_only`` pipeline.
 Segments with excessive movement can be marked with ``BAD_mov_*`` annotations through the ``rotation_velocity_limit``, ``translation_velocity_limit`` and ``mean_distance_limit`` parameters (see :func:`mne.preprocessing.annotate_movement`).
 
+When a subject has several recordings (tasks or runs) at different head positions, Maxwell filtering moves all of them to a common position (the duration-weighted average, see :meth:`Pipeline.show_head_position_overview`), so that they share one forward solution.
+This requires the full SSS reconstruction: with ``st_only=True``, only the temporal projection is applied and the data keep their original head position.
+Source estimates then require that all recordings of a subject were made at the same head position, so use ``st_only=False`` when head positions differ between recordings.
+
 The following is an example for EEG using band-pass filter and ICA::
 
     class Experiment(Pipeline):

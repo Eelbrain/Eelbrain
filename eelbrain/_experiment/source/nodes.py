@@ -572,7 +572,7 @@ def _check_head_position_alignment(ctx: Request, info: mne.Info) -> None:
         angle, distance = mne.transforms.angle_distance_between_rigid(info['dev_head_t']['trans'], canonical['trans'], angle_units='deg', distance_units='mm')
         # Maxwell filtering towards the canonical position sets dev_head_t exactly; the tolerance only absorbs the float32 precision of transforms in FIFF files
         if distance > 0.01 or angle > 0.001:
-            raise RuntimeError(f"The data head position differs from the canonical session head position by {distance:.1f} mm and {angle:.2f}°. Apply Maxwell filtering before computing source estimates.")
+            raise RuntimeError(f"The data head position differs from the canonical session head position by {distance:.1f} mm and {angle:.2f}°. Apply Maxwell filtering with the full SSS reconstruction (RawMaxwell with st_only=False) before computing source estimates; st_only=True does not move the data.")
 
 
 def _source_dependencies(ctx: Request, sensor_dependency: Dependency) -> tuple[Dependency, ...]:

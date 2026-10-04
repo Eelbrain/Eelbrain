@@ -818,6 +818,7 @@ class RawMaxwell(CachedRawPipe):
     Empty room recordings are prepared with :func:`mne.preprocessing.maxwell_filter_prepare_emptyroom` before filtering: the device-to-head transform, digitization and bad channels of the task recording are injected, so that the empty room is filtered in the same coordinate frame, with the same origin and destination, and retains the same SSS components as the task recording (the ``'in'`` regularization selects components from the sensor geometry alone). The noise covariance therefore spans the same subspace as the data. Bad channels are the union of the task recording's and the empty room's own.
     Flat channels are automatically marked as bad by :func:`mne.preprocessing.find_bad_channels_maxwell`.
     :meth:`Pipeline.show_head_position_overview` marks recordings with continuous HPI with ``†``; those are the recordings that benefit from ``head_pos=True``.
+    When a subject has several recordings at different head positions, the SSS reconstruction moves them all to a common position (the duration-weighted average) so that they share one forward solution. With ``st_only=True``, only the temporal projection is applied and the data keep their original head position; source estimates then require all recordings of a subject to share one head position.
     """
 
     _bad_chs_affect_cache = True
