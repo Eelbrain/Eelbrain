@@ -2566,6 +2566,7 @@ class DerivativeRegistry:
         for entry in dependencies.values():
             if not isinstance(entry, dict):
                 continue
+            entry.pop('kind', None)  # recorded before 0.43 and ignored since; dropped so that a mismatch report names the actual difference
             node = self._nodes.get(entry.get('name'))
             fingerprint = entry.get('fingerprint')
             if node is not None and isinstance(fingerprint, dict):
