@@ -554,8 +554,8 @@ class Pipeline(StateModel):
         self._derivatives.register(PredictorInput(self.root, self.predictors))
         self._derivatives.register(TRFDerivative(self.root, self._estimators, self.predictors, self.stim_var, self._raw))
         self._derivatives.register(TRFDatasetDerivative(self.root, self._estimators, self._epochs))
-        self._derivatives.register(TRFGroupDatasetDerivative(self._mri_subjects, self._variables, self._groups))
-        self._derivatives.register(TRFModelTestDerivative(self.tests, self._groups))
+        self._derivatives.register(TRFGroupDatasetDerivative(self._estimators, self._mri_subjects, self._variables, self._groups))
+        self._derivatives.register(TRFModelTestDerivative(self._estimators, self.tests, self._groups))
 
         # --- Sensor-space: events → epochs → evoked ---
         event_factors = sequence_arg(f'{self.__class__.__name__}.event_factors', self.event_factors, allow_none=False, sequence_type=frozenset)

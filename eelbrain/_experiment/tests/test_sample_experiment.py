@@ -2225,6 +2225,33 @@ def test_load_trf(samples_trf_experiment):
 
 
 @requires_mne_sample_data
+def test_trf_ncrf_dependencies(samples_trf_experiment):
+    "NCRF reads sensor-space epochs, whose output depends on the EEG 'reference' state; like source localization, it pins reference=''"
+    from eelbrain._experiment.tests.sample_experiment import SampleTRF
+
+    class Experiment(SampleTRF):
+        estimators = {**SampleTRF.estimators, 'ncrf': NCRF()}
+
+    e = Experiment(samples_trf_experiment().root)
+    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40', inv='')
+    options = e._trf_options('env', 0., 0.1, 'ncrf', None, None, False)
+    ctx = e._resolve_derivative('trf', options=options)
+    # every edge satisfies key coverage (used to raise RuntimeError for the 'epochs' edge)
+    deps = {dep.label or dep.name: dep for dep, _ in e._derivatives._dependency_handles(ctx)}
+    assert {'fwd', 'cov'} <= set(deps)
+    assert deps['response'].name == 'epochs'
+    assert deps['response'].state == {'reference': ''}
+    assert 'reference' not in ctx.node._get_key_fields(ctx)
+    # boosting on sensor data is keyed on the reference
+    boosting_ctx = e._resolve_derivative('trf', options=e._trf_options('env', 0., 0.1, 'boosting', None, None, False))
+    assert 'reference' in boosting_ctx.node._get_key_fields(boosting_ctx)
+    # the dataset nodes key the estimator's extra input fields (dependency_tree validates every edge)
+    e._derivatives.dependency_tree('trf-group-dataset', state={**e.state, 'group': 'all'}, options=options)
+    options = e._trf_options('env > 0', 0., 0.1, 'ncrf', None, None, False, comparison=True)
+    e._derivatives.dependency_tree('trf-model-test', state={**e.state, 'group': 'all'}, options={**options, 'metric': 'explained_variance'})
+
+
+@requires_mne_sample_data
 def test_load_trf_term_lags(samples_trf_experiment):
     "Per-term lag windows through model-string slice syntax"
     from eelbrain import BoostingResult

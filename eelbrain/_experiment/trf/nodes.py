@@ -260,12 +260,11 @@ class TRFDerivative(Derivative[object]):
         # field the build may read: 'inv' is always read (to pick the space).
         fields = ('subject', 'session', 'acquisition', 'raw', 'epoch', 'epoch_rejection', 'inv')
         est = self.estimators[ctx.options['estimator']]
-        if ctx.state['inv']:  # non-empty inverse → source space
+        if ctx.state['inv']:  # non-empty inverse → source space ('epochs-stc' pins reference='')
             fields += ('cov', 'mrisubject', 'src', 'parc')
-        if est.extra_input_fields:
-            fields += est.extra_input_fields
-        else:
+        elif not est.requires_sensor_space:  # sensor-space 'epochs' are keyed on the EEG reference; an estimator that localizes internally pins reference='' (see dependencies)
             fields += ('reference',)
+        fields += est.extra_input_fields  # e.g., NCRF: sensor data + forward solution
         return tuple(fields)
 
     def fingerprint(self, ctx: Request) -> dict[str, object]:
@@ -283,6 +282,7 @@ class TRFDerivative(Derivative[object]):
         est = self.estimators[ctx.options['estimator']]
 
         # M/EEG response: sensor (inv='') vs source space
+        state = None
         if ctx.state['inv']:  # source space
             node = 'epochs-stc'
             option_kwargs = {}
@@ -292,8 +292,10 @@ class TRFDerivative(Derivative[object]):
                 'data': ctx.options['data'],  # resolved sensor kind
                 'interpolate_bads': est.interpolate_bads,
             }
+            if est.requires_sensor_space:  # localizes internally: EEG referencing is part of source modeling, as for 'epochs-stc'
+                state = {'reference': ''}
         options = ctx.options_for(node, 'samplingrate', 'decim', **option_kwargs)
-        deps = [Dependency(node, label='response', options=options)]
+        deps = [Dependency(node, label='response', state=state, options=options)]
 
         for extra in est.extra_inputs:
             deps.append(Dependency(extra))
@@ -523,6 +525,7 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
         fields = ['subject', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'reference', 'raw', 'inv']
         if ctx.state['inv']:
             fields += ['cov', 'src', 'parc', 'adjacency', 'mrisubject', 'common_brain']
+        fields += self.estimators[ctx.options['estimator']].extra_input_fields
         return tuple(fields)
 
     def validate_options(self, ctx: Request) -> None:
@@ -589,6 +592,9 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
 
     Parameters
     ----------
+    estimators
+        Mapping of estimator name to :class:`Estimator` definition (the
+        :attr:`Pipeline.estimators` attribute).
     mri_subjects
         Mapping of ``mri`` value to subject→MRI-subject (for per-subject state).
     variables
@@ -613,10 +619,12 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
 
     def __init__(
             self,
+            estimators: dict[str, Estimator],
             mri_subjects: dict[str, dict[str, str]],
             variables: Variables,
             groups: dict[str, tuple[str, ...]],
     ):
+        self.estimators = estimators
         self.mri_subjects = mri_subjects
         self.variables = variables
         self.groups = groups
@@ -625,6 +633,7 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
         fields = ['group', 'mri', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'reference', 'raw', 'inv']
         if ctx.state['inv']:
             fields += ['cov', 'src', 'parc', 'adjacency', 'mrisubject', 'common_brain']
+        fields += self.estimators[ctx.options['estimator']].extra_input_fields
         return tuple(fields)
 
     def fingerprint(self, ctx: Request) -> dict[str, object]:
@@ -684,6 +693,9 @@ class TRFModelTestDerivative(Derivative[Any]):
 
     Parameters
     ----------
+    estimators
+        Mapping of estimator name to :class:`Estimator` definition (the
+        :attr:`Pipeline.estimators` attribute).
     tests
         Configured :attr:`Pipeline.tests` definitions.
     groups
@@ -711,9 +723,11 @@ class TRFModelTestDerivative(Derivative[Any]):
 
     def __init__(
             self,
+            estimators: dict[str, Estimator],
             tests: dict[str, Test],
             groups: dict[str, tuple[str, ...]],
     ):
+        self.estimators = estimators
         self.tests = tests
         self.groups = groups
 
@@ -721,6 +735,7 @@ class TRFModelTestDerivative(Derivative[Any]):
         fields = ['group', 'mri', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'reference', 'raw', 'inv']
         if ctx.state['inv']:
             fields += ['cov', 'src', 'parc', 'adjacency', 'mrisubject', 'common_brain']
+        fields += self.estimators[ctx.options['estimator']].extra_input_fields
         return tuple(fields)
 
     def validate_options(self, ctx: Request) -> None:
