@@ -625,14 +625,12 @@ class SharedToolsMenu:  # Frame mixin
             argsort = np.argsort(abs_comp)
             if abs_comp[argsort[-1]] > abs_comp[argsort[-2]] * channel_ratio:
                 ch_name = self.doc.epochs_ndvar.sensor.names[argsort[-1]]
-                # Explained variance
-                explained_desc = self.doc.explained_variance(i, format=True)
                 # Loading by epoch
                 max_loadings = self.doc.sources[:, i].extrema('time').abs().x
                 # Noise relative to the signal in the channel
                 variance_fraction = self.doc.channel_variance_fraction(i, ch_name)
                 # Store
-                candidates.append([i, ch_name, max_loadings, explained_desc, variance_fraction])
+                candidates.append([i, ch_name, max_loadings, variance_fraction])
         candidates = sorted(candidates, key=itemgetter(-1), reverse=True)
 
         # format output
@@ -646,7 +644,7 @@ class SharedToolsMenu:  # Frame mixin
                 continue
             figure = matplotlib.figure.Figure(figsize=(4, 3))
             axes = figure.add_axes((0.1, 0.1, .7, 0.8))
-            p = plot.Topomap(nc, axes=axes, vmax=1, interpolation='linear')
+            p = plot.Topomap(nc, axes=axes, vmax=1, interpolation='linear', axtitle=desc)
             p.plot_colorbar(right_of=axes, ticks=3)
             image = fmtxt.Image(f'Neighbor correlation {desc}', 'jpg')
             canvas = FigureCanvasAgg(figure)
@@ -658,8 +656,9 @@ class SharedToolsMenu:  # Frame mixin
 
         # Candidate components
         section = doc.add_section("Components loading on a single channel")
-        section.add_paragraph(f"Components whose largest channel weight exceeds the second largest by a factor of {channel_ratio:g}, ranked by the share of the channel's variance that is due to the component (i.e., likely due to channel-specific noise). The histogram shows the distribution across epochs of the component's peak loading: a permanently defective channel loads on every epoch, whereas an intermittent artifact concentrates near zero with a few large outliers and may be better addressed through epoch rejection. The last column shows the share of the channel's variance that is due to the component, along with the channel's neighbor correlation.")
-        for component, ch_name, max_loadings, explained_desc, variance_fraction in candidates:
+        section.add_paragraph([f"Components whose largest channel weight exceeds the second largest by a factor of {channel_ratio:g}, ranked by the share of the channel's variance that is due to the component (i.e., likely due to channel-specific noise). The histogram shows the distribution across epochs of the component's peak loading: a permanently defective channel loads on every epoch, whereas an intermittent artifact concentrates near zero with a few large outliers and may be better addressed through epoch rejection. ", fmtxt.symbol('Var', 'ch'), " is the share of the channel's variance that is due to the component, and ", fmtxt.symbol('R', 'n'), " is the channel's neighbor correlation."])
+        table = fmtxt.Table('lll', rules=False)
+        for component, ch_name, max_loadings, variance_fraction in candidates:
             # plot component map
             figure = matplotlib.figure.Figure(figsize=(1, 1))
             canvas = FigureCanvasAgg(figure)
@@ -670,10 +669,9 @@ class SharedToolsMenu:  # Frame mixin
 
             # Text desc
             component_link = fmtxt.Link(f"#{component}", f'component:{component}')
-            desc = fmtxt.FMText([ch_name, fmtxt.linebreak, component_link, fmtxt.linebreak, explained_desc])
-            diagnostics_desc = fmtxt.FMText([f"{variance_fraction:.0%} of channel variance", fmtxt.linebreak, f"Neighbor correlation: {nc_before[ch_name]:.2f}"])
-            table = fmtxt.Table('llll', rules=False)
-            section.add_paragraph(table)
+            variance_eq = fmtxt.eq('Var', 100 * variance_fraction, 'ch', fmt='%.0f%%')
+            nc_eq = fmtxt.eq('R', nc_before[ch_name], 'n', fmt='%.2f')
+            desc = fmtxt.FMText([ch_name, fmtxt.linebreak, component_link, fmtxt.linebreak, variance_eq, fmtxt.linebreak, nc_eq])  # , css={'width': '7em'})
 
             # Loadings
             binrange = [0, max_loadings.max()]
@@ -684,7 +682,8 @@ class SharedToolsMenu:  # Frame mixin
             histogram = fmtxt.Image(f'#{component}', 'jpg')
             canvas.print_jpeg(histogram)
 
-            table.cells(image, desc, histogram, diagnostics_desc)
+            table.cells(image, desc, histogram)
+        section.add_paragraph(table)
 
         InfoFrame(self, "Bad Channels", doc, 500)
 
