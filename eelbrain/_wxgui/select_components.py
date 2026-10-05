@@ -259,12 +259,17 @@ class Document(FileDocument):
         self.epoch_labels = tuple(labels)
 
         # properties which are not modified by ICA
-        # global mean
+        # global mean and component maps in data units (pre-whitening reverted)
         if ica.noise_cov is None:  # revert standardization
             global_mean = ica.pca_mean_ * ica.pre_whitener_[:, 0]
+            mixing_raw = mixing_data * ica.pre_whitener_[:, 0]
         else:
-            global_mean = np.dot(linalg.pinv(ica.pre_whitener_), ica.pca_mean_)
+            pre_whitener_inv = linalg.pinv(ica.pre_whitener_)
+            global_mean = np.dot(pre_whitener_inv, ica.pca_mean_)
+            mixing_raw = np.dot(mixing_data, pre_whitener_inv.T)
         self.global_mean = NDVar(global_mean[picks], (self.epochs_ndvar.sensor,))
+        # channel data ≈ mixing.T @ sources + global_mean (up to the residual PCA components)
+        self.mixing = NDVar(mixing_raw[:, picks], (ic_dim, self.epochs_ndvar.sensor), 'mixing')
         # pre-ICA signal range, normalized so it displays at a fixed scale.
         primary_ch_type = components_by_type[0][0]
         self.pre_ica_range_scale = 2 * CH_TYPE_DEFAULT_VLIM_SI[primary_ch_type]
@@ -305,6 +310,20 @@ class Document(FileDocument):
             else:
                 return ', '.join([f'{k}: {v:.1%}' for k, v in desc_dict.items()])
         return desc_dict
+
+    def channel_variance_fraction(self, component: int, ch_name: str) -> float:
+        """Share of the variance of a channel that is due to one component
+
+        Parameters
+        ----------
+        component
+            Index of the component.
+        ch_name
+            Name of the channel.
+        """
+        i_ch = self.epochs_ndvar.sensor.channel_idx[ch_name]
+        contribution = self.mixing.x[component, i_ch] * self.sources.x[:, component, :]
+        return contribution.var() / self.epochs_ndvar.x[:, i_ch, :].var()
 
 
 class Model(FileModel):
@@ -608,11 +627,12 @@ class SharedToolsMenu:  # Frame mixin
                 ch_name = self.doc.epochs_ndvar.sensor.names[argsort[-1]]
                 # Explained variance
                 explained_desc = self.doc.explained_variance(i, format=True)
-                explained_variance = max(self.doc.explained_variance(i).values())
                 # Loading by epoch
                 max_loadings = self.doc.sources[:, i].extrema('time').abs().x
+                # Noise relative to the signal in the channel
+                variance_fraction = self.doc.channel_variance_fraction(i, ch_name)
                 # Store
-                candidates.append([i, ch_name, max_loadings, explained_desc, explained_variance])
+                candidates.append([i, ch_name, max_loadings, explained_desc, variance_fraction])
         candidates = sorted(candidates, key=itemgetter(-1), reverse=True)
 
         # format output
@@ -638,8 +658,8 @@ class SharedToolsMenu:  # Frame mixin
 
         # Candidate components
         section = doc.add_section("Components loading on a single channel")
-        section.add_paragraph(f"Components whose largest channel weight exceeds the second largest by a factor of {channel_ratio:g}, ranked by explained variance. The histogram shows the distribution across epochs of the component's peak loading: a permanently defective channel loads on every epoch, whereas an intermittent artifact concentrates near zero with a few large outliers and is better addressed through epoch rejection.")
-        for component, ch_name, max_loadings, explained_desc, _ in candidates:
+        section.add_paragraph(f"Components whose largest channel weight exceeds the second largest by a factor of {channel_ratio:g}, ranked by the share of the channel's variance that is due to the component (i.e., likely due to channel-specific noise). The histogram shows the distribution across epochs of the component's peak loading: a permanently defective channel loads on every epoch, whereas an intermittent artifact concentrates near zero with a few large outliers and may be better addressed through epoch rejection. The last column shows the share of the channel's variance that is due to the component, along with the channel's neighbor correlation.")
+        for component, ch_name, max_loadings, explained_desc, variance_fraction in candidates:
             # plot component map
             figure = matplotlib.figure.Figure(figsize=(1, 1))
             canvas = FigureCanvasAgg(figure)
@@ -651,7 +671,8 @@ class SharedToolsMenu:  # Frame mixin
             # Text desc
             component_link = fmtxt.Link(f"#{component}", f'component:{component}')
             desc = fmtxt.FMText([ch_name, fmtxt.linebreak, component_link, fmtxt.linebreak, explained_desc])
-            table = fmtxt.Table('lll', rules=False)
+            diagnostics_desc = fmtxt.FMText([f"{variance_fraction:.0%} of channel variance", fmtxt.linebreak, f"Neighbor correlation: {nc_before[ch_name]:.2f}"])
+            table = fmtxt.Table('llll', rules=False)
             section.add_paragraph(table)
 
             # Loadings
@@ -663,7 +684,7 @@ class SharedToolsMenu:  # Frame mixin
             histogram = fmtxt.Image(f'#{component}', 'jpg')
             canvas.print_jpeg(histogram)
 
-            table.cells(image, desc, histogram)
+            table.cells(image, desc, histogram, diagnostics_desc)
 
         InfoFrame(self, "Bad Channels", doc, 500)
 
@@ -2162,6 +2183,9 @@ def _find_bad_channels_help() -> fmtxt.Section:
     section = doc.add_section("Channels missing from component maps")
     section.add_paragraph("A channel that does not record any signal appears as a gap in the component maps: its weight is ~0 where the surrounding channels carry a strong field. A weight of ~0 in a single component is not diagnostic, because the channel could be located on the null line of a polarity reversal. Two properties make it diagnostic: the weight is ≤ ~0 in multiple components that reflect realistic field patterns, and it is ≤ ~0 while the surrounding channels all have the same polarity.")
     section.add_paragraph("A channel that is already excluded as bad is not part of the ICA decomposition and can not be evaluated. An empty result does therefore not imply that all previously excluded channels were rightly excluded. Conversely, acting on a result means marking the channel as bad and re-computing the ICA decomposition.")
+
+    section = doc.add_section("Components loading on a single channel")
+    section.add_paragraph("A component whose map is dominated by a single channel usually reflects noise in that channel rather than a field pattern. Because the component's unmixing weights predict the channel from all other channels, rejecting it amounts to interpolating the channel, which adds no independent information for source estimation. The choice is therefore between keeping the channel with its noise and marking it as bad. The share of the channel's variance that is due to the component indicates how strong the noise is compared to the signal in the channel: stationary noise with a small share is accounted for by the noise covariance in source estimation, whereas a channel dominated by noise, or by intermittent noise, is better marked as bad.")
 
     section = doc.add_section("Settings")
     for label, description in _FIND_BAD_CHANNELS_HELP.values():

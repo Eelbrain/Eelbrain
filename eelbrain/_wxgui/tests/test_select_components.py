@@ -3,6 +3,10 @@ from os.path import join
 from warnings import catch_warnings, filterwarnings
 
 import mne
+import numpy as np
+from numpy.testing import assert_allclose
+import pytest
+
 from eelbrain import gui, load
 from eelbrain.testing import gui_test, TempDir, requires_mne_testing_data
 from eelbrain._wxgui import ID
@@ -39,7 +43,19 @@ def test_select_components():
     assert ica.exclude == []
 
     # tools
-    frame.ShowBadChannels()
+    frame.ShowBadChannels(channel_ratio=1.)  # every component is a candidate: renders the diagnostics table
+    # mixing in data units reconstructs the channel data from the sources
+    doc = frame.doc
+    ica_full = mne.preprocessing.read_ica(path)
+    applied = doc.as_ndvar(ica_full.apply(ds['epochs'].copy(), n_pca_components=ica_full.n_components_, verbose=False))
+    reconstruction = np.einsum('kc,nkt->nct', doc.mixing.x, doc.sources.x) + doc.global_mean.x[:, None]
+    assert_allclose(reconstruction, applied.x, rtol=1e-6, atol=1e-6 * np.abs(applied.x).max())
+    # share of a channel's variance due to one component
+    ch_name = doc.epochs_ndvar.sensor.names[5]
+    variance_fraction = doc.channel_variance_fraction(2, ch_name)
+    contribution = doc.mixing[2, ch_name] * doc.sources[:, 2]
+    assert variance_fraction == pytest.approx(contribution.var() / doc.epochs_ndvar.sub(sensor=ch_name).var())
+    assert 0 <= variance_fraction
     dlg = FindBadChannelsDialog(frame, frame.doc.components_by_type)
     assert [ch_type for ch_type, _, _ in dlg.type_rows] == [ch_type for ch_type, _ in frame.doc.components_by_type]
     ch_type, components = frame.doc.components_by_type[0]
