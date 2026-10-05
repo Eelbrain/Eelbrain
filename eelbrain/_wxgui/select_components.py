@@ -325,6 +325,80 @@ class Document(FileDocument):
         contribution = self.mixing.x[component, i_ch] * self.sources.x[:, component, :]
         return contribution.var() / self.epochs_ndvar.x[:, i_ch, :].var()
 
+    def channel_gaps(
+            self,
+            smoothness: dict[str, float] = None,
+            gap_ratio: float = GAP_RATIO_DEFAULT,
+            min_components: int = MIN_COMPONENTS_DEFAULT,
+            min_consistency: float = CONSISTENCY_DEFAULT,
+    ) -> tuple[list[tuple[NDVar, ChannelGapResult]], list[tuple[str, str]]]:
+        """Channels that are missing from component maps (see :func:`find_channel_gaps`)
+
+        Parameters
+        ----------
+        smoothness
+            ``{ch_type: threshold}`` for the channel types to analyze; channel types that are
+            missing are skipped. If unspecified, the default types and thresholds are used.
+        gap_ratio
+            Maximum relative weight for a channel to count as a gap.
+        min_components
+            Minimum number of components in which a channel needs to be a gap.
+        min_consistency
+            Minimum fraction of the testable components in which a channel needs to be a gap.
+
+        Returns
+        -------
+        gap_results
+            ``(components, result)`` for each channel type that was analyzed.
+        skipped
+            ``(ch_type, reason)`` for each channel type that was not analyzed.
+        """
+        if smoothness is None:
+            smoothness = {ch_type: SMOOTHNESS_DEFAULT[ch_type] for ch_type, _ in self.components_by_type if CH_TYPE_DEFAULT.get(ch_type)}
+        source_variance = self.sources.x.var(axis=(0, 2))
+        gap_results = []
+        skipped = []
+        for ch_type, components in self.components_by_type:
+            if ch_type not in smoothness:
+                reason = "not selected; gradiometer maps are spatial derivatives and are not spatially smooth" if ch_type == 'grad' else "not selected"
+                skipped.append((ch_type, reason))
+                continue
+            try:
+                result = find_channel_gaps(components, source_variance, smoothness[ch_type], gap_ratio, min_components, min_consistency, ch_type)
+            except RuntimeError as error:  # sensor adjacency undefined
+                skipped.append((ch_type, str(error)))
+            else:
+                gap_results.append((components, result))
+        return gap_results, skipped
+
+    def single_channel_components(self, channel_ratio: float = _CHANNEL_RATIO_DEFAULT) -> list[tuple[int, str, np.ndarray, float]]:
+        """Components whose map loads predominantly on a single channel (likely channel-specific noise)
+
+        Parameters
+        ----------
+        channel_ratio
+            Minimum ratio between the largest and the second largest channel weight in a
+            component map.
+
+        Returns
+        -------
+        candidates
+            ``(component, ch_name, max_loadings, variance_fraction)`` for each qualifying
+            component, sorted by ``variance_fraction``, the share of the channel's variance
+            that is due to the component (see :meth:`channel_variance_fraction`), descending.
+            ``max_loadings`` is the component's peak loading in each epoch.
+        """
+        candidates = []
+        for i, component_map in enumerate(self.components):
+            abs_comp = abs(component_map.x)
+            argsort = np.argsort(abs_comp)
+            if abs_comp[argsort[-1]] > abs_comp[argsort[-2]] * channel_ratio:
+                ch_name = self.epochs_ndvar.sensor.names[argsort[-1]]
+                max_loadings = self.sources[:, i].extrema('time').abs().x
+                variance_fraction = self.channel_variance_fraction(i, ch_name)
+                candidates.append((i, ch_name, max_loadings, variance_fraction))
+        return sorted(candidates, key=itemgetter(-1), reverse=True)
+
 
 class Model(FileModel):
     """Manages a document with its history"""
@@ -593,8 +667,6 @@ class SharedToolsMenu:  # Frame mixin
         """
         import seaborn  # lazy: pulls in ipywidgets/IPython/statsmodels, ~10% of GUI import time
 
-        if smoothness is None:
-            smoothness = {ch_type: SMOOTHNESS_DEFAULT[ch_type] for ch_type, _ in self.doc.components_by_type if CH_TYPE_DEFAULT.get(ch_type)}
         nc_before = neighbor_correlation(concatenate(self.doc.epochs_ndvar))
         if self.doc.accept.all():
             nc_after = None
@@ -603,35 +675,10 @@ class SharedToolsMenu:  # Frame mixin
             nc_after = neighbor_correlation(concatenate(epochs))
 
         # Find channels that are missing from component maps
-        source_variance = self.doc.sources.x.var(axis=(0, 2))
-        gap_results = []  # [(components, result), ...]
-        skipped = []  # [(ch_type, reason), ...]
-        for ch_type, components in self.doc.components_by_type:
-            if ch_type not in smoothness:
-                reason = "not selected; gradiometer maps are spatial derivatives and are not spatially smooth" if ch_type == 'grad' else "not selected"
-                skipped.append((ch_type, reason))
-                continue
-            try:
-                result = find_channel_gaps(components, source_variance, smoothness[ch_type], gap_ratio, min_components, min_consistency, ch_type)
-            except RuntimeError as error:  # sensor adjacency undefined
-                skipped.append((ch_type, str(error)))
-            else:
-                gap_results.append((components, result))
+        gap_results, skipped = self.doc.channel_gaps(smoothness, gap_ratio, min_components, min_consistency)
 
         # Find ICA components that load on a single channel
-        candidates = []
-        for i, component_map in enumerate(self.doc.components):
-            abs_comp = abs(component_map.x)
-            argsort = np.argsort(abs_comp)
-            if abs_comp[argsort[-1]] > abs_comp[argsort[-2]] * channel_ratio:
-                ch_name = self.doc.epochs_ndvar.sensor.names[argsort[-1]]
-                # Loading by epoch
-                max_loadings = self.doc.sources[:, i].extrema('time').abs().x
-                # Noise relative to the signal in the channel
-                variance_fraction = self.doc.channel_variance_fraction(i, ch_name)
-                # Store
-                candidates.append([i, ch_name, max_loadings, variance_fraction])
-        candidates = sorted(candidates, key=itemgetter(-1), reverse=True)
+        candidates = self.doc.single_channel_components(channel_ratio)
 
         # format output
         doc = fmtxt.Section("Bad Channels")

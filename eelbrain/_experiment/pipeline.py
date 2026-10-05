@@ -1999,11 +1999,7 @@ class Pipeline(StateModel):
             raw.resample(samplingrate)
 
         if ndvar:
-            source_pipe = self._raw.root_source_pipe(raw_name)
-            data = DataSpec('sensor')
-            data_kind = data.find_ndvar_channel_types(raw.info)[0]
-            sysname = source_pipe._get_sysname(raw.info, self.get('subject'), data_kind)
-            adjacency = source_pipe._get_adjacency(data_kind)
+            sysname, adjacency = self._ndvar_sensor_args(raw_name, raw.info, self.get('subject'))
             raw = load.mne.raw_ndvar(raw, sysname=sysname, adjacency=adjacency)
 
         return raw
@@ -2379,6 +2375,27 @@ class Pipeline(StateModel):
             self.make_bad_channels(bad_chs)
         return full_nc, bad_chs
 
+    def _ndvar_sensor_args(
+            self,
+            raw_name: str,
+            info: mne.Info,
+            subject: str,
+    ) -> tuple[str | None, str | Sequence | None]:
+        """``(sysname, adjacency)`` for converting data from a raw step to :class:`NDVar` (see :func:`load.mne.sensor_dim`)
+
+        Parameters
+        ----------
+        raw_name
+            Raw step the data comes from; the sensor system is defined by its source.
+        info
+            Measurement info of the data.
+        subject
+            Subject the data belongs to (the sensor system can vary by subject).
+        """
+        source_pipe = self._raw.root_source_pipe(raw_name)
+        data_kind = DataSpec('sensor').find_ndvar_channel_types(info)[0]
+        return source_pipe._get_sysname(info, subject, data_kind), source_pipe._get_adjacency(data_kind)
+
     @suppress_mne_warning
     def make_ica_selection(
             self,
@@ -2470,11 +2487,7 @@ class Pipeline(StateModel):
             info = ds['epochs'].info
             decim = None
             display_data = ds
-        data = DataSpec('sensor')
-        data_kind = data.find_ndvar_channel_types(info)[0]
-        source_pipe = self._raw.root_source_pipe(ica_name)
-        sysname = source_pipe._get_sysname(info, subject, data_kind)
-        adjacency = source_pipe._get_adjacency(data_kind)
+        sysname, adjacency = self._ndvar_sensor_args(ica_name, info, subject)
         try:
             frame = gui.select_components(path, display_data, sysname, adjacency, decim, debug, events=labeled_events)
         except DimensionMismatchError as error:
@@ -2519,11 +2532,7 @@ class Pipeline(StateModel):
         channels_path = bads_ctx.node.path(bads_ctx)
         # Labeled events for the timeline
         events = self._load_derivative('labeled-events')
-        # Sensor system info
-        source_pipe = self._raw.root_source_pipe(raw_name)
-        data_kind = DataSpec('sensor').find_ndvar_channel_types(raw_data.info)[0]
-        sysname = source_pipe._get_sysname(raw_data.info, subject, data_kind)
-        adjacency = source_pipe._get_adjacency(data_kind)
+        sysname, adjacency = self._ndvar_sensor_args(raw_name, raw_data.info, subject)
         return gui.select_channels(raw_data, channels_path, events=events, sysname=sysname, adjacency=adjacency)
 
     def make_ica(self, **state) -> Path:

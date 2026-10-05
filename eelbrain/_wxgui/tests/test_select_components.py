@@ -56,6 +56,20 @@ def test_select_components():
     contribution = doc.mixing[2, ch_name] * doc.sources[:, 2]
     assert variance_fraction == pytest.approx(contribution.var() / doc.epochs_ndvar.sub(sensor=ch_name).var())
     assert 0 <= variance_fraction
+    # components loading on a single channel, ranked by that share
+    candidates = doc.single_channel_components(channel_ratio=1.)
+    assert len(candidates) == len(doc.components)
+    assert all(a[-1] >= b[-1] for a, b in zip(candidates, candidates[1:]))
+    for component, ch_name, max_loadings, variance_fraction in candidates:
+        assert ch_name == doc.epochs_ndvar.sensor.names[np.argmax(abs(doc.components[component].x))]
+        assert variance_fraction == doc.channel_variance_fraction(component, ch_name)
+        assert max_loadings.shape == (len(doc.epochs_ndvar),)
+    assert doc.single_channel_components(channel_ratio=1000.) == []
+    # channels missing from component maps, with the default channel types
+    gap_results, skipped = doc.channel_gaps()
+    assert [result.ch_type for _, result in gap_results] == ['mag', 'eeg']
+    assert [ch_type for ch_type, _ in skipped] == ['grad']
+    assert [result.ch_type for _, result in doc.channel_gaps({'grad': 0.6})[0]] == ['grad']
     dlg = FindBadChannelsDialog(frame, frame.doc.components_by_type)
     assert [ch_type for ch_type, _, _ in dlg.type_rows] == [ch_type for ch_type, _ in frame.doc.components_by_type]
     ch_type, components = frame.doc.components_by_type[0]
