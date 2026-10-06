@@ -670,15 +670,29 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             self,
             ctx: Request,
             tasks: tuple[str, ...],
+            preload: bool = True,
     ) -> mne.io.BaseRaw:
+        """Load the source recordings of ``tasks`` concatenated into one raw
+
+        Parameters
+        ----------
+        ctx
+            Resolved request for this ICA.
+        tasks
+            Tasks whose recordings to concatenate.
+        preload
+            Load the data into memory. With ``False``, cached recordings stay
+            file-backed, so that a consumer that decimates (e.g. the component
+            selection GUI) never holds the full-rate data in memory.
+        """
         bad_channels = self._load_bad_channels(ctx)
         states = self._source_states(ctx, tasks)
         if not states:
             raise FileMissingError(f"No source recordings found to estimate ICA {self.raw_name!r} ({ctx.state['subject']=}, session={ctx.state.get('session')!r}).")
-        raw = load_raw_dependency(ctx, self.pipe.source, preload=True, state=states[0])
+        raw = load_raw_dependency(ctx, self.pipe.source, preload=preload, state=states[0])
         raw.info['bads'] = bad_channels
         for state in states[1:]:
-            raw_ = load_raw_dependency(ctx, self.pipe.source, preload=True, state=state)
+            raw_ = load_raw_dependency(ctx, self.pipe.source, preload=preload, state=state)
             raw_.info['bads'] = bad_channels
             raw.append(raw_)
         return raw

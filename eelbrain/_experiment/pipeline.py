@@ -2452,7 +2452,7 @@ class Pipeline(StateModel):
             else:
                 task = sequence_arg('task', task)
             ctx = self._resolve_derivative(ica_input_name(ica_name))
-            raw = ctx.node.load_concatenated_source_raw(ctx, task)
+            raw = ctx.node.load_concatenated_source_raw(ctx, task, preload=False)
             decim = decim_param(samplingrate, decim, None, raw.info, minimal=True)
             info = raw.info
             display_data = raw
