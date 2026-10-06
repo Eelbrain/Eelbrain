@@ -1150,7 +1150,8 @@ class PipelineFrame(EelbrainFrame):
         sysname, adjacency = self._pipeline._ndvar_sensor_args(raw_name, raw.info, ctx.state['subject'])
         doc = ICADocument(spec.path, raw, sysname, adjacency)
         gap_results, _ = doc.channel_gaps()
-        return bad_channel_evidence(doc.single_channel_components(), gap_results, doc.flat_channels())
+        flat = doc.flat_channels()
+        return bad_channel_evidence(doc.single_channel_components(flat=flat), gap_results, flat)
 
     def _show_bad_channel_summary(
             self,

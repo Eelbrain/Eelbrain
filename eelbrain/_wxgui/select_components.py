@@ -401,7 +401,11 @@ class Document(FileDocument):
                 gap_results.append((components, result))
         return gap_results, skipped
 
-    def single_channel_components(self, channel_ratio: float = _CHANNEL_RATIO_DEFAULT) -> list[tuple[int, str, np.ndarray, float]]:
+    def single_channel_components(
+            self,
+            channel_ratio: float = _CHANNEL_RATIO_DEFAULT,
+            flat: Sequence[tuple[str, str]] = None,
+    ) -> list[tuple[int, str, float]]:
         """Components whose map loads predominantly on a single channel (likely channel-specific noise)
 
         Parameters
@@ -409,19 +413,22 @@ class Document(FileDocument):
         channel_ratio
             Minimum ratio between the largest and the second largest channel weight in a
             component map.
+        flat
+            Flat channels, as returned by :meth:`flat_channels` (computed if unspecified).
 
         Returns
         -------
         candidates
-            ``(component, ch_name, max_loadings, variance_fraction)`` for each qualifying
-            component, sorted by ``variance_fraction``, the share of the channel's variance
-            that is due to the component (see :meth:`channel_variance_fraction`), descending.
-            ``max_loadings`` is the component's peak loading in each epoch. The weights are
+            ``(component, ch_name, variance_fraction)`` for each qualifying component, sorted
+            by ``variance_fraction``, the share of the channel's variance that is due to the
+            component (see :meth:`channel_variance_fraction`), descending. The weights are
             compared within each channel type (see :attr:`components_by_type`), so a
-            component can be listed once per type. Flat channels (see :meth:`flat_channels`)
-            are skipped, because the share of their variance is undefined.
+            component can be listed once per type. Flat channels are skipped, because the
+            share of their variance is undefined.
         """
-        flat = {ch_name for ch_name, _ in self.flat_channels()}
+        if flat is None:
+            flat = self.flat_channels()
+        flat = {ch_name for ch_name, _ in flat}
         candidates = []
         for ch_type, components in self.components_by_type:
             names = components.sensor.names
@@ -434,9 +441,7 @@ class Document(FileDocument):
                     ch_name = names[argsort[-1]]
                     if ch_name in flat:
                         continue
-                    max_loadings = self.sources[:, i].extrema('time').abs().x
-                    variance_fraction = self.channel_variance_fraction(i, ch_name)
-                    candidates.append((i, ch_name, max_loadings, variance_fraction))
+                    candidates.append((i, ch_name, self.channel_variance_fraction(i, ch_name)))
         return sorted(candidates, key=itemgetter(-1), reverse=True)
 
 
@@ -718,11 +723,11 @@ class SharedToolsMenu:  # Frame mixin
         # Find channels that are missing from component maps
         gap_results, skipped = self.doc.channel_gaps(smoothness, gap_ratio, min_components, min_consistency)
 
-        # Find ICA components that load on a single channel
-        candidates = self.doc.single_channel_components(channel_ratio)
-
         # Flat channels
         flat = self.doc.flat_channels()
+
+        # Find ICA components that load on a single channel
+        candidates = self.doc.single_channel_components(channel_ratio, flat)
 
         # for the summary window, opened through the link in the report
         self._bad_channel_results = [((), *bad_channel_evidence(candidates, gap_results, flat))]
@@ -762,7 +767,7 @@ class SharedToolsMenu:  # Frame mixin
         section = doc.add_section("Components loading on a single channel")
         section.add_paragraph([f"Components whose largest channel weight exceeds the second largest by a factor of {channel_ratio:g}, ranked by the share of the channel's variance that is due to the component (i.e., likely due to channel-specific noise). The histogram shows the distribution across epochs of the component's peak loading: a permanently defective channel loads on every epoch, whereas an intermittent artifact concentrates near zero with a few large outliers and may be better addressed through epoch rejection. ", fmtxt.symbol('Var', 'ch'), " is the share of the channel's variance that is due to the component, and ", fmtxt.symbol('R', 'n'), " is the channel's neighbor correlation."])
         table = fmtxt.Table('lll', rules=False)
-        for component, ch_name, max_loadings, variance_fraction in candidates:
+        for component, ch_name, variance_fraction in candidates:
             # plot component map
             figure = matplotlib.figure.Figure(figsize=(1, 1))
             canvas = FigureCanvasAgg(figure)
@@ -778,7 +783,8 @@ class SharedToolsMenu:  # Frame mixin
                 desc += [fmtxt.linebreak, fmtxt.eq('R', nc_before[ch_name], 'n', fmt='%.2f')]
             desc = fmtxt.FMText(desc)
 
-            # Loadings
+            # Loadings: the component's peak loading in each epoch
+            max_loadings = self.doc.sources[:, component].extrema('time').abs().x
             binrange = [0, max_loadings.max()]
             figure = matplotlib.figure.Figure(figsize=(2, 1))
             canvas = FigureCanvasAgg(figure)
@@ -879,7 +885,8 @@ class SharedToolsMenu:  # Frame mixin
         """
         if self._bad_channel_results is None:
             gap_results, _ = self.doc.channel_gaps()
-            self._bad_channel_results = [((), *bad_channel_evidence(self.doc.single_channel_components(), gap_results, self.doc.flat_channels()))]
+            flat = self.doc.flat_channels()
+            self._bad_channel_results = [((), *bad_channel_evidence(self.doc.single_channel_components(flat=flat), gap_results, flat))]
         frame = BadChannelSummaryFrame(self, self._bad_channel_results, (), self.AddBadChannels)
         frame.Show()
         return frame

@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection, Sequence
 
-import numpy as np
 import wx
 
 from .._data_obj import NDVar
@@ -31,7 +30,7 @@ Additions = list[tuple[tuple[str, ...], list[str]]]
 
 
 def bad_channel_evidence(
-        candidates: Sequence[tuple[int, str, np.ndarray, float]],
+        candidates: Sequence[tuple[int, str, float]],
         gap_results: Sequence[tuple[NDVar, ChannelGapResult]],
         flat: FlatList,
 ) -> tuple[CandidateList, GapList, FlatList]:
@@ -48,7 +47,7 @@ def bad_channel_evidence(
     flat
         Flat channels (see :meth:`~eelbrain._wxgui.select_components.Document.flat_channels`).
     """
-    candidate_list = [(ch_name, component, variance_fraction) for component, ch_name, _, variance_fraction in candidates]
+    candidate_list = [(ch_name, component, variance_fraction) for component, ch_name, variance_fraction in candidates]
     gaps = [(channel.name, channel.n_evidence, channel.n_testable) for _, result in gap_results for channel in result.channels]
     return candidate_list, gaps, list(flat)
 

@@ -63,9 +63,8 @@ def test_select_components():
     assert {(component, ch_name) for component, ch_name, *_ in candidates} == expected
     assert len(candidates) == len(doc.components) * len(doc.components_by_type)
     assert all(a[-1] >= b[-1] for a, b in zip(candidates, candidates[1:]))
-    for component, ch_name, max_loadings, variance_fraction in candidates:
+    for component, ch_name, variance_fraction in candidates:
         assert variance_fraction == doc.channel_variance_fraction(component, ch_name)
-        assert max_loadings.shape == (len(doc.epochs_ndvar),)
     assert doc.single_channel_components(channel_ratio=1000.) == []
     # flat channels: per channel type standard deviation threshold (SI units), for every channel type
     assert doc.flat_channels() == []
