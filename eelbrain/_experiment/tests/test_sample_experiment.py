@@ -1149,6 +1149,7 @@ def test_head_pos_without_chpi(samples_experiment):
     # the sample data has no cHPI, so the derivative falls back to the static dev_head_t
     head_pos = e.load_head_position()
     assert head_pos.shape == (1, 10)
+    assert 'raw-head-position [derivative]' in e.load_head_position(show_dependencies=True).text(1000)
     pos_request = e._derivatives.resolve('raw-head-position', state=e.state)
     assert pos_request.artifact_path.suffix == '.pos'
     assert pos_request.artifact_path.exists()

@@ -1030,11 +1030,17 @@ class Pipeline(StateModel):
         raw_name = self.get('raw', **kwargs)
         return self._load_derivative(raw_node_name(raw_name), options={'noise': noise}, view='bads', show_dependencies=show_dependencies)
 
-    def load_head_position(self, **state) -> np.ndarray | None:
+    def load_head_position(
+            self,
+            show_dependencies: bool = False,
+            **state,
+    ) -> np.ndarray | None | DependencyTree:
         """Load head position samples for a recording
 
         Parameters
         ----------
+        show_dependencies
+            Return the request's dependency tree instead of loading the data (displays as text, or as a flow chart in notebooks).
         ...
             State parameters.
 
@@ -1054,7 +1060,7 @@ class Pipeline(StateModel):
         pipeline.RawMaxwell : Maxwell filtering with head movement compensation
         """
         self.set(**state)
-        return self._load_derivative('raw-head-position')
+        return self._load_derivative('raw-head-position', show_dependencies=show_dependencies)
 
     def load_cov(
             self,
