@@ -1325,9 +1325,9 @@ class Pipeline(StateModel):
         predictor = self.predictors[term.predictor_key]
         if not isinstance(predictor, (UTSPredictor, NUTSPredictor)):
             raise NotImplementedError(f"{term.string}: load_predictor only supports file predictors; load {type(predictor).__name__} through load_trf")
+        contents = self._load_derivative('predictor', options={'term': term}, show_dependencies=show_dependencies)
         if show_dependencies:
-            return self._load_derivative('predictor', options={'term': term}, show_dependencies=True)
-        contents = self._load_derivative('predictor', options={'term': term})
+            return contents
         x = predictor._generate(contents, tmin, tstep, n_samples, term)
         x = filter_predictor(x, self._raw, self.get('raw'), filter_x)
         x.name = term.string if name is None else name
@@ -1827,9 +1827,9 @@ class Pipeline(StateModel):
             Forward operator.
         """
         self.set(**state)
+        fwd = self._load_derivative('fwd', show_dependencies=show_dependencies)
         if show_dependencies:
-            return self._load_derivative('fwd', show_dependencies=True)
-        fwd = self._load_derivative('fwd')
+            return fwd
         if ndvar:
             src = self.get('src')
             parc = self._current_source_parc()
@@ -1909,9 +1909,9 @@ class Pipeline(StateModel):
 
         """
         self.set(**state)
+        inv = self._load_derivative('inv', show_dependencies=show_dependencies)
         if show_dependencies:
-            return self._load_derivative('inv', show_dependencies=True)
-        inv = self._load_derivative('inv')
+            return inv
 
         if ndvar:
             parc = self._current_source_parc()
@@ -2078,9 +2078,9 @@ class Pipeline(StateModel):
              - :ref:`state-raw`: preprocessing pipeline
         """
         raw_name = self.get('raw', **kwargs)
+        raw = self._load_derivative(raw_node_name(raw_name), options={'preload': preload, 'noise': noise}, show_dependencies=show_dependencies)
         if show_dependencies:
-            return self._load_derivative(raw_node_name(raw_name), options={'preload': preload, 'noise': noise}, show_dependencies=True)
-        raw = self._load_derivative(raw_node_name(raw_name), options={'preload': preload, 'noise': noise})
+            return raw
         if decim and decim > 1:
             assert samplingrate is None, "samplingrate and decim can't both be specified"
             samplingrate = int(round(raw.info['sfreq'] / decim))
@@ -2163,9 +2163,9 @@ class Pipeline(StateModel):
             raise RuntimeError(f"{subject=}, {group=}")
 
         options = {'reject': reject}
+        ds = self._load_derivative('epoch-events', options=options, show_dependencies=show_dependencies)
         if show_dependencies:
-            return self._load_derivative('epoch-events', options=options, show_dependencies=True)
-        ds = self._load_derivative('epoch-events', options=options)
+            return ds
         if vardef:
             vardef.resolve(ds)
         return ds
@@ -2201,9 +2201,9 @@ class Pipeline(StateModel):
             mlab.show()
         """
         self.set(**state)
+        src_spaces = self._load_derivative('src', show_dependencies=show_dependencies)
         if show_dependencies:
-            return self._load_derivative('src', show_dependencies=True)
-        src_spaces = self._load_derivative('src')
+            return src_spaces
         if ndvar:
             src = self.get('src')
             subjects_dir = self.root / MRI_SDIR
@@ -2317,9 +2317,9 @@ class Pipeline(StateModel):
             'samplingrate': samplingrate,
         }
         result_node = 'two-stage-level-2' if isinstance(test_obj, TwoStageTest) else 'test-result'
+        result = self._load_derivative(result_node, options=options, show_dependencies=show_dependencies)
         if show_dependencies:
-            return self._load_derivative(result_node, options=options, show_dependencies=True)
-        result = self._load_derivative(result_node, options=options)
+            return result
         if not return_data:
             return result
         elif isinstance(test_obj, TwoStageTest):
