@@ -64,6 +64,6 @@ p = plot.UTS([x, trf, y], ylabel=['Stimulus (x)', 'TRF', 'Response (y)'], **plot
 # the TRF. Eelbrain comes with an implementation of :func:`boosting`, a
 # coordinate descent algorithm with early stopping based on cross-validation:
 
-fit = boosting(y, x, 0.000, 0.500, basis=0.050, partitions=2)
+fit = boosting(y, x, 0.000, 0.500, basis=0.050)
 plot_args = {**plot_args, 'columns': 3}
 p = plot.UTS([trf, fit.h, None], axtitle=["Model TRF", "Reconstructed TRF"], **plot_args)

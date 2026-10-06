@@ -529,6 +529,8 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
         _normalize_trf_options(ctx.options)
         if not ctx.state['inv'] and (smooth := ctx.options['smooth']):
             raise ValueError(f"{smooth=}: smoothing is only available for source-space data")
+        if not ctx.options['trfs'] and not self.estimators[ctx.options['estimator']].metric_keys:
+            raise ValueError(f"trfs=False: estimator {ctx.options['estimator']!r} provides no fit metrics, so the dataset would be empty")
 
     def fingerprint(self, ctx: Request) -> dict[str, object]:
         return {}

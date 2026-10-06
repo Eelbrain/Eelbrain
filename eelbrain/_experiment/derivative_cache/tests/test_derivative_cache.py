@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,6 +19,7 @@ from eelbrain._experiment.derivative_cache import (
     Request,
     DerivativeRegistry,
     Input,
+    LoadProfile,
     ProtectedArtifactError,
     UncachedDerivative,
     VersionedInput,
@@ -901,7 +903,7 @@ def test_registry_logs_cache_events(caplog):
     manifest = json.loads(manifest_path.read_text())
     assert manifest['derivative'] == 'value'
     assert manifest['key'] == {'subject': 's1'}
-    assert manifest['dependencies']['source']['kind'] == 'input'
+    assert 'key' not in manifest['dependencies']['source']  # inputs have no artifact
 
 
 def test_recompute_logs_invalidation_reason(caplog):
@@ -1232,20 +1234,33 @@ def test_uncached_derivative_rebuilds_every_time():
         handle.manifest_path
 
 
+def test_dep_entry_matches_after_caching_node():
+    "A dependency recorded while its node was uncached (no key) stays valid once the node is cached"
+    from eelbrain._experiment.derivative_cache.base import _dep_entry_matches
+
+    stored = {'name': 'pos', 'fingerprint': {'a': 1}, 'dependencies': {}}
+    current = {**stored, 'key': {'subject': 's1'}, 'manifest': 'pos/pos.json'}
+    assert _dep_entry_matches(stored, current)
+    assert not _dep_entry_matches(stored, {**current, 'fingerprint': {'a': 2}})
+    # a recorded key still has to match
+    assert not _dep_entry_matches({**stored, 'key': {'subject': 's0'}}, current)
+    assert _dep_entry_matches(current, current)
+
+
 def test_registry_resolve_returns_request_for_input_and_derivative():
     _, registry, _, _, _, _, _, _, _root = make_registry()
 
     handle = registry.resolve('source', state=DEFAULT_STATE)
     assert isinstance(handle, Request)
     assert handle.describe_dependency()['name'] == 'source'
-    assert handle.describe_dependency()['kind'] == 'input'
+    assert 'key' not in handle.describe_dependency()
     with pytest.raises(TypeError, match="input 'source'"):
         _ = handle.artifact_path
 
     value_handle = registry.resolve('value', state=DEFAULT_STATE)
     assert isinstance(value_handle, Request)
     assert value_handle.describe_dependency()['name'] == 'value'
-    assert value_handle.describe_dependency()['kind'] == 'derivative'
+    assert value_handle.describe_dependency()['key'] == value_handle.key()
     # the manifest path is recorded relative to the cache dir (portable across a moved root)
     assert value_handle.describe_dependency()['manifest'] == value_handle.manifest_path.relative_to(registry.cache_dir).as_posix()
 
@@ -1791,6 +1806,18 @@ class DownstreamDerivative(Derivative[str]):
         Path(path).write_text(value)
 
 
+class ArtifactFingerprintDerivative(ConfiguredDerivative):
+    """Dependents see the built artifact's metadata rather than the configuration (like the regularization actually applied to a covariance)."""
+    dependency_fingerprint_from_artifact = True
+
+    def artifact_metadata(self, ctx: Request, value: str) -> dict[str, object]:
+        return {'length': len(value)}
+
+    def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, object]:
+        ctx.ensure()
+        return dict(ctx.artifact_metadata)
+
+
 class DirArtifactDerivative(Derivative[str]):
     """Derivative whose artifact is a directory containing several files."""
     name = 'dir-artifact'
@@ -2121,6 +2148,33 @@ def test_gc_stale_dependency_after_child_rebuild():
     assert registry.resolve('configured', state=DEFAULT_STATE).is_valid()
 
 
+def test_gc_stale_artifact_fingerprint_dependency():
+    "Dependents of a stale node whose dependency fingerprint comes from its artifact are kept as unverifiable"
+    root, registry, _ = make_source_registry()
+    configured = ArtifactFingerprintDerivative(root)
+    registry.register(configured)
+    registry.register(DownstreamDerivative(root))
+    downstream_ctx = registry.resolve('downstream', state=DEFAULT_STATE)
+    downstream_ctx.load()
+    configured.config = 'b'  # same artifact length as 'a'
+    report = registry.scan_cache()
+    _single_entry(report, GCCategory.REVALIDATION_STALE)
+    entry = _single_entry(report, GCCategory.UNVERIFIABLE)
+    assert entry.path == downstream_ctx.artifact_path
+    assert 'configured' in entry.reason
+    report.collect()
+    assert downstream_ctx.artifact_path.exists()
+    # rebuilt with the same artifact-level fingerprint, the dependent stays valid
+    registry.resolve('configured', state=DEFAULT_STATE).load()
+    assert registry.scan_cache().entries == []
+    assert downstream_ctx.is_valid()
+    # a rebuild that changes the artifact-level fingerprint invalidates the dependent through normal validation
+    configured.config = 'ccc'
+    registry.resolve('configured', state=DEFAULT_STATE).load()
+    entry = _single_entry(registry.scan_cache(), GCCategory.REVALIDATION_STALE)
+    assert entry.path == downstream_ctx.artifact_path
+
+
 def test_gc_directory_artifact():
     root, registry = make_empty_registry()
     node = DirArtifactDerivative(root)
@@ -2329,3 +2383,50 @@ def test_external_input_has_artifact_members():
     with pytest.raises(TypeError, match="uncached derivative 'ephemeral'"):
         handle.key()
     assert handle.is_valid() is False
+
+
+def test_load_profile_attributes_time_to_the_node_that_spent_it(monkeypatch):
+    "A nested load counts towards its own node, not the load that made it"
+    now = [0.]
+    monkeypatch.setattr('eelbrain._experiment.derivative_cache.base.time', SimpleNamespace(perf_counter=lambda: now[0]))
+    profile = LoadProfile()
+    with profile.measure('outer'):
+        with profile.measure('inner'):
+            now[0] += 0.02
+        with profile.measure('inner'):
+            now[0] += 0.02
+        now[0] += 0.01
+
+    assert profile.calls == {'outer': 1, 'inner': 2}
+    # the two nested loads are subtracted from the outer one, so the times sum to the total
+    assert profile.self_time['inner'] == pytest.approx(0.04)
+    assert profile.self_time['outer'] == pytest.approx(0.01)
+    assert sum(profile.self_time.values()) == pytest.approx(profile.total)
+    # the summary ranks the nodes by the time they spent, most expensive first
+    assert profile.summary().startswith('inner ')
+    assert profile.summary(limit=1).count(',') == 0
+
+
+def _profile_lines(caplog) -> list[str]:
+    "The per-node breakdowns LoadProfile logged, apart from the cache's own Load lines"
+    return [r.message for r in caplog.records if r.message.startswith('Load ') and ' s: ' in r.message]
+
+
+def test_profile_loads_logs_where_a_load_spent_its_time(caplog):
+    "With profiling on, every top-level load reports its per-node breakdown"
+    pipeline, registry, source, value, *_ = make_registry()
+
+    with caplog.at_level(logging.DEBUG, logger=LOG.name):
+        registry.resolve('value', state=DEFAULT_STATE).load()
+    assert _profile_lines(caplog) == []  # off by default
+
+    registry.profile_loads = True
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger=LOG.name):
+        registry.resolve('summary', state=DEFAULT_STATE).load()
+    # one line for the top-level load, naming the dependency it loaded on the way
+    lines = _profile_lines(caplog)
+    assert len(lines) == 1
+    assert lines[0].startswith('Load summary in ')
+    assert 'summary ' in lines[0] and 'value ' in lines[0]
+    assert lines[0].count('(1x)') == 2  # loading the dependency does not count as a load of the node that asked for it

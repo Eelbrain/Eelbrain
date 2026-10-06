@@ -380,6 +380,9 @@ Group analysis and model tests
 The ``metric`` parameter selects the fit metric to test (by default ``'ev'``, the proportion of explained variance), and by default the comparison determines the test: a one-sample test against zero for ``x > 0``, and a related-measures test with the comparison's tail otherwise; the ``test`` parameter can name a test defined in :attr:`Pipeline.tests` instead (for example, to compare groups).
 Subjects are selected through the :ref:`state-group` state.
 
+Model tests should be based on cross-validated fit metrics, which :class:`Boosting` computes by default.
+With ``Boosting(cv=False)``, fit metrics are not available, because they would be computed from the same data that were used to estimate the TRFs, and overestimate predictive power.
+
 
 Batch estimation and distributed fitting
 ========================================

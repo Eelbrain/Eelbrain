@@ -40,7 +40,8 @@ class Split(PickleableDataClass, EQMixIn):
     train: np.ndarray  # (, 2) array of int, segment (start, stop)
     validate: np.ndarray = None
     test: np.ndarray = None
-    i_test: int = 0  # Index (to group splits with the same test segmet)
+    i_test: int = 0  # Index (to group splits with the same test segment)
+    i_validate: int = None  # Index of the validation segment
 
     @cached_property
     def train_and_validate(self):
@@ -105,7 +106,7 @@ def split_data(
         model: CategorialArg = None,  # sample evenly from cells
         data: Dataset = None,
         validate: int = 1,  # Number of segments in validation set
-        test: int = 0,  # Number of segments in test set
+        test: int = 1,  # Number of segments in test set
 ):
     """Split data segments into train, validate and test segments"""
     if partitions and int(partitions) != partitions:
@@ -115,7 +116,7 @@ def split_data(
     if int(test) != test:
         raise TypeError(f"{test=}")
     if partitions is not None and partitions <= validate + test:
-        raise ValueError(f"{validate=}, {test=} with {partitions=}")
+        raise ValueError(f"{partitions=}: need at least {validate + test + 1} partitions with {validate=} and {test=}")
     partitions_arg = partitions
     assert validate >= 0
     if validate > 1:
@@ -125,7 +126,7 @@ def split_data(
         raise NotImplementedError
     if len(segments) == 1:
         if partitions is None:
-            partitions = 2 + test + validate if test else 10
+            partitions = 5
         if model is not None:
             raise TypeError(f'model={dataobj_repr(model)!r}: model cannot be specified in unsegmented data')
         n_times = segments[0, 1] - segments[0, 0]
@@ -208,7 +209,7 @@ def split_data(
                 validate_segments = merge_segments(split_segments[validate_set], soft_splits)
             # create split
             train_segments = merge_segments(split_segments[train_set], soft_splits)
-            splits.append(Split(train_segments, validate_segments, test_segments, i_test))
+            splits.append(Split(train_segments, validate_segments, test_segments, i_test, i_validate))
     return Splits(splits, partitions_arg, partitions, validate, test, model, segments, split_segments)
 
 
@@ -568,7 +569,7 @@ class DeconvolutionData:
             model: CategorialArg = None,  # sample evenly from cells
             data: Dataset = None,
             validate: int = 1,  # Number of segments in validation set
-            test: int = 0,  # Number of segments in test set
+            test: int = 1,  # Number of segments in test set
     ):
         """Initialize cross-validation scheme
 

@@ -772,6 +772,15 @@ Epoch rejection methods:
    ManualRejection
    ChannelModelRejection
 
+Noise covariance:
+
+.. autosummary::
+   :toctree: generated
+
+   Covariance
+   RawCovariance
+   EpochCovariance
+
 Tests:
 
 .. autosummary::

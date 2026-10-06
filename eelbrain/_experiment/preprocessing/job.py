@@ -15,7 +15,6 @@ from typing import Any
 
 import mne
 
-from ..._utils import user_activity
 from ..derivative_cache import Job
 
 
@@ -51,6 +50,5 @@ class ICAJob(Job):
     def __call__(self) -> mne.preprocessing.ICA:
         "Fit the ICA and return the :class:`mne.preprocessing.ICA` object."
         ica = mne.preprocessing.ICA(**self.kwargs)
-        with user_activity:
-            ica.fit(self.raw, **self.fit_kwargs)
+        ica.fit(self.raw, **self.fit_kwargs)
         return ica

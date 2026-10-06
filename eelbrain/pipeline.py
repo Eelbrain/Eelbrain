@@ -1,6 +1,7 @@
 # autoflake: skip_file
 
 from ._experiment.derivative_cache.base import ProtectedArtifactError
+from ._experiment.covariance import Covariance, EpochCovariance, RawCovariance
 from ._experiment.pipeline import Pipeline
 from ._experiment.preprocessing import RawSource, RawFilter, RawICA, RawMaxwell, RawOversampledTemporalProjection, RawReReference, RawApplyICA, Reference
 from ._experiment.epochs import ContinuousEpoch, EpochCollection, PrimaryEpoch, SecondaryEpoch, SuperEpoch

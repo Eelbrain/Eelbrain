@@ -39,9 +39,16 @@ class Mouse(Pipeline):
         # explicitly modified (here, selecting a subset of events)
         'prime': SecondaryEpoch('word', "stimulus == 'prime'"),
         'target': SecondaryEpoch('word', "stimulus == 'target'"),
-        # The 'cov' epoch defines the data segments used to compute the noise covariance matrix for
-        # source localization
-        'cov': SecondaryEpoch('prime', tmax=0),
+        # The pre-stimulus baseline, used below to estimate the noise covariance matrix for source
+        # localization
+        'baseline': SecondaryEpoch('prime', tmax=0),
+    }
+
+    # Noise covariance estimates for source localization, selected through the 'cov' state. An
+    # empty room covariance ('emptyroom') is always available; this entry estimates the covariance
+    # from the 'baseline' epoch defined above, and is used with e.set(cov='baseline')
+    noise_covariance = {
+        'baseline': EpochCovariance('baseline'),
     }
 
     # Tests define contrasts or comparisons based on variables.

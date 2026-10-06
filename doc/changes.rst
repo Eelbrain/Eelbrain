@@ -43,6 +43,13 @@ New in 0.43
   - EEG data can be re-referenced after epoching and channel interpolation
     through :attr:`pipeline.Pipeline.references` and the ``reference`` state.
     This is generally preferable to re-referencing before epoching.
+  - API change: noise covariance estimation is now configured through
+    :attr:`pipeline.Pipeline.noise_covariance`, with
+    :class:`pipeline.EpochCovariance` and :class:`pipeline.RawCovariance`.
+    Covariances are now regularized by default to bound their condition number
+    (``max_condition``), which keeps whitening stable for Maxwell-filtered data.
+    The built-in ``cov`` options are now ``'emptyroom'`` (the default) and
+    ``'ad_hoc'``; for epoch-based options see :attr:`pipeline.Pipeline.noise_covariance`.
   - Temporal response function analyses: :meth:`pipeline.Pipeline.load_trf`,
     :meth:`pipeline.Pipeline.load_trfs`, :meth:`pipeline.Pipeline.load_model_test`
   - New :meth:`pipeline.Pipeline.clean_cache` reviews and deletes invalid or
@@ -55,6 +62,8 @@ New in 0.43
     documented with :attr:`pipeline.Pipeline.variables`.
   - :class:`pipeline.RawSource`: the ``rename_channels`` parameter now renames
     channels in the montage/adjacency instead of renaming channels in the data.
+  - :class:`pipeline.RawMaxwell` can compensate for head movement in recordings
+    with continuous HPI through the ``head_pos`` parameter.
   - New :attr:`pipeline.Pipeline.event_factors` attribute to read numeric
     ``events.tsv`` columns as categorial (:class:`Factor`).
   - The ``load_...`` methods accept ``show_dependencies=True`` to return the
@@ -65,9 +74,19 @@ New in 0.43
 
 * Boosting:
 
+  - API change: :func:`boosting` now performs cross-validation by default
+    (``test=1``), so that fit metrics reflect predictive power for held-out
+    data. The default number of partitions is now 5 (instead of 10).
+    ``test=0`` and ``partitions=10`` restores the previous TRF estimation, but
+    fit metrics are no longer computed because they would overestimate predictive power.
   - API change: the proportion of explained variance is now called ``ev``
     instead of ``det``, in the :class:`Dataset` returned by
     :meth:`BoostingResult.partition_result_data`
+  - Fix: :attr:`BoostingResult.proportion_explained` inside
+    :attr:`BoostingResult.partition_results` is now computed relative
+    to the variability in the evaluated data segments. Previously, it was
+    computed relative to the variability in all data, which strongly
+    overestimated it.
 
 * ICA-GUI (:func:`gui.select_components`): The *Find Bad Channels* tool now also
   detects defective channels through gaps in the component maps — channels whose

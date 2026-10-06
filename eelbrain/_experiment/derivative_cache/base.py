@@ -54,8 +54,8 @@ and removed by :mod:`.garbage_collection`; the entry points are
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from contextlib import contextmanager
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
@@ -65,7 +65,9 @@ import logging
 from pathlib import Path
 import pickle
 import re
+import time
 import tomllib
+import traceback
 from typing import Any, Generic, TYPE_CHECKING, TypeVar
 from uuid import uuid4
 import warnings
@@ -74,6 +76,7 @@ import mne
 import numpy as np
 
 from ..._data_obj import Factor, Interaction, NDVar, Var
+from ..._utils import user_activity
 from ..configuration import Configuration
 from ..logging import CacheInvalidation, diff_invalidation
 from ..pathing import CACHE_DIR, DERIV_DIR, LOG_DIR
@@ -116,7 +119,11 @@ def _atomic_write_text(path: Path, text: str) -> None:
     tmp_path.replace(path)
 
 
-def _read_warning_log(path: Path) -> list[dict[str, str]]:
+# Warning log entries: ``item``, ``category`` and ``message`` are required; ``state`` (JSON of the key-field state), ``location`` (``file:line`` the warning was attributed to) and ``stack`` (one line per frame) are optional
+_WARNING_LOG_STRINGS = ('item', 'category', 'message', 'state', 'location')
+
+
+def _read_warning_log(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     try:
@@ -128,28 +135,30 @@ def _read_warning_log(path: Path) -> list[dict[str, str]]:
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        item = entry.get('item')
-        category = entry.get('category')
-        message = entry.get('message')
-        if isinstance(item, str) and isinstance(category, str) and isinstance(message, str):
-            warnings_.append({'item': item, 'category': category, 'message': message})
+        warning = {key: entry[key] for key in _WARNING_LOG_STRINGS if isinstance(entry.get(key), str)}
+        if not all(key in warning for key in ('item', 'category', 'message')):
+            continue
+        stack = entry.get('stack')
+        if isinstance(stack, list) and all(isinstance(line, str) for line in stack):
+            warning['stack'] = stack
+        warnings_.append(warning)
     return warnings_
 
 
-def _write_warning_log(path: Path, header: str, warnings_: list[dict[str, str]]) -> None:
+def _write_warning_log(path: Path, header: str, warnings_: list[dict[str, Any]]) -> None:
     lines = [
         'version = 1',
         f'header = {_toml_string(header.rstrip())}',
         '',
     ]
     for warning in warnings_:
-        lines.extend((
-            '[[warning]]',
-            f'item = {_toml_string(warning["item"])}',
-            f'category = {_toml_string(warning["category"])}',
-            f'message = {_toml_string(warning["message"])}',
-            '',
-        ))
+        lines.append('[[warning]]')
+        lines.extend(f'{key} = {_toml_string(warning[key])}' for key in _WARNING_LOG_STRINGS if key in warning)
+        if 'stack' in warning:
+            lines.append('stack = [')
+            lines.extend(f'    {_toml_string(line)},' for line in warning['stack'])
+            lines.append(']')
+        lines.append('')
     path.write_text('\n'.join(lines))
 
 
@@ -245,6 +254,16 @@ class ProtectedArtifactError(RuntimeError):
         if instructions:
             text += f" {instructions}"
         super().__init__(text)
+
+
+class UnverifiableArtifactError(RuntimeError):
+    """An artifact's validity can not be determined without building something.
+
+    Raised by node hooks (such as :meth:`DependencyNode.dependency_fingerprint_override`)
+    during read-only validation when the answer would require building a
+    dependency; :meth:`DerivativeRegistry.scan_cache` then keeps the artifact
+    as unverifiable.
+    """
 
 
 class JobInputsChangedError(RuntimeError):
@@ -518,6 +537,16 @@ class DependencyNode(Generic[T]):
         Log level for the standard cache hit/build messages, which are the
         pipeline's progress report for anything expensive. Set to ``None`` to
         suppress them. Only nodes with a tracked artifact emit them.
+    dependency_fingerprint_from_artifact
+        Declare that :meth:`dependency_fingerprint` describes the built
+        artifact (e.g. through :attr:`Request.artifact_metadata`) rather than
+        the configuration, or that dependents describe this node by its
+        artifact through :meth:`dependency_fingerprint_override`, so that
+        rebuilding this node does not necessarily change how it appears to its
+        dependents. A read-only cache scan cannot rebuild the artifact to find
+        out, so it keeps the dependents of a stale instance of such a node as
+        unverifiable instead of collecting them as stale (see
+        :meth:`DerivativeRegistry.scan_cache`).
     """
 
     name: str
@@ -528,6 +557,7 @@ class DependencyNode(Generic[T]):
     cache_policy: CachePolicy = CachePolicy.NEVER
     # Log level for standard cache hit/build messages. Set to None to silence.
     cache_log_level: int | None = logging.DEBUG
+    dependency_fingerprint_from_artifact: bool = False
 
     def cache_log_path(self, ctx: Request, path: Path) -> str:
         """Return the displayed artifact path for cache log messages."""
@@ -680,6 +710,23 @@ class DependencyNode(Generic[T]):
         ----------
         fingerprint
             A stored (canonicalized) fingerprint of this node; modify in place.
+        """
+
+    def normalize_stored_dependencies(self, dependencies: dict[str, Any]) -> None:
+        """Update the stored dependency manifest of this node to the current schema, in place.
+
+        Called by :meth:`DerivativeRegistry.read_manifest` on every dependency
+        manifest of this node read back from disk — in the node's own manifest
+        and in the copies embedded in dependents' manifests. Override to
+        migrate stored dependency entries after a change to
+        :meth:`dependencies` (e.g., drop an edge that turned out not to affect
+        the artifact) without invalidating existing caches. The default does
+        nothing.
+
+        Parameters
+        ----------
+        dependencies
+            The stored dependency manifest of this node, keyed by edge label; modify in place.
         """
 
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
@@ -1265,10 +1312,15 @@ def _dep_entry_matches(stored: dict[str, Any], current: dict[str, Any]) -> bool:
     ``key`` participates because fingerprints often describe configuration
     only: a dependency that resolves to a different artifact (different cache
     key) must invalidate the parent even when its fingerprint is unchanged.
+    A stored entry without ``key`` was recorded while the node was not cached;
+    its fingerprint and sub-dependencies validated it then and still do, so
+    caching a node does not invalidate the artifacts depending on it.
     """
-    for key in ('name', 'kind', 'view', 'key'):
+    for key in ('name', 'view'):
         if stored.get(key) != current.get(key):
             return False
+    if 'key' in stored and stored['key'] != current.get('key'):
+        return False
     stored_quick = stored.get('quick_fingerprint')
     current_quick = current.get('quick_fingerprint')
     if stored_quick is not None and current_quick is not None and stored_quick == current_quick:
@@ -1306,6 +1358,51 @@ def compare_manifests(stored: ArtifactManifest | None, current: ArtifactManifest
     if not dependencies_match(stored.dependencies, current.dependencies):
         return diff_invalidation('dependencies', stored.dependencies, current.dependencies, strip_quick=True)
     return None
+
+
+class LoadProfile:
+    """Time spent per node during one top-level :meth:`Request.load`.
+
+    A load walks the dependency graph, so its total says nothing about where the
+    time went: a slow raw file, a slow rebuild and a slow cache walk all look the
+    same. This attributes the time to the node that spent it, by subtracting each
+    nested load from the load that made it, so the times sum to the total.
+
+    Switched on per experiment with :attr:`DerivativeRegistry.profile_loads`
+    (``eelbrain-gui --debug``); off, no measurement is taken at all.
+    """
+
+    def __init__(self):
+        self.self_time: dict[str, float] = {}  # node name -> seconds spent in it
+        self.calls: dict[str, int] = {}  # node name -> number of loads
+        self.total = 0.  # seconds of the load that finished last, i.e. the outermost one
+        self._nested = 0.  # seconds the current load has spent in nested loads
+
+    @contextmanager
+    def measure(self, name: str) -> Iterator[None]:
+        """Time one load of node ``name``, excluding the loads nested inside it."""
+        outer_nested = self._nested
+        self._nested = 0.
+        t_start = time.perf_counter()
+        try:
+            yield
+        finally:
+            elapsed = time.perf_counter() - t_start
+            self.self_time[name] = self.self_time.get(name, 0.) + elapsed - self._nested
+            self.calls[name] = self.calls.get(name, 0) + 1
+            self._nested = outer_nested + elapsed
+            self.total = elapsed
+
+    def summary(self, limit: int = 4) -> str:
+        """The nodes that took the longest, most expensive first.
+
+        Parameters
+        ----------
+        limit
+            Number of nodes to list.
+        """
+        ranked = sorted(self.self_time, key=self.self_time.get, reverse=True)
+        return ', '.join(f"{name} {self.self_time[name]:.3f} s ({self.calls[name]}x)" for name in ranked[:limit])
 
 
 class Request(Generic[T]):
@@ -1577,11 +1674,8 @@ class Request(Generic[T]):
         if view is not None:
             out['view'] = view
         if isinstance(self.node, Derivative) and self.node.cache_policy != CachePolicy.NEVER:
-            out['kind'] = 'derivative'
             out['key'] = self.key()
             out['manifest'] = self.manifest_path.relative_to(self.registry.cache_dir).as_posix()
-        else:
-            out['kind'] = 'input'
         return out
 
     def _require_derivative(self) -> Derivative[T]:
@@ -1844,7 +1938,9 @@ class Request(Generic[T]):
         ``view`` is accepted; passing ``state``, ``options``, or ``controls``
         raises :class:`TypeError`.
         """
-        with self.registry._load_context():
+        # A dependency load is profiled by the dependency's own load()
+        profile = self.registry._profile_load(self) if name is None else nullcontext()
+        with self.registry._load_context(), profile:
             return self._load(name, state, options, view=view, controls=controls)
 
     def _resolve_target(
@@ -1950,6 +2046,9 @@ class Request(Generic[T]):
         the target is an :class:`Input`, which has no artifact to materialize.
         Views are irrelevant here and are ignored: they shape a loaded value,
         not the artifact this builds.
+
+        During a read-only scan (cache garbage collection) nothing is built:
+        a stale artifact is left as it is.
         """
         with self.registry._load_context():
             self._ensure(name, state, options, controls=controls)
@@ -1969,7 +2068,7 @@ class Request(Generic[T]):
 
         if state is not None or options is not None or controls:
             raise TypeError("Request.ensure() without a dependency name takes no overrides")
-        if self.is_valid():
+        if self.registry._readonly or self.is_valid():
             return
         with self._build_deps_context():
             self.load_artifact()
@@ -1992,6 +2091,10 @@ class DerivativeRegistry:
         # Reuse cache-validity results within one top-level Request.load().
         # Artifacts themselves are not shared because callers can mutate them.
         self._validation_cache: ContextVar[dict[tuple[str, str], CacheInvalidation | None] | None] = ContextVar(f'{type(self).__name__}-{id(self)}-validation-cache', default=None)
+        # Log where each top-level load spends its time (see LoadProfile); off by
+        # default, because the measurement is only worth taking when it is read.
+        self.profile_loads = False
+        self._load_profile: ContextVar[LoadProfile | None] = ContextVar(f'{type(self).__name__}-{id(self)}-load-profile', default=None)
 
     @contextmanager
     def _load_context(self):
@@ -2000,10 +2103,33 @@ class DerivativeRegistry:
             yield
             return
         token = self._validation_cache.set({})
-        try:
+        with user_activity:
+            try:
+                yield
+            finally:
+                self._validation_cache.reset(token)
+
+    @contextmanager
+    def _profile_load(self, ctx: Request) -> Iterator[None]:
+        """Time one load of ``ctx``, and log where the outermost one spent its time.
+
+        A no-op unless :attr:`profile_loads` is set; see :class:`LoadProfile`.
+        """
+        if not self.profile_loads:
             yield
+            return
+        profile = self._load_profile.get()
+        outermost = profile is None
+        if outermost:
+            profile = LoadProfile()
+            token = self._load_profile.set(profile)
+        try:
+            with profile.measure(ctx.node.name):
+                yield
         finally:
-            self._validation_cache.reset(token)
+            if outermost:
+                self._load_profile.reset(token)
+                self.log.debug(f"Load {ctx.node.name} in {profile.total:.3f} s: {profile.summary()}")
 
     @staticmethod
     def _validation_key(ctx: Request) -> tuple[str, str]:
@@ -2088,25 +2214,39 @@ class DerivativeRegistry:
             item = str(path)
         else:
             item = node.name
-        with warnings.catch_warnings(record=True) as warning_list:
+        warning_list: list[tuple[Warning, str, list[str]]] = []
+        recorded: set[tuple[str, str]] = set()
+
+        def showwarning(message, category, filename, lineno, file=None, line=None):
+            # Only the first occurrence of a warning is kept (see below); a warning issued in a loop must not extract its stack every time
+            if (category.__name__, str(message)) in recorded:
+                return
+            recorded.add((category.__name__, str(message)))
+            # Record the full stack: libraries such as MNE attribute the warning to the first frame outside their own namespace, which hides the path within the library
+            stack = [f'{frame.filename}:{frame.lineno} in {frame.name}' for frame in traceback.extract_stack()[:-1] if frame.filename != warnings.__file__]
+            warning_list.append((message, f'{filename}:{lineno}', stack))
+
+        with warnings.catch_warnings():
             warnings.simplefilter('always')
             warnings.filterwarnings('ignore', r'unclosed file ', ResourceWarning)
+            warnings.showwarning = showwarning
             yield
         if not warning_list:
             return
+        state = json.dumps({key: ctx.state[key] for key in node._get_key_fields(ctx) if key in ctx.state}, default=str)
         details_path = Path(self.root) / LOG_DIR / f'{node.name}-warnings.toml'
         details_path.parent.mkdir(parents=True, exist_ok=True)
         entries = _read_warning_log(details_path)
-        seen = {(entry['item'], entry['category'], entry['message']) for entry in entries}
+        seen = {(entry['item'], entry['category'], entry['message'], entry.get('state', '')) for entry in entries}
         new_entries = []
-        for message in warning_list:
-            category = message.category.__name__
-            text = str(message.message)
-            key = (item, category, text)
+        for message, location, stack in warning_list:
+            category = message.__class__.__name__
+            text = str(message)
+            key = (item, category, text, state)
             if key in seen:
                 continue
             seen.add(key)
-            entry = {'item': item, 'category': category, 'message': text}
+            entry = {'item': item, 'category': category, 'message': text, 'state': state, 'location': location, 'stack': stack}
             entries.append(entry)
             new_entries.append(entry)
         if not new_entries:
@@ -2114,7 +2254,7 @@ class DerivativeRegistry:
         _write_warning_log(details_path, f"Warnings emitted during {node.name}.\n", entries)
         count = len(new_entries)
         noun = 'warning was' if count == 1 else 'warnings were'
-        self.log.warning("%s new %s issued during %s. Full details were written to %s. Previously recorded %s warnings will be suppressed in the terminal for this experiment.", count, noun, node.name, details_path, node.name)
+        self.log.warning("%s new %s issued during %s (%s; first: %s at %s). Full details were written to %s. Previously recorded %s warnings will be suppressed in the terminal for this experiment.", count, noun, node.name, state, new_entries[0]['message'], new_entries[0]['location'], details_path, node.name)
 
     def describe_artifact_path(self, path: str | Path) -> str:
         artifact_path = Path(path)
@@ -2363,6 +2503,8 @@ class DerivativeRegistry:
         if node is not None and isinstance(manifest.fingerprint, dict):
             node.normalize_stored_fingerprint(manifest.fingerprint)
         if isinstance(manifest.dependencies, dict):
+            if node is not None:
+                node.normalize_stored_dependencies(manifest.dependencies)
             self._normalize_dependency_fingerprints(manifest.dependencies)
         return manifest
 
@@ -2370,12 +2512,15 @@ class DerivativeRegistry:
         for entry in dependencies.values():
             if not isinstance(entry, dict):
                 continue
+            entry.pop('kind', None)  # recorded before 0.43 and ignored since; dropped so that a mismatch report names the actual difference
             node = self._nodes.get(entry.get('name'))
             fingerprint = entry.get('fingerprint')
             if node is not None and isinstance(fingerprint, dict):
                 node.normalize_stored_fingerprint(fingerprint)
             sub = entry.get('dependencies')
             if isinstance(sub, dict):
+                if node is not None:
+                    node.normalize_stored_dependencies(sub)
                 self._normalize_dependency_fingerprints(sub)
 
     def write_manifest(self, path: str | Path, manifest: ArtifactManifest) -> None:

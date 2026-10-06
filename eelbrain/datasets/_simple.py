@@ -621,6 +621,8 @@ def setup_samples_experiment(
     emptyroom_raw = mne.io.read_raw_fif(emptyroom_fname)
     emptyroom_raw.info['line_freq'] = 60
     emptyroom_raw.info['bads'] = []
+    if pick and pick != 'eeg':  # the empty room has the same sensors as the task recordings
+        emptyroom_raw.pick_types(pick, stim=True, exclude=[])
     sfreq = emptyroom_raw.info['sfreq']
 
     # segmentation
