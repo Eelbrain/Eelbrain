@@ -85,12 +85,18 @@ def filter_predictor(x: NDVar, raw: dict[str, RawPipe], raw_name: str, filter_x:
     return x
 
 
+def _is_source_space(ctx: Request, est: Estimator) -> bool:
+    "Whether the TRFs are in source space: fit to source-localized data (``inv``), or by an estimator that localizes internally"
+    return bool(ctx.state['inv']) or est.requires_sensor_space
+
+
 def _trf_dataset_key_fields(ctx: Request, estimators: dict[str, Estimator], *case_fields: str) -> tuple[str, ...]:
     "Key fields shared by the TRF dataset nodes: ``case_fields`` identify the cases (subject or group), the rest the TRFs"
+    est = estimators[ctx.options['estimator']]
     fields = [*case_fields, 'session', 'acquisition', 'epoch', 'epoch_rejection', 'reference', 'raw', 'inv']
-    if ctx.state['inv']:
+    if _is_source_space(ctx, est):
         fields += ['cov', 'src', 'parc', 'adjacency', 'mrisubject', 'common_brain']
-    fields += estimators[ctx.options['estimator']].extra_input_fields
+    fields += est.extra_input_fields
     return tuple(fields)
 
 
@@ -535,7 +541,7 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
 
     def validate_options(self, ctx: Request) -> None:
         _normalize_trf_options(ctx.options)
-        if not ctx.state['inv'] and (smooth := ctx.options['smooth']):
+        if (smooth := ctx.options['smooth']) and not _is_source_space(ctx, self.estimators[ctx.options['estimator']]):
             raise ValueError(f"{smooth=}: smoothing is only available for source-space data")
 
     def fingerprint(self, ctx: Request) -> dict[str, object]:
@@ -545,7 +551,7 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
         trf_options = ctx.options_for('trf', 'x', 'tstart', 'tstop', 'estimator', 'data', 'samplingrate', 'decim', 'filter_x')
         epoch_def = self.epochs[ctx.state['epoch']]
         deps = [Dependency('trf', label=epoch, state={'epoch': epoch}, options=trf_options) for epoch in epoch_def.collected_epochs]
-        if ctx.state['inv'] and not is_fake_mri(self.root / mri_dir(ctx.state)):
+        if _is_source_space(ctx, self.estimators[ctx.options['estimator']]) and not is_fake_mri(self.root / mri_dir(ctx.state)):
             deps.append(Dependency('source-morph'))
         return tuple(deps)
 
@@ -557,7 +563,7 @@ class TRFDatasetDerivative(UncachedDerivative[Dataset]):
         dss = [est._result_dataset(ctx.load(epoch), scale=scale, trfs=trfs) for epoch in epoch_def.collected_epochs]
         ds = combine(dss, name=ctx.options['x'].name)
         # Morphing/smoothing
-        if ctx.state['inv']:
+        if _is_source_space(ctx, est):
             common_brain = ctx.state['common_brain']
             if is_fake_mri(self.root / mri_dir(ctx.state)):
                 source_morph = None
@@ -647,7 +653,7 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
 
     def validate_options(self, ctx: Request) -> None:
         _normalize_trf_options(ctx.options)
-        if not ctx.state['inv'] and (smooth := ctx.options['smooth']):
+        if (smooth := ctx.options['smooth']) and not _is_source_space(ctx, self.estimators[ctx.options['estimator']]):
             raise ValueError(f"{smooth=}: smoothing is only available for source-space data")
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
