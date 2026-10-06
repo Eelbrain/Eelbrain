@@ -767,12 +767,13 @@ class SharedToolsMenu:  # Frame mixin
         section = doc.add_section("Components loading on a single channel")
         section.add_paragraph([f"Components whose largest channel weight exceeds the second largest by a factor of {channel_ratio:g}, ranked by the share of the channel's variance that is due to the component (i.e., likely due to channel-specific noise). The histogram shows the distribution across epochs of the component's peak loading: a permanently defective channel loads on every epoch, whereas an intermittent artifact concentrates near zero with a few large outliers and may be better addressed through epoch rejection. ", fmtxt.symbol('Var', 'ch'), " is the share of the channel's variance that is due to the component, and ", fmtxt.symbol('R', 'n'), " is the channel's neighbor correlation."])
         table = fmtxt.Table('lll', rules=False)
+        components_of = {name: components for _, components in self.doc.components_by_type for name in components.sensor.names}
         for component, ch_name, variance_fraction in candidates:
-            # plot component map
+            # plot the component map of the channel's type
             figure = matplotlib.figure.Figure(figsize=(1, 1))
             canvas = FigureCanvasAgg(figure)
             axes = figure.add_subplot()
-            plot.Topomap(self.doc.components[component], axes=axes, interpolation='linear')
+            plot.Topomap(components_of[ch_name][component], axes=axes, interpolation='linear')
             image = fmtxt.Image(f'#{component}', 'jpg')
             canvas.print_jpeg(image)
 
