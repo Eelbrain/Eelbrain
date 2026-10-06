@@ -48,7 +48,8 @@ def test_select_components():
     doc = frame.doc
     ica_full = mne.preprocessing.read_ica(path)
     applied = doc.as_ndvar(ica_full.apply(ds['epochs'].copy(), n_pca_components=ica_full.n_components_, verbose=False))
-    reconstruction = np.einsum('kc,nkt->nct', doc.mixing.x, doc.sources.x) + doc.global_mean.x[:, None]
+    picks = [doc.ica.ch_names.index(name) for name in doc.epochs_ndvar.sensor.names]
+    reconstruction = np.einsum('kc,nkt->nct', doc.mixing.x[:, picks], doc.sources.x) + doc.global_mean.x[:, None]
     assert_allclose(reconstruction, applied.x, rtol=1e-6, atol=1e-6 * np.abs(applied.x).max())
     # share of a channel's variance due to one component
     ch_name = doc.epochs_ndvar.sensor.names[5]
@@ -56,22 +57,22 @@ def test_select_components():
     contribution = doc.mixing[2, ch_name] * doc.sources[:, 2]
     assert variance_fraction == pytest.approx(contribution.var() / doc.epochs_ndvar.sub(sensor=ch_name).var())
     assert 0 <= variance_fraction
-    # components loading on a single channel, ranked by that share
+    # components loading on a single channel, ranked by that share; every channel type is screened
     candidates = doc.single_channel_components(channel_ratio=1.)
-    assert len(candidates) == len(doc.components)
+    expected = {(i, components.sensor.names[np.argmax(abs(components[i].x))]) for _, components in doc.components_by_type for i in range(len(components))}
+    assert {(component, ch_name) for component, ch_name, *_ in candidates} == expected
+    assert len(candidates) == len(doc.components) * len(doc.components_by_type)
     assert all(a[-1] >= b[-1] for a, b in zip(candidates, candidates[1:]))
     for component, ch_name, max_loadings, variance_fraction in candidates:
-        assert ch_name == doc.epochs_ndvar.sensor.names[np.argmax(abs(doc.components[component].x))]
         assert variance_fraction == doc.channel_variance_fraction(component, ch_name)
         assert max_loadings.shape == (len(doc.epochs_ndvar),)
     assert doc.single_channel_components(channel_ratio=1000.) == []
-    # flat channels: per channel type standard deviation threshold (SI units)
+    # flat channels: per channel type standard deviation threshold (SI units), for every channel type
     assert doc.flat_channels() == []
-    names = list(doc.epochs_ndvar.sensor.names)
-    std = doc.epochs_ndvar.x.std(axis=(0, 2))
-    ch_types = doc.epochs.get_channel_types(picks=names)
-    i_quietest_mag = min((i for i, ch_type in enumerate(ch_types) if ch_type == 'mag'), key=std.__getitem__)
-    assert doc.flat_channels({'mag': 1.01 * std[i_quietest_mag]}) == [(names[i_quietest_mag], 'mag')]
+    assert set(doc.screened_channel_types) == {'mag', 'grad', 'eeg'}
+    std = doc.epochs.get_data(picks=doc.screened_channels).std(axis=(0, 2))
+    i_quietest_eeg = min((i for i, ch_type in enumerate(doc.screened_channel_types) if ch_type == 'eeg'), key=std.__getitem__)
+    assert doc.flat_channels({'eeg': 1.01 * std[i_quietest_eeg]}) == [(doc.screened_channels[i_quietest_eeg], 'eeg')]
     # channels missing from component maps, with the default channel types
     gap_results, skipped = doc.channel_gaps()
     assert [result.ch_type for _, result in gap_results] == ['mag', 'eeg']

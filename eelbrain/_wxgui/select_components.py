@@ -268,8 +268,12 @@ class Document(FileDocument):
             global_mean = np.dot(pre_whitener_inv, ica.pca_mean_)
             mixing_raw = np.dot(mixing_data, pre_whitener_inv.T)
         self.global_mean = NDVar(global_mean[picks], (self.epochs_ndvar.sensor,))
-        # channel data ≈ mixing.T @ sources + global_mean (up to the residual PCA components)
-        self.mixing = NDVar(mixing_raw[:, picks], (ic_dim, self.epochs_ndvar.sensor), 'mixing')
+        # channel data ≈ mixing.T @ sources + global_mean (up to the residual PCA components); all
+        # channels the ICA was estimated from, not only the primary type shown in epochs_ndvar
+        self.mixing = NDVar(mixing_raw, (ic_dim, Categorial('channel', ica.ch_names)), 'mixing')
+        # channels that are screened for being bad: every topographic type, in the ICA's channel order
+        self.screened_channels = [ica.ch_names[i] for i in topo_picks]
+        self.screened_channel_types = ica.info.get_channel_types(topo_picks)
         # pre-ICA signal range, normalized so it displays at a fixed scale.
         primary_ch_type = components_by_type[0][0]
         self.pre_ica_range_scale = 2 * CH_TYPE_DEFAULT_VLIM_SI[primary_ch_type]
@@ -323,7 +327,9 @@ class Document(FileDocument):
         Returns
         -------
         flat
-            ``(ch_name, ch_type)`` per flat channel, in channel order.
+            ``(ch_name, ch_type)`` per flat channel, in channel order. Every topographic
+            channel type the ICA was estimated from is screened (see
+            :attr:`screened_channels`), not only the type shown in :attr:`epochs_ndvar`.
 
         Notes
         -----
@@ -332,10 +338,8 @@ class Document(FileDocument):
         """
         if thresholds is None:
             thresholds = FLAT_DEFAULT
-        names = list(self.epochs_ndvar.sensor.names)
-        ch_types = self.epochs.get_channel_types(picks=names)
-        std = self.epochs_ndvar.x.std(axis=(0, 2))
-        return [(name, ch_type) for name, ch_type, ch_std in zip(names, ch_types, std) if ch_type in thresholds and ch_std < thresholds[ch_type]]
+        std = self.epochs.get_data(picks=self.screened_channels).std(axis=(0, 2))
+        return [(name, ch_type) for name, ch_type, ch_std in zip(self.screened_channels, self.screened_channel_types, std) if ch_type in thresholds and ch_std < thresholds[ch_type]]
 
     def channel_variance_fraction(self, component: int, ch_name: str) -> float:
         """Share of the variance of a channel that is due to one component
@@ -345,11 +349,11 @@ class Document(FileDocument):
         component
             Index of the component.
         ch_name
-            Name of the channel.
+            Name of the channel (any channel the ICA was estimated from).
         """
-        i_ch = self.epochs_ndvar.sensor.channel_idx[ch_name]
+        i_ch = self.ica.ch_names.index(ch_name)
         contribution = self.mixing.x[component, i_ch] * self.sources.x[:, component, :]
-        return contribution.var() / self.epochs_ndvar.x[:, i_ch, :].var()
+        return contribution.var() / self.epochs.get_data(picks=[ch_name]).var()
 
     def channel_gaps(
             self,
@@ -412,22 +416,27 @@ class Document(FileDocument):
             ``(component, ch_name, max_loadings, variance_fraction)`` for each qualifying
             component, sorted by ``variance_fraction``, the share of the channel's variance
             that is due to the component (see :meth:`channel_variance_fraction`), descending.
-            ``max_loadings`` is the component's peak loading in each epoch. Flat channels
-            (see :meth:`flat_channels`) are skipped, because the share of their variance is
-            undefined.
+            ``max_loadings`` is the component's peak loading in each epoch. The weights are
+            compared within each channel type (see :attr:`components_by_type`), so a
+            component can be listed once per type. Flat channels (see :meth:`flat_channels`)
+            are skipped, because the share of their variance is undefined.
         """
         flat = {ch_name for ch_name, _ in self.flat_channels()}
         candidates = []
-        for i, component_map in enumerate(self.components):
-            abs_comp = abs(component_map.x)
-            argsort = np.argsort(abs_comp)
-            if abs_comp[argsort[-1]] > abs_comp[argsort[-2]] * channel_ratio:
-                ch_name = self.epochs_ndvar.sensor.names[argsort[-1]]
-                if ch_name in flat:
-                    continue
-                max_loadings = self.sources[:, i].extrema('time').abs().x
-                variance_fraction = self.channel_variance_fraction(i, ch_name)
-                candidates.append((i, ch_name, max_loadings, variance_fraction))
+        for ch_type, components in self.components_by_type:
+            names = components.sensor.names
+            if len(names) < 2:
+                continue
+            for i, component_map in enumerate(components):
+                abs_comp = abs(component_map.x)
+                argsort = np.argsort(abs_comp)
+                if abs_comp[argsort[-1]] > abs_comp[argsort[-2]] * channel_ratio:
+                    ch_name = names[argsort[-1]]
+                    if ch_name in flat:
+                        continue
+                    max_loadings = self.sources[:, i].extrema('time').abs().x
+                    variance_fraction = self.channel_variance_fraction(i, ch_name)
+                    candidates.append((i, ch_name, max_loadings, variance_fraction))
         return sorted(candidates, key=itemgetter(-1), reverse=True)
 
 
@@ -763,9 +772,10 @@ class SharedToolsMenu:  # Frame mixin
 
             # Text desc
             component_link = fmtxt.Link(f"#{component}", f'component:{component}')
-            variance_eq = fmtxt.eq('Var', 100 * variance_fraction, 'ch', fmt='%.0f%%')
-            nc_eq = fmtxt.eq('R', nc_before[ch_name], 'n', fmt='%.2f')
-            desc = fmtxt.FMText([ch_name, fmtxt.linebreak, component_link, fmtxt.linebreak, variance_eq, fmtxt.linebreak, nc_eq])
+            desc = [ch_name, fmtxt.linebreak, component_link, fmtxt.linebreak, fmtxt.eq('Var', 100 * variance_fraction, 'ch', fmt='%.0f%%')]
+            if ch_name in nc_before.sensor.channel_idx:  # the neighbor correlation map covers the primary channel type
+                desc += [fmtxt.linebreak, fmtxt.eq('R', nc_before[ch_name], 'n', fmt='%.2f')]
+            desc = fmtxt.FMText(desc)
 
             # Loadings
             binrange = [0, max_loadings.max()]
