@@ -718,7 +718,7 @@ class SharedToolsMenu:  # Frame mixin
             component_link = fmtxt.Link(f"#{component}", f'component:{component}')
             variance_eq = fmtxt.eq('Var', 100 * variance_fraction, 'ch', fmt='%.0f%%')
             nc_eq = fmtxt.eq('R', nc_before[ch_name], 'n', fmt='%.2f')
-            desc = fmtxt.FMText([ch_name, fmtxt.linebreak, component_link, fmtxt.linebreak, variance_eq, fmtxt.linebreak, nc_eq])  # , css={'width': '7em'})
+            desc = fmtxt.FMText([ch_name, fmtxt.linebreak, component_link, fmtxt.linebreak, variance_eq, fmtxt.linebreak, nc_eq])
 
             # Loadings
             binrange = [0, max_loadings.max()]

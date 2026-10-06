@@ -1277,7 +1277,7 @@ class PipelineFrame(EelbrainFrame):
             if not keep_going:
                 cancelled.set()
 
-        results = []  # [(combo, candidates), ...]
+        results = []  # [(combo, candidates, gaps), ...]
         errors = []  # [(combo, error), ...]
         with self._pipeline_lock:
             for i, (combo, spec) in enumerate(rows):
