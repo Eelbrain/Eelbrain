@@ -376,7 +376,7 @@ class TRFDerivative(Derivative[object]):
             fwd = cov = None
             if 'fwd' in est.extra_inputs:
                 fwd = ctx.load('fwd')  # ensure built and tracked as a dependency
-                fwd = load.mne.forward_operator(fwd, ctx.state['src'], self.root / MRI_SDIR, None)
+                fwd = load.mne.forward_operator(fwd, ctx.state['src'], self.root / MRI_SDIR, None, adjacency=False)
             if 'cov' in est.extra_inputs:
                 cov = ctx.load('cov')
         return TRFJob(est, y, xs, tstart, tstop, fwd, cov)
