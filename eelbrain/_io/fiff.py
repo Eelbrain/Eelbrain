@@ -1442,9 +1442,10 @@ def forward_operator(
         if name is None:
             name = os.path.basename(fwd)
         fwd = mne.read_forward_solution(fwd)
-        mne.convert_forward_solution(fwd, force_fixed=not is_vol, use_cps=True, copy=False)
     elif name is None:
         name = 'fwd'
+    if not is_vol and fwd['source_ori'] != FIFF.FIFFV_MNE_FIXED_ORI:
+        fwd = mne.convert_forward_solution(fwd, force_fixed=True, use_cps=True)
     sensor = sensor_dim(fwd['info'], sysname=sysname, adjacency=adjacency)
     assert np.all(sensor.names == fwd['sol']['row_names'])
     subject = fwd['src'][0]['subject_his_id']
