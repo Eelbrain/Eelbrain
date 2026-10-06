@@ -15,6 +15,7 @@ available; the chart is scaled down to fit the width of the output area).
 from __future__ import annotations
 
 import shutil
+import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -277,6 +278,10 @@ class DependencyTree:
         try:
             svg = self.graph().pipe(format='svg', encoding='utf-8')
         except graphviz.ExecutableNotFound:
+            warnings.warn("Dependency tree displayed as text because the graphviz binaries are not installed (e.g. mamba install graphviz)")
+            return None
+        except graphviz.CalledProcessError as error:
+            warnings.warn(f"Dependency tree displayed as text because rendering the flow chart failed: {error}")
             return None
         # Scale a graph that is wider than the notebook output area down to fit
         # (the style attribute overrides the fixed width/height attributes)

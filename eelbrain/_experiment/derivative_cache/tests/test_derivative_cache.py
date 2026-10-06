@@ -4,6 +4,7 @@ import json
 import logging
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 import pytest
 
@@ -1207,7 +1208,7 @@ def test_dependency_tree_dedups_view_option_requests():
 
 
 def test_dependency_tree_graph():
-    pytest.importorskip('graphviz')
+    graphviz = pytest.importorskip('graphviz')
     _, registry, _, _, _, _, _, _, _root = make_registry()
     registry.register(ModeAgnosticDerivative())
 
@@ -1223,6 +1224,11 @@ def test_dependency_tree_graph():
     html = tree._repr_html_()
     if html is not None:  # needs the graphviz binary
         assert html.startswith('<svg style="max-width:100%;height:auto"')
+    # without a working binary, fall back to text with a warning
+    with mock.patch.object(graphviz.Digraph, 'pipe', side_effect=graphviz.ExecutableNotFound(['dot'])), pytest.warns(UserWarning, match='graphviz binaries'):
+        assert tree._repr_html_() is None
+    with mock.patch.object(graphviz.Digraph, 'pipe', side_effect=graphviz.CalledProcessError(1, ['dot'])), pytest.warns(UserWarning, match='rendering the flow chart failed'):
+        assert tree._repr_html_() is None
 
 
 def test_uncached_derivative_rebuilds_every_time():
