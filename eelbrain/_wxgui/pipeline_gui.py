@@ -9,6 +9,7 @@ import time
 import traceback
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -1173,10 +1174,7 @@ class PipelineFrame(EelbrainFrame):
         if errors:
             self._show_error(*_error_dialog_args(errors[0][1]))
         if results:
-            def apply(additions, recompute):
-                self._add_ica_bad_channels(scope, additions, recompute)
-
-            BadChannelSummaryFrame(self, results, scope[4].key_fields, apply).Show()
+            BadChannelSummaryFrame(self, results, scope[4].key_fields, partial(self._add_ica_bad_channels, scope)).Show()
 
     def _on_mri_activated(self, row_idx: int, subject: str):
         """Handle double-click on an MRI row."""
