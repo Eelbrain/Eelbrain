@@ -1062,7 +1062,7 @@ def test_unique_cache_paths_do_not_create_disambiguation_sidecar():
 def test_dependency_tree_formats_ascii_dependencies():
     _, registry, _, _, _, _, _, _, _root = make_registry()
 
-    tree = str(registry.dependency_tree('comparison', state=DEFAULT_STATE))
+    tree = registry.dependency_tree('comparison', state=DEFAULT_STATE).text(1000)
 
     assert "comparison [derivative] {subject='s1'}" in tree
     assert "current -> value [derivative] {subject='s1'}" in tree
@@ -1091,8 +1091,8 @@ def test_dependency_tree_shows_root_view():
     tree = registry.dependency_tree('optioned', state=DEFAULT_STATE, view='echo')
 
     assert tree.root.view == 'echo'
-    assert " [view: echo]" in str(tree).splitlines()[0]
-    assert '[view: echo]' not in '\n'.join(str(tree).splitlines()[1:])
+    assert " [view: echo]" in tree.text(1000).splitlines()[0]
+    assert '[view: echo]' not in '\n'.join(tree.text(1000).splitlines()[1:])
     try:
         import graphviz  # noqa: F401
     except ImportError:
@@ -1130,7 +1130,7 @@ def test_dependency_tree_dedups_key_equivalent_requests():
     registry.register(ModeAgnosticDerivative())
 
     tree = registry.dependency_tree('mode-agnostic', state=DEFAULT_STATE)
-    text = str(tree)
+    text = tree.text(1000)
 
     # 'value' does not key on 'mode', so the mode-override edge resolves to the same artifact
     assert "alt-mode -> value [derivative] {subject='s1'} [state: mode='alt'] [seen]" in text
@@ -1138,7 +1138,7 @@ def test_dependency_tree_dedups_key_equivalent_requests():
     assert seen_node.seen
     assert not seen_node.children
     # ... while a key-relevant state override stays distinct
-    comparison_text = str(registry.dependency_tree('comparison', state=DEFAULT_STATE))
+    comparison_text = registry.dependency_tree('comparison', state=DEFAULT_STATE).text(1000)
     assert '[seen]' not in comparison_text
 
 
@@ -1192,7 +1192,7 @@ def test_dependency_tree_dedups_view_option_requests():
     tree = registry.dependency_tree('view-agnostic', state=DEFAULT_STATE)
 
     # view options do not enter the identity of an uncached node either
-    assert "alt-view -> viewed-uncached [uncached] [options: view] [seen]" in str(tree)
+    assert "alt-view -> viewed-uncached [uncached] [options: view] [seen]" in tree.text(1000)
     seen_node = tree.root.children[1]
     assert seen_node.seen
     assert not seen_node.children

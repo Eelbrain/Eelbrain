@@ -190,7 +190,7 @@ def test_sample(samples_experiment):
     assert e._parcs['lobes'].name == 'lobes'
     dep_tree = e.load_evoked(show_dependencies=True)
     assert isinstance(dep_tree, DependencyTree)
-    tree = str(dep_tree)
+    tree = dep_tree.text(1000)
     assert 'evoked [derivative]' in tree
     # Dataset assembly is always uncached
     assert 'epochs [uncached]' in tree
@@ -246,7 +246,7 @@ def test_sample(samples_experiment):
     assert ds[0, 'evoked'].info['bads'] == ['MEG 0331']
 
     e.set(epoch_rejection='manual')
-    test_tree = str(e.load_test('a>v', tstart=0.05, tstop=0.2, pmin=0.05, samples=100, data='meg.rms', baseline=False, show_dependencies=True))
+    test_tree = e.load_test('a>v', tstart=0.05, tstop=0.2, pmin=0.05, samples=100, data='meg.rms', baseline=False, show_dependencies=True).text(1000)
     assert 'test-result [derivative]' in test_tree
     assert 'evoked-test-data [uncached]' in test_tree
     assert 'evoked-group-dataset [uncached]' in test_tree
