@@ -168,6 +168,11 @@ class DependencyTree:
     ``graphviz`` package and binary are installed (falling back to text
     otherwise). :meth:`graph` returns the underlying
     :class:`graphviz.Digraph` for customization or export.
+
+    Parameters
+    ----------
+    root
+        The resolved root request; its ``children`` hold the rest of the tree.
     """
 
     def __init__(self, root: DependencyTreeNode):
