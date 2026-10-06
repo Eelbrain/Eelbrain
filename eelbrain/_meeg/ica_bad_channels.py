@@ -23,6 +23,8 @@ CH_TYPE_DEFAULT = {'mag': True, 'grad': False, 'eeg': True}
 GAP_RATIO_DEFAULT = 0.5  # |w[c]| <= this * mean(|w[neighbors]|)
 MIN_COMPONENTS_DEFAULT = 2  # number of components that need to show the gap
 CONSISTENCY_DEFAULT = 0.5  # n_evidence / n_testable
+# Maximum standard deviation for a channel to count as flat, following mne.preprocessing.find_bad_channels_maxwell
+FLAT_DEFAULT = {'mag': 1e-17, 'grad': 1e-15, 'eeg': 1e-9}
 _SALIENCE = 0.15  # min(|w[neighbors]|) >= this * max(|w|); applies to every neighbor, so it
 # is a stronger requirement than the same value applied to the neighborhood mean would be
 _SIGN_CONSISTENCY = 0.8  # |mean(w[neighbors])| >= this * mean(|w[neighbors]|)

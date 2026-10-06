@@ -65,6 +65,13 @@ def test_select_components():
         assert variance_fraction == doc.channel_variance_fraction(component, ch_name)
         assert max_loadings.shape == (len(doc.epochs_ndvar),)
     assert doc.single_channel_components(channel_ratio=1000.) == []
+    # flat channels: per channel type standard deviation threshold (SI units)
+    assert doc.flat_channels() == []
+    names = list(doc.epochs_ndvar.sensor.names)
+    std = doc.epochs_ndvar.x.std(axis=(0, 2))
+    ch_types = doc.epochs.get_channel_types(picks=names)
+    i_quietest_mag = min((i for i, ch_type in enumerate(ch_types) if ch_type == 'mag'), key=std.__getitem__)
+    assert doc.flat_channels({'mag': 1.01 * std[i_quietest_mag]}) == [(names[i_quietest_mag], 'mag')]
     # channels missing from component maps, with the default channel types
     gap_results, skipped = doc.channel_gaps()
     assert [result.ch_type for _, result in gap_results] == ['mag', 'eeg']

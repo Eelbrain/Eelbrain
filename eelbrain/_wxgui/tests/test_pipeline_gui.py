@@ -541,22 +541,32 @@ def test_ica_bad_channels_report_a_failed_write(monkeypatch, tmp_path):
 
 
 def test_channel_summary_rows():
-    "One row per channel: gaps first, then the component that explains most of the channel's variance, strongest first"
+    "One row per channel: flat first, then gaps, then the component that explains most of the channel's variance, strongest first"
     results = [
-        (('R01',), [('MEG 0111', 3, 0.6), ('MEG 0112', 5, 0.2), ('MEG 0111', 7, 0.8)], [('MEG 0112', 4, 6), ('MEG 0113', 2, 2)]),
-        (('R02',), [], []),
-        (('R03',), [('MEG 0113', 1, 0.5)], []),
+        (('R01',), [('MEG 0111', 3, 0.6), ('MEG 0112', 5, 0.2), ('MEG 0111', 7, 0.8)], [('MEG 0112', 4, 6), ('MEG 0113', 2, 2)], [('EEG 001', 'eeg'), ('MEG 0113', 'mag')]),
+        (('R02',), [], [], [('EEG 001', 'eeg')]),
+        (('R03',), [('MEG 0113', 1, 0.5)], [], [('EEG 001', 'eeg'), ('EEG 002', 'eeg')]),
     ]
     rows = pipeline_gui._channel_summary_rows(results)
     assert rows == [
-        (('R01',), 'MEG 0112', 5, 0.2, (4, 6)),
-        (('R01',), 'MEG 0113', None, None, (2, 2)),
-        (('R01',), 'MEG 0111', 7, 0.8, None),
-        (('R03',), 'MEG 0113', 1, 0.5, None),
+        (('R01',), 'MEG 0113', None, None, (2, 2), True),
+        (('R01',), 'EEG 001', None, None, None, True),
+        (('R01',), 'MEG 0112', 5, 0.2, (4, 6), False),
+        (('R01',), 'MEG 0111', 7, 0.8, None, False),
+        (('R02',), 'EEG 001', None, None, None, True),
+        (('R03',), 'EEG 001', None, None, None, True),
+        (('R03',), 'EEG 002', None, None, None, True),
+        (('R03',), 'MEG 0113', 1, 0.5, None, False),
     ]
-    # gaps count regardless of the threshold
-    assert pipeline_gui._bad_channels_above(rows, 0.5) == [(('R01',), ['MEG 0112', 'MEG 0113', 'MEG 0111']), (('R03',), ['MEG 0113'])]
-    assert pipeline_gui._bad_channels_above(rows, 0.9) == [(('R01',), ['MEG 0112', 'MEG 0113'])]
+    # flat channels and gaps count regardless of the threshold
+    assert pipeline_gui._bad_channels_above(rows, 0.5) == [(('R01',), ['MEG 0113', 'EEG 001', 'MEG 0112', 'MEG 0111']), (('R02',), ['EEG 001']), (('R03',), ['EEG 001', 'EEG 002', 'MEG 0113'])]
+    assert pipeline_gui._bad_channels_above(rows, 0.9) == [(('R01',), ['MEG 0113', 'EEG 001', 'MEG 0112']), (('R02',), ['EEG 001']), (('R03',), ['EEG 001', 'EEG 002'])]
+    # excluded channels are never marked, whatever the evidence
+    assert pipeline_gui._bad_channels_above(rows, 0.9, ['EEG 001', 'MEG 0113']) == [(('R01',), ['MEG 0112']), (('R03',), ['EEG 002'])]
+    # an EEG channel that is flat in every recording is most likely the reference
+    assert pipeline_gui._flat_in_every_recording(results) == ['EEG 001']
+    assert pipeline_gui._flat_in_every_recording(results[:1]) == ['EEG 001']
+    assert pipeline_gui._flat_in_every_recording([]) == []
 
 
 def test_find_bad_channels_thread_holds_the_pipeline_lock(monkeypatch):
@@ -569,7 +579,7 @@ def test_find_bad_channels_thread_holds_the_pipeline_lock(monkeypatch):
         locked.append(frame._pipeline_lock.locked())
         if spec == 'bad':
             raise DataError("no positions")
-        return [('MEG 0111', 3, 0.6)], [('MEG 0112', 4, 6)]
+        return [('MEG 0111', 3, 0.6)], [('MEG 0112', 4, 6)], [('EEG 001', 'eeg')]
 
     frame = _frame(
         _pipeline_lock=threading.Lock(),
@@ -583,7 +593,7 @@ def test_find_bad_channels_thread_holds_the_pipeline_lock(monkeypatch):
     assert [i for i, _ in updates] == [0, 1]
     (scope, results, errors, cancelled, progress_), = summary
     assert scope is _ICA_SCOPE and progress_ is progress
-    assert results == [(('R01',), [('MEG 0111', 3, 0.6)], [('MEG 0112', 4, 6)])]
+    assert results == [(('R01',), [('MEG 0111', 3, 0.6)], [('MEG 0112', 4, 6)], [('EEG 001', 'eeg')])]
     assert [combo for combo, _ in errors] == [('R02',)] and isinstance(errors[0][1], DataError)
     assert not cancelled
 
@@ -593,7 +603,7 @@ def test_find_bad_channels_thread_holds_the_pipeline_lock(monkeypatch):
     locked.clear()
     frame._find_bad_channels_thread(_ICA_SCOPE, [(('R01',), 'ok'), (('R02',), 'ok')], progress)
     assert locked == [True]
-    assert summary[0][1] == [(('R01',), [('MEG 0111', 3, 0.6)], [('MEG 0112', 4, 6)])] and summary[0][3] is True
+    assert summary[0][1] == [(('R01',), [('MEG 0111', 3, 0.6)], [('MEG 0112', 4, 6)], [('EEG 001', 'eeg')])] and summary[0][3] is True
 
 
 def test_refresh_holds_the_pipeline_lock(monkeypatch):

@@ -30,7 +30,7 @@ from .. import load, plot, fmtxt
 from .._colorspaces import UNAMBIGUOUS_COLORS
 from .._data_obj import Dataset, Factor, NDVar, Categorial, Scalar, combine
 from .._io.fiff import _picks, sensor_dim
-from .._meeg.ica_bad_channels import CH_TYPE_DEFAULT, CONSISTENCY_DEFAULT, GAP_RATIO_DEFAULT, MIN_COMPONENTS_DEFAULT, SMOOTHNESS_DEFAULT, ChannelGapResult, find_channel_gaps, map_smoothness, neighbor_matrix
+from .._meeg.ica_bad_channels import CH_TYPE_DEFAULT, CONSISTENCY_DEFAULT, FLAT_DEFAULT, GAP_RATIO_DEFAULT, MIN_COMPONENTS_DEFAULT, SMOOTHNESS_DEFAULT, ChannelGapResult, find_channel_gaps, map_smoothness, neighbor_matrix
 from .._ndvar import concatenate, neighbor_correlation
 from .._types import PathArg
 from .._utils.numpy_utils import INT_TYPES
@@ -311,6 +311,32 @@ class Document(FileDocument):
                 return ', '.join([f'{k}: {v:.1%}' for k, v in desc_dict.items()])
         return desc_dict
 
+    def flat_channels(self, thresholds: dict[str, float] = None) -> list[tuple[str, str]]:
+        """Channels whose standard deviation is below a channel type specific threshold
+
+        Parameters
+        ----------
+        thresholds
+            ``{ch_type: max_std}`` in SI units (default :data:`FLAT_DEFAULT`); channel types
+            that are missing are not screened.
+
+        Returns
+        -------
+        flat
+            ``(ch_name, ch_type)`` per flat channel, in channel order.
+
+        Notes
+        -----
+        A flat EEG channel can be the reference, which is not defective; marking it as bad is
+        left to the user (as in :meth:`Pipeline.make_bad_channels_auto`).
+        """
+        if thresholds is None:
+            thresholds = FLAT_DEFAULT
+        names = list(self.epochs_ndvar.sensor.names)
+        ch_types = self.epochs.get_channel_types(picks=names)
+        std = self.epochs_ndvar.x.std(axis=(0, 2))
+        return [(name, ch_type) for name, ch_type, ch_std in zip(names, ch_types, std) if ch_type in thresholds and ch_std < thresholds[ch_type]]
+
     def channel_variance_fraction(self, component: int, ch_name: str) -> float:
         """Share of the variance of a channel that is due to one component
 
@@ -386,14 +412,19 @@ class Document(FileDocument):
             ``(component, ch_name, max_loadings, variance_fraction)`` for each qualifying
             component, sorted by ``variance_fraction``, the share of the channel's variance
             that is due to the component (see :meth:`channel_variance_fraction`), descending.
-            ``max_loadings`` is the component's peak loading in each epoch.
+            ``max_loadings`` is the component's peak loading in each epoch. Flat channels
+            (see :meth:`flat_channels`) are skipped, because the share of their variance is
+            undefined.
         """
+        flat = {ch_name for ch_name, _ in self.flat_channels()}
         candidates = []
         for i, component_map in enumerate(self.components):
             abs_comp = abs(component_map.x)
             argsort = np.argsort(abs_comp)
             if abs_comp[argsort[-1]] > abs_comp[argsort[-2]] * channel_ratio:
                 ch_name = self.epochs_ndvar.sensor.names[argsort[-1]]
+                if ch_name in flat:
+                    continue
                 max_loadings = self.sources[:, i].extrema('time').abs().x
                 variance_fraction = self.channel_variance_fraction(i, ch_name)
                 candidates.append((i, ch_name, max_loadings, variance_fraction))
@@ -697,6 +728,18 @@ class SharedToolsMenu:  # Frame mixin
             canvas = FigureCanvasAgg(figure)
             canvas.print_jpeg(image)
             section.append(image)
+
+        # Flat channels
+        flat = self.doc.flat_channels()
+        section = doc.add_section("Flat channels")
+        section.add_paragraph(f"Channels whose standard deviation is below {', '.join(f'{threshold:g} ({ch_type})' for ch_type, threshold in FLAT_DEFAULT.items())}. A flat EEG channel can be the reference, which is not defective; EEG channels are therefore listed but not included in the link below.")
+        if flat:
+            section.add_paragraph(', '.join(f"{ch_name} ({ch_type})" for ch_name, ch_type in flat))
+            names = [ch_name for ch_name, ch_type in flat if ch_type != 'eeg']
+            if names and self.doc.bad_channels_callback is not None:
+                section.add_paragraph(fmtxt.Link(f"Add {len(names)} channel{'s' if len(names) > 1 else ''} to bad channels…", f"{_BAD_CHANNELS_URL}{','.join(names)}"))
+        else:
+            section.add_paragraph("No flat channel.")
 
         # Channels missing from component maps
         self._AddChannelGapSection(doc, gap_results, skipped, gap_ratio, min_components, min_consistency)
@@ -2224,7 +2267,10 @@ def _component_links(components: Sequence[int]) -> fmtxt.FMText:
 def _find_bad_channels_help() -> fmtxt.Section:
     "Help text for FindBadChannelsDialog (hover help is unreliable on some platforms)"
     doc = fmtxt.Section("Find Bad Channels")
-    doc.add_paragraph("This tool looks for bad channels in two ways: channels that are missing from the ICA component maps, and components that load on a single channel.")
+    doc.add_paragraph("This tool looks for bad channels in three ways: flat channels, channels that are missing from the ICA component maps, and components that load on a single channel.")
+
+    section = doc.add_section("Flat channels")
+    section.add_paragraph("A channel whose standard deviation is below a sensor type specific threshold records nothing. A flat EEG channel can be the reference, which is not defective: whether to mark it as bad is left to the user.")
 
     section = doc.add_section("Channels missing from component maps")
     section.add_paragraph("A channel that does not record any signal appears as a gap in the component maps: its weight is ~0 where the surrounding channels carry a strong field. A weight of ~0 in a single component is not diagnostic, because the channel could be located on the null line of a polarity reversal. Two properties make it diagnostic: the weight is ≤ ~0 in multiple components that reflect realistic field patterns, and it is ≤ ~0 while the surrounding channels all have the same polarity.")

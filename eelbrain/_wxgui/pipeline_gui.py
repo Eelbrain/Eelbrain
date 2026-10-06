@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 import traceback
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -167,42 +167,58 @@ CHANNEL_VARIANCE_DEFAULT = 0.5
 # Bad channel evidence of one recording (see PipelineFrame._ica_bad_channel_candidates)
 CandidateList = list[tuple[str, int, float]]  # (ch_name, component, variance_fraction) per component loading on a single channel
 GapList = list[tuple[str, int, int]]  # (ch_name, n_evidence, n_testable) per channel missing from component maps
-# Summary row: (combo, ch_name, component, variance_fraction, gap); component and variance_fraction are None
-# for a channel no component loads on, gap is (n_evidence, n_testable) or None for a channel that is not a gap
-SummaryRow = tuple[tuple[str, ...], str, int | None, float | None, tuple[int, int] | None]
+FlatList = list[tuple[str, str]]  # (ch_name, ch_type) per flat channel
+RecordingResult = tuple[tuple[str, ...], CandidateList, GapList, FlatList]  # (combo, candidates, gaps, flat)
+# Summary row: (combo, ch_name, component, variance_fraction, gap, flat); component and variance_fraction are
+# None for a channel no component loads on, gap is (n_evidence, n_testable) or None for a channel that is not a gap
+SummaryRow = tuple[tuple[str, ...], str, int | None, float | None, tuple[int, int] | None, bool]
 
 
-def _channel_summary_rows(
-        results: Sequence[tuple[tuple[str, ...], CandidateList, GapList]],
-) -> list[SummaryRow]:
+def _channel_summary_rows(results: Sequence[RecordingResult]) -> list[SummaryRow]:
     """One row per channel for the bad channel summary
 
     Parameters
     ----------
     results
-        ``(combo, candidates, gaps)`` per recording (see
+        ``(combo, candidates, gaps, flat)`` per recording (see
         :meth:`PipelineFrame._ica_bad_channel_candidates`). A channel that several
         components load on is listed with the one that explains most of its variance.
-        Within a recording, channels missing from component maps come first, then the
-        rest by variance fraction, descending.
+        Within a recording, flat channels come first, then channels missing from component
+        maps, then the rest by variance fraction, descending.
     """
     rows = []
-    for combo, candidates, gaps in results:
+    for combo, candidates, gaps, flat in results:
         best = {}  # {ch_name: (component, variance_fraction)}
         for ch_name, component, variance_fraction in candidates:
             if ch_name not in best or variance_fraction > best[ch_name][1]:
                 best[ch_name] = (component, variance_fraction)
         gap_by_name = {ch_name: (n_evidence, n_testable) for ch_name, n_evidence, n_testable in gaps}
-        for ch_name in gap_by_name:
+        flat_names = {ch_name for ch_name, _ in flat}
+        for ch_name in (*gap_by_name, *flat_names):
             best.setdefault(ch_name, (None, None))
-        for ch_name, (component, variance_fraction) in sorted(best.items(), key=lambda item: (item[0] in gap_by_name, item[1][1] or 0), reverse=True):
-            rows.append((combo, ch_name, component, variance_fraction, gap_by_name.get(ch_name)))
+        for ch_name, (component, variance_fraction) in sorted(best.items(), key=lambda item: (item[0] in flat_names, item[0] in gap_by_name, item[1][1] or 0), reverse=True):
+            rows.append((combo, ch_name, component, variance_fraction, gap_by_name.get(ch_name), ch_name in flat_names))
     return rows
+
+
+def _flat_in_every_recording(results: Sequence[RecordingResult]) -> list[str]:
+    """EEG channels that are flat in every recording: most likely the reference rather than defective
+
+    Parameters
+    ----------
+    results
+        ``(combo, candidates, gaps, flat)`` per recording (see :func:`_channel_summary_rows`).
+    """
+    if not results:
+        return []
+    flat_sets = [{ch_name for ch_name, ch_type in flat if ch_type == 'eeg'} for _, _, _, flat in results]
+    return sorted(set.intersection(*flat_sets))
 
 
 def _bad_channels_above(
         rows: Sequence[SummaryRow],
         threshold: float,
+        exclude: Collection[str] = (),
 ) -> list[tuple[tuple[str, ...], list[str]]]:
     """Channels to mark as bad at ``threshold``, grouped by recording: ``[(combo, names), ...]``
 
@@ -211,18 +227,23 @@ def _bad_channels_above(
     rows
         Summary rows (see :func:`_channel_summary_rows`).
     threshold
-        Minimum variance fraction for a channel to count as bad; a channel that is
+        Minimum variance fraction for a channel to count as bad; a channel that is flat or
         missing from component maps counts regardless.
+    exclude
+        Channels that are never marked, whatever the evidence (e.g. the EEG reference,
+        which is flat by design).
     """
     by_combo = {}
-    for combo, ch_name, _, variance_fraction, gap in rows:
-        if gap is not None or variance_fraction >= threshold:
+    for combo, ch_name, _, variance_fraction, gap, flat in rows:
+        if ch_name in exclude:
+            continue
+        if flat or gap is not None or variance_fraction >= threshold:
             by_combo.setdefault(combo, []).append(ch_name)
     return list(by_combo.items())
 
 
 class BadChannelSummaryFrame(wx.Frame):
-    """Channels dominated by a single ICA component, with an Apply button to mark them as bad
+    """Channels that are flat, missing from ICA maps or dominated by one component, with an Apply button to mark them as bad
 
     A regular window rather than a dialog, so that the user can go back to the pipeline
     window and open the ICAs in question before applying.
@@ -234,7 +255,7 @@ class BadChannelSummaryFrame(wx.Frame):
     scope
         Table the recordings belong to (see :meth:`PipelineFrame._table_scope`).
     results
-        ``(combo, candidates, gaps)`` per recording that was analyzed (see
+        ``(combo, candidates, gaps, flat)`` per recording that was analyzed (see
         :func:`_channel_summary_rows`).
     threshold
         Initial minimum variance fraction for marking a channel as bad.
@@ -244,7 +265,7 @@ class BadChannelSummaryFrame(wx.Frame):
             self,
             parent: PipelineFrame,
             scope: tuple,
-            results: Sequence[tuple[tuple[str, ...], CandidateList, GapList]],
+            results: Sequence[RecordingResult],
             threshold: float,
     ) -> None:
         super().__init__(parent, title="Bad Channels")
@@ -263,25 +284,33 @@ class BadChannelSummaryFrame(wx.Frame):
         self._threshold.SetDigits(0)
         # arrows and typed text; the selection is updated once the control has finished
         # processing the change, so that its text is current when it is read
-        self._threshold.Bind(wx.EVT_SPINCTRLDOUBLE, self._on_threshold)
-        self._threshold.Bind(wx.EVT_TEXT, self._on_threshold)
+        self._threshold.Bind(wx.EVT_SPINCTRLDOUBLE, self._on_change)
+        self._threshold.Bind(wx.EVT_TEXT, self._on_change)
         hbox.Add(self._threshold, flag=wx.ALIGN_CENTER_VERTICAL | wx.LEFT, border=6)
         hbox.Add(wx.StaticText(panel, label="% of its variance"), flag=wx.ALIGN_CENTER_VERTICAL | wx.LEFT, border=4)
         vbox.Add(hbox, flag=wx.LEFT | wx.RIGHT | wx.TOP, border=12)
         # wrapped to the window width in _on_size
-        self._texts = [wx.StaticText(panel, label="A channel that is missing from component maps (Gap: components with a gap / components in which the channel could be evaluated) is marked regardless.")]
-        vbox.Add(self._texts[0], flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP | wx.BOTTOM, border=12)
+        self._texts = [wx.StaticText(panel, label="A channel that is flat, or missing from component maps (Gap: components with a gap / components in which the channel could be evaluated), is marked regardless of the threshold. A flat EEG channel can be the reference rather than defective: channels listed under Do not mark are left alone whatever the evidence.")]
+        vbox.Add(self._texts[0], flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, border=12)
+        hbox = wx.BoxSizer(wx.HORIZONTAL)
+        hbox.Add(wx.StaticText(panel, label="Do not mark (comma-separated):"), flag=wx.ALIGN_CENTER_VERTICAL)
+        self._exclude = wx.TextCtrl(panel, value=', '.join(_flat_in_every_recording(results)))
+        self._exclude.SetToolTip("Pre-filled with the EEG channels that are flat in every recording, which is most likely the reference")
+        self._exclude.Bind(wx.EVT_TEXT, self._on_change)
+        hbox.Add(self._exclude, proportion=1, flag=wx.ALIGN_CENTER_VERTICAL | wx.LEFT, border=6)
+        vbox.Add(hbox, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP | wx.BOTTOM, border=12)
 
         self._list = wx.ListCtrl(panel, style=wx.LC_REPORT | wx.BORDER_NONE)
-        columns = [*((field.title(), 90) for field in layout.key_fields), ("Channel", 100), ("Component", 90), ("Variance", 80), ("Gap", 80)]
+        columns = [*((field.title(), 90) for field in layout.key_fields), ("Channel", 100), ("Flat", 50), ("Gap", 80), ("Component", 90), ("Variance", 80)]
         for i, (label, width) in enumerate(columns):
             self._list.InsertColumn(i, label, width=width)
-        for combo, ch_name, component, variance_fraction, gap in self._rows:
+        for combo, ch_name, component, variance_fraction, gap, flat in self._rows:
             idx = self._list.InsertItem(self._list.GetItemCount(), combo[0])
+            flat_str = 'flat' if flat else ''
+            gap_str = '' if gap is None else f"{gap[0]} / {gap[1]}"
             component_str = '' if component is None else f"#{component}"
             variance_str = '' if variance_fraction is None else f"{variance_fraction:.0%}"
-            gap_str = '' if gap is None else f"{gap[0]} / {gap[1]}"
-            for col, value in enumerate((*combo[1:], ch_name, component_str, variance_str, gap_str), 1):
+            for col, value in enumerate((*combo[1:], ch_name, flat_str, gap_str, component_str, variance_str), 1):
                 self._list.SetItem(idx, col, value)
         vbox.Add(self._list, proportion=1, flag=wx.EXPAND)
 
@@ -322,20 +351,24 @@ class BadChannelSummaryFrame(wx.Frame):
             pass
         return self._threshold_value
 
-    def bad_channels(self) -> list[tuple[tuple[str, ...], list[str]]]:
-        """Channels above the current threshold, grouped by recording: ``[(combo, names), ...]``"""
-        return _bad_channels_above(self._rows, self.get_threshold())
+    def exclude(self) -> list[str]:
+        "Channels listed under Do not mark"
+        return [name.strip() for name in self._exclude.GetValue().split(',') if name.strip()]
 
-    def _on_threshold(self, event) -> None:
+    def bad_channels(self) -> list[tuple[tuple[str, ...], list[str]]]:
+        """Channels to mark as bad with the current settings, grouped by recording: ``[(combo, names), ...]``"""
+        return _bad_channels_above(self._rows, self.get_threshold(), self.exclude())
+
+    def _on_change(self, event) -> None:
         wx.CallAfter(self._update_selection)
 
     def _update_selection(self) -> None:
-        "Colour the rows that are above the threshold and update the status bar and Apply button"
+        "Colour the rows that will be marked and update the status bar and Apply button"
         additions = self.bad_channels()
         selected = {(combo, ch_name) for combo, names in additions for ch_name in names}
         # an explicit colour: wx.NullColour does not clear a colour once one was set (macOS)
         default = self._list.GetTextColour()
-        for i, (combo, ch_name, _, _, _) in enumerate(self._rows):
+        for i, (combo, ch_name, *_) in enumerate(self._rows):
             self._list.SetItemTextColour(i, wx.RED if (combo, ch_name) in selected else default)
         self._list.Refresh()
         n_channels = sum(len(names) for _, names in additions)
@@ -861,7 +894,7 @@ class PipelineFrame(EelbrainFrame):
 
         # Bad channel search of the ICA task; shown and enabled along with the compute button
         self._bad_chs_btn = wx.Button(self._panel, label="Bad-Chs", style=wx.BU_EXACTFIT)
-        self._bad_chs_btn.SetToolTip("Find channels dominated by a single ICA component in every recording with a selected ICA")
+        self._bad_chs_btn.SetToolTip("Find flat channels and channels dominated by a single ICA component in every recording with a selected ICA")
         self._bad_chs_btn.Bind(wx.EVT_BUTTON, self._on_find_bad_channels)
         toolbar.Add(self._bad_chs_btn, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=6)
 
@@ -1240,7 +1273,7 @@ class PipelineFrame(EelbrainFrame):
             wx.CallAfter(self._start_refresh)
 
     def _on_find_bad_channels(self, event) -> None:
-        """Bad-Chs button: find channels dominated by a single ICA component in every recording with a selected ICA."""
+        """Bad-Chs button: find flat channels and channels dominated by a single ICA component in every recording with a selected ICA."""
         scope = self._table_scope()
         task = scope[0]
         rows = []  # [(combo, spec), ...]
@@ -1277,7 +1310,7 @@ class PipelineFrame(EelbrainFrame):
             if not keep_going:
                 cancelled.set()
 
-        results = []  # [(combo, candidates, gaps), ...]
+        results = []  # [(combo, candidates, gaps, flat), ...]
         errors = []  # [(combo, error), ...]
         with self._pipeline_lock:
             for i, (combo, spec) in enumerate(rows):
@@ -1294,12 +1327,13 @@ class PipelineFrame(EelbrainFrame):
             self,
             raw_name: str,
             spec: JobSpec,
-    ) -> tuple[CandidateList, GapList]:
+    ) -> tuple[CandidateList, GapList, FlatList]:
         """Bad channel evidence of one recording
 
         The metrics of the ICA GUI's Find Bad Channels tool, with its default parameters
-        (see :meth:`select_components.Document.single_channel_components` and
-        :meth:`select_components.Document.channel_gaps`), computed on the recording's ICA
+        (see :meth:`select_components.Document.single_channel_components`,
+        :meth:`select_components.Document.channel_gaps` and
+        :meth:`select_components.Document.flat_channels`), computed on the recording's ICA
         and the raw data it was estimated from, without opening the GUI.
 
         Parameters
@@ -1319,6 +1353,8 @@ class PipelineFrame(EelbrainFrame):
             ``(ch_name, n_evidence, n_testable)`` per channel that is missing from component
             maps: the number of components in which it is a gap, and in which it could be
             evaluated.
+        flat
+            ``(ch_name, ch_type)`` per flat channel.
         """
         ctx = spec.ctx
         raw = ctx.node.load_concatenated_source_raw(ctx, ctx.node.pipe.task, preload=False)
@@ -1327,12 +1363,12 @@ class PipelineFrame(EelbrainFrame):
         candidates = [(ch_name, component, variance_fraction) for component, ch_name, _, variance_fraction in doc.single_channel_components()]
         gap_results, _ = doc.channel_gaps()
         gaps = [(channel.name, channel.n_evidence, channel.n_testable) for _, result in gap_results for channel in result.channels]
-        return candidates, gaps
+        return candidates, gaps, doc.flat_channels()
 
     def _show_bad_channel_summary(
             self,
             scope: tuple,  # see :meth:`_table_scope`
-            results: list[tuple[tuple[str, ...], CandidateList, GapList]],
+            results: list[RecordingResult],
             errors: list[tuple[tuple[str, ...], Exception]],
             cancelled: bool,
             progress: wx.ProgressDialog,
