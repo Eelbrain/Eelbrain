@@ -573,7 +573,7 @@ def test_find_bad_channels_thread_holds_the_pipeline_lock(monkeypatch):
     "Every recording is analyzed under the pipeline lock; a failing one is reported, the rest are summarized"
     monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda func, *args: func(*args))
     locked, updates = [], []
-    progress = SimpleNamespace(Update=lambda i, msg: updates.append((i, msg)) or (True, False))
+    progress = SimpleNamespace(Update=lambda i, msg: updates.append((i, msg)) or (True, False), WasCancelled=lambda: False, Destroy=lambda: None)
 
     def candidates(raw_name, spec):
         locked.append(frame._pipeline_lock.locked())
@@ -591,19 +591,28 @@ def test_find_bad_channels_thread_holds_the_pipeline_lock(monkeypatch):
     assert locked == [True, True]
     assert not frame._pipeline_lock.locked()
     assert [i for i, _ in updates] == [0, 1]
-    (scope, results, errors, cancelled, progress_), = summary
+    (scope, results, errors, progress_), = summary
     assert scope is _ICA_SCOPE and progress_ is progress
     assert results == [(('R01',), [('MEG 0111', 3, 0.6)], [('MEG 0112', 4, 6)], [('EEG 001', 'eeg')])]
     assert [combo for combo, _ in errors] == [('R02',)] and isinstance(errors[0][1], DataError)
-    assert not cancelled
 
-    # Abort in the progress dialog stops the search before the next recording
-    progress.Update = lambda i, msg: (False, False)
+    # Abort in the progress dialog while a recording loads stops the search before the next one
+    progress.Update = lambda i, msg: (i == 0, False)
     summary.clear()
     locked.clear()
-    frame._find_bad_channels_thread(_ICA_SCOPE, [(('R01',), 'ok'), (('R02',), 'ok')], progress)
+    frame._find_bad_channels_thread(_ICA_SCOPE, [(('R01',), 'ok'), (('R02',), 'ok'), (('R03',), 'ok')], progress)
     assert locked == [True]
-    assert summary[0][1] == [(('R01',), [('MEG 0111', 3, 0.6)], [('MEG 0112', 4, 6)], [('EEG 001', 'eeg')])] and summary[0][3] is True
+    assert summary[0][1] == [(('R01',), [('MEG 0111', 3, 0.6)], [('MEG 0112', 4, 6)], [('EEG 001', 'eeg')])]
+
+    # the summary asks the dialog whether Abort was clicked, which also covers the last recording (the frame's own method is mocked above)
+    monkeypatch.setattr(pipeline_gui, 'BadChannelSummaryFrame', lambda *args: opened.append(args) or SimpleNamespace(Show=lambda: None))
+    opened, destroyed = [], []
+    progress = SimpleNamespace(WasCancelled=lambda: True, Destroy=lambda: destroyed.append(True))
+    PipelineFrame._show_bad_channel_summary(frame, _ICA_SCOPE, summary[0][1], [], progress)
+    assert destroyed == [True] and opened == []
+    progress.WasCancelled = lambda: False
+    PipelineFrame._show_bad_channel_summary(frame, _ICA_SCOPE, summary[0][1], [], progress)
+    assert len(opened) == 1 and opened[0][1] == summary[0][1]
 
 
 def test_refresh_holds_the_pipeline_lock(monkeypatch):

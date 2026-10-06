@@ -58,6 +58,8 @@ class _AbortRequested(Exception):
 
 
 _USER_ERROR_TYPES = (ConfigurationError, DataError, FileMissingError, FileNotFoundError)
+# Seconds the bad channel search waits for the main thread to process a progress update before loading the next row
+_PROGRESS_UPDATE_TIMEOUT = 1.
 
 
 def _format_user_error(error: Exception) -> tuple[str, str] | None:
@@ -1081,29 +1083,34 @@ class PipelineFrame(EelbrainFrame):
 
         Holds the pipeline lock throughout, like a refresh pass: loading a recording's
         raw data goes through the derivative cache. The progress dialog is updated on the
-        main thread, which is also where it reports a click on Abort; the row being
-        loaded at that point still completes.
+        main thread, which is also where it reports a click on Abort; the update is awaited
+        before a row is loaded, so that the row being loaded when Abort is clicked is the
+        last one. An Abort during the last row is seen by :meth:`_show_bad_channel_summary`.
         """
         raw_name = scope[3]
         cancelled = threading.Event()
+        updated = threading.Event()
 
         def update(i: int, combo: tuple[str, ...]) -> None:
             keep_going, _ = progress.Update(i, f"Loading {' '.join(combo)}…  ({i + 1} / {len(rows)})")
             if not keep_going:
                 cancelled.set()
+            updated.set()
 
         results = []  # [(combo, candidates, gaps, flat), ...]
         errors = []  # [(combo, error), ...]
         with self._pipeline_lock:
             for i, (combo, spec) in enumerate(rows):
+                updated.clear()
+                wx.CallAfter(update, i, combo)
+                updated.wait(_PROGRESS_UPDATE_TIMEOUT)
                 if cancelled.is_set():
                     break
-                wx.CallAfter(update, i, combo)
                 try:
                     results.append((combo, *self._ica_bad_channel_candidates(raw_name, spec)))
                 except Exception as error:
                     errors.append((combo, error))
-        wx.CallAfter(self._show_bad_channel_summary, scope, results, errors, cancelled.is_set(), progress)
+        wx.CallAfter(self._show_bad_channel_summary, scope, results, errors, progress)
 
     def _ica_bad_channel_candidates(
             self,
@@ -1150,14 +1157,15 @@ class PipelineFrame(EelbrainFrame):
             scope: tuple,  # see :meth:`_table_scope`
             results: list[RecordingResult],
             errors: list[tuple[tuple[str, ...], Exception]],
-            cancelled: bool,
             progress: wx.ProgressDialog,
     ) -> None:
         """Close the progress dialog and open the summary window for the rows that were analyzed.
 
         The first error is shown, as after a refresh pass; the rows that resolved are
-        still summarized. A cancelled search shows nothing.
+        still summarized. A cancelled search shows nothing, also when Abort was clicked
+        while the last row was loading.
         """
+        cancelled = progress.WasCancelled()
         progress.Destroy()
         if cancelled:
             return
