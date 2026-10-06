@@ -23,9 +23,8 @@ if TYPE_CHECKING:
     import graphviz
 
 
-def _mapping_text(mapping: dict[str, Any] | None, *, values: bool = True) -> str | None:
-    if not mapping:
-        return None
+def _mapping_items(mapping: dict[str, Any], *, values: bool = True) -> list[str]:
+    """Format mapping items as ``key=value`` (or just keys), limited to a readable number with a ``+n`` overflow marker."""
     items = list(mapping.items())
     max_items = 6 if values else 8
     if values:
@@ -34,22 +33,23 @@ def _mapping_text(mapping: dict[str, Any] | None, *, values: bool = True) -> str
         parts = [str(key) for key, _ in items[:max_items]]
     if len(items) > max_items:
         parts.append(f"+{len(items) - max_items}")
-    return ', '.join(parts)
+    return parts
+
+
+def _mapping_text(mapping: dict[str, Any] | None, *, values: bool = True) -> str | None:
+    if not mapping:
+        return None
+    return ', '.join(_mapping_items(mapping, values=values))
 
 
 def _label_lines(mapping: dict[str, Any] | None, *, values: bool = True) -> list[str]:
-    """Multi-line graph-node label for a mapping (one clipped item per line keeps node boxes narrow)."""
+    """Multi-line graph label for a mapping (one clipped item per line keeps node boxes narrow)."""
     if not mapping:
         return []
-    items = list(mapping.items())
-    max_items = 6 if values else 8
+    items = _mapping_items(mapping, values=values)
     if values:
-        lines = [_clip_segment(f"{key}={value!r}", 40) for key, value in items[:max_items]]
-    else:
-        lines = [_clip_segment(', '.join(str(key) for key, _ in items[:max_items]), 40)]
-    if len(items) > max_items:
-        lines.append(f"+{len(items) - max_items}")
-    return lines
+        return [_clip_segment(item, 40) for item in items]
+    return [_clip_segment(', '.join(items), 40)]
 
 
 def _line_width(max_line_length: int | None) -> int:
