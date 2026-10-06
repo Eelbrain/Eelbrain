@@ -1040,14 +1040,15 @@ class PipelineFrame(EelbrainFrame):
                     self._pipeline.make_bad_channels(names, raw=raw_name, **{**state, **source_state})
                 spec.path.unlink(missing_ok=True)
                 jobs.append((combo, spec))
-        except _USER_ERROR_TYPES as exc:
+        except Exception as exc:  # any error: the ICAs deleted so far still need to be queued or shown as missing
             error = exc
         finally:
             self._pipeline_lock.release()
         if recompute:
             wx.CallAfter(self._queue_jobs, scope, jobs)
         if error is not None:
-            # the recording whose bad channels could not be written may be half updated, so re-read every row
+            # the recording whose bad channels could not be written may be half updated, so re-read every row;
+            # _error_dialog_args presents an unexpected error as a bug report
             wx.CallAfter(self._show_error, *_error_dialog_args(error))
             wx.CallAfter(self._start_refresh)
         elif not recompute:
