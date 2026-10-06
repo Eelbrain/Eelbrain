@@ -1196,6 +1196,14 @@ def test_dependency_tree_dedups_view_option_requests():
     seen_node = tree.root.children[1]
     assert seen_node.seen
     assert not seen_node.children
+    try:
+        import graphviz  # noqa: F401
+    except ImportError:
+        return
+    # the deduplicated node carries no options; the edges do
+    source = tree.graph().source
+    assert 'label="viewed-uncached"' in source
+    assert 'label="alt-view\nview"' in source
 
 
 def test_dependency_tree_graph():

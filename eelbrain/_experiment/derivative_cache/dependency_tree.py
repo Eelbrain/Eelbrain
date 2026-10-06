@@ -233,10 +233,12 @@ class DependencyTree:
             node_id = f'n{len(node_ids)}'
             node_ids[node.identity] = node_id
             label_lines = [node.name, *_label_lines(node.key)]
-            if not node.key and node.options:
-                label_lines.extend(_label_lines(node.options, values=False))
-            if node is self.root and node.view:
-                label_lines.append(f"view: {node.view}")
+            if node is self.root:
+                # The root has no incoming edge to carry its options and view
+                if not node.key:
+                    label_lines.extend(_label_lines(node.options, values=False))
+                if node.view:
+                    label_lines.append(f"view: {node.view}")
             label = '\n'.join(label_lines)
             if node.kind == 'derivative':
                 dot.node(node_id, label, shape='box', style='rounded,filled', fillcolor='lightblue')
@@ -253,6 +255,7 @@ class DependencyTree:
                 if child.label:
                     label_parts.append(child.label)
                 label_parts.extend(_label_lines(child.state))
+                label_parts.extend(_label_lines(child.options, values=False))
                 if child.view:
                     label_parts.append(f"view: {child.view}")
                 edge_label = '\n'.join(label_parts)
