@@ -477,6 +477,7 @@ class SharedToolsMenu:  # Frame mixin
     # MakeToolsMenu() might be called before __init__
     butterfly_baseline = ID.BASELINE_NONE
     last_model = ""
+    _bad_channel_results = None  # set by ShowBadChannels, for the summary window
 
     def AddToolbarButtons(self, tb):
         button = wx.Button(tb, label="PSD")
@@ -872,8 +873,13 @@ class SharedToolsMenu:  # Frame mixin
     def ShowBadChannelSummary(self) -> BadChannelSummaryFrame:
         """Open the window for selecting which of the channels found by :meth:`ShowBadChannels` to mark as bad
 
-        The same window as Bad-Chs in the pipeline GUI, restricted to this recording.
+        The same window as Bad-Chs in the pipeline GUI, restricted to this recording. Shows
+        the channels found by the last :meth:`ShowBadChannels`, or, before any report, the
+        channels found with the default settings.
         """
+        if self._bad_channel_results is None:
+            gap_results, _ = self.doc.channel_gaps()
+            self._bad_channel_results = [((), *bad_channel_evidence(self.doc.single_channel_components(), gap_results, self.doc.flat_channels()))]
         frame = BadChannelSummaryFrame(self, self._bad_channel_results, (), self.AddBadChannels)
         frame.Show()
         return frame

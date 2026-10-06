@@ -9,7 +9,7 @@ import pytest
 
 from eelbrain import gui, load
 from eelbrain.testing import gui_test, TempDir, requires_mne_testing_data
-from eelbrain._wxgui import ID
+from eelbrain._wxgui import ID, bad_channel_summary
 from eelbrain._wxgui.select_components import ComponentMapDialog, FindBadChannelsDialog, HelpDialog, YScaleDialog, _FIND_BAD_CHANNELS_HELP, _find_bad_channels_help
 
 
@@ -101,8 +101,10 @@ def test_select_components():
     assert scale_dlg.GetValues() == (5, 8, 2., 3.)
     scale_dlg.Destroy()
 
-    # the summary window for marking channels as bad: this recording only
+    # the summary window for marking channels as bad: this recording only; also before any report
+    frame._bad_channel_results = None
     summary = frame.ShowBadChannelSummary()
+    assert len(summary._rows) == len(bad_channel_summary._channel_summary_rows(frame._bad_channel_results))
     assert len(summary._rows) == len({ch_name for _, ch_name, *_ in summary._rows})  # one row per channel
     assert [combo for combo, *_ in summary._rows] == [()] * len(summary._rows)
     assert summary.exclude() == []
