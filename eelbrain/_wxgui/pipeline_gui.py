@@ -331,13 +331,13 @@ class BadChannelSummaryFrame(wx.Frame):
 
     def _update_selection(self) -> None:
         "Colour the rows that are above the threshold and update the status bar and Apply button"
-        threshold = self.get_threshold()
+        additions = self.bad_channels()
+        selected = {(combo, ch_name) for combo, names in additions for ch_name in names}
         # an explicit colour: wx.NullColour does not clear a colour once one was set (macOS)
         default = self._list.GetTextColour()
-        for i, (_, _, _, variance_fraction, gap) in enumerate(self._rows):
-            self._list.SetItemTextColour(i, wx.RED if gap is not None or variance_fraction >= threshold else default)
+        for i, (combo, ch_name, _, _, _) in enumerate(self._rows):
+            self._list.SetItemTextColour(i, wx.RED if (combo, ch_name) in selected else default)
         self._list.Refresh()
-        additions = self.bad_channels()
         n_channels = sum(len(names) for _, names in additions)
         self.SetStatusText(f"{n_channels} bad channels in {len(additions)} of {self._n_recordings} recordings")
         self._apply_btn.Enable(bool(additions))
