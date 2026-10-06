@@ -1321,7 +1321,7 @@ class PipelineFrame(EelbrainFrame):
             evaluated.
         """
         ctx = spec.ctx
-        raw = ctx.node.load_concatenated_source_raw(ctx, ctx.node.pipe.task)
+        raw = ctx.node.load_concatenated_source_raw(ctx, ctx.node.pipe.task, preload=False)
         sysname, adjacency = self._pipeline._ndvar_sensor_args(raw_name, raw.info, ctx.state['subject'])
         doc = ICADocument(spec.path, raw, sysname, adjacency)
         candidates = [(ch_name, component, variance_fraction) for component, ch_name, _, variance_fraction in doc.single_channel_components()]
