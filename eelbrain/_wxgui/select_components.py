@@ -39,6 +39,7 @@ from .._utils.system import IS_OSX
 from ..plot._base import AxisData, DataLayer, PlotType
 from ..plot._topo import AxTopomap
 from ._ch_types import CH_TYPE_PICK_KWARGS, CH_TYPE_COLORS, CH_TYPE_DEFAULT_VLIM_SI, ch_type_scale
+from .bad_channel_summary import Additions, BadChannelSummaryFrame, bad_channel_evidence
 from .frame import EelbrainDialog
 from .frame import NavigableFrame
 from .history import Action, FileDocument, FileModel, FileFrame, FileFrameChild
@@ -74,8 +75,7 @@ _COMPONENT_MAP_SIZE = 90
 _COMPONENT_DIALOG_SIZE = (700, 600)
 _HELP_DIALOG_SIZE = (520, 620)
 # InfoFrame link scheme for adding channels to the bad channels
-_BAD_CHANNELS_URL = 'bad-channels:'
-_BAD_CHANNELS_DIALOG_WIDTH = 400
+_BAD_CHANNELS_URL = 'bad-channels:'  # link in the Find Bad Channels report that opens the summary window
 # FindBadChannelsDialog settings: {setting: (label, description)}. Used both for the hover
 # help of the individual controls and for the help dialog, in the order listed here.
 _FIND_BAD_CHANNELS_HELP = {
@@ -711,8 +711,16 @@ class SharedToolsMenu:  # Frame mixin
         # Find ICA components that load on a single channel
         candidates = self.doc.single_channel_components(channel_ratio)
 
+        # Flat channels
+        flat = self.doc.flat_channels()
+
+        # for the summary window, opened through the link in the report
+        self._bad_channel_results = [((), *bad_channel_evidence(candidates, gap_results, flat))]
+
         # format output
         doc = fmtxt.Section("Bad Channels")
+        if self.doc.bad_channels_callback is not None:
+            doc.add_paragraph(fmtxt.Link("Select channels to mark as bad…", _BAD_CHANNELS_URL))
 
         # Neighbor correlation map
         section = doc.add_section("Neighbor correlation")
@@ -730,14 +738,10 @@ class SharedToolsMenu:  # Frame mixin
             section.append(image)
 
         # Flat channels
-        flat = self.doc.flat_channels()
         section = doc.add_section("Flat channels")
-        section.add_paragraph(f"Channels whose standard deviation is below {', '.join(f'{threshold:g} ({ch_type})' for ch_type, threshold in FLAT_DEFAULT.items())}. A flat EEG channel can be the reference, which is not defective; EEG channels are therefore listed but not included in the link below.")
+        section.add_paragraph(f"Channels whose standard deviation is below {', '.join(f'{threshold:g} ({ch_type})' for ch_type, threshold in FLAT_DEFAULT.items())}. A flat EEG channel can be the reference, which is not defective.")
         if flat:
             section.add_paragraph(', '.join(f"{ch_name} ({ch_type})" for ch_name, ch_type in flat))
-            names = [ch_name for ch_name, ch_type in flat if ch_type != 'eeg']
-            if names and self.doc.bad_channels_callback is not None:
-                section.add_paragraph(fmtxt.Link(f"Add {len(names)} channel{'s' if len(names) > 1 else ''} to bad channels…", f"{_BAD_CHANNELS_URL}{','.join(names)}"))
         else:
             section.add_paragraph("No flat channel.")
 
@@ -809,7 +813,6 @@ class SharedToolsMenu:  # Frame mixin
         if skipped:
             section.add_paragraph(f"Not analyzed: {'; '.join(f'{ch_type} ({reason})' for ch_type, reason in skipped)}.")
 
-        names = []
         for components, result in gap_results:
             n_solid = result.solid.sum()
             sub_section = section.add_section(f"{result.ch_type}: {n_solid} of {len(result.solid)} components with a realistic field pattern")
@@ -836,7 +839,6 @@ class SharedToolsMenu:  # Frame mixin
             if not result.channels:
                 sub_section.add_paragraph("No channel is missing from the component maps.")
                 continue
-            names.extend(channel.name for channel in result.channels)
             if len(result.channels) > _GAP_MAX_ROWS:
                 sub_section.add_paragraph(f"Showing the {_GAP_MAX_ROWS} strongest of {len(result.channels)} channels.")
             table = fmtxt.Table('ll', rules=False)
@@ -857,29 +859,38 @@ class SharedToolsMenu:  # Frame mixin
                     desc += [f"{len(channel.no_gap_components)} no gap: ", _component_links(channel.no_gap_components)]
                 table.cells(image, fmtxt.FMText(desc))
 
-        if names:
-            section.add_paragraph("To exclude these channels, mark them as bad and re-compute the ICA decomposition:")
-            section.add_paragraph(', '.join(names))
-            if self.doc.bad_channels_callback is not None:
-                section.add_paragraph(fmtxt.Link(f"Add {len(names)} channel{'s' if len(names) > 1 else ''} to bad channels…", f"{_BAD_CHANNELS_URL}{','.join(names)}"))
+    def ShowBadChannelSummary(self) -> BadChannelSummaryFrame:
+        """Open the window for selecting which of the channels found by :meth:`ShowBadChannels` to mark as bad
 
-    def AddBadChannels(self, names: Sequence[str]):
+        The same window as Bad-Chs in the pipeline GUI, restricted to this recording.
+        """
+        frame = BadChannelSummaryFrame(self, self._bad_channel_results, (), self.AddBadChannels)
+        frame.Show()
+        return frame
+
+    def AddBadChannels(
+            self,
+            additions: Additions,
+            recompute: bool,
+    ) -> None:
         """Add channels to the bad channels of the host application
 
         Only available when the GUI was opened by an application that can write bad channels
         (i.e., when :attr:`Document.bad_channels_callback` is set). Since the ICA was computed
         with these channels included, it is invalidated by this and the GUI is closed.
+
+        Parameters
+        ----------
+        additions
+            ``[(combo, names), ...]`` as the summary window's apply callback supplies it; the
+            combos are ignored, because the ICA GUI shows a single recording.
+        recompute
+            Queue the new ICA decomposition right away.
         """
         callback = self.doc.bad_channels_callback
         if callback is None:
             return
-        dlg = AddBadChannelsDialog(self, names)
-        confirmed = dlg.ShowModal() == wx.ID_OK
-        recompute = dlg.recompute.GetValue()
-        dlg.Destroy()
-        if not confirmed:
-            return
-        callback(list(names), recompute)
+        callback([name for _, names in additions for name in names], recompute)
         # force close: the ICA is invalid, so saving component selection would be pointless
         frame = self if self.owns_file else self.Parent
         frame.Close(True)
@@ -2316,33 +2327,6 @@ def _topomap_bitmap(component: NDVar, size: int = _COMPONENT_MAP_SIZE, dpi: floa
     return wx.Bitmap.FromBufferRGBA(width, height, canvas.buffer_rgba())
 
 
-class AddBadChannelsDialog(EelbrainDialog):
-    "Confirm adding channels to the bad channels, which invalidates the ICA"
-
-    def __init__(self, parent, names: Sequence[str], **kwargs):
-        super().__init__(parent, wx.ID_ANY, "Add Bad Channels", **kwargs)
-        sizer = wx.BoxSizer(wx.VERTICAL)
-        label = wx.StaticText(self, label=f"Add to the bad channels: {', '.join(names)}?\n\nThe ICA was computed with these channels included, so it will be deleted, along with the current component selection. This window will close.")
-        label.Wrap(_BAD_CHANNELS_DIALOG_WIDTH)
-        sizer.Add(label, flag=wx.ALL, border=10)
-
-        self.recompute = ctrl = wx.CheckBox(self, label="Re-compute the ICA now")
-        ctrl.SetValue(True)
-        ctrl.SetToolTip("Start computing the new ICA decomposition right away; otherwise it needs to be computed before component selection can continue")
-        sizer.Add(ctrl, flag=wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
-
-        button_sizer = wx.StdDialogButtonSizer()
-        btn = wx.Button(self, wx.ID_OK, "Add Bad Channels")
-        btn.SetDefault()
-        button_sizer.AddButton(btn)
-        button_sizer.AddButton(wx.Button(self, wx.ID_CANCEL))
-        button_sizer.Realize()
-        sizer.Add(button_sizer, flag=wx.ALL, border=10)
-
-        self.SetSizer(sizer)
-        sizer.Fit(self)
-
-
 class ComponentMapDialog(EelbrainDialog):
     """All component maps for one channel type, ranked by spatial smoothness
 
@@ -2467,8 +2451,8 @@ class InfoFrame(HTMLFrame):
         return pos, (w, h)
 
     def OpenURL(self, url):
-        if url.startswith(_BAD_CHANNELS_URL):
-            self.Parent.AddBadChannels(url[len(_BAD_CHANNELS_URL):].split(','))
+        if url == _BAD_CHANNELS_URL:
+            self.Parent.ShowBadChannelSummary()
             return
         component = epoch = None
         for part in url.split():

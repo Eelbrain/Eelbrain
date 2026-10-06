@@ -11,7 +11,7 @@ from eelbrain._exceptions import ConfigurationError, DataError
 from eelbrain._experiment.derivative_cache import ProtectedArtifactError
 from eelbrain._experiment.epoch_rejection import ChannelModelRejection, ManualRejection
 from eelbrain._experiment.exceptions import FileMissingError
-from eelbrain._wxgui import pipeline_gui
+from eelbrain._wxgui import bad_channel_summary, pipeline_gui
 from eelbrain._wxgui.pipeline_gui import COMMON_BRAIN_ROW, GREY, PLACEHOLDER, TASKS, TASKS_BY_NAME, Layout, PipelineFrame, _format_user_error
 
 
@@ -547,7 +547,7 @@ def test_channel_summary_rows():
         (('R02',), [], [], [('EEG 001', 'eeg')]),
         (('R03',), [('MEG 0113', 1, 0.5)], [], [('EEG 001', 'eeg'), ('EEG 002', 'eeg')]),
     ]
-    rows = pipeline_gui._channel_summary_rows(results)
+    rows = bad_channel_summary._channel_summary_rows(results)
     assert rows == [
         (('R01',), 'MEG 0113', None, None, (2, 2), True),
         (('R01',), 'EEG 001', None, None, None, True),
@@ -559,14 +559,14 @@ def test_channel_summary_rows():
         (('R03',), 'MEG 0113', 1, 0.5, None, False),
     ]
     # flat channels and gaps count regardless of the threshold
-    assert pipeline_gui._bad_channels_above(rows, 0.5) == [(('R01',), ['MEG 0113', 'EEG 001', 'MEG 0112', 'MEG 0111']), (('R02',), ['EEG 001']), (('R03',), ['EEG 001', 'EEG 002', 'MEG 0113'])]
-    assert pipeline_gui._bad_channels_above(rows, 0.9) == [(('R01',), ['MEG 0113', 'EEG 001', 'MEG 0112']), (('R02',), ['EEG 001']), (('R03',), ['EEG 001', 'EEG 002'])]
+    assert bad_channel_summary._bad_channels_above(rows, 0.5) == [(('R01',), ['MEG 0113', 'EEG 001', 'MEG 0112', 'MEG 0111']), (('R02',), ['EEG 001']), (('R03',), ['EEG 001', 'EEG 002', 'MEG 0113'])]
+    assert bad_channel_summary._bad_channels_above(rows, 0.9) == [(('R01',), ['MEG 0113', 'EEG 001', 'MEG 0112']), (('R02',), ['EEG 001']), (('R03',), ['EEG 001', 'EEG 002'])]
     # excluded channels are never marked, whatever the evidence
-    assert pipeline_gui._bad_channels_above(rows, 0.9, ['EEG 001', 'MEG 0113']) == [(('R01',), ['MEG 0112']), (('R03',), ['EEG 002'])]
+    assert bad_channel_summary._bad_channels_above(rows, 0.9, ['EEG 001', 'MEG 0113']) == [(('R01',), ['MEG 0112']), (('R03',), ['EEG 002'])]
     # an EEG channel that is flat in every recording is most likely the reference
-    assert pipeline_gui._flat_in_every_recording(results) == ['EEG 001']
-    assert pipeline_gui._flat_in_every_recording(results[:1]) == ['EEG 001']
-    assert pipeline_gui._flat_in_every_recording([]) == []
+    assert bad_channel_summary._flat_in_every_recording(results) == ['EEG 001']
+    assert bad_channel_summary._flat_in_every_recording(results[:1]) == ['EEG 001']
+    assert bad_channel_summary._flat_in_every_recording([]) == []
 
 
 def test_find_bad_channels_thread_holds_the_pipeline_lock(monkeypatch):
