@@ -14,7 +14,7 @@ from .._meeg.ica_bad_channels import ChannelGapResult
 
 
 # Default minimum share of a channel's variance due to one ICA component for marking the channel as bad (Bad-Chs in the ICA task)
-CHANNEL_VARIANCE_DEFAULT = 0.5
+CHANNEL_VARIANCE_DEFAULT = 0.2
 
 
 # Bad channel evidence of one recording (see PipelineFrame._ica_bad_channel_candidates)
