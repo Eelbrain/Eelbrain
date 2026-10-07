@@ -93,9 +93,11 @@ def _is_source_space(ctx: Request, est: Estimator) -> bool:
 def _trf_dataset_key_fields(ctx: Request, estimators: dict[str, Estimator], *case_fields: str) -> tuple[str, ...]:
     "Key fields shared by the TRF dataset nodes: ``case_fields`` identify the cases (subject or group), the rest the TRFs"
     est = estimators[ctx.options['estimator']]
-    fields = [*case_fields, 'session', 'acquisition', 'epoch', 'epoch_rejection', 'reference', 'raw', 'inv']
+    fields = [*case_fields, 'session', 'acquisition', 'epoch', 'epoch_rejection', 'raw', 'inv']
     if _is_source_space(ctx, est):
         fields += ['cov', 'src', 'parc', 'adjacency', 'mrisubject', 'common_brain']
+    else:
+        fields.append('reference')  # source modeling pins reference='' (see TRFDerivative)
     fields += est.extra_input_fields
     return tuple(fields)
 

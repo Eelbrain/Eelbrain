@@ -2252,6 +2252,7 @@ def test_trf_ncrf_dependencies(samples_trf_experiment):
     # NCRF results are in source space: morphed to the common brain, and smoothing is available
     group_ctx = e._derivatives.resolve('trf-group-dataset', state={**e.state, 'group': 'all'}, options={**options, 'smooth': 0.005})
     assert 'common_brain' in group_ctx.node._get_key_fields(group_ctx)
+    assert 'reference' not in group_ctx.node._get_key_fields(group_ctx)
     options = e._trf_options('env > 0', 0., 0.1, 'ncrf', None, None, False, comparison=True)
     e._derivatives.dependency_tree('trf-model-test', state={**e.state, 'group': 'all'}, options={**options, 'metric': 'explained_variance'})
 
