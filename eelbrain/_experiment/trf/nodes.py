@@ -21,7 +21,7 @@ from ..derivative_cache import Dependency, Derivative, OptionSpec, Request, Unca
 from ..epochs.config import EpochBase
 from ..pathing import BIDS_ENTITY_KEYS, MRI_SDIR, mri_dir
 from ..preprocessing import RawFilter, RawPipe, RawSource
-from ..source.nodes import _subject_state
+from ..source.nodes import _drop_unknown_labels, _source_parc, _subject_state
 from ..statistics.config import ResolvedTestNDSpec, TTestOneSample, TTestRelated, Test, TwoStageTest
 from ..variable_def import Variables
 from .estimator import Estimator
@@ -276,9 +276,11 @@ class TRFDerivative(Derivative[object]):
         fields = ('subject', 'session', 'acquisition', 'raw', 'epoch', 'epoch_rejection', 'inv')
         est = self.estimators[ctx.options['estimator']]
         if ctx.state['inv']:  # non-empty inverse → source space ('epochs-stc' pins reference='')
-            fields += ('cov', 'mrisubject', 'src', 'parc')
+            fields += ('cov', 'mrisubject', 'src')
         elif not est.requires_sensor_space:  # sensor-space 'epochs' are keyed on the EEG reference; an estimator that localizes internally pins reference='' (see dependencies)
             fields += ('reference',)
+        if _is_source_space(ctx, est):
+            fields += ('parc',)  # masks the source space
         fields += est.extra_input_fields  # e.g., NCRF: sensor data + forward solution
         return tuple(fields)
 
@@ -314,6 +316,8 @@ class TRFDerivative(Derivative[object]):
 
         for extra in est.extra_inputs:
             deps.append(Dependency(extra))
+        if est.requires_sensor_space and _source_parc(ctx.state):
+            deps.append(Dependency('annot'))  # parcellation for the forward operator's source space
 
         # One predictor-file edge per input. Stimulus predictors, including
         # per-event SubjectUTSPredictors, are shared across recordings;
@@ -391,7 +395,12 @@ class TRFDerivative(Derivative[object]):
             fwd = cov = None
             if 'fwd' in est.extra_inputs:
                 fwd = ctx.load('fwd')  # ensure built and tracked as a dependency
-                fwd = load.mne.forward_operator(fwd, ctx.state['src'], self.root / MRI_SDIR, None, adjacency=False)
+                parc = _source_parc(ctx.state)
+                if parc:
+                    ctx.ensure('annot')
+                fwd = load.mne.forward_operator(fwd, ctx.state['src'], self.root / MRI_SDIR, parc, adjacency=False)
+                if parc:
+                    fwd = _drop_unknown_labels(fwd)
             if 'cov' in est.extra_inputs:
                 cov = ctx.load('cov')
         return TRFJob(est, y, xs, tstart, tstop, fwd, cov)

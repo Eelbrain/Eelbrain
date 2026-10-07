@@ -2241,7 +2241,9 @@ def test_trf_ncrf_dependencies(samples_trf_experiment):
     assert {'fwd', 'cov'} <= set(deps)
     assert deps['response'].name == 'epochs'
     assert deps['response'].state == {'reference': ''}
+    assert 'annot' in deps  # the parc state masks the source space
     assert 'reference' not in ctx.node._get_key_fields(ctx)
+    assert 'parc' in ctx.node._get_key_fields(ctx)
     # boosting on sensor data is keyed on the reference
     boosting_ctx = e._resolve_derivative('trf', options=e._trf_options('env', 0., 0.1, 'boosting', None, None, False))
     assert 'reference' in boosting_ctx.node._get_key_fields(boosting_ctx)
@@ -2252,6 +2254,27 @@ def test_trf_ncrf_dependencies(samples_trf_experiment):
     assert 'common_brain' in group_ctx.node._get_key_fields(group_ctx)
     options = e._trf_options('env > 0', 0., 0.1, 'ncrf', None, None, False, comparison=True)
     e._derivatives.dependency_tree('trf-model-test', state={**e.state, 'group': 'all'}, options={**options, 'metric': 'explained_variance'})
+
+
+@requires_mne_sample_data
+def test_trf_ncrf_job(samples_experiment):
+    "NCRF job: sensor data with the forward operator as fixed-orientation (sensor, source) NDVar"
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleTRF
+
+    class Experiment(SampleTRF):
+        estimators = {**SampleTRF.estimators, 'ncrf': NCRF()}
+
+    root = samples_experiment(n_subjects=1, n_segments=4, mris=True)
+    e = Experiment(root)
+    e.set(epoch='target', epoch_rejection='', raw='1-40', src='ico-2', parc='ac', inv='')
+    job = e.load_trf_job('imp', 0, 0.1, estimator='ncrf')
+    assert job.fwd.has_dim('sensor')
+    assert job.fwd.has_dim('source')
+    assert job.fwd.source.subject == e.get('mrisubject')
+    assert job.fwd.source.parc.name == 'ac'
+    assert not job.fwd.source.parc.startswith('unknown').any()
+    assert set(job.y.sensor.names) >= set(job.fwd.sensor.names)
 
 
 @requires_mne_sample_data
