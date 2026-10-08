@@ -1075,7 +1075,10 @@ class PipelineFrame(EelbrainFrame):
                 source_subject = cfg['subject_from']
                 message = f"{mrisubject} has MRI scaling parameters ({source_subject} × {cfg['scale']}) but no scaled surfaces yet.\n\nCreate the scaled MRI now?"
                 if not (self._pipeline.root / MRI_SDIR / source_subject / 'surf' / 'lh.white').exists():
-                    message += f" This will first download {source_subject}."
+                    if source_subject != 'fsaverage':  # only fsaverage can be downloaded (see ensure_mri)
+                        wx.MessageBox(f"{mrisubject} has MRI scaling parameters, but its source subject {source_subject} is not present in {subjects_dir}.", "MRI not found", wx.OK | wx.ICON_INFORMATION, self)
+                        return
+                    message += " This will first download fsaverage."
                 dlg = wx.MessageDialog(self, message, f"Scale {source_subject} for {mrisubject}?", wx.YES_NO | wx.ICON_QUESTION)
                 if dlg.ShowModal() == wx.ID_YES:
                     self._make_mri(mrisubject, f"Scaling {source_subject} for {mrisubject}…")
