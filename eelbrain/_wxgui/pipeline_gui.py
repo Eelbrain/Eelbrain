@@ -1050,6 +1050,10 @@ class PipelineFrame(EelbrainFrame):
         status = self._list.GetItemText(row_idx, 2)
         subjects_dir = str(self._pipeline.root / MRI_SDIR)
         common_brain = self._pipeline.get('common_brain')
+        # The compute worker's jobs create missing MRIs too (see ensure_mri); two concurrent mne.scale_mri() calls on one subject would delete each other's files
+        if status in (COMMON_BRAIN_MISSING, MRITask.missing_status) and self._worker_active:
+            wx.MessageBox("Wait for the running computation to finish before creating an MRI subject.", "Computation in progress", wx.OK | wx.ICON_INFORMATION, self)
+            return
 
         if subject == COMMON_BRAIN_ROW:
             if status == COMMON_BRAIN_MISSING:
@@ -1753,6 +1757,8 @@ class PipelineFrame(EelbrainFrame):
         self._progress_label.Show()
         self._refresh_btn.Disable()
         self._task_choice.Disable()
+        self._compute_btn.Disable()
+        self._worker_active = True  # keeps _start_compute from running jobs (which may call ensure_mri) alongside this thread
         self._panel.Layout()
         self.SetStatusText(label)
         self._download_timer = wx.Timer(self)
@@ -1777,11 +1783,14 @@ class PipelineFrame(EelbrainFrame):
         self._progress_label.Hide()
         self._refresh_btn.Enable()
         self._task_choice.Enable()
+        self._worker_active = False
+        self._update_compute_button()
         self._panel.Layout()
         if error_tb:
             self._show_error(error_tb)
         else:
             self._start_refresh()
+        self._drain_queue()  # jobs queued while the MRI job was running
 
     def _iter_combos(
             self,
