@@ -782,6 +782,11 @@ def test_scaled_mri_from_cfg(samples_experiment):
     cfg = "[MRI Scaling]\nsubject_from = fsaverage\nsubject_to = sub-R0000\nn_params = 1\nscale = 0.95\nversion = 1\n\n"
     shutil.rmtree(mri_dir)
     mri_dir.mkdir()
+    # a source subject that is neither present nor downloadable
+    cfg_path.write_text(cfg.replace('fsaverage', 'sub-template'))
+    with pytest.raises(FileNotFoundError, match='sub-template'):
+        e.load_src(src='ico-2')
+    assert not (mri_dir / 'surf').exists()
     cfg_path.write_text(cfg)
 
     src = e.load_src(src='ico-2')

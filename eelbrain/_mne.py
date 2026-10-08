@@ -95,6 +95,8 @@ def ensure_mri(
     if source_subject == subject:
         raise ValueError(f"{mri_dir / 'MRI scaling parameters.cfg'} names {subject} as its own source subject")
     ensure_mri(source_subject, subjects_dir, log)
+    if not (subjects_dir / source_subject / 'surf' / 'lh.white').exists():
+        raise FileNotFoundError(f"Cannot create {subject} by scaling {source_subject}: {subjects_dir / source_subject} has no surfaces")
     log.info("Scaling %s by %s to create %s...", source_subject, cfg['scale'], subject)
     skip_fiducials = not (subjects_dir / source_subject / 'bem' / f'{source_subject}-fiducials.fif').exists()
     # mne.scale_mri() <= 1.13 writes a malformed cfg file (n_params = 3 with a single value) for a scalar scale; a uniform 3-vector avoids this
