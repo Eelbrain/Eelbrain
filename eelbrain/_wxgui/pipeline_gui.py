@@ -25,7 +25,7 @@ from .._experiment.epochs import PrimaryEpoch
 from .._experiment.exceptions import FileMissingError, ICAChannelsChangedError, ICAMissingError
 from .._experiment.pathing import MRI_SDIR
 from .._experiment.preprocessing import REINDEX_ICA, RawICA, RawSource, ica_input_name, raw_bad_channels_input_name, raw_input_name
-from .._mne import ensure_mri
+from .._mne import ensure_mri, read_mri_scaling_cfg
 from .._utils.mne_utils import is_fake_mri
 from .frame import EelbrainFrame
 from .select_components import Document as ICADocument
@@ -1071,8 +1071,7 @@ class PipelineFrame(EelbrainFrame):
                         "MRI not found", wx.OK | wx.ICON_INFORMATION, self,
                     )
         elif status == MRITask.missing_status:
-            if is_fake_mri(self._pipeline.root / MRI_SDIR / mrisubject):
-                cfg = mne.coreg.read_mri_cfg(mrisubject, subjects_dir)
+            if (cfg := read_mri_scaling_cfg(mrisubject, subjects_dir)) is not None:
                 source_subject = cfg['subject_from']
                 message = f"{mrisubject} has MRI scaling parameters ({source_subject} × {cfg['scale']}) but no scaled surfaces yet.\n\nCreate the scaled MRI now?"
                 if not (self._pipeline.root / MRI_SDIR / source_subject / 'surf' / 'lh.white').exists():

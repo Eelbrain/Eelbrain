@@ -40,10 +40,18 @@ def assert_subject_exists(subject, subjects_dir):
         raise OSError(f"Subject {subject} does not exist in subjects_dir {subjects_dir}")
 
 
+def read_mri_scaling_cfg(
+        subject: str,
+        subjects_dir: PathArg,
+) -> dict | None:
+    """Scaling parameters of a scaled MRI subject (``None`` for a subject without ``MRI scaling parameters.cfg``)"""
+    if os.path.exists(os.path.join(subjects_dir, subject, 'MRI scaling parameters.cfg')):
+        return mne.coreg.read_mri_cfg(subject, subjects_dir)
+
+
 def find_source_subject(subject, subjects_dir):
-    cfg_path = os.path.join(subjects_dir, subject, 'MRI scaling parameters.cfg')
-    if os.path.exists(cfg_path):
-        cfg = mne.coreg.read_mri_cfg(subject, subjects_dir)
+    cfg = read_mri_scaling_cfg(subject, subjects_dir)
+    if cfg is not None:
         return cfg['subject_from']
 
 
@@ -80,9 +88,9 @@ def ensure_mri(
         log.info("Downloading fsaverage to %s...", subjects_dir)
         mne.datasets.fetch_fsaverage(subjects_dir)
         return
-    elif not (mri_dir / 'MRI scaling parameters.cfg').exists():
+    cfg = read_mri_scaling_cfg(subject, subjects_dir)
+    if cfg is None:
         return
-    cfg = mne.coreg.read_mri_cfg(subject, subjects_dir)
     source_subject = cfg['subject_from']
     ensure_mri(source_subject, subjects_dir, log)
     log.info("Scaling %s by %s to create %s...", source_subject, cfg['scale'], subject)
