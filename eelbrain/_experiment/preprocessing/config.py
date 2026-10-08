@@ -289,8 +289,15 @@ class RawFilter(CachedRawPipe):
         self.kwargs = kwargs
         self.n_jobs = n_jobs
 
-    def _filter_ndvar(self, ndvar, **kwargs):
-        return filter_data(ndvar, self.l_freq, self.h_freq, **self.kwargs, **kwargs)
+    def _filter_ndvar(self, ndvar: NDVar, **kwargs) -> NDVar:
+        "Filter like the raw data; a low-pass at or above the NDVar's Nyquist frequency is skipped (resampling to that rate already low-passed the data)"
+        nyquist = 0.5 / ndvar.time.tstep
+        if self.l_freq is not None and self.l_freq >= nyquist:
+            raise ValueError(f"RawFilter {self.l_freq=} Hz: can not high-pass data sampled at {2 * nyquist:g} Hz")
+        h_freq = None if self.h_freq is not None and self.h_freq >= nyquist else self.h_freq
+        if self.l_freq is None and h_freq is None:
+            return ndvar
+        return filter_data(ndvar, self.l_freq, h_freq, **self.kwargs, **kwargs)
 
     def _make(
             self,

@@ -3,10 +3,14 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import mne
+import numpy as np
+from numpy.testing import assert_array_equal
 import pytest
 
+from eelbrain import NDVar, UTS, filter_data
 from eelbrain._exceptions import ConfigurationError, DataError
-from eelbrain._experiment.preprocessing import RawMaxwell, RawSource
+from eelbrain._experiment.preprocessing import RawFilter, RawMaxwell, RawSource
+from eelbrain._experiment.trf import filter_predictor
 from eelbrain.testing import requires_mne_testing_data
 
 
@@ -180,3 +184,21 @@ def test_maxwell_movement_annotations():
         annotate_movement.reset_mock()
         pipe._make(raw, path=path, head_pos=head_pos[:1])
         annotate_movement.assert_not_called()
+
+
+def test_raw_filter_predictor_nyquist():
+    "A low-pass at or above the predictor's Nyquist frequency is skipped; the high-pass is kept"
+    x = NDVar(np.random.default_rng(0).normal(size=500), UTS(0, 0.02, 500), {'sampling': 'continuous'}, 'x')  # 50 Hz
+    raw = {'raw': RawSource(), '1-40': RawFilter('raw', 1, 40), '25': RawFilter('raw', None, 25), '20': RawFilter('raw', None, 20)}
+    # high-pass only (the 40 Hz low-pass is above the 25 Hz Nyquist frequency)
+    assert_array_equal(filter_predictor(x, raw, '1-40', True).x, filter_data(x, 1, None, pad='edge').x)
+    # a low-pass at Nyquist is skipped too, leaving nothing to apply
+    assert filter_predictor(x, raw, '25', True) is x
+    # a low-pass below Nyquist is applied
+    assert_array_equal(filter_predictor(x, raw, '20', True).x, filter_data(x, None, 20, pad='edge').x)
+    # filter_x=False still skips everything
+    assert filter_predictor(x, raw, '1-40', False) is x
+    # a high-pass above Nyquist would remove everything
+    raw['30-40'] = RawFilter('raw', 30, 40)
+    with pytest.raises(ValueError):
+        filter_predictor(x, raw, '30-40', True)
