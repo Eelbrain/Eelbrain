@@ -87,7 +87,10 @@ def ensure_mri(
         return
     elif subject == 'fsaverage':
         log.info("Downloading fsaverage to %s...", subjects_dir)
+        subjects_dir_config = mne.get_config('SUBJECTS_DIR')
         mne.datasets.fetch_fsaverage(subjects_dir)
+        if subjects_dir_config is None:
+            mne.set_config('SUBJECTS_DIR', None)  # fetch_fsaverage() stores subjects_dir as the global default when none is configured
         return
     cfg = read_mri_scaling_cfg(subject, subjects_dir)
     if cfg is None:
