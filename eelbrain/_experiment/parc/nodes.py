@@ -18,7 +18,7 @@ import mne
 
 from ...mne_fixes import write_labels_to_annot
 from ..._utils import subp
-from ..._mne import find_source_subject
+from ..._mne import ensure_mri, find_source_subject
 from ..._utils.mne_utils import fix_annot_names, is_fake_mri
 from ..derivative_cache import Dependency, ExternalArtifactDerivative, Request, file_fingerprint
 from ..pathing import MRI_SDIR, annot_file_path, annot_stamp_path, label_dir
@@ -110,7 +110,8 @@ class AnnotDerivative(ExternalArtifactDerivative[list[mne.Label]]):
         parc, parc_def = _resolve_parc(self.parcs, ctx.state['parc'])
         if parc_def is None or isinstance(parc_def, VolumeParc):
             return
-        elif not self._is_managed_annot(ctx.state, parc_def):
+        ensure_mri(ctx.state['mrisubject'], ctx.root / MRI_SDIR, ctx.registry.log)
+        if not self._is_managed_annot(ctx.state, parc_def):
             # The annot files are externally managed, make sure they exist
             missing = [path for hemi in ('lh', 'rh') if not (path := ctx.root / annot_file_path(ctx.state, hemi)).exists()]
             if missing:

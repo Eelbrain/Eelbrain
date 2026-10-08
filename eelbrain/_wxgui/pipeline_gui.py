@@ -25,6 +25,7 @@ from .._experiment.epochs import PrimaryEpoch
 from .._experiment.exceptions import FileMissingError, ICAChannelsChangedError, ICAMissingError
 from .._experiment.pathing import MRI_SDIR
 from .._experiment.preprocessing import REINDEX_ICA, RawICA, RawSource, ica_input_name, raw_bad_channels_input_name, raw_input_name
+from .._mne import ensure_mri
 from .._utils.mne_utils import is_fake_mri
 from .frame import EelbrainFrame
 from .select_components import Document as ICADocument
@@ -165,7 +166,8 @@ class BadChannelsDialog(wx.Dialog):
 COMMON_BRAIN_ROW = '(common brain)'
 # Status of the common brain row without a reconstruction. Distinct from
 # MRITask.missing_status because the row is not a subject: it is neither counted
-# nor coloured like one, and _on_mri_activated offers to download fsaverage for it.
+# nor coloured like one, and _on_mri_activated offers to download fsaverage for it
+# (a subject row with scaling parameters but no surfaces is offered scaling instead).
 COMMON_BRAIN_MISSING = 'missing'
 # Statuses written by the compute queue while a row is in flight: the artifact
 # is not there yet, so they count as missing in the status bar
@@ -1060,7 +1062,7 @@ class PipelineFrame(EelbrainFrame):
                         wx.YES_NO | wx.ICON_QUESTION,
                     )
                     if dlg.ShowModal() == wx.ID_YES:
-                        self._fetch_fsaverage()
+                        self._make_mri(mrisubject, "Downloading fsaverage…")
                     dlg.Destroy()
                 else:
                     wx.MessageBox(
@@ -1069,6 +1071,17 @@ class PipelineFrame(EelbrainFrame):
                         "MRI not found", wx.OK | wx.ICON_INFORMATION, self,
                     )
         elif status == MRITask.missing_status:
+            if is_fake_mri(self._pipeline.root / MRI_SDIR / mrisubject):
+                cfg = mne.coreg.read_mri_cfg(mrisubject, subjects_dir)
+                source_subject = cfg['subject_from']
+                message = f"{mrisubject} has MRI scaling parameters ({source_subject} × {cfg['scale']}) but no scaled surfaces yet.\n\nCreate the scaled MRI now?"
+                if not (self._pipeline.root / MRI_SDIR / source_subject / 'surf' / 'lh.white').exists():
+                    message += f" This will first download {source_subject}."
+                dlg = wx.MessageDialog(self, message, f"Scale {source_subject} for {mrisubject}?", wx.YES_NO | wx.ICON_QUESTION)
+                if dlg.ShowModal() == wx.ID_YES:
+                    self._make_mri(mrisubject, f"Scaling {source_subject} for {mrisubject}…")
+                dlg.Destroy()
+                return
             dlg = wx.MessageDialog(
                 self,
                 f"To create a scaled template brain from {common_brain}, switch to the Coregistration task.",
@@ -1089,7 +1102,7 @@ class PipelineFrame(EelbrainFrame):
         # If the subject has no FreeSurfer reconstruction, fall back to the
         # template brain so the coreg GUI can open and the user can use its
         # "Scale MRI" feature to create a subject-specific brain.
-        if not (subjects_dir_path / mrisubject / 'surf' / 'lh.pial').exists():
+        if not (subjects_dir_path / mrisubject / 'surf' / 'lh.white').exists():
             mrisubject = pipeline.get('common_brain')
         with pipeline._temporary_state:
             kw = dict(subject=subject, raw='raw')
@@ -1728,34 +1741,35 @@ class PipelineFrame(EelbrainFrame):
         else:  # dialog dismissed without a choice
             return task.missing_row(combo, layout, 'stale')
 
-    def _fetch_fsaverage(self):
-        """Download fsaverage to the experiment's FreeSurfer subjects directory in a thread."""
+    def _make_mri(self, mrisubject: str, label: str):
+        """Download or scale an MRI subject in the experiment's FreeSurfer subjects directory in a thread (see ensure_mri)."""
         subjects_dir = self._pipeline.root / MRI_SDIR
+        log = logging.getLogger(__name__)
         self._progress_gauge.SetRange(1)  # non-zero range required for Pulse() to animate
         self._progress_gauge.Show()
-        self._progress_label.SetLabel("Downloading fsaverage…")
+        self._progress_label.SetLabel(label)
         self._progress_label.Show()
         self._refresh_btn.Disable()
         self._task_choice.Disable()
         self._panel.Layout()
-        self.SetStatusText("Downloading fsaverage…")
+        self.SetStatusText(label)
         self._download_timer = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self._on_download_timer, self._download_timer)
         self._download_timer.Start(100)
 
         def run():
             try:
-                mne.datasets.fetch_fsaverage(subjects_dir=subjects_dir)
-                wx.CallAfter(self._finish_fsaverage_download, None)
+                ensure_mri(mrisubject, subjects_dir, log)
+                wx.CallAfter(self._finish_mri_job, None)
             except Exception:
-                wx.CallAfter(self._finish_fsaverage_download, traceback.format_exc())
+                wx.CallAfter(self._finish_mri_job, traceback.format_exc())
 
         threading.Thread(target=run, daemon=True).start()
 
     def _on_download_timer(self, event):
         self._progress_gauge.Pulse()
 
-    def _finish_fsaverage_download(self, error_tb):
+    def _finish_mri_job(self, error_tb):
         self._download_timer.Stop()
         self._progress_gauge.Hide()
         self._progress_label.Hide()
@@ -1894,7 +1908,7 @@ class PipelineFrame(EelbrainFrame):
                         is_common_brain = combo == (COMMON_BRAIN_ROW,)
                         mrisubject = pipeline.get('common_brain' if is_common_brain else 'mrisubject')
                         mri_dir = pipeline.root / MRI_SDIR / mrisubject
-                        if not (mri_dir / 'surf' / 'lh.pial').exists():
+                        if not (mri_dir / 'surf' / 'lh.white').exists():
                             status = COMMON_BRAIN_MISSING if is_common_brain else task.missing_status
                         elif not is_common_brain and is_fake_mri(mri_dir):
                             status = 'template'

@@ -39,7 +39,7 @@ from ..._text import enumeration, plural
 from ..._utils import subp
 from ..._utils.mne_utils import is_fake_mri
 from ...mne_fixes._source_space import merge_volume_source_space, prune_volume_source_space, restrict_volume_source_space
-from ..._mne import find_source_subject, label_from_annot
+from ..._mne import ensure_mri, find_source_subject, label_from_annot
 from .config import InverseSolution, parse_src
 
 
@@ -129,6 +129,7 @@ class BemInput(Input):
 
     def load(self, ctx: Request) -> mne.ConductorModel:
         subject = ctx.state['mrisubject']
+        ensure_mri(subject, ctx.root / MRI_SDIR, ctx.registry.log)
         if subject == 'fsaverage' or is_fake_mri(ctx.root / mri_dir(ctx.state)):
             return mne.read_bem_surfaces(self.path(ctx))
         bem_dir_ = ctx.root / bem_dir(ctx.state)
@@ -189,6 +190,7 @@ class SrcDerivative(ExternalArtifactDerivative[mne.SourceSpaces]):
         dst.parent.mkdir(parents=True, exist_ok=True)
         subject = ctx.state['mrisubject']
         src = ctx.state['src']
+        ensure_mri(subject, ctx.root / MRI_SDIR, ctx.registry.log)
 
         if self._source_subject(ctx) is not None:
             ctx.load('source-src')

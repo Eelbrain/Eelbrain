@@ -771,6 +771,33 @@ def test_evoked_artifact_is_consumer_independent(samples_experiment):
 
 
 @requires_mne_sample_data
+def test_scaled_mri_from_cfg(samples_experiment):
+    """A subject directory holding only MRI scaling parameters is scaled on demand"""
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    root = samples_experiment(n_subjects=1, n_segments=1, mris=True)
+    e = SampleExperiment(root)
+    mri_dir = Path(root) / 'derivatives' / 'freesurfer' / 'sub-R0000'
+    cfg_path = mri_dir / 'MRI scaling parameters.cfg'
+    cfg = "[MRI Scaling]\nsubject_from = fsaverage\nsubject_to = sub-R0000\nn_params = 1\nscale = 0.95\nversion = 1\n\n"
+    shutil.rmtree(mri_dir)
+    mri_dir.mkdir()
+    cfg_path.write_text(cfg)
+
+    src = e.load_src(src='ico-2')
+    assert src[0]['nuse'] == 162
+    assert (mri_dir / 'surf' / 'lh.white').exists()
+    assert (mri_dir / 'bem' / 'sub-R0000-inner_skull-bem.fif').exists()
+    assert (mri_dir / 'bem' / 'sub-R0000-ico-2-src.fif').exists()
+    assert (mri_dir / 'label' / 'lh.aparc.annot').exists()
+    assert cfg_path.read_text() == cfg
+    # a complete MRI is left alone
+    mtime = (mri_dir / 'surf' / 'lh.white').stat().st_mtime
+    e.load_annot(parc='aparc')
+    assert (mri_dir / 'surf' / 'lh.white').stat().st_mtime == mtime
+
+
+@requires_mne_sample_data
 @pytest.mark.slow
 def test_sample_source(samples_experiment):
     set_log_level('warning', 'mne')
