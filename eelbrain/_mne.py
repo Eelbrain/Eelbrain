@@ -92,6 +92,8 @@ def ensure_mri(
     if cfg is None:
         return
     source_subject = cfg['subject_from']
+    if source_subject == subject:
+        raise ValueError(f"{mri_dir / 'MRI scaling parameters.cfg'} names {subject} as its own source subject")
     ensure_mri(source_subject, subjects_dir, log)
     log.info("Scaling %s by %s to create %s...", source_subject, cfg['scale'], subject)
     skip_fiducials = not (subjects_dir / source_subject / 'bem' / f'{source_subject}-fiducials.fif').exists()
