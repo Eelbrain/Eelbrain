@@ -78,7 +78,8 @@ def ensure_mri(
     directory that contains only an ``MRI scaling parameters.cfg`` file (e.g.,
     from a BIDS dataset that distributes scaling parameters instead of scaled
     surfaces) is populated with :func:`mne.scale_mri`. Any other missing subject
-    is left alone.
+    is left alone, and a directory that holds scaling parameters together with
+    other content raises an error rather than being overwritten.
     """
     subjects_dir = Path(subjects_dir)
     mri_dir = subjects_dir / subject
@@ -94,6 +95,10 @@ def ensure_mri(
     source_subject = cfg['subject_from']
     if source_subject == subject:
         raise ValueError(f"{mri_dir / 'MRI scaling parameters.cfg'} names {subject} as its own source subject")
+    # mne.scale_mri(overwrite=True) deletes the whole directory, so only scale into one that holds nothing but the cfg (ignoring hidden files such as .DS_Store)
+    extra = sorted(path.name for path in mri_dir.iterdir() if path.name != 'MRI scaling parameters.cfg' and not path.name.startswith('.'))
+    if extra:
+        raise FileExistsError(f"Cannot create {subject} by scaling {source_subject}: {mri_dir} has no surfaces but is not empty ({', '.join(extra)}); remove everything except the cfg file to re-create the scaled MRI")
     ensure_mri(source_subject, subjects_dir, log)
     if not (subjects_dir / source_subject / 'surf' / 'lh.white').exists():
         raise FileNotFoundError(f"Cannot create {subject} by scaling {source_subject}: {subjects_dir / source_subject} has no surfaces")

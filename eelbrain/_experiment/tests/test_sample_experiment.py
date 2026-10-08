@@ -788,6 +788,14 @@ def test_scaled_mri_from_cfg(samples_experiment):
         e.load_src(src='ico-2')
     assert not (mri_dir / 'surf').exists()
     cfg_path.write_text(cfg)
+    # a directory with other content is never deleted
+    extra = mri_dir / 'label' / 'lh.custom.annot'
+    extra.parent.mkdir()
+    extra.touch()
+    with pytest.raises(FileExistsError, match='label'):
+        e.load_src(src='ico-2')
+    assert extra.exists()
+    shutil.rmtree(extra.parent)
 
     src = e.load_src(src='ico-2')
     assert src[0]['nuse'] == 162

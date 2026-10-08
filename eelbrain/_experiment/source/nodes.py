@@ -187,10 +187,10 @@ class SrcDerivative(ExternalArtifactDerivative[mne.SourceSpaces]):
 
     def build(self, ctx: Request) -> None:
         dst = self.path(ctx)
-        dst.parent.mkdir(parents=True, exist_ok=True)
         subject = ctx.state['mrisubject']
         src = ctx.state['src']
         ensure_mri(subject, ctx.root / MRI_SDIR, ctx.registry.log)
+        dst.parent.mkdir(parents=True, exist_ok=True)
 
         if self._source_subject(ctx) is not None:
             ctx.load('source-src')
