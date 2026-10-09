@@ -480,7 +480,7 @@ class BoostingResult(PickleableDataClass):
             raise ValueError("Cross-prediction requires a model fit with cross-validation (test=1)")
         # predictors
         x_ = self.x if x is None else x
-        x_data = PredictorData(x_, data, copy=True)
+        x_data = PredictorData(x_, data)
         # check predictors match h
         if x_data.x_name == self.x:
             x_use = None
@@ -511,16 +511,11 @@ class BoostingResult(PickleableDataClass):
         n_y = sum(len(dim) for dim in y_dims) or 1
         y_pred = np.empty((1, n_y, x_data.n_times_flat))
         # prepare x:  (n_x_only, n_shared, n_x_times)
-        x_array = x_data.data
+        x_data.flatten()
         if self.scale_data:
-            x_mean = self._x_mean_array[x_use_index]
-            x_scale = self._x_scale_array[x_use_index]
-            x_array -= x_mean[:, newaxis]
-            x_pads = -(x_mean / x_scale)[newaxis]
-            x_array /= x_scale[:, newaxis]
-        else:
-            x_pads = np.zeros((1, len(x_array)))
-        x_array = x_array[newaxis, :, :]
+            x_data.apply_x_normalization(self._x_mean_array[x_use_index], self._x_scale_array[x_use_index])
+        x_array = x_data.x[newaxis]
+        x_pads = x_data.x_pads[newaxis]
         # prepare h
         h_i_start = int(round(self.h_time.tmin / self.h_time.tstep))
         # iterate through partitions
@@ -870,6 +865,7 @@ class Boosting:
             self,
             data: DeconvolutionData,
     ):
+        data.flatten()
         self.data = data
 
     def fit(
@@ -881,7 +877,7 @@ class Boosting:
             delta: float = 0.005,  # coordinate search step
             mindelta: float = None,  # narrow search by reducing delta until reaching mindelta
     ):
-        self.data._check_data()
+        self.data.check_data()
         if error not in ('l1', 'l2'):
             raise ValueError(f"{error=}")
         error_id = int(error[1])
@@ -903,19 +899,19 @@ class Boosting:
         if tstart_is_sequence != isinstance(tstop, (tuple, list, np.ndarray)):
             raise TypeError(f"{tstart=}, {tstop=}: need to be both scalar or both sequences")
         elif tstart_is_sequence:
-            n_predictors = len(self.data._x_meta)
+            n_predictors = len(self.data.x_meta)
             if len(tstart) != n_predictors:
                 raise ValueError(f'{tstart=}: {len(tstart)=} is different from the number of predictors ({n_predictors})')
             elif len(tstop) != len(tstart):
                 raise ValueError(f'{tstop=}: {len(tstop)=} does not match {len(tstart)=}')
             elif any(start >= stop for start, stop in zip(tstart, tstop)):
                 raise ValueError(f"Some tstart > tstop: {tstart=} and {tstop=}")
-            if self.data._multiple_x:
+            if self.data.multiple_x:
                 self.tstart = tuple(tstart)
                 self.tstop = tuple(tstop)
             else:
                 self.tstart, self.tstop = tstart[0], tstop[0]
-            n_xs = [reduce(mul, map(len, xdims), 1) for _, xdims, _ in self.data._x_meta]
+            n_xs = [reduce(mul, map(len, xdims), 1) for _, xdims, _ in self.data.x_meta]
             tstart_by_x = [t for t, n in zip(tstart, n_xs) for _ in range(n)]
             tstop_by_x = [t for t, n in zip(tstop, n_xs) for _ in range(n)]
         else:
