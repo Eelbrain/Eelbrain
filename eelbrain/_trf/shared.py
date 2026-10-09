@@ -1,4 +1,3 @@
-import numpy
 from dataclasses import dataclass, fields
 from functools import cached_property, reduce
 from itertools import product, zip_longest
@@ -133,7 +132,7 @@ def split_data(
         split_points = np.round(np.linspace(0, n_times, partitions + 1)).astype(np.int64)
         soft_splits = split_points[1:-1]
         split_segments = np.vstack([split_points[i: i + 2] for i in range(partitions)])
-        categories = [None]
+        piece_partition = np.arange(partitions)
     else:
         n_segments = len(segments)
         # determine model cells
@@ -154,16 +153,20 @@ def split_data(
                 partitions = cell_size
             else:
                 raise NotImplementedError(f"Automatic partition for {cell_size} cases")
-        # create segments
+        # create segments, and assign each to a partition
         if cell_size >= partitions:
+            # whole segments, interleaved within each cell
             soft_splits = None
             split_segments = segments
-        else:
-            # need to subdivide segments
-            if model is not None:
-                raise NotImplementedError(f'{partitions=}: with model')
-            elif partitions % cell_size:
-                raise ValueError(f'{partitions=}: not a multiple of n_cases ({cell_size})')
+            piece_partition = np.empty(n_segments, np.int64)
+            for cell_index in categories:
+                if cell_index is None:
+                    cell_index = np.arange(n_segments)
+                piece_partition[cell_index] = np.arange(len(cell_index)) % partitions
+        elif model is not None:
+            raise NotImplementedError(f'{partitions=}: with model')
+        elif partitions % cell_size == 0:
+            # subdivide each segment into the same number of parts
             n_parts = partitions // cell_size
             split_segments = []
             soft_splits = []
@@ -173,38 +176,36 @@ def split_data(
                 split_segments.extend(split_points[i: i + 2] for i in range(n_parts))
             soft_splits = np.concatenate(soft_splits)
             split_segments = np.vstack(split_segments)
+            piece_partition = np.arange(partitions)
+        else:
+            # partitions with equal numbers of samples, cut additionally at segment boundaries
+            split_points = np.round(np.linspace(segments[0, 0], segments[-1, 1], partitions + 1)).astype(np.int64)
+            boundaries = segments[1:, 0]
+            cuts = np.union1d(split_points, boundaries)
+            split_segments = np.vstack([cuts[:-1], cuts[1:]]).T
+            soft_splits = np.setdiff1d(split_points[1:-1], boundaries)
+            piece_partition = np.searchsorted(split_points, split_segments[:, 0], side='right') - 1
     # create actual splits
     splits = []  # list of Split
     test_iter = range(partitions) if test else [None]
     validate_iter = range(partitions) if validate else [None]
-    n_segments = len(split_segments)
     for i_test in test_iter:
         for i_validate in validate_iter:
             if i_test == i_validate:
                 continue
-            train_set = np.ones(n_segments, bool)
+            train_set = np.ones(len(split_segments), bool)
             # test set
             if i_test is None:
                 test_segments = None
             else:
-                test_set = np.zeros(n_segments, bool)
-                for cell_index in categories:
-                    index = slice(i_test, None, partitions)
-                    if cell_index is not None:
-                        index = cell_index[index]
-                    test_set[index] = True
+                test_set = piece_partition == i_test
                 train_set ^= test_set
                 test_segments = merge_segments(split_segments[test_set], soft_splits)
             # validation set
             if i_validate is None:
                 validate_segments = None
             else:
-                validate_set = np.zeros(n_segments, bool)
-                for cell_index in categories:
-                    index = slice(i_validate, None, partitions)
-                    if cell_index is not None:
-                        index = cell_index[index]
-                    validate_set[index] = True
+                validate_set = piece_partition == i_validate
                 train_set ^= validate_set
                 validate_segments = merge_segments(split_segments[validate_set], soft_splits)
             # create split
@@ -213,8 +214,181 @@ def split_data(
     return Splits(splits, partitions_arg, partitions, validate, test, model, segments, split_segments)
 
 
+def _flatten(
+        segments: list[np.ndarray],
+        owned: bool,
+) -> tuple[np.ndarray, list[np.ndarray], bool]:
+    """Concatenate segments along time, and replace them with views into the result
+
+    Parameters
+    ----------
+    segments
+        Per-segment arrays with time as the last axis.
+    owned
+        Whether ``segments`` are owned by the caller (and may be modified in place).
+
+    Returns
+    -------
+    flat
+        Concatenated array.
+    views
+        Views into ``flat``, one per segment.
+    owned
+        Whether ``flat`` is owned by the caller.
+    """
+    if len(segments) == 1:
+        return segments[0], segments, owned
+    flat = np.concatenate(segments, axis=-1)
+    return flat, _segment_views(flat, [seg.shape[-1] for seg in segments]), True
+
+
+def _segment_views(
+        flat: np.ndarray,
+        n_times: Sequence[int],
+) -> list[np.ndarray]:
+    "Views into ``flat``, one per segment"
+    stops = np.cumsum(n_times)
+    return [flat[..., start:stop] for start, stop in zip(stops - n_times, stops)]
+
+
+def _copy_segments(
+        segments: list[np.ndarray],
+        flat: np.ndarray | None,
+) -> tuple[list[np.ndarray], np.ndarray | None]:
+    "Copy segment data, keeping the segments as views into ``flat`` when it exists"
+    if flat is None:
+        return [seg.copy() for seg in segments], None
+    flat = flat.copy()
+    return _segment_views(flat, [seg.shape[-1] for seg in segments]), flat
+
+
+def _case_segments(cases: np.ndarray) -> tuple[list[np.ndarray], np.ndarray | None, bool]:
+    """Split a ``(n_cases, n_rows, n_times)`` array into per-case segments
+
+    Returns
+    -------
+    segments
+        One ``(n_rows, n_times)`` array per case.
+    flat
+        For a single row, the concatenated ``(1, n_cases * n_times)`` array,
+        which is a reshape of ``cases`` (a view when possible); otherwise
+        ``None`` (concatenating requires a transposed copy).
+    owned
+        Whether the data is a copy (and may be modified in place).
+    """
+    n_cases, n_rows, n_times = cases.shape
+    if n_rows != 1:
+        return list(cases), None, False
+    flat = cases.reshape((1, -1))
+    return _segment_views(flat, [n_times] * n_cases), flat, not np.may_share_memory(flat, cases)
+
+
+def _segment_range(segments: list[np.ndarray]) -> np.ndarray:
+    "Range (max - min) of each row along time, across segments (NaN for rows containing NaN)"
+    return np.max([seg.max(-1) for seg in segments], 0) - np.min([seg.min(-1) for seg in segments], 0)
+
+
+def _center_and_scale(
+        segments: list[np.ndarray],
+        error: str,
+        n_vector: int = 0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Normalize segments in place, each row across all segments
+
+    Parameters
+    ----------
+    segments
+        Per-segment arrays, ``(n_rows, n_times_i)``.
+    error
+        Scale by the mean absolute value (``'l1'``) or the standard deviation (``'l2'``).
+    n_vector
+        For vector data, the number of components in each vector; rows are then
+        scaled by the vector norm, and the scale has ``n_rows / n_vector`` entries.
+
+    Returns
+    -------
+    mean
+        The mean of each row, which was subtracted.
+    scale
+        The scale of each row (or vector), by which the row was divided.
+    """
+    n = sum(seg.shape[-1] for seg in segments)
+    mean = sum(seg.sum(-1) for seg in segments) / n
+    for seg in segments:
+        seg -= mean[:, newaxis]
+    if n_vector:
+        magnitudes = [norm(seg.reshape((-1, n_vector, seg.shape[-1])), axis=1) for seg in segments]
+    else:
+        magnitudes = segments
+    if error == 'l1':
+        scale = sum(np.abs(x).sum(-1) for x in magnitudes) / n
+    elif error == 'l2':
+        scale = (sum((x ** 2).sum(-1) for x in magnitudes) / n) ** 0.5
+    else:
+        raise RuntimeError(f"{error=}")
+    row_scale = np.repeat(scale, n_vector) if n_vector else scale
+    for seg in segments:
+        seg /= row_scale[:, newaxis]
+    return mean, scale
+
+
+def lag_matrix(
+        x: np.ndarray,
+        i_start: int,
+        n_lags: int,
+        pad: float = 0,
+) -> np.ndarray:
+    """Matrix of lagged copies of a time series
+
+    Parameters
+    ----------
+    x
+        Time series, ``(n_times,)``.
+    i_start
+        Lag (in samples) of the first column.
+    n_lags
+        Number of lags (columns).
+    pad
+        Value representing ``x`` outside of its time axis.
+
+    Returns
+    -------
+    lagged
+        Array ``(n_times, n_lags)`` with ``lagged[t, j] = x[t - i_start - j]``, which
+        is the convention of :func:`convolve`: the kernel sample ``j`` applies to
+        ``x`` lagged by ``i_start + j`` samples.
+
+    Notes
+    -----
+    The result is a view into a padded copy of ``x``, and is thus cheap to
+    create; it should not be modified.
+    """
+    n_times = len(x)
+    i_stop = i_start + n_lags - 1  # largest lag
+    pad_head = max(i_stop, 0)
+    pad_tail = max(-i_start, 0)
+    padded = np.concatenate([np.full(pad_head, pad, x.dtype), x, np.full(pad_tail, pad, x.dtype)])
+    windows = np.lib.stride_tricks.sliding_window_view(padded, n_lags)
+    # windows[k, m] = padded[k + m]; lagged[t, j] = padded[pad_head + t - i_start - j]
+    k0 = pad_head - i_stop
+    return windows[k0:k0 + n_times, ::-1]
+
+
 class PredictorData:
-    """Restructure model NDVars (like DeconvolutionData but for x only)"""
+    """Restructure model NDVars (like DeconvolutionData but for x only)
+
+    Attributes
+    ----------
+    x_segments : list of array
+        Predictor data for each segment, ``(n_predictors, n_times_i)``.
+    data : array
+        All segments concatenated along time, ``(n_predictors, n_times_flat)``;
+        built from :attr:`x_segments` when first accessed, after which the
+        segments are views into it.
+    segments : array
+        ``(n_segments, 2)`` array of segment ``[start, stop]`` indices on the
+        concatenated time axis.
+    """
 
     def __init__(
             self,
@@ -243,7 +417,6 @@ class PredictorData:
                 if any(xij.get_dim('time') != time_x0j for xij, time_x0j in zip(xi, time_dim)):
                     raise ValueError("Not all NDVars in x have matching time dimensions")
             n_times = [len(uts) for uts in time_dim]
-            seg_i = np.append(0, np.cumsum(n_times, dtype=np.int64))
         else:
             time_dim = xs[0].get_dim('time')
             if any(xi.get_dim('time') != time_dim for xi in xs[1:]):
@@ -251,71 +424,47 @@ class PredictorData:
             n_times = len(time_dim)
 
             # determine cases (used as segments)
-            has_case = n_cases = seg_i = None
+            has_case = n_cases = None
             for xi in xs:
                 # determine cases
                 if n_cases is None:
                     has_case = xi.has_case
-                    if xi.has_case:
-                        n_cases = len(xi)
-                        # prepare segment index
-                        seg_i = np.arange(0, n_cases * n_times + 1, n_times, np.int64)
-                    else:
-                        n_cases = 0
-                        seg_i = np.array([0, n_times], np.int64)
+                    n_cases = len(xi) if xi.has_case else 0
                 elif xi.has_case ^ has_case:
                     raise ValueError(f'x={xs}: some but not all x have case')
                 elif has_case and len(xi) != n_cases:
                     raise ValueError(f'x={xs}: not all items have the same number of cases')
-        segments = np.hstack((seg_i[:-1, newaxis], seg_i[1:, newaxis]))
-
-        # x_data:  predictor x time array
+        case_to_segments = bool(has_case) and not is_ragged
+        n_segments = n_cases if has_case else 1
         if is_ragged:
-            x0s = [xi[0] for xi in xs]
+            segment_n_times = n_times
         else:
-            x0s = xs
-        if has_case and not is_ragged:
-            last = ('case', 'time')
-            last_dim = -2
-        else:
-            last = 'time'
-            last_dim = -1
-        x_dimnames = [xi.get_dimnames(last=last) for xi in x0s]
-        x_dims = [xi.get_dims(dimnames[:last_dim]) for xi, dimnames in zip(x0s, x_dimnames)]
+            segment_n_times = [n_times] * n_segments
+        stops = np.cumsum(segment_n_times, dtype=np.int64)
+        segments = np.hstack(((stops - segment_n_times)[:, newaxis], stops[:, newaxis]))
+
+        # x_segments: list of (n_x, n_times_i) arrays
+        x0s = [xi[0] for xi in xs] if is_ragged else xs
+        x_dimnames = [xi.get_dimnames(first='case' if case_to_segments else None, last='time') for xi in x0s]
+        n_leading = 1 if case_to_segments else 0
+        x_dims = [xi.get_dims(dimnames[n_leading:-1]) for xi, dimnames in zip(x0s, x_dimnames)]
         x_ns = [reduce(mul, [len(dim) for dim in dims], 1) for dims in x_dims]
         x_indexes = [start if stop - start == 1 else slice(start, stop) for start, stop in intervals(np.cumsum(x_ns), first=0)]
         if is_ragged:
-            n_times_flat = sum(n_times)
-        elif has_case:
-            n_times_flat = n_cases * n_times
+            x_arrays = [[xij.get_data(dimnames).reshape((n, -1)) for xij in xi] for xi, dimnames, n in zip(xs, x_dimnames, x_ns)]
+        elif case_to_segments:
+            x_arrays = [xi.get_data(dimnames).reshape((n_cases, n, n_times)) for xi, dimnames, n in zip(xs, x_dimnames, x_ns)]
         else:
-            n_times_flat = n_times
-        total_n_x = sum(x_ns)
-        if is_ragged:
-            x_data = numpy.empty((total_n_x, n_times_flat))
-            i0 = 0
-            for xi, dimnames, n in zip(xs, x_dimnames, x_ns):
-                i1 = i0 + n
-                t0 = 0
-                for xij, n_times_j in zip(xi, n_times):
-                    t1 = t0 + n_times_j
-                    x_data[i0:i1, t0:t1] = xij.get_data(dimnames).reshape((n, n_times_j))
-                    t0 = t1
-                i0 = i1
-            x_data_is_copy = True
+            x_arrays = [[xi.get_data(dimnames).reshape((n, n_times))] for xi, dimnames, n in zip(xs, x_dimnames, x_ns)]
+        x_flat = None
+        if multiple_x:
+            x_segments = [np.concatenate([arrays[i] for arrays in x_arrays]) for i in range(n_segments)]
+            x_owned = True
+        elif case_to_segments:
+            x_segments, x_flat, x_owned = _case_segments(x_arrays[0])
         else:
-            shape = (-1, n_times_flat)
-            x_data = [np.ascontiguousarray(xi.get_data(dimnames).reshape(shape)) for xi, dimnames in zip(xs, x_dimnames)]
-            if len(x_data) == 1:
-                x_data = x_data[0]
-                if copy:
-                    x_data = x_data.copy()
-                    x_data_is_copy = True
-                else:
-                    x_data_is_copy = False
-            else:
-                x_data = np.concatenate(x_data)
-                x_data_is_copy = True
+            x_segments = list(x_arrays[0])
+            x_owned = False
 
         # x_meta:  meta-information for x_data
         x_meta = []
@@ -332,41 +481,80 @@ class PredictorData:
         self.is_ragged = is_ragged
         self.has_case = has_case
         self.n_cases = n_cases
-        self.case_to_segments = n_cases > 0 and not is_ragged
+        self.case_to_segments = case_to_segments
         self.time_dim = time_dim
         self.n_times = n_times
-        self.n_times_flat = n_times_flat
+        self.n_times_flat = int(stops[-1])
         self.multiple_x = multiple_x
         self.x_name = x_name
         self.x_names = x_names
         self.x_meta = x_meta
-        self.data = x_data
-        self.data_is_copy = x_data_is_copy
+        self.x_segments = x_segments
+        self.x_owned = x_owned
+        self._x_flat = x_flat
         self.segments = segments
+        if copy:
+            if self._x_flat is None:
+                self._x_flat, self.x_segments, self.x_owned = _flatten(x_segments, x_owned)
+            if not self.x_owned:
+                self.x_segments, self._x_flat = _copy_segments(self.x_segments, self._x_flat)
+                self.x_owned = True
+
+    @property
+    def data(self) -> np.ndarray:
+        "Predictors concatenated along time, ``(n_predictors, n_times_flat)``"
+        if self._x_flat is None:
+            self._x_flat, self.x_segments, self.x_owned = _flatten(self.x_segments, self.x_owned)
+        return self._x_flat
 
 
 class DeconvolutionData:
     """Restructure input NDVars into arrays for deconvolution
 
+    The data is stored as one array per segment (trial); segments are views into
+    the input :class:`NDVar` data when possible. Arrays concatenated along time
+    (:attr:`y`, :attr:`x`) are built when first accessed, after which the
+    segments are views into them.
+
+    Parameters
+    ----------
+    y
+        Dependent variable.
+    x
+        Predictors.
+    data
+        Dataset in which to evaluate ``y`` and ``x`` if they are strings.
+    in_place
+        Modify the data of the input NDVars in place when normalizing (saves
+        memory).
+
     Attributes
     ----------
-    y : NDVar
-        Dependent variable.
-    x : NDVar | sequence of NDVar
-        Predictors.
+    y_segments : list of array
+        Dependent variable for each segment, ``(n_signals, n_times_i)``.
+    x_segments : list of array
+        Predictors for each segment, ``(n_predictors, n_times_i)``.
+    y : array
+        Dependent variable concatenated along time, ``(n_signals, n_times_flat)``.
+    x : array
+        Predictors concatenated along time, ``(n_predictors, n_times_flat)``.
     segments : np.ndarray
-        ``(n_segments, 2)`` array of segment ``[start, stop]`` indices. The
-        segments delimit chunks of continuous data, such as trials.
+        ``(n_segments, 2)`` array of segment ``[start, stop]`` indices on the
+        concatenated time axis. The segments delimit chunks of continuous data,
+        such as trials.
+    x_meta : list of tuple
+        ``(name, dims, index)`` for each predictor variable: its name, its
+        dimensions other than case and time, and the index of its rows in ``x``.
+    x_mean, x_scale, y_mean, y_scale : array
+        Normalization that was applied to the data (``None`` before :meth:`normalize`).
     splits : list of Split
         Cross-validation scheme.
     """
-    # data
+    # normalization
     x_mean = None
     x_scale = None
     y_mean = None
     y_scale = None
-    _x_is_copy: bool = False
-    _y_is_copy: bool = False
     scale_data: str = None
     # cross-validation
     splits: Splits = None
@@ -423,29 +611,23 @@ class DeconvolutionData:
         y_dimnames = y0.get_dimnames(last=last)
         ydims = y0.get_dims(y_dimnames[:n_ydims])
         n_flat = reduce(mul, map(len, ydims), 1)
-        shape = (n_flat, x_data.n_times_flat)
+        y_flat = None
+        y_owned = False
         if x_data.is_ragged:
-            y_data = np.empty(shape)
-            for yi, (start, stop) in zip(y, x_data.segments):
-                y_data[:, start:stop] = yi.get_data(y_dimnames).reshape((n_flat, stop - start))
-            self._y_is_copy = True
+            y_segments = [yi.get_data(y_dimnames).reshape((n_flat, -1)) for yi in y]
+        elif x_data.case_to_segments:
+            y_array = y.get_data(('case', *y_dimnames[:n_ydims], 'time')).reshape((n_cases, n_flat, x_data.n_times))
+            y_segments, y_flat, y_owned = _case_segments(y_array)
         else:
-            y_data = y.get_data(y_dimnames).reshape(shape)
-        # shape for exposing vector dimension
-        if vector_dim:
-            n_flat_prevector = reduce(mul, map(len, ydims[:-1]), 1)
-            n_vector = len(ydims[-1])
-            assert n_vector > 1
-            vector_shape = (n_flat_prevector, n_vector, x_data.n_times_flat)
-        else:
-            vector_shape = None
-
+            y_segments = [y.get_data(y_dimnames).reshape((n_flat, x_data.n_times))]
         self.time = x_data.time_dim[0] if x_data.is_ragged else x_data.time_dim
         self.segments = x_data.segments
         self.shortest_segment_n_times = np.min(np.diff(x_data.segments, axis=1))
         self.in_place = in_place
         # y
-        self.y = y_data  # (n_signals, n_times)
+        self.y_segments = y_segments  # [(n_signals, n_times_i), ...]
+        self._y_flat = y_flat
+        self._y_owned = y_owned
         self.y_name = y.name
         self._y_repr = dataobj_repr(y)
         self.y_info = _info.copy(y0.info)
@@ -453,28 +635,83 @@ class DeconvolutionData:
         self.yshape = tuple(map(len, ydims))
         self.full_y_dims = None if x_data.is_ragged else y.get_dims(y_dimnames)
         self.vector_dim = vector_dim  # vector dimension
-        self.vector_shape = vector_shape  # flat shape with vector dim separate
         # x
-        self.x = x_data.data  # (n_predictors, n_times)
+        self.x_segments = x_data.x_segments  # [(n_predictors, n_times_i), ...]
+        self._x_flat = x_data._x_flat
+        self._x_owned = x_data.x_owned
         self.x_name = x_data.x_name
         self.x_names = x_data.x_names
-        self._x_meta = x_data.x_meta  # [(x.name, xdim, index), ...]; index is int or slice
-        self._multiple_x = x_data.multiple_x
-        self._x_is_copy = x_data.data_is_copy
+        self.x_meta = x_data.x_meta  # [(x.name, xdim, index), ...]; index is int or slice
+        self.multiple_x = x_data.multiple_x
         # basis
         self.basis = 0
         self.basis_window = None
+
+    def __getstate__(self) -> dict:
+        # the segments hold all the data; a concatenated copy is rebuilt on demand
+        state = {**self.__dict__, '_y_flat': None, '_x_flat': None, '_y_owned': True, '_x_owned': True}
+        return state
+
+    @property
+    def y(self) -> np.ndarray:
+        "Dependent variable concatenated along time, ``(n_signals, n_times_flat)``"
+        if self._y_flat is None:
+            self._y_flat, self.y_segments, self._y_owned = _flatten(self.y_segments, self._y_owned)
+        return self._y_flat
+
+    @property
+    def x(self) -> np.ndarray:
+        "Predictors concatenated along time, ``(n_predictors, n_times_flat)``"
+        if self._x_flat is None:
+            self._x_flat, self.x_segments, self._x_owned = _flatten(self.x_segments, self._x_owned)
+        return self._x_flat
+
+    @property
+    def n_x(self) -> int:
+        "Number of predictor time series (rows in ``x``)"
+        return len(self.x_segments[0])
+
+    @property
+    def n_y(self) -> int:
+        "Number of dependent time series (rows in ``y``)"
+        return len(self.y_segments[0])
 
     def _copy_data(self, y=False):
         "Make sure the data is a copy before modifying"
         if self.in_place:
             return
-        if not self._x_is_copy:
-            self.x = self.x.copy()
-            self._x_is_copy = True
-        if y and not self._y_is_copy:
-            self.y = self.y.copy()
-            self._y_is_copy = True
+        if not self._x_owned:
+            self.x_segments, self._x_flat = _copy_segments(self.x_segments, self._x_flat)
+            self._x_owned = True
+        if y and not self._y_owned:
+            self.y_segments, self._y_flat = _copy_segments(self.y_segments, self._y_flat)
+            self._y_owned = True
+
+    def segment_slices(self, ranges: np.ndarray) -> list[tuple[int, int, int]]:
+        """Map ranges on the concatenated time axis to slices of the data segments
+
+        Parameters
+        ----------
+        ranges
+            ``(n, 2)`` array of ``[start, stop]`` indices on the concatenated
+            time axis, e.g. :attr:`Split.train`.
+
+        Returns
+        -------
+        slices
+            ``(i_segment, start, stop)`` for each contiguous part of the ranges,
+            with ``start`` and ``stop`` relative to the segment, such that
+            ``y_segments[i_segment][:, start:stop]`` is the corresponding data.
+        """
+        seg_starts, seg_stops = self.segments.T
+        out = []
+        for start, stop in ranges:
+            i_first = np.searchsorted(seg_stops, start, 'right')
+            i_last = np.searchsorted(seg_starts, stop, 'left')
+            for i in range(i_first, i_last):
+                seg_start, seg_stop = self.segments[i]
+                out.append((i, int(max(start, seg_start) - seg_start), int(min(stop, seg_stop) - seg_start)))
+        return out
 
     def apply_basis(self, basis: float, basis_window: str):
         """Apply basis to x
@@ -482,6 +719,7 @@ class DeconvolutionData:
         Notes
         -----
         Normalize after applying basis (basis can smooth out variance).
+        The basis is applied to each segment separately.
         """
         if self.basis != 0:
             raise NotImplementedError("Applying basis more than once")
@@ -493,59 +731,82 @@ class DeconvolutionData:
         if len(w) <= 1:
             raise ValueError(f"{basis=}: Window is {len(w)} samples long")
         w /= w.sum()
-        for xi in self.x:
-            xi[:] = scipy.signal.convolve(xi, w, 'same')
+        for seg in self.x_segments:
+            seg[:] = scipy.signal.convolve(seg, w[newaxis], 'same')
         self.basis = basis
         self.basis_window = basis_window
 
-    @cached_property
-    def x_pads(self):
-        return np.zeros(len(self.x))
+    @property
+    def x_pads(self) -> np.ndarray:
+        "Value of each predictor outside the data (the normalized value of 0)"
+        if self.x_mean is None:
+            return np.zeros(self.n_x)
+        return -self.x_mean / self.x_scale
 
-    def normalize(self, error: str):
-        self._copy_data(y=True)
-        y_mean = self.y.mean(1)
-        x_mean = self.x.mean(1)
-        self.y -= y_mean[:, newaxis]
-        self.x -= x_mean[:, newaxis]
-        # for vector data, scale by vector norm
-        if self.vector_shape:
-            y_data_vector_shape = self.y.reshape(self.vector_shape)
-            y_data_for_scale = norm(y_data_vector_shape, axis=1)
+    def _record_x_normalization(
+            self,
+            x_mean: np.ndarray,
+            x_scale: np.ndarray,
+    ):
+        "Record a normalization step applied to the current ``x``, composing it with previous ones"
+        if self.x_mean is None:
+            self.x_mean = x_mean
+            self.x_scale = x_scale
         else:
-            y_data_vector_shape = None
-            y_data_for_scale = self.y
+            self.x_mean = self.x_mean + x_mean * self.x_scale
+            self.x_scale = self.x_scale * x_scale
 
-        if error == 'l1':
-            y_scale = np.abs(y_data_for_scale).mean(-1)
-            x_scale = np.abs(self.x).mean(-1)
-        elif error == 'l2':
-            y_scale = (y_data_for_scale ** 2).mean(-1) ** 0.5
-            x_scale = (self.x ** 2).mean(-1) ** 0.5
-        else:
-            raise RuntimeError(f"{error=}")
+    def normalize(self, error: str, y: bool = True):
+        """Center and scale the data in place
 
-        if self.vector_shape:
-            y_data_vector_shape /= y_scale[:, newaxis, newaxis]
-        else:
-            self.y /= y_scale[:, newaxis]
-        self.x /= x_scale[:, newaxis]
-
+        Parameters
+        ----------
+        error
+            Scale by the mean absolute value (``'l1'``) or the standard
+            deviation (``'l2'``).
+        y
+            Normalize ``y`` as well as ``x`` (set to ``False`` to only
+            normalize the predictors).
+        """
+        self._copy_data(y=y)
+        x_mean, x_scale = _center_and_scale(self.x_segments, error)
+        self._record_x_normalization(x_mean, x_scale)
+        if y:
+            n_vector = len(self.vector_dim) if self.vector_dim else 0
+            y_mean, y_scale = _center_and_scale(self.y_segments, error, n_vector)
+            if self.y_mean is None:
+                self.y_mean = y_mean
+                self.y_scale = y_scale
+            else:
+                self.y_mean = self.y_mean + y_mean * np.repeat(self.y_scale, n_vector or 1)
+                self.y_scale = self.y_scale * y_scale
         self.scale_data = error
-        self.y_mean = y_mean
-        self.y_scale = y_scale
-        self.x_mean = x_mean
-        self.x_scale = x_scale
-        # zero-padding for convolution
-        self.x_pads = -x_mean / x_scale
+
+    def apply_x_normalization(
+            self,
+            x_mean: np.ndarray | float,
+            x_scale: np.ndarray | float,
+    ):
+        """Normalize the predictors in place with given values (e.g., from a fitted model)
+
+        Parameters
+        ----------
+        x_mean
+            Value to subtract from each predictor (``(n_predictors,)`` array or scalar).
+        x_scale
+            Value by which to divide each predictor.
+        """
+        x_mean = np.broadcast_to(x_mean, (self.n_x,)).astype(np.float64)
+        x_scale = np.broadcast_to(x_scale, (self.n_x,)).astype(np.float64)
+        self._copy_data()
+        for seg in self.x_segments:
+            seg -= x_mean[:, newaxis]
+            seg /= x_scale[:, newaxis]
+        self._record_x_normalization(x_mean, x_scale)
 
     def _check_data(self):
-        if self.x_scale is None:
-            x_check = self.x.var(1)
-            y_check = self.y.var(1)
-        else:
-            x_check = self.x_scale
-            y_check = self.y_scale
+        x_check = _segment_range(self.x_segments) if self.x_scale is None else self.x_scale
+        y_check = _segment_range(self.y_segments) if self.y_scale is None else self.y_scale
         # check for flat data
         zero_var = y_check == 0
         if np.any(zero_var):
@@ -587,25 +848,28 @@ class DeconvolutionData:
     def data_scale_ndvars(self):
         if self.scale_data:
             # y
-            if self.yshape:
-                y_mean = NDVar(self.y_mean.reshape(self.yshape), self.ydims, self.y_name, self.y_info)
+            if self.y_mean is None:
+                y_mean = y_scale = None
             else:
-                y_mean = self.y_mean[0]
-            # scale does not include vector dim
-            if self.vector_dim:
-                dims = self.ydims[:-1]
-                shape = self.yshape[:-1]
-            else:
-                dims = self.ydims
-                shape = self.yshape
-            if shape:
-                y_scale = NDVar(self.y_scale.reshape(shape), dims, self.y_name, self.y_info)
-            else:
-                y_scale = self.y_scale[0]
+                if self.yshape:
+                    y_mean = NDVar(self.y_mean.reshape(self.yshape), self.ydims, self.y_name, self.y_info)
+                else:
+                    y_mean = self.y_mean[0]
+                # scale does not include vector dim
+                if self.vector_dim:
+                    dims = self.ydims[:-1]
+                    shape = self.yshape[:-1]
+                else:
+                    dims = self.ydims
+                    shape = self.yshape
+                if shape:
+                    y_scale = NDVar(self.y_scale.reshape(shape), dims, self.y_name, self.y_info)
+                else:
+                    y_scale = self.y_scale[0]
             # x
             x_mean = []
             x_scale = []
-            for name, xdims, index in self._x_meta:
+            for name, xdims, index in self.x_meta:
                 if xdims:
                     shape = [len(dim) for dim in xdims]
                     x_mean.append(NDVar(self.x_mean[index].reshape(shape), xdims, name))
@@ -613,7 +877,7 @@ class DeconvolutionData:
                 else:
                     x_mean.append(self.x_mean[index])
                     x_scale.append(self.x_scale[index])
-            if self._multiple_x:
+            if self.multiple_x:
                 x_mean = tuple(x_mean)
                 x_scale = tuple(x_scale)
             else:
@@ -638,13 +902,13 @@ class DeconvolutionData:
         else:
             info = self.y_info
 
-        for name, xdims, index in self._x_meta:
+        for name, xdims, index in self.x_meta:
             dims = (*self.ydims, *xdims, h_time)
             shape = [len(dim) for dim in dims]
             x = h[:, index, :].reshape(shape)
             hs.append(NDVar(x, dims, name, info))
 
-        if self._multiple_x:
+        if self.multiple_x:
             return tuple(hs)
         else:
             return hs[0]

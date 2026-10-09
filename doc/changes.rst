@@ -92,6 +92,16 @@ New in 0.43
     to the variability in the evaluated data segments. Previously, it was
     computed relative to the variability in all data, which strongly
     overestimated it.
+  - A number of ``partitions`` that is not a multiple of the number of cases
+    (and larger than it) now divides the data into partitions with equal
+    numbers of samples, cut additionally at case boundaries, instead of raising
+    an error.
+  - The ``basis`` is now applied to each case separately, so that it no longer
+    smooths across case boundaries.
+  - The data representation is shared with the `NCRF
+    <https://github.com/proloyd/neuro-currentRF>`_ package: data is kept as one
+    array per case, which is a view into the input :class:`NDVar` data, so that
+    estimators that do not need concatenated data do not copy it.
 
 * ICA-GUI (:func:`gui.select_components`): The *Find Bad Channels* tool now also
   detects defective channels through gaps in the component maps — channels whose

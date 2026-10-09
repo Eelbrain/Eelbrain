@@ -768,7 +768,7 @@ class Boosting:
             self.tstop = tuple(tstop)
             if any(start >= stop for start, stop in zip(self.tstart, self.tstop)):
                 raise ValueError(f"Some tstart > tstop: {tstart=} and {tstop=}")
-            n_xs = [reduce(mul, map(len, xdims), 1) for _, xdims, _ in self.data._x_meta]
+            n_xs = [reduce(mul, map(len, xdims), 1) for _, xdims, _ in self.data.x_meta]
             tstart_by_x = [t for t, n in zip(tstart, n_xs) for _ in range(n)]
             tstop_by_x = [t for t, n in zip(tstop, n_xs) for _ in range(n)]
         else:

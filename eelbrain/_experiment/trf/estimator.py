@@ -321,12 +321,12 @@ class NCRF(Estimator):
                 y = Datalist([yi.sub(sensor=cov.ch_names) for yi in y])
             else:
                 y = y.sub(sensor=cov.ch_names)
-        if len(xs) == 1:
-            x = xs[0]
-        else:
-            x = xs
-        from ncrf import fit_ncrf
-        return fit_ncrf(y, x, fwd, cov, tstart, tstop, basis_stride=self.basis_stride, n_iter=self.n_iter, n_iterc=self.n_iterc, n_iterf=self.n_iterf, mu=self.mu, tol=self.tol, n_splits=self.n_splits, use_ES=self.use_ES, basis_std=self.basis_std)
+        x = xs[0] if len(xs) == 1 else xs
+        from ncrf import ChampLasso, CrossValidation, NCRFEstimator, RegressionData
+        data = RegressionData.from_data(y, x, tstart, tstop, self.basis_stride, basis_std=self.basis_std)
+        estimator = NCRFEstimator.from_lead_field(fwd, cov)
+        solver = ChampLasso(mu=self.mu, n_iter=self.n_iter, n_iterc=self.n_iterc, n_iterf=self.n_iterf, tol=self.tol, use_es=self.use_ES)
+        return estimator.fit(data, solver, cv=CrossValidation(self.n_splits), compute_explained_variance=True)
 
     # ``result`` is an :class:`ncrf.NCRFFit` report; the kernels and TRF timing live on its ``model``
     def _result_metrics(self, result) -> dict[str, NDVar | float]:
