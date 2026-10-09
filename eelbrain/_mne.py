@@ -1,5 +1,6 @@
 from copy import deepcopy
 from functools import reduce
+import logging
 from math import ceil, floor
 import operator
 import os
@@ -39,11 +40,77 @@ def assert_subject_exists(subject, subjects_dir):
         raise OSError(f"Subject {subject} does not exist in subjects_dir {subjects_dir}")
 
 
+def read_mri_scaling_cfg(
+        subject: str,
+        subjects_dir: PathArg,
+) -> dict | None:
+    """Scaling parameters of a scaled MRI subject (``None`` for a subject without ``MRI scaling parameters.cfg``)"""
+    if os.path.exists(os.path.join(subjects_dir, subject, 'MRI scaling parameters.cfg')):
+        return mne.coreg.read_mri_cfg(subject, subjects_dir)
+
+
 def find_source_subject(subject, subjects_dir):
-    cfg_path = os.path.join(subjects_dir, subject, 'MRI scaling parameters.cfg')
-    if os.path.exists(cfg_path):
-        cfg = mne.coreg.read_mri_cfg(subject, subjects_dir)
+    cfg = read_mri_scaling_cfg(subject, subjects_dir)
+    if cfg is not None:
         return cfg['subject_from']
+
+
+def ensure_mri(
+        subject: str,
+        subjects_dir: PathArg,
+        log: logging.Logger,
+) -> None:
+    """Create a missing MRI subject when it can be derived automatically
+
+    Parameters
+    ----------
+    subject
+        MRI subject.
+    subjects_dir
+        FreeSurfer subjects directory.
+    log
+        Logger for progress messages.
+
+    Notes
+    -----
+    Does nothing when the subject's surfaces are present. Otherwise, ``fsaverage``
+    is downloaded with :func:`mne.datasets.fetch_fsaverage`, and a subject
+    directory that contains only an ``MRI scaling parameters.cfg`` file (e.g.,
+    from a BIDS dataset that distributes scaling parameters instead of scaled
+    surfaces) is populated with :func:`mne.scale_mri`. Any other missing subject
+    is left alone, and a directory that holds scaling parameters together with
+    other content raises an error rather than being overwritten.
+    """
+    subjects_dir = Path(subjects_dir)
+    mri_dir = subjects_dir / subject
+    if (mri_dir / 'surf' / 'lh.white').exists():
+        return
+    elif subject == 'fsaverage':
+        log.info("Downloading fsaverage to %s...", subjects_dir)
+        subjects_dir_config = mne.get_config('SUBJECTS_DIR')
+        mne.datasets.fetch_fsaverage(subjects_dir)
+        if subjects_dir_config is None:
+            mne.set_config('SUBJECTS_DIR', None)  # fetch_fsaverage() stores subjects_dir as the global default when none is configured
+        return
+    cfg = read_mri_scaling_cfg(subject, subjects_dir)
+    if cfg is None:
+        return
+    source_subject = cfg['subject_from']
+    if source_subject == subject:
+        raise ValueError(f"{mri_dir / 'MRI scaling parameters.cfg'} names {subject} as its own source subject")
+    # mne.scale_mri(overwrite=True) deletes the whole directory, so only scale into one that holds nothing but the cfg (ignoring hidden files such as .DS_Store)
+    extra = sorted(path.name for path in mri_dir.iterdir() if path.name != 'MRI scaling parameters.cfg' and not path.name.startswith('.'))
+    if extra:
+        raise FileExistsError(f"Cannot create {subject} by scaling {source_subject}: {mri_dir} has no surfaces but is not empty ({', '.join(extra)}); remove everything except the cfg file to re-create the scaled MRI")
+    ensure_mri(source_subject, subjects_dir, log)
+    if not (subjects_dir / source_subject / 'surf' / 'lh.white').exists():
+        raise FileNotFoundError(f"Cannot create {subject} by scaling {source_subject}: {subjects_dir / source_subject} has no surfaces")
+    log.info("Scaling %s by %s to create %s...", source_subject, cfg['scale'], subject)
+    skip_fiducials = not (subjects_dir / source_subject / 'bem' / f'{source_subject}-fiducials.fif').exists()
+    # mne.scale_mri() <= 1.13 writes a malformed cfg file (n_params = 3 with a single value) for a scalar scale; a uniform 3-vector avoids this
+    scale = np.broadcast_to(cfg['scale'], 3)
+    # overwrite: the directory already exists, holding the cfg file (which scale_mri rewrites)
+    mne.scale_mri(source_subject, subject, scale, overwrite=True, subjects_dir=subjects_dir, skip_fiducials=skip_fiducials, labels=False, annot=True)
 
 
 def switch_hemi_tag(name):

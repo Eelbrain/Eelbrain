@@ -36,6 +36,14 @@ Map MEG/EEG subjects to FreeSurfer MRI subjects. Keys in ``mri_subjects`` are na
     }
 
 
+Missing MRI subjects are created automatically when they are first needed, as long as they can be derived without user input:
+
+- ``fsaverage`` is downloaded with :func:`mne.datasets.fetch_fsaverage`.
+- A subject directory that contains only an ``MRI scaling parameters.cfg`` file (as written by :func:`mne.scale_mri` and the MNE coregistration GUI) is populated by scaling the template brain accordingly. This allows distributing a BIDS dataset with the scaling parameters alone instead of the scaled surfaces.
+
+The MRI task of the :ref:`pipeline-gui` offers the same operations by double-clicking a row.
+
+
 Coregistration
 ==============
 
