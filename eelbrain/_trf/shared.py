@@ -10,28 +10,30 @@ import scipy.signal
 from scipy.linalg import norm
 
 from .. import _info
-from .._data_obj import CategorialArg, NDVarArg, Datalist, Dataset, NDVar, Case, UTS, dataobj_repr, ascategorial, asndvar
+from .._data_obj import CategorialArg, NDVarArg, Datalist, Dataset, Factor, Interaction, NDVar, Case, UTS, dataobj_repr, ascategorial, asndvar
 from .._utils import PickleableDataClass, intervals
 
 
 class EQMixIn:
+    """Add __eq__() for dataclasses with array and categorial fields"""
 
     def __eq__(self, other):
+        if other is self:
+            return True
         if not isinstance(other, self.__class__):
             return False
         for field in fields(self):
             a, b = getattr(self, field.name), getattr(other, field.name)
-            if isinstance(a, b.__class__):
-                if isinstance(a, np.ndarray):
-                    if not np.array_equal(a, b):
-                        break
-                elif a != b:
-                    break
-            else:
-                break
-        else:
-            return True
-        return False
+            if isinstance(a, np.ndarray) or isinstance(b, np.ndarray):
+                if not np.array_equal(a, b):
+                    return False
+            elif isinstance(a, (Factor, Interaction)) or isinstance(b, (Factor, Interaction)):
+                # element-wise comparison
+                if not (isinstance(b, a.__class__) and len(a) == len(b) and np.all(a == b)):
+                    return False
+            elif a != b:
+                return False
+        return True
 
 
 @dataclass(eq=False)
