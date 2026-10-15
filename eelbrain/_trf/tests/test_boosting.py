@@ -238,7 +238,7 @@ def test_boosting_epochs():
 def test_boosting_object():
     "Test Boosting object"
     ds = datasets._get_continuous(ynd=True)
-    data = DeconvolutionData('y', 'x2', ds)
+    data = DeconvolutionData('x2', 'y', ds)
     data.apply_basis(0.2, 'hamming')
     data.normalize('l1')
     data.initialize_cross_validation(4)

@@ -24,7 +24,7 @@ class Evaluator:
             data: DeconvolutionData,
             segments: list[np.ndarray] = None,  # evaluations for different test-segments
     ):
-        n = len(data.y)
+        n = data.y.n_rows
         if self.vector:
             if not data.vector_dim:
                 raise ValueError(f"{self.__class__.__name__}: Vector evaluator for non-vector data")
@@ -254,7 +254,7 @@ class VectorCorrelation(Evaluator):
         y_scale = (y_norm ** 2).mean() ** 0.5
         if y_scale == 0:
             return 0
-        elif self.data.scale_data == 'l2':
+        elif self.data.y.scale_norm == 'l2':
             y_l2 = y
         else:
             y_l2 = y / y_scale
@@ -281,7 +281,7 @@ class VectorCorrelationL1(VectorCorrelation):
         y_scale = y_norm.mean()
         if y_scale == 0:
             return 0
-        elif self.data.scale_data == 'l1':
+        elif self.data.y.scale_norm == 'l1':
             y_l1 = y
         else:
             y_l1 = y / y_scale

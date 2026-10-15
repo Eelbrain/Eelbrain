@@ -5,7 +5,7 @@ import numpy as np
 from numpy.testing import assert_array_equal
 import pytest
 
-from eelbrain import Factor, datasets, epoch_impulse_predictor
+from eelbrain import Factor, NDVar, Scalar, datasets, epoch_impulse_predictor
 from eelbrain._ndvar._convolve import convolve_1d
 from eelbrain._trf.shared import DeconvolutionData, lag_matrix, split_data
 
@@ -14,20 +14,20 @@ def test_deconvolution_data_continuous():
     ds = datasets._get_continuous(ynd=True)
 
     # normalizing
-    data = DeconvolutionData(ds['y'][:8], ds['x1'][:8])
+    data = DeconvolutionData(ds['x1'][:8], ds['y'][:8])
     data.normalize('l1')
     data.flatten()
-    assert data.x[0].mean() == pytest.approx(0, abs=1e-16)
-    assert abs(data.x).mean() == pytest.approx(1, abs=1e-10)
+    assert data.x.flat[0].mean() == pytest.approx(0, abs=1e-16)
+    assert abs(data.x.flat).mean() == pytest.approx(1, abs=1e-10)
     with pytest.raises(ValueError):
         data.apply_basis(0.050, 'hamming')
     # with basis
-    data = DeconvolutionData(ds['y'][:8], ds['x1'][:8])
+    data = DeconvolutionData(ds['x1'][:8], ds['y'][:8])
     data.apply_basis(0.500, 'hamming')
     data.normalize('l1')
     data.flatten()
-    assert data.x[0].mean() == pytest.approx(0, abs=1e-16)
-    assert abs(data.x).mean() == pytest.approx(1, abs=1e-10)
+    assert data.x.flat[0].mean() == pytest.approx(0, abs=1e-16)
+    assert abs(data.x.flat).mean() == pytest.approx(1, abs=1e-10)
 
     # partitioning, no testing set
     data.initialize_cross_validation(4, test=0)
@@ -76,7 +76,7 @@ def test_deconvolution_data_trials():
     ds['imp'] = epoch_impulse_predictor('uts', data=ds)
     ds['imp_a'] = epoch_impulse_predictor('uts', "A == 'a1'", data=ds)
 
-    data = DeconvolutionData('uts', 'imp', ds)
+    data = DeconvolutionData('imp', 'uts', ds)
     data.normalize('l1')
     assert_array_equal(data.segments, [[i * n_times, (i + 1) * n_times] for i in range(60)])
 
@@ -113,43 +113,85 @@ def test_deconvolution_data_segments():
     ds = datasets.get_uts(True)
     y = ds['utsnd']
     x = ds['uts']
-    data = DeconvolutionData(y, [x, 'uts'], ds)
-    assert len(data.y_segments) == len(data.x_segments) == 60
-    assert data.n_y == 5 and data.n_x == 2
+    data = DeconvolutionData([x, 'uts'], y, ds)
+    assert len(data.y.segments) == len(data.x.segments) == 60
+    assert data.y.n_rows == 5 and data.x.n_rows == 2
     # y segments are views into the NDVar
-    assert np.shares_memory(data.y_segments[0], y.x)
-    assert_array_equal(data.y_segments[3], y.x[3])
+    assert np.shares_memory(data.y.segments[0], y.x)
+    assert_array_equal(data.y.segments[3], y.x[3])
     assert data.segment_slices(np.array([[0, 10], [95, 215]])) == [(0, 0, 10), (0, 95, 100), (1, 0, 100), (2, 0, 15)]
+    with pytest.raises(RuntimeError):
+        data.y.flat
     # modifying does not touch the input
     y_copy = y.x.copy()
     data.normalize('l2')
     assert_array_equal(y.x, y_copy)
     # the flat array holds the same data, and the segments become views into it
-    with pytest.raises(RuntimeError):
-        data.y
     data.flatten()
-    assert data.y.shape == (5, 6000)
-    assert_array_equal(data.y[:, 300:400], data.y_segments[3])
-    assert np.shares_memory(data.y, data.y_segments[3])
-    data.y_segments[3][0, 0] = 99
-    assert data.y[0, 300] == 99
+    assert data.y.flat.shape == (5, 6000)
+    assert_array_equal(data.y.flat[:, 300:400], data.y.segments[3])
+    assert np.shares_memory(data.y.flat, data.y.segments[3])
+    data.y.segments[3][0, 0] = 99
+    assert data.y.flat[0, 300] == 99
     # pickling drops the flat arrays, the segments keep the data
     data_2 = pickle.loads(pickle.dumps(data))
-    assert data_2._y_flat is None
+    assert data_2.y._flat is None
     data_2.flatten()
-    assert_array_equal(data_2.y, data.y)
-    assert_array_equal(data_2.x_mean, data.x_mean)
+    assert_array_equal(data_2.y.flat, data.y.flat)
+    assert_array_equal(data_2.x.mean, data.x.mean)
 
     # in-place normalization modifies the input
     x_copy = x.x.copy()
-    data = DeconvolutionData(y, x, in_place=True)
+    data = DeconvolutionData(x, y, in_place=True)
     data.normalize('l1')
-    assert_array_equal(data.x_segments[0][0], x.x[0])
+    assert_array_equal(data.x.segments[0][0], x.x[0])
     assert not np.array_equal(x.x, x_copy)
     # for a single predictor, the flat array is a view into the input (no copy)
-    assert np.shares_memory(data.x, x.x)
-    assert_array_equal(data.x[0, 100:200], x.x[1])
+    assert np.shares_memory(data.x.flat, x.x)
+    assert_array_equal(data.x.flat[0, 100:200], x.x[1])
     x.x[:] = x_copy
+
+    # without y (e.g., for prediction)
+    data = DeconvolutionData([x, 'uts'], data=ds)
+    assert data.y is None
+    data.normalize('l1')
+    data.check_data()
+    data.flatten()
+    assert data.x.flat.shape == (2, 6000)
+    with pytest.raises(ValueError, match="same time dimension"):
+        DeconvolutionData(x, y.sub(time=(0, 0.5)))
+
+    # non-contiguous input: the flat array is a contiguous copy
+    x_strided = NDVar(np.repeat(x.x, 2, 1)[:, ::2], x.dims, 'x_strided')
+    data = DeconvolutionData(x_strided, y)
+    assert not data.x.flat.flags.c_contiguous
+    data.flatten()
+    assert data.x.flat.flags.c_contiguous
+    assert_array_equal(data.x.flat[0, 100:200], x.x[1])
+    data.normalize('l1')
+    assert_array_equal(x_strided.x, x.x)
+    # predictor with time first
+    x_t = NDVar(np.stack([x.x[0], x.x[1]], 1), (x.time, Scalar('s', [0, 1])), 'x_t')
+    data = DeconvolutionData(x_t, y[0])
+    assert not data.x._owned  # transposed view into the input
+    data.flatten()
+    assert data.x.flat.flags.c_contiguous
+    assert_array_equal(data.x.flat, x.x[:2])
+    # several cases with time first: the segments are transposed views, the flat array is still C-contiguous
+    x_ct = NDVar(np.stack([x.x, x.x ** 2], 2), (x.dims[0], x.time, Scalar('s', [0, 1])), 'x_ct')
+    data = DeconvolutionData(x_ct, y)
+    assert not data.x._owned
+    assert not data.x.segments[0].flags.c_contiguous
+    data.flatten()
+    assert data.x.flat.flags.c_contiguous
+    assert_array_equal(data.x.flat[1, 100:200], x.x[1] ** 2)
+    # predictor whose rows combine non-adjacent dimensions: get_data() has to copy, so the data is owned
+    x_ab = NDVar(np.ascontiguousarray(x.x[:4].reshape((2, 2, -1)).transpose((0, 2, 1))), (Scalar('a', [0, 1]), x.time, Scalar('b', [0, 1])), 'x_ab')
+    data = DeconvolutionData(x_ab, y[0])
+    assert data.x._owned
+    assert_array_equal(data.x.segments[0], x.x[:4])
+    data.normalize('l1')
+    assert_array_equal(x_ab.x[:, 0], x.x[:4].reshape((2, 2, -1))[:, :, 0])  # input unchanged
 
 
 def test_deconvolution_data_check():
@@ -157,39 +199,39 @@ def test_deconvolution_data_check():
     ds = datasets.get_uts(True)
     y = ds['utsnd'].copy()
     x = ds['uts'].copy()
-    DeconvolutionData(y, x).check_data()
+    DeconvolutionData(x, y).check_data()
     y.x[:, 1, :] = 0.1
     with pytest.raises(ValueError, match="1 flat time series"):
-        DeconvolutionData(y, x).check_data()
+        DeconvolutionData(x, y).check_data()
     y = ds['utsnd']
     x.x[3, 10] = np.nan
     with pytest.raises(ValueError, match="NaN in"):
-        DeconvolutionData(y, x).check_data()
+        DeconvolutionData(x, y).check_data()
 
 
 def test_deconvolution_data_normalize_x():
     "Normalization can be restricted to x, and applied with given values"
     ds = datasets._get_continuous(ynd=True)
     y, x = ds['y'], ds['x1']
-    data = DeconvolutionData(y, x)
-    data.normalize('l2', y=False)
-    assert data.y_mean is None
-    assert_array_equal(data.y_segments[0][0], y.x)
+    data = DeconvolutionData(x, y)
+    data.x.normalize('l2')
+    assert data.y.mean is None
+    assert_array_equal(data.y.segments[0][0], y.x)
     x_mean, x_scale = x.mean('time'), x.std('time')
-    assert data.x_mean[0] == pytest.approx(x_mean)
-    assert data.x_scale[0] == pytest.approx(x_scale)
-    assert data.x_pads[0] == pytest.approx(-x_mean / x_scale)
+    assert data.x.mean[0] == pytest.approx(x_mean)
+    assert data.x.scale[0] == pytest.approx(x_scale)
+    assert data.x.pads[0] == pytest.approx(-x_mean / x_scale)
     # applying a second normalization composes with the first
-    data.apply_x_normalization(1., 2.)
-    assert data.x_mean[0] == pytest.approx(x_mean + x_scale)
-    assert data.x_scale[0] == pytest.approx(x_scale * 2)
+    data.x.apply_normalization(1., 2.)
+    assert data.x.mean[0] == pytest.approx(x_mean + x_scale)
+    assert data.x.scale[0] == pytest.approx(x_scale * 2)
     data.flatten()
-    np.testing.assert_allclose(data.x[0], ((x.x - x_mean) / x_scale - 1) / 2)
+    np.testing.assert_allclose(data.x.flat[0], ((x.x - x_mean) / x_scale - 1) / 2)
     # the recorded values reproduce the normalized data
-    data_2 = DeconvolutionData(y, x)
-    data_2.apply_x_normalization(data.x_mean, data.x_scale)
+    data_2 = DeconvolutionData(x, y)
+    data_2.x.apply_normalization(data.x.mean, data.x.scale)
     data_2.flatten()
-    np.testing.assert_allclose(data_2.x, data.x)
+    np.testing.assert_allclose(data_2.x.flat, data.x.flat)
     # the normalization is reported even though no error norm was used
     y_mean, y_scale, x_mean_2, x_scale_2 = data_2.data_scale_ndvars()
     assert y_mean is None and y_scale is None

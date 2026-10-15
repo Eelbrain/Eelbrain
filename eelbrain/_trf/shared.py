@@ -1,6 +1,6 @@
 from dataclasses import dataclass, fields
 from functools import cached_property, reduce
-from itertools import product, zip_longest
+from itertools import product
 from operator import mul
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
@@ -12,7 +12,7 @@ from scipy.linalg import norm
 
 from .. import _info
 from .._data_obj import CategorialArg, NDVarArg, Datalist, Dataset, Factor, Interaction, NDVar, Case, UTS, dataobj_repr, ascategorial, asndvar
-from .._utils import PickleableDataClass, intervals
+from .._utils import PickleableDataClass
 
 if TYPE_CHECKING:
     from ..plot import DataSplit
@@ -346,34 +346,6 @@ def split_data(
     return Splits(splits, partitions_arg, partitions, validate, test, model, segments, split_segments)
 
 
-def _flatten(
-        segments: list[np.ndarray],
-        owned: bool,
-) -> tuple[np.ndarray, list[np.ndarray], bool]:
-    """Concatenate segments along time, and replace them with views into the result
-
-    Parameters
-    ----------
-    segments
-        Per-segment arrays with time as the last axis.
-    owned
-        Whether ``segments`` are owned by the caller (and may be modified in place).
-
-    Returns
-    -------
-    flat
-        Concatenated array.
-    views
-        Views into ``flat``, one per segment.
-    owned
-        Whether ``flat`` is owned by the caller.
-    """
-    if len(segments) == 1:
-        return segments[0], segments, owned
-    flat = np.concatenate(segments, axis=-1)
-    return flat, _segment_views(flat, [seg.shape[-1] for seg in segments]), True
-
-
 def _segment_views(
         flat: np.ndarray,
         n_times: Sequence[int],
@@ -381,87 +353,6 @@ def _segment_views(
     "Views into ``flat``, one per segment"
     stops = np.cumsum(n_times)
     return [flat[..., start:stop] for start, stop in zip(stops - n_times, stops)]
-
-
-def _copy_segments(
-        segments: list[np.ndarray],
-        flat: np.ndarray | None,
-) -> tuple[list[np.ndarray], np.ndarray | None]:
-    "Copy segment data, keeping the segments as views into ``flat`` when it exists"
-    if flat is None:
-        return [seg.copy() for seg in segments], None
-    flat = flat.copy()
-    return _segment_views(flat, [seg.shape[-1] for seg in segments]), flat
-
-
-def _case_segments(cases: np.ndarray) -> tuple[list[np.ndarray], np.ndarray | None, bool]:
-    """Split a ``(n_cases, n_rows, n_times)`` array into per-case segments
-
-    Returns
-    -------
-    segments
-        One ``(n_rows, n_times)`` array per case.
-    flat
-        For a single row, the concatenated ``(1, n_cases * n_times)`` array,
-        which is a reshape of ``cases`` (a view when possible); otherwise
-        ``None`` (concatenating requires a transposed copy).
-    owned
-        Whether the data is a copy (and may be modified in place).
-    """
-    n_cases, n_rows, n_times = cases.shape
-    if n_rows != 1:
-        return list(cases), None, False
-    flat = cases.reshape((1, -1))
-    return _segment_views(flat, [n_times] * n_cases), flat, not np.may_share_memory(flat, cases)
-
-
-def _segment_range(segments: list[np.ndarray]) -> np.ndarray:
-    "Range (max - min) of each row along time, across segments (NaN for rows containing NaN)"
-    return np.max([seg.max(-1) for seg in segments], 0) - np.min([seg.min(-1) for seg in segments], 0)
-
-
-def _center_and_scale(
-        segments: list[np.ndarray],
-        error: str,
-        n_vector: int = 0,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Normalize segments in place, each row across all segments
-
-    Parameters
-    ----------
-    segments
-        Per-segment arrays, ``(n_rows, n_times_i)``.
-    error
-        Scale by the mean absolute value (``'l1'``) or the standard deviation (``'l2'``).
-    n_vector
-        For vector data, the number of components in each vector; rows are then
-        scaled by the vector norm, and the scale has ``n_rows / n_vector`` entries.
-
-    Returns
-    -------
-    mean
-        The mean of each row, which was subtracted.
-    scale
-        The scale of each row (or vector), by which the row was divided.
-    """
-    n = sum(seg.shape[-1] for seg in segments)
-    mean = sum(seg.sum(-1) for seg in segments) / n
-    for seg in segments:
-        seg -= mean[:, newaxis]
-    if n_vector:
-        magnitudes = [norm(seg.reshape((-1, n_vector, seg.shape[-1])), axis=1) for seg in segments]
-    else:
-        magnitudes = segments
-    if error == 'l1':
-        scale = sum(np.abs(x).sum(-1) for x in magnitudes) / n
-    elif error == 'l2':
-        scale = (sum((x ** 2).sum(-1) for x in magnitudes) / n) ** 0.5
-    else:
-        raise ValueError(f"{error=}")
-    row_scale = np.repeat(scale, n_vector) if n_vector else scale
-    for seg in segments:
-        seg /= row_scale[:, newaxis]
-    return mean, scale
 
 
 def lag_matrix(
@@ -506,59 +397,336 @@ def lag_matrix(
     return windows[k0:k0 + n_times, ::-1]
 
 
-class PredictorData:
-    """Restructure predictor NDVars into arrays for deconvolution
+class SegmentedArray:
+    """Time series stored as one array per segment, with lazy concatenation and copy-on-write
 
-    The data is stored as one array per segment (trial); segments are views into
-    the input :class:`NDVar` data when possible. The array concatenated along
-    time (:attr:`x`) is built by :meth:`flatten`, after which the segments are
-    views into it.
+    Parameters
+    ----------
+    segments
+        One ``(n_rows, n_times_i)`` array per segment (trial).
+    owned
+        Whether the arrays may be modified in place (otherwise they are copied
+        before the first modification).
+    flat
+        The segments concatenated along time, if already available (the
+        segments are then views into it).
+    n_vector
+        For vector data, the number of components in each vector; the scale is
+        then one entry per vector rather than per row.
+    name
+        Description of the data for error messages.
+    names
+        Name of each row for error messages.
+
+    Attributes
+    ----------
+    segments : list of array
+        Data for each segment, ``(n_rows, n_times_i)``; views into :attr:`flat`
+        after :meth:`flatten`.
+    mean, scale : array
+        Normalization that was applied to the data (``None`` before :meth:`normalize`).
+    scale_norm : str
+        The ``error`` argument of :meth:`normalize` (``None`` before :meth:`normalize`).
+    """
+    mean: np.ndarray = None
+    scale: np.ndarray = None
+    scale_norm: str = None
+
+    def __init__(
+            self,
+            segments: list[np.ndarray],
+            owned: bool,
+            flat: np.ndarray = None,
+            n_vector: int = 0,
+            name: str = 'data',
+            names: Sequence[str] = None,
+    ):
+        self.segments = segments
+        self._owned = owned
+        self._flat = flat
+        self.n_vector = n_vector
+        self.name = name
+        self.names = names
+
+    def __getstate__(self) -> dict:
+        # the segments hold all the data; the concatenated array is rebuilt by flatten()
+        return {**self.__dict__, '_flat': None, '_owned': True}
+
+    @property
+    def n_rows(self) -> int:
+        "Number of time series (rows in each segment)"
+        return len(self.segments[0])
+
+    @property
+    def _n_times(self) -> list[int]:
+        "Number of time points in each segment"
+        return [seg.shape[-1] for seg in self.segments]
+
+    @property
+    def flat(self) -> np.ndarray:
+        "All segments concatenated along time, ``(n_rows, n_times_flat)``; available after :meth:`flatten`"
+        if self._flat is None:
+            raise RuntimeError("Concatenated data is only available after flatten()")
+        return self._flat
+
+    def flatten(self):
+        """Build the concatenated array (:attr:`flat`)
+
+        Afterwards, :attr:`flat` is C-contiguous (as required by the Cython
+        routines) and :attr:`segments` are views into it, so that any reference
+        to the previous segment arrays is stale. The data is not modified in
+        place through :attr:`flat`; use :meth:`normalize` and
+        :meth:`apply_normalization`, which copy the data when it is not owned.
+        """
+        if self._flat is None:
+            if len(self.segments) > 1:
+                self._flat = self._concatenated()
+                self.segments = _segment_views(self._flat, self._n_times)
+                self._owned = True
+                return
+            self._flat = self.segments[0]
+        if not self._flat.flags.c_contiguous:
+            self._flat = np.ascontiguousarray(self._flat)
+            self.segments = _segment_views(self._flat, self._n_times)
+            self._owned = True
+
+    def _concatenated(self) -> np.ndarray:
+        "Segments concatenated along time, as a new C-contiguous array (np.concatenate() would keep the memory layout of transposed segments)"
+        out = np.empty((self.n_rows, sum(self._n_times)), self.segments[0].dtype)
+        return np.concatenate(self.segments, axis=-1, out=out)
+
+    def _copy_data(self):
+        "Make sure the data is a copy before modifying"
+        if self._owned:
+            return
+        # multiple segments are copied into a concatenated array (so that a later flatten() does not need to copy again)
+        if self._flat is None and len(self.segments) == 1:
+            self.segments = [self.segments[0].copy()]
+        else:
+            if self._flat is None:
+                self._flat = self._concatenated()
+            else:
+                self._flat = self._flat.copy()
+            self.segments = _segment_views(self._flat, self._n_times)
+        self._owned = True
+
+    def _row_scale(self, scale: np.ndarray) -> np.ndarray:
+        "Expand a per-vector scale to one entry per row"
+        return np.repeat(scale, self.n_vector) if self.n_vector else scale
+
+    def _record_normalization(
+            self,
+            mean: np.ndarray,
+            scale: np.ndarray,
+    ):
+        "Record a normalization step applied to the current data, composing it with previous ones"
+        if self.mean is None:
+            self.mean = mean
+            self.scale = scale
+        else:
+            self.mean = self.mean + mean * self._row_scale(self.scale)
+            self.scale = self.scale * scale
+
+    def normalize(self, error: str):
+        """Center and scale each row in place
+
+        Parameters
+        ----------
+        error
+            Scale by the mean absolute value (``'l1'``) or the standard
+            deviation (``'l2'``).
+        """
+        self._copy_data()
+        n = sum(self._n_times)
+        mean = sum(seg.sum(-1) for seg in self.segments) / n
+        for seg in self.segments:
+            seg -= mean[:, newaxis]
+        if self.n_vector:
+            magnitudes = [norm(seg.reshape((-1, self.n_vector, seg.shape[-1])), axis=1) for seg in self.segments]
+        else:
+            magnitudes = self.segments
+        if error == 'l1':
+            scale = sum(np.abs(x).sum(-1) for x in magnitudes) / n
+        elif error == 'l2':
+            scale = (sum((x ** 2).sum(-1) for x in magnitudes) / n) ** 0.5
+        else:
+            raise ValueError(f"{error=}")
+        row_scale = self._row_scale(scale)
+        for seg in self.segments:
+            seg /= row_scale[:, newaxis]
+        self._record_normalization(mean, scale)
+        self.scale_norm = error
+
+    def apply_normalization(
+            self,
+            mean: np.ndarray | float,
+            scale: np.ndarray | float,
+    ):
+        """Normalize in place with given values (e.g., from a fitted model)
+
+        Parameters
+        ----------
+        mean
+            Value to subtract from each row (``(n_rows,)`` array or scalar).
+        scale
+            Value by which to divide each row (``(n_rows,)`` array or scalar;
+            one entry per vector for vector data).
+        """
+        n_scale = self.n_rows // self.n_vector if self.n_vector else self.n_rows
+        mean = np.broadcast_to(mean, (self.n_rows,)).astype(np.float64)
+        scale = np.broadcast_to(scale, (n_scale,)).astype(np.float64)
+        self._copy_data()
+        row_scale = self._row_scale(scale)
+        for seg in self.segments:
+            seg -= mean[:, newaxis]
+            seg /= row_scale[:, newaxis]
+        self._record_normalization(mean, scale)
+
+    @property
+    def pads(self) -> np.ndarray:
+        "Value of each row outside the data (the normalized value of 0)"
+        if self.mean is None:
+            return np.zeros(self.n_rows)
+        return -self.mean / self._row_scale(self.scale)
+
+    def check(self):
+        "Raise an error for rows that are flat or contain NaN"
+        if self.scale is None:  # range of each row (NaN for rows containing NaN)
+            check = np.max([seg.max(-1) for seg in self.segments], 0) - np.min([seg.min(-1) for seg in self.segments], 0)
+        else:
+            check = self.scale
+        is_flat = check == 0
+        if np.any(is_flat):
+            if self.names:
+                raise ValueError(f"{self.name}: flat data in {', '.join(self.names[i] for i in np.flatnonzero(is_flat))}")
+            raise ValueError(f"{self.name}: contains {is_flat.sum()} flat time series")
+        has_nan = np.isnan(check)
+        if np.any(has_nan):
+            if self.names:
+                raise ValueError(f"{self.name}: NaN in {', '.join(self.names[i] for i in np.flatnonzero(has_nan))}")
+            raise ValueError(f"{self.name}: contains NaN")
+
+
+def _time_structure(v: NDVar | Datalist) -> tuple[bool, int, UTS | list[UTS]]:
+    "``(is_ragged, n_cases, time_dim)`` of an NDVar or ragged list of NDVars (``n_cases=0`` without case dimension)"
+    if isinstance(v, NDVar):
+        return False, len(v) if v.has_case else 0, v.get_dim('time')
+    return True, len(v), [vi.get_dim('time') for vi in v]
+
+
+def _ndvar_segments(
+        v: NDVar | Datalist,
+        dimnames: Sequence[str],
+        n_rows: int,
+        case_to_segments: bool,
+) -> tuple[list[np.ndarray], np.ndarray | None, bool]:
+    """Extract per-segment ``(n_rows, n_times_i)`` arrays from an NDVar (or ragged list of NDVars)
+
+    Parameters
+    ----------
+    v
+        NDVar, or list of NDVars for ragged trials.
+    dimnames
+        Order of the dimensions, with ``'time'`` last (and ``'case'`` first
+        when ``case_to_segments``).
+    n_rows
+        Product of the lengths of the dimensions other than case and time.
+    case_to_segments
+        Split the case dimension of ``v`` into segments.
+
+    Returns
+    -------
+    segments, flat, owned
+        See :class:`SegmentedArray`. ``flat`` is only available when splitting
+        the case dimension of a single row (a reshape of the data; otherwise
+        concatenating would require a transposed copy). The data is ``owned``
+        when extracting it already required a copy.
+    """
+    if not isinstance(v, NDVar):
+        segments = [vi.get_data(dimnames).reshape((n_rows, -1)) for vi in v]
+        return segments, None, not any(np.may_share_memory(seg, vi.x) for seg, vi in zip(segments, v))
+    elif not case_to_segments:
+        data = v.get_data(dimnames).reshape((n_rows, -1))
+        return [data], None, not np.may_share_memory(data, v.x)
+    cases = v.get_data(dimnames).reshape((len(v), n_rows, -1))
+    if n_rows != 1:
+        return list(cases), None, not np.may_share_memory(cases, v.x)
+    flat = cases.reshape((1, -1))
+    return _segment_views(flat, [cases.shape[-1]] * len(v)), flat, not np.may_share_memory(flat, v.x)
+
+
+class DeconvolutionData:
+    """Restructure input NDVars into arrays for deconvolution
+
+    The data is stored as one array per segment (trial), with segments as views
+    into the input :class:`NDVar` data when possible (see
+    :class:`SegmentedArray`). The segment structure (cases or ragged trials)
+    is determined by ``x``, and ``y`` has to match it.
 
     Parameters
     ----------
     x
         Predictors.
+    y
+        Dependent variable (optional, e.g. for predicting from a fitted model).
     data
-        Dataset in which to evaluate ``x`` if it is a string.
+        Dataset in which to evaluate ``y`` and ``x`` if they are strings.
     in_place
         Modify the data of the input NDVars in place when normalizing (saves
         memory).
 
     Attributes
     ----------
-    x_segments : list of array
-        Predictor data for each segment, ``(n_predictors, n_times_i)``.
-    x : array
-        All segments concatenated along time, ``(n_predictors, n_times_flat)``;
-        available after :meth:`flatten`.
+    x : SegmentedArray
+        Predictors, ``(n_predictors, n_times_i)`` per segment.
+    y : SegmentedArray
+        Dependent variable, ``(n_signals, n_times_i)`` per segment (``None``
+        without ``y``); ``y.scale`` has one entry per vector.
     segments : array
         ``(n_segments, 2)`` array of segment ``[start, stop]`` indices on the
         concatenated time axis. The segments delimit chunks of continuous data,
         such as trials.
+    time : UTS
+        Time dimension (of the first segment for ragged data).
+    time_dim : UTS | list of UTS
+        Time dimension of each segment (a list for ragged data).
+    n_times_flat : int
+        Total number of time samples across all segments.
+    x_name : str | list of str
+        Name of the predictor (a list for multiple predictors).
     x_meta : list of tuple
         ``(name, dims, index)`` for each predictor variable: its name, its
         dimensions other than case and time, and the index of its rows in ``x``.
-    x_mean, x_scale : array
-        Normalization that was applied to the data (``None`` before :meth:`normalize`).
-    scale_data : str
-        The ``error`` argument of :meth:`normalize` (``None`` before :meth:`normalize`).
-    x_name : str | list of str
-        Name of the predictor (a list for multiple predictors).
-    x_names : list of str
-        Name of each predictor time series (row in ``x``).
-    time : UTS
-        Time dimension (of the first segment for ragged data).
-    n_times_flat : int
-        Total number of time samples across all segments.
+    basis : float
+        Length of the basis window applied to ``x`` (0 for none).
+    y_name : str
+        Name of the dependent variable.
+    ydims : tuple of Dimension
+        Dimensions of ``y`` other than case and time (vector dimension last).
+    yshape : tuple of int
+        Shape corresponding to ``ydims``.
+    vector_dim : Dimension
+        Vector dimension of ``y`` (``None`` for scalar data).
+    y_info : dict
+        Info dictionary of ``y``.
+    splits : Splits
+        Cross-validation scheme (``None`` before :meth:`initialize_cross_validation`).
     """
-    # normalization
-    x_mean: np.ndarray = None
-    x_scale: np.ndarray = None
-    scale_data: str = None
+    # y (None without y)
+    y: SegmentedArray = None
+    y_name: str = None
+    y_info: dict = None
+    ydims: tuple = None
+    yshape: tuple = None
+    vector_dim = None
+    full_y_dims: tuple = None
+    # cross-validation
+    splits: Splits = None
 
     def __init__(
             self,
             x: NDVarArg | Sequence[NDVarArg],
+            y: NDVarArg = None,
             data: Dataset = None,
             in_place: bool = False,
     ):
@@ -572,77 +740,49 @@ class PredictorData:
             if len(xs) == 0:
                 raise ValueError(f"{x=} of length 0")
             x_name = [x_.name for x_ in xs]
-        is_ragged = not isinstance(xs[0], NDVar)
-        if is_ragged:
-            has_case = True
-            n_cases = len(xs[0])
-            if not all(len(xi) == n_cases for xi in xs[1:]):
-                raise ValueError(f'x={xs}: different number of items')
-            time_dim = [x0j.get_dim('time') for x0j in xs[0]]
-            for xi in xs:
-                if any(xij.get_dim('time') != time_x0j for xij, time_x0j in zip(xi, time_dim)):
-                    raise ValueError("Not all NDVars in x have matching time dimensions")
-            n_times = [len(uts) for uts in time_dim]
-        else:
-            time_dim = xs[0].get_dim('time')
-            if any(xi.get_dim('time') != time_dim for xi in xs[1:]):
-                raise ValueError("Not all NDVars in x have matching time dimensions")
-            n_times = len(time_dim)
-
-            # determine cases (used as segments)
-            has_case = n_cases = None
-            for xi in xs:
-                # determine cases
-                if n_cases is None:
-                    has_case = xi.has_case
-                    n_cases = len(xi) if xi.has_case else 0
-                elif xi.has_case ^ has_case:
-                    raise ValueError(f'x={xs}: some but not all x have case')
-                elif has_case and len(xi) != n_cases:
-                    raise ValueError(f'x={xs}: not all items have the same number of cases')
-        case_to_segments = bool(has_case) and not is_ragged
+        # segment structure
+        structure = is_ragged, n_cases, time_dim = _time_structure(xs[0])
+        for xi in xs[1:]:
+            if _time_structure(xi) != structure:
+                raise ValueError(f"x={xs}: not all predictors have the same time dimension and cases")
+        has_case = is_ragged or n_cases > 0
+        case_to_segments = has_case and not is_ragged
         n_segments = n_cases if has_case else 1
         if is_ragged:
+            n_times = [len(uts) for uts in time_dim]
             segment_n_times = n_times
         else:
+            n_times = len(time_dim)
             segment_n_times = [n_times] * n_segments
         stops = np.cumsum(segment_n_times, dtype=np.int64)
         segments = np.hstack(((stops - segment_n_times)[:, newaxis], stops[:, newaxis]))
 
-        # x_segments: list of (n_x, n_times_i) arrays
-        x0s = [xi[0] for xi in xs] if is_ragged else xs
-        x_dimnames = [xi.get_dimnames(first='case' if case_to_segments else None, last='time') for xi in x0s]
-        n_leading = 1 if case_to_segments else 0
-        x_dims = [xi.get_dims(dimnames[n_leading:-1]) for xi, dimnames in zip(x0s, x_dimnames)]
-        x_ns = [reduce(mul, [len(dim) for dim in dims], 1) for dims in x_dims]
-        x_indexes = [start if stop - start == 1 else slice(start, stop) for start, stop in intervals(np.cumsum(x_ns), first=0)]
-        if is_ragged:
-            x_arrays = [[xij.get_data(dimnames).reshape((n, -1)) for xij in xi] for xi, dimnames, n in zip(xs, x_dimnames, x_ns)]
-        elif case_to_segments:
-            x_arrays = [xi.get_data(dimnames).reshape((n_cases, n, n_times)) for xi, dimnames, n in zip(xs, x_dimnames, x_ns)]
-        else:
-            x_arrays = [[xi.get_data(dimnames).reshape((n, n_times))] for xi, dimnames, n in zip(xs, x_dimnames, x_ns)]
-        x_flat = None
-        if multiple_x:
-            x_segments = [np.concatenate([arrays[i] for arrays in x_arrays]) for i in range(n_segments)]
-            x_owned = True
-        elif case_to_segments:
-            x_segments, x_flat, x_owned = _case_segments(x_arrays[0])
-        else:
-            x_segments = list(x_arrays[0])
-            x_owned = False
-
-        # x_meta:  meta-information for x_data
-        x_meta = []
+        # x: rows for each predictor
+        x_meta = []  # [(x.name, xdims, index), ...]; index is int or slice
         x_names = []
-        for xi, dims, index in zip(x0s, x_dims, x_indexes):
-            x_repr = dataobj_repr(xi)
-            if len(dims) == 0:
-                x_names.append(x_repr)
+        x_arrays = []  # (segments, flat, owned) for each predictor
+        for xi in xs:
+            x0i = xi[0] if is_ragged else xi
+            dimnames = x0i.get_dimnames(first='case' if case_to_segments else None, last='time')
+            dims = x0i.get_dims(dimnames[1:-1] if case_to_segments else dimnames[:-1])
+            n_rows = reduce(mul, [len(dim) for dim in dims], 1)
+            index = len(x_names) if n_rows == 1 else slice(len(x_names), len(x_names) + n_rows)
+            x_repr = dataobj_repr(x0i)
+            if dims:
+                x_names.extend("-".join((x_repr, *map(str, v))) for v in product(*dims))
             else:
-                for v in product(*dims):
-                    x_names.append("-".join((x_repr, *map(str, v))))
-            x_meta.append((xi.name, dims, index))
+                x_names.append(x_repr)
+            x_meta.append((x0i.name, dims, index))
+            x_arrays.append(_ndvar_segments(xi, dimnames, n_rows, case_to_segments))
+        if multiple_x:
+            x_flat = np.empty((len(x_names), int(stops[-1])))
+            for (x_segments, _, _), (_, _, index) in zip(x_arrays, x_meta):
+                for seg, (start, stop) in zip(x_segments, segments):
+                    x_flat[index, start:stop] = seg
+            self.x = SegmentedArray(_segment_views(x_flat, segment_n_times), True, x_flat, name='x', names=x_names)
+        else:
+            x_segments, x_flat, x_owned = x_arrays[0]
+            self.x = SegmentedArray(x_segments, x_owned or in_place, x_flat, name='x', names=x_names)
 
         self.is_ragged = is_ragged
         self.has_case = has_case
@@ -654,49 +794,56 @@ class PredictorData:
         self.n_times_flat = int(stops[-1])
         self.multiple_x = multiple_x
         self.x_name = x_name
-        self.x_names = x_names
-        self.x_meta = x_meta  # [(x.name, xdim, index), ...]; index is int or slice
-        self.x_segments = x_segments  # [(n_predictors, n_times_i), ...]
-        self._x_owned = x_owned
-        self._x_flat = x_flat
+        self.x_meta = x_meta
         self.segments = segments
         self.shortest_segment_n_times = np.min(np.diff(segments, axis=1))
-        self.in_place = in_place
         # basis
         self.basis = 0
         self.basis_window = None
 
-    def __getstate__(self) -> dict:
-        # the segments hold all the data; the concatenated arrays are rebuilt by flatten()
-        return {**self.__dict__, '_x_flat': None, '_x_owned': True}
+        # y
+        if y is None:
+            return
+        if isinstance(y, (list, tuple)) and isinstance(y[0], str):
+            raise TypeError(f"{y=}: need a single NDVar (or list with ragged trials) as dependent variable")
+        y = asndvar(y, data=data, ragged=is_ragged)
+        y_structure = _time_structure(y)
+        if y_structure != structure:
+            raise ValueError(f"y={dataobj_repr(y)}: does not have the same time dimension and cases as x: y={y_structure[1:]}, x={structure[1:]}")
+        y0 = y[0] if is_ragged else y
+        # vector dimension
+        vector_dims = [dim.name for dim in y0.dims if dim._adjacency_type == 'vector']
+        if not vector_dims:
+            vector_dim = None
+        elif len(vector_dims) == 1:
+            vector_dim = y0.get_dim(vector_dims.pop())
+        else:
+            raise NotImplementedError(f"{y=}: more than one vector dimension ({', '.join(vector_dims)})")
+        # y rows: ydims x time
+        last = (vector_dim.name, 'time') if vector_dim else ('time',)
+        y_dimnames = y0.get_dimnames(first='case' if case_to_segments else None, last=last)
+        ydims = y0.get_dims(y_dimnames[1:-1] if case_to_segments else y_dimnames[:-1])
+        n_rows = reduce(mul, map(len, ydims), 1)
+        y_segments, y_flat, y_owned = _ndvar_segments(y, y_dimnames, n_rows, case_to_segments)
+        n_vector = len(vector_dim) if vector_dim else 0
+        self.y = SegmentedArray(y_segments, y_owned or in_place, y_flat, n_vector, f"y={dataobj_repr(y)}")
+        self.y_name = y.name
+        self.y_info = _info.copy(y0.info)
+        self.ydims = ydims
+        self.yshape = tuple(map(len, ydims))
+        self.vector_dim = vector_dim
+        if is_ragged:
+            self.full_y_dims = None
+        elif case_to_segments:
+            self.full_y_dims = y.get_dims((*y_dimnames[1:-1], 'case', 'time'))
+        else:
+            self.full_y_dims = y.get_dims(y_dimnames)
 
     def flatten(self):
-        """Build the concatenated array (:attr:`x`)
-
-        Afterwards, :attr:`x_segments` are views into the concatenated array,
-        so that any reference to the previous segment arrays is stale.
-        """
-        if self._x_flat is None:
-            self._x_flat, self.x_segments, self._x_owned = _flatten(self.x_segments, self._x_owned)
-
-    @property
-    def x(self) -> np.ndarray:
-        "Predictors concatenated along time, ``(n_predictors, n_times_flat)``"
-        if self._x_flat is None:
-            raise RuntimeError("Concatenated data is only available after flatten()")
-        return self._x_flat
-
-    @property
-    def n_x(self) -> int:
-        "Number of predictor time series (rows in ``x``)"
-        return len(self.x_segments[0])
-
-    def _copy_data(self):
-        "Make sure the data is a copy before modifying"
-        if self.in_place or self._x_owned:
-            return
-        self.x_segments, self._x_flat = _copy_segments(self.x_segments, self._x_flat)
-        self._x_owned = True
+        "Build the concatenated arrays (see :meth:`SegmentedArray.flatten`)"
+        self.x.flatten()
+        if self.y is not None:
+            self.y.flatten()
 
     def apply_basis(self, basis: float, basis_window: str):
         """Apply basis to x
@@ -717,241 +864,39 @@ class PredictorData:
             raise NotImplementedError("Applying basis more than once")
         elif not basis:
             return
-        self._copy_data()
+        self.x._copy_data()
         n = int(round(basis / self.time.tstep))
         w = scipy.signal.get_window(basis_window, n, False)
         if len(w) <= 1:
             raise ValueError(f"{basis=}: Window is {len(w)} samples long")
         w /= w.sum()
-        for seg in self.x_segments:
+        for seg in self.x.segments:
             seg[:] = scipy.signal.convolve(seg, w[newaxis], 'same')
         self.basis = basis
         self.basis_window = basis_window
 
-    @property
-    def x_pads(self) -> np.ndarray:
-        "Value of each predictor outside the data (the normalized value of 0)"
-        if self.x_mean is None:
-            return np.zeros(self.n_x)
-        return -self.x_mean / self.x_scale
-
-    def _record_x_normalization(
-            self,
-            x_mean: np.ndarray,
-            x_scale: np.ndarray,
-    ):
-        "Record a normalization step applied to the current ``x``, composing it with previous ones"
-        if self.x_mean is None:
-            self.x_mean = x_mean
-            self.x_scale = x_scale
-        else:
-            self.x_mean = self.x_mean + x_mean * self.x_scale
-            self.x_scale = self.x_scale * x_scale
-
     def normalize(self, error: str):
-        """Center and scale the predictors in place
+        """Center and scale ``x`` and ``y`` in place (see :meth:`SegmentedArray.normalize`)
 
         Parameters
         ----------
         error
             Scale by the mean absolute value (``'l1'``) or the standard
             deviation (``'l2'``).
-        """
-        self._copy_data()
-        x_mean, x_scale = _center_and_scale(self.x_segments, error)
-        self._record_x_normalization(x_mean, x_scale)
-        self.scale_data = error
 
-    def apply_x_normalization(
-            self,
-            x_mean: np.ndarray | float,
-            x_scale: np.ndarray | float,
-    ):
-        """Normalize the predictors in place with given values (e.g., from a fitted model)
-
-        Parameters
-        ----------
-        x_mean
-            Value to subtract from each predictor (``(n_predictors,)`` array or scalar).
-        x_scale
-            Value by which to divide each predictor.
+        Notes
+        -----
+        To normalize only the predictors, use ``data.x.normalize(error)``.
         """
-        x_mean = np.broadcast_to(x_mean, (self.n_x,)).astype(np.float64)
-        x_scale = np.broadcast_to(x_scale, (self.n_x,)).astype(np.float64)
-        self._copy_data()
-        for seg in self.x_segments:
-            seg -= x_mean[:, newaxis]
-            seg /= x_scale[:, newaxis]
-        self._record_x_normalization(x_mean, x_scale)
+        self.x.normalize(error)
+        if self.y is not None:
+            self.y.normalize(error)
 
     def check_data(self):
-        "Raise an error for predictors that are flat or contain NaN"
-        x_check = _segment_range(self.x_segments) if self.x_scale is None else self.x_scale
-        zero_var = x_check == 0
-        if np.any(zero_var):
-            names = [self.x_names[i] for i in np.flatnonzero(zero_var)]
-            raise ValueError(f"x: flat data in {', '.join(names)}")
-        has_nan = np.isnan(x_check)
-        if np.any(has_nan):
-            names = [self.x_names[i] for i in np.flatnonzero(has_nan)]
-            raise ValueError(f"x: NaN in {', '.join(names)}")
-
-
-class DeconvolutionData(PredictorData):
-    """Restructure input NDVars into arrays for deconvolution
-
-    The data is stored as one array per segment (trial); segments are views into
-    the input :class:`NDVar` data when possible. Arrays concatenated along time
-    (:attr:`y`, :attr:`x`) are built by :meth:`flatten`, after which the
-    segments are views into them. See :class:`PredictorData` for the predictor
-    attributes.
-
-    Parameters
-    ----------
-    y
-        Dependent variable.
-    x
-        Predictors.
-    data
-        Dataset in which to evaluate ``y`` and ``x`` if they are strings.
-    in_place
-        Modify the data of the input NDVars in place when normalizing (saves
-        memory).
-
-    Attributes
-    ----------
-    y_segments : list of array
-        Dependent variable for each segment, ``(n_signals, n_times_i)``.
-    y : array
-        Dependent variable concatenated along time, ``(n_signals, n_times_flat)``;
-        available after :meth:`flatten`.
-    y_mean, y_scale : array
-        Normalization that was applied to ``y`` (``None`` before :meth:`normalize`);
-        ``y_scale`` has one entry per vector rather than per row.
-    y_name : str
-        Name of the dependent variable.
-    ydims : tuple of Dimension
-        Dimensions of ``y`` other than case and time (vector dimension last).
-    yshape : tuple of int
-        Shape corresponding to ``ydims``.
-    vector_dim : Dimension
-        Vector dimension of ``y`` (``None`` for scalar data).
-    y_info : dict
-        Info dictionary of ``y``.
-    splits : Splits
-        Cross-validation scheme (``None`` before :meth:`initialize_cross_validation`).
-    """
-    # normalization
-    y_mean: np.ndarray = None
-    y_scale: np.ndarray = None
-    # cross-validation
-    splits: Splits = None
-
-    def __init__(
-            self,
-            y: NDVarArg,
-            x: NDVarArg | Sequence[NDVarArg],
-            data: Dataset = None,
-            in_place: bool = False,
-    ):
-        PredictorData.__init__(self, x, data, in_place)
-
-        # check y
-        if isinstance(y, (list, tuple)) and isinstance(y[0], str):
-            raise TypeError(f"{y=}: need a single NDVar (or list with ragged trials) as dependent variable")
-        y = asndvar(y, data=data, ragged=self.is_ragged)
-        if self.is_ragged:
-            n_cases = len(y)
-            y0 = y[0]
-            y_time_dim = [yi.get_dim('time') for yi in y]
-        else:
-            n_cases = len(y) if y.has_case else 0
-            y0 = y
-            y_time_dim = y.get_dim('time')
-            if y.has_case ^ self.has_case:
-                raise ValueError(f'{y=}: case dimension does not match x')
-        if y_time_dim != self.time_dim:
-            if isinstance(y_time_dim, list):
-                desc = '\n'.join([f"{y_time}  {x_time}" for y_time, x_time in zip_longest(y_time_dim, self.time_dim)])
-            else:
-                desc = f"y_time={y_time_dim!r}; x_time={self.time_dim!r}"
-            raise ValueError(f"y does not have the same time dimension as x:\n{desc}")
-        elif n_cases != self.n_cases:
-            raise ValueError(f'{y=}: different number of cases from x ({self.n_cases})')
-
-        # vector dimension
-        vector_dims = [dim.name for dim in y0.dims if dim._adjacency_type == 'vector']
-        if not vector_dims:
-            vector_dim = None
-        elif len(vector_dims) == 1:
-            vector_dim = y0.get_dim(vector_dims.pop())
-        else:
-            raise NotImplementedError(f"{y=}: more than one vector dimension ({', '.join(vector_dims)})")
-
-        # y_data: flatten to ydim x time array
-        last = ('time',)
-        n_ydims = -1
-        if self.case_to_segments:
-            last = ('case', *last)
-            n_ydims -= 1
-        if vector_dim:
-            last = (vector_dim.name, *last)
-        y_dimnames = y0.get_dimnames(last=last)
-        ydims = y0.get_dims(y_dimnames[:n_ydims])
-        n_flat = reduce(mul, map(len, ydims), 1)
-        y_flat = None
-        y_owned = False
-        if self.is_ragged:
-            y_segments = [yi.get_data(y_dimnames).reshape((n_flat, -1)) for yi in y]
-        elif self.case_to_segments:
-            y_array = y.get_data(('case', *y_dimnames[:n_ydims], 'time')).reshape((n_cases, n_flat, self.n_times))
-            y_segments, y_flat, y_owned = _case_segments(y_array)
-        else:
-            y_segments = [y.get_data(y_dimnames).reshape((n_flat, self.n_times))]
-        # y
-        self.y_segments = y_segments  # [(n_signals, n_times_i), ...]
-        self._y_flat = y_flat
-        self._y_owned = y_owned
-        self.y_name = y.name
-        self._y_repr = dataobj_repr(y)
-        self.y_info = _info.copy(y0.info)
-        self.ydims = ydims  # without case and time
-        self.yshape = tuple(map(len, ydims))
-        self.full_y_dims = None if self.is_ragged else y.get_dims(y_dimnames)
-        self.vector_dim = vector_dim  # vector dimension
-
-    def __getstate__(self) -> dict:
-        return {**PredictorData.__getstate__(self), '_y_flat': None, '_y_owned': True}
-
-    def flatten(self):
-        """Build the concatenated arrays (:attr:`y` and :attr:`x`)
-
-        Afterwards, :attr:`y_segments` and :attr:`x_segments` are views into the
-        concatenated arrays, so that any reference to the previous segment
-        arrays is stale.
-        """
-        PredictorData.flatten(self)
-        if self._y_flat is None:
-            self._y_flat, self.y_segments, self._y_owned = _flatten(self.y_segments, self._y_owned)
-
-    @property
-    def y(self) -> np.ndarray:
-        "Dependent variable concatenated along time, ``(n_signals, n_times_flat)``"
-        if self._y_flat is None:
-            raise RuntimeError("Concatenated data is only available after flatten()")
-        return self._y_flat
-
-    @property
-    def n_y(self) -> int:
-        "Number of dependent time series (rows in ``y``)"
-        return len(self.y_segments[0])
-
-    def _copy_data(self, y: bool = False):
-        "Make sure the data is a copy before modifying (``y``: also copy ``y``)"
-        PredictorData._copy_data(self)
-        if y and not self.in_place and not self._y_owned:
-            self.y_segments, self._y_flat = _copy_segments(self.y_segments, self._y_flat)
-            self._y_owned = True
+        "Raise an error for data that is flat or contains NaN (see :meth:`SegmentedArray.check`)"
+        self.x.check()
+        if self.y is not None:
+            self.y.check()
 
     def segment_slices(self, ranges: np.ndarray) -> list[tuple[int, int, int]]:
         """Map ranges on the concatenated time axis to slices of the data segments
@@ -967,7 +912,7 @@ class DeconvolutionData(PredictorData):
         slices
             ``(i_segment, start, stop)`` for each contiguous part of the ranges,
             with ``start`` and ``stop`` relative to the segment, such that
-            ``y_segments[i_segment][:, start:stop]`` is the corresponding data.
+            ``y.segments[i_segment][:, start:stop]`` is the corresponding data.
         """
         seg_starts, seg_stops = self.segments.T
         out = []
@@ -978,48 +923,6 @@ class DeconvolutionData(PredictorData):
                 seg_start, seg_stop = self.segments[i]
                 out.append((i, int(max(start, seg_start) - seg_start), int(min(stop, seg_stop) - seg_start)))
         return out
-
-    def normalize(self, error: str, y: bool = True):
-        """Center and scale the data in place
-
-        Parameters
-        ----------
-        error
-            Scale by the mean absolute value (``'l1'``) or the standard
-            deviation (``'l2'``).
-        y
-            Normalize ``y`` as well as ``x`` (set to ``False`` to only
-            normalize the predictors).
-        """
-        self._copy_data(y=y)
-        PredictorData.normalize(self, error)
-        if y:
-            n_vector = len(self.vector_dim) if self.vector_dim else 0
-            y_mean, y_scale = _center_and_scale(self.y_segments, error, n_vector)
-            if self.y_mean is None:
-                self.y_mean = y_mean
-                self.y_scale = y_scale
-            else:
-                self.y_mean = self.y_mean + y_mean * np.repeat(self.y_scale, n_vector or 1)
-                self.y_scale = self.y_scale * y_scale
-
-    def check_data(self, y: bool = True):
-        """Raise an error for data that is flat or contains NaN
-
-        Parameters
-        ----------
-        y
-            Check ``y`` as well as ``x``.
-        """
-        PredictorData.check_data(self)
-        if not y:
-            return
-        y_check = _segment_range(self.y_segments) if self.y_scale is None else self.y_scale
-        zero_var = y_check == 0
-        if np.any(zero_var):
-            raise ValueError(f"y={self._y_repr}: contains {zero_var.sum()} flat time series")
-        if np.isnan(y_check.sum()):
-            raise ValueError(f"y={self._y_repr}: contains NaN")
 
     def initialize_cross_validation(
             self,
@@ -1067,15 +970,15 @@ class DeconvolutionData(PredictorData):
 
         All four are ``None`` if the data was not normalized.
         """
-        if self.x_mean is not None:
+        if self.x.mean is not None:
             # y
-            if self.y_mean is None:
+            if self.y is None or self.y.mean is None:
                 y_mean = y_scale = None
             else:
                 if self.yshape:
-                    y_mean = NDVar(self.y_mean.reshape(self.yshape), self.ydims, self.y_name, self.y_info)
+                    y_mean = NDVar(self.y.mean.reshape(self.yshape), self.ydims, self.y_name, self.y_info)
                 else:
-                    y_mean = self.y_mean[0]
+                    y_mean = self.y.mean[0]
                 # scale does not include vector dim
                 if self.vector_dim:
                     dims = self.ydims[:-1]
@@ -1084,20 +987,20 @@ class DeconvolutionData(PredictorData):
                     dims = self.ydims
                     shape = self.yshape
                 if shape:
-                    y_scale = NDVar(self.y_scale.reshape(shape), dims, self.y_name, self.y_info)
+                    y_scale = NDVar(self.y.scale.reshape(shape), dims, self.y_name, self.y_info)
                 else:
-                    y_scale = self.y_scale[0]
+                    y_scale = self.y.scale[0]
             # x
             x_mean = []
             x_scale = []
             for name, xdims, index in self.x_meta:
                 if xdims:
                     shape = [len(dim) for dim in xdims]
-                    x_mean.append(NDVar(self.x_mean[index].reshape(shape), xdims, name))
-                    x_scale.append(NDVar(self.x_scale[index].reshape(shape), xdims, name))
+                    x_mean.append(NDVar(self.x.mean[index].reshape(shape), xdims, name))
+                    x_scale.append(NDVar(self.x.scale[index].reshape(shape), xdims, name))
                 else:
-                    x_mean.append(self.x_mean[index])
-                    x_scale.append(self.x_scale[index])
+                    x_mean.append(self.x.mean[index])
+                    x_scale.append(self.x.scale[index])
             if self.multiple_x:
                 x_mean = tuple(x_mean)
                 x_scale = tuple(x_scale)
@@ -1129,7 +1032,7 @@ class DeconvolutionData(PredictorData):
         """
         h_time = UTS(tstart, self.time.tstep, h.shape[-1], self.time.unit)
         hs = []
-        if self.x_mean is not None:
+        if self.x.mean is not None:
             info = _info.for_normalized_data(self.y_info, 'Response')
         else:
             info = self.y_info

@@ -39,7 +39,7 @@ from .._exceptions import OldVersionError
 from .._ndvar.ndvar import _concatenate_values, set_adjacency, set_parc
 from .._ndvar._convolve import convolve_1d, convolve_2d
 from .._utils import PickleableDataClass, user_activity
-from .shared import PredictorData, DeconvolutionData, Split, Splits, merge_segments
+from .shared import DeconvolutionData, Split, Splits, merge_segments
 from ._fit_metrics import get_evaluators
 from . import _boosting_opt as opt
 
@@ -480,7 +480,7 @@ class BoostingResult(PickleableDataClass):
             raise ValueError("Cross-prediction requires a model fit with cross-validation (test=1)")
         # predictors
         x_ = self.x if x is None else x
-        x_data = PredictorData(x_, data)
+        x_data = DeconvolutionData(x_, data=data)
         # check predictors match h
         if x_data.x_name == self.x:
             x_use = None
@@ -513,9 +513,9 @@ class BoostingResult(PickleableDataClass):
         # prepare x:  (n_x_only, n_shared, n_x_times)
         x_data.flatten()
         if self.scale_data:
-            x_data.apply_x_normalization(self._x_mean_array[x_use_index], self._x_scale_array[x_use_index])
-        x_array = x_data.x[newaxis]
-        x_pads = x_data.x_pads[newaxis]
+            x_data.x.apply_normalization(self._x_mean_array[x_use_index], self._x_scale_array[x_use_index])
+        x_array = x_data.x.flat[newaxis]
+        x_pads = x_data.x.pads[newaxis]
         # prepare h
         h_i_start = int(round(self.h_time.tmin / self.h_time.tstep))
         # iterate through partitions
@@ -834,8 +834,8 @@ class Boosting:
     Standard usage of the object-oriented API for a model with
     cross-validation, comparable to the :func:`boosting` function::
 
-        data = DeconvolutionData(y, x, ds)
-        data.apply_basis(0.05, 'hamming'')
+        data = DeconvolutionData(x, y, ds)
+        data.apply_basis(0.05, 'hamming')
         data.normalize('l1')
         data.initialize_cross_validation(5)
         model = Boosting(data)
@@ -893,7 +893,7 @@ class Boosting:
         self.error = error
         self.delta = delta
         self.mindelta = mindelta
-        n_x = len(self.data.x)
+        n_x = self.data.x.n_rows
         # find TRF start/stop for each x
         tstart_is_sequence = isinstance(tstart, (tuple, list, np.ndarray))
         if tstart_is_sequence != isinstance(tstop, (tuple, list, np.ndarray)):
@@ -944,7 +944,7 @@ class Boosting:
         split_train = package_splits([split.train for split in self.data.splits.splits])
         split_validate = package_splits([split.validate for split in self.data.splits.splits])
         split_train_and_validate = package_splits([split.train_and_validate for split in self.data.splits.splits])
-        self.hs, hs_failed = opt.boosting_runs(self.data.y, self.data.x, self.data.x_pads, split_train, split_validate, split_train_and_validate, i_start_by_x, i_stop_by_x, delta, mindelta_, error_id, selective_stopping, num_threads)
+        self.hs, hs_failed = opt.boosting_runs(self.data.y.flat, self.data.x.flat, self.data.x.pads, split_train, split_validate, split_train_and_validate, i_start_by_x, i_stop_by_x, delta, mindelta_, error_id, selective_stopping, num_threads)
         self.split_results = [SplitResult(i, split, h_failed) for i, (split, h_failed) in enumerate(zip(self.data.splits.splits, hs_failed))]
 
         self.t_fit_done = time.time()
@@ -977,7 +977,8 @@ class Boosting:
     ) -> list:
         "Predict y and compute fit metrics (see :meth:`Evaluator.get`)"
         # y dimensions
-        n_y = len(self.data.y)
+        y = self.data.y.flat
+        n_y = len(y)
         if self.data.vector_dim:
             n_vec = len(self.data.vector_dim)
             n_vecs = n_y // n_vec
@@ -986,12 +987,12 @@ class Boosting:
 
         # predicted y
         if debug:
-            self.y_pred = y_pred_iter = y_pred = np.full(self.data.y.shape, np.nan)  # NaN for samples that are not predicted
+            self.y_pred = y_pred_iter = y_pred = np.full(y.shape, np.nan)  # NaN for samples that are not predicted
         elif n_vecs:
-            y_pred = np.empty((n_vec, *self.data.y.shape[1:]))
+            y_pred = np.empty((n_vec, *y.shape[1:]))
             y_pred_iter = chain.from_iterable(repeat(tuple(y_pred), n_vecs))
         else:
-            y_pred = np.empty(self.data.y.shape[1:])
+            y_pred = np.empty(y.shape[1:])
             y_pred_iter = repeat(y_pred, n_y)
 
         all_evaluators, evaluators_s, evaluators_v = get_evaluators(metrics, self.data, eval_segments)
@@ -1000,18 +1001,18 @@ class Boosting:
         for i_y, y_pred_i in enumerate(y_pred_iter):
             # for cross-validation, different segments are predicted by different h:
             for h, segments in hs:
-                convolve_1d(h[i_y], self.data.x, self.data.x_pads, self._i_start, segments, y_pred_i)
+                convolve_1d(h[i_y], self.data.x.flat, self.data.x.pads, self._i_start, segments, y_pred_i)
 
             if evaluators_s:
                 for e in evaluators_s:
-                    e.add_y(i_y, self.data.y[i_y], y_pred_i)
+                    e.add_y(i_y, y[i_y], y_pred_i)
 
             if evaluators_v and i_y % n_vec == n_vec - 1:
                 i_vec = i_y // n_vec
                 i_y_vec = slice(i_y - n_vec + 1, i_y + 1)
                 y_pred_i_vec = y_pred[i_y_vec] if debug else y_pred
                 for e in evaluators_v:
-                    e.add_y(i_vec, self.data.y[i_y_vec], y_pred_i_vec)
+                    e.add_y(i_vec, y[i_y_vec], y_pred_i_vec)
         return all_evaluators
 
     def evaluate_fit(
@@ -1079,7 +1080,7 @@ class Boosting:
         else:
             partitions = []
         hs = [self._get_h(partition) for partition in partitions]
-        n_samples = self.data.y.shape[1]
+        n_samples = self.data.n_times_flat
 
         evaluations = {}
         partition_evaluations = [{} for _ in partitions]
@@ -1131,7 +1132,7 @@ class Boosting:
                 eval_segments = split.test if cross_fit else split.validate
                 h_i = self.data.package_kernel(h_i, self.tstart_h)
                 result = BoostingResult(
-                    self.data.y_name, self.data.x_name, self.tstart, self.tstop, bool(self.data.scale_data), self.delta, self.mindelta, self.error, self.selective_stopping,
+                    self.data.y_name, self.data.x_name, self.tstart, self.tstop, self.data.x.mean is not None, self.delta, self.mindelta, self.error, self.selective_stopping,
                     y_mean, y_scale, x_mean, x_scale,
                     h_i, self._get_h_failed(partition),
                     self.data.basis, self.data.basis_window, None,
@@ -1143,7 +1144,7 @@ class Boosting:
             partition_results_list = None
         return BoostingResult(
             # basic parameters
-            self.data.y_name, self.data.x_name, self.tstart, self.tstop, bool(self.data.scale_data), self.delta, self.mindelta, self.error, self.selective_stopping,
+            self.data.y_name, self.data.x_name, self.tstart, self.tstop, self.data.x.mean is not None, self.delta, self.mindelta, self.error, self.selective_stopping,
             # data properties
             y_mean, y_scale, x_mean, x_scale,
             # results
@@ -1327,7 +1328,7 @@ def boosting(
     if selective_stopping < 0:
         raise ValueError(f"{selective_stopping=}")
 
-    dec_data = DeconvolutionData(y, x, data, scale_in_place)
+    dec_data = DeconvolutionData(x, y, data, scale_in_place)
     dec_data.apply_basis(basis, basis_window)
     if scale_data:
         dec_data.normalize(error)
