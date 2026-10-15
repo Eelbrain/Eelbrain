@@ -3,6 +3,7 @@ from functools import cached_property, reduce
 from itertools import product, zip_longest
 from operator import mul
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy import newaxis
@@ -13,11 +14,14 @@ from .. import _info
 from .._data_obj import CategorialArg, NDVarArg, Datalist, Dataset, Factor, Interaction, NDVar, Case, UTS, dataobj_repr, ascategorial, asndvar
 from .._utils import PickleableDataClass, intervals
 
+if TYPE_CHECKING:
+    from ..plot import DataSplit
+
 
 class EQMixIn:
     """Add __eq__() for dataclasses with array and categorial fields"""
 
-    def __eq__(self, other):
+    def __eq__(self, other) -> bool:
         if other is self:
             return True
         if not isinstance(other, self.__class__):
@@ -38,23 +42,51 @@ class EQMixIn:
 
 @dataclass(eq=False)
 class Split(PickleableDataClass, EQMixIn):
-    train: np.ndarray  # (, 2) array of int, segment (start, stop)
+    """One cross-validation split of the data (see :class:`Splits`)
+
+    Attributes
+    ----------
+    train
+        ``(n, 2)`` array of ``[start, stop]`` indices of the training segments
+        (on the concatenated time axis).
+    validate
+        Validation segments, in the same format as ``train`` (``None`` without
+        validation set).
+    test
+        Test segments, in the same format as ``train`` (``None`` without test set).
+    i_test
+        Index of the test partition (groups splits with the same test segments;
+        ``None`` without test set).
+    i_validate
+        Index of the validation partition (``None`` without validation set).
+    """
+    train: np.ndarray
     validate: np.ndarray = None
     test: np.ndarray = None
-    i_test: int = 0  # Index (to group splits with the same test segment)
-    i_validate: int = None  # Index of the validation segment
+    i_test: int = 0
+    i_validate: int = None
 
     @cached_property
-    def train_and_validate(self):
+    def train_and_validate(self) -> np.ndarray:
+        "Training and validation segments combined"
         return np.vstack([self.train, self.validate])
 
 
 def merge_segments(
         segments: np.ndarray,
         soft_splits: bool | np.ndarray = None,
-):
-    """Take a selection of input segments and remove soft boundaries"""
-    # return out_segments
+) -> np.ndarray:
+    """Merge adjacent segments at soft boundaries
+
+    Parameters
+    ----------
+    segments
+        ``(n, 2)`` array of ``[start, stop]`` indices, sorted by time.
+    soft_splits
+        Boundaries at which adjacent segments are merged: ``True`` to merge at
+        all boundaries, an array of boundary indices to merge only at those, or
+        ``None`` to return ``segments`` unchanged.
+    """
     if soft_splits is None or isinstance(soft_splits, np.ndarray) and len(soft_splits) == 0:
         return segments
     out_segments = list(segments)
@@ -69,15 +101,38 @@ def merge_segments(
 
 @dataclass(eq=False)
 class Splits(PickleableDataClass, EQMixIn):
-    """The cross-validation scheme used by :func:`boosting` (:attr:`BoostingResult.splits`)"""
+    """The cross-validation scheme used by :func:`boosting` (:attr:`BoostingResult.splits`)
+
+    Attributes
+    ----------
+    splits
+        The individual splits.
+    partitions_arg
+        The ``partitions`` argument used to create the splits (``None`` for
+        automatic selection).
+    n_partitions
+        Number of partitions the data was divided into.
+    n_validate
+        Number of partitions in each validation set.
+    n_test
+        Number of partitions in each test set.
+    model
+        Model used to sample partitions evenly from cells.
+    segments
+        ``(n_segments, 2)`` array of ``[start, stop]`` indices of the original
+        data segments (on the concatenated time axis).
+    split_segments
+        ``(n_sections, 2)`` array of the sections into which the data was
+        subdivided to form partitions.
+    """
     splits: list[Split]
     partitions_arg: int | None
     n_partitions: int
     n_validate: int
     n_test: int
     model: CategorialArg = None
-    segments: np.ndarray = None  # Original data segments
-    split_segments: np.ndarray = None  # Data subdivision for splits
+    segments: np.ndarray = None
+    split_segments: np.ndarray = None
 
     def __repr__(self):
         if len(self.segments) == 1:
@@ -94,7 +149,7 @@ class Splits(PickleableDataClass, EQMixIn):
         items = ', '.join(items)
         return f"<Splits: {desc} split into {len(self.split_segments)} sections{items}>"
 
-    def plot(self, **kwargs):
+    def plot(self, **kwargs) -> 'DataSplit':
         """Plot data splits (see :class:`plot.DataSplit` for parameters)"""
         from ..plot import DataSplit
 
@@ -102,14 +157,89 @@ class Splits(PickleableDataClass, EQMixIn):
 
 
 def split_data(
-        segments: np.ndarray,  # (n, 2) array of [start, stop] indices
-        partitions: int = None,  # Number of segments to split the data
-        model: CategorialArg = None,  # sample evenly from cells
-        data: Dataset = None,
-        validate: int = 1,  # Number of segments in validation set
-        test: int = 1,  # Number of segments in test set
-):
-    """Split data segments into train, validate and test segments"""
+        segments: np.ndarray,
+        partitions: int | None = None,
+        model: CategorialArg | None = None,
+        data: Dataset | None = None,
+        validate: int = 1,
+        test: int = 1,
+) -> Splits:
+    """Split data segments into train, validate and test segments
+
+    Parameters
+    ----------
+    segments
+        ``(n_segments, 2)`` array of ``[start, stop]`` indices of the data
+        segments (on the concatenated time axis).
+    partitions
+        Number of partitions to divide the data into (by default, determined
+        from the number of segments).
+    model
+        Sample partitions evenly from the cells of this model (one entry per
+        segment).
+    data
+        Dataset in which to evaluate ``model`` if it is a string.
+    validate
+        Number of partitions in each validation set (0 or 1).
+    test
+        Number of partitions in each test set (0 or 1).
+
+    Notes
+    -----
+    Splitting always follows the same four steps:
+
+    1. Divide the data into *sections*. A section is either a whole segment or
+       a piece of a segment. Boundaries between the original segments are
+       *hard*; boundaries introduced by cutting a segment are *soft*.
+    2. Assign each section to one of ``partitions`` partitions.
+    3. Create one :class:`Split` for each combination of test and validation
+       partition: the test and validation partitions are used as test and
+       validation set, all remaining partitions form the training set. With
+       ``validate=1`` and ``test=1`` this yields ``k * (k - 1)`` splits (for
+       *k* = ``partitions``); with one of them set to 0, it yields *k* splits
+       in which the corresponding set is ``None``.
+    4. Within each set of a split, merge adjacent sections at soft boundaries,
+       so that pieces of a segment that end up in the same set form one
+       continuous segment again. Hard boundaries are never merged.
+
+    How the sections are formed and assigned to partitions (steps 1 and 2)
+    depends on the data and on the arguments:
+
+    **Continuous data** (a single segment): the segment is cut into
+    ``partitions`` contiguous sections of equal length (default 5), and each
+    section is one partition. ``model`` is not allowed.
+
+    **Segmented data with at least as many segments as partitions** (``model``
+    is ``None`` and ``n_segments >= partitions``, or each cell of ``model`` has
+    at least ``partitions`` segments): whole segments are used as sections. The
+    segments are assigned to partitions in an interleaved fashion, i.e.,
+    partition *p* receives segments ``[p::partitions]``. With ``model``, this
+    is done separately within each cell, so that every partition samples each
+    cell evenly. The automatic default is ``partitions = n_segments`` (number
+    of segments in the smallest cell with ``model``), which amounts to
+    leave-one-out and is only available for 3 to 10 segments (per cell); with
+    ``model`` it further requires all cells to have the same size.
+
+    **Segmented data with more partitions than segments** (``model`` is
+    ``None`` and ``partitions > n_segments``; not implemented with ``model``):
+    segments are cut into pieces, and the pieces are used as sections.
+
+     - If ``partitions`` is a multiple of ``n_segments``, each segment is cut
+       into ``partitions / n_segments`` pieces of equal length, and each piece
+       is one partition. Partitions are thus numbered consecutively along the
+       time axis (the first pieces all come from the first segment), and
+       partition sizes depend on the length of the segment they come from.
+     - Otherwise, the concatenated time axis is divided into ``partitions``
+       spans of equal length, and the data is cut at these span boundaries
+       (soft) as well as at all segment boundaries (hard). Each section is
+       assigned to the partition whose span contains its start, so partitions
+       contain (approximately) equal numbers of samples, while a span that
+       straddles a segment boundary yields two sections in the same partition.
+
+    See :ref:`exa-data_split` for illustrations of these schemes, and use
+    :meth:`Splits.plot` (or :func:`plot.preview_partitions`) to inspect a
+    specific configuration.
+    """
     if partitions and int(partitions) != partitions:
         raise TypeError(f"{partitions=}")
     if int(validate) != validate:
@@ -410,10 +540,20 @@ class PredictorData:
         dimensions other than case and time, and the index of its rows in ``x``.
     x_mean, x_scale : array
         Normalization that was applied to the data (``None`` before :meth:`normalize`).
+    scale_data : str
+        The ``error`` argument of :meth:`normalize` (``None`` before :meth:`normalize`).
+    x_name : str | list of str
+        Name of the predictor (a list for multiple predictors).
+    x_names : list of str
+        Name of each predictor time series (row in ``x``).
+    time : UTS
+        Time dimension (of the first segment for ragged data).
+    n_times_flat : int
+        Total number of time samples across all segments.
     """
     # normalization
-    x_mean = None
-    x_scale = None
+    x_mean: np.ndarray = None
+    x_scale: np.ndarray = None
     scale_data: str = None
 
     def __init__(
@@ -561,6 +701,13 @@ class PredictorData:
     def apply_basis(self, basis: float, basis_window: str):
         """Apply basis to x
 
+        Parameters
+        ----------
+        basis
+            Length of the basis window (in seconds); 0 to skip.
+        basis_window
+            Window shape (see :func:`scipy.signal.get_window`).
+
         Notes
         -----
         Normalize after applying basis (basis can smooth out variance).
@@ -679,13 +826,24 @@ class DeconvolutionData(PredictorData):
         Dependent variable concatenated along time, ``(n_signals, n_times_flat)``;
         available after :meth:`flatten`.
     y_mean, y_scale : array
-        Normalization that was applied to ``y`` (``None`` before :meth:`normalize`).
-    splits : list of Split
-        Cross-validation scheme.
+        Normalization that was applied to ``y`` (``None`` before :meth:`normalize`);
+        ``y_scale`` has one entry per vector rather than per row.
+    y_name : str
+        Name of the dependent variable.
+    ydims : tuple of Dimension
+        Dimensions of ``y`` other than case and time (vector dimension last).
+    yshape : tuple of int
+        Shape corresponding to ``ydims``.
+    vector_dim : Dimension
+        Vector dimension of ``y`` (``None`` for scalar data).
+    y_info : dict
+        Info dictionary of ``y``.
+    splits : Splits
+        Cross-validation scheme (``None`` before :meth:`initialize_cross_validation`).
     """
     # normalization
-    y_mean = None
-    y_scale = None
+    y_mean: np.ndarray = None
+    y_scale: np.ndarray = None
     # cross-validation
     splits: Splits = None
 
@@ -789,7 +947,7 @@ class DeconvolutionData(PredictorData):
         return len(self.y_segments[0])
 
     def _copy_data(self, y: bool = False):
-        "Make sure the data is a copy before modifying"
+        "Make sure the data is a copy before modifying (``y``: also copy ``y``)"
         PredictorData._copy_data(self)
         if y and not self.in_place and not self._y_owned:
             self.y_segments, self._y_flat = _copy_segments(self.y_segments, self._y_flat)
@@ -865,26 +1023,50 @@ class DeconvolutionData(PredictorData):
 
     def initialize_cross_validation(
             self,
-            partitions: int = None,  # Number of segments to split the data
-            model: CategorialArg = None,  # sample evenly from cells
+            partitions: int = None,
+            model: CategorialArg = None,
             data: Dataset = None,
-            validate: int = 1,  # Number of segments in validation set
-            test: int = 1,  # Number of segments in test set
+            validate: int = 1,
+            test: int = 1,
     ):
-        """Initialize cross-validation scheme
+        """Initialize the cross-validation scheme (:attr:`splits`)
+
+        Parameters
+        ----------
+        partitions
+            Number of partitions to divide the data into (by default, determined
+            from the number of segments).
+        model
+            Sample partitions evenly from the cells of this model (one entry per
+            segment).
+        data
+            Dataset in which to evaluate ``model`` if it is a string.
+        validate
+            Number of partitions in each validation set (0 or 1).
+        test
+            Number of partitions in each test set (0 or 1).
 
         Notes
         -----
-        General solution:
-
-         - split data into even sized segments (hard and soft splits)
-         - group segments by cell-index
-         - create splits
-         - merge segments at soft boundaries
+        See :func:`split_data` for the algorithm.
         """
         self.splits = split_data(self.segments, partitions, model, data, validate, test)
 
-    def data_scale_ndvars(self):
+    def data_scale_ndvars(self) -> tuple:
+        """Normalization parameters packaged like the input data
+
+        Returns
+        -------
+        y_mean, y_scale
+            Normalization of ``y`` (:class:`NDVar`, or scalar for a single time
+            series; ``None`` if ``y`` was not normalized). ``y_scale`` does not
+            include the vector dimension.
+        x_mean, x_scale
+            Normalization of ``x`` (:class:`NDVar` or scalar; a tuple with one
+            item per predictor for multiple predictors).
+
+        All four are ``None`` if the data was not normalized.
+        """
         if self.x_mean is not None:
             # y
             if self.y_mean is None:
@@ -926,13 +1108,24 @@ class DeconvolutionData(PredictorData):
             y_mean = y_scale = x_mean = x_scale = None
         return y_mean, y_scale, x_mean, x_scale
 
-    def package_kernel(self, h, tstart):
+    def package_kernel(
+            self,
+            h: np.ndarray,
+            tstart: float,
+    ) -> NDVar | tuple[NDVar, ...]:
         """Package kernel as NDVar
 
         Parameters
         ----------
-        h : array  (n_y, n_x, n_times)
-            Kernel data.
+        h
+            Kernel data, ``(n_y, n_x, n_times)``.
+        tstart
+            Time of the first kernel sample.
+
+        Returns
+        -------
+        kernel
+            One :class:`NDVar` per predictor (a tuple for multiple predictors).
         """
         h_time = UTS(tstart, self.time.tstep, h.shape[-1], self.time.unit)
         hs = []
@@ -954,11 +1147,31 @@ class DeconvolutionData(PredictorData):
 
     def package_value(
             self,
-            value: np.ndarray,  # data
-            name: str,  # NDVar name
-            info: dict = None,  # NDVar info
-            meas: str = None,  # for NDVar info
-    ):
+            value: np.ndarray,
+            name: str,
+            info: dict = None,
+            meas: str = None,
+    ) -> NDVar | float:
+        """Package a per-signal value (e.g., a fit metric) like ``y``
+
+        Parameters
+        ----------
+        value
+            One value per signal, ``(n_y,)``, or one value per vector,
+            ``(n_y / n_vector,)``, for values pooled over the vector dimension.
+        name
+            NDVar name.
+        info
+            NDVar info (default: the info of ``y``).
+        meas
+            Measurement type, used to generate the NDVar info.
+
+        Returns
+        -------
+        value
+            :class:`NDVar` with the dimensions of ``y`` (without case and time),
+            or a scalar for a single time series.
+        """
         if not self.yshape:
             return value[0]
 
@@ -983,7 +1196,20 @@ class DeconvolutionData(PredictorData):
 
         return NDVar(value, dims, name, info)
 
-    def package_y_like(self, data, name):
+    def package_y_like(
+            self,
+            data: np.ndarray,
+            name: str,
+    ) -> NDVar:
+        """Package data with the shape of ``y`` (e.g., predicted ``y``) as NDVar
+
+        Parameters
+        ----------
+        data
+            Data with the same number of elements as the input ``y``.
+        name
+            NDVar name.
+        """
         if not self.full_y_dims:
             raise NotImplementedError
         shape = tuple(map(len, self.full_y_dims))
