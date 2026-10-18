@@ -7,7 +7,7 @@ import pytest
 
 from eelbrain import Factor, NDVar, Scalar, datasets, epoch_impulse_predictor
 from eelbrain._ndvar._convolve import convolve_1d
-from eelbrain._trf.shared import DeconvolutionData, lag_matrix, split_data
+from eelbrain._trf.shared import DeconvolutionData, Split, Splits, lag_matrix, split_data
 
 
 def test_deconvolution_data_continuous():
@@ -32,42 +32,53 @@ def test_deconvolution_data_continuous():
     # partitioning, no testing set
     data.initialize_cross_validation(4, test=0)
     assert len(data.splits.splits) == 4
-    assert_array_equal(data.splits.splits[0].validate, [[0, 20]])
+    assert not any(split.is_test or split.splits for split in data.splits.splits)
+    assert_array_equal(data.splits.splits[0].reserved, [[0, 20]])
     assert_array_equal(data.splits.splits[0].train, [[20, 80]])
-    assert_array_equal(data.splits.splits[1].validate, [[20, 40]])
+    assert_array_equal(data.splits.splits[1].reserved, [[20, 40]])
     assert_array_equal(data.splits.splits[1].train, [[0, 20], [40, 80]])
-    assert_array_equal(data.splits.splits[2].validate, [[40, 60]])
+    assert_array_equal(data.splits.splits[2].reserved, [[40, 60]])
     assert_array_equal(data.splits.splits[2].train, [[0, 40], [60, 80]])
-    assert_array_equal(data.splits.splits[3].validate, [[60, 80]])
+    assert_array_equal(data.splits.splits[3].reserved, [[60, 80]])
     assert_array_equal(data.splits.splits[3].train, [[0, 60]])
 
     # partitioning, testing set
     data.initialize_cross_validation(4, test=1)
-    assert len(data.splits.splits) == 12
+    assert len(data.splits.splits) == 4
+    assert all(split.is_test and len(split.splits) == 3 for split in data.splits.splits)
+    assert [split.i_reserved for split in data.splits.splits] == [0, 1, 2, 3]
+    # test partition 0
+    test_split = data.splits.splits[0]
+    assert_array_equal(test_split.reserved, [[0, 20]])
+    assert_array_equal(test_split.train, [[20, 80]])
+    assert [split.i_reserved for split in test_split.splits] == [1, 2, 3]
+    assert not any(split.is_test for split in test_split.splits)
     # 0/1
-    assert_array_equal(data.splits.splits[0].test, [[0, 20]])
-    assert_array_equal(data.splits.splits[0].validate, [[20, 40]])
-    assert_array_equal(data.splits.splits[0].train, [[40, 80]])
+    assert_array_equal(test_split.splits[0].reserved, [[20, 40]])
+    assert_array_equal(test_split.splits[0].train, [[40, 80]])
     # 0/2
-    assert_array_equal(data.splits.splits[1].test, [[0, 20]])
-    assert_array_equal(data.splits.splits[1].validate, [[40, 60]])
-    assert_array_equal(data.splits.splits[1].train, [[20, 40], [60, 80]])
+    assert_array_equal(test_split.splits[1].reserved, [[40, 60]])
+    assert_array_equal(test_split.splits[1].train, [[20, 40], [60, 80]])
     # 0/3
-    assert_array_equal(data.splits.splits[2].test, [[0, 20]])
-    assert_array_equal(data.splits.splits[2].validate, [[60, 80]])
-    assert_array_equal(data.splits.splits[2].train, [[20, 60]])
+    assert_array_equal(test_split.splits[2].reserved, [[60, 80]])
+    assert_array_equal(test_split.splits[2].train, [[20, 60]])
+    # test partition 1
+    test_split = data.splits.splits[1]
+    assert_array_equal(test_split.reserved, [[20, 40]])
+    assert_array_equal(test_split.train, [[0, 20], [40, 80]])
+    assert [split.i_reserved for split in test_split.splits] == [0, 2, 3]
     # 1/0
-    assert_array_equal(data.splits.splits[3].test, [[20, 40]])
-    assert_array_equal(data.splits.splits[3].validate, [[0, 20]])
-    assert_array_equal(data.splits.splits[3].train, [[40, 80]])
+    assert_array_equal(test_split.splits[0].reserved, [[0, 20]])
+    assert_array_equal(test_split.splits[0].train, [[40, 80]])
     # 1/2
-    assert_array_equal(data.splits.splits[4].test, [[20, 40]])
-    assert_array_equal(data.splits.splits[4].validate, [[40, 60]])
-    assert_array_equal(data.splits.splits[4].train, [[0, 20], [60, 80]])
-    # 1/3, 2/0, 2/1, 2/3, 3/0, 3/1, 3/2
-    assert_array_equal(data.splits.splits[11].test, [[60, 80]])
-    assert_array_equal(data.splits.splits[11].validate, [[40, 60]])
-    assert_array_equal(data.splits.splits[11].train, [[0, 40]])
+    assert_array_equal(test_split.splits[1].reserved, [[40, 60]])
+    assert_array_equal(test_split.splits[1].train, [[0, 20], [60, 80]])
+    # test partition 3, validation partition 2
+    test_split = data.splits.splits[3]
+    assert_array_equal(test_split.reserved, [[60, 80]])
+    assert_array_equal(test_split.train, [[0, 60]])
+    assert_array_equal(test_split.splits[2].reserved, [[40, 60]])
+    assert_array_equal(test_split.splits[2].train, [[0, 40]])
 
 
 def test_deconvolution_data_trials():
@@ -86,7 +97,7 @@ def test_deconvolution_data_trials():
     arange = np.arange(len(data.segments)) % 3
     for i, split in enumerate(data.splits.splits):
         validate_index = arange == i
-        assert_array_equal(split.validate, data.segments[validate_index])
+        assert_array_equal(split.reserved, data.segments[validate_index])
         assert_array_equal(split.train, data.segments[~validate_index])
 
     # continuoue model
@@ -94,7 +105,7 @@ def test_deconvolution_data_trials():
     assert len(data.splits.splits) == 3
     for i, split in enumerate(data.splits.splits):
         validate_index = arange == i
-        assert_array_equal(split.validate, data.segments[validate_index])
+        assert_array_equal(split.reserved, data.segments[validate_index])
         assert_array_equal(split.train, data.segments[~validate_index])
 
     # alternating model
@@ -104,7 +115,7 @@ def test_deconvolution_data_trials():
     arange = np.repeat(np.arange(20), 3) % 3
     for i, split in enumerate(data.splits.splits):
         validate_index = arange == i
-        assert_array_equal(split.validate, data.segments[validate_index])
+        assert_array_equal(split.reserved, data.segments[validate_index])
         assert_array_equal(split.train, data.segments[~validate_index])
 
 
@@ -266,18 +277,57 @@ def test_split_data_unequal_partitions():
     splits = split_data(segments, 3, validate=1, test=0)
     assert len(splits.splits) == 3
     assert_array_equal(splits.split_segments, [[0, 67], [67, 100], [100, 133], [133, 200]])
-    assert_array_equal(splits.splits[0].validate, [[0, 67]])
+    assert_array_equal(splits.splits[0].reserved, [[0, 67]])
     assert_array_equal(splits.splits[0].train, [[67, 100], [100, 200]])
-    assert_array_equal(splits.splits[1].validate, [[67, 100], [100, 133]])
+    assert_array_equal(splits.splits[1].reserved, [[67, 100], [100, 133]])
     assert_array_equal(splits.splits[1].train, [[0, 67], [133, 200]])
-    assert_array_equal(splits.splits[2].validate, [[133, 200]])
+    assert_array_equal(splits.splits[2].reserved, [[133, 200]])
     assert_array_equal(splits.splits[2].train, [[0, 100], [100, 133]])
     # a split point on a segment boundary is not a soft split
     splits = split_data(np.array([[0, 100], [100, 300]]), 3, validate=1, test=0)
     assert_array_equal(splits.split_segments, [[0, 100], [100, 200], [200, 300]])
-    assert_array_equal(splits.splits[1].validate, [[100, 200]])
+    assert_array_equal(splits.splits[1].reserved, [[100, 200]])
     assert_array_equal(splits.splits[1].train, [[0, 100], [200, 300]])
     assert_array_equal(splits.splits[0].train, [[100, 300]])
+
+
+def test_split_data_no_validate_no_test():
+    "Without validation and test set, a single split uses all data for training"
+    segments = np.array([[0, 100], [100, 200]])
+    splits = split_data(segments, 3, validate=0, test=0)
+    assert len(splits.splits) == 1
+    split = splits.splits[0]
+    assert_array_equal(split.train, [[0, 100], [100, 200]])  # the segment boundary is hard
+    assert split.reserved is None
+    assert split.i_reserved is None
+    assert split.splits == []
+
+
+def test_splits_legacy_format():
+    "Load Splits pickled before nested splits (one flat Split per boosting run)"
+    def flat_split(state: dict) -> Split:
+        split = Split.__new__(Split)
+        split.__setstate__(state)
+        return split
+
+    def legacy_splits(splits: Splits, flat: list) -> Splits:
+        legacy = Splits.__new__(Splits)
+        legacy.__setstate__({**splits.__getstate__(), 'splits': flat})
+        return legacy
+
+    segments = np.array([[0, 100], [100, 200]])
+    # with test set
+    splits = split_data(segments, 4)
+    states = [{'train': split.train, 'validate': split.reserved, 'test': test_split.reserved, 'i_test': test_split.i_reserved, 'i_validate': split.i_reserved} for test_split in splits.splits for split in test_split.splits]
+    assert len(states) == 12
+    assert legacy_splits(splits, [flat_split(state) for state in states]) == splits
+    # before BoostingResult version 16, i_validate was not stored
+    assert legacy_splits(splits, [flat_split({k: v for k, v in state.items() if k != 'i_validate'}) for state in states]) == splits
+    # without test set
+    splits = split_data(segments, 4, test=0)
+    states = [{'train': split.train, 'validate': split.reserved, 'test': None, 'i_test': 0, 'i_validate': split.i_reserved} for split in splits.splits]
+    assert legacy_splits(splits, [flat_split(state) for state in states]) == splits
+    assert legacy_splits(splits, [flat_split({k: v for k, v in state.items() if k != 'i_validate'}) for state in states]) == splits
 
 
 def test_splits_eq():

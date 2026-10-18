@@ -173,14 +173,14 @@ class BoostingResult(PickleableDataClass):
         :class:`Dataset`.
     i_test
         Index of the test partition whose data the fit metrics describe (see
-        :attr:`Split.i_test`): set for results in
+        :attr:`Split.i_reserved`): set for results in
         :attr:`BoostingResult.partition_results` of models estimated with
         ``test=1``, and for results from :meth:`Boosting.evaluate_fit` with
         ``i_test``. ``None`` when fit metrics pool all test partitions.
     i_validate
         For results in :attr:`BoostingResult.partition_results` of models
         estimated with ``test=0``: index of the validation partition (see
-        :attr:`Split.i_validate`).
+        :attr:`Split.i_reserved`).
     train_r, train_r_rank, train_r_l1, train_residual, train_proportion_explained
         Fit to the training data (only for results in
         :attr:`BoostingResult.partition_results` of models estimated with
@@ -261,7 +261,7 @@ class BoostingResult(PickleableDataClass):
     train_r_l1: NDVar = None
     partition_results: list[BoostingResult] = None
     # store the version of the boosting algorithm with which model was fit
-    version: int = 17  # file format (updates when re-saving)
+    version: int = 18  # file format (updates when re-saving)
     algorithm_version: int = -1  # do not change when re-saving
     execution_context: ExecutionContext | tuple[ExecutionContext, ...] = None  # do not change when re-saving
     # debug parameters
@@ -317,6 +317,7 @@ class BoostingResult(PickleableDataClass):
                 else:
                     contexts = tuple(dict.fromkeys(ExecutionContext._from_legacy(c) for c in context if c is not None))
                     state['execution_context'] = contexts[0] if len(contexts) == 1 else contexts
+            # version 18: nested splits (flat splits are converted in Splits.__setstate__)
         PickleableDataClass.__setstate__(self, state)
 
     def __repr__(self):
@@ -518,15 +519,10 @@ class BoostingResult(PickleableDataClass):
         x_pads = x_data.x.pads[newaxis]
         # prepare h
         h_i_start = int(round(self.h_time.tmin / self.h_time.tstep))
-        # iterate through partitions
+        # iterate through partitions (each partition result corresponds to a top-level test split)
+        test_splits = {split.i_reserved: split for split in self.splits.splits}
         for result in self.partition_results:
-            # find segments
-            for split in self.splits.splits:
-                if split.i_test == result.i_test:
-                    segments = split.test
-                    break
-            else:
-                raise RuntimeError(f"Split missing for test segment {result.i_test}")
+            segments = test_splits[result.i_test].reserved
             # h to flat array: (n_h_only == in y, n_shared == in x, n_h_times)
             hs = [result.h] if isinstance(result.h, NDVar) else result.h
             if x_use:
@@ -818,11 +814,19 @@ def _environment() -> dict:
 
 
 class SplitResult:
-    __slots__ = ('i_split', 'split', 'h_failed')
+    "Result of one boosting run"
+    __slots__ = ('i_split', 'split', 'top_split', 'h_failed')
 
-    def __init__(self, i_split: int, split: Split, h_failed: np.ndarray):
+    def __init__(
+            self,
+            i_split: int,
+            split: Split,
+            top_split: Split,
+            h_failed: np.ndarray,
+    ):
         self.i_split = i_split  # index into Boosting.hs
-        self.split = split
+        self.split = split  # leaf split
+        self.top_split = top_split  # top-level split containing the leaf (or the leaf itself)
         self.h_failed = h_failed  # (n_y,)
 
 
@@ -933,25 +937,24 @@ class Boosting:
         max_lag_n_times = max(i_stop - 1, -i_start)
         if max_lag_n_times > self.data.shortest_segment_n_times:
             raise ValueError(f"{tstart=}, {tstop=}: the kernel extends beyond the shortest data segment ({self.data.shortest_segment_n_times} samples)")
+        if not self.data.splits.n_validate:
+            raise NotImplementedError("Boosting without validation set (validate=0): early stopping requires a validation set")
         shortest_cv_segment_n_times = np.min(np.diff(self.data.splits.split_segments, axis=1))
         if max_lag_n_times > shortest_cv_segment_n_times:
             raise ValueError(f"{tstart=}, {tstop=}: the kernel extends beyond the shortest cross-validation data segment ({shortest_cv_segment_n_times} samples)")
 
         self.t_fit_start = time.time()
 
-        # boosting
+        # boosting: one run per leaf split
+        runs = self.data.splits.leaves
+        train = package_splits([split.train for _, split in runs])
+        validate = package_splits([split.reserved for _, split in runs])
+        train_and_validate = package_splits([split.train_and_reserved for _, split in runs])
         self.n_workers = num_threads = CONFIG['n_workers']
-        split_train = package_splits([split.train for split in self.data.splits.splits])
-        split_validate = package_splits([split.validate for split in self.data.splits.splits])
-        split_train_and_validate = package_splits([split.train_and_validate for split in self.data.splits.splits])
-        self.hs, hs_failed = opt.boosting_runs(self.data.y.flat, self.data.x.flat, self.data.x.pads, split_train, split_validate, split_train_and_validate, i_start_by_x, i_stop_by_x, delta, mindelta_, error_id, selective_stopping, num_threads)
-        self.split_results = [SplitResult(i, split, h_failed) for i, (split, h_failed) in enumerate(zip(self.data.splits.splits, hs_failed))]
+        self.hs, hs_failed = opt.boosting_runs(self.data.y.flat, self.data.x.flat, self.data.x.pads, train, validate, train_and_validate, i_start_by_x, i_stop_by_x, delta, mindelta_, error_id, selective_stopping, num_threads)
+        self.split_results = [SplitResult(i, split, top_split, h_failed) for i, ((top_split, split), h_failed) in enumerate(zip(runs, hs_failed))]
 
         self.t_fit_done = time.time()
-
-    def _get_i_tests(self):
-        assert self.data.splits.n_test
-        return sorted({split.split.i_test for split in self.split_results})
 
     def _get_h(self, split_results: list[SplitResult]) -> np.ndarray:
         "Average kernel over the given splits, skipping failed kernels (channels that failed in all splits are 0)"
@@ -1064,21 +1067,21 @@ class Boosting:
             else:
                 metrics = ['l1_residual', 'l2_residual', 'r', 'r_rank', 'l1_total', 'l2_total']
 
-        # partitions: [[SplitResult, ...], ...]
+        # top-level splits to evaluate (test splits with cross_fit, validation splits otherwise)
         if cross_fit:
-            i_tests = self._get_i_tests()
+            top_splits = self.data.splits.splits
             if i_test is not None:
-                if i_test not in i_tests:
-                    raise ValueError(f"{i_test=}: test partitions are {i_tests}")
-                i_tests = [i_test]
-            partitions = [[split for split in self.split_results if split.split.i_test == i] for i in i_tests]
+                top_splits = [split for split in top_splits if split.i_reserved == i_test]
+                if not top_splits:
+                    raise ValueError(f"{i_test=}: test partitions are {[split.i_reserved for split in self.data.splits.splits]}")
         elif i_test is not None:
             raise ValueError(f"{i_test=} without cross_fit")
         elif partition_results:
-            # without test set, each split has a different validation partition
-            partitions = [[split] for split in self.split_results]
+            top_splits = self.data.splits.splits
         else:
-            partitions = []
+            top_splits = []
+        # kernel for each top-level split: average of its runs
+        partitions = [[result for result in self.split_results if result.top_split == split] for split in top_splits]
         hs = [self._get_h(partition) for partition in partitions]
         n_samples = self.data.n_times_flat
 
@@ -1086,7 +1089,7 @@ class Boosting:
         partition_evaluations = [{} for _ in partitions]
         if cross_fit:
             # each test partition is predicted by the h estimated without it
-            test_segments = [partition[0].split.test for partition in partitions]
+            test_segments = [split.reserved for split in top_splits]
             hs_segments = list(zip(hs, test_segments))
             all_segments = np.sort(np.vstack(test_segments), 0)
             n_samples = int(np.sum(all_segments[:, 1] - all_segments[:, 0]))  # all data unless i_test is specified
@@ -1103,9 +1106,8 @@ class Boosting:
         elif metrics:
             # Without test set, fit metrics would be computed from the data used to estimate h
             # (overestimating predictive power); only report validation and training fit for each split
-            for h_i, (split_result,), evaluations_i in zip(hs, partitions, partition_evaluations):
-                split = split_result.split
-                evaluators = self._evaluate(metrics, [(h_i, split.train_and_validate)], [split.validate, split.train])
+            for h_i, split, evaluations_i in zip(hs, top_splits, partition_evaluations):
+                evaluators = self._evaluate(metrics, [(h_i, split.train_and_reserved)], [split.reserved, split.train])
                 evaluations_i.update({e.attr: e.get() for e in evaluators})
                 evaluations_i.update({f'train_{e.attr}': e.get(1) for e in evaluators})
 
@@ -1127,18 +1129,16 @@ class Boosting:
         # partition-specific results
         if partition_results:
             partition_results_list = []
-            for partition, h_i, evaluations_i in zip(partitions, hs, partition_evaluations):
-                split = partition[0].split
-                eval_segments = split.test if cross_fit else split.validate
+            for split, partition, h_i, evaluations_i in zip(top_splits, partitions, hs, partition_evaluations):
                 h_i = self.data.package_kernel(h_i, self.tstart_h)
                 result = BoostingResult(
                     self.data.y_name, self.data.x_name, self.tstart, self.tstop, self.data.x.mean is not None, self.delta, self.mindelta, self.error, self.selective_stopping,
                     y_mean, y_scale, x_mean, x_scale,
                     h_i, self._get_h_failed(partition),
                     self.data.basis, self.data.basis_window, None,
-                    int(np.sum(eval_segments[:, 1] - eval_segments[:, 0])), self.data.y_info, self.data.ydims,
+                    int(np.sum(split.reserved[:, 1] - split.reserved[:, 0])), self.data.y_info, self.data.ydims,
                     algorithm_version=BOOSTING_VERSION, execution_context=execution_context,
-                    i_test=split.i_test, i_validate=None if cross_fit else split.i_validate, **evaluations_i)
+                    i_test=split.i_reserved if cross_fit else None, i_validate=None if cross_fit else split.i_reserved, **evaluations_i)
                 partition_results_list.append(result)
         else:
             partition_results_list = None
@@ -1230,11 +1230,13 @@ def boosting(
         is ``'hamming'``).
     partitions
         Divide the data into this many ``partitions`` (*k*) for
-        cross-validation. Each boosting run uses one partition for validation
-        (early stopping), one partition as test set (with ``test=1``), and the
-        remaining partitions for training. With ``test=1``, this requires at
-        least 3 partitions and results in ``k * (k - 1)`` boosting runs
-        (instead of ``k`` runs with ``test=0``).
+        cross-validation. With ``test=1``, each partition is held out in turn
+        as test set, and the remaining data is divided again, holding out each
+        of the remaining partitions in turn for validation (early stopping);
+        each combination is one boosting run. This requires at least 3
+        partitions and results in ``k * (k - 1)`` boosting runs (instead of
+        ``k`` runs with ``test=0``, each holding out one partition for
+        validation). See :class:`Splits` for the resulting structure.
         If data is continuous, data are divided into contiguous segments of
         equal length (default 5).
         If data has cases, cases are divided with ``[::partitions]`` slices
@@ -1249,12 +1251,14 @@ def boosting(
         If provided, other parameters can be specified as string for items in
         ``ds``.
     validate
-        Number of segments in validation dataset (currently has to be 1).
+        Number of partitions held out for validation (early stopping) in each
+        boosting run (currently has to be 1).
     test
         By default (``test=1``), the boosting algorithm performs *k*-fold
         cross-validation (with *k* = ``partitions``): Each partition is used as
         test dataset in turn, while the remaining ``k - 1`` partitions are used
-        to estimate the kernel. The fit metrics (e.g.,
+        to estimate the kernel (averaging the boosting runs with different
+        validation partitions). The fit metrics (e.g.,
         :attr:`BoostingResult.r` and :attr:`BoostingResult.proportion_explained`)
         reflect the re-combination of all partitions, each one predicted from
         the corresponding, independent training set. They thus estimate the
@@ -1340,6 +1344,7 @@ def boosting(
 
 
 def package_splits(splits: Sequence[np.ndarray]) -> np.ndarray:
+    "Stack segment arrays into one ``(n_splits, n_max, 2)`` array, padded with -1"
     n = max(len(split) for split in splits)
     out = np.empty((len(splits), n, 2), np.int64)
     out.fill(-1)

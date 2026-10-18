@@ -1,5 +1,7 @@
-from dataclasses import dataclass, fields
-from functools import cached_property, reduce
+from __future__ import annotations
+
+from dataclasses import dataclass, field, fields
+from functools import reduce
 from itertools import product
 from operator import mul
 from collections.abc import Sequence
@@ -26,8 +28,8 @@ class EQMixIn:
             return True
         if not isinstance(other, self.__class__):
             return False
-        for field in fields(self):
-            a, b = getattr(self, field.name), getattr(other, field.name)
+        for field_i in fields(self):
+            a, b = getattr(self, field_i.name), getattr(other, field_i.name)
             if isinstance(a, np.ndarray) or isinstance(b, np.ndarray):
                 if not np.array_equal(a, b):
                     return False
@@ -44,32 +46,70 @@ class EQMixIn:
 class Split(PickleableDataClass, EQMixIn):
     """One cross-validation split of the data (see :class:`Splits`)
 
+    A split divides the data available to it into training segments and
+    (optionally) one held-out partition. The held-out partition is either a
+    *test* set, which is never consulted while estimating the kernel, or a
+    *validation* set, which is consulted repeatedly during fitting (for early
+    stopping). A test split can in turn contain validation splits, which divide
+    its training data again; each split without inner splits (leaf)
+    corresponds to one boosting run.
+
     Attributes
     ----------
     train
         ``(n, 2)`` array of ``[start, stop]`` indices of the training segments
         (on the concatenated time axis).
-    validate
-        Validation segments, in the same format as ``train`` (``None`` without
-        validation set).
-    test
-        Test segments, in the same format as ``train`` (``None`` without test set).
-    i_test
-        Index of the test partition (groups splits with the same test segments;
-        ``None`` without test set).
-    i_validate
-        Index of the validation partition (``None`` without validation set).
+    reserved
+        Held-out segments, in the same format as ``train`` (``None`` if all
+        data is used for training).
+    i_reserved
+        Index of the held-out partition (``None`` if all data is used for
+        training).
+    is_test
+        Whether the held-out segments are a test set (``True``) or a
+        validation set (``False``).
+    splits
+        Inner splits, which divide ``train`` into training and validation
+        segments (empty for a leaf split).
     """
     train: np.ndarray
-    validate: np.ndarray = None
-    test: np.ndarray = None
-    i_test: int = 0
-    i_validate: int = None
+    reserved: np.ndarray = None
+    i_reserved: int = None
+    is_test: bool = False
+    splits: list[Split] = field(default_factory=list)
 
-    @cached_property
-    def train_and_validate(self) -> np.ndarray:
-        "Training and validation segments combined"
-        return np.vstack([self.train, self.validate])
+    def __post_init__(self):
+        if self.reserved is not None and not self.is_test:
+            assert not any(split.is_test for split in self.splits), "test split inside validation split"
+
+    @property
+    def train_and_reserved(self) -> np.ndarray:
+        "Training and held-out segments combined, sorted by time (all data available to the split)"
+        if self.reserved is None:
+            return self.train
+        segments = np.vstack([self.train, self.reserved])
+        return segments[np.argsort(segments[:, 0])]
+
+    @property
+    def leaves(self) -> list[Split]:
+        "Splits without inner splits, each corresponding to one boosting run (``[self]`` for a leaf)"
+        if not self.splits:
+            return [self]
+        return [leaf for split in self.splits for leaf in split.leaves]
+
+    def __setstate__(self, state: dict):
+        if 'validate' in state:
+            # flat format (before nested splits): one split per boosting run
+            train, validate, test, i_test = (state[key] for key in ['train', 'validate', 'test', 'i_test'])
+            i_validate = state.get('i_validate')  # not stored before BoostingResult version 16 (restored by Splits.__setstate__)
+            if validate is None:
+                state = {'train': train, 'reserved': test, 'i_reserved': None if test is None else i_test, 'is_test': test is not None}
+            elif test is None:
+                state = {'train': train, 'reserved': validate, 'i_reserved': i_validate}
+            else:  # nested: test split with a single validation split
+                validation_split = Split(train, validate, i_validate)
+                state = {'train': validation_split.train_and_reserved, 'reserved': test, 'i_reserved': i_test, 'is_test': True, 'splits': [validation_split]}
+        PickleableDataClass.__setstate__(self, state)
 
 
 def merge_segments(
@@ -99,14 +139,33 @@ def merge_segments(
     return np.vstack(out_segments)
 
 
+def _restore_validation_indices(
+        splits: list[Split],
+        n_partitions: int,
+        i_test: int | None = None,
+):
+    "Fill in validation partition indices missing from splits pickled before BoostingResult version 16 (created in partition order, skipping the test partition)"
+    partitions = [p for p in range(n_partitions) if p != i_test]
+    for p, split in zip(partitions, splits):
+        if split.i_reserved is None and split.reserved is not None:
+            split.i_reserved = p
+
+
 @dataclass(eq=False)
 class Splits(PickleableDataClass, EQMixIn):
     """The cross-validation scheme used by :func:`boosting` (:attr:`BoostingResult.splits`)
 
+    With a test set (``test=1``), :attr:`splits` contains one test
+    :class:`Split` per partition, and each of those contains the validation
+    splits of its training data (:attr:`Split.splits`). Without test set,
+    :attr:`splits` contains one validation :class:`Split` per partition; with
+    neither validation nor test set, a single split that uses all data for
+    training.
+
     Attributes
     ----------
     splits
-        The individual splits.
+        The top-level splits.
     partitions_arg
         The ``partitions`` argument used to create the splits (``None`` for
         automatic selection).
@@ -134,6 +193,26 @@ class Splits(PickleableDataClass, EQMixIn):
     segments: np.ndarray = None
     split_segments: np.ndarray = None
 
+    def __setstate__(self, state: dict):
+        splits = state['splits']
+        if splits:
+            _restore_validation_indices(splits, state['n_partitions'])
+        test_splits = [split for split in splits if split.is_test] if splits else []
+        if len({split.i_reserved for split in test_splits}) < len(test_splits):
+            # flat format (before nested splits): one top-level split per boosting run; merge test splits with the same test partition
+            soft_splits = np.setdiff1d(state['split_segments'][1:, 0], state['segments'][:, 0])
+            merged = {}
+            for split in splits:
+                if split.i_reserved in merged:
+                    merged[split.i_reserved].splits.extend(split.splits)
+                else:
+                    split.train = merge_segments(split.train, soft_splits)
+                    merged[split.i_reserved] = split
+            state['splits'] = list(merged.values())
+            for split in state['splits']:
+                _restore_validation_indices(split.splits, state['n_partitions'], split.i_reserved)
+        PickleableDataClass.__setstate__(self, state)
+
     def __repr__(self):
         if len(self.segments) == 1:
             desc = "continuous data"
@@ -149,7 +228,12 @@ class Splits(PickleableDataClass, EQMixIn):
         items = ', '.join(items)
         return f"<Splits: {desc} split into {len(self.split_segments)} sections{items}>"
 
-    def plot(self, **kwargs) -> 'DataSplit':
+    @property
+    def leaves(self) -> list[tuple[Split, Split]]:
+        "``(top-level split, leaf split)`` for each boosting run, grouped by top-level split (see :attr:`Split.leaves`)"
+        return [(top_split, leaf) for top_split in self.splits for leaf in top_split.leaves]
+
+    def plot(self, **kwargs) -> DataSplit:
         """Plot data splits (see :class:`plot.DataSplit` for parameters)"""
         from ..plot import DataSplit
 
@@ -192,12 +276,18 @@ def split_data(
        a piece of a segment. Boundaries between the original segments are
        *hard*; boundaries introduced by cutting a segment are *soft*.
     2. Assign each section to one of ``partitions`` partitions.
-    3. Create one :class:`Split` for each combination of test and validation
-       partition: the test and validation partitions are used as test and
-       validation set, all remaining partitions form the training set. With
-       ``validate=1`` and ``test=1`` this yields ``k * (k - 1)`` splits (for
-       *k* = ``partitions``); with one of them set to 0, it yields *k* splits
-       in which the corresponding set is ``None``.
+    3. Create the :class:`Split` tree. With ``test=1``, create one test split
+       for each partition *i*: partition *i* is held out as test set and all
+       remaining partitions form the training set. With ``validate=1``, each
+       split created so far (or, with ``test=0``, the whole data) is further
+       divided into validation splits, one for each partition *j* in its
+       training set: partition *j* is held out as validation set and the
+       remaining training partitions form the training set. With ``validate=1``
+       and ``test=1`` this yields *k* test splits with ``k - 1`` validation
+       splits each, i.e., ``k * (k - 1)`` boosting runs (for *k* =
+       ``partitions``); with one of them set to 0, it yields *k* top-level
+       splits without inner splits; with both set to 0, a single split that
+       uses all data for training.
     4. Within each set of a split, merge adjacent sections at soft boundaries,
        so that pieces of a segment that end up in the same set form one
        continuous segment again. Hard boundaries are never merged.
@@ -249,8 +339,10 @@ def split_data(
     if partitions is not None and partitions <= validate + test:
         raise ValueError(f"{partitions=}: need at least {validate + test + 1} partitions with {validate=} and {test=}")
     partitions_arg = partitions
-    if validate != 1:
-        raise NotImplementedError(f"{validate=}: currently has to be 1")
+    if validate < 0:
+        raise ValueError(f"{validate=}")
+    elif validate > 1:
+        raise NotImplementedError(f"{validate=}: currently has to be 0 or 1")
     if test < 0:
         raise ValueError(f"{test=}")
     elif test > 1:
@@ -318,31 +410,29 @@ def split_data(
             soft_splits = np.setdiff1d(split_points[1:-1], boundaries)
             piece_partition = np.searchsorted(split_points, split_segments[:, 0], side='right') - 1
     # create actual splits
-    splits = []  # list of Split
-    test_iter = range(partitions) if test else [None]
-    validate_iter = range(partitions) if validate else [None]
-    for i_test in test_iter:
-        for i_validate in validate_iter:
-            if i_test == i_validate:
-                continue
-            train_set = np.ones(len(split_segments), bool)
-            # test set
-            if i_test is None:
-                test_segments = None
-            else:
-                test_set = piece_partition == i_test
-                train_set ^= test_set
-                test_segments = merge_segments(split_segments[test_set], soft_splits)
-            # validation set
-            if i_validate is None:
-                validate_segments = None
-            else:
-                validate_set = piece_partition == i_validate
-                train_set ^= validate_set
-                validate_segments = merge_segments(split_segments[validate_set], soft_splits)
-            # create split
-            train_segments = merge_segments(split_segments[train_set], soft_splits)
-            splits.append(Split(train_segments, validate_segments, test_segments, i_test, i_validate))
+
+    def make_split(
+            train_partitions: list[int],
+            i_reserved: int | None,
+            is_test: bool,
+            inner_validate: bool = False,
+    ) -> Split:
+        "Split training on ``train_partitions`` and holding out ``i_reserved``; ``inner_validate`` to add validation splits of the training partitions"
+        train = merge_segments(split_segments[np.isin(piece_partition, train_partitions)], soft_splits)
+        reserved = None if i_reserved is None else merge_segments(split_segments[piece_partition == i_reserved], soft_splits)
+        if inner_validate:
+            inner_splits = [make_split([p for p in train_partitions if p != i], i, False) for i in train_partitions]
+        else:
+            inner_splits = []
+        return Split(train, reserved, i_reserved, is_test, inner_splits)
+
+    all_partitions = list(range(partitions))
+    if test:
+        splits = [make_split([p for p in all_partitions if p != i], i, True, bool(validate)) for i in all_partitions]
+    elif validate:
+        splits = [make_split([p for p in all_partitions if p != i], i, False) for i in all_partitions]
+    else:
+        splits = [make_split(all_partitions, None, False)]
     return Splits(splits, partitions_arg, partitions, validate, test, model, segments, split_segments)
 
 
