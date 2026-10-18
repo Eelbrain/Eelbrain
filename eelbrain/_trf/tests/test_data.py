@@ -289,6 +289,13 @@ def test_split_data_unequal_partitions():
     assert_array_equal(splits.splits[1].reserved, [[100, 200]])
     assert_array_equal(splits.splits[1].train, [[0, 100], [200, 300]])
     assert_array_equal(splits.splits[0].train, [[100, 300]])
+    # more partitions than samples
+    with pytest.raises(ValueError, match="not enough samples"):
+        split_data(np.array([[0, 2], [2, 4]]), 5, validate=1, test=0)
+    with pytest.raises(ValueError, match="not enough samples"):  # continuous data
+        split_data(np.array([[0, 3]]), 5, validate=1, test=0)
+    with pytest.raises(ValueError, match="not enough samples"):  # partitions a multiple of the number of segments
+        split_data(np.array([[0, 2], [2, 4]]), 6, validate=1, test=0)
 
 
 def test_split_data_no_validate_no_test():
