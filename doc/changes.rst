@@ -120,6 +120,9 @@ New in 0.43
     <https://github.com/proloyd/neuro-currentRF>`_ package: data is kept as one
     array per case, which is a view into the input :class:`NDVar` data, so that
     estimators that do not need concatenated data do not copy it.
+  - The cross-validation scheme is public: :func:`split_data` creates the
+    :class:`Splits`, and :class:`Split` objects are nested (test splits contain
+    validation splits).
 
 * ICA-GUI (:func:`gui.select_components`):
 
