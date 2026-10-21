@@ -497,6 +497,99 @@ def lag_matrix(
     return windows[k0:k0 + n_times, ::-1]
 
 
+@dataclass
+class RowBlock:
+    """Rows of a :class:`SegmentedArray` that stem from one :class:`NDVar`
+
+    Attributes
+    ----------
+    name
+        Name of the NDVar.
+    dims
+        Dimensions of the NDVar other than case and time (the vector dimension
+        last).
+    index
+        Rows of the block in the array (the flattened ``dims``).
+    info
+        Info dictionary of the NDVar (not considered for equality: two blocks
+        are equal when they describe the same rows).
+    """
+    name: str | None
+    dims: tuple[Dimension, ...]
+    index: slice
+    info: dict = field(compare=False)
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        "Shape corresponding to :attr:`dims`"
+        return tuple(len(dim) for dim in self.dims)
+
+    @property
+    def n_rows(self) -> int:
+        "Number of rows in the block"
+        return self.index.stop - self.index.start
+
+    def names(self, per_vector: bool = False) -> list[str]:
+        "Name of each row (or, with ``per_vector``, of each vector) for error messages"
+        name = self.name or '<NDVar>'
+        dims = self.dims[:-1] if per_vector else self.dims
+        if not dims:
+            return [name]
+        return ["-".join((name, *map(str, values))) for values in product(*dims)]
+
+
+def package_values(
+        blocks: Sequence[RowBlock],
+        value: np.ndarray,
+        name: str | None = None,
+        info: dict | None = None,
+        dims: tuple[Dimension, ...] = (),
+        n_vector: int = 0,
+) -> list[NDVar | float]:
+    """Package per-row values as one NDVar per block
+
+    Parameters
+    ----------
+    blocks
+        The blocks describing the rows of ``value`` (e.g., :attr:`SegmentedArray.blocks`).
+    value
+        One value per row, ``(n_rows, ...)``, or, for vector data, one
+        value per vector, ``(n_rows / n_vector, ...)``, for values pooled
+        over the vector dimension.
+    name
+        NDVar name (default: the name of the block's NDVar).
+    info
+        NDVar info (default: the info of the block's NDVar).
+    dims
+        Dimensions of any axes of ``value`` after the row axis.
+    n_vector
+        Number of components in each vector (0 for scalar data).
+
+    Returns
+    -------
+    values
+        For each block, an :class:`NDVar` with the block's dimensions
+        (without the vector dimension for pooled values) followed by
+        ``dims``, or a scalar for a block without dimensions.
+    """
+    per_vector = n_vector and len(value) != blocks[-1].index.stop
+    out = []
+    for block in blocks:
+        if per_vector:
+            block_dims = block.dims[:-1]
+            block_value = value[block.index.start // n_vector:block.index.stop // n_vector]
+        else:
+            block_dims = block.dims
+            block_value = value[block.index]
+        out_dims = (*block_dims, *dims)
+        if not out_dims:
+            out.append(block_value[0])
+        else:
+            shape = tuple(len(dim) for dim in out_dims)
+            out.append(NDVar(block_value.reshape(shape), out_dims, block.name if name is None else name, block.info if info is None else info))
+    return out
+
+
 class SegmentedArray:
     """Time series stored as one array per segment, with lazy concatenation and copy-on-write
 
@@ -510,19 +603,22 @@ class SegmentedArray:
     flat
         The segments concatenated along time, if already available (the
         segments are then views into it).
-    n_vector
-        For vector data, the number of components in each vector; the scale is
-        then one entry per vector rather than per row.
+    blocks
+        Origin of the rows, one block per input NDVar (see :class:`RowBlock`;
+        see :meth:`from_ndvars` for building an array from NDVars).
+    vector_dim
+        For vector data, the vector dimension (the last dimension of each
+        block); the scale is then one entry per vector rather than per row.
     name
         Description of the data for error messages.
-    names
-        Name of each row for error messages.
 
     Attributes
     ----------
     segments : list of array
         Data for each segment, ``(n_rows, n_times_i)``; views into :attr:`flat`
         after :meth:`flatten`.
+    n_vector : int
+        Number of components in each vector (0 for scalar data).
     mean, scale : array
         Normalization that was applied to the data (``None`` before :meth:`normalize`).
     scale_norm : str
@@ -537,16 +633,75 @@ class SegmentedArray:
             segments: list[np.ndarray],
             owned: bool,
             flat: np.ndarray | None = None,
-            n_vector: int = 0,
+            blocks: Sequence[RowBlock] = (),
+            vector_dim: Dimension | None = None,
             name: str = 'data',
-            names: Sequence[str] | None = None,
     ):
         self.segments = segments
         self._owned = owned
         self._flat = flat
-        self.n_vector = n_vector
+        self.blocks = list(blocks)
+        self.vector_dim = vector_dim
+        self.n_vector = len(vector_dim) if vector_dim else 0
         self.name = name
-        self.names = names
+
+    @classmethod
+    def from_ndvars(
+            cls,
+            ndvars: Sequence[NDVar | Datalist],
+            case_to_segments: bool,
+            vector: bool,
+            name: str,
+            in_place: bool,
+    ) -> SegmentedArray:
+        """Build an array from NDVars, with the rows of successive NDVars stacked
+
+        Parameters
+        ----------
+        ndvars
+            NDVars (or lists of NDVars for ragged trials) with the same time
+            dimension and cases.
+        case_to_segments
+            Split the case dimension into segments.
+        vector
+            Treat a vector dimension as such (see :attr:`vector_dim`), rather
+            than as a collection of independent rows.
+        name
+            Description of the data for error messages.
+        in_place
+            Allow modifying the data of the input NDVars in place.
+        """
+        blocks = []
+        arrays = []  # (segments, flat, owned) for each NDVar
+        vector_dim = None
+        for v in ndvars:
+            v0 = v if isinstance(v, NDVar) else v[0]
+            if vector:
+                v_vector_dims = [dim for dim in v0.dims if dim._adjacency_type == 'vector']
+                if len(v_vector_dims) > 1:
+                    raise NotImplementedError(f"{name}: more than one vector dimension ({', '.join(dim.name for dim in v_vector_dims)})")
+                v_vector_dim = v_vector_dims[0] if v_vector_dims else None
+                if blocks and v_vector_dim != vector_dim:
+                    raise ValueError(f"{name}: not all NDVars have the same vector dimension")
+                vector_dim = v_vector_dim
+            last = (vector_dim.name, 'time') if vector_dim else ('time',)
+            dimnames = v0.get_dimnames(first='case' if case_to_segments else None, last=last)
+            dims = v0.get_dims(dimnames[1:-1] if case_to_segments else dimnames[:-1])
+            n_rows = reduce(mul, map(len, dims), 1)
+            start = blocks[-1].index.stop if blocks else 0
+            blocks.append(RowBlock(v.name, dims, slice(start, start + n_rows), _info.copy(v0.info)))
+            arrays.append(_ndvar_segments(v, dimnames, n_rows, case_to_segments))
+        if len(arrays) == 1:
+            segments, flat, owned = arrays[0]
+            return cls(segments, owned or in_place, flat, blocks, vector_dim, name)
+        # stack the rows of all NDVars into one concatenated array
+        n_times = [seg.shape[-1] for seg in arrays[0][0]]
+        stops = np.cumsum(n_times)
+        flat = np.empty((blocks[-1].index.stop, stops[-1]))
+        for (segments, _, _), block in zip(arrays, blocks):
+            for seg, start, stop in zip(segments, stops - n_times, stops):
+                flat[block.index, start:stop] = seg
+        return cls(_segment_views(flat, n_times), True, flat, blocks, vector_dim, name)
 
     def __getstate__(self) -> dict:
         # the segments hold all the data; the concatenated array is rebuilt by flatten()
@@ -556,6 +711,11 @@ class SegmentedArray:
     def n_rows(self) -> int:
         "Number of time series (rows in each segment)"
         return len(self.segments[0])
+
+    @property
+    def names(self) -> list[str]:
+        "Name of each row for error messages (empty without :attr:`blocks`)"
+        return [name for block in self.blocks for name in block.names()]
 
     @property
     def _n_times(self) -> list[int]:
@@ -693,18 +853,30 @@ class SegmentedArray:
         "Raise an error for rows that are flat or contain NaN"
         if self.scale is None:  # range of each row (NaN for rows containing NaN)
             check = np.max([seg.max(-1) for seg in self.segments], 0) - np.min([seg.min(-1) for seg in self.segments], 0)
-        else:
+            names = self.names
+        else:  # one entry per vector for vector data
             check = self.scale
+            names = [name for block in self.blocks for name in block.names(bool(self.n_vector))]
         is_flat = check == 0
         if np.any(is_flat):
-            if self.names:
-                raise ValueError(f"{self.name}: flat data in {', '.join(self.names[i] for i in np.flatnonzero(is_flat))}")
+            if names:
+                raise ValueError(f"{self.name}: flat data in {', '.join(names[i] for i in np.flatnonzero(is_flat))}")
             raise ValueError(f"{self.name}: contains {is_flat.sum()} flat time series")
         has_nan = np.isnan(check)
         if np.any(has_nan):
-            if self.names:
-                raise ValueError(f"{self.name}: NaN in {', '.join(self.names[i] for i in np.flatnonzero(has_nan))}")
+            if names:
+                raise ValueError(f"{self.name}: NaN in {', '.join(names[i] for i in np.flatnonzero(has_nan))}")
             raise ValueError(f"{self.name}: contains NaN")
+
+    def package_values(
+            self,
+            value: np.ndarray,
+            name: str | None = None,
+            info: dict | None = None,
+            dims: tuple[Dimension, ...] = (),
+    ) -> list[NDVar | float]:
+        "Package per-row values (e.g., :attr:`mean`) as one NDVar per block (see :func:`package_values`)"
+        return package_values(self.blocks, value, name, info, dims, self.n_vector)
 
 
 def _time_structure(v: NDVar | Datalist) -> tuple[bool, int, UTS | list[UTS]]:
@@ -779,10 +951,12 @@ class DeconvolutionData:
     Attributes
     ----------
     x : SegmentedArray
-        Predictors, ``(n_predictors, n_times_i)`` per segment.
+        Predictors, ``(n_predictors, n_times_i)`` per segment, with one
+        :class:`RowBlock` per predictor variable.
     y : SegmentedArray
         Dependent variable, ``(n_signals, n_times_i)`` per segment (``None``
-        without ``y``); ``y.scale`` has one entry per vector.
+        without ``y``), with a single :class:`RowBlock`; ``y.scale`` has one
+        entry per vector.
     segments : array
         ``(n_segments, 2)`` array of segment ``[start, stop]`` indices on the
         concatenated time axis. The segments delimit chunks of continuous data,
@@ -795,52 +969,30 @@ class DeconvolutionData:
         Total number of time samples across all segments.
     x_name : str | list of str
         Name of the predictor (a list for multiple predictors).
-    x_meta : list of tuple
-        ``(name, dims, index)`` for each predictor variable: its name, its
-        dimensions other than case and time, and the index of its rows in ``x``.
     basis : float
         Length of the basis window applied to ``x`` (0 for none).
-    y_name : str
-        Name of the dependent variable.
-    ydims : tuple of Dimension
-        Dimensions of ``y`` other than case and time (vector dimension last).
-    yshape : tuple of int
-        Shape corresponding to ``ydims``.
-    vector_dim : Dimension
-        Vector dimension of ``y`` (``None`` for scalar data).
-    y_info : dict
-        Info dictionary of ``y``.
     splits : Splits
         Cross-validation scheme (``None`` before :meth:`initialize_cross_validation`).
     """
-    # y (None without y)
-    y: SegmentedArray | None = None
-    y_name: str | None = None
-    y_info: dict | None = None
-    ydims: tuple[Dimension, ...] | None = None
-    yshape: tuple[int, ...] | None = None
-    vector_dim: Dimension | None = None
-    full_y_dims: tuple[Dimension, ...] | None = None
+    y: SegmentedArray | None = None  # None without y
     # cross-validation
     splits: Splits | None = None
 
     def __init__(
             self,
             x: NDVarArg | Sequence[NDVarArg],
-            y: NDVarArg = None,
+            y: NDVarArg | None = None,
             data: Dataset = None,
             in_place: bool = False,
     ):
         if isinstance(x, (NDVar, Datalist, str)):
             multiple_x = False
             xs = [asndvar(x, data=data, ragged=True)]
-            x_name = xs[0].name
         else:
             multiple_x = True
             xs = [asndvar(x_, data=data, ragged=True) for x_ in x]
             if len(xs) == 0:
                 raise ValueError(f"{x=} of length 0")
-            x_name = [x_.name for x_ in xs]
         # segment structure
         structure = is_ragged, n_cases, time_dim = _time_structure(xs[0])
         for xi in xs[1:]:
@@ -858,33 +1010,7 @@ class DeconvolutionData:
         stops = np.cumsum(segment_n_times, dtype=np.int64)
         segments = np.hstack(((stops - segment_n_times)[:, newaxis], stops[:, newaxis]))
 
-        # x: rows for each predictor
-        x_meta = []  # [(x.name, xdims, index), ...]; index is int or slice
-        x_names = []
-        x_arrays = []  # (segments, flat, owned) for each predictor
-        for xi in xs:
-            x0i = xi[0] if is_ragged else xi
-            dimnames = x0i.get_dimnames(first='case' if case_to_segments else None, last='time')
-            dims = x0i.get_dims(dimnames[1:-1] if case_to_segments else dimnames[:-1])
-            n_rows = reduce(mul, [len(dim) for dim in dims], 1)
-            index = len(x_names) if n_rows == 1 else slice(len(x_names), len(x_names) + n_rows)
-            x_repr = dataobj_repr(x0i)
-            if dims:
-                x_names.extend("-".join((x_repr, *map(str, v))) for v in product(*dims))
-            else:
-                x_names.append(x_repr)
-            x_meta.append((x0i.name, dims, index))
-            x_arrays.append(_ndvar_segments(xi, dimnames, n_rows, case_to_segments))
-        if multiple_x:
-            x_flat = np.empty((len(x_names), int(stops[-1])))
-            for (x_segments, _, _), (_, _, index) in zip(x_arrays, x_meta):
-                for seg, (start, stop) in zip(x_segments, segments):
-                    x_flat[index, start:stop] = seg
-            self.x = SegmentedArray(_segment_views(x_flat, segment_n_times), True, x_flat, name='x', names=x_names)
-        else:
-            x_segments, x_flat, x_owned = x_arrays[0]
-            self.x = SegmentedArray(x_segments, x_owned or in_place, x_flat, name='x', names=x_names)
-
+        self.x = SegmentedArray.from_ndvars(xs, case_to_segments, False, 'x', in_place)
         self.is_ragged = is_ragged
         self.has_case = has_case
         self.n_cases = n_cases
@@ -894,8 +1020,7 @@ class DeconvolutionData:
         self.n_times = n_times
         self.n_times_flat = int(stops[-1])
         self.multiple_x = multiple_x
-        self.x_name = x_name
-        self.x_meta = x_meta
+        self.x_name = [block.name for block in self.x.blocks] if multiple_x else self.x.blocks[0].name
         self.segments = segments
         self.shortest_segment_n_times = np.min(np.diff(segments, axis=1))
         # basis
@@ -911,34 +1036,7 @@ class DeconvolutionData:
         y_structure = _time_structure(y)
         if y_structure != structure:
             raise ValueError(f"y={dataobj_repr(y)}: does not have the same time dimension and cases as x: y={y_structure[1:]}, x={structure[1:]}")
-        y0 = y[0] if is_ragged else y
-        # vector dimension
-        vector_dims = [dim.name for dim in y0.dims if dim._adjacency_type == 'vector']
-        if not vector_dims:
-            vector_dim = None
-        elif len(vector_dims) == 1:
-            vector_dim = y0.get_dim(vector_dims.pop())
-        else:
-            raise NotImplementedError(f"{y=}: more than one vector dimension ({', '.join(vector_dims)})")
-        # y rows: ydims x time
-        last = (vector_dim.name, 'time') if vector_dim else ('time',)
-        y_dimnames = y0.get_dimnames(first='case' if case_to_segments else None, last=last)
-        ydims = y0.get_dims(y_dimnames[1:-1] if case_to_segments else y_dimnames[:-1])
-        n_rows = reduce(mul, map(len, ydims), 1)
-        y_segments, y_flat, y_owned = _ndvar_segments(y, y_dimnames, n_rows, case_to_segments)
-        n_vector = len(vector_dim) if vector_dim else 0
-        self.y = SegmentedArray(y_segments, y_owned or in_place, y_flat, n_vector, f"y={dataobj_repr(y)}")
-        self.y_name = y.name
-        self.y_info = _info.copy(y0.info)
-        self.ydims = ydims
-        self.yshape = tuple(map(len, ydims))
-        self.vector_dim = vector_dim
-        if is_ragged:
-            self.full_y_dims = None
-        elif case_to_segments:
-            self.full_y_dims = y.get_dims((*y_dimnames[1:-1], 'case', 'time'))
-        else:
-            self.full_y_dims = y.get_dims(y_dimnames)
+        self.y = SegmentedArray.from_ndvars([y], case_to_segments, True, f"y={dataobj_repr(y)}", in_place)
 
     def flatten(self):
         "Build the concatenated arrays (see :meth:`SegmentedArray.flatten`)"
@@ -1027,8 +1125,8 @@ class DeconvolutionData:
 
     def initialize_cross_validation(
             self,
-            partitions: int = None,
-            model: CategorialArg = None,
+            partitions: int | None = None,
+            model: CategorialArg | None = None,
             data: Dataset = None,
             validate: int = 1,
             test: int = 1,
@@ -1071,46 +1169,18 @@ class DeconvolutionData:
 
         All four are ``None`` if the data was not normalized.
         """
-        if self.x.mean is not None:
-            # y
-            if self.y is None or self.y.mean is None:
-                y_mean = y_scale = None
-            else:
-                if self.yshape:
-                    y_mean = NDVar(self.y.mean.reshape(self.yshape), self.ydims, self.y_name, self.y_info)
-                else:
-                    y_mean = self.y.mean[0]
-                # scale does not include vector dim
-                if self.vector_dim:
-                    dims = self.ydims[:-1]
-                    shape = self.yshape[:-1]
-                else:
-                    dims = self.ydims
-                    shape = self.yshape
-                if shape:
-                    y_scale = NDVar(self.y.scale.reshape(shape), dims, self.y_name, self.y_info)
-                else:
-                    y_scale = self.y.scale[0]
-            # x
-            x_mean = []
-            x_scale = []
-            for name, xdims, index in self.x_meta:
-                if xdims:
-                    shape = [len(dim) for dim in xdims]
-                    x_mean.append(NDVar(self.x.mean[index].reshape(shape), xdims, name))
-                    x_scale.append(NDVar(self.x.scale[index].reshape(shape), xdims, name))
-                else:
-                    x_mean.append(self.x.mean[index])
-                    x_scale.append(self.x.scale[index])
-            if self.multiple_x:
-                x_mean = tuple(x_mean)
-                x_scale = tuple(x_scale)
-            else:
-                x_mean = x_mean[0]
-                x_scale = x_scale[0]
+        if self.x.mean is None:
+            return None, None, None, None
+        if self.y is None or self.y.mean is None:
+            y_mean = y_scale = None
         else:
-            y_mean = y_scale = x_mean = x_scale = None
-        return y_mean, y_scale, x_mean, x_scale
+            y_mean, = self.y.package_values(self.y.mean)
+            y_scale, = self.y.package_values(self.y.scale)
+        x_mean = self.x.package_values(self.x.mean)
+        x_scale = self.x.package_values(self.x.scale)
+        if self.multiple_x:
+            return y_mean, y_scale, tuple(x_mean), tuple(x_scale)
+        return y_mean, y_scale, x_mean[0], x_scale[0]
 
     def package_kernel(
             self,
@@ -1132,73 +1202,15 @@ class DeconvolutionData:
             One :class:`NDVar` per predictor (a tuple for multiple predictors).
         """
         h_time = UTS(tstart, self.time.tstep, h.shape[-1], self.time.unit)
-        hs = []
+        y_info = self.y.blocks[0].info
         if self.x.mean is not None:
-            info = _info.for_normalized_data(self.y_info, 'Response')
+            info = _info.for_normalized_data(y_info, 'Response')
         else:
-            info = self.y_info
-
-        for name, xdims, index in self.x_meta:
-            dims = (*self.ydims, *xdims, h_time)
-            shape = [len(dim) for dim in dims]
-            x = h[:, index, :].reshape(shape)
-            hs.append(NDVar(x, dims, name, info))
-
+            info = y_info
+        hs = [self.y.package_values(h[:, block.index], block.name, info, (*block.dims, h_time))[0] for block in self.x.blocks]
         if self.multiple_x:
             return tuple(hs)
-        else:
-            return hs[0]
-
-    def package_value(
-            self,
-            value: np.ndarray,
-            name: str,
-            info: dict = None,
-            meas: str = None,
-    ) -> NDVar | float:
-        """Package a per-signal value (e.g., a fit metric) like ``y``
-
-        Parameters
-        ----------
-        value
-            One value per signal, ``(n_y,)``, or one value per vector,
-            ``(n_y / n_vector,)``, for values pooled over the vector dimension.
-        name
-            NDVar name.
-        info
-            NDVar info (default: the info of ``y``).
-        meas
-            Measurement type, used to generate the NDVar info.
-
-        Returns
-        -------
-        value
-            :class:`NDVar` with the dimensions of ``y`` (without case and time),
-            or a scalar for a single time series.
-        """
-        if not self.yshape:
-            return value[0]
-
-        # shape
-        has_vector = value.shape[0] == self.y.n_rows
-        if self.vector_dim and not has_vector:
-            dims = self.ydims[:-1]
-            shape = self.yshape[:-1]
-        else:
-            dims = self.ydims
-            shape = self.yshape
-        if not dims:
-            return value[0]
-        elif len(shape) > 1:
-            value = value.reshape(shape)
-
-        # info
-        if meas:
-            info = _info.for_stat_map(meas, old=info)
-        elif info is None:
-            info = self.y_info
-
-        return NDVar(value, dims, name, info)
+        return hs[0]
 
     def package_y_like(
             self,
@@ -1214,17 +1226,11 @@ class DeconvolutionData:
         name
             NDVar name.
         """
-        if not self.full_y_dims:
-            raise NotImplementedError
-        shape = tuple(map(len, self.full_y_dims))
-        data = data.reshape(shape)
-        # roll Case to first axis
-        for axis, dim in enumerate(self.full_y_dims):
-            if isinstance(dim, Case):
-                data = np.rollaxis(data, axis)
-                dims = list(self.full_y_dims)
-                dims.insert(0, dims.pop(axis))
-                break
-        else:
-            dims = self.full_y_dims
-        return NDVar(data, dims, name)
+        if self.is_ragged:
+            raise NotImplementedError("package_y_like() for ragged data")
+        dims = self.y.blocks[0].dims
+        shape = tuple(len(dim) for dim in dims)
+        if self.case_to_segments:
+            data = np.rollaxis(data.reshape((*shape, self.n_cases, self.n_times)), -2)
+            return NDVar(data, (Case, *dims, self.time), name)
+        return NDVar(data.reshape((*shape, self.n_times)), (*dims, self.time), name)

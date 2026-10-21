@@ -7,7 +7,7 @@ import pytest
 
 from eelbrain import Factor, NDVar, Scalar, Space, datasets, epoch_impulse_predictor
 from eelbrain._ndvar._convolve import convolve_1d
-from eelbrain._trf.shared import DeconvolutionData, Split, Splits, lag_matrix, split_data
+from eelbrain._trf.shared import DeconvolutionData, Split, Splits, lag_matrix, package_values, split_data
 
 
 def test_deconvolution_data_continuous():
@@ -212,12 +212,20 @@ def test_deconvolution_data_check():
     x = ds['uts'].copy()
     DeconvolutionData(x, y).check_data()
     y.x[:, 1, :] = 0.1
-    with pytest.raises(ValueError, match="1 flat time series"):
+    with pytest.raises(ValueError, match="flat data in utsnd-1"):
         DeconvolutionData(x, y).check_data()
     y = ds['utsnd']
     x.x[3, 10] = np.nan
     with pytest.raises(ValueError, match="NaN in"):
         DeconvolutionData(x, y).check_data()
+    # vector data: the scale has one entry per vector
+    x = ds['uts']
+    y = NDVar(np.random.RandomState(0).normal(size=(60, 2, 3, 100)), (x.dims[0], Scalar('s', [0, 1]), Space('RAI'), x.time), 'y')
+    y.x[:, 1] = 0
+    data = DeconvolutionData(x, y)
+    data.normalize('l2')
+    with pytest.raises(ValueError, match="flat data in y-1$"):
+        data.check_data()
 
 
 def test_deconvolution_data_normalize_x():
@@ -263,10 +271,26 @@ def test_deconvolution_data_vector_only():
     np.testing.assert_allclose(y_mean.x, y.mean('time').x)
     assert np.isscalar(y_scale)
     # per-row values keep the vector dimension, per-vector values are scalar
-    value = data.package_value(np.arange(2.), 'value')
+    value = data.y.package_values(np.arange(2.), 'value')[0]
     assert value.dims == (space,)
     assert_array_equal(value.x, [0, 1])
-    assert data.package_value(np.arange(1.), 'value') == 0
+    assert data.y.package_values(np.arange(1.), 'value')[0] == 0
+    # packaging from the blocks alone, without the array
+    assert package_values(data.y.blocks, np.arange(1.), 'value', n_vector=2)[0] == 0
+    assert_array_equal(package_values(data.y.blocks, np.arange(2.), 'value', n_vector=2)[0].x, [0, 1])
+
+
+def test_row_block_equality():
+    "Blocks identify rows by name and dimensions; the NDVar info does not matter"
+    ds = datasets._get_continuous()
+    x = ds['x1']
+    data = DeconvolutionData([x, ds['x2']], ds['y'])
+    x_other = NDVar(x.x, x.dims, x.name, {'unit': 'other'})
+    data_other = DeconvolutionData([x_other, ds['x2']], ds['y'])
+    assert data_other.x.blocks == data.x.blocks
+    assert data_other.y.blocks == data.y.blocks
+    assert DeconvolutionData([ds['x2'], x], ds['y']).x.blocks != data.x.blocks
+    assert DeconvolutionData(x, ds['y']).x.blocks != data.x.blocks
 
 
 def test_lag_matrix():

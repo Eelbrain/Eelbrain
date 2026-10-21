@@ -529,8 +529,8 @@ class BoostingResult(PickleableDataClass):
                 hs = {h.name: h for h in hs}
                 hs = [hs[x] for x in x_use]
             h_array = []
-            for h, (_, xdims, _) in zip(hs, x_data.x_meta):
-                dimnames = [*y_dimnames, *[dim.name for dim in xdims], 'time']
+            for h, block in zip(hs, x_data.x.blocks):
+                dimnames = [*y_dimnames, *[dim.name for dim in block.dims], 'time']
                 h_data = h.get_data(dimnames)
                 h_data = h_data.reshape((n_y, -1, h_data.shape[-1]))
                 h_array.append(h_data)
@@ -903,7 +903,7 @@ class Boosting:
         if tstart_is_sequence != isinstance(tstop, (tuple, list, np.ndarray)):
             raise TypeError(f"{tstart=}, {tstop=}: need to be both scalar or both sequences")
         elif tstart_is_sequence:
-            n_predictors = len(self.data.x_meta)
+            n_predictors = len(self.data.x.blocks)
             if len(tstart) != n_predictors:
                 raise ValueError(f'{tstart=}: {len(tstart)=} is different from the number of predictors ({n_predictors})')
             elif len(tstop) != len(tstart):
@@ -915,7 +915,7 @@ class Boosting:
                 self.tstop = tuple(tstop)
             else:
                 self.tstart, self.tstop = tstart[0], tstop[0]
-            n_xs = [reduce(mul, map(len, xdims), 1) for _, xdims, _ in self.data.x_meta]
+            n_xs = [block.n_rows for block in self.data.x.blocks]
             tstart_by_x = [t for t, n in zip(tstart, n_xs) for _ in range(n)]
             tstop_by_x = [t for t, n in zip(tstop, n_xs) for _ in range(n)]
         else:
@@ -967,8 +967,8 @@ class Boosting:
 
     def _get_h_failed(self, split_results: list[SplitResult]) -> np.ndarray:
         out = np.all([split.h_failed for split in split_results], 0)
-        if self.data.vector_dim:
-            out = np.all(out.reshape((len(self.data.vector_dim), -1)), 0)
+        if self.data.y.vector_dim:
+            out = np.all(out.reshape((len(self.data.y.vector_dim), -1)), 0)
         return out
 
     def _evaluate(
@@ -982,8 +982,8 @@ class Boosting:
         # y dimensions
         y = self.data.y.flat
         n_y = len(y)
-        if self.data.vector_dim:
-            n_vec = len(self.data.vector_dim)
+        if self.data.y.vector_dim:
+            n_vec = len(self.data.y.vector_dim)
             n_vecs = n_y // n_vec
         else:
             n_vec = n_vecs = 0
@@ -1060,7 +1060,7 @@ class Boosting:
 
         # fit evaluation
         if metrics is None:
-            if self.data.vector_dim:
+            if self.data.y.vector_dim:
                 metrics = [f'vec-{self.error}', f'vec-{self.error}-total', 'vec-corr']
                 if self.error == 'l1':
                     metrics.append('vec-corr-l1')
@@ -1122,6 +1122,7 @@ class Boosting:
         h = self.data.package_kernel(h_x, self.tstart_h)
         # package model parameters
         y_mean, y_scale, x_mean, x_scale = self.data.data_scale_ndvars()
+        y_block = self.data.y.blocks[0]
         if debug:
             evaluations['y_pred'] = self.data.package_y_like(self.y_pred, 'y-pred')
             evaluations['fit'] = self
@@ -1132,11 +1133,11 @@ class Boosting:
             for split, partition, h_i, evaluations_i in zip(top_splits, partitions, hs, partition_evaluations):
                 h_i = self.data.package_kernel(h_i, self.tstart_h)
                 result = BoostingResult(
-                    self.data.y_name, self.data.x_name, self.tstart, self.tstop, self.data.x.mean is not None, self.delta, self.mindelta, self.error, self.selective_stopping,
+                    y_block.name, self.data.x_name, self.tstart, self.tstop, self.data.x.mean is not None, self.delta, self.mindelta, self.error, self.selective_stopping,
                     y_mean, y_scale, x_mean, x_scale,
                     h_i, self._get_h_failed(partition),
                     self.data.basis, self.data.basis_window, None,
-                    int(np.sum(split.reserved[:, 1] - split.reserved[:, 0])), self.data.y_info, self.data.ydims,
+                    int(np.sum(split.reserved[:, 1] - split.reserved[:, 0])), y_block.info, y_block.dims,
                     algorithm_version=BOOSTING_VERSION, execution_context=execution_context,
                     i_test=split.i_reserved if cross_fit else None, i_validate=None if cross_fit else split.i_reserved, **evaluations_i)
                 partition_results_list.append(result)
@@ -1144,7 +1145,7 @@ class Boosting:
             partition_results_list = None
         return BoostingResult(
             # basic parameters
-            self.data.y_name, self.data.x_name, self.tstart, self.tstop, self.data.x.mean is not None, self.delta, self.mindelta, self.error, self.selective_stopping,
+            y_block.name, self.data.x_name, self.tstart, self.tstop, self.data.x.mean is not None, self.delta, self.mindelta, self.error, self.selective_stopping,
             # data properties
             y_mean, y_scale, x_mean, x_scale,
             # results
@@ -1152,7 +1153,7 @@ class Boosting:
             # advanced parameters
             self.data.basis, self.data.basis_window, self.data.splits,
             # advanced data properties
-            n_samples, self.data.y_info, self.data.ydims,
+            n_samples, y_block.info, y_block.dims,
             partition_results=partition_results_list,
             algorithm_version=BOOSTING_VERSION, execution_context=execution_context,
             i_test=i_test, **evaluations)
