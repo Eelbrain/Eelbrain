@@ -322,6 +322,7 @@ class NCRF(Estimator):
             else:
                 y = y.sub(sensor=cov.ch_names)
         x = xs[0] if len(xs) == 1 else xs
+        # Use component API because xs is organized by predictor [pred1, pred2, ...] whereas fit_ncrf expects xs organized by trial
         from ncrf import ChampLasso, CrossValidation, NCRFEstimator, RegressionData
         data = RegressionData.from_data(y, x, tstart, tstop, self.basis_stride, basis_std=self.basis_std)
         estimator = NCRFEstimator.from_lead_field(fwd, cov)

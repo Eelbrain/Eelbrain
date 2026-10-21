@@ -13,7 +13,7 @@ import scipy.signal
 from scipy.linalg import norm
 
 from .. import _info
-from .._data_obj import CategorialArg, NDVarArg, Datalist, Dataset, Factor, Interaction, NDVar, Case, UTS, dataobj_repr, ascategorial, asndvar
+from .._data_obj import CategorialArg, NDVarArg, Datalist, Dataset, Dimension, Factor, Interaction, NDVar, Case, UTS, dataobj_repr, ascategorial, asndvar
 from .._utils import PickleableDataClass
 
 if TYPE_CHECKING:
@@ -46,13 +46,13 @@ class EQMixIn:
 class Split(PickleableDataClass, EQMixIn):
     """One cross-validation split of the data (see :class:`Splits`)
 
-    A split divides the data available to it into training segments and
-    (optionally) one held-out partition. The held-out partition is either a
-    *test* set, which is never consulted while estimating the kernel, or a
-    *validation* set, which is consulted repeatedly during fitting (for early
-    stopping). A test split can in turn contain validation splits, which divide
-    its training data again; each split without inner splits (leaf)
-    corresponds to one boosting run.
+    A split divides the data into training segments and (optionally) one held-out
+    partition. The held-out partition is either a *test* set, which is never consulted
+    while estimating the kernel, or a *validation* set, which is consulted repeatedly
+    during fitting (e.g., for early stopping).
+    A train/test split can in turn contain train/validation splits which subdivide
+    its training data.
+    Each split without inner splits (a "leaf") corresponds to one boosting run.
 
     Attributes
     ----------
@@ -99,14 +99,14 @@ class Split(PickleableDataClass, EQMixIn):
 
     def __setstate__(self, state: dict):
         if 'validate' in state:
-            # flat format (before nested splits): one split per boosting run
+            # backwards compatibility for flat format (before nested splits introduced in 0.43)
             train, validate, test, i_test = (state[key] for key in ['train', 'validate', 'test', 'i_test'])
             i_validate = state.get('i_validate')  # not stored before BoostingResult version 16 (restored by Splits.__setstate__)
             if validate is None:
                 state = {'train': train, 'reserved': test, 'i_reserved': None if test is None else i_test, 'is_test': test is not None}
             elif test is None:
                 state = {'train': train, 'reserved': validate, 'i_reserved': i_validate}
-            else:  # nested: test split with a single validation split
+            else:
                 validation_split = Split(train, validate, i_validate)
                 state = {'train': validation_split.train_and_reserved, 'reserved': test, 'i_reserved': i_test, 'is_test': True, 'splits': [validation_split]}
         PickleableDataClass.__setstate__(self, state)
@@ -114,7 +114,7 @@ class Split(PickleableDataClass, EQMixIn):
 
 def merge_segments(
         segments: np.ndarray,
-        soft_splits: bool | np.ndarray = None,
+        soft_splits: bool | np.ndarray,
 ) -> np.ndarray:
     """Merge adjacent segments at soft boundaries
 
@@ -123,11 +123,12 @@ def merge_segments(
     segments
         ``(n, 2)`` array of ``[start, stop]`` indices, sorted by time.
     soft_splits
-        Boundaries at which adjacent segments are merged: ``True`` to merge at
-        all boundaries, an array of boundary indices to merge only at those, or
-        ``None`` to return ``segments`` unchanged.
+        Boundaries at which adjacent segments are merged:
+        ``True`` to merge at all adjacent segments,
+         an array of boundary indices to merge only at those, or
+        ``False`` to return ``segments`` unchanged.
     """
-    if soft_splits is None or isinstance(soft_splits, np.ndarray) and len(soft_splits) == 0:
+    if soft_splits is False or isinstance(soft_splits, np.ndarray) and len(soft_splits) == 0:
         return segments
     out_segments = list(segments)
     for i in range(len(out_segments) - 1, 0, -1):
@@ -144,7 +145,12 @@ def _restore_validation_indices(
         n_partitions: int,
         i_test: int | None = None,
 ):
-    "Fill in validation partition indices missing from splits pickled before BoostingResult version 16 (created in partition order, skipping the test partition)"
+    """Backwards compatibility
+
+    Fill in validation partition indices missing from splits pickled before
+    BoostingResult version 16 (created in partition order, skipping the test
+    partition)
+    """
     partitions = [p for p in range(n_partitions) if p != i_test]
     for p, split in zip(partitions, splits):
         if split.i_reserved is None and split.reserved is not None:
@@ -194,12 +200,12 @@ class Splits(PickleableDataClass, EQMixIn):
     split_segments: np.ndarray = None
 
     def __setstate__(self, state: dict):
+        # Backwards compatibility for BoostingResult version < 18
         splits = state['splits']
         if splits:
             _restore_validation_indices(splits, state['n_partitions'])
         test_splits = [split for split in splits if split.is_test] if splits else []
         if len({split.i_reserved for split in test_splits}) < len(test_splits):
-            # flat format (before nested splits): one top-level split per boosting run; merge test splits with the same test partition
             soft_splits = np.setdiff1d(state['split_segments'][1:, 0], state['segments'][:, 0])
             merged = {}
             for split in splits:
@@ -380,7 +386,7 @@ def split_data(
         # create segments, and assign each to a partition
         if cell_size >= partitions:
             # whole segments, interleaved within each cell
-            soft_splits = None
+            soft_splits = False
             split_segments = segments
             piece_partition = np.empty(n_segments, np.int64)
             for cell_index in categories:
@@ -522,18 +528,18 @@ class SegmentedArray:
     scale_norm : str
         The ``error`` argument of :meth:`normalize` (``None`` before :meth:`normalize`).
     """
-    mean: np.ndarray = None
-    scale: np.ndarray = None
-    scale_norm: str = None
+    mean: np.ndarray | None = None
+    scale: np.ndarray | None = None
+    scale_norm: str | None = None
 
     def __init__(
             self,
             segments: list[np.ndarray],
             owned: bool,
-            flat: np.ndarray = None,
+            flat: np.ndarray | None = None,
             n_vector: int = 0,
             name: str = 'data',
-            names: Sequence[str] = None,
+            names: Sequence[str] | None = None,
     ):
         self.segments = segments
         self._owned = owned
@@ -704,7 +710,8 @@ class SegmentedArray:
 def _time_structure(v: NDVar | Datalist) -> tuple[bool, int, UTS | list[UTS]]:
     "``(is_ragged, n_cases, time_dim)`` of an NDVar or ragged list of NDVars (``n_cases=0`` without case dimension)"
     if isinstance(v, NDVar):
-        return False, len(v) if v.has_case else 0, v.get_dim('time')
+        n_cases = len(v) if v.has_case else 0
+        return False, n_cases, v.get_dim('time')
     return True, len(v), [vi.get_dim('time') for vi in v]
 
 
@@ -807,15 +814,15 @@ class DeconvolutionData:
         Cross-validation scheme (``None`` before :meth:`initialize_cross_validation`).
     """
     # y (None without y)
-    y: SegmentedArray = None
-    y_name: str = None
-    y_info: dict = None
-    ydims: tuple = None
-    yshape: tuple = None
-    vector_dim = None
-    full_y_dims: tuple = None
+    y: SegmentedArray | None = None
+    y_name: str | None = None
+    y_info: dict | None = None
+    ydims: tuple[Dimension, ...] | None = None
+    yshape: tuple[int, ...] | None = None
+    vector_dim: Dimension | None = None
+    full_y_dims: tuple[Dimension, ...] | None = None
     # cross-validation
-    splits: Splits = None
+    splits: Splits | None = None
 
     def __init__(
             self,
