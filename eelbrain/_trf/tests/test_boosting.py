@@ -240,6 +240,8 @@ def test_boosting_epochs():
 def test_boosting_object():
     "Test Boosting object"
     ds = datasets._get_continuous(ynd=True)
+    with pytest.raises(ValueError, match="without y"):
+        Boosting(DeconvolutionData('x2', data=ds))
     data = DeconvolutionData('x2', 'y', ds)
     data.apply_basis(0.2, 'hamming')
     data.normalize('l1')

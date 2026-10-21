@@ -869,6 +869,8 @@ class Boosting:
             self,
             data: DeconvolutionData,
     ):
+        if data.y is None:
+            raise ValueError("data without y: boosting requires a dependent variable")
         data.flatten()
         self.data = data
 
