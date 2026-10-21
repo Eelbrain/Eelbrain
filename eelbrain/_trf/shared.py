@@ -1180,7 +1180,7 @@ class DeconvolutionData:
             return value[0]
 
         # shape
-        has_vector = value.shape[0] > self.yshape[0]
+        has_vector = value.shape[0] == self.y.n_rows
         if self.vector_dim and not has_vector:
             dims = self.ydims[:-1]
             shape = self.yshape[:-1]

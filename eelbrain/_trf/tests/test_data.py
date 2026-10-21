@@ -5,7 +5,7 @@ import numpy as np
 from numpy.testing import assert_array_equal
 import pytest
 
-from eelbrain import Factor, NDVar, Scalar, datasets, epoch_impulse_predictor
+from eelbrain import Factor, NDVar, Scalar, Space, datasets, epoch_impulse_predictor
 from eelbrain._ndvar._convolve import convolve_1d
 from eelbrain._trf.shared import DeconvolutionData, Split, Splits, lag_matrix, split_data
 
@@ -247,6 +247,26 @@ def test_deconvolution_data_normalize_x():
     y_mean, y_scale, x_mean_2, x_scale_2 = data_2.data_scale_ndvars()
     assert y_mean is None and y_scale is None
     assert x_mean_2 == pytest.approx(x_mean + x_scale) and x_scale_2 == pytest.approx(x_scale * 2)
+
+
+def test_deconvolution_data_vector_only():
+    "Packaging values for y whose only non-time dimension is a vector dimension"
+    ds = datasets._get_continuous()
+    x = ds['x1']
+    rng = np.random.RandomState(0)
+    space = Space('RA')
+    y = NDVar(rng.normal(size=(2, len(x))), (space, x.time), 'y')
+    data = DeconvolutionData(x, y)
+    data.normalize('l2')
+    y_mean, y_scale, _, _ = data.data_scale_ndvars()
+    assert y_mean.dims == (space,)
+    np.testing.assert_allclose(y_mean.x, y.mean('time').x)
+    assert np.isscalar(y_scale)
+    # per-row values keep the vector dimension, per-vector values are scalar
+    value = data.package_value(np.arange(2.), 'value')
+    assert value.dims == (space,)
+    assert_array_equal(value.x, [0, 1])
+    assert data.package_value(np.arange(1.), 'value') == 0
 
 
 def test_lag_matrix():
