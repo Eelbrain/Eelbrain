@@ -1001,12 +1001,14 @@ class Boosting:
             y_pred_iter = repeat(y_pred, n_y)
 
         all_evaluators, evaluators_s, evaluators_v = get_evaluators(metrics, self.data, eval_segments)
+        x = self.data.x.flat
+        x_pads = self.data.x.pads
 
         # fit and evaluate each y
         for i_y, y_pred_i in enumerate(y_pred_iter):
             # for cross-validation, different segments are predicted by different h:
             for h, segments in hs:
-                convolve_1d(h[i_y], self.data.x.flat, self.data.x.pads, self._i_start, segments, y_pred_i)
+                convolve_1d(h[i_y], x, x_pads, self._i_start, segments, y_pred_i)
 
             if evaluators_s:
                 for e in evaluators_s:
