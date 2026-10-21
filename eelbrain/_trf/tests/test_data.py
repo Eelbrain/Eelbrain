@@ -223,8 +223,25 @@ def test_deconvolution_data_check():
     y = NDVar(np.random.RandomState(0).normal(size=(60, 2, 3, 100)), (x.dims[0], Scalar('s', [0, 1]), Space('RAI'), x.time), 'y')
     y.x[:, 1] = 0
     data = DeconvolutionData(x, y)
-    data.normalize('l2')
+    # normalizing checks before modifying the data (also x when the check of y fails)
     with pytest.raises(ValueError, match="flat data in y-1$"):
+        data.normalize('l2')
+    assert data.y.mean is None and data.y.scale_norm is None
+    assert_array_equal(data.y.segments[0], y.x[0].reshape((6, 100)))
+    assert data.x.mean is None and data.x.scale_norm is None
+    assert_array_equal(data.x.segments[0], x.x[:1])
+    x.x[3, 10] = np.nan
+    with pytest.raises(ValueError, match="NaN in uts"):
+        DeconvolutionData(x, y).x.normalize(True, 'l1')
+    # a scale supplied by the user does not vouch for the data
+    data = DeconvolutionData(x, y)
+    data.x.normalize(0., 1.)
+    with pytest.raises(ValueError, match="NaN in uts"):
+        data.check_data()
+    x.x[:] = 1
+    data = DeconvolutionData(x, y)
+    data.x.normalize(0., 1.)
+    with pytest.raises(ValueError, match="flat data in uts"):
         data.check_data()
 
 
@@ -233,7 +250,7 @@ def test_deconvolution_data_normalize_x():
     ds = datasets._get_continuous(ynd=True)
     y, x = ds['y'], ds['x1']
     data = DeconvolutionData(x, y)
-    data.x.normalize('l2')
+    data.x.normalize(True, 'l2')
     assert data.y.mean is None
     assert_array_equal(data.y.segments[0][0], y.x)
     x_mean, x_scale = x.mean('time'), x.std('time')
@@ -241,20 +258,29 @@ def test_deconvolution_data_normalize_x():
     assert data.x.scale[0] == pytest.approx(x_scale)
     assert data.x.pads[0] == pytest.approx(-x_mean / x_scale)
     # applying a second normalization composes with the first
-    data.x.apply_normalization(1., 2.)
+    assert data.x.scale_norm == 'l2'
+    data.x.normalize(1., 2.)
     assert data.x.mean[0] == pytest.approx(x_mean + x_scale)
     assert data.x.scale[0] == pytest.approx(x_scale * 2)
+    assert data.x.scale_norm is None
     data.flatten()
     np.testing.assert_allclose(data.x.flat[0], ((x.x - x_mean) / x_scale - 1) / 2)
     # the recorded values reproduce the normalized data
     data_2 = DeconvolutionData(x, y)
-    data_2.x.apply_normalization(data.x.mean, data.x.scale)
+    data_2.x.normalize(data.x.mean, data.x.scale)
     data_2.flatten()
     np.testing.assert_allclose(data_2.x.flat, data.x.flat)
     # the normalization is reported even though no error norm was used
     y_mean, y_scale, x_mean_2, x_scale_2 = data_2.data_scale_ndvars()
     assert y_mean is None and y_scale is None
     assert x_mean_2 == pytest.approx(x_mean + x_scale) and x_scale_2 == pytest.approx(x_scale * 2)
+    # scaling without centering
+    data_3 = DeconvolutionData(x, y)
+    data_3.x.normalize(False, 'l1')
+    assert_array_equal(data_3.x.mean, [0])
+    assert data_3.x.scale[0] == pytest.approx(abs(x.x).mean())
+    assert data_3.x.pads[0] == 0
+    np.testing.assert_allclose(data_3.x.segments[0][0], x.x / abs(x.x).mean())
 
 
 def test_deconvolution_data_vector_only():

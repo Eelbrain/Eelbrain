@@ -5,7 +5,7 @@ from functools import reduce
 from itertools import product
 from operator import mul
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 from numpy import newaxis
@@ -622,7 +622,8 @@ class SegmentedArray:
     mean, scale : array
         Normalization that was applied to the data (``None`` before :meth:`normalize`).
     scale_norm : str
-        The ``error`` argument of :meth:`normalize` (``None`` before :meth:`normalize`).
+        The norm used to estimate ``scale`` in :meth:`normalize` (``None`` if
+        ``scale`` was not estimated).
     """
     mean: np.ndarray | None = None
     scale: np.ndarray | None = None
@@ -735,8 +736,8 @@ class SegmentedArray:
         Afterwards, :attr:`flat` is C-contiguous (as required by the Cython
         routines) and :attr:`segments` are views into it, so that any reference
         to the previous segment arrays is stale. The data is not modified in
-        place through :attr:`flat`; use :meth:`normalize` and
-        :meth:`apply_normalization`, which copy the data when it is not owned.
+        place through :attr:`flat`; use :meth:`normalize`, which copies the
+        data when it is not owned.
         """
         if self._flat is None:
             if len(self.segments) > 1:
@@ -774,73 +775,87 @@ class SegmentedArray:
         "Expand a per-vector scale to one entry per row"
         return np.repeat(scale, self.n_vector) if self.n_vector else scale
 
-    def _record_normalization(
+    def normalize(
+            self,
+            mean: bool | np.ndarray | float,
+            scale: Literal['l1', 'l2'] | np.ndarray | float,
+    ):
+        """Center and scale each row in place
+
+        Parameters
+        ----------
+        mean
+            Value to subtract from each row (``(n_rows,)`` array or scalar);
+            ``True`` to use the mean of each row, ``False`` to skip centering.
+        scale
+            Value by which to divide each row (``(n_rows,)`` array or scalar;
+            one entry per vector for vector data); or estimate it from the
+            centered data as the mean absolute value (``'l1'``) or the standard
+            deviation (``'l2'``).
+
+        Notes
+        -----
+        The data is checked for flat and NaN rows before it is modified.
+        """
+        self._apply_normalization(*self._normalization(mean, scale))
+
+    def _normalization(
+            self,
+            mean: bool | np.ndarray | float,
+            scale: Literal['l1', 'l2'] | np.ndarray | float,
+    ) -> tuple[np.ndarray, np.ndarray, str | None]:
+        "``(mean, scale, scale_norm)`` for :meth:`normalize`, checking the data without modifying it"
+        n = sum(self._n_times)
+        center = mean is not False
+        if mean is True:
+            mean = sum(seg.sum(-1) for seg in self.segments) / n
+        elif center:
+            mean = np.broadcast_to(mean, (self.n_rows,)).astype(np.float64)
+        else:
+            mean = np.zeros(self.n_rows)
+        if isinstance(scale, str):
+            if scale not in ('l1', 'l2'):
+                raise ValueError(f"{scale=}")
+            scale_norm = scale
+            # estimate the scale from the centered data without modifying it, so that the data is intact if the check below fails
+            total = 0
+            for seg in self.segments:
+                centered = seg - mean[:, newaxis] if center else seg
+                if self.n_vector:
+                    centered = norm(centered.reshape((-1, self.n_vector, seg.shape[-1])), axis=1)
+                total = total + (np.abs(centered).sum(-1) if scale == 'l1' else (centered ** 2).sum(-1))
+            scale = total / n if scale == 'l1' else (total / n) ** 0.5
+            # dividing by a scale of 0 would turn flat rows into NaN
+            self._check_values(scale, bool(self.n_vector))
+        else:
+            scale_norm = None  # the data is no longer normalized to the norm
+            n_scale = self.n_rows // self.n_vector if self.n_vector else self.n_rows
+            scale = np.broadcast_to(scale, (n_scale,)).astype(np.float64)
+        return mean, scale, scale_norm
+
+    def _apply_normalization(
             self,
             mean: np.ndarray,
             scale: np.ndarray,
+            scale_norm: str | None,
     ):
-        "Record a normalization step applied to the current data, composing it with previous ones"
+        "Apply a normalization determined with :meth:`_normalization`"
+        self._copy_data()
+        center = mean.any()
+        row_scale = self._row_scale(scale)
+        for seg in self.segments:
+            if center:
+                seg -= mean[:, newaxis]
+            seg /= row_scale[:, newaxis]
+        self.scale_norm = scale_norm
+
+        # Record normalization
         if self.mean is None:
             self.mean = mean
             self.scale = scale
         else:
             self.mean = self.mean + mean * self._row_scale(self.scale)
             self.scale = self.scale * scale
-
-    def normalize(self, error: str):
-        """Center and scale each row in place
-
-        Parameters
-        ----------
-        error
-            Scale by the mean absolute value (``'l1'``) or the standard
-            deviation (``'l2'``).
-        """
-        self._copy_data()
-        n = sum(self._n_times)
-        mean = sum(seg.sum(-1) for seg in self.segments) / n
-        for seg in self.segments:
-            seg -= mean[:, newaxis]
-        if self.n_vector:
-            magnitudes = [norm(seg.reshape((-1, self.n_vector, seg.shape[-1])), axis=1) for seg in self.segments]
-        else:
-            magnitudes = self.segments
-        if error == 'l1':
-            scale = sum(np.abs(x).sum(-1) for x in magnitudes) / n
-        elif error == 'l2':
-            scale = (sum((x ** 2).sum(-1) for x in magnitudes) / n) ** 0.5
-        else:
-            raise ValueError(f"{error=}")
-        row_scale = self._row_scale(scale)
-        for seg in self.segments:
-            seg /= row_scale[:, newaxis]
-        self._record_normalization(mean, scale)
-        self.scale_norm = error
-
-    def apply_normalization(
-            self,
-            mean: np.ndarray | float,
-            scale: np.ndarray | float,
-    ):
-        """Normalize in place with given values (e.g., from a fitted model)
-
-        Parameters
-        ----------
-        mean
-            Value to subtract from each row (``(n_rows,)`` array or scalar).
-        scale
-            Value by which to divide each row (``(n_rows,)`` array or scalar;
-            one entry per vector for vector data).
-        """
-        n_scale = self.n_rows // self.n_vector if self.n_vector else self.n_rows
-        mean = np.broadcast_to(mean, (self.n_rows,)).astype(np.float64)
-        scale = np.broadcast_to(scale, (n_scale,)).astype(np.float64)
-        self._copy_data()
-        row_scale = self._row_scale(scale)
-        for seg in self.segments:
-            seg -= mean[:, newaxis]
-            seg /= row_scale[:, newaxis]
-        self._record_normalization(mean, scale)
 
     @property
     def pads(self) -> np.ndarray:
@@ -851,18 +866,21 @@ class SegmentedArray:
 
     def check(self):
         "Raise an error for rows that are flat or contain NaN"
-        if self.scale is None:  # range of each row (NaN for rows containing NaN)
-            check = np.max([seg.max(-1) for seg in self.segments], 0) - np.min([seg.min(-1) for seg in self.segments], 0)
-            names = self.names
-        else:  # one entry per vector for vector data
-            check = self.scale
-            names = [name for block in self.blocks for name in block.names(bool(self.n_vector))]
-        is_flat = check == 0
+        if self.scale_norm is None:  # range of each row (NaN for rows containing NaN)
+            values = np.max([seg.max(-1) for seg in self.segments], 0) - np.min([seg.min(-1) for seg in self.segments], 0)
+            self._check_values(values, False)
+        else:  # the scale was estimated from the data (one entry per vector for vector data)
+            self._check_values(self.scale, bool(self.n_vector))
+
+    def _check_values(self, values: np.ndarray, per_vector: bool):
+        "Raise an error for rows (or vectors, with ``per_vector``) whose ``values`` are 0 (flat) or NaN"
+        names = [name for block in self.blocks for name in block.names(per_vector)]
+        is_flat = values == 0
         if np.any(is_flat):
             if names:
                 raise ValueError(f"{self.name}: flat data in {', '.join(names[i] for i in np.flatnonzero(is_flat))}")
             raise ValueError(f"{self.name}: contains {is_flat.sum()} flat time series")
-        has_nan = np.isnan(check)
+        has_nan = np.isnan(values)
         if np.any(has_nan):
             if names:
                 raise ValueError(f"{self.name}: NaN in {', '.join(names[i] for i in np.flatnonzero(has_nan))}")
@@ -1085,11 +1103,13 @@ class DeconvolutionData:
 
         Notes
         -----
-        To normalize only the predictors, use ``data.x.normalize(error)``.
+        To normalize only the predictors, use ``data.x.normalize(True, error)``.
         """
-        self.x.normalize(error)
-        if self.y is not None:
-            self.y.normalize(error)
+        arrays = [self.x] if self.y is None else [self.x, self.y]
+        # check all data before modifying any of it, so that a failure leaves the data intact
+        normalizations = [array._normalization(True, error) for array in arrays]
+        for array, normalization in zip(arrays, normalizations):
+            array._apply_normalization(*normalization)
 
     def check_data(self):
         "Raise an error for data that is flat or contains NaN (see :meth:`SegmentedArray.check`)"

@@ -514,7 +514,7 @@ class BoostingResult(PickleableDataClass):
         # prepare x:  (n_x_only, n_shared, n_x_times)
         x_data.flatten()
         if self.scale_data:
-            x_data.x.apply_normalization(self._x_mean_array[x_use_index], self._x_scale_array[x_use_index])
+            x_data.x.normalize(self._x_mean_array[x_use_index], self._x_scale_array[x_use_index])
         x_array = x_data.x.flat[newaxis]
         x_pads = x_data.x.pads[newaxis]
         # prepare h
