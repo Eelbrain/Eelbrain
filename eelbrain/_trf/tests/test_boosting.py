@@ -122,7 +122,11 @@ def test_boosting():
     assert correlation_coefficient(y_pred, y, 'time') == pytest.approx(res_cv.r)
     # fit res_cv on same data as res
     fit = res_cv.fit
-    fit.data.splits = replace(fit.data.splits, splits=[fit.data.splits.splits[3]])
+    splits = fit.data.splits
+    fit.data.initialize_cross_validation(3)  # splits that were not fit
+    with pytest.raises(RuntimeError, match="does not match the splits used in fit"):
+        fit.evaluate_fit()
+    fit.data.splits = replace(splits, splits=[splits.splits[3]])
     # the existing runs are still matched to the (equal) replaced split
     assert_dataobj_equal(fit.evaluate_fit().h, res_cv.partition_results[3].h)
     fit.fit(0, 1, 0, 'l2')

@@ -1069,6 +1069,9 @@ class Boosting:
             top_splits = []
         # kernel for each top-level split: average of its runs
         partitions = [[result for result in self.split_results if result.top_split == split] for split in top_splits]
+        for split, partition in zip(top_splits, partitions):
+            if not partition:
+                raise RuntimeError(f"data.splits does not match the splits used in fit(): no boosting runs for the split with {split.i_reserved=}")
         hs = [self._get_h(partition) for partition in partitions]
         n_samples = self.data.n_times_flat
 

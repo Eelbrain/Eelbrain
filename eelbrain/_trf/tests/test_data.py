@@ -15,6 +15,8 @@ def test_deconvolution_data_continuous():
 
     # normalizing
     data = DeconvolutionData(ds['x1'][:8], ds['y'][:8])
+    with pytest.raises(ValueError, match="need 'l1' or 'l2'"):
+        data.normalize('L1')
     data.normalize('l1')
     data.flatten()
     assert data.x.flat[0].mean() == pytest.approx(0, abs=1e-16)

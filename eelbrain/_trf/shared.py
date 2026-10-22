@@ -884,7 +884,7 @@ class SegmentedArray:
             mean = np.zeros(self.n_rows)
         if isinstance(scale, str):
             if scale not in ('l1', 'l2'):
-                raise ValueError(f"{scale=}")
+                raise ValueError(f"{scale=}: need 'l1' or 'l2'")
             scale_norm = scale
             # estimate the scale from the centered data without modifying it, so that the data is intact if the check below fails
             total = 0
