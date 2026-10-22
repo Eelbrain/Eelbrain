@@ -19,10 +19,13 @@ Subclasses for specific purposes:
    :toctree: generated
 
    Table
+   Row
+   List
    Image
    Figure
    Section
    Report
+   FMTextConstant
 
 Functions for export:
 
@@ -52,11 +55,13 @@ import shutil
 import socket
 import sys
 from io import BytesIO, StringIO
+from numpy.typing import ArrayLike
 import tempfile
 import time
 from types import MappingProxyType
-from typing import Any
-from collections.abc import Iterable, Sequence
+from typing import Any, Literal
+from collections.abc import Iterable, Iterator, Sequence
+from urllib.parse import quote
 import webbrowser
 
 import numpy as np
@@ -209,9 +214,9 @@ def display(
 
     Parameters
     ----------
-    fmtext : FMText
+    fmtext
         Object to display.
-    title : FMText
+    title
         Window title.
     """
     from ._wxgui import get_app
@@ -241,7 +246,7 @@ def save_html(
 
     Parameters
     ----------
-    fmtext : FMText
+    fmtext
         Object to save.
     path
         Destination filename. If unspecified, a file dialog will open to ask
@@ -284,7 +289,7 @@ def save_pdf(
 
     Parameters
     ----------
-    fmtext : FMText
+    fmtext
         Object to save.
     path
         Destination filename. If unspecified, a file dialog will open to ask
@@ -307,7 +312,7 @@ def save_rtf(
 
     Parameters
     ----------
-    fmtext : FMText
+    fmtext
         Object to save.
     path
         Destination filename. If unspecified, a file dialog will open to ask
@@ -329,7 +334,7 @@ def save_tex(
 
     Parameters
     ----------
-    fmtext : FMText
+    fmtext
         Object to save.
     path
         Destination filename. If unspecified, a file dialog will open to ask
@@ -356,7 +361,7 @@ def copy_pdf(fmtext: FMTextLike):
 
     Parameters
     ----------
-    fmtext : FMText
+    fmtext
         Object to copy.
     """
     # save pdf to temp file
@@ -443,15 +448,15 @@ def make_html_doc(
     return _html_doc_template.format(meta=meta, title=title, style=style, body=txt_body)
 
 
-def tex(text, env=None):
+def tex(text: any, env: dict = None):
     """Create TeX code for any object with a string representation
 
     Parameters
     ----------
-    text : any
+    text
         Object to be converted to HTML. If the object has a ``.get_html()``
         method the result of this method is returned, otherwise ``str(text)``.
-    env : dict
+    env
         Environment for FMTXT compilation.
     """
     if hasattr(text, 'get_tex'):
@@ -542,6 +547,7 @@ def asfmtext_or_none(
 
 
 class FMTextConstant:
+    """Element with a fixed representation in each format (e.g. ``fmtxt.linebreak``)"""
 
     def __init__(self, name, html, rtf, tex, text):
         self.name = name
@@ -700,7 +706,7 @@ class FMTextElement:
         else:
             return escape_tex(out)
 
-    def save_html(self, path: PathArg = None, embed_images=True, meta=None):
+    def save_html(self, path: PathArg = None, embed_images: bool = True, meta: dict = None):
         """Save in HTML format
 
         Parameters
@@ -708,10 +714,10 @@ class FMTextElement:
         path
             Destination filename. If unspecified, a file dialog will open to ask
             for a destination.
-        embed_images : bool
+        embed_images
             Embed images in the HTML file (default True). If False, a separate
             folder containing image files is created.
-        meta : dict
+        meta
             Meta-information for document head.
         """
         save_html(self, path, embed_images, meta)
@@ -766,12 +772,12 @@ class FMText(FMTextElement):
 
     Parameters
     ----------
-    content : FMTextLike
+    content
         Any item with a string representation (str, FMText, scalar, ...)
         or an object that iterates over such items (e.g. a list of FMText).
-    tag : str
+    tag
         Formatting tag.
-    options : dict
+    options
         Options for HTML tags.
     rasterize
         Try to rasterize images in ``content``.
@@ -804,12 +810,12 @@ class FMText(FMTextElement):
             content = [asfmtext(content, rasterize=rasterize)]
         FMTextElement.__init__(self, content, tag, options)
 
-    def append(self, content):
+    def append(self, content: FMTextLike):
         """Append content to the FMText item
 
         Parameters
         ----------
-        content : str | object | iterable
+        content
             Any item with a string representation (str, FMText, scalar, ...)
             or an object that iterates over such items (e.g. a list of FMText).
         """
@@ -920,14 +926,14 @@ class Math(FMTextElement):
 
     Parameters
     ----------
-    content : str
+    content
         LaTeX math expression (excluding '$'). E.g. ``r'\sqrt{a}'``.
-    equation : bool
+    equation
         Whether to display the expression as a separate equation (as
         oppposed to inline).
     """
 
-    def __init__(self, content, equation=False):
+    def __init__(self, content: str, equation: bool = False):
         FMTextElement.__init__(self, content)
         self._equation = equation
 
@@ -957,11 +963,11 @@ class EquationArray(FMTextElement):
 
     Parameters
     ----------
-    eqnarray : tuple of str
+    eqnarray
         Tuple of lines for the equation array.
     """
 
-    def __init__(self, eqnarray):
+    def __init__(self, eqnarray: tuple[str, ...]):
         FMTextElement.__init__(self, eqnarray)
 
     def __repr__(self):
@@ -1022,12 +1028,12 @@ class List(FMTextElement):
 
         Parameters
         ----------
-        head : FMTextLike
+        head
             First line on higher level (no bullet for highest list, or list
             element for subordinate list).
-        items : iterable of FMTextLike
+        items
             List items.
-        ordered : bool
+        ordered
             Whether to use the "ol" HTML tag (instead of "ul").
         """
         self.ordered = ordered
@@ -1058,11 +1064,11 @@ class List(FMTextElement):
 
         Parameters
         ----------
-        head : FMTextLike
+        head
             Text for the parent item
-        items : iterable of FMTextLike
+        items
             Subordinate list items.
-        ordered : None | bool
+        ordered
             Whether to use the "ol" HTML tag (instead of "ul"). The default is
             to inherit the parent list's setting.
 
@@ -1110,16 +1116,16 @@ class List(FMTextElement):
 
 class Cell(FMText):
 
-    def __init__(self, content='', tag=None, width=1, just=None):
+    def __init__(self, content='', tag=None, width: int = 1, just: Literal['l', 'r', 'c'] = None):
         """A cell for a table
 
         Parameters
         ----------
         text : FMText
             Cell content.
-        width : int
+        width
             Width in columns for multicolumn cells.
-        just : None | 'l' | 'r' | 'c'
+        just
             Justification. None: use column standard.
         others :
             FMText parameters.
@@ -1241,19 +1247,19 @@ class Row(list):
             content: FMTextLike = None,
             tag: str = None,
             width: int = 1,
-            just: str = None,
+            just: Literal['l', 'r', 'c'] = None,
     ):
         """Add a cell to the row
 
         Parameters
         ----------
-        content : FMText
+        content
             Cell content.
-        tag : str
+        tag
             Formatting tag.
-        width : int
+        width
             Width in columns for multicolumn cells.
-        just : 'l' | 'r' | 'c'
+        just
             Justification (default: use column standard).
         """
         cell = Cell(content, tag, width, just)
@@ -1455,19 +1461,19 @@ class Table(FMTextElement):
             content: FMTextLike = None,
             tag: str = None,
             width: int = 1,
-            just: str = None,
+            just: Literal['l', 'r', 'c'] = None,
     ):
         """Add a cell to the table
 
         Parameters
         ----------
-        content : FMText
+        content
             Cell content.
-        tag : str
+        tag
             Formatting tag.
-        width : int
+        width
             Width in columns for multicolumn cells.
-        just : 'l' | 'r' | 'c'
+        just
             Justification (default: use column standard).
         """
         if self._active_row is None or len(self._active_row) == self.n_columns:
@@ -1479,12 +1485,12 @@ class Table(FMTextElement):
         for cell in cells:
             self.cell(cell, **kwargs)
 
-    def add_row(self, at=None):
+    def add_row(self, at: int = None):
         """Add a row without affecting the cursor
 
         Parameters
         ----------
-        at : int
+        at
             Index at which to insert row (default is after the current row;
             midrules also count as rows).
 
@@ -1511,7 +1517,7 @@ class Table(FMTextElement):
                 self._active_row.append(Cell())
             self._active_row = None
 
-    def midrule(self, span=None):
+    def midrule(self, span: str | Sequence[int] = None):
         """Add a midrule
 
         note that a toprule and a bottomrule are inserted automatically
@@ -1519,7 +1525,7 @@ class Table(FMTextElement):
 
         Parameters
         ----------
-        span : str | sequence of int
+        span
             Add a midrule that spans less than the whole width of the table
             (e.g., ``'2-4'`` or ``(2, 4)``).
         """
@@ -1744,14 +1750,14 @@ class Table(FMTextElement):
             items.append(r"\end{center}")
         return '\n'.join(items)
 
-    def get_tsv(self, delimiter='\t', fmt='%.9g') -> str:
+    def get_tsv(self, delimiter: str = '\t', fmt: str = '%.9g') -> str:
         r"""Render the table to tab-separated values (TSV) string
 
         Parameters
         ----------
-        delimiter : str
+        delimiter
             Delimiter between columns (default ``'\t'``).
-        fmt : str
+        fmt
             Format string for numerical entries (default ``'%.9g'``).
         """
         buffer = StringIO(newline='')
@@ -1769,7 +1775,7 @@ class Table(FMTextElement):
 
         Parameters
         ----------
-        path : str
+        path
             Target file name (leave unspecified to use Save As dialog).
 
         Notes
@@ -1806,34 +1812,40 @@ class Table(FMTextElement):
 
         document.save(path)
 
-    def save_tsv(self, path: PathArg = None, delimiter='\t', fmt='%.15g'):
+    def save_tsv(self, path: PathArg = None, delimiter: str = '\t', fmt: str = '%.15g'):
         r"""Save the table as tab-separated values file
 
         Parameters
         ----------
         path
             Destination file name.
-        delimiter : str
+        delimiter
             String that is placed between cells (default: ``'\t'``).
-        fmt : str
+        fmt
             Format string for representing numerical cells.
             (see 'Python String Formatting Documentation
             <http://docs.python.org/library/stdtypes.html#string-formatting-operations>'_)
         """
         _save_txt(self.get_tsv(delimiter, fmt), path)
 
-    def save_txt(self, path: PathArg = None, fmt='%.15g', delim='   ', linesep='\n'):
+    def save_txt(
+            self,
+            path: PathArg = None,
+            fmt: str = '%.15g',
+            delim: str = '   ',
+            linesep: str = '\n',
+    ):
         r"""Save the table as text file
 
         Parameters
         ----------
         path
             Destination file name.
-        fmt : str
+        fmt
             Format string for representing numerical cells (default '%.15g').
-        delim : str
+        delim
             Cell delimiter.
-        linesep : str
+        linesep
             String that is placed in between lines (default is ``'\n'``).
         """
         _save_txt(self.get_str({'fmt': fmt}, delim, linesep), path)
@@ -1842,23 +1854,31 @@ class Table(FMTextElement):
 class Image(FMTextElement, BytesIO):
     "Represent an image file"
 
-    def __init__(self, name=None, format='png', alt=None, buf=b'', height=None, width=None):
+    def __init__(
+            self,
+            name: str = None,
+            format: str = 'png',
+            alt: str = None,
+            buf: bytes = b'',
+            height: int = None,
+            width: int = None,
+    ):
         """Represent an image file
 
         Parameters
         ----------
-        name : str
+        name
             Name for the file (without extension; default is 'image').
-        format : str
+        format
             File format (default 'png').
-        alt : None | str
+        alt
             Alternate text, placeholder in case the image can not be found
             (HTML `alt` tag, default is ``name``).
-        buf : bytes
+        buf
             Image buffer (optional).
-        height : int
+        height
             Target height of the image; currently only used for iPython display.
-        width : int
+        width
             Target width of the image; currently only used for iPython display.
         """
         BytesIO.__init__(self, buf)
@@ -1870,23 +1890,31 @@ class Image(FMTextElement, BytesIO):
         self.width = width
 
     @classmethod
-    def from_array(cls, array, name='array', format='png', alt=None, height=None, width=None):
+    def from_array(
+            cls,
+            array: ArrayLike,
+            name: str = 'array',
+            format: str = 'png',
+            alt: str = None,
+            height: int = None,
+            width: int = None,
+    ):
         """Create an Image object from an array.
 
         Parameters
         ----------
-        array : array_like
+        array
             RGBA image array.
-        name : None | str
+        name
             Name for the target image.
-        format : str
+        format
             Format to save (default ``'png'``).
-        alt : None | str
+        alt
             Alternate text, placeholder in case the image can not be found
             (HTML `alt` tag).
-        height : int
+        height
             Target height of the image; currently only used for iPython display.
-        width : int
+        width
             Target width of the image; currently only used for iPython display.
         """
         im = cls(name, format, alt, height=height, width=width)
@@ -1954,7 +1982,7 @@ class Image(FMTextElement, BytesIO):
                     i += 1
                     dst = root / resource_dir / f'{name}-{i}{ext}'
             self.save_image(dst)
-            src = dst.relative_to(root)
+            src = quote(dst.relative_to(root).as_posix())  # names like '#3' are not valid in a URL
         alt = html(self._alt)
         return f'<img src="{src}" alt="{alt}">'
 
@@ -2064,9 +2092,9 @@ class Section(FMText):
 
     Parameters
     ----------
-    heading : FMTextLike
+    heading
         Section heading.
-    content : FMTextLike
+    content
         Section content. Can also be constructed dynamically through the
         different .add_... methods.
     """
@@ -2089,11 +2117,11 @@ class Section(FMText):
 
         Parameters
         ----------
-        caption : FMTextLike
+        caption
             Figure caption.
-        content : FMTextLike
+        content
             Figure content.
-        options : dict
+        options
             HTML options for ``<figure>`` tag.
 
         Returns
@@ -2176,9 +2204,9 @@ class Section(FMText):
 
         Parameters
         ----------
-        heading : FMTextLike
+        heading
             Heading for the section.
-        content : FMTextLike
+        content
             Content for the section.
 
         Returns
@@ -2244,17 +2272,17 @@ class Report(Section):
 
     Parameters
     ----------
-    title : FMTextLike
+    title
         Document title.
-    author : FMTextLike
+    author
         Document autho.
-    date : bool | FMTextLike
+    date
         Date to print on the report. If True (default), the current day
         (object initialization) is used.
-    content : FMTextLike
+    content
         Report content. Can also be constructed dynamically through the
         different .add_... methods.
-    site_title : str
+    site_title
         Set the HTML site title (the default is the same as title).
     """
 
@@ -2349,19 +2377,19 @@ class Report(Section):
         txt = '\n'.join(content)
         return txt
 
-    def save_html(self, path, embed_images=True, meta=None):
+    def save_html(self, path: PathArg, embed_images: bool = True, meta: dict = None):
         """Save HTML file of the report
 
         Parameters
         ----------
-        path : str
+        path
             Path at which to save the html. Does not need to contain the
             extension. A folder with the same name is created fo resource
             files.
-        embed_images : bool
+        embed_images
             Embed images in the HTML file (default True). If False, a separate
             folder containing image files is created.
-        meta : dict
+        meta
             Meta-information for document head.
         """
         save_html(self, path, embed_images, meta)
@@ -2373,12 +2401,12 @@ class Report(Section):
         self.save_html(path)
         webbrowser.open('file:/' + os.path.realpath(path))
 
-    def sign(self, packages=('eelbrain',)):
+    def sign(self, packages: Iterator[str] = ('eelbrain',)):
         """Add a signature to the report
 
         Parameters
         ----------
-        packages : iterator of str
+        packages
             Packages whose ``__version__`` to include in the signature (default
             is eelbrain only).
 
@@ -2415,17 +2443,17 @@ def symbol(symbol, subscript=None, tag='math'):
         return FMText([Text(symbol), Text(subscript, '_')], tag)
 
 
-def p(p, stars=None, of=3, tag='math'):
+def p(p: float, stars: str | bool = None, of: int = 3, tag='math'):
     """:class:`FMText` representation of a p-value
 
     Parameters
     ----------
-    p : scalar
+    p
         P-value.
-    stars : str | True
+    stars
         Stars decorating the p-value (e.g., "**"); ``True`` to use
         conventional thresholds (default is no stars).
-    of : int
+    of
         Max numbers of star characters possible (to add empty space for
         alignment; ignored when ``stars`` is not specified).
 
@@ -2461,19 +2489,19 @@ def eq(name, result, subscript=None, fmt='%.2f', stars=None, of=3, drop0=False):
     return FMText([symbol_, Text(' = '), stat_], 'math')
 
 
-def peq(p, subscript=None, stars=None, of=3):
+def peq(p: float, subscript: Text = None, stars: str | bool = None, of: int = 3):
     """:class:`FMText` representation of a p-value equation
 
     Parameters
     ----------
-    p : scalar
+    p
         P-value.
-    subscript : Text
+    subscript
         Subscript for ``p``.
-    stars : str | True
+    stars
         Stars decorating the p-value (e.g., "**"); ``True`` to use
         conventional thresholds (default is no stars).
-    of : int
+    of
         Max numbers of star characters possible (to add empty space for
         alignment; ignored when ``stars`` is not specified).
 
@@ -2506,14 +2534,14 @@ def delim_list(items, delimiter=', '):
     return out
 
 
-def unindent(text, skip1=False):
+def unindent(text, skip1: bool = False):
     """Remove leading spaces that are present in all lines of ``text``.
 
     Parameters
     ----------
     test : str
         The text from which leading spaces should be removed.
-    skip1 : bool
+    skip1
         Ignore the first line when determining number of spaces to unindent,
         and remove all leading whitespaces from it.
     """
@@ -2536,14 +2564,14 @@ def unindent(text, skip1=False):
     return text
 
 
-def im_table(ims, header=None, name="im_table"):
+def im_table(ims: Sequence[Sequence[np.ndarray]], header: list[str] = None, name="im_table"):
     """Create an SVG with a table of images
 
     Parameters
     ----------
-    ims : list of list of arrays
+    ims
         Images. Should all have same shape.
-    header : None | list of str
+    header
         List of column titles.
 
     Returns
@@ -2592,12 +2620,12 @@ def im_table(ims, header=None, name="im_table"):
     return Image(name, 'svg', buf=buf.encode())
 
 
-def _array_as_png(im):
+def _array_as_png(im: ArrayLike):
     """Convert array to base64 encoded PNG
 
     Parameters
     ----------
-    im : array_like
+    im
         An MxN (luminance), MxNx3 (RGB) or MxNx4 (RGBA) array.
 
     Returns

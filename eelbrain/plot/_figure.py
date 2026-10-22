@@ -16,15 +16,22 @@ class Figure(EelFigure):
     ----------
     nax : int (optional)
         Create this many axes (default is to not create any axes).
+    data_desc
+        Data description for frame title.
     ...
         Also accepts :ref:`general-layout-parameters`.
     autoscale : bool
         Autoscale data axes (default False).
     """
 
-    def __init__(self, nax=0, **kwargs):
+    def __init__(
+            self,
+            nax: int = 0,
+            data_desc: str | None = None,
+            **kwargs,
+    ):
         layout = Layout(nax, 1, 2, **kwargs)
-        EelFigure.__init__(self, None, layout)
+        EelFigure.__init__(self, data_desc, layout)
 
     def show(self):
         self._show()

@@ -33,13 +33,14 @@ import socket
 from threading import Thread
 from time import time as current_time
 from collections.abc import Iterable
+from typing import Literal
 
 import numpy as np
 import scipy.stats
 from scipy import ndimage
 
 from .. import fmtxt, _info, _text
-from ..fmtxt import FMText
+from ..fmtxt import FMText, FMTextLike
 from .._celltable import Celltable
 from .._config import CONFIG, mpc, tqdm_disable
 from .._data_obj import (
@@ -84,13 +85,19 @@ class NDTest:
 
     Attributes
     ----------
-    p : NDVar | None
+    clusters : Dataset | None
+        Table of all the clusters found (None if no clusters were found, or if
+        no clustering was performed).
+    p
         Map of p-values corrected for multiple comparison (or None if no
         correction was performed).
-    tfce_map : NDVar | None
+    tfce_map
         Map of the test statistic processed with the threshold-free cluster
         enhancement algorithm (or None if no TFCE was performed).
     """
+    p: NDVar
+    tfce_map: NDVar
+
     _state_common = ('y', 'match', 'sub', 'samples', 'tfce', 'pmin', '_cdist', 'tstart', 'tstop', '_dims')
     _state_specific = ()
     _statistic = None
@@ -253,7 +260,7 @@ class NDTest:
 
         Returns
         -------
-        cluster
+        cluster : NDVar
             NDVar of the cluster, 0 outside the cluster.
 
         Notes
@@ -381,7 +388,7 @@ class NDTest:
     def _max_statistic_from_map(
             stat_map: NDVar,
             p_map: NDVar,
-            tail: int,
+            tail: Literal[-1, 0, 1],
             mask: NDVar = None,
             return_time: bool = False,
             return_p: bool = False,
@@ -443,42 +450,43 @@ class TContrastRelated(NDTest):
 
     Parameters
     ----------
-    y : NDVar
+    y
         Dependent variable.
-    x : categorial
+    x
         Model containing the cells which are compared with the contrast.
-    contrast : str
+    contrast
         Contrast specification: see Notes.
-    match : Factor
+    match
         Match cases for a repeated measures test.
-    sub : index
+    sub
         Perform the test with a subset of the data.
-    data : Dataset
+    data
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
-    tail : 0 | 1 | -1
+    tail
         Which tail of the t-distribution to consider:
         0: both (two-tailed);
         1: upper tail (one-tailed);
         -1: lower tail (one-tailed).
-    samples : int
+    samples
         Number of samples for permutation test (default 10,000).
-    pmin : None | scalar (0 < pmin < 1)
-        Threshold for forming clusters:  use a t-value equivalent to an
-        uncorrected p-value for a related samples t-test (with df =
+    pmin
+        Threshold for forming clusters (``0 < pmin < 1``):  use a t-value
+        equivalent to an uncorrected p-value for a related samples t-test
+        (with df =
         len(match.cells) - 1).
-    tmin : scalar
+    tmin
         Threshold for forming clusters as t-value.
-    tfce : bool | scalar
+    tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
-    tstart : scalar
+    tstart
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
-    tstop : scalar
+    tstop
         Stop of the time window for the permutation test (default is the
         end of ``y``).
-    parc : str
+    parc
         Collect permutation statistics for all regions of the parcellation of
         this dimension. For threshold-based test, the regions are disconnected.
     force_permutation: bool
@@ -540,7 +548,7 @@ class TContrastRelated(NDTest):
             match: CategorialArg = None,
             sub: CategorialArg = None,
             data: Dataset = None,
-            tail: int = 0,
+            tail: Literal[-1, 0, 1] = 0,
             samples: int = 10000,
             pmin: float = None,
             tmin: float = None,
@@ -623,58 +631,58 @@ class Correlation(NDTest):
 
     Parameters
     ----------
-    y : NDVar
+    y
         Dependent variable.
-    x : continuous
+    x
         The continuous predictor variable.
-    norm : None | categorial
+    norm
         Categories in which to normalize (z-score) x.
-    sub : index
+    sub
         Perform the test with a subset of the data.
-    data : Dataset
+    data
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
-    samples : int
+    samples
         Number of samples for permutation test (default 10,000).
-    pmin : None | scalar (0 < pmin < 1)
-        Threshold for forming clusters:  use an r-value equivalent to an
-        uncorrected p-value.
-    rmin : None | scalar
+    pmin
+        Threshold for forming clusters (``0 < pmin < 1``):  use an r-value
+        equivalent to an uncorrected p-value.
+    rmin
         Threshold for forming clusters.
-    tfce : bool | scalar
+    tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
-    tstart : scalar
+    tstart
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
-    tstop : scalar
+    tstop
         Stop of the time window for the permutation test (default is the
         end of ``y``).
-    match : None | categorial
+    match
         When permuting data, only shuffle the cases within the categories
         of match.
-    parc : str
+    parc
         Collect permutation statistics for all regions of the parcellation of
         this dimension. For threshold-based test, the regions are disconnected.
-    mintime : scalar
+    mintime : float
         Minimum duration for clusters (in seconds).
     minsource : int
         Minimum number of sources per cluster.
 
     Attributes
     ----------
-    clusters : None | Dataset
+    clusters
         For cluster-based tests, a table of all clusters. Otherwise a table of
         all significant regions (or ``None`` if permutations were omitted).
         See also the :meth:`.find_clusters` method.
-    p : NDVar | None
+    p
         Map of p-values corrected for multiple comparison (or None if no
         correction was performed).
-    p_uncorrected : NDVar
+    p_uncorrected
         Map of p-values uncorrected for multiple comparison.
-    r : NDVar
+    r
         Map of correlation values (with threshold contours).
-    tfce_map : NDVar | None
+    tfce_map
         Map of the test statistic processed with the threshold-free cluster
         enhancement algorithm (or None if no TFCE was performed).
 
@@ -682,6 +690,12 @@ class Correlation(NDTest):
     --------
     testnd : Information on the different permutation methods
     """
+    clusters: Dataset
+    p: NDVar
+    p_uncorrected: NDVar
+    r: NDVar
+    tfce_map: NDVar
+
     _state_specific = ('x', 'norm', 'n', 'df', 'r')
     _statistic = 'r'
 
@@ -826,16 +840,16 @@ class NDDifferenceTest(NDTest):
             mask = self.p > p
         return self._cdist.uncrop(mask, self.difference, True)
 
-    def masked_difference(self, p=0.05, name=None):
+    def masked_difference(self, p: float = 0.05, name: str = None) -> NDVar:
         """Difference map masked by significance
 
         Parameters
         ----------
-        p : scalar
+        p
             Threshold p-value for masking (default 0.05). For threshold-based
             cluster tests, ``pmin=1`` includes all clusters regardless of their
             p-value.
-        name : str
+        name
             Name of the output NDVar.
         """
         mask = self._get_mask(p)
@@ -844,12 +858,12 @@ class NDDifferenceTest(NDTest):
 
 class NDMaskedC1Mixin:
 
-    def masked_c1(self, p=0.05):
+    def masked_c1(self, p: float = 0.05) -> NDVar:
         """``c1`` map masked by significance of the ``c1``-``c0`` difference
 
         Parameters
         ----------
-        p : scalar
+        p
             Threshold p-value for masking (default 0.05). For threshold-based
             cluster tests, ``pmin=1`` includes all clusters regardless of their
             p-value.
@@ -863,66 +877,66 @@ class TTestOneSample(NDDifferenceTest):
 
     Parameters
     ----------
-    y : NDVar
+    y
         Dependent variable.
-    popmean : scalar
+    popmean
         Value to compare y against (default is 0).
-    match : None | categorial
+    match
         Combine data for these categories before testing.
-    sub : index
+    sub
         Perform test with a subset of the data.
-    data : Dataset
+    data
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables
-    tail : 0 | 1 | -1
+    tail
         Which tail of the t-distribution to consider:
         0: both (two-tailed);
         1: upper tail (one-tailed);
         -1: lower tail (one-tailed).
-    samples : int
+    samples
         Number of samples for permutation test (default 10,000).
-    pmin : None | scalar (0 < pmin < 1)
-        Threshold for forming clusters:  use a t-value equivalent to an
-        uncorrected p-value.
-    tmin : scalar
+    pmin
+        Threshold for forming clusters (``0 < pmin < 1``):  use a t-value
+        equivalent to an uncorrected p-value.
+    tmin
         Threshold for forming clusters as t-value.
-    tfce : bool | scalar
+    tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
-    tstart : scalar
+    tstart
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
-    tstop : scalar
+    tstop
         Stop of the time window for the permutation test (default is the
         end of ``y``).
-    parc : str
+    parc
         Collect permutation statistics for all regions of the parcellation of
         this dimension. For threshold-based test, the regions are disconnected.
     force_permutation: bool
         Conduct permutations regardless of whether there are any clusters.
-    mintime : scalar
+    mintime : float
         Minimum duration for clusters (in seconds).
     minsource : int
         Minimum number of sources per cluster.
 
     Attributes
     ----------
-    clusters : None | Dataset
+    clusters
         For cluster-based tests, a table of all clusters. Otherwise a table of
         all significant regions (or ``None`` if permutations were omitted).
         See also the :meth:`.find_clusters` method.
-    difference : NDVar
+    difference
         The difference value entering the test (``y`` if popmean is 0).
-    n : int
+    n
         Number of cases.
-    p : NDVar | None
+    p
         Map of p-values corrected for multiple comparison (or None if no
         correction was performed).
-    p_uncorrected : NDVar
+    p_uncorrected
         Map of p-values uncorrected for multiple comparison.
-    t : NDVar
+    t
         Map of t-values.
-    tfce_map : NDVar | None
+    tfce_map
         Map of the test statistic processed with the threshold-free cluster
         enhancement algorithm (or None if no TFCE was performed).
 
@@ -934,6 +948,14 @@ class TTestOneSample(NDDifferenceTest):
     -----
     Data points with zero variance are set to t=0.
     """
+    clusters: Dataset
+    difference: NDVar
+    n: int
+    p: NDVar
+    p_uncorrected: NDVar
+    t: NDVar
+    tfce_map: NDVar
+
     _state_specific = ('popmean', 'tail', 'n', 'df', 't', 'difference')
     _statistic = 't'
 
@@ -946,7 +968,7 @@ class TTestOneSample(NDDifferenceTest):
             match: CategorialArg = None,
             sub: IndexArg = None,
             data: Dataset = None,
-            tail: int = 0,
+            tail: Literal[-1, 0, 1] = 0,
             samples: int = 10000,
             pmin: float = None,
             tmin: float = None,
@@ -1063,76 +1085,76 @@ class TTestIndependent(NDDifferenceTest):
 
     Parameters
     ----------
-    y : NDVar
+    y
         Dependent variable.
-    x : categorial | NDVar
+    x
         Model containing the cells which should be compared, or NDVar to which
         ``y`` should be compared. In the latter case, the next three parameters
         are ignored.
-    c1 : str | tuple | None
+    c1
         Test condition (cell of ``x``). ``c1`` and ``c0`` can be omitted if
         ``x`` only contains two cells, in which case cells will be used in
         alphabetical order.
-    c0 : str | tuple | None
+    c0
         Control condition (cell of ``x``).
-    match : categorial
+    match
         Combine cases with the same cell on ``x % match``.
-    sub : index
+    sub
         Perform the test with a subset of the data.
-    data : Dataset
+    data
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
-    tail : 0 | 1 | -1
+    tail
         Which tail of the t-distribution to consider:
         0: both (two-tailed);
         1: upper tail (one-tailed);
         -1: lower tail (one-tailed).
-    samples : int
+    samples
         Number of samples for permutation test (default 10,000).
-    pmin : None | scalar (0 < pmin < 1)
-        Threshold p value for forming clusters. None for threshold-free
-        cluster enhancement.
-    tmin : scalar
+    pmin
+        Threshold p value for forming clusters (``0 < pmin < 1``). None for
+        threshold-free cluster enhancement.
+    tmin
         Threshold for forming clusters as t-value.
-    tfce : bool | scalar
+    tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
-    tstart : scalar
+    tstart
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
-    tstop : scalar
+    tstop
         Stop of the time window for the permutation test (default is the
         end of ``y``).
-    parc : str
+    parc
         Collect permutation statistics for all regions of the parcellation of
         this dimension. For threshold-based test, the regions are disconnected.
     force_permutation: bool
         Conduct permutations regardless of whether there are any clusters.
-    mintime : scalar
+    mintime : float
         Minimum duration for clusters (in seconds).
     minsource : int
         Minimum number of sources per cluster.
 
     Attributes
     ----------
-    c1_mean : NDVar
+    c1_mean
         Mean in the c1 condition.
-    c0_mean : NDVar
+    c0_mean
         Mean in the c0 condition.
-    clusters : None | Dataset
+    clusters
         For cluster-based tests, a table of all clusters. Otherwise a table of
         all significant regions (or ``None`` if permutations were omitted).
         See also the :meth:`.find_clusters` method.
-    difference : NDVar
+    difference
         Difference between the mean in condition c1 and condition c0.
-    p : NDVar | None
+    p
         Map of p-values corrected for multiple comparison (or None if no
         correction was performed).
-    p_uncorrected : NDVar
+    p_uncorrected
         Map of p-values uncorrected for multiple comparison.
-    t : NDVar
+    t
         Map of t-values.
-    tfce_map : NDVar | None
+    tfce_map
         Map of the test statistic processed with the threshold-free cluster
         enhancement algorithm (or None if no TFCE was performed).
 
@@ -1144,6 +1166,15 @@ class TTestIndependent(NDDifferenceTest):
     -----
     Cases with zero variance are set to t=0.
     """
+    c1_mean: NDVar
+    c0_mean: NDVar
+    clusters: Dataset
+    difference: NDVar
+    p: NDVar
+    p_uncorrected: NDVar
+    t: NDVar
+    tfce_map: NDVar
+
     _state_specific = ('x', 'c1', 'c0', 'tail', 't', 'n1', 'n0', 'df', 'c1_mean',
                        'c0_mean')
     _statistic = 't'
@@ -1159,7 +1190,7 @@ class TTestIndependent(NDDifferenceTest):
             match: CategorialArg = None,
             sub: IndexArg = None,
             data: Dataset = None,
-            tail: int = 0,
+            tail: Literal[-1, 0, 1] = 0,
             samples: int = 10000,
             pmin: float = None,
             tmin: float = None,
@@ -1285,27 +1316,27 @@ class TTestRelated(NDMaskedC1Mixin, NDDifferenceTest):
 
     Parameters
     ----------
-    y : NDVar
+    y
         Dependent variable.
-    x : categorial | NDVar
+    x
         Model containing the cells which should be compared, or NDVar to which
         ``y`` should be compared. In the latter case, the next three parameters
         are ignored.
-    c1 : str | tuple | None
+    c1
         Test condition (cell of ``x``). ``c1`` and ``c0`` can be omitted if
         ``x`` only contains two cells, in which case cells will be used in
         alphabetical order.
-    c0 : str | tuple | None
+    c0
         Control condition (cell of ``x``).
-    match : categorial
+    match
         Units within which measurements are related (e.g. 'subject' in a
         within-subject comparison).
-    sub : index
+    sub
         Perform the test with a subset of the data.
-    data : Dataset
+    data
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
-    tail : 0 | 1 | -1
+    tail
         Which tail of the t-distribution to consider:
         0: both (two-tailed, default);
         1: upper tail (one-tailed);
@@ -1338,27 +1369,27 @@ class TTestRelated(NDMaskedC1Mixin, NDDifferenceTest):
 
     Attributes
     ----------
-    c1_mean : NDVar
+    c1_mean
         Mean in the c1 condition.
-    c0_mean : NDVar
+    c0_mean
         Mean in the c0 condition.
-    clusters : None | Dataset
+    clusters
         For cluster-based tests, a table of all clusters. Otherwise a table of
         all significant regions (or ``None`` if permutations were omitted).
         See also the :meth:`.find_clusters` method.
-    difference : NDVar
+    difference
         Difference between the mean in condition c1 and condition c0.
-    p : NDVar | None
+    p
         Map of p-values corrected for multiple comparison (or None if no
         correction was performed).
-    p_uncorrected : NDVar
+    p_uncorrected
         Map of p-values uncorrected for multiple comparison.
-    t : NDVar
+    t
         Map of t-values.
-    tfce_map : NDVar | None
+    tfce_map
         Map of the test statistic processed with the threshold-free cluster
         enhancement algorithm (or None if no TFCE was performed).
-    n : int
+    n
         Number of cases.
 
     See Also
@@ -1376,6 +1407,16 @@ class TTestRelated(NDMaskedC1Mixin, NDDifferenceTest):
 
     T-values for cases with zero variance are set to t=0.
     """
+    c1_mean: NDVar
+    c0_mean: NDVar
+    clusters: Dataset
+    difference: NDVar
+    p: NDVar
+    p_uncorrected: NDVar
+    t: NDVar
+    tfce_map: NDVar
+    n: int
+
     _state_specific = ('x', 'c1', 'c0', 'tail', 't', 'n', 'df', 'c1_mean',
                        'c0_mean')
     _statistic = 't'
@@ -1391,7 +1432,7 @@ class TTestRelated(NDMaskedC1Mixin, NDDifferenceTest):
             match: CategorialArg = None,
             sub: IndexArg = None,
             data: Dataset = None,
-            tail: int = 0,
+            tail: Literal[-1, 0, 1] = 0,
             samples: int = 10000,
             pmin: float = None,
             tmin: float = None,
@@ -1599,14 +1640,14 @@ class MultiEffectNDTest(NDTest):
         tail = getattr(self, 'tail', self._statistic_tail)
         return self._max_statistic_from_map(stat_map, p_map, tail, mask, return_time, return_p, sub)
 
-    def cluster(self, cluster_id, effect=0):
+    def cluster(self, cluster_id: int, effect: int | str = 0):
         """Retrieve a specific cluster as NDVar
 
         Parameters
         ----------
-        cluster_id : int
+        cluster_id
             Cluster id.
-        effect : int | str
+        effect
             Index or name of the effect from which to retrieve a cluster
             (default is the first effect).
 
@@ -1623,12 +1664,12 @@ class MultiEffectNDTest(NDTest):
         i = self._effect_index(effect)
         return self._cdist[i].cluster(cluster_id)
 
-    def compute_probability_map(self, effect=0, **sub):
+    def compute_probability_map(self, effect: int | str = 0, **sub):
         """Compute a probability map
 
         Parameters
         ----------
-        effect : int | str
+        effect
             Index or name of the effect from which to use the parameter map
             (default is the first effect).
 
@@ -1734,36 +1775,36 @@ class ANOVA(MultiEffectNDTest):
 
     Parameters
     ----------
-    y : NDVar
+    y
         Dependent variable.
-    x : Model
+    x
         Independent variables.
-    sub : index
+    sub
         Perform the test with a subset of the data.
-    data : Dataset
+    data
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
-    samples : int
+    samples
         Number of samples for permutation test (default 10,000).
-    pmin : None | scalar (0 < pmin < 1)
-        Threshold for forming clusters:  use an f-value equivalent to an
-        uncorrected p-value.
-    fmin : scalar
+    pmin
+        Threshold for forming clusters (``0 < pmin < 1``):  use an f-value
+        equivalent to an uncorrected p-value.
+    fmin
         Threshold for forming clusters as f-value.
-    tfce : bool | scalar
+    tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
-    tstart : scalar
+    tstart
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
-    tstop : scalar
+    tstop
         Stop of the time window for the permutation test (default is the
         end of ``y``).
-    match : categorial | False
+    match
         When permuting data, only shuffle the cases within the categories
         of match. By default, ``match`` is determined automatically based on
         the random efects structure of ``x``.
-    parc : str
+    parc
         Collect permutation statistics for all regions of the parcellation of
         this dimension. For threshold-based test, the regions are disconnected.
     force_permutation: bool
@@ -1775,20 +1816,20 @@ class ANOVA(MultiEffectNDTest):
 
     Attributes
     ----------
-    effects : tuple of str
+    effects
         Names of the tested effects, in the same order as in other attributes.
-    clusters : None | Dataset
+    clusters
         For cluster-based tests, a table of all clusters. Otherwise a table of
         all significant regions (or ``None`` if permutations were omitted).
         See also the :meth:`.find_clusters` method.
-    f : list of NDVar
+    f
         Maps of F values.
-    p : list of NDVar | None
+    p
         Maps of p-values corrected for multiple comparison (or None if no
         correction was performed).
-    p_uncorrected : list of NDVar
+    p_uncorrected
         Maps of p-values uncorrected for multiple comparison.
-    tfce_maps : list of NDVar | None
+    tfce_maps
         Maps of the test statistic processed with the threshold-free cluster
         enhancement algorithm (or None if no TFCE was performed).
 
@@ -1802,6 +1843,13 @@ class ANOVA(MultiEffectNDTest):
     For information on model specification see the univariate
     :class:`~eelbrain.test.ANOVA` examples.
     """
+    effects: tuple[str, ...]
+    clusters: Dataset
+    f: list[NDVar]
+    p: list[NDVar]
+    p_uncorrected: list[NDVar]
+    tfce_maps: list[NDVar]
+
     _state_specific = ('pmin', '_effects', '_dfs_denom', 'f')
     _statistic = 'f'
     _statistic_tail = 1
@@ -1949,16 +1997,16 @@ class ANOVA(MultiEffectNDTest):
         else:
             return self._statistic_map
 
-    def table(self, title=None, caption=None, clusters=False):
+    def table(self, title: FMTextLike = None, caption: FMTextLike = None, clusters: bool | float = False) -> fmtxt.Table:
         """Table listing all effects and corresponding smallest p-values
 
         Parameters
         ----------
-        title : text
+        title
             Title for the table.
-        caption : text
+        caption
             Caption for the table.
-        clusters : bool | float
+        clusters
             Include properties of all significant clusters (default ``False``;
             use float to include clusters with p ≤ ``clusters``).
 
@@ -2021,34 +2069,34 @@ class Vector(NDDifferenceTest):
 
     Parameters
     ----------
-    y : NDVar
+    y
         Dependent variable (needs to include one vector dimension).
-    match : None | categorial
+    match
         Combine data for these categories before testing.
-    sub : index
+    sub
         Perform test with a subset of the data.
-    data : Dataset
+    data
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables
-    samples : int
+    samples
         Number of samples for permutation test (default 10000).
-    tmin : scalar
+    tmin
         Threshold value for forming clusters.
-    tfce : bool | scalar
+    tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
-    tstart : scalar
+    tstart
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
-    tstop : scalar
+    tstop
         Stop of the time window for the permutation test (default is the
         end of ``y``).
-    parc : str
+    parc
         Collect permutation statistics for all regions of the parcellation of
         this dimension. For threshold-based test, the regions are disconnected.
     force_permutation: bool
         Conduct permutations regardless of whether there are any clusters.
-    norm : bool
+    norm
         Use the vector norm as univariate test statistic (instead of Hotelling’s
         T-Square statistic).
     mintime : scalar
@@ -2058,19 +2106,19 @@ class Vector(NDDifferenceTest):
 
     Attributes
     ----------
-    n : int
+    n
         Number of cases.
-    difference : NDVar
+    difference
         The vector field averaged across cases.
-    t2 : NDVar | None
+    t2
         Hotelling T-Square map; ``None`` if the test used ``norm=True``.
-    p : NDVar | None
+    p
         Map of p-values corrected for multiple comparison (or ``None`` if no
         correction was performed).
-    tfce_map : NDVar | None
+    tfce_map
         Map of the test statistic processed with the threshold-free cluster
         enhancement algorithm (or None if no TFCE was performed).
-    clusters : None | Dataset
+    clusters
         For cluster-based tests, a table of all clusters. Otherwise a table of
         all significant regions (or ``None`` if permutations were omitted).
         See also the :meth:`.find_clusters` method.
@@ -2094,6 +2142,13 @@ class Vector(NDDifferenceTest):
         3 matrices. International Journal of Modern Physics C, 19(3), 523-548.
         `10.1142/S0129183108012303 <https://doi.org/10.1142/S0129183108012303>`_
     """
+    n: int
+    difference: NDVar
+    t2: NDVar
+    p: NDVar
+    tfce_map: NDVar
+    clusters: Dataset
+
     _state_specific = ('difference', 'n', '_v_dim', 't2')
 
     @user_activity
@@ -2280,8 +2335,8 @@ class VectorDifferenceIndependent(Vector):
             self,
             y: NDVarArg,
             x: CategorialArg | NDVarArg,
-            c1: str = None,
-            c0: str = None,
+            c1: CellArg = None,
+            c0: CellArg = None,
             match: CategorialArg = None,
             sub: IndexArg = None,
             data: Dataset = None,
@@ -2332,11 +2387,12 @@ class VectorDifferenceIndependent(Vector):
     def _vector_perm(y, n1, out, seed, use_norm):
         assert use_norm
         n_cases, n_dims, n_tests = y.shape
+        rng = np.random.RandomState(seed)
         # randomize directions
         rotation = rand_rotation_matrices(n_cases, seed, n_dims)
         # randomize groups
         cases = np.arange(n_cases)
-        np.random.shuffle(cases)
+        rng.shuffle(cases)
         # group 1
         mean_1 = np.zeros((n_dims, n_tests))
         for case in cases[:n1]:
@@ -2360,71 +2416,71 @@ class VectorDifferenceRelated(NDMaskedC1Mixin, Vector):
 
     Parameters
     ----------
-    y : NDVar
+    y
         Dependent variable.
-    x : categorial | NDVar
+    x
         Model containing the cells which should be compared, or NDVar to which
         ``y`` should be compared. In the latter case, the next three parameters
         are ignored.
-    c1 : str | tuple | None
+    c1
         Test condition (cell of ``x``). ``c1`` and ``c0`` can be omitted if
         ``x`` only contains two cells, in which case cells will be used in
         alphabetical order.
-    c0 : str | tuple | None
+    c0
         Control condition (cell of ``x``).
-    match : categorial
+    match
         Units within which measurements are related (e.g. 'subject' in a
         within-subject comparison).
-    sub : index
+    sub
         Perform the test with a subset of the data.
-    data : Dataset
+    data
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
-    samples : int
+    samples
         Number of samples for permutation test (default 10000).
-    tmin : scalar
+    tmin
         Threshold value for forming clusters.
-    tfce : bool | scalar
+    tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
-    tstart : scalar
+    tstart
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
-    tstop : scalar
+    tstop
         Stop of the time window for the permutation test (default is the
         end of ``y``).
-    parc : str
+    parc
         Collect permutation statistics for all regions of the parcellation of
         this dimension. For threshold-based test, the regions are disconnected.
     force_permutation: bool
         Conduct permutations regardless of whether there are any clusters.
-    norm : bool
+    norm
         Use the vector norm as univariate test statistic (instead of Hotelling’s
         T-Square statistic).
-    mintime : scalar
+    mintime : float
         Minimum duration for clusters (in seconds).
     minsource : int
         Minimum number of sources per cluster.
 
     Attributes
     ----------
-    n : int
+    n
         Number of cases.
-    c1_mean : NDVar
+    c1_mean
         Mean in the ``c1`` condition.
-    c0_mean : NDVar
+    c0_mean
         Mean in the ``c0`` condition.
-    difference : NDVar
+    difference
         Difference between the mean in condition ``c1`` and condition ``c0``.
-    t2 : NDVar | None
+    t2
         Hotelling T-Square map; ``None`` if the test used ``norm=True``.
-    p : NDVar | None
+    p
         Map of p-values corrected for multiple comparison (or ``None`` if no
         correction was performed).
-    tfce_map : NDVar | None
+    tfce_map
         Map of the test statistic processed with the threshold-free cluster
         enhancement algorithm (or None if no TFCE was performed).
-    clusters : None | Dataset
+    clusters
         For cluster-based tests, a table of all clusters. Otherwise a table of
         all significant regions (or ``None`` if permutations were omitted).
         See also the :meth:`.find_clusters` method.
@@ -2434,6 +2490,15 @@ class VectorDifferenceRelated(NDMaskedC1Mixin, Vector):
     Vector : One-sample vector test, notes on vector test implementation
     testnd : Information on the different permutation methods
     """
+    n: int
+    c1_mean: NDVar
+    c0_mean: NDVar
+    difference: NDVar
+    t2: NDVar
+    p: NDVar
+    tfce_map: NDVar
+    clusters: Dataset
+
     _state_specific = ('x', 'c1', 'c0', 'difference', 'c1_mean', 'c0_mean', 'n', '_v_dim', 't2')
 
     @user_activity
@@ -2442,8 +2507,8 @@ class VectorDifferenceRelated(NDMaskedC1Mixin, Vector):
             self,
             y: NDVarArg,
             x: CategorialArg | NDVarArg,
-            c1: str = None,
-            c0: str = None,
+            c1: CellArg = None,
+            c0: CellArg = None,
             match: CategorialArg = None,
             sub: IndexArg = None,
             data: Dataset = None,

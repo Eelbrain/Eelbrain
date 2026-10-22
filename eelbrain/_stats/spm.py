@@ -7,6 +7,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from .. import _info, fmtxt
+from ..fmtxt import FMTextLike
 from .._data_obj import Dataset, Factor, Var, NDVar, Case, IndexArg, ModelArg, NDVarArg, Parametrization, PermutedParametrization, asmodel, asndvar, assub, combine
 from .._exceptions import DimensionMismatchError
 from .._utils import deprecate_ds_arg
@@ -305,22 +306,23 @@ class LM(MultiEffectNDTest):
 
 
 class LMGroup:
-    """Group level analysis for linear model :class:`LM` objects
+    """Group level analysis for linear model :class:`testnd.LM` objects
 
     Parameters
     ----------
-    lms : sequence of LM
-        A separate :class:`LM` object for each subject.
+    lms
+        A separate :class:`testnd.LM` object for each subject.
 
     Attributes
     ----------
-    column_names : [str]
+    column_names
         Names of the linear model columns.
-    column_keys : [str]
+    column_keys
         Corresponding dataset keys (with invalid characters replaced).
-    tests : None | {str: TTestRelated}
-        Tests computed with :meth:`compute_column_ttests`.
-    samples : None | int
+    tests
+        Tests computed with :meth:`compute_column_ttests`, mapping column name
+        to :class:`test.TTestRelated`.
+    samples
         Number of samples used to compute tests in :attr:`tests`.
 
     See Also
@@ -331,8 +333,12 @@ class LMGroup:
     --------
     See :ref:`exa-two-stage` example.
     """
+    column_names: list[str]
+    column_keys: list[str]
+    tests: dict
+    samples: int
 
-    def __init__(self, lms):
+    def __init__(self, lms: Sequence[LM]):
         # check lms
         lm0 = lms[0]
         n_columns_by_term = lm0._n_columns()
@@ -399,7 +405,7 @@ class LMGroup:
         x = np.concatenate([lm._coefficient(term) for lm in self._lms])
         return NDVar(x, (Case,) + self.dims, name=term)
 
-    def coefficients_dataset(self, terms=None, long=False):
+    def coefficients_dataset(self, terms: str | Sequence[str] = None, long: bool = False):
         """Regression coefficients in a :class:`Dataset`
 
         By default, each regression coefficient is assigned as separate column.
@@ -409,9 +415,9 @@ class LMGroup:
 
         Parameters
         ----------
-        terms : str | sequence of str
+        terms
             Terms for which to retrieve coefficients (default is all terms).
-        long : bool
+        long
             Produce a table in long form.
 
         Returns
@@ -444,17 +450,24 @@ class LMGroup:
             ds.update(self.subject_variables)
         return ds
 
-    def column_ttest(self, term, return_data=False, popmean=0, *args, **kwargs):
+    def column_ttest(
+            self,
+            term: str,
+            return_data: bool = False,
+            popmean: float = 0,
+            *args,
+            **kwargs,
+    ):
         """One-sample t-test on a single model column
 
         Parameters
         ----------
-        term : str
+        term
             Name of the term to test.
-        return_data : bool
+        return_data
             Return the individual subjects' coefficients along with test
             results.
-        popmean : scalar
+        popmean
             Value to compare y against (default is 0).
         tail : 0 | 1 | -1
             Which tail of the t-distribution to consider:
@@ -520,7 +533,7 @@ class LMGroup:
         return table
 
     def compute_column_ttests(self, *args, **kwargs):
-        """Compute all tests and store them in :attr:`self.tests`
+        """Compute all tests and store them in :attr:`~testnd.LMGroup.tests`
 
         Parameters like :meth:`.column_ttest`, starting with ``popmean``.
         """
@@ -536,14 +549,14 @@ class LMGroup:
             info.add_sublist(effect, [res.info_list()])
         return info
 
-    def table(self, title=None, caption=None):
+    def table(self, title: FMTextLike = None, caption: FMTextLike = None) -> fmtxt.Table:
         """Table listing all terms and corresponding smallest p-values
 
         Parameters
         ----------
-        title : text
+        title
             Title for the table.
-        caption : text
+        caption
             Caption for the table.
 
         Returns

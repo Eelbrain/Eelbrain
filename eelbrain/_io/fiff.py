@@ -198,7 +198,7 @@ def events(
 
     Returns
     -------
-    events
+    events : Dataset
         A Dataset with the following variables:
          - *i_start*: the index of the event in the raw file.
          - *trigger*: the event value/id.
@@ -459,10 +459,25 @@ def epochs(
     return ndvar
 
 
-def add_epochs(ds, tmin=-0.1, tmax=0.6, baseline=None, decim=1, mult=1,
-               proj=False, data=None, reject=None, exclude='bads', info=None,
-               name="meg", raw=None, sensors=None, i_start='i_start',
-               sysname=None, tstop=None):
+def add_epochs(
+        ds: Dataset,
+        tmin: float = -0.1,
+        tmax: float = 0.6,
+        baseline: tuple[float, float] = None,
+        decim: int = 1,
+        mult: float = 1,
+        proj: bool = False,
+        data: DataArg = None,
+        reject: float = None,
+        exclude: str | Sequence[str] = 'bads',
+        info: dict = None,
+        name: str = "meg",
+        raw: mne.io.BaseRaw = None,
+        sensors: Sensor = None,
+        i_start: str = 'i_start',
+        sysname: str = None,
+        tstop: float = None,
+):
     """
     Load epochs and add them to a dataset as :class:`NDVar`.
 
@@ -472,54 +487,54 @@ def add_epochs(ds, tmin=-0.1, tmax=0.6, baseline=None, decim=1, mult=1,
 
     Parameters
     ----------
-    ds : Dataset
+    ds
         Dataset containing a variable which defines epoch cues (i_start) and to
         which the epochs are added.
-    tmin : scalar
+    tmin
         First sample to include in the epochs in seconds (Default is -0.1).
-    tmax : scalar
+    tmax
         Last sample to include in the epochs in seconds (Default 0.6; use
         ``tstop`` instead to specify index exclusive of last sample).
-    baseline : (float, float) | None
+    baseline
         Time interval for baseline correction. ``(tmin, tmax)`` tuple in
         seconds, or ``None`` to use all the data (e.g., ``(None, 0)`` uses all
         the data from the beginning of the epoch up to ``t = 0``). Set to
         ``None`` for no baseline correction (default).
-    decim : int
+    decim
         Downsample the data by this factor when importing. ``1`` means no
         downsampling. Note that this function does not low-pass filter
         the data. The data is downsampled by picking out every
         n-th sample (see `Wikipedia <http://en.wikipedia.org/wiki/Downsampling>`_).
-    mult : scalar
+    mult
         multiply all data by a constant.
-    proj : bool
+    proj
         mne.Epochs kwarg (subtract projections when loading data)
-    data : 'eeg' | 'mag' | 'grad'
+    data
         Which data channels data to include (default based on channels in data).
-    reject : None | scalar
+    reject
         Threshold for rejecting epochs (peak to peak). Requires a for of
         mne-python which implements the Epochs.model['index'] variable.
-    exclude : list of string | str
+    exclude
         Channels to exclude (:func:`mne.pick_types` kwarg).
         If 'bads' (default), exclude channels in info['bads'].
         If empty do not exclude any.
-    info : None | dict
+    info
         Entries for the ndvar's info dict.
-    name : str
+    name
         name for the new NDVar.
-    raw : None | mne Raw
+    raw
         Raw file providing the data; if ``None``, ``ds.info['raw']`` is used.
-    sensors : None | Sensor
+    sensors
         The default (``None``) reads the sensor locations from the fiff file.
         If the fiff file contains incorrect sensor locations, a different
         Sensor instance can be supplied through this kwarg.
-    i_start : str
+    i_start
         name of the variable containing the index of the events.
-    sysname : str
+    sysname
         Name of the sensor system to load sensor adjacency (e.g. 'neuromag',
         inferred automatically for KIT data converted with a recent version of
         MNE-Python).
-    tstop : scalar
+    tstop
         Alternative to ``tmax``: While ``tmax`` specifies the last samples to
         include, ``tstop`` can be used to specify the epoch time excluding the
         last time point (i.e., standard Python/Eelbrain indexing convention).
@@ -549,7 +564,14 @@ def add_epochs(ds, tmin=-0.1, tmax=0.6, baseline=None, decim=1, mult=1,
     return ds
 
 
-def add_mne_epochs(ds, tmin=-0.1, tmax=None, baseline=None, target='epochs', **kwargs):
+def add_mne_epochs(
+        ds: Dataset,
+        tmin: float = -0.1,
+        tmax: float = None,
+        baseline: tuple[float, float] = None,
+        target: str = 'epochs',
+        **kwargs,
+):
     """
     Load epochs and add them to a dataset as :class:`mne.Epochs`.
 
@@ -563,20 +585,20 @@ def add_mne_epochs(ds, tmin=-0.1, tmax=None, baseline=None, target='epochs', **k
 
     Parameters
     ----------
-    ds : Dataset
+    ds
         Dataset with events from a raw fiff file (i.e., created by
         load.mne.events).
-    tmin : scalar
+    tmin
         First sample to include in the epochs in seconds (Default is -0.1).
-    tmax : scalar
+    tmax
         Last sample to include in the epochs in seconds (Default 0.6; use
         ``tstop`` instead to specify index exclusive of last sample).
-    baseline : (float, float) | None
+    baseline
         Time interval for baseline correction. ``(tmin, tmax)`` tuple in
         seconds, or ``None`` to use all the data (e.g., ``(None, 0)`` uses all
         the data from the beginning of the epoch up to ``t = 0``). Set to
         ``None`` for no baseline correction (default).
-    target : str
+    target
         Name for the Epochs object in the Dataset.
     ...
         See :func:`~eelbrain.load.mne.mne_epochs`.
@@ -606,37 +628,49 @@ def _mne_events(ds=None, i_start='i_start', trigger='trigger'):
     return events
 
 
-def mne_epochs(ds, tmin=-0.1, tmax=None, baseline=None, i_start='i_start',
-               raw=None, drop_bad_chs=True, picks=None, reject=None, tstop=None,
-               decim=1, trigger='trigger', **kwargs):
+def mne_epochs(
+        ds: Dataset,
+        tmin: float = -0.1,
+        tmax: float = None,
+        baseline: tuple[float, float] = None,
+        i_start: str = 'i_start',
+        raw: mne.io.BaseRaw = None,
+        drop_bad_chs: bool = True,
+        picks: Sequence[str] = None,
+        reject: float = None,
+        tstop: float = None,
+        decim: int = 1,
+        trigger: str = 'trigger',
+        **kwargs,
+):
     """Load epochs as :class:`mne.Epochs`.
 
     Parameters
     ----------
-    ds : Dataset
+    ds
         Dataset containing a variable which defines epoch cues (i_start).
-    tmin : scalar
+    tmin
         First sample to include in the epochs in seconds (Default is -0.1).
-    tmax : scalar
+    tmax
         Last sample to include in the epochs in seconds (Default 0.6; use
         ``tstop`` instead to specify index exclusive of last sample).
-    baseline : (float, float) | None
+    baseline
         Time interval for baseline correction. ``(tmin, tmax)`` tuple in
         seconds, or ``None`` to use all the data (e.g., ``(None, 0)`` uses all
         the data from the beginning of the epoch up to ``t = 0``). Set to
         ``None`` for no baseline correction (default).
-    i_start : str
+    i_start
         Name of the variable containing the sample index of each event.
-    trigger : str
+    trigger
         Name of the variable containing the integer event ID (trigger code).
-    raw : None | mne Raw
+    raw
         If None, ds.info['raw'] is used.
-    drop_bad_chs : bool
+    drop_bad_chs
         Drop all channels in raw.info['bads'] form the Epochs. This argument is
         ignored if the picks argument is specified.
     picks, reject
         :class:`mne.Epochs` parameters.
-    tstop : scalar
+    tstop
         Alternative to ``tmax``. While ``tmax`` specifies the last samples to
         include, ``tstop`` specifies the sample before which to stop (standard
         Python indexing convention).
@@ -708,7 +742,7 @@ def sensor_dim(
         Name of the sensor system to load sensor adjacency (e.g. 'neuromag',
         inferred automatically for KIT data converted with a recent version of
         MNE-Python).
-    adjacency : str | list of (str, str) | array of int, (n_edges, 2)
+    adjacency
         Sensor adjacency (adjacency graph). Can be specified as:
 
         - ``"none"`` for no connections
@@ -745,7 +779,7 @@ def sensor_dim(
     nan_mask = np.array([np.any(np.isnan(loc)) for loc in ch_locs])
     if np.any(nan_mask):
         nan_ch_names = [name for name, is_nan in zip(ch_names, nan_mask) if is_nan]
-        raise ValueError(f"Channels with NaN position in sensor layout: {', '.join(nan_ch_names)}")
+        raise ValueError(f"Channels with NaN position in sensor layout: {', '.join(nan_ch_names)}. This usually means that no position is available for these channels (e.g., a montage was not applied, or the channels are missing from electrodes.tsv). Supply positions (e.g., through a montage), or exclude the channels from the data (e.g., by marking them as bad).")
 
     # use KIT system ID if available
     sysname = KIT_NEIGHBORS.get(info.get('kit_system_id'), sysname)
@@ -834,7 +868,7 @@ def variable_length_epochs(
         exclude: str | Sequence[str] = 'bads',
         sysname: str = None,
         adjacency: AdjacencyArg = None,
-        tstop: float | Sequence[float] = None,
+        tstop: float | Sequence[float] | str = None,
         name: str = None,
         **kwargs,
 ) -> list[NDVar]:
@@ -857,8 +891,8 @@ def variable_length_epochs(
         the data from the beginning of the epoch up to ``t = 0``). Set to
         ``None`` for no baseline correction (default).
     allow_truncation
-        If a ``tmax`` value falls outside the data available in ``raw``,
-        automatically truncate the epoch (by default this raises a
+        If a ``tmin`` or ``tmax`` value falls outside the data available in
+        ``raw``, automatically truncate the epoch (by default this raises a
         ``ValueError``).
     data
         Which data channels data to include (default based on channels in data).
@@ -870,7 +904,7 @@ def variable_length_epochs(
         Name of the sensor system to load sensor adjacency (e.g. 'neuromag306',
         inferred automatically for KIT data converted with a recent version of
         MNE-Python).
-    adjacency : str | list of (str, str) | array of int, (n_edges, 2)
+    adjacency
         Adjacency between elements. Can be specified as:
 
         - ``"none"`` for no connections
@@ -889,6 +923,7 @@ def variable_length_epochs(
         For example, at 100 Hz the epoch with ``tmin=-0.1, tmax=0.4`` will have
         51 samples, while the epoch specified with ``tmin=-0.1, tstop=0.4`` will
         have 50 samples.
+        Can be :class:`str` referencing a variable in ``events``.
     name
         Name for the NDVar.
     ...
@@ -903,13 +938,42 @@ def variable_length_epochs(
     return [epochs_ndvar(epoch, name, data, exclude, sysname=sysname, adjacency=adjacency)[0] for epoch in epochs_]
 
 
+def _epoch_times(
+        events: Dataset,
+        value: float | Sequence[float] | str,
+        n: int,
+        name: str,
+) -> np.ndarray:
+    """Evaluate a per-epoch time parameter into one value per event
+
+    Parameters
+    ----------
+    events
+        Dataset with the events, in which ``value`` is evaluated if it is a :class:`str`.
+    value
+        Scalar (applied to all epochs), one value per event, or name of (or expression using) a variable in ``events``.
+    n
+        Number of events.
+    name
+        Name of the parameter, used for error messages.
+    """
+    if isinstance(value, str):
+        value = events.eval(value)
+    if np.isscalar(value):
+        return np.repeat(float(value), n)
+    value = np.asarray(value, float)
+    if value.ndim != 1 or len(value) != n:
+        raise ValueError(f"{name}: needs to be a scalar or provide one value for each of the {n} events, got array of shape {value.shape}")
+    return value
+
+
 def variable_length_mne_epochs(
         events: Dataset,
         tmin: float | Sequence[float] | str,
         tmax: float | Sequence[float] | str = None,
         baseline: BaselineArg = None,
         allow_truncation: bool = False,
-        tstop: float | Sequence[float] = None,
+        tstop: float | Sequence[float] | str = None,
         picks: PicksArg = None,
         decim: int = 1,
         i_start: str = 'i_start',
@@ -938,10 +1002,6 @@ def variable_length_mne_epochs(
         If a ``tmin`` or ``tmax`` value falls outside the data available in
         ``raw``, automatically truncate the epoch (by default this raises a
         ``ValueError``).
-    i_start
-        Name of the variable containing the sample index of each event.
-    trigger
-        Name of the variable containing the integer event ID (trigger code).
     tstop
         Alternative to ``tmax``. While ``tmax`` specifies the last samples to
         include, ``tstop`` specifies the sample before which to stop (standard
@@ -949,33 +1009,43 @@ def variable_length_mne_epochs(
         For example, at 100 Hz the epoch with ``tmin=-0.1, tmax=0.4`` will have
         51 samples, while the epoch specified with ``tmin=-0.1, tstop=0.4`` will
         have 50 samples.
+        Can be :class:`str` referencing a variable in ``events``.
+    picks
+        Channels to include (:class:`mne.Epochs` parameter). By default, all
+        channels are included; if ``raw`` has bad channels, MEG, EEG and EOG
+        channels are picked without excluding the bad ones.
+    decim
+        Decimate the data by this factor (i.e., only keep every ``decim``'th
+        sample; :class:`mne.Epochs` parameter).
+    i_start
+        Name of the variable containing the sample index of each event.
+    trigger
+        Name of the variable containing the integer event ID (trigger code).
     ...
         :class:`mne.Epochs` parameters.
+
+    Returns
+    -------
+    epochs
+        List with one :class:`mne.Epochs` object for each row in ``events``.
     """
     if baseline is False:
         baseline = None
     raw = events.info['raw']
+    if tmax is None and tstop is None:
+        raise TypeError(f"{tmax=}, {tstop=}: must specify at least one")
+    elif tmax is not None and tstop is not None:
+        raise TypeError(f"{tmax=}, {tstop=}: can not specify both")
+    n = events.n_cases
+    tmin = _epoch_times(events, tmin, n, 'tmin')
     if tmax is None:
-        if tstop is None:
-            raise TypeError(f"{tmax=}, {tstop=}: must specify at least one")
-        if isinstance(tstop, str):
-            tstop = events.eval(tstop)
-        n = len(tstop)
-    else:
-        if isinstance(tmax, str):
-            tmax = events.eval(tmax)
-        n = len(tmax)
-    if np.isscalar(tmin):
-        tmin = np.repeat(tmin, n)
-    else:
-        tmin = np.asarray(tmin)
-    if tmax is None:
+        tstop = _epoch_times(events, tstop, n, 'tstop')
         sfreq = raw.info['sfreq'] / decim
         start_index = np.round(tmin * sfreq).astype(int)
-        stop_index = np.round(np.asarray(tstop) * sfreq).astype(int)
+        stop_index = np.round(tstop * sfreq).astype(int)
         tmax = tmin + (stop_index - start_index - 1) / sfreq
-    elif np.isscalar(tmax):
-        tmax = np.repeat(tmax, n)
+    else:
+        tmax = _epoch_times(events, tmax, n, 'tmax')
     if picks is None and raw.info['bads']:
         picks = mne.pick_types(raw.info, meg=True, eeg=True, eog=True, ref_meg=False, exclude=[])
     events_array = _mne_events(events, i_start=i_start, trigger=trigger)
@@ -987,7 +1057,7 @@ def variable_length_mne_epochs(
             if allow_truncation:
                 tmin_i = (raw.first_samp - events_array[i, 0]) / raw.info['sfreq']
             else:
-                missing = (i_min - raw.first_samp) / raw.info['sfreq']
+                missing = (raw.first_samp - i_min) / raw.info['sfreq']
                 raise ValueError(f"{tmin[i]=} is outside of data range by {missing:g} s")
         i_max = events_array[i, 0] + floor(tmax_i * raw.info['sfreq'])
         if raw.last_samp < i_max:
@@ -1146,7 +1216,7 @@ def epochs_ndvar(
         If empty do not exclude any.
     mult
         multiply all data by a constant.
-    info : None | dict
+    info
         Additional contents for the info dictionary of the NDVar.
     sensors
         The default (``None``) reads the sensor locations from the fiff file.
@@ -1158,7 +1228,7 @@ def epochs_ndvar(
         Name of the sensor system to load sensor adjacency (e.g. 'neuromag306',
         inferred automatically for KIT data converted with a recent version of
         MNE-Python).
-    adjacency : str | list of (str, str) | array of int, (n_edges, 2)
+    adjacency
         Adjacency between elements. Can be specified as:
 
         - ``"none"`` for no connections
@@ -1193,31 +1263,38 @@ def epochs_ndvar(
     return NDVar(x, ('case', sensor, time), info=info_, name=name)
 
 
-def evoked_ndvar(evoked, name=None, data=None, exclude='bads', vmax=None,
-                 sysname=None, adjacency=None):
+def evoked_ndvar(
+        evoked: str | mne.Evoked | Sequence[mne.Evoked],
+        name: str = None,
+        data: DataArg = None,
+        exclude: str | Sequence[str] = 'bads',
+        vmax: float = None,
+        sysname: str = None,
+        adjacency: AdjacencyArg = None,
+):
     """
-    Convert one or more mne :class:`Evoked` objects to an :class:`NDVar`.
+    Convert one or more mne :class:`mne.Evoked` objects to an :class:`NDVar`.
 
     Parameters
     ----------
-    evoked : str | Evoked | list of Evoked
+    evoked
         The Evoked to convert to NDVar. Can be a string designating a file
         path to a evoked fiff file containing only one evoked.
-    name : str
+    name
         Name of the NDVar.
-    data : 'eeg' | 'mag' | 'grad'
+    data
         Which data channels data to include (default based on channels in data).
-    exclude : list of string | string
+    exclude
         Channels to exclude (:func:`mne.pick_types` kwarg).
         If 'bads' (default), exclude channels in info['bads'].
         If empty do not exclude any.
-    vmax : None | scalar
+    vmax
         Set a default range for plotting.
-    sysname : str
+    sysname
         Name of the sensor system to load sensor adjacency (e.g. 'neuromag306',
         inferred automatically for KIT data converted with a recent version of
         MNE-Python).
-    adjacency : str | list of (str, str) | array of int, (n_edges, 2)
+    adjacency
         adjacency between elements. Can be specified as:
 
         - ``"none"`` for no connections
@@ -1365,9 +1442,10 @@ def forward_operator(
         if name is None:
             name = os.path.basename(fwd)
         fwd = mne.read_forward_solution(fwd)
-        mne.convert_forward_solution(fwd, force_fixed=not is_vol, use_cps=True, copy=False)
     elif name is None:
         name = 'fwd'
+    if not is_vol and fwd['source_ori'] != FIFF.FIFFV_MNE_FIXED_ORI:
+        fwd = mne.convert_forward_solution(fwd, force_fixed=True, use_cps=True)
     sensor = sensor_dim(fwd['info'], sysname=sysname, adjacency=adjacency)
     assert np.all(sensor.names == fwd['sol']['row_names'])
     subject = fwd['src'][0]['subject_his_id']
@@ -1382,27 +1460,33 @@ def forward_operator(
     return NDVar(x, dims, name)
 
 
-def inverse_operator(inv, src, subjects_dir=None, parc='aparc', name=None):
+def inverse_operator(
+        inv: str | mne.minimum_norm.InverseOperator,
+        src: str,
+        subjects_dir: str = None,
+        parc: str = 'aparc',
+        name: str = None,
+):
     """Load inverse operator as :class:`NDVar`
 
     Parameters
     ----------
-    inv : str | mne.minimum_norm.InverseOperator
+    inv
         MNE inverse operator, or path to inverse operator.
-    src : str
+    src
         Tag describing the source space (e.g., "ico-4").
-    subjects_dir : str
+    subjects_dir
         Location of the MRI subjects directory.
-    parc : str
+    parc
         Parcellation to load (corresponding to existing annot files; default
         'aparc').
-    name : str
+    name
         Name the NDVar (default is the filename if a path is provided,
         otherwise "inv").
 
     Returns
     -------
-    inv : NDVar  (source, sensor)
+    inv : NDVar
         NDVar containing the inverse operator.
     """
     if isinstance(inv, str):
@@ -1426,12 +1510,12 @@ def stc_ndvar(
         subject: str,
         src: str,
         subjects_dir: PathArg = None,
-        method: str = None,
+        method: Literal['MNE', 'dSPM', 'sLORETA', 'eLORETA'] = None,
         fixed: bool = None,
         name: str = None,
         check: bool = True,
         parc: str | None = '',
-        adjacency: str = None,
+        adjacency: Literal['link-midline'] = None,
         sss_filename: str = '{subject}-{src}-src.fif',
 ):
     """
@@ -1439,7 +1523,7 @@ def stc_ndvar(
 
     Parameters
     ----------
-    stc : SourceEstimate | list of SourceEstimates | str
+    stc
         The source estimate object(s) or a path to an stc file. Volum and vector
         source estimates are supported.
     subject
@@ -1448,7 +1532,7 @@ def stc_ndvar(
         The kind of source space used (e.g., 'ico-4').
     subjects_dir
         The path to the subjects_dir (needed to locate the source space file).
-    method : 'MNE' | 'dSPM' | 'sLORETA' | 'eLORETA'
+    method
         Source estimation method (optional, used for generating info).
     fixed
         Source estimation orientation constraint (optional, used for generating
@@ -1462,7 +1546,7 @@ def stc_ndvar(
         Name of a parcellation to add to the source space. ``None`` to add no
         parcellation. The default is ``aparc`` for surface source-spaces and
         none for volume source spaces.
-    adjacency : 'link-midline'
+    adjacency
         Modify source space adjacency to link medial sources of the two
         hemispheres across the midline.
     sss_filename

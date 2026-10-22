@@ -97,7 +97,7 @@ i == ('a', 'd')
 # ---
 #
 # The :class:`Var` class is a container for one-dimensional
-# :py:class:`numpy.ndarray`:
+# :class:`numpy.ndarray`:
 
 y = Var([1, 2, 3, 4, 5, 6])
 y
@@ -116,7 +116,7 @@ y[2:]
 y + 1
 
 ###############################################################################
-# For any more complex operations the corresponding :py:class:`numpy.ndarray`
+# For any more complex operations the corresponding :class:`numpy.ndarray`
 # can be retrieved in the :attr:`Var.x` attribute:
 
 y.x

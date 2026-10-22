@@ -26,23 +26,22 @@ import mne_bids
 from mne_bids import BIDSPath
 import numpy
 import pandas as pd
-from scipy.spatial.transform import Rotation
 
 from ..._exceptions import DataError
 from ..derivative_cache import (
-    ArtifactManifest, CachePolicy, Dependency, Derivative, UncachedDerivative,
-    Request, Input, MANIFEST_SCHEMA_VERSION, ProtectedArtifactError,
-    canonical_state_subset, compare_manifests, file_fingerprint,
+    ALLOW_PROTECTED_OVERWRITE, ArtifactManifest, CachePolicy, Dependency, Derivative, UncachedDerivative,
+    JobProvenance, Request, Input, MANIFEST_SCHEMA_VERSION, ProtectedArtifactError, UnverifiableArtifactError,
+    compare_manifests, file_fingerprint,
 )
 from ..logging import find_difference, format_difference_path
 from ..exceptions import FileMissingError, ICAMissingError
 from ..pathing import bids_path, DERIV_DIR
+from .job import ICAJob
 from .config import (
-    MNE_VERBOSITY, RawPipeGraph, RawSource, CachedRawPipe, RawICA, RawApplyICA, RawMaxwell,
+    MNE_VERBOSITY, RawPipeGraph, RawSource, CachedRawPipe, RawICA, RawApplyICA, RawMaxwell, find_chpi,
     raw_node_name, raw_bad_channels_input_name, raw_input_name, ica_input_name,
 )
 
-LOG = logging.getLogger(__name__)
 REINDEX_ICA = 'reindex_ica'
 # Scaling factors from BIDS coordinate units to metres
 COORD_SCALE = {'mm': 1e-3, 'cm': 1e-2, 'm': 1.0}
@@ -71,6 +70,45 @@ BIDS_TO_MNE_CHANNEL_TYPES = {
     'EYEGAZE': 'eyegaze',
     'PUPIL': 'pupil',
 }
+
+
+def resolve_raw_bids_path(ctx: Request, extension: str, require: bool = False) -> BIDSPath:
+    """Locate the raw recording file described by ``ctx``.
+
+    Parameters
+    ----------
+    ctx
+        Request describing the recording and the ``noise`` option.
+    extension
+        File extension of the raw data files (e.g. ``'.fif'``).
+    require
+        Raise :exc:`FileMissingError` when no file exists at the expected location
+        (by default, the expected location is returned even when it does not exist).
+    """
+    bids_path_ = bids_path(ctx.root, ctx.state, extension, datatype=ctx.datatype, noise=ctx.options['noise'])
+    if bids_path_.fpath.exists():
+        return bids_path_
+    # Alternative path: split files
+    split_path = bids_path_.copy().update(split='01')
+    if split_path.fpath.exists():
+        return split_path
+    if require:
+        raise FileMissingError(f"Raw input file does not exist at expected location {bids_path_.fpath}")
+    return bids_path_
+
+
+def read_channels_tsv(path: Path) -> pd.DataFrame:
+    """Read a BIDS ``channels.tsv`` file, requiring the ``name`` column.
+
+    Parameters
+    ----------
+    path
+        Path of the ``channels.tsv`` file.
+    """
+    channels_df = pd.read_csv(path, sep='\t')
+    if 'name' not in channels_df.columns:
+        raise RuntimeError(f"channels.tsv file at {path} is missing required column 'name'.")
+    return channels_df
 
 
 def canonical_recording(recordings: frozenset[tuple[str, str, str, str, str]], subject: str, session: str | None, acquisition: str | None) -> tuple[str, str] | None:
@@ -104,23 +142,25 @@ def canonical_recording(recordings: frozenset[tuple[str, str, str, str, str]], s
 class RawBadChannelsInput(Input[list[str]]):
     """Access to Pipeline-specific bad channel definitions.
 
-    User-specified bad channels are stored in an Eelbrain-specific  ``channels.tsv`` file under the ``derivatives/mne/`` hierarchy  rather than in the BIDS source dataset, so that re-downloading the dataset does not overwrite them.
-    The BIDS source ``channels.tsv`` is used as seed when the derivatives file is first written.
+    Bad channels are defined by an Eelbrain-specific ``channels.tsv`` file under the
+    ``derivatives/mne/`` hierarchy rather than in the BIDS source dataset, so that the
+    user can update bad channels without modifying the source dataset, and so that a
+    channel that is marked bad in the BIDS source dataset can be marked good again.
+
+    Like the ICA file (:class:`ICAInput`), the derivatives file is user-owned: the
+    Pipeline creates it when it is missing, but never overwrites user edits, so the file
+    lives outside the cache. Unlike the ICA file, its content is cheap to read and fully
+    describes itself, so no provenance manifest is needed and this remains a plain
+    :class:`Input`.
     """
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run')
     key_options = {'noise': False}
 
-    def __init__(
-            self,
-            raw_name: str,
-            pipe: RawSource,
-            extension: str,
-    ):
-        self.name = raw_bad_channels_input_name(raw_name)
-        self.raw_name = raw_name
-        self.fixed_state = {'raw': raw_name}
-        self.pipe = pipe
-        self.extension = extension
+    def __init__(self, raw_input: RawSourceInput):
+        self.name = raw_bad_channels_input_name(raw_input.raw_name)
+        self.raw_name = raw_input.raw_name
+        self.fixed_state = {'raw': raw_input.raw_name}
+        self.raw_input = raw_input
 
     def path(self, ctx: Request) -> Path:
         """Path to the Pipeline-specific bad-channels ``channels.tsv`` file."""
@@ -130,32 +170,142 @@ class RawBadChannelsInput(Input[list[str]]):
 
     def _bids_path(self, ctx: Request) -> BIDSPath:
         """Noise-resolved ``channels.tsv`` :class:`BIDSPath` in the source dataset."""
-        bpath = bids_path(ctx.root, ctx.state, self.extension, datatype=ctx.datatype, noise=ctx.options['noise'])
+        bpath = bids_path(ctx.root, ctx.state, self.raw_input.extension, datatype=ctx.datatype, noise=ctx.options['noise'])
         return bpath.update(suffix='channels', extension='.tsv')
-
-    def _active_path(self, ctx: Request) -> Path:
-        """The file ``load`` reads from: derivatives file if present, else BIDS source."""
-        path = self.path(ctx)
-        if path.exists():
-            return path
-        return self._bids_path(ctx).fpath
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {'bads': self.load(ctx)}
 
+    def normalize_stored_fingerprint(self, fingerprint: dict[str, Any]) -> None:
+        if isinstance(fingerprint.get('bads'), list):  # stored in channels.tsv file order before 0.43; load() now returns them sorted
+            fingerprint['bads'] = sorted(fingerprint['bads'])
+
     def dependency_fingerprint_quick(self, ctx: Request, view: str | None = None) -> dict[str, Any] | None:
-        return file_fingerprint(ctx.root, self._active_path(ctx))
+        # The derivatives channels.tsv fully determines the bad channels
+        path = self.path(ctx)
+        if not path.exists():
+            if ctx.registry._readonly:
+                return None  # seeding would write to disk; fall back to the full comparison
+            self.load(ctx)  # seed the file here so that it is stable by the time job provenance is recorded
+        return file_fingerprint(ctx.root, path)
+
+    def _initial_channels_df(
+            self,
+            ctx: Request,
+            raw: mne.io.BaseRaw = None,
+    ) -> tuple[pd.DataFrame, mne.io.BaseRaw | None]:
+        """Initial content for the derivatives ``channels.tsv`` file, and the raw file if one was used to determine that content.
+
+        Parameters
+        ----------
+        ctx
+            Request identifying the recording.
+        raw
+            The source raw file, if the caller has already loaded it (loaded on
+            demand otherwise).
+        """
+        # BIDS source ``channels.tsv`` (resolved like in _apply_bids_channels, honoring BIDS inheritance)
+        source_path = RawSourceInput._find_bids_channels(self._bids_path(ctx))
+        channels_df = None
+        if source_path is not None:
+            channels_df = read_channels_tsv(source_path)
+            if 'status' in channels_df.columns:
+                return channels_df, None
+        # Fall back on bad channels in raw file
+        if raw is None:
+            raw = self.raw_input._load_raw(ctx, preload=False)
+        bads = raw.info['bads']
+        if channels_df is None:
+            channels_df = pd.DataFrame({'name': list(raw.ch_names)})
+        channels_df['status'] = ['bad' if ch in bads else 'good' for ch in channels_df['name']]
+        return channels_df, raw
+
+    def _load_df(
+            self,
+            ctx: Request,
+            raw: mne.io.BaseRaw = None,
+    ) -> tuple[pd.DataFrame, Path, bool, mne.io.BaseRaw | None]:
+        """The bad-channel table for ``ctx``, its path, whether it is backed by a file on disk, and the raw file if one was used for seeding.
+
+        When the derivatives ``channels.tsv`` file does not exist yet, its initial
+        content is returned without writing it.
+
+        Parameters
+        ----------
+        ctx
+            Request identifying the recording.
+        raw
+            The source raw file, if the caller has already loaded it (loaded on
+            demand otherwise).
+        """
+        path = self.path(ctx)
+        if not path.exists():
+            channels_df, raw = self._initial_channels_df(ctx, raw)
+            return channels_df, path, False, raw
+        channels_df = read_channels_tsv(path)
+        if 'status' not in channels_df.columns:
+            channels_df['status'] = 'good'
+        return channels_df, path, True, None
 
     def load(self, ctx: Request) -> list[str]:
-        path = self._active_path(ctx)
-        if not path.exists():
-            return []
-        channels_df = pd.read_csv(path, sep='\t')
-        if 'status' not in channels_df.columns:
-            return []
-        if 'name' not in channels_df.columns:
-            raise RuntimeError(f"channels.tsv file at {path} is missing required column 'name'.")
-        return channels_df.query('status == "bad"')['name'].tolist()
+        channels_df, path, exists, raw = self._load_df(ctx)
+        if not exists and not ctx.registry._readonly:
+            self._check_eeg_positions(ctx, channels_df, raw)
+            ctx.registry.log.info("Creating bad-channels file at %s.", path)
+            self._write_df(path, channels_df)
+        return sorted(channels_df.loc[channels_df['status'] == 'bad', 'name'])
+
+    def _check_eeg_positions(
+            self,
+            ctx: Request,
+            channels_df: pd.DataFrame,
+            raw: mne.io.BaseRaw = None,
+    ) -> None:
+        """Check EEG channel positions before creating the bad-channels file.
+
+        Channels without a position cannot be plotted or interpolated. Rather than
+        marking them as bad silently, an error asks the user to fix the positions or
+        mark the channels as bad explicitly.
+
+        Parameters
+        ----------
+        ctx
+            Request identifying the recording.
+        channels_df
+            Content for the bad-channels file (see :meth:`_initial_channels_df`).
+        raw
+            The source raw file (loaded if not supplied).
+        """
+        if raw is None:
+            raw = self.raw_input._load_raw(ctx, preload=False)
+        eeg_picks = mne.pick_types(raw.info, meg=False, eeg=True, exclude=())
+        if len(eeg_picks) == 0:
+            return
+        bad_chs = set(channels_df.loc[channels_df['status'] == 'bad', 'name'])
+        nan_chs = {raw.info['chs'][i]['ch_name'] for i in eeg_picks if numpy.isnan(raw.info['chs'][i]['loc'][:3]).any()} - bad_chs
+        if not nan_chs:
+            return
+        eeg_names = {raw.info['chs'][i]['ch_name'] for i in eeg_picks}
+        if nan_chs == eeg_names - bad_chs:
+            raise DataError("All EEG channel positions are NaN. This usually means that the raw file does not contain electrode positions and a montage needs to be applied. Set the montage parameter in RawSource to supply channel positions.")
+        raise DataError(f"EEG channels without a position: {', '.join(sorted(nan_chs))}. These channels cannot be plotted or interpolated; mark them as bad (e.g. with make_bad_channels) or fix their positions in the dataset.")
+
+    def _write_df(
+            self,
+            path: Path,
+            df: pd.DataFrame,
+    ) -> None:
+        """Write the bad-channel table to the ``channels.tsv`` file.
+
+        Parameters
+        ----------
+        path
+            Path of the ``channels.tsv`` file (parent directories are created).
+        df
+            The bad-channel table.
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(path, sep='\t', index=False)
 
     def write(
             self,
@@ -163,17 +313,12 @@ class RawBadChannelsInput(Input[list[str]]):
             raw: mne.io.BaseRaw,
             new_bads: list[str],
             redo: bool,
-            *,
-            create: bool = False,
     ) -> None:
         """Write bad-channel status to the Pipeline-specific ``channels.tsv`` file.
 
         Bad channels are written to the ``derivatives/mne/`` hierarchy so
-        that the BIDS source dataset is never modified. With ``create=True``, a
-        missing file is initialized from the BIDS source ``channels.tsv`` (to
-        preserve any bad channels shipped with the dataset), or from ``raw`` if
-        no source sidecar exists, so the resulting file contains one row for
-        every channel in the recording.
+        that the BIDS source dataset is never modified. A missing file is
+        first initialized like in :meth:`load` (see :meth:`_initial_channels_df`).
         Channel names in ``new_bads`` are normalized against the raw file using
         the associated :class:`RawSource`. By default, new bad channels are
         added to any channels that are already marked bad. With ``redo=True``,
@@ -185,47 +330,19 @@ class RawBadChannelsInput(Input[list[str]]):
         ctx
             Request describing the recording and ``noise`` option.
         raw
-            Raw file used to validate channel names and initialize a missing
-            ``channels.tsv`` file.
+            Raw data used to validate channel names in ``new_bads``.
         new_bads
             Channels to mark bad.
         redo
             Replace existing bad-channel markings instead of adding to them.
-        create
-            Create a missing ``channels.tsv`` file before writing.
         """
-        path = self.path(ctx)
-        if path.exists():
-            channels_df = pd.read_csv(path, sep='\t')
-            if 'name' not in channels_df.columns:
-                raise RuntimeError(f"channels.tsv file at {path} is missing required column 'name'.")
-            if 'status' not in channels_df.columns:
-                channels_df['status'] = 'good'
-            created = False
-        elif create:
-            source_path = self._bids_path(ctx).fpath
-            if source_path.exists():
-                LOG.info("No bad-channels file found at %s, seeding from BIDS source %s.", path, source_path)
-                channels_df = pd.read_csv(source_path, sep='\t')
-                if 'name' not in channels_df.columns:
-                    raise RuntimeError(f"channels.tsv file at {source_path} is missing required column 'name'.")
-                if 'status' not in channels_df.columns:
-                    channels_df['status'] = 'good'
-            else:
-                LOG.info("No bad-channels file found at %s, creating one from raw.", path)
-                ch_status = ['bad' if ch in raw.info['bads'] else 'good' for ch in raw.ch_names]
-                channels_df = pd.DataFrame({'name': raw.ch_names, 'status': ch_status})
-            path.parent.mkdir(parents=True, exist_ok=True)
-            created = True
-        else:
-            raise FileMissingError(f"Bad channels file does not exist at {path}")
-
-        old_bads = channels_df.query('status == "bad"')['name'].tolist()
-        new_bads = self.pipe._normalize_channel_names(raw, new_bads)
+        channels_df, path, exists, _ = self._load_df(ctx, raw)
+        old_bads = channels_df.loc[channels_df['status'] == 'bad', 'name'].tolist()
+        new_bads = self.raw_input.pipe._normalize_channel_names(raw, new_bads)
         if not redo:
             new_bads = sorted(set(old_bads).union(new_bads))
-        LOG.info("Bad channels: %s -> %s for %s", old_bads, new_bads, path)
-        if new_bads == old_bads and not created:
+        ctx.registry.log.info("Bad channels: %s -> %s for %s", old_bads, new_bads, path)
+        if set(new_bads) == set(old_bads) and exists:
             return
 
         missing = [ch for ch in new_bads if ch not in set(channels_df['name'])]
@@ -234,7 +351,9 @@ class RawBadChannelsInput(Input[list[str]]):
         if redo:
             channels_df['status'] = 'good'
         channels_df.loc[channels_df['name'].isin(new_bads), 'status'] = 'bad'
-        channels_df.to_csv(path, sep='\t', index=False)
+        if not exists:
+            self._check_eeg_positions(ctx, channels_df, raw)
+        self._write_df(path, channels_df)
 
 
 class RawSourceInput(Input[mne.io.BaseRaw]):
@@ -254,29 +373,14 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         self.pipe = pipe
         self.extension = extension
 
-    def _resolve_bids_path(self, ctx: Request, require: bool = False) -> BIDSPath:
-        """Return the noise-resolved BIDSPath and the actual file path on disk."""
-        bids_path_ = bids_path(ctx.root, ctx.state, self.extension, datatype=ctx.datatype)
-        if ctx.options['noise']:
-            bids_path_ = bids_path_.find_empty_room()
-        if bids_path_.fpath.exists():
-            return bids_path_
-        # Alternative path: split files
-        split_path = bids_path_.copy().update(split='01')
-        if split_path.fpath.exists():
-            return split_path
-        if require:
-            raise FileMissingError(f"Raw input file does not exist at expected location {bids_path_.fpath}")
-        return bids_path_
-
     def path(self, ctx: Request) -> Path:
-        return self._resolve_bids_path(ctx).fpath
+        return resolve_raw_bids_path(ctx, self.extension).fpath
 
     @staticmethod
-    def _read_raw(path: BIDSPath, preload: bool) -> mne.io.BaseRaw:
-        """Read a raw file using the MNE reader appropriate for its BIDS extension."""
+    def _read_raw(path: Path, preload: bool) -> mne.io.BaseRaw:
+        """Read a raw file using the MNE reader appropriate for its extension."""
         kwargs = {'preload': preload, 'verbose': MNE_VERBOSITY}
-        match path.extension:
+        match path.suffix:
             case '.fif':
                 reader = mne.io.read_raw_fif
                 kwargs['allow_maxshield'] = True
@@ -289,11 +393,11 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
             case '.bdf':
                 reader = mne.io.read_raw_bdf
             case _:
-                raise RuntimeError(f"Unrecognized file format: {path.extension}")
-        return reader(path.fpath, **kwargs)
+                raise RuntimeError(f"Unrecognized file format: {path.suffix}")
+        return reader(path, **kwargs)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        path = self._resolve_bids_path(ctx)
+        path = resolve_raw_bids_path(ctx, self.extension)
         fp = {
             'raw': self.raw_name,
             'pipe': self.pipe,
@@ -319,13 +423,20 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         raw = self._load_raw(ctx, preload=False)
         return raw.info
 
-    def _load_raw(self, ctx: Request, preload: bool):
-        path = self._resolve_bids_path(ctx, require=True)
-        raw = self._read_raw(path, preload=preload)
+    def _load_raw(self, ctx: Request, preload: bool) -> mne.io.BaseRaw:
+        """Load the source raw file with BIDS channel metadata and electrode positions applied.
+
+        Parameters
+        ----------
+        ctx
+            Request identifying the recording.
+        preload
+            Load the data into memory (as opposed to only the header).
+        """
+        path = resolve_raw_bids_path(ctx, self.extension, require=True)
+        raw = self._read_raw(path.fpath, preload=preload)
         self._apply_bids_channels(path, raw)
-        if self.pipe.rename_channels:
-            if rename := {k: v for k, v in self.pipe.rename_channels.items() if k in raw.ch_names}:
-                raw.rename_channels(rename)
+        self._apply_bids_line_freq(path, raw)
         if self.pipe.montage:
             raw.set_montage(self.pipe.montage)
         elif path.datatype == 'eeg':
@@ -339,15 +450,24 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
         return Path(channels_path) if channels_path is not None else None
 
     @staticmethod
+    def _apply_bids_line_freq(path: BIDSPath, raw: mne.io.BaseRaw) -> None:
+        """Set the power line frequency from the BIDS JSON sidecar when the raw header does not specify it."""
+        if raw.info['line_freq'] is not None:
+            return
+        sidecar_path = path.find_matching_sidecar(suffix=path.datatype, extension='.json', on_error='ignore')
+        if sidecar_path is None:
+            return
+        line_freq = json.loads(Path(sidecar_path).read_text(encoding='utf-8')).get('PowerLineFrequency')
+        if line_freq not in (None, 'n/a'):
+            raw.info['line_freq'] = float(line_freq)
+
+    @staticmethod
     def _apply_bids_channels(path: BIDSPath, raw: mne.io.BaseRaw) -> None:
         """Apply channel metadata from BIDS channels.tsv sidecar if present."""
         channels_path = RawSourceInput._find_bids_channels(path)
         if channels_path is None:
             return
-        channels_df = pd.read_csv(channels_path, sep='\t')
-        if 'name' not in channels_df.columns:
-            warnings.warn(f"{channels_path} has no 'name' column; skipping channel metadata.")
-            return
+        channels_df = read_channels_tsv(channels_path)
 
         if 'type' in channels_df.columns:
             channel_types = {}
@@ -462,7 +582,7 @@ class RawSourceDerivative(UncachedDerivative[mne.io.BaseRaw]):
     def build(self, ctx: Request) -> mne.io.BaseRaw:
         source_name = raw_input_name(self.raw_name)
         raw = ctx.load(source_name)
-        raw.info['bads'] = self._load_bad_channels(ctx)
+        raw.info['bads'] = ctx.load(raw_bad_channels_input_name(self.raw_name))
         return raw
 
     def apply_view_options(self, ctx: Request, raw: mne.io.BaseRaw) -> mne.io.BaseRaw:
@@ -472,36 +592,23 @@ class RawSourceDerivative(UncachedDerivative[mne.io.BaseRaw]):
 
     def load_view(self, ctx: Request, view: str):
         source_name = raw_input_name(self.raw_name)
+        bads_name = raw_bad_channels_input_name(self.raw_name)
+        bads = ctx.load(bads_name, options=ctx.options_for(bads_name, 'noise'))
         if view == 'bads':
-            return self._load_bad_channels(ctx)
+            return bads
         if view == 'info':
             info = ctx.load(source_name, options=ctx.options_for(source_name, 'noise'), view='info')
             with info._unlock():
-                info['bads'] = self._load_bad_channels(ctx)
+                info['bads'] = bads
             return info
         return super().load_view(ctx, view)
 
-    def _load_bad_channels(self, ctx: Request) -> list[str]:
-        tsv_bads = ctx.load(raw_bad_channels_input_name(self.raw_name))
-        raw = ctx.load(raw_input_name(self.raw_name))
-        raw_bads = raw.info['bads']
-        all_bads = set(tsv_bads) | set(raw_bads)
-
-        # Detect EEG channels whose positions contain NaN
-        eeg_picks = mne.pick_types(raw.info, meg=False, eeg=True, exclude=())
-        nan_bads = {raw.info['chs'][i]['ch_name'] for i in eeg_picks if numpy.any(numpy.isnan(raw.info['chs'][i]['loc'][:3]))}
-        nan_bads.difference_update(all_bads)
-        if nan_bads:
-            eeg_names = {raw.info['chs'][i]['ch_name'] for i in eeg_picks}
-            if eeg_names and eeg_names.issubset(nan_bads):
-                raise DataError("All EEG channel positions are NaN. This usually means that the raw file does not contain electrode positions and a montage needs to be applied. Set the montage parameter in RawSource to supply channel positions.")
-            warnings.warn(f"Channels with NaN position marked as bad: {', '.join(sorted(nan_bads))}", RuntimeWarning)
-            all_bads |= nan_bads
-
-        return sorted(all_bads)
-
 
 class ICAInput(Input[mne.preprocessing.ICA]):
+    # The ICA file is user-owned (it may carry manual component selections), so the
+    # cache only mirrors a provenance manifest for it and never overwrites it silently.
+    cache_policy = CachePolicy.EXTERNAL
+    cache_log_level = logging.INFO
     key_fields = ('subject', 'session', 'acquisition', 'run')
     version = 1
 
@@ -525,12 +632,6 @@ class ICAInput(Input[mne.preprocessing.ICA]):
 
     def path(self, ctx: Request) -> Path:
         return self.pipe.path(ctx)
-
-    def _key(self, ctx: Request) -> dict[str, Any]:
-        return canonical_state_subset({**ctx.state, 'raw': self.raw_name}, self.key_fields)
-
-    def _manifest(self, ctx: Request) -> ArtifactManifest | None:
-        return ctx.registry.read_manifest(ctx.registry.manifest_path(self.path(ctx), self.name))
 
     def _load_value(self, ctx: Request) -> mne.preprocessing.ICA:
         return self.pipe._load_ica(ctx)
@@ -569,23 +670,32 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             self,
             ctx: Request,
             tasks: tuple[str, ...],
+            preload: bool = True,
     ) -> mne.io.BaseRaw:
+        """Load the source recordings of ``tasks`` concatenated into one raw
+
+        Parameters
+        ----------
+        ctx
+            Resolved request for this ICA.
+        tasks
+            Tasks whose recordings to concatenate.
+        preload
+            Load the data into memory. With ``False``, cached recordings stay
+            file-backed, so that a consumer that decimates (e.g. the component
+            selection GUI) never holds the full-rate data in memory.
+        """
         bad_channels = self._load_bad_channels(ctx)
         states = self._source_states(ctx, tasks)
         if not states:
             raise FileMissingError(f"No source recordings found to estimate ICA {self.raw_name!r} ({ctx.state['subject']=}, session={ctx.state.get('session')!r}).")
-        raw = load_raw_dependency(ctx, self.pipe.source, preload=True, state=states[0])
+        raw = load_raw_dependency(ctx, self.pipe.source, preload=preload, state=states[0])
         raw.info['bads'] = bad_channels
         for state in states[1:]:
-            raw_ = load_raw_dependency(ctx, self.pipe.source, preload=True, state=state)
+            raw_ = load_raw_dependency(ctx, self.pipe.source, preload=preload, state=state)
             raw_.info['bads'] = bad_channels
             raw.append(raw_)
         return raw
-
-    def _reindex_existing(self, ctx: Request) -> mne.preprocessing.ICA:
-        value = self._load_value(ctx)
-        ctx.registry.write_manifest(ctx.registry.manifest_path(self.path(ctx), self.name), self._build_manifest(ctx, value))
-        return value
 
     @staticmethod
     def _manifest_matches(
@@ -615,7 +725,18 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             if dep.endswith(':raw'):
                 raw_name = self._dependency_raw_name(previous, current, dep)
                 if path[-1] == 'bads':
-                    return f"This ICA was estimated using different bad channels: {old!r} -> {new!r}."
+                    old_set = set(old or [])
+                    new_set = set(new or [])
+                    added = sorted(new_set - old_set)
+                    removed = sorted(old_set - new_set)
+                    lines = ["The set of bad channels used for ICA estimation changed."]
+                    if shared := sorted(old_set & new_set):
+                        lines.append(f"  shared: {', '.join(shared)}")
+                    if added:
+                        lines.append(f"  added: {', '.join(added)}")
+                    if removed:
+                        lines.append(f"  removed: {', '.join(removed)}")
+                    return '\n'.join(lines)
                 if any(a == 'fingerprint' and b == 'source' for a, b in zip(path, path[1:])):
                     def _fmt_mtime(v: Any) -> str:
                         t = v if isinstance(v, (int, float)) else (v.get('mtime') if isinstance(v, dict) else None)
@@ -629,20 +750,6 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         diff = find_difference(previous.fingerprint, current.fingerprint)
         if diff is not None:
             path, old, new = diff
-            if path == ('bads',):
-                old_set = set(old or [])
-                new_set = set(new or [])
-                removed = sorted(old_set - new_set)
-                added = sorted(new_set - old_set)
-                shared = sorted(old_set & new_set)
-                lines = ["The set of bad channels used for ICA estimation changed."]
-                if shared:
-                    lines.append(f"  shared: {', '.join(shared)}")
-                if added:
-                    lines.append(f"  added: {', '.join(added)}")
-                if removed:
-                    lines.append(f"  removed: {', '.join(removed)}")
-                return '\n'.join(lines)
             field = format_difference_path(path)
             return f"The recorded ICA settings changed ({field}: {old!r} -> {new!r})."
 
@@ -680,37 +787,50 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             parts = parts[1:] or [parts[0]]
         return format_difference_path(tuple(parts))
 
-    def _current_value_manifest(
-            self,
-            ctx: Request,
-    ) -> tuple[mne.preprocessing.ICA, ArtifactManifest]:
-        value = self._load_value(ctx)
-        return value, self._build_manifest(ctx, value)
-
     def _build_manifest(
             self,
             ctx: Request,
-            value: mne.preprocessing.ICA,
+            dependencies: dict[str, Any],
+            fingerprint: dict[str, Any] | None = None,
     ) -> ArtifactManifest:
+        """Manifest for this request with the given fingerprints.
+
+        Validity checks pass the current dependency fingerprints
+        (``ctx.dependency_fingerprints()``) to compare against the stored
+        manifest; :meth:`save_result` passes the :meth:`JobSpec.make_job`
+        snapshot so the result is filed under the inputs it was computed from.
+        The node ``fingerprint`` defaults to the current one, with the same
+        snapshot override for :meth:`save_result`.
+        """
         resolve_state, resolve_options = ctx._resolve_context()
         return ArtifactManifest(
             schema_version=MANIFEST_SCHEMA_VERSION,
             derivative=self.name,
             derivative_version=self.version,
-            key=self._key(ctx),
-            fingerprint=ctx.registry.canonicalize(self.fingerprint(ctx)),
-            dependencies=ctx.registry.dependency_fingerprints(ctx),
-            cache_policy='external',
+            key=ctx.key(),
+            fingerprint=ctx.registry.canonicalize(self.fingerprint(ctx)) if fingerprint is None else fingerprint,
+            dependencies=dependencies,
+            cache_policy=self.cache_policy.value,
             software={'eelbrain_cache_schema': str(MANIFEST_SCHEMA_VERSION), 'mne': mne.__version__},
             resolve_state=resolve_state,
             resolve_options=resolve_options,
         )
 
+    def _manifests(self, ctx: Request) -> tuple[ArtifactManifest | None, ArtifactManifest]:
+        """The manifest stored for this ICA file, and the one the current inputs describe.
+
+        Parameters
+        ----------
+        ctx
+            Resolved request for this ICA.
+        """
+        previous = ctx._manifest()
+        return previous, self._build_manifest(ctx, ctx.dependency_fingerprints(previous.dependencies if previous else None))
+
     def is_valid(self, ctx: Request) -> bool:
-        path = self.path(ctx)
-        if not path.exists():
+        if not self.path(ctx).exists():
             return False
-        return self._manifest_matches(self._manifest(ctx), self._current_value_manifest(ctx)[1])
+        return self._manifest_matches(*self._manifests(ctx))
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         deps = []
@@ -725,12 +845,13 @@ class ICAInput(Input[mne.preprocessing.ICA]):
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         path = self.path(ctx)
         return {
-            'raw': self.raw_name,
             'pipe': self.pipe,
-            'bads': self._load_bad_channels(ctx),
             'ica_path': path.relative_to(ctx.root),
             'exists': path.exists(),
         }
+
+    def normalize_stored_fingerprint(self, fingerprint: dict[str, Any]) -> None:
+        fingerprint.pop('bads', None)
 
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
         fingerprint = self.fingerprint(ctx)
@@ -746,11 +867,12 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         path = self.path(ctx)
         if not path.exists():
             raise ICAMissingError(f"ICA file {path.name} does not exist. Run e.make_ica() to create it.")
-        value, current = self._current_value_manifest(ctx)
-        previous = self._manifest(ctx)
+        value = self._load_value(ctx)
+        previous, current = self._manifests(ctx)
         if not self._manifest_matches(previous, current):
             if ctx.has_control(REINDEX_ICA):
-                ctx.registry.write_manifest(ctx.registry.manifest_path(path, self.name), current)
+                # Keep the existing ICA file, but rewrite its manifest
+                ctx.registry.write_manifest(ctx.manifest_path, current)
                 return value
             reason = self._stale_reason(previous, current)
             raise ProtectedArtifactError(self.name, path, message=f"Existing ICA file {path.name!r} no longer matches the current data and ICA settings.", reason=reason, instructions=f"{reason}\nTo make this ICA match the current pipeline again, revert the raw pipeline change or recompute the ICA. To keep using this existing ICA anyway, call e.load_ica(raw={self.raw_name!r}, accept_stale=True) once or run e.make_ica(raw={self.raw_name!r}) and choose 'incorporate'. To recompute it from the current data, run e.make_ica(raw={self.raw_name!r}) and choose 'overwrite'.")
@@ -774,56 +896,67 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             return 'missing-raw'
         return super().load_view(ctx, view)
 
-    def materialize(
-            self,
-            ctx: Request,
-            allow_protected_overwrite: bool = False,
-            allow_protected_reindex: bool = False,
-    ) -> mne.preprocessing.ICA:
-        """Build and save the ICA, or load it if already up-to-date.
+    def _check_protected(self, ctx: Request) -> None:
+        """Raise :exc:`pipeline.ProtectedArtifactError` when recomputing would replace a stale ICA file.
 
-        Unlike a standard :class:`Derivative`, ICA files may contain manual
+        Unlike a standard :class:`Derivative`, an ICA file may contain manual
         component-rejection decisions and must not be silently overwritten when
-        they are stale. This method therefore raises
-        :exc:`ProtectedArtifactError` instead of rebuilding automatically.
-
-        The caller (``make_ica``) catches that error, prompts the user for a
-        choice, and calls this method again with the appropriate flag set:
-
-        - ``allow_protected_overwrite=True`` — recompute ICA and overwrite the
-          existing file.
-        - ``allow_protected_reindex=True`` — keep the existing file and rewrite
-          its manifest to match the current pipeline state (``incorporate``).
+        it goes stale. The caller (``make_ica``, or the pipeline GUI) catches the
+        error, asks the user, and then either re-resolves the request with
+        ``ALLOW_PROTECTED_OVERWRITE`` to recompute, or loads the existing file
+        with ``REINDEX_ICA`` to keep it and rewrite its manifest.
 
         Parameters
         ----------
         ctx
             Bound request for the current ICA input.
-        allow_protected_overwrite
-            If ``True``, recompute ICA even when an existing file is stale.
-        allow_protected_reindex
-            If ``True``, keep the existing ICA file but update its manifest so
-            it is no longer considered stale.
         """
-        path = self.path(ctx)
-        previous = self._manifest(ctx)
-        if path.exists():
-            value, current = self._current_value_manifest(ctx)
-            if self._manifest_matches(previous, current):
-                return value
-            elif allow_protected_reindex:
-                assert current is not None
-                ctx.registry.write_manifest(ctx.registry.manifest_path(path, self.name), current)
-                return value
-            elif not allow_protected_overwrite:
-                reason = self._stale_reason(previous, current)
-                raise ProtectedArtifactError(self.name, path, message=f"Existing ICA file {path.name!r} no longer matches the current data and ICA settings.", instructions=f"{reason}\nUse allow_protected_reindex=True to keep this ICA file and rewrite its manifest, or allow_protected_overwrite=True to recompute it.")
+        # Existence first: for the common batch case (no ICA file yet) this costs one
+        # stat, with no dependency-fingerprint walk.
+        if not self.path(ctx).exists() or ctx.has_control(ALLOW_PROTECTED_OVERWRITE):
+            return
+        previous, current = self._manifests(ctx)
+        if self._manifest_matches(previous, current):
+            return
+        reason = self._stale_reason(previous, current)
+        raise ProtectedArtifactError(self.name, self.path(ctx), message=f"Existing ICA file {self.path(ctx).name!r} no longer matches the current data and ICA settings.", reason=reason, instructions=f"{reason}\nRe-resolve the request with ALLOW_PROTECTED_OVERWRITE to recompute this ICA, or load it with REINDEX_ICA to keep the existing file and rewrite its manifest.")
+
+    def make_job(self, ctx: Request) -> ICAJob:
+        """Load the source data and assemble a picklable :class:`ICAJob` (the fit deferred).
+
+        Parameters
+        ----------
+        ctx
+            Resolved request for this ICA.
+        """
+        self._check_protected(ctx)
         raw = self.load_concatenated_source_raw(ctx, self.pipe.task)
-        value = self.pipe._fit_ica(raw, ctx.state['subject'], self.raw_name)
+        kwargs, fit_kwargs = self.pipe._ica_kwargs()
+        return ICAJob(raw, kwargs, fit_kwargs)
+
+    def save_result(
+            self,
+            ctx: Request,
+            result: mne.preprocessing.ICA,
+            provenance: JobProvenance,
+    ) -> mne.preprocessing.ICA:
+        """Save the ICA file, mirror its provenance manifest, and return the reloaded ICA"""
+        path = self.path(ctx)
+        # Check whether the ICA file changed while the fit ran
+        current = file_fingerprint(ctx.root, path) if path.exists() else None
+        if current != provenance.artifact:
+            verb = 'created' if provenance.artifact is None else 'changed'
+            raise ProtectedArtifactError(self.name, path, message=f"ICA file {path.name!r} was {verb} while this ICA was being computed.", reason=f"The file at {path.name} is not the one this computation was authorized to overwrite.", instructions=f"Another session or tool wrote this ICA file after the fit started, so the newly computed result was not saved. Inspect the existing file, and run e.make_ica(raw={self.raw_name!r}) again if you want to replace it.")
+        # Save the new file
         path.parent.mkdir(parents=True, exist_ok=True)
-        value.save(path, overwrite=True)
-        ctx.registry.write_manifest(ctx.registry.manifest_path(path, self.name), self._build_manifest(ctx, value))
-        return self.load(ctx)
+        result.save(path, overwrite=True)
+        # The fit ran on the snapshot inputs, so the manifest records the snapshot
+        # fingerprint; 'exists' describes the artifact itself, just written.
+        fingerprint = {**provenance.fingerprint, 'exists': True}
+        ctx.registry.write_manifest(ctx.manifest_path, self._build_manifest(ctx, provenance.dependencies, fingerprint))
+        # Reload without the validity check of load(): when the inputs changed during
+        # the fit, the manifest just written is deliberately stale by current inputs.
+        return self._load_value(ctx)
 
 
 class RawDerivative(Derivative[mne.io.BaseRaw]):
@@ -891,11 +1024,20 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         elif isinstance(self.pipe, RawMaxwell):
             deps.append(Dependency('maxwell-calibration'))
             deps.append(Dependency('maxwell-crosstalk'))
-            deps.append(Dependency('canonical-head-position'))
+            if not self.pipe.st_only:  # the destination only enters the SSS reconstruction, which st_only skips
+                deps.append(Dependency('canonical-head-position'))
+            if ctx.options['noise']:
+                # the task recording whose head frame, digitization and bad channels the empty room takes on
+                deps.append(Dependency(source_node, options={'noise': False, 'preload': False}, label='reference'))
+            elif self.pipe.head_pos:
+                deps.append(Dependency('raw-head-position'))
         return tuple(deps)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return {'pipe': self.pipe, 'raw': self.raw_name}
+        fingerprint = {'pipe': self.pipe, 'raw': self.raw_name}
+        if ctx.options['noise'] and isinstance(self.pipe, RawMaxwell):
+            fingerprint['empty_room'] = 'head'  # filtered in the task recording's head frame (previously the device frame)
+        return fingerprint
 
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
         if view == 'bads':
@@ -905,6 +1047,26 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
                 'bads': self.pipe._collect_bads(ctx, noise=ctx.options['noise']),
             }
         return super().dependency_fingerprint(ctx, view)
+
+    def normalize_stored_dependencies(self, dependencies: dict[str, Any]) -> None:
+        if isinstance(self.pipe, RawMaxwell) and self.pipe.st_only:
+            dependencies.pop('canonical-head-position', None)  # recorded during 0.43 development although st_only ignores the destination
+
+    def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, Any] | None:
+        """Record the destination that Maxwell filtering consumes, rather than how it was derived, so that changes to head position tracking only invalidate artifacts whose destination changed"""
+        if dep.name != 'canonical-head-position':
+            return None
+        if ctx.registry._readonly:
+            # A read-only cache scan can not build the canonical head position; describe the stored artifact (scan_cache keeps the dependents of a stale canonical head position as unverifiable, see CanonicalHeadPositionDerivative.dependency_fingerprint_from_artifact)
+            if not dep_ctx.artifact_path.exists():
+                raise UnverifiableArtifactError("the canonical head position has not been computed; the destination used for Maxwell filtering is only known once it is built")
+            destination = dep_ctx.node.load(dep_ctx, dep_ctx.artifact_path)
+        else:
+            destination = dep_ctx.load()
+        if destination is None:
+            return {'destination': None}
+        # trans files store single precision; match it so that the fingerprint is the same before and after the artifact round-trip
+        return {'destination': destination['trans'].astype(numpy.float32)}
 
     def build(self, ctx: Request) -> mne.io.BaseRaw:
         source_node = raw_node_name(self.pipe.source)
@@ -933,8 +1095,12 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
         if isinstance(self.pipe, RawMaxwell):
             calibration = ctx.load('maxwell-calibration')
             cross_talk = ctx.load('maxwell-crosstalk')
-            destination = ctx.load('canonical-head-position')
-            return self.pipe._make(raw, path=path, noise=ctx.options['noise'], raw_name=self.raw_name, log=ctx.registry.log, source_pipe=source_pipe, calibration=calibration, cross_talk=cross_talk, destination=destination)
+            destination = None if self.pipe.st_only else ctx.load('canonical-head-position')
+            if ctx.options['noise']:
+                reference, head_pos = ctx.load('reference'), None
+            else:
+                reference, head_pos = None, ctx.load('raw-head-position') if self.pipe.head_pos else None
+            return self.pipe._make(raw, path=path, noise=ctx.options['noise'], raw_name=self.raw_name, log=ctx.registry.log, source_pipe=source_pipe, calibration=calibration, cross_talk=cross_talk, destination=destination, head_pos=head_pos, reference=reference)
         return self.pipe._make(raw, path=path, noise=ctx.options['noise'], raw_name=self.raw_name, log=ctx.registry.log, source_pipe=source_pipe)
 
     def load(self, ctx: Request, path: Path) -> mne.io.BaseRaw:
@@ -1040,44 +1206,74 @@ class MaxwellCrosstalkInput(Input[Path]):
         return path if path.exists() else None
 
 
-class RawHeadPositionDerivative(UncachedDerivative[numpy.ndarray]):
+class RawHeadPositionDerivative(Derivative[numpy.ndarray]):
     """Head position samples extracted from one raw recording.
 
-    For recordings with cHPI active the full tracked position time-series is
-    returned; otherwise the static ``dev_head_t`` transform is returned as a
-    single sample.
+    For recordings with continuous head position information (see
+    :func:`find_chpi`), the tracked position time-series (see
+    :func:`mne.chpi.compute_head_pos`).
+    Otherwise, the static ``dev_head_t`` transform as a single sample.
+    ``None`` when the file has no head position information at all.
 
-    Returns an ``(n, 6)`` float array with columns
-    ``[q1, q2, q3, tx, ty, tz]`` using MNE's compact quaternion convention.
-    An empty ``(0, 6)`` array is returned when no head position information is
-    available in the file.
+    Parameters
+    ----------
+    source_name
+        Name of the raw source node (see :class:`RawSourceDerivative`). The
+        bad channels it applies are excluded from the cHPI coil fits, so a
+        noisy or flat channel does not degrade the position estimates.
     """
 
     name = 'raw-head-position'
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run')
+    cache_suffix = '.pos'
 
-    def __init__(self, raw_input_name: str):
-        self._raw_input_name = raw_input_name
+    def __init__(self, source_name: str):
+        self._source_name = source_name
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
-        return (Dependency(self._raw_input_name),)
+        return (Dependency(self._source_name),)
 
     def build(self, ctx: Request) -> numpy.ndarray | None:
-        raw = ctx.load(self._raw_input_name)
+        raw = ctx.load(self._source_name)
         info = raw.info
-        hpi_freqs, _, _ = mne.chpi.get_chpi_info(info, on_missing='ignore')
-        if len(hpi_freqs):
+        method = find_chpi(raw, log=ctx.registry.log)
+        chpi_locs = None
+        if method == 'freqs':
             chpi_amplitudes = mne.chpi.compute_chpi_amplitudes(raw)
             chpi_locs = mne.chpi.compute_chpi_locs(info, chpi_amplitudes)
-            head_pos = mne.chpi.compute_head_pos(info, chpi_locs)
-            # head_pos columns: [t, q1, q2, q3, tx, ty, tz, gof, err, v]
-            return head_pos[:, 1:7]
+        elif method == 'ctf':
+            chpi_locs = mne.chpi.extract_chpi_locs_ctf(raw)
+        elif method == 'kit':
+            try:
+                chpi_locs = mne.chpi.extract_chpi_locs_kit(raw)
+            except RuntimeError:  # the stim channel exists but does not carry cHPI data
+                ctx.registry.log.warning("Raw head position: no cHPI data in the KIT stim channel for %s; using the static dev_head_t", ctx.state.get('subject'))
+        if chpi_locs is not None:
+            # The weighted fit uses all coils, weighted by goodness of fit and inter-coil distance error, which avoids jumps when coils switch in and out of the best 3-coil subset that the unweighted fit selects. It is only enabled for coils driven at known frequencies, where compute_chpi_locs provides the goodness of fit. CTF has exactly 3 coils, so there is no subset to select. KIT has 5, and extract_chpi_locs_kit reads a goodness of fit from the stim channel, but the weighted fit has not been verified on KIT data yet.
+            if method == 'kit':
+                ctx.registry.log.info("Raw head position: using the unweighted 3-coil fit for KIT recording %s (the weighted fit has not been verified for KIT cHPI data); expect jumps when coils switch in and out of the fit", ctx.state.get('subject'))
+            head_pos = mne.chpi.compute_head_pos(info, chpi_locs, weighted=method == 'freqs')
+            if len(head_pos):
+                return head_pos
+            # compute_head_pos returns (0, 10) when every fit is rejected; fall back to the static transform so that consumers always see at least one sample
+            ctx.registry.log.warning("Raw head position: cHPI is active but no head position could be estimated for %s; using the static dev_head_t", ctx.state.get('subject'))
         dev_head_t = info.get('dev_head_t')
         if dev_head_t is None:
             return None
         trans = dev_head_t['trans']
         quat = mne.transforms.rot_to_quat(trans[:3, :3])
-        return numpy.array([[*quat, *trans[:3, 3]]])
+        return numpy.array([[raw.first_time, *quat, *trans[:3, 3], 0., 0., 0.]])
+
+    def save(self, ctx: Request, path: Path, value: numpy.ndarray | None) -> None:
+        if value is None:
+            path.write_bytes(b'')  # artifacts are rebuilt in place, so an earlier non-empty file has to be truncated
+        else:
+            mne.chpi.write_head_pos(path, value)
+
+    def load(self, ctx: Request, path: Path) -> numpy.ndarray | None:
+        if path.stat().st_size == 0:
+            return None
+        return mne.chpi.read_head_pos(path)
 
 
 class CanonicalHeadPositionDerivative(Derivative):
@@ -1087,17 +1283,22 @@ class CanonicalHeadPositionDerivative(Derivative):
     subject, session, and acquisition, suitable as the ``destination`` parameter of
     :func:`mne.preprocessing.maxwell_filter`.
 
-    The rotation is the Fréchet mean on SO(3) computed via
-    :meth:`scipy.spatial.transform.Rotation.mean` (eigenvector method).
-    The translation is the arithmetic mean.  For recordings with cHPI all
-    tracked position samples contribute, not just the starting position.
-
-    Returns ``None`` when only one position sample exists across all
-    tasks/runs, in which case each file's own ``dev_head_t`` is used directly
-    by Maxwell filtering to avoid round-trip conversion noise.
+    All samples from all tasks and runs are averaged with
+    :func:`mne.preprocessing.compute_average_dev_head_t`, weighting each sample
+    by the time it was held (a recording with a single static position counts
+    with its full duration) and excluding ``BAD`` segments. ``None`` when only one recording exists, or when
+    the recordings do not contain two distinct position samples; each file's own
+    ``dev_head_t`` is then used directly, by Maxwell filtering (which also
+    compensates head movement towards ``dev_head_t`` when no destination is
+    given) as well as by the forward solution, avoiding round-trip conversion
+    noise and keeping source estimates for pipelines without Maxwell filtering
+    aligned with the data.
 
     Parameters
     ----------
+    source_name
+        Name of the raw source node providing the recordings (for their
+        duration and ``BAD`` annotations).
     recordings
         Existing ``(subject, session, task, acquisition, run)`` recordings, used for
         existence checks in :meth:`dependencies`.
@@ -1110,14 +1311,18 @@ class CanonicalHeadPositionDerivative(Derivative):
 
     name = 'canonical-head-position'
     key_fields = ('subject', 'session', 'acquisition')
-    cache_suffix = '.fif'
+    cache_suffix = '-trans.fif'  # MNE warns about trans files that do not use this suffix
+    # Depend on actual computed head position
+    dependency_fingerprint_from_artifact = True
 
     def __init__(
             self,
+            source_name: str,
             recordings: frozenset[tuple[str, str, str, str, str]],
             tasks: Sequence[str],
             runs: Sequence[str],
     ):
+        self._source_name = source_name
         self._recordings = recordings
         self._tasks = tasks
         self._runs = runs or ['']
@@ -1129,35 +1334,37 @@ class CanonicalHeadPositionDerivative(Derivative):
         deps = []
         for task, run in itertools.product(self._tasks, self._runs):
             if (subject, session, task, acquisition, run) in self._recordings:
-                deps.append(Dependency(
-                    name='raw-head-position',
-                    label=f'task-{task}_run-{run}' if run else f'task-{task}',
-                    state={'task': task, 'run': run},
-                ))
+                label = f'task-{task}_run-{run}' if run else f'task-{task}'
+                state = {'task': task, 'run': run}
+                deps.append(Dependency(name='raw-head-position', label=label, state=state))
+                deps.append(Dependency(name=self._source_name, label=f'raw:{label}', state=state))
         return tuple(deps)
 
     def build(self, ctx: Request) -> mne.transforms.Transform | None:
-        all_positions = []
+        raws, positions = [], []
         for label in ctx.declared_dependencies:
-            positions = ctx.load(label)  # (n, 6): [q1, q2, q3, tx, ty, tz], or None
-            if positions is not None:
-                all_positions.append(positions)
-        if len(all_positions) <= 1:
+            if label.startswith('raw:'):
+                continue
+            head_pos = ctx.load(label)  # (n, 10) MaxFilter format, or None
+            if head_pos is None:
+                continue
+            raw = ctx.load(f'raw:{label}')
+            # The 3-decimal time format of .pos files can round the first sample to before raw.first_time, which compute_average_dev_head_t only tolerates for multi-sample arrays
+            head_pos = head_pos.copy()
+            head_pos[0, 0] = max(head_pos[0, 0], raw.first_time)
+            raws.append(raw)
+            positions.append(head_pos)
+        if len(positions) <= 1:
             return None
-        all_pos = numpy.vstack(all_positions)  # (N, 6): [q1, q2, q3, tx, ty, tz]
-        if numpy.allclose(all_pos[1:], all_pos[0]):
+        # Without two distinct positions, each file's own dev_head_t is used directly (no round-trip conversion noise)
+        all_positions = numpy.vstack([pos[:, 1:7] for pos in positions])
+        if numpy.allclose(all_positions[1:], all_positions[0]):
             return None
-        # MNE compact quaternions [q1, q2, q3] → scipy [x, y, z, w] (scalar last)
-        q = all_pos[:, :3]
-        q0 = numpy.sqrt(numpy.maximum(1.0 - numpy.sum(q ** 2, axis=1), 0.0))
-        trans = numpy.eye(4)
-        trans[:3, :3] = Rotation.from_quat(numpy.column_stack([q, q0])).mean().as_matrix()
-        trans[:3, 3] = numpy.mean(all_pos[:, 3:], axis=0)
-        return mne.transforms.Transform(fro='meg', to='head', trans=trans)
+        return mne.preprocessing.compute_average_dev_head_t(raws, positions)
 
     def save(self, ctx: Request, path: Path, value: mne.transforms.Transform | None) -> None:
         if value is None:
-            path.touch()
+            path.write_bytes(b'')  # artifacts are rebuilt in place, so an earlier non-empty file has to be truncated
         else:
             mne.write_trans(path, value, overwrite=True)
 

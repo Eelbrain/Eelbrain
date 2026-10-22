@@ -10,6 +10,15 @@ build:
   os: "ubuntu-22.04"
   tools:
     python: "mambaforge-22.9"
+  jobs:
+    post_checkout:
+      # setuptools_scm needs reachable version tags before the package is installed.
+      - |
+        if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+          git fetch --unshallow --tags
+        else
+          git fetch --tags
+        fi
 
 conda:
   environment: "env-readthedocs.yml"

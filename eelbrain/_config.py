@@ -70,10 +70,10 @@ def configure(
         plots and save them without showing them on the screen).
     format
         Default format for plots (for example "png", "svg", ...).
-    figure_background : bool | matplotlib color
+    figure_background
         While :mod:`matplotlib` uses a gray figure background by default,
         Eelbrain uses white. Set this parameter to ``False`` to use the default
-        from :attr:`matplotlib.rcParams`, or set it to a valid matplotblib
+        from :data:`matplotlib.rcParams`, or set it to a valid matplotblib
         color value to use an arbitrary color. ``True`` to revert to the default
         white.
     prompt_toolkit
@@ -87,9 +87,10 @@ def configure(
         GUIs).
     animate
         Animate plot navigation (default True).
-    nice : int [-20, 19]
-        Scheduling priority for muliprocessing (larger number yields more to
-        other processes; negative numbers require root privileges).
+    nice
+        Scheduling priority for muliprocessing (``-20 <= nice <= 19``; larger
+        number yields more to other processes; negative numbers require root
+        privileges).
     tqdm
         Enable or disable :mod:`tqdm` progress bars.
     log

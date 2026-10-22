@@ -159,7 +159,7 @@ Running tests locally (from the project root):
 
 For more options, see the `pytest docs <https://docs.pytest.org/en/stable/how-to/usage.html>`_.
 
-Additional tests for the :class:`Pipeline` takes longer to run and can be run separately as needed:
+Additional tests for the :class:`~pipeline.Pipeline` takes longer to run and can be run separately as needed:
 
 .. code-block:: console
 
@@ -201,7 +201,7 @@ Coding Style and Documentation
     - There's no need to duplicate type information in docstrings if it is already present in the signature; the signature is the source of truth.
 
 **Documentation Format**
-    - The documentation is written with :mod:`sphinx` in `ReStructured Text <https://www.sphinx-doc.org/en/master/usage/restructuredtext>`_.
+    - The documentation is written with `Sphinx <https://www.sphinx-doc.org>`_ in `ReStructured Text <https://www.sphinx-doc.org/en/master/usage/restructuredtext>`_.
 
 
 Recommended Tools

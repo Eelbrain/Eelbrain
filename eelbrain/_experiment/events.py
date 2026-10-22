@@ -4,7 +4,7 @@
 Dependency structure:
 
     epoch-events
-    ├── PrimaryEpoch (single run) / ContinuousEpoch
+    ├── PrimaryEpoch / ContinuousEpoch (single run)
     │     └── selected-events
     │           ├── labeled-events
     │           │     ├── events-input   (BIDS sidecar, preferred when present)
@@ -12,7 +12,7 @@ Dependency structure:
     │           └── rejection            (epoch-rejection-input | epoch-rejection-channel-model;
     │                                      only when epoch_rejection is set and reject != False)
     │
-    ├── PrimaryEpoch (combine runs: run=None and multiple runs exist)
+    ├── PrimaryEpoch / ContinuousEpoch (combine runs)
     │     └── selected-events  ×N  (one per run)
     │           ├── labeled-events
     │           │     ├── events-input
@@ -65,7 +65,7 @@ import hashlib
 import inspect
 from pathlib import Path
 from typing import Any
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
 import numpy as np
 import pandas as pd
@@ -74,13 +74,25 @@ from mne_bids import BIDSPath
 from .. import load, save
 from .._data_obj import Datalist, Dataset, Factor, Var, combine
 from .._exceptions import ConfigurationError
-from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS, INTERPOLATE_WINDOWS, INTERPOLATE_WINDOWS_MAX
+from .._info import INTERPOLATE_CHANNELS, INTERPOLATE_WINDOWS, INTERPOLATE_WINDOWS_MAX, merge_info
 from .derivative_cache import CachePolicy, Dependency, Derivative, Input, Request, UncachedDerivative, file_fingerprint
 from .epoch_rejection import EpochRejection, ManualRejection
 from .epochs import EPOCH_EXTRACT_OPTIONS, EpochCollection, SecondaryEpoch, SuperEpoch, PrimaryEpoch, ContinuousEpoch, single_recording_run
 from .pathing import BIDS_ENTITY_KEYS, bids_path
 from .preprocessing import raw_node_name
 from .variable_def import Variables
+
+
+def _combine_event_datasets(dss: list[Dataset], keys: Iterable[str] = BIDS_ENTITY_KEYS) -> Dataset:
+    """Combine event Datasets while preserving unambiguous BIDS identity"""
+    info = merge_info(dss)
+    for key in keys:
+        if key in info:
+            continue
+        for ds in dss:
+            if key in ds.info:
+                ds[:, key] = ds.info.pop(key)
+    return combine(dss, info=info)
 
 
 def function_fingerprint(function) -> str:
@@ -103,7 +115,10 @@ class EventsInput(Input[Dataset]):
     columns ``onset`` (seconds), ``sample`` (integer sample index), and
     ``value`` (integer trigger code).  Additional columns are passed through
     to the returned :class:`~eelbrain.Dataset` so that they are available in
-    :meth:`~Pipeline.label_events`.
+    :meth:`~Pipeline.label_events`.  Columns default to :class:`~eelbrain.Var`
+    when their values are numeric; columns listed in
+    :attr:`Pipeline.event_factors` are read as :class:`~eelbrain.Factor`
+    regardless, with the values in the file as literal labels (e.g. ``'3'``, ``'n/a'``).
 
     """
     name = 'events-input'
@@ -112,8 +127,10 @@ class EventsInput(Input[Dataset]):
     def __init__(
             self,
             raw_extension: str,
+            event_factors: frozenset[str],
     ):
         self.raw_extension = raw_extension
+        self.event_factors = event_factors
 
     def _resolve_bids_events_path(self, ctx: Request) -> BIDSPath:
         return bids_path(ctx.root, ctx.state, extension='.tsv', datatype=ctx.datatype, suffix='events')
@@ -122,13 +139,19 @@ class EventsInput(Input[Dataset]):
         return self._resolve_bids_events_path(ctx).fpath
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
-        return file_fingerprint(ctx.root, self.path(ctx))
+        # Only include event_factors when set, so that existing manifests remain valid
+        path = self.path(ctx)
+        if path.exists() and self.event_factors:
+            metadata = {'event_factors': self.event_factors}
+        else:
+            metadata = None
+        return file_fingerprint(ctx.root, self.path(ctx), metadata=metadata)
 
     def load(self, ctx: Request) -> Dataset | None:
         path = self.path(ctx)
         if not path.exists():
             return None
-        df = pd.read_csv(path, sep='\t')
+        df = pd.read_csv(path, sep='\t', converters=dict.fromkeys(self.event_factors, str))
         entities = {k: ctx.state[k] for k in BIDS_ENTITY_KEYS}
         return Dataset.from_dataframe(df, info=entities)
 
@@ -242,6 +265,11 @@ class LabeledEventsDerivative(Derivative[Dataset]):
     ``False`` this node is always rebuilt from the cached unlabeled events —
     the correct choice when ``label_events`` reads external files whose changes
     cannot be detected without executing the hook.
+
+    Only the event variables are applied here; across-subject variables
+    (:class:`GroupVar`, :class:`LabelVar` on ``'subject'``, and variables
+    derived from either) are applied where subjects are combined, so that the
+    cached artifact is independent of the other subjects' entries.
     """
     name = 'labeled-events'
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run', 'raw')
@@ -254,7 +282,6 @@ class LabeledEventsDerivative(Derivative[Dataset]):
             multi_task: bool,
             multi_session: bool,
             variables: Variables,
-            groups: dict[str, Any],
             cache: bool,
     ):
         self.label_events_impl = label_events
@@ -262,7 +289,6 @@ class LabeledEventsDerivative(Derivative[Dataset]):
         self.multi_task = multi_task
         self.multi_session = multi_session
         self._variables = variables
-        self._groups = groups
         if not cache:
             self.cache_policy = CachePolicy.NEVER
 
@@ -273,8 +299,10 @@ class LabeledEventsDerivative(Derivative[Dataset]):
         )
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        # Across-subject variables are applied where subjects are combined, so they are
+        # not part of this artifact and another subject's entry does not invalidate it
         return {
-            'variables': self._variables,
+            'variables': self._variables.event_vars,
             'label_events': function_fingerprint(self.label_events_impl),
         }
 
@@ -293,12 +321,15 @@ class LabeledEventsDerivative(Derivative[Dataset]):
                 ds['sample'] = ds['sample'] + trigger_events.info['raw.first_samp']
         else:
             ds = trigger_events
+        # Event Dataset invariant: every BIDS entity is available in info for
+        # a single recording; aggregation adds a column for entities that vary.
+        ds.info.update({key: ctx.state[key] for key in BIDS_ENTITY_KEYS})
         ds['subject'] = Factor([ctx.state['subject']], repeat=ds.n_cases, random=True)
         if self.multi_task:
             ds[:, 'task'] = ctx.state['task']
         if self.multi_session:
             ds[:, 'session'] = ctx.state['session']
-        self._variables._apply(ds, self._groups)
+        self._variables.resolve(ds, input_events=True)
 
         # Apply e.label_events()
         info = ds.info
@@ -420,12 +451,9 @@ class SelectedEventsDerivative(UncachedDerivative[Dataset]):
                     ds = ds.sub(rejection_ds['accept'])
                 elif reject is not False:
                     raise RuntimeError(f"{reject=}")
-
-                ds.info[BAD_CHANNELS] = rejection_ds.info.get(BAD_CHANNELS, [])
             else:
                 ds.info[INTERPOLATE_CHANNELS] = False
                 ds.info[INTERPOLATE_WINDOWS] = False
-                ds.info[BAD_CHANNELS] = []
         elif isinstance(epoch, SecondaryEpoch):
             ds = ctx.load('selected-events')
             if epoch.sel:
@@ -434,6 +462,8 @@ class SelectedEventsDerivative(UncachedDerivative[Dataset]):
         else:
             raise RuntimeError(f"{epoch=}")
 
+        ds.info['epoch'] = ctx.state['epoch']
+        ds.info['run'] = ctx.state['run']
         return epoch._prepare_selected_events(ds, subject, ctx.options)
 
 
@@ -441,8 +471,8 @@ class EpochEventsDerivative(UncachedDerivative[Dataset]):
     """Epoch-level event aggregation.
 
     For :class:`~epochs.PrimaryEpoch` and :class:`~epochs.ContinuousEpoch`,
-    delegates to :class:`SelectedEventsDerivative`.  For combine-all
-    PrimaryEpochs aggregates across runs and adds a ``'run'`` column.  For
+    delegates to :class:`SelectedEventsDerivative`. For combine-all epochs,
+    aggregates across runs and adds a ``'run'`` column. For
     :class:`~epochs.SecondaryEpoch` and :class:`~epochs.SuperEpoch` delegates
     to the appropriate base/sub-epoch ``epoch-events`` nodes.
 
@@ -473,7 +503,7 @@ class EpochEventsDerivative(UncachedDerivative[Dataset]):
 
     def _find_runs(self, ctx: Request, epoch) -> tuple[str, ...]:
         """Runs to aggregate over"""
-        if isinstance(epoch, PrimaryEpoch):
+        if isinstance(epoch, (PrimaryEpoch, ContinuousEpoch)):
             if epoch.run is None:
                 key = (ctx.state['subject'], ctx.state['session'], epoch.task, ctx.state['acquisition'])
                 if key in self._runs_for:
@@ -488,7 +518,7 @@ class EpochEventsDerivative(UncachedDerivative[Dataset]):
         runs = self._find_runs(ctx, epoch)
         if isinstance(epoch, EpochCollection):
             raise ValueError(f"epoch={epoch.name!r}; can't load events for epoch collection")
-        elif isinstance(epoch, (PrimaryEpoch, SecondaryEpoch)) and runs:
+        elif isinstance(epoch, (PrimaryEpoch, SecondaryEpoch, ContinuousEpoch)) and runs:
             # Combine-all: per-run selected-events; index applied after combining
             rec_options = ctx.options_for('selected-events', 'reject', *EPOCH_EXTRACT_OPTIONS)
             return tuple(
@@ -518,33 +548,17 @@ class EpochEventsDerivative(UncachedDerivative[Dataset]):
         if isinstance(epoch, (PrimaryEpoch, SecondaryEpoch, ContinuousEpoch)):
             runs = self._find_runs(ctx, epoch)
             if runs:
-                dss = []
-                for run in runs:
-                    ds = ctx.load(f'selected-events-{run}')
-                    ds[:, 'run'] = run
-                    dss.append(ds)
-                ds = combine(dss)
-                ds.info[BAD_CHANNELS] = sorted({ch for d in dss for ch in d.info.get(BAD_CHANNELS, [])})
-                ds.info[INTERPOLATE_CHANNELS] = any(d.info.get(INTERPOLATE_CHANNELS, False) for d in dss)
-                ds.info[INTERPOLATE_WINDOWS] = any(d.info.get(INTERPOLATE_WINDOWS, False) for d in dss)
-                windows_max = {d.info.get(INTERPOLATE_WINDOWS_MAX) for d in dss} - {None}
-                if windows_max:
-                    assert len(windows_max) == 1
-                    ds.info[INTERPOLATE_WINDOWS_MAX] = windows_max.pop()
+                dss = [ctx.load(f'selected-events-{run}') for run in runs]
+                ds = _combine_event_datasets(dss, ('run',))
                 if epoch.n_cases is not None and ds.n_cases != epoch.n_cases:
                     raise RuntimeError(f"Number of epochs {ds.n_cases}, expected {epoch.n_cases}")
-                return ds
-            return ctx.load('selected-events')
+            else:
+                ds = ctx.load('selected-events')
         elif isinstance(epoch, SuperEpoch):
-            dss = []
-            bad_channels = set()
-            for sub_epoch in epoch.sub_epochs:
-                ds = ctx.load(f'{sub_epoch}:events')
-                ds[:, 'epoch'] = sub_epoch
-                dss.append(ds)
-                bad_channels.update(ds.info[BAD_CHANNELS])
-            ds = combine(dss)
-            ds.info[BAD_CHANNELS] = sorted(bad_channels)
+            dss = [ctx.load(f'{sub_epoch}:events') for sub_epoch in epoch.sub_epochs]
+            ds = _combine_event_datasets(dss, (*BIDS_ENTITY_KEYS, 'epoch'))
+            ds = epoch._prepare_selected_events(ds, ctx.state['subject'], ctx.options)
         else:
             raise RuntimeError(f"{epoch=}")
-        return epoch._prepare_selected_events(ds, ctx.state['subject'], ctx.options)
+        ds.info['epoch'] = ctx.state['epoch']
+        return ds

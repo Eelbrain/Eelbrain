@@ -30,14 +30,14 @@ Manual
    changes
    publications
    development
+   auto_examples/index
+   recipes
 
 .. toctree::
    :maxdepth: 2
 
    reference
-   auto_examples/index
-   recipes
-   experiment
+   pipeline/index
 
 
 .. seealso::

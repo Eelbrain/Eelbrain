@@ -6,6 +6,8 @@
    mrat_data
    dat_file
    dat_set
+   dat_set_paths
+   add_dat_set_epochs
    roi
 
 """
@@ -16,19 +18,20 @@ import re
 import numpy as np
 from scipy.io import loadmat
 
-from .._data_obj import Dataset, Factor, NDVar, UTS, Scalar, combine
+from .._data_obj import Dataset, Factor, IndexArg, NDVar, UTS, Scalar, combine
+from .._types import PathArg
 from .._utils import ui
 
 
 _mat_wildcard = ('Matlab data file (*.mat)', '*.mat')
 
 
-def dat_file(path):
+def dat_file(path: PathArg):
     """Load an besa source estimate from a dat file
 
     Parameters
     ----------
-    path : str
+    path
         Path to the dat file.
 
     Returns
@@ -73,18 +76,18 @@ def dat_file(path):
     return src
 
 
-def dat_set(path, subjects=[], conditions=[]):
+def dat_set(path: PathArg, subjects: list = [], conditions: list = []):
     """Load multiple dat files as a Dataset
 
     Parameters
     ----------
-    path : str
+    path
         The path to the dat files, contain the placeholders '{subject}' and
         '{condition}'. Can contain ``*``.
-    subjects : list
+    subjects
         Subject identifiers. If the list is empty, they are inferred based on
         the path and existing files.
-    conditions : list
+    conditions
         Condition labels. If the list is empty, they are inferred based on
         the path and existing files.
 
@@ -104,18 +107,18 @@ def dat_set(path, subjects=[], conditions=[]):
     return ds
 
 
-def dat_set_paths(path, subjects=[], conditions=[]):
+def dat_set_paths(path: PathArg, subjects: list = [], conditions: list = []):
     """Find paths for a set of dat files
 
     Parameters
     ----------
-    path : str
+    path
         The path to the dat files, contain the placeholders '{subject}' and
         '{condition}'. Can contain ``*``.
-    subjects : list
+    subjects
         Subject identifiers. If the list is empty, they are inferred based on
         the path and existing files.
-    conditions : list
+    conditions
         Condition labels. If the list is empty, they are inferred based on
         the path and existing files.
 
@@ -183,15 +186,15 @@ def dat_set_paths(path, subjects=[], conditions=[]):
     return ds
 
 
-def add_dat_set_epochs(ds, name='src'):
+def add_dat_set_epochs(ds: Dataset, name: str = 'src'):
     """
     Read epochs for a Dataset created with :func:`dat_set_paths`
 
     Parameters
     ----------
-    ds : Dataset
+    ds
         Dataset as returned by :func:`dat_set_paths`
-    name : str
+    name
         Name for the variable containing the epochs.
 
     Returns
@@ -213,20 +216,20 @@ def add_dat_set_epochs(ds, name='src'):
     return ds
 
 
-def roi(path, adjust_index=True):
+def roi(path: PathArg, adjust_index: bool = True):
     """Load a BESA-MN ROI saved in a ``*.mat`` file.
 
     Parameters
     ----------
-    path : str
+    path
         Path to the ``*.mat`` file containing the ROI.
-    adjust_index : bool
+    adjust_index
         Adjust the index for Python (Matlab indexes start with 1, Python
         indexes start with 0).
 
     Returns
     -------
-    roi : array, shape = (n_sources,)
+    roi : numpy.ndarray
         ROI source indexes.
     """
     mat = loadmat(path)
@@ -236,16 +239,16 @@ def roi(path, adjust_index=True):
     return roi_idx
 
 
-def roi_results(path=None, varname=None):
+def roi_results(path: PathArg = None, varname: str = None):
     """
     Load the meg data from a saved besa-mn ROI results object
 
     Parameters
     ----------
-    path : str | None
+    path
         Path to the ``*.m`` file containing the saved results. If None, a file
         can be selected using a system file dialog.
-    varname : str | None
+    varname
         If the ``*.m`` file contains more than one variable, the name of the
         variable containing the results can be specified as string.
 
@@ -291,21 +294,26 @@ def roi_results(path=None, varname=None):
     return ds
 
 
-def mrat_data(path=None, tstart=-0.1, roi=None, varname=None):
+def mrat_data(
+        path: PathArg = None,
+        tstart: float = -0.1,
+        roi: IndexArg = None,
+        varname: str = None,
+):
     """
     Load meg data from a saved mrat dataset object
 
     Parameters
     ----------
-    path : str | None
+    path
         Path to the ``*.m`` file containing the saved results. If None, a file
         can be selected using a system file dialog.
-    tstart : scalar
+    tstart
         Time value of the first sample in the data.
-    roi : numpy index
+    roi
         Index of the sources to load (Python style indexing, i.e., the first
         source has index 0).
-    varname : str | None
+    varname
         If the ``*.m`` file contains more than one variable, the name of the
         variable containing the results can be specified as string.
 

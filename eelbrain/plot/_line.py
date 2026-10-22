@@ -1,10 +1,11 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 "Line plots"
+from collections.abc import Sequence
 from itertools import cycle, repeat
 
 import numpy as np
 
-from .._data_obj import ascategorial, asndvar, assub
+from .._data_obj import CategorialArg, CellArg, Dataset, IndexArg, NDVar, ascategorial, asndvar, assub
 from ._base import EelFigure, Layout, LegendMixin, XAxisMixin, AxisScale, frame_title
 from functools import reduce
 
@@ -14,41 +15,41 @@ class LineStack(LegendMixin, XAxisMixin, EelFigure):
 
     Parameters
     ----------
-    y : NDVar
+    y
         Values to plot.
-    x : cateorial
+    x
         Variable to aggregate cases into lines (default is to plot each line).
-    sub : None | index array
+    sub
         Only use a subset of the data provided.
-    ds : Dataset
+    ds
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
-    offset : float | str
+    offset
         The distance between the baseline (y = 0) for the different lines.
         Can be a string expressed as a function of y. For example,
         ``'0.66 * max(y)'`` will offset each line by 0.66 times the maximum
         value in ``y`` (after aggregating if ``x`` is specified). The default is
         ``'2/3 * max(y.max(), -y.min())'``.
-    xlim : scalar | (scalar, scalar)
+    xlim
         Initial x-axis view limits as ``(left, right)`` tuple or as ``length``
         scalar (default is the full x-axis in the data).
-    xlabel : bool | str
+    xlabel
         X-axis label. By default the label is inferred from the data.
-    xticklabels : bool
+    xticklabels
         Print x-axis tick-labels (set to False to suppress them).
-    ylabel : bool | str
+    ylabel
         Y-axis label. By default the label is inferred from the data.
-    colors : dict | sequence of colors
+    colors
         Colors for the lines (default is all lines in black).
-    ylabels : bool | dict | sequence of str
+    ylabels
         Labels for the different lines, placed along the y-axis.
-    legend : str | int | 'fig' | None
+    legend
         Matplotlib figure legend location argument or 'fig' to plot the
         legend in a separate figure.
-    labels : dict
+    labels
         Alternative labels for legend as ``{cell: label}`` dictionary (preserves
         order).
-    clip : bool
+    clip
         Clip lines outside of axes (the default depends on whether ``frame`` is
         closed or open).
     ...
@@ -65,10 +66,27 @@ class LineStack(LegendMixin, XAxisMixin, EelFigure):
      - ``d``: x-axis zoom out (increase x axis range)
     """
 
-    def __init__(self, y, x=None, sub=None, ds=None, offset='y.max() - y.min()',
-                 ylim=None, xlim=None, xlabel=True, xticklabels=True,
-                 ylabel=True, order=None, colors=None, ylabels=True, xdim=None,
-                 legend=None, labels=None, clip=None, **kwargs):
+    def __init__(
+            self,
+            y: NDVar | Sequence[NDVar],
+            x: CategorialArg = None,
+            sub: IndexArg = None,
+            ds: Dataset = None,
+            offset: float | str = 'y.max() - y.min()',
+            ylim: float | tuple[float, float] = None,
+            xlim: float | tuple[float, float] = None,
+            xlabel: bool | str = True,
+            xticklabels: bool = True,
+            ylabel: bool | str = True,
+            order: Sequence[CellArg] = None,
+            colors: dict | Sequence = None,
+            ylabels: bool | dict | Sequence[str] = True,
+            xdim: str = None,
+            legend: str | int = None,
+            labels: dict = None,
+            clip: bool = None,
+            **kwargs,
+    ):
         sub = assub(sub, ds)
         if isinstance(y, (tuple, list)):
             if x is not None:

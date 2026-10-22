@@ -10,7 +10,7 @@ jobs:
   build-posix:
     name: build-${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       max-parallel: 5
@@ -45,7 +45,7 @@ jobs:
         create-args: |
           python=${{ matrix.python }} vtk=9.4.2 mayavi=4.8.3=pyside6_* qt6-main=6.9.2 noqt5 pysurfer=0.11.2 numpy=2.2.6 -v
     - name: Set up OpenGL and headless displays
-      uses: pyvista/setup-headless-display-action@v4
+      uses: pyvista/setup-headless-display-action@v5
       with:
         qt: true
         pyvista: false
@@ -53,7 +53,7 @@ jobs:
     - name: Build eelbrain
       run: pip install --no-deps -e .
     - name: Cache MNE datasets
-      uses: actions/cache@v5.0.5
+      uses: actions/cache@v6.1.0
       with:
         path: ~/mne_data
         key: mne-data
@@ -65,7 +65,7 @@ jobs:
         time python -c "import mne; print(f'{mne.datasets.testing.data_path(verbose=False)=}')"
         time python -c "import mne; print(f'{mne.datasets.fetch_fsaverage(verbose=False)=}')"
     - name: Run tests
-      timeout-minutes: 20
+      timeout-minutes: 30
       run: |
         pytest eelbrain --cov --cov-branch --cov-report=xml -v -rfEXs --durations=15
     - name: Upload coverage to Codecov

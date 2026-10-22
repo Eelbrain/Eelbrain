@@ -55,8 +55,9 @@ class Evaluator:
     def __repr__(self):
         return f"<{self.__class__.__name__} evaluator>"
 
-    def get(self, i_test: int = -1):
-        return self.data.package_value(self.xs[i_test + 1], self.name, meas=self.meas)
+    def get(self, i: int = 0):
+        "Fit metric for the ``i``-th entry of ``segments``"
+        return self.data.package_value(self.xs[i], self.name, meas=self.meas)
 
 
 class L1(Evaluator):
@@ -192,6 +193,38 @@ class VectorL2(Evaluator):
             x[i] = err_i.sum()
 
 
+class VectorL1Total(Evaluator):
+    vector = True
+    attr = 'l1_total'
+    name = 'Vector l1 total'
+
+    def add_y(
+            self,
+            i: int,  # y index (row in data.y)
+            y: np.ndarray,  # actual data
+            y_pred: np.ndarray,  # data predicted by model
+    ):
+        y_norm = norm(y, axis=0)
+        for x, segments in zip(self.xs, self.segments):
+            x[i] = self._crop_y(segments, y_norm).sum()
+
+
+class VectorL2Total(Evaluator):
+    vector = True
+    attr = 'l2_total'
+    name = 'Vector l2 total'
+
+    def add_y(
+            self,
+            i: int,  # y index (row in data.y)
+            y: np.ndarray,  # actual data
+            y_pred: np.ndarray,  # data predicted by model
+    ):
+        y_ss = (y ** 2).sum(0)
+        for x, segments in zip(self.xs, self.segments):
+            x[i] = self._crop_y(segments, y_ss).sum()
+
+
 class VectorCorrelation(Evaluator):
     vector = True
     attr = 'r'
@@ -272,6 +305,8 @@ EVALUATORS = {
     'r_rank': RankCorrelation,
     'vec-l1': VectorL1,
     'vec-l2': VectorL2,
+    'vec-l1-total': VectorL1Total,
+    'vec-l2-total': VectorL2Total,
     'vec-corr': VectorCorrelation,
     'vec-corr-l1': VectorCorrelationL1,
 }
@@ -281,7 +316,7 @@ def get_evaluators(
         keys: list[str],
         data: DeconvolutionData,
         segments: list[np.ndarray] = None,  # evaluations for different test-segments
-) -> (list[Evaluator], list[Evaluator], list[Evaluator]):
+) -> tuple[list[Evaluator], list[Evaluator], list[Evaluator]]:
     evaluators = [EVALUATORS[key](data, segments) for key in keys]
     # split into scalar and vector evaluators
     evaluators_s = [e for e in evaluators if not e.vector]

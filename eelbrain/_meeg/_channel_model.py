@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .._data_obj import Datalist, NDVar, NDVarArg, UTS, asndvar
+from .._data_obj import Datalist, NDVar, NDVarArg, Sensor, UTS, asndvar
 from .base import BadChannelWindow
 
 if TYPE_CHECKING:
@@ -59,11 +59,13 @@ class ChannelModel:
 
     Attributes
     ----------
-    sensor : Sensor
+    sensor
         The sensor dimension the model was fit with.
-    estimators_ : list
+    estimators_
         The fitted estimator for each sensor (in the order of ``sensor``).
     """
+    sensor: Sensor
+    estimators_: list
 
     def __init__(
             self,
@@ -127,7 +129,8 @@ class ChannelModel:
 
         Returns
         -------
-        self
+        model : ChannelModel
+            The model itself, to allow chaining.
         """
         if isinstance(data, list):
             # long epochs: concatenate the good samples of each epoch
@@ -176,7 +179,7 @@ class ChannelModel:
 
         Returns
         -------
-        prediction
+        prediction : NDVar | Datalist
             Data with the same dimensions as ``data``, where each channel is
             predicted from the other channels. For a list of long epochs, a
             :class:`Datalist` with one prediction NDVar per epoch.
@@ -222,7 +225,7 @@ class ChannelModel:
 
         Returns
         -------
-        score
+        score : NDVar | Datalist
             The per-channel error score (``[case x] sensor``). For a list of long
             epochs, a :class:`Datalist` with one score NDVar per epoch.
         """
@@ -283,7 +286,7 @@ class ChannelModel:
 
         Returns
         -------
-        windows
+        windows : Datalist | list
             One list of :class:`BadChannelWindow` per epoch (per case for an
             epoched NDVar; a single list for a continuous NDVar).
 

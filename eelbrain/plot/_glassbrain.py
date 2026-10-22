@@ -34,6 +34,8 @@ OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
 DAMAGE.
 
 """
+from __future__ import annotations
+
 import os
 from typing import Literal
 import warnings
@@ -611,7 +613,7 @@ class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
             xlim: float | tuple[float, float] = None,
             name: str = None,
             **kwargs,
-    ) -> (Butterfly, 'GlassBrain'):
+    ) -> tuple[Butterfly, GlassBrain]:
         """Shortcut for a butterfly-plot with a time-linked glassbrain plot
 
         Parameters
@@ -743,7 +745,13 @@ def _to_mni152(trans):
     return np.dot(t, trans)
 
 
-def _stc_to_volume(ndvar, src, dest='mri', mri_resolution=False, mni305=False):
+def _stc_to_volume(
+        ndvar,
+        src,
+        dest: Literal['mri', 'surf'] = 'mri',
+        mri_resolution=False,
+        mni305=False,
+):
     """Save a volume source estimate in a NIfTI file.
 
     Parameters
@@ -752,7 +760,7 @@ def _stc_to_volume(ndvar, src, dest='mri', mri_resolution=False, mni305=False):
         The source estimate
     src : list
         The list of source spaces (should actually be of length 1).
-    dest : 'mri' | 'surf'
+    dest
         If 'mri' the volume is defined in the coordinate system of
         the original T1 image. If 'surf' the coordinate system
         of the FreeSurfer surface is used (Surface RAS).

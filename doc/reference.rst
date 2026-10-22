@@ -38,6 +38,7 @@ NDVar dimensions (not usually initialized by themselves but through
 .. autosummary::
    :toctree: generated
 
+   Dimension
    Case
    Categorial
    Scalar
@@ -46,6 +47,14 @@ NDVar dimensions (not usually initialized by themselves but through
    VolumeSourceSpace
    Space
    UTS
+
+
+Exceptions:
+
+.. autosummary::
+   :toctree: generated
+
+   DimensionMismatchError
 
 
 .. _reference-io:
@@ -137,7 +146,9 @@ functions. See also :class:`NDVar` methods.
 .. autosummary::
    :toctree: generated
 
+   BadChannelWindow
    Butterworth
+   ChannelModel
    complete_source_space
    concatenate
    convolve
@@ -178,6 +189,7 @@ Temporal Response Functions
 
    boosting
    BoostingResult
+   Splits
    epoch_impulse_predictor
    event_impulse_predictor
 
@@ -249,6 +261,13 @@ Mass-Univariate Statistics
    testnd.Correlation
    testnd.Vector
    testnd.VectorDifferenceRelated
+
+All results share the attributes of their base class:
+
+.. autosummary::
+   :toctree: generated
+
+   testnd.NDTest
 
 The tests in this module produce maps of statistical parameters, and implement different methods to compute corresponding maps of *p*-values that are corrected for multiple comparison:
 
@@ -332,6 +351,7 @@ Color tools for plotting:
    plot.ColorBar
    plot.ColorGrid
    plot.ColorList
+   plot.Legend
 
 .. seealso::
     Example with :ref:`exa-colormaps`
@@ -575,6 +595,7 @@ Tools with a graphical user interface (GUI):
 .. autosummary::
    :toctree: generated
 
+    gui.select_channels
     gui.select_components
     gui.select_epochs
     gui.load_stcs
@@ -675,7 +696,7 @@ Experiment Pipeline
 The :class:`~pipeline.Pipeline` class provides a template for analyzing EEG and MEG
 data. The objects for specifying the analysis are all in the
 :mod:`pipeline` submodule.
-:func:`load_pipeline` is a helper for loading a :class:`Pipeline` from a Python file:
+:func:`load_pipeline` is a helper for loading a :class:`~pipeline.Pipeline` from a Python file:
 
 .. currentmodule:: eelbrain
 
@@ -751,6 +772,15 @@ Epoch rejection methods:
    ManualRejection
    ChannelModelRejection
 
+Noise covariance:
+
+.. autosummary::
+   :toctree: generated
+
+   Covariance
+   RawCovariance
+   EpochCovariance
+
 Tests:
 
 .. autosummary::
@@ -774,6 +804,13 @@ Brain parcellations:
    FSAverageParc
    SeededParc
    IndividualSeededParc
+
+Exceptions:
+
+.. autosummary::
+   :toctree: generated
+
+   ProtectedArtifactError
 
 
 ^^^^^^^^

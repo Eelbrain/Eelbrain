@@ -155,25 +155,24 @@ p = eelbrain.plot.TopoArray(trf.h, t=[0.050, 0.120, 0.150], w=6, h=4, clip='circ
 # Predictive power
 # ----------------
 # In order to derive an unbiased estimate of predictive power,
-# we can use cross-validation.
+# the :func:`boosting` function uses cross-validation by default.
 # That means part of the data is never used while estimating the TRF,
 # and can be used in the end to calculate how well the TRF can predict neural data.
-# The :func:`boosting` function uses *K*-fold cross-validation.
-# Cross-validation is enabled with the ``test=True`` parameter,
-# and *K* is set through the ``partitions`` parameter.
-
-trf_cv = eelbrain.boosting('eeg', 'onsets', 0, 0.500, data=events, basis=0.050, partitions=4, test=True)
-
-###############################################################################
+# Specifically, it uses *k*-fold cross-validation, with *k* set through the ``partitions`` parameter:
+# each partition is held out as test data in turn,
+# and predicted from a TRF estimated on the remaining partitions.
+# The fit metrics of the ``trf`` estimated above, such as ``proportion_explained`` and ``r``,
+# thus estimate how well the model predicts data that were not used to fit it.
+#
 # Plot the predictive power across sensors, including the average across all
 # sensors in each figure title.
 
-title = f"Mean exp: {trf_cv.proportion_explained.mean('sensor'):.2%}"
-p = eelbrain.plot.Topomap(trf_cv.proportion_explained, clip='circle', title=title)
+title = f"Mean exp: {trf.proportion_explained.mean('sensor'):.2%}"
+p = eelbrain.plot.Topomap(trf.proportion_explained, clip='circle', title=title)
 pcb = p.plot_colorbar('Proportion explained')
 
-title = f"Mean r: {trf_cv.r.mean('sensor'):.2}"
-p = eelbrain.plot.Topomap(trf_cv.r, clip='circle', title=title)
+title = f"Mean r: {trf.r.mean('sensor'):.2}"
+p = eelbrain.plot.Topomap(trf.r, clip='circle', title=title)
 pcb = p.plot_colorbar()
 
 ###############################################################################
@@ -181,8 +180,9 @@ pcb = p.plot_colorbar()
 # --------
 # Train an envelope decoder on the first 11 trials and use it to decode the envelope of the last trial.
 
-# Use a larger delta to speed up training
-decoder = eelbrain.boosting('envelope', 'eeg', -0.500, 0, data=events[:11], partitions=5, delta=0.05)
+# Use a larger delta to speed up training.
+# Skip the test partitions (test=0), because the decoder is evaluated on the held-out last trial below.
+decoder = eelbrain.boosting('envelope', 'eeg', -0.500, 0, data=events[:11], partitions=5, test=0, delta=0.05)
 
 ###############################################################################
 # Now use the decoder to reconstruct the envelope of the last trial. Note that,

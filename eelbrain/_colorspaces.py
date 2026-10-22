@@ -2,6 +2,7 @@
 from itertools import cycle
 from math import ceil
 from numbers import Real
+from typing import Literal
 from collections.abc import Sequence
 
 from colormath.color_objects import LCHabColor, sRGBColor
@@ -10,6 +11,8 @@ import matplotlib
 from matplotlib.colors import ListedColormap
 from matplotlib.colors import LinearSegmentedColormap, to_rgb, to_rgba
 import numpy as np
+
+from ._types import ColorArg
 
 
 # https://jfly.uni-koeln.de/html/color_blind/ (Fig. 16)
@@ -300,24 +303,31 @@ def twoway_colors(
     return colors
 
 
-def two_step_colormap(left_max, left, center='transparent', right=None, right_max=None, name='two-step'):
+def two_step_colormap(
+        left_max: ColorArg,
+        left: ColorArg,
+        center: ColorArg | Literal['transparent'] = 'transparent',
+        right: ColorArg = None,
+        right_max: ColorArg = None,
+        name: str = 'two-step',
+):
     """Colormap with 2 or 4 gradients (e.g., ``white - red - transparent - blue - white``)
 
     Parameters
     ----------
-    left_max : matplotlib color
+    left_max
         Left end of the colormap.
-    left : matplotlib color
+    left
         Left middle of the colormap.
-    center : matplotlib color | 'transparent'
+    center
         Color for the middle value; 'transparent to make the middle transparent
         (default).
-    right : matplotlib color
+    right
         Right middle of the colormap (if not specified, the colormap ends at
         the location specified by ``center``).
-    right_max : matplotlib color
+    right_max
         Right end of the colormap.
-    name : str
+    name
         Name for the colormap.
 
     Examples

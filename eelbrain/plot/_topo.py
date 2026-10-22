@@ -11,6 +11,7 @@ from collections.abc import Sequence
 
 import matplotlib
 import matplotlib.axes
+from matplotlib.colors import Colormap
 import matplotlib.markers
 import matplotlib.patches
 import numpy as np
@@ -68,7 +69,7 @@ class Topomap(SensorMapMixin, ColorMapMixin, TopoMapKey, EelFigure):
     interpolation
         Method for interpolating topo-map between sensors (default is based on
         mne-python).
-    clip : bool | 'even' | 'circle'
+    clip
         Outline for clipping topomaps: 'even' to clip at a constant distance
         (default), 'circle' to clip using a circle.
     clip_distance
@@ -133,7 +134,7 @@ class Topomap(SensorMapMixin, ColorMapMixin, TopoMapKey, EelFigure):
             proj: str = 'default',
             res: int = None,
             interpolation: InterpolationArg = None,
-            clip: bool | str = 'even',
+            clip: bool | Literal['even', 'circle'] = 'even',
             clip_distance: float = 0.05,
             head_radius: float | tuple[float, float] = None,
             head_pos: float | Sequence[float] = 0,
@@ -224,7 +225,7 @@ class TopomapBins(SensorMapMixin, ColorMapMixin, TopoMapKey, EelFigure):
     interpolation
         Method for interpolating topo-map between sensors (default is based on
         mne-python).
-    clip : bool | 'even' | 'circle'
+    clip
         Outline for clipping topomaps: 'even' to clip at a constant distance
         (default), 'circle' to clip using a circle.
     clip_distance
@@ -248,7 +249,7 @@ class TopomapBins(SensorMapMixin, ColorMapMixin, TopoMapKey, EelFigure):
     sensorlabels
         Show sensor labels. For 'name', any prefix common to all names
         is removed; with 'fullname', the full name is shown.
-    mark : Sensor index
+    mark
         Sensors which to mark.
     mcolor
         Color for marked sensors (see :func:`matplotlib.pyplot.scatter`).
@@ -286,7 +287,7 @@ class TopomapBins(SensorMapMixin, ColorMapMixin, TopoMapKey, EelFigure):
             proj: str = 'default',
             res: int = None,
             interpolation: InterpolationArg = None,
-            clip: bool | str = 'even',
+            clip: bool | Literal['even', 'circle'] = 'even',
             clip_distance: float = 0.05,
             head_radius: float | tuple[float, float] = None,
             head_pos: float | Sequence[float] = 0,
@@ -381,9 +382,9 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
         contours), or a dictionary with ``**kwargs`` for
         :meth:`~matplotlib.axes.Axes.contour` (must include a ``"levels"`` key).
         Default is no contours.
-    color : matplotlib color
+    color
         Color of the butterfly plots.
-    linewidth : scalar
+    linewidth
         Linewidth for plots (defult is to use ``matplotlib.rcParams``).
     t
         Time to display in the topomap.
@@ -394,20 +395,20 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
     interpolation
         Method for interpolating topo-map between sensors (default is based on
         mne-python).
-    clip : bool | 'even' | 'circle'
+    clip
         Outline for clipping topomaps: 'even' to clip at a constant distance
         (default), 'circle' to clip using a circle.
-    clip_distance : scalar
+    clip_distance
         How far from sensor locations to clip (1 is the axes height/width).
-    head_radius : scalar | tuple
+    head_radius
         Radius of the head outline drawn over sensors (on sensor plots with
         normalized positions, 0.45 is the outline of the topomap); 0 to plot no
         outline; tuple for separate (right, anterior) radius.
         The default is determined automatically.
-    head_pos : scalar
+    head_pos
         Head outline position along the anterior axis (0 is the center, 0.5 is
         the top end of the plot).
-    im_interpolation : str
+    im_interpolation
         Topomap image interpolation (see Matplotlib's
         :meth:`~matplotlib.axes.Axes.imshow`). Matplotlib 1.5.3's SVG output
         can't handle uneven aspect with ``interpolation='none'``, use
@@ -418,10 +419,10 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
     sensorlabels
         Show sensor labels. For 'name', any prefix common to all names
         is removed; with 'fullname', the full name is shown.
-    mark : Sensor index
+    mark
         Sensors to mark in the topo-map. To highlight sensors in the butterfly
         plot, consider using :meth:`NDVar.mask` on ``y``.
-    mcolor : matplotlib color
+    mcolor
         Color for marked sensors.
     xlabel
         X-axis label. By default the label is inferred from the data.
@@ -435,10 +436,10 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
         Specify which axes should be annotated with y-axis tick labels.
         Use ``int`` for a single axis, a sequence of ``int`` for multiple
         specific axes, or one of ``'left' | 'bottom' | 'all' | 'none'``.
-    axtitle : bool | sequence of str
+    axtitle
         Title for the individual axes. The default is to show the names of the
         epochs, but only if multiple axes are plotted.
-    xlim : scalar | (scalar, scalar)
+    xlim
         Initial x-axis view limits as ``(left, right)`` tuple or as ``length``
         scalar (default is the full x-axis in the data).
     ...
@@ -489,7 +490,7 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
             proj: str = 'default',
             res: int = None,
             interpolation: InterpolationArg = None,
-            clip: bool | str = 'even',
+            clip: bool | Literal['even', 'circle'] = 'even',
             clip_distance: float = 0.05,
             head_radius: float | tuple[float, float] = None,
             head_pos: float | Sequence[float] = 0,
@@ -944,7 +945,7 @@ class TopoArray(ColorMapMixin, TopoMapKey, XAxisMixin, EelFigure):
         number of topomaps per array-plot.
     t
         Time points for topomaps.
-    xlim : scalar | (scalar, scalar)
+    xlim
         Initial x-axis view limits as ``(left, right)`` tuple or as ``length``
         scalar (default is the full x-axis in the data).
     proj
@@ -954,7 +955,7 @@ class TopoArray(ColorMapMixin, TopoMapKey, XAxisMixin, EelFigure):
     interpolation
         Method for interpolating topo-map between sensors (default is based on
         mne-python).
-    clip : bool | 'even' | 'circle'
+    clip
         Outline for clipping topomaps: 'even' to clip at a constant distance
         (default), 'circle' to clip using a circle.
     clip_distance
@@ -979,9 +980,9 @@ class TopoArray(ColorMapMixin, TopoMapKey, XAxisMixin, EelFigure):
         Show sensor labels. For 'name', any prefix common to all names
         is removed; with 'fullname', the full name is shown. Set to ``''`` to
         hide sensor position markers completely.
-    mark : Sensor index
+    mark
         Sensors which to mark.
-    mcolor : matplotlib color
+    mcolor
         Color for marked sensors.
     axtitle
         Title for the individual axes. The default is to show the names of the
@@ -1041,7 +1042,7 @@ class TopoArray(ColorMapMixin, TopoMapKey, XAxisMixin, EelFigure):
             proj: str = 'default',
             res: int = None,
             interpolation: InterpolationArg = None,
-            clip: bool | str = 'even',
+            clip: bool | Literal['even', 'circle'] = 'even',
             clip_distance: float = 0.05,
             head_radius: float | tuple[float, float] = None,
             head_pos: float | Sequence[float] = 0,
@@ -1177,14 +1178,14 @@ class TopoArray(ColorMapMixin, TopoMapKey, XAxisMixin, EelFigure):
             if w.plot is not None:
                 yield w.plot
 
-    def set_cmap(self, cmap, meas=None):
+    def set_cmap(self, cmap: str | Colormap, meas: str = None):
         """Change the colormap
 
         Parameters
         ----------
-        cmap : str | colormap
+        cmap
             New colormap.
-        meas : None | str
+        meas
             Measurement to which to apply the colormap. With None, it is
             applied to all.
         """
@@ -1193,15 +1194,15 @@ class TopoArray(ColorMapMixin, TopoMapKey, XAxisMixin, EelFigure):
             p.set_cmap(cmap, meas)
         self.draw()
 
-    def set_topo_t_single(self, topo_id, t):
+    def set_topo_t_single(self, topo_id: int, t: float):
         """
         Set the time for a single topomap.
 
         Parameters
         ----------
-        topo_id : int
+        topo_id
             Index of the topomap (numbered throughout the figure).
-        t : scalar or ``None``
+        t
             time point; ``None`` clears the topomap
         """
         # get window ax
@@ -1213,15 +1214,15 @@ class TopoArray(ColorMapMixin, TopoMapKey, XAxisMixin, EelFigure):
 
         self.canvas.draw()
 
-    def set_topo_t(self, topo_id, t):
+    def set_topo_t(self, topo_id: int, t: float):
         """
         Set the time point for a topo-map (same for all array plots)
 
         Parameters
         ----------
-        topo_id : int
+        topo_id
             Index of the topomap (numberd for each array-plot).
-        t : scalar or ``None``
+        t
             time point; ``None`` clears the topomap
 
         See Also

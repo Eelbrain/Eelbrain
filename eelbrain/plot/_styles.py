@@ -16,7 +16,7 @@ import matplotlib as mpl
 from matplotlib.colors import LinearSegmentedColormap, to_rgb, to_rgba
 
 from .._colorspaces import LocatedListedColormap, lch_to_rgb, rgb_to_lch, oneway_colors, twoway_colors, SYMMETRIC_CMAPS
-from .._data_obj import Factor, Interaction, CellArg
+from .._data_obj import CategorialArg, Factor, Interaction, CellArg
 from .._exceptions import KeysMissing
 from functools import cached_property
 
@@ -213,23 +213,24 @@ def find_cell_styles(
     return to_styles_dict(out)
 
 
-def colors_for_categorial(x, hue_start=0.2, cmap=None):
+def colors_for_categorial(x: CategorialArg, hue_start: float = 0.2, cmap: str = None) -> dict:
     """Automatically select colors for a categorial model
 
     Parameters
     ----------
-    x : categorial
+    x
         Model defining the cells for which to define colors.
-    hue_start : 0 <= scalar < 1
-        First hue value (only for two-way or higher level models).
-    cmap : str (optional)
+    hue_start
+        First hue value (``0 <= hue_start < 1``; only for two-way or higher
+        level models).
+    cmap
         Name of a matplotlib colormap to use instead of default hue-based
         colors (only used for one-way models).
 
     Returns
     -------
-    colors : dict {cell -> color}
-        Dictionary providing colors for the cells in x.
+    colors : dict
+        Dictionary mapping each cell in ``x`` to a color.
     """
     if isinstance(x, Factor):
         return colors_for_oneway(x.cells, hue_start, cmap=cmap)
@@ -240,7 +241,7 @@ def colors_for_categorial(x, hue_start=0.2, cmap=None):
 
 
 def colors_for_oneway(
-        cells,
+        cells: Sequence[str],
         hue_start: float | Sequence[float] = 0.2,
         light_range: float | tuple[float, float] = 0.5,
         cmap: str = None,
@@ -253,11 +254,11 @@ def colors_for_oneway(
 
     Parameters
     ----------
-    cells : sequence of str
+    cells
         Cells for which to assign colors.
     hue_start
         First hue value (``0 <= hue < 1``) or list of hue values.
-    light_range : scalar | tuple of 2 scalar
+    light_range
         Scalar that specifies the amount of lightness variation (default 0.5).
         If positive, the first color is lightest; if negative, the first color
         is darkest. A tuple can be used to specify exact end-points (e.g.,
@@ -286,7 +287,8 @@ def colors_for_oneway(
 
     Returns
     -------
-    Mapping from cells to colors.
+    colors : dict
+        Mapping from cells to colors.
     """
     if isinstance(cells, Iterator):
         cells = tuple(cells)
@@ -321,11 +323,11 @@ def colors_for_twoway(
         Cells of the major factor.
     x2_cells
         Cells of the minor factor.
-    hue_start : 0 <= scalar < 1
-        First hue value.
-    hue_shift : 0 <= scalar < 1
+    hue_start
+        First hue value (``0 <= hue_start < 1``).
+    hue_shift
         Use that part of the hue continuum between categories to shift hue
-        within categories.
+        within categories (``0 <= hue_shift < 1``).
     hues
         List of hue values corresponding to the levels of the first factor
         (overrides regular hue distribution).
@@ -336,7 +338,8 @@ def colors_for_twoway(
 
     Returns
     -------
-    Mapping from cells to colors.
+    colors : dict
+        Mapping from cells to colors.
     """
     x1_cells = list(x1_cells)
     x2_cells = list(x2_cells)
@@ -365,7 +368,8 @@ def colors_for_nway(
 
     Returns
     -------
-    Mapping from cells to colors.
+    colors : dict
+        Mapping from cells to colors.
     """
     if len(cell_lists) == 1:
         return colors_for_oneway(cell_lists[0])
@@ -416,7 +420,8 @@ def styles_for_twoway(
 
     Returns
     -------
-    Mapping from cells to plot styles.
+    styles : dict
+        Mapping from cells to plot styles.
     """
     x1_cells = list(x1_cells)
     x2_cells = list(x2_cells)
@@ -464,7 +469,7 @@ def soft_threshold_colormap(
     vmax
         Intended largest value of the colormap (used to infer the location of
         the ``threshold``).
-    subthreshold : matplotlib color
+    subthreshold
         Color of sub-threshold values (the default is the end or middle of
         the colormap, depending on whether it is symmetric).
     symmetric

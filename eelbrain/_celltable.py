@@ -6,7 +6,7 @@ import numpy as np
 
 from ._data_obj import (
     NumericArg, CategorialArg, CellArg, IndexArg,
-    NDVar, Case, Dataset,
+    Factor, Interaction, NDVar, Var, Case, Dataset,
     ascategorial, asdataobject, assub,
     cellname, dataobj_repr,
 )
@@ -57,35 +57,45 @@ class Celltable:
 
     Attributes
     ----------
-    y : data-object
+    y
         ``y`` after evaluating input parameters.
-    x : categorial
+    x
         ``x`` after evaluating input parameters.
-    match : categorial | None
+    match
         ``match`` after evaluating input parameters.
-    sub : bool array | None
-        ``sub`` after evaluating input parameters.
-    cells : list of (str | tuple)
+    sub
+        Boolean array; ``sub`` after evaluating input parameters.
+    cells
         List of all cells in x.
-    data : {cell: data}
-        Data (``y[index]``) in each cell.
-    data_indexes : {cell: index-array}
+    data
+        Data (``y[index]``) in each cell, mapping cell to data.
+    data_indexes
         For each cell, a boolean-array specifying the index for that cell in
         ``x``.
 
     **If ``match`` is specified**:
 
-    within : dict(cell1, cell2 -> bool)
+    within
         Dictionary that specifies for each cell pair whether the corresponding
         comparison is a repeated-measures or an independent measures
         comparison (only available when the input argument ``match`` is
         specified.
-    all_within : bool
+    all_within
         Whether all comparison are repeated-measures comparisons or not.
-    groups : dict(cell -> group)
+    groups
         A slice of the match argument describing the group members for each
         cell.
     """
+    within: dict
+    all_within: bool
+    groups: dict
+    y: Var | NDVar
+    x: Factor | Interaction
+    match: Factor | Interaction
+    cells: list[str | tuple]
+    sub: np.ndarray
+    data: dict
+    data_indexes: dict
 
     def __init__(
             self,
@@ -287,14 +297,14 @@ class Celltable:
         else:
             return y_
 
-    def cellname(self, cell, delim=' '):
+    def cellname(self, cell: tuple | str, delim: str = ' '):
         """Produce a str label for a cell.
 
         Parameters
         ----------
-        cell : tuple | str
+        cell
             Cell.
-        delim : str
+        delim
             Interaction cells (represented as tuple of strings) are joined by
             ``delim``.
         """
@@ -309,12 +319,12 @@ class Celltable:
         """
         return [cellname(cell, delim) for cell in self.cells]
 
-    def data_for_cell(self, cell):
+    def data_for_cell(self, cell: str | tuple[str, ...]):
         """Retrieve data for a cell, allowing advanced cell combinations
 
         Parameters
         ----------
-        cell : str | tuple of str
+        cell
             Name fo the cell. See notes for special cell names. After a special
             cell is retrieved for the first time it is also add to
             ``self.data``.
@@ -366,12 +376,12 @@ class Celltable:
     def _get_func(self, cell, func):
         return self.data[cell].aggregate(func=func).x
 
-    def get_statistic(self, func=np.mean):
+    def get_statistic(self, func: Callable | str = np.mean):
         """Return a list with ``a * func(data)`` for each data cell.
 
         Parameters
         ----------
-        func : callable | str
+        func
             statistics function that is applied to the data. Can be string,
             such as '[x]sem' or '[x]ci', e.g. '2sem'.
 
@@ -387,12 +397,12 @@ class Celltable:
 
         return [func(self.data[cell].x) for cell in self.cells]
 
-    def get_statistic_dict(self, func=np.mean):
+    def get_statistic_dict(self, func: Callable | str = np.mean):
         """Return a ``{cell: func(data)}`` dictionary.
 
         Parameters
         ----------
-        func : callable | str
+        func
             statistics function that is applied to the data. Can be string,
             such as '[x]sem', '[x]std', or '[x]ci', e.g. '2sem'.
 

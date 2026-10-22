@@ -10,6 +10,7 @@
 #  - issues commands to Model
 
 import mne
+from matplotlib.axes import Axes
 from matplotlib.collections import LineCollection
 import numpy as np
 import pandas as pd
@@ -33,6 +34,9 @@ from .select_epochs import VLimDialog
 
 
 DEFAULT_WINDOW = 30.0  # seconds
+
+# Topomap columns, in display order (one group of three per channel type)
+TOPO_LABELS = ('Cursor', 'Neighbor corr raw', 'Neighbor corr clean')
 
 _EVENT_COLORS = [c for c in UNAMBIGUOUS_COLORS.values()]
 
@@ -214,13 +218,18 @@ class Document(FileDocument):
         return frozenset(new_bad)
 
     def compute_nc_dynamic(self, ch_type: str, ndvar: NDVar) -> NDVar | None:
-        """NC recomputed with bad channels omitted, for a smooth interpolated map."""
+        """NC recomputed with bad channels omitted, for a smooth interpolated map.
+
+        Falls back to the static map (all channels) when the correlation can not be
+        mapped: without bad channels, with fewer than 4 good channels, or on failure.
+        """
         static = self.nc_static.get(ch_type)
         bad = self.bad_channels
         if static is None:
             return None
         good = [n for n in ndvar.sensor.names if n not in bad]
-        if len(good) == len(ndvar.sensor) or len(good) < 2:
+        # fewer than 4 sensors can not be laid out as a map (the 2-D projection fits a sphere)
+        if len(good) == len(ndvar.sensor) or len(good) < 4:
             return static
         try:
             return neighbor_correlation(ndvar.sub(sensor=good))
@@ -267,8 +276,12 @@ class Frame(NavigableFrame, FileFrame):
     * Bad channels are shown as red dotted lines in butterfly plots and
       as red ``x`` marks in topomaps.
     * The cursor topomap updates in real time as you move the mouse.
-    * The "NC (clean)" topomap recomputes neighbor correlation after each
-      bad-channel change.
+    * The "Neighbor corr clean" topomap recomputes neighbor correlation after
+      each bad-channel change, omitting the bad channels; those channels are
+      therefore absent from it (no sensor dot and no ``x`` mark), while the
+      "Neighbor corr raw" map always shows all channels. With fewer than 4
+      good channels the clean map falls back to the raw map, since fewer
+      sensors can not be laid out as a map.
 
     *Keyboard shortcuts* in addition to the ones in the menu:
 
@@ -327,7 +340,6 @@ class Frame(NavigableFrame, FileFrame):
         self._cursor_topos: list[AxTopomap] = []
         self._static_nc_topos: list[AxTopomap] = []
         self._dynamic_nc_topos: list[AxTopomap] = []
-        self._topo_axes: list = []
         self._cursor_cbars: list = []        # Colorbar per cursor topo (rescales with cursor)
         self._cursor_cbar_axes: list = []    # their axes, for blitted redraws
         self._events_ax = None
@@ -647,21 +659,16 @@ class Frame(NavigableFrame, FileFrame):
         self._cursor_topos = []
         self._static_nc_topos = []
         self._dynamic_nc_topos = []
-        self._topo_axes = []
         self._cursor_cbars = []
         self._cursor_cbar_axes = []
 
-        topo_groups = [
-            ('Cursor', self._cursor_topos),
-            ('Neighbor corr raw', self._static_nc_topos),
-            ('Neighbor corr clean', self._dynamic_nc_topos),
-        ]
+        topo_lists = [self._cursor_topos, self._static_nc_topos, self._dynamic_nc_topos]
 
         for i_type, (ch_type, ndvar, picks) in enumerate(doc.ndvars_by_type):
             sensor = ndvar.sensor
             display_unit, scale = ch_type_scale(ch_type)
             nc_raw_topo = None  # provides the shared color scale/colorbar for the NC pair
-            for j_group, (label, topo_list) in enumerate(topo_groups):
+            for j_group, topo_list in enumerate(topo_lists):
                 if j_group == 0:
                     map_x = cursor_map_x[i_type]
                 elif j_group == 1:
@@ -673,58 +680,91 @@ class Frame(NavigableFrame, FileFrame):
                 )
                 ax.ch_type = ch_type
                 ax.topo_group = j_group
-                self._topo_axes.append(ax)
 
-                # Initial data for this topo; cursor in display units, NC unitless
                 if j_group == 0:
+                    # Cursor topo: display units, own colorbar that rescales with the cursor
                     d = raw[picks, 0:1][0][:, 0] * scale
                     topo_ndvar = NDVar(d, (sensor,), name=ch_type, info=ndvar.info)
-                    cbar_label = display_unit or ch_type
-                    interpolation = 'linear'
                     vlims = {ndvar.info.get('meas'): (-vlim_display, vlim_display)}
-                else:
-                    # NC raw uses the static map; NC clean omits bad channels
-                    if j_group == 1:
-                        topo_ndvar = doc.nc_static.get(ch_type)
-                    else:
-                        topo_ndvar = doc.compute_nc_dynamic(ch_type, ndvar)
-                    if topo_ndvar is None:
-                        topo_ndvar = NDVar(np.zeros(len(sensor)), (sensor,), name=ch_type)
-                    cbar_label = 'r'
-                    interpolation = 'nearest'
-                    vlims = {'r': (-1, 1)}
-
-                layers = AxisData([DataLayer(topo_ndvar, PlotType.IMAGE)])
-                p = AxTopomap(ax, layers, vlims=vlims, interpolation=interpolation, clip='even')
-                ax.text(0.5, 0.0, f"{label} ({ch_type})", transform=ax.transAxes,
-                        ha='center', va='bottom', fontsize=7)
-
-                if j_group == 0:
-                    # Cursor topo: own colorbar that rescales with the cursor
+                    p = self._plot_topo(ax, topo_ndvar, TOPO_LABELS[0], ch_type, vlims, 'linear')
                     cbar_ax = self.figure.add_axes(
                         (cursor_cbar_x[i_type], topo_bottom, cbar_w, topo_h),
                     )
-                    cbar = self._add_topo_colorbar(p, cbar_ax, cbar_label)
+                    cbar = self._add_topo_colorbar(p, cbar_ax, display_unit or ch_type)
                     self._cursor_cbars.append(cbar)
                     self._cursor_cbar_axes.append(cbar_ax)
                 elif j_group == 1:
-                    # NC raw defines the shared color scale; colorbar drawn with the clean topo
+                    # NC raw: static; defines the color scale shared with the clean map
+                    topo_ndvar = doc.nc_static.get(ch_type)
+                    if topo_ndvar is None:
+                        topo_ndvar = NDVar(np.zeros(len(sensor)), (sensor,), name=ch_type)
+                    p = self._plot_topo(ax, topo_ndvar, TOPO_LABELS[1], ch_type, {'r': (-1, 1)}, 'nearest')
                     nc_raw_topo = p
                 else:
                     # NC clean: share the raw NC color scale and a single colorbar
+                    p = self._plot_nc_clean(ax, ch_type, ndvar)
                     cbar_ax = self.figure.add_axes(
                         (nc_cbar_x[i_type], topo_bottom, cbar_w, topo_h),
                     )
-                    self._add_topo_colorbar(nc_raw_topo, cbar_ax, cbar_label)
+                    self._add_topo_colorbar(nc_raw_topo, cbar_ax, 'r')
 
-                # Mark bad channels with red ×
-                if doc.bad_channels:
-                    self._mark_bad_on_topo(p, sensor, doc.bad_channels)
-
+                self._mark_bad_on_topo(p)
                 topo_list.append(p)
 
         self.canvas.store_canvas()
         self.canvas.draw()
+
+    def _plot_topo(
+            self,
+            ax: Axes,
+            data: NDVar,
+            label: str,
+            ch_type: str,
+            vlims: dict,
+            interpolation: str,
+    ) -> AxTopomap:
+        """Plot a topomap on ``ax``, replacing anything previously plotted there.
+
+        Parameters
+        ----------
+        ax
+            Axes to draw on.
+        data
+            Sensor data to map.
+        label
+            Map title, one of :data:`TOPO_LABELS`.
+        ch_type
+            Channel type, appended to the title.
+        vlims
+            ``{meas: (vmin, vmax)}`` color scale.
+        interpolation
+            Image interpolation, as for :class:`AxTopomap`.
+        """
+        ax.clear()
+        layers = AxisData([DataLayer(data, PlotType.IMAGE)])
+        p = AxTopomap(ax, layers, vlims=vlims, interpolation=interpolation, clip='even')
+        ax.text(0.5, 0.0, f"{label} ({ch_type})", transform=ax.transAxes, ha='center', va='bottom', fontsize=7)
+        return p
+
+    def _plot_nc_clean(
+            self,
+            ax: Axes,
+            ch_type: str,
+            ndvar: NDVar,
+    ) -> AxTopomap:
+        """(Re-)plot the clean neighbor-correlation topomap for ``ch_type`` on ``ax``.
+
+        Neighbor correlation is recomputed on good channels only, so the sensor
+        dimension of the data shrinks as channels are marked bad.  An
+        :class:`AxTopomap` derives its sensor layout (markers, clip outline) from
+        the data at construction and does not update it in ``set_data()``, so the
+        map is rebuilt rather than updated; that keeps the sensor markers and the
+        bad-channel marks consistent with the data that is actually shown.
+        """
+        data = self.doc.compute_nc_dynamic(ch_type, ndvar)
+        if data is None:
+            data = NDVar(np.zeros(len(ndvar.sensor)), (ndvar.sensor,), name=ch_type)
+        return self._plot_topo(ax, data, TOPO_LABELS[2], ch_type, {'r': (-1, 1)}, 'nearest')
 
     def _add_topo_colorbar(self, topo_plot: AxTopomap, cbar_ax, label: str):
         """Attach a thin vertical colorbar (with unit label) to a topomap."""
@@ -740,11 +780,16 @@ class Frame(NavigableFrame, FileFrame):
         vmin, vmax = cbar.mappable.get_clim()
         cbar.set_ticks([vmin, (vmin + vmax) / 2, vmax])
 
-    def _mark_bad_on_topo(self, topo_plot: AxTopomap, sensor, bad: set[str]):
-        """Add red × marks at bad channel positions on a topomap."""
-        bad_idx = [i for i, n in enumerate(sensor.names) if n in bad]
-        if bad_idx:
-            topo_plot.sensors.mark_sensors(bad_idx, color='red', marker='x', size=30, zorder=10)
+    def _mark_bad_on_topo(self, topo_plot: AxTopomap) -> None:
+        """Set the red × marks for bad channels on a topomap.
+
+        Marks are always resolved against the topomap's own sensor dimension,
+        which for the clean neighbor-correlation map contains good channels only.
+        """
+        topo_plot.sensors.mark_sensors(None)  # clear
+        bad = [name for name in topo_plot.sensors.sensors.names if name in self.doc.bad_channels]
+        if bad:
+            topo_plot.sensors.mark_sensors(bad, color='red', marker='x', size=30, zorder=10)
 
     def _update_window(self):
         """Update butterfly and events display for the current time window."""
@@ -826,8 +871,6 @@ class Frame(NavigableFrame, FileFrame):
 
     def _update_bad_channels(self):
         """Called by Document when bad channels change; updates line styles and topos."""
-        bad = self.doc.bad_channels
-
         # Update butterfly line colors and styles
         for ch_type, ndvar, picks in self.doc.ndvars_by_type:
             lc = self._butterfly_lc.get(ch_type)
@@ -837,21 +880,14 @@ class Frame(NavigableFrame, FileFrame):
             lc.set_color(colors)
             lc.set_linestyle(linestyles)
 
-        # Update sensor marks on all topos
-        for p, (ch_type, ndvar, picks) in zip(
-                self._cursor_topos + self._static_nc_topos + self._dynamic_nc_topos,
-                list(self.doc.ndvars_by_type) * 3,
-        ):
-            sensor = ndvar.sensor
-            p.sensors.mark_sensors(None)  # clear
-            if bad:
-                self._mark_bad_on_topo(p, sensor, bad)
-
-        # Recompute and update dynamic NC topos
+        # Rebuild the clean NC topos (their sensor dimension follows the good channels)
         for i_type, (ch_type, ndvar, picks) in enumerate(self.doc.ndvars_by_type):
-            nc_dyn = self.doc.compute_nc_dynamic(ch_type, ndvar)
-            if nc_dyn is not None and i_type < len(self._dynamic_nc_topos):
-                self._dynamic_nc_topos[i_type].set_data([nc_dyn])
+            ax = self._dynamic_nc_topos[i_type].ax
+            self._dynamic_nc_topos[i_type] = self._plot_nc_clean(ax, ch_type, ndvar)
+
+        # Update sensor marks on all topos
+        for p in self._cursor_topos + self._static_nc_topos + self._dynamic_nc_topos:
+            self._mark_bad_on_topo(p)
 
         self.canvas.draw()
         # Refresh the blit background so cursor-topo / window updates stay valid
@@ -873,7 +909,7 @@ class Frame(NavigableFrame, FileFrame):
             d = raw[picks, t_idx:t_idx + 1][0][:, 0] * scale
             cursor_ndvar = NDVar(d, (ndvar.sensor,), name=ch_type, info=ndvar.info)
             self._cursor_topos[i_type].set_data([cursor_ndvar])
-            redraw_axes.append(self._topo_axes[i_type * 3])
+            redraw_axes.append(self._cursor_topos[i_type].ax)
 
         if redraw_axes:
             self.canvas.redraw(redraw_axes)
@@ -970,6 +1006,7 @@ class Frame(NavigableFrame, FileFrame):
         if entry is None:
             return
         ch_type, ndvar, picks = entry
+        title = f"{TOPO_LABELS[group]} ({ch_type})"
         if group == 0:
             t = self._cursor_t if self._cursor_t is not None else self.t_start
             raw = self.doc.raw
@@ -977,13 +1014,11 @@ class Frame(NavigableFrame, FileFrame):
             _, scale = ch_type_scale(ch_type)
             d = raw[picks, t_idx:t_idx + 1][0][:, 0] * scale
             data = NDVar(d, (ndvar.sensor,), name=ch_type, info=ndvar.info)
-            title = f"Cursor ({ch_type}) t={t:.3f} s"
+            title = f"{title} t={t:.3f} s"
         elif group == 1:
             data = self.doc.nc_static.get(ch_type)
-            title = f"Neighbor corr raw ({ch_type})"
         else:
             data = self.doc.compute_nc_dynamic(ch_type, ndvar)
-            title = f"Neighbor corr clean ({ch_type})"
         if data is None:
             return
         plot.Topomap(data, sensorlabels='name', axw=9, title=title)

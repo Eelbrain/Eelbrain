@@ -31,6 +31,7 @@ import math
 import os
 import re
 import time
+from typing import Literal
 
 from matplotlib.transforms import Bbox
 import mne
@@ -699,15 +700,19 @@ class Model(FileModel):
                               new_accept)
         self.history.do(action)
 
-    def threshold(self, threshold=2e-12, method='abs'):
+    def threshold(
+            self,
+            threshold: float = 2e-12,
+            method: Literal['abs', 'p2p'] = 'abs',
+    ) -> np.ndarray:
         """Find epochs based on a threshold criterion
 
         Parameters
         ----------
-        threshold : scalar
+        threshold
             The threshold value. Examples: 1.25e-11 to detect saturated
             channels; 2e-12: for conservative MEG rejection.
-        method : 'abs' | 'p2p'
+        method
             How to apply the threshold. With "abs", the threshold is applied to
             absolute values. With 'p2p' the threshold is applied to
             peak-to-peak values.
@@ -732,14 +737,19 @@ class Model(FileModel):
             raise ValueError(f"Invalid method: {method!r}")
         return np.array(x) < threshold
 
-    def threshold_multi(self, type_thresholds, method='abs'):
+    def threshold_multi(
+            self,
+            type_thresholds: list,
+            method: Literal['abs', 'p2p'] = 'abs',
+    ):
         """Find epochs based on per-channel-type threshold criteria.
 
         Parameters
         ----------
-        type_thresholds : list of (ch_type, threshold_si, display_str)
-            As returned by ``ThresholdDialog.GetThresholds()``.
-        method : 'abs' | 'p2p'
+        type_thresholds
+            List of (ch_type, threshold_si, display_str),
+            as returned by ``ThresholdDialog.GetThresholds()``.
+        method :
 
         Returns
         -------

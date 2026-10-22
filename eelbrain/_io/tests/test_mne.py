@@ -8,7 +8,7 @@ import numpy as np
 from numpy.testing import assert_array_equal, assert_array_almost_equal
 import pytest
 
-from eelbrain import datasets, load
+from eelbrain import Dataset, Var, datasets, load
 from eelbrain.testing import assert_dataobj_equal, requires_mne_sample_data, requires_mne_testing_data, file_path
 
 
@@ -160,3 +160,74 @@ def test_load_fiff_from_raw():
     picks = pick_types(epochs.info, meg='mag')
     mne_data = epochs.get_data()[:, picks]
     assert_array_almost_equal(meg.x, mne_data, 10)
+
+
+def test_variable_length_mne_epochs():
+    "Argument handling in load.mne.variable_length_mne_epochs()"
+    sfreq = 100.
+    info = mne.create_info(['Fp', 'Cz'], sfreq, 'eeg')
+    # ramp data, so that each value identifies its own sample index in raw
+    data = np.arange(1000, dtype=float)[None].repeat(2, 0) * 1e-6
+    raw = mne.io.RawArray(data, info, verbose='error')
+    ds = Dataset({
+        'i_start': Var([300, 500]),
+        'trigger': Var([1, 2]),
+        't_min': Var([-0.1, -0.2]),
+        't_max': Var([0.2, 0.3]),
+    }, info={'raw': raw})
+
+    def first_samples(epochs):
+        "Index in raw of the first sample of each epoch"
+        return [round(e.get_data(verbose='error')[0, 0, 0] / 1e-6) for e in epochs]
+
+    # scalar tmin/tmax apply to all epochs
+    epochs = load.mne.variable_length_mne_epochs(ds, -0.1, 0.2)
+    assert [len(e.times) for e in epochs] == [31, 31]
+    assert first_samples(epochs) == [290, 490]
+
+    # str tmin/tmax are evaluated in events
+    epochs = load.mne.variable_length_mne_epochs(ds, 't_min', 't_max')
+    assert [len(e.times) for e in epochs] == [31, 51]
+    assert first_samples(epochs) == [290, 480]
+
+    # sequence and scalar can be mixed
+    epochs = load.mne.variable_length_mne_epochs(ds, [-0.1, -0.2], 0.2)
+    assert [len(e.times) for e in epochs] == [31, 41]
+    assert first_samples(epochs) == [290, 480]
+
+    # tstop is exclusive of the last sample
+    epochs = load.mne.variable_length_mne_epochs(ds, 0., tstop=0.2)
+    assert [len(e.times) for e in epochs] == [20, 20]
+    assert first_samples(epochs) == [300, 500]
+
+    # tmin/tmax need to match the number of events
+    with pytest.raises(ValueError):
+        load.mne.variable_length_mne_epochs(ds, [-0.1, -0.2, -0.3], 0.2)
+    with pytest.raises(ValueError):
+        load.mne.variable_length_mne_epochs(ds, -0.1, [0.2])
+
+    # exactly one of tmax/tstop is required
+    with pytest.raises(TypeError):
+        load.mne.variable_length_mne_epochs(ds, -0.1)
+    with pytest.raises(TypeError):
+        load.mne.variable_length_mne_epochs(ds, -0.1, 0.2, tstop=0.3)
+
+    # epochs reaching outside the data raise, reporting how much is missing
+    with pytest.raises(ValueError, match='outside of data range by 1 s'):
+        load.mne.variable_length_mne_epochs(ds, -4., 0.2)
+
+    # ... unless truncation is allowed
+    epochs = load.mne.variable_length_mne_epochs(ds, -4., 0.2, allow_truncation=True)
+    assert first_samples(epochs) == [0, 100]
+
+    # Event indexes are absolute, i.e. they include raw.first_samp
+    raw.crop(5.)  # data now starts 5 s (500 samples) into the recording
+    assert raw.first_samp == 500
+    ds = Dataset({'i_start': Var([700, 900]), 'trigger': Var([1, 2])}, info={'raw': raw})
+
+    epochs = load.mne.variable_length_mne_epochs(ds, 0., 0.09)
+    assert [round(e.get_data(verbose='error')[0, 0, 0] / 1e-6) for e in epochs] == [700, 900]
+
+    # an epoch starting before the first sample is out of range
+    with pytest.raises(ValueError, match='outside of data range by 1 s'):
+        load.mne.variable_length_mne_epochs(ds, -3., 0.09)

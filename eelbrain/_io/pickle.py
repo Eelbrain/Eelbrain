@@ -152,14 +152,14 @@ def update_subjects_dir(
         subjects_dir: PathArg,
         depth: int = 0,
 ) -> None:
-    """Update FreeSurfer :attr:`~eelbrain.SourceSpace.subjects_dir` on source-space data
+    """Update FreeSurfer :attr:`SourceSpace.subjects_dir` on source-space data
 
     Operates in-place.
 
     Parameters
     ----------
     obj
-        Object on which to replace :attr:`~eelbrain.SourceSpace.subjects_dir`.
+        Object on which to replace :attr:`SourceSpace.subjects_dir`.
     subjects_dir
         New values for subjects_dir.
     depth

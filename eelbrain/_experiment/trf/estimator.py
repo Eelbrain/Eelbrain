@@ -3,7 +3,7 @@
 
 An :class:`Estimator` is a :class:`Configuration` that both selects a fitting
 algorithm (boosting or NCRF) and carries the algorithm-specific parameters.
-TRF-general parameters (model, ``tstart``, ``tstop``, ``data``, ``mask``,
+TRF-general parameters (model, ``tstart``, ``tstop``, ``data``,
 ``samplingrate``) stay on :meth:`Pipeline.load_trf`; estimator-specific
 parameters (``basis``, ``delta``, ``mu``, …) live on the estimator.
 """
@@ -26,15 +26,14 @@ def arctanh(r: NDVar | float) -> NDVar | float:
 
 
 class Estimator(Configuration):
-    """Base class for TRF estimators
+    """Base class for TRF estimators"""
+    # Subclasses select a fitting algorithm and declare its parameters through ``DICT_ATTRS``.
+    # Cross-validation / partitioning is owned by each estimator because the schemes differ between algorithms.
 
-    Subclasses select a fitting algorithm and declare its parameters through
-    :attr:`DICT_ATTRS`. Cross-validation / partitioning is owned by each
-    estimator because the schemes differ between algorithms.
-    """
     # Dependencies (registered derivative names) that :meth:`_fit` needs beyond
     # the response, loaded by the TRF node and passed as keyword arguments.
     extra_inputs: tuple[str, ...] = ()
+    extra_input_fields: tuple[str, ...] = ()
     # Whether the estimator requires sensor-space data (inv=''; e.g., NCRF)
     requires_sensor_space: bool = False
     # Fit-quality metric columns this estimator contributes to the TRFs Dataset.
@@ -103,8 +102,8 @@ class Estimator(Configuration):
             self,
             y: NDVar | Datalist,
             xs: list[NDVar | Datalist],
-            tstart: float,
-            tstop: float,
+            tstart: float | list[float],
+            tstop: float | list[float],
             *,
             fwd: NDVar = None,
             cov=None,
@@ -120,9 +119,9 @@ class Estimator(Configuration):
             Predictors, one entry per model term (each a :class:`NDVar` or
             :class:`Datalist` matching ``y``).
         tstart
-            Start of the TRF in seconds.
+            Start of the TRF in seconds (or one value per predictor).
         tstop
-            Stop of the TRF in seconds.
+            Stop of the TRF in seconds (or one value per predictor).
         fwd
             Forward solution (NCRF only).
         cov
@@ -150,21 +149,27 @@ class Boosting(Estimator):
     selective_stopping
         Stop boosting each predictor separately (see :func:`eelbrain.boosting`).
     scale_data
-        Scale ``y`` and ``x`` before fitting; ``'inplace'`` to save memory.
+        Normalize ``y`` and ``x`` before fitting.
     partitions
         Number of partitions for cross-validation. ``None`` to infer from the
-        number of cases; a negative value concatenates the cases and uses
-        ``-partitions`` partitions (``-1`` to let boosting infer them).
+        number of cases; a negative value concatenates the cases and splits them
+        into ``abs(partitions)`` equal length partitions.
     cv
-        Use cross-validation (hold out a test partition).
+        Use cross-validation (hold out a test partition; default). With
+        ``cv=False``, TRFs are estimated from all data, and fit metrics (e.g.,
+        ``r`` and ``ev``) are not available, because they would be computed
+        from the same data that were used to estimate the TRF, and
+        overestimate the model's predictive power. Model comparisons (e.g.,
+        :meth:`Pipeline.load_model_test`) thus require ``cv=True``. See the
+        ``test`` parameter of :func:`eelbrain.boosting` for details.
     partition_results
-        Keep the result for each test partition.
+        Keep the result for each test partition (or, with ``cv=False``, for
+        each validation partition).
     backward
         Fit a backward model (predict the stimulus from the response). Only
         valid with a single-term model.
     """
     DICT_ATTRS = ('basis', 'basis_window', 'error', 'delta', 'mindelta', 'selective_stopping', 'scale_data', 'partitions', 'cv', 'partition_results', 'backward')
-    metric_keys = ('r', 'z', 'residual', 'det', 'r1', 'z1')
 
     def __init__(
             self,
@@ -174,8 +179,8 @@ class Boosting(Estimator):
             delta: float = 0.005,
             mindelta: float = None,
             selective_stopping: int = 0,
-            scale_data: bool | Literal['inplace'] = 'inplace',
-            partitions: int = None,
+            scale_data: bool = True,
+            partitions: int | None = -5,
             cv: bool = True,
             partition_results: bool = False,
             backward: bool = False,
@@ -184,13 +189,20 @@ class Boosting(Estimator):
         self.basis_window = basis_window
         self.error = error
         self.delta = typed_arg(delta, float)
-        self.mindelta = typed_arg(mindelta, float)
-        self.selective_stopping = selective_stopping
-        self.scale_data = scale_data
+        self.mindelta = typed_arg(mindelta, float, allow_none=True)
+        self.selective_stopping = typed_arg(selective_stopping, int)
+        self.scale_data = typed_arg(scale_data, bool)
+        if partitions is not None and abs(partitions) < 2 + cv:
+            raise ValueError(f"{partitions=}: need at least {2 + cv} partitions with {cv=} (negative values concatenate cases)")
         self.partitions = partitions
         self.cv = cv
         self.partition_results = partition_results
         self.backward = backward
+
+    @property
+    def metric_keys(self) -> tuple[str, ...]:
+        # boosting computes fit metrics only with cross-validation
+        return ('r', 'z', 'residual', 'ev', 'r1', 'z1') if self.cv else ()
 
     @property
     def interpolate_bads(self) -> bool:
@@ -201,7 +213,7 @@ class Boosting(Estimator):
     def _fit(self, y, xs, tstart, tstop, *, fwd=None, cov=None):
         partitions = self.partitions
         if partitions is not None and partitions < 0:
-            partitions = None if partitions == -1 else -partitions
+            partitions = -partitions
             y = concatenate(y)
             xs = [concatenate(x) for x in xs]
         if len(xs) == 1:
@@ -215,11 +227,14 @@ class Boosting(Estimator):
             if len(set(names)) < len(names):
                 raise ValueError(f"Multiple predictors with the same name: {', '.join(names)}")
             x = xs
-        return boosting(y, x, tstart, tstop, self.scale_data, self.delta, self.mindelta, self.error, self.basis, self.basis_window, partitions=partitions, test=int(self.cv), selective_stopping=self.selective_stopping, partition_results=self.partition_results)
+        scale_data = 'inplace' if self.scale_data else False
+        return boosting(y, x, tstart, tstop, scale_data, self.delta, self.mindelta, self.error, self.basis, self.basis_window, partitions=partitions, test=int(self.cv), selective_stopping=self.selective_stopping, partition_results=self.partition_results)
 
     def _result_metrics(self, result) -> dict[str, NDVar | float]:
+        if not self.cv:
+            return {}
         r = result.r
-        metrics = {'r': r, 'z': arctanh(r), 'residual': result.residual, 'det': result.proportion_explained}
+        metrics = {'r': r, 'z': arctanh(r), 'residual': result.residual, 'ev': result.proportion_explained}
         if result.r_l1 is not None:  # vector data
             r1 = result.r_l1
             metrics['r1'] = r1
@@ -246,32 +261,38 @@ class NCRF(Estimator):
     mu
         Regularization parameter (``'auto'`` to determine through
         cross-validation, or a numeric value / sequence of values).
-    nlevels
-        Number of levels for the lead-field decomposition.
+    basis_stride
+        Spacing between neighboring Gabor basis atoms, in samples.
     n_iter
-        Number of iterations.
+        Number of outer iterations.
     n_iterc
-        Number of coordinate-descent iterations.
+        Number of Champagne iterations within each outer iteration.
     n_iterf
-        Number of FASTA iterations.
+        Number of FASTA iterations within each outer iteration.
     n_splits
         Number of cross-validation splits for ``mu='auto'``.
     tol
         Convergence tolerance.
     use_ES
-        Use the early-stopping strategy.
+        Refine the cross-validated ``mu`` with the estimation stability criterion.
     basis_std
-        Standard deviation of the temporal basis (in seconds).
+        Standard deviation of the Gaussian basis atoms (in seconds).
+
+    Notes
+    -----
+    The fit-quality metrics (see :meth:`Pipeline.load_trfs`) are the selected
+    ``mu`` and the training-set scores of the :class:`ncrf.NCRFFit`.
     """
     extra_inputs = ('fwd', 'cov')
+    extra_input_fields = ('cov', 'mrisubject', 'src')
     requires_sensor_space = True
-    DICT_ATTRS = ('mu', 'nlevels', 'n_iter', 'n_iterc', 'n_iterf', 'n_splits', 'tol', 'use_ES', 'basis_std')
-    metric_keys = ('mu',)
+    DICT_ATTRS = ('mu', 'basis_stride', 'n_iter', 'n_iterc', 'n_iterf', 'n_splits', 'tol', 'use_ES', 'basis_std')
+    metric_keys = ('mu', 'explained_variance', 'l2_error', 'cross_fit', 'weighted_l2_error')
 
     def __init__(
             self,
             mu: str | float | Sequence[float] = 'auto',
-            nlevels: int = 1,
+            basis_stride: int = 1,
             n_iter: int = 10,
             n_iterc: int = 10,
             n_iterf: int = 100,
@@ -281,7 +302,7 @@ class NCRF(Estimator):
             basis_std: float = 0.0085,
     ):
         self.mu = mu
-        self.nlevels = nlevels
+        self.basis_stride = typed_arg(basis_stride, int)
         self.n_iter = n_iter
         self.n_iterc = n_iterc
         self.n_iterf = n_iterf
@@ -305,10 +326,14 @@ class NCRF(Estimator):
         else:
             x = xs
         from ncrf import fit_ncrf
-        return fit_ncrf(y, x, fwd, cov, tstart, tstop, nlevels=self.nlevels, n_iter=self.n_iter, n_iterc=self.n_iterc, n_iterf=self.n_iterf, normalize=True, in_place=True, mu=self.mu, tol=self.tol, n_splits=self.n_splits, use_ES=self.use_ES, basis_std=self.basis_std)
+        return fit_ncrf(y, x, fwd, cov, tstart, tstop, basis_stride=self.basis_stride, n_iter=self.n_iter, n_iterc=self.n_iterc, n_iterf=self.n_iterf, mu=self.mu, tol=self.tol, n_splits=self.n_splits, use_ES=self.use_ES, basis_std=self.basis_std)
 
+    # ``result`` is an :class:`ncrf.NCRFFit` report; the kernels and TRF timing live on its ``model``
     def _result_metrics(self, result) -> dict[str, NDVar | float]:
-        return {'mu': result.mu}
+        return {'mu': result.solver.mu, **result.scores}
 
     def _result_tstep(self, result) -> float:
-        return result.tstep
+        return result.model.design.tstep
+
+    def _result_kernels(self, result, *, scale: str) -> list[NDVar]:
+        return super()._result_kernels(result.model, scale=scale)

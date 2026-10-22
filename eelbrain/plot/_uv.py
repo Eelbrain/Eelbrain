@@ -18,7 +18,7 @@ from .._data_obj import VarArg, CategorialArg, UVArg, IndexArg, CellArg, Dataset
 from .._stats import test, stats
 from .._utils import deprecate_ds_arg
 from ._base import EelFigure, Layout, LegendArg, LegendMixin, CategorialAxisMixin, ColorBarMixin, XAxisMixin, YLimMixin, frame_title
-from ._styles import ColorsArg, find_cell_styles
+from ._styles import ColorArg, ColorsArg, find_cell_styles
 
 
 # keys for sorting kwargs
@@ -206,7 +206,7 @@ class Boxplot(CategorialAxisMixin, YLimMixin, _SimpleFigure):
     cells
         Cells to plot (optional). All entries have to be cells of ``x``). Can be
         used to change the order of the bars or plot only certain cells.
-    test : bool | scalar
+    test
         ``True`` (default): perform pairwise tests; ``False``: no tests;
         scalar: 1-sample tests against this value.
     tail
@@ -241,7 +241,7 @@ class Boxplot(CategorialAxisMixin, YLimMixin, _SimpleFigure):
         i.e. the level on each Factor of ``x`` on a separate line).
     xtick_rotation
         Tick label orientation – ``'vertical'`` ``'horizontal'`` or an angle.
-    colors : bool | sequence | dict of matplitlib colors
+    colors
         Matplotlib colors to use for boxes (True to use the module default;
         default is False, i.e. no colors).
     data
@@ -331,7 +331,7 @@ class Barplot(CategorialAxisMixin, YLimMixin, _SimpleFigure):
     within_subject_error
         Within-subject error bars (see Loftus & Masson, 1994; default is
         ``True`` for complete related measures designs, ``False`` otherwise).
-    ec : matplotlib color
+    ec
         Error bar color.
     test
         ``True`` (default): perform pairwise tests; ``False``: no tests;
@@ -371,7 +371,7 @@ class Barplot(CategorialAxisMixin, YLimMixin, _SimpleFigure):
         i.e. the level on each Factor of ``x`` on a separate line).
     xtick_rotation
         Tick label orientation – ``'vertical'`` ``'horizontal'`` or an angle.
-    colors : bool | dict | sequence of matplitlib colors
+    colors
         Matplotlib colors to use for boxes (True to use the module default;
         default is False, i.e. no colors).
     pos
@@ -380,7 +380,7 @@ class Barplot(CategorialAxisMixin, YLimMixin, _SimpleFigure):
         Width of the bars (deault 0.5).
     color
         Bar color (ignored if ``colors`` is specified).
-    edgec : matplotlib color
+    edgec
         Barplot edge color.
     data
         If a Dataset is specified, all data-objects can be specified as
@@ -470,7 +470,7 @@ class BarplotHorizontal(XAxisMixin, CategorialAxisMixin, _SimpleFigure):
     within_subject_error
         Within-subject error bars (see Loftus & Masson, 1994; default is
         ``True`` for complete related measures designs, ``False`` otherwise).
-    ec : matplotlib color
+    ec
         Error bar color.
     test
         ``True`` (default): perform pairwise tests; ``False``: no tests;
@@ -507,7 +507,7 @@ class BarplotHorizontal(XAxisMixin, CategorialAxisMixin, _SimpleFigure):
         Delimiter for x axis category descriptors.
     xtick_rotation
         Tick label orientation – ``'vertical'`` ``'horizontal'`` or an angle.
-    colors : bool | dict | sequence of matplitlib colors
+    colors
         Matplotlib colors to use for boxes (True to use the module default;
         default is False, i.e. no colors).
     pos
@@ -516,7 +516,7 @@ class BarplotHorizontal(XAxisMixin, CategorialAxisMixin, _SimpleFigure):
         Width of the bars (deault 0.5).
     c
         Bar color (ignored if colors is specified).
-    edgec : matplotlib color
+    edgec
         Barplot edge color.
     data
         If a Dataset is specified, all data-objects can be specified as
@@ -799,9 +799,9 @@ class Timeplot(LegendMixin, YLimMixin, EelFigure):
     data
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables
-    main : numpy function
-        draw lines to connect values across time (default: np.mean).
-        Can be 'bar' for barplots or False.
+    main
+        Draw lines to connect values across time (default: :func:`numpy.mean`).
+        Can also be 'bar' for barplots.
     error
         How to indicate estimate error. For complete within-subject designs,
         the within-subject measures are displayed (see Loftus & Masson, 1994).
@@ -809,29 +809,29 @@ class Timeplot(LegendMixin, YLimMixin, EelFigure):
         'box': boxplots;
         '[x]sem': x standard error of the means (e.g. 'sem', '2sem');
         '[x]std': x standard deviations.
-    x_jitter : bool
+    x_jitter
         When plotting error bars, jitter their location on the x-axis to
         increase readability.
-    bottom : scalar
+    bottom
         Lower end of the y axis (default is 0).
-    top : scalar
+    top
         Upper end of the y axis (default is determined from the data).
     xlabel
         X-axis label. By default the label is inferred from the data.
     ylabel
         Y-axis label. By default the label is inferred from the data.
-    timelabels : sequence | dict | 'all'
+    timelabels
         Labels for the x (time) axis. Exact labels can be specified in the form
         of a list of labels corresponsing to all unique values of ``time``, or a
         ``{time_value: label}`` dictionary. For 'all', all values of ``time``
         are marked. The default is normal matplotlib ticks.
-    legend : str | int | 'fig' | None
+    legend
         Matplotlib figure legend location argument or 'fig' to plot the
         legend in a separate figure.
-    labels : dict
+    labels
         Alternative labels for legend as ``{cell: label}`` dictionary (preserves
         order).
-    colors : str | list | dict
+    colors
         Colors for the categories.
         **str**: A colormap name; cells are mapped onto the colormap in
         regular intervals.
@@ -852,7 +852,7 @@ class Timeplot(LegendMixin, YLimMixin, EelFigure):
             sub: IndexArg = None,
             data: Dataset = None,
             # data plotting
-            main: Callable = np.mean,
+            main: Callable | Literal['bar'] | None = np.mean,
             error: str = 'sem',
             x_jitter: bool = False,
             bottom: float = None,
@@ -1198,8 +1198,8 @@ class Regression(EelFigure, LegendMixin):
     labels
         Alternative labels for legend as ``{cell: label}`` dictionary (preserves
         order).
-    c : color | sequence of colors
-        Colors.
+    c
+        Color, or sequence of colors for the categories in ``cat``.
     tight : bool
         Use matplotlib's tight_layout to expand all axes to fill the figure
         (default True)
@@ -1220,7 +1220,7 @@ class Regression(EelFigure, LegendMixin):
             alpha: float = .2,
             legend: LegendArg = None,
             labels: dict = None,
-            c: Any = ('#009CFF', '#FF7D26', '#54AF3A', '#FE58C6', '#20F2C3'),
+            c: ColorArg | Sequence[ColorsArg] = ('#009CFF', '#FF7D26', '#54AF3A', '#FE58C6', '#20F2C3'),
             **kwargs):
         sub, n = assub(sub, data, return_n=True)
         y, n = asvar(y, sub, data, n, return_n=True)
@@ -1326,22 +1326,22 @@ class Histogram(EelFigure):
     ----------
     Y : Var
         Dependent variable.
-    x : categorial
+    x
         Categories for separate histograms.
-    match : None | categorial
+    match
         Match cases for a repeated measures design.
-    sub : index-array
+    sub
         Use a subset of the data.
     ds : Dataset
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables
-    pooled : bool
+    pooled
         Add one plot with all values/differences pooled.
-    density : bool
+    density
         Norm counts to approximate a probability density (default False).
-    test : bool
+    test
         Test for normality.
-    tight : bool
+    tight
         Use matplotlib's tight_layout to expand all axes to fill the figure
         (default True)
     title
@@ -1350,7 +1350,7 @@ class Histogram(EelFigure):
         X axis label.
     ylabel
         Y axis label.
-    bins : str | int | array
+    bins
         Histogram bins, specified either as arry of bin edges or as ``bins``
         parameter for :func:`numpy.histogram_bin_edges`).
     ...

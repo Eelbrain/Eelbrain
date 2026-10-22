@@ -1,6 +1,7 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 "A few basic operations needed throughout Eelbrain"
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, fields
 import functools
 import inspect
@@ -82,7 +83,7 @@ def ask(
             print(f"Invalid entry - type one of ({', '.join(options)})")
 
 
-def deprecated(version, replacement):
+def deprecated(version: str, replacement: Callable | str):
     """Decorator to deprecate functions and methods
 
     Also handles docstring of the deprecated function.
@@ -91,7 +92,7 @@ def deprecated(version, replacement):
     ----------
     version : str
         Version in which the feature will be removed.
-    replacement : callable | str
+    replacement
         Either a verbal description, or a pointer to the direct replacement
         function which takes the same arguments. In the latter case, the
         replacement is automatically called and the deprecated function is not
@@ -118,14 +119,14 @@ def deprecated(version, replacement):
     return dec
 
 
-def _deprecated_alias(alias, for_, version):
+def _deprecated_alias(alias: str, for_: Callable, version: str):
     """Create a deprecated alias
 
     Parameters
     ----------
     alias : str
         Name of the alias.
-    for_ : callable
+    for_
         New function (replacement).
     version : str
         Version in which the feature will be removed.

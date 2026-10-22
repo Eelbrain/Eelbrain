@@ -106,6 +106,7 @@ from .._config import CONFIG
 from .._data_obj import Dimension, Dataset, Factor, Interaction, NDVar, Var, Case, UTS, NDVarArg, CategorialArg, IndexArg, CellArg, NDVarTypes, ascategorial, asndvar, assub, isnumeric, isdataobject, combine_cells, cellname
 from .._utils.notebooks import use_inline_backend
 from .._stats import testnd
+from .._types import PathArg
 from .._utils import IS_WINDOWS, intervals, ui
 from .._ndvar import erode, resample
 from .._text import enumeration, ms
@@ -1599,9 +1600,9 @@ class EelFigure(MatplotlibFigure):
 
      - find desired figure properties and then use them to initialize
        the _EelFigure superclass; then use the
-       :py:attr:`_EelFigure.figure` and :py:attr:`_EelFigure.canvas` attributes.
+       :attr:`_EelFigure.figure` and :attr:`_EelFigure.canvas` attributes.
      - end the initialization by calling `_EelFigure._show()`
-     - add the :py:meth:`_fill_toolbar` method
+     - add the :meth:`_fill_toolbar` method
     """
     _default_xlabel_ax = -1
     _default_ylabel_ax = 0
@@ -2013,12 +2014,12 @@ class EelFigure(MatplotlibFigure):
         self._frame.canvas.draw()
         self._last_draw_time = time.time() - t0
 
-    def draw_crosshairs(self, enable=True):
+    def draw_crosshairs(self, enable: bool = True):
         """Draw crosshairs under the cursor
 
         Parameters
         ----------
-        enable : bool
+        enable
             Enable drawing crosshairs (default True, set to False to disable).
         """
         self._draw_crosshairs = enable
@@ -2048,14 +2049,14 @@ class EelFigure(MatplotlibFigure):
         """
         self.figure.savefig(*args, **kwargs)
 
-    def add_hline(self, y, axes=None, *args, **kwargs):
+    def add_hline(self, y: float, axes: int | Sequence[int] = None, *args, **kwargs):
         """Draw a horizontal line on one or more axes
 
         Parameters
         ----------
-        y : scalar
+        y
             Level at which to draw the line.
-        axes : int | list of int
+        axes
             Which axes to mark (default is all axes).
         ...
             :meth:`matplotlib.axes.Axes.axhline` parameters.
@@ -2070,16 +2071,16 @@ class EelFigure(MatplotlibFigure):
             ax.axhline(y, *args, **kwargs)
         self.draw()
 
-    def add_hspan(self, bottom, top, axes=None, *args, **kwargs):
+    def add_hspan(self, bottom: float, top: float, axes: int | Sequence[int] = None, *args, **kwargs):
         """Draw a horizontal bar on one or more axes
 
         Parameters
         ----------
-        bottom : scalar
+        bottom
             Bottom end of the horizontal bar.
-        top : scalar
+        top
             Top end of the horizontal bar.
-        axes : int | list of int
+        axes
             Which axes to mark (default is all axes).
         ...
             :meth:`matplotlib.axes.Axes.axvspan` parameters.
@@ -2094,14 +2095,14 @@ class EelFigure(MatplotlibFigure):
             ax.axhspan(bottom, top, *args, **kwargs)
         self.draw()
 
-    def add_vline(self, x, axes=None, *args, **kwargs):
+    def add_vline(self, x: float, axes: int | Sequence[int] = None, *args, **kwargs):
         """Draw a vertical line on one or more axes
 
         Parameters
         ----------
-        x : scalar
+        x
             Value at which to place the vertical line.
-        axes : int | list of int
+        axes
             Which axes to mark (default is all axes).
         ...
             :meth:`matplotlib.axes.Axes.axvspan` parameters.
@@ -2116,16 +2117,16 @@ class EelFigure(MatplotlibFigure):
             ax.axvline(x, *args, **kwargs)
         self.draw()
 
-    def add_vspan(self, xmin, xmax, axes=None, *args, **kwargs):
+    def add_vspan(self, xmin: float, xmax: float, axes: int | Sequence[int] = None, *args, **kwargs):
         """Draw a vertical bar on one or more axes
 
         Parameters
         ----------
-        xmin : scalar
+        xmin
             Start value on the x-axis.
-        xmax : scalar
+        xmax
             Last value on the x-axis.
-        axes : int | list of int
+        axes
             Which axes to mark (default is all axes).
         ...
             :meth:`matplotlib.axes.Axes.axvspan` parameters.
@@ -2145,12 +2146,12 @@ class EelFigure(MatplotlibFigure):
         plot_name = self.__class__.__name__
         self._frame.SetTitle(f'{plot_name}: {name}' if name else plot_name)
 
-    def set_xtick_rotation(self, rotation):
+    def set_xtick_rotation(self, rotation: float):
         """Rotate every x-axis tick-label by an angle (counterclockwise, in degrees)
 
         Parameters
         ----------
-        rotation : scalar
+        rotation
             Counterclockwise rotation angle, in degrees.
         """
         for ax in self.axes:
@@ -2944,11 +2945,11 @@ class ColorMapMixin(ColorBarMixin):
 
         Parameters
         ----------
-        level : scalar
+        level
             The value at which to draw the contour.
-        color : matplotlib color
+        color
             The color of the contour line.
-        meas : str
+        meas
             The measurement for which to add a contour line (default is the
             measurement plotted first).
         """
@@ -2959,14 +2960,14 @@ class ColorMapMixin(ColorBarMixin):
             p.add_contour(meas, level, color)
         self.draw()
 
-    def set_cmap(self, cmap, meas=None):
+    def set_cmap(self, cmap: str | Colormap, meas: str = None):
         """Change the colormap in the array plots
 
         Parameters
         ----------
-        cmap : str | colormap
+        cmap
             New colormap.
-        meas : None | str
+        meas
             Measurement to which to apply the colormap. With None, it is
             applied to all.
         """
@@ -2981,7 +2982,7 @@ class ColorMapMixin(ColorBarMixin):
         else:
             self.draw()
 
-    def set_vlim(self, v=None, vmax=None, meas=None):
+    def set_vlim(self, v: float = None, vmax: float = None, meas: str = None):
         """Change the colormap limits
 
         If the limit is symmetric, use ``set_vlim(vlim)``; if it is not, use
@@ -2989,14 +2990,14 @@ class ColorMapMixin(ColorBarMixin):
 
         Parameters
         ----------
-        v : scalar
+        v
             If this is the only value specified it is interpreted as the upper
             end of the scale, and the lower end is determined based on
             the colormap to be ``-v`` or ``0``. If ``vmax`` is also specified,
             ``v`` specifies the lower end of the scale.
-        vmax : scalar (optional)
+        vmax
             Upper end of the color scale.
-        meas : str (optional)
+        meas
             Measurement type to apply (default is the first one found).
         """
         if meas is None:
@@ -3106,7 +3107,7 @@ class LegendMixin:
 
         Returns
         -------
-        legend_figure : None | legend
+        legend_figure : matplotlib.figure.Figure | None
             If loc=='fig' the Figure, otherwise None.
 
         Notes
@@ -3364,12 +3365,12 @@ class TimeSlicer:
             self.set_time(t)
         self.set_time(tmax)
 
-    def set_time(self, time):
+    def set_time(self, time: float):
         """Set the time point to display
 
         Parameters
         ----------
-        time : scalar
+        time
             Time to display.
         """
         self._set_time(time, True)
@@ -3464,14 +3465,19 @@ class TimeSlicerEF(TimeSlicer):
         if self.__redraw and redraw and self._frame is not None:
             self.canvas.redraw(self.__axes)
 
-    def save_movie(self, filename=None, time_dilation=4., **kwargs):
+    def save_movie(
+            self,
+            filename: PathArg = None,
+            time_dilation: float = 4.,
+            **kwargs,
+    ):
         """Save the figure with moving time axis as movie
 
         Parameters
         ----------
-        filename : path-like
+        filename
             Filename for the movie (omit to use a GUI).
-        time_dilation : float
+        time_dilation
             Factor by which to stretch time (default 4). Time dilation is
             controlled through the frame-rate; if the ``fps`` keyword argument
             is specified, ``time_dilation`` is ignored.
@@ -3790,17 +3796,17 @@ class XAxisMixin:
         if draw:
             self.draw()
 
-    def add_vspans(self, intervals, axes=None, *args, **kwargs):
+    def add_vspans(self, intervals: Sequence[tuple[float, float]], axes: int | Sequence[int] = None, *args, **kwargs):
         """Draw vertical bars over axes
 
         Parameters
         ----------
-        intervals : sequence of (start, stop) tuples
+        intervals
             Start and stop positions on the x-axis.
-        axes : int | list of int
+        axes
             Which axes to mark (default is all axes).
-        additonal arguments :
-            Additional arguments for :func:`matplotlib.axvspan`.
+        **kwargs
+            Additional arguments for :meth:`matplotlib.axes.Axes.axvspan`.
         """
         if axes is None:
             axes = self.__axes
@@ -3893,14 +3899,14 @@ class YLimMixin:
         vmax = max(p.vmax for p in self.__plots)
         return vmin, vmax
 
-    def set_ylim(self, bottom=None, top=None):
+    def set_ylim(self, bottom: float = None, top: float = None):
         """Set the y-axis limits
 
         Parameters
         ----------
-        bottom : scalar
+        bottom
             Lower y-axis limit.
-        top : scalar
+        top
             Upper y-axis limit.
         """
         if bottom is None and top is None:

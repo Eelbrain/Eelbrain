@@ -88,7 +88,7 @@ def concatenate(
         ``'time'``).
     name
         Name the NDVar holding the result.
-    tmin : float | 'first'
+    tmin
         Time axis start, only applies when concatenating along time dimension
         (``dim='time'``); default is 0.
         Set ``tmin='first'`` to use ``tmin`` of ``ndvars[0]``.
@@ -212,18 +212,23 @@ def _concatenate_values(
     return values[0]
 
 
-def convolve(h, x, ds=None, name=None):
+def convolve(
+        h: NDVarArg | Sequence[NDVarArg],
+        x: NDVarArg | Sequence[NDVarArg],
+        ds: Dataset = None,
+        name: str = None,
+) -> NDVar:
     """Convolve ``h`` and ``x`` along the time dimension
 
     Parameters
     ----------
-    h : NDVar | sequence of NDVar
+    h
         Kernel.
-    x : NDVar | sequence of NDVar
+    x
         Data to convolve, corresponding to ``h``.
-    ds : Dataset
+    ds
         If provided, elements of ``x`` can be specified as :class:`str`.
-    name : str
+    name
         Name for output variable.
 
     Returns
@@ -291,19 +296,24 @@ def convolve(h, x, ds=None, name=None):
     return NDVar(out, dims, *op_name(x, name=name))
 
 
-def correlation_coefficient(x, y, dim=None, name=None):
+def correlation_coefficient(
+        x: NDVar,
+        y: NDVar,
+        dim: str | tuple[str, ...] = None,
+        name: str = None,
+):
     """Correlation between two NDVars along a specific dimension
 
     Parameters
     ----------
-    x : NDVar
+    x
         First variable.
-    y : NDVar
+    y
         Second variable.
-    dim : str | tuple of str
+    dim
         Dimension over which to compute correlation (by default all shared
         dimensions).
-    name : str
+    name
         Name for output variable.
 
     Returns
@@ -360,22 +370,22 @@ def correlation_coefficient(x, y, dim=None, name=None):
     return NDVar(out, dims, name, info)
 
 
-def cross_correlation(in1, in2, name=None):
+def cross_correlation(in1: NDVarArg, in2: NDVarArg, name: str = None) -> NDVar:
     """Cross-correlation between two NDVars along the time axis
 
     Parameters
     ----------
-    in1 : NDVar  (time,)
-        First NDVar.
-    in2 : NDVar  (time,)
+    in1
+        First NDVar, with a ``time`` dimension.
+    in2
         Second NDVar.
-    name : str
+    name
         Name for the new NDVar.
 
     Returns
     -------
-    NDVar  (time,)
-        Cross-correlation between ``in1`` and ``in2``, with a time axis
+    cc : NDVar
+        Cross-correlation between ``in1`` and ``in2``, with a ``time`` axis
         reflecting time shift.
     """
     x1 = in1.get_data(('time',))
@@ -473,19 +483,20 @@ def cwt_morlet(
     return NDVar(x, out_dims, y.name, info)
 
 
-def dss(ndvar) -> (NDVar, NDVar):
+def dss(ndvar: NDVarArg) -> tuple[NDVar, NDVar]:
     """Denoising source separation (DSS)
 
     Parameters
     ----------
-    ndvar : NDVar (case, dim, time)
-        Data to decompose. DSS is performed over the case and time dimensions.
+    ndvar
+        Data to decompose, with dimensions ``(case, dim, time)``. DSS is
+        performed over the case and time dimensions.
 
     Returns
     -------
-    to_dss : NDVar (dss, dim)
-        Transform data to DSS.
-    from_dss : NDVar (dim, dss)
+    to_dss : NDVar
+        Transform data to DSS, with dimensions ``(dss, dim)``.
+    from_dss : NDVar
         Reconstruct data form DSS.
 
     Notes
@@ -582,14 +593,14 @@ def filter_data(
     return NDVar(x, ndvar.dims, name, ndvar.info)
 
 
-def find_intervals(ndvar, interpolate=False):
+def find_intervals(ndvar: NDVar, interpolate: bool = False) -> tuple:
     """Find intervals from a boolean NDVar
 
     Parameters
     ----------
-    ndvar : boolean NDVar (time,)
+    ndvar
         Data which to convert to intervals.
-    interpolate : bool
+    interpolate
         By default, ``start`` values reflect the first sample that is ``True``
         and ``stop`` values reflect the first sample that is ``False``. With
         ``interpolate=True``, time points are shifted half a sample to the
@@ -597,12 +608,11 @@ def find_intervals(ndvar, interpolate=False):
 
     Returns
     -------
-    intervals : iterator over tuples
+    intervals : tuple
         Intervals represented as ``(start, stop)`` tuples
     """
     if ndvar.dimnames != ('time',):
-        raise DimensionMismatchError("Requires NDVar with time dimension only,"
-                                     "got %r" % (ndvar,))
+        raise DimensionMismatchError(f"{ndvar=}; requires NDVar with time dimension only")
     # make sure we have a boolean NDVar
     if ndvar.x.dtype.kind != 'b':
         ndvar = ndvar != 0
@@ -627,12 +637,12 @@ def find_intervals(ndvar, interpolate=False):
     return tuple(zip(onsets, offsets))
 
 
-def find_peaks(ndvar):
+def find_peaks(ndvar: NDVar):
     """Find local maxima in an NDVar
 
     Parameters
     ----------
-    ndvar : NDVar
+    ndvar
         Data in which to find peaks.
 
     Returns
@@ -661,21 +671,22 @@ def find_peaks(ndvar):
     return NDVar(peak_map, ndvar.dims, ndvar.name)
 
 
-def frequency_response(b, frequencies=None):
+def frequency_response(b: NDVar, frequencies: int | np.ndarray = None) -> NDVar:
     """Frequency response for a FIR filter
 
     Parameters
     ----------
-    b : NDVar  (..., time, ...)
-        FIR Filter.
-    frequencies : int | array_like
+    b
+        FIR Filter, with a ``time`` dimension.
+    frequencies
         Number of frequencies at which to compute the response, or array with
         exact frequencies in Hz.
 
     Returns
     -------
-    frequency_response : NDVar  (..., frequency)
-        Frequency response for each filter in ``b``.
+    frequency_response : NDVar
+        Frequency response for each filter in ``b``, with a ``frequency``
+        dimension.
     """
     time = b.get_dim('time')
     dimnames = b.get_dimnames(last='time')
@@ -706,11 +717,11 @@ def gaussian(center: float, width: float, time: UTS):
 
     Parameters
     ----------
-    center : scalar
+    center
         Center of the window (normalized to the closest sample on ``time``).
-    width : scalar
+    width
         Standard deviation of the window.
-    time : UTS
+    time
         Time dimension.
 
     Returns
@@ -733,25 +744,32 @@ def gaussian(center: float, width: float, time: UTS):
     return NDVar(window_data, (time,))
 
 
-def label_operator(labels, operation='mean', exclude=None, weights=None,
-                   dim_name='label', dim_values=None):
+def label_operator(
+        labels: NDVar,
+        operation: Literal['mean', 'sum'] = 'mean',
+        exclude: np.ndarray = None,
+        weights: NDVar = None,
+        dim_name: str = 'label',
+        dim_values: dict = None,
+) -> NDVar:
     """Convert labeled NDVar into a matrix operation to extract label values
 
     Parameters
     ----------
-    labels : NDVar of int
-        NDVar in which each label corresponds to a unique integer.
-    operation : 'mean' | 'sum'
+    labels
+        NDVar of :class:`int`, in which each label corresponds to a unique
+        integer.
+    operation
         Whether to extract the label mean or sum.
-    exclude : array_like
+    exclude
         Values to exclude (i.e., use ``exclude=0`` to ignore the area where
         ``labels==0``.
-    weights : NDVar
+    weights
         NDVar with same dimension as ``labels`` to assign weights to label
         elements.
-    dim_name : str
+    dim_name
         Name for the dimension characterized by labels (default ``"label"``).
-    dim_values : dict
+    dim_values
         Dictionary mapping label ids (i.e., values in ``labels``) to values on
         the dimension characterized by labels. If values are strings the new
         dimension will be categorical, if values are scalar it will be Scalar.
@@ -903,7 +921,7 @@ def normalize_in_cells(
         for_dim: str,
         in_cells: CategorialArg = None,
         data: Dataset = None,
-        method: str = 'z-score',
+        method: Literal['z-score', 'range'] = 'z-score',
 ) -> NDVar:
     """Normalize data in cells to make it appropriate for ANOVA [1]_
 
@@ -919,7 +937,7 @@ def normalize_in_cells(
         that will be used as fixed effects in the ANOVA).
     data
         Dataset containing the data.
-    method : 'z-score' | 'range'
+    method
         Method used for normalizing the data:
         ``z-score``: for the data in each cell, subtract the mean and divide by
         the standard deviation (mean and standard deviation are computed after
@@ -1016,29 +1034,36 @@ def powerlaw_noise(
     return NDVar(x, dim_objs, name=f'(1/f)^{exponent}')
 
 
-def psd_welch(ndvar, fmin=0, fmax=np.inf, n_fft=256, n_overlap=0, n_per_seg=None):
+def psd_welch(
+        ndvar: NDVar,
+        fmin: float = 0,
+        fmax: float = np.inf,
+        n_fft: int = 256,
+        n_overlap: int = 0,
+        n_per_seg: int = None,
+) -> NDVar:
     """Power spectral density with Welch's method
 
     Parameters
     ----------
-    ndvar : NDVar  (..., time, ...)
+    ndvar
         Data with time dimension.
-    fmin : scalar
+    fmin
         Lower bound of the frequencies of interest.
-    fmax : scalar
+    fmax
         Upper bound of the frequencies of interest.
-    n_fft : int
+    n_fft
         Length of the FFT in samples (default 256).
-    n_overlap : int
+    n_overlap
         Overlap between segments in samples (default 0).
-    n_per_seg : int | None
+    n_per_seg
         Length of each Welch segment in samples. Smaller ``n_per_seg`` result
         in smoother PSD estimates (default ``n_fft``).
 
     Returns
     -------
-    psd : NDVar  (..., frequency)
-        Power spectral density.
+    psd : NDVar
+        Power spectral density, with a ``frequency`` dimension.
 
     Notes
     -----
@@ -1217,13 +1242,13 @@ class Butterworth(Filter):
 
     Parameters
     ----------
-    low : scalar
+    low
         Low cutoff frequency.
-    high : scalar | None
+    high
         High cutoff frequency.
-    order : int
+    order
         Filter order.
-    sfreq : scalar
+    sfreq
         Downsample filtered signal to this sampling frequency.
 
     Notes
@@ -1326,7 +1351,7 @@ def set_adjacency(
 
     Returns
     -------
-    data_with_adjacency
+    data_with_adjacency : NDVar | Dimension
         Shallow copy of ``data`` with the new adjacency.
     """
     if isinstance(data, NDVar):
@@ -1373,7 +1398,7 @@ def set_parc(
 
     Returns
     -------
-    data_with_parc
+    data_with_parc : NDVar | SourceSpace
         Shallow copy of ``data`` with the source space parcellation set to
         ``parc``.
     """
@@ -1417,7 +1442,7 @@ def set_tmin(
 
     Returns
     -------
-    out
+    out : NDVar | UTS
         Shallow copy of ``data`` with updated time axis.
 
     See Also
@@ -1448,11 +1473,11 @@ def set_time(
 
     Parameters
     ----------
-    ndvar : NDVar
+    ndvar
         Input :class:`NDVar`.
-    time : UTS | NDVar
+    time
         New time axis, or :class:`NDVar` with time axis to match.
-    mode : str
+    mode
         How to pad ``ndvar``, see :func:`numpy.pad`.
     name
         Name for the new NDVar.

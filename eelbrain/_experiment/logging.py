@@ -227,7 +227,7 @@ class StructuredFormatter(logging.Formatter):
     """Formatter that appends tab-separated structured columns for cache events.
 
     Records emitted with ``extra={'cache_event': {...}}`` (see
-    :meth:`Derivative._log_cache_event`) get the :data:`CACHE_EVENT_COLUMNS`
+    :meth:`DependencyNode._log_cache_event`) get the :data:`CACHE_EVENT_COLUMNS`
     values appended, tab-separated, after the human-readable message. Using a
     fixed column order shared across entries keeps the log file compact (no
     repeated keys) while remaining machine-parseable.

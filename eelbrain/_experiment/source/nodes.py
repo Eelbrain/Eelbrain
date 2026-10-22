@@ -18,6 +18,7 @@ from itertools import product
 import os
 from pathlib import Path
 from typing import Any
+import warnings
 
 import mne
 import numpy as np
@@ -33,11 +34,12 @@ from ..pathing import (
 )
 from ..preprocessing import Reference, canonical_recording, raw_node_name
 from ..data import DataSpec
+from ..variable_def import Variables
 from ..._text import enumeration, plural
 from ..._utils import subp
 from ..._utils.mne_utils import is_fake_mri
 from ...mne_fixes._source_space import merge_volume_source_space, prune_volume_source_space, restrict_volume_source_space
-from ..._mne import find_source_subject, label_from_annot
+from ..._mne import ensure_mri, find_source_subject, label_from_annot
 from .config import InverseSolution, parse_src
 
 
@@ -127,11 +129,12 @@ class BemInput(Input):
 
     def load(self, ctx: Request) -> mne.ConductorModel:
         subject = ctx.state['mrisubject']
+        ensure_mri(subject, ctx.root / MRI_SDIR, ctx.registry.log)
         if subject == 'fsaverage' or is_fake_mri(ctx.root / mri_dir(ctx.state)):
             return mne.read_bem_surfaces(self.path(ctx))
         bem_dir_ = ctx.root / bem_dir(ctx.state)
         paths = self._surface_paths(ctx)
-        missing = [surf for surf, path in paths.items() if not paths.exists()]
+        missing = [surf for surf, path in paths.items() if not path.exists()]
         if missing:
             # Test for broken FreeSurfer symlinks
             for surf in missing[:]:
@@ -184,13 +187,15 @@ class SrcDerivative(ExternalArtifactDerivative[mne.SourceSpaces]):
 
     def build(self, ctx: Request) -> None:
         dst = self.path(ctx)
-        dst.parent.mkdir(parents=True, exist_ok=True)
         subject = ctx.state['mrisubject']
         src = ctx.state['src']
+        ensure_mri(subject, ctx.root / MRI_SDIR, ctx.registry.log)
+        dst.parent.mkdir(parents=True, exist_ok=True)
 
         if self._source_subject(ctx) is not None:
             ctx.load('source-src')
             ctx.registry.log.info("Scaling %s source space for %s...", src, subject)
+            dst.unlink(missing_ok=True)  # mne.scale_source_space() does not overwrite (e.g. a file previously scaled by mne coreg)
             mne.scale_source_space(subject, f'{{subject}}-{src}-src.fif', subjects_dir=ctx.root / MRI_SDIR, n_jobs=1)
             return
 
@@ -417,7 +422,11 @@ class InvDerivative(Derivative[mne.minimum_norm.InverseOperator]):
         reference._prepare_source_data(raw, self.raw.root_source_pipe(ctx.state['raw']).montage)
         if reference.add and _eeg_channel_names(fwd['info']) != _eeg_channel_names(raw.info):
             raise NotImplementedError(f"EEG channels differ between the forward solution and the {ctx.state['raw']!r} raw used for the inverse operator; source localization with a reconstructed reference channel ({reference.add}) requires the inverse raw to keep the same EEG channels as the root 'raw' source used for the forward solution.")
-        return solution._build_operator(raw.info, fwd, ctx.load('cov'))
+        cov = ctx.load('cov')
+        # make_inverse_operator estimates the rank from the covariance and uses that estimate, but warns when it exceeds the SSS rank in the raw.info header
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', 'Something went wrong in the data-driven estimation')
+            return solution._build_operator(raw.info, fwd, cov)
 
     def load(
             self,
@@ -560,10 +569,12 @@ def _apply_source_baseline(stc_value, baseline) -> None:
 
 def _check_head_position_alignment(ctx: Request, info: mne.Info) -> None:
     """Raise if the data's head position doesn't match the canonical session position."""
-    median_head_pos = ctx.load('canonical-head-position')
-    if median_head_pos is not None:
-        if not np.allclose(info['dev_head_t']['trans'], median_head_pos['trans']):
-            raise RuntimeError("The data head position does not match the canonical session head position. Apply Maxwell filtering before computing source estimates.")
+    canonical = ctx.load('canonical-head-position')
+    if canonical is not None:
+        angle, distance = mne.transforms.angle_distance_between_rigid(info['dev_head_t']['trans'], canonical['trans'], angle_units='deg', distance_units='mm')
+        # Maxwell filtering towards the canonical position sets dev_head_t exactly; the tolerance only absorbs the float32 precision of transforms in FIFF files
+        if distance > 0.01 or angle > 0.001:
+            raise RuntimeError(f"The data head position differs from the canonical session head position by {distance:.1f} mm and {angle:.2f}°. Apply Maxwell filtering with the full SSS reconstruction (RawMaxwell with st_only=False) before computing source estimates; st_only=True does not move the data.")
 
 
 def _source_dependencies(ctx: Request, sensor_dependency: Dependency) -> tuple[Dependency, ...]:
@@ -637,6 +648,11 @@ class EpochsStcDerivative(UncachedDerivative[Dataset]):
         self.epochs = epochs
         self._references = references
 
+    def validate_options(self, ctx: Request) -> None:
+        if src_baseline := ctx.options['src_baseline']:
+            if self.epochs[ctx.state['epoch']].post_baseline_trigger_shift:
+                raise NotImplementedError(f"{src_baseline=}: post_baseline_trigger_shift is not implemented for baseline correction in source space")
+
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         options = ctx.options_for('epochs', 'baseline', 'reject', 'samplingrate', 'decim', 'pad', ndvar=False, data='sensor')
         return _source_dependencies(ctx, Dependency('epochs', options=options))
@@ -658,8 +674,6 @@ class EpochsStcDerivative(UncachedDerivative[Dataset]):
         _check_head_position_alignment(ctx, epoch_list[0].info)
 
         src_baseline = ctx.options['src_baseline']
-        if src_baseline and epoch.post_baseline_trigger_shift:
-            raise NotImplementedError("src_baseline with post_baseline_trigger_shift")
         if src_baseline is True:
             src_baseline = epoch.baseline
         projection = _prepare_source_projection(ctx, ctx.options['morph'], solution)
@@ -760,6 +774,11 @@ class EvokedStcDerivative(UncachedDerivative[Dataset]):
         self.epochs = epochs
         self._references = references
 
+    def validate_options(self, ctx: Request) -> None:
+        if src_baseline := ctx.options['src_baseline']:
+            if self.epochs[ctx.state['epoch']].post_baseline_trigger_shift:
+                raise NotImplementedError(f"{src_baseline=}: post_baseline_trigger_shift is not implemented for baseline correction in source space")
+
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         options = ctx.options_for('evoked', 'model', 'baseline', 'samplingrate', 'decim')
         return _source_dependencies(ctx, Dependency('evoked', options=options))
@@ -778,8 +797,6 @@ class EvokedStcDerivative(UncachedDerivative[Dataset]):
 
         src_baseline = ctx.options['src_baseline']
         epoch = self.epochs[ctx.state['epoch']]
-        if src_baseline and epoch.post_baseline_trigger_shift:
-            raise NotImplementedError(f"{src_baseline=}: post_baseline_trigger_shift is not implemented for baseline correction in source space")
         if src_baseline is True:
             src_baseline = epoch.baseline
         projection = _prepare_source_projection(ctx, ctx.options['morph'], solution)
@@ -835,6 +852,12 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset | ROIData]):
     -----
     ``morph`` defaults to ``True``. With ``ndvar=True, morph=False``, source
     NDVars from different brains are retained as a list in the ``src`` column.
+
+    Across-subject variables are added here, because this is where subjects are
+    combined. They are added in :meth:`apply_view_options`, i.e. they are part
+    of the returned data but not of this node's fingerprint; a cached consumer
+    that reads them is responsible for recording their values (see
+    :meth:`~eelbrain._experiment.variable_def.Variables.resolve`).
     """
     name = 'evoked-stc-group-dataset'
     key_options = {
@@ -844,8 +867,14 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset | ROIData]):
         'morph': True,
     }
 
-    def __init__(self, mri_subjects: dict[str, dict[str, str]], groups: dict[str, tuple[str, ...]]):
+    def __init__(
+            self,
+            mri_subjects: dict[str, dict[str, str]],
+            variables: Variables,
+            groups: dict[str, tuple[str, ...]],
+    ):
         self.mri_subjects = mri_subjects
+        self.variables = variables
         self.groups = groups
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...] | None:
@@ -885,6 +914,15 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset | ROIData]):
         else:
             dss = [ctx.load(subject) for subject in subjects]
             return combine(dss, to_list=True)
+
+    def apply_view_options(self, ctx: Request, value: Dataset | ROIData) -> Dataset | ROIData:
+        if isinstance(value, ROIData):
+            self.variables.resolve(value.n_trials_ds, self.groups, across_subject_only=True)
+            for label_ds in value.label_data.values():
+                self.variables.resolve(label_ds, self.groups, across_subject_only=True)
+        else:
+            self.variables.resolve(value, self.groups, across_subject_only=True)
+        return value
 
 
 def roi_data_from_dataset(

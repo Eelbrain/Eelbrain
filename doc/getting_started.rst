@@ -71,7 +71,7 @@ Interacting with other Python libraries
 `Pandas <https://pandas.pydata.org>`_
     Convert an Eelbrain :class:`Dataset` to a :class:`pandas.DataFrame` using :meth:`Dataset.as_dataframe`. Useful libraries: `Pingouin <https://pingouin-stats.org>`_ (statistics); `Seaborn <http://seaborn.pydata.org>`_ (plotting).
 `R <http://r-project.org>`_
-    When using R from Python through the :mod:`rpy2` bridge, transfer data between R ``data.frame`` and Eelbrain :class:`Dataset` using :meth:`Dataset.from_r` and :meth:`Dataset.to_r`.
+    When using R from Python through the `rpy2 <https://rpy2.github.io>`_ bridge, transfer data between R ``data.frame`` and Eelbrain :class:`Dataset` using :meth:`Dataset.from_r` and :meth:`Dataset.to_r`.
 
 
 Windows: Scrolling

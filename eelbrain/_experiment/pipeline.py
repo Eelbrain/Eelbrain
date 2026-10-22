@@ -23,20 +23,20 @@ from .. import plot
 from .. import save
 from .._data_obj import CellArg, Datalist, Dataset, Factor, Var, NDVar, SourceSpace, VolumeSourceSpace, assert_is_legal_dataset_key, combine
 from .._exceptions import ConfigurationError, DimensionMismatchError
-from .._info import BAD_CHANNELS, INTERPOLATE_CHANNELS
+from .._info import INTERPOLATE_CHANNELS
 from .._meeg import new_rejection_ds
 from ..mne_fixes import suppress_mne_warning
 from .._ndvar import concatenate, neighbor_correlation
 from .._stats.testnd import NDTest
 from .._text import enumeration
 from .._types import PathArg
-from .._utils import ask, keydefaultdict, log_level, ScreenHandler
+from .._utils import ask, keydefaultdict, log_level, user_activity, ScreenHandler
 from .._utils.mne_utils import is_fake_mri
-from .covariance import CovDerivative, EpochCovariance, RawCovariance
-from .derivative_cache import DerivativeRegistry, ProtectedArtifactError, Request, _format_size
-from .configuration import Configuration, ConfigurationDict, sequence_arg
+from .covariance import Covariance, CovDerivative, EpochCovariance, RawCovariance
+from .derivative_cache import ALLOW_PROTECTED_OVERWRITE, DependencyTree, DerivativeRegistry, JobSpec, ProtectedArtifactError, Request, _format_size
+from .configuration import Configuration, ConfigurationDict, check_names, sequence_arg
 from .epochs import (
-    EpochBase, EpochsDerivative, RecordingEpochsDerivative, EvokedDerivative,
+    ContinuousEpoch, EpochBase, EpochsDerivative, RecordingEpochsDerivative, EvokedDerivative,
     EvokedGroupDatasetDerivative, PrimaryEpoch, SecondaryEpoch,
     SuperEpoch, assemble_epochs, decim_param,
 )
@@ -53,7 +53,7 @@ from .pathing import (
 )
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, _resolve_parc
 from .preprocessing import (
-    CachedRawPipe, ICAInput, MaxwellCalibrationInput, MaxwellCrosstalkInput, CanonicalHeadPositionDerivative, RawBadChannelsInput, RawDerivative, RawHeadPositionDerivative, RawPipe, RawSource, RawSourceDerivative, RawSourceInput, RawICA, RawMaxwell, Reference,
+    CachedRawPipe, ICAInput, MaxwellCalibrationInput, MaxwellCrosstalkInput, CanonicalHeadPositionDerivative, RawBadChannelsInput, RawDerivative, RawHeadPositionDerivative, RawPipe, RawSource, RawSourceDerivative, RawSourceInput, RawICA, RawMaxwell, Reference, find_chpi,
     REINDEX_ICA, assemble_raw_pipes, ica_input_name, raw_bad_channels_input_name, raw_node_name, raw_input_name,
 )
 from .data import DataSpec
@@ -65,13 +65,11 @@ from .source import (
 )
 from .statistics import EvokedTestDataDerivative, TestResultDerivative, TwoStageDataDerivative, TwoStageLevel1Derivative, TwoStageLevel2Derivative, TwoStageTest
 from .statistics.config import Test, validate_tests
-from .trf import Boosting, Estimator, Model, NUTSPredictor, PredictorInput, TRFDatasetDerivative, TRFDerivative, TRFGroupDatasetDerivative, TRFJob, TRFJobSpec, UTSPredictor, filter_predictor
-from .trf.model import parse_term
-from .variable_def import Variables, apply_vardef, label_groups
+from .trf import Boosting, Estimator, Model, NUTSPredictor, PredictorInput, TRFDatasetDerivative, TRFDerivative, TRFGroupDatasetDerivative, TRFJob, TRFModelTestDerivative, UTSPredictor, filter_predictor
+from .trf.model import Comparison, parse_term
+from .variable_def import RESERVED_VAR_KEYS, Variables, label_groups
 
 
-# Allowable parameters
-COV_PARAMS = {'epoch', 'method', 'reg', 'keep_sample_mean', 'reg_eval_win_pad'}
 # Argument types
 BaselineArg = bool | tuple[float | None, float | None]
 DataArg = str | DataSpec
@@ -101,7 +99,7 @@ class Pipeline(StateModel):
 
     Parameters
     ----------
-    root : str | None
+    root
         the root directory for the experiment (usually the directory
         containing the 'meg' and 'mri' directories). The experiment can be
         initialized without the root for testing purposes.
@@ -144,6 +142,8 @@ class Pipeline(StateModel):
     merge_triggers: int = None
     # add this value to all trigger times (in seconds); global shift, or {subject: shift, (subject, session): shift} dictionary
     trigger_shift: float | dict[str | tuple[str, str], float] = 0
+    # events.tsv columns to read as categorial (Factor) even when their values look numeric
+    event_factors: str | Sequence[str] = ()
 
     # variables for automatic labeling {name: {trigger: label, triggers: label}}
     variables: dict[str, Any] = {}
@@ -195,15 +195,15 @@ class Pipeline(StateModel):
     # or by exclusion: {'group': {'base': 'all', 'exclude': ('member1', 'member2')}}
     groups = {}
 
-    # kwargs for regularization of the covariance matrix
-    _covs = {
-        'auto': EpochCovariance('cov', 'auto'),
-        'bestreg': EpochCovariance('cov', 'best'),
-        'reg': EpochCovariance('cov', 'diagonal_fixed'),
-        'noreg': EpochCovariance('cov', 'empirical'),
+    # Noise covariance estimates, selected through the 'cov' state
+    _default_covs = {
         'emptyroom': RawCovariance(),
         'ad_hoc': RawCovariance(method='ad_hoc'),
     }
+    # noise_covariance: named RawCovariance/EpochCovariance configurations; the
+    # built-in entries in _default_covs are always available and can be overridden
+    # here (e.g. {'baseline': EpochCovariance('baseline')})
+    noise_covariance: dict[str, Covariance] = {}
 
     # MRI subject names: {subject: mrisubject} mappings
     # selected with e.set(mri=dict_name)
@@ -363,30 +363,25 @@ class Pipeline(StateModel):
         # variables
         self._variables = Variables(self.variables)
         self._variables._check_trigger_vars()
+        self._variables._check_group_vars(self._groups, 'Pipeline.variables')
 
         # epochs
         self._epochs = ConfigurationDict('epoch', assemble_epochs(self.epochs, self._tasks))
 
         # epoch rejection; 'manual' is always available, '' selects no rejection
         epoch_rejection: dict[str, EpochRejection | None] = {'': None}
+        check_names(self.epoch_rejection, 'epoch_rejection', allow_empty=False)
         for name, rejection in self.epoch_rejection.items():
-            if not isinstance(name, str):
-                raise TypeError(f"epoch_rejection[{name!r}]: name must be a string")
-            elif not name:
-                raise ValueError(f"epoch_rejection[{name!r}]: name can't be empty")
-            elif not isinstance(rejection, EpochRejection):
+            if not isinstance(rejection, EpochRejection):
                 raise TypeError(f"epoch_rejection[{name!r}]={rejection!r}: need EpochRejection")
             epoch_rejection[name] = rejection
         self._epoch_rejection = ConfigurationDict('epoch_rejection', epoch_rejection)
 
         # epoch re-referencing; 'average' is always available and user-overridable
         references = {'': None, 'average': Reference('average')}
+        check_names(self.references, 'references', allow_empty=False)
         for name, reference in self.references.items():
-            if not isinstance(name, str):
-                raise TypeError(f"references[{name!r}]: name must be a string")
-            elif not name:
-                raise ValueError(f"references[{name!r}]: name can't be empty")
-            elif not isinstance(reference, Reference) or isinstance(reference, RawPipe):
+            if not isinstance(reference, Reference) or isinstance(reference, RawPipe):
                 raise TypeError(f"references[{name!r}]={reference!r}: need Reference")
             elif name == 'average':
                 if reference.reference != 'average':
@@ -400,10 +395,12 @@ class Pipeline(StateModel):
         self._mri_subjects = self.mri_subjects.copy()
 
         # Sensor noise covariance estimates
-        self._covs = ConfigurationDict('covariance', self._covs)
-        for name, cov in self._covs.items():
+        check_names(self.noise_covariance, 'noise_covariance', allow_empty=False)
+        for name, cov in self.noise_covariance.items():
             if not isinstance(cov, (RawCovariance, EpochCovariance)):
-                raise TypeError(f"_covs[{name!r}]={cov!r}: need RawCovariance or EpochCovariance")
+                raise TypeError(f"noise_covariance[{name!r}]={cov!r}: need RawCovariance or EpochCovariance")
+        self._covs = ConfigurationDict('covariance', {**self._default_covs, **self.noise_covariance})
+        for name, cov in self._covs.items():
             cov._store_name(name)
 
         # parcellations
@@ -419,7 +416,13 @@ class Pipeline(StateModel):
 
         # tests
         validate_tests(self.tests)
-        for test_obj in self.tests.values():
+        for name, test_obj in self.tests.items():
+            test_obj.vars._check_group_vars(self._groups, f"tests[{name!r}] vars")
+            # stage 1 fits one subject at a time, where an across-subject variable is constant
+            if isinstance(test_obj, TwoStageTest):
+                across_subject = {**self._variables.across_subject_vars, **test_obj.vars._find_across_subject_vars(self._variables.across_subject_vars)}
+                if across := [v for v in test_obj._test_vars if v in across_subject]:
+                    raise ConfigurationError(f"tests[{name!r}]: two-stage tests fit each subject separately, so across-subject variable {enumeration([repr(v) for v in across])} can not be used. Use Pipeline.variables with TTestIndependent or ANOVA to compare groups.")
             if test_obj.model:
                 test_obj.model = self._eval_model(test_obj.model)
         self.tests = ConfigurationDict('test', self.tests)
@@ -427,7 +430,7 @@ class Pipeline(StateModel):
         # TRF: named models, estimators, predictors, stimulus variables
         self._named_models: dict[str, Model] = ConfigurationDict('model')
         for name, value in self.models.items():
-            self._named_models[name] = Model.coerce(value).initialize(self._named_models)
+            self._named_models[name] = Model.coerce(value, self._named_models)
         estimators = {'boosting': Boosting(), **self.estimators}
         for name, estimator in estimators.items():
             if not isinstance(estimator, Estimator):
@@ -469,7 +472,7 @@ class Pipeline(StateModel):
         self._register_field('reference', self._references.keys(), allow_empty=True)
 
         # cov
-        self._register_field('cov', sorted(self._covs))
+        self._register_field('cov', sorted(self._covs), default='emptyroom')
         # inv determines the analysis space: a non-empty inverse means source space, inv='' means sensor space.
         self._register_field('inv', default='', eval_handler=self._eval_inv, allow_empty=True)
         # default sensor-space data kind for analyses (see .default_data)
@@ -522,10 +525,10 @@ class Pipeline(StateModel):
             if isinstance(pipe, RawSource):
                 raw_input = RawSourceInput(raw_name, pipe, self._raw_extension)
                 self._derivatives.register(raw_input)
-                self._derivatives.register(RawBadChannelsInput(raw_name, pipe, self._raw_extension))
+                self._derivatives.register(RawBadChannelsInput(raw_input))
                 self._derivatives.register(RawSourceDerivative(raw_name, pipe, self._raw_extension))
-                self._derivatives.register(RawHeadPositionDerivative(raw_input.name))
-                self._derivatives.register(CanonicalHeadPositionDerivative(self._recordings, self._tasks, self._runs))
+                self._derivatives.register(RawHeadPositionDerivative(raw_node_name(raw_name)))
+                self._derivatives.register(CanonicalHeadPositionDerivative(raw_node_name(raw_name), self._recordings, self._tasks, self._runs))
             elif isinstance(pipe, CachedRawPipe):
                 self._derivatives.register(RawDerivative(raw_name, pipe, self._raw, self._raw_extension))
                 if isinstance(pipe, RawICA):
@@ -545,10 +548,14 @@ class Pipeline(StateModel):
         self._derivatives.register(PredictorInput(self.root, self.predictors))
         self._derivatives.register(TRFDerivative(self.root, self._estimators, self.predictors, self.stim_var, self._raw))
         self._derivatives.register(TRFDatasetDerivative(self.root, self._estimators, self._epochs))
-        self._derivatives.register(TRFGroupDatasetDerivative(self._mri_subjects, self._groups))
+        self._derivatives.register(TRFGroupDatasetDerivative(self._estimators, self._mri_subjects, self._variables, self._groups))
+        self._derivatives.register(TRFModelTestDerivative(self._estimators, self.tests, self._groups))
 
         # --- Sensor-space: events → epochs → evoked ---
-        self._derivatives.register(EventsInput(self._raw_extension))
+        event_factors = sequence_arg(f'{self.__class__.__name__}.event_factors', self.event_factors, allow_none=False, sequence_type=frozenset)
+        if reserved := event_factors.intersection(RESERVED_VAR_KEYS):
+            raise ConfigurationError(f"{self.__class__.__name__}.event_factors={self.event_factors!r}: {sorted(reserved)} are reserved names; these columns are written or read by the pipeline itself")
+        self._derivatives.register(EventsInput(self._raw_extension, event_factors))
         self._derivatives.register(EventsDerivative(
             self.trigger_shift,
             sequence_arg(f'{self.__class__.__name__}.stim_channel', self.stim_channel),
@@ -563,7 +570,6 @@ class Pipeline(StateModel):
             len(self._tasks) > 1,
             len(self._sessions) > 1,
             self._variables,
-            self._groups,
             self.cache_event_labels,
         ))
         self._derivatives.register(SelectedEventsDerivative(self._epochs, self._epoch_rejection))
@@ -571,7 +577,7 @@ class Pipeline(StateModel):
         self._derivatives.register(RecordingEpochsDerivative(self._raw, self._epochs, self._references, self.cache_epochs))
         self._derivatives.register(EpochsDerivative(self._raw, self._epochs, self._runs_for))
         self._derivatives.register(EvokedDerivative(self._raw, self._epochs))
-        self._derivatives.register(EvokedGroupDatasetDerivative(self._raw, self._groups))
+        self._derivatives.register(EvokedGroupDatasetDerivative(self._raw, self._variables, self._groups))
 
         # --- Source-space infrastructure ---
         self._derivatives.register(CovDerivative(self._covs, self._raw, self._references, self._recordings))
@@ -584,11 +590,11 @@ class Pipeline(StateModel):
         # --- Source-space: epochs/evoked projected to source space ---
         self._derivatives.register(EpochsStcDerivative(self._raw, self._epochs, self._references))
         self._derivatives.register(EvokedStcDerivative(self._raw, self._epochs, self._references))
-        self._derivatives.register(EvokedStcGroupDatasetDerivative(self._mri_subjects, self._groups))
+        self._derivatives.register(EvokedStcGroupDatasetDerivative(self._mri_subjects, self._variables, self._groups))
 
         # --- Statistical tests ---
         self._derivatives.register(EvokedTestDataDerivative(self.tests, self._epochs, self._groups))
-        self._derivatives.register(TwoStageDataDerivative(self.tests, self._epochs, self._groups))
+        self._derivatives.register(TwoStageDataDerivative(self.tests, self._epochs))
         self._derivatives.register(TwoStageLevel1Derivative(self.tests))
         self._derivatives.register(TestResultDerivative(*result_args))
         self._derivatives.register(TwoStageLevel2Derivative(*result_args))
@@ -608,8 +614,20 @@ class Pipeline(StateModel):
             view: str | None = None,
             *,
             controls: frozenset[str] | set[str] | tuple[str, ...] = (),
+            show_dependencies: bool = False,
     ) -> Any:
+        if show_dependencies:
+            return self._derivatives.dependency_tree(name, state=self.state, options=options, view=view, controls=controls)
         return self._resolve_derivative(name, options=options, controls=controls).load(view=view)
+
+    def _job_spec(
+            self,
+            name: str,  # Registered node name.
+            options: dict[str, Any] | None = None,
+            controls: frozenset[str] | set[str] | tuple[str, ...] = (),
+    ) -> JobSpec:
+        "Host-side handle for computing one artifact (generate job, check whether done, save result)"
+        return JobSpec(self._resolve_derivative(name, options=options, controls=controls))
 
     def clean_cache(
             self,
@@ -632,7 +650,7 @@ class Pipeline(StateModel):
 
         Returns
         -------
-        report_table
+        report_table : fmtxt.Table | None
             Per-category summary of the scan (file counts and sizes).
         """
         report = self._derivatives.scan_cache(revalidate=revalidate)
@@ -723,9 +741,9 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        field : str
+        field
             Field for which to find values.
-        exclude : list of str
+        exclude
             Exclude these values.
         ...
             State parameters.
@@ -749,21 +767,28 @@ class Pipeline(StateModel):
         else:
             return StateModel.get_field_values(self, field, exclude)
 
-    def iter(self, fields='subject', exclude=None, values=None, progress_bar=None, **state):
+    def iter(
+            self,
+            fields: str | Sequence[str] = 'subject',
+            exclude: dict = None,
+            values: dict = None,
+            progress_bar: str = None,
+            **state,
+    ):
         """
         Cycle the experiment's state through all values on the given fields
 
         Parameters
         ----------
-        fields : sequence | str
+        fields
             Field(s) over which should be iterated.
-        exclude : dict  {str: iterator over str}
+        exclude
             Exclude values from iteration (``{field: values_to_exclude}``).
-        values : dict  {str: iterator over str}
+        values
             Fields with custom values to iterate over (instead of the
             corresponding field values) with {name: (sequence of values)}
             entries.
-        progress_bar : str
+        progress_bar
             Message to show in the progress bar.
         ...
             State parameters.
@@ -810,7 +835,7 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        ds : Dataset
+        ds
             A Dataset containing events (with variables as returned by
             :func:`load.mne.events`).
 
@@ -856,7 +881,7 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        ds : Dataset
+        ds
             A Dataset containing events (with variables as returned by
             :func:`load.mne.events`).
 
@@ -930,22 +955,23 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        ds : Dataset
+        ds
             A Dataset with 'subject' entry.
         """
         subject = ds['subject']
         for name, subjects in self._groups.items():
             ds[name] = Var(subject.isin(subjects))
 
-    def label_groups(self, subject, groups):
+    def label_groups(self, subject: Factor, groups: Sequence[str] | dict) -> Factor:
         """Generate Factor for group membership
 
         Parameters
         ----------
-        subject : Factor
+        subject
             A Factor with subjects.
-        groups : list of str | {str: str} dict
-            Groups which to label (raises an error if group membership is not
+        groups
+            Groups which to label as ``[group, ...]`` or ``{group: label}``
+            (raises an error if group membership is not
             unique). To use labels other than the group names themselves, use
             a ``{group: label}`` dict.
 
@@ -956,47 +982,102 @@ class Pipeline(StateModel):
         """
         return label_groups(subject, groups, self._groups)
 
-    def load_annot(self, **state):
+    def load_annot(
+            self,
+            show_dependencies: bool = False,
+            **state,
+    ) -> list[mne.Label] | DependencyTree:
         """Load a parcellation (from an annot file)
+
+        Parameters
+        ----------
+        show_dependencies
+            Return the request's dependency tree instead of loading the data (displays as text, or as a flow chart in notebooks).
+        ...
+            State parameters.
 
         Returns
         -------
         labels : list of Label
             Labels in the parcellation (output of
             :func:`mne.read_labels_from_annot`).
-        ...
-            State parameters.
         """
         self.set(**state)
-        return self._load_derivative('annot')
+        return self._load_derivative('annot', show_dependencies=show_dependencies)
 
-    def load_bad_channels(self, noise: bool = False, **kwargs):
+    def load_bad_channels(
+            self,
+            noise: bool = False,
+            show_dependencies: bool = False,
+            **kwargs,
+    ) -> list[str] | DependencyTree:
         """Load bad channels
 
         Parameters
         ----------
         noise
             Load bad channels for empty-room noise recording instead of the subject recording.
+        show_dependencies
+            Return the request's dependency tree instead of loading the data (displays as text, or as a flow chart in notebooks).
         ...
             State parameters.
 
         Returns
         -------
-        bad_chs : list of str
+        bad_chs : list[str]
             Bad channels.
         """
         raw_name = self.get('raw', **kwargs)
-        return self._load_derivative(raw_node_name(raw_name), options={'noise': noise}, view='bads')
+        return self._load_derivative(raw_node_name(raw_name), options={'noise': noise}, view='bads', show_dependencies=show_dependencies)
 
-    def load_cov(self, **kwargs):
+    def load_head_position(
+            self,
+            show_dependencies: bool = False,
+            **state,
+    ) -> np.ndarray | None | DependencyTree:
+        """Load head position samples for a recording
+
+        Parameters
+        ----------
+        show_dependencies
+            Return the request's dependency tree instead of loading the data (displays as text, or as a flow chart in notebooks).
+        ...
+            State parameters.
+
+        Returns
+        -------
+        head_pos
+            ``(n, 10)`` array in MaxFilter format, with columns
+            ``[t, q1, q2, q3, tx, ty, tz, gof, err, v]``, as produced by
+            :func:`mne.chpi.compute_head_pos` and suitable for
+            :func:`mne.viz.plot_head_positions`. For recordings without
+            continuous HPI, the static ``dev_head_t`` is returned as a single
+            sample. ``None`` when the recording has no head position
+            information at all.
+
+        See Also
+        --------
+        pipeline.RawMaxwell : Maxwell filtering with head movement compensation
+        """
+        self.set(**state)
+        return self._load_derivative('raw-head-position', show_dependencies=show_dependencies)
+
+    def load_cov(
+            self,
+            show_dependencies: bool = False,
+            **state,
+    ) -> mne.Covariance | DependencyTree:
         """Load the covariance matrix
 
         Parameters
         ----------
+        show_dependencies
+            Return the request's dependency tree instead of loading the data (displays as text, or as a flow chart in notebooks).
         ...
             State parameters.
         """
-        return self._load_derivative('cov', **kwargs)
+        self.set(**state)
+        return self._load_derivative('cov', show_dependencies=show_dependencies)
 
     def _resolve_data(
             self,
@@ -1044,8 +1125,9 @@ class Pipeline(StateModel):
             src_baseline: BaselineArg = False,
             morph: bool = None,
             keep_mne: bool = False,
+            show_dependencies: bool = False,
             **state,
-    ) -> Dataset:
+    ) -> Dataset | DependencyTree:
         """
         Load a :class:`Dataset` with epochs for a given epoch definition
 
@@ -1077,7 +1159,7 @@ class Pipeline(StateModel):
             definition).
         decim
             Data decimation factor (alternative to ``samplingrate``).
-        pad : scalar
+        pad
             Pad the epochs with this much time (in seconds; e.g. for spectral
             analysis).
         tmin
@@ -1103,6 +1185,8 @@ class Pipeline(StateModel):
         keep_mne
             Also include the underlying :class:`mne.Epochs` (sensor space) or
             sensor-space data (source space) in the returned :class:`Dataset`.
+        show_dependencies
+            Return the request's dependency tree instead of loading the data (displays as text, or as a flow chart in notebooks).
         ...
             Applicable :ref:`state-parameters`:
 
@@ -1130,7 +1214,7 @@ class Pipeline(StateModel):
                 'ndvar': ndvar,
                 'reject': reject,
             }
-            return self._load_derivative('epochs-stc', options=options)
+            return self._load_derivative('epochs-stc', options=options, show_dependencies=show_dependencies)
 
         # sensor space
         if isinstance(ndvar, str):
@@ -1156,9 +1240,13 @@ class Pipeline(StateModel):
             'interpolate_bads': bool(interpolate_bads),
             'reset_bads': interpolate_bads == True,
         }
-        return self._load_derivative('epochs', options=options)
+        return self._load_derivative('epochs', options=options, show_dependencies=show_dependencies)
 
-    def load_events(self, **state) -> Dataset:
+    def load_events(
+            self,
+            show_dependencies: bool = False,
+            **state,
+    ) -> Dataset | DependencyTree:
         """
         Load events from a raw file.
 
@@ -1167,6 +1255,8 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
+        show_dependencies
+            Return the request's dependency tree instead of loading the data (displays as text, or as a flow chart in notebooks).
         ...
             Applicable :ref:`state-parameters`:
 
@@ -1175,7 +1265,7 @@ class Pipeline(StateModel):
 
         """
         self.set(**state)
-        return self._load_derivative('labeled-events')
+        return self._load_derivative('labeled-events', show_dependencies=show_dependencies)
 
     def load_predictor(
             self,
@@ -1185,14 +1275,19 @@ class Pipeline(StateModel):
             tmin: float = None,
             filter_x: bool | Literal['continuous'] = False,
             name: str = None,
+            show_dependencies: bool = False,
             **state,
-    ) -> NDVar:
+    ) -> NDVar | DependencyTree:
         """Load a file predictor as an :class:`NDVar`
 
         Reads the predictor file's relevant data and shapes it into a predictor
         on the requested time axis. Only file predictors
-        (:class:`UTSPredictor`, :class:`NUTSPredictor`) can be loaded directly;
-        an :class:`EventPredictor` is generated from the data and is only
+        (:class:`UTSPredictor`, :class:`NUTSPredictor`,
+        :class:`SubjectUTSPredictor`) can be loaded directly; for a
+        :class:`SubjectUTSPredictor` the ``subject``, ``session``, and
+        ``acquisition`` state selects the file; in sequence mode, ``task`` and
+        ``run`` also select the file. An :class:`EventPredictor` is generated
+        from the data and is only
         available through :meth:`load_trf`.
 
         Parameters
@@ -1217,18 +1312,22 @@ class Pipeline(StateModel):
             the :class:`RawFilter` pipes of the current ``raw`` pipeline).
             ``True`` to filter all predictors; ``'continuous'`` to filter only
             time-continuous predictors (those with ``sampling='continuous'``,
-            see :class:`FilePredictorBase`).
+            see :class:`UTSPredictor`).
         name
             Reassign the name of the predictor :class:`NDVar`.
+        show_dependencies
+            Return the request's dependency tree instead of loading the data (displays as text, or as a flow chart in notebooks).
         ...
             State parameters.
         """
         self.set(**state)
-        term = parse_term(code)
+        term = parse_term(code).without_lags()  # lag overrides do not affect the predictor itself
         predictor = self.predictors[term.predictor_key]
         if not isinstance(predictor, (UTSPredictor, NUTSPredictor)):
             raise NotImplementedError(f"{term.string}: load_predictor only supports file predictors; load {type(predictor).__name__} through load_trf")
-        contents = self._load_derivative('predictor', options={'code': code})
+        contents = self._load_derivative('predictor', options={'term': term}, show_dependencies=show_dependencies)
+        if show_dependencies:
+            return contents
         x = predictor._generate(contents, tmin, tstep, n_samples, term)
         x = filter_predictor(x, self._raw, self.get('raw'), filter_x)
         x.name = term.string if name is None else name
@@ -1241,16 +1340,21 @@ class Pipeline(StateModel):
             tstop: float,
             estimator: str,
             data: str | None,
-            mask: str | None,
             samplingrate: int | None,
             filter_x: bool | str,
             state: dict[str, Any] | None = None,
+            *,
+            comparison: bool = False,
     ) -> dict[str, Any]:
-        """Normalize parameters for TRF nodes"""
+        """Normalize parameters for TRF nodes
+
+        Parameters
+        ----------
+        comparison
+            Whether ``x`` is a model comparison rather than a single model.
+        """
         if state:
             self.set(**state)
-        if mask is not None:
-            raise NotImplementedError(f"{mask=}: source-space masking is not implemented yet")
         # Resolve the data kind against the analysis space (inv state) and the estimator.
         est = self._estimators[estimator]
         if est.requires_sensor_space:
@@ -1261,8 +1365,8 @@ class Pipeline(StateModel):
             data_string = 'sensor'
         else:
             data_string = self._resolve_data(data).string
-        model = Model.coerce(x).initialize(self._named_models).sorted()
-        return {'x': model, 'tstart': float(tstart), 'tstop': float(tstop), 'estimator': estimator, 'data': data_string, 'mask': mask, 'samplingrate': samplingrate, 'filter_x': filter_x}
+        x_ = self._eval_trf_x(x, comparison)
+        return {'x': x_, 'tstart': float(tstart), 'tstop': float(tstop), 'estimator': estimator, 'data': data_string, 'samplingrate': samplingrate, 'filter_x': filter_x}
 
     def load_trf(
             self,
@@ -1272,18 +1376,20 @@ class Pipeline(StateModel):
             *,
             estimator: str = 'boosting',
             data: str = None,
-            mask: str = None,
             samplingrate: int = None,
             filter_x: bool | Literal['continuous'] = False,
             path_only: bool = False,
+            show_dependencies: bool = False,
             **state,
-    ):
+    ) -> Any:
         """Load (or compute) the TRF for a model and the current subject
 
         Parameters
         ----------
         x
-            Model (e.g. ``'gammatone + word'``).
+            Model (e.g. ``'gammatone + word'``). A term can override the lag
+            window with slice syntax, e.g. ``'gammatone[0.2:] + word[-0.1:0.8]'``
+            (an omitted boundary uses ``tstart``/``tstop``).
         tstart
             Start of the TRF in seconds.
         tstop
@@ -1299,19 +1405,23 @@ class Pipeline(StateModel):
             :attr:`default_data`. The analysis *space* is set by the ``inv``
             state (``inv=''`` for sensor space; a non-empty inverse for source
             space); in source space leave ``data`` unset. NCRF requires
-            ``inv=''`` and leaves ``data`` unset.
-        mask
-            Parcellation to mask source-space data (not implemented yet).
+            ``inv=''`` and leaves ``data`` unset. In source space, the ``parc``
+            state masks the source space: sources labeled ``"unknown"`` are
+            excluded.
         samplingrate
             Samplingrate in Hz for the analysis.
         filter_x
             Filter predictors like the M/EEG data (see :meth:`load_predictor`).
         path_only
             Return the path to the cache file instead of loading the TRF.
+        show_dependencies
+            Return the request's dependency tree instead of loading the data (displays as text, or as a flow chart in notebooks; resolving the tree loads the events needed to enumerate the predictors).
         ...
             State parameters.
         """
-        options = self._trf_options(x, tstart, tstop, estimator, data, mask, samplingrate, filter_x, state)
+        options = self._trf_options(x, tstart, tstop, estimator, data, samplingrate, filter_x, state)
+        if show_dependencies:
+            return self._derivatives.dependency_tree('trf', state=self.state, options=options)
         ctx = self._resolve_derivative('trf', options=options)
         if path_only:
             return ctx.artifact_path
@@ -1325,15 +1435,13 @@ class Pipeline(StateModel):
             *,
             estimator: str = 'boosting',
             data: str = None,
-            mask: str = None,
             samplingrate: int = None,
             filter_x: bool | Literal['continuous'] = False,
             **state,
-    ) -> TRFJobSpec:
+    ) -> JobSpec:
         "Host-side handle for one TRF fit (generate job, check whether done, save result)"
-        options = self._trf_options(x, tstart, tstop, estimator, data, mask, samplingrate, filter_x, state)
-        ctx = self._resolve_derivative('trf', options=options)
-        return TRFJobSpec(ctx)
+        options = self._trf_options(x, tstart, tstop, estimator, data, samplingrate, filter_x, state)
+        return self._job_spec('trf', options=options)
 
     def load_trf_job(
             self,
@@ -1343,7 +1451,6 @@ class Pipeline(StateModel):
             *,
             estimator: str = 'boosting',
             data: str = None,
-            mask: str = None,
             samplingrate: int = None,
             filter_x: bool | Literal['continuous'] = False,
             **state,
@@ -1354,11 +1461,15 @@ class Pipeline(StateModel):
         pickled and executed on a machine without access to the raw data. This is
         useful for distributed fitting and for inspecting the exact data used to
         estimate a model.
+        Note that calling a :class:`TRFJob` instance (i.e., executing the job) may
+        mutate the data it carries.
 
         Parameters
         ----------
         x
-            Model (e.g. ``'gammatone + word'``).
+            Model (e.g. ``'gammatone + word'``). A term can override the lag
+            window with slice syntax, e.g. ``'gammatone[0.2:] + word[-0.1:0.8]'``
+            (an omitted boundary uses ``tstart``/``tstop``).
         tstart
             Start of the TRF in seconds.
         tstop
@@ -1367,8 +1478,6 @@ class Pipeline(StateModel):
             Name of the estimator in :attr:`estimators` (default ``'boosting'``).
         data
             Sensor-space data *kind* to fit (see :meth:`load_trf`).
-        mask
-            Parcellation to mask source-space data (not implemented yet).
         samplingrate
             Samplingrate in Hz for the analysis.
         filter_x
@@ -1376,7 +1485,7 @@ class Pipeline(StateModel):
         ...
             State parameters.
         """
-        return self._trf_job_spec(x, tstart, tstop, estimator=estimator, data=data, mask=mask, samplingrate=samplingrate, filter_x=filter_x, **state).make_job()
+        return self._trf_job_spec(x, tstart, tstop, estimator=estimator, data=data, samplingrate=samplingrate, filter_x=filter_x, **state).make_job()
 
     def load_trfs(
             self,
@@ -1387,14 +1496,14 @@ class Pipeline(StateModel):
             *,
             estimator: str = 'boosting',
             data: str = None,
-            mask: str = None,
             samplingrate: int = None,
             filter_x: bool | Literal['continuous'] = False,
             scale: Literal['original'] = None,
             smooth: float = None,
             trfs: bool = True,
+            show_dependencies: bool = False,
             **state,
-    ) -> Dataset:
+    ) -> Dataset | DependencyTree:
         """Load TRFs for a group (or subject) as a :class:`Dataset`
 
         Assembles the per-subject TRFs (see :meth:`load_trf`) into a group-level
@@ -1405,12 +1514,14 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        subjects : str | 1 | -1
+        subjects
             Subject(s) for which to load data. Can be a single subject name or a
             group name such as ``'all'``. ``1`` to use the current subject;
             ``-1`` for the current group.
         x
-            Model (e.g. ``'gammatone + word'``).
+            Model (e.g. ``'gammatone + word'``). A term can override the lag
+            window with slice syntax, e.g. ``'gammatone[0.2:] + word[-0.1:0.8]'``
+            (an omitted boundary uses ``tstart``/``tstop``).
         tstart
             Start of the TRF in seconds.
         tstop
@@ -1419,13 +1530,11 @@ class Pipeline(StateModel):
             Name of the estimator in :attr:`estimators` (default ``'boosting'``).
         data
             Response data to fit (see :meth:`load_trf`).
-        mask
-            Parcellation to mask source-space data (not implemented yet).
         samplingrate
             Samplingrate in Hz for the analysis.
         filter_x
             Filter predictors like the M/EEG data (see :meth:`load_predictor`).
-        scale : 'original'
+        scale
             Rescale the TRFs to the scale of the source data (the default is the
             scale based on normalized predictors and responses).
         smooth
@@ -1433,24 +1542,127 @@ class Pipeline(StateModel):
             in [m]; only for source data).
         trfs
             Include the TRF kernels. Set ``False`` to load only the fit metrics.
+        show_dependencies
+            Return the request's dependency tree instead of loading the data (displays as text, or as a flow chart in notebooks; resolving the tree loads the events needed to enumerate the predictors).
         ...
             State parameters.
 
         Returns
         -------
-        trf_ds
-            Dataset with ``subject``, ``epoch``, the estimator's fit metrics, and
-            one :class:`NDVar` per TRF component. ``trf_ds.info['xs']`` lists the
+        trf_ds : Dataset
+            Dataset with ``subject``, ``epoch``, ``task`` (unless an epoch
+            combines several tasks), the estimator's fit metrics, and one
+            :class:`NDVar` per TRF component. ``trf_ds.info['xs']`` lists the
             TRF component keys.
         """
         subject, group = self._process_subject_arg(subjects, state)
-        trf_options = self._trf_options(x, tstart, tstop, estimator, data, mask, samplingrate, filter_x)
+        trf_options = self._trf_options(x, tstart, tstop, estimator, data, samplingrate, filter_x)
         options = {**trf_options, 'scale': scale, 'smooth': smooth, 'trfs': trfs}
         if group is not None:
-            ds = self._load_derivative('trf-group-dataset', options=options)
+            ds = self._load_derivative('trf-group-dataset', options=options, show_dependencies=show_dependencies)
         else:
-            ds = self._load_derivative('trf-dataset', options=options)
+            ds = self._load_derivative('trf-dataset', options=options, show_dependencies=show_dependencies)
         return ds
+
+    def load_model_test(
+            self,
+            x: str,
+            tstart: float = 0.,
+            tstop: float = 0.5,
+            *,
+            estimator: str = 'boosting',
+            data: str = None,
+            samplingrate: int = None,
+            filter_x: bool | Literal['continuous'] = False,
+            metric: str = 'ev',
+            smooth: float = None,
+            test: str = None,
+            pmin: PMinArg = 'tfce',
+            samples: int = 10000,
+            return_data: bool = False,
+            show_dependencies: bool = False,
+            **state,
+    ) -> Any:
+        """Test a difference in predictive power between two TRF models
+
+        Parameters
+        ----------
+        x
+            Model comparison, such as ``'acoustic + lexical > acoustic'`` or
+            ``'acoustic + lexical @ lexical'``. Comparisons against ``0`` test
+            one model's predictive power against zero. A term can override the
+            lag window with slice syntax, e.g.
+            ``'acoustic + lexical @ lexical[0.2:]'`` tests the contribution of
+            ``lexical`` at lags from 0.2 s to ``tstop`` (an omitted boundary
+            uses ``tstart``/``tstop``).
+        tstart
+            Start of the TRF in seconds.
+        tstop
+            Stop of the TRF in seconds.
+        estimator
+            Name of the estimator in :attr:`estimators` (default ``'boosting'``).
+        data
+            Response data to fit (see :meth:`load_trf`).
+        samplingrate
+            Samplingrate in Hz for the analysis.
+        filter_x
+            Filter predictors like the M/EEG data (see :meth:`load_predictor`).
+        metric
+            Fit metric to test. The default, ``'ev'``, is explained variance.
+            Append ``'.sum'``, ``'.mean'``, or ``'.max'`` to reduce the metric
+            across sensors or sources before testing.
+        smooth
+            Smooth source-space metric maps before testing (Gaussian standard
+            deviation in meters).
+        test
+            Name of a test in :attr:`tests`. By default, use a one-sample test
+            for comparisons against zero and a related-measures test otherwise,
+            with the tail specified by the comparison.
+        pmin
+            Cluster-forming threshold or ``'tfce'``. Only applies to an
+            unreduced ``metric``; a reduced one leaves a single value per case,
+            which is tested parametrically (use ``pmin=None, samples=0``).
+        samples
+            Number of permutations used to determine cluster p-values (see
+            ``pmin``).
+        return_data
+            Return the :class:`Dataset` used for the test together with the
+            statistical result.
+        show_dependencies
+            Return the request's dependency tree instead of loading the data (displays as text, or as a flow chart in notebooks; resolving the tree loads the events needed to enumerate the predictors).
+        ...
+            State parameters. Use ``group`` to select the subjects.
+
+        Returns
+        -------
+        result
+            Statistical test result.
+        data, result
+            With ``return_data=True``, the data used for the test and the
+            statistical result.
+        """
+        self.set(**state)
+        trf_options = self._trf_options(x, tstart, tstop, estimator, data, samplingrate, filter_x, comparison=True)
+        metric_key, _ = TRFModelTestDerivative._metric_parts(metric)
+        estimator_obj = self._estimators[estimator]
+        if metric_key not in estimator_obj.metric_keys:
+            available = ', '.join(estimator_obj.metric_keys) or 'no fit metrics'
+            raise ValueError(f"{metric=}: estimator {estimator!r} provides {available}")
+        if test is not None:
+            if not isinstance(test, str):
+                raise TypeError(f"{test=}: expected a test name or None")
+            self.tests[test]  # raise for an undefined test name
+
+        options = {
+            **trf_options,
+            'metric': metric,
+            'smooth': smooth,
+            'test': test,
+            'pmin': pmin,
+            'samples': samples,
+            'return_data': return_data,
+        }
+        return self._load_derivative('trf-model-test', options=options, show_dependencies=show_dependencies)
 
     def load_evoked(
             self,
@@ -1465,13 +1677,15 @@ class Pipeline(StateModel):
             morph: bool = None,
             keep_mne: bool = False,
             model: str = '',
-            **state):
+            show_dependencies: bool = False,
+            **state,
+    ) -> Dataset | DependencyTree:
         """
         Load a Dataset with condition average responses for each subject.
 
         Parameters
         ----------
-        subjects : str | 1 | -1
+        subjects
             Subject(s) for which to load data. Can be a single subject
             name or a group name such as ``'all'``. ``1`` to use the current
             subject; ``-1`` for the current group. Default is current subject
@@ -1512,6 +1726,8 @@ class Pipeline(StateModel):
             How to group trials into conditions before averaging (e.g.
             ``'condition'`` or ``'a % b'``). The default (``''``) is the grand
             average across all trials.
+        show_dependencies
+            Return the request's dependency tree instead of loading the data (displays as text, or as a flow chart in notebooks).
         ...
             Applicable :ref:`state-parameters`:
 
@@ -1549,8 +1765,8 @@ class Pipeline(StateModel):
                 'ndvar': ndvar,
             }
             if group is not None:
-                return self._load_derivative('evoked-stc-group-dataset', options=options)
-            return self._load_derivative('evoked-stc', options=options)
+                return self._load_derivative('evoked-stc-group-dataset', options=options, show_dependencies=show_dependencies)
+            return self._load_derivative('evoked-stc', options=options, show_dependencies=show_dependencies)
 
         # sensor space
         if isinstance(ndvar, str):
@@ -1579,15 +1795,16 @@ class Pipeline(StateModel):
         if group is not None:
             # Group data is merged in a common sensor space, so bad channels are always interpolated (the interpolate_bads argument only controls single-subject loads).
             options['interpolate_bads'] = True
-            return self._load_derivative('evoked-group-dataset', options=options)
-        return self._load_derivative('evoked', options=options)
+            return self._load_derivative('evoked-group-dataset', options=options, show_dependencies=show_dependencies)
+        return self._load_derivative('evoked', options=options, show_dependencies=show_dependencies)
 
     def load_fwd(
             self,
             surf_ori: bool = True,
             ndvar: bool = False,
+            show_dependencies: bool = False,
             **state,
-    ) -> mne.forward.Forward | NDVar:
+    ) -> mne.Forward | NDVar | DependencyTree:
         """Load the forward solution
 
         Parameters
@@ -1598,17 +1815,21 @@ class Pipeline(StateModel):
             surface based).
         ndvar
             Return forward solution as :class:`NDVar` (default is
-            :class:`mne.forward.Forward`).
+            :class:`mne.Forward`).
+        show_dependencies
+            Return the request's dependency tree instead of loading the data (displays as text, or as a flow chart in notebooks).
         ...
             State parameters.
 
         Returns
         -------
-        forward_operator : mne.forward.Forward | NDVar
+        forward_operator : mne.Forward | NDVar
             Forward operator.
         """
         self.set(**state)
-        fwd = self._load_derivative('fwd')
+        fwd = self._load_derivative('fwd', show_dependencies=show_dependencies)
+        if show_dependencies:
+            return fwd
         if ndvar:
             src = self.get('src')
             parc = self._current_source_parc()
@@ -1625,8 +1846,9 @@ class Pipeline(StateModel):
     def load_ica(
             self,
             accept_stale: bool = False,
+            show_dependencies: bool = False,
             **state,
-    ) -> mne.preprocessing.ICA:
+    ) -> mne.preprocessing.ICA | DependencyTree:
         """Load the mne-python ICA object
 
         Parameters
@@ -1636,12 +1858,14 @@ class Pipeline(StateModel):
             that it was created from the current data and ICA settings, for
             example after changing the raw preprocessing used to estimate the
             ICA. This rewrites the bookkeeping for that file instead of
-            raising :class:`ProtectedArtifactError`. Use this only when you
+            raising :exc:`ProtectedArtifactError`. Use this only when you
             intentionally want to keep the existing file on your own
             responsibility instead of reverting those changes or recomputing
             the ICA. When Eelbrain detects a mismatch, the error message names
             the raw step and setting that changed so you can decide whether to
             revert that change.
+        show_dependencies
+            Return the request's dependency tree instead of loading the data (displays as text, or as a flow chart in notebooks).
         ...
             State parameters.
 
@@ -1651,17 +1875,18 @@ class Pipeline(StateModel):
         """
         raw_name = self.get('raw', **state)
         ica_raw_name = self._raw.ica_name(raw_name)
-        return self._derivatives.resolve(
-            ica_input_name(ica_raw_name),
-            state={**self.state, 'raw': ica_raw_name},
-            controls={REINDEX_ICA} if accept_stale else (),
-        ).load()
+        state = {**self.state, 'raw': ica_raw_name}
+        controls = {REINDEX_ICA} if accept_stale else ()
+        if show_dependencies:
+            return self._derivatives.dependency_tree(ica_input_name(ica_raw_name), state=state, controls=controls)
+        return self._derivatives.resolve(ica_input_name(ica_raw_name), state=state, controls=controls).load()
 
     def load_inv(
             self,
             ndvar: bool = False,
+            show_dependencies: bool = False,
             **state,
-    ) -> mne.minimum_norm.InverseOperator | NDVar:
+    ) -> mne.minimum_norm.InverseOperator | NDVar | DependencyTree:
         """Load the inverse operator
 
         Parameters
@@ -1671,6 +1896,8 @@ class Pipeline(StateModel):
             :class:`mne.minimum_norm.InverseOperator`). The NDVar representation
             does not take into account any direction selectivity (loose/free
             orientation) or noise normalization properties.
+        show_dependencies
+            Return the request's dependency tree instead of loading the data (displays as text, or as a flow chart in notebooks).
         ...
             Applicable :ref:`state-parameters`:
 
@@ -1682,7 +1909,9 @@ class Pipeline(StateModel):
 
         """
         self.set(**state)
-        inv = self._load_derivative('inv')
+        inv = self._load_derivative('inv', show_dependencies=show_dependencies)
+        if show_dependencies:
+            return inv
 
         if ndvar:
             parc = self._current_source_parc()
@@ -1700,7 +1929,7 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        label : str
+        label
             Name of the label. If the label name does not end in '-lh' or '-rh'
             the combination of the labels ``label + '-lh'`` and
             ``label + '-rh'`` is returned.
@@ -1716,11 +1945,17 @@ class Pipeline(StateModel):
         else:
             raise ValueError(f"Label {label!r} could not be found in parc {self.get('parc')!r}.")
 
-    def load_source_morph(self, **state):
+    def load_source_morph(
+            self,
+            show_dependencies: bool = False,
+            **state,
+    ) -> mne.SourceMorph | DependencyTree:
         """Load the source morph from mrisubject to common_brain
 
         Parameters
         ----------
+        show_dependencies
+            Return the request's dependency tree instead of loading the data (displays as text, or as a flow chart in notebooks).
         ...
             State parameters.
 
@@ -1733,15 +1968,16 @@ class Pipeline(StateModel):
         compatibility with public STC-based workflows.
         """
         self.set(**state)
-        return self._load_derivative('source-morph')
+        return self._load_derivative('source-morph', show_dependencies=show_dependencies)
 
     def load_neighbor_correlation(
             self,
             subjects: SubjectArg = None,
             epoch: str = None,
             return_data: bool = False,
+            show_dependencies: bool = False,
             **state,
-    ) -> NDVar | Dataset | tuple[NDVar, NDVar]:
+    ) -> NDVar | Dataset | tuple[NDVar, NDVar] | DependencyTree:
         """Load sensor neighbor correlation
 
         Parameters
@@ -1757,6 +1993,8 @@ class Pipeline(StateModel):
         return_data
             Return the data from which the correlation is calculated. Only
             possible when loading neighbor-correlation for a single subject.
+        show_dependencies
+            Return the dependency tree of the underlying data request instead of loading (displays as text, or as a flow chart in notebooks; only available for a single subject).
 
         Returns
         -------
@@ -1771,6 +2009,8 @@ class Pipeline(StateModel):
         if group is not None:
             if return_data:
                 raise ValueError(f"{return_data=} when loading data for group")
+            if show_dependencies:
+                raise ValueError(f"show_dependencies=True with group {group!r}: show dependencies for a single subject instead")
             if state:
                 self.set(**state)
             lines = [(subject, self.load_neighbor_correlation(1, epoch)) for subject in self]
@@ -1781,10 +2021,14 @@ class Pipeline(StateModel):
             epoch_params = self._epochs[epoch]
             if len(epoch_params.tasks) != 1:
                 raise ValueError(f"{epoch=}: epoch has multiple tasks")
+            if show_dependencies:
+                return self.load_epochs(epoch=epoch, reject=False, decim=1, show_dependencies=True, **state)
             ds = self.load_epochs(epoch=epoch, reject=False, decim=1, **state)
             key = ds.info['sensor_types'][0]
             data = concatenate(ds[key])
         else:
+            if show_dependencies:
+                return self.load_raw(ndvar=True, show_dependencies=True, **state)
             data = self.load_raw(ndvar=True, **state)
         n_corr = neighbor_correlation(data)
         if return_data:
@@ -1801,8 +2045,9 @@ class Pipeline(StateModel):
             tstart: float = None,
             tstop: float = None,
             noise: bool = False,
+            show_dependencies: bool = False,
             **kwargs,
-    ) -> mne.io.Raw | NDVar:
+    ) -> mne.io.Raw | NDVar | DependencyTree:
         """
         Load a raw file as mne Raw object.
 
@@ -1825,13 +2070,17 @@ class Pipeline(StateModel):
             Crop the raw data.
         noise
             Load corresponding empty-room data instead of current subject's task data (default ``False``).
+        show_dependencies
+            Return the request's dependency tree instead of loading the data (displays as text, or as a flow chart in notebooks).
         ...
             Applicable :ref:`state-parameters`:
 
              - :ref:`state-raw`: preprocessing pipeline
         """
         raw_name = self.get('raw', **kwargs)
-        raw = self._load_derivative(raw_node_name(raw_name), options={'preload': preload, 'noise': noise})
+        raw = self._load_derivative(raw_node_name(raw_name), options={'preload': preload, 'noise': noise}, show_dependencies=show_dependencies)
+        if show_dependencies:
+            return raw
         if decim and decim > 1:
             assert samplingrate is None, "samplingrate and decim can't both be specified"
             samplingrate = int(round(raw.info['sfreq'] / decim))
@@ -1843,11 +2092,7 @@ class Pipeline(StateModel):
             raw.resample(samplingrate)
 
         if ndvar:
-            source_pipe = self._raw.root_source_pipe(raw_name)
-            data = DataSpec('sensor')
-            data_kind = data.find_ndvar_channel_types(raw.info)[0]
-            sysname = source_pipe._get_sysname(raw.info, self.get('subject'), data_kind)
-            adjacency = source_pipe._get_adjacency(data_kind)
+            sysname, adjacency = self._ndvar_sensor_args(raw_name, raw.info, self.get('subject'))
             raw = load.mne.raw_ndvar(raw, sysname=sysname, adjacency=adjacency)
 
         return raw
@@ -1860,9 +2105,10 @@ class Pipeline(StateModel):
             self,
             subjects: SubjectArg = None,
             reject: bool | Literal['keep'] = True,
-            vardef: str = None,
+            vardef: str | Variables = None,
+            show_dependencies: bool = False,
             **kwargs,
-    ) -> Dataset:
+    ) -> Dataset | DependencyTree:
         """
         Load events and return a subset based on epoch and rejection
 
@@ -1879,8 +2125,12 @@ class Pipeline(StateModel):
             Set ``reject='keep'`` to load the rejection (added it to the events
             as ``'accept'`` variable), but keep bad trails.
         vardef
-            Name of a test defining additional variables to add to the returned
-            Dataset.
+            Additional variables to add to the returned Dataset, as
+            :class:`Variables` or the name of a test defining them.
+            Across-subject variables are only added when loading data for a
+            group.
+        show_dependencies
+            Return the request's dependency tree instead of loading the data (displays as text, or as a flow chart in notebooks; only available when loading a single subject).
         ...
             State parameters.
 
@@ -1893,23 +2143,36 @@ class Pipeline(StateModel):
             raise ValueError(f"{reject=}")
         state = dict(kwargs)
         subject, group = self._process_subject_arg(subjects, state)
+        if show_dependencies and group is not None:
+            raise ValueError(f"show_dependencies=True with group {group!r}: group-level events are combined outside the dependency graph; show dependencies for a single subject instead")
 
+        if isinstance(vardef, str):
+            vardef = self.tests[vardef].vars
         if group is not None:
-            return combine([self.load_selected_events(subjects=subject_, reject=reject, vardef=vardef, **state) for subject_ in self.iter(group=group)])
+            # vardef is applied once, to the combined data, where its across-subject variables are also defined
+            ds = combine([self.load_selected_events(subjects=subject_, reject=reject, **state) for subject_ in self.iter(group=group)])
+            self._variables.resolve(ds, self._groups, across_subject_only=True)
+            if vardef:
+                vardef.resolve(ds, self._groups)
+            return ds
         elif subject is None:
             raise RuntimeError(f"{subject=}, {group=}")
 
         options = {'reject': reject}
-        ds = self._load_derivative('epoch-events', options=options)
-        apply_vardef(ds, vardef, self.tests, self._groups)
+        ds = self._load_derivative('epoch-events', options=options, show_dependencies=show_dependencies)
+        if show_dependencies:
+            return ds
+        if vardef:
+            vardef.resolve(ds)
         return ds
 
     def load_src(
             self,
             add_geom: bool = False,
             ndvar: bool = False,
+            show_dependencies: bool = False,
             **state,
-    ) -> mne.SourceSpaces | SourceSpace | VolumeSourceSpace:
+    ) -> mne.SourceSpaces | SourceSpace | VolumeSourceSpace | DependencyTree:
         """Load the current source space
 
         Parameters
@@ -1918,6 +2181,8 @@ class Pipeline(StateModel):
             Parameter for :func:`mne.read_source_spaces`.
         ndvar
             Return as NDVar Dimension object (default False).
+        show_dependencies
+            Return the request's dependency tree instead of loading the data (displays as text, or as a flow chart in notebooks).
         ...
             State parameters.
 
@@ -1932,7 +2197,9 @@ class Pipeline(StateModel):
             mlab.show()
         """
         self.set(**state)
-        src_spaces = self._load_derivative('src')
+        src_spaces = self._load_derivative('src', show_dependencies=show_dependencies)
+        if show_dependencies:
+            return src_spaces
         if ndvar:
             src = self.get('src')
             subjects_dir = self.root / MRI_SDIR
@@ -1959,8 +2226,9 @@ class Pipeline(StateModel):
             src_baseline: BaselineArg = None,
             samplingrate: int = None,
             return_data: bool = False,
+            show_dependencies: bool = False,
             **state,
-    ) -> NDTest | ROITestResult | tuple[Dataset | ROIData, NDTest | ROITestResult]:
+    ) -> NDTest | ROITestResult | tuple[Dataset | ROIData, NDTest | ROITestResult] | DependencyTree:
         """Create and load spatio-temporal cluster test results
 
         Parameters
@@ -2011,6 +2279,8 @@ class Pipeline(StateModel):
             definition).
         return_data
             Return the data along with the test result (see below).
+        show_dependencies
+            Return the request's dependency tree instead of loading the data (displays as text, or as a flow chart in notebooks).
         ...
             State parameters (Use the ``group`` state parameter to select the
             subject group for which to perform the test).
@@ -2022,7 +2292,7 @@ class Pipeline(StateModel):
             ``{roi: dataset}`` dictionary).
         res : NDTest | ROITestResult
             Test result for the specified test (for ROIs tests,
-            an :class:`~_experiment.ROITestResult` object).
+            an :class:`ROITestResult` object).
         """
         test_obj = self.tests[test]
         self.set(**state)
@@ -2043,7 +2313,9 @@ class Pipeline(StateModel):
             'samplingrate': samplingrate,
         }
         result_node = 'two-stage-level-2' if isinstance(test_obj, TwoStageTest) else 'test-result'
-        result = self._load_derivative(result_node, options=options)
+        result = self._load_derivative(result_node, options=options, show_dependencies=show_dependencies)
+        if show_dependencies:
+            return result
         if not return_data:
             return result
         elif isinstance(test_obj, TwoStageTest):
@@ -2094,42 +2366,58 @@ class Pipeline(StateModel):
             bad_chs = (bad_chs,)
         raw = self._load_derivative(raw_input_name(source_name), options={'noise': noise})
         bads_ctx = self._resolve_derivative(raw_bad_channels_input_name(source_name), options={'noise': noise})
-        bads_ctx.node.write(bads_ctx, raw, bad_chs, redo, create=True)
+        bads_ctx.node.write(bads_ctx, raw, bad_chs, redo)
 
     def make_bad_channels_auto(
         self,
-        flat: float = None,
+        meg: float = 1e-14,
+        eeg: float = 0,
         redo: bool = False,
         noise: bool = False,
         **state: Any,
     ) -> None:
-        """Automatically detect bad channels
+        """Automatically detect flat channels and mark them as bad
 
-        Works on ``raw='raw'``
+        Works on ``raw='raw'``. Only implemented for MEG channels.
 
         Parameters
         ----------
-        flat
-            Threshold for detecting flat channels: channels with ``std < flat``
-            are considered bad (default 1e-14 for MEG and 0 for EEG).
+        meg
+            Threshold for detecting flat MEG channels: channels with ``std < flat``
+            are considered bad (default 1e-14; set to 0 to skip detection).
+        eeg
+            Threshold for detecting flat EEG channels (default 0).
         redo
             If the file already exists, replace it (instead of adding).
         noise
             If True, make bad channels for the empty-room recording instead of the current subject's recording.
         ...
             State parameters.
+
+        Notes
+        -----
+        Pipelines that include :class:`RawMaxwell` do not need this: flat channels
+        are marked as bad automatically by
+        :func:`mne.preprocessing.find_bad_channels_maxwell`.
         """
-        if state:
-            self.set(**state)
+        self.set(**state)
+        assert meg or eeg
         source_name = self._raw.root_source_name('raw')
-        pipe = self._raw[source_name]
-        raw_ctx = self._resolve_derivative(raw_input_name(source_name), options={'noise': noise, 'preload': True})
+        raw_ctx = self._resolve_derivative(raw_node_name(source_name), options={'noise': noise, 'preload': True})
         raw = raw_ctx.load()
+        if redo:
+            raw.info['bads'] = []
+        picks_meg = mne.pick_types(raw.info, meg=bool(meg), ref_meg=False)
+        picks_eeg = mne.pick_types(raw.info, eeg=bool(eeg))
+        detected = []
+        for picks, flat in ((picks_meg, meg), (picks_eeg, eeg)):
+            if len(picks) == 0:
+                continue
+            data = raw.get_data(picks)
+            detected.extend([raw.ch_names[pick] for pick in picks[data.std(axis=1) < flat]])
+        # save
         bads_ctx = self._resolve_derivative(raw_bad_channels_input_name(source_name), options={'noise': noise})
-        bids_path = raw_ctx.node._resolve_bids_path(raw_ctx)
-        detected = pipe._detect_flat_channels(bids_path, raw, flat)
-        if detected is not None:
-            bads_ctx.node.write(bads_ctx, raw, detected, redo, create=True)
+        bads_ctx.node.write(bads_ctx, raw, detected, redo)
 
     def make_bad_channels_neighbor_correlation(
             self,
@@ -2137,7 +2425,7 @@ class Pipeline(StateModel):
             epoch: str = None,
             save: bool = True,
             **state,
-    ) -> (NDVar, list[str]):
+    ) -> tuple[NDVar, list[str]]:
         """Iteratively exclude bad channels based on low average neighbor-correlation
 
         Parameters
@@ -2197,6 +2485,27 @@ class Pipeline(StateModel):
             self.make_bad_channels(bad_chs)
         return full_nc, bad_chs
 
+    def _ndvar_sensor_args(
+            self,
+            raw_name: str,
+            info: mne.Info,
+            subject: str,
+    ) -> tuple[str | None, str | Sequence | None]:
+        """``(sysname, adjacency)`` for converting data from a raw step to :class:`NDVar` (see :func:`load.mne.sensor_dim`)
+
+        Parameters
+        ----------
+        raw_name
+            Raw step the data comes from; the sensor system is defined by its source.
+        info
+            Measurement info of the data.
+        subject
+            Subject the data belongs to (the sensor system can vary by subject).
+        """
+        source_pipe = self._raw.root_source_pipe(raw_name)
+        data_kind = DataSpec('sensor').find_ndvar_channel_types(info)[0]
+        return source_pipe._get_sysname(info, subject, data_kind), source_pipe._get_adjacency(data_kind)
+
     @suppress_mne_warning
     def make_ica_selection(
             self,
@@ -2253,7 +2562,7 @@ class Pipeline(StateModel):
             else:
                 task = sequence_arg('task', task)
             ctx = self._resolve_derivative(ica_input_name(ica_name))
-            raw = ctx.node.load_concatenated_source_raw(ctx, task)
+            raw = ctx.node.load_concatenated_source_raw(ctx, task, preload=False)
             decim = decim_param(samplingrate, decim, None, raw.info, minimal=True)
             info = raw.info
             display_data = raw
@@ -2288,17 +2597,14 @@ class Pipeline(StateModel):
             info = ds['epochs'].info
             decim = None
             display_data = ds
-        data = DataSpec('sensor')
-        data_kind = data.find_ndvar_channel_types(info)[0]
-        source_pipe = self._raw.root_source_pipe(ica_name)
-        sysname = source_pipe._get_sysname(info, subject, data_kind)
-        adjacency = source_pipe._get_adjacency(data_kind)
+        sysname, adjacency = self._ndvar_sensor_args(ica_name, info, subject)
         try:
             frame = gui.select_components(path, display_data, sysname, adjacency, decim, debug, events=labeled_events)
         except DimensionMismatchError as error:
-            # The sensors no longer match those the ICA was estimated on, which
-            # in this context means the bad channels have changed.
-            raise ICAChannelsChangedError(path) from error
+            # The sensors no longer match those the ICA was estimated on. Not strict:
+            # deleting the ICA is the remedy whichever side has the extra channels.
+            bads_before = pipe._check_ica_channels(mne.preprocessing.read_ica(path), info, strict=False)
+            raise ICAChannelsChangedError(path, sorted(bads_before), info['bads']) from error
         return frame
 
     def make_bad_channels_selection(
@@ -2310,8 +2616,8 @@ class Pipeline(StateModel):
 
         Opens :func:`eelbrain.gui.select_channels` for the current subject.
         The document is the Pipeline-specific ``*_channels.tsv`` file under
-        the ``derivatives/mne/`` hierarchy (seeded from the BIDS source the
-        first time it is written). Events come from labeled-events.
+        the ``derivatives/mne/`` hierarchy (built from the BIDS source when
+        first accessed). Events come from labeled-events.
 
         Parameters
         ----------
@@ -2329,18 +2635,14 @@ class Pipeline(StateModel):
         subject = self.get('subject')
         # Load raw at the requested pipeline stage (unprocessed input if source)
         raw_data = self._load_derivative(raw_node_name(raw_name), options={'preload': False, 'noise': False})
-        # Bad channels are stored in the derivatives/mne hierarchy; ensure the
-        # file exists (seeded from the BIDS source) so the GUI can read/write it
+        # Bad channels are stored in the derivatives/mne hierarchy; loading
+        # builds a missing file (seeded from the BIDS source) so the GUI can read/write it
         bads_ctx = self._resolve_derivative(raw_bad_channels_input_name(source_name))
-        bads_ctx.node.write(bads_ctx, raw_data, [], redo=False, create=True)
+        bads_ctx.load()
         channels_path = bads_ctx.node.path(bads_ctx)
         # Labeled events for the timeline
         events = self._load_derivative('labeled-events')
-        # Sensor system info
-        source_pipe = self._raw.root_source_pipe(raw_name)
-        data_kind = DataSpec('sensor').find_ndvar_channel_types(raw_data.info)[0]
-        sysname = source_pipe._get_sysname(raw_data.info, subject, data_kind)
-        adjacency = source_pipe._get_adjacency(data_kind)
+        sysname, adjacency = self._ndvar_sensor_args(raw_name, raw_data.info, subject)
         return gui.select_channels(raw_data, channels_path, events=events, sysname=sysname, adjacency=adjacency)
 
     def make_ica(self, **state) -> Path:
@@ -2353,7 +2655,7 @@ class Pipeline(StateModel):
 
         Returns
         -------
-        path : Path
+        path : pathlib.Path
             Path to the ICA file.
 
         Notes
@@ -2377,9 +2679,11 @@ class Pipeline(StateModel):
         if ica_raw_name != raw_name:
             self.set(raw=ica_raw_name)
             print(f"raw: {raw_name} -> {ica_raw_name}")
-        ctx = self._resolve_derivative(ica_input_name(ica_raw_name))
+        spec = self._job_spec(ica_input_name(ica_raw_name))
+        if spec.is_done:
+            return spec.path
         try:
-            ctx.node.materialize(ctx)
+            job = spec.make_job()
         except ProtectedArtifactError as error:
             command = ask(
                 f"ICA file {Path(error.path).name} is stale. How should it be handled?",
@@ -2391,14 +2695,18 @@ class Pipeline(StateModel):
                 help="This ICA file may contain manual component selections, so Eelbrain does not replace it automatically when the current data and settings no longer match.",
             )
             if command == 'overwrite':
-                ctx.node.materialize(ctx, allow_protected_overwrite=True)
+                spec = spec.with_controls(ALLOW_PROTECTED_OVERWRITE)
+                job = spec.make_job()
             elif command == 'incorporate':
-                ctx.node.materialize(ctx, allow_protected_reindex=True)
+                self.load_ica(raw=ica_raw_name, accept_stale=True)
+                return spec.path
             elif command != 'abort':
                 raise RuntimeError(f"{command=}")
             else:
                 raise RuntimeError("User aborted ICA overwrite")
-        return self._raw[ica_raw_name].path(ctx)
+        with user_activity:
+            spec.save_result(job, job())
+        return spec.path
 
     def make_epoch_rejection(
             self,
@@ -2421,7 +2729,7 @@ class Pipeline(StateModel):
         samplingrate
             Samplingrate in Hz for the visualization (set to a lower value to
             improve GUI performance; the default is the epoch setting).
-        auto : scalar (optional)
+        auto
             Perform automatic rejection instead of showing the GUI by supplying
             a an absolute threshold (for example, ``1e-12`` to reject any epoch
             in which the absolute of at least one channel exceeds 1 picotesla).
@@ -2429,7 +2737,7 @@ class Pipeline(StateModel):
             When working with data from multiple sensor types, use a dictionary
             to set levels for all types,
             e.g. ``{'mag': 2e-12, 'grad': 5e-11, 'eeg': 1.5e-4}``.
-        overwrite : bool
+        overwrite
             If ``auto`` is specified and a rejection file already exists,
             overwrite the old file. The default is to raise an :exc:`IOError` if
             the file exists (``None``). Set to ``False`` to quietly keep the
@@ -2606,13 +2914,13 @@ class Pipeline(StateModel):
         parc
             Parcellation to plot. If None (default), use parc from the current
             state.
-        surf : 'inflated' | 'pial' | 'smoothwm' | 'sphere' | 'white'
+        surf
             Freesurfer surface to use as brain geometry.
         views
             One or several views to show in the figure. The options are:
             ``'lateral', 'medial', 'ventral', 'dorsal', 'rostral', 'parietal',
             'frontal', 'caudal'``.
-        hemi : 'lh' | 'rh' | 'both' | 'split'
+        hemi
             Which hemispheres to plot (default includes hemisphere with more
             than one label in the annot file).
         borders
@@ -2621,9 +2929,9 @@ class Pipeline(StateModel):
             Alpha of the annotation (1=opaque, 0=transparent, default 0.7).
         axw
             Figure width per hemisphere.
-        foreground : mayavi color
+        foreground
             Figure foreground color (i.e., the text color).
-        background : mayavi color
+        background
             Figure background color.
         seeds
             Plot seeds as points (only applies to seeded parcellations).
@@ -2746,16 +3054,21 @@ class Pipeline(StateModel):
             fig.plotter.enable_parallel_projection()
         return fig
 
-    def plot_whitened_gfp(self, s_start=None, s_stop=None, run=None):
-        """Plot the GFP of the whitened evoked to evaluate the the covariance matrix
+    def plot_whitened_gfp(
+            self,
+            s_start: str | None = None,
+            s_stop: str | None = None,
+            run: bool | None = None,
+    ):
+        """Plot the GFP of the whitened evoked to evaluate the covariance matrix
 
         Parameters
         ----------
-        s_start : str
+        s_start
             Subject at which to start (default is the first subject).
         s_stop: str
             Subject at which to stop (default is the last subject).
-        run : bool
+        run
             Run the GUI after plotting (default depends on environment).
         """
         gfps = []
@@ -2773,7 +3086,7 @@ class Pipeline(StateModel):
 
         colors = plot.colors_for_oneway(subjects)
         title = f"Whitened Global Field Power ({self.get('cov')})"
-        fig = plot._base.Figure(1, title, h=7, run=run)
+        fig = plot._figure.Figure(1, title, h=7, run=run)
         ax = fig.axes[0]
         for subject, gfp in zip(subjects, gfps):
             ax.plot(whitened_evoked.times, gfp, label=subject, color=colors[subject])
@@ -2921,16 +3234,16 @@ class Pipeline(StateModel):
         brain.add_label(label, alpha=0.75)
         return brain
 
-    def plot_raw(self, decim=10, xlim=5, subtract_mean=False, **state):
+    def plot_raw(self, decim: int = 10, xlim: float = 5, subtract_mean: bool = False, **state):
         """Plot raw sensor data
 
         Parameters
         ----------
-        decim : int
+        decim
             Decimate data for faster plotting (default 10).
-        xlim : scalar
+        xlim
             Number of seconds to display (default 5 s).
-        subtract_mean : bool
+        subtract_mean
             Subtract the mean from each channel (useful when plotting raw data
             recorded with DC offset).
         ...
@@ -2991,7 +3304,7 @@ class Pipeline(StateModel):
             self,
             ori: str = 'free',
             snr: float = 3,
-            method: str = 'dSPM',
+            method: Literal['MNE', 'dSPM', 'sLORETA', 'eLORETA'] = 'dSPM',
             depth: float = 0,
             pick_normal: bool = False,
             **state,
@@ -3029,7 +3342,7 @@ class Pipeline(StateModel):
             estimates. 3 is recommended for averaged responses, 1 for raw or
             single trial data. Set to 0 for unregularized inverse solution
             (``λ = 0``).
-        method : 'MNE' | 'dSPM' | 'sLORETA' | 'eLORETA'
+        method
             Noise normalization method. ``MNE`` uses unnormalized current
             estimates. ``dSPM`` [1]_ (default) ``sLORETA`` [2]_ and eLORETA [3]_
             normalize each the estimate at each source with an estimate of the
@@ -3087,7 +3400,7 @@ class Pipeline(StateModel):
     def inv_str(
             ori: str = 'free',
             snr: float = 3,
-            method: str = 'dSPM',
+            method: Literal['MNE', 'dSPM', 'sLORETA', 'eLORETA'] = 'dSPM',
             depth: float = 0,
             pick_normal: bool = False,
     ):
@@ -3107,6 +3420,9 @@ class Pipeline(StateModel):
             raise ValueError(f"{model=}; To specify interactions, use '%' instead of '*'")
 
         factors = [v.strip() for v in model.split('%')]
+        # a model groups trials within subject, which happens before across-subject variables exist
+        if across := [factor for factor in factors if factor in self._variables.across_subject_vars]:
+            raise ConfigurationError(f"{model=}: {enumeration([repr(factor) for factor in across])} is an across-subject variable, which is only added after subjects are combined and can thus not be used to group trials. To compare groups, use TTestIndependent or ANOVA with subject nested in the group variable.")
 
         # find order value for each factor
         ordered_factors = {}
@@ -3123,6 +3439,33 @@ class Pipeline(StateModel):
         if unordered_factors:
             model.extend(unordered_factors)
         return '%'.join(model)
+
+    def _eval_trf_x(
+            self,
+            x: str,
+            comparison: bool | None = None,
+    ) -> Model | Comparison:
+        """Evaluate a TRF model or model-comparison expression
+
+        Parameters
+        ----------
+        x
+            Model (``'a + b'``) or comparison (``'a + b > a'``) expression.
+        comparison
+            Require a comparison (``True``) or a single model (``False``); by
+            default (``None``) accept either.
+        """
+        if not isinstance(x, str):
+            raise TypeError(f"{x=}: need a model expression as a string")
+        if any(operator in x for operator in ('@', '=', '<', '>')):
+            out = Comparison.coerce(x, self._named_models)
+        else:
+            out = Model.coerce(x, self._named_models)
+        if comparison and not isinstance(out, Comparison):
+            raise TypeError(f"{x=}: need a model comparison, such as 'a + b > a'")
+        elif comparison is False and isinstance(out, Comparison):
+            raise TypeError(f"{x=}: need a single model, not a comparison")
+        return out
 
     def _update_mrisubject(self, fields: dict) -> str:
         subject = fields['subject']
@@ -3156,7 +3499,7 @@ class Pipeline(StateModel):
             runs = self._runs_for.get((fields['subject'], fields.get('session', ''), task, acquisition), ())
         else:
             epoch = self._epochs[epoch_name]
-            if not isinstance(epoch, PrimaryEpoch):
+            if not isinstance(epoch, (PrimaryEpoch, ContinuousEpoch)):
                 return None
             runs = self._runs_for.get((fields['subject'], fields.get('session', ''), epoch.task, acquisition), ())
             if epoch.run is not None:
@@ -3277,42 +3620,10 @@ class Pipeline(StateModel):
                 t.cells(subject, ', '.join(bad_channels[subject]))
         return t
 
-    def _show_dependencies(
-            self,
-            name: str,
-            options: dict[str, Any] | None = None,
-            *,
-            max_line_length: int | None = None,
-            return_str: bool = False,
-            **state,
-    ) -> str | None:
-        """Show the dependency tree for one registered input or derivative.
-
-        Parameters
-        ----------
-        name
-            Registered dependency node name, for example ``'evoked'``,
-            ``'test-result'`` or ``'fwd'``.
-        options
-            Load options for the requested node.
-        max_line_length
-            Maximum line length for the formatted tree. By default, infer the
-            current terminal width.
-        return_str
-            Return the formatted tree instead of printing it.
-        ...
-            State parameters for resolving the requested node.
-        """
-        self.set(**state)
-        tree = self._derivatives.dependency_tree(name, state=self.state, options=options, max_line_length=max_line_length)
-        if return_str:
-            return tree
-        print(tree)
-        return None
-
     def show_head_position_overview(
             self,
-            tolerance: float = 1e-3,
+            distance: float = 1.,
+            angle: float = .5,
             asds: bool = False,
             **state,
     ) -> 'fmtxt.Table | fmtxt.Section | Dataset':
@@ -3325,16 +3636,21 @@ class Pipeline(StateModel):
 
         Labels are assigned per subject, starting from A for the first task
         encountered. Tasks with the same label share the same head position
-        within ``tolerance``; labels are not comparable across subjects.
+        within ``distance`` and ``angle``; labels are not comparable across
+        subjects.
 
         Parameters
         ----------
-        tolerance
-            Maximum element-wise absolute difference in the ``dev_head_t``
-            transformation matrix for two recordings to be considered as having
-            the same head position. Default ``1e-3`` corresponds to approximately
-            1 mm for translation (and roughly 0.06° for rotation), which is
-            conservative enough to justify sharing a forward solution.
+        distance
+            Maximum distance (in mm) between the ``dev_head_t`` transforms of two
+            recordings for them to count as the same head position (see
+            :func:`mne.transforms.angle_distance_between_rigid`). The default
+            of 1 mm is conservative enough to justify sharing a forward solution.
+        angle
+            Maximum rotation (in degrees) between the ``dev_head_t`` transforms
+            of two recordings for them to count as the same head position. The
+            default of 0.5° moves a point 10 cm from the center of rotation by
+            less than 1 mm.
         asds
             Return a :class:`Dataset` instead of formatted output.
         ...
@@ -3346,7 +3662,7 @@ class Pipeline(StateModel):
             Table with tasks as rows and subjects as columns. Each cell contains
             a cluster label (A, B, C, ...) indicating the head position group;
             cells with the same label share the same head position within
-            ``tolerance``. Missing recordings are shown as "—". When the
+            ``distance`` and ``angle``. Missing recordings are shown as "—". When the
             experiment has multiple sessions with differing head positions, a
             :class:`fmtxt.Section` with one table per session is returned.
         Dataset
@@ -3378,11 +3694,11 @@ class Pipeline(StateModel):
             if ctx.exists():
                 data.setdefault(session, {}).setdefault(subject, {})[key] = None
                 chl.setdefault(session, {}).setdefault(subject, {})[key] = False
-                info = self._load_derivative(node_name, view='info', options={'noise': False})
-                head_t = info.get('dev_head_t')
+                raw = self._load_derivative(node_name, options={'noise': False})
+                head_t = raw.info.get('dev_head_t')
                 if head_t is not None:
                     data[session][subject][key] = head_t['trans'].copy()
-                chl[session][subject][key] = bool(info.get('hpi_meas'))
+                chl[session][subject][key] = find_chpi(raw) is not None
 
         sessions = sorted(data.keys())
         task_order = {t: i for i, t in enumerate(tasks)}
@@ -3419,7 +3735,8 @@ class Pipeline(StateModel):
                         any_missing = True
                         continue
                     for rep_label, rep_trans in representatives:
-                        if np.allclose(trans, rep_trans, atol=tolerance, rtol=0):
+                        rep_angle, rep_distance = mne.transforms.angle_distance_between_rigid(trans, rep_trans, angle_units='deg', distance_units='mm')
+                        if rep_distance <= distance and rep_angle <= angle:
                             subject_labels[key] = rep_label
                             break
                     else:
@@ -3529,6 +3846,16 @@ class Pipeline(StateModel):
             sub.append(_make_table(session))
         return section
 
+    def show_model_terms(self, x: str) -> fmtxt.Table:
+        """Table showing terms in a TRF model or comparison
+
+        Parameters
+        ----------
+        x
+            Model or comparison for which to show terms.
+        """
+        return self._eval_trf_x(x).term_table()
+
     def show_raw_info(self, **state) -> fmtxt.Table | None:
         """Display the selected pipeline for raw processing
 
@@ -3603,17 +3930,17 @@ class Pipeline(StateModel):
         ds = Dataset.from_caselist(['subject', 'reg'], rows)
         return ds
 
-    def show_rej_info(self, flagp=None, asds=False, bads=False, **state):
+    def show_rej_info(self, flagp: float = None, asds: bool = False, bads: bool = False, **state):
         """Information about artifact rejection
 
         Parameters
         ----------
-        flagp : scalar
+        flagp
             Flag entries whose percentage of good trials is lower than this
             number.
-        asds : bool
+        asds
             Return a Dataset with the information (default is to print it).
-        bads : bool
+        bads
             Display bad channel names (not just number of bad channels).
 
         See Also
@@ -3632,11 +3959,10 @@ class Pipeline(StateModel):
 
         # format bad channels
         if bads:
-            bads_fmt = ', '.join
+            def bads_fmt(ch_names: list[str]) -> str: return ', '.join(ch_names)
         else:
-            bads_fmt = len
+            def bads_fmt(ch_names: list[str]) -> str: return str(len(ch_names))
 
-        bads_in_rej = False
         subjects = []
         n_events = []
         n_good = []
@@ -3647,28 +3973,25 @@ class Pipeline(StateModel):
             try:
                 bads_raw = self.load_bad_channels()
             except FileMissingError:  # raw file is missing
-                bad_chs.append(('NaN', 'NaN'))
+                bad_chs.append('NaN')
                 if has_epoch_rejection:
                     n_good.append(float('nan'))
                 if has_interp:
                     n_interp.append(float('nan'))
                 n_events.append(np.nan)
                 continue
+            else:
+                bad_chs.append(bads_fmt(bads_raw))
 
             try:
                 ds = self.load_selected_events(reject='keep')
             except FileMissingError:  # rejection file is missing
                 ds = self.load_selected_events(reject=False)
-                bad_chs.append((bads_fmt(bads_raw), 'NaN'))
                 if has_epoch_rejection:
                     n_good.append(float('nan'))
                 if has_interp:
                     n_interp.append(float('nan'))
             else:
-                bads_rej = set(ds.info[BAD_CHANNELS]).difference(bads_raw)
-                if bads_rej:
-                    bads_in_rej = True
-                bad_chs.append((bads_fmt(bads_raw), bads_fmt(bads_rej)))
                 if has_epoch_rejection:
                     n_good.append(ds['accept'].sum())
                 if has_interp:
@@ -3676,15 +3999,6 @@ class Pipeline(StateModel):
             n_events.append(ds.n_cases)
         has_interp = has_interp and any(n_interp)
         caption = f"Rejection info for raw={raw_name}, epoch={epoch_name}, rej={rej_name}. Percent is rounded to one decimal."
-
-        if bads_in_rej:
-            caption += " Bad channels: defined in bad_channels file and in epoch-rejection file."
-            bad_chs = [f'{bads_raw} + {bads_rej}' for bads_raw, bads_rej in bad_chs]
-        else:
-            bad_chs = [f'{bads_raw}' for bads_raw, bads_rej in bad_chs]
-
-        if bads:
-            bad_chs = [s.replace('MEG ', '') for s in bad_chs]
 
         if has_interp:
             caption += " ch_interp: average number of channels interpolated per epoch, rounded to one decimal."

@@ -97,6 +97,7 @@ plot.Scatter('Realname', ..., ds=ds)  # -> 'Realname'
 """
 from __future__ import annotations
 
+import builtins
 from copy import copy, deepcopy
 import fnmatch
 from functools import cached_property, partial
@@ -871,7 +872,13 @@ def all_equal(a, b, nan_equal=False):
 
 # --- sorting ---
 
-def align(d1, d2, i1='index', i2=None, out='data'):
+def align(
+        d1: Dataset | DataObjectArg,
+        d2: Dataset | DataObjectArg,
+        i1: UVArg = 'index',
+        i2: UVArg = None,
+        out: Literal['data', 'index'] = 'data',
+):
     """Align two data-objects based on index variables
 
     Before aligning, two data-objects ``d1`` and ``d2`` describe the same cases,
@@ -883,22 +890,22 @@ def align(d1, d2, i1='index', i2=None, out='data'):
 
     Parameters
     ----------
-    d1, d2 : data-object
+    d1, d2
         Two data objects which are to be aligned
-    i1, i2 : str | Var | Factor | Interaction
+    i1, i2
         Indexes for cases in d1 and d2. If d1 and d2 are Datasets, i1 and i2
         can be keys for variables in d1 and d2.  If i2 is identical to i1 it can
         be omitted. Indexes have to supply a unique value for each case.
-    out : 'data' | 'index'
+    out
         **'data'**: returns the two aligned data objects. **'index'**: returns
         two indices index1 and index2 which can be used to align the datasets
         with ``d1[index1]; d2[index2]``.
 
     Returns
     -------
-    d1_aligned : data-object | array
+    d1_aligned : DataObjectArg | numpy.ndarray
         Aligned copy of ``d1`` (or index to align ``d1`` if ``out='index'``).
-    d2_aligned : data-object | array
+    d2_aligned : DataObjectArg | numpy.ndarray
         Aligned copy of ``d2`` (or index to align ``d2`` if ``out='index'``).
 
     See Also
@@ -933,26 +940,31 @@ def align(d1, d2, i1='index', i2=None, out='data'):
         raise ValueError(f"{out=}")
 
 
-def align1(d, to, by='index', out='data'):
+def align1(
+        d: Dataset | DataObjectArg,
+        to: DataObjectArg,
+        by: str | DataObjectArg = 'index',
+        out: Literal['data', 'index'] = 'data',
+):
     """Align a data object to an index variable
 
     Parameters
     ----------
-    d : data-object
+    d
         Data object with cases that should be aligned to ``idx``.
-    to : data-object
+    to
         Index array to which ``d`` should be aligned. If ``to`` is a
         :class:`Dataset`, use ``to[by]``.
-    by : str | data-object
+    by
         Variable labeling cases in ``d`` for aligning them to ``to``. If ``d``
         is a :class:`Dataset`, ``by`` can be the name of a variable in ``d``.
-    out : 'data' | 'index'
+    out
         Return a restructured copy of ``d`` (default) or an index array into
         ``d``.
 
     Returns
     -------
-    d_aligned : data-object | array
+    d_aligned : DataObjectArg | numpy.ndarray
         Aligned copy of ``d`` (or index to align ``d`` to ``idx`` if
         ``out='index'``).
 
@@ -993,17 +1005,21 @@ def align1(d, to, by='index', out='data'):
         raise ValueError(f"{out=}")
 
 
-def choose(choice, sources, name=None):
+def choose(
+        choice: ArrayLike,
+        sources: Sequence[DataObjectArg],
+        name: str = None,
+):
     """Combine data-objects picking from a different object for each case
 
     Parameters
     ----------
-    choice : array of int
-        Array specifying for each case from which of the sources the data should
-        be taken.
-    sources : list of data-objects
+    choice
+        Array of :class:`int`, specifying for each case from which of the
+        sources the data should be taken.
+    sources
         Data that should be combined.
-    name : str
+    name
         Name for the new data-object (optional).
 
     Notes
@@ -1034,20 +1050,23 @@ def choose(choice, sources, name=None):
         raise NotImplementedError
 
 
-def shuffled_index(n, cells=None):
+def shuffled_index(
+        n: int,
+        cells: CategorialArg = None,
+) -> np.ndarray:
     """Return an index to shuffle a data-object
 
     Parameters
     ----------
-    n : int
+    n
         Number of cases in the index.
-    cells : categorial
+    cells
         Only shuffle cases within cells.
 
     Returns
     -------
-    index : array of int
-        Array with in indexes for shuffling a data-object.
+    index : numpy.ndarray
+        Array of :class:`int` indexes for shuffling a data-object.
 
     Notes
     -----
@@ -1071,6 +1090,7 @@ def combine(
         incomplete: Literal['raise', 'drop', 'fill in'] = 'raise',
         dim_intersection: bool = False,
         to_list: bool = False,
+        info: dict = None,
 ):
     """Combine a list of items of the same type into one item.
 
@@ -1103,6 +1123,8 @@ def combine(
         have mismatching dimensions, a :exc:`DimensionMismatchError` is raised.
         With ``to_list=True``, the :class:`NDVar` are added as :class:`list` of
         :class:`NDVar` instead.
+    info
+        Info dict (when combining :class:`Dataset`)
 
     Notes
     -----
@@ -1142,7 +1164,9 @@ def combine(
 
     # combine objects
     if stype is Dataset:
-        out = Dataset(name=name, info=_info.merge_info(items))
+        if info is None:
+            info = _info.merge_info(items)
+        out = Dataset(name=name, info=info)
         if incomplete == 'fill in':
             # find all keys and data types
             keys = list(first_item.keys())
@@ -1314,19 +1338,22 @@ class Var(Named):
 
     Attributes
     ----------
-    x : numpy.ndarray
+    x
         The data stored in the Var.
-    name : None | str
+    name
         The Var's name.
 
     Notes
     -----
-    While :py:class:`Var` objects support a few basic operations in a
-    :py:mod:`numpy`-like fashion (``+``, ``-``, ``*``, ``/``, ``//``), their
-    :py:attr:`Var.x` attribute provides access to the corresponding
-    :py:class:`numpy.array` which can be used for anything more complicated.
-    :py:attr:`Var.x` can be read and modified, but should not be replaced.
+    While :class:`Var` objects support a few basic operations in a
+    :mod:`numpy`-like fashion (``+``, ``-``, ``*``, ``/``, ``//``), their
+    :attr:`Var.x` attribute provides access to the corresponding
+    :class:`numpy.ndarray` which can be used for anything more complicated.
+    :attr:`Var.x` can be read and modified, but should not be replaced.
     """
+    x: numpy.ndarray
+    name: str
+
     df = 1
     ndim = 1
     random = False
@@ -1683,28 +1710,28 @@ class Var(Named):
         """
         return np.argmin(self.x)
 
-    def argsort(self, kind='quicksort'):
+    def argsort(self, kind: Literal['quicksort', 'mergesort', 'heapsort'] = 'quicksort') -> np.ndarray:
         """:func:`numpy.argsort`
 
         Parameters
         ----------
-        kind : 'quicksort' | 'mergesort' | 'heapsort'
+        kind
             Sorting algorithm (default 'quicksort').
 
         Returns
         -------
-        index_array : array of int
+        index_array : numpy.ndarray
             Array of indices that sort `a` along the specified axis.
             In other words, ``a[index_array]`` yields a sorted `a`.
         """
         return np.argsort(self.x, kind=kind)
 
-    def astype(self, dtype):
+    def astype(self, dtype: DTypeLike) -> Var:
         """Copy of the Var with data cast to the specified type
 
         Parameters
         ----------
-        dtype : numpy dtype
+        dtype
             Numpy data-type specification (see :meth:`numpy.ndarray.astype`).
         """
         return Var(self.x.astype(dtype), self.name, self.info)
@@ -1719,21 +1746,21 @@ class Var(Named):
         "For effect coding"
         return self.x[:, None] - self.x.mean()
 
-    def as_factor(self, labels='%s', name=None, random=False):
+    def as_factor(self, labels: str | dict = '%s', name: str = None, random: bool = False):
         """Convert the Var into a Factor
 
         Parameters
         ----------
-        labels : str | dict
+        labels
             Either a format string for converting values into labels (default:
             ``'%r'``) or a dictionary mapping values to labels (see examples).
             In a dictionary, multiple values can be assigned the same label by
             providing multiple keys in a tuple. A special key 'default' can be
             used to assign values that are not otherwise specified in the
             dictionary (by default this is the empty string ``''``).
-        name : str
+        name
             Name of the output Factor (default is the current name).
-        random : bool
+        random
             Whether the Factor is a random Factor (default ``False``).
 
         Examples
@@ -1825,7 +1852,7 @@ class Var(Named):
 
         Returns
         -------
-        aggregated_var
+        aggregated_var : Var
             A :class:`Var` instance with a single value for each cell in ``x``.
         """
         if x is None:
@@ -1845,16 +1872,21 @@ class Var(Named):
     def beta_labels(self):
         return [self.name]
 
-    def diff(self, to_end=None, to_begin=None, name=None):
+    def diff(
+            self,
+            to_end: float = None,
+            to_begin: float = None,
+            name: str = None,
+    ) -> Var:
         """The differences between consecutive values
 
         Parameters
         ----------
-        to_end : scalar (optional)
+        to_end
             Append ``to_end`` at the end.
-        to_begin : scalar (optional)
+        to_begin
             Add ``to_begin`` at the beginning.
-        name : str
+        name
             Name of the output (default is the current name).
 
         Returns
@@ -1902,19 +1934,26 @@ class Var(Named):
     #     return Var(y, name, info=self.info.copy())
 
     @classmethod
-    def from_dict(cls, base, values, name=None, default=0, info=None):
+    def from_dict(
+            cls,
+            base: Sequence,
+            values: dict,
+            name: str = None,
+            default: float = 0,
+            info: dict = None,
+    ) -> Var:
         """
         Construct a Var object by mapping ``base`` to ``values``.
 
         Parameters
         ----------
-        base : sequence
+        base
             Sequence to be mapped to the new Var.
-        values : dict
+        values
             Mapping from values in base to values in the new Var.
-        name : str
+        name
             Name for the new Var.
-        default : scalar
+        default
             Default value to supply for entries in ``base`` that are not in
             ``values``.
 
@@ -1927,21 +1966,28 @@ class Var(Named):
         return cls([values.get(b, default) for b in base], name, info=info)
 
     @classmethod
-    def from_apply(cls, base, func, name=None, info=None):
+    def from_apply(
+            cls,
+            base: Sequence | Var | NDVar,
+            func: Callable,
+            name: str = None,
+            info: dict = None,
+    ) -> Var:
         """
         Construct a Var instance by applying a function to each value in a base
 
         Parameters
         ----------
-        base : sequence, len = n
-            Base for the new Var. Can be an NDVar, if ``func`` is a
-            dimensionality reducing function such as :func:`numpy.mean`.
-        func : callable
+        base
+            Base for the new Var, with one entry per case. Can be an NDVar, if
+            ``func`` is a dimensionality reducing function such as
+            :func:`numpy.mean`.
+        func
             A function that when applied to each element in ``base`` returns
             the desired value for the resulting Var.
-        name : str
+        name
             Name for the new Var.
-        info : dict
+        info
             Info for the new Var.
         """
         if isinstance(base, (Var, NDVar)):
@@ -1956,12 +2002,12 @@ class Var(Named):
 
         return cls(x, name, info=info)
 
-    def index(self, value):
+    def index(self, value: float) -> np.ndarray:
         """``v.index(value)`` returns an array of indices where v equals value
 
         Returns
         -------
-        index : array of int
+        index : numpy.ndarray
             Array of positive :class:`int` indices.
         """
         return np.flatnonzero(self == value)
@@ -1988,14 +2034,14 @@ class Var(Named):
         "Boolean index, True where the Var value is not in values"
         return np.isin(self.x, values, invert=True)
 
-    def log(self, base=None, name=None):
+    def log(self, base: float = None, name: str = None) -> Var:
         """Element-wise log
 
         Parameters
         ----------
-        base : scalar
+        base
             Base of the log (default is the natural log).
-        name : str
+        name
             Name of the output Var (default is the current name).
         """
         if base is None:
@@ -2038,16 +2084,16 @@ class Var(Named):
         """
         return self.x.min()
 
-    def repeat(self, repeats, name=None):
+    def repeat(self, repeats: int | np.ndarray, name: str = None) -> Var:
         """
         Repeat each element ``repeats`` times
 
         Parameters
         ----------
-        repeats : int | array of int
-            Number of repeats, either a constant or a different number for each
-            element.
-        name : str
+        repeats
+            Number of repeats, either a constant or an array of :class:`int`
+            with a different number for each element.
+        name
             Name of the output Var (default is current name).
         """
         return Var(self.x.repeat(repeats), *op_name(self, name=name))
@@ -2100,12 +2146,12 @@ class Var(Named):
         "The standard deviation"
         return self.x.std(ddof=ddof)
 
-    def sort_index(self, descending=False):
+    def sort_index(self, descending: bool = False):
         """Create an index that could be used to sort the Var.
 
         Parameters
         ----------
-        descending : bool
+        descending
             Sort in descending instead of an ascending order.
         """
         idx = np.argsort(self.x, kind='mergesort')
@@ -2117,14 +2163,14 @@ class Var(Named):
         "The sum over all values"
         return self.x.sum()
 
-    def tile(self, repeats, name=None):
+    def tile(self, repeats: int, name: str = None):
         """Construct a Var by repeating ``self`` ``repeats`` times
 
         Parameters
         ----------
-        repeats : int
+        repeats
             Number of repeats.
-        name : str
+        name
             Name of the output Var (default is current name).
         """
         if name is None:
@@ -2202,8 +2248,8 @@ class _Effect:
 
         Returns
         -------
-        count : Var of int,  len = len(self)
-            Cumulative count of value in self.
+        count : Var
+            Cumulative count of value in self, with one value per case.
 
         Examples
         --------
@@ -2224,12 +2270,12 @@ class _Effect:
             x = np.cumsum(self == value) + start
         return Var(x)
 
-    def enumerate_cells(self, name=None):
+    def enumerate_cells(self, name: str = None):
         """Enumerate the occurrence of each cell value throughout the data
 
         Parameters
         ----------
-        name : None | str
+        name
             Name for the returned Var.
 
         Returns
@@ -2266,12 +2312,12 @@ class _Effect:
         """
         return np.flatnonzero(self == cell)
 
-    def index_opt(self, cell):
+    def index_opt(self, cell: CellArg) -> slice | np.ndarray:
         """Find an optimized index for a given cell.
 
         Returns
         -------
-        index : slice | array
+        index : slice | numpy.ndarray
             If possible, a ``slice`` object is returned. Otherwise, an array
             of indices (as with ``e.index(cell)``).
         """
@@ -2288,21 +2334,25 @@ class _Effect:
             index = slice(start, stop, step)
         return index
 
-    def sort_index(self, descending=False, order=None):
+    def sort_index(
+            self,
+            descending: bool = False,
+            order: Sequence[CellArg] = None,
+    ) -> np.ndarray:
         """Create an index that could be used to sort this data_object.
 
         Parameters
         ----------
-        descending : bool
+        descending
             Sort in descending instead of the default ascending order.
-        order : None | sequence
+        order
             Sequence of cells to define a custom order. Any cells that are not
             present in ``order`` will be omitted in the sort_index, i.e. the
             sort_index will be shorter than its source.
 
         Returns
         -------
-        sort_index : array of int
+        sort_index : numpy.ndarray
             Array which can be used to sort a data_object in the desired order.
         """
         idx = np.empty(len(self), dtype=np.intp)
@@ -2357,13 +2407,13 @@ class Factor(_Effect):
 
     Attributes
     ----------
-    .name : None | str
+    name
         The Factor's name.
-    .cells : tuple of str
+    cells : tuple of str
         Ordered names of all cells. Order is determined 1) by the order of
         cells in the ``labels`` argument, and 2) for cells that do not occur in
         ``labels`` it is determined by first occurrence in ``x``.
-    .random : bool
+    random
         Whether the factor represents a random or fixed effect (for ANOVA).
 
     Examples
@@ -2390,6 +2440,8 @@ class Factor(_Effect):
         >>> Factor('iiiooo')
         Factor(['i', 'i', 'i', 'o', 'o', 'o'])
     """
+    name: str
+    random: bool
 
     def __init__(
             self,
@@ -2678,7 +2730,7 @@ class Factor(_Effect):
         return [txt.format(cells[i], cells[-1]) for i in range(len(cells) - 1)]
 
     @property
-    def cells(self):
+    def cells(self) -> tuple[str, ...]:
         return tuple(self._labels.values())
 
     def _sorted_cells(self):
@@ -2738,8 +2790,8 @@ class Factor(_Effect):
 
         Returns
         -------
-        count : Var of int,  len = len(self)
-            Cumulative count of value in self.
+        count : Var
+            Cumulative count of value in self, with one value per case.
 
         Examples
         --------
@@ -2779,7 +2831,7 @@ class Factor(_Effect):
 
         Returns
         -------
-        factor
+        factor : Factor
             A copy of self with only one value for each cell in ``x``.
         """
         if x is None:
@@ -2825,7 +2877,7 @@ class Factor(_Effect):
 
         Returns
         -------
-        index
+        index : np.ndarray
             Index that is ``True`` for all cases whose label ends with
             ``substr``.
 
@@ -2843,17 +2895,21 @@ class Factor(_Effect):
         values = [v for v in self.cells if v.endswith(substr)]
         return self.isin(values)
 
-    def floodfill(self, regions, empty=''):
+    def floodfill(
+            self,
+            regions: Sequence | Literal['previous'],
+            empty: str = '',
+    ) -> Factor:
         """Fill in empty regions in a Factor from the nearest non-empty value
 
         Parameters
         ----------
-        regions : array_like | str
+        regions
             How to define regions to fill. Can be an object with same length as
             the factor that indicates regions to fill (see example). Can also
             be ``"previous"``, in which case the last value before the empty
             cell is used.
-        empty : str
+        empty
             Value that is to be treated as empty (default is '').
 
         Examples
@@ -2866,9 +2922,6 @@ class Factor(_Effect):
         >>> f.floodfill([1, 1, 1, 1, 1, 1, 1, 1])
         Factor(['a', 'a', 'a', 'a', 'a', 'a', 'b', 'b'])
         """
-        if isinstance(regions, str) and regions not in ('previous',):
-            raise ValueError(f"demarcation={regions!r}")
-
         out = self.copy(None)
         if empty not in self._codes:
             return out
@@ -2883,7 +2936,7 @@ class Factor(_Effect):
                 for i in is_empty:
                     x[i] = x[i - 1]
             else:
-                raise RuntimeError(f"demarcation={regions!r}")
+                raise ValueError(f"{regions=}")
         else:
             assert len(regions) == self._n_cases
             i_region_start = 0
@@ -2941,8 +2994,9 @@ class Factor(_Effect):
 
         Returns
         -------
-        index : array of bool
-            For each case True if the value is in values, else False.
+        index : numpy.ndarray
+            Boolean array; for each case True if the value is in values, else
+            False.
 
         Examples
         --------
@@ -2957,7 +3011,7 @@ class Factor(_Effect):
 
         Returns
         -------
-        index
+        index : np.ndarray
             For each case True if the value is in values, else False.
 
         Examples
@@ -2973,8 +3027,9 @@ class Factor(_Effect):
 
         Returns
         -------
-        index : array of bool
-            For each case False if the value is in values, else True.
+        index : numpy.ndarray
+            Boolean array; for each case False if the value is in values, else
+            True.
         """
         return self.isnotin(values)
 
@@ -2983,17 +3038,18 @@ class Factor(_Effect):
 
         Returns
         -------
-        index : array of bool
-            For each case False if the value is in values, else True.
+        index : numpy.ndarray
+            Boolean array; for each case False if the value is in values, else
+            True.
         """
         return np.isin(self.x, self._encode(values), invert=True)
 
-    def label_length(self, name=None):
+    def label_length(self, name: str = None):
         """Create Var with the length of each label string
 
         Parameters
         ----------
-        name : str
+        name
             Name of the output Factor (default is current name).
 
         Examples
@@ -3028,7 +3084,7 @@ class Factor(_Effect):
 
         Returns
         -------
-        index
+        index : np.ndarray
             Index that is ``True`` for all cases whose label matches
             ``pattern``.
 
@@ -3050,12 +3106,12 @@ class Factor(_Effect):
     def n_cells(self):
         return len(self._labels)
 
-    def update_labels(self, labels):
+    def update_labels(self, labels: dict):
         """Change one or more labels in place
 
         Parameters
         ----------
-        labels : dict
+        labels
             Mapping from old labels to new labels. Existing labels that are not
             in ``labels`` are kept.
 
@@ -3089,7 +3145,7 @@ class Factor(_Effect):
         self._labels = new_labels
         self._codes = {l: c for c, l in new_labels.items()}
 
-    def sort_cells(self, order):
+    def sort_cells(self, order: Sequence[str]):
         """Reorder the cells of the Factor (in-place)
 
         The cell order controls the order in which data are displayed in tables
@@ -3097,7 +3153,7 @@ class Factor(_Effect):
 
         Parameters
         ----------
-        order : sequence of str
+        order
             New cell order. Needs to contain each cell exactly once.
         """
         new_order = tuple(order)
@@ -3137,7 +3193,7 @@ class Factor(_Effect):
 
         Returns
         -------
-        index
+        index : np.ndarray
             Index that is ``True`` for all cases whose label starts with
             ``substr``.
 
@@ -3168,29 +3224,29 @@ class Factor(_Effect):
             table.cell(np.sum(self.x == code))
         return table
 
-    def repeat(self, repeats, name=None):
+    def repeat(self, repeats: int | np.ndarray, name: str = None) -> Factor:
         """Repeat each element ``repeats`` times
 
         Parameters
         ----------
-        repeats : int | array of int
-            Number of repeats, either a constant or a different number for each
-            element.
-        name : str
+        repeats
+            Number of repeats, either a constant or an array of :class:`int`
+            with a different number for each element.
+        name
             Name of the output Factor (default is current name).
         """
         if name is None or name is True:
             name = self.name
         return Factor(self.x, name, self.random, repeats, labels=self._labels)
 
-    def tile(self, repeats, name=None):
+    def tile(self, repeats: int, name: str = None):
         """Construct a Factor by repeating ``self`` ``repeats`` times
 
         Parameters
         ----------
-        repeats : int
+        repeats
             Number of repeats.
-        name : str
+        name
             Name of the output Factor (default is current name).
         """
         if name is None or name is True:
@@ -3203,7 +3259,7 @@ class NDVar(Named):
 
     Parameters
     ----------
-    x : array_like
+    x
         The data.
     dims
         The dimensions characterizing the axes of the data. If present, ``Case``
@@ -3214,20 +3270,30 @@ class NDVar(Named):
         A dictionary with data properties (can contain arbitrary
         information that will be accessible in the info attribute).
 
+    Attributes
+    ----------
+    x
+        The data.
+    dims
+        The dimensions characterizing the axes of the data.
+    info
+        Data properties.
+    name
+        The NDVar's name.
 
     Notes
     -----
     An :class:`NDVar` consists of the following components:
 
-    - A :class:`numpy.ndarray`, stored in the :attr:`.x` attribute.
+    - A :class:`numpy.ndarray`, stored in the :attr:`NDVar.x` attribute.
     - Meta-information describing each axis of the array using a
       :class:`Dimension` object (for example, :class:`UTS` for uniform
       time series, or :class:`Sensor` for a sensor array). These
-      dimensions are stored in the :attr:`.dims` attribute, with the ith
-      element of :attr:`.dims` describing the ith axis of :attr:`.x`.
+      dimensions are stored in the :attr:`NDVar.dims` attribute, with the ith
+      element of :attr:`NDVar.dims` describing the ith axis of :attr:`NDVar.x`.
     - A dictionary containing other meta-information stored in the
-      :attr:`.info` attribute.
-    - A name stored in the :attr:`.name` attribute.
+      :attr:`NDVar.info` attribute.
+    - A name stored in the :attr:`NDVar.name` attribute.
 
     :class:`NDVar` objects support the native :func:`abs` and :func:`round`
     functions.
@@ -3240,9 +3306,9 @@ class NDVar(Named):
     ``ndvar.sub(time=0.1)``, regardless of which axis represents the time
     dimension.
 
-    *Shallow copies*: When generating a derived NDVars, :attr:`x` and
-    :attr:`dims` are generated without copying data whenever possible.
-    A shallow copy of :attr:`info` is stored. This means that modifying a
+    *Shallow copies*: When generating a derived NDVars, :attr:`NDVar.x` and
+    :attr:`NDVar.dims` are generated without copying data whenever possible.
+    A shallow copy of :attr:`NDVar.info` is stored. This means that modifying a
     derived NDVar in place can affect the NDVar it was derived from.
     When indexing an NDVar, the new NDVar will contain a view
     on the data whenever possible based on the underlying array (See `NumPy
@@ -3259,6 +3325,10 @@ class NDVar(Named):
     - Work with :class:`NDVar`: :ref:`exa-cluster-based-mu`
     - Convert :class:`NDVar` to univariate :class:`Var`: :ref:`exa-compare-topographies`
     """
+    x: numpy.ndarray
+    dims: tuple[Dimension, ...]
+    info: dict
+    name: str
 
     def __init__(
             self,
@@ -3682,12 +3752,12 @@ class NDVar(Named):
             out += range_desc
         return out
 
-    def abs(self, name=None):
+    def abs(self, name: str = None):
         """Compute the absolute values
 
         Parameters
         ----------
-        name : str
+        name
             Name of the output NDVar (default is the current name).
 
         Returns
@@ -3718,7 +3788,7 @@ class NDVar(Named):
 
         Returns
         -------
-        any
+        any : NDVar | Var | bool
             Boolean data indicating presence of nonzero value over specified
             dimensions. Return a Var if only the case dimension remains, and a
             boolean if the function collapses over all data.
@@ -3769,7 +3839,7 @@ class NDVar(Named):
 
         Returns
         -------
-        any
+        any : NDVar | Var | bool
             Boolean data indicating presence of nonzero value over specified
             dimensions. Return a Var if only the case dimension remains, and a
             boolean if the function collapses over all data.
@@ -3795,7 +3865,7 @@ class NDVar(Named):
 
         Returns
         -------
-        argmax
+        argmax : float | str | tuple | NDVar | Var
             Index appropriate for the NDVar's dimensions. If NDVar has more
             than one dimensions, a tuple of indices.
         """
@@ -3831,7 +3901,7 @@ class NDVar(Named):
 
         Returns
         -------
-        argmin
+        argmin : float | str | tuple | NDVar | Var
             Index appropriate for the NDVar's dimensions. If NDVar has more
             than one dimensions, a tuple of indices.
         """
@@ -3910,7 +3980,7 @@ class NDVar(Named):
 
         Returns
         -------
-        aggregated_ndvar
+        aggregated_ndvar : NDVar
             NDVar with data aggregated over cells of ``x``.
         """
         if not self.has_case:
@@ -3987,12 +4057,12 @@ class NDVar(Named):
 
         return self._package_aggregated_output(x, dims, name, _info.for_data(x, self.info))
 
-    def astype(self, dtype):
+    def astype(self, dtype: DTypeLike) -> NDVar:
         """Copy of the NDVar with data cast to the specified type
 
         Parameters
         ----------
-        dtype : numpy dtype
+        dtype
             Numpy data-type specification (see :meth:`numpy.ndarray.astype`).
         """
         return NDVar(self.x.astype(dtype), self.dims, self.name, self.info)
@@ -4043,7 +4113,7 @@ class NDVar(Named):
 
         Returns
         -------
-        binned_ndvar
+        binned_ndvar : NDVar
             NDVar with data binned along the time axis (i.e., each time point
             reflects one time bin).
         """
@@ -4108,18 +4178,24 @@ class NDVar(Named):
         info = {**self.info, 'bins': tuple(intervals(edges))}
         return NDVar(x, dims, name or self.name, info)
 
-    def clip(self, min=None, max=None, name=None, out=None):
+    def clip(
+            self,
+            min: float | Var | NDVar = None,
+            max: float | Var | NDVar = None,
+            name: str = None,
+            out: NDVar = None,
+    ) -> NDVar:
         """Clip data (see :func:`numpy.clip`)
 
         Parameters
         ----------
-        min : scalar | Var | NDVar
+        min
             Minimum value.
-        max : scalar | Var | NDVar
+        max
             Maximum value.
-        name : str
+        name
             Name of the output NDVar (default is the current name).
-        out : NDVar
+        out
             Container for output.
         """
         if min is not None:
@@ -4135,12 +4211,12 @@ class NDVar(Named):
             x = self.x.clip(min, max)
             return NDVar(x, self.dims, name or self.name, self.info)
 
-    def copy(self, name=None):
+    def copy(self, name: str = None):
         """A deep copy of the NDVar's data
 
         Parameters
         ----------
-        name : str
+        name
             Name of the output NDVar (default is the current name).
 
         Returns
@@ -4279,14 +4355,14 @@ class NDVar(Named):
         else:
             return NDVar(x, dims, name, {})
 
-    def envelope(self, dim='time', name=None):
+    def envelope(self, dim: str = 'time', name: str = None):
         """Compute the Hilbert envelope of a signal
 
         Parameters
         ----------
-        dim : str
+        dim
             Dimension over which to compute the envelope (default 'time').
-        name : str
+        name
             Name of the output NDVar (default is the current name).
 
         Returns
@@ -4339,7 +4415,7 @@ class NDVar(Named):
 
         Returns
         -------
-        extrema
+        extrema : NDVar | Var | float
             Extrema over specified dimensions. Return a Var if only the
             case dimension remains, and a float if the function collapses over
             all data.
@@ -4351,15 +4427,15 @@ class NDVar(Named):
         """
         return self._aggregate_over_dims(axis, regions, extrema)
 
-    def fft(self, dim=None, name=None):
+    def fft(self, dim: str = None, name: str = None):
         """Fast fourier transform
 
         Parameters
         ----------
-        dim : str
+        dim
             Dimension along which to operate (the default is the ``time``
             dimension if present).
-        name : str
+        name
             Name of the output NDVar (default is the current name).
 
         Returns
@@ -4481,7 +4557,7 @@ class NDVar(Named):
 
         Returns
         -------
-        inferred_names
+        inferred_names : tuple[str, ...]
             Dimension names in the same order as in ``names``.
         """
         if first is not None or last is not None:
@@ -4541,18 +4617,18 @@ class NDVar(Named):
     def has_dim(self, name):
         return name in self._dim_2_ax
 
-    def label_clusters(self, threshold=0, tail=0, name=None):
+    def label_clusters(self, threshold: float = 0, tail: Literal[-1, 0, 1] = 0, name: str = None):
         """Find and label clusters of values exceeding a threshold
 
         Parameters
         ----------
-        threshold : scalar
+        threshold
             Threshold value for clusters (default 0 to find clusters of
             non-zero values).
-        tail : 0 | -1 | 1
+        tail
             Whether to label cluster smaller than threshold, larger than
             threshold, or both (default).
-        name : str
+        name
             Name of the output NDVar (default is the current name).
 
         Returns
@@ -4602,14 +4678,14 @@ class NDVar(Named):
         info = {**self.info, 'cids': cids}
         return NDVar(cmap, self.dims, name or self.name, info)
 
-    def log(self, base=None, name=None):
+    def log(self, base: float = None, name: str = None) -> NDVar:
         """Element-wise log
 
         Parameters
         ----------
-        base : scalar
+        base
             Base of the log (default is the natural log).
-        name : str
+        name
             Name of the output NDVar (default is the current name).
         """
         mod = np.ma if isinstance(self.x, np.ma.masked_array) else np
@@ -4628,16 +4704,23 @@ class NDVar(Named):
             op = f'log{base:g}('
         return NDVar(x, self.dims, *op_name(self, op, name=name))
 
-    def mask(self, mask, name=None, missing=None, fill_value=None):
+    def mask(
+            self,
+            mask: NDVar,
+            name: str = None,
+            missing: bool = None,
+            fill_value: float = None,
+    ) -> NDVar:
         """Create a masked version of this NDVar (see :class:`numpy.ma.MaskedArray`)
 
         Parameters
         ----------
-        mask : bool NDVar
-            Mask, with equal dimensions (``True`` values will be masked).
-        name : str
+        mask
+            Boolean mask, with equal dimensions (``True`` values will be
+            masked).
+        name
             Name of the output NDVar (default is the current name).
-        missing : bool
+        missing
             Whether to mask values that are outside of ``mask`` (i.e., when
             ``mask``'s dimensions only cover part of the NDVar).
             The default is to raise a ``ValueError`` if ``mask`` is missing values.
@@ -4700,7 +4783,7 @@ class NDVar(Named):
             Vakue to fill in for previously masked values; can be the name of any
             numpy method, derived from the previously unmasked values (e.g.,
             ``mean`` or ``max``).
-        name : str
+        name
             Name of the output NDVar (default is the current name).
         """
         if isinstance(self.x, np.ma.masked_array):
@@ -4741,7 +4824,7 @@ class NDVar(Named):
 
         Returns
         -------
-        max
+        max : NDVar | Var | float
             The maximum over specified dimensions. Return a Var if only the
             case dimension remains, and a float if the function collapses over
             all data.
@@ -4800,7 +4883,7 @@ class NDVar(Named):
 
         Returns
         -------
-        min
+        min : NDVar | Var | float
             The minimum over specified dimensions. Return a Var if only the
             case dimension remains, and a float if the function collapses over
             all data.
@@ -4812,17 +4895,17 @@ class NDVar(Named):
         """
         return self._aggregate_over_dims(axis, regions, np.min)
 
-    def norm(self, dim, ord=2, name=None):
+    def norm(self, dim: str, ord: float = 2, name: str = None) -> NDVar:
         """Norm over ``dim``
 
         Parameters
         ----------
-        dim : str
+        dim
             Dimension over which to operate.
-        ord : scalar
+        ord
             See description of vector norm for :func:`scipy.linalg.norm`
             (default 2).
-        name : str
+        name
             Name of the output NDVar (default is the current name).
 
         Returns
@@ -4850,17 +4933,17 @@ class NDVar(Named):
         dims = self.dims[:axis] + self.dims[axis + 1:]
         return self._package_aggregated_output(x, dims, name)
 
-    def ols(self, x, name=None):
+    def ols(self, x: Model | str, name: str = None):
         """Sample-wise ordinary least squares regressions
 
         Parameters
         ----------
-        x : Model | str
+        x
             Predictor or predictors. A Model to regress over cases, or a
             dimension name to regress against values of one of the
             ``NDVar``'s dimensions. A Model with multiple ``Var``s can be
             supplied as argument list of ``Var``.
-        name : str
+        name
             Name of the output NDVar (default is the current name).
 
         Returns
@@ -4906,16 +4989,16 @@ class NDVar(Named):
             out_dims = (Case,) + self.dims[1:]
         return self._package_aggregated_output(betas, out_dims, name, info)
 
-    def ols_t(self, x, name=None):
+    def ols_t(self, x: Model, name: str = None):
         """
         Compute T-values for sample-wise ordinary least squares regressions
 
         Parameters
         ----------
-        x : Model
+        x
             Predictor or predictors. Can also be supplied as argument that can
             be converted to a Model, for example ``Var`` or list of ``Var``.
-        name : str
+        name
             Name of the output NDVar (default is the current name).
 
         Returns
@@ -4960,7 +5043,13 @@ class NDVar(Named):
         else:
             return NDVar(x, dims, *args)
 
-    def quantile(self, q=0.5, axis: AxisArg = None, interpolation='linear', **regions) -> NDVar | Var | float:
+    def quantile(
+            self,
+            q: float = 0.5,
+            axis: AxisArg = None,
+            interpolation: str = 'linear',
+            **regions,
+    ) -> NDVar | Var | float:
         """The value such that q of the NDVar's values are lower
 
         (See func:`numpy.quantile`)
@@ -4974,9 +5063,9 @@ class NDVar(Named):
             An boolean NDVar with the same dimensions as the data can be used
             to compute the maximum in specific elements (if the data has a case
             dimension, the maximum is computed for each case).
-        q : float
+        q
             Quantile to compute, between 0 and 1 inclusive.
-        interpolation : str
+        interpolation
             See func:`numpy.quantile`.
         **regions
             Regions over which to aggregate. For example, to get the maximum
@@ -4991,15 +5080,16 @@ class NDVar(Named):
         func = partial(np_func, q=q, interpolation=interpolation)
         return self._aggregate_over_dims(axis, regions, func, mask=np.nan)
 
-    def repeat(self, repeats, name=None):
+    def repeat(self, repeats: int | np.ndarray, name: str = None) -> NDVar:
         """Repeat slices of the NDVar along the case dimension
 
         Parameters
         ----------
-        repeats : int | array of ints
-            The number of repetitions for each element. `repeats` is
+        repeats
+            The number of repetitions for each element (:class:`int` or array
+            of :class:`int`). `repeats` is
             broadcasted to fit the shape of the given dimension.
-        name : str
+        name
             Name of the output NDVar (default is the current name).
         """
         if self.has_case:
@@ -5027,16 +5117,16 @@ class NDVar(Named):
         dims[axis] = dims[axis]._rename(to)
         return NDVar(self.x, dims, name or self.name, self.info)
 
-    def residuals(self, x, name=None):
+    def residuals(self, x: Model, name: str = None):
         """
         The residuals of sample-wise ordinary least squares regressions
 
         Parameters
         ----------
-        x : Model
+        x
             Predictor or predictors. Can also be supplied as argument that can
             be converted to a Model, for example ``Var`` or list of ``Var``.
-        name : str
+        name
             Name of the output NDVar (default is the current name).
 
         Returns
@@ -5078,7 +5168,7 @@ class NDVar(Named):
 
         Returns
         -------
-        rms
+        rms : NDVar | Var | float
             The root mean square over specified dimensions. Return a Var if
             only the case dimension remains, and a float if the function
             collapses over all data.
@@ -5086,12 +5176,12 @@ class NDVar(Named):
         from ._stats.stats import rms
         return self._aggregate_over_dims(axis, regions, rms)
 
-    def sign(self, name=None):
+    def sign(self, name: str = None):
         """Element-wise indication of the sign
 
         Parameters
         ----------
-        name : str
+        name
             Name of the output NDVar (default is the current name).
 
         Returns
@@ -5101,27 +5191,36 @@ class NDVar(Named):
 
         Notes
         -----
-        Like :func:`numpy.sign`.
+        Like :obj:`numpy.sign`.
         """
         return NDVar(np.sign(self.x), self.dims, name or self.name, self.info)
 
-    def smooth(self, dim, window_size=None, window='hamming', mode='center', window_samples=None, fix_edges=False, name=None):
+    def smooth(
+            self,
+            dim: str,
+            window_size: float = None,
+            window: str | tuple = 'hamming',
+            mode: Literal['left', 'center', 'right', 'full'] = 'center',
+            window_samples: int = None,
+            fix_edges: bool = False,
+            name: str = None,
+    ) -> NDVar:
         """Smooth data by convolving it with a window
 
         Parameters
         ----------
-        dim : str
+        dim
             Dimension along which to smooth.
-        window_size : scalar
+        window_size
             Size of the window (in dimension units, i.e., for time in
             seconds). For finite windows this is the full size of the window,
             for a gaussian window it is the standard deviation.
-        window : str | tuple
+        window
             Window type, input to :func:`scipy.signal.get_window`. For example
             'boxcar', 'triang', 'hamming' (default). For dimensions with
             irregular spacing, such as :class:`SourceSpace`, only ``gaussian``
             is implemented.
-        mode : 'left' | 'center' | 'right' | 'full'
+        mode
             Alignment of the output to the input relative to the window:
 
             - ``left``: sample in the output corresponds to the left edge of
@@ -5133,17 +5232,17 @@ class NDVar(Named):
             - ``full``: return the full convolution. This is only implemented
               for smoothing time axis.
 
-        window_samples : scalar
+        window_samples
             Size of the window in samples (this parameter is used to specify
             window size in array elements rather than in units of the dimension;
             it is mutually exclusive with ``window_size``).
-        fix_edges : bool
+        fix_edges
             Standard convolution smears values around the edges resulting in
             some data loss. The ``fix_edges`` option renormalizes the smoothing
             window when it overlaps an edge to make sure that
             ``x.smooth('time').sum('time') == x.sum('time')``. Only implemented
             for ``mode='center'``).
-        name : str
+        name
             Name for the smoothed NDVar.
 
         Returns
@@ -5257,7 +5356,7 @@ class NDVar(Named):
 
         Returns
         -------
-        std
+        std : NDVar | Var | float
             The standard deviation over specified dimensions. Return a Var if
             only the case dimension remains, and a float if the function
             collapses over all data.
@@ -5279,7 +5378,7 @@ class NDVar(Named):
         range:
             A range within a dimension is specified through a keyword-argument.
             Only the data in the specified range is included. Use like the
-            :py:meth:`.sub` method.
+            :meth:`.sub` method.
 
 
         **additional kwargs:**
@@ -5473,26 +5572,26 @@ class NDVar(Named):
 
         Returns
         -------
-        sum
+        sum : NDVar | Var | float
             The sum over specified dimensions. Return a Var if only the
             case dimension remains, and a float if the function collapses over
             all data.
         """
         return self._aggregate_over_dims(axis, regions, np.sum)
 
-    def threshold(self, v, tail=1, name=None):
+    def threshold(self, v: float, tail: Literal[-1, 0, 1] = 1, name: str = None):
         """Set all values below a threshold to 0.
 
         Parameters
         ----------
-        v : scalar
+        v
             Threshold value.
-        tail : -1 | 0 | 1
+        tail
             Tailedness.
             1: set values below v to 0 (default);
             0: set values between -v and v to 0;
             -1: set values above v to 0.
-        name : str
+        name
             Name of the output NDVar (default is the current name).
         """
         if tail == 0:
@@ -5534,7 +5633,7 @@ class NDVar(Named):
 
         Returns
         -------
-        var
+        var : NDVar | Var | float
             The variance over specified dimensions. Return a Var if only the
             case dimension remains, and a float if the function collapses over
             all data.
@@ -5583,7 +5682,7 @@ def extrema(x, axis=None):
 
 
 class Datalist(list):
-    """:py:class:`list` subclass for including lists in in a Dataset.
+    """:class:`list` subclass for including lists in in a Dataset.
 
     Parameters
     ----------
@@ -5591,7 +5690,7 @@ class Datalist(list):
         Content for the Datalist.
     name
         Name of the Datalist.
-    fmt : 'repr' | 'str' | 'strlist'
+    fmt
         How to format items when converting Datasets to tables (default 'repr'
         uses the normal object representation).
 
@@ -5622,7 +5721,7 @@ class Datalist(list):
             self,
             items: Sequence[Any] = None,
             name: str = None,
-            fmt: str = 'repr',
+            fmt: Literal['repr', 'str', 'strlist'] = 'repr',
     ):
         if fmt not in ('repr', 'str', 'strlist'):
             raise ValueError(f"{fmt=}")
@@ -5841,20 +5940,20 @@ class Dataset(dict):
 
     Parameters
     ----------
-    items : dict | list
+    items
         Items in the Dataset (either specified as ``{key: data_object}``
         dictionary, or as ``[data_object]`` list in which data-object names will
         be used as keys).
         The Dataset stores the input items directly, without making a copy.
-    name : str
+    name
         Name for the Dataset.
-    caption : str
+    caption
         Caption for the table.
-    info : dict
+    info
         Info dictionary, can contain arbitrary entries and can be accessed
         as ``.info`` attribute after initialization. The Dataset makes a
         shallow copy.
-    n_cases : int
+    n_cases
         Specify the number of cases in the Dataset if no items are added
         upon initialization (by default the number is inferred when the
         fist item is added).
@@ -5862,7 +5961,7 @@ class Dataset(dict):
 
     Attributes
     ----------
-    n_cases : None | int
+    n_cases
         The number of cases in the Dataset (corresponding to the number of
         rows in the table representation). None if no variables have been
         added.
@@ -5877,8 +5976,8 @@ class Dataset(dict):
     dictionary. Each variable corresponds to a column, and each index in the
     value list corresponds to a row, or case.
 
-    The Dataset class inherits basic behavior from :py:class:`dict`.
-    Dictionary keys are enforced to be :py:class:`str` objects and should
+    The Dataset class inherits basic behavior from :class:`dict`.
+    Dictionary keys are enforced to be :class:`str` objects and should
     correspond to the variable names.
     As for a dictionary, The Dataset's length (``len(ds)``) reflects the number
     of variables in the Dataset (i.e., the number of rows).
@@ -5888,12 +5987,12 @@ class Dataset(dict):
 
     The :class:`Dataset` assumes certain properties of the items that are
     assigned, for example they need to support :mod:`numpy` indexing.
-    When assigning items that are not :mod:`eelbrain` data containers, they are
+    When assigning items that are not ``eelbrain`` data containers, they are
     coerced in the following manner:
 
     - 1-d :class:`numpy.ndarray` are coerced to :class:`Var`; other
       :class:`numpy.ndarray` are assigned as is
-    - Objects conforming to the Python :class:`collections.Sequence` abstract
+    - Objects conforming to the Python :class:`collections.abc.Sequence` abstract
       base class are coerced to :class:`Datalist`
     - :class:`mne.Epochs` are assigned as is
     - For advanced use, additional classes can be assigned as is by extending the
@@ -5950,13 +6049,22 @@ class Dataset(dict):
     - :ref:`exa-intro`: basic functionality
     - :ref:`exa-dataset`: how to construct datasets
     """
+    n_cases: int
+
     _value_type_exceptions = (MNE_EPOCHS,)
 
     @staticmethod
     def _is_kv_pair(item):
         return isinstance(item, (list, tuple)) and len(item) == 2 and isinstance(item[0], str)
 
-    def __init__(self, items=None, name=None, caption=None, info=None, n_cases=None):
+    def __init__(
+            self,
+            items: dict | list = None,
+            name: str = None,
+            caption: str = None,
+            info: dict = None,
+            n_cases: int = None,
+    ):
         dict.__init__(self)  # skips __setitem__()
         self.n_cases = None if n_cases is None else int(n_cases)
         self.name = name
@@ -6222,14 +6330,14 @@ class Dataset(dict):
         else:
             self[item.name] = item
 
-    def add_empty_var(self, name, dtype=np.float64):
+    def add_empty_var(self, name: str, dtype: DTypeLike = np.float64) -> Var:
         """Create an empty variable in the dataset
 
         Parameters
         ----------
-        name : str
+        name
             Name for the new variable.
-        dtype : numpy dtype
+        dtype
             Data type of the new variable (default is float64).
 
         Returns
@@ -6365,13 +6473,13 @@ class Dataset(dict):
     def _asfmtext(self, **_):
         return self.as_table()
 
-    def eval(self, expression):
+    def eval(self, expression: str):
         """
         Evaluate an expression involving items stored in the Dataset.
 
         Parameters
         ----------
-        expression : str
+        expression
             Python expression to evaluate.
 
         Notes
@@ -6534,12 +6642,12 @@ class Dataset(dict):
         return cls(items, info=info)
 
     @classmethod
-    def from_r(cls, name) -> Dataset:
+    def from_r(cls, name: str) -> Dataset:
         """Create a Dataset from an R data frame through ``rpy2``
 
         Parameters
         ----------
-        name : str
+        name
             Name of the dataframe in R.
 
         Examples
@@ -6594,16 +6702,21 @@ class Dataset(dict):
         "The i'th case as a dictionary"
         return {k: v[i] for k, v in self.items()}
 
-    def get_subsets_by(self, x, exclude=(), name='{name}[{cell}]'):
+    def get_subsets_by(
+            self,
+            x: CategorialArg,
+            exclude: Sequence[CellArg] = (),
+            name: str = '{name}[{cell}]',
+    ) -> dict:
         """Split the Dataset by the cells of ``x``
 
         Parameters
         ----------
-        x : categorial
+        x
             Model defining cells into which to split the dataset.
-        exclude : sequence of str
+        exclude
             Cells of ``x`` which should be ignored.
-        name : str
+        name
             Name for the new datasets (formatted with ``self.name`` and
             ``cell``).
 
@@ -6715,24 +6828,24 @@ class Dataset(dict):
 
         return ds
 
-    def copy(self, name=None):
+    def copy(self, name: str = None):
         """Create a shallow copy of the dataset
 
         Parameters
         ----------
-        name : str
+        name
             Name for the new dataset (default is ``self.name``).
         """
         return Dataset(self, name or self.name, self._caption, self.info, self.n_cases)
 
-    def equalize_counts(self, x, n=None):
+    def equalize_counts(self, x: CategorialArg, n: int = None) -> Dataset:
         """Create a copy of the Dataset with equal counts in each cell of x
 
         Parameters
         ----------
-        x : categorial
+        x
             Model which defines the cells in which to equalize the counts.
-        n : int
+        n
             Number of cases per cell (the default is the maximum possible, i.e.
             the number of cases in the cell with the least number of cases).
             Negative numbers to subtract from maximum possible.
@@ -6803,17 +6916,17 @@ class Dataset(dict):
             yield self.get_case(i)
 
     @property
-    def n_items(self):
+    def n_items(self) -> int:
         return super().__len__()
 
-    def rename(self, old, new):
+    def rename(self, old: str, new: str):
         """Shortcut to rename a data-object in the Dataset.
 
         Parameters
         ----------
-        old : str
+        old
             Current name of the data-object.
-        new : str
+        new
             New name for the data-object.
         """
         if old not in self:
@@ -6825,7 +6938,7 @@ class Dataset(dict):
 
     def repeat(
             self,
-            repeats: int | Sequence[[int]],
+            repeats: int | Sequence[int],
             name: str = None,
     ):
         """
@@ -6856,15 +6969,15 @@ class Dataset(dict):
     def shape(self):
         return (self.n_cases, self.n_items)
 
-    def sort(self, order, descending=False):
+    def sort(self, order: str | DataObjectArg, descending: bool = False) -> None:
         """Sort the Dataset in place.
 
         Parameters
         ----------
-        order : str | data-object
+        order
             Data object (Var, Factor or interactions) according to whose values
             to sort the Dataset, or its name in the Dataset.
-        descending : bool
+        descending
             Sort in descending instead of an ascending order.
 
         See Also
@@ -6876,15 +6989,15 @@ class Dataset(dict):
         for k in self:
             self[k] = self[k][idx]
 
-    def sort_index(self, order, descending=False):
+    def sort_index(self, order: str | DataObjectArg, descending: bool = False) -> np.ndarray:
         """Create an index that could be used to sort the Dataset.
 
         Parameters
         ----------
-        order : str | data-object
+        order
             Data object (Var, Factor or interactions) according to whose values
             to sort the Dataset, or its name in the Dataset.
-        descending : bool
+        descending
             Sort in descending instead of an ascending order.
 
         See Also
@@ -6930,33 +7043,39 @@ class Dataset(dict):
         else:
             raise ValueError(f"Unrecognized extension: {ext!r}. Needs to be .pickle, .txt or .tex.")
 
-    def save_rtf(self, path=None, fmt='%.3g'):
+    def save_rtf(self, path: PathArg = None, fmt: str = '%.3g') -> None:
         """Save the Dataset as TeX table.
 
         Parameters
         ----------
-        path : None | str
+        path
             Target file name (if ``None`` is supplied, a save file dialog is
             displayed). If no extension is specified, '.tex' is appended.
-        fmt : format string
+        fmt
             Formatting for scalar values.
         """
         table = self.as_table(fmt=fmt)
         table.save_rtf(path)
 
-    def save_tex(self, path=None, fmt='%.3g', header=True, midrule=True):
+    def save_tex(
+            self,
+            path: PathArg = None,
+            fmt: str = '%.3g',
+            header: bool = True,
+            midrule: bool = True,
+    ) -> None:
         """Save the Dataset as TeX table.
 
         Parameters
         ----------
-        path : None | str
+        path
             Target file name (if ``None`` is supplied, a save file dialog is
             displayed). If no extension is specified, '.tex' is appended.
-        fmt : format string
+        fmt
             Formatting for scalar values.
-        header : bool
+        header
             Include the varibale names as a header row.
-        midrule : bool
+        midrule
             print a midrule after table header.
         """
         if not isinstance(path, str):
@@ -7008,12 +7127,12 @@ class Dataset(dict):
         table = self.as_table(fmt=fmt, header=header, nan=nan)
         table.save_tsv(path, delimiter, fmt)
 
-    def save_pickled(self, path=None):
+    def save_pickled(self, path: PathArg = None):
         """Pickle the Dataset.
 
         Parameters
         ----------
-        path : None | str
+        path
             Target file name (if ``None`` is supplied, a save file dialog is
             displayed). If no extension is specified, '.pickle' is appended.
         """
@@ -7032,15 +7151,15 @@ class Dataset(dict):
         with open(path, 'wb') as fid:
             pickle.dump(self, fid, pickle.HIGHEST_PROTOCOL)
 
-    def sorted(self, order, descending=False):
+    def sorted(self, order: str | DataObjectArg, descending: bool = False) -> Dataset:
         """Create an sorted copy of the Dataset.
 
         Parameters
         ----------
-        order : str | data-object
+        order
             Data object (Var, Factor or interactions) according to whose values
             to sort the Dataset, or its name in the Dataset.
-        descending : bool
+        descending
             Sort in descending instead of an ascending order.
 
         See Also
@@ -7051,24 +7170,29 @@ class Dataset(dict):
         idx = self.sort_index(order, descending)
         return self[idx]
 
-    def sub(self, index=None, keys=None, name=None):
+    def sub(
+            self,
+            index: IndexArg | int | str = None,
+            keys: Sequence[str] | str = None,
+            name: str = None,
+    ) -> Dataset | DataObjectArg:
         """Access a subset of the data in the Dataset.
 
         Parameters
         ----------
-        index : int | array | str
+        index
             Index for selecting a subset of cases. Can be an valid numpy index
             or a string (the name of a variable in Dataset, or an expression
             to be evaluated in the Dataset's namespace).
-        keys : sequence of str | str
+        keys
             Only include items with those keys (default all items). Use a
             :class:`str` to retrieve a single item directly.
-        name : str
+        name
             name for the new Dataset.
 
         Returns
         -------
-        data : Dataset | data_object
+        data : Dataset | DataObjectArg
             Either the :class:`Dataset` with cases restricted to ``index``, or,
             if ``key`` is a :class:`str`, a single item restricted to ``index``.
 
@@ -7139,14 +7263,14 @@ class Dataset(dict):
         "Table with the last n cases in the Dataset"
         return self._display_table(range(-n, 0), title)
 
-    def tile(self, repeats, name=None):
+    def tile(self, repeats: int, name: str = None):
         """Concatenate ``repeats`` copies of the dataset
 
         Parameters
         ----------
-        repeats : int
+        repeats
             Number of repeats.
-        name : str
+        name
             Name for the new dataset (default is ``self.name``).
         """
         items = {name: item.tile(repeats) for name, item in self.items()}
@@ -7154,12 +7278,12 @@ class Dataset(dict):
             name = self.name
         return Dataset(items, name, self._caption, self.info, self.n_cases * repeats)
 
-    def to_r(self, name=None):
+    def to_r(self, name: str = None):
         """Place the Dataset into R as dataframe using rpy2
 
         Parameters
         ----------
-        name : str
+        name
             Name for the R dataframe (default is self.name).
 
         Examples
@@ -7215,18 +7339,18 @@ class Dataset(dict):
         df = ro.DataFrame(items)
         ro.globalenv[name] = df
 
-    def update(self, ds, replace=False, info=True):
+    def update(self, ds: Dataset | dict, replace: bool = False, info: bool = True):
         """Update the Dataset with all variables in ``ds``.
 
         Parameters
         ----------
-        ds : Dataset | dict
+        ds
             A Dataset or other dictionary-like object whose keys are strings
             and whose values are data-objects.
-        replace : bool
+        replace
             If a variable in ds is already present, replace it. If False,
             duplicates raise a ValueError (unless they are equivalent).
-        info : bool
+        info
             Also update the info dictionary.
 
         Notes
@@ -7278,16 +7402,17 @@ class Interaction(_Effect):
 
     Parameters
     ----------
-    base : sequence
+    base
         List of data-objects that form the basis of the interaction.
 
     Attributes
     ----------
-    base : list
+    base
         All effects.
     """
+    base: list
 
-    def __init__(self, base):
+    def __init__(self, base: Sequence[DataObjectArg]):
         base_ = EffectList()
         n_vars = 0
 
@@ -7347,7 +7472,7 @@ class Interaction(_Effect):
         return set(self)
 
     @cached_property
-    def cells(self):
+    def cells(self) -> tuple[CellArg, ...]:
         return tuple(cell for cell in self._all_cells if cell in self._value_set)
 
     def _sorted_cells(self):
@@ -7403,14 +7528,14 @@ class Interaction(_Effect):
             return np.any(x, 0)
         return np.ones(len(self), bool)
 
-    def as_factor(self, delim=' ', name=None):
+    def as_factor(self, delim: str = ' ', name: str = None):
         """Convert the Interaction to a factor
 
         Parameters
         ----------
-        delim : str
+        delim
             Delimiter to join factor cell values (default ``" "``).
-        name : str
+        name
             Name for the Factor (default is None).
 
         Examples
@@ -7446,12 +7571,12 @@ class Interaction(_Effect):
             return [self.name]
         return ["%s %i" % (self.name, i) for i in range(self.df)]
 
-    def as_labels(self, delim=' '):
+    def as_labels(self, delim: str = ' '):
         """All values as a list of strings.
 
         Parameters
         ----------
-        delim : str
+        delim
             Delimiter with which to join the elements of cells.
         """
         return [delim.join(filter(None, map(str, case))) for case in self]
@@ -7462,12 +7587,12 @@ class Interaction(_Effect):
     ) -> Interaction:
         return Interaction(f.aggregate(x) for f in self.base)
 
-    def isin(self, cells):
+    def isin(self, cells: Sequence[CellArg]) -> np.ndarray:
         """An index that is true where the Interaction equals any of the cells.
 
         Parameters
         ----------
-        cells : sequence of tuples
+        cells
             Cells for which the index will be true. Cells described as tuples
             of strings.
         """
@@ -7475,7 +7600,7 @@ class Interaction(_Effect):
         return np.any(is_v, 0)
 
 
-def box_cox_transform(x, p, name=None):
+def box_cox_transform(x: VarArg, p: float, name: str = None) -> Var:
     """The Box-Cox transform of x as :class:`Var`
 
     With ``p=0``, this is the log of x; otherwise ``(x**p - 1) / p``
@@ -7484,7 +7609,7 @@ def box_cox_transform(x, p, name=None):
     ----------
     x : Var
         Source data.
-    p : scalar
+    p
         Parameter for Box-Cox transform.
     name : str
         Name for the output Var.
@@ -7600,19 +7725,20 @@ class Model:
 
     Parameters
     ----------
-    x : effect | iterator of effects
+    x
         Effects to be included in the model (Var, Factor, Interaction ,
         ...). Can also contain models, in which case all the model's
         effects will be added.
 
     Attributes
     ----------
-    effects : list
+    effects
         Effects included in the model (:class:`Var`, :class:`Factor`, etc.
         objects)
     """
+    effects: list
 
-    def __init__(self, x):
+    def __init__(self, x: DataObjectArg | Iterator[DataObjectArg]):
         effects = EffectList()
 
         # find effects in input
@@ -7771,8 +7897,9 @@ class Model:
 
         Returns
         -------
-        effects_to_beta : np.ndarray (n_effects, 2)
-            For each effect, indicating the first index in betas and df
+        effects_to_beta : numpy.ndarray
+            Array of shape ``(n_effects, 2)``, for each effect indicating the
+            first index in betas and df
         """
         out = np.empty((len(self.effects), 2), np.intp)
         beta_start = 1
@@ -7782,23 +7909,28 @@ class Model:
             beta_start += e.df
         return out
 
-    def as_table(self, method='dummy', cases=0, group_terms=True):
+    def as_table(
+            self,
+            method: Literal['effect', 'dummy'] = 'dummy',
+            cases: int = 0,
+            group_terms: bool = True,
+    ) -> fmtxt.Table:
         """Return a table with the model codes
 
         Parameters
         ----------
-        method : 'effect' | 'dummy'
+        method
             Coding scheme: effect coding or dummy coding.
-        cases : int | iterator of int
+        cases
             Cases to include (int includes that many cases from the beginning,
             0 includes all; negative number works like negative indexing).
-        group_terms : bool
+        group_terms
             Group model columns that represent the same effect under one
             heading.
 
         Returns
         --------
-        table : FMText Table
+        table : fmtxt.Table
             The full model as a table.
         """
         itre_cases = cases_arg(cases, self.df_total)
@@ -8041,11 +8173,14 @@ class Dimension:
 
     Attributes
     ----------
-    x : array_like
+    x
         Numerical values (e.g. for locating categories on an axis).
-    values : sequence
+    values
         Meaningful point descriptions (e.g. time points, sensor names, ...).
     """
+    x: ArrayLike
+    values: Sequence
+
     _ADJACENCY_TYPES = ('grid', 'none', 'custom', 'vector')
     _axis_unit = None
     _default_adjacency = 'none'  # for loading old pickles
@@ -8191,11 +8326,11 @@ class Dimension:
 
         Parameters
         ----------
-        scalar : bool
+        scalar
             If True, the axis is scalar and labels should correspond to the axis
             value. If False, the axis represents categorial bins (e.g.,
             im-plots).
-        label : bool | str
+        label
             Label (if True, return an appropriate axis-specific label).
 
         Returns
@@ -8330,14 +8465,14 @@ class Dimension:
         "Distance matrix for dimension elements (square form)"
         raise NotImplementedError(f"Distances for {self.__class__.__name__}")
 
-    def intersect(self, dim, check_dims=True):
+    def intersect(self, dim: Dimension, check_dims: bool = True):
         """Create a Dimension that is the intersection with dim
 
         Parameters
         ----------
-        dim : Dimension
+        dim
             Dimension to intersect with.
-        check_dims : bool
+        check_dims
             Check dimensions for consistency (not applicaple).
 
         Returns
@@ -8348,12 +8483,12 @@ class Dimension:
         """
         raise NotImplementedError
 
-    def _union(self, other):
+    def _union(self, other: Dimension):
         """Create a Dimension that is the union with dim
 
         Parameters
         ----------
-        other : Dimension
+        other
             Dimension to form union with.
 
         Returns
@@ -8369,9 +8504,9 @@ class Dimension:
 
         Parameters
         ----------
-        x : array of bool, (n_clusters, len(self))
-            The cluster extents, with different clusters stacked along the
-            first axis.
+        x
+            Boolean array of shape ``(n_clusters, len(self))``: the cluster
+            extents, with different clusters stacked along the first axis.
 
         Returns
         -------
@@ -8388,8 +8523,9 @@ class Dimension:
 
         Returns
         -------
-        adjacency : array of int, (n_pairs, 2)
-            array of sorted ``[src, dst]`` pairs, with all ``src < dst``.
+        adjacency : numpy.ndarray
+            Array of :class:`int` with shape ``(n_pairs, 2)``: sorted
+            ``[src, dst]`` pairs, with all ``src < dst``.
         """
         if self._adjacency is None:
             self._adjacency = self._generate_adjacency()
@@ -8402,12 +8538,12 @@ class Dimension:
         "Variables to add when melting the dimension"
         return {}
 
-    def _subgraph(self, index=None):
+    def _subgraph(self, index: ArrayLike = None) -> np.ndarray:
         """Adjacency parameter for new Dimension instance
 
         Parameters
         ----------
-        index : array_like
+        index
             Index if the new dimension is a subset of the current dimension.
         """
         if self._adjacency_type == 'custom':
@@ -8430,9 +8566,9 @@ class Case(Dimension):
 
     Parameters
     ----------
-    n : int
+    n
         Number of cases.
-    adjacency : 'grid' | 'none' | array of int, (n_edges, 2)
+    adjacency
         Adjacency between elements. Set to ``"none"`` for no connections or
         ``"grid"`` to use adjacency in the sequence of elements as connection.
         Set to :class:`numpy.ndarray` to specify custom adjacency. The array
@@ -8539,11 +8675,11 @@ class Space(Dimension):
 
     Parameters
     ----------
-    directions : str
+    directions
         A sequence of directions, each indicated by a single capitalized
         character, from the following set: [A]nterior, [P]osterior, [L]eft,
         [R]ight, [S]uperior and [I]nferior.
-    name : str
+    name
         Dimension name.
 
     Notes
@@ -8638,14 +8774,14 @@ class Space(Dimension):
         else:
             return ''.join(self._directions[i] for i in arg)
 
-    def intersect(self, dim, check_dims=True):
+    def intersect(self, dim: Space, check_dims: bool = True):
         """Create a dimension object that is the intersection with dim
 
         Parameters
         ----------
-        dim : Space
+        dim
             Dimension to intersect with.
-        check_dims : bool
+        check_dims
             Check dimensions for consistency.
 
         Returns
@@ -8783,21 +8919,21 @@ class Categorial(Dimension):
         else:
             return Dimension._dim_index(self, index)
 
-    def intersect(self, dim, check_dims=False):
+    def intersect(self, dim: Dimension, check_dims: bool = False):
         """Create a dimension object that is the intersection with dim
 
         Parameters
         ----------
-        dim : type(self)
-            Dimension to intersect with.
-        check_dims : bool
+        dim
+            Dimension to intersect with (same type as ``self``).
+        check_dims
             Check dimensions for consistency (not applicaple to this subclass).
 
         Returns
         -------
-        intersection : type(self)
+        intersection : Dimension
             The intersection with dim (returns itself if dim and self are
-            equal)
+            equal); same type as ``self``.
         """
         if self.name != dim.name:
             raise DimensionMismatchError("Dimensions don't match")
@@ -9005,9 +9141,9 @@ class Scalar(Dimension):
 
         Parameters
         ----------
-        x : array of bool, (n_clusters, len(self))
-            The cluster extents, with different clusters stacked along the
-            first axis.
+        x
+            Boolean array of shape ``(n_clusters, len(self))``: the cluster
+            extents, with different clusters stacked along the first axis.
 
         Returns
         -------
@@ -9062,21 +9198,21 @@ class Scalar(Dimension):
         else:
             return Dimension._dim_index(self, index)
 
-    def intersect(self, dim, check_dims=False):
+    def intersect(self, dim: Dimension, check_dims: bool = False):
         """Create a dimension object that is the intersection with dim
 
         Parameters
         ----------
-        dim : type(self)
-            Dimension to intersect with.
-        check_dims : bool
+        dim
+            Dimension to intersect with (same type as ``self``).
+        check_dims
             Check dimensions for consistency (not applicaple to this subclass).
 
         Returns
         -------
-        intersection : type(self)
+        intersection : Dimension
             The intersection with dim (returns itself if dim and self are
-            equal)
+            equal); same type as ``self``.
         """
         if self.name != dim.name:
             raise DimensionMismatchError("Dimensions don't match")
@@ -9100,8 +9236,9 @@ class Sensor(Dimension):
 
     Parameters
     ----------
-    locations : array_like  (n_sensor, 3)
-        list of sensor locations in ALS coordinates, i.e., for each sensor a
+    locations
+        Sensor locations with shape ``(n_sensor, 3)``, in ALS coordinates,
+        i.e., for each sensor a
         ``(anterior, left, superior)`` coordinate triplet.
     names
         Sensor names, same order as ``locs`` (default is ``['0', '1', '2',
@@ -9111,8 +9248,9 @@ class Sensor(Dimension):
     proj2d
         Default 2d projection (default is ``'z-root'``; for options see notes
         below).
-    adjacency : str | list of (str, str) | array of int, (n_edges, 2)
-        Adjacency between elements. Can be specified as:
+    adjacency
+        Adjacency between elements, as array of :class:`int` with shape
+        ``(n_edges, 2)``. Can be specified as:
 
         - ``"none"`` for no connections
         - ``"grid"`` to use adjacency in the sensor names
@@ -9124,18 +9262,20 @@ class Sensor(Dimension):
 
     Attributes
     ----------
-    channel_idx : dict
+    channel_idx
         Dictionary mapping channel names to indexes.
-    locations : array  (n_sensors, 3)
-        Spatial position of all sensors.
-    names : list of str
+    locations
+        Spatial position of all sensors, with shape ``(n_sensors, 3)``.
+    names
         Ordered list of sensor names.
     right : NDVar
         Sensor position along left-right axis.
-    anterior : numpy.array  (n_sensors,)
-        Sensor position along posterior-anterior axis.
-    superior : numpy.array  (n_sensors,)
-        Sensor position along inferior-superior axis.
+    anterior : numpy.ndarray
+        Sensor position along posterior-anterior axis, with shape
+        ``(n_sensors,)``.
+    superior : numpy.ndarray
+        Sensor position along inferior-superior axis, with shape
+        ``(n_sensors,)``.
 
     Notes
     -----
@@ -9157,17 +9297,21 @@ class Sensor(Dimension):
     ...              (0, -.25, -.45)]
     >>> sensor_dim = Sensor(locations, names=["Cz", "Pz"])
     """
+    channel_idx: dict
+    locations: numpy.ndarray
+    names: list[str]
+
     _default_adjacency = 'custom'
     _proj_aliases = {'left': 'x-', 'right': 'x+', 'back': 'y-', 'front': 'y+', 'top': 'z+', 'bottom': 'z-'}
 
     @deprecate_kwarg('connectivity', 'adjacency', '0.41', '0.42')
     def __init__(
             self,
-            locations: Sequence,
+            locations: ArrayLike,
             names: Sequence[str] = None,
             sysname: str = None,
             proj2d: str = 'z root',
-            adjacency: str | Sequence = 'none',
+            adjacency: AdjacencyArg = 'none',
     ):
         # 'z root' transformation fails with 32-bit floats
         self.locations = locations = np.asarray(locations, dtype=np.float64)
@@ -9233,6 +9377,10 @@ class Sensor(Dimension):
     def __repr__(self):
         return f"<Sensor n={len(self)}, name={self.sysname!r}>"
 
+    def _cache_form_(self) -> dict:
+        """Identity for cache fingerprints (see :meth:`DerivativeRegistry.canonicalize`)"""
+        return {'sysname': self.sysname, 'names': list(self.names), 'locations': self.locations.tolist()}
+
     def __len__(self):
         return len(self.locations)
 
@@ -9263,9 +9411,9 @@ class Sensor(Dimension):
 
         Parameters
         ----------
-        x : array of bool  (n_clusters, n_sensors)
-            The cluster extents, with different clusters stacked along the
-            first axis.
+        x
+            Boolean array of shape ``(n_clusters, n_sensors)``: the cluster
+            extents, with different clusters stacked along the first axis.
 
         Returns
         -------
@@ -9361,15 +9509,15 @@ class Sensor(Dimension):
         return cls(locs, names, **kwargs)
 
     @classmethod
-    def from_montage(cls, montage, channels=None):
+    def from_montage(cls, montage: str | mne.channels.DigMontage, channels: list[str] = None):
         """From :class:`~mne.channels.DigMontage`
 
         Parameters
         ----------
-        montage : str | mne.channels.DigMontage
+        montage
             Montage, or name to load a standard montage (see
             :func:`mne.channels.make_standard_montage`).
-        channels : list of str
+        channels
             Channel names in the desired order (optional).
         """
         if isinstance(montage, str):
@@ -9415,15 +9563,15 @@ class Sensor(Dimension):
             return proj
 
     @cached_property
-    def right(self):
+    def right(self) -> NDVar:
         return NDVar(self.x, self)
 
     @cached_property
-    def anterior(self):
+    def anterior(self) -> np.ndarray:
         return NDVar(self.y, self)
 
     @cached_property
-    def superior(self):
+    def superior(self) -> np.ndarray:
         return NDVar(self.z, self)
 
     def get_adjacency(self):
@@ -9459,8 +9607,9 @@ class Sensor(Dimension):
 
         Returns
         -------
-        locs_2d : array (n_sensor, 2)
-            Sensor position 2d projection in x, y coordinates.
+        locs_2d : numpy.ndarray
+            Sensor position 2d projection in x, y coordinates, with shape
+            ``(n_sensor, 2)``.
         """
         proj = self._interpret_proj(proj)
 
@@ -9652,7 +9801,7 @@ class Sensor(Dimension):
 
         Returns
         -------
-        index
+        index : NDVar
             Boolean :class:`NDVar` indexing selected channels.
         """
         if (include is None) == (exclude is None):
@@ -9672,43 +9821,16 @@ class Sensor(Dimension):
 
     def _normalize_sensor_names(self, names, missing='raise'):
         "Process a user-input list of sensor names"
-        valid_chs = set()
-        missing_chs = set()
-        int_to_name = None
-        for name in names:
-            if name in self.names:
-                valid_chs.add(name)
-                continue
-            elif isinstance(name, Integral) or name.isdigit():
-                key = int(name) if isinstance(name, str) else name
-                if int_to_name is None:
-                    int_to_name = {}
-                    for ch_name in self.names:
-                        if match := re.search(r'\d+', ch_name):
-                            int_to_name[int(match.group())] = ch_name
+        return normalize_sensor_names(names, self.names, missing)
 
-                if key in int_to_name:
-                    valid_chs.add(int_to_name[key])
-                    continue
-            missing_chs.add(name)
-
-        if missing == 'raise':
-            if missing_chs:
-                raise ValueError(f"The following channels are not in the raw data: {', '.join(sorted(missing_chs))}")
-            return sorted(valid_chs)
-        elif missing == 'return':
-            return sorted(valid_chs), missing_chs
-        else:
-            raise ValueError(f"{missing=}")
-
-    def intersect(self, dim, check_dims=True):
+    def intersect(self, dim: Sensor, check_dims: bool = True):
         """Create a Sensor dimension that is the intersection with dim
 
         Parameters
         ----------
-        dim : Sensor
+        dim
             Sensor dimension to intersect with.
-        check_dims : bool
+        check_dims
             Check dimensions for consistency (e.g., channel locations). Default
             is ``True``. Set to ``False`` to intersect channels based on names
             only and ignore mismatch between locations for channels with the
@@ -9749,7 +9871,7 @@ class Sensor(Dimension):
 
         Returns
         -------
-        neighbors
+        neighbors : dict[int, np.ndarray]
             Dictionaries whose keys are sensor indices, and whose values are
             lists of neighbors represented as sensor indices.
         """
@@ -9760,14 +9882,18 @@ class Sensor(Dimension):
             nb[i] = np.flatnonzero(distances < (distances.min() * connect_dist))
         return nb
 
-    def set_adjacency(self, neighbors=None, connect_dist=None):
+    def set_adjacency(
+            self,
+            neighbors: Sequence[tuple[str, str]] = None,
+            connect_dist: float = None,
+    ) -> None:
         """Define the sensor adjacency through neighbors or distance
 
         Parameters
         ----------
-        neighbors : sequence of (str, str)
+        neighbors
             A list of connections, all assumed to be bidirectional.
-        connect_dist : None | scalar
+        connect_dist
             For each sensor, neighbors are defined as those sensors within
             ``connect_dist`` times the distance of the closest neighbor.
             e.g., 1.75 or 1.6
@@ -9828,6 +9954,42 @@ def _point_graph(coords, dist_threshold):
         i0 = i1
 
     return graph[dist < dist_threshold]
+
+
+def normalize_sensor_names(
+        names: Sequence[str | int],
+        valid_names: Sequence[str],
+        missing: str = 'raise',
+):
+    "Process a user-input list of sensor names"
+    valid_chs = set()
+    missing_chs = set()
+    int_to_name = None
+    for name in names:
+        if name in valid_names:
+            valid_chs.add(name)
+            continue
+        elif isinstance(name, Integral) or name.isdigit():
+            key = int(name) if isinstance(name, str) else name
+            if int_to_name is None:
+                int_to_name = {}
+                for ch_name in valid_names:
+                    if match := re.search(r'\d+', ch_name):
+                        int_to_name[int(match.group())] = ch_name
+
+            if key in int_to_name:
+                valid_chs.add(int_to_name[key])
+                continue
+        missing_chs.add(name)
+
+    if missing == 'raise':
+        if missing_chs:
+            raise ValueError(f"The following channels are not in the raw data: {', '.join(sorted(missing_chs))}")
+        return sorted(valid_chs)
+    elif missing == 'return':
+        return sorted(valid_chs), missing_chs
+    else:
+        raise ValueError(f"{missing=}")
 
 
 def _matrix_graph(matrix):
@@ -10098,9 +10260,9 @@ class SourceSpaceBase(Dimension):
 
         Parameters
         ----------
-        x : array of bool, (n_clusters, len(self))
-            The cluster extents, with different clusters stacked along the
-            first axis.
+        x
+            Boolean array of shape ``(n_clusters, len(self))``: the cluster
+            extents, with different clusters stacked along the first axis.
 
         Returns
         -------
@@ -10156,18 +10318,19 @@ class SourceSpaceBase(Dimension):
             i0 = i
         return dist
 
-    def adjacency(self, disconnect_parc=False):
+    def adjacency(self, disconnect_parc: bool = False):
         """Create source space adjacency
 
         Parameters
         ----------
-        disconnect_parc : bool
+        disconnect_parc
             Reduce adjacency to label-internal connections.
 
         Returns
         -------
-        connetivity : array of int, (n_pairs, 2)
-            array of sorted [src, dst] pairs, with all src < dts.
+        connetivity : numpy.ndarray
+            Array of :class:`int` with shape ``(n_pairs, 2)``: sorted
+            ``[src, dst]`` pairs, with all ``src < dst``.
         """
         if self._n_vert == 0:
             return np.empty((0, 2), np.uint32)
@@ -10196,22 +10359,29 @@ class SourceSpaceBase(Dimension):
     def _compute_adjacency(self):
         raise NotImplementedError(f"Adjacency for {self.kind!r} source space")
 
-    def circular_index(self, seeds, extent=0.05, name="globe"):
+    def circular_index(
+            self,
+            seeds: ArrayLike,
+            extent: float = 0.05,
+            name: str = "globe",
+    ) -> NDVar:
         """Return an index into all vertices closer than ``extent`` of a seed
 
         Parameters
         ----------
-        seeds : array_like, (3,) | (n, 3)
-            Seed location(s) around which to build index.
-        extent : float
+        seeds
+            Seed location(s) around which to build index; shape ``(3,)`` for a
+            single seed or ``(n, 3)`` for several.
+        extent
             Index vertices closer than this (in m in 3d space).
-        name : str
+        name
             Name of the NDVar.
 
         Returns
         -------
-        roi : NDVar  ('source',)
-            Index into the spherical area around ``seeds``.
+        roi : NDVar
+            Index into the spherical area around ``seeds``, with a ``source``
+            dimension.
         """
         seeds = np.atleast_2d(seeds)
         dist = cdist(self.coordinates, seeds)
@@ -10301,12 +10471,12 @@ class SourceSpaceBase(Dimension):
     def _setup_source_space(self):
         raise NotImplementedError
 
-    def index_for_label(self, label):
+    def index_for_label(self, label: str | Sequence[str]) -> NDVar:
         """Return the index for a label
 
         Parameters
         ----------
-        label : str | sequance of str
+        label
             One or several names of regions in the current parcellation.
 
         Returns
@@ -10335,19 +10505,19 @@ class SourceSpaceBase(Dimension):
         index = np.hstack([np.isin(s, d) for s, d in zip(self.vertices, dim.vertices)])
         return NDVar(index, (self,))
 
-    def intersect(self, dim, check_dims=True):
+    def intersect(self, dim: SourceSpace, check_dims: bool = True):
         """Create a Source dimension that is the intersection with dim
 
         Parameters
         ----------
-        dim : Source
+        dim
             Dimension to intersect with.
-        check_dims : bool
+        check_dims
             Check dimensions for consistency (not applicaple to this subclass).
 
         Returns
         -------
-        intersection : Source
+        intersection : SourceSpace
             The intersection with dim (returns itself if dim and self are
             equal)
         """
@@ -10404,12 +10574,14 @@ class SourceSpace(SourceSpaceBase):
 
     Attributes
     ----------
-    coordinates : array (n_sources, 3)
-        Spatial coordinate for each source.
-    normals : array (n_sources, 3)
+    coordinates
+        Spatial coordinate for each source, with shape ``(n_sources, 3)``.
+    normals
         Orientation (direction) of each source.
-    parc : Factor
+    parc
         Parcellation (one label for each source).
+    subjects_dir
+        FreeSurfer subjects directory.
 
     See Also
     --------
@@ -10423,6 +10595,11 @@ class SourceSpace(SourceSpaceBase):
      - 'lh' or 'rh' to select an entire hemisphere
 
     """
+    coordinates: numpy.ndarray
+    normals: numpy.ndarray
+    parc: Factor
+    subjects_dir: str
+
     _kinds = ('ico', 'oct')
 
     @deprecate_kwarg('connectivity', 'adjacency', '0.41', '0.42')
@@ -10550,7 +10727,7 @@ class SourceSpace(SourceSpaceBase):
                 i0 = i1
         return SourceSpace(vertices, subject, src, subjects_dir, parc, name=name, filename=filename)
 
-    def _link_midline(self, maxdist=0.015):
+    def _link_midline(self, maxdist: float = 0.015):
         """Link sources in the left and right hemispheres
 
         Link each source to the nearest source in the opposing hemisphere if
@@ -10558,7 +10735,7 @@ class SourceSpace(SourceSpaceBase):
 
         Parameters
         ----------
-        maxdist : scalar [m]
+        maxdist
             Add an interhemispheric connection between any two vertices whose
             distance is less than this number (in meters; default 0.015).
         """
@@ -10712,23 +10889,25 @@ class SourceSpace(SourceSpaceBase):
 
         Returns
         -------
-        index : boolean NDVar
-            Index into the source space dim that corresponds to the label.
+        index : NDVar
+            Boolean index into the source space dim that corresponds to the
+            label.
         """
         return SourceSpaceBase.index_for_label(self, label)
 
-    def surface_coordinates(self, surf='white'):
+    def surface_coordinates(self, surf: str = 'white'):
         """Load surface coordinates for any FreeSurfer surface
 
         Parameters
         ----------
-        surf : str
+        surf
             Name of the FreeSurfer surface.
 
         Returns
         -------
-        coords : array (n_sources, 3)
-            Coordinates for each source contained in the source space.
+        coords : numpy.ndarray
+            Coordinates for each source contained in the source space, with
+            shape ``(n_sources, 3)``.
         """
         out = []
         for hemi, vertices in zip(('lh', 'rh'), self.vertices):
@@ -10763,7 +10942,7 @@ class VolumeSourceSpace(SourceSpaceBase):
         source space file).
     parc
         Add a parcellation to the source space to identify vertex location.
-    adjacency : 'grid' | 'none' | array of int, (n_edges, 2)
+    adjacency
         Adjacency between elements. Set to ``"none"`` for no connections or
         ``"grid"`` to use adjacency in the sequence of elements as connection.
         Set to :class:`numpy.ndarray` to specify custom adjacency. The array
@@ -10905,19 +11084,19 @@ class UTS(Dimension):
 
     Attributes
     ----------
-    tmin : float
+    tmin
         Lowest time point in seconds.
-    tmax : float
+    tmax
         Largest time point [s].
-    tstep : float
+    tstep
         Time step for each sample [s].
-    nsamples : int
+    nsamples
         Number of samples.
-    tstop : float
+    tstop
         Time sample after ``tmax`` [s] (consistent with indexing excluding end
         point).
-    times : array (nsamples,)
-        Array with all time points.
+    times : numpy.ndarray
+        Array with all time points, with shape ``(n_samples,)``.
 
     Notes
     -----
@@ -10928,6 +11107,12 @@ class UTS(Dimension):
         None).
 
     """
+    tmin: float
+    tmax: float
+    tstep: float
+    nsamples: int
+    tstop: float
+
     _default_adjacency = 'grid'
     _tol = 0.000001  # tolerance for deciding if time values are equal
     plot_s_as_ms: float = 3  # plot s as ms when the absolute times in s are smaller than this
@@ -10953,20 +11138,20 @@ class UTS(Dimension):
         self._n_decimals = max(n_decimals(self.tmin), n_decimals(self.tstep))
 
     @cached_property
-    def times(self):
+    def times(self) -> np.ndarray:
         return self.tmin + np.arange(self.nsamples) * self.tstep
 
     @classmethod
-    def from_int(cls, first, last, sfreq):
+    def from_int(cls, first: int, last: int, sfreq: float) -> UTS:
         """Create a UTS dimension from sample index and sampling frequency
 
         Parameters
         ----------
-        first : int
+        first
             Index of the first sample, relative to 0.
-        last : int
+        last
             Index of the last sample, relative to 0.
-        sfreq : scalar
+        sfreq
             Sampling frequency, in Hz.
         """
         tmin = first / sfreq
@@ -11132,9 +11317,9 @@ class UTS(Dimension):
 
         Parameters
         ----------
-        x : array of bool, (n_clusters, len(self))
-            The cluster extents, with different clusters stacked along the
-            first axis.
+        x
+            Boolean array of shape ``(n_clusters, len(self))``: the cluster
+            extents, with different clusters stacked along the first axis.
         """
         # find indices of cluster extent
         row, col = np.nonzero(x)
@@ -11150,9 +11335,9 @@ class UTS(Dimension):
 
         Parameters
         ----------
-        x : array of bool, (n_clusters, len(self))
-            The cluster extents, with different clusters stacked along the
-            first axis.
+        x
+            Boolean array of shape ``(n_clusters, len(self))``: the cluster
+            extents, with different clusters stacked along the first axis.
 
         Returns
         -------
@@ -11290,14 +11475,14 @@ class UTS(Dimension):
         else:
             return Dimension._dim_index(self, arg)
 
-    def intersect(self, dim, check_dims=True):
+    def intersect(self, dim: UTS, check_dims: bool = True):
         """Create a UTS dimension that is the intersection with ``dim``
 
         Parameters
         ----------
-        dim : UTS
+        dim
             Dimension to intersect with.
-        check_dims : bool
+        check_dims
             Check dimensions for consistency (not applicaple to this subclass).
 
         Returns
@@ -11362,6 +11547,10 @@ def intersect_dims(dims1, dims2, check_dims: bool = True):
 
 
 EVAL_CONTEXT.update(Var=Var, Factor=Factor, extrema=extrema)
+# Names that Dataset.eval() can resolve on its own. A name in an expression that is not
+# one of these has to come from the data; one that is both is the data's, since the
+# Dataset is eval()'s locals and thus shadows the context (see Dataset.eval).
+EVAL_CONTEXT_NAMES = {*vars(builtins), *EVAL_CONTEXT}
 
 NDVarArg = NDVar | str
 AxisArg = None | str | Sequence[str] | NDVar
@@ -11371,6 +11560,7 @@ NumericArg = Var | NDVar | str
 CategorialVariable = Factor | Interaction | NestedEffect
 CategorialArg = CategorialVariable | str
 AdjacencyArg = Literal['grid', 'none', 'vector', 'custom'] | ArrayLike
+DataObjectArg = Var | NDVar | CategorialVariable | Model | Datalist
 FactorArg = Factor | str
 CellArg = str | tuple[str, ...]
 IndexArg = Var | np.ndarray | str

@@ -94,3 +94,54 @@ def test_select_channels():
     frame._decim_auto = True
     frame._update_window()
     assert frame._butterfly_lc['eeg'].get_segments()[0].shape[0] <= n_full
+
+
+@gui_test
+def test_select_channels_nc_topos():
+    "Neighbor-correlation topomaps stay consistent with the bad-channel selection"
+    set_log_level('warning', 'mne')
+    raw, ch_names = _eeg_raw()
+
+    tempdir = TempDir()
+    path = join(tempdir, 'sub-01_channels.tsv')
+    status = ['bad' if n == 'F3' else 'good' for n in ch_names]
+    pd.DataFrame({'name': ch_names, 'status': status}).to_csv(path, sep='\t', index=False)
+
+    frame = gui.select_channels(raw, path)
+
+    def sensor_names(topo):
+        return list(topo.sensors.sensors.names)
+
+    def marked(topo):
+        # channel names under the red × markers
+        locs = topo.sensors.locs
+        out = []
+        for h in topo.sensors._mark_handles:
+            for x, y in h.get_offsets():
+                i = int(np.argmin(np.hypot(locs[:, 0] - x, locs[:, 1] - y)))
+                out.append(topo.sensors.sensors.names[i])
+        return sorted(out)
+
+    # the raw NC map always shows all channels; the clean map only good ones
+    assert sensor_names(frame._static_nc_topos[0]) == ch_names
+    assert sensor_names(frame._dynamic_nc_topos[0]) == [n for n in ch_names if n != 'F3']
+    assert marked(frame._static_nc_topos[0]) == ['F3']
+    assert marked(frame._dynamic_nc_topos[0]) == []
+
+    # un-marking a channel brings its sensor marker back on the clean map
+    frame.model.toggle_bad('F3')
+    assert sensor_names(frame._dynamic_nc_topos[0]) == ch_names
+    assert marked(frame._static_nc_topos[0]) == []
+
+    # marking the last channel bad must not index past the clean map's sensors
+    frame.model.toggle_bad(ch_names[-1])
+    assert sensor_names(frame._dynamic_nc_topos[0]) == ch_names[:-1]
+    assert marked(frame._static_nc_topos[0]) == [ch_names[-1]]
+    assert marked(frame._cursor_topos[0]) == [ch_names[-1]]
+    assert marked(frame._dynamic_nc_topos[0]) == []
+
+    # with fewer than 4 good channels the clean map falls back to the raw map
+    for name in ch_names[3:-1]:
+        frame.model.toggle_bad(name)
+    assert sensor_names(frame._dynamic_nc_topos[0]) == ch_names
+    assert marked(frame._dynamic_nc_topos[0]) == sorted(ch_names[3:])

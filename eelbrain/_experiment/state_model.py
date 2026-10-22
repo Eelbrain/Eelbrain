@@ -10,7 +10,7 @@ import difflib
 from functools import cached_property, reduce
 from itertools import chain, product
 import operator
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 import traceback
 
 import numpy as np
@@ -557,16 +557,21 @@ class StateModel:
 
         return t
 
-    def show_state(self, temp=None, empty=False, hide=()):
+    def show_state(
+            self,
+            temp: str | Sequence[str] = None,
+            empty: bool = False,
+            hide: Collection[str] = (),
+    ):
         """List field values.
 
         Parameters
         ----------
-        temp : None | str | sequence of str
+        temp
             Only show the specified field or fields.
-        empty : bool
+        empty
             Show empty variables (items whose value is the empty string '').
-        hide : collection of str
+        hide
             State variables to hide.
 
         Returns

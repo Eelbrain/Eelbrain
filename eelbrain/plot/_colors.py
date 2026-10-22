@@ -9,6 +9,7 @@ from collections.abc import Sequence
 import numpy as np
 import matplotlib
 import matplotlib.axes
+import matplotlib.text
 import matplotlib.cm
 from matplotlib.colors import Colormap, Normalize
 from matplotlib.colorbar import ColorbarBase
@@ -39,7 +40,7 @@ class ColorGrid(EelFigure):
     size
         Size (width and height) of the color squares (the default is to
         scale them to fit the font size).
-    column_label_position : 'top' | 'bottom' | 'none'
+    column_label_position
         Where to place the column labels (default is 'top').
     row_first
         Whether the row cell precedes the column cell in color keys. By
@@ -47,18 +48,20 @@ class ColorGrid(EelFigure):
     labels
         Condition labels that are used instead of the keys in ``row_cells`` and
         ``column_cells``.
-    shape : 'box' | 'line'
+    shape
         Shape for color samples (default 'box').
     ...
         Also accepts :ref:`general-layout-parameters`.
 
     Attributes
     ----------
-    column_labels : list of :class:`matplotlib.text.Text`
+    column_labels
         Column labels.
-    row_labels : list of :class:`matplotlib.text.Text`
+    row_labels
         Row labels.
     """
+    column_labels: list[matplotlib.text.Text]
+    row_labels: list[matplotlib.text.Text]
 
     def __init__(
             self,
@@ -66,10 +69,10 @@ class ColorGrid(EelFigure):
             column_cells: Sequence[str],
             colors: dict[CellArg, Any],
             size: float = None,
-            column_label_position: str = 'top',
+            column_label_position: Literal['top', 'bottom', 'none'] = 'top',
             row_first: bool = None,
             labels: dict = None,
-            shape: str = 'box',
+            shape: Literal['box', 'line'] = 'box',
             **kwargs):
         row_cells = list(row_cells)
         column_cells = list(column_cells)
@@ -253,9 +256,10 @@ class ColorList(EelFigure):
 
     Attributes
     ----------
-    labels : list of :class:`matplotlib.text.Text`
+    labels
         Color labels.
     """
+    labels: list[matplotlib.text.Text]
 
     def __init__(
             self,
@@ -396,7 +400,7 @@ class ColorBar(EelFigure):
         negative values above ``abs(threshold)``).
     ticklocation
         Where to place ticks and label.
-    background : matplotlib color
+    background
         Background color (for colormaps including transparency).
     ...
         Also accepts :ref:`general-layout-parameters`.

@@ -64,7 +64,9 @@ p.set_time(1.200)
 #
 # - TRF from -100 to 400 ms
 # - Basis of 100 ms Hamming windows
-# - Use 4 partitionings of the data for cross-validation based early stopping
+# - Divide the data into 4 partitions for cross-validation: each partition is
+#   held out as test data in turn, while the remaining partitions are used to
+#   estimate the TRF (with cross-validation based early stopping)
 res = boosting(eeg, envelope, -0.100, 0.400, basis=0.100, partitions=4)
 p = plot.TopoButterfly(res.h_scaled, w=6, h=2)
 p.set_time(.180)
@@ -88,7 +90,8 @@ p.set_time(.150)
 # Compare models
 # --------------
 # Compare model quality through the correlation between measured and predicted
-# responses:
+# responses. These correlations are cross-validated, i.e., each partition of
+# the data is predicted from a TRF that was estimated without it:
 plot.Topomap([res.r, res_onset.r], w=4, h=2, columns=2, axtitle=['envelope', 'envelope + onset'])
 
 

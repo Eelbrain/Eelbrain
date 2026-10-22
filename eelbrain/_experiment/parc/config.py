@@ -143,7 +143,7 @@ class CombinationParc(Parcellation):
     base
         The name of the parcellation that provides the input labels. A common
         ``base`` is the ``'aparc'`` parcellation [1]_.
-    labels : dict  {str: str}
+    labels
         New labels to create in ``{name: expression}`` format. All label names
         should be composed of alphanumeric characters (plus underline) and should
         not contain the -hemi tags. In order to create a given label only on one
@@ -200,7 +200,7 @@ class CombinationParc(Parcellation):
     def __init__(
             self,
             base: str,
-            labels: dict,
+            labels: dict[str, str],
             views: str | Sequence[str] = None,
     ):
         Parcellation.__init__(self, views)
@@ -362,12 +362,12 @@ class SeededParc(Parcellation):
 
     Parameters
     ----------
-    seeds : dict
+    seeds
         ``{name: seed(s)}`` dictionary, where names are strings, including
         hemisphere tags (e.g., ``"mylabel-lh"``) and seed(s) are array-like,
         specifying one or more seed coordinate (shape ``(3,)`` or
         ``(n_seeds, 3)``).
-    mask : str
+    mask
         Name of a parcellation to use as mask (i.e., anything that is "unknown"
         in that parcellation is excluded from the new parcellation. For example,
         use ``{'mask': 'lobes'}`` to exclude the subcortical areas around the
@@ -390,7 +390,7 @@ class SeededParc(Parcellation):
     kind = 'seeded'
     make = True
 
-    def __init__(self, seeds, mask=None, surface='white', views=None):
+    def __init__(self, seeds: dict, mask: str = None, surface='white', views=None):
         Parcellation.__init__(self, views)
         self.seeds = seeds
         self.mask = mask

@@ -3,7 +3,7 @@
 import itertools
 import json
 import logging
-from os.path import join, exists
+from os.path import join, exists, relpath
 from os import remove
 from pathlib import Path
 import shutil
@@ -15,14 +15,16 @@ from warnings import catch_warnings, filterwarnings
 
 import mne
 import numpy as np
-from numpy.testing import assert_almost_equal, assert_array_equal
+from numpy.testing import assert_allclose, assert_almost_equal, assert_array_equal
 
 from eelbrain import *
 from eelbrain.pipeline import *
 from eelbrain._exceptions import ConfigurationError
-from eelbrain._experiment.derivative_cache import ProtectedArtifactError
+from eelbrain._experiment.covariance import EpochCovariance
+from eelbrain._experiment.derivative_cache import ALLOW_PROTECTED_OVERWRITE, DependencyTree, ProtectedArtifactError
+from eelbrain._experiment.derivative_cache.garbage_collection import GCCategory
 from eelbrain._experiment.parc.nodes import AnnotDerivative
-from eelbrain._experiment.pathing import LOG_DIR, ica_file_path
+from eelbrain._experiment.pathing import BIDS_ENTITY_KEYS, LOG_DIR, ica_file_path
 from eelbrain._experiment.preprocessing import RawFilterElliptic, ica_input_name, raw_node_name
 from eelbrain._experiment.data import DataSpec
 from eelbrain._experiment.variable_def import EvalVar, LabelVar, Variables
@@ -61,10 +63,36 @@ def _test_result_manifest_path(
     return e._derivatives.resolve(node, state=e.state, options=options).manifest_path
 
 
+def _trf_group_shell(e, x: str, tstart: float, tstop: float) -> Dataset:
+    "The trf-group-dataset ``shell`` view for the pipeline's current state"
+    options = {**e._trf_options(x, tstart, tstop, 'boosting', None, None, False), 'scale': None, 'smooth': None, 'trfs': True}
+    return e._load_derivative('trf-group-dataset', options=options, view='shell')
+
+
 @pytest.fixture(scope='session')
 def _samples_templates(tmp_path_factory):
     "Per-session cache of sample-experiment templates, keyed by setup configuration"
     return tmp_path_factory.mktemp('samples_templates'), {}
+
+
+def _samples_template(
+        template_dir: Path,
+        cache: dict,
+        n_subjects: int = 3,
+        n_tasks: int = 1,
+        n_segments: int = 4,
+        n_runs: int = 1,
+        mris: bool = False,
+        pick: str = 'mag',
+) -> Path:
+    "Session-cached bare dataset template for one setup configuration"
+    key = (n_subjects, n_tasks, n_segments, n_runs, mris, pick)
+    if key not in cache:
+        template = template_dir / f'template-{len(cache)}'
+        template.mkdir()
+        datasets.setup_samples_experiment(template, n_subjects, n_tasks, n_segments, n_runs, mris, pick=pick)
+        cache[key] = template / 'SampleExperiment'
+    return cache[key]
 
 
 @pytest.fixture
@@ -89,15 +117,59 @@ def samples_experiment(_samples_templates, tmp_path):
     ) -> str:
         if not mne.datasets.has_dataset("sample"):
             pytest.skip("mne sample data unavailable")
-        key = (n_subjects, n_tasks, n_segments, n_runs, mris, pick)
-        if key not in cache:
-            template = template_dir / f'template-{len(cache)}'
-            template.mkdir()
-            datasets.setup_samples_experiment(template, n_subjects, n_tasks, n_segments, n_runs, mris, pick=pick)
-            cache[key] = template / 'SampleExperiment'
+        template = _samples_template(template_dir, cache, n_subjects, n_tasks, n_segments, n_runs, mris, pick)
         root = tmp_path / f'experiment-{next(counter)}' / 'SampleExperiment'
-        shutil.copytree(cache[key], root)
+        shutil.copytree(template, root)
         return str(root)
+
+    return make
+
+
+@pytest.fixture
+def samples_trf_experiment(_samples_templates, tmp_path):
+    """Configured :class:`SampleTRF` experiments backed by a warmed session template.
+
+    Like ``samples_experiment(n_subjects=1, n_segments=4)``, but the
+    session-cached template additionally contains the ``{stim}~env.pickle``
+    UTS predictor files (one 60-sample random time series per ``modality``
+    stimulus, at the epochs' native tstep) and the derived raw/epoch artifacts
+    for the standard TRF test state (subject R0000, epoch 'target', raw
+    '1-40', no rejection, sensor space). The derivative cache is root-relative
+    and ``copytree`` preserves mtimes, so each test's copy starts with cache
+    hits for everything but what the test itself adds (e.g. the fit). Every
+    call returns a fresh :class:`SampleTRF` instance, already set to the
+    standard state, on its own copy of the template.
+    """
+    from eelbrain._experiment.tests.sample_experiment import SampleTRF
+
+    template_dir, cache = _samples_templates
+    counter = itertools.count()
+    state = {'subject': 'R0000', 'epoch': 'target', 'epoch_rejection': '', 'raw': '1-40', 'inv': ''}
+
+    def make():
+        if not mne.datasets.has_dataset("sample"):
+            pytest.skip("mne sample data unavailable")
+        set_log_level('warning', 'mne')
+        if 'trf' not in cache:
+            base = _samples_template(template_dir, cache, n_subjects=1)
+            template = template_dir / f'template-{len(cache)}' / 'SampleExperiment'
+            shutil.copytree(base, template)
+            e = SampleTRF(template)
+            e.set(**state)
+            # warm the raw/epoch derivatives; the native (decimated) tstep is an
+            # integer ratio of the raw rate, so predictors at this tstep need no resampling
+            tstep = e.load_epochs(reject=False)['mag'].time.tstep
+            pdir = template / 'derivatives' / 'predictors'
+            pdir.mkdir(parents=True, exist_ok=True)
+            rng = np.random.RandomState(0)
+            for stim in ('auditory', 'visual'):
+                save.pickle(NDVar(rng.normal(size=60), UTS(0, tstep, 60), name='env'), pdir / f'{stim}~env.pickle')
+            cache['trf'] = template
+        root = tmp_path / f'experiment-{next(counter)}' / 'SampleExperiment'
+        shutil.copytree(cache['trf'], root)
+        e = SampleTRF(root)
+        e.set(**state)
+        return e
 
     return make
 
@@ -116,11 +188,13 @@ def test_sample(samples_experiment):
     assert e._raw['raw'].name == 'raw'
     assert e._parcs['ac'].name == 'ac'
     assert e._parcs['lobes'].name == 'lobes'
-    tree = e._show_dependencies('evoked', return_str=True)
+    dep_tree = e.load_evoked(show_dependencies=True)
+    assert isinstance(dep_tree, DependencyTree)
+    tree = dep_tree.text(1000)
     assert 'evoked [derivative]' in tree
     # Dataset assembly is always uncached
     assert 'epochs [uncached]' in tree
-    wrapped_tree = e._show_dependencies('evoked', max_line_length=60, return_str=True)
+    wrapped_tree = dep_tree.text(max_line_length=60)
     assert all(len(line) <= 60 for line in wrapped_tree.splitlines())
 
     # wildcard formatting
@@ -172,22 +246,8 @@ def test_sample(samples_experiment):
     assert ds[0, 'evoked'].info['bads'] == ['MEG 0331']
 
     e.set(epoch_rejection='manual')
-    test_tree = e._show_dependencies(
-        'test-result',
-        options={
-            'data': DataSpec.coerce('meg.rms'),
-            'samples': 100,
-            'test': 'a>v',
-            'tstart': 0.05,
-            'tstop': 0.2,
-            'pmin': 0.05,
-            'baseline': False,
-            'src_baseline': None,
-            'smooth': None,
-            'samplingrate': None,
-        },
-        return_str=True,
-    )
+    test_tree = e.load_test('a>v', tstart=0.05, tstop=0.2, pmin=0.05, samples=100, data='meg.rms', baseline=False, show_dependencies=True).text(1000)
+    assert 'test-result [derivative]' in test_tree
     assert 'evoked-test-data [uncached]' in test_tree
     assert 'evoked-group-dataset [uncached]' in test_tree
     sds = []
@@ -494,17 +554,282 @@ def test_sample(samples_experiment):
 
 
 @requires_mne_sample_data
+def test_group_membership_cache_relevance(samples_experiment):
+    """Group membership is cache-relevant only where a test reads it
+
+    ``GroupVar`` is applied where subjects are combined, so per-subject
+    artifacts are independent of it, and a group-level result is only
+    invalidated when the test actually uses the groups that changed.
+    """
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    root = samples_experiment(n_subjects=3, n_segments=2, mris=False)
+
+    def experiment(g0):
+        class Experiment(SampleExperiment):
+            groups = {
+                'g0': Group(g0),
+                'g1': SubGroup('all', g0),
+                'fixed': Group(['R0000', 'R0002']),  # membership unaffected by moving R0001
+            }
+            variables = {**SampleExperiment.variables, 'age': GroupVar(['g0', 'g1'])}
+            tests = {**SampleExperiment.tests, 'g0=g1': TTestIndependent('age', 'g0', 'g1'), 'one-sample': TTestOneSample()}
+        return Experiment(root)
+
+    def test_data_dependencies(e, test, group):
+        e.set(group=group, epoch='target', epoch_rejection='')
+        handle = e._resolve_derivative('evoked-test-data', options={'data': DataSpec.coerce('meg.rms'), 'test': test})
+        return handle.dependency_fingerprints()
+
+    def test_data_variables(e, test, group):
+        "The values the test reads, as recorded in the event-shell dependency"
+        return test_data_dependencies(e, test, group)['events']['fingerprint']
+
+    def events_identity(e):
+        e.set(subject='R0002', epoch='target', epoch_rejection='')
+        handle = e._resolve_derivative('labeled-events')
+        return handle.artifact_path, handle.current_fingerprint()
+
+    e = experiment(['R0000'])
+    e_moved = experiment(['R0000', 'R0001'])  # R0001 moves from g1 to g0
+
+    # per-subject events are independent of group membership
+    assert events_identity(e_moved) == events_identity(e)
+    # a test reading the changed groups is invalidated
+    assert test_data_variables(e_moved, 'g0=g1', 'all') != test_data_variables(e, 'g0=g1', 'all')
+    # a test that reads no across-subject variable is not
+    assert test_data_variables(e_moved, 'a>v', 'all') == test_data_variables(e, 'a>v', 'all')
+    # a test that reads no variable at all does not depend on the events in the first place
+    assert set(test_data_dependencies(e, 'one-sample', 'all')) == {'dataset'}
+    # neither is the group test on a group that excludes the subject that moved
+    assert test_data_variables(e_moved, 'g0=g1', 'fixed') == test_data_variables(e, 'g0=g1', 'fixed')
+
+    # a GroupVar is only present in data that combines subjects
+    e.set(group='all', epoch='target', epoch_rejection='')
+    assert 'age' in e.load_selected_events(-1)
+    assert 'age' not in e.load_selected_events('R0000')
+    assert 'age' not in e.load_events(subject='R0000')
+
+    # a GroupVar can not group trials within subject
+    with pytest.raises(ConfigurationError, match='across-subject variable'):
+        e.load_evoked('R0000', model='age')
+
+    # GroupVar referring to an undefined group, in Pipeline.variables ...
+    class BadExperiment(SampleExperiment):
+        variables = {**SampleExperiment.variables, 'age': GroupVar(['g0', 'g1'])}
+    with pytest.raises(ConfigurationError, match='undefined group'):
+        BadExperiment(root)
+
+    # ... and in the GroupVar that TTestIndependent synthesizes
+    class BadExperiment(SampleExperiment):
+        tests = {'g0=g1': TTestIndependent('group', 'g0', 'g1')}
+    with pytest.raises(ConfigurationError, match='undefined group'):
+        BadExperiment(root)
+
+    # across-subject variables can not be used in a two-stage test
+    class BadExperiment(SampleExperiment):
+        groups = {'g0': Group(['R0000']), 'g1': SubGroup('all', ['R0000'])}
+        variables = {**SampleExperiment.variables, 'age': GroupVar(['g0', 'g1'])}
+        tests = {'twostage-group': TwoStageTest('age_g0', vars={'age_g0': EvalVar("age == 'g0'")})}
+    with pytest.raises(ConfigurationError, match='across-subject variable'):
+        BadExperiment(root)
+
+
+@requires_mne_sample_data
+def test_test_result_tracks_event_variables(samples_experiment):
+    """A result is invalidated by a change to a variable it reads
+
+    The upstream ``evoked`` node narrows its own ``epoch-events`` dependency to the
+    evaluated model, which also truncates that subtree, so nothing below it reports a
+    change in a variable the test reads outside the model. The test-data node resolves
+    those against each subject's events itself.
+    """
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    root = samples_experiment(n_subjects=3, n_segments=2, mris=False)
+
+    def experiment(age_labels):
+        class Experiment(SampleExperiment):
+            variables = {
+                **SampleExperiment.variables,
+                'age': LabelVar('subject', age_labels),  # between-subject, not in the model
+            }
+            tests = {
+                **SampleExperiment.tests,
+                'anova': ANOVA('modality * age * subject(age)'),
+            }
+        return Experiment(root)
+
+    options = {
+        'data': DataSpec.coerce('meg.rms'), 'samples': 20, 'test': 'anova',
+        'tstart': 0.05, 'tstop': 0.2, 'pmin': 0.05, 'baseline': False,
+        'src_baseline': None, 'smooth': None, 'samplingrate': None,
+    }
+
+    e = experiment({'R0000': 'young', 'R0001': 'old', 'R0002': 'old'})
+    e.set(group='all', epoch='target', epoch_rejection='')
+    assert e.tests['anova'].model == 'modality'  # 'age' enters outside the model
+    handle = e._resolve_derivative('test-result', options=options)
+    _ = handle.load()
+    assert handle.is_valid()
+
+    # R0001 moves from 'old' to 'young': the between-subject factor changes
+    e_changed = experiment({'R0000': 'young', 'R0001': 'young', 'R0002': 'old'})
+    e_changed.set(group='all', epoch='target', epoch_rejection='')
+    assert not e_changed._resolve_derivative('test-result', options=options).is_valid()
+
+    # a variable the test does not read leaves it valid
+    class Unrelated(type(e)):
+        variables = {
+            **type(e).variables,
+            'unused': LabelVar('value', {1: 'a', 2: 'b'}),
+        }
+    e_unrelated = Unrelated(root)
+    e_unrelated.set(group='all', epoch='target', epoch_rejection='')
+    assert e_unrelated._resolve_derivative('test-result', options=options).is_valid()
+
+    # what is recorded are the values the test reads, not the definitions producing
+    # them: changing a label that no retained event maps to must not invalidate the
+    # result, even though it changes the definition of a variable the test does read
+    e_extra = experiment({'R0000': 'young', 'R0001': 'old', 'R0002': 'old', 'R9999': 'other'})
+    e_extra.set(group='all', epoch='target', epoch_rejection='')
+    assert e_extra._resolve_derivative('test-result', options=options).is_valid()
+
+    # a pipeline variable the test reads only through one of its own variables is
+    # tracked as well: `score` reaches the test through `age`, and nothing between
+    # the events and the result reports it
+    age_codes = {1.: 'low', 2.: 'low', 3.: 'high', 4.: 'high', 5.: 'high'}
+
+    def indirect(scores, codes=age_codes):
+        class Experiment(SampleExperiment):
+            variables = {**SampleExperiment.variables, 'score': LabelVar('subject', scores)}
+            tests = {**SampleExperiment.tests, 'indirect': ANOVA('modality * age * subject(age)', vars={'age': LabelVar('score', codes)})}
+        pipeline = Experiment(root)
+        pipeline.set(group='all', epoch='target', epoch_rejection='')
+        return pipeline
+
+    indirect_options = {**options, 'test': 'indirect'}
+    e_indirect = indirect({'R0000': 1., 'R0001': 3., 'R0002': 5.})
+    handle = e_indirect._resolve_derivative('test-result', options=indirect_options)
+    _ = handle.load()
+    assert handle.is_valid()
+    # R0001 crosses the threshold, so the between-subject factor changes
+    assert not indirect({'R0000': 1., 'R0001': 1., 'R0002': 5.})._resolve_derivative('test-result', options=indirect_options).is_valid()
+    # a score change that does not cross it leaves the result valid
+    assert indirect({'R0000': 2., 'R0001': 4., 'R0002': 5.})._resolve_derivative('test-result', options=indirect_options).is_valid()
+    # the same holds for the test's own variable: its values are recorded, so a code
+    # that no subject maps to does not invalidate the result
+    assert indirect({'R0000': 1., 'R0001': 3., 'R0002': 5.}, {**age_codes, 6.: 'high'})._resolve_derivative('test-result', options=indirect_options).is_valid()
+
+
+@requires_mne_sample_data
+def test_evoked_artifact_is_consumer_independent(samples_experiment):
+    """The evoked cache is shared between consumers that read different variables
+
+    An ``evoked`` artifact has a single manifest, so what a consumer reads must not
+    enter it; otherwise alternating between two tests rebuilds every subject's data.
+    """
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    root = samples_experiment(n_subjects=3, n_segments=2, mris=False)
+
+    class Experiment(SampleExperiment):
+        variables = {
+            **SampleExperiment.variables,
+            'age': LabelVar('subject', {'R0000': 'young', 'R0001': 'old', 'R0002': 'old'}),
+        }
+        tests = {**SampleExperiment.tests, 'anova': ANOVA('modality * age * subject(age)')}
+
+    e = Experiment(root)
+    e.set(group='all', epoch='target', epoch_rejection='')
+
+    def load_test_data(test):
+        # evoked-test-data is uncached, so it always descends to `evoked`
+        e._load_derivative('evoked-test-data', options={'data': DataSpec.coerce('meg.rms'), 'test': test})
+
+    def evoked_mtime():
+        e.set(subject='R0000')
+        path = e._resolve_derivative('evoked', options={'model': 'modality'}).artifact_path
+        e.set(group='all')
+        return path.stat().st_mtime_ns
+
+    load_test_data('anova')
+    mtime = evoked_mtime()
+    load_test_data('anova')
+    assert evoked_mtime() == mtime
+    # 'a>v' reads 'modality' but not 'age', and must reuse the same artifact
+    load_test_data('a>v')
+    assert evoked_mtime() == mtime
+    load_test_data('anova')
+    assert evoked_mtime() == mtime
+    # ... and so must a plain load_evoked(), which reads no variables at all
+    e.load_evoked('R0000', model='modality')
+    assert evoked_mtime() == mtime
+
+
+@requires_mne_sample_data
+def test_scaled_mri_from_cfg(samples_experiment):
+    """A subject directory holding only MRI scaling parameters is scaled on demand"""
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    root = samples_experiment(n_subjects=1, n_segments=1, mris=True)
+    e = SampleExperiment(root)
+    mri_dir = Path(root) / 'derivatives' / 'freesurfer' / 'sub-R0000'
+    cfg_path = mri_dir / 'MRI scaling parameters.cfg'
+    cfg = "[MRI Scaling]\nsubject_from = fsaverage\nsubject_to = sub-R0000\nn_params = 1\nscale = 0.95\nversion = 1\n\n"
+    shutil.rmtree(mri_dir)
+    mri_dir.mkdir()
+    # a source subject that is neither present nor downloadable
+    cfg_path.write_text(cfg.replace('fsaverage', 'sub-template'))
+    with pytest.raises(FileNotFoundError, match='sub-template'):
+        e.load_src(src='ico-2')
+    assert not (mri_dir / 'surf').exists()
+    cfg_path.write_text(cfg)
+    # a directory with other content is never deleted
+    extra = mri_dir / 'label' / 'lh.custom.annot'
+    extra.parent.mkdir()
+    extra.touch()
+    with pytest.raises(FileExistsError, match='label'):
+        e.load_src(src='ico-2')
+    assert extra.exists()
+    shutil.rmtree(extra.parent)
+
+    src = e.load_src(src='ico-2')
+    assert src[0]['nuse'] == 162
+    assert (mri_dir / 'surf' / 'lh.white').exists()
+    assert (mri_dir / 'bem' / 'sub-R0000-inner_skull-bem.fif').exists()
+    assert (mri_dir / 'bem' / 'sub-R0000-ico-2-src.fif').exists()
+    assert (mri_dir / 'label' / 'lh.aparc.annot').exists()
+    assert cfg_path.read_text() == cfg
+    # a complete MRI is left alone
+    mtime = (mri_dir / 'surf' / 'lh.white').stat().st_mtime
+    e.load_annot(parc='aparc')
+    assert (mri_dir / 'surf' / 'lh.white').stat().st_mtime == mtime
+
+
+@requires_mne_sample_data
 @pytest.mark.slow
 def test_sample_source(samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
     root = samples_experiment(n_subjects=3, n_segments=1, mris=True)  # TODO: use sample MRI which already has forward solution
-    e = SampleExperiment(root)
+
+    class Experiment(SampleExperiment):
+        raw = {
+            **SampleExperiment.raw,
+            # full SSS (the default 'tsss' is tSSS-only), for the inverse operator rank checks below
+            'sss': RawMaxwell('raw', ignore_ref=True),
+            'sss-ica': RawICA('sss', 'sample', method='fastica', max_iter=1, n_components=0.95),
+        }
+    e = Experiment(root)
 
     # source space tests
     # ico-2 (320 vertices/hemi) keeps forward/inverse fast while still covering the transversetemporal ROI
-    e.set(epoch='auditory', epoch_rejection='', src='ico-2', parc='ac', inv='free-3-dSPM')
+    e.set(epoch='auditory', epoch_rejection='', src='ico-2', parc='ac', inv='free-3-dSPM', cov='empirical')
     morph = e.load_source_morph(subject='R0000')
     assert isinstance(morph, mne.SourceMorph)
     assert exists(e._resolve_derivative('source-morph').manifest_path)
@@ -513,6 +838,14 @@ def test_sample_source(samples_experiment):
     assert exists(e._resolve_derivative('src').manifest_path)
     assert exists(e._resolve_derivative('fwd').manifest_path)
     assert exists(e._resolve_derivative('inv').manifest_path)
+    # Source space files without manifest (e.g. copied with a template brain, or scaled by mne coreg) are regenerated rather than protected
+    subject_src = e._derivatives.resolve('src', state=e.state)
+    fsaverage_src = e._derivatives.resolve('src', state={**e.state, 'mrisubject': 'fsaverage'})
+    for request in (subject_src, fsaverage_src):
+        request.manifest_path.unlink()
+    e.load_src()
+    assert exists(subject_src.manifest_path)
+    assert exists(fsaverage_src.manifest_path)
     # cat is a view option on evoked-stc: subsetting model cells
     ds_all = e.load_evoked(model='side', ndvar=False, inv='free-3-dSPM')
     ds_left = e.load_evoked(model='side', cat=('left',), ndvar=False, inv='free-3-dSPM')
@@ -540,7 +873,7 @@ def test_sample_source(samples_experiment):
         roi_manifest_data = json.load(fid)
     assert 'evoked-test-data' in roi_manifest_data['dependencies']
     roi_deps = roi_manifest_data['dependencies']['evoked-test-data']['dependencies']
-    assert set(roi_deps) == {'dataset'}
+    assert set(roi_deps) == {'dataset', 'events'}  # 'events' is the shell the test's variables are resolved against
     assert roi_deps['dataset']['name'] == 'evoked-stc-group-dataset'
     group_deps = roi_deps['dataset']['dependencies']
     assert set(group_deps) == {'R0000', 'R0001', 'R0002'}
@@ -575,6 +908,36 @@ def test_sample_source(samples_experiment):
             **SampleExperiment.parcs,
             'ac': SubParc('aparc', ('superiortemporal',)),
         }
+
+    # Inverse operator rank after full SSS (reuses the R0000 forward solution)
+    e.set('R0000', raw='sss', cov='empirical', epoch='auditory', epoch_rejection='')
+    inv = e.load_inv()
+    raw = e.load_raw()
+    cov = e._load_derivative('cov')
+    header_rank = mne.compute_rank(cov, rank='info', info=raw.info)['mag']  # the sample experiment keeps magnetometers only
+    n_channels = len(mne.pick_types(raw.info, meg=True, exclude='bads'))
+    assert header_rank < n_channels
+    # the data-driven estimate for an empirical covariance recovers the SSS rank
+    assert mne.minimum_norm.compute_rank_inverse(inv) == header_rank
+    # MNE's comparison of the data-driven rank with the header is suppressed, so it never reaches the warning log
+    warning_log = e.root / LOG_DIR / 'inv-warnings.toml'
+    assert not warning_log.exists() or 'theoretical rank' not in warning_log.read_text()
+
+    # ICA after SSS: each excluded component removes one dimension from the data rank
+    e.set(raw='sss-ica')
+    with catch_warnings():
+        filterwarnings('ignore', "FastICA did not converge", UserWarning)
+        ica_path = e.make_ica()
+    ica = e.load_ica()
+    ica.exclude = [0, 1]
+    ica.save(ica_path, overwrite=True)
+    assert mne.minimum_norm.compute_rank_inverse(e.load_inv()) == header_rank - 2
+    # the inverse operator follows the ICA selection
+    ica.exclude = [0]
+    ica.save(ica_path, overwrite=True)
+    assert mne.minimum_norm.compute_rank_inverse(e.load_inv()) == header_rank - 1
+    # a diagonal (ad hoc) covariance is full rank; imposing the SSS rank on it would zero arbitrary channel directions in the whitener
+    assert mne.minimum_norm.compute_rank_inverse(e.load_inv(cov='ad_hoc')) == n_channels
 
 
 @requires_mne_sample_data
@@ -654,6 +1017,7 @@ def test_sample_tasks(monkeypatch, samples_experiment):
     monkeypatch.setattr(recording_epochs_node, 'build', count_recording_epochs_builds)
     ds_super = e.load_epochs(epoch='super', interpolate_bads=True)
     assert recording_epochs_builds == ['target1', 'target2']
+    assert ds_super.info['epoch'] == 'super'
     assert_dataobj_equal(ds_super['mag'], combine((ds1['mag'], ds2['mag'])))
     # SuperEpoch should depend on the same sub-epoch request as direct loading.
     super_handle = e._resolve_derivative('epochs')
@@ -666,7 +1030,7 @@ def test_sample_tasks(monkeypatch, samples_experiment):
     # evoked
     dse_super = e.load_evoked(epoch='super', model='modality%side')
     ds_super_keep = e.load_epochs(epoch='super', interpolate_bads='keep')
-    target = ds_super_keep.aggregate('modality%side', drop=('sample', 't_edf', 'onset', 'index', 'value', 'task', 'interpolate_channels', 'epoch'))
+    target = ds_super_keep.aggregate('modality%side', drop=('sample', 'onset', 'index', 'value', 'task', 'interpolate_channels', 'epoch'))
     assert_dataobj_equal(dse_super, target, 19)
 
     # conflicting task and epoch settings
@@ -683,6 +1047,87 @@ def test_sample_tasks(monkeypatch, samples_experiment):
         filterwarnings('ignore', "FastICA did not converge", UserWarning)
         ica_path = e.make_ica()
     assert ica_path == Path(root) / 'derivatives' / 'mne' / 'sub-R0000' / 'meg' / 'sub-R0000_desc-ica_ica.fif'
+
+    # head position overview: recordings with the same dev_head_t share a label
+    ds = e.show_head_position_overview(asds=True)
+    assert ds.n_cases == 4
+    assert set(ds['label']) == {'A'}
+    assert '†' not in str(e.show_head_position_overview())  # the sample raw has an initial HPI measurement, but no continuous HPI
+
+
+@requires_mne_sample_data
+def test_make_ica_job(samples_experiment):
+    "The separable, picklable ICAJob and its cache integration"
+    import pickle
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    set_log_level('warning', 'mne')
+    root = samples_experiment(n_subjects=1, n_segments=2)
+
+    class Experiment(SampleExperiment):
+        raw = {
+            **SampleExperiment.raw,
+            'ica': RawICA('1-40', 'sample', method='fastica', n_components=0.95),
+        }
+    e = Experiment(root)
+    e.set('R0000', raw='ica')
+
+    spec = e._job_spec(ica_input_name('ica'))
+    assert not spec.is_done
+
+    # data-carrying, picklable job computed "off-host"
+    with catch_warnings():
+        filterwarnings('ignore', "FastICA did not converge", UserWarning)
+        job = pickle.loads(pickle.dumps(spec.make_job()))
+        assert job.raw.preload
+        assert job.key == spec.key
+        assert job.provenance is not None  # travels with the data through the round trip
+        ica = spec.save_result(job, job())
+    assert isinstance(ica, mne.preprocessing.ICA)
+    assert spec.is_done
+    assert Path(spec.path).exists()
+    assert exists(e._derivatives.manifest_path(spec.path, ica_input_name('ica')))
+    # make_ica sees the cached ICA and does not recompute it
+    assert e.make_ica() == spec.path
+
+    # a stale ICA file is protected: make_job() raises before loading any data
+    class ChangedExperiment(Experiment):
+        raw = {
+            **Experiment.raw,
+            '1-40': RawFilter('tsss', 1, 41),
+            'ica': RawICA('1-40', 'sample', method='fastica', n_components=0.95),
+        }
+    e_changed = ChangedExperiment(root)
+    e_changed.set('R0000', raw='ica')
+    stale_spec = e_changed._job_spec(ica_input_name('ica'))
+    assert not stale_spec.is_done
+    with pytest.raises(ProtectedArtifactError):
+        stale_spec.make_job()
+
+    # an ICA file that appears while the fit is running is not clobbered by the result:
+    # it was never the file the overwrite was authorized for
+    race_spec = stale_spec.with_controls(ALLOW_PROTECTED_OVERWRITE)
+    with catch_warnings():
+        filterwarnings('ignore', "FastICA did not converge", UserWarning)
+        race_job = race_spec.make_job()
+    ica.save(race_spec.path, overwrite=True)  # another session writes it meanwhile
+    with pytest.raises(ProtectedArtifactError, match="while this ICA was being computed"):
+        race_spec.save_result(race_job, race_job())
+
+    # ... and recomputes once the overwrite is authorized, with the cache reporting the
+    # job to the experiment's own logger (which does not propagate to the root logger)
+    records = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    e_changed._log.addHandler(handler)
+    with catch_warnings():
+        filterwarnings('ignore', "FastICA did not converge", UserWarning)
+        overwrite_spec = stale_spec.with_controls(ALLOW_PROTECTED_OVERWRITE)
+        overwrite_job = overwrite_spec.make_job()
+        overwrite_spec.save_result(overwrite_job, overwrite_job())
+    assert stale_spec.is_done
+    # at INFO, so it reaches the terminal before the minutes-long fit
+    assert [(record.levelno, record.getMessage()) for record in records if record.getMessage().startswith('Generate job for ica-input@ica:')] == [(logging.INFO, f"Generate job for ica-input@ica: {relpath(stale_spec.path, root)}")]
 
 
 @requires_mne_sample_data
@@ -721,6 +1166,218 @@ def test_ica_all_tasks_after_maxwell(samples_experiment):
     assert isinstance(e.load_ica(), mne.preprocessing.ICA)
     # the ICA can be applied to an individual recording
     assert isinstance(e.load_raw(), mne.io.BaseRaw)
+
+
+@requires_mne_sample_data
+def test_head_pos_without_chpi(samples_experiment):
+    "RawMaxwell(head_pos=True) is a no-op for recordings without continuous HPI; the empty room follows the task recording"
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    root = samples_experiment(n_subjects=1, n_segments=1)
+
+    class Experiment(SampleExperiment):
+        raw = {
+            **SampleExperiment.raw,
+            # full SSS: with the st_only=True default pipe, head_pos would not compensate the output
+            'sss': RawMaxwell('raw', ignore_ref=True),
+            'sss_hp': RawMaxwell('raw', ignore_ref=True, head_pos=True),
+        }
+    e = Experiment(root)
+    e.set('R0000')
+
+    # the sample data has no cHPI, so the derivative falls back to the static dev_head_t
+    head_pos = e.load_head_position()
+    assert head_pos.shape == (1, 10)
+    assert 'raw-head-position [derivative]' in e.load_head_position(show_dependencies=True).text(1000)
+    pos_request = e._derivatives.resolve('raw-head-position', state=e.state)
+    assert pos_request.artifact_path.suffix == '.pos'
+    assert pos_request.artifact_path.exists()
+    with open(pos_request.manifest_path) as fid:
+        pos_manifest = json.load(fid)
+    # the coil fits exclude the bad channels, so the head positions depend on the raw source node that applies them
+    assert list(pos_manifest['dependencies']) == [raw_node_name('raw')]
+    assert 'bads' in pos_manifest['dependencies'][raw_node_name('raw')]['dependencies']['raw-input-bads@raw']['fingerprint']
+
+    # with a single position sample there is nothing to compensate, so the output is unchanged
+    raw_hp = e.load_raw(raw='sss_hp', preload=True)
+    raw = e.load_raw(raw='sss', preload=True)
+    assert raw_hp.ch_names == raw.ch_names
+    assert 'chpi' not in raw_hp.get_channel_types()
+    assert_array_equal(raw_hp.get_data(), raw.get_data())
+
+    # head_pos still separates the two pipes in the cache
+    manifests = {raw: e._derivatives.resolve(raw_node_name(raw), state={**e.state, 'raw': raw}, options={'noise': False}).manifest_path for raw in ('sss', 'sss_hp')}
+    assert manifests['sss_hp'] != manifests['sss']
+    # the Maxwell manifest records the destination that was used, not how the canonical head position was derived
+    with open(manifests['sss']) as fid:
+        sss_manifest = json.load(fid)
+    canonical_entry = sss_manifest['dependencies']['canonical-head-position']
+    assert canonical_entry['fingerprint'] == {'destination': None}
+    assert 'dependencies' not in canonical_entry
+
+    # the empty room is filtered in the task recording's head frame and retains the same SSS components
+    e.set(raw='sss')
+    raw_noise = e.load_raw(noise=True)
+    assert_allclose(raw_noise.info['dev_head_t']['trans'], raw.info['dev_head_t']['trans'])
+    sss_info, sss_info_noise = (r.info['proc_history'][-1]['max_info']['sss_info'] for r in (raw, raw_noise))
+    assert_array_equal(sss_info_noise['components'], sss_info['components'])
+    assert sss_info_noise['nfree'] == sss_info['nfree']
+    # so the empty room covariance has exactly the rank of the task data, and MNE's header comparison holds
+    cov = e.load_cov(cov='emptyroom')
+    assert mne.compute_rank(cov, info=raw.info) == mne.compute_rank(cov, rank='info', info=raw.info)
+
+    # A read-only cache scan does not build the canonical head position; with a stale canonical head position, the Maxwell artifacts are kept as unverifiable (their destination might not change)
+    canonical_manifest_path = e._derivatives.resolve('canonical-head-position', state=e.state).manifest_path
+    canonical_manifest = json.loads(canonical_manifest_path.read_text())
+    canonical_manifest['derivative_version'] += 1
+    canonical_manifest_path.write_text(json.dumps(canonical_manifest))
+    report = e._derivatives.scan_cache()
+    categories = {entry.manifest_path: entry.category for entry in report.entries}
+    assert categories[canonical_manifest_path] == GCCategory.DERIVATIVE_VERSION
+    assert categories[manifests['sss']] == GCCategory.UNVERIFIABLE
+    assert categories[manifests['sss_hp']] == GCCategory.UNVERIFIABLE
+    assert not report.errors
+    assert json.loads(canonical_manifest_path.read_text()) == canonical_manifest  # not rebuilt by the scan
+    # without the stored artifact, the destination can not be verified at all
+    canonical_manifest_path.unlink()
+    e._derivatives.resolve('canonical-head-position', state=e.state).artifact_path.unlink()
+    report = e._derivatives.scan_cache()
+    categories = {entry.manifest_path: entry.category for entry in report.entries}
+    assert categories[manifests['sss']] == GCCategory.UNVERIFIABLE
+    assert not report.errors
+    assert e._derivatives.resolve(raw_node_name('sss'), state={**e.state, 'raw': 'sss'}, options={'noise': False}).is_valid()  # a regular load rebuilds the canonical head position and finds the destination unchanged
+
+
+@requires_mne_sample_data
+def test_maxwell_st_only_destination(samples_experiment):
+    "With st_only=True the destination does not enter the output, so the canonical head position is not a dependency; manifests that still record it remain valid"
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    root = samples_experiment(n_subjects=1, n_segments=1)
+    e = SampleExperiment(root)
+    e.set('R0000', raw='1-40')
+    e.load_raw()
+
+    def request(raw):
+        return e._derivatives.resolve(raw_node_name(raw), state={**e.state, 'raw': raw}, options={'noise': False})
+
+    tsss_manifest_path, filter_manifest_path = request('tsss').manifest_path, request('1-40').manifest_path
+    with open(tsss_manifest_path) as fid:
+        tsss_manifest = json.load(fid)
+    assert 'canonical-head-position' not in tsss_manifest['dependencies']
+
+    # manifests written while the dependency was still declared: the stale entry is dropped, in the node's own manifest and nested in a dependent's
+    stale_entry = {'name': 'canonical-head-position', 'fingerprint': {}, 'dependencies': {'task-sample': {'name': 'raw-head-position', 'fingerprint': {}, 'dependencies': {}}}, 'key': 'stale', 'manifest': 'stale.json'}
+    tsss_manifest['dependencies']['canonical-head-position'] = stale_entry
+    with open(tsss_manifest_path, 'w') as fid:
+        json.dump(tsss_manifest, fid)
+    with open(filter_manifest_path) as fid:
+        filter_manifest = json.load(fid)
+    filter_manifest['dependencies'][raw_node_name('tsss')]['dependencies']['canonical-head-position'] = stale_entry
+    with open(filter_manifest_path, 'w') as fid:
+        json.dump(filter_manifest, fid)
+    assert request('tsss').is_valid()
+    assert request('1-40').is_valid()
+
+
+@requires_mne_sample_data
+def test_covariance_max_condition(samples_experiment):
+    "max_condition regularizes only where needed, and only invalidates dependents where it did"
+    from eelbrain._experiment.covariance import RawCovariance
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    root = samples_experiment(n_subjects=1, n_segments=2)
+
+    def experiment(max_condition):
+        class Experiment(SampleExperiment):
+            noise_covariance = {'emptyroom': RawCovariance(max_condition=max_condition)}
+        e = Experiment(root)
+        e.set(subject='R0000', cov='emptyroom', raw='1-40')
+        return e, e._derivatives.resolve('cov', state=e.state)
+
+    e, handle = experiment(1e6)
+    cov = e.load_cov()
+    condition = handle.artifact_metadata['condition']['mag']
+    assert 10 < condition < 1e6, "sample data covariance is expected to be well conditioned"
+    assert 'regularization' not in handle.artifact_metadata
+    fingerprint = handle.current_dependency_fingerprint()
+
+    # the same covariance without the setting: the artifact is rebuilt because its own
+    # definition changed, but dependents stay valid because the covariance did not
+    e_off, handle_off = experiment(0)
+    assert_array_equal(e_off.load_cov().data, cov.data)
+    assert handle_off.artifact_metadata == {}
+    assert handle_off.current_fingerprint() != handle.current_fingerprint()
+    assert handle_off.current_dependency_fingerprint() == fingerprint
+
+    # a target below the actual condition number does change the covariance, and says so
+    e_reg, handle_reg = experiment(condition / 10)
+    assert not np.array_equal(e_reg.load_cov().data, cov.data)
+    assert handle_reg.artifact_metadata['regularization']['mag'] > 0
+    assert handle_reg.current_dependency_fingerprint() != fingerprint
+
+
+@requires_mne_sample_data
+def test_head_pos_movement_compensation(samples_experiment):
+    "RawMaxwell(head_pos=True) compensates movement, drops the CHPI channels, and keeps mixed runs concatenable"
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.preprocessing.nodes import RawHeadPositionDerivative
+    from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
+
+    root = samples_experiment(n_subjects=1, n_tasks=2, n_segments=1, n_runs=2)
+
+    class Experiment(SampleExperiment):
+        raw = {
+            'tsss': RawMaxwell('raw', ignore_ref=True, head_pos=True),
+            'tsss_static': RawMaxwell('raw', ignore_ref=True),
+            'ica': RawICA('tsss', method='fastica', max_iter=1, n_components=0.95),
+            **SampleExperiment.raw,
+        }
+
+    def mixed_head_positions(self, ctx):
+        "Tracked positions for run 1, only the static transform for run 2"
+        raw = ctx.load(self._source_name)
+        trans = raw.info['dev_head_t']['trans']
+        quat = mne.transforms.rot_to_quat(trans[:3, :3])
+        sample = [*quat, *trans[:3, 3], .99, .001, .01]
+        if ctx.state['run'] != '1':
+            return np.array([[raw.first_time, *sample]])
+        t = np.linspace(raw.first_time, raw.times[-1] + raw.first_time, 20)
+        out = np.tile([sample], (20, 1))
+        out[:, 3:6] += np.linspace(0, .005, 20)[:, np.newaxis]  # move the head over the recording
+        return np.column_stack([t, out])
+
+    e = Experiment(root)
+    e.set('R0000', task='sample1', run='1')
+    with patch.object(RawHeadPositionDerivative, 'build', mixed_head_positions):
+        assert e.load_head_position().shape == (20, 10)
+        raw_hp = e.load_raw(raw='tsss', preload=True)
+        raw = e.load_raw(raw='tsss_static', preload=True)
+        # movement compensation changed the MEG data ...
+        data, data_hp = raw.get_data(picks='meg'), raw_hp.get_data(picks='meg')
+        assert np.abs(data_hp - data).max() / np.abs(data).max() > 1e-3
+        # ... but not the channel layout: the 'chpi' position channels maxwell_filter appends are removed
+        assert 'chpi' not in raw_hp.get_channel_types()
+        assert raw_hp.ch_names == raw.ch_names
+        # the Maxwell manifest records the destination (the canonical head position, which the filtered data were moved to)
+        manifest_path = e._derivatives.resolve(raw_node_name('tsss_static'), state={**e.state, 'raw': 'tsss_static'}, options={'noise': False}).manifest_path
+        with open(manifest_path) as fid:
+            canonical_entry = json.load(fid)['dependencies']['canonical-head-position']
+        assert 'dependencies' not in canonical_entry
+        assert_allclose(canonical_entry['fingerprint']['destination'], raw.info['dev_head_t']['trans'], atol=1e-6)
+        # the same destination is recorded for a filtered run that it is applied to
+        tsss_request = e._derivatives.resolve(raw_node_name('tsss'), state={**e.state, 'raw': 'tsss'}, options={'noise': False})
+        assert tsss_request.is_valid()
+
+        assert e.load_head_position(run='2').shape == (1, 10)  # run 2 has nothing to compensate
+        e.set(raw='ica')
+        with catch_warnings():
+            filterwarnings('ignore', "FastICA did not converge", UserWarning)
+            # ICA after RawMaxwell concatenates the tracked and the untracked run, which requires matching channels
+            e.make_ica()
+            assert isinstance(e.load_ica(), mne.preprocessing.ICA)
 
 
 @requires_mne_sample_data
@@ -855,10 +1512,30 @@ def test_variable_length_epochs(samples_experiment):
             **SampleExperiment.epochs,
             # tmax varies per epoch (0.2 or 0.3 s) -> variable-length epochs
             'varlen': PrimaryEpoch('sample', "event == 'target'", tmin=-0.1, tmax='0.2 + 0.1*(index % 2)', decim=5),
+            # all selected events form a single ContinuousEpoch segment
+            'cont-one': ContinuousEpoch('sample', "event == 'target'", pad_start=0.1, pad_end=0.1, split=1000),
+            # every selected event forms an equal-length segment
+            'cont-equal': ContinuousEpoch('sample', "event == 'target'", pad_start=0.1, pad_end=0.1, split=0),
+        }
+        # covariance from variable-length epochs
+        noise_covariance = {
+            **SampleExperiment.noise_covariance,
+            'varlen': EpochCovariance('varlen', 'empirical'),
+            'varlen-mean': EpochCovariance('varlen', 'empirical', keep_sample_mean=False),
         }
 
     e = Experiment(root)
     e.set(subject='R0000', epoch='varlen', epoch_rejection='', raw='raw')
+
+    # covariance from variable-length epochs
+    e.set(cov='varlen')
+    cov = e._load_derivative('cov')
+    assert isinstance(cov, mne.Covariance)
+    assert cov.nfree > 0
+    e.set(cov='varlen-mean')
+    with pytest.raises(NotImplementedError, match='keep_sample_mean'):
+        e._load_derivative('cov')
+    e.set(cov='empirical')
 
     ds = e.load_epochs()
     n = ds.n_cases
@@ -880,10 +1557,32 @@ def test_variable_length_epochs(samples_experiment):
     assert isinstance(ds_both['epochs'], Datalist)
     assert isinstance(ds_both['mag'], Datalist)
 
+    # ContinuousEpoch keeps the segmented representation even when there is
+    # only one segment.
+    e.set(epoch='cont-one')
+    ds_cont = e.load_epochs(keep_mne=True)
+    assert ds_cont.n_cases == 1
+    assert isinstance(ds_cont['epochs'], Datalist)
+    assert isinstance(ds_cont['mag'], Datalist)
+    assert ds_cont['epochs'][0].times[0] == pytest.approx(-0.1, abs=0.002)
+    assert ds_cont['mag'][0].time.tmin == pytest.approx(ds_cont['epochs'][0].times[0])
+
+    # Equal-length ContinuousEpoch segments likewise remain separate because
+    # they occupy different positions on the epoch-wide clock.
+    e.set(epoch='cont-equal')
+    ds_cont = e.load_epochs(keep_mne=True)
+    assert ds_cont.n_cases > 1
+    assert isinstance(ds_cont['epochs'], Datalist)
+    assert isinstance(ds_cont['mag'], Datalist)
+    assert len({y.time.nsamples for y in ds_cont['mag']}) == 1
+    assert len({y.time.tmin for y in ds_cont['mag']}) == ds_cont.n_cases
+
 
 @requires_mne_sample_data
 def test_channel_model_rejection(samples_experiment):
     "Automatic epoch rejection via ChannelModel (the 'epoch_rejection' state)"
+    import pickle
+
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
     from eelbrain._info import INTERPOLATE_CHANNELS
@@ -917,6 +1616,13 @@ def test_channel_model_rejection(samples_experiment):
     assert ds.n_cases == n_total - n_rejected
     # second resolve is a cache hit (no rebuild)
     assert e._resolve_derivative('epoch-rejection-channel-model').is_valid()
+
+    # the separable job reproduces build(): a picklable job carrying its data
+    spec = e._job_spec('epoch-rejection-channel-model')
+    assert spec.is_done
+    job = pickle.loads(pickle.dumps(spec.make_job()))
+    assert job.key == spec.key
+    assert_dataobj_equal(job(), rej_ds)
 
     # MEG-only data: ChannelModelRejection has no EEG to model -> raises
     meg_root = samples_experiment(1, 1, pick='mag')
@@ -1113,11 +1819,18 @@ def test_raw_reader_warnings_are_summarized(monkeypatch, samples_experiment):
     assert 'Synthetic raw reader warning 2' in text
     data = tomllib.loads(text)
     assert len(data['warning']) == 2
+    # each entry records where the warning was attributed to, the key-field state and the full call stack
+    entry = data['warning'][0]
+    assert entry['location'].endswith(f'{__file__}:{read_raw_fif.__code__.co_firstlineno + 1}')
+    assert json.loads(entry['state'])['subject'] == 'R0000'
+    assert any('read_raw_fif' in line for line in entry['stack'])
+    assert any('load_raw' in line for line in entry['stack'])
 
     log_path = Path(next(handler.baseFilename for handler in e._log.handlers if isinstance(handler, logging.FileHandler)))
     log_text = log_path.read_text()
     assert str(details_path) in log_text
     assert log_text.count('issued during raw-input@raw') == 1
+    assert 'Synthetic raw reader warning 1' in log_text
 
     e.load_raw(raw='raw')
     assert details_path.read_text() == text
@@ -1270,6 +1983,20 @@ def test_evoked_cache_stales_on_model_change(samples_experiment):
     assert not handle.is_valid()
     ds = e_changed.load_evoked(ndvar=False, model='modality')
     assert set(ds['modality'].cells) == {'auditory_changed', 'visual'}
+
+    # reassigning the same events to the same cells changes the averages, so it has to
+    # invalidate the artifact as well
+    class ReassignedExperiment(SampleExperiment):
+        variables = {
+            **SampleExperiment.variables,
+            'modality': LabelVar('value', {(1, 3): 'auditory_changed', (2, 4): 'visual'}),
+        }
+
+    e_reassigned = ReassignedExperiment(root)
+    e_reassigned.set(subject='R0000', epoch='target', epoch_rejection='')
+    assert not e_reassigned._resolve_derivative('evoked', options={'model': 'modality'}).is_valid()
+    ds_reassigned = e_reassigned.load_evoked(ndvar=False, model='modality')
+    assert set(ds_reassigned['modality'].cells) == set(ds['modality'].cells)  # the cells are unchanged; only their contents differ
 
 
 @requires_mne_sample_data
@@ -1478,6 +2205,44 @@ def test_labeled_events_sidecar_copies_raw_info_from_raw(samples_experiment):
 
 
 @requires_mne_sample_data
+def test_events_input(samples_experiment):
+    """Test reading events from events.tsv sidecar file"""
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    root = samples_experiment(n_subjects=1, n_segments=2, mris=False)
+
+    # Add a numeric-looking column with n/a values to the events.tsv sidecar
+    path = Path(root) / 'sub-R0000' / 'meg' / 'sub-R0000_task-sample_events.tsv'
+    lines = path.read_text().splitlines()
+    lines[0] += '\tcondition'
+    for i in range(1, len(lines)):
+        lines[i] += '\t' + ('n/a' if i % 3 == 0 else str(i % 2 + 1))
+    path.write_text('\n'.join(lines) + '\n')
+
+    # By default, a column with only numbers and n/a is read as Var
+    e = SampleExperiment(root)
+    ds = e.load_events(subject='R0000')
+    assert isinstance(ds['condition'], Var)
+
+    class FactorExperiment(SampleExperiment):
+        event_factors = 'condition'
+
+    # event_factors also needs to invalidate the cached labeled-events
+    e = FactorExperiment(root)
+    ds = e.load_events(subject='R0000')
+    assert isinstance(ds['condition'], Factor)
+    assert set(ds['condition'].cells) == {'n/a', '1', '2'}
+
+    # Column names are validated
+    class ReservedExperiment(SampleExperiment):
+        event_factors = ('condition', 'sample')
+
+    with pytest.raises(ConfigurationError, match="reserved"):
+        ReservedExperiment(root)
+
+
+@requires_mne_sample_data
 def test_raw_cache_identity_ignores_view_options(samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
@@ -1599,8 +2364,8 @@ def test_sample_neuromag(samples_experiment):
 
 
 @requires_mne_sample_data
-def test_primary_epoch_run(samples_experiment):
-    """Test PrimaryEpoch.run parameter: combine-all and explicit-run modes."""
+def test_epoch_run(samples_experiment):
+    """Test run aggregation for PrimaryEpoch and ContinuousEpoch."""
     set_log_level('warning', 'mne')
 
     root = samples_experiment(n_subjects=2, n_segments=2, n_runs=2)
@@ -1618,6 +2383,9 @@ def test_primary_epoch_run(samples_experiment):
             'target-copy': SecondaryEpoch('target'),
             'target-r1': PrimaryEpoch('sample', "event == 'target'", tmax=0.3, decim=5, run='1'),
             'target-r2': PrimaryEpoch('sample', "event == 'target'", tmax=0.3, decim=5, run='2'),
+            'cont': ContinuousEpoch('sample', "event == 'target'", pad_start=0.1, pad_end=0.1, split=0.5),
+            'cont-r1': ContinuousEpoch('sample', "event == 'target'", pad_start=0.1, pad_end=0.1, split=0.5, run='1'),
+            'cont-r2': ContinuousEpoch('sample', "event == 'target'", pad_start=0.1, pad_end=0.1, split=0.5, run='2'),
         }
 
     e = MultiRunExperiment(root)
@@ -1656,6 +2424,33 @@ def test_primary_epoch_run(samples_experiment):
     ds_secondary_epochs = e.load_epochs()
     assert ds_secondary_epochs.n_cases == ds_secondary.n_cases
 
+    # Continuous epochs are prepared independently in each recording, then
+    # combined as segments carrying their run identity.
+    e.set(epoch='cont-r1', epoch_rejection='')
+    assert e.get('run') == '1'
+    cont_r1 = e.load_selected_events()
+    e.set(epoch='cont-r2')
+    assert e.get('run') == '2'
+    cont_r2 = e.load_selected_events()
+    e.set(epoch='cont')
+    cont_all = e.load_selected_events()
+    assert cont_all.n_cases == cont_r1.n_cases + cont_r2.n_cases
+    assert cont_all['run'].cells == ('1', '2')
+    for entity in BIDS_ENTITY_KEYS:
+        if entity in cont_all and len(set(cont_all[entity])) > 1:
+            assert entity not in cont_all.info
+        else:
+            assert entity in cont_all.info
+    for run in cont_all['run'].cells:
+        run_ds = cont_all.sub(cont_all['run'] == run)
+        assert run_ds[0, 'epoch_time'] == pytest.approx(0.0)
+        assert run_ds[0, 'events'][0, 'epoch_time'] == pytest.approx(0.0)
+
+    cont_epochs = e.load_epochs()
+    assert isinstance(cont_epochs['mag'], Datalist)
+    assert cont_epochs.n_cases == cont_all.n_cases
+    assert all(events[0, 'epoch_time'] == pytest.approx(y.time.tmin + 0.1, abs=0.002) for events, y in cont_epochs.zip('events', 'mag'))
+
 
 @requires_mne_sample_data
 def test_sample_eeg(samples_experiment):
@@ -1677,23 +2472,19 @@ def test_sample_eeg(samples_experiment):
 
 
 @requires_mne_sample_data
-def test_load_trf(samples_experiment):
+def test_load_trf(samples_trf_experiment):
     "load_trf, caching, and the separable TRFJob"
     import pickle
     from eelbrain import BoostingResult
-    from eelbrain._experiment.tests.sample_experiment import SampleTRF
 
-    set_log_level('warning', 'mne')
-    root = samples_experiment(n_subjects=1, n_segments=4)
-    e = SampleTRF(root)
-    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40', inv='')
+    e = samples_trf_experiment()
 
     # compute
     res = e.load_trf('imp', 0, 0.1)
     assert isinstance(res, BoostingResult)
 
     # cache hit
-    options = e._trf_options('imp', 0., 0.1, 'boosting', None, None, None, False, {})
+    options = e._trf_options('imp', 0., 0.1, 'boosting', None, None, False, {})
     assert e._resolve_derivative('trf', options=options).is_valid()
 
     # path
@@ -1703,7 +2494,7 @@ def test_load_trf(samples_experiment):
     # data-carrying, picklable job reproduces the result
     job = e.load_trf_job('imp', 0, 0.1)
     job = pickle.loads(pickle.dumps(job))
-    res2 = job.fit()
+    res2 = job()
     assert isinstance(res2, BoostingResult)
 
     # external execution re-incorporated into the cache
@@ -1713,28 +2504,139 @@ def test_load_trf(samples_experiment):
     path.unlink()
     spec.ctx.manifest_path.unlink(missing_ok=True)
     assert not spec.is_done
-    result = pickle.loads(pickle.dumps(spec.make_job())).fit()  # "off-host"
-    spec.save_result(result)
+    job = pickle.loads(pickle.dumps(spec.make_job()))  # "off-host"
+    spec.save_result(job, job())
     assert spec.is_done
     assert path.exists()
 
+    # a single TRF is fit for one model; a comparison belongs to load_model_test
+    with pytest.raises(TypeError, match='not a comparison'):
+        e.load_trf('imp > 0', 0, 0.1)
+    with pytest.raises(TypeError, match='not a comparison'):
+        e.load_trfs('R0000', 'imp > 0', 0, 0.1)
+
 
 @requires_mne_sample_data
-def test_predictor_subset_fingerprint(samples_experiment):
+def test_trf_ncrf_dependencies(samples_trf_experiment):
+    "NCRF reads sensor-space epochs, whose output depends on the EEG 'reference' state; like source localization, it pins reference=''"
+    from eelbrain._experiment.tests.sample_experiment import SampleTRF
+
+    class Experiment(SampleTRF):
+        estimators = {**SampleTRF.estimators, 'ncrf': NCRF()}
+
+    e = Experiment(samples_trf_experiment().root)
+    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40', inv='')
+    options = e._trf_options('env', 0., 0.1, 'ncrf', None, None, False)
+    ctx = e._resolve_derivative('trf', options=options)
+    # every edge satisfies key coverage (used to raise RuntimeError for the 'epochs' edge)
+    deps = {dep.label or dep.name: dep for dep, _ in e._derivatives._dependency_handles(ctx)}
+    assert {'fwd', 'cov'} <= set(deps)
+    assert deps['response'].name == 'epochs'
+    assert deps['response'].state == {'reference': ''}
+    assert 'annot' in deps  # the parc state masks the source space
+    assert 'reference' not in ctx.node._get_key_fields(ctx)
+    assert 'parc' in ctx.node._get_key_fields(ctx)
+    # boosting on sensor data is keyed on the reference
+    boosting_ctx = e._resolve_derivative('trf', options=e._trf_options('env', 0., 0.1, 'boosting', None, None, False))
+    assert 'reference' in boosting_ctx.node._get_key_fields(boosting_ctx)
+    # the dataset nodes key the estimator's extra input fields (dependency_tree validates every edge)
+    e._derivatives.dependency_tree('trf-group-dataset', state={**e.state, 'group': 'all'}, options=options)
+    # NCRF results are in source space: morphed to the common brain, and smoothing is available
+    group_ctx = e._derivatives.resolve('trf-group-dataset', state={**e.state, 'group': 'all'}, options={**options, 'smooth': 0.005})
+    assert 'common_brain' in group_ctx.node._get_key_fields(group_ctx)
+    assert 'reference' not in group_ctx.node._get_key_fields(group_ctx)
+    options = e._trf_options('env > 0', 0., 0.1, 'ncrf', None, None, False, comparison=True)
+    e._derivatives.dependency_tree('trf-model-test', state={**e.state, 'group': 'all'}, options={**options, 'metric': 'explained_variance'})
+
+
+@requires_mne_sample_data
+def test_trf_ncrf_job(samples_experiment):
+    "NCRF job: sensor data with the forward operator as fixed-orientation (sensor, source) NDVar"
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleTRF
+
+    class Experiment(SampleTRF):
+        estimators = {**SampleTRF.estimators, 'ncrf': NCRF()}
+
+    root = samples_experiment(n_subjects=1, n_segments=4, mris=True)
+    e = Experiment(root)
+    e.set(epoch='target', epoch_rejection='', raw='1-40', src='ico-2', parc='ac', inv='')
+    job = e.load_trf_job('imp', 0, 0.1, estimator='ncrf')
+    assert job.fwd.has_dim('sensor')
+    assert job.fwd.has_dim('source')
+    assert job.fwd.source.subject == e.get('mrisubject')
+    assert job.fwd.source.parc.name == 'ac'
+    assert not job.fwd.source.parc.startswith('unknown').any()
+    assert set(job.y.sensor.names) >= set(job.fwd.sensor.names)
+
+
+@requires_mne_sample_data
+def test_load_trf_term_lags(samples_trf_experiment):
+    "Per-term lag windows through model-string slice syntax"
+    from eelbrain import BoostingResult
+    from eelbrain._experiment.trf.model import TRFModelError
+
+    e = samples_trf_experiment()
+
+    # per-term override alongside the model-wide window (terms are fit in sorted order)
+    res = e.load_trf('imp + env[0.02:0.08]', 0, 0.1)
+    assert isinstance(res, BoostingResult)
+    assert res.tstart == (0.02, 0)
+    assert res.tstop == (0.08, 0.1)
+    assert [h.name for h in res.h] == ['env', 'imp']  # a unique predictor is named without its lag window
+
+    # the same predictor with two lag windows shares one predictor-file dependency
+    res = e.load_trf('env[:0.05] + env[0.05:]', 0, 0.1)
+    assert res.tstart == (0.05, 0)
+    assert res.tstop == (0.1, 0.05)
+    assert [h.name for h in res.h] == ['env[0.05:0.1]', 'env[0:0.05]']  # lag windows disambiguate a split predictor
+    options = e._trf_options('env[:0.05] + env[0.05:]', 0., 0.1, 'boosting', None, None, False, {})
+    ctx = e._resolve_derivative('trf', options=options)
+    assert ctx.is_valid()
+    dependencies = ctx._manifest().dependencies
+    assert 'auditory~env' in dependencies
+    assert not any('[' in key for key in dependencies)
+
+    # a window shared by all terms is normalized to the model-wide bounds (scalar lags)
+    res = e.load_trf('env[0.02:0.08]', 0, 0.1)
+    assert res.tstart == 0.02
+    assert res.tstop == 0.08
+    ctx = e._resolve_derivative('trf', options=e._trf_options('env[0.02:0.08]', 0., 0.1, 'boosting', None, None, False, {}))
+    assert ctx.options['x'].name == 'env'
+    assert ctx.options['tstart'] == 0.02
+    assert ctx.options['tstop'] == 0.08
+    # ...so equivalent spellings share one cached artifact
+    assert e.load_trf('env[0.02:0.08]', 0, 0.5, path_only=True) == e.load_trf('env[0.02:0.08]', 0, 0.1, path_only=True)
+    assert e.load_trf('env', 0.02, 0.08, path_only=True) == e.load_trf('env[0.02:0.08]', 0, 0.1, path_only=True)
+    assert e.load_trf('imp[0:0.1] + env[0:0.1]', 0, 0.5, path_only=True) == e.load_trf('imp + env', 0, 0.1, path_only=True)
+    # distinct windows: every term explicit, model-wide bounds normalized out of the cache key
+    ctx = e._resolve_derivative('trf', options=e._trf_options('imp[0:] + env[0.02:]', 0., 0.1, 'boosting', None, None, False, {}))
+    assert ctx.options['x'].name == 'env[0.02:0.1] + imp[0:0.1]'
+    assert ctx.options['tstart'] is None
+    assert ctx.options['tstop'] is None
+    assert e.load_trf('imp[0:0.1] + env[0.02:0.1]', 0, 0.5, path_only=True) == e.load_trf('imp[0:] + env[0.02:]', 0, 0.1, path_only=True)
+    with pytest.raises(TRFModelError):  # resolved window of env is empty
+        e.load_trf('imp + env[0.2:]', 0, 0.1)
+
+    # comparison omitting a lag window resolves to the complement
+    comparison = e._eval_trf_x('imp + env @ env[:0.05]')
+    assert comparison.x1.name == 'imp + env'
+    assert comparison.x0.name == 'imp + env[0.05:]'
+    with pytest.raises(TRFModelError):  # omitted window beyond the model-wide window
+        e.load_model_test('imp + env @ env[0.2:]', 0, 0.1)
+
+
+@requires_mne_sample_data
+def test_predictor_subset_fingerprint(samples_trf_experiment):
     "Editing an unused predictor-file column does not invalidate a cached TRF; editing a used one does"
     import os
     from eelbrain import BoostingResult, Dataset, Var, save
-    from eelbrain._experiment.tests.sample_experiment import SampleTRF
 
-    set_log_level('warning', 'mne')
-    root = samples_experiment(n_subjects=1, n_segments=4)
-    e = SampleTRF(root)
-    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40', inv='')
+    e = samples_trf_experiment()
     samplingrate = 1 / e.load_epochs(reject=False)['mag'].time.tstep
 
-    pdir = Path(root) / 'derivatives' / 'predictors'
-    pdir.mkdir(parents=True, exist_ok=True)
-    ref_dir = Path(root) / 'derivatives' / 'eelbrain' / 'cache' / 'predictor'
+    pdir = e.root / 'derivatives' / 'predictors'
+    ref_dir = e.root / 'derivatives' / 'eelbrain' / 'cache' / 'predictor'
     mtime = [1_700_000_000]
 
     def write(stim, value, unused):
@@ -1758,7 +2660,7 @@ def test_predictor_subset_fingerprint(samples_experiment):
 
     res = e.load_trf('word-value-mask', 0, 0.1, samplingrate=samplingrate)
     assert isinstance(res, BoostingResult)
-    options = e._trf_options('word-value-mask', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
+    options = e._trf_options('word-value-mask', 0., 0.1, 'boosting', None, samplingrate, False, {})
     ctx = e._resolve_derivative('trf', options=options)
     assert ctx.is_valid()
 
@@ -1808,33 +2710,20 @@ def test_load_trf_source(samples_experiment):
     e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40', src='ico-2', parc='ac')
     res = e.load_trf('imp', 0, 0.1)
     assert isinstance(res, BoostingResult)
-    assert e._resolve_derivative('trf', options=e._trf_options('imp', 0., 0.1, 'boosting', None, None, None, False, {})).is_valid()
+    assert e._resolve_derivative('trf', options=e._trf_options('imp', 0., 0.1, 'boosting', None, None, False, {})).is_valid()
 
 
 @requires_mne_sample_data
-def test_load_trf_filepredictor(samples_experiment):
+def test_load_trf_filepredictor(samples_trf_experiment):
     "load_trf with a UTSPredictor: per-stimulus predictor dependency edges"
-    from eelbrain import BoostingResult, NDVar, UTS, save
-    from eelbrain._experiment.tests.sample_experiment import SampleTRF
+    from eelbrain import BoostingResult, NDVar, save
 
-    set_log_level('warning', 'mne')
-    root = samples_experiment(n_subjects=1, n_segments=4)
-    e = SampleTRF(root)
-    e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40', inv='')
-
-    # match the predictor sampling to the data's natural (decimated) rate so the
-    # samplingrate is an integer ratio of the raw rate and needs no resampling
+    # the fixture provides a predictor file per stimulus (one for each 'modality' cell)
+    e = samples_trf_experiment()
     tstep = e.load_epochs(reject=False)['mag'].time.tstep
     samplingrate = 1 / tstep
-
-    # write a predictor file per stimulus (one for each 'modality' cell)
-    pdir = Path(root) / 'derivatives' / 'predictors'
-    pdir.mkdir(parents=True, exist_ok=True)
-    uts = UTS(0, tstep, 60)
-    rng = np.random.RandomState(0)
-    predictor_ndvars = {stim: NDVar(rng.normal(size=60), uts, name='env') for stim in ('auditory', 'visual')}
-    for stim, ndvar in predictor_ndvars.items():
-        save.pickle(ndvar, pdir / f'{stim}~env.pickle')
+    pdir = e.root / 'derivatives' / 'predictors'
+    predictor_ndvars = {stim: load.unpickle(pdir / f'{stim}~env.pickle') for stim in ('auditory', 'visual')}
 
     # load_predictor shapes one stimulus' file into an NDVar at the requested tstep
     x = e.load_predictor('auditory~env', tstep)
@@ -1847,7 +2736,7 @@ def test_load_trf_filepredictor(samples_experiment):
     assert isinstance(res, BoostingResult)
 
     # the per-stimulus predictor file edges are recorded in the manifest
-    options = e._trf_options('env', 0., 0.1, 'boosting', None, None, samplingrate, False, {})
+    options = e._trf_options('env', 0., 0.1, 'boosting', None, samplingrate, False, {})
     ctx = e._resolve_derivative('trf', options=options)
     assert ctx.is_valid()
     assert {'auditory~env', 'visual~env'} <= set(ctx._manifest().dependencies)
@@ -1866,8 +2755,247 @@ def test_load_trf_filepredictor(samples_experiment):
     assert e._resolve_derivative('trf', options=options).is_valid()
 
     # editing a predictor file invalidates the cached TRF
-    save.pickle(NDVar(rng.normal(size=60), uts, name='env'), pdir / 'auditory~env.pickle')
+    edited = predictor_ndvars['auditory'] + 1
+    edited.name = 'env'
+    save.pickle(edited, pdir / 'auditory~env.pickle')
     assert not e._resolve_derivative('trf', options=options).is_valid()
+
+
+def _subject_predictor_path(root, subject, desc, task='sample', run='', per_event=False):
+    entities = f'sub-{subject}'
+    if not per_event:
+        entities += f'_task-{task}'
+        if run:
+            entities += f'_run-{run}'
+    path = Path(root) / 'derivatives' / 'subject-predictors' / f'sub-{subject}' / f'{entities}_desc-{desc}.pickle'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+@requires_mne_sample_data
+def test_load_trf_subject_predictor(samples_experiment):
+    "load_trf with a SubjectUTSPredictor (sequence mode): one recording-long file per recording"
+    from eelbrain import BoostingResult, NDVar, UTS, save
+    from eelbrain._experiment.trf.model import TRFModelError
+    from eelbrain._experiment.tests.sample_experiment import SampleTRF
+
+    set_log_level('warning', 'mne')
+    root = samples_experiment(n_subjects=2, n_segments=4)
+    e = SampleTRF(root)
+    e.set(epoch='target', epoch_rejection='', raw='1-40', inv='')
+
+    subjects = ('R0000', 'R0001')
+    rng = np.random.RandomState(0)
+    e.set(subject='R0000')
+    ds = e.load_epochs(reject=False)
+    tstep = ds['mag'].time.tstep
+    samplingrate = 1 / tstep
+    # the file must span the whole recording, since each trial is cut out at its
+    # own recording time (sequence mode); size it from the trial sample range
+    sfreq = ds.info['raw.samplingrate']
+    span = (ds['sample'].max() - ds['sample'].min()) / sfreq + 2.
+    n_samples = int(span / tstep)
+    uts = UTS(-0.5, tstep, n_samples)
+
+    # a different recording-long predictor per subject (no session/acquisition
+    # in this dataset, so no ses-/acq- entities in the path)
+    predictor_ndvars = {s: NDVar(rng.normal(size=n_samples), uts, name='envseq') for s in subjects}
+    for subject, ndvar in predictor_ndvars.items():
+        assert 'sampling' not in ndvar.info
+        save.pickle(ndvar, _subject_predictor_path(root, subject, 'envseq'))
+
+    # load_predictor returns each subject's own file (it bypasses the assembly path)
+    for subject in subjects:
+        x = e.load_predictor('envseq', tstep, subject=subject)
+        assert isinstance(x, NDVar)
+        assert x.name == 'envseq'
+        assert_array_equal(x.x, predictor_ndvars[subject].x)
+
+    # a term with a stimulus is rejected in sequence mode
+    with pytest.raises(TRFModelError):
+        e.load_predictor('auditory~envseq', tstep, subject='R0000')
+
+    # filter_x='continuous' determines whether to filter from metadata supplied
+    # by the predictor configuration, not from the raw predictor file
+    job = e.load_trf_job('envseq', 0, 0.1, samplingrate=samplingrate, filter_x='continuous', subject='R0000')
+    assert job.xs[0].info['sampling'] == 'continuous'
+
+    # compute per subject; the (stimulus-free) predictor edge is in the manifest
+    options = e._trf_options('envseq', 0., 0.1, 'boosting', None, samplingrate, False, {})
+    for subject in subjects:
+        e.set(subject=subject)
+        res = e.load_trf('envseq', 0, 0.1, samplingrate=samplingrate)
+        assert isinstance(res, BoostingResult)
+        ctx = e._resolve_derivative('trf', options=options)
+        assert ctx.is_valid()
+        assert 'envseq@task-sample' in set(ctx._manifest().dependencies)
+
+    # editing R0000's file invalidates only R0000's TRF; R0001 stays valid
+    save.pickle(NDVar(rng.normal(size=n_samples), uts, name='envseq'), _subject_predictor_path(root, 'R0000', 'envseq'))
+    e.set(subject='R0000')
+    assert not e._resolve_derivative('trf', options=options).is_valid()
+    e.set(subject='R0001')
+    assert e._resolve_derivative('trf', options=options).is_valid()
+
+
+@requires_mne_sample_data
+def test_load_trf_continuous_predictor(samples_experiment):
+    "Continuous (ContinuousEpoch) predictors: per-event UTSPredictor and per-event SubjectUTSPredictor"
+    from eelbrain import BoostingResult, NDVar, UTS, save
+    from eelbrain._experiment.tests.sample_experiment import SampleTRF
+
+    set_log_level('warning', 'mne')
+    root = samples_experiment(n_subjects=1, n_segments=4)
+    e = SampleTRF(root)
+    e.set(subject='R0000', epoch='cont', epoch_rejection='', raw='1-40', inv='')
+
+    # ContinuousEpoch: one case per continuous segment, response is a Datalist
+    ds = e.load_epochs(reject=False, decim=5, keep_mne=True)
+    assert ds.info['nested_events'] == 'events'
+    assert ds.n_cases > 1
+    assert isinstance(ds['epochs'], Datalist)
+    assert isinstance(ds['mag'], Datalist)
+    assert ds[0, 'epoch_time'] == pytest.approx(0.0)
+    assert ds[1, 'epoch_time'] > 0
+    epoch_tmin = ds['epochs'][0].times[0]
+    for epoch_time, events, epochs_i, y_i in ds.zip('epoch_time', 'events', 'epochs', 'mag'):
+        assert events[0, 'epoch_time'] == pytest.approx(epoch_time)
+        assert epochs_i.times[0] == pytest.approx(epoch_time + epoch_tmin)
+        assert y_i.time.tmin == pytest.approx(epochs_i.times[0])
+    tstep = ds['mag'][0].time.tstep
+    samplingrate = 1 / tstep
+    stimuli = ('auditory', 'visual')  # the 'modality' stim_var cells
+
+    rng = np.random.RandomState(0)
+    # keep the per-event predictor shorter than the epoch's pad_end (0.1 s), so
+    # the last event's predictor fits inside its segment
+    stim_uts = UTS(0, tstep, 10)
+
+    # flat per-stimulus files for a UTSPredictor, placed at each event's time
+    pdir = Path(root) / 'derivatives' / 'predictors'
+    pdir.mkdir(parents=True, exist_ok=True)
+    for stim in stimuli:
+        save.pickle(NDVar(rng.normal(size=stim_uts.nsamples), stim_uts, name='env'), pdir / f'{stim}~env.pickle')
+
+    res = e.load_trf('env', 0, 0.1, samplingrate=samplingrate)
+    assert isinstance(res, BoostingResult)
+    job = e.load_trf_job('env', 0, 0.1, samplingrate=samplingrate)
+    assert isinstance(job.y, Datalist)
+    assert isinstance(job.xs[0], Datalist)
+    assert all(x_i.time == y_i.time for x_i, y_i in zip(job.xs[0], job.y))
+    # one predictor-file edge per stimulus, enumerated from the nested events
+    options = e._trf_options('env', 0., 0.1, 'boosting', None, samplingrate, False, {})
+    deps = set(e._resolve_derivative('trf', options=options)._manifest().dependencies)
+    assert {'auditory~env', 'visual~env'} <= deps
+
+    # per-event SubjectUTSPredictor: one subject-specific file per stimulus
+    for stim in stimuli:
+        save.pickle(NDVar(rng.normal(size=stim_uts.nsamples), stim_uts, name='envp'), _subject_predictor_path(root, 'R0000', f'{stim}~envp', per_event=True))
+    res = e.load_trf('envp', 0, 0.1, samplingrate=samplingrate)
+    assert isinstance(res, BoostingResult)
+    job = e.load_trf_job('envp', 0, 0.1, samplingrate=samplingrate)
+    assert all(x_i.time == y_i.time for x_i, y_i in zip(job.xs[0], job.y))
+    options = e._trf_options('envp', 0., 0.1, 'boosting', None, samplingrate, False, {})
+    deps = set(e._resolve_derivative('trf', options=options)._manifest().dependencies)
+    assert {'auditory~envp', 'visual~envp'} <= deps
+
+    # sequence-mode SubjectUTSPredictor on the same ContinuousEpoch: one
+    # recording-long file, cut into per-segment chunks by recording time
+    sfreq = ds.info['raw.samplingrate']
+    span = (ds['sample'].max() - ds['sample'].min()) / sfreq + 6.
+    n_samples = int(span / tstep)
+    save.pickle(NDVar(rng.normal(size=n_samples), UTS(-0.5, tstep, n_samples), name='envseq'), _subject_predictor_path(root, 'R0000', 'envseq'))
+    res = e.load_trf('envseq', 0, 0.1, samplingrate=samplingrate)
+    assert isinstance(res, BoostingResult)
+    job = e.load_trf_job('envseq', 0, 0.1, samplingrate=samplingrate, filter_x='continuous')
+    assert all(x_i.info['sampling'] == 'continuous' for x_i in job.xs[0])
+    assert all(x_i.time == y_i.time for x_i, y_i in zip(job.xs[0], job.y))
+
+
+@requires_mne_sample_data
+def test_load_trf_continuous_predictor_multiple_runs(samples_experiment):
+    "Pooled ContinuousEpoch TRFs load each run's SubjectUTSPredictor files"
+    from eelbrain import BoostingResult, NDVar, UTS, save
+    from eelbrain._experiment.tests.sample_experiment import SampleTRF
+
+    set_log_level('warning', 'mne')
+    root = samples_experiment(n_subjects=1, n_segments=4, n_runs=2)
+    e = SampleTRF(root)
+    e.set(subject='R0000', epoch='cont', epoch_rejection='', raw='1-40', inv='')
+
+    ds = e.load_epochs(reject=False, decim=5)
+    assert ds['run'].cells == ('1', '2')
+    assert isinstance(ds['mag'], Datalist)
+    tstep = ds['mag'][0].time.tstep
+    samplingrate = 1 / tstep
+    rng = np.random.RandomState(1)
+
+    # Sequence predictors use a separate recording-long file for each run.
+    tmax = max(y.time.tmax for y in ds['mag']) + 1
+    sequence_uts = UTS(-0.5, tstep, int(np.ceil((tmax + 0.5) / tstep)))
+    sequences = {}
+    for run in ds['run'].cells:
+        sequence = NDVar(rng.normal(size=sequence_uts.nsamples), sequence_uts, name='envseq')
+        sequences[run] = sequence
+        save.pickle(sequence, _subject_predictor_path(root, 'R0000', 'envseq', run=run))
+
+    sequence_job = e.load_trf_job('envseq', 0, 0.1, samplingrate=samplingrate)
+    assert isinstance(sequence_job.y, Datalist)
+    assert isinstance(sequence_job.xs[0], Datalist)
+    for run, x_i, y_i in zip(ds['run'], sequence_job.xs[0], sequence_job.y):
+        sequence = sequences[run]
+        i_start = sequence.time._array_index(y_i.time.tmin)
+        assert_array_equal(x_i.x, sequence.x[i_start:i_start + y_i.time.nsamples])
+        assert x_i.time == y_i.time
+
+    sequence_result = e.load_trf('envseq', 0, 0.1, samplingrate=samplingrate)
+    assert isinstance(sequence_result, BoostingResult)
+    sequence_options = e._trf_options('envseq', 0., 0.1, 'boosting', None, samplingrate, False, {})
+    sequence_ctx = e._resolve_derivative('trf', options=sequence_options)
+    sequence_deps = set(sequence_ctx._manifest().dependencies)
+    assert {'envseq@task-sample_run-1', 'envseq@task-sample_run-2'} <= sequence_deps
+
+    # Per-event predictors are subject/stimulus-specific and shared across runs.
+    stimuli = ('auditory', 'visual')
+    stimulus_uts = UTS(0, tstep, 10)
+    per_event = {}
+    for stim in stimuli:
+        predictor = NDVar(rng.normal(size=stimulus_uts.nsamples), stimulus_uts, name='envp')
+        per_event[stim] = predictor
+        save.pickle(predictor, _subject_predictor_path(root, 'R0000', f'{stim}~envp', per_event=True))
+
+    per_event_job = e.load_trf_job('envp', 0, 0.1, samplingrate=samplingrate)
+    for events, x_i, y_i in zip(ds['events'], per_event_job.xs[0], per_event_job.y):
+        stim = events[0, 'modality']
+        predictor = per_event[stim]
+        i_start = x_i.time._array_index(events[0, 'epoch_time'])
+        assert_array_equal(x_i.x[i_start:i_start + predictor.time.nsamples], predictor.x)
+        assert x_i.time == y_i.time
+
+    per_event_result = e.load_trf('envp', 0, 0.1, samplingrate=samplingrate)
+    assert isinstance(per_event_result, BoostingResult)
+    per_event_options = e._trf_options('envp', 0., 0.1, 'boosting', None, samplingrate, False, {})
+    per_event_deps = set(e._resolve_derivative('trf', options=per_event_options)._manifest().dependencies)
+    assert {'auditory~envp', 'visual~envp'} <= per_event_deps
+
+    # Fixed-length pooled epochs likewise compute sequence offsets separately
+    # within each run rather than from one global sample origin.
+    e.set(epoch='target')
+    target_ds = e.load_epochs(reject=False)
+    target_job = e.load_trf_job('envseq', 0, 0.1, samplingrate=samplingrate)
+    sample_0 = {run: target_ds[target_ds['run'] == run, 'sample'][0] for run in target_ds['run'].cells}
+    sfreq = target_ds.info['raw.samplingrate']
+    for i, (run, sample_i) in enumerate(target_ds.zip('run', 'sample')):
+        sequence = sequences[run]
+        offset = (sample_i - sample_0[run]) / sfreq
+        offset = tstep * round(offset / tstep)
+        i_start = sequence.time._array_index(offset + target_job.y.time.tmin)
+        assert_array_equal(target_job.xs[0].x[i], sequence.x[i_start:i_start + target_job.y.time.nsamples])
+
+    # Any constituent recording changing invalidates the pooled ContinuousEpoch fit.
+    e.set(epoch='cont')
+    save.pickle(NDVar(rng.normal(size=sequence_uts.nsamples), sequence_uts, name='envseq'), _subject_predictor_path(root, 'R0000', 'envseq', run='1'))
+    assert not e._resolve_derivative('trf', options=sequence_options).is_valid()
 
 
 @requires_mne_sample_data
@@ -1886,14 +3014,22 @@ def test_load_trfs(samples_experiment):
     assert ds.n_cases == 1
     assert ds[0, 'subject'] == 'R0000'
     assert ds[0, 'epoch'] == 'target'
+    assert ds[0, 'task'] == 'sample'
     assert ds.info['xs'] == ['imp']
-    for key in ('r', 'z', 'residual', 'det', 'imp'):
+    for key in ('r', 'z', 'residual', 'ev', 'imp'):
         assert isinstance(ds[key], NDVar)
+    assert 'det' not in ds
 
     # group -> one case per subject
     ds_all = e.load_trfs('all', 'imp', 0, 0.1)
     assert ds_all.n_cases == 2
     assert sorted(ds_all['subject'].cells) == ['R0000', 'R0001']
+    assert ds_all['task'].cells == ('sample',)
+
+    # the shell describes those columns without loading data
+    shell = _trf_group_shell(e, 'imp', 0, 0.1)
+    assert list(shell) == ['epoch', 'task', 'subject']
+    assert all(list(shell[key]) == list(ds_all[key]) for key in shell)
 
     # scale='original' rescales the kernel
     ds_scaled = e.load_trfs('R0000', 'imp', 0, 0.1, scale='original')
@@ -1904,6 +3040,152 @@ def test_load_trfs(samples_experiment):
     assert ds_metrics.info['xs'] == []
     assert 'imp' not in ds_metrics
     assert isinstance(ds_metrics['r'], NDVar)
+
+
+@requires_mne_sample_data
+def test_trf_subject_variable(samples_experiment):
+    """A subject-level variable reaches TRF group data, and the model test tracks its values
+
+    A TRF dataset carries no event columns, so a variable is applied there only when the
+    combined data provides its inputs. ``LabelVar('subject', ...)`` qualifies (a
+    behavioral score, say), while one derived from single-trial columns does not.
+    """
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment, SampleTRF
+
+    set_log_level('warning', 'mne')
+    root = samples_experiment(n_subjects=3, n_segments=4)
+
+    def experiment(scores):
+        class Experiment(SampleTRF):
+            predictors = {**SampleTRF.predictors, 'modality_imp': EventPredictor("modality == 'auditory'")}
+            models = {'base': 'imp', 'full': 'imp + modality_imp'}
+            variables = {
+                **SampleExperiment.variables,
+                'score': LabelVar('subject', scores),
+                'score_bin': LabelVar('score', {1.: 'low', 2.: 'high', 3.: 'high'}),  # derived, hence also across-subject
+                'score_task': LabelVar('subject', scores, task='sample'),  # the epoch's task
+                'score_other_task': LabelVar('subject', scores, task='other'),
+            }
+            tests = {
+                **SampleExperiment.tests,
+                'high=low': TTestIndependent('score_bin', 'high', 'low'),
+            }
+        return Experiment(root)
+
+    e = experiment({'R0000': 1., 'R0001': 2., 'R0002': 3.})
+    e.set(epoch='target', epoch_rejection='', raw='1-40', inv='')
+
+    ds = e.load_trfs('all', 'imp', 0, 0.1)
+    assert 'score' in ds
+    assert list(ds['score']) == [1., 2., 3.]
+    # the task column allows applying task-restricted variables
+    assert list(ds['score_task']) == [1., 2., 3.]
+    assert 'score_other_task' not in ds
+    # a variable whose source columns are absent is skipped rather than raising
+    assert 'modality' not in ds
+    # ... and it is absent from single-subject data, since its definition spans subjects
+    assert 'score' not in e.load_selected_events('R0000')
+
+    def test_variables(pipeline, test):
+        "The values the test reads, as recorded in the event-shell dependency"
+        options = {**pipeline._trf_options('full > base', 0, 0.1, 'boosting', None, None, False, comparison=True), 'test': test}
+        handle = pipeline._resolve_derivative('trf-model-test', options=options)
+        return handle.dependency_fingerprints()['events']['fingerprint']
+
+    # the shell the model test fingerprints resolves the score without loading data
+    assert test_variables(e, 'high=low') == {'score_bin': ['low', 'high', 'high']}
+    # the values, not the definition: adding a subject outside the group changes nothing
+    e_extra = experiment({'R0000': 1., 'R0001': 2., 'R0002': 3., 'R9999': 9.})
+    e_extra.set(epoch='target', epoch_rejection='', raw='1-40', inv='')
+    assert test_variables(e_extra, 'high=low') == test_variables(e, 'high=low')
+
+    # a test reading an event variable can not be resolved against a TRF dataset
+    with pytest.raises(ValueError, match="'modality'"):
+        test_variables(e, 'a>v')
+
+    # a subject-keyed variable is deferred, so another subject's entry leaves this
+    # subject's events untouched
+    def events_identity(pipeline):
+        pipeline.set(subject='R0000')
+        handle = pipeline._resolve_derivative('labeled-events')
+        return handle.artifact_path, handle.current_fingerprint()
+
+    assert events_identity(e_extra) == events_identity(e)
+
+
+@requires_mne_sample_data
+def test_load_model_test(samples_experiment):
+    """load_model_test: model data assembly, result caching, and named tests"""
+    from eelbrain._experiment.tests.sample_experiment import SampleTRF
+
+    class ModelTestTRF(SampleTRF):
+        predictors = {**SampleTRF.predictors, 'modality_imp': EventPredictor("modality == 'auditory'")}
+        models = {
+            'base': 'imp',
+            'full': 'imp + modality_imp',
+        }
+        tests = {**SampleTRF.tests, 'trf-one-sample': TTestOneSample()}
+
+    set_log_level('warning', 'mne')
+    root = samples_experiment(n_subjects=3, n_segments=4)
+    e = ModelTestTRF(root)
+    e.set(epoch='target', epoch_rejection='', raw='1-40', inv='')
+
+    # Default non-null comparison: paired model values, reduced only for the test
+    ds, res = e.load_model_test('full > base', 0, 0.1, metric='ev.mean', pmin=None, samples=0, return_data=True)
+    assert ds.n_cases == 6
+    assert ds['model'].cells == ('test', 'baseline')
+    assert isinstance(ds['ev'], NDVar)
+    assert 'det' not in ds
+    assert hasattr(res, 'p')
+
+    cache_dir = Path(root) / 'derivatives' / 'eelbrain' / 'cache' / 'trf-model-test'
+    artifacts = list(cache_dir.rglob('*.pickle'))
+    assert len(artifacts) == 1
+    artifact = artifacts[0]
+    mtime = artifact.stat().st_mtime_ns
+    manifest = json.loads(Path(f'{artifact}.manifest.json').read_text())
+    assert set(manifest['dependencies']) == {'x1', 'x0'}
+
+    # Expanded spelling and return_data view resolve to the same artifact
+    res_cached = e.load_model_test('imp + modality_imp > imp', 0, 0.1, metric='ev.mean', pmin=None, samples=0)
+    assert hasattr(res_cached, 'p')
+    assert artifact.stat().st_mtime_ns == mtime
+    assert list(cache_dir.rglob('*.pickle')) == artifacts
+
+    # Statistical options have distinct cache identities
+    e.load_model_test('full > base', 0, 0.1, metric='ev', pmin=None, samples=1)
+    e.load_model_test('full > base', 0, 0.1, metric='ev', pmin=0.05, samples=0)
+    assert len(list(cache_dir.rglob('*.pickle'))) == 3
+
+    # ... but a reduced metric is tested parametrically, so they do not apply
+    with pytest.raises(ValueError, match="metric='ev.mean'"):
+        e.load_model_test('full > base', 0, 0.1, metric='ev.mean')
+    with pytest.raises(ValueError, match='samples=10'):
+        e.load_model_test('full > base', 0, 0.1, metric='ev.mean', pmin=None, samples=10)
+
+    # A named test operates on one difference value per subject
+    ds_diff, named_res = e.load_model_test('full > base', 0, 0.1, metric='ev.mean', test='trf-one-sample', pmin=None, samples=0, return_data=True)
+    assert ds_diff.n_cases == 3
+    assert 'model' not in ds_diff
+    assert hasattr(named_res, 'p')
+
+    # Comparison against zero has only one model dependency
+    ds_zero, zero_res = e.load_model_test('base > 0', 0, 0.1, pmin=None, samples=0, return_data=True)
+    assert ds_zero.n_cases == 3
+    assert 'model' not in ds_zero
+    assert hasattr(zero_res, 'p')
+    manifests = [json.loads(path.read_text()) for path in cache_dir.rglob('*.manifest.json')]
+    assert any(set(manifest['dependencies']) == {'x1'} for manifest in manifests)
+
+    with pytest.raises(TypeError, match='need a model comparison'):
+        e.load_model_test('base', 0, 0.1)
+    with pytest.raises(ValueError, match="metric='det'"):
+        e.load_model_test('base > 0', 0, 0.1, metric='det')
+    with pytest.raises(ValueError, match="expected 'sum', 'mean', or 'max'"):
+        e.load_model_test('base > 0', 0, 0.1, metric='ev.median')
+    with pytest.raises(ValueError, match='available metrics'):
+        e.load_model_test('base > 0', 0, 0.1, metric='r1.mean', pmin=None, samples=0)
 
 
 @requires_mne_sample_data
@@ -1924,6 +3206,14 @@ def test_load_trfs_collection(samples_experiment):
     assert sorted(ds['epoch'].cells) == ['auditory', 'visual']
     assert ds.info['xs'] == ['imp']
     assert all(s == 'R0000' for s in ds['subject'])
+    # the task of each member epoch
+    assert ds['task'].cells == ('sample',)
+
+    # the shell describes the member epochs without loading data
+    ds_all = e.load_trfs('all', 'imp', 0, 0.1)
+    shell = _trf_group_shell(e, 'imp', 0, 0.1)
+    assert list(shell) == ['epoch', 'task', 'subject']
+    assert all(list(shell[key]) == list(ds_all[key]) for key in shell)
 
 
 @requires_mne_sample_data

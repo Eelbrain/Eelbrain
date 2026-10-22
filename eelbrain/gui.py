@@ -7,12 +7,12 @@ from ._data_obj import Dataset
 from ._types import ColorArg, PathArg
 
 
-def run(block=False):
+def run(block: bool = False):
     """Hand over command to the GUI (quit the GUI to return to the terminal)
 
     Parameters
     ----------
-    block : bool
+    block
         Block the Terminal even if the GUI is capable of being run in parallel.
         Control returns to the Terminal when the user quits the GUI application.
         This is also useful to prevent plots from closing at the end of a
@@ -146,13 +146,13 @@ def select_epochs(
     vlim
         Limit of the epoch plots on the y-axis. If None, a value is
         determined automatically to show all data.
-    color : matplotlib color
+    color
         Color for primary data (default is black).
     lw
         Linewidth for normal sensor plots.
-    mark : None | index for sensor dim
+    mark
         Sensors to plot as individual traces with a separate color.
-    mcolor : matplotlib color
+    mcolor
         Color for marked traces.
     mlw
         Line width for marked sensor plots.

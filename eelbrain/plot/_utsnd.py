@@ -200,7 +200,7 @@ class Array(TimeSlicerEF, ColorMapMixin, XAxisMixin, EelFigure):
         Specify which axes should be annotated with y-axis tick labels.
         Use ``int`` for a single axis, a sequence of ``int`` for multiple
         specific axes, or one of ``'left' | 'bottom' | 'all' | 'none'``.
-    data : Dataset
+    data
         If a Dataset is provided, ``epochs`` and ``xax`` can be specified
         as strings.
     sub
@@ -394,13 +394,13 @@ class Butterfly(TimeSlicerEF, LegendMixin, TopoMapKey, YLimMixin, XAxisMixin, Ee
 
     Parameters
     ----------
-    y : (list of) NDVar
+    y
         Data to plot.
-    xax : None | categorial
+    xax
         Create a separate plot for each cell in this model.
-    sensors: None or list of sensor IDs
-        sensors to plot (``None`` = all)
-    axtitle : bool | sequence of str
+    sensors
+        Sensors to plot (``None`` = all).
+    axtitle
         Title for the individual axes. The default is to show the names of the
         epochs, but only if multiple axes are plotted.
     xlabel
@@ -415,28 +415,28 @@ class Butterfly(TimeSlicerEF, LegendMixin, TopoMapKey, YLimMixin, XAxisMixin, Ee
         Specify which axes should be annotated with y-axis tick labels.
         Use ``int`` for a single axis, a sequence of ``int`` for multiple
         specific axes, or one of ``'left' | 'bottom' | 'all' | 'none'``.
-    color : matplotlib color | dict
+    color
         Either a color for all lines, or a dictionary mapping levels of the
         line dimension to colors. The default is to use ``NDVar.info['color']``
         if available, otherwise the matplotlib default color alternation. Use
         ``color=True`` to use the matplotlib default.
-    linewidth : scalar
+    linewidth
         Linewidth for plots (defult is to use ``matplotlib.rcParams``).
-    data : Dataset
+    data
         If a Dataset is provided, ``epochs`` and ``xax`` can be specified
         as strings.
-    sub : str | array
+    sub
         Specify a subset of the data.
-    x : str
+    x
         Dimension to plot on the x-axis (default 'time').
-    vmax : scalar
+    vmax
         Top of the y axis (default depends on data).
-    vmin : scalar
+    vmin
         Bottom of the y axis (default depends on data).
-    xlim : scalar | (scalar, scalar)
+    xlim
         Initial x-axis view limits as ``(left, right)`` tuple or as ``length``
         scalar (default is the full x-axis in the data).
-    clip : bool
+    clip
         Clip lines outside of axes (the default depends on whether ``frame`` is
         closed or open).
     tight : bool
@@ -474,7 +474,7 @@ class Butterfly(TimeSlicerEF, LegendMixin, TopoMapKey, YLimMixin, XAxisMixin, Ee
             self,
             y: NDVarArg | Sequence | NDTest,
             xax: CategorialArg = None,
-            sensors: Sequence = None,
+            sensors: IndexArg = None,
             axtitle: bool | Sequence[str] = True,
             xlabel: bool | str = True,
             ylabel: bool | str = True,

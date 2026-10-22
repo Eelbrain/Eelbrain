@@ -9,16 +9,16 @@ corresponding sensor data live in :mod:`._experiment.epochs.nodes`.
 
 from __future__ import annotations
 
-from typing import Any, Literal
 from collections.abc import Iterator, Mapping, Sequence
 import math
+from typing import Any, Literal
 
 import numpy as np
 
 from ..._data_obj import Dataset, Var
 from ..._exceptions import ConfigurationError
 from ..._text import enumeration
-from ..configuration import Configuration, typed_arg
+from ..configuration import Configuration, sequence_arg, typed_arg
 
 
 EpochBaselineArg = Literal[False] | tuple[float | None, float | None] | None
@@ -87,6 +87,7 @@ class EpochBase(Configuration):
     trigger_shift = None
     post_baseline_trigger_shift = None
     decim = None
+    run = None  # a specific run to restrict to; None aggregates all runs (overridden by PrimaryEpoch)
     _rej_file_epochs_from_name = False
     _needs_task: bool = False
     _tasks = None  # set if tasks is not (task,)
@@ -192,6 +193,24 @@ class EpochBase(Configuration):
             return self._tasks
         return (self.task,)
 
+    @property
+    def collected_epochs(self) -> tuple[str, ...]:
+        """The epochs that are loaded separately to make up this epoch's data
+
+        Only an :class:`EpochCollection` is composed of separately loaded
+        epochs; any other epoch is loaded as a whole, i.e. as itself.
+        """
+        return (self.name,)
+
+    @property
+    def collected_tasks(self) -> tuple[str, ...] | None:
+        """The task of each of :attr:`collected_epochs`
+
+        ``None`` if any of them combines several tasks, i.e. if the data can not
+        be attributed to a single task throughout.
+        """
+        return self.tasks if len(self.tasks) == 1 else None
+
 
 class Epoch(EpochBase):
     """Fixed-length, time-locked epoch base (non-functional baseclass)"""
@@ -240,15 +259,15 @@ class Epoch(EpochBase):
         elif baseline is not False:
             if len(baseline) != 2:
                 raise ValueError(f"{baseline=}: needs to be length 2 tuple")
-            baseline = (typed_arg(baseline[0], float), typed_arg(baseline[1], float))
+            baseline = (typed_arg(baseline[0], float, allow_none=True), typed_arg(baseline[1], float, allow_none=True))
 
         if not isinstance(trigger_shift, (float, str)):
             raise TypeError(f"{trigger_shift=}: needs to be float or str")
 
         self.tmin = typed_arg(tmin, float)
         self.tmax = typed_arg(tmax, float, str)
-        self.samplingrate = typed_arg(samplingrate, float, int)
-        self.decim = typed_arg(decim, int)
+        self.samplingrate = typed_arg(samplingrate, float, int, allow_none=True)
+        self.decim = typed_arg(decim, int, allow_none=True)
         self.baseline = baseline
         self.trigger_shift = trigger_shift
         self.post_baseline_trigger_shift = post_baseline_trigger_shift
@@ -348,7 +367,7 @@ class PrimaryEpoch(Epoch):
     decim
         Alternative to ``samplingrate``. Decimate the data by this factor
         (i.e., only keep every ``decim``'th sample).
-    baseline : tuple
+    baseline
         The baseline of the epoch (default ``(None, 0)``; if ``tmin > 0``: no
         baseline; if ``tmax < 0``: the whole interval).
     trigger_shift
@@ -420,9 +439,9 @@ class PrimaryEpoch(Epoch):
     ):
         super().__init__(tmin, tmax, samplingrate, decim, baseline, trigger_shift, post_baseline_trigger_shift, post_baseline_trigger_shift_min, post_baseline_trigger_shift_max)
         self.task = task
-        self.run = typed_arg(run, str)
-        self.sel = typed_arg(sel, str)
-        self.n_cases = typed_arg(n_cases, int)
+        self.run = typed_arg(run, str, allow_none=True)
+        self.sel = typed_arg(sel, str, allow_none=True)
+        self.n_cases = typed_arg(n_cases, int, allow_none=True)
 
 
 class SecondaryEpoch(Epoch):
@@ -460,7 +479,7 @@ class SecondaryEpoch(Epoch):
             **kwargs,
     ):
         self.sel_epoch = base
-        self.sel = typed_arg(sel, str)
+        self.sel = typed_arg(sel, str, allow_none=True)
         self._kwargs = kwargs
 
     def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase], tasks: Sequence[str]) -> None:
@@ -480,7 +499,7 @@ class SuperEpoch(Epoch):
 
     Parameters
     ----------
-    sub_epochs : sequence of str
+    sub_epochs
         Tuple of epoch names. These epochs are combined to form the super-epoch.
         Epochs are merged at the level of events, so the base epochs can not
         contain post-baseline trigger shifts which are applied after loading
@@ -495,7 +514,7 @@ class SuperEpoch(Epoch):
     DICT_ATTRS = Epoch.DICT_ATTRS + ('sub_epochs',)
     INHERITED_PARAMS = ('tmin', 'tmax', 'decim', 'samplingrate', 'baseline')
 
-    def __init__(self, sub_epochs, **kwargs):
+    def __init__(self, sub_epochs: Sequence[str], **kwargs):
         self.sub_epochs = tuple(sub_epochs)
         self._kwargs = kwargs
 
@@ -551,14 +570,27 @@ class EpochCollection(EpochBase):
     DICT_ATTRS = ('collect',)
 
     def __init__(self, collect: Sequence[str]):
-        self.collect = collect
+        self.collect = sequence_arg('collect', collect)
 
     def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase], tasks: Sequence[str]) -> None:
         sub_epochs = [epochs[sub_epoch] for sub_epoch in self.collect]
         for param, value in _shared_sub_epoch_parameters(self.name, sub_epochs, SuperEpoch.INHERITED_PARAMS).items():
             setattr(self, param, value)
-        self._tasks = tuple(sorted({task for sub_epoch in sub_epochs for task in sub_epoch.tasks}))
+        sub_tasks = [sub_epoch.tasks for sub_epoch in sub_epochs]
+        self._tasks = tuple(sorted({task for epoch_tasks in sub_tasks for task in epoch_tasks}))
+        if all(len(epoch_tasks) == 1 for epoch_tasks in sub_tasks):
+            self._collected_tasks = tuple(epoch_tasks[0] for epoch_tasks in sub_tasks)
+        else:
+            self._collected_tasks = None
         self.rej_file_epochs = sorted({epoch_name for sub_epoch in sub_epochs for epoch_name in sub_epoch.rej_file_epochs})
+
+    @property
+    def collected_epochs(self) -> tuple[str, ...]:
+        return self.collect
+
+    @property
+    def collected_tasks(self) -> tuple[str, ...] | None:
+        return self._collected_tasks
 
 
 class ContinuousEpoch(EpochBase):
@@ -574,6 +606,9 @@ class ContinuousEpoch(EpochBase):
 
     When using :meth:`Pipeline.load_epochs`, each row of the returned
     :class:`Dataset` will contain the events in the epoch alongside the data.
+    Within each recording, all segments share an ``epoch_time`` coordinate
+    whose zero is the first selected event; later segments retain their
+    position on that recording's clock.
 
     Parameters
     ----------
@@ -597,8 +632,11 @@ class ContinuousEpoch(EpochBase):
         Target samplingrate. Needs to divide data samplingrate evenly (e.g.
         ``200`` for data sampled at 1000 Hz; by default, use the raw data
         samplingrate).
+    run
+        Restrict the epoch to a specific run. By default (``None``), events are
+        combined across all available runs for the given task.
     """
-    DICT_ATTRS = ('task', 'sel', 'pad_start', 'pad_end', 'split', 'samplingrate')
+    DICT_ATTRS = ('task', 'sel', 'pad_start', 'pad_end', 'split', 'samplingrate', 'run')
     _rej_file_epochs_from_name = True
     _needs_task = True
 
@@ -610,13 +648,15 @@ class ContinuousEpoch(EpochBase):
             pad_end: float = 1.000,
             split: float = 10,
             samplingrate: float = None,
+            run: str | None = None,
     ):
-        self.task = typed_arg(task, str)
-        self.sel = typed_arg(sel, str)
+        self.task = typed_arg(task, str, allow_none=True)
+        self.sel = typed_arg(sel, str, allow_none=True)
         self.pad_start = typed_arg(pad_start, float)
         self.pad_end = typed_arg(pad_end, float)
         self.split = typed_arg(split, float)
-        self.samplingrate = typed_arg(samplingrate, float, int)
+        self.samplingrate = typed_arg(samplingrate, float, int, allow_none=True)
+        self.run = typed_arg(run, str, allow_none=True)
 
     def _prepare_selected_events(
             self,
@@ -628,18 +668,16 @@ class ContinuousEpoch(EpochBase):
 
         split_threshold = self.split + self.pad_start + self.pad_end
         onsets = np.flatnonzero(ds['onset'].diff(to_begin=split_threshold + 1) >= split_threshold)
-        illegal = {'T_relative', 'events', 'tmax'}.intersection(ds)
+        illegal = {'epoch_time', 'events', 'tmax'}.intersection(ds)
         if illegal:
             raise RuntimeError(f"Events contain variables with reserved names: {', '.join(illegal)}")
-        events = [ds[i1:i2] for i1, i2 in zip(onsets, [*onsets[1:], None])]
         raw_samplingrate = ds.info['raw.samplingrate']
-        for events_i in events:
-            sample_i = events_i['sample'] - events_i[0, 'sample']
-            events_i['T_relative'] = sample_i / raw_samplingrate
+        ds['epoch_time'] = (ds['sample'] - ds[0, 'sample']) / raw_samplingrate
+        events = [ds[i1:i2] for i1, i2 in zip(onsets, [*onsets[1:], None])]
         ds = ds[onsets]
         ds.info['nested_events'] = 'events'
         ds['events'] = events
-        ds['tmax'] = Var([events_i[-1, 'onset'] - events_i[0, 'onset'] + self.pad_end for events_i in events])
+        ds['tmax'] = Var([events_i[-1, 'epoch_time'] - events_i[0, 'epoch_time'] + self.pad_end for events_i in events])
         return ds
 
     def _extraction_parameters(
@@ -692,8 +730,9 @@ def single_recording_run(epochs: Mapping[str, EpochBase], epoch: EpochBase) -> s
     Used to pin the ``run`` of a per-recording dependency when an aggregating
     node (``epochs``/``epoch-events``) is not combining across multiple runs, so
     the pinned value comes from the epoch definition rather than ambient state.
-    Returns the :class:`PrimaryEpoch` ``run`` (following ``SecondaryEpoch``
-    bases), or ``''`` when the experiment has no run entity.
+    Returns the primary/continuous epoch's ``run`` (following
+    :class:`SecondaryEpoch` bases), or ``''`` when the experiment has no run
+    entity.
 
     Parameters
     ----------

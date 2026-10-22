@@ -54,8 +54,8 @@ and removed by :mod:`.garbage_collection`; the entry points are
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from contextlib import contextmanager
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
@@ -65,8 +65,9 @@ import logging
 from pathlib import Path
 import pickle
 import re
-import shutil
+import time
 import tomllib
+import traceback
 from typing import Any, Generic, TYPE_CHECKING, TypeVar
 from uuid import uuid4
 import warnings
@@ -75,12 +76,15 @@ import mne
 import numpy as np
 
 from ..._data_obj import Factor, Interaction, NDVar, Var
+from ..._utils import user_activity
 from ..configuration import Configuration
 from ..logging import CacheInvalidation, diff_invalidation
 from ..pathing import CACHE_DIR, DERIV_DIR, LOG_DIR
+from .dependency_tree import DependencyTree, DependencyTreeNode
 
 if TYPE_CHECKING:
     from .garbage_collection import GCReport
+    from .job import Job, JobProvenance
 
 T = TypeVar('T')
 MANIFEST_SUFFIX = '.manifest.json'
@@ -115,7 +119,11 @@ def _atomic_write_text(path: Path, text: str) -> None:
     tmp_path.replace(path)
 
 
-def _read_warning_log(path: Path) -> list[dict[str, str]]:
+# Warning log entries: ``item``, ``category`` and ``message`` are required; ``state`` (JSON of the key-field state), ``location`` (``file:line`` the warning was attributed to) and ``stack`` (one line per frame) are optional
+_WARNING_LOG_STRINGS = ('item', 'category', 'message', 'state', 'location')
+
+
+def _read_warning_log(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     try:
@@ -127,28 +135,30 @@ def _read_warning_log(path: Path) -> list[dict[str, str]]:
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        item = entry.get('item')
-        category = entry.get('category')
-        message = entry.get('message')
-        if isinstance(item, str) and isinstance(category, str) and isinstance(message, str):
-            warnings_.append({'item': item, 'category': category, 'message': message})
+        warning = {key: entry[key] for key in _WARNING_LOG_STRINGS if isinstance(entry.get(key), str)}
+        if not all(key in warning for key in ('item', 'category', 'message')):
+            continue
+        stack = entry.get('stack')
+        if isinstance(stack, list) and all(isinstance(line, str) for line in stack):
+            warning['stack'] = stack
+        warnings_.append(warning)
     return warnings_
 
 
-def _write_warning_log(path: Path, header: str, warnings_: list[dict[str, str]]) -> None:
+def _write_warning_log(path: Path, header: str, warnings_: list[dict[str, Any]]) -> None:
     lines = [
         'version = 1',
         f'header = {_toml_string(header.rstrip())}',
         '',
     ]
     for warning in warnings_:
-        lines.extend((
-            '[[warning]]',
-            f'item = {_toml_string(warning["item"])}',
-            f'category = {_toml_string(warning["category"])}',
-            f'message = {_toml_string(warning["message"])}',
-            '',
-        ))
+        lines.append('[[warning]]')
+        lines.extend(f'{key} = {_toml_string(warning[key])}' for key in _WARNING_LOG_STRINGS if key in warning)
+        if 'stack' in warning:
+            lines.append('stack = [')
+            lines.extend(f'    {_toml_string(line)},' for line in warning['stack'])
+            lines.append(']')
+        lines.append('')
     path.write_text('\n'.join(lines))
 
 
@@ -157,6 +167,12 @@ class CachePolicy(str, Enum):
 
     REQUIRED
         The artifact is always written to and read from disk.
+    EXTERNAL
+        The artifact lives outside ``cache-dir`` and is not owned by the cache:
+        the pipeline may write it, but so may the user or an external tool
+        (e.g. an ICA file that may carry manual component selections). The
+        cache only mirrors a provenance manifest for it and never replaces the
+        artifact automatically.
     NEVER
         Caching is permanently disabled: the derivative has no artifact path
         or manifest and is rebuilt on every request. Set by
@@ -165,6 +181,7 @@ class CachePolicy(str, Enum):
     """
 
     REQUIRED = 'required'
+    EXTERNAL = 'external'
     NEVER = 'never'
 
 
@@ -239,6 +256,39 @@ class ProtectedArtifactError(RuntimeError):
         super().__init__(text)
 
 
+class UnverifiableArtifactError(RuntimeError):
+    """An artifact's validity can not be determined without building something.
+
+    Raised by node hooks (such as :meth:`DependencyNode.dependency_fingerprint_override`)
+    during read-only validation when the answer would require building a
+    dependency; :meth:`DerivativeRegistry.scan_cache` then keeps the artifact
+    as unverifiable.
+    """
+
+
+class JobInputsChangedError(RuntimeError):
+    """Refuse to compute a job whose inputs moved while its data was being loaded.
+
+    A job carries data read during :meth:`DependencyNode.make_job`, so inputs
+    that change during that load would leave the job holding data the manifest
+    does not describe. Nothing is protected here and nothing expensive has been
+    computed yet -- the job is simply not worth computing, and re-requesting it
+    reads the current data.
+    """
+
+    def __init__(
+            self,
+            node: str,
+            field: str | None = None,
+            old: Any = None,
+            new: Any = None,
+    ):
+        self.node = node
+        self.field = field
+        detail = f" ({field}: {old!r} -> {new!r})" if field is not None else ""
+        super().__init__(f"Inputs for {node!r} changed while its data was being loaded{detail}. The job would compute an artifact from data that is already out of date, so it was not created; request it again to compute from the current data.")
+
+
 def _simple_cache_label(key: dict[str, Any]) -> str | None:
     parts = []
     for name, value in key.items():
@@ -267,7 +317,9 @@ class OptionSpec:
     :attr:`DependencyNode.view_options` in place of a plain default to
     normalize and validate the option value when a request is resolved. This
     happens before the cache key is computed, so equivalent spellings share
-    one cached artifact and invalid values fail before build.
+    one cached artifact and invalid values fail before build. An
+    :class:`OptionSpec` only sees its own option; a constraint spanning several
+    options belongs in :meth:`DependencyNode.validate_options`.
 
     The declared ``default`` itself is exempt from normalization and
     validation (checked by identity), so a ``None`` placeholder default does
@@ -287,9 +339,10 @@ class OptionSpec:
     normalize
         Called as ``normalize(value)`` before validation; the return
         value replaces the option value for the whole request (key,
-        fingerprint, and build all see the normalized value). Must be
-        idempotent, since child requests are normalized again when they are
-        resolved.
+        fingerprint, and build all see the normalized value). Runs for every
+        non-default value, including values that already have ``type``, so it
+        can canonicalize typed values. Must be idempotent, since child
+        requests are normalized again when they are resolved.
     """
 
     default: Any
@@ -301,12 +354,12 @@ class OptionSpec:
         """Normalize and validate one option value for ``ctx``."""
         if value is None and self.default is None:
             return value
-        elif self.type and isinstance(value, self.type):
-            return value
         elif self.normalize:
             value = self.normalize(value)
             if self.type:
                 assert isinstance(value, self.type)
+            return value
+        elif self.type and isinstance(value, self.type):
             return value
         elif self.type:
             if not isinstance(self.type, tuple):
@@ -436,14 +489,14 @@ class DependencyNode(Generic[T]):
         under that name.
     key_fields
         State fields whose values determine this node's output. Reading any
-        state field outside ``key_fields`` / ``fixed_state`` during
-        :meth:`~Derivative.build`, :meth:`fingerprint`, or
-        :meth:`dependencies` raises :class:`RuntimeError`. Use
+        state field outside ``key_fields`` / ``fixed_state`` while determining
+        or shaping the node's value raises :class:`RuntimeError` (see
+        :meth:`Request._state_check_context` for the methods this covers). Use
         :meth:`override_key_fields` when a node's key depends on the state
-        dynamically. An explicit empty tuple opts out (the
+        dynamically; a node that does need not also declare a static
+        ``key_fields``. An explicit empty tuple opts out (the
         node manages its own identity via a :meth:`Derivative.key` override).
-        Mandatory for :class:`Input` nodes (only ``()`` opts out). ``key_fields``
-        also feeds the edge-coverage check (see
+        ``key_fields`` also feeds the edge-coverage check (see
         :meth:`DerivativeRegistry._check_edge_key_coverage`): every field a
         dependency keys on must be pinned on the edge or covered by the parent's
         key fields.
@@ -472,6 +525,28 @@ class DependencyNode(Generic[T]):
         ``state`` override. The counterpart to :attr:`key_fields`: where
         ``key_fields`` declares polymorphism over state keys, ``fixed_state``
         pins them.
+    cache_policy
+        Whether this node has a tracked artifact and manifest. The default
+        (:attr:`CachePolicy.NEVER`) means it has neither, so
+        :meth:`Request.key`, :attr:`Request.artifact_path` and
+        :attr:`Request.manifest_path` raise :class:`TypeError`.
+        :class:`Derivative` sets :attr:`CachePolicy.REQUIRED`; an :class:`Input`
+        whose artifact is user-owned but provenance-tracked sets
+        :attr:`CachePolicy.EXTERNAL`.
+    cache_log_level
+        Log level for the standard cache hit/build messages, which are the
+        pipeline's progress report for anything expensive. Set to ``None`` to
+        suppress them. Only nodes with a tracked artifact emit them.
+    dependency_fingerprint_from_artifact
+        Declare that :meth:`dependency_fingerprint` describes the built
+        artifact (e.g. through :attr:`Request.artifact_metadata`) rather than
+        the configuration, or that dependents describe this node by its
+        artifact through :meth:`dependency_fingerprint_override`, so that
+        rebuilding this node does not necessarily change how it appears to its
+        dependents. A read-only cache scan cannot rebuild the artifact to find
+        out, so it keeps the dependents of a stale instance of such a node as
+        unverifiable instead of collecting them as stale (see
+        :meth:`DerivativeRegistry.scan_cache`).
     """
 
     name: str
@@ -479,11 +554,75 @@ class DependencyNode(Generic[T]):
     key_options: dict[str, Any] = {}
     view_options: dict[str, Any] = {}
     fixed_state: dict[str, Any] = {}
+    cache_policy: CachePolicy = CachePolicy.NEVER
+    # Log level for standard cache hit/build messages. Set to None to silence.
+    cache_log_level: int | None = logging.DEBUG
+    dependency_fingerprint_from_artifact: bool = False
+
+    def cache_log_path(self, ctx: Request, path: Path) -> str:
+        """Return the displayed artifact path for cache log messages."""
+        return ctx.registry.describe_artifact_path(path)
+
+    def log_cache_hit(self, ctx: Request, path: Path) -> None:
+        """Emit the standard cache-hit message for this node."""
+        self._log_cache_event(ctx, path, "Load cached", 'cached')
+
+    def log_cache_build(self, ctx: Request, path: Path) -> None:
+        """Emit the standard cache-build message for this node (no prior artifact)."""
+        self._log_cache_event(ctx, path, "Build", 'build')
+
+    def log_cache_recompute(self, ctx: Request, path: Path, reason: CacheInvalidation) -> None:
+        """Emit the cache-recompute message, reporting why the cached artifact was invalid."""
+        self._log_cache_event(ctx, path, "Recompute", 'recompute', reason=reason)
+
+    def log_job(self, ctx: Request, path: Path) -> None:
+        """Emit the message for generating a job that will compute this node's artifact.
+
+        Distinct from :meth:`log_cache_build`: the job's data has been read, but
+        whether it is ever computed, and where, is up to whoever holds it.
+        """
+        self._log_cache_event(ctx, path, "Generate job for", 'job')
+
+    def _log_cache_event(
+            self,
+            ctx: Request,
+            path: Path,
+            action: str,
+            event: str,
+            *,
+            reason: CacheInvalidation | None = None,
+    ) -> None:
+        if self.cache_log_level is None:
+            return
+        detail = f" ({reason.message()})" if reason is not None else ""
+        cache_event = {'event': event, 'derivative': self.name}
+        if reason is not None:
+            cache_event.update(reason.as_dict())
+        ctx.registry.log.log(
+            self.cache_log_level, "%s %s%s: %s", action, self.name, detail, self.cache_log_path(ctx, path),
+            extra={'cache_event': cache_event},
+        )
 
     @classmethod
     def declared_options(cls) -> set[str]:
         """Return all option names declared by this node."""
         return {*cls.key_options, *cls.view_options}
+
+    def validate_options(self, ctx: Request) -> None:
+        """Normalize and reject invalid combinations of option values.
+
+        Called exactly once per request, after :class:`OptionSpec` normalization
+        and before the cache key is computed, so an invalid combination can fail
+        before any expensive work. Combinations that are canonical only in
+        combination may be normalized by updating ``ctx.options`` in place, so
+        equivalent spellings share one canonical key; such normalization must be
+        idempotent, since child requests are normalized again when they are
+        resolved.
+
+        Override this for constraints or canonicalization spanning several
+        options, or options and state (handle individual options in
+        :class:`OptionSpec`).
+        """
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...] | None:
         """Dynamically choose the state fields in the cache key for this request.
@@ -556,6 +695,39 @@ class DependencyNode(Generic[T]):
         dependency timestamps need not override this method.
         """
         return {}
+
+    def normalize_stored_fingerprint(self, fingerprint: dict[str, Any]) -> None:
+        """Update a stored fingerprint of this node to the current schema, in place.
+
+        Called by :meth:`DerivativeRegistry.read_manifest` on every fingerprint
+        of this node read back from disk — both in the node's own manifest and
+        in the copies embedded in dependents' manifests. Override to migrate
+        stored fingerprints after a change to :meth:`fingerprint` /
+        :meth:`dependency_fingerprint` (e.g., drop a removed key) without
+        invalidating existing caches. The default does nothing.
+
+        Parameters
+        ----------
+        fingerprint
+            A stored (canonicalized) fingerprint of this node; modify in place.
+        """
+
+    def normalize_stored_dependencies(self, dependencies: dict[str, Any]) -> None:
+        """Update the stored dependency manifest of this node to the current schema, in place.
+
+        Called by :meth:`DerivativeRegistry.read_manifest` on every dependency
+        manifest of this node read back from disk — in the node's own manifest
+        and in the copies embedded in dependents' manifests. Override to
+        migrate stored dependency entries after a change to
+        :meth:`dependencies` (e.g., drop an edge that turned out not to affect
+        the artifact) without invalidating existing caches. The default does
+        nothing.
+
+        Parameters
+        ----------
+        dependencies
+            The stored dependency manifest of this node, keyed by edge label; modify in place.
+        """
 
     def dependency_fingerprint(self, ctx: Request, view: str | None = None) -> dict[str, Any]:
         """Describe how this node should appear when used as a dependency.
@@ -639,6 +811,64 @@ class DependencyNode(Generic[T]):
         """
         raise ValueError(f"{self.name!r} does not define load view {view!r}")
 
+    def key(self, ctx: Request) -> dict[str, Any]:
+        """The key used to generate a unique path for this artifact.
+
+        This is the framework assembler and should not need overriding.
+        The key is used to resolve the artifact path and should stay focused
+        on cache address/identity. It is narrower than :meth:`fingerprint`,
+        which records the fuller set of non-dependency request
+        state/options/definitions that make an existing artifact stale.
+        """
+        fields = self._get_key_fields(ctx)
+        key = canonical_state_subset(ctx.state, fields)
+        option_names = self.override_key_options(ctx)
+        options = ctx.options if option_names is None else {name: ctx.options[name] for name in option_names}
+        if options:
+            key['options'] = options
+        return key
+
+    def is_valid(self, ctx: Request) -> bool:
+        """Return whether a valid artifact for this request already exists.
+
+        Subclasses with a tracked artifact must override this; a node without
+        one has nothing to validate, so this raises like :meth:`Request.key`
+        and :attr:`Request.artifact_path` do.
+        """
+        ctx._require_artifact('validity check')
+        raise NotImplementedError(f"{self.name!r} declares {self.cache_policy} but does not implement is_valid()")
+
+    def make_job(self, ctx: Request) -> Job:
+        """Load this request's inputs and assemble a picklable :class:`Job` (the computation deferred).
+
+        Override this on nodes whose computation should be separable from data
+        loading, so a single artifact can be computed on a machine that does not
+        have the raw data. Implementations load through ``ctx.load(...)`` inside
+        ``ctx._build_deps_context()``, exactly as :meth:`Derivative.build` does,
+        and the corresponding ``build`` is ``self.make_job(ctx)()``.
+        """
+        raise NotImplementedError
+
+    def save_result(
+            self,
+            ctx: Request,
+            result: T,
+            provenance: JobProvenance,
+    ) -> T:
+        """Persist an externally computed ``result`` and return the reloaded artifact.
+
+        Parameters
+        ----------
+        ctx
+            Resolved request for the artifact.
+        result
+            The value computed by the job.
+        provenance
+            What the job's inputs looked like when it read them; the artifact
+            is filed under these (see :class:`JobProvenance`).
+        """
+        raise NotImplementedError
+
 
 class Input(DependencyNode[T]):
     """Base class for non-cacheable external inputs.
@@ -647,6 +877,13 @@ class Input(DependencyNode[T]):
     such as raw source files, manually curated metadata, or external logs.
     They still participate in dependency manifests through
     :meth:`DependencyNode.fingerprint`.
+
+    An input whose artifact the pipeline does generate, but does not own
+    outright (e.g. an ICA file that may carry manual component selections),
+    declares :attr:`CachePolicy.EXTERNAL`. The cache then mirrors a provenance
+    manifest for it, so the input has a key, an artifact path and a manifest
+    path like a derivative, and can implement :meth:`DependencyNode.make_job` /
+    :meth:`DependencyNode.save_result`; but it is never rebuilt automatically.
     """
 
     def load(self, ctx: Request):
@@ -693,11 +930,11 @@ class VersionedInput(Input[T]):
 
     def _source_fingerprint(self, ctx: Request) -> dict[str, Any]:
         """Cheap fingerprint of the source (e.g. :func:`file_fingerprint`); the data is only compared when it drifts."""
-        raise NotImplementedError
+        return file_fingerprint(ctx.root, self.path(ctx))
 
     def _current_data(self, ctx: Request) -> Any:
         """Load the tracked data from the source."""
-        raise NotImplementedError
+        return self.load(ctx)
 
     def _data_equal(self, ctx: Request, stored: Any, current: Any) -> bool:
         """Exact comparison between the reference copy and the current data."""
@@ -808,22 +1045,29 @@ class Derivative(DependencyNode[T]):
     cache_suffix
         File suffix for the default :meth:`path` implementation. Leave
         ``None`` when overriding :meth:`path` directly.
-    cache_log_level
-        Log level for standard cache hit/build messages. Set to ``None``
-        to suppress them.
     version
         Derivative-local schema version recorded in manifests. Increment
         when the serialization format changes incompatibly.
+    protected
+        Whether an existing artifact that lacks a valid manifest is protected
+        from being replaced automatically: loading raises
+        :exc:`ProtectedArtifactError` instead of rebuilding, unless the request
+        carries ``ALLOW_PROTECTED_OVERWRITE``. Opt in for derivatives whose
+        artifact may hold work the pipeline cannot reproduce (e.g. manual
+        selections). The default rebuilds, which is appropriate for artifacts
+        that are fully determined by their inputs, including a pre-existing
+        file of unknown provenance such as a source space file copied along
+        with a template brain.
     """
 
     # Whether artifacts of this derivative persist to the cache.
     cache_policy: CachePolicy = CachePolicy.REQUIRED
     # File suffix for the default :meth:`path` implementation.
     cache_suffix: str | None = None
-    # Log level for standard cache hit/build messages. Set to None to silence.
-    cache_log_level: int | None = logging.DEBUG
     # Derivative-local version recorded in manifests for compatibility checks.
     version: int = 1
+    # Whether an existing artifact without a valid manifest is protected from automatic replacement.
+    protected: bool = False
 
     def cache_label(self, ctx: Request) -> str | None:
         """Return an optional readable label for the default cache path.
@@ -836,42 +1080,6 @@ class Derivative(DependencyNode[T]):
         fields = self._get_key_fields(ctx)
         label_key = canonical_state_subset(ctx.state, fields) if fields else ctx.key()
         return _simple_cache_label(label_key)
-
-    def cache_log_path(self, ctx: Request, path: Path) -> str:
-        """Return the displayed artifact path for cache log messages."""
-        return ctx.registry.describe_artifact_path(path)
-
-    def log_cache_hit(self, ctx: Request, path: Path) -> None:
-        """Emit the standard cache-hit message for this derivative."""
-        self._log_cache_event(ctx, path, "Load cached", 'cached')
-
-    def log_cache_build(self, ctx: Request, path: Path) -> None:
-        """Emit the standard cache-build message for this derivative (no prior artifact)."""
-        self._log_cache_event(ctx, path, "Build", 'build')
-
-    def log_cache_recompute(self, ctx: Request, path: Path, reason: CacheInvalidation) -> None:
-        """Emit the cache-recompute message, reporting why the cached artifact was invalid."""
-        self._log_cache_event(ctx, path, "Recompute", 'recompute', reason=reason)
-
-    def _log_cache_event(
-            self,
-            ctx: Request,
-            path: Path,
-            action: str,
-            event: str,
-            *,
-            reason: CacheInvalidation | None = None,
-    ) -> None:
-        if self.cache_log_level is None:
-            return
-        detail = f" ({reason.message()})" if reason is not None else ""
-        cache_event = {'event': event, 'derivative': self.name}
-        if reason is not None:
-            cache_event.update(reason.as_dict())
-        ctx.registry.log.log(
-            self.cache_log_level, "%s %s%s: %s", action, self.name, detail, self.cache_log_path(ctx, path),
-            extra={'cache_event': cache_event},
-        )
 
     def path(self, ctx: Request) -> Path:
         """Return the concrete artifact path for this request.
@@ -898,22 +1106,22 @@ class Derivative(DependencyNode[T]):
         label_slug = label_clean[:MAX_CACHE_LABEL_LEN].strip('-_')
         return ctx.registry.cache_dir / self.name / _cache_entity_dir(key) / f"{label_slug}_key-{key_hash}{self.cache_suffix}"
 
-    def key(self, ctx: Request) -> dict[str, Any]:
-        """The key used to generate a unique path for this artifact.
+    def is_valid(self, ctx: Request) -> bool:
+        """Return whether this request already has a valid cached artifact."""
+        if self.cache_policy is CachePolicy.NEVER:
+            return False
+        manifest = ctx._manifest()
+        if manifest is None or not ctx.artifact_path.exists():
+            return False
+        return ctx.registry._validation_reason(ctx, manifest) is None
 
-        This is the framework assembler and should not need overriding.
-        The key is used to resolve the artifact path and should stay focused
-        on cache address/identity. It is narrower than :meth:`fingerprint`,
-        which records the fuller set of non-dependency request
-        state/options/definitions that make an existing artifact stale.
-        """
-        fields = self._get_key_fields(ctx)
-        key = canonical_state_subset(ctx.state, fields)
-        option_names = self.override_key_options(ctx)
-        options = ctx.options if option_names is None else {name: ctx.options[name] for name in option_names}
-        if options:
-            key['options'] = options
-        return key
+    def save_result(
+            self,
+            ctx: Request,
+            result: T,
+            provenance: JobProvenance,
+    ) -> T:
+        return ctx.save_artifact(result, provenance)
 
     def build(self, ctx: Request) -> T:
         """Compute the artifact value for this request.
@@ -979,6 +1187,8 @@ class Derivative(DependencyNode[T]):
         without changing cache identity. The default implementation returns
         ``value`` unchanged. Any data loaded through ``ctx.load(...)`` must be
         declared in :meth:`dependencies`, just as for :meth:`build`.
+
+        Does not apply in :meth:`load_view`.
         """
         return value
 
@@ -1024,8 +1234,13 @@ class ExternalArtifactDerivative(Derivative[T]):
     - a small stamp inside ``cache-dir``, when the real output is multiple
       files, or when a user-provided variant must stay a fingerprinted input
       rather than this node's writable artifact (e.g. parcellation ``*.annot``
-      files, where anchoring on the user files outside ``cache-dir`` would route
-      them through :class:`ProtectedArtifactError`).
+      files, where anchoring on the user files would make them this node's
+      artifact, to be rebuilt whenever they go stale).
+
+    When the anchor is the real file, a pre-existing file of unknown provenance
+    (e.g. copied along with a template brain, or produced by an external tool)
+    is rebuilt like any stale artifact, unless the derivative opts into
+    :attr:`~Derivative.protected`.
 
     The :meth:`save` provided here materializes that stamp when, and only when,
     the anchor lives in ``cache-dir``; when :meth:`path` is the real external
@@ -1046,10 +1261,9 @@ class ExternalArtifactDerivative(Derivative[T]):
 class _RestrictedStateView(Mapping):
     """State view that enforces access only to declared key fields.
 
-    Used during :meth:`Derivative.build`, :meth:`~DependencyNode.fingerprint`,
-    :meth:`~DependencyNode.dependency_fingerprint`, and
-    :meth:`~DependencyNode.dependencies` to ensure every state field that
-    affects the artifact is declared in :attr:`~DependencyNode.key_fields` or
+    Used during the methods that determine or shape a node's value (see
+    :meth:`Request._state_check_context`) to ensure every state field that
+    affects it is declared in :attr:`~DependencyNode.key_fields` or
     :attr:`~DependencyNode.fixed_state`.
 
     This is a :class:`~collections.abc.Mapping`, not a :class:`dict`, so that
@@ -1098,10 +1312,15 @@ def _dep_entry_matches(stored: dict[str, Any], current: dict[str, Any]) -> bool:
     ``key`` participates because fingerprints often describe configuration
     only: a dependency that resolves to a different artifact (different cache
     key) must invalidate the parent even when its fingerprint is unchanged.
+    A stored entry without ``key`` was recorded while the node was not cached;
+    its fingerprint and sub-dependencies validated it then and still do, so
+    caching a node does not invalidate the artifacts depending on it.
     """
-    for key in ('name', 'kind', 'view', 'key'):
+    for key in ('name', 'view'):
         if stored.get(key) != current.get(key):
             return False
+    if 'key' in stored and stored['key'] != current.get('key'):
+        return False
     stored_quick = stored.get('quick_fingerprint')
     current_quick = current.get('quick_fingerprint')
     if stored_quick is not None and current_quick is not None and stored_quick == current_quick:
@@ -1141,6 +1360,51 @@ def compare_manifests(stored: ArtifactManifest | None, current: ArtifactManifest
     return None
 
 
+class LoadProfile:
+    """Time spent per node during one top-level :meth:`Request.load`.
+
+    A load walks the dependency graph, so its total says nothing about where the
+    time went: a slow raw file, a slow rebuild and a slow cache walk all look the
+    same. This attributes the time to the node that spent it, by subtracting each
+    nested load from the load that made it, so the times sum to the total.
+
+    Switched on per experiment with :attr:`DerivativeRegistry.profile_loads`
+    (``eelbrain-gui --debug``); off, no measurement is taken at all.
+    """
+
+    def __init__(self):
+        self.self_time: dict[str, float] = {}  # node name -> seconds spent in it
+        self.calls: dict[str, int] = {}  # node name -> number of loads
+        self.total = 0.  # seconds of the load that finished last, i.e. the outermost one
+        self._nested = 0.  # seconds the current load has spent in nested loads
+
+    @contextmanager
+    def measure(self, name: str) -> Iterator[None]:
+        """Time one load of node ``name``, excluding the loads nested inside it."""
+        outer_nested = self._nested
+        self._nested = 0.
+        t_start = time.perf_counter()
+        try:
+            yield
+        finally:
+            elapsed = time.perf_counter() - t_start
+            self.self_time[name] = self.self_time.get(name, 0.) + elapsed - self._nested
+            self.calls[name] = self.calls.get(name, 0) + 1
+            self._nested = outer_nested + elapsed
+            self.total = elapsed
+
+    def summary(self, limit: int = 4) -> str:
+        """The nodes that took the longest, most expensive first.
+
+        Parameters
+        ----------
+        limit
+            Number of nodes to list.
+        """
+        ranked = sorted(self.self_time, key=self.self_time.get, reverse=True)
+        return ', '.join(f"{name} {self.self_time[name]:.3f} s ({self.calls[name]}x)" for name in ranked[:limit])
+
+
 class Request(Generic[T]):
     """One bound request for data from the dependency graph.
 
@@ -1169,10 +1433,11 @@ class Request(Generic[T]):
 
     Notes
     -----
-    Derivative-only members such as :meth:`key`, :attr:`artifact_path`,
-    :attr:`manifest_path`, :meth:`is_valid`, and :meth:`ensure` are available
-    on the same object. They raise :class:`TypeError` when the request targets
-    an input.
+    Artifact members such as :meth:`key`, :attr:`artifact_path`,
+    :attr:`manifest_path` and :meth:`is_valid` are available on the same
+    object. They raise :class:`TypeError` when the node has no tracked
+    artifact, i.e. for an uncached derivative and for any input other than an
+    :attr:`CachePolicy.EXTERNAL` one. :meth:`ensure` is derivative-only.
     """
 
     def __init__(
@@ -1217,15 +1482,15 @@ class Request(Generic[T]):
         # node that keys dynamically need not also declare a redundant static
         # key_fields. A node that declares neither (e.g. a result node that
         # overrides key() and manages its own identity, or an Input with
-        # key_fields=()) is not read-restricted. Inputs are restricted only in
-        # their cache-affecting methods (fingerprint/dependencies); load() etc.
-        # run outside the check context and may read arbitrary state.
+        # key_fields=()) is not read-restricted.
         self._restricted_state: _RestrictedStateView | None = None
         if isinstance(node, (Derivative, Input)):
             read_fields = node._get_key_fields(self)
             allowed = frozenset(read_fields) | frozenset(node.fixed_state)
             if allowed:
                 self._restricted_state = _RestrictedStateView(state, allowed)
+        with self._state_check_context():
+            node.validate_options(self)
         if isinstance(node, Derivative) and node.cache_policy != CachePolicy.NEVER:
             # Canonicalize here so key() implementations need not: a key that
             # only became canonical through the manifest JSON round-trip would
@@ -1258,9 +1523,34 @@ class Request(Generic[T]):
         """Return whether this request includes one explicit execution control."""
         return control in self.controls
 
+    def with_controls(self, *controls: str) -> Request[T]:
+        """Copy of this request with additional execution controls.
+
+        Used to authorize an operation that the plain request refuses, such as
+        recomputing a protected artifact, without going through mutable
+        pipeline state. The request is copied rather than re-resolved, so
+        which options the caller actually provided carries over unchanged;
+        option values are re-validated by the constructor, which is idempotent
+        for already-canonical values.
+
+        Parameters
+        ----------
+        controls
+            Request controls to add to those this request carries.
+        """
+        return Request(
+            node=self.node,
+            registry=self.registry,
+            state=self._state,
+            options=dict(self.options),
+            view_options=dict(self.view_options),
+            controls=self.controls.union(controls),
+            provided_key_options=self._provided_key_options,
+        )
+
     @contextmanager
     def _state_check_context(self):
-        """Restrict ``ctx.state`` to declared key_fields during cache-affecting calls.
+        """Restrict ``ctx.state`` to declared key_fields during calls that shape a node's value.
 
         When active, any access to a state field not listed in
         :attr:`~Derivative.key_fields` or :attr:`~DependencyNode.fixed_state`
@@ -1384,11 +1674,8 @@ class Request(Generic[T]):
         if view is not None:
             out['view'] = view
         if isinstance(self.node, Derivative) and self.node.cache_policy != CachePolicy.NEVER:
-            out['kind'] = 'derivative'
             out['key'] = self.key()
             out['manifest'] = self.manifest_path.relative_to(self.registry.cache_dir).as_posix()
-        else:
-            out['kind'] = 'input'
         return out
 
     def _require_derivative(self) -> Derivative[T]:
@@ -1396,36 +1683,40 @@ class Request(Generic[T]):
             return self.node
         raise TypeError(f"Request for input {self.node.name!r} has no derivative artifact state")
 
-    def _require_cached_derivative(self, attribute: str) -> None:
-        derivative = self._require_derivative()
-        if derivative.cache_policy is CachePolicy.NEVER:
-            raise TypeError(f"Request for uncached derivative {derivative.name!r} has no {attribute}")
+    def _require_artifact(self, attribute: str) -> None:
+        if self.node.cache_policy is CachePolicy.NEVER:
+            kind = 'uncached derivative' if isinstance(self.node, Derivative) else 'untracked input'
+            raise TypeError(f"Request for {kind} {self.node.name!r} has no {attribute}")
 
     @property
     def base_artifact_path(self) -> Path:
         """Base artifact path before any cache-path disambiguation."""
-        self._require_cached_derivative('artifact path')
-        assert self._base_artifact_path is not None
+        if self._base_artifact_path is None:
+            self._require_artifact('artifact path')
+            self._base_artifact_path = self.node.path(self)
         return self._base_artifact_path
 
     @property
     def artifact_path(self) -> Path:
-        """Resolved artifact path for a derivative request."""
-        self._require_cached_derivative('artifact path')
-        assert self._artifact_path is not None
+        """Resolved artifact path for this request."""
+        if self._artifact_path is None:
+            # Cache-path disambiguation only applies inside cache-dir, so an
+            # EXTERNAL artifact is simply its own path.
+            self._artifact_path = self.base_artifact_path
         return self._artifact_path
 
     @property
     def manifest_path(self) -> Path:
-        """Resolved manifest path for a derivative request."""
-        self._require_cached_derivative('manifest path')
-        assert self._manifest_path is not None
+        """Resolved manifest path for this request."""
+        if self._manifest_path is None:
+            self._manifest_path = self.registry.manifest_path(self.artifact_path, self.node.name)
         return self._manifest_path
 
     def key(self) -> dict[str, Any]:
-        """Return the normalized derivative key for this request."""
-        self._require_cached_derivative('cache key')
-        assert self._key is not None
+        """Return the normalized cache key for this request."""
+        if self._key is None:
+            self._require_artifact('cache key')
+            self._key = self.registry.canonicalize(self.node.key(self))
         return self._key
 
     @property
@@ -1484,14 +1775,8 @@ class Request(Generic[T]):
         return reason
 
     def is_valid(self) -> bool:
-        """Return whether the current derivative request already has a valid artifact."""
-        derivative = self._require_derivative()
-        if derivative.cache_policy is CachePolicy.NEVER:
-            return False
-        manifest = self._manifest()
-        if manifest is None or not self.artifact_path.exists():
-            return False
-        return self.registry._validation_reason(self, manifest) is None
+        """Return whether this request already has a valid artifact."""
+        return self.node.is_valid(self)
 
     def _dependency_map(self) -> dict[str, Dependency]:
         """Declared dependencies keyed by label, rejecting duplicate labels."""
@@ -1531,8 +1816,9 @@ class Request(Generic[T]):
             if manifest is not None and artifact_exists and reason is None:
                 self._artifact_metadata = manifest.artifact_metadata
                 derivative.log_cache_hit(self, self.artifact_path)
-                return derivative.load(self, self.artifact_path)
-            if artifact_exists and not self.registry.is_cache_artifact(self.artifact_path) and not self.has_control(ALLOW_PROTECTED_OVERWRITE):
+                with self._state_check_context():
+                    return derivative.load(self, self.artifact_path)
+            if artifact_exists and derivative.protected and not self.has_control(ALLOW_PROTECTED_OVERWRITE):
                 raise ProtectedArtifactError(derivative.name, self.artifact_path)
             if reason is None:
                 derivative.log_cache_build(self, self.artifact_path)
@@ -1546,14 +1832,39 @@ class Request(Generic[T]):
             return artifact
         return self.save_artifact(artifact)
 
-    def save_artifact(self, artifact: T) -> T:
+    def save_artifact(self, artifact: T, provenance: JobProvenance | None = None) -> T:
         """Persist a built artifact and write its manifest; return the reloaded artifact.
 
         Shared by :meth:`load_artifact` and by off-host execution (an externally
         computed result re-united with its cache entry, e.g. via
-        :meth:`~eelbrain._experiment.trf.job.TRFJobSpec.save_result`).
+        :meth:`~eelbrain._experiment.derivative_cache.job.JobSpec.save_result`).
+
+        Parameters
+        ----------
+        artifact
+            The value to persist.
+        provenance
+            What the inputs looked like when a job read them, for a result
+            computed off-host; the artifact is filed under these rather than
+            under the current inputs, which may have moved on. Omitted for an
+            artifact built in place, which records the inputs the build just
+            read.
         """
         derivative = self._require_derivative()
+        if provenance is not None:
+            # A job result reaches here without passing through load_artifact's
+            # protected check, so repeat it: a protected artifact is never
+            # overwritten without explicit authorization. Only on this path -- an
+            # in-place build was already checked before building, and for an
+            # ExternalArtifactDerivative the file existing here means build() just
+            # wrote it.
+            if self.artifact_path.exists() and derivative.protected and not self.has_control(ALLOW_PROTECTED_OVERWRITE):
+                raise ProtectedArtifactError(derivative.name, self.artifact_path)
+            dependencies = provenance.dependencies
+            fingerprint = provenance.fingerprint
+        else:
+            dependencies = self.dependency_fingerprints()
+            fingerprint = self.current_fingerprint()
         artifact_metadata = self.registry.canonicalize(derivative.artifact_metadata(self, artifact))
         self.artifact_path.parent.mkdir(parents=True, exist_ok=True)
         derivative.save(self, self.artifact_path, artifact)
@@ -1563,8 +1874,8 @@ class Request(Generic[T]):
             derivative=derivative.name,
             derivative_version=derivative.version,
             key=self.key(),
-            fingerprint=self.current_fingerprint(),
-            dependencies=self.dependency_fingerprints(),
+            fingerprint=fingerprint,
+            dependencies=dependencies,
             cache_policy=derivative.cache_policy.value,
             software={
                 'eelbrain_cache_schema': str(MANIFEST_SCHEMA_VERSION),
@@ -1575,9 +1886,12 @@ class Request(Generic[T]):
             resolve_options=resolve_options,
         )
         self.registry.write_manifest(self.manifest_path, manifest)
-        self.registry._record_valid(self)
+        if provenance is None:
+            # Only an in-place build is guaranteed to be up-to-date; a job result may already be stale
+            self.registry._record_valid(self)
         self._artifact_metadata = manifest.artifact_metadata
-        return derivative.load(self, self.artifact_path)
+        with self._state_check_context():
+            return derivative.load(self, self.artifact_path)
 
     def load(
             self,
@@ -1624,7 +1938,9 @@ class Request(Generic[T]):
         ``view`` is accepted; passing ``state``, ``options``, or ``controls``
         raises :class:`TypeError`.
         """
-        with self.registry._load_context():
+        # A dependency load is profiled by the dependency's own load()
+        profile = self.registry._profile_load(self) if name is None else nullcontext()
+        with self.registry._load_context(), profile:
             return self._load(name, state, options, view=view, controls=controls)
 
     def _resolve_target(
@@ -1681,16 +1997,17 @@ class Request(Generic[T]):
         if state is not None or options is not None or controls:
             raise TypeError("Request.load() without a dependency name only accepts a view override")
         if view is not None:
-            with self.registry._node_warning_context(self):
+            with self.registry._node_warning_context(self), self._state_check_context():
                 return self.node.load_view(self, view)
         if isinstance(self.node, Input):
-            with self.registry._node_warning_context(self):
+            with self.registry._node_warning_context(self), self._state_check_context():
                 return self.node.load(self)
 
         derivative = self._require_derivative()
         with self._build_deps_context():
             artifact = self.load_artifact()
-            return derivative.apply_view_options(self, artifact)
+            with self._state_check_context():
+                return derivative.apply_view_options(self, artifact)
 
     def ensure(
             self,
@@ -1729,6 +2046,9 @@ class Request(Generic[T]):
         the target is an :class:`Input`, which has no artifact to materialize.
         Views are irrelevant here and are ignored: they shape a loaded value,
         not the artifact this builds.
+
+        During a read-only scan (cache garbage collection) nothing is built:
+        a stale artifact is left as it is.
         """
         with self.registry._load_context():
             self._ensure(name, state, options, controls=controls)
@@ -1748,7 +2068,7 @@ class Request(Generic[T]):
 
         if state is not None or options is not None or controls:
             raise TypeError("Request.ensure() without a dependency name takes no overrides")
-        if self.is_valid():
+        if self.registry._readonly or self.is_valid():
             return
         with self._build_deps_context():
             self.load_artifact()
@@ -1771,6 +2091,10 @@ class DerivativeRegistry:
         # Reuse cache-validity results within one top-level Request.load().
         # Artifacts themselves are not shared because callers can mutate them.
         self._validation_cache: ContextVar[dict[tuple[str, str], CacheInvalidation | None] | None] = ContextVar(f'{type(self).__name__}-{id(self)}-validation-cache', default=None)
+        # Log where each top-level load spends its time (see LoadProfile); off by
+        # default, because the measurement is only worth taking when it is read.
+        self.profile_loads = False
+        self._load_profile: ContextVar[LoadProfile | None] = ContextVar(f'{type(self).__name__}-{id(self)}-load-profile', default=None)
 
     @contextmanager
     def _load_context(self):
@@ -1779,10 +2103,33 @@ class DerivativeRegistry:
             yield
             return
         token = self._validation_cache.set({})
-        try:
+        with user_activity:
+            try:
+                yield
+            finally:
+                self._validation_cache.reset(token)
+
+    @contextmanager
+    def _profile_load(self, ctx: Request) -> Iterator[None]:
+        """Time one load of ``ctx``, and log where the outermost one spent its time.
+
+        A no-op unless :attr:`profile_loads` is set; see :class:`LoadProfile`.
+        """
+        if not self.profile_loads:
             yield
+            return
+        profile = self._load_profile.get()
+        outermost = profile is None
+        if outermost:
+            profile = LoadProfile()
+            token = self._load_profile.set(profile)
+        try:
+            with profile.measure(ctx.node.name):
+                yield
         finally:
-            self._validation_cache.reset(token)
+            if outermost:
+                self._load_profile.reset(token)
+                self.log.debug(f"Load {ctx.node.name} in {profile.total:.3f} s: {profile.summary()}")
 
     @staticmethod
     def _validation_key(ctx: Request) -> tuple[str, str]:
@@ -1818,8 +2165,6 @@ class DerivativeRegistry:
             raise RuntimeError(f"Dependency node {node.name!r} already registered")
         if not isinstance(node, (Derivative, Input)):
             raise TypeError(f"Unsupported node type: {type(node)!r}")
-        if isinstance(node, Input) and node.key_fields is UNSET:
-            raise TypeError(f"Input {node.name!r} must declare key_fields (state fields that determine its content); use an empty tuple () only if its identity is fully option-based.")
         self._nodes[node.name] = node
 
     def _get_node(self, name: str) -> DependencyNode[Any]:
@@ -1869,25 +2214,39 @@ class DerivativeRegistry:
             item = str(path)
         else:
             item = node.name
-        with warnings.catch_warnings(record=True) as warning_list:
+        warning_list: list[tuple[Warning, str, list[str]]] = []
+        recorded: set[tuple[str, str]] = set()
+
+        def showwarning(message, category, filename, lineno, file=None, line=None):
+            # Only the first occurrence of a warning is kept (see below); a warning issued in a loop must not extract its stack every time
+            if (category.__name__, str(message)) in recorded:
+                return
+            recorded.add((category.__name__, str(message)))
+            # Record the full stack: libraries such as MNE attribute the warning to the first frame outside their own namespace, which hides the path within the library
+            stack = [f'{frame.filename}:{frame.lineno} in {frame.name}' for frame in traceback.extract_stack()[:-1] if frame.filename != warnings.__file__]
+            warning_list.append((message, f'{filename}:{lineno}', stack))
+
+        with warnings.catch_warnings():
             warnings.simplefilter('always')
             warnings.filterwarnings('ignore', r'unclosed file ', ResourceWarning)
+            warnings.showwarning = showwarning
             yield
         if not warning_list:
             return
+        state = json.dumps({key: ctx.state[key] for key in node._get_key_fields(ctx) if key in ctx.state}, default=str)
         details_path = Path(self.root) / LOG_DIR / f'{node.name}-warnings.toml'
         details_path.parent.mkdir(parents=True, exist_ok=True)
         entries = _read_warning_log(details_path)
-        seen = {(entry['item'], entry['category'], entry['message']) for entry in entries}
+        seen = {(entry['item'], entry['category'], entry['message'], entry.get('state', '')) for entry in entries}
         new_entries = []
-        for message in warning_list:
-            category = message.category.__name__
-            text = str(message.message)
-            key = (item, category, text)
+        for message, location, stack in warning_list:
+            category = message.__class__.__name__
+            text = str(message)
+            key = (item, category, text, state)
             if key in seen:
                 continue
             seen.add(key)
-            entry = {'item': item, 'category': category, 'message': text}
+            entry = {'item': item, 'category': category, 'message': text, 'state': state, 'location': location, 'stack': stack}
             entries.append(entry)
             new_entries.append(entry)
         if not new_entries:
@@ -1895,7 +2254,7 @@ class DerivativeRegistry:
         _write_warning_log(details_path, f"Warnings emitted during {node.name}.\n", entries)
         count = len(new_entries)
         noun = 'warning was' if count == 1 else 'warnings were'
-        self.log.warning("%s new %s issued during %s. Full details were written to %s. Previously recorded %s warnings will be suppressed in the terminal for this experiment.", count, noun, node.name, details_path, node.name)
+        self.log.warning("%s new %s issued during %s (%s; first: %s at %s). Full details were written to %s. Previously recorded %s warnings will be suppressed in the terminal for this experiment.", count, noun, node.name, state, new_entries[0]['message'], new_entries[0]['location'], details_path, node.name)
 
     def describe_artifact_path(self, path: str | Path) -> str:
         artifact_path = Path(path)
@@ -2008,75 +2367,38 @@ class DerivativeRegistry:
                 out.append((dep, request))
         return out
 
-    @staticmethod
-    def _tree_mapping_text(mapping: dict[str, Any] | None, *, values: bool = True) -> str | None:
-        if not mapping:
-            return None
-        items = list(mapping.items())
-        max_items = 6 if values else 8
-        if values:
-            parts = [f"{key}={value!r}" for key, value in items[:max_items]]
+    def _tree_identity(self, handle: Request[Any]) -> str:
+        """Stable id for the artifact/value a request resolves to.
+
+        Derived from the node's effective key (key fields and key options,
+        both context-sensitive), not the full request state or view options,
+        so requests that differ only in key-irrelevant state or in view options
+        share one identity.
+        """
+        node = handle.node
+        if node.cache_policy is CachePolicy.NEVER:
+            content = {
+                'state': canonical_state_subset(handle.state, node._get_key_fields(handle)),
+                'options': self.canonicalize(handle.options),
+            }
         else:
-            parts = [str(key) for key, _ in items[:max_items]]
-        if len(items) > max_items:
-            parts.append(f"+{len(items) - max_items}")
-        return ', '.join(parts)
-
-    def _tree_request_id(self, handle: Request[Any], view: str | None = None) -> str:
-        return json.dumps({
-            'name': handle.node.name,
-            'state': self.canonicalize(handle.state),
-            'options': self.canonicalize({**handle.options, **handle.view_options}),
-            'view': view,
-        }, sort_keys=True, separators=(',', ':'))
-
-    @staticmethod
-    def _tree_line_width(max_line_length: int | None) -> int:
-        if max_line_length is None:
-            return shutil.get_terminal_size(fallback=(100, 24)).columns
-        if max_line_length < 16:
-            raise ValueError(f"{max_line_length=}: needs to be at least 16")
-        return max_line_length
-
-    @staticmethod
-    def _clip_tree_segment(text: str, available: int) -> str:
-        if len(text) <= available:
-            return text
-        if available <= 1:
-            return '…'
-        return text[:available - 1].rstrip() + '…'
-
-    def _format_tree_line(
-            self,
-            first_prefix: str,
-            continuation_prefix: str,
-            segments: list[str],
-            max_line_length: int,
-    ) -> list[str]:
-        lines = []
-        current = first_prefix
-        current_prefix = first_prefix
-        for segment in segments:
-            if len(current) + len(segment) <= max_line_length:
-                current += segment
-                continue
-            if current != current_prefix:
-                lines.append(current)
-                current = continuation_prefix
-                current_prefix = continuation_prefix
-            available = max_line_length - len(current)
-            current += self._clip_tree_segment(segment.lstrip(), available)
-        lines.append(current)
-        return lines
+            content = {'key': handle.key()}
+        return json.dumps({'name': node.name, **content}, sort_keys=True, separators=(',', ':'))
 
     def dependency_tree(
             self,
             name: str,
             state: dict[str, Any] | None = None,
             options: dict[str, Any] | None = None,
-            max_line_length: int | None = None,
-    ) -> str:
-        """Format one resolved dependency request as an ASCII tree.
+            view: str | None = None,
+            controls: frozenset[str] | set[str] | tuple[str, ...] = (),
+    ) -> DependencyTree:
+        """Resolve one request and return its dependency tree for display.
+
+        Since dependency edges are context-sensitive, the tree describes the
+        request resolved from the given ``state`` and ``options``; resolving it
+        may load upstream artifacts that a node needs to enumerate its edges
+        (e.g. events for TRF predictors).
 
         Parameters
         ----------
@@ -2086,68 +2408,51 @@ class DerivativeRegistry:
             State for resolving the request.
         options
             Options for resolving the request.
-        max_line_length
-            Maximum line length for the formatted tree. By default, infer the
-            current terminal width and wrap long node descriptions onto
-            continuation lines.
+        view
+            Named view that would be loaded from the root request (shown on the root; it does not affect the tree).
+        controls
+            Controls for resolving the request (see :meth:`resolve`).
+
+        Returns
+        -------
+        tree
+            Tree whose ``repr`` is an ASCII rendering; in Jupyter notebooks it
+            displays as a graphviz flow chart when the optional ``graphviz``
+            package is installed (see :class:`~eelbrain._experiment.derivative_cache.dependency_tree.DependencyTree`).
         """
-        root = self.resolve(name, state=state, options=options)
-        line_width = self._tree_line_width(max_line_length)
         seen = set()
-        lines = []
 
-        def append_node(
-                handle: Request[Any],
-                dep: Dependency | None,
-                prefix: str,
-                is_last: bool,
-        ) -> None:
-            first_prefix = ''
-            continuation_prefix = '    '
-            if dep is not None:
-                first_prefix = prefix + ('└── ' if is_last else '├── ')
-                continuation_prefix = prefix + ('    ' if is_last else '│   ')
-            parts = []
-            if dep and dep.label and dep.label != dep.name:
-                parts.append(f"{dep.label} -> ")
-            parts.append(handle.node.name)
-            if isinstance(handle.node, Derivative):
-                if handle.node.cache_policy == CachePolicy.NEVER:
-                    parts.append(' [uncached]')
-                else:
-                    parts.append(' [derivative]')
-                    key_text = self._tree_mapping_text(handle.key())
-                    if key_text:
-                        parts.append(f" {{{key_text}}}")
+        def make_node(handle: Request[Any], dep: Dependency | None) -> DependencyTreeNode:
+            node = handle.node
+            if isinstance(node, Derivative):
+                kind = 'uncached' if node.cache_policy is CachePolicy.NEVER else 'derivative'
             else:
-                parts.append(' [input]')
-            if dep and dep.state:
-                state_text = self._tree_mapping_text(self.canonicalize(dep.state))
-                if state_text:
-                    parts.append(f" [state: {state_text}]")
-            if dep and dep.view:
-                parts.append(f" [view: {dep.view}]")
-            option_source = {**handle.options, **handle.view_options} if dep is None else dep.options
-            if option_source:
-                option_text = self._tree_mapping_text(self.canonicalize(option_source), values=False)
-                if option_text:
-                    parts.append(f" [options: {option_text}]")
+                kind = 'input'
+            if dep is None:
+                node_options = self.canonicalize({**handle.options, **handle.view_options})
+            else:
+                node_options = self.canonicalize(dep.options) if dep.options else {}
+            identity = self._tree_identity(handle)
+            tree_node = DependencyTreeNode(
+                name=node.name,
+                kind=kind,
+                label=dep.label if dep and dep.label and dep.label != dep.name else None,
+                key=handle.key() if kind == 'derivative' else None,
+                state=self.canonicalize(dep.state) if dep and dep.state else {},
+                options=node_options,
+                view=dep.view if dep else view,
+                identity=identity,
+                seen=identity in seen,
+            )
+            if tree_node.seen:
+                return tree_node
+            seen.add(identity)
+            for child_dep, child_handle in self._dependency_handles(handle):
+                tree_node.children.append(make_node(child_handle, child_dep))
+            return tree_node
 
-            request_id = self._tree_request_id(handle, dep.view if dep else None)
-            if request_id in seen:
-                parts.append(' [seen]')
-                lines.extend(self._format_tree_line(first_prefix, continuation_prefix, parts, line_width))
-                return
-
-            seen.add(request_id)
-            lines.extend(self._format_tree_line(first_prefix, continuation_prefix, parts, line_width))
-            children = self._dependency_handles(handle)
-            child_prefix = continuation_prefix if dep is not None else prefix
-            for i, (child_dep, child_handle) in enumerate(children):
-                append_node(child_handle, child_dep, child_prefix, i == len(children) - 1)
-
-        append_node(root, None, '', True)
-        return '\n'.join(lines)
+        root = self.resolve(name, state=state, options=options, controls=controls)
+        return DependencyTree(make_node(root, None))
 
     def is_cache_artifact(self, path: Path) -> bool:
         return path.is_relative_to(self.cache_dir)
@@ -2189,10 +2494,34 @@ class DerivativeRegistry:
             return None
         try:
             data = json.loads(manifest_path.read_text())
-            return ArtifactManifest.from_dict(data)
+            manifest = ArtifactManifest.from_dict(data)
         except (OSError, ValueError, TypeError, AttributeError) as error:
             self.log.debug("Treating unreadable manifest %s as missing (%s)", manifest_path, error)
             return None
+        # Normalize stored fingerprints
+        node = self._nodes.get(manifest.derivative)
+        if node is not None and isinstance(manifest.fingerprint, dict):
+            node.normalize_stored_fingerprint(manifest.fingerprint)
+        if isinstance(manifest.dependencies, dict):
+            if node is not None:
+                node.normalize_stored_dependencies(manifest.dependencies)
+            self._normalize_dependency_fingerprints(manifest.dependencies)
+        return manifest
+
+    def _normalize_dependency_fingerprints(self, dependencies: dict[str, Any]) -> None:
+        for entry in dependencies.values():
+            if not isinstance(entry, dict):
+                continue
+            entry.pop('kind', None)  # recorded before 0.43 and ignored since; dropped so that a mismatch report names the actual difference
+            node = self._nodes.get(entry.get('name'))
+            fingerprint = entry.get('fingerprint')
+            if node is not None and isinstance(fingerprint, dict):
+                node.normalize_stored_fingerprint(fingerprint)
+            sub = entry.get('dependencies')
+            if isinstance(sub, dict):
+                if node is not None:
+                    node.normalize_stored_dependencies(sub)
+                self._normalize_dependency_fingerprints(sub)
 
     def write_manifest(self, path: str | Path, manifest: ArtifactManifest) -> None:
         manifest_path = Path(path)
@@ -2223,7 +2552,7 @@ class DerivativeRegistry:
 
         The output is suitable for fingerprints, keys, and manifests: dicts are
         sorted by key, sets are sorted, numpy scalars are unwrapped, and
-        :class:`Path` objects become strings. Unrecognized types fall back to
+        :class:`~pathlib.Path` objects become strings. Unrecognized types fall back to
         ``repr()``.
 
         Domain-specific types handled here (:class:`~eelbrain.Var`,
@@ -2263,7 +2592,7 @@ class DerivativeRegistry:
             return [DerivativeRegistry.canonicalize(v) for v in value]
         if isinstance(value, Path):
             return str(value)
-        if isinstance(value, set):
+        if isinstance(value, (set, frozenset)):
             return sorted(DerivativeRegistry.canonicalize(v) for v in value)
         if hasattr(value, 'item'):
             try:

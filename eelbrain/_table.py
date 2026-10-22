@@ -52,7 +52,7 @@ def difference(
 
     Returns
     -------
-    diff
+    diff : Dataset
         Dataset with the difference between ``c1`` and ``c0`` on ``y``.
 
     Examples
@@ -118,17 +118,17 @@ def frequencies(
 
     Parameters
     ----------
-    y : univariate
+    y
         Values whose frequencies are of interest.
-    x : categorial
+    x
         Optional model defining cells for which frequencies are displayed
         separately.
-    of : categorial
+    of
         With ``x`` constant within ``of``, only count frequencies for each value
         in ``of`` once. (Compress y and x before calculating frequencies.)
-    sub : index
+    sub
         Only use a subset of the data.
-    data : Dataset
+    data
         If data is specified, other parameters can be strings naming for
         variables in ``data``.
 
@@ -469,7 +469,7 @@ def cast_to_ndvar(
 
     Returns
     -------
-    short_ds
+    short_ds : Dataset
         Copy of ``ds``, aggregated over ``dim_values``, and with an
         :class:`NDVar` containing the values from ``data`` and a new dimension
         reflecting ``dim_values``. If ``dim_values`` is a Factor, the new
@@ -598,7 +598,7 @@ def stats(
 
     Returns
     -------
-    table
+    table : Dataset | fmtxt.Table
         Table with statistics.
 
     Examples
@@ -729,7 +729,7 @@ def repmeas(
         Dependent variable (can be model with several dependents).
     x
         Model defining the cells that should be restructured into variables.
-    match : categorial
+    match
         Model identifying the source of the measurement across repetitions,
         i.e. the model that should be retained.
     sub

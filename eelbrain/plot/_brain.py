@@ -14,7 +14,7 @@ from nibabel.freesurfer import read_annot
 import numpy as np
 
 from .._data_obj import NDVar, SourceSpace, UTS
-from .._types import PathArg
+from .._types import ColorArg, PathArg
 from .._stats.testnd import NDTest, NDDifferenceTest, MultiEffectNDTest
 from .._utils import deprecated
 from ..fmtxt import im_table
@@ -25,50 +25,66 @@ from ._colors import ColorList
 from ._utsnd import Butterfly
 
 
-def annot(annot, subject='fsaverage', surf='smoothwm', borders=False, alpha=0.7,
-          hemi=None, views=('lat', 'med'), w=None, h=None, axw=None, axh=None,
-          foreground=None, background=None, parallel=True, cortex='classic',
-          title=None, subjects_dir=None, name=None):
+def annot(
+        annot: str,
+        subject: str = 'fsaverage',
+        surf: Literal['inflated', 'pial', 'smoothwm', 'sphere', 'white'] = 'smoothwm',
+        borders: bool | int = False,
+        alpha: float = 0.7,
+        hemi: Literal['lh', 'rh', 'both', 'split'] = None,
+        views: str | Sequence[str] = ('lat', 'med'),
+        w: float = None,
+        h: float = None,
+        axw: float = None,
+        axh: float = None,
+        foreground: ColorArg = None,
+        background: ColorArg = None,
+        parallel: bool = True,
+        cortex: str | tuple | dict = 'classic',
+        title: str = None,
+        subjects_dir: PathArg = None,
+        name: str = None,
+):
     """Plot the parcellation in an annotation file
 
     Parameters
     ----------
-    annot : str
+    annot
         Name of the annotation (e.g., "PALS_B12_LOBES").
-    subject : str
+    subject
         Name of the subject (default 'fsaverage').
-    surf : 'inflated' | 'pial' | 'smoothwm' | 'sphere' | 'white'
+    surf
         Freesurfer surface to use as brain geometry.
-    borders : bool | int
+    borders
         Show only label borders (PySurfer Brain.add_annotation() argument).
-    alpha : scalar
+    alpha
         Alpha of the annotation (1=opaque, 0=transparent, default 0.7).
-    hemi : 'lh' | 'rh' | 'both' | 'split'
+    hemi
         Which hemispheres to plot (default includes hemisphere with more than one
         label in the annot file).
-    views : str | sequence of str
+    views
         One or several views to show in the figure. The options are:
         ``'lateral', 'medial', 'ventral', 'dorsal', 'rostral', 'parietal',
         'frontal', 'caudal'``.
-    w, h, axw, axh : scalar
+    w, h, axw, axh
         Layout parameters (figure width/height, subplot width/height).
-    foreground : mayavi color
+    foreground
         Figure foreground color (i.e., the text color).
-    background : mayavi color
+    background
         Figure background color.
-    parallel : bool
+    parallel
         Set views to parallel projection (default ``True``).
-    cortex : str | tuple | dict
+    cortex
         Mark gyri and sulci on the cortex. Presets: ``'classic'`` (default),
         ``'high_contrast'``, ``'low_contrast'``, ``'bone'``. Can also be a
         single color (e.g. ``'red'``, ``(0.1, 0.4, 1.)``) or a tuple of two
         colors for gyri and sulci (e.g. ``['red', 'blue']`` or ``[(1, 0, 0),
         (0, 0, 1)]``). For all options see the PySurfer documentation.
-    title : str
+    title
         title for the window (default is the parcellation name).
-    subjects_dir : None | str
+    subjects_dir
         Override the default subjects_dir.
-    name : str
+    name
         Equivalent to ``title``, for consistency with other plotting functions.
 
     Returns
@@ -79,7 +95,7 @@ def annot(annot, subject='fsaverage', surf='smoothwm', borders=False, alpha=0.7,
     Notes
     -----
     The ``Brain`` object that is returned has a
-    :meth:`~plot._brain_fixes.plot_legend` method to plot the color legend.
+    :meth:`~plot._brain_object.Brain.plot_legend` method to plot the color legend.
 
     See Also
     --------
@@ -116,14 +132,14 @@ def annot(annot, subject='fsaverage', surf='smoothwm', borders=False, alpha=0.7,
     return brain
 
 
-def annot_legend(lh, rh, *args, **kwargs):
+def annot_legend(lh: str, rh: str, *args, **kwargs):
     """Plot a legend for a freesurfer parcellation
 
     Parameters
     ----------
-    lh : str
+    lh
         Path to the lh annot-file.
-    rh : str
+    rh
         Path to the rh annot-file.
     labels : dict (optional)
         Alternative (text) label for (brain) labels.
@@ -187,29 +203,37 @@ def _plot(data, *args, **kwargs):
         return brain(data, *args, **kwargs)
 
 
-def dspm(src, fmin=13, fmax=22, fmid=None, *args, **kwargs):
+def dspm(
+        src: NDVar,
+        fmin: float = 13,
+        fmax: float = 22,
+        fmid: float = None,
+        *args,
+        **kwargs,
+):
     """
     Plot a source estimate with coloring for dSPM values (bipolar).
 
     Parameters
     ----------
-    src : NDVar, dims = ([case,] source, [time])
-        NDVar with SourceSpace dimension. If stc contains a case dimension,
+    src
+        NDVar with SourceSpace dimension, with dimensions
+        ``([case,] source, [time])``. If stc contains a case dimension,
         the average across cases is taken.
-    fmin, fmax : scalar >= 0
-        Start- and end-point for the color gradient for positive values. The
-        gradient for negative values goes from -fmin to -fmax. Values between
-        -fmin and fmin are transparent.
-    fmid : None | scalar
+    fmin, fmax
+        Start- and end-point (both ``>= 0``) for the color gradient for
+        positive values. The gradient for negative values goes from -fmin to
+        -fmax. Values between -fmin and fmin are transparent.
+    fmid
         Midpoint for the color gradient. If fmid is None (default) it is set
         half way between fmin and fmax.
-    surf : 'inflated' | 'pial' | 'smoothwm' | 'sphere' | 'white'
+    surf : Literal['inflated', 'pial', 'smoothwm', 'sphere', 'white']
         Freesurfer surface to use as brain geometry.
-    views : str | sequence of str
+    views : str | Sequence[str]
         One or several views to show in the figure. The options are:
         ``'lateral', 'medial', 'ventral', 'dorsal', 'rostral', 'parietal',
         'frontal', 'caudal'``.
-    hemi : 'lh' | 'rh' | 'both' | 'split'
+    hemi : Literal['lh', 'rh', 'both', 'split']
         Which hemispheres to plot (default based on data).
     colorbar : bool
         Add a colorbar to the figure (use ``.plot_colorbar()`` to plot a
@@ -256,24 +280,32 @@ def dspm(src, fmin=13, fmax=22, fmid=None, *args, **kwargs):
     return _plot(src, lut, -fmax, fmax, *args, **kwargs)
 
 
-def p_map(p_map, param_map=None, p0=0.05, p1=0.01, p0alpha=0.5, *args,
-          **kwargs):
+def p_map(
+        p_map: NDVar | NDTest,
+        param_map: NDVar = None,
+        p0: float = 0.05,
+        p1: float = 0.01,
+        p0alpha: float = 0.5,
+        *args,
+        **kwargs,
+):
     """Plot a map of p-values in source space.
 
     Parameters
     ----------
-    p_map : NDVar | NDTest
+    p_map
         Map of p values, or test result.
-    param_map : NDVar
+    param_map
         Statistical parameter covering the same data points as p_map. Only the
         sign is used, for incorporating the directionality of the effect into
         the plot.
-    p0 : scalar
+    p0
         Highest p-value that is visible.
-    p1 : scalar
+    p1
         P-value where the colormap changes from ramping alpha to ramping color.
-    p0alpha : 1 >= float >= 0
-        Alpha at ``p0``. Set to 0 for a smooth transition, or a larger value to
+    p0alpha
+        Alpha at ``p0`` (``0 <= p0alpha <= 1``). Set to 0 for a smooth
+        transition, or a larger value to
         clearly delineate significant regions (default 0.5).
     surf : 'inflated' | 'pial' | 'smoothwm' | 'sphere' | 'white'
         Freesurfer surface to use as brain geometry.
@@ -351,7 +383,7 @@ def p_map(p_map, param_map=None, p0=0.05, p1=0.01, p0alpha=0.5, *args,
     return p
 
 
-def cluster(cluster, vmax=None, *args, **kwargs):
+def cluster(cluster: NDVar, vmax: float = None, *args, **kwargs):
     """Plot a spatio-temporal cluster
 
     Plots a cluster with the assumption that all non-zero data should be
@@ -359,12 +391,12 @@ def cluster(cluster, vmax=None, *args, **kwargs):
 
     Parameters
     ----------
-    cluster : NDVar
+    cluster
         The cluster.
-    vmax : scalar != 0
-        Maximum value in the colormap. Default is the maximum value in the
-        cluster.
-    surf : 'inflated' | 'pial' | 'smoothwm' | 'sphere' | 'white'
+    vmax
+        Maximum value in the colormap (``!= 0``). Default is the maximum value
+        in the cluster.
+    surf : Literal['inflated', 'pial', 'smoothwm', 'sphere', 'white']
         Freesurfer surface to use as brain geometry.
     views : str | sequence of str
         One or several views to show in the figure. The options are:
@@ -424,74 +456,95 @@ def cluster(cluster, vmax=None, *args, **kwargs):
     return _plot(cluster, lut, -vmax, vmax, *args, **kwargs)
 
 
-def brain(src, cmap=None, vmin=None, vmax=None, surf='inflated',
-          views='lateral', hemi=None, colorbar=False, time_label='ms',
-          w=None, h=None, axw=None, axh=None, foreground=None, background=None,
-          parallel=True, cortex='classic', title=None, smoothing_steps=None,
-          mask=True, subjects_dir=None, name=None, pos=None):
-    """Create a :class:`Brain` object with a data layer
+def brain(
+        src: NDVar | SourceSpace | str,
+        cmap: str | np.ndarray | dict = None,
+        vmin: float = None,
+        vmax: float = None,
+        surf: Literal['inflated', 'pial', 'smoothwm', 'sphere', 'white'] = 'inflated',
+        views: str | Sequence[str] = 'lateral',
+        hemi: Literal['lh', 'rh', 'both', 'split'] = None,
+        colorbar: bool = False,
+        time_label: str = 'ms',
+        w: float = None,
+        h: float = None,
+        axw: float = None,
+        axh: float = None,
+        foreground: ColorArg = None,
+        background: ColorArg = None,
+        parallel: bool = True,
+        cortex: str | tuple | dict = 'classic',
+        title: str = None,
+        smoothing_steps: int = None,
+        mask: bool | ColorArg = True,
+        subjects_dir: PathArg = None,
+        name: str = None,
+        pos: tuple[int, int] = None,
+):
+    """Create a :class:`~plot._brain_object.Brain` object with a data layer
 
     Parameters
     ----------
-    src : NDVar ([case,] source, [time]) | SourceSpace | str
-        Data to plot; can be specified as :class:`NDVar` with source-space data,
+    src
+        Data to plot, with dimensions ``([case,] source, [time])``; can be
+        specified as :class:`NDVar` with source-space data,
         :class:`SourceSpace` dimension, or as subject name (:class:`str`).
         If ``src`` contains a ``Case`` dimension, the average across cases is
         taken. If it contains integer data, it is plotted as annotation,
         otherwise as data layer.
-    cmap : str | array
+    cmap
         Colormap (name of a matplotlib colormap) or LUT array. If ``src`` is an
         integer NDVar, ``cmap`` can be a color dictionary mapping label IDs to
         colors.
-    vmin, vmax : scalar
+    vmin, vmax
         Endpoints for the colormap. Need to be set explicitly if ``cmap`` is
         a LUT array.
-    surf : 'inflated' | 'pial' | 'smoothwm' | 'sphere' | 'white'
+    surf
         Freesurfer surface to use as brain geometry.
-    views : str | sequence of str
+    views
         One or several views to show in the figure. The options are:
         ``'lateral', 'medial', 'ventral', 'dorsal', 'rostral', 'parietal',
         'frontal', 'caudal'``.
-    hemi : 'lh' | 'rh' | 'both' | 'split'
+    hemi
         Which hemispheres to plot (default based on data).
-    colorbar : bool
+    colorbar
         Add a colorbar to the figure (use ``.plot_colorbar()`` to plot a
         colorbar separately).
-    time_label : str
+    time_label
         Label to show time point. Use ``'ms'`` or ``'s'`` to display time in
         milliseconds or in seconds, or supply a custom format string to format
         time values (in seconds; default is ``'ms'``).
-    w, h, axw, axh : scalar
+    w, h, axw, axh
         Layout parameters (figure width/height, subplot width/height).
-    foreground : mayavi color
+    foreground
         Figure foreground color (i.e., the text color).
-    background : mayavi color
+    background
         Figure background color.
-    parallel : bool
+    parallel
         Set views to parallel projection (default ``True``).
-    cortex : str | tuple | dict
+    cortex
         Mark gyri and sulci on the cortex. Presets: ``'classic'`` (default),
         ``'high_contrast'``, ``'low_contrast'``, ``'bone'``. Can also be a
         single color (e.g. ``'red'``, ``(0.1, 0.4, 1.)``) or a tuple of two
         colors for gyri and sulci (e.g. ``['red', 'blue']`` or ``[(1, 0, 0),
         (0, 0, 1)]``). For all options see the PySurfer documentation.
-    title : str
+    title
         title for the window (default is based on the subject name and
         ``src``).
-    smoothing_steps : None | int
+    smoothing_steps
         Number of smoothing steps if data is spatially undersampled (pysurfer
         ``Brain.add_data()`` argument).
-    mask : bool | matplotlib color
+    mask
         Shade areas that are not in ``src``. Can be matplotlib color, including
         alpha (e.g., ``(1, 1, 1, 0.5)`` for semi-transparent white). If
         smoothing is enabled through ``smoothing_steps``, the mask is added as
         data layer, otherwise it is added as label. To add a mask independently,
-        use the :meth:`Brain.add_mask` method.
-    subjects_dir : None | str
+        use the :meth:`~plot._brain_object.Brain.add_mask` method.
+    subjects_dir
         Override the subjects_dir associated with the source space dimension.
-    name : str
+    name
         Equivalent to ``title``, for consistency with other plotting functions.
-    pos : tuple of int
+    pos
         Position of the new window on the screen.
 
     Returns
@@ -665,17 +718,25 @@ class ImageTable(ColorBarMixin, EelFigure):
     def _fill_toolbar(self, tb):
         ColorBarMixin._fill_toolbar(self, tb)
 
-    def add_column_titles(self, titles, x=None, y=0.25, va='center', ha='center', **kwargs):
+    def add_column_titles(
+            self,
+            titles: Sequence[str],
+            x: float = None,
+            y: float = 0.25,
+            va: str = 'center',
+            ha: str = 'center',
+            **kwargs,
+    ):
         """Add a title for each column of images
 
         Parameters
         ----------
         titles : sequence of str
             Titles, from top to bottom.
-        x : scalar
+        x
             Horizontal distance from left of the axes (default is to center
             over the axes).
-        y : scalar
+        y
             Vertical distance from the top of the figure.
         ...
             Matplotlib text parameters.
@@ -695,16 +756,24 @@ class ImageTable(ColorBarMixin, EelFigure):
             self.figure.text(x_, y_, label, va=va, ha=ha, **kwargs)
         self.draw()
 
-    def add_row_titles(self, titles, x=0.1, y=None, va='center', ha='center', **kwargs):
+    def add_row_titles(
+            self,
+            titles: Sequence[str],
+            x: float = 0.1,
+            y: float = None,
+            va: str = 'center',
+            ha: str = 'center',
+            **kwargs,
+    ):
         """Add a title for each row of images
 
         Parameters
         ----------
         titles : sequence of str
             Titles, from top to bottom.
-        x : scalar
+        x
             Horizontal distance from left of the figure.
-        y : scalar
+        y
             Vertical distance from the bottom of the axes (default is the
             center of the axes).
         ...
@@ -1272,7 +1341,7 @@ class SequencePlotter:
         self._brain_args = {'surf': surf, 'foreground': foreground, 'background': background, 'parallel': parallel, 'cortex': cortex, 'mask': mask}
 
     def set_parallel_view(self, forward=None, up=None, scale=None):
-        "Set view for all plots (see :meth:`~.brain_object.Brain.set_parallel_view`"
+        "Set view for all plots (see :meth:`~plot._brain_object.Brain.set_parallel_view`"
         if forward is not None:
             self._parallel_view['forward'] = forward
         if up is not None:
@@ -1480,12 +1549,12 @@ class SequencePlotter:
             layer_label = desc if label is None else label
             self.add_ndvar(ndvar, cmap, -vmax, vmax, label=layer_label, **kwargs)
 
-    def set_frame_order(self, order):
+    def set_frame_order(self, order: list):
         """Set the order in which frames are plotted
 
         Parameters
         ----------
-        order : list
+        order
             Sequence of frame dimension indices.
         """
         self._assert_has_frame_dim()
@@ -1590,7 +1659,7 @@ class SequencePlotter:
 
         Returns
         -------
-        fig
+        fig : ImageTable
             Figure created by the plot.
 
         Notes
@@ -1780,50 +1849,62 @@ def copy(brain):
     return brain.copy_screenshot()
 
 
-def butterfly(y, cmap=None, vmin=None, vmax=None, surf='inflated',
-              views='lateral', hemi=None,
-              w=5, h=2.5, smoothing_steps=None, mask=True,
-              xlim=None, name=None):
+def butterfly(
+        y: NDVar,
+        cmap: str | np.ndarray = None,
+        vmin: float = None,
+        vmax: float = None,
+        surf: Literal['inflated', 'pial', 'smoothwm', 'sphere', 'white'] = 'inflated',
+        views: str | Sequence[str] = 'lateral',
+        hemi: Literal['lh', 'rh'] = None,
+        w: float = 5,
+        h: float = 2.5,
+        smoothing_steps: int = None,
+        mask: bool | ColorArg = True,
+        xlim: float | tuple[float, float] = None,
+        name: str = None,
+):
     """Shortcut for a Butterfly-plot with a time-linked brain plot
 
     Parameters
     ----------
-    y : NDVar  ([case,] time, source)
-        Data to plot; if ``y`` has a case dimension, the mean is plotted.
-        ``y`` can also be a :mod:`~eelbrain.testnd` t-test result, in which
+    y
+        Data to plot, with dimensions ``([case,] time, source)``; if ``y`` has
+        a case dimension, the mean is plotted.
+        ``y`` can also be a :mod:`testnd` t-test result, in which
         case a masked parameter map is plotted (p ≤ 0.05).
-    cmap : str | array
+    cmap
         Colormap (name of a matplotlib colormap).
-    vmin : scalar
+    vmin
         Plot data range minimum.
-    vmax : scalar
+    vmax
         Plot data range maximum.
-    surf : 'inflated' | 'pial' | 'smoothwm' | 'sphere' | 'white'
+    surf
         Freesurfer surface to use as brain geometry.
-    views : str | sequence of str
+    views
         One or several views to show in the figure. The options are:
         ``'lateral', 'medial', 'ventral', 'dorsal', 'rostral', 'parietal',
         'frontal', 'caudal'``.
-    hemi : 'lh' | 'rh'
+    hemi
         Plot only this hemisphere (the default is to plot all hemispheres with
         data in ``y``).
-    w : scalar
+    w
         Butterfly plot width (inches).
-    h : scalar
+    h
         Plot height (inches; applies to butterfly and brain plot).
-    smoothing_steps : None | int
+    smoothing_steps
         Number of smoothing steps if data is spatially undersampled (pysurfer
         ``Brain.add_data()`` argument).
-    mask : bool | matplotlib color
+    mask
         Shade areas that are not in ``src``. Can be matplotlib color, including
         alpha (e.g., ``(1, 1, 1, 0.5)`` for semi-transparent white). If
         smoothing is enabled through ``smoothing_steps``, the mask is added as
         data layer, otherwise it is added as label. To add a mask independently,
-        use the :meth:`Brain.add_mask` method.
-    xlim : scalar | (scalar, scalar)
+        use the :meth:`~plot._brain_object.Brain.add_mask` method.
+    xlim
         Initial x-axis view limits as ``(left, right)`` tuple or as ``length``
         scalar (default is the full x-axis in the data).
-    name : str
+    name
         The window title (default is y.name).
 
     Returns

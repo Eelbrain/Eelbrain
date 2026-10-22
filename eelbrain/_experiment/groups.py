@@ -13,7 +13,7 @@ class Group(GroupBase):
 
     Parameters
     ----------
-    subjects : collection of str
+    subjects
         Group members.
 
     See Also
@@ -47,9 +47,9 @@ class SubGroup(GroupBase):
 
     Parameters
     ----------
-    base : str
+    base
         The name of the group to base the new group on (e.g., ``'all'``).
-    exclude : collection of str
+    exclude
         Subjects to exclude (e.g., ``("R0026", "R0042", "R0066")``).
 
     See Also

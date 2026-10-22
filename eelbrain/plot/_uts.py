@@ -36,7 +36,7 @@ class UTSStat(LegendMixin, XAxisMixin, YLimMixin, EelFigure):
     data
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
-    main : func | None
+    main
         Measure for the central tendency (function that takes an ``axis``
         argument). The default is numpy.mean.
     error
@@ -102,12 +102,14 @@ class UTSStat(LegendMixin, XAxisMixin, YLimMixin, EelFigure):
         <http://matplotlib.org/api/colors_api.html>`_.
     error_alpha
         Alpha of the error plot (default 0.3).
-    mask : NDVar | {cell: NDVar}
-        Mask certain time points. To control appearance of masked regions, set
-        ``colors`` using :class:`plot.Style`.
+    mask
+        Mask certain time points. A single :class:`NDVar` to set a global mask,
+        or a ``{cell: mask}`` dictionary to control mask by ``cell``.
+        To control appearance of masked regions, set ``colors`` using
+        :class:`plot.Style`.
     clusters
         Clusters to add to the plots. The clusters should be provided as
-        Dataset, as stored in test results' :py:attr:`.clusters`.
+        Dataset, as stored in test results' :attr:`testnd.NDTest.clusters`.
     pmax
         Maximum p-value of clusters to plot as solid.
     ptrend
@@ -296,7 +298,7 @@ class UTSStat(LegendMixin, XAxisMixin, YLimMixin, EelFigure):
         clusters
             A dataset with the clusters to visualize.
             Uses the format of clusters stored in test results'
-            :py:attr:`.clusters`.
+            :attr:`testnd.NDTest.clusters`.
             This should include at least ``tstart`` and ``tstop`` columns.
             It can also optionally contain an ``effect`` column to use different
             ``color`` and ``y`` levels for different types of clusters.
@@ -305,9 +307,9 @@ class UTSStat(LegendMixin, XAxisMixin, YLimMixin, EelFigure):
             Only plot clusters with ``p <= pmax``.
         ptrend
             Maximum p-value of clusters to plot as trend.
-        color : matplotlib color | dict
+        color
             Color for the clusters, or a ``{effect: color}`` dictionary.
-        ax : None | int
+        ax
             Index of the axes to which the clusters are to be added. If None,
             add the clusters to all axes.
         y
@@ -343,16 +345,16 @@ class UTS(TimeSlicerEF, LegendMixin, YLimMixin, XAxisMixin, EelFigure):
 
     Parameters
     ----------
-    y : (list of) NDVar
+    y
         UTS data to plot. For a list (``[a, b]``) each item will be plotted
         separately. To combine multiple UTSs in a common axes, use a nested
         list (``[[a, b]]`` would plot ``a`` and ``b`` together in a common axes).
-    xax : categorial
+    xax
         Make separate axes for each category in this categorial model.
-    axtitle : bool | sequence of str
+    axtitle
         Title for the individual axes. The default is to show the names of the
         epochs, but only if multiple axes are plotted.
-    data : Dataset
+    data
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
     sub

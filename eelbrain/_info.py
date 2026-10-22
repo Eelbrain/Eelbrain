@@ -38,8 +38,15 @@ cmap ticks
     Non-standard cmap-ticks; used by plot.brain.p_map to transmit proper tick
     labels for remapped p-values
 """
+from __future__ import annotations
+
 import mne
 import numpy as np
+from typing import TYPE_CHECKING
+from collections.abc import Sequence
+
+if TYPE_CHECKING:
+    from ._data_obj import Dataset
 
 
 # Key constants for info dictionaries
@@ -231,7 +238,7 @@ def _values_equal(a, b):
         return a == b
 
 
-def merge_info(items):
+def merge_info(items: Sequence[Dataset]) -> dict:
     "Merge info dicts from several objects"
     info0 = items[0].info
     other_infos = [i.info for i in items[1:]]

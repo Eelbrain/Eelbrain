@@ -11,6 +11,8 @@ from .._utils.parse import find_variables
 
 class Configuration:
     DICT_ATTRS = None
+    # DICT_ATTRS entries with defaults that are omitted in _as_dict(), so that adding a field does not invalidate caches built before it existed
+    DICT_DEFAULTS = {}
     name = None
 
     def _as_dict(self) -> dict[str, Any]:
@@ -46,8 +48,12 @@ class Configuration:
         """
         if self.DICT_ATTRS is None:
             raise NotImplementedError(f"{self.__class__.__name__}.DICT_ATTRS")
-        out = {'type': self.__class__.__name__}
-        out.update({k: getattr(self, k) for k in self.DICT_ATTRS})
+        keys = set(self.DICT_ATTRS).union(self.DICT_DEFAULTS)
+        out = {key: getattr(self, key) for key in keys}
+        out['type'] = self.__class__.__name__
+        for key, value in self.DICT_DEFAULTS.items():
+            if out[key] == value:
+                del out[key]
         return out
 
     def _store_name(self, name: str) -> None:
@@ -68,7 +74,12 @@ class Configuration:
             value = getattr(self, name)
             if param.default is param.empty:
                 args.append(repr(value))
-            elif value != param.default:
+            else:
+                try:
+                    if value == param.default:
+                        continue
+                except (TypeError, ValueError, AttributeError):  # e.g., mne.channels.DigMontage and array-valued attributes raise on comparison
+                    pass
                 args.append(f'{name}={value!r}')
         return args
 
@@ -248,11 +259,33 @@ def find_dependent_epochs(epoch, epochs):
     return out[1:]
 
 
-def typed_arg(arg, type_, secondary_type=None):
+def typed_arg(
+        arg: Any,
+        type_: type,
+        secondary_type: type | None = None,
+        allow_none: bool = False,
+) -> Any:
+    """Coerce a configuration argument to its target type.
+
+    Parameters
+    ----------
+    arg
+        The argument value to coerce.
+    type_
+        Target type; ``arg`` is coerced with ``type_(arg)``.
+    secondary_type
+        Alternative type that is passed through without coercion (e.g. ``str``
+        for arguments that accept a value or an expression).
+    allow_none
+        Pass through ``None`` (for optional arguments); by default, ``None``
+        raises a :exc:`TypeError`.
+    """
     if secondary_type is not None and isinstance(arg, secondary_type):
         return arg
     elif arg is None:
-        return None
+        if allow_none:
+            return None
+        raise TypeError(f"Expected {type_.__name__}, got None")
     else:
         return type_(arg)
 

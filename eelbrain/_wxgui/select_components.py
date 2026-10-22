@@ -9,6 +9,7 @@
 #  - listens to Document changes
 #  - issues commands to Model
 from collections import defaultdict
+from functools import partial
 from itertools import repeat
 from math import ceil
 from operator import itemgetter
@@ -21,22 +22,24 @@ from matplotlib.patches import Rectangle
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 import numpy as np
 from scipy import linalg
-import seaborn
 import wx
+import wx.html
 from wx.lib.scrolledpanel import ScrolledPanel
 
 from .. import load, plot, fmtxt
 from .._colorspaces import UNAMBIGUOUS_COLORS
 from .._data_obj import Dataset, Factor, NDVar, Categorial, Scalar, combine
 from .._io.fiff import _picks, sensor_dim
+from .._meeg.ica_bad_channels import CH_TYPE_DEFAULT, CONSISTENCY_DEFAULT, FLAT_DEFAULT, GAP_RATIO_DEFAULT, MIN_COMPONENTS_DEFAULT, SMOOTHNESS_DEFAULT, ChannelGapResult, find_channel_gaps, map_smoothness, neighbor_matrix
 from .._ndvar import concatenate, neighbor_correlation
 from .._types import PathArg
 from .._utils.numpy_utils import INT_TYPES
-from .._utils.parse import FLOAT_PATTERN, POS_FLOAT_PATTERN
+from .._utils.parse import FLOAT_PATTERN, POS_FLOAT_PATTERN, POS_INT_PATTERN
 from .._utils.system import IS_OSX
 from ..plot._base import AxisData, DataLayer, PlotType
 from ..plot._topo import AxTopomap
 from ._ch_types import CH_TYPE_PICK_KWARGS, CH_TYPE_COLORS, CH_TYPE_DEFAULT_VLIM_SI, ch_type_scale
+from .bad_channel_summary import Additions, BadChannelSummaryFrame, bad_channel_evidence
 from .frame import EelbrainDialog
 from .frame import NavigableFrame
 from .history import Action, FileDocument, FileModel, FileFrame, FileFrameChild
@@ -53,12 +56,36 @@ TOPO_ARGS = {
     'interpolation': 'linear',  # interpolation that does not assume continuity
     'clip': 'even',
 }
+# The source time-course axes uses row units (one row has height 1); at ``source_scale = 1``, this many source-data units span one row
+SOURCE_UNITS_PER_ROW = 10
 # Default peak amplitude thresholds for FindNoisyEpochsDialog, in SI units.
 # Peak amplitudes from mne_epochs.get_data() are in SI: T for mag, T/m for grad, V for eeg.
 _THRESHOLD_DEFAULT_SI = {
     'mag':  1000e-15,   # 1000 fT
     'grad': 1000e-15,   # 10 fT/cm
     'eeg':  100e-6,     # 100 µV
+}
+# Find Bad Channels: a component loads on a single channel if the largest channel weight
+# exceeds the second largest by this factor
+_CHANNEL_RATIO_DEFAULT = 3.
+# Maximum number of defective channels listed with a topomap
+_GAP_MAX_ROWS = 20
+# ComponentMapDialog: size of each component map, and initial dialog size, in pixels
+_COMPONENT_MAP_SIZE = 90
+_COMPONENT_DIALOG_SIZE = (700, 600)
+_HELP_DIALOG_SIZE = (520, 620)
+# InfoFrame link scheme for adding channels to the bad channels
+_BAD_CHANNELS_URL = 'bad-channels:'  # link in the Find Bad Channels report that opens the summary window
+# FindBadChannelsDialog settings: {setting: (label, description)}. Used both for the hover
+# help of the individual controls and for the help dialog, in the order listed here.
+_FIND_BAD_CHANNELS_HELP = {
+    'ch_type': ("Sensor type", "Each sensor type is analyzed separately, using its own component maps and sensor adjacency. Gradiometers are disabled by default: gradiometer maps are spatial derivatives and are not spatially smooth, and each planar gradiometer is adjacent to its co-located partner, which measures an orthogonal gradient. Both properties make this analysis unreliable for gradiometers."),
+    'smoothness': ("Smoothness", "Minimum spatial smoothness for a component to be used, measured as the correlation between the component map and its own neighbor average. Realistic field patterns are spatially smooth, whereas components that reflect channel noise are not. Raise this value to use fewer, cleaner components."),
+    'show': ("Show", "Display all component maps for the sensor type, ranked by smoothness, to find an appropriate smoothness threshold."),
+    'gap_ratio': ("Gap ratio", "Maximum ratio between a channel's weight and the average weight of its neighbors for the channel to count as a gap. The ratio is measured in the polarity of the neighborhood, so it is ~1 for a normal channel, ~0 for a channel that records nothing, and negative for a channel whose polarity is reversed relative to all its neighbors; the latter two are both detected. This is also the sensitivity limit: a channel whose gain is merely attenuated, to more than about a fifth of normal, is not detected."),
+    'min_components': ("Min. components", "Minimum number of components in which a channel needs to be a gap. A single gap is not diagnostic."),
+    'min_consistency': ("Min. consistency", "Minimum fraction of the components in which a channel could be evaluated in which it needs to be a gap. A channel can only be evaluated in components in which its neighbors carry a strong field of uniform polarity; a defective channel is a gap in almost all of them."),
+    'channel_ratio': ("Single channel ratio", "For finding components that load on a single channel: the minimum ratio between the largest and the second largest channel weight in the component map. Such components usually reflect a noisy channel rather than a field pattern."),
 }
 
 # For unit-tests
@@ -140,6 +167,10 @@ class Document(FileDocument):
         self._ndvar_args = dict(sysname=sysname, adjacency=adjacency)
         self.saved = True
         self._explained_variance = {}
+        # Set by a host application that can add bad channels (the pipeline GUI); called as
+        # ``bad_channels_callback(names, recompute)``. While it is None, the GUI does not
+        # offer to add bad channels, because it has no way to write them.
+        self.bad_channels_callback = None
 
         self.continuous = isinstance(data, mne.io.BaseRaw)
         if self.continuous:
@@ -215,6 +246,8 @@ class Document(FileDocument):
         # sources
         data = ica.get_sources(epochs).get_data(copy=False)
         self.sources = NDVar(data, ('case', ic_dim, self.epochs_ndvar.time), 'sources', {'meas': 'component', 'cmap': 'xpolar'})
+        # zero-point for plotting sources; scaling around it keeps each source time course aligned with its topography
+        self.source_mean = self.sources.mean(('case', 'time')).x
 
         # find unique epoch labels
         if 'index' in ds:
@@ -226,12 +259,21 @@ class Document(FileDocument):
         self.epoch_labels = tuple(labels)
 
         # properties which are not modified by ICA
-        # global mean
+        # global mean and component maps in data units (pre-whitening reverted)
         if ica.noise_cov is None:  # revert standardization
             global_mean = ica.pca_mean_ * ica.pre_whitener_[:, 0]
+            mixing_raw = mixing_data * ica.pre_whitener_[:, 0]
         else:
-            global_mean = np.dot(linalg.pinv(ica.pre_whitener_), ica.pca_mean_)
+            pre_whitener_inv = linalg.pinv(ica.pre_whitener_)
+            global_mean = np.dot(pre_whitener_inv, ica.pca_mean_)
+            mixing_raw = np.dot(mixing_data, pre_whitener_inv.T)
         self.global_mean = NDVar(global_mean[picks], (self.epochs_ndvar.sensor,))
+        # channel data ≈ mixing.T @ sources + global_mean (up to the residual PCA components); all
+        # channels the ICA was estimated from, not only the primary type shown in epochs_ndvar
+        self.mixing = NDVar(mixing_raw, (ic_dim, Categorial('channel', ica.ch_names)), 'mixing')
+        # channels that are screened for being bad: every topographic type, in the ICA's channel order
+        self.screened_channels = [ica.ch_names[i] for i in topo_picks]
+        self.screened_channel_types = ica.info.get_channel_types(topo_picks)
         # pre-ICA signal range, normalized so it displays at a fixed scale.
         primary_ch_type = components_by_type[0][0]
         self.pre_ica_range_scale = 2 * CH_TYPE_DEFAULT_VLIM_SI[primary_ch_type]
@@ -273,6 +315,135 @@ class Document(FileDocument):
                 return ', '.join([f'{k}: {v:.1%}' for k, v in desc_dict.items()])
         return desc_dict
 
+    def flat_channels(self, thresholds: dict[str, float] = None) -> list[tuple[str, str]]:
+        """Channels whose standard deviation is below a channel type specific threshold
+
+        Parameters
+        ----------
+        thresholds
+            ``{ch_type: max_std}`` in SI units (default :data:`FLAT_DEFAULT`); channel types
+            that are missing are not screened.
+
+        Returns
+        -------
+        flat
+            ``(ch_name, ch_type)`` per flat channel, in channel order. Every topographic
+            channel type the ICA was estimated from is screened (see
+            :attr:`screened_channels`), not only the type shown in :attr:`epochs_ndvar`.
+
+        Notes
+        -----
+        A flat EEG channel can be the reference, which is not defective; marking it as bad is
+        left to the user (as in :meth:`Pipeline.make_bad_channels_auto`).
+        """
+        if thresholds is None:
+            thresholds = FLAT_DEFAULT
+        std = self.epochs.get_data(picks=self.screened_channels).std(axis=(0, 2))
+        return [(name, ch_type) for name, ch_type, ch_std in zip(self.screened_channels, self.screened_channel_types, std) if ch_type in thresholds and ch_std < thresholds[ch_type]]
+
+    def channel_variance_fraction(self, component: int, ch_name: str) -> float:
+        """Share of the variance of a channel that is due to one component
+
+        Parameters
+        ----------
+        component
+            Index of the component.
+        ch_name
+            Name of the channel (any channel the ICA was estimated from).
+        """
+        i_ch = self.ica.ch_names.index(ch_name)
+        contribution = self.mixing.x[component, i_ch] * self.sources.x[:, component, :]
+        return contribution.var() / self.epochs.get_data(picks=[ch_name]).var()
+
+    def channel_gaps(
+            self,
+            smoothness: dict[str, float] = None,
+            gap_ratio: float = GAP_RATIO_DEFAULT,
+            min_components: int = MIN_COMPONENTS_DEFAULT,
+            min_consistency: float = CONSISTENCY_DEFAULT,
+    ) -> tuple[list[tuple[NDVar, ChannelGapResult]], list[tuple[str, str]]]:
+        """Channels that are missing from component maps (see :func:`find_channel_gaps`)
+
+        Parameters
+        ----------
+        smoothness
+            ``{ch_type: threshold}`` for the channel types to analyze; channel types that are
+            missing are skipped. If unspecified, the default types and thresholds are used.
+        gap_ratio
+            Maximum relative weight for a channel to count as a gap.
+        min_components
+            Minimum number of components in which a channel needs to be a gap.
+        min_consistency
+            Minimum fraction of the testable components in which a channel needs to be a gap.
+
+        Returns
+        -------
+        gap_results
+            ``(components, result)`` for each channel type that was analyzed.
+        skipped
+            ``(ch_type, reason)`` for each channel type that was not analyzed.
+        """
+        if smoothness is None:
+            smoothness = {ch_type: SMOOTHNESS_DEFAULT[ch_type] for ch_type, _ in self.components_by_type if CH_TYPE_DEFAULT.get(ch_type)}
+        source_variance = self.sources.x.var(axis=(0, 2))
+        gap_results = []
+        skipped = []
+        for ch_type, components in self.components_by_type:
+            if ch_type not in smoothness:
+                reason = "not selected; gradiometer maps are spatial derivatives and are not spatially smooth" if ch_type == 'grad' else "not selected"
+                skipped.append((ch_type, reason))
+                continue
+            try:
+                result = find_channel_gaps(components, source_variance, smoothness[ch_type], gap_ratio, min_components, min_consistency, ch_type)
+            except RuntimeError as error:  # sensor adjacency undefined
+                skipped.append((ch_type, str(error)))
+            else:
+                gap_results.append((components, result))
+        return gap_results, skipped
+
+    def single_channel_components(
+            self,
+            channel_ratio: float = _CHANNEL_RATIO_DEFAULT,
+            flat: Sequence[tuple[str, str]] = None,
+    ) -> list[tuple[int, str, float]]:
+        """Components whose map loads predominantly on a single channel (likely channel-specific noise)
+
+        Parameters
+        ----------
+        channel_ratio
+            Minimum ratio between the largest and the second largest channel weight in a
+            component map.
+        flat
+            Flat channels, as returned by :meth:`flat_channels` (computed if unspecified).
+
+        Returns
+        -------
+        candidates
+            ``(component, ch_name, variance_fraction)`` for each qualifying component, sorted
+            by ``variance_fraction``, the share of the channel's variance that is due to the
+            component (see :meth:`channel_variance_fraction`), descending. The weights are
+            compared within each channel type (see :attr:`components_by_type`), so a
+            component can be listed once per type. Flat channels are skipped, because the
+            share of their variance is undefined.
+        """
+        if flat is None:
+            flat = self.flat_channels()
+        flat = {ch_name for ch_name, _ in flat}
+        candidates = []
+        for ch_type, components in self.components_by_type:
+            names = components.sensor.names
+            if len(names) < 2:
+                continue
+            for i, component_map in enumerate(components):
+                abs_comp = abs(component_map.x)
+                argsort = np.argsort(abs_comp)
+                if abs_comp[argsort[-1]] > abs_comp[argsort[-2]] * channel_ratio:
+                    ch_name = names[argsort[-1]]
+                    if ch_name in flat:
+                        continue
+                    candidates.append((i, ch_name, self.channel_variance_fraction(i, ch_name)))
+        return sorted(candidates, key=itemgetter(-1), reverse=True)
+
 
 class Model(FileModel):
     """Manages a document with its history"""
@@ -311,14 +482,9 @@ class SharedToolsMenu:  # Frame mixin
     # MakeToolsMenu() might be called before __init__
     butterfly_baseline = ID.BASELINE_NONE
     last_model = ""
+    _bad_channel_results = None  # set by ShowBadChannels, for the summary window
 
     def AddToolbarButtons(self, tb):
-        button = wx.Button(tb, label="Rare Events")
-        button.Bind(wx.EVT_BUTTON, self.OnFindRareEvents)
-        tb.AddControl(button)
-        button = wx.Button(tb, label="Noisy Epochs")
-        button.Bind(wx.EVT_BUTTON, self.OnFindNoisyEpochs)
-        tb.AddControl(button)
         button = wx.Button(tb, label="PSD")
         button.Bind(wx.EVT_BUTTON, self.OnPlotPSD)
         tb.AddControl(button)
@@ -327,12 +493,12 @@ class SharedToolsMenu:  # Frame mixin
         app = wx.GetApp()
 
         # Artifact detection helpers
-        item = menu.Append(wx.ID_ANY, "Find Rare Events", "Find components with major loading on a small number of epochs")
-        app.Bind(wx.EVT_MENU, self.OnFindRareEvents, item)
+        item = menu.Append(wx.ID_ANY, "Find Bad Channels", "Find channels that are missing from component maps, and components that are likely due to bad channels")
+        app.Bind(wx.EVT_MENU, self.OnFindBadChannels, item)
         item = menu.Append(wx.ID_ANY, "Find Noisy Epochs", "Find epochs with strong signal")
         app.Bind(wx.EVT_MENU, self.OnFindNoisyEpochs, item)
-        item = menu.Append(wx.ID_ANY, "Find Bad Channels", "Find components that are likely due to bad channels")
-        app.Bind(wx.EVT_MENU, self.OnFindBadChannels, item)
+        item = menu.Append(wx.ID_ANY, "Find Rare Events", "Find components with major loading on a small number of epochs")
+        app.Bind(wx.EVT_MENU, self.OnFindRareEvents, item)
         menu.AppendSeparator()
 
         # plotting
@@ -503,6 +669,50 @@ class SharedToolsMenu:  # Frame mixin
         InfoFrame(self, "Rare Events", doc, 500)
 
     def OnFindBadChannels(self, event):
+        dlg = FindBadChannelsDialog(self, self.doc.components_by_type)
+        rcode = dlg.ShowModal()
+        if rcode != wx.ID_OK:
+            dlg.Destroy()
+            return
+        smoothness = dlg.get_smoothness()
+        parameters = dict(
+            gap_ratio=float(dlg.gap_ratio.GetValue()),
+            min_components=int(dlg.min_components.GetValue()),
+            min_consistency=float(dlg.min_consistency.GetValue()),
+            channel_ratio=float(dlg.channel_ratio.GetValue()),
+        )
+        dlg.StoreConfig()
+        dlg.Destroy()
+        self.ShowBadChannels(smoothness, **parameters)
+
+    def ShowBadChannels(
+            self,
+            smoothness: dict[str, float] = None,
+            gap_ratio: float = GAP_RATIO_DEFAULT,
+            min_components: int = MIN_COMPONENTS_DEFAULT,
+            min_consistency: float = CONSISTENCY_DEFAULT,
+            channel_ratio: float = _CHANNEL_RATIO_DEFAULT,
+    ):
+        """Find and display bad channels (separate from :class:`FindBadChannelsDialog` for testing)
+
+        Parameters
+        ----------
+        smoothness
+            ``{ch_type: threshold}`` for the channel types to analyze; channel types that are
+            missing are skipped. If unspecified, the default types and thresholds are used.
+        gap_ratio
+            Maximum relative weight for a channel to count as a gap (see
+            :func:`find_channel_gaps`).
+        min_components
+            Minimum number of components in which a channel needs to be a gap.
+        min_consistency
+            Minimum fraction of the testable components in which a channel needs to be a gap.
+        channel_ratio
+            For the unrelated screen for components loading on a single channel: minimum ratio
+            between the largest and the second largest channel weight in a component map.
+        """
+        import seaborn  # lazy: pulls in ipywidgets/IPython/statsmodels, ~10% of GUI import time
+
         nc_before = neighbor_correlation(concatenate(self.doc.epochs_ndvar))
         if self.doc.accept.all():
             nc_after = None
@@ -510,55 +720,72 @@ class SharedToolsMenu:  # Frame mixin
             epochs = self.doc.as_ndvar(self.doc.apply(self.doc.epochs))
             nc_after = neighbor_correlation(concatenate(epochs))
 
+        # Find channels that are missing from component maps
+        gap_results, skipped = self.doc.channel_gaps(smoothness, gap_ratio, min_components, min_consistency)
+
+        # Flat channels
+        flat = self.doc.flat_channels()
+
         # Find ICA components that load on a single channel
-        candidates = []
-        for i, component_map in enumerate(self.doc.components):
-            abs_comp = abs(component_map.x)
-            argsort = np.argsort(abs_comp)
-            if abs_comp[argsort[-1]] > abs_comp[argsort[-2]] * 3:
-                ch_name = self.doc.epochs_ndvar.sensor.names[argsort[-1]]
-                # Explained variance
-                explained_desc = self.doc.explained_variance(i, format=True)
-                explained_variance = max(self.doc.explained_variance(i).values())
-                # Loading by epoch
-                max_loadings = self.doc.sources[:, i].extrema('time').abs().x
-                # Store
-                candidates.append([i, ch_name, max_loadings, explained_desc, explained_variance])
-        candidates = sorted(candidates, key=itemgetter(-1), reverse=True)
+        candidates = self.doc.single_channel_components(channel_ratio, flat)
+
+        # for the summary window, opened through the link in the report
+        self._bad_channel_results = [((), *bad_channel_evidence(candidates, gap_results, flat))]
 
         # format output
         doc = fmtxt.Section("Bad Channels")
+        if self.doc.bad_channels_callback is not None:
+            doc.add_paragraph(fmtxt.Link("Select channels to mark as bad…", _BAD_CHANNELS_URL))
 
         # Neighbor correlation map
+        section = doc.add_section("Neighbor correlation")
+        section.add_paragraph("Correlation of each channel with the average of its neighbors. A channel that does not record brain signal stands out as a local minimum.")
         for nc, desc in [[nc_before, 'raw data'], [nc_after, 'cleaned']]:
             if nc is None:
                 continue
             figure = matplotlib.figure.Figure(figsize=(4, 3))
             axes = figure.add_axes((0.1, 0.1, .7, 0.8))
-            p = plot.Topomap(nc, axes=axes, vmax=1, interpolation='linear')
+            p = plot.Topomap(nc, axes=axes, vmax=1, interpolation='linear', axtitle=desc)
             p.plot_colorbar(right_of=axes, ticks=3)
             image = fmtxt.Image(f'Neighbor correlation {desc}', 'jpg')
             canvas = FigureCanvasAgg(figure)
             canvas.print_jpeg(image)
-            doc.append(image)
+            section.append(image)
+
+        # Flat channels
+        section = doc.add_section("Flat channels")
+        section.add_paragraph(f"Channels whose standard deviation is below {', '.join(f'{threshold:g} ({ch_type})' for ch_type, threshold in FLAT_DEFAULT.items())}. A flat EEG channel can be the reference, which is not defective.")
+        if flat:
+            section.add_paragraph(', '.join(f"{ch_name} ({ch_type})" for ch_name, ch_type in flat))
+        else:
+            section.add_paragraph("No flat channel.")
+
+        # Channels missing from component maps
+        self._AddChannelGapSection(doc, gap_results, skipped, gap_ratio, min_components, min_consistency)
 
         # Candidate components
-        for component, ch_name, max_loadings, explained_variance, _ in candidates:
-            # plot component map
+        section = doc.add_section("Components loading on a single channel")
+        section.add_paragraph([f"Components whose largest channel weight exceeds the second largest by a factor of {channel_ratio:g}, ranked by the share of the channel's variance that is due to the component (i.e., likely due to channel-specific noise). The histogram shows the distribution across epochs of the component's peak loading: a permanently defective channel loads on every epoch, whereas an intermittent artifact concentrates near zero with a few large outliers and may be better addressed through epoch rejection. ", fmtxt.symbol('Var', 'ch'), " is the share of the channel's variance that is due to the component, and ", fmtxt.symbol('R', 'n'), " is the channel's neighbor correlation."])
+        table = fmtxt.Table('lll', rules=False)
+        components_of = {name: components for _, components in self.doc.components_by_type for name in components.sensor.names}
+        for component, ch_name, variance_fraction in candidates:
+            # plot the component map of the channel's type
             figure = matplotlib.figure.Figure(figsize=(1, 1))
             canvas = FigureCanvasAgg(figure)
             axes = figure.add_subplot()
-            plot.Topomap(self.doc.components[component], axes=axes, interpolation='linear')
+            plot.Topomap(components_of[ch_name][component], axes=axes, interpolation='linear')
             image = fmtxt.Image(f'#{component}', 'jpg')
             canvas.print_jpeg(image)
 
             # Text desc
             component_link = fmtxt.Link(f"#{component}", f'component:{component}')
-            desc = fmtxt.FMText([ch_name, fmtxt.linebreak, component_link, fmtxt.linebreak, explained_variance])
-            table = fmtxt.Table('lll', rules=False)
-            doc.add_paragraph(table)
+            desc = [ch_name, fmtxt.linebreak, component_link, fmtxt.linebreak, fmtxt.eq('Var', 100 * variance_fraction, 'ch', fmt='%.0f%%')]
+            if ch_name in nc_before.sensor.channel_idx:  # the neighbor correlation map covers the primary channel type
+                desc += [fmtxt.linebreak, fmtxt.eq('R', nc_before[ch_name], 'n', fmt='%.2f')]
+            desc = fmtxt.FMText(desc)
 
-            # Loadings
+            # Loadings: the component's peak loading in each epoch
+            max_loadings = self.doc.sources[:, component].extrema('time').abs().x
             binrange = [0, max_loadings.max()]
             figure = matplotlib.figure.Figure(figsize=(2, 1))
             canvas = FigureCanvasAgg(figure)
@@ -568,8 +795,129 @@ class SharedToolsMenu:  # Frame mixin
             canvas.print_jpeg(histogram)
 
             table.cells(image, desc, histogram)
+        section.add_paragraph(table)
 
         InfoFrame(self, "Bad Channels", doc, 500)
+
+    def _AddChannelGapSection(
+            self,
+            doc: fmtxt.Section,
+            gap_results: Sequence[tuple[NDVar, ChannelGapResult]],
+            skipped: Sequence[tuple[str, str]],
+            gap_ratio: float,
+            min_components: int,
+            min_consistency: float,
+    ):
+        """Report channels whose weight is ~0 in multiple components with a uniform neighborhood
+
+        Parameters
+        ----------
+        doc
+            Report to add the section to.
+        gap_results
+            ``(components, result)`` for each channel type that was analyzed.
+        skipped
+            ``(ch_type, reason)`` for each channel type that was not analyzed.
+        gap_ratio
+            Gap ratio that was used, for describing the analysis.
+        min_components
+            Minimum number of components that was used, for describing the analysis.
+        min_consistency
+            Minimum consistency that was used, for describing the analysis.
+        """
+        section = doc.add_section("Channels missing from component maps")
+        section.add_paragraph(f"A channel that does not record signal appears as a gap in component maps: its weight is ≤ ~0 (less than {gap_ratio:g} times the average of its neighbors) where its neighbors carry a strong field of uniform polarity. Channels listed here show such a gap in at least {min_components} components with a realistic field pattern, and in at least {min_consistency:.0%} of the components in which they could be evaluated.")
+        section.add_paragraph("Channels that are already excluded as bad are not part of the decomposition and can not be evaluated here.")
+        if skipped:
+            section.add_paragraph(f"Not analyzed: {'; '.join(f'{ch_type} ({reason})' for ch_type, reason in skipped)}.")
+
+        for components, result in gap_results:
+            n_solid = result.solid.sum()
+            sub_section = section.add_section(f"{result.ch_type}: {n_solid} of {len(result.solid)} components with a realistic field pattern")
+            if not n_solid:
+                sub_section.add_paragraph("No component qualifies; lower the smoothness threshold to analyze this channel type.")
+                continue
+            sensor = components.get_dim('sensor')
+            marks = [channel.name for channel in result.channels]
+
+            # Overview: fraction of testable components in which each channel is a gap
+            figure = matplotlib.figure.Figure(figsize=(4, 3))
+            axes = figure.add_axes((0.1, 0.1, .7, 0.8))
+            consistency = NDVar(result.consistency, (sensor,), 'consistency')
+            p = plot.Topomap(consistency, axes=axes, vmin=0, vmax=1, mark=marks, mcolor='yellow', **TOPO_ARGS)
+            p.plot_colorbar(right_of=axes, ticks=3)
+            image = fmtxt.Image(f'Gaps {result.ch_type}', 'jpg')
+            canvas = FigureCanvasAgg(figure)
+            canvas.print_jpeg(image)
+            sub_section.append(image)
+
+            n_never_testable = np.sum(result.n_testable == 0)
+            if n_never_testable:
+                sub_section.add_paragraph(f"{n_never_testable} channels could not be evaluated (no component with a salient neighborhood of uniform polarity).")
+            if not result.channels:
+                sub_section.add_paragraph("No channel is missing from the component maps.")
+                continue
+            if len(result.channels) > _GAP_MAX_ROWS:
+                sub_section.add_paragraph(f"Showing the {_GAP_MAX_ROWS} strongest of {len(result.channels)} channels.")
+            table = fmtxt.Table('ll', rules=False)
+            sub_section.add_paragraph(table)
+            for channel in result.channels[:_GAP_MAX_ROWS]:
+                # Component with the clearest gap
+                figure = matplotlib.figure.Figure(figsize=(1, 1))
+                canvas = FigureCanvasAgg(figure)
+                axes = figure.add_subplot()
+                plot.Topomap(components[channel.gap_components[0]], axes=axes, mark=[channel.name], mcolor='yellow', **TOPO_ARGS)
+                image = fmtxt.Image(channel.name, 'jpg')
+                canvas.print_jpeg(image)
+                # Text desc: which components show the gap, and which don't
+                n_gaps = len(channel.gap_components)
+                desc = [channel.name, f" (gap {channel.gap:.2f})", fmtxt.linebreak]
+                desc += [f"{n_gaps} gap{'s' if n_gaps > 1 else ''}: ", _component_links(channel.gap_components), fmtxt.linebreak]
+                if channel.no_gap_components:
+                    desc += [f"{len(channel.no_gap_components)} no gap: ", _component_links(channel.no_gap_components)]
+                table.cells(image, fmtxt.FMText(desc))
+
+    def ShowBadChannelSummary(self) -> BadChannelSummaryFrame:
+        """Open the window for selecting which of the channels found by :meth:`ShowBadChannels` to mark as bad
+
+        The same window as Bad-Chs in the pipeline GUI, restricted to this recording. Shows
+        the channels found by the last :meth:`ShowBadChannels`, or, before any report, the
+        channels found with the default settings.
+        """
+        if self._bad_channel_results is None:
+            gap_results, _ = self.doc.channel_gaps()
+            flat = self.doc.flat_channels()
+            self._bad_channel_results = [((), *bad_channel_evidence(self.doc.single_channel_components(flat=flat), gap_results, flat))]
+        frame = BadChannelSummaryFrame(self, self._bad_channel_results, (), self.AddBadChannels)
+        frame.Show()
+        return frame
+
+    def AddBadChannels(
+            self,
+            additions: Additions,
+            recompute: bool,
+    ) -> None:
+        """Add channels to the bad channels of the host application
+
+        Only available when the GUI was opened by an application that can write bad channels
+        (i.e., when :attr:`Document.bad_channels_callback` is set). Since the ICA was computed
+        with these channels included, it is invalidated by this and the GUI is closed.
+
+        Parameters
+        ----------
+        additions
+            ``[(combo, names), ...]`` as the summary window's apply callback supplies it; the
+            combos are ignored, because the ICA GUI shows a single recording.
+        recompute
+            Queue the new ICA decomposition right away.
+        """
+        callback = self.doc.bad_channels_callback
+        if callback is None:
+            return
+        callback([name for _, names in additions for name in names], recompute)
+        # force close: the ICA is invalid, so saving component selection would be pointless
+        frame = self if self.owns_file else self.Parent
+        frame.Close(True)
 
     def OnPlotButterfly(self, event):
         self.PlotConditionAverages(self)
@@ -773,7 +1121,8 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
         self.i_first_epoch = 0
         self.pad_time = 0
         self.n_epochs_in_data = len(self.doc.sources)
-        self.y_scale = self.config.ReadFloat('y_scale', 10)
+        self.source_scale = self.config.ReadFloat('source_scale', 1)
+        self.range_scale = self.config.ReadFloat('range_scale', 1)
         self._marked_component_i = None
         self._marked_component_h = None
         self._marked_epoch_i = None
@@ -831,11 +1180,12 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
         epoch_index = slice(self.i_first_epoch, self.i_first_epoch + self.n_epochs)
         data = self.doc.sources.sub(case=epoch_index, component=slice(self.i_first, self.i_first + n_comp))
         y = data.get_data(('component', 'case', 'time')).reshape((n_comp_actual, -1))
-        if y.base is not None and data.x.base is not None:
-            y = y.copy()
+        # scale around the source mean (arithmetic always creates a new array), then offset by row
+        mean = self.doc.source_mean[self.i_first: self.i_first + n_comp_actual, None]
+        y = (y - mean) * (self.source_scale / SOURCE_UNITS_PER_ROW)
         start = n_comp - 1 + self.show_range
         stop = -1 + (n_comp - n_comp_actual) + self.show_range
-        y += np.arange(start * self.y_scale, stop * self.y_scale, -self.y_scale)[:, None]
+        y += np.arange(start, stop, -1)[:, None]
         # pad epoch labels for x-axis
         epoch_labels = self.doc.epoch_labels[epoch_index]
         if len(epoch_labels) < self.n_epochs:
@@ -851,8 +1201,8 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
 
     def _get_raw_range(self):
         epoch_index = slice(self.i_first_epoch, self.i_first_epoch + self.n_epochs)
-        y_min = self._pad(self.doc.pre_ica_min[epoch_index].x.ravel())
-        y_max = self._pad(self.doc.pre_ica_max[epoch_index].x.ravel())
+        y_min = self._pad(self.doc.pre_ica_min[epoch_index].x.ravel() * self.range_scale)
+        y_max = self._pad(self.doc.pre_ica_max[epoch_index].x.ravel() * self.range_scale)
         return y_min, y_max
 
     def _get_clean_range(self):
@@ -861,8 +1211,9 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
         y_clean = self.doc.as_ndvar(self.doc.apply(epochs))
         y_min = y_clean.min('sensor').x.ravel()
         y_max = y_clean.max('sensor').x.ravel()
-        y_min /= self.doc.pre_ica_range_scale
-        y_max /= self.doc.pre_ica_range_scale
+        scale = self.range_scale / self.doc.pre_ica_range_scale
+        y_min *= scale
+        y_max *= scale
         return self._pad(y_min), self._pad(y_max)
 
     def _plot(self):
@@ -940,8 +1291,8 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
             # cleaned
             ys_clean = self._get_clean_range()
             self.y_range_post_lines = [ax.plot(yi, color=post_color, clip_on=False)[0] for yi in ys_clean]
-        # axes limits
-        self.ax_tc_ylim = (-0.5 * self.y_scale, (n_rows - 0.5) * self.y_scale)
+        # axes limits: one row per component (and one for the range), independent of the scales
+        self.ax_tc_ylim = (-0.5, n_rows - 0.5)
         ax.set_ylim(self.ax_tc_ylim)
         ax.set_xlim((0, y.shape[1]))
         # epoch / second demarcation
@@ -998,8 +1349,8 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
         elen = len(self.doc.sources.time)
         x_max = self.n_epochs * elen
         # confine markers to the bottom range row
-        y0 = -0.5 * self.y_scale
-        height = self.y_scale
+        y0 = -0.5
+        height = 1
         times = events[self._t_column].x
         has_duration = 'duration' in events
         colorby = self._events_colorby
@@ -1032,7 +1383,7 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
     def _event_i_comp(self, event):
         if event.inaxes:
             if event.inaxes.i_comp is None:
-                i_in_axes = ceil(event.ydata / self.y_scale + 0.5)
+                i_in_axes = ceil(event.ydata + 0.5)
                 if i_in_axes == 1 and self.show_range:
                     return
                 i_comp = int(self.i_first + self.n_comp + self.show_range - i_in_axes)
@@ -1180,7 +1531,8 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
             self.doc.callbacks.remove('case_change', self.CaseChanged)
             self.config.WriteInt('layout_n_comp', self.n_comp)
             self.config.WriteInt('layout_n_epochs', self.n_epochs)
-            self.config.WriteFloat('y_scale', self.y_scale)
+            self.config.WriteFloat('source_scale', self.source_scale)
+            self.config.WriteFloat('range_scale', self.range_scale)
             self.config.Flush()
 
     def OnDown(self, event):
@@ -1249,60 +1601,19 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
         self.PopupMenu(menu, event.Position)
         menu.Destroy()
 
-    def OnSetLayout(self, event):
-        caption = "Set ICA Source Layout"
-        if self.doc.continuous:
-            msg = "Number of components and seconds per page (e.g., '10 20')"
-        else:
-            msg = "Number of components and epochs (e.g., '10 20')"
-        default = '%i %i' % (self.n_comp, self.n_epochs)
-        dlg = wx.TextEntryDialog(self, msg, caption, default)
-        while True:
-            if dlg.ShowModal() == wx.ID_OK:
-                value = dlg.GetValue()
-                try:
-                    n_comp, n_epochs = map(int, value.split())
-                except Exception:
-                    wx.MessageBox("Invalid entry: %r. Need two integers \n"
-                                  "(e.g., '10 20').", "Invalid Entry",
-                                  wx.OK | wx.ICON_ERROR)
-                else:
-                    dlg.Destroy()
-                    break
-            else:
-                dlg.Destroy()
-                return
-
-        self.n_comp = n_comp
-        self.n_epochs = n_epochs
-        self._plot()
-
     def OnSetVLim(self, event):
-        dlg = wx.TextEntryDialog(self, "Y-axis scale:", "Y-Axis Scale",
-                                 f"{10. / self.y_scale:g}")
-        value = None
-        while True:
-            if dlg.ShowModal() != wx.ID_OK:
-                break
-            error = None
-            try:
-                value = float(dlg.GetValue())
-                if value <= 0:
-                    error = f"{value}: must be > 0"
-            except Exception as exception:
-                error = str(exception)
-
-            if error:
-                msg = wx.MessageDialog(self, error, "Invalid Entry", wx.OK | wx.ICON_ERROR)
-                msg.ShowModal()
-                msg.Destroy()
+        dlg = YScaleDialog(self, self.n_comp, self.n_epochs, self.source_scale, self.range_scale, self.doc.continuous)
+        if dlg.ShowModal() == wx.ID_OK:
+            n_comp, n_epochs, self.source_scale, self.range_scale = dlg.GetValues()
+            if n_comp == self.n_comp and n_epochs == self.n_epochs:
+                self.SetFirstEpoch(self.i_first_epoch)  # redraw with the new scales
             else:
-                break
+                self.n_comp = n_comp
+                self.n_epochs = n_epochs
+                self._plot()
         dlg.Destroy()
-        if value is not None:
-            self.y_scale = 10. / value
-            # redraw
-            self.SetFirstEpoch(self.i_first_epoch)
+
+    OnSetLayout = OnSetVLim  # "Set Layout" and "Set Axis Limits" open the same dialog
 
     def OnShowTopos(self, event):
         self.ShowTopos()
@@ -1342,8 +1653,8 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
             i_from_top = self._marked_component_i - i_first
             i_from_bottom = n_rows - 1 - i_from_top
             if 0 <= i_from_bottom < n_rows:
-                bottom = (i_from_bottom - 0.5) * self.y_scale
-                self._marked_component_h = self.ax_tc.axhspan(bottom, bottom + self.y_scale, edgecolor='yellow', facecolor='yellow')
+                bottom = i_from_bottom - 0.5
+                self._marked_component_h = self.ax_tc.axhspan(bottom, bottom + 1, edgecolor='yellow', facecolor='yellow')
 
         n_comp_actual = min(self.n_comp_in_ica - i_first, self.n_comp)
         for i in range(n_comp_actual):
@@ -1371,6 +1682,8 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
         self.SetFirstEpoch(self.i_first_epoch)
 
     def SetFirstEpoch(self, i_first_epoch):
+        # a partial page at the start would scroll past the beginning of the data
+        i_first_epoch = max(0, i_first_epoch)
         self.i_first_epoch = i_first_epoch
 
         # marked epoch
@@ -1381,8 +1694,8 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
             i = self._marked_epoch_i - i_first_epoch
             if 0 <= i < self.n_epochs:
                 elen = len(self.doc.sources.time)
-                bottom = -0.5 * self.y_scale
-                height = (self.n_comp + self.show_range) * self.y_scale
+                bottom = -0.5
+                height = self.n_comp + self.show_range
                 self._marked_epoch_h = Rectangle((i * elen, bottom), elen, height, edgecolor='yellow', facecolor='yellow')
                 self.ax_tc.add_patch(self._marked_epoch_h)
 
@@ -1704,6 +2017,68 @@ class TopoFrame(SharedToolsMenu, FileFrameChild):
         return menu
 
 
+class YScaleDialog(EelbrainDialog):
+
+    def __init__(
+            self,
+            parent,
+            n_comp: int,
+            n_epochs: int,
+            source_scale: float,
+            range_scale: float,
+            continuous: bool,
+            **kwargs,
+    ):
+        super().__init__(parent, wx.ID_ANY, "Display Layout and Scale", **kwargs)
+        int_validator = REValidator(POS_INT_PATTERN, "Invalid entry: {value}. Please specify an integer > 0.", False)
+        float_validator = REValidator(POS_FLOAT_PATTERN, "Invalid entry: {value}. Please specify a number > 0.", False)
+        epoch_desc = "seconds" if continuous else "epochs"
+
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(wx.StaticText(self, label="Page layout"), flag=wx.ALL, border=5)
+        grid = wx.FlexGridSizer(rows=2, cols=2, vgap=3, hgap=5)
+        grid.Add(wx.StaticText(self, label="Components:"), flag=wx.ALIGN_CENTER_VERTICAL)
+        self.n_comp = ctrl = wx.TextCtrl(self, value=f'{n_comp}', validator=int_validator, style=wx.TE_RIGHT)
+        ctrl.SetHelpText("Number of components (rows) per page")
+        ctrl.SelectAll()
+        ctrl.SetFocus()
+        grid.Add(ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(wx.StaticText(self, label=f"{epoch_desc.capitalize()}:"), flag=wx.ALIGN_CENTER_VERTICAL)
+        self.n_epochs = ctrl = wx.TextCtrl(self, value=f'{n_epochs}', validator=int_validator, style=wx.TE_RIGHT)
+        ctrl.SetHelpText(f"Number of {epoch_desc} per page")
+        grid.Add(ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
+        sizer.Add(grid, flag=wx.ALL, border=5)
+
+        sizer.Add(wx.StaticText(self, label="Time-course display scale"), flag=wx.ALL, border=5)
+        grid = wx.FlexGridSizer(rows=2, cols=2, vgap=3, hgap=5)
+        grid.Add(wx.StaticText(self, label="Components:"), flag=wx.ALIGN_CENTER_VERTICAL)
+        self.source_scale = ctrl = wx.TextCtrl(self, value=f'{source_scale:g}', validator=float_validator, style=wx.TE_RIGHT)
+        ctrl.SetHelpText("Scale for the component source time courses")
+        grid.Add(ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(wx.StaticText(self, label="Data range:"), flag=wx.ALIGN_CENTER_VERTICAL)
+        self.range_scale = ctrl = wx.TextCtrl(self, value=f'{range_scale:g}', validator=float_validator, style=wx.TE_RIGHT)
+        ctrl.SetHelpText("Scale for the raw and cleaned data range at the bottom")
+        grid.Add(ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
+        sizer.Add(grid, flag=wx.ALL, border=5)
+
+        # buttons
+        button_sizer = wx.StdDialogButtonSizer()
+        btn = wx.Button(self, wx.ID_OK)
+        btn.SetDefault()
+        button_sizer.AddButton(btn)
+        btn = wx.Button(self, wx.ID_CANCEL)
+        button_sizer.AddButton(btn)
+        button_sizer.Realize()
+        sizer.Add(button_sizer)
+
+        self.SetSizer(sizer)
+        sizer.Fit(self)
+
+    def GetValues(self) -> tuple[int, int, float, float]:
+        "Return ``(n_comp, n_epochs, source_scale, range_scale)``"
+        return int(self.n_comp.GetValue()), int(self.n_epochs.GetValue()), float(self.source_scale.GetValue()), float(self.range_scale.GetValue())
+
+
 class FindNoisyEpochsDialog(EelbrainDialog):
 
     def __init__(self, parent, type_scales: dict, default_thresholds_si: dict, **kwargs):
@@ -1801,6 +2176,235 @@ class FindNoisyEpochsDialog(EelbrainDialog):
         config.Flush()
 
 
+class FindBadChannelsDialog(EelbrainDialog):
+
+    def __init__(self, parent, components_by_type: Sequence[tuple[str, NDVar]], **kwargs):
+        super().__init__(parent, wx.ID_ANY, "Find Bad Channels", **kwargs)
+        config = parent.config
+
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(wx.StaticText(self, label="Find channels that are missing from component maps.\nSensor type and smoothness required to use component:"), flag=wx.ALL, border=5)
+
+        # One row per channel type: [checkbox] [type] [smoothness] [show]
+        grid = wx.FlexGridSizer(rows=len(components_by_type), cols=4, vgap=3, hgap=5)
+        self.type_rows = []  # [(ch_type, enabled_ctrl, smoothness_ctrl), ...]
+        for ch_type, components in components_by_type:
+            enabled = config.ReadBool(f"FindBadChannels/enabled_{ch_type}", CH_TYPE_DEFAULT.get(ch_type, False))
+            smoothness = config.ReadFloat(f"FindBadChannels/smoothness_{ch_type}", SMOOTHNESS_DEFAULT.get(ch_type, 0.9))
+            enabled_ctrl = wx.CheckBox(self, label='')
+            enabled_ctrl.SetValue(enabled)
+            enabled_ctrl.SetToolTip(_FIND_BAD_CHANNELS_HELP['ch_type'][1])
+            grid.Add(enabled_ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
+            grid.Add(wx.StaticText(self, label=ch_type), flag=wx.ALIGN_CENTER_VERTICAL)
+            validator = REValidator(POS_FLOAT_PATTERN, "Invalid entry: {value}. Please specify a number > 0.", False)
+            smoothness_ctrl = wx.TextCtrl(self, value=f'{smoothness:g}', validator=validator, style=wx.TE_RIGHT)
+            smoothness_ctrl.SetToolTip(_FIND_BAD_CHANNELS_HELP['smoothness'][1])
+            grid.Add(smoothness_ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
+            label, help_text = _FIND_BAD_CHANNELS_HELP['show']
+            button = wx.Button(self, label=label, style=wx.BU_EXACTFIT)
+            button.SetToolTip(help_text)
+            button.Bind(wx.EVT_BUTTON, partial(self.OnShowComponents, ch_type, components))
+            grid.Add(button, flag=wx.ALIGN_CENTER_VERTICAL)
+            self.type_rows.append((ch_type, enabled_ctrl, smoothness_ctrl))
+        sizer.Add(grid, flag=wx.ALL, border=5)
+
+        # Parameters
+        grid = wx.FlexGridSizer(rows=3, cols=2, vgap=3, hgap=5)
+        self.gap_ratio = self._AddParameter(grid, 'gap_ratio', config.ReadFloat("FindBadChannels/gap_ratio", GAP_RATIO_DEFAULT))
+        self.min_components = self._AddParameter(grid, 'min_components', config.ReadInt("FindBadChannels/min_components", MIN_COMPONENTS_DEFAULT), integer=True)
+        self.min_consistency = self._AddParameter(grid, 'min_consistency', config.ReadFloat("FindBadChannels/min_consistency", CONSISTENCY_DEFAULT))
+        sizer.Add(grid, flag=wx.ALL, border=5)
+
+        # Second, unrelated algorithm
+        sizer.Add(wx.StaticLine(self), flag=wx.EXPAND | wx.LEFT | wx.RIGHT, border=5)
+        sizer.Add(wx.StaticText(self, label="Find components loading on a single channel:"), flag=wx.ALL, border=5)
+        grid = wx.FlexGridSizer(rows=1, cols=2, vgap=3, hgap=5)
+        self.channel_ratio = self._AddParameter(grid, 'channel_ratio', config.ReadFloat("FindBadChannels/channel_ratio", _CHANNEL_RATIO_DEFAULT))
+        sizer.Add(grid, flag=wx.ALL, border=5)
+
+        # default button
+        btn = wx.Button(self, wx.ID_DEFAULT, "Default Settings")
+        sizer.Add(btn, border=2)
+        btn.Bind(wx.EVT_BUTTON, self.OnSetDefault)
+
+        # buttons
+        button_sizer = wx.StdDialogButtonSizer()
+        btn = wx.Button(self, wx.ID_HELP)
+        btn.Bind(wx.EVT_BUTTON, self.OnHelp)
+        button_sizer.AddButton(btn)
+        btn = wx.Button(self, wx.ID_OK)
+        btn.SetDefault()
+        button_sizer.AddButton(btn)
+        btn = wx.Button(self, wx.ID_CANCEL)
+        button_sizer.AddButton(btn)
+        button_sizer.Realize()
+        sizer.Add(button_sizer)
+
+        self.SetSizer(sizer)
+        sizer.Fit(self)
+
+    def OnHelp(self, event):
+        dlg = HelpDialog(self, "Find Bad Channels", _find_bad_channels_help())
+        dlg.ShowModal()
+        dlg.Destroy()
+
+    def _AddParameter(self, grid: wx.FlexGridSizer, setting: str, value: float, integer: bool = False) -> wx.TextCtrl:
+        label, help_text = _FIND_BAD_CHANNELS_HELP[setting]
+        grid.Add(wx.StaticText(self, label=f'{label}: '), flag=wx.ALIGN_CENTER_VERTICAL)
+        if integer:
+            validator = REValidator(POS_INT_PATTERN, "Invalid entry: {value}. Please specify an integer > 0.", False)
+        else:
+            validator = REValidator(POS_FLOAT_PATTERN, "Invalid entry: {value}. Please specify a number > 0.", False)
+        ctrl = wx.TextCtrl(self, value=f'{value:g}', validator=validator, style=wx.TE_RIGHT)
+        ctrl.SetToolTip(help_text)
+        grid.Add(ctrl, flag=wx.ALIGN_CENTER_VERTICAL)
+        return ctrl
+
+    def OnShowComponents(self, ch_type: str, components: NDVar, event):
+        try:
+            dlg = ComponentMapDialog(self, ch_type, components)
+        except RuntimeError as error:  # sensor adjacency undefined
+            wx.MessageBox(str(error), "Sensor Adjacency Undefined", style=wx.ICON_ERROR)
+            return
+        dlg.ShowModal()
+        dlg.Destroy()
+
+    def get_smoothness(self) -> dict[str, float]:
+        """Return ``{ch_type: smoothness}`` for all enabled channel types."""
+        return {ch_type: float(smoothness_ctrl.GetValue()) for ch_type, enabled_ctrl, smoothness_ctrl in self.type_rows if enabled_ctrl.GetValue()}
+
+    def OnSetDefault(self, event):
+        for ch_type, enabled_ctrl, smoothness_ctrl in self.type_rows:
+            enabled_ctrl.SetValue(CH_TYPE_DEFAULT.get(ch_type, False))
+            smoothness_ctrl.SetValue(f'{SMOOTHNESS_DEFAULT.get(ch_type, 0.9):g}')
+        self.gap_ratio.SetValue(f'{GAP_RATIO_DEFAULT:g}')
+        self.min_components.SetValue(f'{MIN_COMPONENTS_DEFAULT:g}')
+        self.min_consistency.SetValue(f'{CONSISTENCY_DEFAULT:g}')
+        self.channel_ratio.SetValue(f'{_CHANNEL_RATIO_DEFAULT:g}')
+
+    def StoreConfig(self):
+        config = self.Parent.config
+        for ch_type, enabled_ctrl, smoothness_ctrl in self.type_rows:
+            config.WriteBool(f"FindBadChannels/enabled_{ch_type}", enabled_ctrl.GetValue())
+            config.WriteFloat(f"FindBadChannels/smoothness_{ch_type}", float(smoothness_ctrl.GetValue()))
+        config.WriteFloat("FindBadChannels/gap_ratio", float(self.gap_ratio.GetValue()))
+        config.WriteInt("FindBadChannels/min_components", int(self.min_components.GetValue()))
+        config.WriteFloat("FindBadChannels/min_consistency", float(self.min_consistency.GetValue()))
+        config.WriteFloat("FindBadChannels/channel_ratio", float(self.channel_ratio.GetValue()))
+        config.Flush()
+
+
+def _component_links(components: Sequence[int]) -> fmtxt.FMText:
+    "Comma-separated links to components in the report"
+    return fmtxt.delim_list(fmtxt.Link(f"#{component}", f'component:{component}') for component in components)
+
+
+def _find_bad_channels_help() -> fmtxt.Section:
+    "Help text for FindBadChannelsDialog (hover help is unreliable on some platforms)"
+    doc = fmtxt.Section("Find Bad Channels")
+    doc.add_paragraph("This tool looks for bad channels in three ways: flat channels, channels that are missing from the ICA component maps, and components that load on a single channel.")
+
+    section = doc.add_section("Flat channels")
+    section.add_paragraph("A channel whose standard deviation is below a sensor type specific threshold records nothing. A flat EEG channel can be the reference, which is not defective: whether to mark it as bad is left to the user.")
+
+    section = doc.add_section("Channels missing from component maps")
+    section.add_paragraph("A channel that does not record any signal appears as a gap in the component maps: its weight is ~0 where the surrounding channels carry a strong field. A weight of ~0 in a single component is not diagnostic, because the channel could be located on the null line of a polarity reversal. Two properties make it diagnostic: the weight is ≤ ~0 in multiple components that reflect realistic field patterns, and it is ≤ ~0 while the surrounding channels all have the same polarity.")
+    section.add_paragraph("A channel that is already excluded as bad is not part of the ICA decomposition and can not be evaluated. An empty result does therefore not imply that all previously excluded channels were rightly excluded. Conversely, acting on a result means marking the channel as bad and re-computing the ICA decomposition.")
+
+    section = doc.add_section("Components loading on a single channel")
+    section.add_paragraph("A component whose map is dominated by a single channel usually reflects noise in that channel rather than a field pattern. Because the component's unmixing weights predict the channel from all other channels, rejecting it amounts to interpolating the channel, which adds no independent information for source estimation. The choice is therefore between keeping the channel with its noise and marking it as bad. The share of the channel's variance that is due to the component indicates how strong the noise is compared to the signal in the channel: stationary noise with a small share is accounted for by the noise covariance in source estimation, whereas a channel dominated by noise, or by intermittent noise, is better marked as bad.")
+
+    section = doc.add_section("Settings")
+    for label, description in _FIND_BAD_CHANNELS_HELP.values():
+        section.add_paragraph([fmtxt.FMTextElement(label, r'\textbf'), f": {description}"])
+    return doc
+
+
+class HelpDialog(EelbrainDialog):
+    "Modal window with formatted help text"
+
+    def __init__(self, parent, title: str, doc: fmtxt.FMTextElement, **kwargs):
+        style = wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER
+        super().__init__(parent, wx.ID_ANY, title, style=style, **kwargs)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        html = wx.html.HtmlWindow(self, style=wx.VSCROLL)
+        html.SetPage(fmtxt.make_html_doc(doc))
+        sizer.Add(html, 1, wx.EXPAND | wx.ALL, 5)
+        button_sizer = wx.StdDialogButtonSizer()
+        btn = wx.Button(self, wx.ID_OK, "Close")
+        btn.SetDefault()
+        button_sizer.AddButton(btn)
+        button_sizer.Realize()
+        sizer.Add(button_sizer, flag=wx.ALL, border=5)
+        self.SetSizer(sizer)
+        self.SetSize(_HELP_DIALOG_SIZE)
+
+
+def _topomap_bitmap(component: NDVar, size: int = _COMPONENT_MAP_SIZE, dpi: float = 100.) -> wx.Bitmap:
+    "Render a component map for display in a dialog"
+    figure = matplotlib.figure.Figure(figsize=(size / dpi, size / dpi), dpi=dpi)
+    canvas = FigureCanvasAgg(figure)
+    axes = figure.add_axes((0, 0, 1, 1))
+    plot.Topomap(component, axes=axes, axtitle=False, **TOPO_ARGS)
+    canvas.draw()
+    width, height = canvas.get_width_height()
+    return wx.Bitmap.FromBufferRGBA(width, height, canvas.buffer_rgba())
+
+
+class ComponentMapDialog(EelbrainDialog):
+    """All component maps for one channel type, ranked by spatial smoothness
+
+    The maps reflow to fill the window width, so that resizing the dialog changes the
+    number of maps per row.
+    """
+
+    def __init__(self, parent, ch_type: str, components: NDVar, **kwargs):
+        matrix, degree = neighbor_matrix(components.get_dim('sensor'))
+        smoothness = map_smoothness(components.get_data(('component', 'sensor')), matrix, np.where(degree > 0, degree, 1.))
+        style = wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER
+        super().__init__(parent, wx.ID_ANY, f"{ch_type} Components", style=style, **kwargs)
+
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        label = wx.StaticText(self, label="Components ranked by spatial smoothness, i.e. the correlation between the component map and its neighbor average. Components at or above the smoothness threshold are used to find gaps.")
+        label.Wrap(_COMPONENT_DIALOG_SIZE[0] - 20)
+        sizer.Add(label, flag=wx.ALL, border=5)
+
+        self.panel = panel = ScrolledPanel(self, style=wx.VSCROLL)
+        self.wrap_sizer = wrap_sizer = wx.WrapSizer(wx.HORIZONTAL)
+        for i in np.argsort(smoothness)[::-1]:
+            item = wx.Panel(panel)
+            item_sizer = wx.BoxSizer(wx.VERTICAL)
+            bitmap = _topomap_bitmap(components[int(i)])
+            item_sizer.Add(wx.StaticBitmap(item, bitmap=bitmap), flag=wx.ALIGN_CENTER)
+            item_sizer.Add(wx.StaticText(item, label=f"#{i}   {smoothness[i]:.2f}"), flag=wx.ALIGN_CENTER)
+            item.SetSizer(item_sizer)
+            item_sizer.Fit(item)
+            wrap_sizer.Add(item, flag=wx.ALL, border=4)
+        panel.SetSizer(wrap_sizer)
+        panel.SetupScrolling(scroll_x=False)
+        panel.Bind(wx.EVT_SIZE, self.OnPanelSize)
+        sizer.Add(panel, 1, wx.EXPAND | wx.ALL, 5)
+
+        button_sizer = wx.StdDialogButtonSizer()
+        btn = wx.Button(self, wx.ID_OK, "Close")
+        btn.SetDefault()
+        button_sizer.AddButton(btn)
+        button_sizer.Realize()
+        sizer.Add(button_sizer, flag=wx.ALL, border=5)
+
+        self.SetSizer(sizer)
+        self.SetSize(_COMPONENT_DIALOG_SIZE)
+
+    def OnPanelSize(self, event):
+        # A WrapSizer only re-wraps when it is explicitly given the new width; without this,
+        # making the dialog narrower keeps the previous number of maps per row and adds a
+        # horizontal scrollbar instead of re-wrapping.
+        width = self.panel.GetClientSize().width
+        self.wrap_sizer.SetDimension(0, 0, width, self.wrap_sizer.ComputeFittingClientSize(self.panel).height)
+        self.panel.SetVirtualSize((width, self.wrap_sizer.GetMinSize().height))
+        event.Skip()
+
+
 class FindRareEventsDialog(EelbrainDialog):
     def __init__(self, parent, *args, **kwargs):
         super().__init__(parent, wx.ID_ANY, "Find Rare Events", *args, **kwargs)
@@ -1860,8 +2464,7 @@ class InfoFrame(HTMLFrame):
     ):
         pos, size = self.find_pos(w, h)
         style = wx.MINIMIZE_BOX | wx.MAXIMIZE_BOX | wx.RESIZE_BORDER | wx.CAPTION | wx.CLOSE_BOX | wx.FRAME_FLOAT_ON_PARENT | wx.FRAME_TOOL_WINDOW
-        html_doc = fmtxt.make_html_doc(doc)
-        HTMLFrame.__init__(self, parent, title, html_doc, pos=pos, size=size, style=style)
+        HTMLFrame.__init__(self, parent, title, doc, pos=pos, size=size, style=style)
 
     @staticmethod
     def find_pos(w: int, h: int):
@@ -1872,6 +2475,9 @@ class InfoFrame(HTMLFrame):
         return pos, (w, h)
 
     def OpenURL(self, url):
+        if url == _BAD_CHANNELS_URL:
+            self.Parent.ShowBadChannelSummary()
+            return
         component = epoch = None
         for part in url.split():
             m = re.match(r'^epoch:(\d+)$', part)

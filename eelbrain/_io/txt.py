@@ -3,6 +3,7 @@ import csv
 import gzip
 from pathlib import Path
 import re
+from typing import Literal
 from numbers import Number
 from collections.abc import Sequence
 
@@ -31,7 +32,7 @@ def tsv(
         skiprows: int = 0,
         start_tag: str = None,
         ignore_missing: bool = False,
-        empty: str | float = None,
+        empty: float | Literal['nan'] = None,
         random: str | Sequence[str] = None,
         strip: bool = False,
         encoding: str = None,
@@ -43,16 +44,16 @@ def tsv(
 
     Parameters
     ----------
-    path : str
+    path
         Path to the file (if omitted, use a system file dialog). Files ending
         in ``*.gz`` are automatically decompressed.
-    names : Sequence of str | bool
+    names
         Column/variable names.
 
         * ``True`` (default): look for names on the first line of the file
         * ``['name1', ...]`` use these names
         * ``False``: use "v1", "v2", ...
-    types : str | dict
+    types
         Column data types::
 
          - 'a': determine automatically
@@ -63,29 +64,29 @@ def tsv(
         Specified either as string, with one type per columnc (e.g.
         ``'ffvva'``) or as ``{column_name: data_type}`` dictionary (e.g.
         ``{'participant': 'f'}``); unspecified columns default to ``'a'``.
-    delimiter : str
+    delimiter
         Value delimiting cells in the input file (default depends on ``path``:
         ``','`` if the extension is ``'.csv'``, otherwise ``'\t'``).
-    skiprows : int
+    skiprows
         Skip so many rows at the beginning of the file (for tsv files with
         headers). Column names are expected to come after the skipped rows.
         ``skiprows`` is applied after ``start_tag``.
-    start_tag : str
+    start_tag
         Alternative way to skip header rows. The table is assumed to start
         on the line following the last line in the file that starts with
         ``start_tag``.
-    ignore_missing : bool
+    ignore_missing
         Ignore rows with missing values (i.e., lines that contain fewer
         ``delimiter`` than the others; by default this raises an IOError). For
         rows with missing values, ``NaN`` is substituted for numerical and
         ``""`` for categorial variables.
-    empty : number | 'nan'
+    empty
         For numerical variables, substitute this value for empty entries. For
         example, if a column in a file contains ``['5', '3', '']``, this is read
         by default as ``Factor(['5', '3', ''])``.
         With ``empty=0``, it is read as ``Var([5, 3, 0])``.
         With ``empty='nan'``, it is read as ``Var([5, 3, nan])``.
-    random : str | sequence of str
+    random
         Names of the columns that should be assigned as random factor.
     strip
         Strip white-space from all categorial variables.
