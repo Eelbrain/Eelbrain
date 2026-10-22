@@ -554,8 +554,6 @@ def test_boosting_arguments():
             boosting('y', 'x1', 0, 0.1, data=ds, partitions=3, **kwargs)
     with pytest.raises(ValueError):
         boosting('y', 'x1', [0, 0], [0.1, 0.1], data=ds, partitions=3)
-    with pytest.raises(TypeError):
-        boosting('y', 'x1', [0], 0.1, data=ds, partitions=3)
     with pytest.raises(NotImplementedError):
         boosting('y', 'x1', 0, 0.1, data=ds, partitions=3, validate=0)
     # sequence tstart/tstop for a single predictor

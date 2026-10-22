@@ -21,7 +21,6 @@ from datetime import datetime
 from functools import cache, cached_property, reduce
 import inspect
 from itertools import chain, repeat
-from math import ceil
 from operator import mul
 import platform
 import sys
@@ -39,7 +38,7 @@ from .._exceptions import OldVersionError
 from .._ndvar.ndvar import _concatenate_values, set_adjacency, set_parc
 from .._ndvar._convolve import convolve_1d, convolve_2d
 from .._utils import PickleableDataClass, user_activity
-from .shared import DeconvolutionData, Split, Splits, merge_segments
+from .shared import DeconvolutionData, Split, Splits, lag_window, merge_segments
 from ._fit_metrics import get_evaluators
 from . import _boosting_opt as opt
 
@@ -899,39 +898,22 @@ class Boosting:
         self.error = error
         self.delta = delta
         self.mindelta = mindelta
-        n_x = self.data.x.n_rows
-        # find TRF start/stop for each x
-        tstart_is_sequence = isinstance(tstart, (tuple, list, np.ndarray))
-        if tstart_is_sequence != isinstance(tstop, (tuple, list, np.ndarray)):
-            raise TypeError(f"{tstart=}, {tstop=}: need to be both scalar or both sequences")
-        elif tstart_is_sequence:
-            n_predictors = len(self.data.x.blocks)
-            if len(tstart) != n_predictors:
-                raise ValueError(f'{tstart=}: {len(tstart)=} is different from the number of predictors ({n_predictors})')
-            elif len(tstop) != len(tstart):
-                raise ValueError(f'{tstop=}: {len(tstop)=} does not match {len(tstart)=}')
-            elif any(start >= stop for start, stop in zip(tstart, tstop)):
-                raise ValueError(f"Some tstart > tstop: {tstart=} and {tstop=}")
-            if self.data.multiple_x:
-                self.tstart = tuple(tstart)
-                self.tstop = tuple(tstop)
-            else:
-                self.tstart, self.tstop = tstart[0], tstop[0]
-            n_xs = [block.n_rows for block in self.data.x.blocks]
-            tstart_by_x = [t for t, n in zip(tstart, n_xs) for _ in range(n)]
-            tstop_by_x = [t for t, n in zip(tstop, n_xs) for _ in range(n)]
+        # TRF extent in indices, per predictor and per row of x
+        n_xs = [block.n_rows for block in self.data.x.blocks]
+        tstep = self.data.time.tstep
+        i_start_by_predictor, i_stop_by_predictor = lag_window(tstart, tstop, tstep, len(n_xs))
+        sequence_types = (tuple, list, np.ndarray)
+        if isinstance(tstart, sequence_types) or isinstance(tstop, sequence_types):
+            # one value per predictor (also when only one of them was specified per predictor)
+            self.tstart = tuple(tstart) if isinstance(tstart, sequence_types) else (tstart,) * len(n_xs)
+            self.tstop = tuple(tstop) if isinstance(tstop, sequence_types) else (tstop,) * len(n_xs)
+            if not self.data.multiple_x:
+                self.tstart, self.tstop = self.tstart[0], self.tstop[0]
         else:
-            if tstart >= tstop:
-                raise ValueError(f"{tstart=} > {tstop=}")
             self.tstart = tstart
             self.tstop = tstop
-            tstart_by_x = [tstart] * n_x
-            tstop_by_x = [tstop] * n_x
-
-        # TRF extent in indices (round before ceil to avoid floating point artifacts, e.g., 0.07 / 0.01 = 7.000000000000001)
-        tstep = self.data.time.tstep
-        i_start_by_x = np.asarray([int(round(t / tstep)) for t in tstart_by_x], np.int64)
-        i_stop_by_x = np.asarray([ceil(round(t / tstep, 6)) for t in tstop_by_x], np.int64)
+        i_start_by_x = np.repeat(i_start_by_predictor, n_xs).astype(np.int64)
+        i_stop_by_x = np.repeat(i_stop_by_predictor, n_xs).astype(np.int64)
         self._i_start = i_start = np.min(i_start_by_x)
         self.tstart_h = i_start * tstep
         i_stop = np.max(i_stop_by_x)

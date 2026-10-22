@@ -7,7 +7,7 @@ import pytest
 
 from eelbrain import Factor, NDVar, Scalar, Space, datasets, epoch_impulse_predictor
 from eelbrain._ndvar._convolve import convolve_1d
-from eelbrain._trf.shared import DeconvolutionData, Split, Splits, lag_matrix, package_values, split_data
+from eelbrain._trf.shared import DeconvolutionData, Split, Splits, lag_matrix, lag_window, package_values, split_data
 
 
 def test_deconvolution_data_continuous():
@@ -342,10 +342,30 @@ def test_lag_matrix():
     np.testing.assert_allclose(lag_matrix(x, -2, 4) @ h[0], y_pred)
 
 
+def test_lag_window():
+    "Lag windows in samples: tstop is exclusive, tmax inclusive"
+    assert lag_window(0, 0.5, 0.01, 1) == ([0], [50])
+    assert lag_window(0, None, 0.01, 1, tmax=0.49) == ([0], [50])
+    assert lag_window(-0.1, [0.2, 0.3], 0.01, 2) == ([-10, -10], [20, 30])
+    assert lag_window([0, 0.1], 0.2, 0.01, 2) == ([0, 10], [20, 20])
+    # a window that ends between samples includes the last lag before tstop
+    assert lag_window(0, 0.505, 0.01, 1) == ([0], [51])
+    # floating point error does not add a lag
+    assert lag_window(0, 0.1 + 0.02, 0.01, 1) == ([0], [12])
+    assert lag_window(0, 0.3, 0.005, 1) == ([0], [60])
+    with pytest.raises(ValueError, match="need one value per predictor"):
+        lag_window([0], 0.2, 0.01, 2)
+    with pytest.raises(ValueError, match="empty lag window"):
+        lag_window(0.2, 0.2, 0.01, 1)
+    with pytest.raises(TypeError):
+        lag_window(0, 0.2, 0.01, 1, tmax=0.19)
+
+
 def test_trf_module():
     "Public module for the shared components"
     from eelbrain import trf
     assert trf.DeconvolutionData is DeconvolutionData
+    assert trf.lag_window is lag_window
     assert isinstance(trf.n_workers(), int)
 
 

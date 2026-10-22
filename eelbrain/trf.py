@@ -7,7 +7,7 @@ Public to share with NCRF, but may change together with NCRF in the future.
 import os
 
 from ._config import CONFIG
-from ._trf.shared import DeconvolutionData, RowBlock, SegmentedArray, Split, Splits, lag_matrix, package_values, split_data
+from ._trf.shared import DeconvolutionData, RowBlock, SegmentedArray, Split, Splits, lag_matrix, lag_window, package_values, split_data
 
 
 def n_workers() -> int:

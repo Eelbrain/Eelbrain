@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields
 from functools import reduce
 from itertools import product
+from math import ceil
 from operator import mul
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Literal
@@ -495,6 +496,74 @@ def lag_matrix(
     # windows[k, m] = padded[k + m]; lagged[t, j] = padded[pad_head + t - i_start - j]
     k0 = pad_head - i_stop
     return windows[k0:k0 + n_times, ::-1]
+
+
+def _ceil_samples(x: float) -> int:
+    "Round up, treating a value within floating point error of an integer as that integer"
+    i = round(x)
+    return i if abs(x - i) < 1e-6 else ceil(x)
+
+
+def lag_window(
+        tstart: float | Sequence[float],
+        tstop: float | Sequence[float] | None,
+        tstep: float,
+        n_predictors: int,
+        tmax: float | Sequence[float] | None = None,
+) -> tuple[list[int], list[int]]:
+    """Lag window of each predictor in samples
+
+    Parameters
+    ----------
+    tstart
+        Start of the window in seconds (the first lag). A scalar applies to
+        all predictors; a sequence specifies one value per predictor.
+    tstop
+        End of the window in seconds, exclusive (like :attr:`UTS.tstop`); in
+        the same format as ``tstart``.
+    tstep
+        Time step in seconds.
+    n_predictors
+        Number of predictors.
+    tmax
+        Alternative to ``tstop``: the last lag in seconds, inclusive (like
+        :attr:`UTS.tmax`).
+
+    Returns
+    -------
+    i_start
+        First lag of each predictor in samples.
+    i_stop
+        End of each predictor's window in samples (exclusive): the kernel for
+        predictor ``i`` has ``i_stop[i] - i_start[i]`` samples.
+
+    Notes
+    -----
+    ``tstart`` and ``tmax`` are rounded to the nearest sample. ``tstop`` is
+    rounded up (allowing for floating point error), so that the window includes
+    every lag before ``tstop``.
+    """
+    if (tstop is None) == (tmax is None):
+        raise TypeError("exactly one of tstop and tmax is required")
+
+    def per_predictor(t: float | Sequence[float], name: str) -> list[float]:
+        if isinstance(t, (Sequence, np.ndarray)):
+            values = list(t)
+            if len(values) != n_predictors:
+                raise ValueError(f"{name}={t!r}: need one value per predictor ({n_predictors})")
+            return values
+        return [t] * n_predictors
+
+    i_start = [int(round(t / tstep)) for t in per_predictor(tstart, 'tstart')]
+    if tstop is None:
+        i_stop = [int(round(t / tstep)) + 1 for t in per_predictor(tmax, 'tmax')]
+    else:
+        i_stop = [_ceil_samples(t / tstep) for t in per_predictor(tstop, 'tstop')]
+    for i, (start, stop) in enumerate(zip(i_start, i_stop)):
+        if stop <= start:
+            desc = f'{tstart=}, {tmax=}' if tstop is None else f'{tstart=}, {tstop=}'
+            raise ValueError(f"{desc}: empty lag window for predictor {i}")
+    return i_start, i_stop
 
 
 @dataclass
