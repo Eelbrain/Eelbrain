@@ -31,7 +31,7 @@ from eelbrain import *
 # example, for plotting.
 # Here we start by create a Sensor dimension from a built-in EEG montage
 # (a montage pairs sensor names with spatial locations on the head surface):
-sensor = Sensor.from_montage('standard_alphabetic')
+sensor = Sensor.from_montage('colin27_alphabetic')
 p = plot.SensorMap(sensor)
 
 ###############################################################################

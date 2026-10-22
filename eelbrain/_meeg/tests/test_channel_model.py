@@ -14,7 +14,7 @@ SFREQ = 100.
 
 
 def _sensor():
-    return Sensor.from_montage('standard_1020', channels=CH_NAMES)
+    return Sensor.from_montage('colin27_1020', channels=CH_NAMES)
 
 
 def _block(n_times, seed, rank=8, noise=0.02):

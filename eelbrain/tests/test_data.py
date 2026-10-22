@@ -1762,7 +1762,7 @@ def test_sensor():
     assert s1.intersect(s2) == sensor[[1]]
     assert sensor._dim_index(np.array([0, 1, 1], bool)) == ['2', '3']
     # from MNE montage
-    m = mne.channels.make_standard_montage('standard_1020')
+    m = mne.channels.make_standard_montage('colin27_1020')
     s = Sensor.from_montage(m)
     assert s.names[0] == 'Fp1'
     # equality

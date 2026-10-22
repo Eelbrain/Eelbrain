@@ -33,7 +33,7 @@ def _eeg_raw(n_times=6000, sfreq=100.):
     data = rng.standard_normal((len(ch_names), n_times)) * 1e-5
     data[4, 1500] += 5e-4  # spike on C3
     raw = mne.io.RawArray(data, info, verbose='error')
-    raw.set_montage('standard_1020')
+    raw.set_montage('colin27_1020')
     return raw, ch_names
 
 

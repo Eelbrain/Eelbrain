@@ -382,7 +382,7 @@ def test_reference_prepare_source_data():
     from eelbrain._experiment.preprocessing import Reference
     mne.set_log_level('ERROR')
 
-    montage = mne.channels.make_standard_montage('standard_1020')
+    montage = mne.channels.make_standard_montage('colin27_1020')
     info = mne.create_info(['Fz', 'Pz', 'C3', 'C4'], 200., 'eeg')  # Cz absent
     raw = mne.io.RawArray(np.zeros((4, 200)), info)
     raw.set_montage(montage)

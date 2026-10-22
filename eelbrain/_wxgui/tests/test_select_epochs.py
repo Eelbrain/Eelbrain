@@ -164,7 +164,7 @@ def _variable_length_ds():
         info = mne.create_info(ch_names, sfreq, 'eeg')
         data = rng.standard_normal((1, len(ch_names), n_times)) * 1e-5
         epochs = mne.EpochsArray(data, info, tmin=-0.1, verbose='error')
-        epochs.set_montage('standard_1020')
+        epochs.set_montage('colin27_1020')
         return epochs
 
     epochs_list = [make_epoch(300), make_epoch(400)]  # 3 s and 4 s

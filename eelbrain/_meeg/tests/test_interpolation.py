@@ -38,7 +38,7 @@ def test_interpolation_meg():
 def test_interpolation_eeg():
     "Per-epoch EEG spherical-spline interpolation only touches each epoch's bads"
     rng = np.random.default_rng(0)
-    montage = mne.channels.make_standard_montage('standard_1020')
+    montage = mne.channels.make_standard_montage('colin27_1020')
     ch_names = ['Fp1', 'Fp2', 'F3', 'F4', 'C3', 'C4', 'P3', 'P4', 'O1', 'O2']
     info = mne.create_info(ch_names, 100., 'eeg')
     info.set_montage(montage)
@@ -63,7 +63,7 @@ def test_interpolation_eeg():
 def test_interpolate_bad_windows_eeg():
     "Windowed EEG interpolation touches only the window and matches whole-epoch"
     ch_names = ['Fp1', 'Fp2', 'F3', 'F4', 'C3', 'C4', 'P3', 'P4', 'O1', 'O2', 'F7', 'F8', 'T7', 'T8', 'P7', 'P8', 'Fz', 'Cz', 'Pz', 'Oz']
-    montage = mne.channels.make_standard_montage('standard_1020')
+    montage = mne.channels.make_standard_montage('colin27_1020')
     info = mne.create_info(ch_names, 100., 'eeg')
     info.set_montage(montage)
     rng = np.random.RandomState(0)
@@ -98,7 +98,7 @@ def test_interpolate_bad_windows_eeg():
 def test_interpolate_bad_windows_eeg_zeroes_when_too_many_bad():
     "Windowed EEG interpolation zeroes intervals when more than max_interpolate channels are bad"
     ch_names = ['Fp1', 'Fp2', 'F3', 'F4', 'C3', 'C4', 'P3', 'P4', 'O1', 'O2', 'F7', 'F8', 'T7', 'T8', 'P7', 'P8', 'Fz', 'Cz', 'Pz', 'Oz']
-    montage = mne.channels.make_standard_montage('standard_1020')
+    montage = mne.channels.make_standard_montage('colin27_1020')
     info = mne.create_info(ch_names, 100., 'eeg')
     info.set_montage(montage)
     rng = np.random.RandomState(0)

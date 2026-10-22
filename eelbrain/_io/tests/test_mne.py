@@ -117,7 +117,7 @@ def test_load_fiff_sensor():
 def test_epochs_ndvar_ignores_bad_channels_for_auto_adjacency():
     ch_names = ['Fz', 'Cz', 'Pz', 'FT9', 'TP9', 'IO']
     info = mne.create_info(ch_names, 100, 'eeg')
-    info.set_montage('standard_1020', on_missing='ignore')
+    info.set_montage('colin27_1020', on_missing='ignore')
     for ch_name in ('FT9', 'TP9', 'IO'):
         info['chs'][info.ch_names.index(ch_name)]['loc'][:3] = np.nan
     info['bads'] = ['FT9', 'TP9', 'IO']

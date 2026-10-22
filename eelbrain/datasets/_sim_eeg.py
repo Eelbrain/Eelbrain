@@ -59,7 +59,7 @@ def simulate_erp(
     assert n_trials % 2 == 0
 
     if sensor is None:
-        sensor = Sensor.from_montage('standard_alphabetic')
+        sensor = Sensor.from_montage('colin27_alphabetic')
         sensor.set_adjacency(connect_dist=1.66)
     if time is None:
         time = UTS(-0.100, 0.005, 140)
