@@ -28,6 +28,7 @@ Define a pre-processing pipeline as a series of linked processing steps
 
    RawSource
    RawFilter
+   RawNotchFilter
    RawICA
    RawApplyICA
    RawMaxwell

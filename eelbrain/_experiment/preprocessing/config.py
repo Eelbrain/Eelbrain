@@ -248,6 +248,7 @@ class CachedRawPipe(RawPipe):
     ) -> list[str]:
         return ctx.load(raw_node_name(self.source), options={'noise': noise}, view='bads')
 
+
 class RawNotchFilter(CachedRawPipe):
     """Apply a notch filter to continuous raw data.
 
@@ -312,6 +313,7 @@ class RawNotchFilter(CachedRawPipe):
             **self.kwargs,
         )
         return raw
+
 
 class RawFilter(CachedRawPipe):
     """Filter raw pipe
