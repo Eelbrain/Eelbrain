@@ -342,6 +342,13 @@ def test_lag_matrix():
     np.testing.assert_allclose(lag_matrix(x, -2, 4) @ h[0], y_pred)
 
 
+def test_trf_module():
+    "Public module for the shared components"
+    from eelbrain import trf
+    assert trf.DeconvolutionData is DeconvolutionData
+    assert isinstance(trf.n_workers(), int)
+
+
 def test_split_data_unequal_partitions():
     "Partitions that are not a multiple of the number of segments: equal sample counts, cut at segment boundaries"
     segments = np.array([[0, 100], [100, 200]])
