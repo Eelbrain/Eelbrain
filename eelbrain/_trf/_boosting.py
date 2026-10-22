@@ -937,8 +937,9 @@ class Boosting:
         i_stop = np.max(i_stop_by_x)
         # The boosting kernel shifts x by each lag within each segment, so no lag can exceed the segment length (i_stop is exclusive)
         max_lag_n_times = max(i_stop - 1, -i_start)
-        if max_lag_n_times > self.data.shortest_segment_n_times:
-            raise ValueError(f"{tstart=}, {tstop=}: the kernel extends beyond the shortest data segment ({self.data.shortest_segment_n_times} samples)")
+        shortest_segment_n_times = min(self.data.segment_n_times)
+        if max_lag_n_times > shortest_segment_n_times:
+            raise ValueError(f"{tstart=}, {tstop=}: the kernel extends beyond the shortest data segment ({shortest_segment_n_times} samples)")
         if not self.data.splits.n_validate:
             raise NotImplementedError("Boosting without validation set (validate=0): early stopping requires a validation set")
         shortest_cv_segment_n_times = np.min(np.diff(self.data.splits.split_segments, axis=1))

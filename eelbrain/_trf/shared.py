@@ -979,6 +979,8 @@ class DeconvolutionData:
         ``(n_segments, 2)`` array of segment ``[start, stop]`` indices on the
         concatenated time axis. The segments delimit chunks of continuous data,
         such as trials.
+    segment_n_times : list of int
+        Number of time samples in each segment.
     time : UTS
         Time dimension (of the first segment for ragged data).
     time_dim : UTS | list of UTS
@@ -1040,7 +1042,7 @@ class DeconvolutionData:
         self.multiple_x = multiple_x
         self.x_name = [block.name for block in self.x.blocks] if multiple_x else self.x.blocks[0].name
         self.segments = segments
-        self.shortest_segment_n_times = np.min(np.diff(segments, axis=1))
+        self.segment_n_times = segment_n_times
         # basis
         self.basis = 0
         self.basis_window = None
