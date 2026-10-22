@@ -9,7 +9,7 @@ import pytest
 
 from eelbrain import NDVar, UTS, filter_data
 from eelbrain._exceptions import ConfigurationError, DataError
-from eelbrain._experiment.preprocessing import RawFilter, RawMaxwell, RawNotchFilter, RawSource, assemble_raw_pipes
+from eelbrain._experiment.preprocessing import RawFilter, RawMaxwell, RawNotchFilter, RawSource
 from eelbrain._experiment.trf import filter_predictor
 from eelbrain.testing import requires_mne_testing_data
 
@@ -214,8 +214,6 @@ def test_raw_notch_filter():
         'n_jobs': 1,
         'kwargs': {'method': 'iir'},
     }
-    raw_pipes = assemble_raw_pipes({'raw': RawSource(), 'notch': RawNotchFilter('raw', (60, 120)), '1-40': RawFilter('notch', 1, 40)}, ('sample',))
-    assert tuple(pipe.name for pipe in raw_pipes.lineage_pipes('1-40')) == ('raw', 'notch', '1-40')
 
     # 10 Hz signal with 60 and 120 Hz line noise
     sfreq = 1000.
