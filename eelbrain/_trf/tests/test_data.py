@@ -371,10 +371,11 @@ def test_trf_module():
     assert isinstance(trf.n_workers(), int)
 
 
-def test_split_data_unequal_partitions():
-    "Partitions that are not a multiple of the number of segments: equal sample counts, cut at segment boundaries"
+def test_split_data_time():
+    "split='time': equal sample counts, cut at segment boundaries"
     segments = np.array([[0, 100], [100, 200]])
-    splits = split_data(segments, 3, validate=1, test=0)
+    splits = split_data(segments, 3, validate=1, test=0, split='time')
+    assert splits.split == 'time'
     assert len(splits.splits) == 3
     assert_array_equal(splits.split_segments, [[0, 67], [67, 100], [100, 133], [133, 200]])
     assert_array_equal(splits.splits[0].reserved, [[0, 67]])
@@ -384,30 +385,75 @@ def test_split_data_unequal_partitions():
     assert_array_equal(splits.splits[2].reserved, [[133, 200]])
     assert_array_equal(splits.splits[2].train, [[0, 100], [100, 133]])
     # a split point on a segment boundary is not a soft split
-    splits = split_data(np.array([[0, 100], [100, 300]]), 3, validate=1, test=0)
+    splits = split_data(np.array([[0, 100], [100, 300]]), 3, validate=1, test=0, split='time')
     assert_array_equal(splits.split_segments, [[0, 100], [100, 200], [200, 300]])
     assert_array_equal(splits.splits[1].reserved, [[100, 200]])
     assert_array_equal(splits.splits[1].train, [[0, 100], [200, 300]])
     assert_array_equal(splits.splits[0].train, [[100, 300]])
+    # with more segments than partitions: contiguous blocks of segments
+    segments = np.array([[i * 10, (i + 1) * 10] for i in range(6)])
+    splits = split_data(segments, 3, validate=1, test=0, split='time')
+    assert_array_equal(splits.splits[0].reserved, [[0, 10], [10, 20]])
+    # default for continuous data
+    assert split_data(np.array([[0, 100]]), 3).split == 'time'
     # more partitions than samples
     with pytest.raises(ValueError, match="not enough samples"):
-        split_data(np.array([[0, 2], [2, 4]]), 5, validate=1, test=0)
+        split_data(np.array([[0, 2], [2, 4]]), 5, validate=1, test=0, split='time')
     with pytest.raises(ValueError, match="not enough samples"):  # continuous data
         split_data(np.array([[0, 3]]), 5, validate=1, test=0)
-    with pytest.raises(ValueError, match="not enough samples"):  # partitions a multiple of the number of segments
-        split_data(np.array([[0, 2], [2, 4]]), 6, validate=1, test=0)
+
+
+def test_split_data_cases():
+    "split='cases' (default with segments) never cuts segments"
+    segments = np.array([[0, 100], [100, 200]])
+    with pytest.raises(ValueError, match="only 2 cases"):
+        split_data(segments, 3, validate=1, test=0)
+    with pytest.raises(ValueError, match="only 2 cases"):  # a multiple of the number of segments
+        split_data(segments, 4, validate=1, test=0)
+    with pytest.raises(TypeError, match="model can only be used"):
+        split_data(segments, 2, Factor('ab'), validate=1, test=0, split='time')
+    with pytest.raises(ValueError, match="split='trials'"):
+        split_data(segments, 2, test=0, split='trials')
 
 
 def test_split_data_no_validate_no_test():
     "Without validation and test set, a single split uses all data for training"
     segments = np.array([[0, 100], [100, 200]])
-    splits = split_data(segments, 3, validate=0, test=0)
+    splits = split_data(segments, 3, validate=0, test=0, split='time')
     assert len(splits.splits) == 1
     split = splits.splits[0]
     assert_array_equal(split.train, [[0, 100], [100, 200]])  # the segment boundary is hard
     assert split.reserved is None
     assert split.i_reserved is None
     assert split.splits == []
+
+
+def test_split_data_within_cases():
+    "Each segment is cut into ``partitions`` pieces, and partition i pools the i-th piece of every segment"
+    segments = np.array([[0, 100], [100, 160]])
+    splits = split_data(segments, 3, validate=1, test=0, split='within_cases')
+    assert splits.split == 'within_cases'
+    assert splits.n_partitions == 3
+    assert_array_equal(splits.split_segments, [[0, 33], [33, 67], [67, 100], [100, 120], [120, 140], [140, 160]])
+    assert_array_equal(splits.splits[0].reserved, [[0, 33], [100, 120]])
+    assert_array_equal(splits.splits[0].train, [[33, 100], [120, 160]])
+    assert_array_equal(splits.splits[1].reserved, [[33, 67], [120, 140]])
+    assert_array_equal(splits.splits[1].train, [[0, 33], [67, 100], [100, 120], [140, 160]])
+    assert_array_equal(splits.splits[2].reserved, [[67, 100], [140, 160]])
+    assert_array_equal(splits.splits[2].train, [[0, 67], [100, 140]])
+    assert "split='within_cases'" in repr(splits)
+    assert splits != split_data(segments, 3, validate=1, test=0, split='time')
+    assert splits == pickle.loads(pickle.dumps(splits))
+    # default number of partitions
+    assert split_data(segments, split='within_cases').n_partitions == 5
+    # continuous data is unaffected
+    assert split_data(segments[:1], 3, split='within_cases').splits == split_data(segments[:1], 3).splits
+    # also with enough segments for whole-segment partitions
+    segments = np.array([[i * 10, (i + 1) * 10] for i in range(6)])
+    splits = split_data(segments, 2, validate=1, test=0, split='within_cases')
+    assert_array_equal(splits.splits[0].reserved, [[0, 5], [10, 15], [20, 25], [30, 35], [40, 45], [50, 55]])
+    with pytest.raises(ValueError, match="not enough samples"):
+        split_data(np.array([[0, 2], [2, 4]]), 3, validate=1, test=0, split='within_cases')
 
 
 def test_splits_legacy_format():
@@ -424,14 +470,14 @@ def test_splits_legacy_format():
 
     segments = np.array([[0, 100], [100, 200]])
     # with test set
-    splits = split_data(segments, 4)
+    splits = split_data(segments, 4, split='time')
     states = [{'train': split.train, 'validate': split.reserved, 'test': test_split.reserved, 'i_test': test_split.i_reserved, 'i_validate': split.i_reserved} for test_split in splits.splits for split in test_split.splits]
     assert len(states) == 12
     assert legacy_splits(splits, [flat_split(state) for state in states]) == splits
     # before BoostingResult version 16, i_validate was not stored
     assert legacy_splits(splits, [flat_split({k: v for k, v in state.items() if k != 'i_validate'}) for state in states]) == splits
     # without test set
-    splits = split_data(segments, 4, test=0)
+    splits = split_data(segments, 4, test=0, split='time')
     states = [{'train': split.train, 'validate': split.reserved, 'test': None, 'i_test': 0, 'i_validate': split.i_reserved} for split in splits.splits]
     assert legacy_splits(splits, [flat_split(state) for state in states]) == splits
     assert legacy_splits(splits, [flat_split({k: v for k, v in state.items() if k != 'i_validate'}) for state in states]) == splits

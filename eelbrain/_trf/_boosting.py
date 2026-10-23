@@ -347,6 +347,10 @@ class BoostingResult(PickleableDataClass):
                 value = None if self.splits is None else self.splits.n_validate
             elif name == 'test':
                 value = None if self.splits is None else self.splits.n_test
+            elif name == 'split':
+                if self.splits is None or self.splits.split == ('cases' if len(self.splits.segments) > 1 else 'time'):
+                    continue
+                value = repr(self.splits.split)
             else:
                 value = getattr(self, name)
             if value is not None and value != param.default:
@@ -1165,6 +1169,7 @@ def boosting(
         model: CategorialArg = None,
         validate: int = 1,  # Number of segments in validation set
         test: int = 1,  # Number of segments in test set
+        split: Literal['cases', 'time', 'within_cases'] = None,
         data: Dataset = None,
         selective_stopping: int = 0,
         partition_results: bool = False,
@@ -1230,14 +1235,16 @@ def boosting(
         validation). See :class:`Splits` for the resulting structure.
         If data is continuous, data are divided into contiguous segments of
         equal length (default 5).
-        If data has cases, cases are divided with ``[::partitions]`` slices
+        If data has cases, how partitions are formed depends on ``split``.
+        By default, cases are divided with ``[::partitions]`` slices
         (default ``n_cases``, which is only possible with 3 to 10 cases;
         if ``model`` is specified, all cells need to have the same number of
         cases, and ``n_cases`` is the number of cases per cell).
         See :ref:`exa-data_split` example.
     model
         If data has cases, divide cases into different categories (division
-        for crossvalidation is done separately for each cell).
+        for crossvalidation is done separately for each cell; only with
+        ``split='cases'``).
     data
         If provided, other parameters can be specified as string for items in
         ``ds``.
@@ -1268,6 +1275,18 @@ def boosting(
         interest, or when the model will be evaluated on independent data
         (e.g., using :func:`convolve`). To inspect the fit of the individual
         boosting runs, use ``partition_results=True``.
+    split
+        If data has cases, how to form partitions (see :func:`split_data` and
+        the :ref:`exa-data_split` example):
+
+        - ``'cases'`` (default): each partition consists of whole cases, so
+          that case boundaries are always partition boundaries. Requires at
+          least as many cases as partitions.
+        - ``'time'``: cut the concatenated cases into ``partitions`` contiguous
+          spans of equal length (default 5), regardless of case boundaries.
+        - ``'within_cases'``: cut each case into ``partitions`` pieces of
+          equal length, and form each partition from one piece of every case
+          (default 5 partitions), so that each partition samples every case.
     selective_stopping
         By default, the boosting algorithm stops when the validation error
         stops decreasing. With ``selective_stopping=True``, boosting continues but
@@ -1327,7 +1346,7 @@ def boosting(
     dec_data.apply_basis(basis, basis_window)
     if scale_data:
         dec_data.normalize(error)
-    dec_data.initialize_cross_validation(partitions, model, data, validate, test)
+    dec_data.initialize_cross_validation(partitions, model, data, validate, test, split)
 
     fit = Boosting(dec_data)
     fit.fit(tstart, tstop, selective_stopping, error, delta, mindelta)

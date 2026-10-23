@@ -1,12 +1,15 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 """Plot data split for cross-validation"""
 
+from collections.abc import Sequence
+from typing import Literal
+
 from matplotlib.patches import Rectangle
 from matplotlib.ticker import MaxNLocator
 import numpy
 
 from .._trf.shared import Splits, split_data
-from .._data_obj import Dataset, CategorialArg, NDVarArg, asndvar
+from .._data_obj import Dataset, CategorialArg, NDVar, NDVarArg, asndvar
 from ._base import EelFigure, Layout, LegendMixin, LegendArg
 from ._styles import colors_for_oneway
 
@@ -95,11 +98,12 @@ class DataSplit(EelFigure, LegendMixin):
 
 
 def preview_partitions(
-    cases: int | NDVarArg = 0,
+    cases: int | Sequence[int] | NDVarArg = 0,
     partitions: int = None,
     model: CategorialArg = None,
     validate: int = 1,
     test: int = 1,
+    split: Literal['cases', 'time', 'within_cases'] = None,
     data: Dataset = None,
     **kwargs,
 ) -> DataSplit:
@@ -109,8 +113,10 @@ def preview_partitions(
     ----------
     cases
         Description of the data that will be used. Can be specified as
-        :class:`NDVar` data, or as integer describing the number of trials
-        (the default assumes continuous data).
+        :class:`NDVar` data, as integer describing the number of trials
+        (the default assumes continuous data), or as a sequence of integers
+        describing the length (number of samples) of each trial, which allows
+        trials of different lengths.
     ...
         For a description of the splitting parameters see :func:`~eelbrain.boosting`.
         For plotting parameters see :class:`DataSplit`.
@@ -121,25 +127,29 @@ def preview_partitions(
     """
     if isinstance(cases, int):
         if cases == 0:
-            has_case = False
             if partitions is None:
                 partitions = 5
             ns = [partitions]
+            xlabel = 'Segment'
+        elif split in ('time', 'within_cases'):
+            # cases need enough samples to be cut into partitions
+            ns = [partitions or 5] * cases
+            xlabel = 'Sample'
         else:
-            has_case = True
             if partitions is None:
                 raise NotImplementedError('Automatic partitions with trials')
             ns = [1] * cases
-    else:
+            xlabel = 'Case'
+    elif isinstance(cases, (str, NDVar)):
         y = asndvar(cases, data=data)
-        has_case = y.has_case
-        if y.has_case:
-            n_cases = len(y)
-        else:
-            n_cases = 1
+        n_cases = len(y) if y.has_case else 1
         ns = [len(y.get_dim('time'))] * n_cases
+        xlabel = 'Sample'
+    else:
+        ns = [int(n) for n in cases]
+        xlabel = 'Sample'
     index = numpy.cumsum([0] + ns)
     segments = numpy.hstack([index[:-1, None], index[1:, None]])
-    splits = split_data(segments, partitions, model, data, validate, test)
-    kwargs.setdefault('xlabel', 'Case' if has_case else 'Segment')
+    splits = split_data(segments, partitions, model, data, validate, test, split)
+    kwargs.setdefault('xlabel', xlabel)
     return DataSplit(splits, **kwargs)
