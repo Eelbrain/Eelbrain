@@ -1687,12 +1687,17 @@ class EelFigure(MatplotlibFigure):
         title = self._frame.GetTitle() if self._has_frame else self._title
         return f'<{title}>'
 
+    def _ipython_display_(self):
+        # Use the figure's own display path so that InlineBackend settings (figure_format, print_figure_kwargs) apply
+        from IPython.display import display
+        display(self.figure)
+
     def _repr_png_(self) -> bytes | None:
-        "PNG representation for display in notebooks (Jupyter, marimo, ...)"
+        "PNG representation for notebooks that do not use IPython (e.g., marimo)"
         if self._displayed_inline:  # _show() already rendered the figure into the notebook
             return None
         buffer = BytesIO()
-        self.figure.savefig(buffer, format='png')
+        self.figure.savefig(buffer, format='png', bbox_inches='tight')  # like marimo's own rendering of pyplot figures
         return buffer.getvalue()
 
     def _set_axtitle(
