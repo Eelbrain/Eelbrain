@@ -1507,11 +1507,7 @@ class MatplotlibFrame(FigureFrame):
         self._plt.close(self.figure)
 
     def Show(self):  # noqa
-        if mpl.get_backend() == 'WXAgg':
-            if do_autorun():
-                self._plt.show()
-        elif use_inline_backend() and not in_ipython():
-            # IPython displays open pyplot figures at the end of each cell; other notebooks (e.g., marimo) need an explicit show()
+        if mpl.get_backend() == 'WXAgg' and do_autorun():
             self._plt.show()
 
 
@@ -1617,6 +1613,7 @@ class EelFigure(MatplotlibFigure):
     _can_set_ylim = False
     _can_set_xlim = False
     _has_frame = False
+    _displayed_inline = False
 
     def __init__(self, data_desc: str | None, layout: BaseLayout):
         """Parent class for Eelbrain figures.
@@ -1690,8 +1687,10 @@ class EelFigure(MatplotlibFigure):
         title = self._frame.GetTitle() if self._has_frame else self._title
         return f'<{title}>'
 
-    def _repr_png_(self) -> bytes:
+    def _repr_png_(self) -> bytes | None:
         "PNG representation for display in notebooks (Jupyter, marimo, ...)"
+        if self._displayed_inline:  # _show() already rendered the figure into the notebook
+            return None
         buffer = BytesIO()
         self.figure.savefig(buffer, format='png')
         return buffer.getvalue()
@@ -1773,10 +1772,16 @@ class EelFigure(MatplotlibFigure):
             self._frame.store_canvas()
 
         if CONFIG['show'] and self._layout.show:
-            self._frame.Show()
-            if self._has_frame and do_autorun(self._layout.run):
-                from .._wxgui import run
-                run()
+            if use_inline_backend() and not in_ipython():
+                # IPython displays open pyplot figures at the end of each cell; other notebooks (e.g., marimo) need an explicit show()
+                from matplotlib import pyplot
+                pyplot.show()
+                self._displayed_inline = True
+            else:
+                self._frame.Show()
+                if self._has_frame and do_autorun(self._layout.run):
+                    from .._wxgui import run
+                    run()
 
     def _tight(self):
         "Default implementation based on matplotlib"
