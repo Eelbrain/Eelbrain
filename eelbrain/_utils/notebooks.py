@@ -12,8 +12,8 @@ def use_inline_backend() -> bool:
     backend = dict.__getitem__(matplotlib.rcParams, 'backend')
     if not isinstance(backend, str):
         return False
-    # module:// backends are notebook integrations (matplotlib_inline, ipympl, marimo) that handle figure display themselves
-    return backend.endswith('inline') or backend == 'nbAgg' or backend.startswith('module://')
+    # Only known notebook module:// backends; other module:// backends (e.g., mplcairo, PyCharm's backend_interagg) are GUI backends
+    return backend.endswith('inline') or backend == 'nbAgg' or backend.startswith(('module://matplotlib_inline', 'module://ipympl', 'module://marimo'))
 
 
 def in_ipython() -> bool:
