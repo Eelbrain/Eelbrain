@@ -79,6 +79,7 @@ from collections import defaultdict
 from dataclasses import dataclass, replace
 from enum import Enum, auto
 from functools import cached_property, reduce
+from io import BytesIO
 from itertools import chain, cycle, repeat
 from logging import getLogger
 import math
@@ -104,7 +105,7 @@ from .._celltable import Celltable
 from .._colorspaces import LocatedColormap, SYMMETRIC_CMAPS, ZEROBASED_CMAPS, ALPHA_CMAPS
 from .._config import CONFIG
 from .._data_obj import Dimension, Dataset, Factor, Interaction, NDVar, Var, Case, UTS, NDVarArg, CategorialArg, IndexArg, CellArg, NDVarTypes, ascategorial, asndvar, assub, isnumeric, isdataobject, combine_cells, cellname
-from .._utils.notebooks import use_inline_backend
+from .._utils.notebooks import in_ipython, use_inline_backend
 from .._stats import testnd
 from .._types import PathArg
 from .._utils import IS_WINDOWS, intervals, ui
@@ -1506,7 +1507,11 @@ class MatplotlibFrame(FigureFrame):
         self._plt.close(self.figure)
 
     def Show(self):  # noqa
-        if mpl.get_backend() == 'WXAgg' and do_autorun():
+        if mpl.get_backend() == 'WXAgg':
+            if do_autorun():
+                self._plt.show()
+        elif use_inline_backend() and not in_ipython():
+            # IPython displays open pyplot figures at the end of each cell; other notebooks (e.g., marimo) need an explicit show()
             self._plt.show()
 
 
@@ -1685,9 +1690,11 @@ class EelFigure(MatplotlibFigure):
         title = self._frame.GetTitle() if self._has_frame else self._title
         return f'<{title}>'
 
-    def _ipython_display_(self):
-        from IPython.display import display
-        display(self.figure)
+    def _repr_png_(self) -> bytes:
+        "PNG representation for display in notebooks (Jupyter, marimo, ...)"
+        buffer = BytesIO()
+        self.figure.savefig(buffer, format='png')
+        return buffer.getvalue()
 
     def _set_axtitle(
             self,
